@@ -299,26 +299,6 @@ func TestResumeReconnectsInitializedHostWithoutNativeResume(t *testing.T) {
 	}
 }
 
-func TestResumeStagesDirectProcessWhenBranchSourceOwnsHost(t *testing.T) {
-	d, srv := newTestDriver(t)
-	d.persistent = true
-	d.connectHost = func(context.Context, persistenthost.Config) (*persistenthost.Transport, error) {
-		return nil, persistenthost.ErrAttached
-	}
-	conv, err := d.Resume(context.Background(), ports.ChatResumeConfig{
-		SessionID: "ao-branch", ProviderConversationID: "thread-branch",
-		DataDir: t.TempDir(), WorkspacePath: "/tmp/ws", AllowConcurrentHostReplacement: true,
-	})
-	if err != nil {
-		t.Fatalf("Resume: %v", err)
-	}
-	defer func() { _ = conv.Close() }()
-	if !srv.sentMethod("initialize") || !srv.sentMethod("thread/resume") {
-		t.Fatalf("branch staging handshake: initialize=%v resume=%v",
-			srv.sentMethod("initialize"), srv.sentMethod("thread/resume"))
-	}
-}
-
 func TestResumeDoesNotCompeteWithAttachedHostDuringDaemonOverlap(t *testing.T) {
 	d, srv := newTestDriver(t)
 	d.persistent = true

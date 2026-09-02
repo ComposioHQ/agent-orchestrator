@@ -597,7 +597,7 @@ func Run(ctx context.Context, cfg Config) error {
 			_ = killProviderProcess(child)
 			return err
 		}
-		defer h.acp.close()
+		defer func() { _ = h.acp.close(context.WithoutCancel(ctx)) }()
 	}
 	h.cond = sync.NewCond(&h.mu)
 	providerDone := make(chan error, 1)
@@ -826,10 +826,10 @@ func (h *host) forwardProvider(stdout io.Reader) error {
 		frame, err := reader.ReadBytes('\n')
 		if len(frame) > 0 {
 			h.mu.Lock()
-			journaled := false
+			retainedByACP := false
 			if h.acp != nil {
 				var relayErr error
-				frame, journaled, relayErr = h.acp.providerFrame(
+				frame, retainedByACP, relayErr = h.acp.providerFrame(
 					h.ctx, frame, h.clientGeneration, h.client != nil,
 				)
 				if relayErr != nil {
@@ -844,7 +844,7 @@ func (h *host) forwardProvider(stdout io.Reader) error {
 				}
 				continue
 			}
-			if requestID, ok := serverRequestID(frame); ok && !journaled {
+			if requestID, ok := serverRequestID(frame); ok && !retainedByACP {
 				if _, exists := h.pendingRequests[requestID]; !exists {
 					h.pendingRequests[requestID] = &pendingRequest{frame: append([]byte(nil), frame...)}
 					h.pendingOrder = append(h.pendingOrder, requestID)
@@ -858,11 +858,11 @@ func (h *host) forwardProvider(stdout io.Reader) error {
 					_ = h.client.Close()
 					h.client = nil
 					h.bufferPendingRequestsLocked()
-					if _, pending := serverRequestID(frame); !pending && !journaled {
+					if _, pending := serverRequestID(frame); !pending && !retainedByACP {
 						h.bufferFrameLocked(frame)
 					}
 				}
-			} else if !journaled {
+			} else if !retainedByACP {
 				if requestID, pending := serverRequestID(frame); !pending || !h.pendingRequests[requestID].buffered {
 					h.bufferFrameLocked(frame)
 					if pending {

@@ -22,6 +22,11 @@ type acpPromptJournal struct {
 	size int64
 }
 
+type acpJournalSpan struct {
+	offset int64
+	length int64
+}
+
 func openACPPromptJournal(ctx context.Context, path string) (*acpPromptJournal, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -37,43 +42,37 @@ func openACPPromptJournal(ctx context.Context, path string) (*acpPromptJournal, 
 	return &acpPromptJournal{path: path, file: file}, nil
 }
 
-func (j *acpPromptJournal) append(ctx context.Context, frame []byte) error {
+func (j *acpPromptJournal) append(ctx context.Context, frame []byte) (acpJournalSpan, error) {
 	if err := ctx.Err(); err != nil {
-		return err
+		return acpJournalSpan{}, err
 	}
 	if int64(len(frame)) > maxACPJournalBytes-j.size {
-		return fmt.Errorf("%w: limit=%d", errACPJournalFull, maxACPJournalBytes)
+		return acpJournalSpan{}, fmt.Errorf("%w: limit=%d", errACPJournalFull, maxACPJournalBytes)
 	}
+	span := acpJournalSpan{offset: j.size, length: int64(len(frame))}
 	written, err := j.file.Write(frame)
 	j.size += int64(written)
 	if err != nil {
-		return fmt.Errorf("append persistent ACP prompt journal: %w", err)
+		return acpJournalSpan{}, fmt.Errorf("append persistent ACP prompt journal: %w", err)
 	}
 	if written != len(frame) {
-		return io.ErrShortWrite
+		return acpJournalSpan{}, io.ErrShortWrite
 	}
-	return nil
+	return span, nil
 }
 
-func (j *acpPromptJournal) replayTo(ctx context.Context, dst io.Writer) error {
+func (j *acpPromptJournal) replayTo(ctx context.Context, dst io.Writer, span acpJournalSpan) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if j.size == 0 {
+	if span.length == 0 {
 		return nil
 	}
-	if _, err := j.file.Seek(0, io.SeekStart); err != nil {
-		return fmt.Errorf("rewind persistent ACP prompt journal: %w", err)
+	if span.offset < 0 || span.length < 0 || span.offset+span.length > j.size {
+		return errors.New("invalid persistent ACP prompt journal span")
 	}
-	_, copyErr := io.CopyN(dst, j.file, j.size)
-	_, seekErr := j.file.Seek(0, io.SeekEnd)
-	if copyErr != nil {
-		return fmt.Errorf("replay persistent ACP prompt journal: %w", copyErr)
-	}
-	if seekErr != nil {
-		return fmt.Errorf("restore persistent ACP prompt journal: %w", seekErr)
-	}
-	return nil
+	_, err := io.Copy(dst, io.NewSectionReader(j.file, span.offset, span.length))
+	return err
 }
 
 func (j *acpPromptJournal) reset(ctx context.Context) error {
@@ -90,7 +89,9 @@ func (j *acpPromptJournal) reset(ctx context.Context) error {
 	return nil
 }
 
-func (j *acpPromptJournal) close() {
-	_ = j.file.Close()
-	_ = os.Remove(j.path)
+func (j *acpPromptJournal) close(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return errors.Join(j.file.Close(), os.Remove(j.path))
 }

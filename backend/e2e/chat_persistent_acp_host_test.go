@@ -42,34 +42,6 @@ func TestCursorACPTurnSurvivesGracefulDaemonRestart(t *testing.T) {
 	runACPTurnSurvivesDaemonRestart(t, "cursor", "cursor-agent", "CURSOR-GRACEFUL-DAEMON-SURVIVED", true)
 }
 
-func TestDroidACPTurnSurvivesDaemonSIGKILL(t *testing.T) {
-	if os.Getenv("AO_LIVE_DROID_ACP") != "1" {
-		t.Skip("set AO_LIVE_DROID_ACP=1 to run the real Droid restart E2E")
-	}
-	runACPTurnSurvivesDaemonSIGKILL(t, "droid", "droid", "DROID-DAEMON-SURVIVED")
-}
-
-func TestKimchiACPTurnSurvivesDaemonSIGKILL(t *testing.T) {
-	if os.Getenv("AO_LIVE_KIMCHI_ACP") != "1" {
-		t.Skip("set AO_LIVE_KIMCHI_ACP=1 to run the real Kimchi restart E2E")
-	}
-	runACPTurnSurvivesDaemonSIGKILL(t, "kimchi", "kimchi", "KIMCHI-DAEMON-SURVIVED")
-}
-
-func TestPiACPTurnSurvivesDaemonSIGKILL(t *testing.T) {
-	if os.Getenv("AO_LIVE_PI_ACP") != "1" {
-		t.Skip("set AO_LIVE_PI_ACP=1 to run the real Pi restart E2E")
-	}
-	runACPTurnSurvivesDaemonSIGKILL(t, "pi", "pi-acp", "PI-DAEMON-SURVIVED")
-}
-
-func TestOMPACPTurnSurvivesDaemonSIGKILL(t *testing.T) {
-	if os.Getenv("AO_LIVE_OMP_ACP") != "1" {
-		t.Skip("set AO_LIVE_OMP_ACP=1 to run the real OMP restart E2E")
-	}
-	runACPTurnSurvivesDaemonSIGKILL(t, "omp", "omp", "OMP-DAEMON-SURVIVED")
-}
-
 func runACPTurnSurvivesDaemonSIGKILL(t *testing.T, harness, binary, token string) {
 	t.Helper()
 	runACPTurnSurvivesDaemonRestart(t, harness, binary, token, false)

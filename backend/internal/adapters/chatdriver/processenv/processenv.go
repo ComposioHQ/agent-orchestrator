@@ -20,12 +20,10 @@ func Merge(overlay map[string]string) []string {
 	for key, value := range overlay {
 		merged[key] = value
 	}
-	return Entries(merged)
+	return entries(merged)
 }
 
-// Entries returns a deterministic KEY=VALUE representation without inheriting
-// any additional process environment.
-func Entries(values map[string]string) []string {
+func entries(values map[string]string) []string {
 	keys := make([]string, 0, len(values))
 	for key := range values {
 		keys = append(keys, key)
@@ -44,18 +42,11 @@ func Entries(values map[string]string) []string {
 func FingerprintEntries(values map[string]string) []string {
 	stable := make(map[string]string, len(values))
 	for key, value := range values {
-		if !controllerCredential(key) {
-			stable[key] = value
+		switch key {
+		case "AO_BROWSER_CAPABILITY", "AO_BROWSER_RUNTIME_TOKEN", "AO_BROWSER_RUNTIME_TOKEN_STDIN":
+			continue
 		}
+		stable[key] = value
 	}
-	return Entries(stable)
-}
-
-func controllerCredential(key string) bool {
-	switch key {
-	case "AO_BROWSER_CAPABILITY", "AO_BROWSER_RUNTIME_TOKEN", "AO_BROWSER_RUNTIME_TOKEN_STDIN":
-		return true
-	default:
-		return false
-	}
+	return entries(stable)
 }

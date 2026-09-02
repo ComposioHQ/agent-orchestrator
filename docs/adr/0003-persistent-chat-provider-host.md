@@ -52,12 +52,11 @@ Codex app-server uses the original raw protocol profile:
   state proves its Codex Chat session is terminated or absent. An unreadable
   store, incompatible descriptor, live PID with an unreachable endpoint, or
   failed auth is preserved rather than treated as death.
-- Branch activation keeps its existing launch-before-destroy safety ordering. If
-  the source controller still owns the exclusive host, its staged replacement
-  uses a direct provider process; the next daemon reconciliation resumes that
-  branch into a persistent host. This avoids breaking branch rollback but leaves a
-  bounded migration gap: a daemon exit after branch activation and before the
-  next reconciliation uses native resume rather than live reconnect.
+- Branch activation first fences an idle source controller, then explicitly
+  terminates its host before opening the replacement. If replacement fails, AO
+  restores the source branch through native resume. This keeps one provider
+  writer at a time and never treats an attached host as permission to launch a
+  competing direct process.
 
 ACP providers use a stateful profile on the same control plane. The host remains
 provider-neutral above JSON-RPC, but it becomes the logical owner of

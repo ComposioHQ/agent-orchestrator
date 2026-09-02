@@ -134,7 +134,7 @@ func (c *conversation) HandleExtensionMethod(
 		if turnID == "" {
 			return nil, errors.New("persistent ACP prompt result has no durable active turn")
 		}
-		c.finishPrompt(turnID, response, promptErr, nil)
+		c.finishPrompt(turnID, response, promptErr)
 		return nil, nil
 	}
 	original, configured := c.extensionMethods[method]

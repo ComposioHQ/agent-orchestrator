@@ -38,15 +38,6 @@ func TestMergeInheritsDaemonEnvironmentAndAppliesOverlay(t *testing.T) {
 	}
 }
 
-func TestEntriesDoesNotInheritDaemonEnvironment(t *testing.T) {
-	t.Setenv("AO_PROCESSENV_INHERITED", "parent")
-	got := Entries(map[string]string{"B": "2", "A": "1"})
-	want := []string{"A=1", "B=2"}
-	if !slices.Equal(got, want) {
-		t.Fatalf("Entries = %v, want %v", got, want)
-	}
-}
-
 func TestFingerprintEntriesExcludesRotatingControllerCredentials(t *testing.T) {
 	got := FingerprintEntries(map[string]string{
 		"AO_BROWSER_CAPABILITY": "rotating-secret",

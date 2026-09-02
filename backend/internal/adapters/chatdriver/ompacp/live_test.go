@@ -33,7 +33,7 @@ func TestLiveOMPACP(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
-	defer conversation.(ports.ChatProviderTerminator).Terminate()
+	defer conversation.Close()
 
 	ref, err := conversation.SendTurn(ctx, ports.ChatUserMessage{
 		Text: "Reply with exactly: AO OMP ACP works", ClientMessageID: "live-1",
@@ -62,9 +62,6 @@ func TestLiveOMPACP(t *testing.T) {
 				}
 				if !strings.Contains(answer.String(), "AO OMP ACP works") {
 					t.Fatalf("answer = %q", answer.String())
-				}
-				if err := conversation.(ports.ChatProviderEventAcknowledger).AcknowledgeProviderEvent(context.Background(), event.ProviderEventID); err != nil {
-					t.Fatalf("acknowledge: %v", err)
 				}
 				return
 			}

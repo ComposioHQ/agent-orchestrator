@@ -317,17 +317,6 @@ func newController(
 // kept running while AO was detached, so forgetting this turn would let a new
 // Send start a second root turn on the same native conversation.
 func (c *Controller) restoreLiveTurnOwnership(turns []domain.ConversationTurn) string {
-	latest := latestLiveProviderTurn(turns)
-	if latest == nil {
-		return ""
-	}
-	c.pendingTurnID = latest.ProviderTurnID
-	c.ackedTurnID = latest.ProviderTurnID
-	c.state = ports.ChatControllerBusy
-	return latest.ProviderTurnID
-}
-
-func latestLiveProviderTurn(turns []domain.ConversationTurn) *domain.ConversationTurn {
 	var latest *domain.ConversationTurn
 	for i := range turns {
 		turn := &turns[i]
@@ -338,7 +327,13 @@ func latestLiveProviderTurn(turns []domain.ConversationTurn) *domain.Conversatio
 			latest = turn
 		}
 	}
-	return latest
+	if latest == nil {
+		return ""
+	}
+	c.pendingTurnID = latest.ProviderTurnID
+	c.ackedTurnID = latest.ProviderTurnID
+	c.state = ports.ChatControllerBusy
+	return latest.ProviderTurnID
 }
 
 // start begins live provider consumption after any durable native history has

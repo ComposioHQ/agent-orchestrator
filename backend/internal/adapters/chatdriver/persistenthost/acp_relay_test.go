@@ -139,6 +139,58 @@ func TestACPRelayAcceptsInteractionCommandIdempotently(t *testing.T) {
 		1, true)
 }
 
+func TestACPRelayPreservesInteractionCausalityAcrossReplay(t *testing.T) {
+	relay := newTestACPRelay(t)
+	prompt := relayClientFrame(t, relay,
+		[]byte(`{"jsonrpc":"2.0","id":1,"method":"session/prompt","params":{}}`+"\n"), 1)
+	relayProviderFrame(t, relay,
+		[]byte(`{"jsonrpc":"2.0","method":"session/update","params":{"marker":"before"}}`+"\n"),
+		1, true)
+	request, _ := relayProviderFrame(t, relay,
+		[]byte(`{"jsonrpc":"2.0","id":"permission-7","method":"session/request_permission","params":{}}`+"\n"),
+		1, true)
+	requestID := frameMetaString(t, request, ACPRequestIDMetaKey)
+	command := []byte(`{"jsonrpc":"2.0","id":10,"method":"` + ACPInteractionCommandMethod +
+		`","params":{"requestId":"` + requestID + `","kind":"approval","decision":{"id":"allow"}}}` + "\n")
+	if _, err := relay.clientFrame(context.Background(), command, 1); err != nil {
+		t.Fatal(err)
+	}
+	relayClientFrame(t, relay,
+		[]byte(`{"jsonrpc":"2.0","id":"permission-7","result":{"outcome":"selected"}}`+"\n"), 1)
+	relayProviderFrame(t, relay,
+		[]byte(`{"jsonrpc":"2.0","method":"session/update","params":{"marker":"after"}}`+"\n"),
+		1, true)
+	relayProviderFrame(t, relay,
+		[]byte(`{"jsonrpc":"2.0","id":`+frameID(t, prompt)+`,"result":{"stopReason":"end_turn"}}`+"\n"),
+		1, true)
+
+	replay := relayReplayFrames(t, relay)
+	if len(replay) != 4 || !bytes.Contains(replay[0], []byte(`"marker":"before"`)) ||
+		!bytes.Contains(replay[1], []byte(ACPInteractionCommandMethod)) ||
+		!bytes.Contains(replay[2], []byte(`"marker":"after"`)) ||
+		!bytes.Contains(replay[3], []byte(ACPPromptResultMethod)) {
+		t.Fatalf("causal replay order = %q", replay)
+	}
+}
+
+func TestACPRelayReplaysProviderCancellationAfterItsRequest(t *testing.T) {
+	relay := newTestACPRelay(t)
+	relayClientFrame(t, relay,
+		[]byte(`{"jsonrpc":"2.0","id":1,"method":"session/prompt","params":{}}`+"\n"), 1)
+	relayProviderFrame(t, relay,
+		[]byte(`{"jsonrpc":"2.0","id":"permission-7","method":"session/request_permission","params":{}}`+"\n"),
+		1, true)
+	relayProviderFrame(t, relay,
+		[]byte(`{"jsonrpc":"2.0","method":"$/cancel_request","params":{"requestId":"permission-7"}}`+"\n"),
+		1, true)
+
+	replay := relayReplayFrames(t, relay)
+	if len(replay) != 2 || !bytes.Contains(replay[0], []byte("session/request_permission")) ||
+		!bytes.Contains(replay[1], []byte("$/cancel_request")) {
+		t.Fatalf("request/cancellation replay order = %q", replay)
+	}
+}
+
 func TestACPRelayRewritesClientCancellationToProviderRequestID(t *testing.T) {
 	relay := newTestACPRelay(t)
 	relayClientFrame(t, relay, []byte(`{"jsonrpc":"2.0","id":99,"method":"initialize","params":{}}`+"\n"), 7)
@@ -184,7 +236,7 @@ func newTestACPRelay(t *testing.T) *acpRelay {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(relay.close)
+	t.Cleanup(func() { _ = relay.close(context.Background()) })
 	return relay
 }
 
@@ -221,11 +273,11 @@ func relayProviderFrame(
 	attached bool,
 ) ([]byte, bool) {
 	t.Helper()
-	rewritten, journaled, err := relay.providerFrame(context.Background(), frame, generation, attached)
+	rewritten, retainedByACP, err := relay.providerFrame(context.Background(), frame, generation, attached)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return rewritten, journaled
+	return rewritten, retainedByACP
 }
 
 func frameID(t *testing.T, frame []byte) string {

@@ -241,12 +241,6 @@ type ChatStartConfig struct {
 	// MCPServers are client-supplied tool servers for this provider conversation.
 	// User/provider configuration still loads normally; these are additive.
 	MCPServers []ChatMCPServerConfig
-	// AllowConcurrentHostReplacement is set only by the idle branch-handoff
-	// coordinator, which deliberately stages a replacement before destroying the
-	// source. Ordinary startup/reconciliation must leave this false so a second
-	// daemon can never mistake an attached persistent host for permission to
-	// launch a competing provider.
-	AllowConcurrentHostReplacement bool
 }
 
 // ChatResumeConfig reattaches to a provider conversation after a restart.
@@ -269,8 +263,6 @@ type ChatResumeConfig struct {
 	ProviderScopeID       string
 	AdditionalDirectories []string
 	MCPServers            []ChatMCPServerConfig
-	// See ChatStartConfig.AllowConcurrentHostReplacement.
-	AllowConcurrentHostReplacement bool
 }
 
 // ChatMCPServerConfig is the provider-neutral session-setup shape for a tool

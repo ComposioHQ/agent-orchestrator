@@ -23,14 +23,30 @@ type acpClientRequest struct {
 }
 
 type acpServerRequest struct {
-	requestID string
-	frame     []byte
+	requestID   string
+	frame       []byte
+	promptOwned bool
 }
 
 type acpInteractionCommand struct {
-	eventID   string
-	canonical string
-	params    json.RawMessage
+	eventID     string
+	canonical   string
+	params      json.RawMessage
+	promptOwned bool
+}
+
+type acpReplayKind uint8
+
+const (
+	acpReplayFrame acpReplayKind = iota
+	acpReplayRequest
+	acpReplayCommand
+)
+
+type acpReplayEntry struct {
+	kind acpReplayKind
+	key  string
+	span acpJournalSpan
 }
 
 type acpClientFrames struct {
@@ -50,6 +66,7 @@ type acpRelay struct {
 	serverOrder       []string
 	commands          map[string]acpInteractionCommand
 	commandOrder      []string
+	promptReplay      []acpReplayEntry
 	state             ACPState
 	promptJournal     *acpPromptJournal
 	promptResult      []byte
@@ -76,12 +93,29 @@ func (r *acpRelay) snapshot() *ACPState {
 }
 
 func (r *acpRelay) replayTo(ctx context.Context, dst io.Writer) error {
-	if err := r.promptJournal.replayTo(ctx, dst); err != nil {
-		return err
+	for _, entry := range r.promptReplay {
+		switch entry.kind {
+		case acpReplayFrame:
+			if err := r.promptJournal.replayTo(ctx, dst, entry.span); err != nil {
+				return err
+			}
+		case acpReplayRequest:
+			if request, ok := r.serverRequests[entry.key]; ok {
+				if _, err := dst.Write(request.frame); err != nil {
+					return err
+				}
+			}
+		case acpReplayCommand:
+			if command, ok := r.commands[entry.key]; ok {
+				if err := r.replayInteractionCommand(ctx, dst, entry.key, command); err != nil {
+					return err
+				}
+			}
+		}
 	}
 	for _, providerID := range r.serverOrder {
 		request, ok := r.serverRequests[providerID]
-		if !ok {
+		if !ok || request.promptOwned {
 			continue
 		}
 		if _, err := dst.Write(request.frame); err != nil {
@@ -90,23 +124,10 @@ func (r *acpRelay) replayTo(ctx context.Context, dst io.Writer) error {
 	}
 	for _, requestID := range r.commandOrder {
 		command, ok := r.commands[requestID]
-		if !ok {
+		if !ok || command.promptOwned {
 			continue
 		}
-		var params map[string]json.RawMessage
-		if err := json.Unmarshal(command.params, &params); err != nil {
-			return err
-		}
-		params["eventId"], _ = json.Marshal(command.eventID)
-		pending := r.hasServerRequest(requestID)
-		params["providerPending"], _ = json.Marshal(pending)
-		encoded, _ := json.Marshal(params)
-		frame := marshalFrame(map[string]json.RawMessage{
-			"jsonrpc": json.RawMessage(`"2.0"`),
-			"method":  json.RawMessage(`"` + ACPInteractionCommandMethod + `"`),
-			"params":  encoded,
-		}, nil)
-		if _, err := dst.Write(frame); err != nil {
+		if err := r.replayInteractionCommand(ctx, dst, requestID, command); err != nil {
 			return err
 		}
 	}
@@ -117,7 +138,32 @@ func (r *acpRelay) replayTo(ctx context.Context, dst io.Writer) error {
 	return nil
 }
 
-func (r *acpRelay) close() { r.promptJournal.close() }
+func (r *acpRelay) replayInteractionCommand(
+	ctx context.Context,
+	dst io.Writer,
+	requestID string,
+	command acpInteractionCommand,
+) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	var params map[string]json.RawMessage
+	if err := json.Unmarshal(command.params, &params); err != nil {
+		return err
+	}
+	params["eventId"], _ = json.Marshal(command.eventID)
+	_, pending := r.serverRequest(requestID)
+	params["providerPending"], _ = json.Marshal(pending)
+	encoded, _ := json.Marshal(params)
+	_, err := dst.Write(marshalFrame(map[string]json.RawMessage{
+		"jsonrpc": json.RawMessage(`"2.0"`),
+		"method":  json.RawMessage(`"` + ACPInteractionCommandMethod + `"`),
+		"params":  encoded,
+	}, nil))
+	return err
+}
+
+func (r *acpRelay) close(ctx context.Context) error { return r.promptJournal.close(ctx) }
 
 func (r *acpRelay) clientFrame(ctx context.Context, frame []byte, generation uint64) (acpClientFrames, error) {
 	var envelope map[string]json.RawMessage
@@ -139,6 +185,7 @@ func (r *acpRelay) clientFrame(ctx context.Context, frame []byte, generation uin
 			r.state.PendingResultEventID = ""
 			r.commands = make(map[string]acpInteractionCommand)
 			r.commandOrder = nil
+			r.promptReplay = nil
 		}
 		return acpClientFrames{}, nil
 	}
@@ -179,6 +226,7 @@ func (r *acpRelay) clientFrame(ctx context.Context, frame []byte, generation uin
 		r.promptResult = nil
 		r.commands = make(map[string]acpInteractionCommand)
 		r.commandOrder = nil
+		r.promptReplay = nil
 	}
 	return acpClientFrames{provider: marshalFrame(envelope, frame)}, nil
 }
@@ -205,7 +253,8 @@ func (r *acpRelay) acceptInteractionCommand(
 		}
 		return acpClientFrames{client: rpcResultFrame(id, map[string]string{"eventId": existing.eventID})}, nil
 	}
-	if !r.hasServerRequest(identity.RequestID) {
+	request, pending := r.serverRequest(identity.RequestID)
+	if !pending {
 		return acpClientFrames{client: rpcErrorFrame(id, "persistent interaction is not pending")}, nil
 	}
 	if err := ctx.Err(); err != nil {
@@ -213,10 +262,14 @@ func (r *acpRelay) acceptInteractionCommand(
 	}
 	command := acpInteractionCommand{
 		eventID: r.newEventID(), canonical: canonical,
-		params: append(json.RawMessage(nil), params...),
+		params:      append(json.RawMessage(nil), params...),
+		promptOwned: request.promptOwned,
 	}
 	r.commands[identity.RequestID] = command
 	r.commandOrder = append(r.commandOrder, identity.RequestID)
+	if command.promptOwned {
+		r.promptReplay = append(r.promptReplay, acpReplayEntry{kind: acpReplayCommand, key: identity.RequestID})
+	}
 	return acpClientFrames{client: rpcResultFrame(id, map[string]string{"eventId": command.eventID})}, nil
 }
 
@@ -242,9 +295,9 @@ func (r *acpRelay) clientCancellation(
 	return fallback
 }
 
-// providerFrame returns the daemon-facing frame and whether it is retained in
-// the active-prompt journal. A journaled frame must not also enter the generic
-// detached buffer or it would be replayed twice.
+// providerFrame returns the daemon-facing frame and whether the ACP profile owns
+// its replay. A retained frame must not also enter the generic detached buffer or
+// it would be replayed twice.
 func (r *acpRelay) providerFrame(
 	ctx context.Context,
 	frame []byte,
@@ -261,15 +314,21 @@ func (r *acpRelay) providerFrame(
 
 	if method != "" {
 		if len(id) > 0 && string(id) != "null" {
-			return r.providerRequest(envelope, frame), true, nil
+			rewritten, key, created := r.providerRequest(envelope, frame)
+			if created && r.state.ActivePrompt {
+				r.promptReplay = append(r.promptReplay, acpReplayEntry{kind: acpReplayRequest, key: key})
+			}
+			return rewritten, true, nil
 		}
 		if r.state.ActivePrompt {
 			eventID := r.newEventID()
 			injectMeta(envelope, ACPEventIDMetaKey, eventID)
 			rewritten := marshalFrame(envelope, frame)
-			if err := r.promptJournal.append(ctx, rewritten); err != nil {
+			span, err := r.promptJournal.append(ctx, rewritten)
+			if err != nil {
 				return nil, false, err
 			}
+			r.promptReplay = append(r.promptReplay, acpReplayEntry{kind: acpReplayFrame, span: span})
 			if !attached {
 				return nil, true, nil
 			}
@@ -310,28 +369,33 @@ func (r *acpRelay) providerFrame(
 	return rewriteResponseID(envelope, request.clientID, frame), false, nil
 }
 
-func (r *acpRelay) providerRequest(envelope map[string]json.RawMessage, fallback []byte) []byte {
+func (r *acpRelay) providerRequest(
+	envelope map[string]json.RawMessage,
+	fallback []byte,
+) (frame []byte, key string, created bool) {
 	id := envelope["id"]
-	key := string(id)
+	key = string(id)
 	request := r.serverRequests[key]
 	if request.requestID == "" {
 		r.nextInteractionID++
 		request.requestID = fmt.Sprintf("acp-request:%d", r.nextInteractionID)
+		request.promptOwned = r.state.ActivePrompt
 		r.serverOrder = append(r.serverOrder, key)
+		created = true
 	}
 	injectMeta(envelope, ACPRequestIDMetaKey, request.requestID)
 	request.frame = marshalFrame(envelope, fallback)
 	r.serverRequests[key] = request
-	return request.frame
+	return request.frame, key, created
 }
 
-func (r *acpRelay) hasServerRequest(requestID string) bool {
+func (r *acpRelay) serverRequest(requestID string) (acpServerRequest, bool) {
 	for _, request := range r.serverRequests {
 		if request.requestID == requestID {
-			return true
+			return request, true
 		}
 	}
-	return false
+	return acpServerRequest{}, false
 }
 
 func (r *acpRelay) removeServerRequest(providerID string) {

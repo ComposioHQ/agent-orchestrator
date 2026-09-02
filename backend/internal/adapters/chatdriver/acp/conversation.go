@@ -326,10 +326,6 @@ func (c *conversation) ActivateLiveReconnect(ctx context.Context, providerTurnID
 		// The old controller committed the terminal event but died before its ACK.
 		// The replay is already queued on this socket, so acknowledge it and ignore
 		// that one private completion after opening the reader gate.
-		if c.liveState.PendingResultEventID == "" {
-			return fmt.Errorf("%w: persistent ACP result has no event identity",
-				ports.ErrChatRecoveryInconclusive)
-		}
 		c.mu.Lock()
 		c.ignorePromptResult = true
 		c.terminalEventID = c.liveState.PendingResultEventID
@@ -509,22 +505,13 @@ func (c *conversation) runTurn(ctx context.Context, sessionID string, turn prepa
 		Prompt:    turn.prompt,
 	})
 
-	c.mu.Lock()
-	if c.detaching {
-		c.mu.Unlock()
-		return
-	}
-	c.settlingTurn = turn.id
-	interrupt := c.interrupt
-	c.mu.Unlock()
-	c.finishPrompt(turn.id, resp, err, interrupt)
+	c.finishPrompt(turn.id, resp, err)
 }
 
 func (c *conversation) finishPrompt(
 	turnID string,
 	resp acpsdk.PromptResponse,
 	err error,
-	interrupt *interruptAttempt,
 ) {
 	c.mu.Lock()
 	if c.detaching {
@@ -532,6 +519,7 @@ func (c *conversation) finishPrompt(
 		return
 	}
 	c.settlingTurn = turnID
+	interrupt := c.interrupt
 	c.mu.Unlock()
 	c.settleOpenItems(turnID)
 	interruptedLocally := false
