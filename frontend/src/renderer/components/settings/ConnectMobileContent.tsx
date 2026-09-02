@@ -7,7 +7,8 @@ import { aoBridge } from "../../lib/bridge";
 import { captureRendererEvent } from "../../lib/telemetry";
 import { ANDROID_PLAY_STORE_URL, IOS_APP_STORE_URL } from "./ConnectMobileGetApp";
 import { reasonMessage, type SetupMode } from "./ConnectMobileSetup";
-import { SettingsOptionMenu, type SettingsOption } from "./SettingsOptionMenu";
+// Returns with the commented-out connection picker below.
+// import { SettingsOptionMenu, type SettingsOption } from "./SettingsOptionMenu";
 import { StyledQRCode } from "./StyledQRCode";
 import { PairingQr } from "./PairingQr";
 import { InstallCloudflared } from "./InstallCloudflared";
@@ -215,11 +216,15 @@ export function ConnectMobileContent({ active }: { active: boolean }) {
 	const queryClient = useQueryClient();
 	const [copied, setCopied] = useState(false);
 	const copiedTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+	// Pinned to "lan" while the connection picker below is commented out.
+	// setMode is still called by the close-reset effect.
 	const [mode, setMode] = useState<SetupMode>("lan");
+	/*
 	const modeOptions = [
 		{ value: "lan", label: t("mobile.lan") },
 		{ value: "tailscale", label: t("mobile.tailscale") },
 	] satisfies SettingsOption<SetupMode>[];
+	*/
 
 	useEffect(() => {
 		return () => {
@@ -297,27 +302,31 @@ export function ConnectMobileContent({ active }: { active: boolean }) {
 		onSuccess: invalidate,
 	});
 
-	// Selecting Tailscale turns TLS on by itself — it is no longer a switch.
-	// iOS refuses cleartext to a 100.x address, so a Tailscale pairing without
-	// it works on Android and fails on iPhone with nothing on either side to
-	// say why. That is not a choice worth offering.
+	// TLS turns itself on wherever Tailscale exists — it is not a switch, and it
+	// is deliberately not tied to the connection picker. iOS refuses cleartext
+	// to a 100.x address, so a Tailscale pairing without it works on Android and
+	// fails on iPhone with nothing on either side to say why. Keying this to a
+	// UI mode would mean hiding that picker also silently disables TLS, which is
+	// the opposite of what a hidden control should do.
 	//
-	// secureAttempted keeps this to one attempt per visit to Tailscale mode: a
-	// tailnet with no certificates fails every time, and retrying on each status
-	// poll would hammer the daemon. The failure is already surfaced by
-	// secureReasonText, and switching modes away and back is the retry.
+	// secureAttempted keeps it to one attempt per panel session: a tailnet with
+	// no certificates fails every time, and retrying on each status poll would
+	// hammer the daemon. secureReasonText surfaces the failure; reopening the
+	// panel is the retry.
 	const secureAttempted = useRef(false);
 	useEffect(() => {
-		if (mode !== "tailscale") {
+		if (!active) {
 			secureAttempted.current = false;
 			return;
 		}
+		// No tailnet address on this machine means nothing for TLS to serve.
+		if (!query.data?.tailscaleHost) return;
 		const secure = query.data?.securePairing;
 		if (!secure || secure.enabled || !secure.available) return;
 		if (secureAttempted.current || setSecure.isPending) return;
 		secureAttempted.current = true;
 		setSecure.mutate(true);
-	}, [mode, query.data?.securePairing, setSecure]);
+	}, [active, query.data?.tailscaleHost, query.data?.securePairing, setSecure]);
 
 	const status = query.data;
 	const enabled = status?.enabled ?? false;
@@ -416,8 +425,16 @@ export function ConnectMobileContent({ active }: { active: boolean }) {
 			<p className="text-xs leading-4 text-settings-muted">{t("mobile.description")}</p>
 
 			<div className="flex flex-col gap-6 sm:flex-row sm:items-start">
-				{/* Left: the connection picker above the walkthrough. */}
+				{/* Left: the walkthrough. */}
 				<div className="flex min-w-0 flex-1 flex-col">
+					{/* Connection picker commented out: one v2 code carries every
+					    advertised endpoint — LAN, Tailscale and tunnel — and the phone
+					    races them, so the mode never changed what a scan produces. TLS
+					    is enabled off the tailnet address rather than this control (see
+					    the effect above), so hiding it does not disable secure pairing.
+					    What it does take off-screen is Tailscale's setup step and the
+					    address/password rows for the tailnet host. */}
+					{/*
 					<div className="flex flex-nowrap items-center gap-2">
 						<SettingsOptionMenu
 							aria-label={t("mobile.connectionMethod")}
@@ -429,6 +446,7 @@ export function ConnectMobileContent({ active }: { active: boolean }) {
 							menuAlign="start"
 						/>
 					</div>
+					*/}
 
 					{/* One walkthrough per connection method. Steps are plain text with
 					    trailing store links; address/password join the list once the QR
@@ -512,7 +530,7 @@ export function ConnectMobileContent({ active }: { active: boolean }) {
 					</ol>
 
 					{/* Tailscale extras: secure pairing (required on iPhone) + status. */}
-					{mode === "tailscale" && secureReasonText && (
+					{status.tailscaleHost && secureReasonText && (
 						<p
 							data-testid="secure-pairing-reason"
 							className="mt-4 text-caption leading-(--leading-settings-mobile-hint) text-warning"
