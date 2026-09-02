@@ -43,6 +43,7 @@ export type ProjectSourcePickerViewProps = {
 	dialog?: boolean;
 	disabled: boolean;
 	folderIcon?: ReactNode;
+	hostRow?: ReactNode;
 	labels: ProjectSourcePickerLabels;
 	onClose?: () => void;
 	onSelect: (source: ProjectSource) => void;
@@ -56,6 +57,7 @@ export function ProjectSourcePickerView({
 	dialog = false,
 	disabled,
 	folderIcon,
+	hostRow,
 	labels,
 	onClose,
 	onSelect,
@@ -71,6 +73,7 @@ export function ProjectSourcePickerView({
 				<h2 className="import-title text-balance">{labels.title}</h2>
 				<p className="import-description text-pretty">{labels.description}</p>
 			</div>
+			{hostRow}
 			<div className="relative z-[2] grid grid-cols-1 gap-4 self-stretch sm:grid-cols-2 sm:gap-6">
 				<ProjectSourceButton
 					description={labels.cloneDescription}

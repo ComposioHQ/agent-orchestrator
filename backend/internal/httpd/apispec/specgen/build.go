@@ -83,6 +83,8 @@ func Build() ([]byte, error) {
 			"Connect Mobile LAN bridge control (loopback/desktop only)"),
 		*(&openapi31.Tag{Name: "browser"}).WithDescription(
 			"Target-isolated desktop browser runtime (loopback only)"),
+		*(&openapi31.Tag{Name: "fs"}).WithDescription(
+			"Read-only filesystem browsing for remote clients"),
 		*(&openapi31.Tag{Name: "system"}).WithDescription(
 			"Local machine readiness checks the desktop app runs before showing the board"),
 	}
@@ -211,6 +213,9 @@ var schemaNames = map[string]string{
 	"ControllersGetProjectResponse":                       "ProjectGetResponse",
 	"ControllersProjectOrDegraded":                        "ProjectOrDegraded",
 	"ControllersListSessionsQuery":                        "ListSessionsQuery",
+	"ControllersListDirsQuery":                            "ListDirsQuery",
+	"ControllersListDirsResponse":                         "ListDirsResponse",
+	"ControllersFSEntry":                                  "FSEntry",
 	"ControllersCleanupSessionsQuery":                     "CleanupSessionsQuery",
 	"ControllersListSessionsResponse":                     "ListSessionsResponse",
 	"ControllersSpawnSessionRequest":                      "SpawnSessionRequest",
@@ -501,6 +506,7 @@ func operations() []operation {
 	ops = append(ops, usageOperations()...)
 	ops = append(ops, pushOperations()...)
 	ops = append(ops, importOperations()...)
+	ops = append(ops, fsOperations()...)
 	ops = append(ops, devOperations()...)
 	ops = append(ops, mobileOperations()...)
 	ops = append(ops, mobileDeviceOperations()...)
@@ -1276,6 +1282,25 @@ func importOperations() []operation {
 				{http.StatusOK, controllers.ImportRunResponse{}},
 				{http.StatusInternalServerError, envelope.APIError{}},
 				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+	}
+}
+
+// fsOperations declares the read-only filesystem-browsing operations. Must stay
+// 1:1 with the routes FSController.Register mounts (enforced by the parity test).
+func fsOperations() []operation {
+	return []operation{
+		{
+			method: http.MethodGet, path: "/api/v1/fs/dirs", id: "listDirs", tag: "fs",
+			summary:    "List the subdirectories of a directory on the daemon host",
+			pathParams: []any{controllers.ListDirsQuery{}},
+			resps: []respUnit{
+				{http.StatusOK, controllers.ListDirsResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusForbidden, envelope.APIError{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
 			},
 		},
 	}
