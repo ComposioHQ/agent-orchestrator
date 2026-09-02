@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
@@ -72,6 +73,9 @@ type Options struct {
 	Binary       string
 	ManagedRoot  string
 	RepoResolver RepoResolver
+	// Logger receives the failures background removal cannot return to a
+	// caller. Optional; nil silences them.
+	Logger *slog.Logger
 }
 
 // Workspace creates per-session git worktrees under a managed root. It
@@ -81,6 +85,10 @@ type Workspace struct {
 	managedRoot string
 	repos       RepoResolver
 	run         commandRunner
+	logger      *slog.Logger
+	// discards tracks background worktree removals so tests can wait for them.
+	// Production never waits: that deferral is the point (see discard.go).
+	discards sync.WaitGroup
 }
 
 type commandRunner func(ctx context.Context, binary string, args ...string) ([]byte, error)
@@ -107,12 +115,18 @@ func New(opts Options) (*Workspace, error) {
 	if err != nil {
 		return nil, fmt.Errorf("gitworktree: managed root: %w", err)
 	}
-	return &Workspace{
+	w := &Workspace{
 		binary:      binary,
 		managedRoot: filepath.Clean(root),
 		repos:       opts.RepoResolver,
 		run:         runCommand,
-	}, nil
+		logger:      opts.Logger,
+	}
+	// A daemon that died mid-removal leaves directories under the discard root
+	// that nothing else will ever look at again. Sweeping at construction is
+	// the one moment we know the root is ours.
+	w.sweepDiscarded()
+	return w, nil
 }
 
 // ResolveDefaultBranch selects a canonical remote-tracking ref using only local
@@ -378,6 +392,12 @@ func (w *Workspace) Destroy(ctx context.Context, info ports.WorkspaceInfo) error
 	}
 	path, err := w.validateManagedPath(info.Path)
 	if err != nil {
+		return err
+	}
+	// Move the directory aside rather than waiting out `git worktree remove`'s
+	// walk of an ignored-file mountain; falls through to the git-driven path
+	// below whenever the move is not clearly safe.
+	if handled, err := w.discardWorktree(ctx, repo, path); handled {
 		return err
 	}
 	_, removeErr := w.run(ctx, w.binary, worktreeRemoveArgs(repo, path)...)
@@ -1205,6 +1225,13 @@ func (w *Workspace) createWorkspaceProjectRepo(ctx context.Context, repo workspa
 }
 
 func (w *Workspace) forceDestroyPath(ctx context.Context, repo, path string) error {
+	// Force teardown has no refusal to honour, so the move is unconditional:
+	// rename the directory out of the way, drop the registration, unlink in the
+	// background.
+	if discarded, ok := w.discard(path); ok {
+		defer w.removeInBackground(discarded)
+		return w.pruneWorktrees(ctx, repo)
+	}
 	_, _ = w.run(ctx, w.binary, worktreeForceRemoveArgs(repo, path)...)
 	if err := w.pruneWorktrees(ctx, repo); err != nil {
 		return err

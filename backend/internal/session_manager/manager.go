@@ -1525,6 +1525,12 @@ func (m *Manager) RollbackSpawn(ctx context.Context, id domain.SessionID) (delet
 	return m.rollbackSpawn(ctx, id)
 }
 
+// killTeardownBudget bounds the detached teardown Kill runs below. Generous on
+// purpose: every step is expected to finish in well under a second, and the
+// only thing this ceiling protects against is a git or runtime call that never
+// returns at all.
+const killTeardownBudget = 5 * time.Minute
+
 // Kill tears down the runtime and workspace, then records terminal intent with
 // the LCM. A workspace teardown refused by the worktree-remove safety
 // (uncommitted work) is never forced: Kill succeeds with freed=false,
@@ -1536,6 +1542,18 @@ func (m *Manager) RollbackSpawn(ctx context.Context, id domain.SessionID) (delet
 // available destroy steps are skipped so it can be cleaned up from the
 // dashboard.
 func (m *Manager) Kill(ctx context.Context, id domain.SessionID) (bool, error) {
+	// Teardown deliberately stops riding the caller's context. Kill runs a
+	// sequence (stop the agent, tear the controller down, drop the worktree,
+	// mark the row terminated) where being cancelled partway leaves a session
+	// that is dead in every way except the one the UI reads: the row still says
+	// alive while its agent is gone. That is exactly what a caller-side timeout
+	// (the REST layer caps a request at cfg.RequestTimeout) or a closed browser
+	// tab used to produce. Values still flow through, so request-scoped logging
+	// keeps working; only the cancellation is dropped, under its own ceiling so
+	// a wedged git or runtime call cannot pin the goroutine forever.
+	ctx, cancelTeardown := context.WithTimeout(context.WithoutCancel(ctx), killTeardownBudget)
+	defer cancelTeardown()
+
 	if err := m.beginAgentOperation(ctx, id, agentOperationKill); err != nil {
 		if errors.Is(err, errAgentOperationInProgress) {
 			err = ErrSwitchInProgress

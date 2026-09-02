@@ -1,0 +1,165 @@
+package gitworktree
+
+import (
+	"context"
+	"errors"
+	"os"
+	"path/filepath"
+	"testing"
+
+	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
+)
+
+// A worktree's ignored build output (node_modules and friends) is the bulk of
+// what teardown has to unlink, and unlinking it inline is what pushed a kill
+// past the daemon's request timeout. Destroy must return with the path already
+// gone and the registration already pruned, leaving only the unlinking behind.
+func TestDestroyDiscardsWorktreeWithoutUnlinkingInline(t *testing.T) {
+	git := requireGit(t)
+	tmp := t.TempDir()
+	repo := setupOriginClone(t, git, tmp)
+	ws, err := New(Options{Binary: git, ManagedRoot: filepath.Join(tmp, "managed"), RepoResolver: StaticRepoResolver{"proj": repo}})
+	if err != nil {
+		t.Fatalf("new: %v", err)
+	}
+	ctx := context.Background()
+	info, err := ws.Create(ctx, ports.WorkspaceConfig{ProjectID: "proj", SessionID: "sess", Branch: "feature/one"})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	// Ignored, like a real session's dependency tree: git would delete it as
+	// part of `worktree remove`, which is the cost being moved off the request.
+	if err := ws.AddExclude(ctx, info, "deps/"); err != nil {
+		t.Fatalf("add exclude: %v", err)
+	}
+	writeIgnoredTree(t, info.Path)
+
+	if err := ws.Destroy(ctx, info); err != nil {
+		t.Fatalf("destroy: %v", err)
+	}
+	if _, err := os.Stat(info.Path); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("worktree path after destroy = %v, want not exist", err)
+	}
+	records, err := ws.listRecords(ctx, repo)
+	if err != nil {
+		t.Fatalf("list records: %v", err)
+	}
+	if _, ok := findWorktree(records, info.Path); ok {
+		t.Fatalf("worktree still registered after destroy")
+	}
+
+	ws.waitForDiscards()
+	entries, err := os.ReadDir(ws.discardedRoot())
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("read discard root: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("discard root still holds %d entries after background removal", len(entries))
+	}
+}
+
+// The discard path must not weaken the refusal that protects uncommitted agent
+// work: a dirty worktree stays on disk, registered, and reported as dirty.
+func TestDestroyDiscardStillRefusesDirtyWorktree(t *testing.T) {
+	git := requireGit(t)
+	tmp := t.TempDir()
+	repo := setupOriginClone(t, git, tmp)
+	ws, err := New(Options{Binary: git, ManagedRoot: filepath.Join(tmp, "managed"), RepoResolver: StaticRepoResolver{"proj": repo}})
+	if err != nil {
+		t.Fatalf("new: %v", err)
+	}
+	ctx := context.Background()
+	info, err := ws.Create(ctx, ports.WorkspaceConfig{ProjectID: "proj", SessionID: "sess", Branch: "feature/one"})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(info.Path, "in-progress.txt"), []byte("agent work"), 0o600); err != nil {
+		t.Fatalf("seed dirty file: %v", err)
+	}
+
+	err = ws.Destroy(ctx, info)
+	if !errors.Is(err, ports.ErrWorkspaceDirty) {
+		t.Fatalf("destroy error = %v, want ports.ErrWorkspaceDirty", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(info.Path, "in-progress.txt")); statErr != nil {
+		t.Fatalf("dirty worktree was not preserved: %v", statErr)
+	}
+	records, err := ws.listRecords(ctx, repo)
+	if err != nil {
+		t.Fatalf("list records: %v", err)
+	}
+	if _, ok := findWorktree(records, info.Path); !ok {
+		t.Fatalf("dirty worktree lost its registration")
+	}
+}
+
+// ForceDestroy has no refusal to honour, so it discards unconditionally, but
+// it still owes the caller a path that is gone and a registration that is
+// pruned by the time it returns.
+func TestForceDestroyDiscardsWorktree(t *testing.T) {
+	git := requireGit(t)
+	tmp := t.TempDir()
+	repo := setupOriginClone(t, git, tmp)
+	ws, err := New(Options{Binary: git, ManagedRoot: filepath.Join(tmp, "managed"), RepoResolver: StaticRepoResolver{"proj": repo}})
+	if err != nil {
+		t.Fatalf("new: %v", err)
+	}
+	ctx := context.Background()
+	info, err := ws.Create(ctx, ports.WorkspaceConfig{ProjectID: "proj", SessionID: "sess", Branch: "feature/one"})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(info.Path, "in-progress.txt"), []byte("agent work"), 0o600); err != nil {
+		t.Fatalf("seed dirty file: %v", err)
+	}
+	if err := ws.ForceDestroy(ctx, info); err != nil {
+		t.Fatalf("force destroy: %v", err)
+	}
+	if _, err := os.Stat(info.Path); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("worktree path after force destroy = %v, want not exist", err)
+	}
+	records, err := ws.listRecords(ctx, repo)
+	if err != nil {
+		t.Fatalf("list records: %v", err)
+	}
+	if _, ok := findWorktree(records, info.Path); ok {
+		t.Fatalf("worktree still registered after force destroy")
+	}
+	ws.waitForDiscards()
+}
+
+// A daemon that dies mid-removal leaves directories in the discard root that
+// nothing else ever revisits. Construction is the one moment the root is known
+// to be ours, so that is where the leftovers get collected.
+func TestNewSweepsLeftoverDiscards(t *testing.T) {
+	tmp := t.TempDir()
+	root := filepath.Join(tmp, "managed")
+	leftover := filepath.Join(root, discardedDirName, "sess-123-0")
+	if err := os.MkdirAll(leftover, 0o755); err != nil {
+		t.Fatalf("seed leftover: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(leftover, "stale.txt"), []byte("x"), 0o600); err != nil {
+		t.Fatalf("seed leftover file: %v", err)
+	}
+	ws, err := New(Options{ManagedRoot: root, RepoResolver: StaticRepoResolver{"proj": tmp}})
+	if err != nil {
+		t.Fatalf("new: %v", err)
+	}
+	ws.waitForDiscards()
+	if _, err := os.Stat(leftover); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("leftover discard after sweep = %v, want not exist", err)
+	}
+}
+
+func writeIgnoredTree(t *testing.T, worktree string) {
+	t.Helper()
+	deps := filepath.Join(worktree, "deps", "pkg")
+	if err := os.MkdirAll(deps, 0o755); err != nil {
+		t.Fatalf("make deps: %v", err)
+	}
+	for _, name := range []string{"a.js", "b.js", "c.js"} {
+		if err := os.WriteFile(filepath.Join(deps, name), []byte("x"), 0o600); err != nil {
+			t.Fatalf("write dep %s: %v", name, err)
+		}
+	}
+}
