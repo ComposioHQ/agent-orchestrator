@@ -330,7 +330,7 @@ function RepositoryOwnerIcon({
 	useEffect(() => {
 		setAvatarState(avatarUrl ? "loading" : "failed");
 		if (!avatarUrl) return;
-		const timeout = window.setTimeout(() => setAvatarState("failed"), 4000);
+		const timeout = window.setTimeout(() => setAvatarState("failed"), 15000);
 		return () => window.clearTimeout(timeout);
 	}, [avatarUrl]);
 
