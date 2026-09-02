@@ -417,7 +417,7 @@ func (s *Service) triggerWithSource(
 ) (reviewcore.TriggerResult, error) {
 	if err := config.Validate(); err != nil {
 		err = fmt.Errorf("%w: reviewer config: %w", ErrInvalid, err)
-		s.emit("ao.review.trigger_failed", workerID, map[string]any{
+		s.emit(ctx, "ao.review.trigger_failed", workerID, map[string]any{
 			"error_kind": reviewErrorKind(err),
 			"trigger":    string(source),
 		})
