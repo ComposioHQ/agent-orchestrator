@@ -769,7 +769,6 @@ describe("SessionView", () => {
 		render(<SessionView sessionId="sess-2" />);
 
 		const newTerminalButton = screen.getByRole("button", { name: "New terminal" });
-		expect(newTerminalButton).toHaveAttribute("title", "New terminal (Ctrl+T)");
 		fireEvent.click(newTerminalButton);
 		expect(openShellTerminalMock).toHaveBeenCalledWith({ projectId: "proj-1", sessionId: "sess-2" }, expect.anything());
 		expect(useUiStore.getState().activeShellTerminalHandleId).toBe("pending-shell:test");

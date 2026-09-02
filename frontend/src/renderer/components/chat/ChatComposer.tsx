@@ -46,6 +46,7 @@ import {
 } from "react";
 import { ArrowUp, Loader2, Plus, Square, X } from "lucide-react";
 import { Button } from "../ui/button";
+import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
 import { cn } from "../../lib/utils";
 import { apiErrorMessage } from "../../lib/api-client";
 import { ComposerSuggestMenu } from "./ComposerSuggestMenu";
@@ -824,51 +825,59 @@ export const ChatComposer = memo(function ChatComposer({
 										event.target.value = "";
 									}}
 								/>
-								<Button
-									type="button"
-									variant="ghost"
-									size="icon-sm"
-									disabled={disabled}
-									onClick={() => filePicker.current?.click()}
-									aria-label="Attach a file"
-									title="Attach a file"
-									className="size-7 shrink-0 rounded-full p-0 text-muted-foreground hover:bg-white/5! hover:text-foreground"
-								>
-									<Plus aria-hidden="true" className="size-3.5 text-muted-foreground" />
-								</Button>
+								<Tooltip>
+									<TooltipTrigger asChild>
+										<span className="inline-flex">
+											<Button
+												type="button"
+												variant="ghost"
+												size="icon-sm"
+												disabled={disabled}
+												onClick={() => filePicker.current?.click()}
+												aria-label="Attach a file"
+												className="size-7 shrink-0 rounded-full p-0 text-muted-foreground hover:bg-white/5! hover:text-foreground"
+											>
+												<Plus aria-hidden="true" className="size-3.5 text-muted-foreground" />
+											</Button>
+										</span>
+									</TooltipTrigger>
+									<TooltipContent side="bottom">Attach a file</TooltipContent>
+								</Tooltip>
 							</>
 						) : null}
 						{settings}
 					</div>
 
 					<div role="group" aria-label="Send message controls" className="flex h-7 shrink-0 items-center">
-						<Button
-							type={canStopTurn ? "button" : "submit"}
-							variant="ghost"
-							size="icon-sm"
-							disabled={canStopTurn ? false : !canSend}
-							onClick={canStopTurn ? onInterrupt : undefined}
-							aria-label={canStopTurn ? "Stop turn" : "Send message"}
-							// The destination Enter is armed with used to be spelled out beside
-							// the button. The row reads better without a line of prose in it, but
-							// the fact is not decoration, so it moves onto the control it
-							// describes rather than being dropped.
-							title={canStopTurn ? "Stop turn" : sendHint}
-							className={cn(
-								"size-7 rounded-full border-transparent focus-visible:ring-ring/40",
-								canStopTurn || canSend
-									? "bg-foreground text-background hover:bg-foreground/90 hover:text-background dark:hover:bg-foreground/90 dark:hover:text-background"
-									: "bg-primary text-primary-foreground",
-							)}
-						>
-							{canStopTurn ? (
-								<Square aria-hidden="true" className="size-2.5 fill-current" />
-							) : steerPending || savingQueuedEditPending || sendPending ? (
-								<Loader2 aria-hidden="true" className="size-3.5 animate-spin" />
-							) : (
-								<ArrowUp aria-hidden="true" className="size-3.5" />
-							)}
-						</Button>
+						<Tooltip>
+							<TooltipTrigger asChild>
+								<span className="inline-flex">
+									<Button
+										type={canStopTurn ? "button" : "submit"}
+										variant="ghost"
+										size="icon-sm"
+										disabled={canStopTurn ? false : !canSend}
+										onClick={canStopTurn ? onInterrupt : undefined}
+										aria-label={canStopTurn ? "Stop turn" : "Send message"}
+										className={cn(
+											"size-7 rounded-full border-transparent focus-visible:ring-ring/40",
+											canStopTurn || canSend
+												? "bg-foreground text-background hover:bg-foreground/90 hover:text-background dark:hover:bg-foreground/90 dark:hover:text-background"
+												: "bg-primary text-primary-foreground",
+										)}
+									>
+										{canStopTurn ? (
+											<Square aria-hidden="true" className="size-2.5 fill-current" />
+										) : steerPending || savingQueuedEditPending || sendPending ? (
+											<Loader2 aria-hidden="true" className="size-3.5 animate-spin" />
+										) : (
+											<ArrowUp aria-hidden="true" className="size-3.5" />
+										)}
+									</Button>
+								</span>
+							</TooltipTrigger>
+							<TooltipContent side="bottom">{canStopTurn ? "Stop turn" : sendHint}</TooltipContent>
+						</Tooltip>
 					</div>
 				</div>
 			</form>,

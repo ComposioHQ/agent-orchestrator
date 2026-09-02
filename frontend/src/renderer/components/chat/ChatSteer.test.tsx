@@ -1,11 +1,21 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { render as rtlRender, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import type { ReactElement } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { ChatComposer } from "./ChatComposer";
 import { ChatWorkspace } from "./ChatWorkspace";
 import { QueuedMessageDock } from "./QueuedMessageDock";
 import { chatFixture } from "../../lib/chat-fixture";
 import { typeInLexicalEditor } from "../../test/lexical";
+import { TooltipProvider } from "../ui/tooltip";
+
+function render(ui: ReactElement) {
+	const result = rtlRender(<TooltipProvider>{ui}</TooltipProvider>);
+	return {
+		...result,
+		rerender: (nextUi: ReactElement) => result.rerender(<TooltipProvider>{nextUi}</TooltipProvider>),
+	};
+}
 
 // Steering sends guidance INTO the running turn instead of queueing behind it. The
 // thing these tests protect is that the choice is legible: Enter changing meaning
@@ -190,6 +200,47 @@ describe("ChatWorkspace steering", () => {
 		expect(within(dock).getByText("first queued")).toBeVisible();
 		expect(within(dock).getByText("second queued")).toBeVisible();
 		expect(screen.queryByText("Queued · sends when the agent finishes")).not.toBeInTheDocument();
+	});
+
+	it("shows drag handles when queue reordering is available", () => {
+		render(
+			<QueuedMessageDock
+				messages={[
+					{
+						turnId: "queued-1",
+						message: {
+							kind: "message",
+							id: "queued-message-1",
+							turnId: "queued-1",
+							sequence: 100,
+							revision: 0,
+							role: "user",
+							origin: "human",
+							text: "first queued",
+							streaming: false,
+							createdAt: "2026-08-11T10:01:00Z",
+						},
+					},
+					{
+						turnId: "queued-2",
+						message: {
+							kind: "message",
+							id: "queued-message-2",
+							turnId: "queued-2",
+							sequence: 101,
+							revision: 0,
+							role: "user",
+							origin: "human",
+							text: "second queued",
+							streaming: false,
+							createdAt: "2026-08-11T10:02:00Z",
+						},
+					},
+				]}
+				onReorderQueuedTurns={vi.fn().mockResolvedValue(undefined)}
+			/>,
+		);
+		expect(screen.getAllByRole("button", { name: "Drag to reorder queued message" })).toHaveLength(2);
 	});
 
 	it("steers, edits, and deletes queued messages from the dock", async () => {

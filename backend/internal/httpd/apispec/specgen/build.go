@@ -157,6 +157,7 @@ var schemaNames = map[string]string{
 	"ControllersSendConversationMessageResponse":           "SendConversationMessageResponse",
 	"ControllersEditConversationMessageRequest":            "EditConversationMessageRequest",
 	"ControllersEditQueuedConversationMessageRequest":      "EditQueuedConversationMessageRequest",
+	"ControllersReorderQueuedConversationTurnsRequest":     "ReorderQueuedConversationTurnsRequest",
 	"ControllersConversationContentSummaryResponse":        "ConversationContentSummaryResponse",
 	"ControllersEditConversationMessageResponse":           "EditConversationMessageResponse",
 	"ControllersActivateConversationBranchResponse":        "ActivateConversationBranchResponse",
@@ -897,6 +898,20 @@ func shellTerminalOperations() []operation {
 			summary:    "Rewrite one queued message before it dispatches",
 			pathParams: []any{controllers.SessionIDParam{}, controllers.ConversationTurnIDParam{}},
 			reqBody:    controllers.EditQueuedConversationMessageRequest{},
+			resps: []respUnit{
+				{http.StatusNoContent, nil},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusConflict, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPost, path: "/api/v1/sessions/{sessionId}/conversation/queue/reorder", id: "reorderQueuedSessionConversationTurns", tag: "conversations",
+			summary:    "Rewrite the durable queue order for undispatched turns",
+			pathParams: []any{controllers.SessionIDParam{}},
+			reqBody:    controllers.ReorderQueuedConversationTurnsRequest{},
 			resps: []respUnit{
 				{http.StatusNoContent, nil},
 				{http.StatusBadRequest, envelope.APIError{}},

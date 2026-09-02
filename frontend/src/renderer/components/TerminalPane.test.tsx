@@ -14,6 +14,7 @@ import {
 	TerminalPane,
 	providerScrollsByKeyboard,
 } from "./TerminalPane";
+import { TooltipProvider } from "./ui/tooltip";
 
 const {
 	attachMock,
@@ -147,7 +148,9 @@ function renderPane(session?: WorkspaceSession) {
 	window.ao = {} as typeof window.ao;
 	const result = render(
 		<QueryClientProvider client={queryClient}>
-			<TerminalPane daemonReady fontSize={12} session={session} theme="dark" />
+			<TooltipProvider>
+				<TerminalPane daemonReady fontSize={12} session={session} theme="dark" />
+			</TooltipProvider>
 		</QueryClientProvider>,
 	);
 	return {
@@ -191,19 +194,21 @@ function renderCachedPane({
 
 	const tree = (nextSession?: WorkspaceSession, nextTarget?: TerminalTarget, showPane = true) => (
 		<QueryClientProvider client={queryClient}>
-			<TerminalCacheProvider daemonReady theme="dark">
-				{showPane ? (
-					<TerminalPane
-						daemonReady
-						fontSize={12}
-						session={nextSession}
-						terminalTarget={nextTarget}
-						theme="dark"
-					/>
-				) : (
-					<div data-testid="away" />
-				)}
-			</TerminalCacheProvider>
+			<TooltipProvider>
+				<TerminalCacheProvider daemonReady theme="dark">
+					{showPane ? (
+						<TerminalPane
+							daemonReady
+							fontSize={12}
+							session={nextSession}
+							terminalTarget={nextTarget}
+							theme="dark"
+						/>
+					) : (
+						<div data-testid="away" />
+					)}
+				</TerminalCacheProvider>
+			</TooltipProvider>
 		</QueryClientProvider>
 	);
 	const result = render(tree(session, terminalTarget));
@@ -355,12 +360,14 @@ describe("TerminalPane replay cover", () => {
 			replaySettled.value = true;
 			view.rerender(
 				<QueryClientProvider client={view.queryClient}>
-					<TerminalPane
-						daemonReady
-						fontSize={12}
-						session={{ ...worker, terminalHandleId: "term-1" }}
-						theme="dark"
-					/>
+					<TooltipProvider>
+						<TerminalPane
+							daemonReady
+							fontSize={12}
+							session={{ ...worker, terminalHandleId: "term-1" }}
+							theme="dark"
+						/>
+					</TooltipProvider>
 				</QueryClientProvider>,
 			);
 			expect(screen.getByTestId("terminal-replay-cover")).toBeInTheDocument();
