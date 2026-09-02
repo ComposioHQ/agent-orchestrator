@@ -3125,20 +3125,28 @@ export interface components {
             action: "git_init" | "git_commit" | "set_remote";
             error?: string;
             message?: string;
+            repoPath: string;
             /** @enum {string} */
             state: "pending" | "running" | "success" | "error";
         };
         GitPreparationInput: {
-            approvedActions: string[];
+            approvedActions?: string[];
             /** @enum {string} */
-            importKind: "project";
+            importKind: "project" | "workspace";
             initialCommitMessage?: string;
             path: string;
             remoteUrl?: string;
+            repositories?: components["schemas"]["GitRepositoryPreparationInput"][];
         };
         GitPreparationResult: {
             events: components["schemas"]["GitPreparationEvent"][];
             validation: components["schemas"]["ImportValidationResult"];
+        };
+        GitRepositoryPreparationInput: {
+            approvedActions: string[];
+            initialCommitMessage?: string;
+            remoteUrl?: string;
+            repoPath: string;
         };
         IdentityResponse: {
             apiVersion: number;
@@ -3159,7 +3167,7 @@ export interface components {
         };
         ImportValidationInput: {
             /** @enum {string} */
-            importKind: "project";
+            importKind: "project" | "workspace";
             path: string;
         };
         ImportValidationResult: {
@@ -3170,6 +3178,7 @@ export interface components {
             /** @enum {string} */
             nextStep: "error" | "choose_import_kind" | "prepare_git" | "continue";
             root: components["schemas"]["RepoGitStatus"];
+            warning?: string;
         };
         InitializeRepositoryInput: {
             path: string;

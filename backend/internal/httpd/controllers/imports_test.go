@@ -109,6 +109,7 @@ func TestImportAPI_ValidateProject(t *testing.T) {
 		ImportKind: importsvc.ImportKindProject,
 		IsValid:    true,
 		Root:       importsvc.RepoGitStatus{RepoPath: "/repo", IsRepo: true, HasCommit: true, HasOrigin: true},
+		Warning:    "Root remote is set; this folder will be imported as a project.",
 		NextStep:   importsvc.ImportNextStepContinue,
 	}}
 	srv := newImportTestServer(t, svc)
@@ -124,6 +125,9 @@ func TestImportAPI_ValidateProject(t *testing.T) {
 	mustJSON(t, body, &resp)
 	if !resp.IsValid || resp.NextStep != importsvc.ImportNextStepContinue {
 		t.Fatalf("response = %#v, want valid continue", resp)
+	}
+	if resp.Warning == "" {
+		t.Fatalf("response = %#v, want warning", resp)
 	}
 
 	body, status, _ = doRequest(t, srv, "POST", "/api/v1/imports/validate", `{`)
