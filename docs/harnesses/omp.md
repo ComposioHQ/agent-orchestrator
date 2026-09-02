@@ -23,6 +23,11 @@ Verify the install:
 omp --version
 ```
 
+OMP 17.1.0 or newer is required for Terminal UI sessions. AO verifies this
+before installing its activity extension because the tracking contract depends
+on OMP 17 lifecycle and approval events. Older OMP versions must be upgraded
+rather than running with incomplete or misleading Kanban status.
+
 AO resolves `omp` from:
 
 - `PATH`
@@ -56,6 +61,8 @@ and restores. The extension reports OMP's native session, agent, and approval
 lifecycle through AO's existing hook pipeline:
 
 - session startup and turn completion report `idle`
+- `/new`, `/resume`, and `/fork` session switches immediately refresh the
+  native resume ID and report `idle`
 - prompt submission reports `active`
 - approval requests report `waiting_input`
 - approval resolution reports `active`
@@ -65,6 +72,11 @@ Hook delivery is best-effort. A missing AO executable, an unavailable daemon,
 or a hook timeout never interrupts the OMP session. AO refuses to overwrite a
 user-owned file at the managed extension path and preserves all other OMP
 extensions.
+
+Only the top-level interactive TUI extension reports activity. OMP subagents
+inherit extension paths, but their non-UI extension contexts are ignored so a
+child cannot replace the root session's resume ID or mark the live root session
+exited.
 
 ## Chat Mode
 

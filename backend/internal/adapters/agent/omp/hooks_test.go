@@ -24,7 +24,11 @@ func TestManagedExtensionEmitsOMPLifecycleHooksAndIgnoresHookFailures(t *testing
 	}
 
 	fixtureDir := t.TempDir()
-	modulePath := writeExecutableOMPExtension(t, fixtureDir, ompActivityExtensionSource())
+	// This test validates lifecycle ordering and payloads, not the production
+	// delivery deadline. Give the fixture headroom under parallel CI load; the
+	// dedicated timeout test below exercises the unmodified production value.
+	source := strings.Replace(ompActivityExtensionSource(), "const HOOK_TIMEOUT_MS = 1_250;", "const HOOK_TIMEOUT_MS = 10_000;", 1)
+	modulePath := writeExecutableOMPExtension(t, fixtureDir, source)
 	capturePath := filepath.Join(fixtureDir, "calls.jsonl")
 	writeOMPFixtureFile(t, filepath.Join(fixtureDir, "ao"), `#!/bin/sh
 {
@@ -41,9 +45,11 @@ exit 9
 const handlers = new Map();
 const loaded = await import(pathToFileURL(process.argv[2]).href);
 loaded.default({ on(name, handler) { handlers.set(name, handler); } });
-const ctx = { sessionManager: { getSessionId() { return "omp-native-123"; } } };
+let nativeSessionID = "omp-native-123";
+const ctx = { hasUI: true, sessionManager: { getSessionId() { return nativeSessionID; } } };
 for (const [name, event] of [
   ["session_start", {}],
+  ["session_switch", {}],
   ["before_agent_start", { prompt: "fix the status tracker" }],
   ["tool_approval_requested", { toolName: "bash", toolCallId: "tool-7" }],
   ["tool_approval_resolved", { toolName: "bash", toolCallId: "tool-7", approved: true }],
@@ -51,6 +57,7 @@ for (const [name, event] of [
   ["agent_end", { willContinue: false }],
   ["session_shutdown", {}],
 ]) {
+  if (name === "session_switch") nativeSessionID = "omp-native-switched";
   await handlers.get(name)(event, ctx);
 }
 `, 0o600)
@@ -66,6 +73,7 @@ for (const [name, event] of [
 
 	calls := readOMPHookCalls(t, capturePath)
 	wantEvents := []string{
+		"session-start",
 		"session-start",
 		"user-prompt-submit",
 		"permission-request",
@@ -84,15 +92,19 @@ for (const [name, event] of [
 		if err := json.Unmarshal([]byte(strings.TrimSpace(calls[i].Input)), &payload); err != nil {
 			t.Fatalf("call %d payload is not JSON: %v", i, err)
 		}
-		if payload["session_id"] != "omp-native-123" {
-			t.Fatalf("call %d session_id = %#v, want omp-native-123", i, payload["session_id"])
+		wantSessionID := "omp-native-switched"
+		if i == 0 {
+			wantSessionID = "omp-native-123"
+		}
+		if payload["session_id"] != wantSessionID {
+			t.Fatalf("call %d session_id = %#v, want %s", i, payload["session_id"], wantSessionID)
 		}
 	}
 
 	var promptPayload struct {
 		Prompt string `json:"prompt"`
 	}
-	if err := json.Unmarshal([]byte(calls[1].Input), &promptPayload); err != nil {
+	if err := json.Unmarshal([]byte(calls[2].Input), &promptPayload); err != nil {
 		t.Fatal(err)
 	}
 	if promptPayload.Prompt != "fix the status tracker" {
@@ -103,7 +115,7 @@ for (const [name, event] of [
 		ToolUseID string `json:"tool_use_id"`
 		Approved  bool   `json:"approved"`
 	}
-	if err := json.Unmarshal([]byte(calls[3].Input), &approvalPayload); err != nil {
+	if err := json.Unmarshal([]byte(calls[4].Input), &approvalPayload); err != nil {
 		t.Fatal(err)
 	}
 	if approvalPayload.ToolName != "bash" || approvalPayload.ToolUseID != "tool-7" || !approvalPayload.Approved {
@@ -117,6 +129,54 @@ for (const [name, event] of [
 	missingCmd.Env = append(envWithoutOMPPath(os.Environ()), "PATH="+missingDir, "AO_TEST_CAPTURE="+capturePath)
 	if output, err := missingCmd.CombinedOutput(); err != nil {
 		t.Fatalf("extension harness failed with ao missing: %v\n%s", err, output)
+	}
+}
+
+func TestManagedExtensionIgnoresInheritedChildContexts(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fake ao executable fixture uses a Unix shebang")
+	}
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is required to execute the OMP extension fixture")
+	}
+
+	fixtureDir := t.TempDir()
+	modulePath := writeExecutableOMPExtension(t, fixtureDir, ompActivityExtensionSource())
+	capturePath := filepath.Join(fixtureDir, "child-calls")
+	writeOMPFixtureFile(t, filepath.Join(fixtureDir, "ao"), "#!/bin/sh\nprintf 'called\\n' >> \"$AO_TEST_CAPTURE\"\n", 0o755)
+	harnessPath := filepath.Join(fixtureDir, "child-harness.mjs")
+	writeOMPFixtureFile(t, harnessPath, `import { pathToFileURL } from "node:url";
+const handlers = new Map();
+const loaded = await import(pathToFileURL(process.argv[2]).href);
+loaded.default({ on(name, handler) { handlers.set(name, handler); } });
+const childCtx = { hasUI: false, sessionManager: { getSessionId() { return "omp-child-native"; } } };
+const events = {
+  session_start: {},
+  session_switch: {},
+  before_agent_start: { prompt: "child prompt" },
+  tool_approval_requested: { toolName: "bash", toolCallId: "child-tool" },
+  tool_approval_resolved: { toolName: "bash", toolCallId: "child-tool", approved: true },
+  agent_end: { willContinue: false },
+  session_shutdown: {},
+};
+for (const [name, event] of Object.entries(events)) {
+  await handlers.get(name)(event, childCtx);
+}
+`, 0o600)
+
+	cmd := exec.CommandContext(context.Background(), node, harnessPath, modulePath)
+	cmd.Env = append(os.Environ(),
+		"PATH="+fixtureDir+string(os.PathListSeparator)+os.Getenv("PATH"),
+		"AO_TEST_CAPTURE="+capturePath,
+	)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("child-context extension harness failed: %v\n%s", err, output)
+	}
+	if data, err := os.ReadFile(capturePath); err == nil {
+		t.Fatalf("inherited child extension published AO hooks:\n%s", data)
+	} else if !os.IsNotExist(err) {
+		t.Fatal(err)
 	}
 }
 
@@ -138,7 +198,7 @@ const handlers = new Map();
 const loaded = await import(pathToFileURL(process.argv[2]).href);
 loaded.default({ on(name, handler) { handlers.set(name, handler); } });
 const started = Date.now();
-await handlers.get("session_start")({}, { sessionManager: { getSessionId() { return "omp-native-timeout"; } } });
+await handlers.get("session_start")({}, { hasUI: true, sessionManager: { getSessionId() { return "omp-native-timeout"; } } });
 console.log(Date.now() - started);
 `, 0o600)
 
@@ -164,6 +224,7 @@ func writeExecutableOMPExtension(t *testing.T, dir, source string) string {
 		`import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";`+"\n", "",
 		`function callHookSync(hookName: string, payload: Record<string, unknown>)`, `function callHookSync(hookName, payload)`,
 		`function sessionID(ctx: any): string`, `function sessionID(ctx)`,
+		`function isRootSession(ctx: any): boolean`, `function isRootSession(ctx)`,
 		`export default function (omp: ExtensionAPI)`, `export default function (omp)`,
 	).Replace(source)
 	writeOMPFixtureFile(t, modulePath, source, 0o600)

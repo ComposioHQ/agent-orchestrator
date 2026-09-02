@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -178,8 +179,12 @@ func TestGetRestoreCommandWithoutNativeSessionIDReturnsNotOK(t *testing.T) {
 }
 
 func TestGetAgentHooksInstallsManagedActivityExtension(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fake OMP version binary uses a Unix shebang")
+	}
 	workspace := t.TempDir()
-	if err := (&Plugin{}).GetAgentHooks(context.Background(), ports.WorkspaceHookConfig{WorkspacePath: workspace}); err != nil {
+	plugin := &Plugin{resolvedBinary: fakeOMPVersionBinary(t, "17.1.0")}
+	if err := plugin.GetAgentHooks(context.Background(), ports.WorkspaceHookConfig{WorkspacePath: workspace}); err != nil {
 		t.Fatalf("GetAgentHooks err = %v", err)
 	}
 
@@ -192,6 +197,7 @@ func TestGetAgentHooksInstallsManagedActivityExtension(t *testing.T) {
 	for _, want := range []string{
 		"agent-orchestrator: managed omp activity extension",
 		`omp.on("session_start"`,
+		`omp.on("session_switch"`,
 		`omp.on("before_agent_start"`,
 		`omp.on("agent_end"`,
 		`omp.on("tool_approval_requested"`,
@@ -212,6 +218,35 @@ func TestGetAgentHooksInstallsManagedActivityExtension(t *testing.T) {
 	}
 	if !strings.Contains(string(gitignore), "/ao-activity.ts") {
 		t.Fatalf("extension .gitignore does not ignore AO file:\n%s", gitignore)
+	}
+}
+
+func TestGetAgentHooksRequiresOMP171LifecycleContract(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fake OMP version binary uses a Unix shebang")
+	}
+	for _, tc := range []struct {
+		version string
+		wantErr bool
+	}{
+		{version: "16.9.9", wantErr: true},
+		{version: "17.0.0", wantErr: true},
+		{version: "17.1.0", wantErr: false},
+		{version: "18.1.0", wantErr: false},
+	} {
+		t.Run(tc.version, func(t *testing.T) {
+			plugin := &Plugin{resolvedBinary: fakeOMPVersionBinary(t, tc.version)}
+			err := plugin.GetAgentHooks(context.Background(), ports.WorkspaceHookConfig{WorkspacePath: t.TempDir()})
+			if tc.wantErr {
+				if err == nil || !strings.Contains(err.Error(), "requires OMP 17.1.0 or newer") {
+					t.Fatalf("GetAgentHooks with OMP %s error = %v, want minimum-version error", tc.version, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("GetAgentHooks with OMP %s: %v", tc.version, err)
+			}
+		})
 	}
 }
 
@@ -270,4 +305,14 @@ func TestGetAgentHooksHonorsContextCancellation(t *testing.T) {
 	if err := (&Plugin{}).GetAgentHooks(ctx, ports.WorkspaceHookConfig{}); !errors.Is(err, context.Canceled) {
 		t.Fatalf("GetAgentHooks err = %v, want context.Canceled", err)
 	}
+}
+
+func fakeOMPVersionBinary(t *testing.T, version string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "omp")
+	script := "#!/bin/sh\nif [ \"${1:-}\" = \"--version\" ]; then\n  echo \"omp/" + version + "\"\n  exit 0\nfi\nexit 2\n"
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return path
 }
