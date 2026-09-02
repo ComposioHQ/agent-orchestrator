@@ -3691,8 +3691,24 @@ func restoreArgv(ctx context.Context, agent ports.Agent, id domain.SessionID, wo
 // beats refusing one that would.
 func nativeConversationMissing(ctx context.Context, agent ports.Agent, ref ports.SessionRef, conversationID string, env map[string]string) bool {
 	probe, ok := agent.(ports.AgentInterfaceHandoffHistoryProbe)
-	if !ok || strings.TrimSpace(conversationID) == "" {
+	if !ok {
 		return false
+	}
+	conversationID = strings.TrimSpace(conversationID)
+	if conversationID == "" {
+		handoff, ok := agent.(ports.AgentInterfaceHandoff)
+		if !ok {
+			return false
+		}
+		var err error
+		conversationID, ok, err = handoff.NativeConversationID(ctx, ref, domain.SessionModeTUI, "")
+		if err != nil || !ok {
+			return false
+		}
+		conversationID = strings.TrimSpace(conversationID)
+		if conversationID == "" {
+			return false
+		}
 	}
 	exists, err := probe.NativeConversationExists(ctx, ref, conversationID, env)
 	return err == nil && !exists
