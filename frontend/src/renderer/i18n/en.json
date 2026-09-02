@@ -221,7 +221,7 @@
 	"createProject.newProject": "New project",
 	"createProject.noRepos": "No repositories detected in this folder.",
 	"createProject.opening": "Opening...",
-	"createProject.openLocal": "Import local folder",
+	"createProject.openLocal": "Import an existing project",
 	"createProject.openLocalDesc": "Use a project that is already on this computer",
 	"createProject.orchestratorAgent": "Orchestrator agent",
 	"createProject.pickerProjectHint": "Opens your system file picker — select one repo folder",
