@@ -3,6 +3,7 @@
 package conpty
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"io"
@@ -50,10 +51,22 @@ func TestDarwinPTYConnStreamsResizesAndReportsExit(t *testing.T) {
 		t.Fatal("Resize accepted a column count that overflows the Darwin winsize")
 	}
 
+	// PTYs echo input by default. Consume the complete readiness line first so
+	// the echo cannot legitimately interleave with the child's initial output.
+	reader := bufio.NewReader(conn)
+	ready, err := reader.ReadString('\n')
+	if err != nil {
+		t.Fatalf("Read readiness: %v", err)
+	}
+	if text := strings.ReplaceAll(ready, "\r", ""); text != "ready\n" {
+		t.Fatalf("readiness output = %q", text)
+	}
+
 	outputC := make(chan []byte, 1)
 	go func() {
 		var output bytes.Buffer
-		_, _ = io.Copy(&output, conn)
+		output.WriteString(ready)
+		_, _ = io.Copy(&output, reader)
 		outputC <- output.Bytes()
 	}()
 	if _, err := conn.Write([]byte("hello\n")); err != nil {
