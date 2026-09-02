@@ -1,4 +1,3 @@
-import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
 	canSubmitProjectSetup,
 	ProjectSetupFormView,
@@ -7,15 +6,17 @@ import {
 import { useTranslation } from "react-i18next";
 import * as Dialog from "@radix-ui/react-dialog";
 import { ChevronLeft, TriangleAlert, X, type LucideIcon } from "lucide-react";
-import { memo, useEffect, useState, type ReactNode } from "react";
+import { memo, useEffect, useMemo, useState, type ReactNode } from "react";
 import type { components } from "../../api/schema";
-import { agentsQueryKey, agentsQueryOptions, refreshAgentsIfStale } from "../hooks/useAgentsQuery";
+import { useAgentReadinessQuery, useEnsureAgentReadiness } from "../hooks/useAgentReadinessQuery";
 import { AGENT_OPTIONS } from "../lib/agent-options";
 import {
 	agentLabelCompare,
 	agentUsageCompare,
 	buildRankedAgentOptions,
 	DEFAULT_AGENT_PRIORITY_RANK,
+	type AgentInfo,
+	unknownAgentReadiness,
 } from "../lib/agent-select-options";
 import { cn } from "../lib/utils";
 import { AgentAvatar } from "./AgentAvatar";
@@ -31,8 +32,6 @@ import { appI18n } from "../i18n";
 import { Button } from "./ui/button";
 
 type TrackerIntakeConfig = components["schemas"]["TrackerIntakeConfig"];
-
-type AgentInfo = components["schemas"]["AgentInfo"];
 
 export type CreateProjectAgentSelection = {
 	workerAgent: string;
@@ -115,15 +114,17 @@ export function CreateProjectAgentSheet({
 	repositorySetupWarning = null,
 }: CreateProjectAgentSheetProps) {
 	const { t } = useTranslation();
-	const queryClient = useQueryClient();
-	const agentsQuery = useQuery({
-		...agentsQueryOptions,
-		enabled: open,
-	});
+	const agentsQuery = useAgentReadinessQuery(open);
+	useEnsureAgentReadiness({ enabled: open });
 	const agents = agentsQuery.data;
-	const installedAgents = agents?.installed ?? [];
-	const agentOptions = agents?.authorized ?? [];
-	const supportedAgents = agents?.supported ?? [];
+	const agentOptions = useMemo(() => agents?.agents ?? [], [agents]);
+	const authorizedAgents = useMemo(
+		() =>
+			agentOptions.filter((agent) =>
+				["authorized", "not_applicable"].includes(agent.authentication.state),
+			),
+		[agentOptions],
+	);
 	const isLoadingAgents = agents === undefined && agentsQuery.isFetching;
 	const agentsError = agentsQuery.isError
 		? agentsQuery.error instanceof Error
@@ -135,6 +136,10 @@ export function CreateProjectAgentSheet({
 	const [orchestratorAgent, setOrchestratorAgent] = useState("");
 	const [workerAgentTouched, setWorkerAgentTouched] = useState(false);
 	const [orchestratorAgentTouched, setOrchestratorAgentTouched] = useState(false);
+	useEnsureAgentReadiness({
+		agentIds: [workerAgent, orchestratorAgent],
+		enabled: open && (workerAgent !== "" || orchestratorAgent !== ""),
+	});
 	const isBusy = isCreating || isInitializing;
 	const [intake, setIntake] = useState<IntakeForm>(EMPTY_INTAKE);
 	const intakeIncomplete = intakeNeedsRule(intake);
@@ -152,17 +157,10 @@ export function CreateProjectAgentSheet({
 
 	useEffect(() => {
 		if (!open) return;
-		void refreshAgentsIfStale().then((next) => {
-			if (next) queryClient.setQueryData(agentsQueryKey, next);
-		});
-	}, [open, queryClient]);
-
-	useEffect(() => {
-		if (!open) return;
-		const defaultAgent = defaultAuthorizedAgent(agentOptions);
+		const defaultAgent = defaultAuthorizedAgent(authorizedAgents);
 		if (!workerAgentTouched) setWorkerAgent(defaultAgent);
 		if (!orchestratorAgentTouched) setOrchestratorAgent(defaultAgent);
-	}, [agentOptions, open, orchestratorAgentTouched, workerAgentTouched]);
+	}, [authorizedAgents, open, orchestratorAgentTouched, workerAgentTouched]);
 
 	useEffect(() => {
 		if (!open) {
@@ -215,9 +213,7 @@ export function CreateProjectAgentSheet({
 									label={t("createProject.workerAgent")}
 									placeholder={t("createProject.selectWorker")}
 									value={workerAgent}
-									authorized={agentOptions}
-									installed={installedAgents}
-									supported={supportedAgents}
+									agents={agentOptions}
 									disabled={isLoadingAgents}
 									labelClassName="agents-sheet-label"
 									triggerClassName="agents-sheet-control"
@@ -234,9 +230,7 @@ export function CreateProjectAgentSheet({
 									label={t("createProject.orchestratorAgent")}
 									placeholder={t("createProject.selectOrchestrator")}
 									value={orchestratorAgent}
-									authorized={agentOptions}
-									installed={installedAgents}
-									supported={supportedAgents}
+									agents={agentOptions}
 									disabled={isLoadingAgents}
 									labelClassName="agents-sheet-label"
 									triggerClassName="agents-sheet-control"
@@ -254,7 +248,7 @@ export function CreateProjectAgentSheet({
 							loading: isLoadingAgents,
 							loadingMessage: t("createProject.loadingAgents"),
 							onRetry: () => void agentsQuery.refetch(),
-							refreshing: false,
+							retrying: agentsQuery.isFetching,
 							retryLabel: t("createProject.retry"),
 						}}
 						alert={
@@ -339,46 +333,40 @@ function ProjectSheetCloseButton({
 }
 
 export const RequiredAgentField = memo(function RequiredAgentField({
-	authorized,
+	agents,
 	disabled = false,
 	hint,
 	icon,
 	id,
 	invalid = false,
-	installed,
 	label,
 	onChange,
 	placeholder,
-	supported,
 	triggerClassName,
 	labelClassName,
 	contentClassName,
 	value,
 	variant = "stacked",
 }: {
-	authorized?: AgentInfo[];
+	agents?: AgentInfo[];
 	disabled?: boolean;
 	/** Caption beside the label, e.g. naming where a preselected default came from. */
 	hint?: string;
 	icon?: LucideIcon;
 	id: string;
 	invalid?: boolean;
-	installed?: AgentInfo[];
 	label: string;
 	onChange: (value: string) => void;
 	placeholder: string;
-	supported?: AgentInfo[];
 	triggerClassName?: string;
 	labelClassName?: string;
 	contentClassName?: string;
 	value: string;
 	variant?: "stacked" | "settings-row" | "chip";
 }) {
-	const fallbackAgents: AgentInfo[] = AGENT_OPTIONS.map((agent) => ({ id: agent, label: agent }));
+	const fallbackAgents: AgentInfo[] = AGENT_OPTIONS.map((agent) => unknownAgentReadiness(agent, agent));
 	const options = buildRankedAgentOptions({
-		supported,
-		installed,
-		authorized,
+		agents,
 		priorityRank: DEFAULT_AGENT_PRIORITY_RANK,
 		fallbackAgents,
 	});

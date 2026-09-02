@@ -12,7 +12,12 @@ import { RequiredAgentField } from "./CreateProjectAgentSheet";
 import type { components } from "../../api/schema";
 import { apiClient, apiErrorCode, apiErrorMessage } from "../lib/api-client";
 import { captureRendererEvent } from "../lib/telemetry";
-import { agentsQueryKey, agentsQueryOptions, refreshAgentsIfStale } from "../hooks/useAgentsQuery";
+import {
+	cacheAgentReadiness,
+	ensureAgentReadiness,
+	useAgentReadinessQuery,
+	useEnsureAgentReadiness,
+} from "../hooks/useAgentReadinessQuery";
 import { type FileAttachmentPayload, useFileAttachments } from "../hooks/useFileAttachments";
 import { useSettings } from "../hooks/useSettings";
 import { useCloudCp } from "../hooks/useCloudCp";
@@ -46,6 +51,8 @@ const CHAT_PREFLIGHT_CODES = new Set([
 	"CHAT_DRIVER_INCOMPATIBLE",
 	"CHAT_AUTH_REQUIRED",
 ]);
+
+const READINESS_RECONCILE_CODES = new Set(["AGENT_BINARY_NOT_FOUND", "CHAT_AUTH_REQUIRED"]);
 
 class TaskCreateError extends Error {
 	constructor(
@@ -170,7 +177,19 @@ export function TaskComposer({
 				return data.workerId;
 			} catch (err) {
 				void captureRendererEvent("ao.renderer.task_create_failed", { project_id: input.projectId });
-				void queryClient.invalidateQueries({ queryKey: agentsQueryKey });
+				if (
+					err instanceof TaskCreateError &&
+					err.code &&
+					READINESS_RECONCILE_CODES.has(err.code) &&
+					input.agent
+				) {
+					try {
+						const completed = await ensureAgentReadiness([input.agent], "launch");
+						cacheAgentReadiness(queryClient, completed);
+					} catch {
+						// Preserve the launch error when opportunistic reconciliation fails.
+					}
+				}
 				throw err instanceof Error ? err : new Error(t("newTask.unableToStart"));
 			}
 		},
@@ -197,15 +216,8 @@ export function TaskComposer({
 			return data.project as Project;
 		},
 	});
-	const agentsQuery = useQuery(agentsQueryOptions);
+	const agentsQuery = useAgentReadinessQuery();
 	const { settings } = useSettings();
-	// Freshen the inventory on open so a just-installed or just-authenticated agent
-	// is present without the user asking for it.
-	useEffect(() => {
-		void refreshAgentsIfStale().then((next) => {
-			if (next) queryClient.setQueryData(agentsQueryKey, next);
-		});
-	}, [queryClient]);
 	// The composer preselects the agent and model a spawn would actually use
 	// instead of parking the controls on a "default" label the user has to
 	// remember. Both resolved values remain directly editable.
@@ -213,6 +225,12 @@ export function TaskComposer({
 	const globalDefaultAgent = projectQuery.data?.agent ?? "";
 	const defaultWorkerAgent = projectWorkerAgent || globalDefaultAgent;
 	const selectedAgent = agent || defaultWorkerAgent;
+	useEnsureAgentReadiness();
+	useEnsureAgentReadiness({
+		agentIds: selectedAgent ? [selectedAgent] : [],
+		enabled: selectedAgent !== "",
+		purpose: "launch",
+	});
 	const defaultWorkerModel =
 		projectQuery.data?.config?.worker?.agentConfig?.model ?? projectQuery.data?.config?.agentConfig?.model ?? "";
 	const defaultWorkerMode =
@@ -268,8 +286,7 @@ export function TaskComposer({
 		projectModelForSelectedAgent || (catalogUsesModes ? "" : catalogDefaultOption);
 	const defaultModeForSelectedAgent = projectModeForSelectedAgent || (catalogUsesModes ? catalogDefaultOption : "");
 
-	const selectedAgentLabel =
-		agentCatalog?.supported?.find((item) => item.id === selectedAgent)?.label || selectedAgent;
+	const selectedAgentLabel = agentCatalog?.agents.find((item) => item.id === selectedAgent)?.label || selectedAgent;
 	const requiresTuiFallback =
 		selectedAgent !== "" &&
 		settings?.defaultSessionMode === "chat" &&
@@ -374,9 +391,7 @@ export function TaskComposer({
 				label: t("newTask.agent"),
 				placeholder: t("newTask.selectAgent"),
 				value: selectedAgent,
-				authorized: agentCatalog?.authorized,
-				installed: agentCatalog?.installed,
-				supported: agentCatalog?.supported,
+				agents: agentCatalog?.agents,
 				disabled: isSubmitting || (agentsQuery.isFetching && agentCatalog === undefined),
 				onChange: (value) => {
 					setAgent(value);

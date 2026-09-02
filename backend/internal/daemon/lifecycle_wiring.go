@@ -190,7 +190,7 @@ func (m sessionLifecycleMessenger) Send(ctx context.Context, id domain.SessionID
 // (issue #2685). The returned service is mounted at httpd APIDeps.Sessions.
 // It also returns the manager so the caller can wire Reconcile into the boot
 // sequence.
-func startSession(ctx context.Context, cfg config.Config, runtime runtimeselect.Runtime, store *sqlite.Store, lcm *lifecycle.Manager, messenger ports.AgentMessenger, telemetry ports.EventSink, agents ports.AgentResolver, previewLifecycle sessionmanager.PreviewLifecycle, browserLifecycle sessionmanager.BrowserLifecycle, browserCapabilities sessionmanager.BrowserCapabilityIssuer, chat sessionmanager.ChatLauncher, defaults sessionmanager.SessionModeDefaults, tracker ports.Tracker, log *slog.Logger) (*sessionsvc.Service, reviewsvc.Manager, sessionLifecycle, error) {
+func startSession(ctx context.Context, cfg config.Config, runtime runtimeselect.Runtime, store *sqlite.Store, lcm *lifecycle.Manager, messenger ports.AgentMessenger, telemetry ports.EventSink, agents ports.AgentResolver, agentReadiness ports.AgentReadinessProvider, previewLifecycle sessionmanager.PreviewLifecycle, browserLifecycle sessionmanager.BrowserLifecycle, browserCapabilities sessionmanager.BrowserCapabilityIssuer, chat sessionmanager.ChatLauncher, defaults sessionmanager.SessionModeDefaults, tracker ports.Tracker, log *slog.Logger) (*sessionsvc.Service, reviewsvc.Manager, sessionLifecycle, error) {
 	gitWS, err := gitworktree.New(gitworktree.Options{
 		// Per-session worktrees live under the data dir, so a single AO_DATA_DIR
 		// override moves all durable per-user state together.
@@ -232,6 +232,7 @@ func startSession(ctx context.Context, cfg config.Config, runtime runtimeselect.
 		Logger:              log,
 		ReconcileWorkers:    startupReconcileWorkers,
 	})
+	mgr.SetAgentReadiness(agentReadiness)
 	scmProvider := newMultiSCMProvider(cfg.GitLab, log)
 	sessionSvc := sessionsvc.NewWithDeps(sessionsvc.Deps{
 		Manager:           mgr,
@@ -243,6 +244,7 @@ func startSession(ctx context.Context, cfg config.Config, runtime runtimeselect.
 		Telemetry:         telemetry,
 		Logger:            log,
 		BackgroundContext: ctx,
+		AgentReadiness:    agentReadiness,
 		// no_signal only makes sense for harnesses with complete lifecycle signal
 		// coverage; partial callbacks cannot prove that silence is abnormal.
 		SignalCapable: activitydispatch.FullySupportsHarness,
@@ -262,7 +264,7 @@ func startSession(ctx context.Context, cfg config.Config, runtime runtimeselect.
 		Projects: store,
 		Launcher: reviewcore.NewLauncher(reviewers, runtime, cfg.DataDir,
 			reviewcore.WithRunFilePath(cfg.RunFilePath),
-			reviewcore.WithAgentAuth(reviewerAgentAuth{agents: agents})),
+			reviewcore.WithAgentAuth(reviewerAgentAuth{readiness: agentReadiness})),
 	})
 	reviewOpts := []reviewsvc.Option{
 		reviewsvc.WithLifecycleReducer(lcm),
@@ -388,23 +390,25 @@ func (a agentRegistry) Agent(harness domain.AgentHarness) (ports.Agent, bool) {
 }
 
 type reviewerAgentAuth struct {
-	agents ports.AgentResolver
+	readiness ports.AgentReadinessProvider
 }
 
 func (r reviewerAgentAuth) AuthStatus(ctx context.Context, harness domain.ReviewerHarness) (ports.AgentAuthStatus, bool, error) {
-	if r.agents == nil {
+	if r.readiness == nil {
 		return "", false, nil
 	}
-	agent, ok := r.agents.Agent(domain.AgentHarness(harness))
-	if !ok {
-		return "", false, nil
+	snapshot, err := r.readiness.EnsureAgentReadiness(ctx, string(harness), domain.AgentReadinessPurposeLaunch)
+	if err != nil {
+		return "", false, err
 	}
-	checker, ok := agent.(ports.AgentAuthChecker)
-	if !ok {
-		return "", false, nil
+	switch snapshot.Authentication.State {
+	case domain.AgentAuthenticationAuthorized, domain.AgentAuthenticationNotApplicable:
+		return ports.AgentAuthStatusAuthorized, true, nil
+	case domain.AgentAuthenticationUnauthorized:
+		return ports.AgentAuthStatusUnauthorized, true, nil
+	default:
+		return ports.AgentAuthStatusUnknown, true, nil
 	}
-	status, err := checker.AuthStatus(ctx)
-	return status, true, err
 }
 
 // buildAgentResolver constructs the per-session agent resolver the Session
