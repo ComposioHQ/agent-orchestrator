@@ -180,7 +180,9 @@ export function CreateProjectFlow({
 						mode: kind === "workspace" ? "workspace" : "project",
 					});
 					setValidationScan(scan);
-					const blockingReason = scan.repos.find((repo) => repo.status === "error")?.reason;
+					const blockingReason = scan.repos.find(
+						(repo) => repo.status === "error" && repo.reason !== "Repository must have at least one commit.",
+					)?.reason;
 					setError(blockingReason ?? null);
 				} catch (err) {
 					setValidationScan({ path, repos: [] });
@@ -369,6 +371,7 @@ export function CreateProjectFlow({
 							onBack={() => {
 								setError(null);
 								setCloneDialogOpen(false);
+								setModePickerOpen(true);
 							}}
 							onChange={(next) => {
 								setCloneDetails(next);
@@ -434,7 +437,7 @@ export function CreateProjectFlow({
 						}
 					}
 				}}
-				onBack={
+					onBack={
 					cloneSelection
 						? () => {
 								setSelectedPath(null);
@@ -953,7 +956,13 @@ function CreateProjectFolderDialog({
 }) {
 	const { t } = useTranslation();
 	const isWorkspace = kind === "workspace";
-	const failedRepos = scan?.repos.filter((repo) => (repo.status === "error" || !repo.hasRemote) && !repo.needsGitInit) ?? [];
+	const failedRepos =
+		scan?.repos.filter(
+			(repo) =>
+				(repo.status === "error" || !repo.hasRemote) &&
+				!repo.needsGitInit &&
+				repo.reason !== "Repository must have at least one commit.",
+		) ?? [];
 	const hasScan = scan !== null;
 	return (
 		<Dialog.Root open={open} onOpenChange={onOpenChange}>
@@ -1013,13 +1022,19 @@ function CreateProjectFolderDialog({
 											<span className="mr-2 inline-block size-2 rounded-full bg-destructive" aria-hidden="true" />
 											{isWorkspace ? t("createProject.importFailedWorkspace") : t("createProject.importFailedProject")}
 										</div>
-										<div className="px-3 py-2 text-[12px] leading-5 text-destructive">{error}</div>
+						<div className="px-3 py-2 text-[12px] leading-5 text-destructive">{error}</div>
+						<div className="border-t border-destructive/30 px-3 py-2 text-[12px] text-[var(--color-text-import-muted)]">
+							{t("createProject.footerReview")}
+						</div>
 										{failedRepos.length > 0 && (
 											<div className="border-t border-destructive/30">
-												{failedRepos.map((repo) => (
-													<ImportRepoRow key={repo.path} repo={repo} failed />
-												))}
-											</div>
+									{failedRepos.map((repo) => (
+										<ImportRepoRow key={repo.path} repo={repo} failed />
+									))}
+									<div className="border-t border-destructive/30 px-3 py-2 text-[12px] text-[var(--color-text-import-muted)]">
+										{t("createProject.footerResolve", { count: failedRepos.length })}
+									</div>
+								</div>
 										)}
 									</div>
 								)}

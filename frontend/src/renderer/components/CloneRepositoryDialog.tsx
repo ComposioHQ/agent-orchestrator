@@ -158,6 +158,7 @@ export default function CloneRepositoryDialog({
 								<button
 									type="button"
 									id="cloneDestination"
+									aria-label={t("createProject.cloneChoose")}
 									aria-describedby={destinationError ? "cloneDestinationError" : undefined}
 									aria-invalid={destinationError ? true : undefined}
 									className="flex h-control-form w-full items-center overflow-hidden rounded-md border border-transparent bg-[var(--color-bg-import-card)] text-left text-[13px] text-foreground outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-50"

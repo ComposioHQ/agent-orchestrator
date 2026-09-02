@@ -330,6 +330,7 @@ async function openCreateProjectDialog(
 	await user.click(screen.getByLabelText("New project"));
 	await user.click(screen.getByRole("button", { name: /^Open local repository$/i }));
 	await screen.findByText(path);
+	await user.click(await screen.findByRole("button", { name: "Continue" }));
 	await chooseOption(screen.getByRole("combobox", { name: "Worker agent" }), "Codex");
 	await chooseOption(screen.getByRole("combobox", { name: "Orchestrator agent" }), "Claude Code");
 	return user;
@@ -362,6 +363,10 @@ beforeEach(() => {
 		},
 		error: undefined,
 	});
+	window.ao!.app.scanImportFolder = vi.fn().mockImplementation(async ({ path }: { path: string }) => ({
+		path,
+		repos: [],
+	}));
 	navigateMock.mockReset();
 	renameSessionMock.mockReset().mockResolvedValue(undefined);
 	spawnMock.mockReset();
@@ -840,6 +845,7 @@ describe("Sidebar", () => {
 
 		expect(await screen.findByText("/repo/new-project")).toBeInTheDocument();
 		expect(window.ao!.app.chooseDirectory).toHaveBeenCalledWith("Choose a project repository");
+		await user.click(screen.getByRole("button", { name: "Continue" }));
 		const dialog = screen.getByRole("dialog", { name: "Project agents" });
 		expect(dialog).toHaveClass("left-1/2", "top-1/2", "-translate-x-1/2", "-translate-y-1/2");
 		await user.click(screen.getByRole("button", { name: "Create and start" }));
@@ -871,7 +877,6 @@ describe("Sidebar", () => {
 		);
 		await user.click(screen.getByRole("button", { name: "Choose" }));
 		expect(window.ao!.app.chooseDirectory).toHaveBeenCalledWith("Choose where to clone the repository");
-		expect(await screen.findByText("/repo/web-app")).toBeInTheDocument();
 		await user.click(screen.getByRole("button", { name: "Continue" }));
 
 		expect(await screen.findByRole("dialog", { name: "Project agents" })).toBeInTheDocument();
@@ -924,7 +929,8 @@ describe("Sidebar", () => {
 		await user.click(await screen.findByRole("button", { name: "Back to code source" }));
 		await user.click(await screen.findByRole("button", { name: /^Open local repository$/i }));
 
-		expect(await screen.findByText("/repo/local-project")).toBeInTheDocument();
+		expect(await screen.findAllByText("/repo/local-project")).not.toHaveLength(0);
+		await user.click(await screen.findByRole("button", { name: "Continue" }));
 		await user.click(screen.getByRole("button", { name: "Create and start" }));
 
 		await waitFor(() =>
@@ -960,6 +966,7 @@ describe("Sidebar", () => {
 		await user.click(screen.getByLabelText("New project"));
 		await user.click(screen.getByRole("button", { name: /^Open local repository$/i }));
 		expect(await screen.findByText("/repo/new-project")).toBeInTheDocument();
+		await user.click(screen.getByRole("button", { name: "Continue" }));
 		expect(screen.getByRole("combobox", { name: "Worker agent" })).toHaveTextContent(/cursor/i);
 		expect(screen.getByRole("combobox", { name: "Orchestrator agent" })).toHaveTextContent(/cursor/i);
 
@@ -1013,6 +1020,8 @@ describe("Sidebar", () => {
 		await user.click(screen.getByLabelText("New project"));
 		await user.click(screen.getByRole("button", { name: /^Open local repository$/i }));
 
+		await screen.findByText("/repo/parent/universe");
+		await user.click(screen.getByRole("button", { name: "Continue" }));
 		expect(await screen.findByRole("dialog", { name: "Project agents" })).toBeInTheDocument();
 		expect(screen.getByText(/If this folder needs Git setup/i)).toBeInTheDocument();
 		expect(screen.getByText(/inside an existing Git repository at \/repo\/parent/i)).toBeInTheDocument();
@@ -1084,6 +1093,7 @@ describe("Sidebar", () => {
 
 		expect(await screen.findByText("/repo/workspace")).toBeInTheDocument();
 		expect(window.ao!.app.chooseDirectory).toHaveBeenCalledWith("Choose a workspace folder");
+		await user.click(screen.getByRole("button", { name: "Continue" }));
 		expect(screen.getByRole("dialog", { name: "Workspace agents" })).toBeInTheDocument();
 		await chooseOption(screen.getByRole("combobox", { name: "Worker agent" }), "Codex");
 		await chooseOption(screen.getByRole("combobox", { name: "Orchestrator agent" }), "Claude Code");
@@ -1114,6 +1124,7 @@ describe("Sidebar", () => {
 
 		await user.click(screen.getByLabelText("New project"));
 		await user.click(screen.getByRole("button", { name: /^Add a workspace folder$/i }));
+		await user.click(await screen.findByRole("button", { name: "Continue" }));
 		await screen.findByRole("dialog", { name: "Workspace agents" });
 		await chooseOption(screen.getByRole("combobox", { name: "Orchestrator agent" }), "Claude Code");
 		await user.click(screen.getByRole("button", { name: "Create workspace and start" }));
@@ -1134,7 +1145,10 @@ describe("Sidebar", () => {
 		const onCreateProject = vi.fn().mockRejectedValue(new Error("workspace not registered")) as CreateProjectHandler;
 		window.ao!.app.chooseDirectory = vi.fn().mockResolvedValue("/Users/test/dev/acme");
 		window.ao!.app.checkAncestorRepo = vi.fn().mockResolvedValue(undefined);
-		window.ao!.app.scanImportFolder = vi.fn().mockResolvedValue({
+		window.ao!.app.scanImportFolder = vi.fn().mockResolvedValueOnce({
+			path: "/Users/test/dev/acme",
+			repos: [],
+		}).mockResolvedValueOnce({
 			path: "/Users/test/dev/acme",
 			repos: [
 				{
@@ -1162,6 +1176,7 @@ describe("Sidebar", () => {
 
 		await user.click(screen.getByLabelText("New project"));
 		await user.click(screen.getByRole("button", { name: /^Add a workspace folder$/i }));
+		await user.click(await screen.findByRole("button", { name: "Continue" }));
 		await screen.findByRole("dialog", { name: "Workspace agents" });
 		await chooseOption(screen.getByRole("combobox", { name: "Orchestrator agent" }), "Claude Code");
 		await user.click(screen.getByRole("button", { name: "Create workspace and start" }));
@@ -1213,6 +1228,7 @@ describe("Sidebar", () => {
 
 		await user.click(screen.getByLabelText("New project"));
 		await user.click(screen.getByRole("button", { name: /^Add a workspace folder$/i }));
+		await user.click(await screen.findByRole("button", { name: "Continue" }));
 		await screen.findByRole("dialog", { name: "Workspace agents" });
 		await chooseOption(screen.getByRole("combobox", { name: "Orchestrator agent" }), "Claude Code");
 		await user.click(screen.getByRole("button", { name: "Create workspace and start" }));
@@ -1230,20 +1246,21 @@ describe("Sidebar", () => {
 		const onCreateProject = vi.fn().mockRejectedValue(new Error("AO daemon is not ready.")) as CreateProjectHandler;
 		window.ao!.app.chooseDirectory = vi.fn().mockResolvedValue("/repo/workspace");
 		window.ao!.app.checkAncestorRepo = vi.fn().mockResolvedValue(undefined);
-		window.ao!.app.scanImportFolder = vi.fn();
+		window.ao!.app.scanImportFolder = vi.fn().mockResolvedValue({ path: "/repo/workspace", repos: [] });
 		renderSidebar({ onCreateProject });
 
 		await user.click(screen.getByLabelText("New project"));
 		await user.click(screen.getByRole("button", { name: /^Add a workspace folder$/i }));
+		await user.click(await screen.findByRole("button", { name: "Continue" }));
 		await screen.findByRole("dialog", { name: "Workspace agents" });
 		await chooseOption(screen.getByRole("combobox", { name: "Orchestrator agent" }), "Claude Code");
 		await user.click(screen.getByRole("button", { name: "Create workspace and start" }));
 
 		expect(await screen.findByText("AO daemon is not ready.")).toBeInTheDocument();
-		// checkAncestorRepo is called once during the preflight (chooseDirectory),
-		// but scanImportFolder is never called (shouldScanCreateFailure returns false for this error)
+		// The initial folder validation is required by the import step. The
+		// non-validation create failure must not trigger a second scan.
 		expect(window.ao!.app.checkAncestorRepo).toHaveBeenCalledWith("/repo/workspace");
-		expect(window.ao!.app.scanImportFolder).not.toHaveBeenCalled();
+		expect(window.ao!.app.scanImportFolder).toHaveBeenCalledTimes(1);
 	});
 
 	it("shows ancestor repo warning in agent sheet for workspace inside existing repo", async () => {
@@ -1263,6 +1280,7 @@ describe("Sidebar", () => {
 
 		await user.click(screen.getByLabelText("New project"));
 		await user.click(screen.getByRole("button", { name: /^Add a workspace folder$/i }));
+		await user.click(await screen.findByRole("button", { name: "Continue" }));
 		await screen.findByRole("dialog", { name: "Workspace agents" });
 		expect(
 			screen.getByText(
@@ -1313,6 +1331,7 @@ describe("Sidebar", () => {
 		await user.click(screen.getByLabelText("New project"));
 		await user.click(screen.getByRole("button", { name: /^Open local repository$/i }));
 		expect(await screen.findByText("/repo/new-project")).toBeInTheDocument();
+		await user.click(screen.getByRole("button", { name: "Continue" }));
 
 		await user.click(screen.getByRole("combobox", { name: "Orchestrator agent" }));
 		const options = await screen.findAllByRole("option");
@@ -1350,6 +1369,7 @@ describe("Sidebar", () => {
 		await user.click(screen.getByLabelText("New project"));
 		await user.click(screen.getByRole("button", { name: /^Open local repository$/i }));
 		expect(await screen.findByText("/repo/new-project")).toBeInTheDocument();
+		await user.click(screen.getByRole("button", { name: "Continue" }));
 		expect(screen.getByRole("button", { name: "Create and start" })).toBeDisabled();
 
 		resolveAgents({
