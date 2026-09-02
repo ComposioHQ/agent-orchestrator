@@ -81,6 +81,8 @@ import { formatTimeCompact, formatTimeTerse } from "../lib/format-time";
 import { useTerminateSession } from "../hooks/useTerminateSession";
 import { useResizable } from "../hooks/useResizable";
 import { useCloudGate } from "../hooks/useCloudGate";
+import { useCloudLocalAuth } from "../hooks/useCloudLocalAuth";
+import { useLocalSignInDialogStore } from "../stores/local-signin-dialog-store";
 import { useShellMaybe } from "../lib/shell-context";
 import { useSidebarUpdateDismissal } from "../hooks/useSidebarUpdateDismissal";
 import { useUpdateStatus } from "../hooks/useUpdateStatus";
@@ -1989,6 +1991,10 @@ function CloudSignInRow({ tabIndex }: { tabIndex: number }) {
 	const { t } = useTranslation();
 	const { cloudEnabled } = useCloudGate();
 	const { configured, status, signIn } = useCloudSession();
+	// Dev + loopback CP: open the local email/password dialog instead of WorkOS.
+	const { available: localAuthAvailable } = useCloudLocalAuth();
+	const openLocalSignIn = useLocalSignInDialogStore((s) => s.openDialog);
+	const onSignIn = () => (localAuthAvailable ? openLocalSignIn() : signIn());
 	if (!configured || !cloudEnabled || status !== "unauthenticated") return null;
 
 	return (
@@ -1998,7 +2004,7 @@ function CloudSignInRow({ tabIndex }: { tabIndex: number }) {
 				NAV_ROW_CLASS,
 				"flex h-9 w-full items-center text-left [&_svg]:size-icon-md [&_svg]:shrink-0",
 			)}
-			onClick={() => signIn()}
+			onClick={onSignIn}
 			tabIndex={tabIndex}
 			type="button"
 		>
@@ -2013,6 +2019,10 @@ function CloudSignInRailButton({ tabIndex }: { tabIndex: number }) {
 	const { t } = useTranslation();
 	const { cloudEnabled } = useCloudGate();
 	const { configured, status, signIn } = useCloudSession();
+	// Dev + loopback CP: open the local email/password dialog instead of WorkOS.
+	const { available: localAuthAvailable } = useCloudLocalAuth();
+	const openLocalSignIn = useLocalSignInDialogStore((s) => s.openDialog);
+	const onSignIn = () => (localAuthAvailable ? openLocalSignIn() : signIn());
 	if (!configured || !cloudEnabled || status !== "unauthenticated") return null;
 
 	return (
@@ -2021,7 +2031,7 @@ function CloudSignInRailButton({ tabIndex }: { tabIndex: number }) {
 				<button
 					aria-label={t("shell.signInToAOCloud")}
 					className="grid size-control-board place-items-center rounded-lg text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground [&_svg]:size-icon-base"
-					onClick={() => signIn()}
+					onClick={onSignIn}
 					tabIndex={tabIndex}
 					type="button"
 				>
