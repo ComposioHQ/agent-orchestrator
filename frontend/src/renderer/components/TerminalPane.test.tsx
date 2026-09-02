@@ -14,6 +14,7 @@ import {
 	TerminalPane,
 	providerScrollsByKeyboard,
 } from "./TerminalPane";
+import { TooltipProvider } from "./ui/tooltip";
 
 const {
 	attachMock,
@@ -23,6 +24,7 @@ const {
 	terminalError,
 	terminalState,
 	replaySettled,
+	hasAttached,
 	terminalSessionOptions,
 	xtermMounts,
 	xtermUnmounts,
@@ -35,7 +37,8 @@ const {
 		terminalError: { value: undefined as string | undefined },
 		terminalState: { value: "idle" },
 		replaySettled: { value: true },
-		terminalSessionOptions: [] as Array<{ coverInitialReplay?: boolean }>,
+		hasAttached: { value: false },
+		terminalSessionOptions: [] as Array<{ coverInitialReplay?: boolean; shellTerminalHandleId?: string }>,
 		xtermMounts: { value: 0 },
 		xtermUnmounts: { value: 0 },
 	}),
@@ -73,6 +76,7 @@ vi.mock("./XtermTerminal", () => ({
 				writeln: vi.fn(),
 				showLatestOutput: vi.fn(),
 				prepareForActivation: prepareForActivationMock,
+				notifyCursorColorScheme: vi.fn(),
 				onUserInput: vi.fn(() => disposable),
 				onResize: vi.fn(() => disposable),
 			});
@@ -87,7 +91,7 @@ vi.mock("./XtermTerminal", () => ({
 vi.mock("../hooks/useTerminalSession", () => ({
 	useTerminalSession: (
 		_session: WorkspaceSession | undefined,
-		options: { coverInitialReplay?: boolean },
+		options: { coverInitialReplay?: boolean; shellTerminalHandleId?: string },
 	) => {
 		terminalSessionOptions.push(options);
 		return {
@@ -95,6 +99,7 @@ vi.mock("../hooks/useTerminalSession", () => ({
 			state: terminalState.value,
 			error: terminalError.value,
 			replaySettled: replaySettled.value,
+			hasAttached: hasAttached.value,
 		};
 	},
 }));
@@ -126,6 +131,7 @@ beforeEach(() => {
 	terminalError.value = undefined;
 	terminalState.value = "idle";
 	replaySettled.value = true;
+	hasAttached.value = false;
 	terminalLinkHandler = undefined;
 	terminalSessionOptions.length = 0;
 	attachMock.mockClear();
@@ -142,7 +148,9 @@ function renderPane(session?: WorkspaceSession) {
 	window.ao = {} as typeof window.ao;
 	const result = render(
 		<QueryClientProvider client={queryClient}>
-			<TerminalPane daemonReady fontSize={12} session={session} theme="dark" />
+			<TooltipProvider>
+				<TerminalPane daemonReady fontSize={12} session={session} theme="dark" />
+			</TooltipProvider>
 		</QueryClientProvider>,
 	);
 	return {
@@ -186,19 +194,21 @@ function renderCachedPane({
 
 	const tree = (nextSession?: WorkspaceSession, nextTarget?: TerminalTarget, showPane = true) => (
 		<QueryClientProvider client={queryClient}>
-			<TerminalCacheProvider daemonReady theme="dark">
-				{showPane ? (
-					<TerminalPane
-						daemonReady
-						fontSize={12}
-						session={nextSession}
-						terminalTarget={nextTarget}
-						theme="dark"
-					/>
-				) : (
-					<div data-testid="away" />
-				)}
-			</TerminalCacheProvider>
+			<TooltipProvider>
+				<TerminalCacheProvider daemonReady theme="dark">
+					{showPane ? (
+						<TerminalPane
+							daemonReady
+							fontSize={12}
+							session={nextSession}
+							terminalTarget={nextTarget}
+							theme="dark"
+						/>
+					) : (
+						<div data-testid="away" />
+					)}
+				</TerminalCacheProvider>
+			</TooltipProvider>
 		</QueryClientProvider>
 	);
 	const result = render(tree(session, terminalTarget));
@@ -267,6 +277,38 @@ describe("TerminalPane empty states", () => {
 			view.restore();
 		}
 	});
+
+	it("selects a temporary shell without attaching xterm to its temporary handle", () => {
+		const shell = {
+			handleId: "pending-shell:test",
+			sessionId: worker.id,
+			workingDir: "",
+			title: "Terminal 1",
+			createdAt: "2026-08-31T00:00:00Z",
+			optimistic: true,
+		} satisfies ShellTerminal;
+		const view = renderCachedPane({
+			session: worker,
+			sessions: [worker],
+			// The authoritative shell can replace the optimistic cache row before
+			// the selected target changes. A pending handle itself is the contract.
+			shellTerminals: [],
+			terminalTarget: {
+				generation: shell.createdAt,
+				kind: "shell",
+				handleId: shell.handleId,
+				sessionId: worker.id,
+				title: shell.title,
+			},
+		});
+		try {
+			expect(screen.getByTestId("optimistic-terminal")).toBeInTheDocument();
+			expect(screen.queryByTestId("xterm")).not.toBeInTheDocument();
+			expect(terminalSessionOptions.at(-1)?.shellTerminalHandleId).toBeUndefined();
+		} finally {
+			view.restore();
+		}
+	});
 });
 
 // Initial-replay cover (issue #3160): xterm stays mounted and ingesting behind
@@ -284,8 +326,8 @@ describe("TerminalPane replay cover", () => {
 		try {
 			const cover = screen.getByTestId("terminal-replay-cover");
 			expect(cover).toBeInTheDocument();
-			expect(cover).toHaveClass("terminal-surface", "pointer-events-none");
-			expect(cover).not.toHaveClass("bg-terminal");
+			expect(cover).toHaveClass("bg-terminal-opaque", "pointer-events-none");
+			expect(cover).not.toHaveClass("terminal-surface");
 			// xterm keeps rendering underneath — covered, never unmounted, so the
 			// grid it measures stays correct.
 			expect(screen.getByTestId("xterm")).toBeInTheDocument();
@@ -318,12 +360,14 @@ describe("TerminalPane replay cover", () => {
 			replaySettled.value = true;
 			view.rerender(
 				<QueryClientProvider client={view.queryClient}>
-					<TerminalPane
-						daemonReady
-						fontSize={12}
-						session={{ ...worker, terminalHandleId: "term-1" }}
-						theme="dark"
-					/>
+					<TooltipProvider>
+						<TerminalPane
+							daemonReady
+							fontSize={12}
+							session={{ ...worker, terminalHandleId: "term-1" }}
+							theme="dark"
+						/>
+					</TooltipProvider>
 				</QueryClientProvider>,
 			);
 			expect(screen.getByTestId("terminal-replay-cover")).toBeInTheDocument();
@@ -336,21 +380,27 @@ describe("TerminalPane replay cover", () => {
 		}
 	});
 
-	it("shows no loader text on a fast open", () => {
-		replaySettled.value = false;
-		const view = renderPane({ ...worker, terminalHandleId: "term-1" });
+	it("keeps the replay cover silent even when attachment takes longer", () => {
+		vi.useFakeTimers();
 		try {
-			// The label is delayed, so a session switch that resolves quickly never
-			// flashes a spinner — the whole point of a blank cover.
-			expect(screen.queryByText("Loading latest output…")).not.toBeInTheDocument();
+			replaySettled.value = false;
+			const view = renderPane({ ...worker, terminalHandleId: "term-1" });
+			try {
+				act(() => vi.advanceTimersByTime(1_000));
+				expect(screen.getByTestId("terminal-replay-cover")).toHaveAttribute("aria-hidden", "true");
+				expect(screen.queryByText("Loading latest output…")).not.toBeInTheDocument();
+			} finally {
+				view.restore();
+			}
 		} finally {
-			view.restore();
+			vi.useRealTimers();
 		}
 	});
 
 	it("stays out of the way while the pane is visibly reattaching", () => {
 		replaySettled.value = false;
 		terminalState.value = "reattaching";
+		hasAttached.value = true;
 		const view = renderPane({ ...worker, terminalHandleId: "term-1" });
 		try {
 			// An open timeout lifts the cover and the backoff reconnect would pull
@@ -417,6 +467,23 @@ describe("TerminalCacheProvider", () => {
 			view.show(sessions[0]);
 			await waitFor(() => expect(activeXterm()).toBe(oldest));
 			expect(xtermMounts.value).toBe(7);
+		} finally {
+			view.restore();
+		}
+	});
+
+	it("reveals a cached terminal immediately while its activation preparation is still pending", async () => {
+		prepareForActivationMock.mockImplementation(() => new Promise<void>(() => undefined));
+		const view = renderCachedPane({ session: sessionA, sessions: [sessionA, sessionB] });
+		try {
+			const terminalA = await waitFor(() => activeXterm());
+			view.show(sessionB);
+			await waitFor(() => expect(activeXterm()).not.toBe(terminalA));
+
+			view.show(sessionA);
+			const host = document.querySelector<HTMLElement>(`[data-terminal-cache-key^="session:${sessionA.id}:worker|"]`);
+			expect(host).toHaveAttribute("data-terminal-activation-phase", "visible");
+			expect(host?.style.visibility).not.toBe("hidden");
 		} finally {
 			view.restore();
 		}
@@ -644,6 +711,10 @@ describe("terminal link preview", () => {
 		const view = renderPane(worker);
 		try {
 			act(() => terminalLinkHandler?.("https://example.com/pull/42"));
+			expect(useUiStore.getState().inspectorSessions[worker.id]).toMatchObject({
+				isOpen: true,
+				view: "browser",
+			});
 			await waitFor(() =>
 				expect(postMock).toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/preview", {
 					params: { path: { sessionId: "sess-1" } },

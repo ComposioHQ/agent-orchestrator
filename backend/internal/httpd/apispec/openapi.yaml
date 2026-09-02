@@ -334,6 +334,45 @@ paths:
       summary: Check whether the desktop browser runtime is connected for a session
       tags:
       - browser
+  /api/v1/desktop/sessions/{sessionId}/workspace:
+    get:
+      operationId: getDesktopSessionWorkspace
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DesktopWorkspaceLocationResponse'
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Resolve a session workspace for the loopback desktop supervisor
+      tags:
+      - sessions
   /api/v1/dev/import-projects:
     post:
       operationId: runDevImportProjects
@@ -371,6 +410,25 @@ paths:
       summary: Run the developer project-registry import through the daemon store
       tags:
       - dev
+  /api/v1/endpoints:
+    get:
+      operationId: getEndpoints
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EndpointsResponse'
+          description: OK
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: List the ways this daemon can currently be reached
+      tags:
+      - identity
   /api/v1/events:
     get:
       operationId: streamEvents
@@ -414,6 +472,25 @@ paths:
       summary: Stream CDC events with durable replay
       tags:
       - events
+  /api/v1/identity:
+    get:
+      operationId: getIdentity
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IdentityResponse'
+          description: OK
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Identify the daemon so a client can confirm which machine answered
+      tags:
+      - identity
   /api/v1/import:
     get:
       operationId: getImportStatus
@@ -636,6 +713,31 @@ paths:
                 $ref: '#/components/schemas/APIError'
           description: Internal Server Error
       summary: Rotate the Connect Mobile password, dropping any connected phone
+      tags:
+      - mobile
+  /api/v1/mobile/remote-access:
+    post:
+      operationId: startMobileRemoteAccess
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MobileStatusResponse'
+          description: OK
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Forbidden
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+      summary: Look for a connector again and start it, without rotating the password
       tags:
       - mobile
   /api/v1/mobile/secure-pairing:
@@ -1242,6 +1344,43 @@ paths:
                 $ref: '#/components/schemas/APIError'
           description: Internal Server Error
       summary: Replace a project's per-project config
+      tags:
+      - projects
+  /api/v1/projects/clone:
+    post:
+      operationId: cloneProject
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CloneProjectInput'
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectResponse'
+          description: Created
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+      summary: Clone and register a project from a git repository URL
       tags:
       - projects
   /api/v1/projects/initialize:
@@ -2011,7 +2150,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/APIError'
           description: Not Implemented
-      summary: Set the automatic CI-failure injection default for new session PRs
+      summary: Set automatic CI-failure injection for a session and its PRs
       tags:
       - sessions
   /api/v1/sessions/{sessionId}/auto-inject-review:
@@ -2696,6 +2835,59 @@ paths:
       summary: List the models the provider offers for a chat session
       tags:
       - conversations
+  /api/v1/sessions/{sessionId}/conversation/queue/reorder:
+    post:
+      operationId: reorderQueuedSessionConversationTurns
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReorderQueuedConversationTurnsRequest'
+        required: true
+      responses:
+        "204":
+          description: No Content
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Rewrite the durable queue order for undispatched turns
+      tags:
+      - conversations
   /api/v1/sessions/{sessionId}/conversation/settings:
     patch:
       operationId: setSessionConversationTurnSettings
@@ -2912,6 +3104,55 @@ paths:
       summary: Name the provider's conversation thread
       tags:
       - conversations
+  /api/v1/sessions/{sessionId}/conversation/turns/{turnId}/cancel:
+    post:
+      operationId: cancelQueuedSessionConversationTurn
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      - description: AO conversation turn identifier, from the snapshot's turns array.
+        in: path
+        name: turnId
+        required: true
+        schema:
+          description: AO conversation turn identifier, from the snapshot's turns
+            array.
+          type: string
+      responses:
+        "204":
+          description: No Content
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Remove one queued message without stopping the running turn
+      tags:
+      - conversations
   /api/v1/sessions/{sessionId}/conversation/turns/{turnId}/edit:
     post:
       operationId: editSessionConversationMessage
@@ -2975,6 +3216,126 @@ paths:
                 $ref: '#/components/schemas/APIError'
           description: Not Implemented
       summary: Branch before and replace an earlier human prompt
+      tags:
+      - conversations
+  /api/v1/sessions/{sessionId}/conversation/turns/{turnId}/queue/edit:
+    post:
+      operationId: editQueuedSessionConversationTurn
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      - description: AO conversation turn identifier, from the snapshot's turns array.
+        in: path
+        name: turnId
+        required: true
+        schema:
+          description: AO conversation turn identifier, from the snapshot's turns
+            array.
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EditQueuedConversationMessageRequest'
+        required: true
+      responses:
+        "204":
+          description: No Content
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Rewrite one queued message before it dispatches
+      tags:
+      - conversations
+  /api/v1/sessions/{sessionId}/conversation/turns/{turnId}/retry:
+    post:
+      operationId: retrySessionConversationTurn
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      - description: AO conversation turn identifier, from the snapshot's turns array.
+        in: path
+        name: turnId
+        required: true
+        schema:
+          description: AO conversation turn identifier, from the snapshot's turns
+            array.
+          type: string
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RetryTurnResponse'
+          description: Accepted
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Re-dispatch a failed turn's durable prompt as a new turn
       tags:
       - conversations
   /api/v1/sessions/{sessionId}/conversation/turns/{turnId}/rollback:
@@ -4670,6 +5031,23 @@ paths:
         schema:
           description: Session-worktree-relative file path.
           type: string
+      - description: Git-state section the file was opened from (see WorkspaceFileSections).
+          staged diffs the index against HEAD; unstaged diffs the worktree against
+          the index; omitted/committed/untracked diff the worktree against the compare
+          base.
+        in: query
+        name: section
+        schema:
+          description: Git-state section the file was opened from (see WorkspaceFileSections).
+            staged diffs the index against HEAD; unstaged diffs the worktree against
+            the index; omitted/committed/untracked diff the worktree against the compare
+            base.
+          enum:
+          - committed
+          - staged
+          - unstaged
+          - untracked
+          type: string
       responses:
         "200":
           content:
@@ -4702,6 +5080,77 @@ paths:
                 $ref: '#/components/schemas/APIError'
           description: Not Implemented
       summary: Read one session workspace file and its git diff
+      tags:
+      - sessions
+  /api/v1/sessions/{sessionId}/workspace/file/blob:
+    get:
+      operationId: getSessionWorkspaceFileBlob
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      - description: Session-worktree-relative file path.
+        in: query
+        name: path
+        required: true
+        schema:
+          description: Session-worktree-relative file path.
+          type: string
+      - description: 'Which revision to read: the compare base (before) or the session
+          worktree (after). Defaults to after.'
+        in: query
+        name: side
+        schema:
+          description: 'Which revision to read: the compare base (before) or the session
+            worktree (after). Defaults to after.'
+          enum:
+          - before
+          - after
+          type: string
+      - description: Cache-busting token. Ignored by the server; the response is never
+          cached.
+        in: query
+        name: v
+        schema:
+          description: Cache-busting token. Ignored by the server; the response is
+            never cached.
+          type: string
+      responses:
+        "200":
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Read one side of a session workspace image file
       tags:
       - sessions
   /api/v1/sessions/{sessionId}/workspace/files:
@@ -4741,6 +5190,60 @@ paths:
                 $ref: '#/components/schemas/APIError'
           description: Not Implemented
       summary: List files in a session workspace with git change status
+      tags:
+      - sessions
+  /api/v1/sessions/{sessionId}/workspace/tree:
+    get:
+      operationId: listSessionWorkspaceTree
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      - description: Directory path relative to the session workspace root. Empty
+          or omitted lists the root.
+        in: query
+        name: path
+        schema:
+          description: Directory path relative to the session workspace root. Empty
+            or omitted lists the root.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListWorkspaceTreeResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: List one directory level of a session workspace's full file tree, git-status
+        decorated
       tags:
       - sessions
   /api/v1/sessions/cleanup:
@@ -4800,6 +5303,43 @@ paths:
                 $ref: '#/components/schemas/APIError'
           description: Not Implemented
       summary: Read the daemon-owned user preferences
+      tags:
+      - settings
+  /api/v1/settings/cloud-offering:
+    patch:
+      operationId: updateCloudOffering
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ControllersUpdateCloudOfferingRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SettingsResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Turn the cloud offering on or off for this machine
       tags:
       - settings
   /api/v1/settings/session-interface:
@@ -4997,6 +5537,113 @@ paths:
       summary: Rename a standalone shell terminal tab
       tags:
       - shellTerminals
+  /api/v1/system/install/{target}:
+    get:
+      operationId: getSystemInstallStatus
+      parameters:
+      - description: 'Install target identifier: tmux, gh, claude, codex, opencode,
+          copilot, or cloudflared.'
+        in: path
+        name: target
+        required: true
+        schema:
+          description: 'Install target identifier: tmux, gh, claude, codex, opencode,
+            copilot, or cloudflared.'
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InstallJob'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Get the current or last known install job status for a system target
+      tags:
+      - system
+    post:
+      operationId: startSystemInstall
+      parameters:
+      - description: 'Install target identifier: tmux, gh, claude, codex, opencode,
+          copilot, or cloudflared.'
+        in: path
+        name: target
+        required: true
+        schema:
+          description: 'Install target identifier: tmux, gh, claude, codex, opencode,
+            copilot, or cloudflared.'
+          type: string
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InstallJob'
+          description: Accepted
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Start (or return the already-running) install job for a fixed system
+        target
+      tags:
+      - system
+  /api/v1/system/requirements:
+    get:
+      operationId: getSystemRequirements
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SystemRequirementsResponse'
+          description: OK
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Check local machine readiness (git, tmux, agent harness, gh)
+      tags:
+      - system
   /api/v1/usage/sessions:
     get:
       operationId: listCompactSessionUsage
@@ -5026,7 +5673,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/APIError'
           description: Not Implemented
-      summary: List compact token usage for session cards
+      summary: List compact token and estimated cost usage for session cards
       tags:
       - usage
   /api/v1/usage/sessions/{sessionId}:
@@ -5065,7 +5712,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/APIError'
           description: Not Implemented
-      summary: Get detailed token usage for one session
+      summary: Get detailed token and estimated cost usage for one session
       tags:
       - usage
 components:
@@ -5150,6 +5797,16 @@ components:
           type: string
         label:
           type: string
+        lastUsedAt:
+          description: Creation time of the newest retained session currently attributed
+            to this agent.
+          format: date-time
+          type:
+          - "null"
+          - string
+        usageCount:
+          description: Number of retained sessions currently attributed to this agent.
+          type: integer
       required:
       - id
       - label
@@ -5435,6 +6092,28 @@ components:
       - sessionId
       - reason
       type: object
+    CloneProjectInput:
+      properties:
+        config:
+          $ref: '#/components/schemas/ProjectConfig'
+        destinationParent:
+          minLength: 1
+          type: string
+        name:
+          type:
+          - "null"
+          - string
+        projectId:
+          type:
+          - "null"
+          - string
+        remoteUrl:
+          minLength: 1
+          type: string
+      required:
+      - remoteUrl
+      - destinationParent
+      type: object
     CompactConversationResponse:
       properties:
         tokensAfter:
@@ -5446,18 +6125,33 @@ components:
       type: object
     CompactSessionUsageResponse:
       properties:
+        estimatedCost:
+          anyOf:
+          - type: "null"
+          - $ref: '#/components/schemas/EstimatedCostResponse'
+            type: object
         incomplete:
           type: boolean
+        processedTokens:
+          description: Canonical input plus output. Null when either component is
+            unknown.
+          minimum: 0
+          type:
+          - "null"
+          - integer
         sessionId:
           type: string
         totalTokens:
+          description: Deprecated compatibility alias for processedTokens.
           format: int64
           minimum: 0
           type: integer
       required:
       - sessionId
+      - processedTokens
       - totalTokens
       - incomplete
+      - estimatedCost
       type: object
     ContainerReapConfig:
       properties:
@@ -5543,6 +6237,30 @@ components:
           type: string
         displayName:
           type: string
+        displayStatus:
+          enum:
+          - Working
+          - Blocked
+          - Exited
+          - No signal
+          - Awaiting PR
+          - Fixing CI failures
+          - Addressing comments
+          - Needs review
+          - Review scheduled
+          - Reviewing
+          - Review pending
+          - Draft
+          - CI failing
+          - Commented
+          - Changes requested
+          - Needs human review
+          - Mergeable
+          - Approved
+          - Merged
+          - Closed without merge
+          - Terminated
+          type: string
         harness:
           type: string
         id:
@@ -5553,12 +6271,27 @@ components:
           type: boolean
         issueId:
           type: string
+        kanbanColumn:
+          enum:
+          - building
+          - validating
+          - needs_review
+          - ready
+          - archive
+          type: string
         kind:
           type: string
+        lastUserMessageAt:
+          format: date-time
+          type:
+          - "null"
+          - string
         mode:
           enum:
           - chat
           - tui
+          type: string
+        model:
           type: string
         pinnedAt:
           format: date-time
@@ -5576,6 +6309,8 @@ components:
           items:
             $ref: '#/components/schemas/SessionPRFacts'
           type: array
+        reviewerConfig:
+          $ref: '#/components/schemas/AgentConfig'
         reviewerHarness:
           enum:
           - claude-code
@@ -5654,6 +6389,8 @@ components:
       - updatedAt
       - isPinned
       - status
+      - kanbanColumn
+      - displayStatus
       - prs
       type: object
     ControllersSetSecurePairingRequest:
@@ -5667,6 +6404,15 @@ components:
       properties:
         enabled:
           type: boolean
+      required:
+      - enabled
+      type: object
+    ControllersUpdateCloudOfferingRequest:
+      properties:
+        enabled:
+          type:
+          - "null"
+          - boolean
       required:
       - enabled
       type: object
@@ -5724,6 +6470,7 @@ components:
           enum:
           - running
           - completed
+          - recovered
           - failed
           - cancelled
           - pending
@@ -5742,6 +6489,19 @@ components:
       - status
       - summary
       - createdAt
+      type: object
+    ConversationBranchMaterializationResponse:
+      properties:
+        replayTruncated:
+          type: boolean
+        strategy:
+          enum:
+          - native
+          - approximate_context
+          type: string
+      required:
+      - strategy
+      - replayTruncated
       type: object
     ConversationBranchPointResponse:
       properties:
@@ -6076,6 +6836,8 @@ components:
           items:
             $ref: '#/components/schemas/ConversationActivityResponse'
           type: array
+        branchMaterialization:
+          $ref: '#/components/schemas/ConversationBranchMaterializationResponse'
         branchPoints:
           items:
             $ref: '#/components/schemas/ConversationBranchPointResponse'
@@ -6122,6 +6884,9 @@ components:
           type: string
         modelReroute:
           $ref: '#/components/schemas/ConversationModelReroutePayload'
+        nativeForkAvailableAfterSequence:
+          format: int64
+          type: integer
         oldestSequence:
           format: int64
           type: integer
@@ -6149,6 +6914,7 @@ components:
       - controller
       - latestSequence
       - hasMoreBefore
+      - nativeForkAvailableAfterSequence
       - turns
       - messages
       - activities
@@ -6198,6 +6964,8 @@ components:
           $ref: '#/components/schemas/ConversationTurnDiffResponse'
         errorMessage:
           type: string
+        hasRetryAttempt:
+          type: boolean
         id:
           type: string
         plan:
@@ -6205,6 +6973,8 @@ components:
         providerTurnId:
           type: string
         requestedAt:
+          type: string
+        retryOfTurnId:
           type: string
         rolledBack:
           type: boolean
@@ -6217,8 +6987,10 @@ components:
           - queued
           - running
           - completed
+          - recovered
           - interrupted
           - failed
+          - cancelled
           type: string
       required:
       - id
@@ -6324,9 +7096,17 @@ components:
           - vibe
           - pi
           - kimchi
+          - omp
           - prime-agent
           - autohand
           - fake
+          type: string
+        approvalMode:
+          enum:
+          - default
+          - accept-edits
+          - auto
+          - bypass-permissions
           type: string
         attachments:
           items:
@@ -6360,6 +7140,16 @@ components:
       required:
       - ok
       - workerId
+      type: object
+    DesktopWorkspaceLocationResponse:
+      properties:
+        sessionId:
+          type: string
+        workspacePath:
+          type: string
+      required:
+      - sessionId
+      - workspacePath
       type: object
     DevImportProjectsConflict:
       properties:
@@ -6435,6 +7225,8 @@ components:
       type: object
     DomainReviewerConfig:
       properties:
+        agentConfig:
+          $ref: '#/components/schemas/AgentConfig'
         harness:
           type: string
       required:
@@ -6462,6 +7254,7 @@ components:
           - queued
           - running
           - completed
+          - recovered
           - interrupted
           - failed
           type: string
@@ -6470,6 +7263,78 @@ components:
       required:
       - sourceBranchId
       - activeBranchId
+      type: object
+    EditQueuedConversationMessageRequest:
+      properties:
+        text:
+          type: string
+      required:
+      - text
+      type: object
+    EndpointsResponse:
+      properties:
+        endpoints:
+          items:
+            $ref: '#/components/schemas/MobileEndpoint'
+          type: array
+      required:
+      - endpoints
+      type: object
+    EstimatedCostResponse:
+      properties:
+        cachedInputNanos:
+          format: int64
+          minimum: 0
+          type:
+          - "null"
+          - integer
+        coverage:
+          enum:
+          - complete
+          - partial
+          type: string
+        inputNanos:
+          description: Every non-cache-read input charge, cache writes included.
+          format: int64
+          minimum: 0
+          type:
+          - "null"
+          - integer
+        outputNanos:
+          format: int64
+          minimum: 0
+          type:
+          - "null"
+          - integer
+        providerAttribution:
+          description: Whether contributing billing providers were detected, inferred
+            from model ownership, or both.
+          enum:
+          - observed
+          - inferred
+          - mixed
+          type: string
+        totalNanos:
+          format: int64
+          minimum: 0
+          type: integer
+      required:
+      - totalNanos
+      - inputNanos
+      - cachedInputNanos
+      - outputNanos
+      - coverage
+      - providerAttribution
+      type: object
+    IdentityResponse:
+      properties:
+        apiVersion:
+          type: integer
+        hostId:
+          type: string
+      required:
+      - hostId
+      - apiVersion
       type: object
     ImportReport:
       properties:
@@ -6518,6 +7383,55 @@ components:
           type: string
       required:
       - path
+      type: object
+    InstallJob:
+      properties:
+        command:
+          description: Human-readable install command, e.g. "brew install tmux", for
+            display even before/without output.
+          type: string
+        error:
+          description: 'Set on failure or when the target is unsupported on this machine:
+            the exec error, the Unsupported reason, or a timeout message.'
+          type: string
+        finishedAt:
+          description: Absent until the job finishes.
+          format: date-time
+          type:
+          - "null"
+          - string
+        output:
+          description: Combined stdout+stderr from the install command, tail-capped
+            to the last ~4000 bytes.
+          type: string
+        startedAt:
+          format: date-time
+          type:
+          - "null"
+          - string
+        status:
+          description: Current lifecycle state of the job.
+          enum:
+          - idle
+          - running
+          - succeeded
+          - failed
+          - unsupported
+          type: string
+        target:
+          description: Install target this job ran (or is running) for.
+          enum:
+          - tmux
+          - gh
+          - claude
+          - codex
+          - opencode
+          - copilot
+          - cloudflared
+          type: string
+      required:
+      - target
+      - status
       type: object
     KillReviewResponse:
       properties:
@@ -6670,6 +7584,18 @@ components:
       type: object
     ListWorkspaceFilesResponse:
       properties:
+        ahead:
+          type:
+          - "null"
+          - integer
+        behind:
+          type:
+          - "null"
+          - integer
+        commits:
+          items:
+            $ref: '#/components/schemas/WorkspaceCommitSummary'
+          type: array
         compareBaseRef:
           type: string
         compareBaseSha:
@@ -6683,13 +7609,38 @@ components:
           items:
             $ref: '#/components/schemas/WorkspaceFileSummary'
           type: array
+        sections:
+          $ref: '#/components/schemas/WorkspaceFileSections'
+        sessionId:
+          type: string
+        summary:
+          $ref: '#/components/schemas/WorkspaceSummary'
+        truncated:
+          type: boolean
+      required:
+      - sessionId
+      - files
+      - truncated
+      - sections
+      - commits
+      - summary
+      type: object
+    ListWorkspaceTreeResponse:
+      properties:
+        entries:
+          items:
+            $ref: '#/components/schemas/WorkspaceTreeEntry'
+          type: array
+        path:
+          type: string
         sessionId:
           type: string
         truncated:
           type: boolean
       required:
       - sessionId
-      - files
+      - path
+      - entries
       - truncated
       type: object
     MarkAllNotificationsReadRequest:
@@ -6797,11 +7748,33 @@ components:
       required:
       - devices
       type: object
+    MobileEndpoint:
+      properties:
+        host:
+          type: string
+        kind:
+          type: string
+        port:
+          type: integer
+        secure:
+          type: boolean
+      required:
+      - kind
+      - host
+      - port
+      - secure
+      type: object
     MobileStatusResponse:
       properties:
         enabled:
           type: boolean
+        endpoints:
+          items:
+            $ref: '#/components/schemas/MobileEndpoint'
+          type: array
         host:
+          type: string
+        hostId:
           type: string
         password:
           type: string
@@ -6811,16 +7784,43 @@ components:
           $ref: '#/components/schemas/ControllersSecurePairingStatus'
         tailscaleHost:
           type: string
+        tunnel:
+          $ref: '#/components/schemas/MobileTunnelStatus'
         warning:
           type: string
       required:
       - enabled
+      - endpoints
+      - hostId
+      - tunnel
       - host
       - tailscaleHost
       - port
       - password
       - warning
       - securePairing
+      type: object
+    MobileTunnelStatus:
+      properties:
+        hostname:
+          type: string
+        lastError:
+          type: string
+        location:
+          type: string
+        ready:
+          type: boolean
+        running:
+          type: boolean
+        supported:
+          type: boolean
+      required:
+      - supported
+      - running
+      - ready
+      - hostname
+      - location
+      - lastError
       type: object
     MuteDeviceRequest:
       properties:
@@ -6911,6 +7911,10 @@ components:
         sessionId:
           description: Agent session the shell is scoped to, so it appears only in
             that session's tab strip. Omitted makes it a standalone shell.
+          type: string
+        shell:
+          description: 'Windows shell selector: auto, git-bash, pwsh, powershell,
+            cmd, or a custom executable path. Ignored on macOS and Linux.'
           type: string
       type: object
     OrchestratorResponse:
@@ -7046,6 +8050,8 @@ components:
           type: string
         agentRulesFile:
           type: string
+        autoReview:
+          type: boolean
         containerReap:
           $ref: '#/components/schemas/ContainerReapConfig'
         defaultBranch:
@@ -7228,6 +8234,15 @@ components:
       - sessionId
       - displayName
       type: object
+    ReorderQueuedConversationTurnsRequest:
+      properties:
+        turnIds:
+          items:
+            type: string
+          type: array
+      required:
+      - turnIds
+      type: object
     ResolveCommentsResponse:
       properties:
         ok:
@@ -7317,6 +8332,22 @@ components:
       - sessionId
       - resumeMode
       - session
+      type: object
+    RetryTurnResponse:
+      properties:
+        providerTurnId:
+          type: string
+        state:
+          enum:
+          - queued
+          - running
+          - completed
+          - recovered
+          - interrupted
+          - failed
+          type: string
+        turnId:
+          type: string
       type: object
     ReviewRun:
       properties:
@@ -7444,6 +8475,7 @@ components:
           - queued
           - running
           - completed
+          - recovered
           - interrupted
           - failed
           type: string
@@ -7692,6 +8724,8 @@ components:
           type: string
         line:
           type: integer
+        reviewId:
+          type: string
         url:
           type: string
       required:
@@ -7736,6 +8770,10 @@ components:
           type: string
         hasUnresolvedHumanComments:
           type: boolean
+        resolvedBy:
+          items:
+            $ref: '#/components/schemas/SessionPRUnresolvedReviewer'
+          type: array
         reviews:
           items:
             $ref: '#/components/schemas/SessionPRReviewEntry'
@@ -8085,6 +9123,8 @@ components:
       type: object
     SetSessionReviewerRequest:
       properties:
+        agentConfig:
+          $ref: '#/components/schemas/AgentConfig'
         harness:
           enum:
           - claude-code
@@ -8120,14 +9160,29 @@ components:
           items:
             type: string
           type: array
+        client:
+          type: string
+        cloudControlPlaneUrl:
+          type: string
+        cloudEnabled:
+          type: boolean
+        cloudOffering:
+          type: boolean
         defaultSessionMode:
           enum:
           - chat
           - tui
           type: string
+        localEnabled:
+          type: boolean
       required:
       - defaultSessionMode
       - chatHarnesses
+      - client
+      - localEnabled
+      - cloudOffering
+      - cloudEnabled
+      - cloudControlPlaneUrl
       type: object
     ShellTerminalEnvelope:
       properties:
@@ -8215,6 +9270,7 @@ components:
           - vibe
           - pi
           - kimchi
+          - omp
           - prime-agent
           - autohand
           type: string
@@ -8229,6 +9285,9 @@ components:
           enum:
           - chat
           - tui
+          type: string
+        model:
+          maxLength: 256
           type: string
         projectId:
           type: string
@@ -8404,6 +9463,51 @@ components:
       required:
       - targetHarness
       type: object
+    SystemRequirement:
+      properties:
+        detail:
+          description: 'Extra context: the resolved path when satisfied, or why it
+            is not.'
+          type: string
+        id:
+          description: Stable requirement identifier.
+          enum:
+          - git
+          - tmux
+          - harness
+          - gh
+          type: string
+        label:
+          description: Human-readable requirement name.
+          type: string
+        required:
+          description: Whether this requirement blocks the overall Ready state.
+          type: boolean
+        satisfied:
+          description: Whether this requirement is currently met.
+          type: boolean
+      required:
+      - id
+      - label
+      - satisfied
+      - required
+      type: object
+    SystemRequirementsResponse:
+      properties:
+        ready:
+          description: True iff every requirement with Required=true is satisfied.
+            Requirements with Required=false (e.g. gh) are advisory and never block
+            readiness.
+          type: boolean
+        requirements:
+          description: Individual checks in stable order for the selected probe.
+          items:
+            $ref: '#/components/schemas/SystemRequirement'
+          type: array
+      required:
+      - ready
+      - requirements
+      type: object
     TrackerIntakeConfig:
       properties:
         assignee:
@@ -8420,6 +9524,8 @@ components:
       type: object
     TriggerReviewRequest:
       properties:
+        agentConfig:
+          $ref: '#/components/schemas/AgentConfig'
         harness:
           enum:
           - claude-code
@@ -8535,6 +9641,10 @@ components:
           type: string
         modelId:
           type: string
+        providerId:
+          description: Canonical provider routing hint derived by the trusted local
+            Claude hook.
+          type: string
         subagentId:
           type: string
         subagentTranscriptPath:
@@ -8557,36 +9667,75 @@ components:
     UsageTotalsResponse:
       properties:
         cacheReadTokens:
+          description: Deprecated compatibility alias for cachedInputTokens.
+          minimum: 0
           type:
           - "null"
           - integer
-        cacheWriteTokens:
+        cachedInputTokens:
+          description: Input read from an existing provider cache. Cache hit percentage
+            uses cachedInputTokens divided by inclusive inputTokens.
+          minimum: 0
           type:
           - "null"
           - integer
+        estimatedCost:
+          anyOf:
+          - type: "null"
+          - $ref: '#/components/schemas/EstimatedCostResponse'
+            type: object
         inputTokens:
+          description: Total input, including cached and uncached input.
+          minimum: 0
           type:
           - "null"
           - integer
         outputTokens:
+          description: Total output, including provider-specific subsets such as reasoning
+            output.
+          minimum: 0
           type:
           - "null"
           - integer
-        reasoningTokens:
+        processedTokens:
+          description: Canonical input plus output. Null when either component is
+            unknown.
+          minimum: 0
           type:
           - "null"
           - integer
         uncachedInputTokens:
+          description: Input not read from an existing provider cache. Includes cache
+            writes.
+          minimum: 0
           type:
           - "null"
           - integer
       required:
       - inputTokens
+      - cachedInputTokens
       - uncachedInputTokens
-      - cacheReadTokens
-      - cacheWriteTokens
       - outputTokens
-      - reasoningTokens
+      - processedTokens
+      - cacheReadTokens
+      - estimatedCost
+      type: object
+    WorkspaceCommitSummary:
+      properties:
+        author:
+          type: string
+        sha:
+          type: string
+        subject:
+          type: string
+        timestamp:
+          format: date-time
+          type: string
+      required:
+      - sha
+      - subject
+      - author
+      - timestamp
       type: object
     WorkspaceFileResponse:
       properties:
@@ -8615,6 +9764,8 @@ components:
           type: string
         diffTruncated:
           type: boolean
+        imageMediaType:
+          type: string
         path:
           type: string
         previousPath:
@@ -8645,6 +9796,30 @@ components:
       - contentTruncated
       - diff
       - diffTruncated
+      type: object
+    WorkspaceFileSections:
+      properties:
+        committed:
+          items:
+            $ref: '#/components/schemas/WorkspaceFileSummary'
+          type: array
+        staged:
+          items:
+            $ref: '#/components/schemas/WorkspaceFileSummary'
+          type: array
+        unstaged:
+          items:
+            $ref: '#/components/schemas/WorkspaceFileSummary'
+          type: array
+        untracked:
+          items:
+            $ref: '#/components/schemas/WorkspaceFileSummary'
+          type: array
+      required:
+      - staged
+      - unstaged
+      - untracked
+      - committed
       type: object
     WorkspaceFileSummary:
       properties:
@@ -8692,6 +9867,50 @@ components:
       - relativePath
       - repo
       type: object
+    WorkspaceSummary:
+      properties:
+        additions:
+          type: integer
+        deletions:
+          type: integer
+        files:
+          type: integer
+      required:
+      - files
+      - additions
+      - deletions
+      type: object
+    WorkspaceTreeEntry:
+      properties:
+        binary:
+          type: boolean
+        hasChanges:
+          type: boolean
+        name:
+          type: string
+        path:
+          type: string
+        size:
+          format: int64
+          type: integer
+        status:
+          enum:
+          - unmodified
+          - modified
+          - added
+          - deleted
+          - renamed
+          type: string
+        type:
+          enum:
+          - file
+          - dir
+          type: string
+      required:
+      - name
+      - path
+      - type
+      type: object
 tags:
 - description: Supported and locally runnable agent adapters
   name: agents
@@ -8719,3 +9938,6 @@ tags:
   name: mobile
 - description: Target-isolated desktop browser runtime (loopback only)
   name: browser
+- description: Local machine readiness checks the desktop app runs before showing
+    the board
+  name: system

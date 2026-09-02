@@ -19,6 +19,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apierr"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	aoprocess "github.com/aoagents/agent-orchestrator/backend/internal/process"
+	"github.com/aoagents/agent-orchestrator/backend/internal/reqid"
 )
 
 // Manager is the controller-facing contract for the /api/v1/projects surface.
@@ -32,6 +33,10 @@ type Manager interface {
 
 	// Add registers a new project from a git repository path.
 	Add(ctx context.Context, in AddInput) (Project, error)
+
+	// Clone checks out a remote git repository and registers the resulting
+	// local repository as a project.
+	Clone(ctx context.Context, in CloneInput) (Project, error)
 
 	// InitializeRepository prepares a selected folder for project registration.
 	InitializeRepository(ctx context.Context, in InitializeRepositoryInput) (InitializeRepositoryResult, error)
@@ -230,7 +235,7 @@ func (m *Service) Add(ctx context.Context, in AddInput) (Project, error) {
 		if err := m.store.UpsertWorkspaceProject(ctx, row, repos); err != nil {
 			return Project{}, apierr.Internal("PROJECT_ADD_FAILED", "Failed to register workspace project")
 		}
-		m.emitProjectAdded(row, projectCountBefore == 0)
+		m.emitProjectAdded(ctx, row, projectCountBefore == 0)
 		p := m.projectFromRow(ctx, row)
 		p.WorkspaceRepos = workspaceReposFromRecords(repos)
 		return p, nil
@@ -248,7 +253,7 @@ func (m *Service) Add(ctx context.Context, in AddInput) (Project, error) {
 	if err := m.store.UpsertProject(ctx, row); err != nil {
 		return Project{}, apierr.Internal("PROJECT_ADD_FAILED", "Failed to register project")
 	}
-	m.emitProjectAdded(row, projectCountBefore == 0)
+	m.emitProjectAdded(ctx, row, projectCountBefore == 0)
 	return m.projectFromRow(ctx, row), nil
 }
 
@@ -479,7 +484,7 @@ func (m *Service) activeProjectCount(ctx context.Context) (int, error) {
 	return len(projects), nil
 }
 
-func (m *Service) emitProjectAdded(row domain.ProjectRecord, firstProject bool) {
+func (m *Service) emitProjectAdded(ctx context.Context, row domain.ProjectRecord, firstProject bool) {
 	if m.telemetry == nil {
 		return
 	}
@@ -489,12 +494,18 @@ func (m *Service) emitProjectAdded(row domain.ProjectRecord, firstProject bool) 
 		"kind":           string(row.Kind.WithDefault()),
 		"has_git_remote": row.RepoOriginURL != "",
 	}
+	// Tag the GitHub org so usage can be attributed/ranked by organisation. Only
+	// the owner is derived — never the repo name or full URL.
+	if owner := githubOwner(row.RepoOriginURL); owner != "" {
+		payload["github_org"] = owner
+	}
 	m.telemetry.Emit(context.Background(), ports.TelemetryEvent{
 		Name:       "ao.projects.created",
 		Source:     "project_service",
 		OccurredAt: at,
 		Level:      ports.TelemetryLevelInfo,
 		ProjectID:  &projectID,
+		RequestID:  reqid.FromContext(ctx),
 		Payload:    payload,
 	})
 	if !firstProject {
@@ -506,8 +517,36 @@ func (m *Service) emitProjectAdded(row domain.ProjectRecord, firstProject bool) 
 		OccurredAt: at,
 		Level:      ports.TelemetryLevelInfo,
 		ProjectID:  &projectID,
+		RequestID:  reqid.FromContext(ctx),
 		Payload:    payload,
 	})
+}
+
+// githubOwner extracts the owner/org from a GitHub remote URL, or "" if the
+// remote is empty or not a github.com remote. It returns only the org segment,
+// never the repo name or full path, so telemetry can rank by organisation
+// without shipping the repository identity.
+func githubOwner(remote string) string {
+	r := strings.TrimSpace(remote)
+	if r == "" {
+		return "" //nolint:nlreturn // guard clause; a leading blank line adds no clarity
+	}
+	if rest, ok := strings.CutPrefix(r, "git@github.com:"); ok {
+		return firstSegment(rest)
+	}
+	for _, p := range []string{"https://github.com/", "http://github.com/", "ssh://git@github.com/", "git://github.com/"} {
+		if rest, ok := strings.CutPrefix(r, p); ok {
+			return firstSegment(rest)
+		}
+	}
+	return ""
+}
+
+func firstSegment(s string) string {
+	if i := strings.IndexByte(s, '/'); i > 0 {
+		return s[:i]
+	}
+	return ""
 }
 
 // UpdateSettings atomically replaces the project's stored display name and

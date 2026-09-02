@@ -2,6 +2,7 @@ package conpty
 
 import (
 	"reflect"
+	"slices"
 	"testing"
 )
 
@@ -46,6 +47,52 @@ func TestStripEnvAssignments(t *testing.T) {
 			}
 			if !reflect.DeepEqual(gotRest, tt.wantRest) {
 				t.Errorf("rest = %#v, want %#v", gotRest, tt.wantRest)
+			}
+		})
+	}
+}
+
+func TestInteractiveTerminalEnvDropsAmbientNoColorAndAdvertisesTrueColor(t *testing.T) {
+	env := interactiveTerminalEnv(
+		[]string{"PATH=/usr/bin", "TERM=dumb", "COLORTERM=ansi", "NO_COLOR=1"},
+		map[string]string{"AO_SESSION_ID": "sess-1"},
+		nil,
+	)
+
+	for _, want := range []string{
+		"PATH=/usr/bin",
+		"AO_SESSION_ID=sess-1",
+		"TERM=xterm-256color",
+		"COLORTERM=truecolor",
+	} {
+		if !slices.Contains(env, want) {
+			t.Errorf("env missing %q: %#v", want, env)
+		}
+	}
+	for _, got := range env {
+		if got == "NO_COLOR=1" {
+			t.Fatalf("ambient NO_COLOR leaked into interactive terminal env: %#v", env)
+		}
+	}
+}
+
+func TestInteractiveTerminalEnvPreservesExplicitNoColor(t *testing.T) {
+	for _, tt := range []struct {
+		name        string
+		configured  map[string]string
+		assignments []string
+	}{
+		{name: "runtime config", configured: map[string]string{"NO_COLOR": "1"}},
+		{name: "argv env assignment", assignments: []string{"NO_COLOR=1"}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			env := interactiveTerminalEnv(
+				[]string{"NO_COLOR=ambient"},
+				tt.configured,
+				tt.assignments,
+			)
+			if !slices.Contains(env, "NO_COLOR=1") {
+				t.Fatalf("explicit NO_COLOR not preserved: %#v", env)
 			}
 		})
 	}

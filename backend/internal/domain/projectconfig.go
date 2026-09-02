@@ -63,6 +63,13 @@ type ProjectConfig struct {
 	// opt-out travels with the container at `docker run` time rather than
 	// drifting out of sync with a project-config list.
 	ContainerReap ContainerReapConfig `json:"containerReap,omitempty"`
+
+	// AutoReview controls whether new worker sessions spawned for this project
+	// have automatic PR review enabled by default. The default (false) leaves
+	// sessions with auto-review off; enabling it copies the setting into each
+	// new session at spawn time. Users can still override the per-session toggle
+	// after spawn.
+	AutoReview bool `json:"autoReview,omitempty"`
 }
 
 // ContainerReapConfig is the project-level opt-out for #2652's Docker
@@ -77,7 +84,8 @@ type ContainerReapConfig struct {
 // the reviewer vocabulary (ReviewerHarness), which is distinct from the worker
 // AgentHarness set.
 type ReviewerConfig struct {
-	Harness ReviewerHarness `json:"harness"`
+	Harness     ReviewerHarness `json:"harness"`
+	AgentConfig AgentConfig     `json:"agentConfig,omitempty"`
 }
 
 // FallbackReviewerHarness is the reviewer used when a project configures none
@@ -187,6 +195,9 @@ func (c ProjectConfig) Validate() error {
 	for i, rv := range c.Reviewers {
 		if !rv.Harness.IsKnown() {
 			return fmt.Errorf("reviewers[%d].harness: unknown harness %q", i, rv.Harness)
+		}
+		if err := rv.AgentConfig.Validate(); err != nil {
+			return fmt.Errorf("reviewers[%d].%w", i, err)
 		}
 	}
 	if err := c.TrackerIntake.Validate(); err != nil {

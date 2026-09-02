@@ -186,6 +186,7 @@ export function useFileAttachments() {
 		() => attachmentsRef.current.map((attachment) => attachment.id).join(":"),
 		[],
 	);
+	const hasPendingReads = useCallback(() => pendingReadsRef.current.size > 0, []);
 
 	return {
 		attachments,
@@ -195,5 +196,6 @@ export function useFileAttachments() {
 		clear,
 		toSettledPayload,
 		attachmentSignature,
+		hasPendingReads,
 	};
 }

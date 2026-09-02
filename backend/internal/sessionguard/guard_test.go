@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
@@ -59,7 +60,12 @@ func (m *blockingMessenger) Send(context.Context, domain.SessionID, string) erro
 }
 
 func record(state domain.ActivityState, terminated bool) domain.SessionRecord {
-	return domain.SessionRecord{ID: "s1", IsTerminated: terminated, Activity: domain.Activity{State: state}}
+	return domain.SessionRecord{
+		ID:            "s1",
+		IsTerminated:  terminated,
+		Activity:      domain.Activity{State: state},
+		FirstSignalAt: time.Now(),
+	}
 }
 
 func TestGuard_OutcomeByState(t *testing.T) {
@@ -106,6 +112,61 @@ func TestGuard_OutcomeByState(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestGuard_TUIStartupPendingBlocksDeliver(t *testing.T) {
+	msgr := &fakeMessenger{}
+	rec := domain.SessionRecord{
+		ID:       "s1",
+		Mode:     domain.SessionModeTUI,
+		Activity: domain.Activity{State: domain.ActivityIdle},
+	}
+	g := New(&fakeStore{rec: rec, ok: true}, msgr, nil)
+	g.SetStartupSignalGate(func(domain.AgentHarness) bool { return true })
+
+	got, err := g.Deliver(context.Background(), "s1", "follow-up")
+	if err != nil {
+		t.Fatalf("Deliver: %v", err)
+	}
+	if got != SuppressedStartupPending {
+		t.Fatalf("outcome = %v, want SuppressedStartupPending", got)
+	}
+	if len(msgr.sent) != 0 {
+		t.Fatalf("messenger sends = %d, want 0 before first hook", len(msgr.sent))
+	}
+
+	rec.FirstSignalAt = time.Now()
+	g = New(&fakeStore{rec: rec, ok: true}, msgr, nil)
+	got, err = g.Deliver(context.Background(), "s1", "follow-up")
+	if err != nil {
+		t.Fatalf("Deliver after signal: %v", err)
+	}
+	if got != Sent {
+		t.Fatalf("outcome after signal = %v, want Sent", got)
+	}
+}
+
+func TestGuard_TUIWithoutStartupCapabilityAllowsDelivery(t *testing.T) {
+	msgr := &fakeMessenger{}
+	rec := domain.SessionRecord{
+		ID:       "s1",
+		Harness:  domain.HarnessAider,
+		Mode:     domain.SessionModeTUI,
+		Activity: domain.Activity{State: domain.ActivityIdle},
+	}
+	g := New(&fakeStore{rec: rec, ok: true}, msgr, nil)
+	g.SetStartupSignalGate(func(domain.AgentHarness) bool { return false })
+
+	got, err := g.Deliver(context.Background(), "s1", "follow-up")
+	if err != nil {
+		t.Fatalf("Deliver: %v", err)
+	}
+	if got != Sent {
+		t.Fatalf("outcome = %v, want Sent for adapter without startup capability", got)
+	}
+	if len(msgr.sent) != 1 {
+		t.Fatalf("messenger sends = %d, want 1", len(msgr.sent))
 	}
 }
 

@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { chmodSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import nodePath from "node:path";
 
@@ -28,6 +28,7 @@ type AutoUpdaterMock = {
   checkForUpdates: ReturnType<typeof vi.fn>;
   downloadUpdate: ReturnType<typeof vi.fn>;
   quitAndInstall: ReturnType<typeof vi.fn>;
+  setFeedURL: ReturnType<typeof vi.fn>;
   channel: string;
   allowPrerelease: boolean;
   allowDowngrade: boolean;
@@ -41,6 +42,7 @@ function createAutoUpdaterMock(): AutoUpdaterMock {
     checkForUpdates: vi.fn(() => Promise.resolve()),
     downloadUpdate: vi.fn(() => Promise.resolve()),
     quitAndInstall: vi.fn(),
+    setFeedURL: vi.fn(),
     channel: "",
     allowPrerelease: false,
     allowDowngrade: false,
@@ -202,7 +204,7 @@ describe("startAutoUpdates", () => {
     expect(autoUpdater.checkForUpdates).toHaveBeenCalledTimes(1);
   });
 
-  it("schedules the next automatic check only after the fixed 1-2 hour cadence", async () => {
+  it("keeps stable automatic checks on the hourly cadence", async () => {
     vi.useFakeTimers();
     const setIntervalSpy = vi.spyOn(globalThis, "setInterval");
     const { module, autoUpdater } = await importAutoUpdater();
@@ -219,7 +221,192 @@ describe("startAutoUpdates", () => {
     expect(autoUpdater.checkForUpdates).toHaveBeenCalledTimes(2);
   });
 
-  it("schedules only feature-pin retirement polling when automatic updates are disabled", async () => {
+  it("rechecks the nightly channel within 15 minutes", async () => {
+    vi.useFakeTimers();
+    const setIntervalSpy = vi.spyOn(globalThis, "setInterval");
+    const { module, autoUpdater } = await importAutoUpdater({
+      enabled: true,
+      channel: "nightly",
+      nightlyAck: true,
+      feature: null,
+    });
+
+    await module.startAutoUpdates(stateDir);
+    const { delay } = latestInterval(setIntervalSpy);
+
+    expect(delay).toBe(15 * 60 * 1000);
+    await vi.advanceTimersByTimeAsync(delay - 1);
+    expect(autoUpdater.checkForUpdates).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(1);
+    expect(autoUpdater.checkForUpdates).toHaveBeenCalledTimes(2);
+  });
+
+  it("manual nightly checks resolve the newest completed release without the Atom feed", async () => {
+    const platformManifest =
+      process.platform === "darwin"
+        ? "nightly-mac.yml"
+        : process.platform === "linux"
+          ? "nightly-linux.yml"
+          : "nightly.yml";
+    const resourcesPath = mkdtempSync(
+      nodePath.join(os.tmpdir(), "ao-nightly-feed-"),
+    );
+    writeFileSync(
+      nodePath.join(resourcesPath, "app-update.yml"),
+      "provider: github\nowner: Untrivial-ai\nrepo: agent-orchestrator\n",
+    );
+    const originalResourcesPath = Object.getOwnPropertyDescriptor(
+      process,
+      "resourcesPath",
+    );
+    Object.defineProperty(process, "resourcesPath", {
+      configurable: true,
+      value: resourcesPath,
+    });
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify([
+          {
+            tag_name: "v1.0.1-nightly.202608231518",
+            draft: false,
+            prerelease: true,
+            assets: [{ name: "Agent.Orchestrator.dmg" }],
+          },
+          {
+            tag_name: "v1.0.1-nightly.202608231517",
+            draft: false,
+            prerelease: true,
+            assets: [{ name: platformManifest }],
+          },
+          {
+            tag_name: "v1.0.1-nightly.202608231350",
+            draft: false,
+            prerelease: true,
+            assets: [{ name: platformManifest }],
+          },
+        ]),
+        { status: 200 },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    try {
+      const { module, autoUpdater } = await importAutoUpdater({
+        enabled: true,
+        channel: "nightly",
+        nightlyAck: true,
+        feature: null,
+      });
+
+      await module.checkForUpdatesNow(stateDir);
+
+      expect(fetchMock).toHaveBeenCalledWith(
+        "https://api.github.com/repos/Untrivial-ai/agent-orchestrator/releases?per_page=100",
+        expect.objectContaining({ signal: expect.any(AbortSignal) }),
+      );
+      expect(autoUpdater.setFeedURL).toHaveBeenNthCalledWith(1, {
+        provider: "generic",
+        url: "https://github.com/Untrivial-ai/agent-orchestrator/releases/download/v1.0.1-nightly.202608231517",
+        channel: "nightly",
+        useMultipleRangeRequest: false,
+      });
+      expect(autoUpdater.checkForUpdates).toHaveBeenCalledTimes(1);
+      expect(autoUpdater.setFeedURL).toHaveBeenNthCalledWith(2, {
+        provider: "github",
+        owner: "Untrivial-ai",
+        repo: "agent-orchestrator",
+      });
+    } finally {
+      if (originalResourcesPath) {
+        Object.defineProperty(process, "resourcesPath", originalResourcesPath);
+      } else {
+        Reflect.deleteProperty(process, "resourcesPath");
+      }
+      rmSync(resourcesPath, { recursive: true, force: true });
+    }
+  });
+
+  it("automatic nightly checks resolve the newest completed release without the Atom feed", async () => {
+    const platformManifest =
+      process.platform === "darwin"
+        ? "nightly-mac.yml"
+        : process.platform === "linux"
+          ? "nightly-linux.yml"
+          : "nightly.yml";
+    const resourcesPath = mkdtempSync(
+      nodePath.join(os.tmpdir(), "ao-nightly-feed-"),
+    );
+    writeFileSync(
+      nodePath.join(resourcesPath, "app-update.yml"),
+      "provider: github\nowner: Untrivial-ai\nrepo: agent-orchestrator\n",
+    );
+    const originalResourcesPath = Object.getOwnPropertyDescriptor(
+      process,
+      "resourcesPath",
+    );
+    Object.defineProperty(process, "resourcesPath", {
+      configurable: true,
+      value: resourcesPath,
+    });
+    // The newest entry is still uploading its manifest: the Atom feed would
+    // point electron-updater at it and 404, and the automatic path swallows
+    // that error, so the install would go silently stale (no sidebar row).
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify([
+          {
+            tag_name: "v1.0.1-nightly.202608231518",
+            draft: false,
+            prerelease: true,
+            assets: [{ name: "Agent.Orchestrator.dmg" }],
+          },
+          {
+            tag_name: "v1.0.1-nightly.202608231517",
+            draft: false,
+            prerelease: true,
+            assets: [{ name: platformManifest }],
+          },
+        ]),
+        { status: 200 },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    try {
+      const { module, autoUpdater } = await importAutoUpdater({
+        enabled: true,
+        channel: "nightly",
+        nightlyAck: true,
+        feature: null,
+      });
+
+      await module.startAutoUpdates(stateDir);
+
+      expect(autoUpdater.setFeedURL).toHaveBeenNthCalledWith(1, {
+        provider: "generic",
+        url: "https://github.com/Untrivial-ai/agent-orchestrator/releases/download/v1.0.1-nightly.202608231517",
+        channel: "nightly",
+        useMultipleRangeRequest: false,
+      });
+      expect(autoUpdater.checkForUpdates).toHaveBeenCalledTimes(1);
+      // Later background checks start from the normal provider again.
+      expect(autoUpdater.setFeedURL).toHaveBeenNthCalledWith(2, {
+        provider: "github",
+        owner: "Untrivial-ai",
+        repo: "agent-orchestrator",
+      });
+    } finally {
+      if (originalResourcesPath) {
+        Object.defineProperty(process, "resourcesPath", originalResourcesPath);
+      } else {
+        Reflect.deleteProperty(process, "resourcesPath");
+      }
+      rmSync(resourcesPath, { recursive: true, force: true });
+    }
+  });
+
+  it("checks stable on launch and hourly when automatic downloads are disabled", async () => {
     vi.useFakeTimers();
     const setIntervalSpy = vi.spyOn(globalThis, "setInterval");
     const { module, autoUpdater } = await importAutoUpdater({
@@ -231,12 +418,31 @@ describe("startAutoUpdates", () => {
 
     await module.startAutoUpdates(stateDir);
 
-    expect(autoUpdater.checkForUpdates).not.toHaveBeenCalled();
-    expect(setIntervalSpy).toHaveBeenCalledTimes(1);
-    expect(setIntervalSpy).toHaveBeenCalledWith(
-      expect.any(Function),
-      30 * 60 * 1000,
-    );
+    expect(autoUpdater.autoDownload).toBe(false);
+    expect(autoUpdater.checkForUpdates).toHaveBeenCalledTimes(1);
+    const { delay } = latestInterval(setIntervalSpy);
+    expect(delay).toBe(60 * 60 * 1000);
+    await vi.advanceTimersByTimeAsync(delay);
+    expect(autoUpdater.checkForUpdates).toHaveBeenCalledTimes(2);
+  });
+
+  it("checks nightly every 15 minutes when automatic downloads are disabled", async () => {
+    vi.useFakeTimers();
+    const setIntervalSpy = vi.spyOn(globalThis, "setInterval");
+    const { module, autoUpdater } = await importAutoUpdater({
+      enabled: false,
+      channel: "nightly",
+      nightlyAck: true,
+      feature: null,
+    });
+
+    await module.startAutoUpdates(stateDir);
+
+    expect(autoUpdater.channel).toBe("nightly");
+    expect(autoUpdater.allowPrerelease).toBe(true);
+    expect(autoUpdater.autoDownload).toBe(false);
+    expect(autoUpdater.checkForUpdates).toHaveBeenCalledTimes(1);
+    expect(latestInterval(setIntervalSpy).delay).toBe(15 * 60 * 1000);
   });
 
   it("does not stack periodic automatic or retirement timers across repeated startAutoUpdates calls", async () => {
@@ -328,6 +534,7 @@ describe("startAutoUpdates", () => {
     expect(module.getUpdateStatus()).toEqual({
       state: "available",
       version: "2.0.0",
+      checkedAt: expect.any(Number),
     });
 
     autoUpdater.checkForUpdates.mockImplementationOnce(() => {
@@ -345,6 +552,7 @@ describe("startAutoUpdates", () => {
     expect(module.getUpdateStatus()).toEqual({
       state: "available",
       version: "2.0.0",
+      checkedAt: expect.any(Number),
     });
   });
 
@@ -361,6 +569,7 @@ describe("startAutoUpdates", () => {
     expect(module.getUpdateStatus()).toEqual({
       state: "available",
       version: "2.0.0",
+      checkedAt: expect.any(Number),
     });
 
     autoUpdater.checkForUpdates.mockImplementationOnce(() => {
@@ -373,7 +582,9 @@ describe("startAutoUpdates", () => {
     await flushMicrotasks();
     expect(module.getUpdateStatus()).toEqual({
       state: "downloading",
+      version: "2.1.0",
       percent: 42,
+      checkedAt: expect.any(Number),
     });
 
     updaterEvents.get("error")?.(err);
@@ -387,6 +598,7 @@ describe("startAutoUpdates", () => {
     expect(module.getUpdateStatus()).toEqual({
       state: "available",
       version: "2.0.0",
+      checkedAt: expect.any(Number),
     });
   });
 
@@ -427,6 +639,87 @@ describe("startAutoUpdates", () => {
       stagedAt,
       escalated: false,
     });
+  });
+
+  it("tells the renderer once automatic checks have failed three times over", async () => {
+    const consoleErrorSpy = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => undefined);
+    const { module, autoUpdater, updaterEvents, statusMessages } =
+      await importAutoUpdater();
+    // A manifest 404 on every check: the failure mode that strands a nightly
+    // install. It resets the net:: streak, so only the generic counter sees it.
+    const err = new Error(
+      'Cannot find nightly-mac.yml in the latest release artifacts: HttpError: 404 "method: GET url: https://example.invalid/nightly-mac.yml"',
+    );
+    autoUpdater.checkForUpdates.mockImplementation(() => {
+      updaterEvents.get("error")?.(err);
+      return Promise.resolve();
+    });
+
+    await module.startAutoUpdates(stateDir);
+    await module.startAutoUpdates(stateDir);
+    // Two failures are still a blip: nothing is broadcast at all.
+    expect(statusMessages()).toEqual([]);
+    expect(module.getUpdateStatus().checksFailing).toBeUndefined();
+
+    await module.startAutoUpdates(stateDir);
+
+    // The state stays truthful — the suppressed failure never replaces it —
+    // and the flag rides along so the sidebar can offer a retry.
+    expect(statusMessages().map((message) => message.payload)).toEqual([
+      expect.objectContaining({ state: "idle", checksFailing: true }),
+    ]);
+    expect(module.getUpdateStatus()).toEqual(
+      expect.objectContaining({ state: "idle", checksFailing: true }),
+    );
+    expect(consoleErrorSpy).toHaveBeenCalledWith(
+      "auto-update check failed:",
+      err,
+    );
+  });
+
+  it("announces a failing streak once, not once per failure", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const { module, autoUpdater, updaterEvents, statusMessages } =
+      await importAutoUpdater();
+    autoUpdater.checkForUpdates.mockImplementation(() => {
+      updaterEvents.get("error")?.(new Error("HttpError: 404 nightly-mac.yml"));
+      return Promise.resolve();
+    });
+
+    for (let attempt = 0; attempt < 6; attempt += 1) {
+      await module.startAutoUpdates(stateDir);
+    }
+
+    // Six failures, one announcement: a check every 15 minutes must not become
+    // a status broadcast every 15 minutes.
+    expect(statusMessages()).toHaveLength(1);
+  });
+
+  it("clears the failing-check streak as soon as a check reaches an answer", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const { module, autoUpdater, updaterEvents } = await importAutoUpdater();
+    autoUpdater.checkForUpdates.mockImplementation(() => {
+      updaterEvents.get("error")?.(new Error("HttpError: 404 nightly-mac.yml"));
+      return Promise.resolve();
+    });
+
+    await module.startAutoUpdates(stateDir);
+    await module.startAutoUpdates(stateDir);
+    await module.startAutoUpdates(stateDir);
+    expect(module.getUpdateStatus().checksFailing).toBe(true);
+
+    autoUpdater.checkForUpdates.mockImplementation(() => {
+      updaterEvents.get("update-not-available")?.();
+      return Promise.resolve();
+    });
+    await module.startAutoUpdates(stateDir);
+
+    expect(module.getUpdateStatus()).toEqual(
+      expect.objectContaining({ state: "not-available" }),
+    );
+    expect(module.getUpdateStatus().checksFailing).toBeUndefined();
   });
 
   it("does not overwrite a newer staged escalation when an automatic check fails", async () => {
@@ -516,7 +809,9 @@ describe("startAutoUpdates", () => {
     updaterEvents.get("download-progress")?.({ percent: 64 });
     expect(module.getUpdateStatus()).toEqual({
       state: "downloading",
+      version: "2.2.0",
       percent: 64,
+      checkedAt: expect.any(Number),
     });
 
     updaterEvents.get("error")?.(err);
@@ -532,6 +827,7 @@ describe("startAutoUpdates", () => {
       version: "2.1.0",
       stagedAt,
       escalated: true,
+      checkedAt: expect.any(Number),
     });
   });
 
@@ -614,6 +910,7 @@ describe("startAutoUpdates", () => {
     expect(module.getUpdateStatus()).toEqual({
       state: "error",
       message: "manual feed failed",
+      checkedAt: expect.any(Number),
     });
   });
 
@@ -631,6 +928,7 @@ describe("startAutoUpdates", () => {
       state: "error",
       message:
         "Couldn't check for updates — the update information was not found on the server.",
+      checkedAt: expect.any(Number),
     });
   });
 
@@ -667,6 +965,7 @@ describe("startAutoUpdates", () => {
       state: "error",
       message:
         "Couldn't check for updates — the update information was not found on the server.",
+      checkedAt: expect.any(Number),
     });
   });
 
@@ -725,6 +1024,39 @@ describe("startAutoUpdates", () => {
     );
   });
 
+  it("restores an earlier staged status immediately after the owned manual-check failure", async () => {
+    vi.spyOn(console, "info").mockImplementation(() => undefined);
+    const { module, autoUpdater, updaterEvents, statusMessages } =
+      await importAutoUpdater();
+    const err = new Error(
+      'Cannot find latest-mac.yml in the latest release artifacts (https://github.com/AgentWrapper/agent-orchestrator/releases/download/v0.10.1/latest-mac.yml):\nHttpError: 404 "method: GET url: https://github.com/AgentWrapper/agent-orchestrator/releases/download/v0.10.1/latest-mac.yml"',
+    );
+    autoUpdater.checkForUpdates.mockImplementationOnce(() => {
+      updaterEvents.get("update-downloaded")?.({ version: "2.1.0" });
+      return Promise.resolve();
+    });
+    await module.checkForUpdatesNow(stateDir, {
+      requestId: "earlier-download",
+    });
+
+    autoUpdater.checkForUpdates.mockRejectedValueOnce(err);
+    await module.checkForUpdatesNow(stateDir, {
+      requestId: "manual-update",
+    });
+
+    expect(statusMessages().slice(-2).map((message) => message.payload)).toEqual([
+      expect.objectContaining({
+        state: "error",
+        requestId: "manual-update",
+      }),
+      expect.objectContaining({
+        state: "downloaded",
+        version: "2.1.0",
+        requestId: "earlier-download",
+      }),
+    ]);
+  });
+
   it("still surfaces non-manifest 404 errors", async () => {
     const { module, updaterEvents } = await importAutoUpdater();
     const err = new Error(
@@ -737,6 +1069,7 @@ describe("startAutoUpdates", () => {
     expect(module.getUpdateStatus()).toEqual({
       state: "error",
       message: err.message,
+      checkedAt: expect.any(Number),
     });
   });
 
@@ -750,6 +1083,7 @@ describe("startAutoUpdates", () => {
       state: "error",
       message: "net::ERR_FAILED",
       netError: true,
+      checkedAt: expect.any(Number),
     });
   });
 
@@ -763,6 +1097,7 @@ describe("startAutoUpdates", () => {
       state: "error",
       message: "net::ERR_FAILED",
       netError: true,
+      checkedAt: expect.any(Number),
     });
   });
 
@@ -775,6 +1110,7 @@ describe("startAutoUpdates", () => {
     expect(module.getUpdateStatus()).toEqual({
       state: "error",
       message: "boom",
+      checkedAt: expect.any(Number),
     });
   });
 
@@ -797,6 +1133,7 @@ describe("startAutoUpdates", () => {
     expect(module.getUpdateStatus()).toEqual({
       state: "idle",
       staleCheckNudge: true,
+      checksFailing: true,
     });
   });
 
@@ -813,7 +1150,14 @@ describe("startAutoUpdates", () => {
     await module.startAutoUpdates(stateDir);
     await module.startAutoUpdates(stateDir);
 
-    expect(module.getUpdateStatus()).toEqual({ state: "idle" });
+    // No restart guidance: the network stack was never the problem. The generic
+    // failing-checks flag still trips, because three failed checks in a row
+    // leave the install just as stranded.
+    expect(module.getUpdateStatus().staleCheckNudge).toBeUndefined();
+    expect(module.getUpdateStatus()).toEqual({
+      state: "idle",
+      checksFailing: true,
+    });
   });
 
   it("does not nudge when a non-net failure breaks the net:: streak", async () => {
@@ -840,8 +1184,13 @@ describe("startAutoUpdates", () => {
     await module.startAutoUpdates(stateDir);
 
     // net, net, non-net, net → the streak resets on the non-net failure, so the
-    // lone trailing net error stays below the threshold (#3526).
-    expect(module.getUpdateStatus()).toEqual({ state: "idle" });
+    // lone trailing net error stays below the threshold (#3526). Four failed
+    // checks is still four failed checks, so the generic flag trips.
+    expect(module.getUpdateStatus().staleCheckNudge).toBeUndefined();
+    expect(module.getUpdateStatus()).toEqual({
+      state: "idle",
+      checksFailing: true,
+    });
   });
 
   it("counts one failure when an automatic check both emits error and rejects", async () => {
@@ -863,6 +1212,7 @@ describe("startAutoUpdates", () => {
     expect(module.getUpdateStatus()).toEqual({
       state: "idle",
       staleCheckNudge: true,
+      checksFailing: true,
     });
   });
 
@@ -884,6 +1234,7 @@ describe("startAutoUpdates", () => {
     expect(module.getUpdateStatus()).toEqual({
       state: "idle",
       staleCheckNudge: true,
+      checksFailing: true,
     });
   });
 
@@ -891,8 +1242,8 @@ describe("startAutoUpdates", () => {
     vi.spyOn(console, "error").mockImplementation(() => undefined);
     const { module, autoUpdater, updaterEvents, statusMessages } =
       await importAutoUpdater();
-    // No checking-for-update: there is no prior status to restore, so the
-    // failures produce no status broadcast at all.
+    // No checking-for-update: there is no prior status to restore, so nothing
+    // is broadcast until the streak itself becomes news.
     autoUpdater.checkForUpdates.mockImplementation(() => {
       updaterEvents.get("error")?.(new Error("net::ERR_FAILED"));
       return Promise.resolve();
@@ -902,10 +1253,18 @@ describe("startAutoUpdates", () => {
     await module.startAutoUpdates(stateDir);
     await module.startAutoUpdates(stateDir);
 
-    expect(statusMessages()).toEqual([]);
+    // One broadcast, from crossing the threshold, carrying the unchanged state.
+    expect(statusMessages().map((message) => message.payload)).toEqual([
+      expect.objectContaining({
+        state: "idle",
+        staleCheckNudge: true,
+        checksFailing: true,
+      }),
+    ]);
     expect(module.getUpdateStatus()).toEqual({
       state: "idle",
       staleCheckNudge: true,
+      checksFailing: true,
     });
   });
 
@@ -924,6 +1283,7 @@ describe("startAutoUpdates", () => {
     expect(module.getUpdateStatus()).toEqual({
       state: "idle",
       staleCheckNudge: true,
+      checksFailing: true,
     });
 
     autoUpdater.checkForUpdates.mockImplementation(() => {
@@ -933,7 +1293,7 @@ describe("startAutoUpdates", () => {
     });
     await module.startAutoUpdates(stateDir);
 
-    expect(module.getUpdateStatus()).toEqual({ state: "not-available" });
+    expect(module.getUpdateStatus()).toEqual({ state: "not-available", checkedAt: expect.any(Number) });
   });
 
   it("logs settings failures during automatic checks and retries on later ticks", async () => {
@@ -1202,6 +1562,7 @@ describe("startAutoUpdates", () => {
     expect(module.getUpdateStatus()).toEqual({
       state: "available",
       version: "1.9.0",
+      checkedAt: expect.any(Number),
     });
 
     automaticCheck.resolve();
@@ -1211,6 +1572,7 @@ describe("startAutoUpdates", () => {
       state: "available",
       version: "2.0.0-pr2709.1",
       requestId: "feature-2709",
+      checkedAt: expect.any(Number),
     });
   });
 
@@ -1234,7 +1596,7 @@ describe("startAutoUpdates", () => {
     );
   });
 
-  it("starts and stops the hourly scheduler when settings are enabled at runtime", async () => {
+  it("reconciles the automatic scheduler when settings change at runtime", async () => {
     vi.useFakeTimers();
     const setIntervalSpy = vi.spyOn(globalThis, "setInterval");
     const clearIntervalSpy = vi.spyOn(globalThis, "clearInterval");
@@ -1254,17 +1616,26 @@ describe("startAutoUpdates", () => {
     );
 
     await module.startAutoUpdates(stateDir);
-    expect(setIntervalSpy).toHaveBeenCalledTimes(1);
+    expect(setIntervalSpy).toHaveBeenCalledTimes(2);
 
     await module.setUpdateSettings(stateDir, { ...current, enabled: true });
     expect(setIntervalSpy.mock.calls.map(([, delay]) => delay)).toContain(
       60 * 60 * 1000,
     );
 
+    await module.setUpdateSettings(stateDir, {
+      ...current,
+      channel: "nightly",
+      nightlyAck: true,
+    });
+    expect(latestInterval(setIntervalSpy).delay).toBe(15 * 60 * 1000);
+
     await module.setUpdateSettings(stateDir, { ...current, enabled: false });
     expect(clearIntervalSpy).toHaveBeenCalled();
-    await vi.advanceTimersByTimeAsync(60 * 60 * 1000);
-    expect(autoUpdater.checkForUpdates).not.toHaveBeenCalled();
+    expect(latestInterval(setIntervalSpy).delay).toBe(15 * 60 * 1000);
+    await vi.advanceTimersByTimeAsync(15 * 60 * 1000);
+    expect(autoUpdater.checkForUpdates).toHaveBeenCalledTimes(2);
+    expect(autoUpdater.autoDownload).toBe(false);
   });
 
   it("does not let a stale disabled check clear a concurrently enabled scheduler", async () => {
@@ -1302,7 +1673,7 @@ describe("startAutoUpdates", () => {
     await flushMicrotasks();
 
     await vi.advanceTimersByTimeAsync(60 * 60 * 1000);
-    expect(autoUpdater.checkForUpdates).toHaveBeenCalledTimes(2);
+    expect(autoUpdater.checkForUpdates).toHaveBeenCalledTimes(3);
   });
 
   it("coalesces hourly ticks while an automatic check is still running", async () => {

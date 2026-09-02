@@ -395,18 +395,37 @@ type AgentSwitchTargetActivation struct {
 	ActivatedAt                   time.Time
 }
 
-// AgentSwitchSourceStopConfirmation records the conclusive source-process
+// AgentSwitchSourceStopConfirmation records the conclusive source-controller
 // boundary without transferring ownership. The sessions row remains bound to
-// SourceHarness and ExpectedSourceRuntimeLaunchID, but its activity becomes
-// exited in the same transaction that advances the switch saga.
+// SourceHarness and the source mode's generation fence (runtime launch for TUI,
+// controller generation for Chat), but its activity becomes exited in the same
+// transaction that advances the switch saga.
 type AgentSwitchSourceStopConfirmation struct {
-	SwitchID                      AgentSwitchID
-	SessionID                     SessionID
-	SourceHarness                 AgentHarness
-	SourceGenerationID            AgentGenerationID
-	ExpectedSourceRuntimeLaunchID string
-	TargetGenerationID            AgentGenerationID
-	StoppedAt                     time.Time
+	SwitchID                           AgentSwitchID
+	SessionID                          SessionID
+	SourceMode                         SessionMode
+	SourceHarness                      AgentHarness
+	SourceGenerationID                 AgentGenerationID
+	ExpectedSourceRuntimeLaunchID      string
+	ExpectedSourceControllerGeneration string
+	TargetGenerationID                 AgentGenerationID
+	StoppedAt                          time.Time
+}
+
+// AgentSwitchChatTargetActivation transfers a stopped Chat session to a fresh
+// structured controller. Chat Service has already claimed ControllerGeneration
+// before this command runs, but it has not started consuming provider events.
+type AgentSwitchChatTargetActivation struct {
+	SwitchID               AgentSwitchID
+	SessionID              SessionID
+	SourceHarness          AgentHarness
+	SourceGenerationID     AgentGenerationID
+	TargetHarness          AgentHarness
+	TargetNativeSessionRef AgentNativeSessionID
+	TargetGenerationID     AgentGenerationID
+	ProviderConversationID string
+	ControllerGeneration   string
+	ActivatedAt            time.Time
 }
 
 var (

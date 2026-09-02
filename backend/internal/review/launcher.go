@@ -67,6 +67,7 @@ type LaunchSpec struct {
 	WorkerID        domain.SessionID
 	ProjectID       domain.ProjectID
 	Harness         domain.ReviewerHarness
+	AgentConfig     domain.AgentConfig
 	WorkspacePath   string
 	AgentSessionID  string
 	PreviousRuns    []domain.ReviewRun
@@ -246,6 +247,7 @@ func (l *agentLauncher) invocation(spec LaunchSpec) ports.ReviewInvocation {
 		TargetSHA:       spec.TargetSHA,
 		ReviewQueue:     spec.ReviewQueue,
 		ReviewIndex:     spec.ReviewIndex,
+		Config:          spec.AgentConfig,
 		WorkspacePath:   spec.WorkspacePath,
 		DataDir:         l.dataDir,
 		RunFilePath:     l.runFile,
@@ -320,6 +322,7 @@ func (l *agentLauncher) prepareIdleInvocation(spec LaunchSpec) (ports.ReviewInvo
 		ReviewerID:       reviewerHandleID(spec.WorkerID),
 		WorkerSessionID:  spec.WorkerID,
 		AgentSessionID:   spec.AgentSessionID,
+		Config:           spec.AgentConfig,
 		WorkspacePath:    spec.WorkspacePath,
 		DataDir:          l.dataDir,
 		RunFilePath:      l.runFile,

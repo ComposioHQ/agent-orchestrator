@@ -5,6 +5,7 @@ import {
 	openReviewStatesFor,
 	reviewIsRunning,
 	reviewRunDisabled,
+	reviewRunActionKind,
 	reviewSessionRunAction,
 	sessionReviewsQueryOptions,
 	type PRReviewState,
@@ -68,10 +69,15 @@ const reviewState = (number: number, status: PRReviewState["status"]): PRReviewS
 // merge silently re-forked them — pin the behaviour so a second copy can't drift
 // back in unnoticed.
 describe("shared review eligibility helpers", () => {
-	it("keeps only the review states belonging to a session's open PRs", () => {
-		const target = session({ prs: [pr(1), pr(2, "draft"), pr(3, "merged")] });
-		const states = [reviewState(1, "needs_review"), reviewState(2, "ineligible"), reviewState(3, "up_to_date")];
-		expect(openReviewStatesFor(target, states).map((state) => state.prNumber)).toEqual([1]);
+	it("keeps only the review states belonging to a session's open or draft PRs", () => {
+		const target = session({ prs: [pr(1), pr(2, "draft"), pr(3, "merged"), pr(4, "closed")] });
+		const states = [
+			reviewState(1, "needs_review"),
+			reviewState(2, "needs_review"),
+			reviewState(3, "up_to_date"),
+			reviewState(4, "up_to_date"),
+		];
+		expect(openReviewStatesFor(target, states).map((state) => state.prNumber)).toEqual([1, 2]);
 	});
 
 	it("reports a running review across the session's open PRs", () => {
@@ -99,5 +105,15 @@ describe("shared review eligibility helpers", () => {
 		expect(reviewSessionRunAction([reviewState(1, "needs_review")], false)).toBe(
 			appI18n.t("inspector.review.runLatest"),
 		);
+	});
+
+	// Telemetry reports the action a user took, and it must not depend on the
+	// translated label they happened to see.
+	it("names the offered run action as a stable enum", () => {
+		expect(reviewRunActionKind([reviewState(1, "needs_review")], true)).toBe("reviewing");
+		expect(reviewRunActionKind([reviewState(1, "running")], false)).toBe("reviewing");
+		expect(reviewRunActionKind([reviewState(1, "needs_review")], false)).toBe("run_latest");
+		expect(reviewRunActionKind([reviewState(1, "changes_requested")], false)).toBe("rerun");
+		expect(reviewRunActionKind([], false)).toBe("run");
 	});
 });

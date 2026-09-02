@@ -12,6 +12,12 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
 
+type AgentInventoryCache struct {
+	ID            int64
+	InventoryJson string
+	ObservedAt    time.Time
+}
+
 type AgentModelCatalog struct {
 	AgentID       string
 	ProjectID     string
@@ -63,6 +69,7 @@ type AppSetting struct {
 	ID                 int64
 	DefaultSessionMode domain.SessionMode
 	UpdatedAt          time.Time
+	CloudOffering      int64
 }
 
 type ChangeLog struct {
@@ -141,6 +148,10 @@ type ConversationBranch struct {
 	ReplacementTurnID      sql.NullString
 	ForkAfterSequence      int64
 	CreatedAt              time.Time
+	Strategy               string
+	ReplayCutoffSequence   int64
+	ReplayTruncated        int64
+	ProviderScopeID        string
 }
 
 type ConversationMessage struct {
@@ -189,20 +200,30 @@ type ConversationTurn struct {
 	BranchID             string
 	PromotionStartedAt   sql.NullTime
 	PromotedToTurnID     sql.NullString
+	RetryOfTurnID        sql.NullString
 }
 
 type ModelUsageEvent struct {
-	ID                  int64
-	BindingID           int64
-	UsageSourceID       int64
-	ModelID             string
-	InputTokens         int64
-	UncachedInputTokens int64
-	CacheReadTokens     int64
-	CacheWriteTokens    int64
-	OutputTokens        int64
-	ReasoningTokens     sql.NullInt64
-	SourceEventKey      string
+	ID                    int64
+	BindingID             int64
+	UsageSourceID         int64
+	ProviderID            string
+	BillingProviderID     sql.NullString
+	ModelID               string
+	UsageMeasurementKind  string
+	InputTokens           sql.NullInt64
+	CachedInputTokens     sql.NullInt64
+	UncachedInputTokens   sql.NullInt64
+	OutputTokens          sql.NullInt64
+	ProviderUsageJson     sql.NullString
+	SourceEventKey        string
+	CreatedAt             sql.NullTime
+	InputCostNanos        sql.NullInt64
+	CachedInputCostNanos  sql.NullInt64
+	OutputCostNanos       sql.NullInt64
+	EstimatedCostNanos    sql.NullInt64
+	PricingVersion        string
+	BillingProviderSource sql.NullString
 }
 
 type Notification struct {
@@ -288,6 +309,7 @@ type PRComment struct {
 	URL              string
 	IsBot            int64
 	AutoInjectReview bool
+	ReviewID         string
 }
 
 type PRReview struct {
@@ -401,6 +423,9 @@ type Session struct {
 	AutoInjectCI              bool
 	AutoReviewEnabled         bool
 	AgentSessionIDLaunchID    string
+	Model                     string
+	LatestUserPromptAt        sql.NullTime
+	ReviewerAgentConfig       string
 }
 
 type SessionCleanupFact struct {
@@ -481,6 +506,7 @@ type UsageBinding struct {
 	State          domain.UsageBindingState
 	LastErrorCode  string
 	UpdatedAt      time.Time
+	ProviderHint   string
 }
 
 type UsageCodexPendingChild struct {

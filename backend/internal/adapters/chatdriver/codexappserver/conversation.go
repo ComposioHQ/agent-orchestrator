@@ -110,7 +110,7 @@ func newConversation(proc *process, log *slog.Logger) *conversation {
 		pending:  make(map[string]*parkedRequest),
 		pumpDone: make(chan struct{}),
 	}
-	c.conn = newConn(proc.stdin, proc.stdout, log, c.handleServerRequest)
+	c.conn = newConnAt(proc.stdin, proc.stdout, log, c.handleServerRequest, proc.nextRequestID)
 	return c
 }
 
@@ -126,6 +126,14 @@ func (c *conversation) start(threadID, model, effort string) {
 
 // ProviderConversationID is the Codex thread id AO persists for resume.
 func (c *conversation) ProviderConversationID() string { return c.threadID }
+
+// PreservesProviderOnClose tells the daemon controller that Close only detaches
+// from a host; it must not project provider death or fail in-flight work.
+func (c *conversation) PreservesProviderOnClose() bool { return c.proc.terminate != nil }
+
+// ReconnectedLive distinguishes attachment to the same initialized process from
+// native-history resume in a replacement process.
+func (c *conversation) ReconnectedLive() bool { return c.proc.reconnected }
 
 // Capabilities reports what this conversation can do.
 func (c *conversation) Capabilities() ports.ChatCapabilities { return capabilities() }
@@ -280,6 +288,7 @@ func applyTurnSettings(params map[string]any, settings ports.ChatTurnSettings) {
 		// rather than assumed to be interchangeable.
 		policy, sandbox := approvalSettings(settings.Approval)
 		params["approvalPolicy"] = policy
+		params["approvalsReviewer"] = approvalReviewer(settings.Approval)
 		params["sandboxPolicy"] = turnSandboxPolicy(sandbox)
 	}
 }
@@ -634,7 +643,7 @@ func (c *conversation) handleServerRequest(ctx context.Context, req serverReques
 		return nil, errors.New("server request carried no id")
 	}
 
-	decisions, summary, detail := parseApproval(req.Method, req.Params)
+	decisions, summary, detail, turnID := parseApproval(req.Method, req.Params)
 
 	offered := make(map[string]json.RawMessage, len(decisions))
 	for _, option := range decisions {
@@ -652,6 +661,7 @@ func (c *conversation) handleServerRequest(ctx context.Context, req serverReques
 
 	c.emit(ports.ChatEvent{
 		Kind:           ports.ChatEventApprovalRequested,
+		ProviderTurnID: turnID,
 		ProviderItemID: requestID,
 		RequestID:      requestID,
 		ActivityKind:   kind,
@@ -792,8 +802,24 @@ func (c *conversation) failPendingApprovals() {
 // Close releases the controller without touching provider-side history.
 func (c *conversation) Close() error {
 	c.closeOnce.Do(func() {
-		c.failPendingApprovals()
+		if c.proc.terminate == nil {
+			c.failPendingApprovals()
+		}
 		if c.proc.stop != nil {
+			_ = c.proc.stop()
+		}
+	})
+	return nil
+}
+
+// Terminate destroys the provider host. Close only detaches and is used by
+// daemon-wide shutdown; explicit session/controller replacement calls this.
+func (c *conversation) Terminate() error {
+	c.closeOnce.Do(func() {
+		c.failPendingApprovals()
+		if c.proc.terminate != nil {
+			_ = c.proc.terminate()
+		} else if c.proc.stop != nil {
 			_ = c.proc.stop()
 		}
 	})
@@ -822,10 +848,10 @@ type approvalPayload struct {
 }
 
 // parseApproval extracts the decisions, label, and neutral detail for a request.
-func parseApproval(method string, params json.RawMessage) ([]ports.ChatDecisionOption, string, []byte) {
+func parseApproval(method string, params json.RawMessage) ([]ports.ChatDecisionOption, string, []byte, string) {
 	var p approvalPayload
 	if err := json.Unmarshal(params, &p); err != nil {
-		return nil, "Approval required", nil
+		return nil, "Approval required", nil, ""
 	}
 
 	options := make([]ports.ChatDecisionOption, 0, len(p.AvailableDecisions))
@@ -868,7 +894,7 @@ func parseApproval(method string, params json.RawMessage) ([]ports.ChatDecisionO
 	if err != nil {
 		encoded = nil
 	}
-	return options, summary, encoded
+	return options, summary, encoded, p.TurnID
 }
 
 // decisionOption reads one entry of availableDecisions, which is either a plain
@@ -885,7 +911,9 @@ func decisionOption(raw json.RawMessage) (ports.ChatDecisionOption, bool) {
 		if asString == "" {
 			return ports.ChatDecisionOption{}, false
 		}
-		return ports.ChatDecisionOption{ID: asString, Label: decisionLabel(asString), Raw: raw}, true
+		return ports.ChatDecisionOption{
+			ID: asString, Label: decisionLabel(asString), Kind: codexDecisionKind(asString), Raw: raw,
+		}, true
 	}
 
 	var asObject map[string]json.RawMessage
@@ -893,9 +921,24 @@ func decisionOption(raw json.RawMessage) (ports.ChatDecisionOption, bool) {
 		return ports.ChatDecisionOption{}, false
 	}
 	for key := range asObject {
-		return ports.ChatDecisionOption{ID: key, Label: decisionLabel(key), Raw: raw}, true
+		return ports.ChatDecisionOption{
+			ID: key, Label: decisionLabel(key), Kind: codexDecisionKind(key), Raw: raw,
+		}, true
 	}
 	return ports.ChatDecisionOption{}, false
+}
+
+func codexDecisionKind(id string) ports.ChatDecisionKind {
+	switch id {
+	case "accept":
+		return ports.ChatDecisionAllowOnce
+	case "acceptForSession", "acceptWithExecpolicyAmendment":
+		return ports.ChatDecisionAllowAlways
+	case "decline", "cancel":
+		return ports.ChatDecisionRejectOnce
+	default:
+		return ""
+	}
 }
 
 // decisionLabel gives known decision ids readable text. An unknown id falls back

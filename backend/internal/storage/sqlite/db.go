@@ -134,8 +134,17 @@ func migrate(db *sql.DB) error {
 	if err := repairRenumberedChatMigrationHistory(db); err != nil {
 		return fmt.Errorf("repair renumbered chat migration history: %w", err)
 	}
+	if err := repairRenumberedUsageCostMigrationHistory(db); err != nil {
+		return fmt.Errorf("repair renumbered usage-cost migration history: %w", err)
+	}
+	if err := prepareUsageCostMigration(db); err != nil {
+		return fmt.Errorf("prepare usage cost migration: %w", err)
+	}
 	if err := prepareAutoInjectReviewMigration(db); err != nil {
 		return fmt.Errorf("prepare auto-inject-review migration: %w", err)
+	}
+	if err := preparePRCommentReviewIDMigration(db); err != nil {
+		return fmt.Errorf("prepare PR comment review-id migration: %w", err)
 	}
 	if err := repairRenumberedAgentSwitchMigrationHistory(db); err != nil {
 		return fmt.Errorf("repair renumbered agent-switch migration history: %w", err)
@@ -152,6 +161,9 @@ func migrate(db *sql.DB) error {
 	if err := prepareQueuedTurnPromotionMigration(db); err != nil {
 		return fmt.Errorf("prepare queued-turn promotion migration: %w", err)
 	}
+	if err := prepareSessionReviewerAgentConfigMigration(db); err != nil {
+		return fmt.Errorf("prepare session reviewer agent-config migration: %w", err)
+	}
 	// Builds can advance a database past a migration that is added or
 	// renumbered later (notably across fast-moving Nightly releases). Apply
 	// those embedded migrations instead of permanently wedging daemon startup
@@ -160,6 +172,29 @@ func migrate(db *sql.DB) error {
 		return fmt.Errorf("run migrations: %w", err)
 	}
 	return reconcileSchema(db)
+}
+
+// prepareUsageCostMigration releases a falsely-applied usage migration before
+// 0101 adds columns to its tables. Some field profiles recorded versions
+// 44-53 from a foreign build without ever creating the real 0052 usage schema.
+func prepareUsageCostMigration(db *sql.DB) error {
+	var gooseTable int
+	if err := db.QueryRow(
+		`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'goose_db_version'`,
+	).Scan(&gooseTable); err != nil || gooseTable == 0 {
+		return err
+	}
+	var usageTables int
+	if err := db.QueryRow(`
+SELECT COUNT(*) FROM sqlite_master
+WHERE type = 'table' AND name IN ('usage_bindings', 'usage_sources', 'model_usage_events')`).Scan(&usageTables); err != nil {
+		return err
+	}
+	if usageTables == 3 {
+		return nil
+	}
+	_, err := db.Exec(`DELETE FROM goose_db_version WHERE version_id = 52`)
+	return err
 }
 
 // prepareAutoInjectReviewMigration preserves development databases whose
@@ -203,6 +238,44 @@ SELECT COALESCE((
 	}
 
 	_, err := db.Exec(`INSERT INTO goose_db_version (version_id, is_applied) VALUES (84, 1)`)
+	return err
+}
+
+// preparePRCommentReviewIDMigration preserves development databases that
+// acquired pr_comment.review_id while this migration was being renumbered but
+// do not have its canonical 0106 ledger entry. Recording the physically present
+// effect prevents goose from replaying the ALTER TABLE over the existing column.
+func preparePRCommentReviewIDMigration(db *sql.DB) error {
+	var gooseTable int
+	if err := db.QueryRow(
+		`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'goose_db_version'`,
+	).Scan(&gooseTable); err != nil {
+		return err
+	}
+	if gooseTable == 0 {
+		return nil
+	}
+
+	var applied, reviewIDColumn int
+	if err := db.QueryRow(`
+SELECT COALESCE((
+    SELECT is_applied FROM goose_db_version
+    WHERE version_id = 106 ORDER BY id DESC LIMIT 1
+), 0)`).Scan(&applied); err != nil {
+		return err
+	}
+	if applied != 0 {
+		return nil
+	}
+	if err := db.QueryRow(
+		`SELECT COUNT(*) FROM pragma_table_info('pr_comment') WHERE name = 'review_id'`,
+	).Scan(&reviewIDColumn); err != nil {
+		return err
+	}
+	if reviewIDColumn == 0 {
+		return nil
+	}
+	_, err := db.Exec(`INSERT INTO goose_db_version (version_id, is_applied) VALUES (106, 1)`)
 	return err
 }
 
@@ -250,6 +323,41 @@ SELECT COALESCE((
 // owns both numbers, so record the promotion schema as version 89. If version 88
 // came from the old promotion migration, remove that ledger entry so goose can
 // apply upstream's auto-inject-CI migration at its canonical version.
+// prepareSessionReviewerAgentConfigMigration preserves databases that
+// already have sessions.reviewer_agent_config from an in-flight local run but
+// do not yet record the canonical 0118 migration version. Recording that
+// physically present effect prevents goose from replaying the ALTER TABLE over
+// the existing column on the next startup.
+func prepareSessionReviewerAgentConfigMigration(db *sql.DB) error {
+	var gooseTable int
+	if err := db.QueryRow(
+		`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'goose_db_version'`,
+	).Scan(&gooseTable); err != nil {
+		return err
+	}
+	if gooseTable == 0 {
+		return nil
+	}
+
+	var applied, reviewerConfigColumn int
+	if err := db.QueryRow(`
+SELECT
+    COALESCE((
+        SELECT is_applied FROM goose_db_version
+        WHERE version_id = 118 ORDER BY id DESC LIMIT 1
+    ), 0),
+    (SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name = 'reviewer_agent_config')
+`).Scan(&applied, &reviewerConfigColumn); err != nil {
+		return err
+	}
+	if applied != 0 || reviewerConfigColumn == 0 {
+		return nil
+	}
+
+	_, err := db.Exec(`INSERT INTO goose_db_version (version_id, is_applied) VALUES (118, 1)`)
+	return err
+}
+
 func prepareQueuedTurnPromotionMigration(db *sql.DB) error {
 	tx, err := db.Begin()
 	if err != nil {
@@ -659,6 +767,146 @@ SELECT COALESCE((
 			return err
 		}
 	}
+	return tx.Commit()
+}
+
+// repairRenumberedUsageCostMigrationHistory preserves development databases
+// opened while this feature's migrations occupied 0109-0112 and, later,
+// 0110-0113. Main now owns 0109-0112, while the same usage migrations live at
+// 0113-0116. Record each physically present usage effect at its canonical
+// number, then release only the collided main numbers whose physical effects
+// are absent.
+func repairRenumberedUsageCostMigrationHistory(db *sql.DB) error {
+	var gooseTable int
+	if err := db.QueryRow(
+		`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'goose_db_version'`,
+	).Scan(&gooseTable); err != nil {
+		return err
+	}
+	if gooseTable == 0 {
+		return nil
+	}
+
+	// provider_hint and the durable event pricing columns arrived together in
+	// the first usage-cost migration. Requiring the complete retained shape
+	// avoids rewriting unrelated migration history on databases without it.
+	var costShape int
+	if err := db.QueryRow(`
+SELECT (SELECT COUNT(*) FROM pragma_table_info('usage_bindings') WHERE name = 'provider_hint')
+     + (SELECT COUNT(*) FROM pragma_table_info('model_usage_events') WHERE name = 'billing_provider_id')
+     + (SELECT COUNT(*) FROM pragma_table_info('model_usage_events') WHERE name = 'estimated_cost_nanos')
+     + (SELECT COUNT(*) FROM pragma_table_info('model_usage_events') WHERE name = 'pricing_version')`).Scan(&costShape); err != nil {
+		return err
+	}
+	if costShape != 4 {
+		return nil
+	}
+
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	markApplied := func(version int64) error {
+		var applied int
+		if err := tx.QueryRow(`
+SELECT COALESCE((
+    SELECT is_applied FROM goose_db_version
+    WHERE version_id = ? ORDER BY id DESC LIMIT 1
+), 0)`, version).Scan(&applied); err != nil {
+			return err
+		}
+		if applied != 0 {
+			return nil
+		}
+		_, err := tx.Exec(
+			`INSERT INTO goose_db_version (version_id, is_applied) VALUES (?, 1)`,
+			version,
+		)
+		return err
+	}
+
+	if err := markApplied(113); err != nil {
+		return err
+	}
+	var canonicalIndex int
+	if err := tx.QueryRow(`
+SELECT COUNT(*) FROM sqlite_master
+WHERE type = 'index' AND name = 'idx_model_usage_events_canonical_cost_candidates'`).Scan(&canonicalIndex); err != nil {
+		return err
+	}
+	if canonicalIndex != 0 {
+		if err := markApplied(114); err != nil {
+			return err
+		}
+	}
+
+	var measurementShape int
+	if err := tx.QueryRow(`
+SELECT COUNT(*) FROM pragma_table_info('model_usage_events')
+WHERE name IN ('usage_measurement_kind', 'provider_usage_json')`).Scan(&measurementShape); err != nil {
+		return err
+	}
+	if measurementShape == 2 {
+		if err := markApplied(115); err != nil {
+			return err
+		}
+	}
+
+	var providerSource int
+	if err := tx.QueryRow(`
+SELECT COUNT(*) FROM pragma_table_info('model_usage_events')
+WHERE name = 'billing_provider_source'`).Scan(&providerSource); err != nil {
+		return err
+	}
+	if providerSource != 0 {
+		if err := markApplied(116); err != nil {
+			return err
+		}
+	}
+
+	var latestPromptShape, branchShape, prTriggerShape, cloudShape int
+	if err := tx.QueryRow(`
+SELECT COUNT(*) FROM pragma_table_info('sessions')
+WHERE name = 'latest_user_prompt_at'`).Scan(&latestPromptShape); err != nil {
+		return err
+	}
+	if err := tx.QueryRow(`
+SELECT COUNT(*) FROM pragma_table_info('conversation_branches')
+WHERE name IN ('strategy', 'replay_cutoff_sequence', 'replay_truncated', 'provider_scope_id')`).Scan(&branchShape); err != nil {
+		return err
+	}
+	if err := tx.QueryRow(`
+SELECT COUNT(*) FROM sqlite_master
+WHERE type = 'trigger' AND name = 'pr_cdc_update'
+  AND instr(COALESCE(sql, ''), 'auto_inject_ci') > 0`).Scan(&prTriggerShape); err != nil {
+		return err
+	}
+	if err := tx.QueryRow(`
+SELECT COUNT(*) FROM pragma_table_info('app_settings')
+WHERE name = 'cloud_offering'`).Scan(&cloudShape); err != nil {
+		return err
+	}
+	for _, migration := range []struct {
+		version int64
+		present bool
+	}{
+		{version: 109, present: latestPromptShape != 0},
+		{version: 110, present: branchShape == 4},
+		{version: 111, present: prTriggerShape != 0},
+		{version: 112, present: cloudShape != 0},
+	} {
+		if migration.present {
+			continue
+		}
+		if _, err := tx.Exec(
+			`DELETE FROM goose_db_version WHERE version_id = ?`, migration.version,
+		); err != nil {
+			return err
+		}
+	}
+
 	return tx.Commit()
 }
 

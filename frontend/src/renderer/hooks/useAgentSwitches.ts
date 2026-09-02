@@ -17,9 +17,12 @@ export function isTerminalAgentSwitch(agentSwitch: AgentSwitch): boolean {
 export function agentSwitchNeedsRecovery(agentSwitch: AgentSwitch): boolean {
 	return (
 		agentSwitchNeedsTargetStartRecovery(agentSwitch) ||
-		agentSwitchNeedsSourceStopRecovery(agentSwitch) ||
-		agentSwitchNeedsSourceRestore(agentSwitch)
+		agentSwitchNeedsSourceRecovery(agentSwitch)
 	);
+}
+
+export function agentSwitchNeedsSourceRecovery(agentSwitch: AgentSwitch): boolean {
+	return agentSwitchNeedsSourceStopRecovery(agentSwitch) || agentSwitchNeedsSourceRestore(agentSwitch);
 }
 
 export function agentSwitchNeedsTargetStartRecovery(agentSwitch: AgentSwitch): boolean {
@@ -47,8 +50,29 @@ export function findRecoveryRequiredAgentSwitch(agentSwitches: AgentSwitch[]): A
 	return agentSwitches.find(agentSwitchNeedsRecovery);
 }
 
+// Selects the durable switch that owns the session interaction lock. The
+// workspace snapshot is fastest, while the switch-history query survives a
+// renderer reload and carries recovery details that the compact summary may not
+// have observed yet.
+export function selectDurableAgentSwitch(
+	sessionAgentSwitch: AgentSwitchSummary | undefined,
+	agentSwitches: AgentSwitch[],
+): AgentSwitch | undefined {
+	const detailed = sessionAgentSwitch
+		? agentSwitches.find((entry) => entry.id === sessionAgentSwitch.id)
+		: undefined;
+	return (
+		detailed ??
+		sessionAgentSwitch ??
+		findRecoveryRequiredAgentSwitch(agentSwitches) ??
+		findActiveAgentSwitch(agentSwitches)
+	);
+}
+
 export function agentSwitchesRefetchInterval(agentSwitches: AgentSwitch[]): 1_000 | false {
-	return findActiveAgentSwitch(agentSwitches) ? 1_000 : false;
+	return findActiveAgentSwitch(agentSwitches) || agentSwitches.some(agentSwitchNeedsSourceRecovery)
+		? 1_000
+		: false;
 }
 
 async function fetchAgentSwitches(sessionId: string): Promise<AgentSwitch[]> {
@@ -66,9 +90,9 @@ export function useAgentSwitches(sessionId: string) {
 		queryKey: agentSwitchesQueryKey(sessionId),
 		enabled: Boolean(sessionId),
 		queryFn: () => (usesPreviewWorkspaceData ? Promise.resolve([]) : fetchAgentSwitches(sessionId)),
-		// Once a durable saga is active, keep its phase fresh even if the CDC
-		// connection is temporarily unavailable. Recovery-required records are
-		// intentionally static until an external recovery changes them.
+		// Keep active sagas fresh even if the CDC connection is temporarily
+		// unavailable. Source-recovery endpoints accept work asynchronously, so
+		// those recovery rows must also poll until their worker settles.
 		refetchInterval: (query) =>
 			agentSwitchesRefetchInterval((query.state.data as AgentSwitch[] | undefined) ?? []),
 		retry: 1,

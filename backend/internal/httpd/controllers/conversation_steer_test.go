@@ -54,12 +54,36 @@ func (f *fakeConversationService) PromoteQueuedTurn(
 	return chatsvc.PromoteQueuedTurnResult{}, nil
 }
 
+func (f *fakeConversationService) CancelQueuedTurn(context.Context, domain.SessionID, string) error {
+	return nil
+}
+
+func (f *fakeConversationService) EditQueuedTurn(context.Context, domain.SessionID, string, string) error {
+	return nil
+}
+
+func (f *fakeConversationService) ReorderQueuedTurns(context.Context, domain.SessionID, []string) error {
+	return nil
+}
+
 func (f *fakeChatService) PromoteQueuedTurn(
 	context.Context,
 	domain.SessionID,
 	string,
 ) (chatsvc.PromoteQueuedTurnResult, error) {
 	return chatsvc.PromoteQueuedTurnResult{}, nil
+}
+
+func (f *fakeChatService) CancelQueuedTurn(context.Context, domain.SessionID, string) error {
+	return nil
+}
+
+func (f *fakeChatService) EditQueuedTurn(context.Context, domain.SessionID, string, string) error {
+	return nil
+}
+
+func (f *fakeChatService) ReorderQueuedTurns(context.Context, domain.SessionID, []string) error {
+	return nil
 }
 
 type promoteQueuedStub struct {
@@ -188,6 +212,27 @@ func TestSteerRouteAcceptsGuidanceAndNamesTheTurn(t *testing.T) {
 	// way rather than as something the daemon said.
 	if svc.seen[0].Origin != domain.MessageOriginHuman {
 		t.Errorf("origin = %q, want human", svc.seen[0].Origin)
+	}
+}
+
+func TestSteerRouteRejectsInvalidAttachmentBeforeCallingService(t *testing.T) {
+	svc := &steerStub{fakeConversationService: &fakeConversationService{}}
+	status, _, failure := postSteer(t, svc, map[string]any{
+		"text": "inspect this",
+		"attachments": []map[string]string{{
+			"mimeType": "image/svg+xml",
+			"data":     "PHN2Zy8+",
+		}},
+	})
+
+	if status != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", status)
+	}
+	if failure.Kind != "validation" || failure.Code != "UNSUPPORTED_ATTACHMENT_TYPE" {
+		t.Errorf("error = %#v, want validation/UNSUPPORTED_ATTACHMENT_TYPE", failure)
+	}
+	if len(svc.seen) != 0 {
+		t.Fatalf("service saw %d steers, want 0", len(svc.seen))
 	}
 }
 

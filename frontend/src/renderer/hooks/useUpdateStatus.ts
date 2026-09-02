@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { UpdateStatus } from "../../main/update-settings";
 import { aoBridge } from "../lib/bridge";
 
@@ -12,14 +12,21 @@ import { aoBridge } from "../lib/bridge";
  * the main process suppresses them for automatic checks. Update telemetry is
  * owned by the main process and subscribed once in lib/update-telemetry.ts.
  */
-export function useUpdateStatus(): UpdateStatus {
+export function useUpdateStatus(onStatusEvent?: (status: UpdateStatus) => void): UpdateStatus {
 	const [status, setStatus] = useState<UpdateStatus>({ state: "idle" });
+	const onStatusEventRef = useRef(onStatusEvent);
+	onStatusEventRef.current = onStatusEvent;
 	useEffect(() => {
 		let live = true;
 		void aoBridge.updates.getStatus().then((s) => {
-			if (live) setStatus(s);
+			if (!live) return;
+			onStatusEventRef.current?.(s);
+			setStatus(s);
 		});
-		const off = aoBridge.updates.onStatus(setStatus);
+		const off = aoBridge.updates.onStatus((next) => {
+			onStatusEventRef.current?.(next);
+			setStatus(next);
+		});
 		return () => {
 			live = false;
 			off?.();
