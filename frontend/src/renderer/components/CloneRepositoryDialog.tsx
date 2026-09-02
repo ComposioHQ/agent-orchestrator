@@ -1,6 +1,7 @@
 import * as Dialog from "@radix-ui/react-dialog";
-import { ChevronLeft, Folder, Link2, X } from "lucide-react";
-import { type FormEvent, useEffect, useState } from "react";
+import { ChevronLeft, Folder, Link2, LoaderCircle, X } from "lucide-react";
+import { AnimatePresence, motion } from "motion/react";
+import { type FormEvent, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { aoBridge } from "../lib/bridge";
 import { Button } from "./ui/button";
@@ -43,6 +44,8 @@ export default function CloneRepositoryDialog({
 }) {
 	const { t } = useTranslation();
 	const [submitted, setSubmitted] = useState(false);
+	const [repositoryCheck, setRepositoryCheck] = useState<"idle" | "checking" | "valid" | "invalid">("idle");
+	const repositoryCheckRequest = useRef(0);
 	const [choosingDestination, setChoosingDestination] = useState(false);
 	const [destinationPickerError, setDestinationPickerError] = useState<string | null>(null);
 	const repositoryName = repositoryNameFromGitUrl(value.remoteUrl);
@@ -57,9 +60,39 @@ export default function CloneRepositoryDialog({
 			(targetPath && existingProjectPaths.some((path) => sameProjectPath(path, targetPath)))),
 	);
 	const urlError = hasRemoteUrl && !repositoryName ? t("createProject.cloneInvalidUrl") : null;
+	const repositoryAccessError = repositoryName && repositoryCheck === "invalid"
+		? t("createProject.cloneRepositoryUnavailable", {
+				defaultValue: "This isn't a repository or you don't have access",
+			})
+		: null;
 	const duplicateError = repositoryName && projectExists ? t("createProject.cloneProjectExists") : null;
+	const inlineRepositoryError = urlError ?? repositoryAccessError ?? duplicateError;
 	const destinationError = submitted && !value.destinationParent ? t("createProject.cloneDestinationRequired") : null;
-	const canContinue = Boolean(repositoryName && value.destinationParent && !projectExists && !disabled && !choosingDestination);
+	const canContinue = Boolean(
+		repositoryName &&
+		repositoryCheck === "valid" &&
+		value.destinationParent &&
+		!projectExists &&
+		!disabled &&
+		!choosingDestination,
+	);
+
+	useEffect(() => {
+		const requestId = ++repositoryCheckRequest.current;
+		if (!repositoryName) {
+			setRepositoryCheck("idle");
+			return;
+		}
+		setRepositoryCheck("checking");
+		const timer = window.setTimeout(() => {
+			void aoBridge.app.checkGitRepository(value.remoteUrl.trim()).then((exists) => {
+				if (requestId === repositoryCheckRequest.current) setRepositoryCheck(exists ? "valid" : "invalid");
+			}).catch(() => {
+				if (requestId === repositoryCheckRequest.current) setRepositoryCheck("invalid");
+			});
+		}, 300);
+		return () => window.clearTimeout(timer);
+	}, [repositoryName, value.remoteUrl]);
 
 	const chooseDestination = async () => {
 		setDestinationPickerError(null);
@@ -135,40 +168,49 @@ export default function CloneRepositoryDialog({
 							) : null}
 
 							<div className="space-y-2">
-								<Label htmlFor="cloneRepositoryUrl" className="text-[13px] font-semibold text-[var(--color-text-import-title)]">
-									{t("createProject.cloneRepositoryUrl")}
-								</Label>
+								<div className="relative">
+									<Label htmlFor="cloneRepositoryUrl" className="text-[13px] font-semibold text-[var(--color-text-import-title)]">
+										{t("createProject.cloneRepositoryUrl")}
+									</Label>
+									<AnimatePresence initial={false}>
+										{inlineRepositoryError ? (
+											<motion.p
+												key={urlError ? "repository-url-error" : repositoryAccessError ? "repository-access-error" : "duplicate-project-error"}
+												initial={{ opacity: 0, filter: "blur(2px)" }}
+												animate={{ opacity: 1, filter: "blur(0px)" }}
+												exit={{ opacity: 0, filter: "blur(2px)" }}
+												transition={{ duration: 0.15, ease: "easeOut" }}
+												className="absolute right-0 top-0 max-w-[65%] truncate overflow-hidden whitespace-nowrap text-right text-[12px] leading-5 text-destructive"
+												role="alert"
+											>
+												{inlineRepositoryError}
+											</motion.p>
+										) : null}
+									</AnimatePresence>
+								</div>
 								<div className="relative">
 									<Input
 										id="cloneRepositoryUrl"
 										autoFocus
 										autoCapitalize="none"
 										autoComplete="off"
-										aria-describedby={urlError ? "cloneRepositoryUrlError" : "cloneRepositoryUrlHelp"}
-										aria-invalid={urlError ? true : undefined}
-										className="bg-[var(--color-bg-import-card)] pl-10 font-mono text-[13px]"
+										aria-describedby="cloneRepositoryUrlHelp"
+										aria-invalid={urlError || repositoryAccessError || duplicateError ? true : undefined}
+										className="bg-[var(--color-bg-import-card)] pl-10 pr-10 font-mono text-[13px]"
 										disabled={disabled}
 										placeholder={t("createProject.cloneRepositoryUrlPlaceholder")}
 										spellCheck={false}
 										value={value.remoteUrl}
 										onChange={(event) => onChange({ ...value, remoteUrl: event.target.value })}
 									/>
+									{repositoryCheck === "checking" ? (
+										<LoaderCircle className="pointer-events-none absolute right-3 top-1/2 size-4 -translate-y-1/2 animate-spin text-muted-foreground" aria-label={t("createProject.cloneCheckingRepository", { defaultValue: "Checking repository" })} />
+									) : null}
 									<RepositoryOwnerIcon owner={repositoryAvatar?.owner ?? null} avatarUrl={repositoryAvatar?.url ?? null} />
 								</div>
-								{urlError ? (
-									<p id="cloneRepositoryUrlError" className="text-pretty text-[12px] leading-5 text-destructive" role="alert">
-										{urlError}
-									</p>
-								) : (
-									<span id="cloneRepositoryUrlHelp" className="sr-only">
-										{t("createProject.cloneRepositoryUrlHelp")}
-									</span>
-								)}
-								{duplicateError ? (
-									<p className="text-pretty text-[12px] leading-5 text-destructive" role="alert">
-										{duplicateError}
-									</p>
-								) : null}
+								<span id="cloneRepositoryUrlHelp" className="sr-only">
+									{t("createProject.cloneRepositoryUrlHelp")}
+								</span>
 							</div>
 
 							<div className="space-y-2">
