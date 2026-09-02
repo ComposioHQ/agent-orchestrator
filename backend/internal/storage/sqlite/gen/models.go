@@ -546,6 +546,8 @@ type Session struct {
 	Model                     string
 	LatestUserPromptAt        sql.NullTime
 	ReviewerAgentConfig       string
+	ArtifactDir               string
+	SessionOutputType         string
 }
 
 type SessionCleanupFact struct {
