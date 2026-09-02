@@ -82,6 +82,7 @@ export function CreateProjectFlow({
 	const [error, setError] = useState<string | null>(null);
 	const [modePickerOpen, setModePickerOpen] = useState(false);
 	const [cloneDialogOpen, setCloneDialogOpen] = useState(false);
+	const [cloneDialogClosing, setCloneDialogClosing] = useState(false);
 	const [cloneDetails, setCloneDetails] = useState<CloneRepositoryDetails>(() => ({
 		remoteUrl: "",
 		destinationParent:
@@ -364,7 +365,7 @@ export function CreateProjectFlow({
 						}}
 						onSelect={selectSource}
 					/>
-					{cloneDialogOpen ? (
+					{cloneDialogOpen || cloneDialogClosing ? (
 						<CloneRepositoryDialog
 							disabled={isBusy}
 							error={error}
@@ -384,11 +385,18 @@ export function CreateProjectFlow({
 							onContinue={(next) => {
 								setCloneSelection(next);
 								setSelectedKind("single_repo");
-								setSelectedPath(next.targetPath);
 								setModePickerOpen(false);
 								setCloneDialogOpen(false);
+								setCloneDialogClosing(true);
+								setChildTransitioning(true);
+								setCloneDialogOpen(false);
+								window.setTimeout(() => {
+									setCloneDialogClosing(false);
+									setSelectedPath(next.targetPath);
+									setChildTransitioning(false);
+								}, 80);
 							}}
-							open
+							open={cloneDialogOpen}
 							value={cloneDetails}
 						/>
 					) : null}
