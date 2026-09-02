@@ -1,22 +1,42 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import { ArrowUpRight, Check, Copy, Loader2, RotateCcw } from "lucide-react";
 import { apiClient, apiErrorMessage } from "../../lib/api-client";
 import { aoBridge } from "../../lib/bridge";
 import { captureRendererEvent } from "../../lib/telemetry";
-import { ANDROID_PLAY_STORE_URL, TESTFLIGHT_URL } from "./ConnectMobileGetApp";
+import { ANDROID_PLAY_STORE_URL, IOS_APP_STORE_URL } from "./ConnectMobileGetApp";
 import { reasonMessage, type SetupMode } from "./ConnectMobileSetup";
-import { SettingsOptionMenu, type SettingsOption } from "./SettingsOptionMenu";
+// Returns with the commented-out connection picker below.
+// import { SettingsOptionMenu, type SettingsOption } from "./SettingsOptionMenu";
 import { StyledQRCode } from "./StyledQRCode";
 import { PairingQr } from "./PairingQr";
 import { InstallCloudflared } from "./InstallCloudflared";
 import { Button } from "../ui/button";
-import { Switch } from "../ui/switch";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
 
 const QR_CODE_SIZE = 204;
-const TESTFLIGHT_QR_SIZE = 140;
+const STORE_QR_SIZE = 140;
+
+const STORE_LINKS = [
+	{
+		key: "ios",
+		Icon: AppleIcon,
+		url: IOS_APP_STORE_URL,
+		labelKey: "mobile.ios",
+		ariaKey: "mobile.iosStoreAria",
+		testId: "ios-store-qr",
+	},
+	{
+		key: "android",
+		Icon: AndroidIcon,
+		url: ANDROID_PLAY_STORE_URL,
+		labelKey: "mobile.android",
+		ariaKey: "mobile.androidSignupAria",
+		testId: "android-play-qr",
+	},
+] as const;
+
 
 import {
 	buildPairingOffer,
@@ -128,8 +148,6 @@ const PAIRING_LINK_BASE = "aomobile://pair";
  *  real pairing payload so a sneaky scan through the blur gets nothing. */
 const PLACEHOLDER_QR_VALUE = "agent-orchestrator";
 
-type MobilePlatform = "ios" | "android";
-
 function AppleIcon({ className }: { className?: string }) {
 	return (
 		<svg aria-hidden="true" className={className} fill="currentColor" viewBox="0 0 384 512">
@@ -146,8 +164,8 @@ function AndroidIcon({ className }: { className?: string }) {
 	);
 }
 
-/** Trailing "Join now ↗" link at the end of a walkthrough step. Border-bottom
- *  instead of text-decoration so the underline runs under the arrow too. */
+/** Trailing store link at the end of a walkthrough step. Border-bottom instead
+ *  of text-decoration so the underline runs under the arrow too. */
 const STEP_LINK_CLASS =
 	"inline-flex items-center gap-0.5 border-b border-[color-mix(in_oklch,var(--color-settings-label)_45%,transparent)] align-baseline text-settings-label transition-colors hover:border-current hover:text-settings-title";
 
@@ -198,22 +216,15 @@ export function ConnectMobileContent({ active }: { active: boolean }) {
 	const queryClient = useQueryClient();
 	const [copied, setCopied] = useState(false);
 	const copiedTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-	const [platform, setPlatform] = useState<MobilePlatform>("ios");
+	// Pinned to "lan" while the connection picker below is commented out.
+	// setMode is still called by the close-reset effect.
 	const [mode, setMode] = useState<SetupMode>("lan");
-	const platformOptions = [
-		{ value: "ios", label: t("mobile.ios"), icon: <AppleIcon className="size-4 shrink-0 !text-settings-title" /> },
-		{ value: "android", label: t("mobile.android"), icon: <AndroidIcon className="size-4 shrink-0 !text-settings-title" /> },
-	] satisfies SettingsOption<MobilePlatform>[];
+	/*
 	const modeOptions = [
 		{ value: "lan", label: t("mobile.lan") },
 		{ value: "tailscale", label: t("mobile.tailscale") },
 	] satisfies SettingsOption<SetupMode>[];
-	const renderPlatformOption = (option: SettingsOption<MobilePlatform>) => (
-		<span className="flex min-w-0 items-center gap-1.5">
-			<span className="flex w-5 shrink-0 justify-center">{option.icon}</span>
-			<span className="min-w-0">{option.label}</span>
-		</span>
-	);
+	*/
 
 	useEffect(() => {
 		return () => {
@@ -290,6 +301,32 @@ export function ConnectMobileContent({ active }: { active: boolean }) {
 		},
 		onSuccess: invalidate,
 	});
+
+	// TLS turns itself on wherever Tailscale exists — it is not a switch, and it
+	// is deliberately not tied to the connection picker. iOS refuses cleartext
+	// to a 100.x address, so a Tailscale pairing without it works on Android and
+	// fails on iPhone with nothing on either side to say why. Keying this to a
+	// UI mode would mean hiding that picker also silently disables TLS, which is
+	// the opposite of what a hidden control should do.
+	//
+	// secureAttempted keeps it to one attempt per panel session: a tailnet with
+	// no certificates fails every time, and retrying on each status poll would
+	// hammer the daemon. secureReasonText surfaces the failure; reopening the
+	// panel is the retry.
+	const secureAttempted = useRef(false);
+	useEffect(() => {
+		if (!active) {
+			secureAttempted.current = false;
+			return;
+		}
+		// No tailnet address on this machine means nothing for TLS to serve.
+		if (!query.data?.tailscaleHost) return;
+		const secure = query.data?.securePairing;
+		if (!secure || secure.enabled || !secure.available) return;
+		if (secureAttempted.current || setSecure.isPending) return;
+		secureAttempted.current = true;
+		setSecure.mutate(true);
+	}, [active, query.data?.tailscaleHost, query.data?.securePairing, setSecure]);
 
 	const status = query.data;
 	const enabled = status?.enabled ?? false;
@@ -388,20 +425,17 @@ export function ConnectMobileContent({ active }: { active: boolean }) {
 			<p className="text-xs leading-4 text-settings-muted">{t("mobile.description")}</p>
 
 			<div className="flex flex-col gap-6 sm:flex-row sm:items-start">
-				{/* Left: platform + connection pickers above one combined walkthrough. */}
+				{/* Left: the walkthrough. */}
 				<div className="flex min-w-0 flex-1 flex-col">
+					{/* Connection picker commented out: one v2 code carries every
+					    advertised endpoint — LAN, Tailscale and tunnel — and the phone
+					    races them, so the mode never changed what a scan produces. TLS
+					    is enabled off the tailnet address rather than this control (see
+					    the effect above), so hiding it does not disable secure pairing.
+					    What it does take off-screen is Tailscale's setup step and the
+					    address/password rows for the tailnet host. */}
+					{/*
 					<div className="flex flex-nowrap items-center gap-2">
-						<SettingsOptionMenu
-							aria-label={t("mobile.getApp")}
-							value={platform}
-							options={platformOptions}
-							onChange={setPlatform}
-							triggerClassName="w-44 justify-between"
-							renderMenuItem={renderPlatformOption}
-							renderTrigger={(selected) => selected && renderPlatformOption(selected)}
-							menuClassName="!w-44 !min-w-0"
-							menuAlign="start"
-						/>
 						<SettingsOptionMenu
 							aria-label={t("mobile.connectionMethod")}
 							value={mode}
@@ -412,67 +446,44 @@ export function ConnectMobileContent({ active }: { active: boolean }) {
 							menuAlign="start"
 						/>
 					</div>
+					*/}
 
-					{/* One walkthrough per platform × connection combo. Steps are plain
-					    text with a trailing "Join now ↗" link; address/password join
-					    the list once the QR is generated. */}
+					{/* One walkthrough per connection method. Steps are plain text with
+					    trailing store links; address/password join the list once the QR
+					    is generated. */}
 					<ol className="settings-mobile-steps mt-4 !text-[13px] !leading-6 !text-[color-mix(in_oklch,var(--color-settings-label)_75%,var(--color-text-settings-muted))]">
-						{platform === "ios" ? (
-							<>
-								<li>{t("mobile.ios.step1")}</li>
-								<li>
-									{t("mobile.ios.step2")}{" "}
+						{/* Both stores are a public one-tap listing now, so the step names
+						    both rather than making people pick a platform first — the
+						    choice only ever selected which of these two links to show. */}
+						<li>
+							{t("mobile.getApp.step1")}{" "}
+							{STORE_LINKS.map(({ key, Icon, url, labelKey, ariaKey, testId }, index) => (
+								<Fragment key={key}>
+									{index > 0 ? <span className="mx-1 text-settings-muted">{t("mobile.getApp.or")}</span> : null}
 									<Tooltip>
 										<TooltipTrigger asChild>
 											<button
 												type="button"
 												className={STEP_LINK_CLASS}
-												aria-label={t("mobile.joinTestFlightAria")}
-												onClick={() => void aoBridge.app.openExternal(TESTFLIGHT_URL)}
+												aria-label={t(ariaKey)}
+												onClick={() => void aoBridge.app.openExternal(url)}
 											>
-												{t("mobile.scanTestFlight")}
+												<Icon className="size-3.5 shrink-0" />
+												{t(labelKey)}
 												<ArrowUpRight className="size-3.5" aria-hidden="true" />
 											</button>
 										</TooltipTrigger>
-										<TooltipContent side="bottom" className="p-2" data-testid="testflight-qr">
+										<TooltipContent side="bottom" className="p-2" data-testid={testId}>
 											<div className="rounded-md bg-(--color-bg-settings-input) p-2">
-												<StyledQRCode value={TESTFLIGHT_URL} size={TESTFLIGHT_QR_SIZE} showLogo={false} className="block" />
+												<StyledQRCode value={url} size={STORE_QR_SIZE} showLogo={false} className="block" />
 											</div>
 										</TooltipContent>
 									</Tooltip>
-								</li>
-							</>
-						) : (
-							<>
-								<li>
-									{t("mobile.android.step1")}{" "}
-									<Tooltip>
-										<TooltipTrigger asChild>
-											<button
-												type="button"
-												className={STEP_LINK_CLASS}
-												aria-label={t("mobile.androidSignupAria")}
-												onClick={() => void aoBridge.app.openExternal(ANDROID_PLAY_STORE_URL)}
-											>
-												{t("mobile.getApp")}
-												<ArrowUpRight className="size-3.5" aria-hidden="true" />
-											</button>
-										</TooltipTrigger>
-										<TooltipContent side="bottom" className="p-2" data-testid="android-play-qr">
-											<div className="rounded-md bg-(--color-bg-settings-input) p-2">
-												<StyledQRCode value={ANDROID_PLAY_STORE_URL} size={TESTFLIGHT_QR_SIZE} showLogo={false} className="block" />
-											</div>
-										</TooltipContent>
-									</Tooltip>
-								</li>
-							</>
-						)}
-						{mode === "lan" ? (
-							<li>{t("mobile.lan.step1")}</li>
-						) : (
-							<li>{t("mobile.tailscale.step1")}</li>
-						)}
-						<li>{platform === "ios" ? t("mobile.ios.step3") : t("mobile.android.step3")}</li>
+								</Fragment>
+							))}
+						</li>
+						{mode === "tailscale" ? <li>{t("mobile.tailscale.step1")}</li> : null}
+						<li>{t("mobile.pairStep")}</li>
 						{showRealQR && (
 							<>
 								<li data-testid="mobile-pairing-address">
@@ -519,36 +530,13 @@ export function ConnectMobileContent({ active }: { active: boolean }) {
 					</ol>
 
 					{/* Tailscale extras: secure pairing (required on iPhone) + status. */}
-					{mode === "tailscale" && (
-						<div className="mt-4 flex flex-col gap-3">
-							<div className="relative flex items-start justify-between gap-3 rounded-md border border-[var(--color-border-settings-input)] bg-[var(--color-bg-settings-input)] px-3.5 py-2.5">
-								<div className="flex min-w-0 flex-col gap-1 pr-2">
-									<span className="text-subtitle leading-(--leading-settings-mobile-title) text-settings-label">
-										{t("mobile.securePairing")}
-									</span>
-									<span className="text-caption leading-(--leading-settings-mobile-hint) text-settings-muted">
-										{t("mobile.securePairing.hint")}
-									</span>
-								</div>
-								<Switch
-									checked={status.securePairing?.enabled ?? false}
-									onCheckedChange={(on) => {
-										clearActionErrors();
-										setSecure.mutate(on);
-									}}
-									disabled={busy}
-									aria-label={t("mobile.securePairing")}
-								/>
-							</div>
-							{platform === "ios" && (
-								<p className="text-caption leading-(--leading-settings-mobile-hint) text-settings-muted">
-									{t("mobile.tailscale.iosHint")}
-								</p>
-							)}
-							{(status.securePairing?.enabled ?? false) && secureReasonText && (
-								<p className="text-caption leading-(--leading-settings-mobile-hint) text-warning">{secureReasonText}</p>
-							)}
-						</div>
+					{status.tailscaleHost && secureReasonText && (
+						<p
+							data-testid="secure-pairing-reason"
+							className="mt-4 text-caption leading-(--leading-settings-mobile-hint) text-warning"
+						>
+							{secureReasonText}
+						</p>
 					)}
 
 					{remoteAccessUnavailable && (

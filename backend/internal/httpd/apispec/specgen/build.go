@@ -295,6 +295,11 @@ var schemaNames = map[string]string{
 	"AgentInventory":                                      "ListAgentsResponse",
 	"AgentInfo":                                           "AgentInfo",
 	"AgentProbeResult":                                    "ProbeAgentResponse",
+	"AgentReadiness":                                      "AgentReadinessResponse",
+	"ControllersEnsureAgentReadinessRequest":              "EnsureAgentReadinessRequest",
+	"DomainAgentReadinessSnapshot":                        "AgentReadinessSnapshot",
+	"DomainAgentInstallationObservation":                  "AgentInstallationObservation",
+	"DomainAgentAuthenticationObservation":                "AgentAuthenticationObservation",
 	// service/systemcheck: "SystemcheckReport" is a generic default name that
 	// reads like an internal type, not a wire response — rename to match the
 	// endpoint it serves, same treatment as AgentInventory above.
@@ -305,6 +310,11 @@ var schemaNames = map[string]string{
 	// InstallStatusResponse (they're the same Go type), so it reflects to one
 	// shared component — name it after the domain concept, not either alias.
 	"SysteminstallJob":                            "InstallJob",
+	"SysteminstallAgentPlan":                      "AgentInstallPlan",
+	"SysteminstallAgentInstallMethod":             "AgentInstallMethod",
+	"ControllersAgentInstallerCatalogResponse":    "AgentInstallerCatalogResponse",
+	"ControllersStartAgentInstallRequest":         "StartAgentInstallRequest",
+	"ControllersAgentInstallJobsResponse":         "AgentInstallJobsResponse",
 	"PortsAgentModelCatalog":                      "AgentModelsResponse",
 	"PortsAgentModelInfo":                         "AgentModelInfo",
 	"ControllersListNotificationsQuery":           "ListNotificationsQuery",
@@ -1021,6 +1031,26 @@ func agentOperations() []operation {
 			},
 		},
 		{
+			method: http.MethodGet, path: "/api/v1/agents/readiness", id: "getAgentReadiness", tag: "agents",
+			summary: "Return cached normalized agent readiness without running native checks",
+			resps: []respUnit{
+				{http.StatusOK, controllers.AgentReadinessResponse{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPost, path: "/api/v1/agents/readiness/ensure", id: "ensureAgentReadiness", tag: "agents",
+			summary: "Ensure normalized readiness for selected agent adapters",
+			reqBody: controllers.EnsureAgentReadinessRequest{},
+			resps: []respUnit{
+				{http.StatusOK, controllers.AgentReadinessResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
 			method: http.MethodPost, path: "/api/v1/agents/refresh", id: "refreshAgents", tag: "agents",
 			summary: "Refresh the cached local agent adapter catalog",
 			resps: []respUnit{
@@ -1031,12 +1061,65 @@ func agentOperations() []operation {
 		},
 		{
 			method: http.MethodPost, path: "/api/v1/agents/{agent}/probe", id: "probeAgent", tag: "agents",
-			summary:    "Run a fresh local readiness probe for one agent adapter",
+			summary:    "Ensure launch-fresh readiness for one agent adapter",
 			pathParams: []any{controllers.AgentIDParam{}},
 			resps: []respUnit{
 				{http.StatusOK, controllers.ProbeAgentResponse{}},
 				{http.StatusBadRequest, envelope.APIError{}},
 				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodGet, path: "/api/v1/agents/installers", id: "listAgentInstallers", tag: "agents",
+			summary: "Resolve the safe installation plan for every supported agent harness",
+			resps: []respUnit{
+				{http.StatusOK, controllers.AgentInstallerCatalogResponse{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPost, path: "/api/v1/agents/{agent}/install", id: "startAgentInstall", tag: "agents",
+			summary:    "Start an asynchronous install for one fixed agent harness",
+			pathParams: []any{controllers.AgentIDParam{}},
+			reqBody:    controllers.StartAgentInstallRequest{}, optionalReqBody: true,
+			resps: []respUnit{
+				{http.StatusAccepted, controllers.AgentInstallResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusConflict, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodGet, path: "/api/v1/agents/install-jobs", id: "listAgentInstallJobs", tag: "agents",
+			summary: "Return the latest durable install job for every agent harness",
+			resps: []respUnit{
+				{http.StatusOK, controllers.AgentInstallJobsResponse{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPost, path: "/api/v1/agents/{agent}/verify", id: "verifyAgentInstall", tag: "agents",
+			summary:    "Verify an installed harness without reinstalling or probing authentication",
+			pathParams: []any{controllers.AgentIDParam{}},
+			resps: []respUnit{
+				{http.StatusAccepted, controllers.AgentInstallResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusConflict, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodGet, path: "/api/v1/agents/{agent}/install", id: "getAgentInstallStatus", tag: "agents",
+			summary:    "Get the current or last install job for one agent harness",
+			pathParams: []any{controllers.AgentIDParam{}},
+			resps: []respUnit{
+				{http.StatusOK, controllers.AgentInstallResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
 				{http.StatusNotImplemented, envelope.APIError{}},
 			},
 		},

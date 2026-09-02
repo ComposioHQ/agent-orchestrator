@@ -86,11 +86,24 @@ func TestLANManagerBlocksLoopbackOnlyControlRoutes(t *testing.T) {
 		}
 	}
 
+	// Agent install mutations are loopback-only, while the adjacent GET
+	// catalog/status routes remain available to authenticated mobile clients.
+	req, _ := http.NewRequest(http.MethodPost, fmt.Sprintf("http://127.0.0.1:%d/api/v1/agents/cursor/install", port), nil)
+	req.Host = "127.0.0.1"
+	req.Header.Set("Authorization", "Bearer secret12")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("agent install request failed: %v", err)
+	}
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("agent install: got %d want 404", resp.StatusCode)
+	}
+
 	// A normal app route must still be reachable through the LAN listener
 	// (not swallowed by the control-route filter). Auth-gating, not the
 	// control filter, decides its fate.
-	req, _ := http.NewRequest(http.MethodGet, fmt.Sprintf("http://127.0.0.1:%d/api/v1/sessions", port), nil)
-	resp, err := http.DefaultClient.Do(req)
+	req, _ = http.NewRequest(http.MethodGet, fmt.Sprintf("http://127.0.0.1:%d/api/v1/sessions", port), nil)
+	resp, err = http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("sessions: request failed: %v", err)
 	}

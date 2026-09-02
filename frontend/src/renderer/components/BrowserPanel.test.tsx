@@ -49,6 +49,7 @@ const hookState = vi.hoisted(() => ({
 	tabNotice: "",
 	agentBrowserActive: false,
 	agentBrowserActivity: null as { active: boolean; action?: string; phase?: "started" | "finished" } | null,
+	profileState: { viewId: "42:sess-1", profileId: null as string | null, temporary: true },
 	previewUrl: undefined as string | undefined,
 	navState: {
 		viewId: "42:sess-1",
@@ -83,6 +84,7 @@ vi.mock("../hooks/useBrowserView", () => ({
 			reopenClosedTab: hookState.reopenClosedTab,
 			agentBrowserActive: hookState.agentBrowserActive,
 			agentBrowserActivity: hookState.agentBrowserActivity,
+			profileState: hookState.profileState,
 			devtoolsState: hookState.devtoolsState,
 			openDevTools: hookState.openDevTools,
 			closeDevTools: hookState.closeDevTools,
@@ -214,6 +216,7 @@ describe("BrowserPanel", () => {
 				annotationCancelListeners.delete(listener);
 			};
 		});
+		window.ao!.browser.historySuggestions = vi.fn(async () => []);
 		window.ao!.browser.notifyPanelUsed = vi.fn();
 		window.ao!.browser.notifyPanelBlur = vi.fn();
 		window.ao!.browser.onFocusLocation = vi.fn((listener: (viewId: string) => void) => {
@@ -229,6 +232,7 @@ describe("BrowserPanel", () => {
 			};
 		});
 		hookState.previewUrl = undefined;
+		hookState.profileState = { viewId: "42:sess-1", profileId: null, temporary: true };
 		hookState.tabs = [{ id: "t1", url: "", title: "", active: true }];
 		hookState.activeTabId = "t1";
 		hookState.tabNotice = "";
@@ -250,6 +254,76 @@ describe("BrowserPanel", () => {
 		await userEvent.type(input, "localhost:5173{Enter}");
 
 		expect(hookState.navigate).toHaveBeenCalledWith("localhost:5173");
+		expect(input).not.toHaveFocus();
+	});
+
+	it("supports consecutive address-bar navigations after refocusing", async () => {
+		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
+		const input = screen.getByRole("textbox", { name: /browser url/i });
+
+		await userEvent.clear(input);
+		await userEvent.type(input, "first.example{Enter}");
+		await userEvent.click(input);
+		await userEvent.clear(input);
+		await userEvent.type(input, "second.example{Enter}");
+
+		expect(hookState.navigate).toHaveBeenNthCalledWith(1, "first.example");
+		expect(hookState.navigate).toHaveBeenNthCalledWith(2, "second.example");
+		expect(input).not.toHaveFocus();
+	});
+
+	it("shows imported history through native address-bar suggestions without adding an overlay", async () => {
+		hookState.profileState = {
+			viewId: "42:sess-1",
+			profileId: "11111111-1111-4111-8111-111111111111",
+			temporary: false,
+		};
+		window.ao!.browser.historySuggestions = vi.fn(async () => [
+			{ url: "https://github.com/openai", title: "OpenAI" },
+		]);
+		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
+		const input = screen.getByRole("textbox", { name: /browser url/i });
+
+		await userEvent.type(input, "git");
+
+		await waitFor(() => expect(window.ao!.browser.historySuggestions).toHaveBeenCalledWith({
+			viewId: "42:sess-1",
+			query: "git",
+		}), { timeout: 2_000 });
+		await waitFor(() => expect(document.querySelector("datalist option")).not.toBeNull());
+		const option = document.querySelector("datalist option")!;
+		expect(option).toHaveValue("https://github.com/openai");
+		expect(input).toHaveAttribute("list", option.closest("datalist")?.id);
+		expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+
+		fireEvent.change(input, { target: { value: "https://github.com/openai" } });
+		expect(hookState.navigate).toHaveBeenCalledWith("https://github.com/openai");
+		expect(input).not.toHaveFocus();
+		expect(document.querySelector("datalist option")).toBeNull();
+	});
+
+	it("does not search imported history until the address is edited", async () => {
+		hookState.profileState = {
+			viewId: "42:sess-1",
+			profileId: "11111111-1111-4111-8111-111111111111",
+			temporary: false,
+		};
+		hookState.navState = { ...hookState.navState, url: "https://example.com/current" };
+		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
+		const input = screen.getByRole("textbox", { name: /browser url/i });
+
+		fireEvent.focus(input);
+		await new Promise((resolve) => window.setTimeout(resolve, 150));
+		expect(window.ao!.browser.historySuggestions).not.toHaveBeenCalled();
+
+		await userEvent.clear(input);
+		await userEvent.type(input, "exa");
+		await waitFor(() =>
+			expect(window.ao!.browser.historySuggestions).toHaveBeenCalledWith({
+				viewId: "42:sess-1",
+				query: "exa",
+			}),
+		);
 	});
 
 	it("marks browser UI as used and focuses the address bar for a matching shortcut request", async () => {

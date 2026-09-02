@@ -382,6 +382,11 @@ func (m *Manager) admitAgentSwitch(ctx context.Context, id domain.SessionID, cfg
 }
 
 func (m *Manager) executeAgentSwitch(ctx context.Context, admitted *admittedAgentSwitch) (result domain.AgentSwitch, retErr error) {
+	releaseHarness, err := m.beginHarnessUse(admitted.config.TargetHarness)
+	if err != nil {
+		return admitted.record, fmt.Errorf("switch agent %s: %w", admitted.session.ID, err)
+	}
+	defer releaseHarness()
 	if domain.NormalizeSessionMode(admitted.session.Mode) == domain.SessionModeChat {
 		return m.executeChatAgentSwitch(ctx, admitted)
 	}
@@ -479,7 +484,7 @@ func (m *Manager) executeAgentSwitch(ctx context.Context, admitted *admittedAgen
 	// Resolve credentials, native-resume evidence, and launch commands before
 	// asking the source to spend a model turn. This preflight does not install
 	// target workspace files or reserve a target generation in durable storage.
-	target, err := m.prepareTargetActivation(ctx, store, rec, project, targetAgent, targetCapabilities, result, cfg.Model)
+	target, err = m.prepareTargetActivation(ctx, store, rec, project, targetAgent, targetCapabilities, result, cfg.Model)
 	if err != nil {
 		return result, fmt.Errorf("switch agent %s: target preflight: %w", id, err)
 	}
@@ -1122,7 +1127,14 @@ func (m *Manager) preserveCurrentNativeSession(ctx context.Context, store ports.
 
 func (m *Manager) prepareTargetActivation(ctx context.Context, store ports.AgentSwitchStore, rec domain.SessionRecord, project domain.ProjectRecord, agent ports.Agent, caps ports.ContinuationCapabilities, sw domain.AgentSwitch, modelOverride string) (preparedTargetActivation, error) {
 	harness := sw.TargetHarness
-	if checker, ok := agent.(ports.AgentAuthChecker); ok {
+	if m.agentReadiness != nil {
+		readiness, readinessErr := m.agentReadiness.EnsureAgentReadiness(ctx, string(harness), domain.AgentReadinessPurposeLaunch)
+		if readinessErr != nil {
+			m.logger.Warn("agent switch: target readiness check failed; launch remains authoritative", "sessionID", rec.ID, "harness", harness, "error", readinessErr)
+		} else if readiness.Authentication.State == domain.AgentAuthenticationUnauthorized {
+			return preparedTargetActivation{}, ErrTargetAgentUnauthorized
+		}
+	} else if checker, ok := agent.(ports.AgentAuthChecker); ok {
 		status, authErr := checker.AuthStatus(ctx)
 		if authErr != nil {
 			m.logger.Warn("agent switch: target auth probe failed; launch remains authoritative", "sessionID", rec.ID, "harness", harness, "error", authErr)

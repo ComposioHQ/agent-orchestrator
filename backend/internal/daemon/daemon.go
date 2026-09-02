@@ -285,6 +285,8 @@ func Run() error {
 		NewID:    uuid.NewString,
 	})
 
+	agentSvc := agentsvc.NewWithDeps(agentsvc.Deps{Cache: store, Discoverer: modelcatalog.Discoverer{}, Projects: store, Sessions: store, Context: ctx, Logger: log})
+
 	// Build the multi-tracker dispatching to both GitHub and GitLab once,
 	// shared between the session service and the intake observer below.
 	// Env-configured tokens are validated eagerly here; CLI credential probing
@@ -293,7 +295,7 @@ func Run() error {
 	// nil-guard and the intake resolver's backoff both tolerate that
 	// (issue #2685).
 	tracker := newMultiTracker(cfg.GitLab, log)
-	sessionSvc, reviewSvc, sessMgr, err := startSession(ctx, cfg, runtimeAdapter, store, lcStack.LCM, messenger, telemetrySink, agents, managedPreview, browserBroker, browserAuthority, chatLauncher{svc: chatSvc}, settingsSvc, tracker, log)
+	sessionSvc, reviewSvc, sessMgr, err := startSession(ctx, cfg, runtimeAdapter, store, lcStack.LCM, messenger, telemetrySink, agents, agentSvc, managedPreview, browserBroker, browserAuthority, chatLauncher{svc: chatSvc}, settingsSvc, tracker, log)
 	if err != nil {
 		stop()
 		lcStack.Stop()
@@ -322,10 +324,31 @@ func Run() error {
 	}
 	lcStack.trackerDone = startTrackerIntake(ctx, store, sessionSvc, tracker, log)
 
-	agentSvc := agentsvc.NewWithDeps(agentsvc.Deps{Cache: store, InventoryCache: store, Discoverer: modelcatalog.Discoverer{}, Projects: store, Sessions: store})
-	hostCommands := systemexec.Adapter{}
+	hostCommands := systemexec.New(cfg.DataDir)
 	systemChecks := systemcheck.New(agentSvc, hostCommands)
-	systemInstall := systeminstall.New(hostCommands, hostCommands)
+	systemInstall := systeminstall.NewWithDeps(hostCommands, hostCommands, systeminstall.Deps{
+		JobStore: store,
+		Verifier: systeminstall.NewVerifier(agents, hostCommands),
+		Sessions: store,
+	})
+	if err := systemInstall.Recover(ctx); err != nil {
+		stop()
+		lcStack.Stop()
+		if cdcErr := cdcPipe.Stop(); cdcErr != nil {
+			log.Error("cdc pipeline shutdown", "err", cdcErr)
+		}
+		return fmt.Errorf("recover harness install jobs: %w", err)
+	}
+	sessMgr.SetHarnessUseGate(systemInstall)
+	systemInstall.SetOnSucceeded(func(target systeminstall.Target) {
+		harness, ok := installedAgentHarness(target)
+		if !ok {
+			return
+		}
+		agentSvc.InvalidateAgentInstallation(harness)
+		agentSvc.RecheckAgent(harness)
+	})
+	agentSvc.WarmReadiness()
 
 	// Connect Mobile: the bridge service needs the LAN listener, but the LAN
 	// listener needs the built router's handler, which only exists once srv is
@@ -644,6 +667,11 @@ func Run() error {
 	// via defer) avoids the LIFO trap where a Stop() that blocks on ctx-cancel
 	// runs before the cancel: a non-signal exit path would hang otherwise.
 	stop()
+	installStopCtx, installStopCancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
+	if err := systemInstall.Close(installStopCtx); err != nil {
+		log.Error("harness installer shutdown", "err", err)
+	}
+	installStopCancel()
 	if startupReconcileDone != nil {
 		<-startupReconcileDone
 	}
@@ -689,6 +717,16 @@ func Run() error {
 		log.Error("cdc pipeline shutdown", "err", err)
 	}
 	return runErr
+}
+
+func installedAgentHarness(target systeminstall.Target) (string, bool) {
+	if target == systeminstall.TargetClaude {
+		return "claude-code", true
+	}
+	if systeminstall.IsAgentTarget(target) {
+		return string(target), true
+	}
+	return "", false
 }
 
 func usagePipelineWatchRoots(roots usagesvc.SourceRoots) []string {

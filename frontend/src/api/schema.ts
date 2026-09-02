@@ -21,6 +21,24 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/agents/{agent}/install": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get the current or last install job for one agent harness */
+        get: operations["getAgentInstallStatus"];
+        put?: never;
+        /** Start an asynchronous install for one fixed agent harness */
+        post: operations["startAgentInstall"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/agents/{agent}/models": {
         parameters: {
             query?: never;
@@ -64,8 +82,93 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Run a fresh local readiness probe for one agent adapter */
+        /** Ensure launch-fresh readiness for one agent adapter */
         post: operations["probeAgent"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/agents/{agent}/verify": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Verify an installed harness without reinstalling or probing authentication */
+        post: operations["verifyAgentInstall"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/agents/install-jobs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Return the latest durable install job for every agent harness */
+        get: operations["listAgentInstallJobs"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/agents/installers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Resolve the safe installation plan for every supported agent harness */
+        get: operations["listAgentInstallers"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/agents/readiness": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Return cached normalized agent readiness without running native checks */
+        get: operations["getAgentReadiness"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/agents/readiness/ensure": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Ensure normalized readiness for selected agent adapters */
+        post: operations["ensureAgentReadiness"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1937,6 +2040,18 @@ export interface components {
             path: string;
             projectId?: null | string;
         };
+        AgentAuthenticationObservation: {
+            /** Format: date-time */
+            attemptedAt: null | string;
+            /** Format: date-time */
+            checkedAt: null | string;
+            /** @enum {string} */
+            freshness: "fresh" | "stale" | "checking";
+            reason: string;
+            reasonCode: string;
+            /** @enum {string} */
+            state: "authorized" | "unauthorized" | "unknown" | "not_applicable";
+        };
         AgentConfig: {
             mode?: string;
             model?: string;
@@ -1957,6 +2072,47 @@ export interface components {
             lastUsedAt?: null | string;
             /** @description Number of retained sessions currently attributed to this agent. */
             usageCount?: number;
+        };
+        AgentInstallJobsResponse: {
+            jobs: components["schemas"]["InstallJob"][];
+        };
+        AgentInstallMethod: {
+            available: boolean;
+            command?: string;
+            expectedDestination?: string;
+            id: string;
+            label: string;
+            reason?: string;
+            recommended: boolean;
+            reinstallAvailable: boolean;
+            reinstallCommand?: string;
+            reinstallReason?: string;
+        };
+        AgentInstallPlan: {
+            agentId: string;
+            automatic: boolean;
+            available: boolean;
+            command?: string;
+            documentationUrl: string;
+            expectedDestination?: string;
+            method: string;
+            methods: components["schemas"]["AgentInstallMethod"][];
+            reason?: string;
+        };
+        AgentInstallationObservation: {
+            /** Format: date-time */
+            attemptedAt: null | string;
+            /** Format: date-time */
+            checkedAt: null | string;
+            /** @enum {string} */
+            freshness: "fresh" | "stale" | "checking";
+            reason: string;
+            reasonCode: string;
+            /** @enum {string} */
+            state: "installed" | "not_installed" | "unknown";
+        };
+        AgentInstallerCatalogResponse: {
+            agents: components["schemas"]["AgentInstallPlan"][];
         };
         AgentModelInfo: {
             id: string;
@@ -1979,6 +2135,20 @@ export interface components {
             /** Format: date-time */
             validatedAt?: string;
             warning?: string;
+        };
+        AgentReadinessResponse: {
+            agents: components["schemas"]["AgentReadinessSnapshot"][];
+        };
+        AgentReadinessSnapshot: {
+            authentication: components["schemas"]["AgentAuthenticationObservation"];
+            /** @enum {string} */
+            effectiveReadiness: "ready" | "not_ready" | "unknown";
+            id: string;
+            installation: components["schemas"]["AgentInstallationObservation"];
+            label: string;
+            /** Format: date-time */
+            lastUsedAt?: null | string;
+            usageCount: number;
         };
         AgentSwitch: {
             /** @enum {string} */
@@ -2142,6 +2312,7 @@ export interface components {
             previewUrl?: string;
             projectId: string;
             prs: components["schemas"]["SessionPRFacts"][];
+            reviewerConfig?: components["schemas"]["AgentConfig"];
             /** @enum {string} */
             reviewerHarness?: "claude-code" | "codex" | "copilot" | "cursor" | "kilocode" | "opencode" | "kiro" | "pi" | "qwen" | "agy" | "continue" | "goose" | "vibe" | "devin" | "droid" | "kimi" | "kimchi" | "muse" | "amp" | "aider" | "grok" | "crush" | "auggie" | "cline" | "autohand";
             /** @enum {string} */
@@ -2461,6 +2632,7 @@ export interface components {
             state: string;
         };
         DomainReviewerConfig: {
+            agentConfig?: components["schemas"]["AgentConfig"];
             harness: string;
         };
         EditConversationMessageRequest: {
@@ -2480,6 +2652,11 @@ export interface components {
         };
         EndpointsResponse: {
             endpoints: components["schemas"]["MobileEndpoint"][];
+        };
+        EnsureAgentReadinessRequest: {
+            agentIds?: string[];
+            /** @enum {string} */
+            purpose: "display" | "launch";
         };
         EstimatedCostResponse: {
             /** Format: int64 */
@@ -2529,11 +2706,15 @@ export interface components {
             command?: string;
             /** @description Set on failure or when the target is unsupported on this machine: the exec error, the Unsupported reason, or a timeout message. */
             error?: string;
+            /** @description Expected or adapter-resolved executable destination. */
+            expectedDestination?: string;
             /**
              * Format: date-time
              * @description Absent until the job finishes.
              */
             finishedAt?: null | string;
+            /** @description Server-owned installation method selected for this harness job. */
+            method?: string;
             /** @description Combined stdout+stderr from the install command, tail-capped to the last ~4000 bytes. */
             output?: string;
             /** Format: date-time */
@@ -2542,12 +2723,14 @@ export interface components {
              * @description Current lifecycle state of the job.
              * @enum {string}
              */
-            status: "idle" | "running" | "succeeded" | "failed" | "unsupported";
+            status: "idle" | "running" | "installing" | "verifying" | "succeeded" | "failed" | "unsupported" | "interrupted";
             /**
-             * @description Install target this job ran (or is running) for.
+             * @description Fixed install target this job ran (or is running) for.
              * @enum {string}
              */
-            target: "tmux" | "gh" | "claude" | "codex" | "opencode" | "copilot" | "cloudflared";
+            target: "tmux" | "gh" | "claude" | "claude-code" | "codex" | "cursor" | "opencode" | "aider" | "copilot" | "grok" | "kimi" | "pi" | "amp" | "auggie" | "droid" | "crush" | "cline" | "goose" | "qwen" | "continue" | "devin" | "kiro" | "kilocode" | "vibe" | "muse" | "agy" | "autohand" | "kimchi" | "prime-agent" | "omp" | "cloudflared";
+            /** Format: date-time */
+            updatedAt?: null | string;
         };
         KillReviewResponse: {
             reviewerHandleId: string;
@@ -3208,6 +3391,7 @@ export interface components {
             url?: string;
         };
         SetSessionReviewerRequest: {
+            agentConfig?: components["schemas"]["AgentConfig"];
             /** @enum {string} */
             harness?: "claude-code" | "codex" | "copilot" | "cursor" | "kilocode" | "opencode" | "kiro" | "pi" | "qwen" | "agy" | "continue" | "goose" | "vibe" | "devin" | "droid" | "kimi" | "kimchi" | "muse" | "amp" | "aider" | "grok" | "crush" | "auggie" | "cline" | "autohand";
         };
@@ -3271,6 +3455,15 @@ export interface components {
             paths: string[];
             sessionId: string;
         };
+        StartAgentInstallRequest: {
+            /** @description Server-issued installation method id. Omit to use the recommended viable method. */
+            method?: string;
+            /**
+             * @description Requested operation. Defaults to install for older clients.
+             * @enum {string}
+             */
+            operation?: "install" | "reinstall";
+        };
         StartPreviewServerRequest: {
             /** @description Named preview configuration. Optional when exactly one configuration exists. */
             configuration?: string;
@@ -3287,6 +3480,7 @@ export interface components {
             transition: components["schemas"]["SessionInterfaceTransition"];
         };
         SteerConversationRequest: {
+            attachments?: components["schemas"]["ConversationImageContentRequest"][];
             clientMessageId?: string;
             text: string;
         };
@@ -3362,6 +3556,7 @@ export interface components {
             repo?: string;
         };
         TriggerReviewRequest: {
+            agentConfig?: components["schemas"]["AgentConfig"];
             /** @enum {string} */
             harness?: "claude-code" | "codex" | "copilot" | "cursor" | "kilocode" | "opencode" | "kiro" | "pi" | "qwen" | "agy" | "continue" | "goose" | "vibe" | "devin" | "droid" | "kimi" | "kimchi" | "muse" | "amp" | "aider" | "grok" | "crush" | "auggie" | "cline" | "autohand";
         };
@@ -3538,6 +3733,110 @@ export interface operations {
             };
         };
     };
+    getAgentInstallStatus: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Agent adapter identifier. */
+                agent: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InstallJob"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    startAgentInstall: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Agent adapter identifier. */
+                agent: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["StartAgentInstallRequest"];
+            };
+        };
+        responses: {
+            /** @description Accepted */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InstallJob"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
     getAgentModels: {
         parameters: {
             query?: {
@@ -3683,6 +3982,230 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ProbeAgentResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    verifyAgentInstall: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Agent adapter identifier. */
+                agent: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Accepted */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InstallJob"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    listAgentInstallJobs: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentInstallJobsResponse"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    listAgentInstallers: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentInstallerCatalogResponse"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    getAgentReadiness: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentReadinessResponse"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    ensureAgentReadiness: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EnsureAgentReadinessRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentReadinessResponse"];
                 };
             };
             /** @description Bad Request */
@@ -10468,7 +10991,7 @@ export interface operations {
             header?: never;
             path: {
                 /** @description Install target identifier: tmux, gh, claude, codex, opencode, copilot, or cloudflared. */
-                target: string;
+                target: "tmux" | "gh" | "claude" | "codex" | "opencode" | "copilot" | "cloudflared";
             };
             cookie?: never;
         };
@@ -10518,7 +11041,7 @@ export interface operations {
             header?: never;
             path: {
                 /** @description Install target identifier: tmux, gh, claude, codex, opencode, copilot, or cloudflared. */
-                target: string;
+                target: "tmux" | "gh" | "claude" | "codex" | "opencode" | "copilot" | "cloudflared";
             };
             cookie?: never;
         };

@@ -33,8 +33,7 @@ type Report struct {
 }
 
 // HarnessCatalog is the subset of agent.Service the harness requirement needs.
-// agent.Service satisfies this with a forced refresh so a user-triggered
-// recheck cannot be answered by the normal short-lived inventory cache.
+// The implementation delegates freshness to the shared readiness coordinator.
 type HarnessCatalog interface {
 	RefreshFresh(ctx context.Context) (agentsvc.Inventory, error)
 	FindInstalledBinary(ctx context.Context) (agentsvc.Info, bool)
