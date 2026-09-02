@@ -213,7 +213,7 @@ func (s *Store) ListCodexAccountSwitchSessions(ctx context.Context, switchID str
 	if err != nil {
 		return nil, fmt.Errorf("list Codex account switch sessions: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	out := make([]domain.CodexAccountSwitchSession, 0)
 	for rows.Next() {
 		var item domain.CodexAccountSwitchSession
@@ -258,18 +258,5 @@ func codexAccountSwitchFromGen(row gen.CodexAccountSwitch) domain.CodexAccountSw
 		CreatedAt:              row.CreatedAt, UpdatedAt: row.UpdatedAt, CompletedAt: nullTimeToPtr(row.CompletedAt),
 		IdempotencyKey: row.IdempotencyKey, RequestFingerprint: row.RequestFingerprint,
 		ExpectedAccountRevision: row.ExpectedAccountRevision,
-	}
-}
-
-func codexAccountSwitchSessionFromGen(row gen.CodexAccountSwitchSession) domain.CodexAccountSwitchSession {
-	return domain.CodexAccountSwitchSession{
-		SessionID: domain.SessionID(row.SessionID), InterfaceMode: domain.SessionMode(row.InterfaceMode),
-		WasRunning: row.WasRunning, StopState: row.StopState, RestartState: row.RestartState,
-		ErrorCode: row.ErrorCode, StoppedAt: nullTimeToPtr(row.StoppedAt), RestartedAt: nullTimeToPtr(row.RestartedAt),
-		NativeSessionID: row.NativeSessionID, SourceHandleID: row.SourceHandleID, SourceGeneration: row.SourceGeneration,
-		ReviewerWasRunning:      row.ReviewerWasRunning,
-		ReviewerSourceHandleID:  row.ReviewerSourceHandleID,
-		ReviewerNativeSessionID: row.ReviewerNativeSessionID,
-		ReviewerStopState:       row.ReviewerStopState, ReviewerRestartState: row.ReviewerRestartState,
 	}
 }

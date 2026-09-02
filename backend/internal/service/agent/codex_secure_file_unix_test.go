@@ -60,10 +60,13 @@ func TestPrivateDirectoryValidationChecksBeyondFirstRootOwnedAncestor(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	safe := os.FileMode(0o755 | os.ModeDir)
-	unsafeRoot := os.FileMode(0o777 | os.ModeDir)
-	stickyRoot := os.FileMode(0o777 | os.ModeDir | os.ModeSticky)
-	uid := uint32(os.Geteuid())
+	safe := os.ModeDir | 0o755
+	unsafeRoot := os.ModeDir | 0o777
+	stickyRoot := os.ModeDir | os.ModeSticky | 0o777
+	uid, ok := currentCodexUID()
+	if !ok {
+		t.Fatal("current user ID is invalid")
+	}
 	lstat := func(rootMode *os.FileMode) func(string) (os.FileInfo, error) {
 		return func(path string) (os.FileInfo, error) {
 			owner, mode := uid, &safe

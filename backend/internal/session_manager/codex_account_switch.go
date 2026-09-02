@@ -452,10 +452,6 @@ func (m *Manager) ensureCodexSwitchChatController(ctx context.Context, rec domai
 	return result.Session, nil
 }
 
-func (m *Manager) runCodexAccountSwitch(ctx context.Context, credentials ports.CodexAccountCredentialManager, store ports.CodexAccountSwitchStore, sw domain.CodexAccountSwitch) {
-	m.runCodexAccountSwitchWithAdmission(ctx, credentials, store, sw, nil)
-}
-
 func (m *Manager) runCodexAccountSwitchWithAdmission(ctx context.Context, credentials ports.CodexAccountCredentialManager, store ports.CodexAccountSwitchStore, sw domain.CodexAccountSwitch, admission *codexSwitchAdmission) {
 	ctx = codexExclusiveOperationContext(ctx)
 	defer func() { m.finishCodexAccountSwitchMutation(credentials, retainCodexAccountSwitchFence(sw.Phase)) }()
@@ -464,13 +460,15 @@ func (m *Manager) runCodexAccountSwitchWithAdmission(ctx context.Context, creden
 	if admission == nil {
 		sessions, err = store.ListCodexAccountSwitchSessions(ctx, sw.ID)
 		if err != nil {
-			m.advanceCodexAccountSwitch(ctx, store, &sw, domain.CodexAccountSwitchRecoveryRequired, "switch_state_unavailable")
+			if advanceErr := m.advanceCodexAccountSwitch(ctx, store, &sw, domain.CodexAccountSwitchRecoveryRequired, "switch_state_unavailable"); advanceErr != nil {
+				m.logger.Error("Codex account switch: failed to persist recovery state", "switchID", sw.ID, "error", advanceErr)
+			}
 			return
 		}
 		admission = &codexSwitchAdmission{}
 		admission.releaseOperations, err = m.acquireCodexSwitchSessionOperations(ctx, sessions)
 		if err != nil {
-			m.failCodexAccountSwitch(ctx, store, &sw, "session_operation_in_progress")
+			m.failCodexAccountSwitchAndLog(ctx, store, &sw, "session_operation_in_progress")
 			return
 		}
 	}
@@ -486,19 +484,19 @@ func (m *Manager) runCodexAccountSwitchWithAdmission(ctx context.Context, creden
 		if sw.Phase == domain.CodexAccountSwitchRequested || sw.Phase == domain.CodexAccountSwitchStoppingSessions {
 			admission.abortChatIntake, err = m.armCodexSwitchChatInterrupt(ctx, sessions)
 			if err != nil {
-				m.failCodexAccountSwitch(ctx, store, &sw, "stop_unconfirmed")
+				m.failCodexAccountSwitchAndLog(ctx, store, &sw, "stop_unconfirmed")
 				return
 			}
 			admission.releaseInput, err = m.freezeCodexSwitchTerminalInput(ctx, sessions)
 			if err != nil {
 				admission.abortChatIntake()
-				m.failCodexAccountSwitch(ctx, store, &sw, "stop_unconfirmed")
+				m.failCodexAccountSwitchAndLog(ctx, store, &sw, "stop_unconfirmed")
 				return
 			}
 			if err := m.prepareCodexSwitchChatInterrupt(ctx, sessions); err != nil {
 				admission.releaseInput()
 				admission.abortChatIntake()
-				m.failCodexAccountSwitch(ctx, store, &sw, "stop_unconfirmed")
+				m.failCodexAccountSwitchAndLog(ctx, store, &sw, "stop_unconfirmed")
 				return
 			}
 		}
@@ -1019,7 +1017,7 @@ func (m *Manager) persistCodexSwitchSession(ctx context.Context, store ports.Cod
 	if err != nil {
 		return errors.Join(err, readErr)
 	}
-	return errors.Join(errors.New("Codex account switch session changed concurrently"), readErr)
+	return errors.Join(errors.New("codex account switch session changed concurrently"), readErr)
 }
 
 func readCodexSwitchSession(ctx context.Context, store ports.CodexAccountSwitchStore, switchID string, sessionID domain.SessionID) (domain.CodexAccountSwitchSession, bool, error) {
@@ -1069,13 +1067,19 @@ func (m *Manager) advanceCodexAccountSwitch(ctx context.Context, store ports.Cod
 	if err != nil {
 		return err
 	}
-	return errors.New("Codex account switch changed concurrently")
+	return errors.New("codex account switch changed concurrently")
 }
 
 func (m *Manager) failCodexAccountSwitch(ctx context.Context, store ports.CodexAccountSwitchStore, sw *domain.CodexAccountSwitch, code string) error {
 	completed := m.clock()
 	sw.CompletedAt = &completed
 	return m.advanceCodexAccountSwitch(ctx, store, sw, domain.CodexAccountSwitchFailed, code)
+}
+
+func (m *Manager) failCodexAccountSwitchAndLog(ctx context.Context, store ports.CodexAccountSwitchStore, sw *domain.CodexAccountSwitch, code string) {
+	if err := m.failCodexAccountSwitch(ctx, store, sw, code); err != nil {
+		m.logger.Error("Codex account switch: failed to persist failure state", "switchID", sw.ID, "error", err)
+	}
 }
 
 func (m *Manager) loadCodexAccountSwitchSessions(ctx context.Context, store ports.CodexAccountSwitchStore, sw domain.CodexAccountSwitch) (domain.CodexAccountSwitch, error) {

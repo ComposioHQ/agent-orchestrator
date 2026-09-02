@@ -76,7 +76,6 @@ func TestCodexAccountSwitchIdempotencyAndSingleActiveConstraint(t *testing.T) {
 func TestCodexAccountSwitchRejectsObsoletePhases(t *testing.T) {
 	t.Parallel()
 	for _, phase := range []string{"waiting_for_safe_boundary", "cancelled"} {
-		phase := phase
 		t.Run(phase, func(t *testing.T) {
 			t.Parallel()
 			st := newTestStore(t)

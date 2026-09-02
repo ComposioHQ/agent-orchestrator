@@ -138,7 +138,7 @@ func WithTelemetry(sink ports.EventSink) Option {
 	return func(s *Service) { s.telemetry = sink }
 }
 
-// WithCodexAccountSwitchGate prevents new Codex reviewer controllers from
+// WithCodexAccountOperationGate prevents new Codex reviewer controllers from
 // entering while the device-global Codex credential is changing.
 func WithCodexAccountOperationGate(gate ports.CodexOperationGate) Option {
 	return func(s *Service) { s.codexOperationGate = gate }
@@ -516,6 +516,7 @@ func (s *Service) CodexReviewerNativeSession(ctx context.Context, workerID domai
 	return s.engine.CodexReviewerNativeSession(ctx, workerID)
 }
 
+// SnapshotCodexReviewer captures the live reviewer identity for an account switch.
 func (s *Service) SnapshotCodexReviewer(ctx context.Context, workerID domain.SessionID) (ports.CodexReviewerControllerSnapshot, error) {
 	return s.engine.SnapshotCodexReviewer(ctx, workerID)
 }
@@ -525,6 +526,7 @@ func (s *Service) SuspendCodexReviewer(ctx context.Context, workerID domain.Sess
 	return s.engine.SuspendCodexReviewer(ctx, workerID)
 }
 
+// SuspendCodexReviewerExact stops only the recorded reviewer identity.
 func (s *Service) SuspendCodexReviewerExact(ctx context.Context, workerID domain.SessionID, expectedHandleID, expectedNativeSessionID string) (bool, error) {
 	return s.engine.SuspendCodexReviewerExact(ctx, workerID, expectedHandleID, expectedNativeSessionID)
 }
@@ -534,6 +536,7 @@ func (s *Service) RestoreCodexReviewer(ctx context.Context, workerID domain.Sess
 	return s.engine.RestoreCodexReviewer(ctx, workerID)
 }
 
+// RestoreCodexReviewerExact resumes only the recorded reviewer native history.
 func (s *Service) RestoreCodexReviewerExact(ctx context.Context, workerID domain.SessionID, expectedNativeSessionID string) error {
 	return s.engine.RestoreCodexReviewerExact(ctx, workerID, expectedNativeSessionID)
 }

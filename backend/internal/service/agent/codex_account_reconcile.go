@@ -219,8 +219,8 @@ func (m *codexAccountManager) matchGlobalAccount(observation ports.CodexAccountO
 		for i := range records {
 			record := records[i]
 			if (record.Snapshot.Status == domain.CodexAccountStatusValid || record.Snapshot.Status == domain.CodexAccountStatusSignedOut) && sameCodexStructuredIdentity(record.Snapshot, observation) && (matched == nil || record.VerifiedAt.After(matched.VerifiedAt)) {
-				copy := record
-				matched = &copy
+				candidate := record
+				matched = &candidate
 			}
 		}
 		if matched != nil {
@@ -237,8 +237,8 @@ func (m *codexAccountManager) matchGlobalAccount(observation ports.CodexAccountO
 		if opaqueMatch != nil {
 			return codexAccountRecord{}, false
 		}
-		copy := record
-		opaqueMatch = &copy
+		candidate := record
+		opaqueMatch = &candidate
 	}
 	if opaqueMatch != nil {
 		return *opaqueMatch, true

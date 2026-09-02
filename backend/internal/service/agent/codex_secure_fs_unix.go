@@ -14,18 +14,22 @@ import (
 
 func ownedByCurrentUser(info os.FileInfo) bool {
 	stat, ok := info.Sys().(*syscall.Stat_t)
+	uid, uidOK := currentCodexUID()
+	return ok && uidOK && stat.Uid == uid
+}
+
+func currentCodexUID() (uint32, bool) {
 	euid := os.Geteuid()
-	return ok && euid >= 0 && uint64(stat.Uid) == uint64(euid)
+	if euid < 0 {
+		return 0, false
+	}
+	uid := uint32(euid) //nolint:gosec // os.Geteuid reports the platform uid_t; reject a non-round-tripping value below.
+	return uid, int64(uid) == int64(euid)
 }
 
 func codexFileOwnerID(info os.FileInfo) (uint32, bool) {
 	stat, ok := info.Sys().(*syscall.Stat_t)
 	return stat.Uid, ok
-}
-
-func hasSingleHardLink(info os.FileInfo) bool {
-	stat, ok := info.Sys().(*syscall.Stat_t)
-	return ok && stat.Nlink == 1
 }
 
 func openCodexFileNoFollow(path string) (*os.File, error) {
@@ -34,7 +38,8 @@ func openCodexFileNoFollow(path string) (*os.File, error) {
 		return nil, err
 	}
 	var stat unix.Stat_t
-	if err := unix.Fstat(fd, &stat); err != nil || stat.Uid != uint32(os.Geteuid()) || stat.Nlink != 1 || stat.Mode&unix.S_IFMT != unix.S_IFREG {
+	uid, uidOK := currentCodexUID()
+	if err := unix.Fstat(fd, &stat); err != nil || !uidOK || stat.Uid != uid || stat.Nlink != 1 || stat.Mode&unix.S_IFMT != unix.S_IFREG {
 		_ = unix.Close(fd)
 		return nil, errors.New("codex file handle is unsafe")
 	}
@@ -72,7 +77,11 @@ func validateCodexDirectory(path string, requirePrivate bool) error {
 }
 
 func validateCodexDirectoryAncestors(path string) error {
-	return validateCodexDirectoryAncestorsWith(path, os.Lstat, uint32(os.Geteuid()))
+	uid, ok := currentCodexUID()
+	if !ok {
+		return errors.New("current user ID is invalid")
+	}
+	return validateCodexDirectoryAncestorsWith(path, os.Lstat, uid)
 }
 
 func validateCodexDirectoryAncestorsWith(path string, lstat func(string) (os.FileInfo, error), currentUID uint32) error {
@@ -128,7 +137,7 @@ func trustedDarwinDirectoryAlias(path string, owner uint32) (string, bool) {
 	if err != nil || target != want {
 		return "", false
 	}
-	return filepath.Join("/", target), true
+	return "/" + target, true
 }
 
 func syncDirectory(path string) error {
