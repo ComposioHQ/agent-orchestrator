@@ -162,7 +162,7 @@ beforeEach(async () => {
 		saving: false,
 		saveError: false,
 	});
-	useUiStore.setState({ developerMode: false });
+	useUiStore.setState({ developerMode: false, remoteHosts: false });
 	document.documentElement.lang = "en";
 });
 
@@ -195,6 +195,21 @@ describe("GlobalSettingsForm", () => {
 		expect(window.localStorage.getItem("ao.developerMode")).toBe("true");
 		await user.click(screen.getByLabelText("Updates channel"));
 		expect(await screen.findByRole("menuitem", { name: "Feature Releases" })).toBeInTheDocument();
+	});
+
+	it("offers Remote hosts as a switch right below Developer Mode and persists it", async () => {
+		const user = userEvent.setup();
+		renderForm();
+		const developerMode = await screen.findByRole("switch", { name: "Developer Mode" });
+		const remoteHosts = screen.getByRole("switch", { name: "Remote hosts (experimental)" });
+		expect(remoteHosts).toHaveAttribute("aria-checked", "false");
+		// "Underneath Developer Mode": the next switch in document order.
+		expect(developerMode.compareDocumentPosition(remoteHosts) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+		expect(screen.getAllByRole("switch").indexOf(remoteHosts)).toBe(screen.getAllByRole("switch").indexOf(developerMode) + 1);
+
+		await user.click(remoteHosts);
+		expect(window.localStorage.getItem("ao.remoteHosts")).toBe("true");
+		expect(useUiStore.getState().remoteHosts).toBe(true);
 	});
 
 	it("shows the available feature builds after choosing Feature Releases", async () => {

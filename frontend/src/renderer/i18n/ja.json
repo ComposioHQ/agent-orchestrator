@@ -637,6 +637,7 @@
 	"settings.close": "設定を閉じる",
 	"settings.connectMobile": "モバイル接続",
 	"settings.developerMode": "開発者モード",
+	"settings.remoteHosts": "リモートホスト（実験的）",
 	"settings.general": "一般",
 	"settings.appearance": "外観",
 	"settings.sessions": "セッション",
