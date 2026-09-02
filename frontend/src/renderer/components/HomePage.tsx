@@ -61,7 +61,7 @@ function HomeActionCard({
 	return (
 		<button
 			aria-label={ariaLabel}
-			className="flex w-full items-center gap-3 rounded-welcome-panel border border-[var(--color-border-import-modal)] bg-[var(--color-bg-import-card)] px-4 py-3 text-left transition-colors hover:bg-[var(--color-bg-import-card-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 disabled:pointer-events-none disabled:opacity-50"
+			className="flex w-full items-center gap-3 rounded-welcome-panel bg-[var(--color-bg-import-card)] px-4 py-3 text-left transition-colors hover:bg-[var(--color-bg-import-card-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 disabled:pointer-events-none disabled:opacity-50"
 			disabled={disabled}
 			onClick={onClick}
 			type="button"
@@ -166,7 +166,7 @@ export function HomePage() {
 						/>
 						<div
 							aria-hidden="true"
-							className="rounded-welcome-panel border border-[var(--color-border-import-modal)] bg-[var(--color-bg-import-card)] px-4 py-3 opacity-50"
+							className="rounded-welcome-panel bg-[var(--color-bg-import-card)] px-4 py-3 opacity-50"
 						/>
 					</div>
 
