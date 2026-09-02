@@ -638,16 +638,16 @@ function CloneProjectProgressDialog({
 	return (
 		<Dialog.Root open={open} onOpenChange={() => undefined}>
 			<Dialog.Portal>
-				<Dialog.Content className="fixed left-1/2 top-1/2 z-overlay w-[min(420px,calc(100vw-32px))] -translate-x-1/2 -translate-y-1/2 rounded-lg border border-border bg-popover p-6 text-popover-foreground shadow-xl data-[state=open]:animate-modal-in data-[state=closed]:animate-modal-out motion-reduce:animate-none">
-					<Dialog.Title className="text-balance text-[18px] font-semibold text-[var(--color-text-import-title)]">
+				<Dialog.Content className="fixed left-1/2 top-1/2 z-overlay w-[min(420px,calc(100vw-32px))] -translate-x-1/2 -translate-y-1/2 rounded-lg border border-border bg-popover p-4 text-popover-foreground shadow-xl data-[state=open]:animate-modal-in data-[state=closed]:animate-modal-out motion-reduce:animate-none">
+					<Dialog.Title className="settings-dialog-title">
 						{error ? "Could not finish setup" : "Setting up your project"}
 					</Dialog.Title>
-					<Dialog.Description className="mt-2 text-[13px] leading-5 text-muted-foreground">
-						{error ? "The project was not opened." : "This will only take a moment."}
+					<Dialog.Description className="sr-only">
+						{error ? "The project was not opened." : "Project setup in progress."}
 					</Dialog.Description>
 
 					{error ? (
-						<div className="mt-5 space-y-4">
+						<div className="mt-4 space-y-4">
 							<div className="rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2.5 text-pretty text-[12px] leading-5 text-destructive" role="alert">
 								{error}
 							</div>
@@ -656,7 +656,7 @@ function CloneProjectProgressDialog({
 							</Button>
 						</div>
 					) : (
-						<div className="mt-6 space-y-4">
+						<div className="mt-4 space-y-4">
 							<div className="flex items-center gap-3">
 								<LoaderCircle className="size-5 animate-spin text-[var(--color-text-import-muted)]" aria-hidden="true" />
 								<p className="text-[14px] font-medium text-foreground">
