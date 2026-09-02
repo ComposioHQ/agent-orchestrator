@@ -6,6 +6,7 @@ import { appI18n } from "../i18n";
 import { GlobalSettingsForm, type GlobalSettingsSection } from "./GlobalSettingsForm";
 import { useLocaleStore } from "../stores/locale-store";
 import { useSoundNotificationsStore } from "../stores/sound-notifications-store";
+import { useTerminalShellStore } from "../stores/terminal-shell-store";
 import { useUiStore } from "../stores/ui-store";
 import { TooltipProvider } from "./ui/tooltip";
 
@@ -59,6 +60,11 @@ vi.mock("@tanstack/react-router", async (importOriginal) => {
 		...actual,
 		useNavigate: () => navigateMock,
 	};
+});
+
+vi.mock("../lib/platform", async (importOriginal) => {
+	const actual = await importOriginal<typeof import("../lib/platform")>();
+	return { ...actual, isWindowsPlatform: () => true };
 });
 
 vi.mock("../lib/bridge", () => ({
@@ -124,10 +130,11 @@ beforeEach(async () => {
 	}
 	getUpdate.mockResolvedValue({ enabled: true, channel: "latest", nightlyAck: false, feature: null });
 	setUpdate.mockResolvedValue(undefined);
-	getUiSettings.mockResolvedValue({ locale: "en", soundNotificationsEnabled: true });
-	setUiSettings.mockImplementation(async (settings: { locale?: string; soundNotificationsEnabled?: boolean }) => ({
+	getUiSettings.mockResolvedValue({ locale: "en", soundNotificationsEnabled: true, terminalShell: { kind: "auto" } });
+	setUiSettings.mockImplementation(async (settings: { locale?: string; soundNotificationsEnabled?: boolean; terminalShell?: { kind: string; path?: string } }) => ({
 		locale: "en",
 		soundNotificationsEnabled: true,
+		terminalShell: { kind: "auto" },
 		...settings,
 	}));
 	updGetStatus.mockResolvedValue({ state: "idle" });
@@ -149,6 +156,12 @@ beforeEach(async () => {
 	await appI18n.changeLanguage("en");
 	useLocaleStore.setState({ locale: "en", loaded: false, saving: false, saveError: false });
 	useSoundNotificationsStore.setState({ enabled: true, loaded: false, saving: false, saveError: false });
+	useTerminalShellStore.setState({
+		preference: { kind: "auto" },
+		loaded: false,
+		saving: false,
+		saveError: false,
+	});
 	useUiStore.setState({ developerMode: false });
 	document.documentElement.lang = "en";
 });
@@ -224,6 +237,36 @@ describe("GlobalSettingsForm", () => {
 		expect(toggle).not.toBeChecked();
 	});
 
+	it("selects Git Bash as the default Windows terminal", async () => {
+		const user = userEvent.setup();
+		renderForm();
+		const selector = await screen.findByLabelText("Default terminal");
+
+		await user.click(selector);
+		await user.click(await screen.findByRole("menuitem", { name: "Git Bash" }));
+
+		await waitFor(() => expect(setUiSettings).toHaveBeenCalledWith({ terminalShell: { kind: "git-bash" } }));
+	});
+
+	it("discards an uncommitted custom shell path when editing is cancelled", async () => {
+		const user = userEvent.setup();
+		renderForm();
+
+		await user.click(await screen.findByLabelText("Default terminal"));
+		await user.click(await screen.findByRole("menuitem", { name: "Custom path" }));
+		await waitFor(() => expect(setUiSettings).toHaveBeenCalledWith({ terminalShell: { kind: "custom" } }));
+
+		setUiSettings.mockClear();
+		await user.click(screen.getByRole("button", { name: "Edit Shell executable" }));
+		const input = screen.getByLabelText("Shell executable");
+		await user.type(input, "C:\\Tools\\bash.exe");
+		await user.keyboard("{Escape}");
+
+		expect(screen.queryByLabelText("Shell executable")).not.toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Edit Shell executable" })).toHaveTextContent("C:\\path\\to\\shell.exe");
+		expect(setUiSettings).not.toHaveBeenCalled();
+	});
+
 	it("keeps the current sound notifications value and reports a persistence failure", async () => {
 		setUiSettings.mockRejectedValue(new Error("disk full"));
 		const user = userEvent.setup();
@@ -271,21 +314,51 @@ describe("GlobalSettingsForm", () => {
 	it("shows the nightly warning when the nightly channel is loaded", async () => {
 		getUpdate.mockResolvedValue({ enabled: true, channel: "nightly", nightlyAck: true, feature: null });
 		renderForm();
-		expect(await screen.findByText(/Nightly builds are cut every day/i)).toBeInTheDocument();
+		expect(await screen.findByText(/Nightly updates daily and may be unstable or cause data loss/i)).toBeInTheDocument();
 		expect(screen.queryByRole("button", { name: "Save changes" })).not.toBeInTheDocument();
 	});
 
-	it("auto-saves when the updates channel changes while automatic updates are enabled", async () => {
+	it("auto-saves the updates channel while automatic updates are disabled", async () => {
 		renderForm();
+		await userEvent.click(await screen.findByRole("switch", { name: "Automatic Updates" }));
+		await waitFor(() =>
+			expect(setUpdate).toHaveBeenCalledWith(expect.objectContaining({ enabled: false, channel: "latest" })),
+		);
 		await screen.findByLabelText("Updates channel");
 		await userEvent.click(screen.getByLabelText("Updates channel"));
 		await userEvent.click(await screen.findByRole("menuitem", { name: "Nightly (Pre-release)" }));
 		await waitFor(() =>
 			expect(setUpdate).toHaveBeenCalledWith(
-				expect.objectContaining({ channel: "nightly", enabled: true, nightlyAck: true, feature: null }),
+				expect.objectContaining({ channel: "nightly", enabled: false, nightlyAck: true, feature: null }),
 			),
 		);
-		expect(await screen.findByText(/Nightly builds are cut every day/i)).toBeInTheDocument();
+		expect(screen.getByTestId("installed-update-channel")).toHaveTextContent("Stable");
+		expect(await screen.findByText(/Nightly updates daily and may be unstable or cause data loss/i)).toBeInTheDocument();
+	});
+
+	it("checks the newly selected channel and explains how to switch after an update", async () => {
+		let emit: (s: { state: string; version?: string; requestId?: string }) => void = () => undefined;
+		updOnStatus.mockImplementation((cb: (s: unknown) => void) => {
+			emit = cb as typeof emit;
+			return () => undefined;
+		});
+		renderForm();
+		await userEvent.click(await screen.findByLabelText("Updates channel"));
+		await userEvent.click(await screen.findByRole("menuitem", { name: "Nightly (Pre-release)" }));
+
+		await waitFor(() =>
+			expect(updCheck).toHaveBeenCalledWith(
+				expect.objectContaining({
+					settings: expect.objectContaining({ channel: "nightly" }),
+					requestId: expect.stringMatching(/^channel-update-/),
+				}),
+			),
+		);
+		const requestId = updCheck.mock.calls.at(-1)?.[0]?.requestId;
+		expect(requestId).toMatch(/^channel-update-/);
+		act(() => emit({ state: "available", version: "1.5.0-nightly.202608271200", requestId }));
+		expect(await screen.findByText("Update and restart to switch to Nightly (Pre-release)."))
+			.toBeInTheDocument();
 	});
 
 	it("auto-saves when automatic updates are toggled", async () => {
@@ -294,24 +367,31 @@ describe("GlobalSettingsForm", () => {
 		await waitFor(() =>
 			expect(setUpdate).toHaveBeenCalledWith(expect.objectContaining({ enabled: false, channel: "latest" })),
 		);
-		expect(screen.queryByLabelText("Updates channel")).not.toBeInTheDocument();
+		expect(screen.getByLabelText("Updates channel")).toBeInTheDocument();
 	});
 
 	it("hides the nightly warning on the stable channel", async () => {
 		renderForm();
 		await screen.findByText("Updates");
-		expect(screen.queryByText(/Nightly builds are cut every day/i)).not.toBeInTheDocument();
+		expect(screen.queryByText(/Nightly updates daily and may be unstable or cause data loss/i)).not.toBeInTheDocument();
 	});
 
 	it("shows the current app version", async () => {
 		renderForm();
-		expect(await screen.findByText(/Current version - v1\.4\.0/)).toBeInTheDocument();
+		await waitFor(() => expect(screen.getByTestId("app-version")).toHaveTextContent("v1.4.0"));
+		await waitFor(() => expect(screen.getByTestId("installed-update-channel")).toHaveTextContent("Stable"));
+	});
+
+	it("shows the installed Nightly channel separately from the selected update feed", async () => {
+		getVersion.mockResolvedValue("1.4.0-nightly.202608271030");
+		renderForm();
+		await waitFor(() => expect(screen.getByTestId("installed-update-channel")).toHaveTextContent("Nightly (Pre-release)"));
 	});
 
 	it("shows an explicit idle update state and triggers a manual check", async () => {
 		renderForm();
-		expect(await screen.findByText(/Current version - v1\.4\.0/)).toBeInTheDocument();
-		expect(screen.getByText("No update check yet.")).toBeInTheDocument();
+		await waitFor(() => expect(screen.getByTestId("app-version")).toHaveTextContent("v1.4.0"));
+		expect(screen.getByText("Updates haven't been checked yet.")).toBeInTheDocument();
 		await userEvent.click(screen.getByRole("button", { name: "Check for updates" }));
 		expect(updCheck).toHaveBeenCalled();
 	});
@@ -334,7 +414,7 @@ describe("GlobalSettingsForm", () => {
 		expect(screen.getByRole("status")).toHaveTextContent("Checking for updates…");
 
 		act(() => finishCheck());
-		await waitFor(() => expect(button).toBeEnabled());
+		await waitFor(() => expect(button).toBeEnabled(), { timeout: 1_500 });
 	});
 
 	it("stops manual loading when the updater completes before the check invocation settles", async () => {
@@ -356,7 +436,7 @@ describe("GlobalSettingsForm", () => {
 
 		act(() => emit({ state: "not-available", checkedAt: Date.now(), requestId }));
 
-		expect(screen.getByRole("status")).toHaveTextContent("You're on the latest version.");
+		await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("You're on the latest version."), { timeout: 1_500 });
 		expect(button).toBeEnabled();
 	});
 
@@ -379,8 +459,11 @@ describe("GlobalSettingsForm", () => {
 			emit({ state: "downloaded", version: "1.2.3", requestId: "earlier-download" });
 		});
 
-		expect(screen.getByRole("status")).toHaveTextContent("Downloaded. Restart to finish updating.");
-		expect(screen.getByRole("button", { name: "Check for updates" })).toBeEnabled();
+		await waitFor(
+			() => expect(screen.getByRole("status")).toHaveTextContent("Downloaded. Restart to finish updating."),
+			{ timeout: 1_500 },
+		);
+		expect(screen.queryByRole("button", { name: "Check for updates" })).not.toBeInTheDocument();
 		expect(screen.getByRole("button", { name: "Restart & install" })).toBeInTheDocument();
 	});
 

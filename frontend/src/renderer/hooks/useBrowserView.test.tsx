@@ -89,6 +89,10 @@ function setupBridge() {
 				{ id: "t2", url: "", title: "", active: true },
 			],
 		})),
+		notifyPanelUsed: vi.fn(),
+		notifyPanelBlur: vi.fn(),
+		onFocusLocation: vi.fn(() => () => undefined),
+		onReopenClosedTab: vi.fn(() => () => undefined),
 		devtools: vi.fn(
 			async ({ viewId, operation, placement }: {
 				viewId: string;
@@ -110,6 +114,7 @@ function setupBridge() {
 			listeners.add(listener);
 			return () => listeners.delete(listener);
 		}),
+		onPageFocus: vi.fn(() => () => undefined),
 		onTabsState: vi.fn((listener: TabsListener) => {
 			tabsListeners.add(listener);
 			return () => tabsListeners.delete(listener);
@@ -266,10 +271,54 @@ describe("useBrowserView", () => {
 		expect(result.current.closedTabs).toEqual([]);
 	});
 
-	// Regression: reopenClosedTab used to drop the entry from closedTabs before
-	// awaiting openTab, which throws BROWSER_TAB_LIMIT at the cap — losing the
-	// entry with no rollback and opening nothing.
-	it("refuses to reopen a closed tab at the tab cap, keeping the entry instead of losing it", async () => {
+	it("remembers a tab closed by a main-process keyboard shortcut", async () => {
+		const bridge = setupBridge();
+		const { result } = renderHook(() => useBrowserView({ sessionId: "sess-1", active: true, poppedOut: false }));
+		await waitFor(() => expect(result.current.tabs.map((tab) => tab.id)).toEqual(["t1"]));
+
+		act(() =>
+			bridge.emitTabs({
+				viewId: "42:sess-1",
+				activeTabId: "t1",
+				tabs: [{ id: "t1", url: "http://localhost:3000/", title: "First", active: true }],
+				change: {
+					kind: "closed",
+					tabId: "t2",
+					tab: { id: "t2", url: "http://localhost:4173/", title: "Keyboard closed", active: false },
+				},
+			}),
+		);
+
+		expect(result.current.closedTabs).toEqual([
+			{ id: "t2", url: "http://localhost:4173/", title: "Keyboard closed", favicon: undefined },
+		]);
+		await act(() => result.current.reopenClosedTab("t2"));
+		expect(bridge.openTab).toHaveBeenCalledWith({ viewId: "42:sess-1", url: "http://localhost:4173/" });
+	});
+
+	it("can reopen a tab immediately after receiving its keyboard-close event", async () => {
+		const bridge = setupBridge();
+		const { result } = renderHook(() => useBrowserView({ sessionId: "sess-1", active: true, poppedOut: false }));
+		await waitFor(() => expect(result.current.tabs.map((tab) => tab.id)).toEqual(["t1"]));
+
+		await act(async () => {
+			bridge.emitTabs({
+				viewId: "42:sess-1",
+				activeTabId: "t1",
+				tabs: [{ id: "t1", url: "http://localhost:3000/", title: "First", active: true }],
+				change: {
+					kind: "closed",
+					tabId: "t2",
+					tab: { id: "t2", url: "http://localhost:4173/", title: "Keyboard closed", active: false },
+				},
+			});
+			await result.current.reopenClosedTab("t2");
+		});
+
+		expect(bridge.openTab).toHaveBeenCalledWith({ viewId: "42:sess-1", url: "http://localhost:4173/" });
+	});
+
+	it("reopens a closed tab beyond the former tab cap", async () => {
 		const bridge = setupBridge();
 		const { result } = renderHook(() => useBrowserView({ sessionId: "sess-1", active: true, poppedOut: false }));
 
@@ -288,8 +337,7 @@ describe("useBrowserView", () => {
 		await act(() => result.current.closeTab("t2"));
 		expect(result.current.closedTabs).toHaveLength(1);
 
-		// Simulate 16 other tabs having opened since (e.g. via agent activity),
-		// hitting MAX_BROWSER_TABS.
+		// Simulate many other tabs having opened since (e.g. via agent activity).
 		act(() =>
 			bridge.emitTabs({
 				viewId: "42:sess-1",
@@ -305,9 +353,8 @@ describe("useBrowserView", () => {
 
 		await act(() => result.current.reopenClosedTab("t2"));
 
-		expect(bridge.openTab).not.toHaveBeenCalled();
-		expect(result.current.closedTabs).toHaveLength(1);
-		expect(result.current.tabNotice).toBe("Reached the tab limit");
+		expect(bridge.openTab).toHaveBeenCalledWith({ viewId: "42:sess-1", url: "http://localhost:4173/" });
+		expect(result.current.closedTabs).toHaveLength(0);
 	});
 
 	// Regression: the same drop-before-await bug also loses the entry on any
@@ -332,7 +379,7 @@ describe("useBrowserView", () => {
 		await act(() => result.current.closeTab("t2"));
 		expect(result.current.closedTabs).toHaveLength(1);
 
-		bridge.openTab.mockRejectedValueOnce(Object.assign(new Error("Browser tab limit reached"), { code: "BROWSER_TAB_LIMIT" }));
+		bridge.openTab.mockRejectedValueOnce(new Error("Browser tab creation failed"));
 		await act(() => result.current.reopenClosedTab("t2"));
 
 		expect(result.current.closedTabs).toHaveLength(1);

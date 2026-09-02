@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/go-chi/chi/v5/middleware"
+
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
@@ -29,6 +31,8 @@ type fakeStore struct {
 	listReviewsErr    error
 	signatureWriteErr error
 	signatureWrites   int
+	chatSpawnErr      error
+	chatSpawnCalls    []domain.ConversationBranch
 }
 
 func newFakeStore() *fakeStore {
@@ -110,6 +114,19 @@ func (f *fakeStore) UpdateSession(_ context.Context, rec domain.SessionRecord) e
 func (f *fakeStore) UpdateSessionFromActivitySignal(_ context.Context, rec domain.SessionRecord) (bool, error) {
 	f.sessions[rec.ID] = rec
 	return true, nil
+}
+
+func (f *fakeStore) CommitChatSpawn(
+	_ context.Context,
+	rec domain.SessionRecord,
+	boundary domain.ConversationBranch,
+) error {
+	if f.chatSpawnErr != nil {
+		return f.chatSpawnErr
+	}
+	f.chatSpawnCalls = append(f.chatSpawnCalls, boundary)
+	f.sessions[rec.ID] = rec
+	return nil
 }
 
 func (f *fakeStore) CommitSessionControllerEpoch(
@@ -230,6 +247,7 @@ func (f *fakeAgentSwitchLifecycleStore) UpdateSessionFromActivitySignal(_ contex
 	current.Metadata.AgentSessionID = rec.Metadata.AgentSessionID
 	current.Metadata.AgentSessionIDLaunchID = rec.Metadata.AgentSessionIDLaunchID
 	current.Metadata.LatestUserPrompt = rec.Metadata.LatestUserPrompt
+	current.Metadata.LatestUserPromptAt = rec.Metadata.LatestUserPromptAt
 	current.Metadata.LatestAssistantUpdate = rec.Metadata.LatestAssistantUpdate
 	current.Metadata.NativeTranscriptPath = rec.Metadata.NativeTranscriptPath
 	current.UpdatedAt = rec.UpdatedAt
@@ -378,7 +396,12 @@ func newManager() (*Manager, *fakeStore, *fakeMessenger) {
 }
 
 func working(id domain.SessionID) domain.SessionRecord {
-	return domain.SessionRecord{ID: id, ProjectID: "mer", Activity: domain.Activity{State: domain.ActivityActive, LastActivityAt: time.Now()}, AutoInjectReview: true}
+	return domain.SessionRecord{
+		ID: id, ProjectID: "mer",
+		Activity:         domain.Activity{State: domain.ActivityActive, LastActivityAt: time.Now()},
+		AutoInjectReview: true,
+		FirstSignalAt:    time.Now(),
+	}
 }
 
 func TestRuntimeObservation_ConfirmedRuntimeDeathTerminates(t *testing.T) {
@@ -752,6 +775,37 @@ func TestActivity_MetadataOnlyStoresAgentSessionIDWithoutChangingActivity(t *tes
 	}
 	if !got.FirstSignalAt.Equal(rec.FirstSignalAt) {
 		t.Fatalf("metadata-only hook changed FirstSignalAt: got %v, want %v", got.FirstSignalAt, rec.FirstSignalAt)
+	}
+}
+
+func TestActivity_UserPromptStoresItsSignalTimestamp(t *testing.T) {
+	m, st, _ := newManager()
+	rec := working("mer-1")
+	rec.Metadata.RuntimeLaunchID = "launch-1"
+	rec.FirstSignalAt = time.Now().Add(-time.Minute)
+	st.sessions[rec.ID] = rec
+	signalAt := time.Unix(456, 0).UTC()
+
+	if err := m.ApplyActivitySignal(ctx, rec.ID, ports.ActivitySignal{
+		LaunchID: "launch-1", LatestUserPrompt: "keep the row compact", Timestamp: signalAt,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	got := st.sessions[rec.ID]
+	if got.Metadata.LatestUserPrompt != "keep the row compact" || !got.Metadata.LatestUserPromptAt.Equal(signalAt) {
+		t.Fatalf("latest user prompt = %q at %s", got.Metadata.LatestUserPrompt, got.Metadata.LatestUserPromptAt)
+	}
+
+	repeatedAt := signalAt.Add(time.Minute)
+	if err := m.ApplyActivitySignal(ctx, rec.ID, ports.ActivitySignal{
+		Valid: true, State: got.Activity.State, Event: "user-prompt-submit", LaunchID: "launch-1",
+		LatestUserPrompt: "keep the row compact", Timestamp: repeatedAt,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	got = st.sessions[rec.ID]
+	if !got.Metadata.LatestUserPromptAt.Equal(repeatedAt) {
+		t.Fatalf("repeated user prompt timestamp = %s, want %s", got.Metadata.LatestUserPromptAt, repeatedAt)
 	}
 }
 
@@ -2608,6 +2662,39 @@ func TestLifecycleNudgeUsesLateBoundSessionInputLease(t *testing.T) {
 	}
 }
 
+func TestLifecycleNudgeStartupGateUsesAdapterCapability(t *testing.T) {
+	tests := []struct {
+		name     string
+		harness  domain.AgentHarness
+		gate     bool
+		wantSent bool
+	}{
+		{name: "startup-signaling adapter is gated", harness: domain.HarnessCursor, gate: true, wantSent: false},
+		{name: "hookless adapter remains deliverable", harness: domain.HarnessAider, gate: false, wantSent: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			st := newFakeStore()
+			msg := &fakeMessenger{}
+			m := New(st, msg, WithStartupSignalGate(func(harness domain.AgentHarness) bool {
+				return harness == tt.harness && tt.gate
+			}))
+			st.sessions["mer-1"] = domain.SessionRecord{
+				ID: "mer-1", Harness: tt.harness, Mode: domain.SessionModeTUI,
+				Activity: domain.Activity{State: domain.ActivityIdle},
+			}
+
+			outcome, err := m.sendOnce(ctx, "mer-1", "", "tracker-comment:1", "1", "review this", 0)
+			if err != nil {
+				t.Fatalf("sendOnce: %v", err)
+			}
+			if got := len(msg.msgs) == 1; got != tt.wantSent {
+				t.Fatalf("sent = %v, want %v (outcome %v)", got, tt.wantSent, outcome)
+			}
+		})
+	}
+}
+
 func TestApplyTrackerFacts_AssigneeChangedIsLogOnly(t *testing.T) {
 	m, st, msg := newManager()
 	st.sessions["mer-1"] = working("mer-1")
@@ -3600,6 +3687,114 @@ func TestMarkSpawnedPersistsChatControllerFacts(t *testing.T) {
 	}
 }
 
+// Model is the same allowlist omission as the chat resume handle above, one
+// field over: it is declared on SessionMetadata, has its own sessions.model
+// column, and is read back by the API — but mergeMetadata never copied it, so
+// every `ao spawn --model X` persisted an empty model and the session reported
+// no model at all.
+func TestMarkSpawnedPersistsResolvedModel(t *testing.T) {
+	ctx := context.Background()
+	st := newFakeStore()
+	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer"}
+	m := New(st, nil)
+
+	if err := m.MarkSpawned(ctx, "mer-1", domain.SessionMetadata{
+		WorkspacePath: "/ws",
+		Model:         "sonnet",
+	}); err != nil {
+		t.Fatalf("MarkSpawned: %v", err)
+	}
+
+	got, _, err := st.GetSession(ctx, "mer-1")
+	if err != nil {
+		t.Fatalf("GetSession: %v", err)
+	}
+	if got.Metadata.Model != "sonnet" {
+		t.Fatalf("model = %q, want %q; a spawn's resolved model must survive the merge",
+			got.Metadata.Model, "sonnet")
+	}
+
+	// Merged rather than assigned: a relaunch that resolves no explicit model
+	// must leave the recorded one alone instead of blanking it.
+	if err := m.MarkSpawned(ctx, "mer-1", domain.SessionMetadata{WorkspacePath: "/ws"}); err != nil {
+		t.Fatalf("second MarkSpawned: %v", err)
+	}
+	got, _, _ = st.GetSession(ctx, "mer-1")
+	if got.Metadata.Model != "sonnet" {
+		t.Fatalf("model = %q after a relaunch that resolved none, want it preserved", got.Metadata.Model)
+	}
+}
+
+func TestMarkChatSpawnedKeepsPreviousOwnerWhenAtomicBoundaryCommitFails(t *testing.T) {
+	ctx := context.Background()
+	st := newFakeStore()
+	previous := domain.SessionRecord{
+		ID: "mer-1", ProjectID: "mer", Mode: domain.SessionModeChat,
+		Metadata: domain.SessionMetadata{
+			ProviderConversationID: "thread-source",
+			ControllerGeneration:   "generation-source",
+		},
+		Activity: domain.Activity{State: domain.ActivityIdle, LastActivityAt: time.Unix(1, 0)},
+	}
+	st.sessions[previous.ID] = previous
+	commitErr := errors.New("provider boundary transaction failed")
+	st.chatSpawnErr = commitErr
+	m := New(st, nil)
+	boundary := domain.ConversationBranch{
+		ID: "fresh-provider-boundary", ConversationID: "conversation-1", SessionID: previous.ID,
+		ProviderConversationID: "thread-fresh", ParentBranchID: "source-provider-boundary",
+		ProviderScopeID: "fresh-provider-boundary", CreatedAt: time.Unix(2, 0),
+	}
+
+	err := m.MarkChatSpawned(ctx, previous.ID, domain.SessionMetadata{
+		ProviderConversationID: "thread-fresh",
+		ControllerGeneration:   "generation-fresh",
+	}, boundary)
+	if !errors.Is(err, commitErr) {
+		t.Fatalf("MarkChatSpawned error = %v, want atomic commit failure", err)
+	}
+	got := st.sessions[previous.ID]
+	if got.Metadata.ProviderConversationID != previous.Metadata.ProviderConversationID ||
+		got.Metadata.ControllerGeneration != previous.Metadata.ControllerGeneration {
+		t.Fatalf("owner after failed boundary commit = handle %q generation %q, want %q/%q",
+			got.Metadata.ProviderConversationID, got.Metadata.ControllerGeneration,
+			previous.Metadata.ProviderConversationID, previous.Metadata.ControllerGeneration)
+	}
+	if len(st.chatSpawnCalls) != 0 {
+		t.Fatalf("committed Chat boundaries after failure = %+v", st.chatSpawnCalls)
+	}
+}
+
+func TestMarkChatSpawnedCommitsReservedBoundaryWithLifecycleOwner(t *testing.T) {
+	ctx := context.Background()
+	st := newFakeStore()
+	st.sessions["mer-1"] = domain.SessionRecord{
+		ID: "mer-1", ProjectID: "mer", Mode: domain.SessionModeChat, IsTerminated: true,
+	}
+	m := New(st, nil)
+	boundary := domain.ConversationBranch{
+		ID: "fresh-provider-boundary", ConversationID: "conversation-1", SessionID: "mer-1",
+		ProviderConversationID: "thread-fresh", ParentBranchID: "source-provider-boundary",
+		ProviderScopeID: "fresh-provider-boundary", CreatedAt: time.Unix(2, 0),
+	}
+
+	if err := m.MarkChatSpawned(ctx, "mer-1", domain.SessionMetadata{
+		ProviderConversationID: "thread-fresh",
+		ControllerGeneration:   "generation-fresh",
+	}, boundary); err != nil {
+		t.Fatalf("MarkChatSpawned: %v", err)
+	}
+	if len(st.chatSpawnCalls) != 1 || st.chatSpawnCalls[0].ID != boundary.ID {
+		t.Fatalf("committed Chat boundaries = %+v, want %q", st.chatSpawnCalls, boundary.ID)
+	}
+	got := st.sessions["mer-1"]
+	if got.IsTerminated || got.Activity.State != domain.ActivityIdle ||
+		got.Metadata.ProviderConversationID != "thread-fresh" ||
+		got.Metadata.ControllerGeneration != "generation-fresh" {
+		t.Fatalf("committed Chat owner = %+v", got)
+	}
+}
+
 func TestActivitySignalRejectsStaleChatControllerGenerationAcrossHandoff(t *testing.T) {
 	ctx := context.Background()
 	st := newFakeStore()
@@ -3639,5 +3834,52 @@ func TestActivitySignalRejectsStaleChatControllerGenerationAcrossHandoff(t *test
 	}
 	if got := st.sessions["mer-1"].Activity.State; got != domain.ActivityIdle {
 		t.Fatalf("old Chat controller changed TUI activity to %q", got)
+	}
+}
+
+// TestEmitTelemetryStampsRequestID covers the shared lifecycle emit path: an
+// HTTP-driven activity signal must tag its events with the request id so the
+// lifecycle rows join to the request, while reaper/poller ticks (a plain
+// background context) must keep an empty request id.
+func TestEmitTelemetryStampsRequestID(t *testing.T) {
+	cases := []struct {
+		name string
+		ctx  context.Context
+		want string
+	}{
+		{
+			name: "request scoped",
+			ctx:  context.WithValue(context.Background(), middleware.RequestIDKey, "req-1"),
+			want: "req-1",
+		},
+		{name: "background context", ctx: context.Background(), want: ""},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			st := newFakeStore()
+			sink := &telemetrySink{}
+			m := New(st, nil, WithTelemetry(sink))
+			now := time.Unix(100, 0).UTC()
+			m.clock = func() time.Time { return now }
+			st.sessions["mer-1"] = domain.SessionRecord{
+				ID:        "mer-1",
+				ProjectID: "mer",
+				Activity:  domain.Activity{State: domain.ActivityIdle, LastActivityAt: now.Add(-time.Minute)},
+			}
+
+			signal := ports.ActivitySignal{Valid: true, State: domain.ActivityWaitingInput, Timestamp: now}
+			if err := m.ApplyActivitySignal(tc.ctx, "mer-1", signal); err != nil {
+				t.Fatal(err)
+			}
+			if len(sink.events) == 0 {
+				t.Fatal("no telemetry events emitted")
+			}
+			for _, ev := range sink.events {
+				if ev.RequestID != tc.want {
+					t.Fatalf("%s RequestID = %q, want %q", ev.Name, ev.RequestID, tc.want)
+				}
+			}
+		})
 	}
 }

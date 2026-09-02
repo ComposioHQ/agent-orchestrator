@@ -1,4 +1,5 @@
 import { SidebarProvider } from "@/components/ui/sidebar";
+import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 // Disable motion animations so AnimatePresence unmounts children immediately
@@ -22,11 +23,29 @@ import type { WorkspaceSession, WorkspaceSummary } from "../types/workspace";
 import { agentsQueryKey } from "../hooks/useAgentsQuery";
 import { useUiStore } from "../stores/ui-store";
 
+type DragOverTestEvent = {
+	active: {
+		id: string;
+		rect: { current: { initial: null; translated: null } };
+	};
+	activatorEvent: null;
+	delta: { x: number; y: number };
+	over: { id: string; rect: { height: number; top: number } } | null;
+};
+
 const {
 	checkUpdateMock,
+	cloudGateState,
 	cloudSessionState,
+	compactRailCanGoBack,
+	compactRailCanGoForward,
+	dragEnds,
+	dragOvers,
+	dragStarts,
 	downloadUpdateMock,
 	getMock,
+	historyBackMock,
+	historyForwardMock,
 	navigateMock,
 	mockParams,
 	renameSessionMock,
@@ -35,6 +54,7 @@ const {
 	commandPaletteEnabled,
 } = vi.hoisted(
 	() => ({
+		cloudGateState: { cloudEnabled: true, localEnabled: true, client: "" },
 		cloudSessionState: {
 			configured: false,
 			session: null as null | { user: { email: string } },
@@ -42,6 +62,9 @@ const {
 			signIn: vi.fn(),
 			signOut: vi.fn().mockResolvedValue(undefined),
 		},
+		dragEnds: new Map<string, (event: { active: { id: string }; over: { id: string } | null }) => void>(),
+		dragOvers: new Map<string, (event: DragOverTestEvent) => void>(),
+		dragStarts: new Map<string, (event: { active: { id: string } }) => void>(),
 		getMock: vi.fn(),
 		navigateMock: vi.fn(),
 		mockParams: { projectId: undefined as string | undefined, sessionId: undefined as string | undefined },
@@ -51,26 +74,70 @@ const {
 		downloadUpdateMock: vi.fn(),
 		checkUpdateMock: vi.fn(),
 		commandPaletteEnabled: { current: true },
+		compactRailCanGoBack: { current: false },
+		compactRailCanGoForward: { current: false },
+		historyBackMock: vi.fn(),
+		historyForwardMock: vi.fn(),
 	}),
 );
+
+vi.mock("@dnd-kit/core", async (importOriginal) => {
+	const actual = await importOriginal<typeof import("@dnd-kit/core")>();
+	return {
+		...actual,
+		DndContext: ({ children, id, onDragEnd, onDragOver, onDragStart }: {
+			children: React.ReactNode;
+			id?: string;
+			onDragEnd?: (event: { active: { id: string }; over: { id: string } | null }) => void;
+			onDragOver?: (event: DragOverTestEvent) => void;
+			onDragStart?: (event: { active: { id: string } }) => void;
+		}) => {
+			if (id && onDragEnd) dragEnds.set(id, onDragEnd);
+			if (id && onDragOver) dragOvers.set(id, onDragOver);
+			if (id && onDragStart) dragStarts.set(id, onDragStart);
+			return <div data-dnd-context={id}>{children}</div>;
+		},
+		DragOverlay: ({ children }: { children: React.ReactNode }) => children,
+	};
+});
 
 vi.mock("../lib/rename-session", () => ({ renameSession: renameSessionMock }));
 vi.mock("../lib/spawn-orchestrator", () => ({ spawnOrchestrator: spawnMock }));
 vi.mock("../lib/cloud-session", () => ({ useCloudSession: () => cloudSessionState }));
+vi.mock("../hooks/useCloudGate", () => ({ useCloudGate: () => cloudGateState }));
 vi.mock("../hooks/useCommandPaletteEnabled", () => ({
 	useCommandPaletteEnabled: () => commandPaletteEnabled.current,
+}));
+
+vi.mock("../lib/platform", () => ({
+	isLinuxPlatform: () => false,
+	isMacPlatform: () => true,
+	isWindowsPlatform: () => false,
 }));
 
 vi.mock("@tanstack/react-router", async (importOriginal) => {
 	const actual = await importOriginal<typeof import("@tanstack/react-router")>();
 	return {
 		...actual,
+		useCanGoBack: () => compactRailCanGoBack.current,
 		useNavigate: () => navigateMock,
 		useParams: () => ({ ...mockParams }),
+		useRouter: () => ({
+			history: {
+				back: historyBackMock,
+				forward: historyForwardMock,
+				location: { state: { __TSR_index: 0 } },
+				subscribe: vi.fn(() => () => undefined),
+			},
+		}),
 		useRouterState: ({ select }: { select: (state: { location: { pathname: string } }) => unknown }) =>
 			select({ location: { pathname: "/" } }),
 	};
 });
+
+vi.mock("./TitlebarNav", () => ({
+	useCanGoForward: () => compactRailCanGoForward.current,
+}));
 
 vi.mock("../lib/bridge", async (importOriginal) => {
 	const actual = await importOriginal<typeof import("../lib/bridge")>();
@@ -173,6 +240,7 @@ function renderSidebar({
 	workspaces = [workspace],
 	initialOpen = true,
 	autoCompact = false,
+	topbarOffset = "toolbar",
 	expandedProjectIds,
 }: {
 	onCloneProject?: CloneProjectHandler;
@@ -183,6 +251,7 @@ function renderSidebar({
 	workspaces?: WorkspaceSummary[];
 	initialOpen?: boolean;
 	autoCompact?: boolean;
+	topbarOffset?: "toolbar" | "titlebar" | "trafficLights" | "session";
 	expandedProjectIds?: string[];
 } = {}) {
 	// Most legacy sidebar tests exercise session rows and assume their fixture
@@ -212,16 +281,19 @@ function renderSidebar({
 	}
 	render(
 		<QueryClientProvider client={queryClient}>
-			<SidebarProvider defaultOpen={initialOpen}>
-				<Sidebar
-					autoCompact={autoCompact}
-					onCloneProject={onCloneProject}
-					onCreateProject={onCreateProject}
-					onInitializeProject={onInitializeProject}
-					onRemoveProject={onRemoveProject}
-					workspaces={workspaces}
-				/>
-			</SidebarProvider>
+			<TooltipProvider>
+				<SidebarProvider defaultOpen={initialOpen}>
+					<Sidebar
+						autoCompact={autoCompact}
+						topbarOffset={topbarOffset}
+						onCloneProject={onCloneProject}
+						onCreateProject={onCreateProject}
+						onInitializeProject={onInitializeProject}
+						onRemoveProject={onRemoveProject}
+						workspaces={workspaces}
+					/>
+				</SidebarProvider>
+			</TooltipProvider>
 		</QueryClientProvider>,
 	);
 	return onRemoveProject;
@@ -275,13 +347,23 @@ async function openCreateProjectDialog(
 
 beforeEach(() => {
 	window.localStorage.clear();
+	dragEnds.clear();
+	dragOvers.clear();
+	dragStarts.clear();
 	document.documentElement.style.removeProperty("--ao-sidebar-w");
 	commandPaletteEnabled.current = true;
+	compactRailCanGoBack.current = false;
+	compactRailCanGoForward.current = false;
+	cloudGateState.cloudEnabled = true;
+	cloudGateState.localEnabled = true;
+	cloudGateState.client = "";
 	cloudSessionState.configured = false;
 	cloudSessionState.session = null;
 	cloudSessionState.status = "unauthenticated";
 	cloudSessionState.signIn.mockReset();
 	cloudSessionState.signOut.mockReset().mockResolvedValue(undefined);
+	historyBackMock.mockReset();
+	historyForwardMock.mockReset();
 	useUiStore.setState({ isCommandPaletteOpen: false, settingsModal: null });
 	getMock.mockReset();
 	getMock.mockResolvedValue({
@@ -316,12 +398,16 @@ afterEach(() => {
 });
 
 describe("Sidebar", () => {
-	it("does not show cloud sign-in controls while signed out", () => {
+	it("shows the cloud sign-in entry point while signed out", () => {
 		cloudSessionState.configured = true;
 		renderSidebar();
 
-		expect(screen.queryByLabelText("Sign in to AO Cloud")).not.toBeInTheDocument();
-		expect(screen.queryByText("Sign in")).not.toBeInTheDocument();
+		const signInControls = screen.getAllByLabelText("Sign in to AO Cloud");
+		expect(signInControls).toHaveLength(2);
+		const activeControl = signInControls.find((control) => control.tabIndex === 0);
+		expect(activeControl).toBeDefined();
+		fireEvent.click(activeControl!);
+		expect(cloudSessionState.signIn).toHaveBeenCalledOnce();
 	});
 
 	it("keeps cloud account controls visible while signed in", () => {
@@ -331,6 +417,16 @@ describe("Sidebar", () => {
 		renderSidebar();
 
 		expect(screen.getAllByLabelText("Signed in as user@example.com")).toHaveLength(2);
+	});
+
+	it("hides cloud account controls when the daemon reports the cloud offering off", () => {
+		cloudGateState.cloudEnabled = false;
+		cloudSessionState.configured = true;
+		cloudSessionState.status = "authenticated";
+		cloudSessionState.session = { user: { email: "user@example.com" } };
+		renderSidebar();
+
+		expect(screen.queryByLabelText("Signed in as user@example.com")).not.toBeInTheDocument();
 	});
 
 	it("suppresses focus chrome without removing keyboard focusability", () => {
@@ -509,6 +605,94 @@ describe("Sidebar", () => {
 		expect(screen.queryByLabelText("Open Project One dashboard")).not.toBeInTheDocument();
 		expect(screen.getByLabelText("Spawn Project One orchestrator")).toBeInTheDocument();
 		expect(screen.getByLabelText("Project actions for Project One")).toBeInTheDocument();
+	});
+
+	it("keeps project disclosure and row actions in the keyboard tab order", () => {
+		renderSidebar({ workspaces: [{ ...workspace, sessions: [session] }] });
+
+		const disclosure = screen.getByRole("button", { name: "Toggle Project One sessions" });
+		expect(disclosure.tagName).toBe("BUTTON");
+		expect(disclosure).toHaveProperty("tabIndex", 0);
+		expect(screen.getByLabelText("Spawn Project One orchestrator")).toHaveProperty("tabIndex", 0);
+		expect(screen.getByLabelText("Project actions for Project One")).toHaveProperty("tabIndex", 0);
+		expect(screen.getByLabelText("Pin session")).toHaveProperty("tabIndex", 0);
+		expect(screen.queryByRole("button", { name: "Rename fix login" })).not.toBeInTheDocument();
+		expect(screen.getByLabelText("Kill session")).toHaveProperty("tabIndex", 0);
+	});
+
+	it("fades the message age out in favor of the overlaid hover actions", () => {
+		const lastUserMessageAt = "2026-06-29T23:55:00Z";
+		renderSidebar({
+			workspaces: [{ ...workspace, sessions: [{ ...session, lastUserMessageAt }] }],
+		});
+
+		const openSession = screen.getByLabelText("Open fix login");
+		const label = within(openSession).getByText("fix login");
+		const actions = screen.getByLabelText("Pin session").closest("[data-session-actions]");
+		const actionButtons = screen.getByLabelText("Pin session").parentElement;
+		const time = actions?.querySelector("time");
+
+		expect(openSession).toHaveClass("pr-[36px]");
+		expect(openSession).toHaveClass(
+			"group-hover/session-row:pr-[50px]",
+			"group-focus-within/session-row:pr-[50px]",
+		);
+		expect(label).toHaveClass("min-w-0", "flex-1", "truncate");
+		expect(actions).toHaveAttribute("data-session-actions");
+		expect(actionButtons).toHaveClass(
+			"absolute",
+			"right-0.5",
+			"opacity-0",
+			"group-hover/session-row:pointer-events-auto",
+			"group-hover/session-row:opacity-100",
+			"group-focus-within/session-row:pointer-events-auto",
+			"group-focus-within/session-row:opacity-100",
+		);
+		expect(time).toHaveAttribute("datetime", lastUserMessageAt);
+		expect(time).toHaveClass(
+			"absolute",
+			"right-1.5",
+			"opacity-100",
+			"group-hover/session-row:opacity-0",
+			"group-focus-within/session-row:opacity-0",
+		);
+		expect(openSession).toHaveClass("pl-1.5");
+		expect(openSession.closest("li")).toHaveClass("pl-0.5");
+	});
+
+	it("keeps session status and actions stable when an action receives keyboard focus", async () => {
+		const user = userEvent.setup();
+		renderSidebar({ workspaces: [{ ...workspace, sessions: [session] }] });
+
+		const openSession = screen.getByLabelText("Open fix login");
+		const row = openSession.closest<HTMLElement>("[data-session-row]");
+		const status = openSession.querySelector("[data-session-status]");
+
+		if (!row) throw new Error("Session row not found");
+		expect(status).toBeInTheDocument();
+		openSession.focus();
+		await user.tab();
+
+		expect(screen.getByLabelText("Pin session")).toHaveFocus();
+		expect(row).toContainElement(openSession);
+		expect(row).toContainElement(status as HTMLElement);
+		expect(row).toContainElement(screen.getByLabelText("Pin session"));
+	});
+
+	it("keeps action pointer presses from triggering the session press surface", () => {
+		renderSidebar({ workspaces: [{ ...workspace, sessions: [session] }] });
+
+		const openSession = screen.getByLabelText("Open fix login");
+		const row = openSession.closest<HTMLElement>("[data-session-row]");
+		if (!row) throw new Error("Session row not found");
+
+		fireEvent.pointerDown(openSession);
+		expect(row).toHaveClass("scale-[0.97]");
+		fireEvent.pointerUp(openSession);
+		expect(row).not.toHaveClass("scale-[0.97]");
+
+		fireEvent.pointerDown(screen.getByLabelText("Pin session"));
+		expect(row).not.toHaveClass("scale-[0.97]");
 	});
 
 	it("toggles project sessions from the folder icon without selecting the project first", async () => {
@@ -1304,12 +1488,12 @@ describe("Sidebar", () => {
 		expect(dialog).toHaveTextContent("repository folder");
 	});
 
-	it("renames a session inline and persists via the daemon", async () => {
+	it("renames a session inline by double-clicking its name", async () => {
 		const user = userEvent.setup();
 		const workspaceWithSession = { ...workspace, sessions: [session] };
 		renderSidebar({ workspaces: [workspaceWithSession] });
 
-		await user.click(screen.getByLabelText("Rename fix login"));
+		await user.dblClick(screen.getByText("fix login"));
 		const input = screen.getByLabelText("Rename fix login");
 		await user.clear(input);
 		await user.type(input, "polish login{Enter}");
@@ -1322,8 +1506,51 @@ describe("Sidebar", () => {
 		const workspaceWithSession = { ...workspace, sessions: [session] };
 		renderSidebar({ workspaces: [workspaceWithSession] });
 
-		await user.click(screen.getByLabelText("Rename fix login"));
+		await user.dblClick(screen.getByText("fix login"));
 		expect(screen.getByLabelText("Rename fix login")).toHaveAttribute("maxlength", "20");
+	});
+
+	it("renders rename as an unboxed inline label editor", async () => {
+		const user = userEvent.setup();
+		const lastUserMessageAt = "2026-06-29T23:55:00Z";
+		mockParams.sessionId = session.id;
+		renderSidebar({
+			workspaces: [{ ...workspace, sessions: [{ ...session, lastUserMessageAt }] }],
+		});
+
+		await user.dblClick(screen.getByText("fix login"));
+		const input = screen.getByLabelText("Rename fix login");
+		const time = input.parentElement?.querySelector("time");
+
+		expect(input).toHaveAttribute("data-session-inline-editor");
+		expect(input).toHaveClass("border-0", "bg-transparent!", "p-0", "ring-0");
+		expect(input).not.toHaveClass("rounded-xs", "border-accent", "px-1", "focus-visible:ring-1");
+		expect(input.parentElement).toHaveAttribute("data-session-row");
+		expect(input.parentElement).toHaveClass("bg-interactive-active", "text-foreground", "pr-1");
+		expect(time).toHaveAttribute("data-session-message-age", "");
+		expect(time).toHaveAttribute("datetime", lastUserMessageAt);
+	});
+
+	it("offers F2 as a keyboard rename path", async () => {
+		const user = userEvent.setup();
+		renderSidebar({ workspaces: [{ ...workspace, sessions: [session] }] });
+
+		const openSession = screen.getByLabelText("Open fix login");
+		expect(openSession).toHaveAttribute("aria-keyshortcuts", "F2");
+		openSession.focus();
+		await user.keyboard("{F2}");
+
+		expect(screen.getByLabelText("Rename fix login")).toHaveFocus();
+	});
+
+	it("retains a double-tap rename path for touch", () => {
+		renderSidebar({ workspaces: [{ ...workspace, sessions: [session] }] });
+
+		const label = screen.getByText("fix login");
+		fireEvent.pointerUp(label, { pointerType: "touch" });
+		fireEvent.pointerUp(label, { pointerType: "touch" });
+
+		expect(screen.getByLabelText("Rename fix login")).toBeInTheDocument();
 	});
 
 	it("cancels the inline rename on Escape without calling the daemon", async () => {
@@ -1331,7 +1558,7 @@ describe("Sidebar", () => {
 		const workspaceWithSession = { ...workspace, sessions: [session] };
 		renderSidebar({ workspaces: [workspaceWithSession] });
 
-		await user.click(screen.getByLabelText("Rename fix login"));
+		await user.dblClick(screen.getByText("fix login"));
 		const input = screen.getByLabelText("Rename fix login");
 		await user.clear(input);
 		await user.type(input, "discard me{Escape}");
@@ -1398,14 +1625,35 @@ describe("Sidebar", () => {
 		expect(document.documentElement.style.getPropertyValue("--ao-sidebar-w")).toBe(`${SIDEBAR_MIN_WIDTH}px`);
 	});
 
-	it("keeps an icon navigation rail when workspace pressure compacts the sidebar", () => {
-		renderSidebar({ autoCompact: true, initialOpen: false });
+	it("keeps the compact icon rail below the macOS traffic-light band", () => {
+		renderSidebar({ autoCompact: true, initialOpen: false, topbarOffset: "trafficLights" });
 
 		const sidebar = document.querySelector('[data-slot="sidebar"][data-state="collapsed"]');
 		expect(sidebar).toHaveAttribute("data-collapsible", "icon");
+		const compactToggle = document.querySelector('[data-slot="sidebar-header"] button[aria-label="Expand sidebar"]');
+		expect(compactToggle).toBeInTheDocument();
+		expect(compactToggle?.querySelector("svg")).toBeInTheDocument();
+		expect(screen.queryByText("Connect Mobile")).not.toBeVisible();
+		expect(screen.queryByText("Settings")).not.toBeVisible();
+		expect(document.querySelector('[data-slot="sidebar-container"]')).toHaveAttribute(
+			"data-topbar-offset",
+			"trafficLights",
+		);
 		expect(document.querySelector('[data-slot="sidebar-gap"]')).toHaveStyle({
 			width: "var(--sidebar-width-icon)",
 		});
+	});
+
+	it("keeps back and forward accessible from the compact rail on macOS/Linux", async () => {
+		compactRailCanGoBack.current = true;
+		compactRailCanGoForward.current = true;
+		renderSidebar({ autoCompact: true, initialOpen: false, topbarOffset: "trafficLights" });
+
+		await userEvent.click(screen.getByRole("button", { name: "Go back" }));
+		await userEvent.click(screen.getByRole("button", { name: "Go forward" }));
+
+		expect(historyBackMock).toHaveBeenCalledTimes(1);
+		expect(historyForwardMock).toHaveBeenCalledTimes(1);
 	});
 
 	it("flushes any queued rAF frame on pointer-up and persists the clamped width", async () => {
@@ -1733,12 +1981,30 @@ describe("Sidebar", () => {
 		const buttons = await screen.findAllByLabelText("Download update v9.9.9");
 		expect(buttons.length).toBeGreaterThan(0);
 		expect(screen.getByText("Update available")).toBeInTheDocument();
-		expect(screen.getByText("v9.9.9")).toBeInTheDocument();
+		const availableRow = screen.getByTestId("sidebar-update-available");
+		expect(within(availableRow).getByText("v9.9.9")).toBeVisible();
+		expect(availableRow.querySelector(".rounded-full")).toBeNull();
+		expect(screen.getByRole("button", { name: "Hide update v9.9.9 for 24 hours" })).not.toHaveClass(
+			"bg-interactive-hover",
+		);
 		// Nothing is staged yet, so the restart action must not be offered.
 		expect(screen.queryByLabelText(/Restart to install update/)).not.toBeInTheDocument();
 
 		await userEvent.click(buttons[0]);
 		expect(downloadUpdateMock).toHaveBeenCalledTimes(1);
+	});
+
+	it("dismisses the current available update without downloading it", async () => {
+		updateStatusMock.mockResolvedValue({ state: "available", version: "9.9.9" });
+		renderSidebar();
+
+		await userEvent.click(await screen.findByRole("button", {
+			name: "Hide update v9.9.9 for 24 hours",
+		}));
+
+		expect(screen.queryByText("Update available")).not.toBeInTheDocument();
+		expect(screen.queryByLabelText("Download update v9.9.9")).not.toBeInTheDocument();
+		expect(downloadUpdateMock).not.toHaveBeenCalled();
 	});
 
 	it("keeps showing update activity while the automatic download is in progress", async () => {
@@ -1747,9 +2013,13 @@ describe("Sidebar", () => {
 
 		await waitFor(() => expect(updateStatusMock).toHaveBeenCalled());
 		expect(screen.getByText("Downloading… 42%")).toBeInTheDocument();
+		const downloadingRow = screen.getByTestId("sidebar-update-downloading");
+		expect(downloadingRow).not.toHaveClass("border");
+		expect(downloadingRow.querySelector("svg circle")).toBeNull();
 		expect(screen.queryByLabelText(/Restart to install update/)).not.toBeInTheDocument();
 		// A download already in flight must not offer a second one.
 		expect(screen.queryByLabelText(/Download update/)).not.toBeInTheDocument();
+		expect(screen.queryByLabelText(/Hide update/)).not.toBeInTheDocument();
 	});
 
 	it("offers a retry when automatic update checks keep failing", async () => {
@@ -1762,6 +2032,10 @@ describe("Sidebar", () => {
 		const buttons = await screen.findAllByLabelText("Retry update check");
 		expect(buttons.length).toBeGreaterThan(0);
 		expect(screen.getByText("Update check failed")).toBeInTheDocument();
+		const failedRow = screen.getByTestId("sidebar-update-failed");
+		expect(failedRow).toHaveClass("border", "border-warning/35", "bg-warning/12", "text-warning");
+		expect(within(failedRow).getByText("Retry update check")).toBeVisible();
+		expect(failedRow.querySelector(".rounded-full")).toBeNull();
 
 		await userEvent.click(buttons[0]);
 		expect(checkUpdateMock).toHaveBeenCalledTimes(1);
@@ -1778,7 +2052,12 @@ describe("Sidebar", () => {
 
 		// A build ready to install is more actionable than "checks are failing".
 		expect(await screen.findAllByLabelText("Restart to install update v9.9.9")).not.toHaveLength(0);
+		const readyRow = screen.getByTestId("sidebar-update-ready");
+		expect(readyRow).toHaveClass("border", "border-primary/35", "bg-primary/12", "text-primary");
+		expect(within(readyRow).getByText("v9.9.9 ready")).toBeVisible();
+		expect(readyRow.querySelector(".rounded-full")).toBeNull();
 		expect(screen.queryByLabelText("Retry update check")).not.toBeInTheDocument();
+		expect(screen.queryByLabelText(/Hide update/)).not.toBeInTheDocument();
 	});
 
 	it("stays quiet for a one-off update failure that has not become a streak", async () => {
@@ -1803,8 +2082,136 @@ describe("Sidebar", () => {
 		const buttons = await screen.findAllByLabelText("Restart to install update v9.9.9");
 		expect(buttons.length).toBeGreaterThan(0);
 		for (const button of buttons) {
-			expect(button).toHaveClass("text-working", "bg-working/12");
+		expect(button).toHaveClass("text-working");
 		}
 		expect(screen.getByText("v9.9.9 ready")).toBeInTheDocument();
+	});
+
+	it("commits a project drop", () => {
+		renderSidebar({
+			workspaces: [
+				{ ...workspace, id: "alpha", name: "Alpha" },
+				{ ...workspace, id: "bravo", name: "Bravo" },
+			],
+		});
+
+		act(() => dragEnds.get("sidebar-projects")?.({ active: { id: "bravo" }, over: { id: "alpha" } }));
+
+		expect(Array.from(document.querySelectorAll("[data-project-label]"), (node) => node.textContent)).toEqual(["Bravo", "Alpha"]);
+	});
+
+	it("pauses nested session drag contexts during a project drag", async () => {
+		renderSidebar({
+			workspaces: [
+				{ ...workspace, id: "alpha", name: "Alpha", sessions: [{ ...session, id: "alpha-session", workspaceId: "alpha" }] },
+				{ ...workspace, id: "bravo", name: "Bravo", sessions: [{ ...session, id: "bravo-session", workspaceId: "bravo" }] },
+			],
+		});
+
+		expect(document.querySelectorAll('[data-dnd-context^="sidebar-sessions-"]')).toHaveLength(2);
+
+		act(() => dragStarts.get("sidebar-projects")?.({ active: { id: "alpha" } }));
+
+		await waitFor(() => expect(document.querySelectorAll('[data-dnd-context^="sidebar-sessions-"]')).toHaveLength(0));
+		expect(screen.getAllByRole("button", { name: "Open fix login" })).toHaveLength(2);
+	});
+
+	it("commits a session drop within its project", () => {
+		renderSidebar({
+			workspaces: [{
+				...workspace,
+				sessions: [
+					{ ...session, id: "first", title: "First", updatedAt: "2026-06-30T01:00:00Z" },
+					{ ...session, id: "second", title: "Second", updatedAt: "2026-06-30T00:00:00Z" },
+				],
+			}],
+		});
+
+		act(() => dragEnds.get("sidebar-sessions-proj-1")?.({ active: { id: "second" }, over: { id: "first" } }));
+
+		expect(Array.from(document.querySelectorAll('[data-testid="session-list-proj-1"] button[aria-label^="Open "]'), (node) => node.getAttribute("aria-label"))).toEqual([
+			"Open Second",
+			"Open First",
+		]);
+	});
+
+	it("does not toggle disclosure from the click synthesized after a folder drag", () => {
+		vi.useFakeTimers();
+		try {
+			renderSidebar({ workspaces: [{ ...workspace, id: "alpha", name: "Alpha" }] });
+			const projectRow = screen.getByText("Alpha").closest("button");
+			const initialDisclosure = projectRow?.getAttribute("aria-expanded");
+
+			act(() => dragEnds.get("sidebar-projects")?.({ active: { id: "alpha" }, over: null }));
+			act(() => fireEvent.click(screen.getByRole("button", { name: "Toggle Alpha sessions" })));
+
+			expect(projectRow).toHaveAttribute("aria-expanded", initialDisclosure ?? "false");
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it("keeps reordered sessions in an expanded project drag preview", () => {
+		renderSidebar({
+			workspaces: [{
+				...workspace,
+				sessions: [
+					{ ...session, id: "first", title: "First", updatedAt: "2026-06-30T01:00:00Z" },
+					{ ...session, id: "second", title: "Second", updatedAt: "2026-06-30T00:00:00Z" },
+				],
+			}],
+		});
+
+		act(() => dragEnds.get("sidebar-sessions-proj-1")?.({ active: { id: "second" }, over: { id: "first" } }));
+		act(() => dragStarts.get("sidebar-projects")?.({ active: { id: "proj-1" } }));
+
+		const overlay = document.querySelector("[data-project-drag-overlay]");
+		expect(overlay).toHaveTextContent(/Project One.*Second.*First/);
+		expect(overlay?.querySelector("[data-project-drag-preview-session]")).toHaveClass("pl-0.5");
+	});
+
+	it("keeps hidden sessions out of compact project drag previews", () => {
+		renderSidebar({
+			autoCompact: true,
+			initialOpen: false,
+			workspaces: [{ ...workspace, sessions: [session] }],
+		});
+
+		act(() => dragStarts.get("sidebar-projects")?.({ active: { id: "proj-1" } }));
+
+		const overlay = document.querySelector("[data-project-drag-overlay]");
+		expect(overlay).toHaveTextContent("Project One");
+		expect(overlay).not.toHaveTextContent("fix login");
+	});
+
+	it.each(["light", "dark"] as const)("uses a visible project drop indicator in the %s theme", (theme) => {
+		document.documentElement.classList.toggle("dark", theme === "dark");
+		try {
+			renderSidebar({
+				workspaces: [
+					{ ...workspace, id: "alpha", name: "Alpha" },
+					{ ...workspace, id: "bravo", name: "Bravo" },
+				],
+			});
+
+			act(() => dragStarts.get("sidebar-projects")?.({ active: { id: "bravo" } }));
+			act(() => dragOvers.get("sidebar-projects")?.({
+				active: {
+					id: "bravo",
+					rect: { current: { initial: null, translated: null } },
+				},
+				activatorEvent: null,
+				delta: { x: 0, y: 0 },
+				over: { id: "alpha", rect: { height: 32, top: 0 } },
+			}));
+
+			const target = document.querySelector('[data-project-id="alpha"]');
+			expect(target).toHaveAttribute("data-drop-indicator", "before");
+			const indicator = target?.querySelector('[data-project-drop-indicator="before"]');
+			expect(indicator).toHaveClass("bg-foreground");
+			expect(indicator).not.toHaveClass("bg-white");
+		} finally {
+			document.documentElement.classList.remove("dark");
+		}
 	});
 });

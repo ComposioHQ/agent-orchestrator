@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -78,10 +79,11 @@ type nestedMessageState struct {
 }
 
 type conversation struct {
-	conn       *acpsdk.ClientSideConnection
-	legacyWire *legacyACPTransport
-	proc       *process
-	log        *slog.Logger
+	conn            *acpsdk.ClientSideConnection
+	legacyWire      *legacyACPTransport
+	proc            *process
+	log             *slog.Logger
+	providerScopeID string
 
 	mu                sync.Mutex
 	sessionID         string
@@ -97,6 +99,7 @@ type conversation struct {
 	thoughts          map[string]string
 	nestedMessages    map[string]nestedMessageState
 	tools             map[string]*toolState
+	providerFailure   *ports.ChatEvent
 	configOptions     []ports.ChatConfigOption
 	skills            []ports.ChatSkill
 	skillsKnown       bool
@@ -138,6 +141,7 @@ var _ acpsdk.ExtensionMethodHandler = (*conversation)(nil)
 func newConversation(
 	proc *process,
 	log *slog.Logger,
+	providerScopeID string,
 	extensionFor ClientExtensionHandler,
 	extensionAliases map[string]string,
 ) *conversation {
@@ -148,6 +152,7 @@ func newConversation(
 	c := &conversation{
 		proc:             proc,
 		log:              log,
+		providerScopeID:  providerScopeID,
 		pending:          make(map[string]*parkedPermission),
 		pendingInputs:    make(map[string]*parkedInput),
 		capabilities:     make(ports.ChatCapabilities),
@@ -167,6 +172,63 @@ func newConversation(
 	c.conn.SetLogger(log)
 	go c.watchConnection()
 	return c
+}
+
+// providerItemID makes ACP's session-scoped opaque item ids safe to use in
+// AO's conversation-wide indexes. ACP only promises ids such as toolCallId are
+// unique inside one provider session, while reconstructed branches deliberately
+// create new sessions that may reuse those values.
+func (c *conversation) providerItemID(id string) string {
+	if id == "" || c.providerScopeID == "" {
+		return id
+	}
+	return "acp:" + lengthPrefixedTuple(c.providerScopeID, id)
+}
+
+// lengthPrefixedTuple encodes opaque strings injectively. ACP identifiers are
+// allowed to contain delimiters (including NUL), and AO provider scopes contain
+// colons, so delimiter-joining cannot safely define a durable identity.
+func lengthPrefixedTuple(parts ...string) string {
+	var encoded strings.Builder
+	for _, part := range parts {
+		encoded.WriteString(strconv.Itoa(len(part)))
+		encoded.WriteByte(':')
+		encoded.WriteString(part)
+	}
+	return encoded.String()
+}
+
+func decodeLengthPrefixedTuple(encoded string, count int) ([]string, bool) {
+	parts := make([]string, 0, count)
+	for range count {
+		separator := strings.IndexByte(encoded, ':')
+		if separator <= 0 {
+			return nil, false
+		}
+		lengthText := encoded[:separator]
+		length, err := strconv.Atoi(lengthText)
+		if err != nil || length < 0 || strconv.Itoa(length) != lengthText {
+			return nil, false
+		}
+		encoded = encoded[separator+1:]
+		if len(encoded) < length {
+			return nil, false
+		}
+		parts = append(parts, encoded[:length])
+		encoded = encoded[length:]
+	}
+	return parts, encoded == ""
+}
+
+func (c *conversation) legacyProviderItemAlias(id string) (string, bool) {
+	if c.providerScopeID == "" || !strings.HasPrefix(id, "acp:") {
+		return "", false
+	}
+	parts, ok := decodeLengthPrefixedTuple(strings.TrimPrefix(id, "acp:"), 2)
+	if !ok || parts[0] != c.providerScopeID || parts[1] == "" {
+		return "", false
+	}
+	return parts[1], true
 }
 
 func (c *conversation) start(
@@ -354,6 +416,7 @@ func (c *conversation) StartDeferredTurn(providerTurnID string) error {
 	c.thoughts = make(map[string]string)
 	c.nestedMessages = make(map[string]nestedMessageState)
 	c.tools = make(map[string]*toolState)
+	c.providerFailure = nil
 	c.mu.Unlock()
 
 	go c.runTurn(turnCtx, sessionID, turn)
@@ -430,6 +493,7 @@ func (c *conversation) runTurn(ctx context.Context, sessionID string, turn prepa
 		c.activeTurn = ""
 		c.settlingTurn = ""
 		c.turnCancel = nil
+		c.providerFailure = nil
 		if c.interrupt == interrupt {
 			c.interrupt = nil
 		}
@@ -704,10 +768,14 @@ func (c *conversation) promptContent(message ports.ChatUserMessage) ([]acpsdk.Co
 			if item.MIMEType != "" {
 				mimeType = pointer(item.MIMEType)
 			}
+			resource := &acpsdk.TextResourceContents{
+				Uri: item.URI, Text: item.Text, MimeType: mimeType,
+			}
+			if item.Internal {
+				resource.Meta = map[string]any{aoInternalReplayMetaKey: true}
+			}
 			prompt = append(prompt, acpsdk.ResourceBlock(acpsdk.EmbeddedResourceResource{
-				TextResourceContents: &acpsdk.TextResourceContents{
-					Uri: item.URI, Text: item.Text, MimeType: mimeType,
-				},
+				TextResourceContents: resource,
 			}))
 		default:
 			return nil, fmt.Errorf("unsupported chat content type %q", item.Type)

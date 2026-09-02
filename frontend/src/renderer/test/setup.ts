@@ -130,6 +130,7 @@ if (typeof window !== "undefined") {
 		},
 		theme: {
 			set: async () => undefined,
+			persistTerminal: async () => undefined,
 		},
 		menu: {
 			action: async () => undefined,
@@ -232,6 +233,10 @@ if (typeof window !== "undefined") {
 			openTab: async ({ viewId }) => ({ viewId, activeTabId: "", tabs: [] }),
 			getProfile: async (viewId: string) => ({ viewId, profileId: null, temporary: true }),
 			showProfileMenu: async () => undefined,
+			notifyPanelUsed: () => undefined,
+			notifyPanelBlur: () => undefined,
+			onFocusLocation: () => () => undefined,
+			onReopenClosedTab: () => () => undefined,
 			devtools: async ({ viewId, operation }) => ({
 				viewId,
 				open: operation !== "close",
@@ -240,6 +245,7 @@ if (typeof window !== "undefined") {
 			destroy: () => undefined,
 			setAnnotationMode: async () => undefined,
 			onNavState: () => () => undefined,
+			onPageFocus: () => () => undefined,
 			onTabsState: () => () => undefined,
 			onAgentActivity: () => () => undefined,
 			onDevToolsState: () => () => undefined,
@@ -309,6 +315,12 @@ if (typeof window !== "undefined") {
 			signIn: async () => undefined,
 			signOut: async () => undefined,
 			onSessionChanged: () => () => undefined,
+		},
+		cloudCp: {
+			request: async () => ({ status: 401, headers: {}, body: "" }),
+			openStream: async () => ({ streamId: "stream_test" }),
+			closeStream: () => undefined,
+			onStreamEvent: () => () => undefined,
 		},
 	};
 } // end if (typeof window !== "undefined")

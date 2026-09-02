@@ -35,11 +35,10 @@ type ControlDeps struct {
 //
 // Middleware order (outermost first):
 //
-//	RequestID      → attach a request id for correlation
-//	RealIP         → normalise client IP (loopback proxy from the dev server)
-//	requestLogger  → slog-backed access log + 5xx telemetry, carries the request id
-//	recoverer      → turn a handler panic into 500 instead of crashing the daemon
-//	cors           → CORS allowlist for the Electron renderer / dev origins
+//	RequestID     → attach a request id for correlation
+//	requestLogger → slog-backed access log + 5xx telemetry, carries the request id
+//	recoverer     → turn a handler panic into 500 instead of crashing the daemon
+//	cors          → CORS allowlist for the Electron renderer / dev origins
 //
 // The per-request timeout is deliberately not global: it wraps only bounded
 // REST routes, never long-lived terminal streams or health probes.
@@ -50,7 +49,6 @@ func NewRouterWithControl(cfg config.Config, log *slog.Logger, termMgr *terminal
 	api := NewAPI(cfg, deps)
 
 	r.Use(middleware.RequestID)
-	r.Use(middleware.RealIP)
 	r.Use(requestLogger(log, deps.Telemetry))
 	r.Use(recoverTelemetry(log, deps.Telemetry))
 	r.Use(corsMiddleware(cfg.AllowedOrigins))
@@ -136,6 +134,7 @@ func mountMobile(r chi.Router, c *controllers.MobileController) {
 	}
 	r.Get("/api/v1/mobile/status", c.Status)
 	r.Post("/api/v1/mobile/enable", c.Enable)
+	r.Post("/api/v1/mobile/remote-access", c.StartRemoteAccess)
 	r.Post("/api/v1/mobile/disable", c.Disable)
 	r.Post("/api/v1/mobile/regenerate", c.Regenerate)
 	r.Post("/api/v1/mobile/secure-pairing", c.SecurePairing)

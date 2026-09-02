@@ -18,7 +18,7 @@ import {
 export type { Theme, ThemePreference, ThemeStyle } from "../lib/theme";
 export { readStoredThemePreference, readStoredThemeStyle, resolveTheme } from "../lib/theme";
 
-export type GlobalSettingsSection = "general" | "mobile" | "shortcuts" | "browserProfiles" | "updates" | "help";
+export type GlobalSettingsSection = "general" | "cloud" | "mobile" | "shortcuts" | "browserProfiles" | "updates" | "help";
 
 export type SettingsModal =
 	| { scope: "global"; section?: GlobalSettingsSection }
@@ -38,6 +38,8 @@ export type InspectorSessionState = {
 	browserContentRevealed?: boolean;
 	/** Real browser activity occurred while Browser was not visible. */
 	browserUnseen?: boolean;
+	/** Files tab: show only files the agent has touched. Defaults to false (full tree). */
+	filesChangedOnly?: boolean;
 	/** The session-entry defaulting (Summary tab, baseline browser reveal) has already run once for this session's lifetime. */
 	initialized?: boolean;
 };
@@ -125,6 +127,7 @@ export type UiState = {
 	initializeInspectorSession: (sessionId: string, hasBrowserContent: boolean, hasInspector: boolean) => void;
 	setBrowserContentRevealed: (sessionId: string, revealed: boolean) => void;
 	setBrowserUnseen: (sessionId: string, unseen: boolean) => void;
+	setFilesChangedOnly: (sessionId: string, changedOnly: boolean) => void;
 	setCommandPaletteOpen: (open: boolean) => void;
 	setProjectRestarting: (projectId: string, restarting: boolean) => void;
 	setOrchestratorReplacementError: (projectId: string, failure: OrchestratorReplacementFailure | null) => void;
@@ -245,12 +248,18 @@ export const useUiStore = create<UiState>((set, get) => ({
 	toggleSidebar: () =>
 		set((state) => {
 			const wasVisible = sidebarIsVisible(state);
+			// While Browser pressure owns the compact rail, expand/collapse is a
+			// temporary override cycle. It must not mutate the durable preference:
+			// removing the rail's layout width lets the percentage-clamped inspector
+			// shift left after the sidebar animation has settled.
+			if (state.isSidebarOpen && state.isSidebarAutoCollapsed) {
+				return { sidebarAutoCollapseOverride: !state.sidebarAutoCollapseOverride };
+			}
 			const isSidebarOpen = !wasVisible;
 			getLocalStorage()?.setItem(sidebarStorageKey, String(isSidebarOpen));
 			return {
 				isSidebarOpen,
 				// Reopening under active workspace pressure is an explicit override.
-				// Closing clears it so the next open follows the current layout policy.
 				sidebarAutoCollapseOverride: isSidebarOpen && state.isSidebarAutoCollapsed,
 			};
 		}),
@@ -344,6 +353,17 @@ export const useUiStore = create<UiState>((set, get) => ({
 				inspectorSessions: {
 					...state.inspectorSessions,
 					[sessionId]: { ...current, browserUnseen },
+				},
+			};
+		}),
+	setFilesChangedOnly: (sessionId, filesChangedOnly) =>
+		set((state) => {
+			const current = inspectorState(state.inspectorSessions, sessionId);
+			if (Boolean(current.filesChangedOnly) === filesChangedOnly) return state;
+			return {
+				inspectorSessions: {
+					...state.inspectorSessions,
+					[sessionId]: { ...current, filesChangedOnly },
 				},
 			};
 		}),

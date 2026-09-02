@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { agentsQueryKey } from "../hooks/useAgentsQuery";
 import { CreateProjectAgentSheet, defaultAuthorizedAgent, RequiredAgentField } from "./CreateProjectAgentSheet";
+import { TooltipProvider } from "./ui/tooltip";
 
 function renderSheet(onSubmit = vi.fn().mockResolvedValue(undefined), queryClient?: QueryClient) {
 	queryClient ??= new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -25,14 +26,16 @@ function renderSheet(onSubmit = vi.fn().mockResolvedValue(undefined), queryClien
 	}
 	render(
 		<QueryClientProvider client={queryClient}>
-			<CreateProjectAgentSheet
-				isCreating={false}
-				kind="single_repo"
-				onOpenChange={() => undefined}
-				onSubmit={onSubmit}
-				open={true}
-				path="/repo/new-project"
-			/>
+			<TooltipProvider>
+				<CreateProjectAgentSheet
+					isCreating={false}
+					kind="single_repo"
+					onOpenChange={() => undefined}
+					onSubmit={onSubmit}
+					open={true}
+					path="/repo/new-project"
+				/>
+			</TooltipProvider>
 		</QueryClientProvider>,
 	);
 	return onSubmit;
@@ -132,7 +135,7 @@ describe("CreateProjectAgentSheet", () => {
 		expect(onSubmit).toHaveBeenCalledWith({
 			workerAgent: "claude-code",
 			orchestratorAgent: "codex",
-			trackerIntake: { enabled: true, provider: "github", assignee: "octocat" },
+			trackerIntake: { enabled: true, assignee: "octocat" },
 		});
 	});
 

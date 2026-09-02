@@ -30,38 +30,42 @@ import (
 	previewutil "github.com/aoagents/agent-orchestrator/backend/internal/preview"
 	"github.com/aoagents/agent-orchestrator/backend/internal/previewserver"
 	sessionsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/session"
+	"github.com/aoagents/agent-orchestrator/backend/pkg/contract"
 )
 
 type fakeSessionService struct {
-	sessions            map[domain.SessionID]domain.Session
-	sent                string
-	sentAttachment      *ports.SpawnAttachment
-	delegationInput     sessionsvc.DelegateTaskInput
-	delegationErr       error
-	cleanupProjects     []domain.ProjectID
-	cleanupResult       []domain.SessionID
-	cleanupSkipped      []sessionsvc.CleanupSkipped
-	workspaceFiles      sessionsvc.WorkspaceFiles
-	workspaceFile       sessionsvc.WorkspaceFileDetail
-	workspaceBlob       sessionsvc.WorkspaceFileBlob
-	workspacePaths      []string
-	spawnErr            error
-	lastSpawn           ports.SpawnConfig
-	orchestratorMode    domain.SessionMode
-	claimErr            error
-	listPRErr           error
-	workspaceErr        error
-	staged              []ports.SpawnAttachment
-	stagedPaths         []string
-	stageErr            error
-	agentSwitches       map[domain.AgentSwitchID]domain.AgentSwitch
-	switchConfig        sessionsvc.SwitchAgentInput
-	switchErr           error
-	recoveredSwitch     domain.AgentSwitchID
-	handoff             json.RawMessage
-	handoffSource       domain.AgentGenerationID
-	autoInjectCISession domain.SessionID
-	autoInjectCIEnabled bool
+	sessions             map[domain.SessionID]domain.Session
+	sent                 string
+	sentAttachment       *ports.SpawnAttachment
+	delegationInput      sessionsvc.DelegateTaskInput
+	delegationErr        error
+	cleanupProjects      []domain.ProjectID
+	cleanupResult        []domain.SessionID
+	cleanupSkipped       []sessionsvc.CleanupSkipped
+	workspaceFiles       sessionsvc.WorkspaceFiles
+	workspaceFile        sessionsvc.WorkspaceFileDetail
+	workspaceFileSection sessionsvc.WorkspaceFileSection
+	workspaceBlob        sessionsvc.WorkspaceFileBlob
+	workspaceTree        sessionsvc.WorkspaceTree
+	workspaceTreePath    string
+	workspacePaths       []string
+	spawnErr             error
+	lastSpawn            ports.SpawnConfig
+	orchestratorMode     domain.SessionMode
+	claimErr             error
+	listPRErr            error
+	workspaceErr         error
+	staged               []ports.SpawnAttachment
+	stagedPaths          []string
+	stageErr             error
+	agentSwitches        map[domain.AgentSwitchID]domain.AgentSwitch
+	switchConfig         sessionsvc.SwitchAgentInput
+	switchErr            error
+	recoveredSwitch      domain.AgentSwitchID
+	handoff              json.RawMessage
+	handoffSource        domain.AgentGenerationID
+	autoInjectCISession  domain.SessionID
+	autoInjectCIEnabled  bool
 }
 
 type fakeInterfaceTransitionSessionService struct {
@@ -559,7 +563,8 @@ func (f *fakeSessionService) WorkspaceWatchPaths(_ context.Context, id domain.Se
 	return []string{session.Metadata.WorkspacePath}, nil
 }
 
-func (f *fakeSessionService) GetWorkspaceFile(_ context.Context, id domain.SessionID, path string) (sessionsvc.WorkspaceFileDetail, error) {
+func (f *fakeSessionService) GetWorkspaceFile(_ context.Context, id domain.SessionID, path string, section sessionsvc.WorkspaceFileSection) (sessionsvc.WorkspaceFileDetail, error) {
+	f.workspaceFileSection = section
 	if f.workspaceErr != nil {
 		return sessionsvc.WorkspaceFileDetail{}, f.workspaceErr
 	}
@@ -585,6 +590,73 @@ func (f *fakeSessionService) GetWorkspaceFileBlob(_ context.Context, id domain.S
 		return blob, nil
 	}
 	return sessionsvc.WorkspaceFileBlob{Path: path, Side: side, MediaType: "image/png"}, nil
+}
+
+func (f *fakeSessionService) ListWorkspaceTree(_ context.Context, id domain.SessionID, path string) (sessionsvc.WorkspaceTree, error) {
+	f.workspaceTreePath = path
+	if f.workspaceErr != nil {
+		return sessionsvc.WorkspaceTree{}, f.workspaceErr
+	}
+	if _, ok := f.sessions[id]; !ok {
+		return sessionsvc.WorkspaceTree{}, apierr.NotFound("SESSION_NOT_FOUND", "Unknown session")
+	}
+	if f.workspaceTree.SessionID != "" {
+		return f.workspaceTree, nil
+	}
+	return sessionsvc.WorkspaceTree{SessionID: id, Path: path}, nil
+}
+
+func TestSessionsAPI_ListWorkspaceTree(t *testing.T) {
+	t.Run("lists the requested directory", func(t *testing.T) {
+		svc := newFakeSessionService()
+		svc.workspaceTree = sessionsvc.WorkspaceTree{
+			SessionID: "ao-1",
+			Path:      "src",
+			Entries: []sessionsvc.WorkspaceTreeEntry{{
+				Name: "main.go", Path: "src/main.go", Type: sessionsvc.WorkspaceTreeFile,
+			}},
+		}
+		srv := newSessionTestServer(t, svc)
+		body, status, _ := doRequest(t, srv, http.MethodGet, "/api/v1/sessions/ao-1/workspace/tree?path=src", "")
+		if status != http.StatusOK {
+			t.Fatalf("status = %d, want 200; body=%s", status, body)
+		}
+		if svc.workspaceTreePath != "src" {
+			t.Fatalf("service path = %q, want src", svc.workspaceTreePath)
+		}
+		var got controllers.ListWorkspaceTreeResponse
+		mustJSON(t, body, &got)
+		if got.Path != "src" || len(got.Entries) != 1 || got.Entries[0].Path != "src/main.go" {
+			t.Fatalf("response = %+v", got)
+		}
+	})
+
+	t.Run("returns not found for an unknown session", func(t *testing.T) {
+		srv := newSessionTestServer(t, newFakeSessionService())
+		body, status, _ := doRequest(t, srv, http.MethodGet, "/api/v1/sessions/missing/workspace/tree", "")
+		if status != http.StatusNotFound {
+			t.Fatalf("status = %d, want 404; body=%s", status, body)
+		}
+	})
+
+	for _, tc := range []struct {
+		name string
+		err  error
+		want int
+	}{
+		{name: "invalid path", err: apierr.Invalid("INVALID_WORKSPACE_PATH", "invalid workspace path", nil), want: http.StatusBadRequest},
+		{name: "service failure", err: errors.New("tree unavailable"), want: http.StatusInternalServerError},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			svc := newFakeSessionService()
+			svc.workspaceErr = tc.err
+			srv := newSessionTestServer(t, svc)
+			body, status, _ := doRequest(t, srv, http.MethodGet, "/api/v1/sessions/ao-1/workspace/tree?path=src", "")
+			if status != tc.want {
+				t.Fatalf("status = %d, want %d; body=%s", status, tc.want, body)
+			}
+		})
+	}
 }
 
 func TestSessionsAPI_AgentSwitchLifecycle(t *testing.T) {
@@ -884,6 +956,8 @@ func TestSessionsAPI_ListSpawnGetAndActions(t *testing.T) {
 	s := svc.sessions["ao-1"]
 	s.Metadata = domain.SessionMetadata{Branch: "qa/modal-worker", WorkspacePath: "/tmp/private-worktree", RuntimeHandleID: "runtime-1", Prompt: "private prompt"}
 	s.SCMStatus = domain.StatusReviewPending
+	s.KanbanColumn = domain.KanbanNeedsReview
+	s.DisplayStatus = contract.DisplayNeedsHumanReview
 	svc.sessions["ao-1"] = s
 	srv := newSessionTestServer(t, svc)
 
@@ -897,6 +971,12 @@ func TestSessionsAPI_ListSpawnGetAndActions(t *testing.T) {
 	mustJSON(t, body, &list)
 	if len(list.Sessions) != 1 || list.Sessions[0].ID != "ao-1" || list.Sessions[0].Status != string(domain.StatusIdle) || list.Sessions[0].SCMStatus != string(domain.StatusReviewPending) || list.Sessions[0].TerminalHandleID != "ao-1/terminal_0" {
 		t.Fatalf("list = %#v", list)
+	}
+	if list.Sessions[0].KanbanColumn != string(domain.KanbanNeedsReview) {
+		t.Fatalf("kanbanColumn = %q, want the derived column on the wire", list.Sessions[0].KanbanColumn)
+	}
+	if list.Sessions[0].DisplayStatus != string(contract.DisplayNeedsHumanReview) {
+		t.Fatalf("displayStatus = %q, want the derived phrase on the wire", list.Sessions[0].DisplayStatus)
 	}
 	if list.Sessions[0].Branch != "qa/modal-worker" {
 		t.Fatalf("branch = %q, want qa/modal-worker", list.Sessions[0].Branch)
@@ -2209,6 +2289,26 @@ func TestSessionsAPI_GetWorkspaceFile(t *testing.T) {
 	}
 }
 
+// TestSessionsAPI_GetWorkspaceFileSection verifies the section query param
+// reaches the service unchanged, so a staged-section request and an
+// unstaged-section request for the same path resolve to different diffs
+// instead of colliding on one combined base..worktree diff.
+func TestSessionsAPI_GetWorkspaceFileSection(t *testing.T) {
+	svc := newFakeSessionService()
+	srv := newSessionTestServer(t, svc)
+
+	for _, section := range []sessionsvc.WorkspaceFileSection{sessionsvc.WorkspaceFileSectionStaged, sessionsvc.WorkspaceFileSectionUnstaged} {
+		body, status, _ := doRequest(t, srv, "GET",
+			"/api/v1/sessions/ao-1/workspace/file?path="+url.QueryEscape("README.md")+"&section="+string(section), "")
+		if status != http.StatusOK {
+			t.Fatalf("section=%s: GET workspace file = %d, want 200; body=%s", section, status, body)
+		}
+		if svc.workspaceFileSection != section {
+			t.Fatalf("section=%s: service received section %q", section, svc.workspaceFileSection)
+		}
+	}
+}
+
 func TestSessionsAPI_GetWorkspaceFileRequiresPath(t *testing.T) {
 	srv := newSessionTestServer(t, newFakeSessionService())
 
@@ -2649,6 +2749,8 @@ type sessionBody struct {
 	Branch           string `json:"branch"`
 	Status           string `json:"status"`
 	SCMStatus        string `json:"scmStatus"`
+	KanbanColumn     string `json:"kanbanColumn"`
+	DisplayStatus    string `json:"displayStatus"`
 	TerminalHandleID string `json:"terminalHandleId"`
 }
 

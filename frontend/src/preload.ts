@@ -25,6 +25,11 @@ import type { TelemetryBootstrap } from "./shared/telemetry";
 import type { MigrationState } from "./main/app-state";
 import type { UpdateSettings, UpdateStatus } from "./main/update-settings";
 import type { CloudAccount } from "./shared/cloud-account";
+import type {
+	CloudCpProxyRequestInit,
+	CloudCpProxyResponse,
+	CloudCpStreamEvent,
+} from "./main/cloud-cp-proxy";
 import type { UpdateOutcome } from "./shared/update-telemetry";
 import type { UiSettings } from "./main/ui-settings";
 import type { UpdateCheckOptions } from "./main/auto-updater";
@@ -253,6 +258,8 @@ const api = {
 		// WebContentsView previews (which follow prefers-color-scheme) stay in sync
 		// with the shell. "system" lets both follow the OS.
 		set: (preference: "light" | "dark" | "system") => ipcRenderer.invoke("theme:set", preference) as Promise<void>,
+		persistTerminal: (scheme: "light" | "dark") =>
+			ipcRenderer.invoke("theme:persist-terminal", scheme) as Promise<void>,
 	},
 	menu: {
 		action: (action: string) => ipcRenderer.invoke("menu:action", action) as Promise<void>,
@@ -309,6 +316,22 @@ const api = {
 			ipcRenderer.invoke("browser:profile:get", viewId) as Promise<BrowserProfileViewState>,
 		showProfileMenu: (input: BrowserProfileMenuInput) =>
 			ipcRenderer.invoke("browser:profile:menu", input) as Promise<void>,
+		notifyPanelUsed: (viewId: string) => ipcRenderer.send("browser:panelUsed", viewId),
+		notifyPanelBlur: (viewId: string) => ipcRenderer.send("browser:panelBlur", viewId),
+		onFocusLocation: (listener: (viewId: string) => void) => {
+			const wrapped = (_event: Electron.IpcRendererEvent, viewId: string) => listener(viewId);
+			ipcRenderer.on("browser:focusLocation", wrapped);
+			return () => {
+				ipcRenderer.off("browser:focusLocation", wrapped);
+			};
+		},
+		onReopenClosedTab: (listener: (viewId: string) => void) => {
+			const wrapped = (_event: Electron.IpcRendererEvent, viewId: string) => listener(viewId);
+			ipcRenderer.on("browser:reopenClosedTab", wrapped);
+			return () => {
+				ipcRenderer.off("browser:reopenClosedTab", wrapped);
+			};
+		},
 		devtools: (input: BrowserDevToolsInput) =>
 			ipcRenderer.invoke("browser:devtools", input) as Promise<BrowserDevToolsState>,
 		destroy: (viewId: string) => ipcRenderer.send("browser:destroy", viewId),
@@ -319,6 +342,13 @@ const api = {
 			ipcRenderer.on("browser:navState", wrapped);
 			return () => {
 				ipcRenderer.off("browser:navState", wrapped);
+			};
+		},
+		onPageFocus: (listener: (viewId: string) => void) => {
+			const wrapped = (_event: Electron.IpcRendererEvent, viewId: string) => listener(viewId);
+			ipcRenderer.on("browser:pageFocus", wrapped);
+			return () => {
+				ipcRenderer.off("browser:pageFocus", wrapped);
 			};
 		},
 		onTabsState: (listener: (state: BrowserTabsState) => void) => {
@@ -471,6 +501,27 @@ const api = {
 			ipcRenderer.on("cloud:sessionChanged", wrapped);
 			return () => {
 				ipcRenderer.off("cloud:sessionChanged", wrapped);
+			};
+		},
+	},
+	// Cloud control-plane transport. The CP has no CORS and the WorkOS bearer
+	// token lives only in the main process, so every CP call is proxied through
+	// main (main/cloud-cp-proxy.ts), which attaches the token; the token itself
+	// never crosses this bridge.
+	cloudCp: {
+		request: (init: CloudCpProxyRequestInit) =>
+			ipcRenderer.invoke("cloudCp:request", init) as Promise<CloudCpProxyResponse>,
+		openStream: (init: CloudCpProxyRequestInit) =>
+			ipcRenderer.invoke("cloudCp:openStream", init) as Promise<{ streamId: string }>,
+		closeStream: (streamId: string) => {
+			ipcRenderer.send("cloudCp:closeStream", streamId);
+		},
+		onStreamEvent: (streamId: string, listener: (event: CloudCpStreamEvent) => void) => {
+			const channel = `cloudCp:stream:${streamId}`;
+			const wrapped = (_event: Electron.IpcRendererEvent, event: CloudCpStreamEvent) => listener(event);
+			ipcRenderer.on(channel, wrapped);
+			return () => {
+				ipcRenderer.off(channel, wrapped);
 			};
 		},
 	},

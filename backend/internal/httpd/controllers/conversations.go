@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -35,6 +36,9 @@ type ConversationService interface {
 	Interrupt(ctx context.Context, session domain.SessionID) error
 	Steer(ctx context.Context, session domain.SessionID, msg ports.ChatUserMessage) (chatsvc.SteerResult, error)
 	PromoteQueuedTurn(ctx context.Context, session domain.SessionID, turnID string) (chatsvc.PromoteQueuedTurnResult, error)
+	CancelQueuedTurn(ctx context.Context, session domain.SessionID, turnID string) error
+	EditQueuedTurn(ctx context.Context, session domain.SessionID, turnID, text string) error
+	ReorderQueuedTurns(ctx context.Context, session domain.SessionID, turnIDs []string) error
 	Models(ctx context.Context, session domain.SessionID) ([]ports.ChatModel, domain.ConversationSettings, error)
 	ConfigOptions(ctx context.Context, session domain.SessionID) ([]ports.ChatConfigOption, error)
 	SetConfigOption(ctx context.Context, session domain.SessionID, configID string, value ports.ChatConfigOptionValue) ([]ports.ChatConfigOption, error)
@@ -69,6 +73,9 @@ func (c *ConversationsController) Register(r chi.Router) {
 	r.Post("/sessions/{sessionId}/conversation/interrupt", c.interrupt)
 	r.Post("/sessions/{sessionId}/conversation/steer", c.steer)
 	r.Post("/sessions/{sessionId}/conversation/turns/{turnId}/steer", c.promoteQueuedTurn)
+	r.Post("/sessions/{sessionId}/conversation/turns/{turnId}/cancel", c.cancelQueuedTurn)
+	r.Post("/sessions/{sessionId}/conversation/turns/{turnId}/queue/edit", c.editQueuedTurn)
+	r.Post("/sessions/{sessionId}/conversation/queue/reorder", c.reorderQueuedTurns)
 	r.Post("/sessions/{sessionId}/conversation/compact", c.compact)
 	r.Get("/sessions/{sessionId}/conversation/models", c.models)
 	r.Get("/sessions/{sessionId}/conversation/config-options", c.configOptions)
@@ -175,8 +182,14 @@ func (c *ConversationsController) activateBranch(w http.ResponseWriter, r *http.
 			"/api/v1/sessions/{sessionId}/conversation/branches/{branchId}/activate")
 		return
 	}
+	branchID, err := url.PathUnescape(chi.URLParam(r, "branchId"))
+	if err != nil {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "validation",
+			"CHAT_BRANCH_INVALID", "conversation branch identifier is invalid", nil)
+		return
+	}
 	active, err := c.Svc.ActivateBranch(r.Context(), domain.SessionID(chi.URLParam(r, "sessionId")),
-		chi.URLParam(r, "branchId"))
+		branchID)
 	if errors.Is(err, domain.ErrNoConversationBranch) {
 		envelope.WriteAPIError(w, r, http.StatusNotFound, "not_found",
 			"CHAT_BRANCH_NOT_FOUND", "that conversation branch does not exist", nil)
@@ -595,6 +608,9 @@ func conversationContent(req SendConversationMessageRequest) ([]ports.ChatConten
 		if strings.TrimSpace(resource.URI) == "" || strings.TrimSpace(resource.Name) == "" {
 			return nil, &attachmentError{"INVALID_RESOURCE", "resource uri and name are required"}
 		}
+		if resource.URI == ports.ChatInternalReplayResourceURI {
+			return nil, &attachmentError{"INVALID_RESOURCE", "resource uri is reserved for AO internal context"}
+		}
 		kind, text := "resource_link", ""
 		if resource.Text != nil {
 			kind = "resource"
@@ -836,30 +852,32 @@ func writeConversationError(w http.ResponseWriter, r *http.Request, err error) {
 // Items arrive already ordered by sequence, so nothing is re-sorted here.
 func conversationSnapshotResponse(s chatsvc.Snapshot) ConversationSnapshotResponse {
 	out := ConversationSnapshotResponse{
-		ConversationID:             s.Conversation.ID,
-		ActiveBranchID:             s.Conversation.ActiveBranchID,
-		BranchedFromEarlierMessage: s.BranchedFromEarlierMessage,
-		SessionID:                  string(s.SessionID),
-		Harness:                    string(s.Harness),
-		Mode:                       string(s.Mode),
-		Controller:                 string(s.Controller),
-		LatestSequence:             s.Conversation.LatestSequence,
-		OldestSequence:             s.OldestSequence,
-		HasMoreBefore:              s.HasMoreBefore,
-		Turns:                      make([]ConversationTurnResponse, 0, len(s.Turns)),
-		Messages:                   make([]ConversationMessageResponse, 0, len(s.Messages)),
-		Activities:                 make([]ConversationActivityResponse, 0, len(s.Activities)),
-		BranchPoints:               make([]ConversationBranchPointResponse, 0, len(s.BranchPoints)),
-		Settings:                   turnSettingsPayload(s.Conversation.Settings),
-		Usage:                      usagePayload(s.Usage),
-		RateLimits:                 rateLimitsPayload(s.RateLimits),
-		CompactedAt:                optionalTimestamp(s.Conversation.CompactedAt),
-		Title:                      s.Conversation.ProviderTitle,
-		ModelReroute:               modelReroutePayload(s.Conversation.ModelReroute),
-		Account:                    accountPayload(s.Conversation.Account),
-		ThreadState:                threadStatePayload(s.Conversation.ThreadState),
-		MCPServers:                 mcpServersPayload(s.Conversation.MCPServers),
-		Capabilities:               capabilityNames(s.Capabilities),
+		ConversationID:                   s.Conversation.ID,
+		ActiveBranchID:                   s.Conversation.ActiveBranchID,
+		BranchedFromEarlierMessage:       s.BranchedFromEarlierMessage,
+		SessionID:                        string(s.SessionID),
+		Harness:                          string(s.Harness),
+		Mode:                             string(s.Mode),
+		Controller:                       string(s.Controller),
+		LatestSequence:                   s.Conversation.LatestSequence,
+		OldestSequence:                   s.OldestSequence,
+		HasMoreBefore:                    s.HasMoreBefore,
+		NativeForkAvailableAfterSequence: s.NativeForkAvailableAfterSequence,
+		Turns:                            make([]ConversationTurnResponse, 0, len(s.Turns)),
+		Messages:                         make([]ConversationMessageResponse, 0, len(s.Messages)),
+		Activities:                       make([]ConversationActivityResponse, 0, len(s.Activities)),
+		BranchPoints:                     make([]ConversationBranchPointResponse, 0, len(s.BranchPoints)),
+		BranchMaterialization:            branchMaterializationPayload(s.ActiveBranch),
+		Settings:                         turnSettingsPayload(s.Conversation.Settings),
+		Usage:                            usagePayload(s.Usage),
+		RateLimits:                       rateLimitsPayload(s.RateLimits),
+		CompactedAt:                      optionalTimestamp(s.Conversation.CompactedAt),
+		Title:                            s.Conversation.ProviderTitle,
+		ModelReroute:                     modelReroutePayload(s.Conversation.ModelReroute),
+		Account:                          accountPayload(s.Conversation.Account),
+		ThreadState:                      threadStatePayload(s.Conversation.ThreadState),
+		MCPServers:                       mcpServersPayload(s.Conversation.MCPServers),
+		Capabilities:                     capabilityNames(s.Capabilities),
 	}
 
 	for _, turn := range s.Turns {
@@ -893,6 +911,7 @@ func conversationSnapshotResponse(s chatsvc.Snapshot) ConversationSnapshotRespon
 			CreatedAt: msg.CreatedAt.UTC().Format(time.RFC3339),
 		}
 		message.Content, message.EditAvailable = conversationContentSummary(msg)
+		message.EditAvailable = message.EditAvailable && msg.Sequence > s.EditFloorSequence
 		out.Messages = append(out.Messages, message)
 	}
 	for _, point := range s.BranchPoints {
@@ -921,6 +940,16 @@ func conversationSnapshotResponse(s chatsvc.Snapshot) ConversationSnapshotRespon
 	return out
 }
 
+func branchMaterializationPayload(branch domain.ConversationBranch) *ConversationBranchMaterializationResponse {
+	if branch.ID == "" || branch.Strategy == "" {
+		return nil
+	}
+	return &ConversationBranchMaterializationResponse{
+		Strategy:        string(branch.Strategy),
+		ReplayTruncated: branch.ReplayTruncated,
+	}
+}
+
 func conversationContentSummary(msg domain.ConversationMessage) ([]ConversationContentSummaryResponse, bool) {
 	if msg.Role != domain.MessageRoleUser || msg.Origin != domain.MessageOriginHuman {
 		return nil, false
@@ -934,7 +963,10 @@ func conversationContentSummary(msg domain.ConversationMessage) ([]ConversationC
 	}
 	summaries := make([]ConversationContentSummaryResponse, 0, len(content))
 	for _, block := range content {
-		if block.Type == "text" {
+		// AO's reconstructed-history seed is provider context, not content the
+		// person attached. Keeping it out of this public summary prevents it from
+		// appearing as a user resource when the edited message is rendered again.
+		if block.Type == "text" || ports.IsInternalReplayContent(block) {
 			continue
 		}
 		name := block.Name

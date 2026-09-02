@@ -43,6 +43,11 @@ surface (`npm run sqlc`, `npm run api`).
   conversation between TUI and Chat without changing the AO session/worktree;
   rollback, restart recovery, controller-generation fencing, and a transition
   message outbox preserve the one-controller invariant.
+- Codex Chat app-server processes are owned by authenticated, detached
+  per-session hosts. Desktop close, full quit, and updater daemon replacement
+  detach and reconnect without relaunching the provider or interrupting an
+  in-flight turn; explicit session termination destroys the host. Other Chat
+  drivers still use native resume after daemon replacement.
 - Durable Chat conversations with project-scoped orchestrator continuity,
   session-scoped worker history, bounded history pages, transactional raw-event
   archive/projection, controller-generation fencing, turns, messages,
@@ -85,8 +90,9 @@ surface (`npm run sqlc`, `npm run api`).
   ([#75](https://github.com/aoagents/agent-orchestrator/issues/75),
   [#108](https://github.com/aoagents/agent-orchestrator/issues/108),
   [#109](https://github.com/aoagents/agent-orchestrator/issues/109)).
-- Terminal mux over WebSocket (`/mux`): per-client `tmux attach` PTY on
-  Darwin/Linux; conpty loopback pty-host on Windows.
+- Terminal mux over WebSocket (`/mux`): detached native PTY host for new macOS
+  sessions, per-client `tmux attach` for Linux and persisted legacy macOS
+  handles, and a ConPTY loopback host on Windows.
 - Lifecycle reducer plus reaper (`internal/observe/reaper`).
 - Agent adapter platform under `internal/adapters/agent/` (25 adapters) with a
   registry and `ao hooks` activity dispatch.

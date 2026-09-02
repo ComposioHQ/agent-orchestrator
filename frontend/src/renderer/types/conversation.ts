@@ -14,7 +14,7 @@
 export type SessionMode = "chat" | "tui";
 
 /** One request and the agent work that followed it. */
-export type TurnState = "queued" | "running" | "completed" | "recovered" | "interrupted" | "failed";
+export type TurnState = "queued" | "running" | "completed" | "recovered" | "interrupted" | "failed" | "cancelled";
 
 export type MessageRole = "user" | "assistant";
 
@@ -365,10 +365,21 @@ export interface AutoReviewDetail {
  * from the presence of text. Read the discriminator, never the kind.
  */
 export interface SystemEventDetail {
-	event?: "compaction" | "model.rerouted" | "auth.reauth_required" | "steer" | "plan" | "context.reset";
+	event?:
+		| "compaction"
+		| "model.rerouted"
+		| "auth.reauth_required"
+		| "provider.failure"
+		| "steer"
+		| "plan"
+		| "context.reset";
 	/** model.rerouted */
 	fromModel?: string;
 	toModel?: string;
+	/** provider.failure: provider-neutral classification from an agent protocol extension. */
+	category?: string;
+	severity?: "warning" | "error" | (string & {});
+	revision?: number;
 	/** steer: the user's own words, delivered into a turn already running. */
 	origin?: string;
 	clientMessageId?: string;
@@ -561,9 +572,7 @@ export interface ChatConfigChoice {
 }
 
 /** The two value shapes ACP session config supports. */
-export type ChatConfigOptionValue =
-	| { value: string }
-	| { enabled: boolean };
+export type ChatConfigOptionValue = { value: string } | { enabled: boolean };
 
 /**
  * One named skill the provider will let this session invoke.
@@ -692,9 +701,13 @@ export interface ConversationSnapshot {
 	latestSequence: number;
 	oldestSequence: number;
 	hasMoreBefore: boolean;
+	/** The first provider-backed prompt in the active provider scope. */
+	nativeForkAvailableAfterSequence?: number;
 	activeBranchId?: string;
 	branchedFromEarlierMessage?: boolean;
 	branchPoints?: ConversationBranchPoint[];
+	/** How the active historical branch acquired its provider context. */
+	branchMaterialization?: ConversationBranchMaterialization;
 	/** What the next turn will be sent with. Daemon-owned, so it survives a
 	 *  restart and applies to turns AO dispatches on the user's behalf. */
 	settings: TurnSettings;
@@ -736,6 +749,13 @@ export interface ConversationSnapshot {
 	 * Read it through `can()`, which encodes that distinction once.
 	 */
 	capabilities?: string[];
+}
+
+/** The provider-history fidelity of the active branch. */
+export interface ConversationBranchMaterialization {
+	strategy: "native" | "approximate_context" | (string & {});
+	/** True when AO's bounded reconstructed context omitted some text. */
+	replayTruncated: boolean;
 }
 
 /**
@@ -787,21 +807,31 @@ export function activeTurn(snapshot: ConversationSnapshot): ConversationTurn | u
 }
 
 /**
+ * Turn ids whose human prompt must not appear in the timeline.
+ *
+ * Queued turns live in the dock until dispatch. Turns cancelled from the dock
+ * before dispatch must not reappear in the timeline after the snapshot refreshes.
+ */
+export function hiddenTimelineTurnIds(snapshot: ConversationSnapshot): Set<string> {
+	return new Set(
+		snapshot.turns
+			.filter((turn) => turn.state === "queued" || turn.state === "cancelled")
+			.map((turn) => turn.id),
+	);
+}
+
+/**
  * Turn ids for messages recorded but not yet sent.
  *
  * The daemon holds a mid-turn message instead of pushing it at a busy agent, so
  * the timeline has to distinguish "waiting to be sent" from "sent".
  */
 export function queuedTurnIds(snapshot: ConversationSnapshot): Set<string> {
-	return new Set(
-		snapshot.turns.filter((turn) => turn.state === "queued").map((turn) => turn.id),
-	);
+	return new Set(snapshot.turns.filter((turn) => turn.state === "queued").map((turn) => turn.id));
 }
 
 /** The pending approval a user must answer, if any. */
-export function pendingApproval(
-	snapshot: ConversationSnapshot,
-): ConversationActivity | undefined {
+export function pendingApproval(snapshot: ConversationSnapshot): ConversationActivity | undefined {
 	return snapshot.items.find(
 		(item): item is ConversationActivity =>
 			item.kind === "activity" && item.activityKind === "approval" && item.status === "pending",
@@ -809,9 +839,7 @@ export function pendingApproval(
 }
 
 /** The structured question currently blocking the agent, if any. */
-export function pendingUserInput(
-	snapshot: ConversationSnapshot,
-): ConversationActivity | undefined {
+export function pendingUserInput(snapshot: ConversationSnapshot): ConversationActivity | undefined {
 	return snapshot.items.find(
 		(item): item is ConversationActivity =>
 			item.kind === "activity" && item.activityKind === "user_input" && item.status === "pending",

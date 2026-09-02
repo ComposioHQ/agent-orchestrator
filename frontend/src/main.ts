@@ -49,7 +49,7 @@ import {
 } from "./main/ui-settings";
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomBytes, randomUUID } from "node:crypto";
-import { closeSync, existsSync, openSync, readFileSync } from "node:fs";
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { chmod, copyFile, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -82,7 +82,14 @@ import {
 	resolveDaemonFromRunFile,
 } from "./shared/daemon-attach";
 import { browserDaemonOwnershipDecision, shouldReplacePortHolder } from "./shared/daemon-takeover";
-import { buildDaemonEnv, resolveShellEnv, type ShellRunner } from "./shared/shell-env";
+import {
+	buildDaemonEnv,
+	resolveShellEnv,
+	resolveShellEnvWithSpec,
+	resolveWindowsShellProbe,
+	type ShellRunner,
+} from "./shared/shell-env";
+import { DEFAULT_TERMINAL_SHELL, type TerminalShellPreference } from "./shared/ui-locale";
 import { bundledTmuxBinaryPath, stableBundledTmuxBinaryPath } from "./shared/bundled-tmux";
 import {
 	handleCloudDeepLink,
@@ -90,10 +97,15 @@ import {
 	registerCloudProtocol,
 	showCloudSignInFailure,
 } from "./main/cloud-auth";
+import { installCloudCpProxy } from "./main/cloud-cp-proxy";
 import { DEFAULT_POSTHOG_HOST, DEFAULT_POSTHOG_PROJECT_KEY } from "./shared/posthog-config";
 import { DEFAULT_SENTRY_DSN } from "./shared/sentry-config";
 import { buildTelemetryBootstrap } from "./shared/telemetry";
-import { createBrowserViewHost, type BrowserViewHost } from "./main/browser-view-host";
+import {
+	createBrowserViewHost,
+	shouldHandleAppShortcutInBrowserContext,
+	type BrowserViewHost,
+} from "./main/browser-view-host";
 import { createBrowserProfileStore } from "./main/browser-profile-store";
 import { BrowserHistoryStore } from "./main/browser-history-store";
 import { BrowserProfileImportService } from "./main/browser-profile-import";
@@ -254,6 +266,29 @@ function syncNativeWindowBackground(): void {
 	mainWindow.setBackgroundColor(
 		nativeTheme.shouldUseDarkColors ? NATIVE_WINDOW_BACKGROUND_DARK : NATIVE_WINDOW_BACKGROUND_LIGHT,
 	);
+}
+
+function resolvedDaemonDataDir(): string {
+	const override = process.env.AO_DATA_DIR?.trim();
+	if (override) return override;
+	if (isDev) return path.join(os.homedir(), ".ao", DEV_STATE_SUBDIR, "data");
+	return path.join(os.homedir(), ".ao", "data");
+}
+
+// Cursor Agent reads TERM_THEME at process start. The daemon applies it from
+// this file when spawning a PTY. The renderer writes the resolved light/dark
+// scheme here so it matches the xterm palette (not Electron nativeTheme alone).
+function persistTerminalThemeHint(scheme: "light" | "dark"): void {
+	const dir = resolvedDaemonDataDir();
+	try {
+		mkdirSync(dir, { recursive: true, mode: 0o750 });
+		const target = path.join(dir, "terminal-theme");
+		const temporary = `${target}.${process.pid}.tmp`;
+		writeFileSync(temporary, `${scheme}\n`, { mode: 0o600 });
+		renameSync(temporary, target);
+	} catch (error) {
+		console.warn("AO: unable to persist terminal theme hint", error);
+	}
 }
 
 nativeTheme.on("updated", syncNativeWindowBackground);
@@ -536,7 +571,9 @@ async function createWindowInternal(): Promise<void> {
 		false,
 		() => keybindingOverrides,
 		() => keybindingRecordingActive,
-		() => true,
+		(id, chord) =>
+			!browserViewHost?.isLastUsedBrowser() ||
+			shouldHandleAppShortcutInBrowserContext(id, chord, isMac),
 		(id) => {
 			if (id !== "toggle-browser-devtools") return;
 			void browserViewHost?.toggleDevToolsForLastFocused().catch(() => undefined);
@@ -745,6 +782,7 @@ const SHELL_ENV_TIMEOUT_MS = 3_000;
 let cachedShellEnv: Record<string, string> | null = null;
 // Memoize the in-flight resolution so concurrent/repeat awaits are cheap.
 let shellEnvPromise: Promise<void> | null = null;
+let terminalShellPreference: TerminalShellPreference = { ...DEFAULT_TERMINAL_SHELL };
 
 // Telemetry defaults stamped on the daemon env on every platform; explicit env
 // always wins.
@@ -813,12 +851,44 @@ const runLoginShell: ShellRunner = (shellPath, args) =>
 		});
 	});
 
-// Resolve the login-shell env once and cache it. No-op on Windows (the launchd
-// shell split does not apply; a static PATH floor suffices). Awaited at the
-// daemon-spawn chokepoint so the cache is populated before the first spawn.
+function lookupWindowsExecutable(candidate: string): string | null {
+	const trimmed = candidate.trim().replace(/^"|"$/g, "");
+	if (!trimmed) return null;
+	const hasDirectory = trimmed.includes("\\") || trimmed.includes("/") || path.isAbsolute(trimmed);
+	const candidates = hasDirectory
+		? [trimmed]
+		: (process.env.PATH ?? process.env.Path ?? "")
+				.split(path.delimiter)
+				.filter(Boolean)
+				.map((directory) => path.join(directory, trimmed));
+	for (const resolved of candidates) {
+		if (existsSync(resolved)) return resolved;
+	}
+	return null;
+}
+
+// Resolve the login-shell env once and cache it. On Windows the selected
+// terminal shell is used for the probe too, so shell profiles and PATH exports
+// stay consistent between standalone terminals and daemon startup.
 function ensureShellEnv(): Promise<void> {
-	if (process.platform === "win32") return Promise.resolve();
 	if (!shellEnvPromise) {
+		if (process.platform === "win32") {
+			const probe =
+				resolveWindowsShellProbe(terminalShellPreference, process.env, lookupWindowsExecutable) ??
+				resolveWindowsShellProbe(DEFAULT_TERMINAL_SHELL, process.env, lookupWindowsExecutable);
+			if (!probe) {
+				shellEnvPromise = Promise.resolve();
+				cachedShellEnv = null;
+				return shellEnvPromise;
+			}
+			shellEnvPromise = resolveShellEnvWithSpec(probe, runLoginShell).then((resolved) => {
+				cachedShellEnv = resolved;
+				if (!resolved) {
+					console.error("AO: could not read the login-shell environment; falling back to the process environment.");
+				}
+			});
+			return shellEnvPromise;
+		}
 		shellEnvPromise = resolveShellEnv(process.env, runLoginShell).then((resolved) => {
 			cachedShellEnv = resolved;
 			if (!resolved) {
@@ -901,7 +971,7 @@ function daemonEnv(forceKeep = keepDaemonAlive(process.env)): NodeJS.ProcessEnv 
 			(app.isPackaged
 				? path.join(process.resourcesPath, "acp-runtime")
 				: path.join(app.getAppPath(), "resources", "acp-runtime")),
-		...(bundledTmuxBinary ? { AO_TMUX_BINARY: bundledTmuxBinary } : {}),
+		...(bundledTmuxBinary ? { AO_TMUX_BINARY: bundledTmuxBinary, AO_TMUX_SOCKET_NAME: "ao" } : {}),
 	};
 	// In dev mode, inject isolation defaults so the dev daemon never collides with
 	// the installed app. User-set env vars take priority (checked first).
@@ -911,9 +981,10 @@ function daemonEnv(forceKeep = keepDaemonAlive(process.env)): NodeJS.ProcessEnv 
 		if (!process.env.AO_RUN_FILE) devExtras.AO_RUN_FILE = runFilePath() ?? "";
 		if (!process.env.AO_DATA_DIR) devExtras.AO_DATA_DIR = path.join(os.homedir(), ".ao", DEV_STATE_SUBDIR, "data");
 	}
-	// Windows keeps the old behavior exactly: no shell probe, no unix PATH floor.
+	// Windows keeps its native environment semantics while overlaying values
+	// exported by the selected login-shell probe.
 	if (process.platform === "win32") {
-		return { ...process.env, ...devExtras, ...telemetryOverrides(), ...ownerTag };
+		return { ...process.env, ...(cachedShellEnv ?? {}), ...devExtras, ...telemetryOverrides(), ...ownerTag };
 	}
 	return buildDaemonEnv(process.env, cachedShellEnv, { ...devExtras, ...telemetryOverrides(), ...ownerTag });
 }
@@ -1742,6 +1813,12 @@ ipcMain.handle("theme:set", (_event, preference: "light" | "dark" | "system") =>
 	}
 });
 
+ipcMain.handle("theme:persist-terminal", (_event, scheme: unknown) => {
+	if (scheme === "light" || scheme === "dark") {
+		persistTerminalThemeHint(scheme);
+	}
+});
+
 // Renderer calls this when focus lands on real shell UI (not the titlebar menu), so menu:action's panel fallback below doesn't go stale.
 ipcMain.on("shell:focus", () => browserViewHost?.forgetLastFocusedPanel());
 
@@ -1909,6 +1986,9 @@ ipcMain.handle("uiSettings:get", async (): Promise<UiSettings> => {
 	const result = !runFile ? coerceUiSettings(settings) : await writeUiSettings(path.dirname(runFile), settings);
 	trayController?.setLocale(result.locale);
 	soundNotificationsEnabled = result.soundNotificationsEnabled;
+	terminalShellPreference = result.terminalShell;
+	shellEnvPromise = null;
+	cachedShellEnv = null;
 	return result;
 	});
 
@@ -2097,6 +2177,10 @@ function notifyRenderersOfCloudSession(account: import("./shared/cloud-account")
 
 installCloudIPC(cloudDataDir, notifyRenderersOfCloudSession);
 
+// Cloud control-plane proxy IPC — cloudCp:request/openStream/closeStream.
+// CP calls go through main so the WorkOS bearer token never reaches a renderer.
+installCloudCpProxy(cloudDataDir);
+
 function focusCloudWindow(): void {
 	const window = BaseWindow.getAllWindows()[0];
 	if (!window) return;
@@ -2281,6 +2365,7 @@ app.whenReady().then(async () => {
 		? await readUiSettings(path.dirname(keybindingRunFile))
 		: { ...DEFAULT_UI_SETTINGS };
 	soundNotificationsEnabled = initialUiSettings.soundNotificationsEnabled;
+	terminalShellPreference = initialUiSettings.terminalShell;
 	if (isTrayEnabled(process.platform, app.isPackaged, app.getVersion())) {
 		trayController = createTrayController({
 			focusWindow: focusMainWindow,

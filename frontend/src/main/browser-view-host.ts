@@ -13,6 +13,7 @@ import { randomUUID } from "node:crypto";
 import type {
 	BrowserAnnotationCancelPayload,
 	BrowserAnnotationContext,
+	BrowserAnnotationDraft,
 	BrowserAnnotationModeInput,
 	BrowserAnnotationPageCancelPayload,
 	BrowserAnnotationPageSubmitPayload,
@@ -28,12 +29,12 @@ import {
 	type BrowserProfileViewState,
 } from "../shared/browser-profiles";
 import { attachAppShortcuts } from "./app-shortcuts";
-import { MAX_BROWSER_TABS } from "../shared/browser-tabs";
-import type { KeybindingOverrides } from "../shared/shortcuts";
+import type { AppShortcutId, KeybindingOverrides, ShortcutChord } from "../shared/shortcuts";
 import type { AgentBrowserRuntime } from "./agent-browser-runtime";
 import type { AgentBrowserTarget, AgentBrowserTargetProvider } from "./agent-browser-cdp-bridge";
 import type { BrowserProfileStore } from "./browser-profile-store";
 import type { BrowserHistoryStore } from "./browser-history-store";
+import { matchInstruction } from "./browser-act-matcher";
 
 function isValidAnnotationContext(value: unknown): value is BrowserAnnotationContext {
 	if (typeof value !== "object" || value === null) return false;
@@ -99,6 +100,7 @@ export type BrowserTabsState = {
 	change?: {
 		kind: "opened" | "popup" | "selected" | "closed";
 		tabId: string;
+		tab?: BrowserTabState;
 	};
 };
 
@@ -153,6 +155,60 @@ type BrowserOpenTabInput = {
 	url?: string;
 };
 
+type BrowserShortcutInput = {
+	key: string;
+	control: boolean;
+	meta: boolean;
+	shift: boolean;
+	alt: boolean;
+	type: string;
+	isAutoRepeat?: boolean;
+};
+
+export type BrowserShortcutAction =
+	| "new-tab"
+	| "reopen-tab"
+	| "close-tab"
+	| "focus-location"
+	| "reload";
+
+export function browserShortcutAction(input: BrowserShortcutInput, isMac: boolean): BrowserShortcutAction | null {
+	const primaryModifier = isMac ? input.meta && !input.control : input.control && !input.meta;
+	if (primaryModifier && !input.alt) {
+		if (input.shift) return input.key.toLowerCase() === "t" ? "reopen-tab" : null;
+		switch (input.key.toLowerCase()) {
+			case "t":
+				return "new-tab";
+			case "w":
+				return "close-tab";
+			case "l":
+				return "focus-location";
+			case "r":
+				return "reload";
+		}
+	}
+	return null;
+}
+
+export function shouldHandleAppShortcutInBrowserContext(
+	id: AppShortcutId,
+	chord: ShortcutChord,
+	isMac: boolean,
+): boolean {
+	if (id === "new-shell-terminal" || id === "close-shell-terminal") return false;
+	return browserShortcutAction(
+		{
+			key: chord.key,
+			control: chord.ctrl,
+			meta: chord.meta,
+			shift: chord.shift,
+			alt: chord.alt,
+			type: "keyDown",
+		},
+		isMac,
+	) === null;
+}
+
 type BrowserWebContents = Pick<
 	WebContents,
 	| "id"
@@ -166,12 +222,15 @@ type BrowserWebContents = Pick<
 	| "mainFrame"
 	| "getTitle"
 	| "getURL"
+	| "getZoomFactor"
 	| "goBack"
 	| "goForward"
 	| "isLoading"
+	| "insertCSS"
 	| "loadURL"
 	| "on"
 	| "reload"
+	| "removeInsertedCSS"
 	| "send"
 	| "setWindowOpenHandler"
 	| "stop"
@@ -180,6 +239,35 @@ type BrowserWebContents = Pick<
 	closeDevTools?: () => void;
 	close?: () => void;
 	session?: Pick<Session, "setPermissionCheckHandler" | "setPermissionRequestHandler" | "webRequest">;
+};
+
+const browserScrollbarCSS = (zoomFactor: number): string => {
+	const effectiveZoom = Number.isFinite(zoomFactor) && zoomFactor > 0 ? zoomFactor : 1;
+	const thickness = Number((8 / effectiveZoom).toFixed(3));
+	return `
+	::-webkit-scrollbar {
+		width: ${thickness}px;
+		height: ${thickness}px;
+	}
+
+	::-webkit-scrollbar-button {
+		display: none;
+	}
+
+	::-webkit-scrollbar-track,
+	::-webkit-scrollbar-corner {
+		background: transparent;
+	}
+
+	::-webkit-scrollbar-thumb {
+		border-radius: 999px;
+		background: rgba(232, 232, 232, 0.72);
+	}
+
+	::-webkit-scrollbar-thumb:hover {
+		background: rgba(232, 232, 232, 0.86);
+	}
+`;
 };
 
 type BrowserViewLike = View & {
@@ -243,6 +331,8 @@ export type BrowserViewHost = {
 	switchProfile: (viewId: string, profileId: BrowserProfileId | null) => Promise<BrowserProfileViewState>;
 	isProfileLive: (profileId: BrowserProfileId) => boolean;
 	clearProfileData: (profileId: BrowserProfileId) => Promise<void>;
+	// Whether browser-owned UI was the most recently used application surface.
+	isLastUsedBrowser: () => boolean;
 	// Same "identical bounds are a no-op, so nudge and restore" trick
 	// window-composition.ts uses for the shell's own stale-surface bug, applied
 	// to the live page's own view. Call right after raising the transparent
@@ -258,6 +348,7 @@ type BrowserEntry = {
 	ready: Promise<void>;
 	state: BrowserNavState;
 	annotationEnabled: boolean;
+	annotationDraft: BrowserAnnotationDraft | null;
 	networkCapture?: BrowserNetworkCapture;
 	favicon?: string;
 	// URL of the favicon currently applied to `favicon` (fetch succeeded).
@@ -462,8 +553,12 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 	let disposePromise: Promise<void> | null = null;
 	// viewId of the panel that most recently held focus; cleared when it is hidden or destroyed.
 	let lastFocusedViewId: string | null = null;
+	// Separate from native focus: the address bar and tab strip live in the shell
+	// renderer, but browser shortcuts must continue to target their panel.
+	let lastUsedViewId: string | null = null;
 	const forgetIfFocused = (viewId: string): void => {
 		if (lastFocusedViewId === viewId) lastFocusedViewId = null;
+		if (lastUsedViewId === viewId) lastUsedViewId = null;
 	};
 	const setAgentBrowserActivity = (
 		session: BrowserSessionEntry,
@@ -529,9 +624,6 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		syncNativeOnActivate = false,
 		preferredTabId?: string,
 	): BrowserEntry => {
-		if (session.tabs.size >= MAX_BROWSER_TABS) {
-			throw browserError("BROWSER_TAB_LIMIT", `Browser tab limit of ${MAX_BROWSER_TABS} reached`);
-		}
 		const tabId = preferredTabId ?? `t${session.nextTabNumber++}`;
 		if (session.tabs.has(tabId)) {
 			throw browserError("INVALID_ARGUMENT", `Browser tab ${tabId} already exists`);
@@ -550,6 +642,22 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		view.setBorderRadius?.(BROWSER_VIEW_BORDER_RADIUS);
 		view.webContents.session?.setPermissionCheckHandler?.(() => false);
 		view.webContents.session?.setPermissionRequestHandler?.((_contents, _permission, callback) => callback(false));
+		let scrollbarStyleKey: string | undefined;
+		let scrollbarStyleUpdate = Promise.resolve();
+		const applyScrollbarStyle = (): void => {
+			scrollbarStyleUpdate = scrollbarStyleUpdate
+				.then(async () => {
+					const previousKey = scrollbarStyleKey;
+					scrollbarStyleKey = await view.webContents.insertCSS(
+						browserScrollbarCSS(view.webContents.getZoomFactor()),
+						{ cssOrigin: "user" },
+					);
+					if (previousKey) await view.webContents.removeInsertedCSS(previousKey);
+				})
+				.catch(() => undefined);
+		};
+		view.webContents.on("dom-ready", applyScrollbarStyle);
+		view.webContents.on("zoom-changed", applyScrollbarStyle);
 
 		const state: BrowserNavState = emptyNavState(session.viewId);
 		const entry: BrowserEntry = {
@@ -559,6 +667,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 			ready: Promise.resolve(),
 			state,
 			annotationEnabled: false,
+			annotationDraft: null,
 		};
 		session.tabs.set(tabId, entry);
 		tabsByWebContentsId.set(view.webContents.id, entry);
@@ -583,10 +692,12 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		// agent-browser's own debugger attachment for this tab.
 		view.webContents.on("console-message", (_event, level, message, line, sourceId) => {
 			if (level < 3) return;
-			const location = sourceId ? `${sourceId}${typeof line === "number" ? `:${line}` : ""}` : "";
+			const location = sourceId
+				? `${sanitizeBrowserURL(sourceId)}${typeof line === "number" ? `:${line}` : ""}`
+				: "";
 			recordBrowserSignal(session, {
 				kind: "console-error",
-				message: location ? `${message} (${location})` : message,
+				message: location ? `${sanitizeURLsInText(message)} (${location})` : sanitizeURLsInText(message),
 			});
 		});
 		hardenWebContents(
@@ -603,11 +714,10 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 				// Created window should be connected to webContents passed with options
 				// object" and crashes the whole app on every link click. Deny the guest
 				// window outright and open (and navigate) our own tab instead; openTab
-				// already handles URL validation, tab-limit, and the "popup" tabs-state
+				// already handles URL validation and the "popup" tabs-state
 				// event this used to push manually.
 				void openTab(session, url, true, "popup", true).catch(() => undefined);
 			},
-			() => !session.profileSwitching && session.tabs.size < MAX_BROWSER_TABS,
 		);
 		wireNavEvents(
 			view.webContents,
@@ -642,7 +752,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 			true,
 			options.getKeybindingOverrides,
 			options.isKeybindingRecording,
-			(id) => id !== "close-shell-terminal" || options.isCloseShellTerminalShortcutEnabled?.() !== false,
+			(id, chord) => shouldHandleAppShortcutInBrowserContext(id, chord, Boolean(options.isMac)),
 			(id) => {
 				if (id !== "toggle-browser-devtools" || !isCurrentEntry() || session.profileSwitching) return;
 				lastFocusedViewId = session.viewId;
@@ -652,7 +762,10 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		view.webContents.on("focus", () => {
 			if (!isCurrentEntry()) return;
 			lastFocusedViewId = session.viewId;
+			lastUsedViewId = session.viewId;
+			shellWebContents.send("browser:pageFocus", session.viewId);
 		});
+		attachBrowserShortcuts(view.webContents, () => session, true);
 		// A newly-created WebContentsView reports about:blank before its renderer
 		// has actually been initialized. CDP commands can hang until that initial
 		// document has completed, so make readiness explicit for every tab.
@@ -786,14 +899,14 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 			if (details.resourceType !== "xhr" || details.statusCode < 400) return;
 			recordBrowserSignal(session, {
 				kind: "network-failure",
-				message: `${details.method} ${details.url} → ${details.statusCode}`,
+				message: `${details.method} ${sanitizeBrowserURL(details.url)} → ${details.statusCode}`,
 			});
 		});
 		electronSession.webRequest.onErrorOccurred(filter, (details) => {
 			if (details.resourceType !== "xhr") return;
 			recordBrowserSignal(session, {
 				kind: "network-failure",
-				message: `${details.method} ${details.url} failed: ${details.error}`,
+				message: `${details.method} ${sanitizeBrowserURL(details.url)} failed: ${details.error}`,
 			});
 		});
 	};
@@ -943,7 +1056,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 
 	// Re-verified 2026-08-19: a long-session report claimed tab close buttons
 	// eventually "stop working" (tab stays in the rail / count badge doesn't
-	// decrement). An accelerated stress repro -- open to MAX_BROWSER_TABS and
+	// decrement). An accelerated stress repro -- open many tabs and
 	// close back to one, 20 cycles, interleaving selectTab/DevTools
 	// open-close/annotation-mode toggles -- against this real closeTab/
 	// destroyTabView path (see "browser tab lifecycle stress" in
@@ -960,6 +1073,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		}
 		const tab = session.tabs.get(tabId);
 		if (!tab) throw browserError("TAB_NOT_FOUND", `Browser tab ${tabId} does not exist`);
+		const closedTab = tabResult(tab, false);
 		const wasActive = tabId === session.activeTabId;
 		disposeNetworkCapture(tab, "tab-closed");
 		if (session.networkTabId === tabId) session.networkTabId = undefined;
@@ -970,9 +1084,105 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 			const nextTabId = [...session.tabs.keys()].at(-1)!;
 			activateTab(session, nextTabId, false);
 		}
-		const state = listTabs(session, { kind: "closed", tabId });
+		const state = listTabs(session, { kind: "closed", tabId, tab: closedTab });
 		shellContents(options).send("browser:tabsState", state);
 		return state;
+	}
+
+	const openUserTab = async (session: BrowserSessionEntry, url?: string): Promise<BrowserTabsState> => {
+		if (!options.agentBrowserRuntime) {
+			await openTab(session, url, true);
+			return listTabs(session);
+		}
+		return queueNativeOperation(session, async () => {
+			await options.agentBrowserRuntime!.runAction(
+				session.sessionId,
+				"tab-new",
+				{ url },
+				agentBrowserTargets(session),
+			);
+			session.nativeActiveTabId = session.activeTabId;
+			return listTabs(session);
+		});
+	};
+
+	const closeUserTab = async (session: BrowserSessionEntry, tabId: string): Promise<BrowserTabsState> => {
+		if (session.tabs.size === 1) return listTabs(session);
+		if (!session.tabs.has(tabId)) return listTabs(session);
+		if (!options.agentBrowserRuntime) return closeTab(session, tabId);
+		return queueNativeOperation(session, async () => {
+			await ensureNativeActiveTab(session);
+			try {
+				await options.agentBrowserRuntime!.runAction(
+					session.sessionId,
+					"tab-close",
+					{ tabId },
+					agentBrowserTargets(session),
+				);
+			} catch (error) {
+				if (!isAgentBrowserCommandFailure(error)) throw error;
+				if (!session.tabs.has(tabId)) return listTabs(session);
+				return closeTab(session, tabId);
+			}
+			session.nativeActiveTabId = undefined;
+			await ensureNativeActiveTab(session);
+			return listTabs(session);
+		});
+	};
+
+	const focusLocation = (session: BrowserSessionEntry): void => {
+		lastUsedViewId = session.viewId;
+		shellWebContents.focus();
+		shellWebContents.send("browser:focusLocation", session.viewId);
+	};
+	const reopenClosedTab = (session: BrowserSessionEntry): void => {
+		shellWebContents.send("browser:reopenClosedTab", session.viewId);
+	};
+	function attachBrowserShortcuts(
+		contents: Pick<WebContents, "on">,
+		getSession: () => BrowserSessionEntry | undefined,
+		isNativePage: boolean,
+	): void {
+		contents.on("before-input-event", (event, input) => {
+			if (input.type !== "keyDown" || input.isAutoRepeat || options.isKeybindingRecording?.()) return;
+			const action = browserShortcutAction(input, Boolean(options.isMac));
+			if (!action) return;
+			const session = getSession();
+			if (!session) return;
+			event.preventDefault();
+			lastUsedViewId = session.viewId;
+			if (action === "focus-location") {
+				focusLocation(session);
+				return;
+			}
+			if (action === "reload") {
+				activeEntry(session).view.webContents.reload();
+				return;
+			}
+			if (action === "new-tab") {
+				void openUserTab(session).then(() => focusLocation(session)).catch(() => undefined);
+				return;
+			}
+			if (action === "reopen-tab") {
+				void queueNativeOperation(session, async () => reopenClosedTab(session)).catch(() => undefined);
+				return;
+			}
+			const closingTabId = session.activeTabId;
+			void closeUserTab(session, closingTabId)
+				.then(() => {
+					if (isNativePage && session.tabs.has(session.activeTabId)) {
+						activeEntry(session).view.webContents.focus();
+					}
+				})
+				.catch(() => undefined);
+		});
+	}
+
+	if (typeof shellWebContents.on === "function") {
+		attachBrowserShortcuts(shellWebContents, () => {
+			if (lastUsedViewId === null) return undefined;
+			return entries.get(lastUsedViewId);
+		}, false);
 	}
 
 	function agentBrowserTargets(session: BrowserSessionEntry): AgentBrowserTargetProvider {
@@ -1204,10 +1414,12 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 
 	const navigateEntry = async (entry: BrowserEntry, url: string): Promise<BrowserNavState> => {
 		await entry.ready;
-		cancelAnnotation(options, entry, "navigation");
 		const normalized = normalizeBrowserURL(url);
 		if (!isAllowedBrowserURL(normalized.href, options.rendererOrigin)) {
 			throw new Error("Unsupported browser URL");
+		}
+		if (!entry.annotationDraft || !isSameAnnotationPage(annotationDraftURL(entry.annotationDraft), normalized.href)) {
+			cancelAnnotation(options, entry, "navigation");
 		}
 		try {
 			await entry.view.webContents.loadURL(normalized.href);
@@ -1533,6 +1745,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		viewId: string,
 		action: (contents: BrowserWebContents) => void,
 		cancelForNavigation = false,
+		reapplyBounds = false,
 	): BrowserNavState => {
 		const session = entries.get(viewId);
 		if (!session) return emptyNavState(viewId);
@@ -1540,6 +1753,8 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		const entry = activeEntry(session);
 		if (cancelForNavigation) {
 			cancelAnnotation(options, entry, "navigation");
+		}
+		if (cancelForNavigation || reapplyBounds) {
 			applySessionBounds(session, entry);
 		}
 		action(entry.view.webContents);
@@ -1553,8 +1768,18 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		assertProfileStable(session);
 		const entry = activeEntry(session);
 		entry.annotationEnabled = input.enabled;
-		entry.view.webContents.send("browser:annotation:setMode", { enabled: input.enabled });
+		if (!input.enabled) entry.annotationDraft = null;
+		entry.view.webContents.send("browser:annotation:setMode", {
+			enabled: input.enabled,
+			...(input.enabled && entry.annotationDraft ? { draft: entry.annotationDraft } : {}),
+		});
 		if (input.enabled) entry.view.webContents.focus();
+	};
+
+	const updateAnnotationDraft = (event: IpcMainEvent, draft: BrowserAnnotationDraft | undefined): void => {
+		const entry = tabsByWebContentsId.get(event.sender.id);
+		if (!entry?.annotationEnabled || !isValidAnnotationDraft(draft)) return;
+		entry.annotationDraft = draft;
 	};
 
 	const forwardAnnotationSubmit = async (
@@ -1576,6 +1801,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		if (!session || session.profileSwitching || session.tabs.get(entry.tabId) !== entry) return;
 		await withBrowserOperation(session, async () => {
 			entry.annotationEnabled = false;
+			entry.annotationDraft = null;
 			// Captured now, before returning: the preload only tears down the
 			// highlight overlay after this handler resolves, so the frame we grab
 			// here still has the selection ring(s) on it and not the prompt box
@@ -1602,6 +1828,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		const viewId = entry?.state.viewId;
 		if (!viewId || !entry) return;
 		entry.annotationEnabled = false;
+		entry.annotationDraft = null;
 		const forwarded: BrowserAnnotationCancelPayload = {
 			viewId,
 			reason: payload?.reason ?? "cancel",
@@ -1659,10 +1886,10 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 			: emptyNavState(viewId),
 	);
 	handle("browser:reload", (event, viewId: string) =>
-		isRendererOwned(event, viewId) ? invokeNav(viewId, (contents) => contents.reload(), true) : emptyNavState(viewId),
+		isRendererOwned(event, viewId) ? invokeNav(viewId, (contents) => contents.reload(), false, true) : emptyNavState(viewId),
 	);
 	handle("browser:stop", (event, viewId: string) =>
-		isRendererOwned(event, viewId) ? invokeNav(viewId, (contents) => contents.stop()) : emptyNavState(viewId),
+		isRendererOwned(event, viewId) ? invokeNav(viewId, (contents) => contents.stop(), true) : emptyNavState(viewId),
 	);
 	handle("browser:getTabs", (event, viewId: string) => {
 		const session = entries.get(viewId);
@@ -1725,6 +1952,12 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 			return listTabs(session);
 		});
 	});
+	on("browser:panelUsed", (event, viewId: string) => {
+		if (isRendererOwned(event, viewId) && entries.has(viewId)) lastUsedViewId = viewId;
+	});
+	on("browser:panelBlur", (event, viewId: string) => {
+		if (isRendererOwned(event, viewId) && lastUsedViewId === viewId) lastUsedViewId = null;
+	});
 	handle("browser:devtools", (event, input: BrowserDevToolsInput) => {
 		if (!input || typeof input.viewId !== "string" || !isRendererOwned(event, input.viewId)) {
 			return emptyDevToolsState(input?.viewId ?? "");
@@ -1749,22 +1982,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 			}
 			url = normalized.href;
 		}
-		if (!options.agentBrowserRuntime) {
-			await openTab(session, url, true);
-			return listTabs(session);
-		}
-		return queueNativeOperation(session, async () => {
-			// Let agent-browser create UI tabs too so its stable tab registry and
-			// AO's WebContentsView IDs stay aligned for later select/close commands.
-			await options.agentBrowserRuntime!.runAction(
-				session.sessionId,
-				"tab-new",
-				{ url },
-				agentBrowserTargets(session),
-			);
-			session.nativeActiveTabId = session.activeTabId;
-			return listTabs(session);
-		});
+		return openUserTab(session, url);
 	});
 	handle("browser:annotation:setMode", (event, input: BrowserAnnotationModeInput) => setAnnotationMode(event, input));
 	on("browser:destroy", (event, viewId: string) => {
@@ -1776,6 +1994,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 	on("browser:annotation:cancel", (event, payload: BrowserAnnotationPageCancelPayload) =>
 		forwardAnnotationCancel(event, payload),
 	);
+	on("browser:annotation:draft", (event, draft: BrowserAnnotationDraft) => updateAnnotationDraft(event, draft));
 
 	return {
 		execute: async (sessionId, action, args = {}, signal) => {
@@ -1823,7 +2042,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 				case "open": {
 					const url = stringArg(args, "url", "URL_REQUIRED", "url is required");
 					await runNative(action, { url: normalizeAgentBrowserURL(url) });
-					return pushNavState(options, activeEntry(session));
+					return agentNavState(pushNavState(options, activeEntry(session)));
 				}
 				case "snapshot": {
 					const result = await runNative(action, { interactive: Boolean(args.interactive) });
@@ -1836,6 +2055,76 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 						...(result._boundary ? { _boundary: result._boundary } : {}),
 						untrustedExternalContent: true,
 					};
+				}
+				case "act": {
+					const instruction = stringArg(args, "instruction", "INVALID_ARGUMENT", "instruction is required");
+					const verb = typeof args.action === "string" && args.action.trim() ? args.action.trim() : "click";
+					if (!ACT_VERBS.has(verb)) {
+						throw browserError("INVALID_ARGUMENT", `Unsupported act verb: ${verb}`);
+					}
+					const value =
+						verb === "fill" || verb === "type"
+							? stringArg(args, "value", "INVALID_ARGUMENT", "value is required", true)
+							: undefined;
+					const nth = typeof args.nth === "number" && Number.isFinite(args.nth) ? Math.trunc(args.nth) : undefined;
+					const nativeArgsForRef = (ref: string) => (value !== undefined ? { ref, text: value } : { ref });
+					const snapshotOnce = async (): Promise<{ text: string; refs: unknown }> => {
+						const result = await runNative("snapshot", { interactive: true });
+						if (typeof result.snapshot !== "string") {
+							throw browserError("BROWSER_AUTOMATION_INVALID_OUTPUT", "Browser snapshot output was invalid");
+						}
+						return { text: result.snapshot, refs: result.refs };
+					};
+					const unresolved = (outcome: "ambiguous" | "no-match", candidates: unknown, snapshot: string) => ({
+						outcome,
+						instruction,
+						...(outcome === "ambiguous" ? { candidates } : {}),
+						snapshot,
+						untrustedExternalContent: true as const,
+					});
+
+					const snapshot1 = await snapshotOnce();
+					const match1 = matchInstruction(instruction, snapshot1.refs, { nth });
+					if (match1.outcome !== "matched") return unresolved(match1.outcome, "candidates" in match1 ? match1.candidates : undefined, snapshot1.text);
+
+					try {
+						const result = await runNative(verb, nativeArgsForRef(match1.candidate.ref));
+						return {
+							outcome: "matched",
+							resolvedRef: match1.candidate.ref,
+							candidate: match1.candidate,
+							result,
+							retried: false,
+							untrustedExternalContent: true,
+						};
+					} catch (error) {
+						// Element attributes/positions on real pages shift between the
+						// snapshot that resolved a ref and the action that uses it, going
+						// stale — this is the one case worth a single automatic retry
+						// (re-snapshot, re-match the *original* instruction, try once
+						// more) rather than making the agent notice and redo the whole
+						// snapshot->click chain itself, which is the entire point of this
+						// primitive. Any other failure, or a second stale ref, rethrows as
+						// itself — an honest failure beats silently doing nothing on a
+						// mutating action, and this must not become an unbounded loop
+						// (mirrors ensureNativeActiveTab's "retry once, then surface
+						// reality" convention elsewhere in this file).
+						if (!isStaleReferenceError(error)) throw error;
+						const snapshot2 = await snapshotOnce();
+						const match2 = matchInstruction(instruction, snapshot2.refs, { nth });
+						if (match2.outcome !== "matched") {
+							return unresolved(match2.outcome, "candidates" in match2 ? match2.candidates : undefined, snapshot2.text);
+						}
+						const result = await runNative(verb, nativeArgsForRef(match2.candidate.ref));
+						return {
+							outcome: "matched",
+							resolvedRef: match2.candidate.ref,
+							candidate: match2.candidate,
+							result,
+							retried: true,
+							untrustedExternalContent: true,
+						};
+					}
 				}
 				case "click":
 				case "dblclick":
@@ -1860,24 +2149,24 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 						targetRef: stringArg(args, "targetRef", "REFERENCE_REQUIRED", "target ref is required"),
 					});
 				case "unhighlight":
-					return unhighlightEntry(entry);
+					return agentURLResult(await unhighlightEntry(entry));
 				case "tabs":
-					return listTabs(session);
+					return agentTabsResult(session);
 				case "tab-new": {
 					const url =
 						typeof args.url === "string" && args.url.trim() ? normalizeAgentBrowserURL(args.url) : undefined;
 					await runNative(action, { url });
-					return tabResult(activeEntry(session), true);
+					return agentTabResult(activeEntry(session), true);
 				}
 				case "tab-select": {
 					await runNative(action, { tabId: stringArg(args, "tabId", "TAB_ID_REQUIRED", "tabId is required") });
-					return tabResult(activeEntry(session), true);
+					return agentTabResult(activeEntry(session), true);
 				}
 				case "tab-close": {
 					const tabId =
 						typeof args.tabId === "string" && args.tabId.trim() ? args.tabId.trim() : session.activeTabId;
 					await runNative(action, { tabId });
-					return { closedTabId: tabId, ...listTabs(session) };
+					return { closedTabId: tabId, ...agentTabsResult(session) };
 				}
 				case "scroll":
 					return runNative(action, {
@@ -1895,7 +2184,18 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 						property,
 						ref: typeof args.ref === "string" && args.ref.trim() ? args.ref : undefined,
 					});
-					return { ...result, value: result.value ?? result[property] };
+					const value = result.value ?? result[property];
+					const safeValue =
+						property === "url"
+							? sanitizeBrowserURL(String(value ?? ""))
+							: property === "title"
+								? sanitizeBrowserTitle(String(value ?? ""))
+								: value;
+					return {
+						...result,
+						...(property === "url" || property === "title" ? { [property]: safeValue } : {}),
+						value: safeValue,
+					};
 				}
 				case "wait":
 					return runNative(action, args);
@@ -1978,6 +2278,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		},
 		forgetLastFocusedPanel: () => {
 			lastFocusedViewId = null;
+			lastUsedViewId = null;
 		},
 		isRendererOwned,
 		getProfileState,
@@ -1986,6 +2287,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		switchProfile,
 		isProfileLive,
 		clearProfileData,
+		isLastUsedBrowser: () => lastUsedViewId !== null && entries.has(lastUsedViewId),
 		// Reported live (macOS, maximized/popped-out panel): opening an overlay
 		// (e.g. a toolbar dropdown) over the browser panel blanks the live page
 		// to black instead of showing it behind the dropdown, and a plain bounds
@@ -2111,6 +2413,18 @@ function isAgentBrowserCommandFailure(error: unknown): boolean {
 	return Boolean(error && typeof error === "object" && "code" in error && error.code === "AGENT_BROWSER_COMMAND_FAILED");
 }
 
+// The `{ref[, text]}`-shaped action family "act" can resolve a target for and
+// then perform, matching every case in the switch above that only ever needs a
+// ref (or a ref plus text). "drag" (needs two independently-matched targets)
+// and "select" (needs matching an option's text within a resolved control, not
+// just the control) are harder matching problems and are deliberately excluded
+// from v1.
+const ACT_VERBS = new Set(["click", "dblclick", "focus", "hover", "fill", "type", "check", "uncheck"]);
+
+function isStaleReferenceError(error: unknown): boolean {
+	return Boolean(error && typeof error === "object" && "code" in error && error.code === "STALE_REFERENCE");
+}
+
 function tabResult(entry: BrowserEntry, active: boolean): BrowserTabState & { untrustedExternalContent: true } {
 	return {
 		id: entry.tabId,
@@ -2119,6 +2433,44 @@ function tabResult(entry: BrowserEntry, active: boolean): BrowserTabState & { un
 		active,
 		...(entry.favicon ? { favicon: entry.favicon } : {}),
 		untrustedExternalContent: true,
+	};
+}
+
+// Renderer IPC deliberately keeps the real URL for the address bar and tab
+// navigation. Agent/daemon responses use this separate projection because they
+// are retained in tool output and transcripts.
+function agentTabResult(entry: BrowserEntry, active: boolean): BrowserTabState & { untrustedExternalContent: true } {
+	const tab = tabResult(entry, active);
+	return {
+		...tab,
+		url: sanitizeBrowserURL(tab.url),
+		title: sanitizeBrowserTitle(tab.title),
+	};
+}
+
+function agentTabsResult(session: BrowserSessionEntry): BrowserTabsState & { untrustedExternalContent: true } {
+	return {
+		viewId: session.viewId,
+		activeTabId: session.activeTabId,
+		tabs: [...session.tabs.values()].map((entry) => agentTabResult(entry, entry.tabId === session.activeTabId)),
+		untrustedExternalContent: true,
+	};
+}
+
+function agentNavState(state: BrowserNavState): BrowserNavState {
+	return {
+		...state,
+		url: sanitizeBrowserURL(state.url),
+		title: sanitizeBrowserTitle(state.title),
+		...(state.error ? { error: sanitizeURLsInText(state.error) } : {}),
+	};
+}
+
+function agentURLResult(result: unknown): unknown {
+	if (!result || typeof result !== "object" || !("url" in result)) return result;
+	return {
+		...result,
+		url: sanitizeBrowserURL(String(result.url ?? "")),
 	};
 }
 
@@ -2157,10 +2509,9 @@ function hardenWebContents(
 	entry: BrowserEntry,
 	isCurrent: () => boolean,
 	openPopup: (url: string) => void,
-	canCreatePopup: () => boolean,
 ): void {
 	contents.setWindowOpenHandler(({ url }) => {
-		if (!isCurrent() || !isAllowedBrowserURL(url, options.rendererOrigin) || !canCreatePopup()) {
+		if (!isCurrent() || !isAllowedBrowserURL(url, options.rendererOrigin)) {
 			return { action: "deny" };
 		}
 		// Always deny — never return createWindow. See the call site's comment for
@@ -2175,6 +2526,10 @@ function hardenWebContents(
 			if (!isCurrent()) return;
 			entry.state = { ...entry.state, error: "Unsupported browser URL" };
 			shellContents(options).send("browser:navState", entry.state);
+			return;
+		}
+		if (entry.annotationDraft && !isSameAnnotationPage(annotationDraftURL(entry.annotationDraft), url)) {
+			cancelAnnotation(options, entry, "navigation");
 		}
 	};
 	contents.on("will-navigate", blockUnsafeNavigation);
@@ -2195,6 +2550,9 @@ function wireNavEvents(
 		if (isActive()) pushNavState(options, entry);
 	};
 	contents.on("did-navigate", (_event, url) => {
+		if (entry.annotationDraft && !isSameAnnotationPage(annotationDraftURL(entry.annotationDraft), url)) {
+			cancelAnnotation(options, entry, "navigation");
+		}
 		clearStaleFavicon(entry, url);
 		if (isActive()) syncActiveBounds();
 		recordHistory(url, contents.getTitle(), true);
@@ -2206,10 +2564,16 @@ function wireNavEvents(
 	});
 	contents.on("page-title-updated", update);
 	contents.on("did-start-loading", () => {
-		cancelAnnotation(options, entry, "navigation");
 		update();
 	});
 	contents.on("did-stop-loading", () => {
+		if (entry.annotationEnabled) {
+			contents.send("browser:annotation:setMode", {
+				enabled: true,
+				...(entry.annotationDraft ? { draft: entry.annotationDraft } : {}),
+			});
+			contents.focus();
+		}
 		recordHistory(contents.getURL(), contents.getTitle(), false);
 		update();
 	});
@@ -2219,6 +2583,7 @@ function wireNavEvents(
 		// independently. Only a main-frame failure means the browser page itself
 		// should be replaced with AO's error state.
 		if (isMainFrame === false) return;
+		cancelAnnotation(options, entry, "navigation");
 		if (isActive()) entry.view.setVisible?.(false);
 		entry.state = { ...readNavState(entry), error: String(errorDescription || "Unable to load page") };
 		if (isActive()) shellContents(options).send("browser:navState", entry.state);
@@ -2311,11 +2676,34 @@ function cancelAnnotation(
 ): void {
 	if (!entry.annotationEnabled) return;
 	entry.annotationEnabled = false;
+	entry.annotationDraft = null;
 	entry.view.webContents.send("browser:annotation:setMode", { enabled: false });
 	shellContents(options).send("browser:annotation:canceled", {
 		viewId: entry.state.viewId,
 		reason,
 	});
+}
+
+function annotationDraftURL(draft: BrowserAnnotationDraft): string {
+	return draft.selection.kind === "element" ? draft.selection.context.url : (draft.selection.contexts[0]?.url ?? "");
+}
+
+function isSameAnnotationPage(source: string, destination: string): boolean {
+	try {
+		const sourceURL = new URL(source);
+		const destinationURL = new URL(destination);
+		sourceURL.hash = "";
+		destinationURL.hash = "";
+		return sourceURL.href === destinationURL.href;
+	} catch {
+		return source === destination;
+	}
+}
+
+function isValidAnnotationDraft(value: unknown): value is BrowserAnnotationDraft {
+	if (!value || typeof value !== "object") return false;
+	const draft = value as Partial<BrowserAnnotationDraft>;
+	return typeof draft.instruction === "string" && isValidAnnotationSelection(draft.selection);
 }
 
 function pushNavState(options: BrowserViewHostOptions, entry: BrowserEntry): BrowserNavState {
@@ -2491,14 +2879,14 @@ function handleNetworkDebuggerEvent(entry: BrowserEntry, method: string, params:
 		if (previous && Object.keys(redirect).length > 0) {
 			applyNetworkResponse(previous, redirect);
 			finishNetworkRequest(previous, timestamp);
-			previous.redirectedTo = sanitizeNetworkURL(url);
+			previous.redirectedTo = sanitizeBrowserURL(url);
 		}
 		const wallTime = finiteNumber(params.wallTime);
 		const item: InternalBrowserNetworkRequest = {
 			id: `n${capture.nextSequence++}`,
 			protocolRequestId: requestID,
 			method: typeof request.method === "string" ? request.method : "GET",
-			url: sanitizeNetworkURL(url),
+			url: sanitizeBrowserURL(url),
 			resourceType: typeof params.type === "string" ? params.type.toLowerCase() : undefined,
 			startedAt: wallTime ? new Date(wallTime * 1_000).toISOString() : new Date().toISOString(),
 			startedMonotonic: timestamp,
@@ -2590,13 +2978,17 @@ function selectedNetworkHeaders(value: unknown, kind: "request" | "response"): R
 		const name = rawName.toLowerCase();
 		if (!allowed.has(name)) continue;
 		let headerValue = typeof rawValue === "string" ? rawValue : String(rawValue);
-		if (name === "referer" || name === "location") headerValue = sanitizeNetworkURL(headerValue);
+		if (name === "referer" || name === "location") headerValue = sanitizeBrowserURL(headerValue);
 		selected[name] = headerValue.slice(0, 1_000);
 	}
 	return Object.keys(selected).length > 0 ? selected : undefined;
 }
 
-function sanitizeNetworkURL(raw: string): string {
+// Safe-to-retain URL form: keep the location useful while removing values that
+// commonly carry credentials or one-time handoff material.
+export function sanitizeBrowserURL(raw: string): string {
+	if (!raw) return "";
+	if (raw === "about:blank") return raw;
 	try {
 		const url = new URL(raw);
 		if (!["http:", "https:", "file:"].includes(url.protocol)) {
@@ -2611,8 +3003,21 @@ function sanitizeNetworkURL(raw: string): string {
 		return url.href;
 	} catch {
 		const withoutFragment = raw.split("#", 1)[0] ?? "";
-		return (withoutFragment.split("?", 1)[0] ?? "").slice(0, 2_000);
+		const withoutQuery = withoutFragment.split("?", 1)[0] ?? "";
+		return withoutQuery.replace(/^([a-z][a-z\d+.-]*:\/\/)[^/@\s]+@/i, "$1").slice(0, 2_000);
 	}
+}
+
+export function sanitizeBrowserTitle(raw: string): string {
+	const title = raw.trim();
+	if (/^(?:[a-z][a-z\d+.-]*:\/\/|(?:about|mailto|data|javascript|blob):)/i.test(title)) {
+		return sanitizeBrowserURL(title);
+	}
+	return sanitizeURLsInText(raw);
+}
+
+function sanitizeURLsInText(raw: string): string {
+	return raw.replace(/\b(?:https?|file):\/\/[^\s<>"']+/gi, (match) => sanitizeBrowserURL(match));
 }
 
 function objectValue(value: unknown): Record<string, unknown> {
@@ -2717,7 +3122,7 @@ function normalizeNativeMessages(
 		if (typeof item === "string") {
 			return {
 				level: action === "errors" ? "error" : "log",
-				message: markUntrusted(externalText(item)),
+				message: markUntrusted(externalText(sanitizeURLsInText(item))),
 				timestamp: new Date().toISOString(),
 			};
 		}
@@ -2738,7 +3143,7 @@ function normalizeNativeMessages(
 					: JSON.stringify(record);
 		return {
 			level,
-			message: markUntrusted(externalText(message)),
+			message: markUntrusted(externalText(sanitizeURLsInText(message))),
 			timestamp: typeof record.timestamp === "string" ? record.timestamp : new Date().toISOString(),
 		};
 	});

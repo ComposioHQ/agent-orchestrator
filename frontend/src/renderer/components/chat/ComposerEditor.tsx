@@ -254,8 +254,10 @@ const EditorBridge = forwardRef<
 		disabled?: boolean;
 		onChange: (snapshot: ComposerEditorSnapshot) => void;
 		onComplete: (snapshot: ComposerEditorSnapshot, key: "Enter" | "Tab") => string | undefined;
+		/** Return true to consume Enter before Lexical inserts a newline. */
+		onEnterKey?: (event: globalThis.KeyboardEvent) => boolean;
 	}
->(function EditorBridge({ disabled, onChange, onComplete }, ref) {
+>(function EditorBridge({ disabled, onChange, onComplete, onEnterKey }, ref) {
 	const [editor] = useLexicalComposerContext();
 
 	useEffect(() => editor.setEditable(!disabled), [disabled, editor]);
@@ -305,7 +307,15 @@ const EditorBridge = forwardRef<
 		};
 		const removeEnter = editor.registerCommand(
 			KEY_ENTER_COMMAND,
-			(event) => complete(event, "Enter"),
+			(event) => {
+				if (event?.isComposing || event?.shiftKey || editor.isComposing()) return false;
+				if (complete(event, "Enter")) return true;
+				if (event && onEnterKey?.(event)) {
+					event.preventDefault();
+					return true;
+				}
+				return false;
+			},
 			COMMAND_PRIORITY_HIGH,
 		);
 		const removeTab = editor.registerCommand(
@@ -317,7 +327,7 @@ const EditorBridge = forwardRef<
 			removeEnter();
 			removeTab();
 		};
-	}, [editor, onComplete]);
+	}, [editor, onComplete, onEnterKey]);
 
 	return null;
 });
@@ -333,6 +343,7 @@ export const ComposerEditor = forwardRef<
 		activeIndex: number;
 		onChange: (snapshot: ComposerEditorSnapshot) => void;
 		onComplete: (snapshot: ComposerEditorSnapshot, key: "Enter" | "Tab") => string | undefined;
+		onEnterKey?: (event: globalThis.KeyboardEvent) => boolean;
 		onCompositionChange: (isComposing: boolean) => void;
 		onKeyDown: (event: KeyboardEvent<HTMLDivElement>) => void;
 		onPaste: (event: ClipboardEvent<HTMLDivElement>) => void;
@@ -347,6 +358,7 @@ export const ComposerEditor = forwardRef<
 		activeIndex,
 		onChange,
 		onComplete,
+		onEnterKey,
 		onCompositionChange,
 		onKeyDown,
 		onPaste,
@@ -399,7 +411,7 @@ export const ComposerEditor = forwardRef<
 								if (event.defaultPrevented) event.stopPropagation();
 							}}
 							className={cn(
-								"chat-composer-scrollbar max-h-40 min-h-[4.5rem] w-full overflow-y-auto overscroll-contain bg-transparent py-1 pl-[7px] pr-0 text-base! leading-relaxed text-foreground caret-foreground outline-none selection:bg-accent/30",
+								"chat-composer-scrollbar max-h-40 min-h-[4.5rem] w-full overflow-y-auto overscroll-contain bg-transparent py-1 pl-[7px] pr-0 text-base! leading-relaxed text-foreground caret-foreground outline-none selection:bg-foreground selection:text-background",
 								disabled && "opacity-50",
 							)}
 						/>
@@ -412,6 +424,7 @@ export const ComposerEditor = forwardRef<
 					disabled={disabled}
 					onChange={onChange}
 					onComplete={onComplete}
+					onEnterKey={onEnterKey}
 				/>
 			</div>
 		</LexicalComposer>

@@ -10,7 +10,6 @@ import type {
 } from "../../main/browser-view-host";
 import type { BrowserAnnotationCancelPayload, BrowserAnnotationSubmitPayload } from "../../shared/browser-annotations";
 import type { BrowserProfileViewState } from "../../shared/browser-profiles";
-import { MAX_BROWSER_TABS } from "../../shared/browser-tabs";
 import { OPEN_BROWSER_OVERLAY_SELECTOR } from "../lib/dom-selectors";
 
 export type { BrowserNavState };
@@ -73,7 +72,7 @@ export type BrowserViewModel = {
 	openTab: (url?: string) => Promise<void>;
 	reorderTabs: (orderedIds: string[]) => void;
 	closedTabs: ClosedBrowserTab[];
-	reopenClosedTab: (tabId: string) => Promise<void>;
+	reopenClosedTab: (tabId?: string) => Promise<void>;
 	devtoolsState: BrowserDevToolsState;
 	profileState: BrowserProfileViewState;
 	openDevTools: () => Promise<void>;
@@ -252,11 +251,10 @@ export function useBrowserView({
 	// actually shown.
 	const updateClosedTabs = useCallback(
 		(updater: (current: ClosedBrowserTab[]) => ClosedBrowserTab[]) => {
-			setClosedTabs((current) => {
-				const next = updater(current);
-				closedTabsBySession.set(sessionId, next);
-				return next;
-			});
+			const current = closedTabsBySession.get(sessionId) ?? [];
+			const next = updater(current);
+			closedTabsBySession.set(sessionId, next);
+			setClosedTabs(next);
 		},
 		[sessionId],
 	);
@@ -443,10 +441,19 @@ export function useBrowserView({
 		return window.ao?.browser.onTabsState((state) => {
 			if (state.viewId !== viewIdRef.current) return;
 			setTabsState(state);
-			if (state.change?.kind !== "popup") return;
-			showTabNotice("Opened new tab");
+			const change = state.change;
+			if (change?.kind === "popup") {
+				showTabNotice("Opened new tab");
+				return;
+			}
+			if (change?.kind !== "closed" || !change.tab || isBlankTabUrl(change.tab.url)) return;
+			const { id, title, url, favicon } = change.tab;
+			updateClosedTabs((current) => [
+				{ id, title, url, favicon },
+				...current.filter((tab) => tab.id !== id),
+			].slice(0, MAX_CLOSED_TABS));
 		});
-	}, [showTabNotice]);
+	}, [showTabNotice, updateClosedTabs]);
 
 	// Re-project the persisted display order onto every incoming tabsState push:
 	// browser:tabsState fires on every nav/title-update/loading-state change for
@@ -679,27 +686,20 @@ export function useBrowserView({
 	);
 
 	const reopenClosedTab = useCallback(
-		async (tabId: string) => {
-			const entry = closedTabs.find((tab) => tab.id === tabId);
+		async (tabId?: string) => {
+			const current = closedTabsBySession.get(sessionId) ?? [];
+			const entry = tabId ? current.find((tab) => tab.id === tabId) : current[0];
 			if (!entry) return;
-			// Gate on the same cap the "+" button already respects, instead of
-			// discovering BROWSER_TAB_LIMIT only after the entry is gone.
-			if (tabsStateRef.current.tabs.length >= MAX_BROWSER_TABS) {
-				showTabNotice("Reached the tab limit");
-				return;
-			}
-			updateClosedTabs((current) => current.filter((tab) => tab.id !== tabId));
+			updateClosedTabs((tabs) => tabs.filter((tab) => tab.id !== entry.id));
 			try {
 				await openTab(entry.url);
 			} catch {
-				// Still possible to race the cap (e.g. the agent opens a tab between
-				// this row rendering and the click) — restore instead of losing the
-				// entry silently.
-				updateClosedTabs((current) => [entry, ...current.filter((tab) => tab.id !== tabId)].slice(0, MAX_CLOSED_TABS));
+				// Restore the entry instead of losing it when tab creation fails.
+				updateClosedTabs((tabs) => [entry, ...tabs.filter((tab) => tab.id !== entry.id)].slice(0, MAX_CLOSED_TABS));
 				showTabNotice("Couldn't reopen that tab");
 			}
 		},
-		[closedTabs, openTab, showTabNotice, updateClosedTabs],
+		[openTab, sessionId, showTabNotice, updateClosedTabs],
 	);
 
 	const runDevtools = useCallback(

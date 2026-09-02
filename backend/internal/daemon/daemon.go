@@ -171,7 +171,7 @@ func Run() error {
 		return err
 	}
 
-	// Terminal streaming: the selected runtime (tmux on macOS/Linux, conpty on Windows) supplies the
+	// Terminal streaming: the selected platform runtime supplies the
 	// attach Stream and liveness; the CDC broadcaster feeds the session-state channel. The manager
 	// is handed to httpd, which mounts it at /mux. Raw PTY bytes never flow
 	// through the CDC change_log -- only session-state events do.
@@ -224,10 +224,12 @@ func Run() error {
 	chatDrivers := chatdriverregistry.Build(log)
 
 	// Daemon-owned preferences. The store's type is field-compatible with the
-	// service's, adapted here so neither package imports the other.
+	// service's, adapted here so neither package imports the other. Offering
+	// gates ride along: they are boot-time config, not stored preferences.
 	settingsSvc := settingssvc.New(
 		settingsStore{store: store},
 		chatDrivers,
+		settingssvc.OfferingFromConfig(cfg),
 		func() time.Time { return time.Now().UTC() },
 	)
 
@@ -245,12 +247,15 @@ func Run() error {
 				return chatsvc.ConversationRows{}, err
 			}
 			return chatsvc.ConversationRows{
-				Conversation:               rows.Conversation,
-				Turns:                      rows.Turns,
-				Messages:                   rows.Messages,
-				Activities:                 rows.Activities,
-				BranchPoints:               rows.BranchPoints,
-				BranchedFromEarlierMessage: rows.BranchedFromEarlierMessage,
+				Conversation:                     rows.Conversation,
+				ActiveBranch:                     rows.ActiveBranch,
+				EditFloorSequence:                rows.EditFloorSequence,
+				NativeForkAvailableAfterSequence: rows.NativeForkAvailableAfterSequence,
+				Turns:                            rows.Turns,
+				Messages:                         rows.Messages,
+				Activities:                       rows.Activities,
+				BranchPoints:                     rows.BranchPoints,
+				BranchedFromEarlierMessage:       rows.BranchedFromEarlierMessage,
 			}, nil
 		}),
 		PageReader: chatsvc.SnapshotPageReaderFunc(func(ctx context.Context, conversationID string, beforeSequence, limit int64) (chatsvc.ConversationRows, error) {
@@ -259,14 +264,17 @@ func Run() error {
 				return chatsvc.ConversationRows{}, err
 			}
 			return chatsvc.ConversationRows{
-				Conversation:               rows.Conversation,
-				Turns:                      rows.Turns,
-				Messages:                   rows.Messages,
-				Activities:                 rows.Activities,
-				BranchPoints:               rows.BranchPoints,
-				BranchedFromEarlierMessage: rows.BranchedFromEarlierMessage,
-				OldestSequence:             rows.OldestSequence,
-				HasMoreBefore:              rows.HasMoreBefore,
+				Conversation:                     rows.Conversation,
+				ActiveBranch:                     rows.ActiveBranch,
+				EditFloorSequence:                rows.EditFloorSequence,
+				NativeForkAvailableAfterSequence: rows.NativeForkAvailableAfterSequence,
+				Turns:                            rows.Turns,
+				Messages:                         rows.Messages,
+				Activities:                       rows.Activities,
+				BranchPoints:                     rows.BranchPoints,
+				BranchedFromEarlierMessage:       rows.BranchedFromEarlierMessage,
+				OldestSequence:                   rows.OldestSequence,
+				HasMoreBefore:                    rows.HasMoreBefore,
 			}, nil
 		}),
 		Drivers: chatDrivers,
@@ -277,7 +285,15 @@ func Run() error {
 		NewID:    uuid.NewString,
 	})
 
-	sessionSvc, reviewSvc, sessMgr, err := startSession(ctx, cfg, runtimeAdapter, store, lcStack.LCM, messenger, telemetrySink, agents, managedPreview, browserBroker, browserAuthority, chatLauncher{svc: chatSvc}, settingsSvc, log)
+	// Build the multi-tracker dispatching to both GitHub and GitLab once,
+	// shared between the session service and the intake observer below.
+	// Env-configured tokens are validated eagerly here; CLI credential probing
+	// (`gh auth token`) stays lazy inside the multi-tracker so boot is not
+	// blocked. May be nil (no usable credentials) — the session service's
+	// nil-guard and the intake resolver's backoff both tolerate that
+	// (issue #2685).
+	tracker := newMultiTracker(cfg.GitLab, log)
+	sessionSvc, reviewSvc, sessMgr, err := startSession(ctx, cfg, runtimeAdapter, store, lcStack.LCM, messenger, telemetrySink, agents, managedPreview, browserBroker, browserAuthority, chatLauncher{svc: chatSvc}, settingsSvc, tracker, log)
 	if err != nil {
 		stop()
 		lcStack.Stop()
@@ -286,6 +302,9 @@ func Run() error {
 		}
 		return fmt.Errorf("wire session service: %w", err)
 	}
+
+	// servers isn't clobbered. See preview_wiring.go (issue #4500).
+	wireManagedPreviewExit(managedPreview, sessionSvc, log)
 	sessMgr.SetTerminalInputGate(termMgr)
 	lifecycleMessenger.Bind(sessionLifecycleMessenger{sessMgr})
 	lcStack.LCM.SetCompletionTerminator(sessMgr)
@@ -301,7 +320,7 @@ func Run() error {
 		}
 		return err
 	}
-	lcStack.trackerDone = startTrackerIntake(ctx, store, sessionSvc, log)
+	lcStack.trackerDone = startTrackerIntake(ctx, store, sessionSvc, tracker, log)
 
 	agentSvc := agentsvc.NewWithDeps(agentsvc.Deps{Cache: store, InventoryCache: store, Discoverer: modelcatalog.Discoverer{}, Projects: store, Sessions: store})
 	hostCommands := systemexec.Adapter{}
@@ -318,6 +337,7 @@ func Run() error {
 		ConfigPath:  mobilebridge.Path(cfg.DataDir),
 		DefaultPort: mobilebridge.DefaultPort,
 	}
+	// HostID is assigned below, once the identity file has been read.
 	mc := &controllers.MobileController{Bridge: bs}
 	browserService := browsersvc.New(sessionSvc, browserBroker, browserAuthority)
 
@@ -333,8 +353,25 @@ func Run() error {
 	var (
 		usageCollector *usagesvc.Collector
 		usagePipeline  *usagepipeline.Pipeline
+		usagePricing   *usagePricingRuntime
 	)
-	if roots, rootsErr := usagesvc.DefaultSourceRoots(ctx); rootsErr != nil {
+	if pricingRuntime, pricingErr := newUsagePricingRuntime(usagePricingRuntimeConfig{
+		DataDir: cfg.DataDir,
+		Store:   store,
+		Logger:  log,
+	}); pricingErr != nil {
+		log.Warn("usage pricing disabled", "err", pricingErr)
+	} else {
+		usagePricing = pricingRuntime
+		if pricingErr := pricingRuntime.Start(ctx); pricingErr != nil {
+			log.Warn("usage pricing startup failed; continuing without catalog enrichment", "err", pricingErr)
+		}
+		defer func() {
+			stop()
+			usagePricing.Wait()
+		}()
+	}
+	if roots, rootsErr := usagesvc.DefaultSourceRoots(ctx, cfg.DataDir); rootsErr != nil {
 		log.Warn("usage collection disabled", "err", rootsErr)
 	} else {
 		usageCollector = usagesvc.NewCollector(store, roots, func(reconcile bool) {
@@ -347,12 +384,19 @@ func Run() error {
 				usagePipeline.NotifyInventoryChanged()
 			}
 		})
-		ingestor := usagepipeline.NewIngestor(store, usagepipeline.IngestorConfig{})
-		usagePipeline = usagepipeline.NewPipeline(store, ingestor, []string{
-			roots.ClaudeProjects,
-			roots.CodexSessions,
-			roots.CodexArchived,
-		}, usagepipeline.CoordinatorConfig{
+		if usagePricing != nil {
+			usageCollector.OnRouteResolved(usagePricing.RepairLegacyAttribution)
+		}
+		ingestorConfig := usagepipeline.IngestorConfig{}
+		if usagePricing != nil {
+			ingestorConfig.Pricing = usagePricing.Manager()
+			ingestorConfig.OnPricingError = func(err error) {
+				log.Warn("usage event pricing failed", "err", err)
+			}
+			ingestorConfig.RequestAttributionRepair = usagePricing.RepairLegacyAttribution
+		}
+		ingestor := usagepipeline.NewIngestor(store, ingestorConfig)
+		usagePipeline = usagepipeline.NewPipeline(store, ingestor, usagePipelineWatchRoots(roots), usagepipeline.CoordinatorConfig{
 			Logger:     log,
 			Initialize: usageCollector.BackfillActive,
 			Reconcile: func(reconcileCtx context.Context) error {
@@ -428,8 +472,52 @@ func Run() error {
 		go dispatcher.Run(ctx)
 	}
 
+	// Managed remote-access connector. Reap first: a daemon that died without
+	// stopping its connector leaves a public tunnel to this machine running
+	// with nobody watching it.
+	tunnelPID := mobilebridge.TunnelPIDPath(cfg.DataDir)
+	if reapErr := mobilebridge.ReapStaleTunnel(tunnelPID, mobilebridge.IsLiveCloudflared, mobilebridge.KillProcess); reapErr != nil {
+		log.Warn("could not reap a stale mobile tunnel", "error", reapErr)
+	}
+	// Looked up again whenever the bridge is enabled, so a cloudflared the user
+	// installs from Connect Mobile is picked up without restarting AO.
+	bs.ResolveTunnel = func() controllers.TunnelController {
+		res := mobilebridge.ResolveCloudflared(mobilebridge.LocalCloudflaredLookup(cfg.DataDir))
+		if res.NeedsInstall {
+			return nil
+		}
+		log.Info("mobile remote access available", "cloudflared", res.Path, "source", res.Source)
+		return mobilebridge.NewManagedTunnel(mobilebridge.ManagedTunnelDeps{
+			Binary: res.Path, PIDPath: tunnelPID, Log: log,
+		})
+	}
+	if res := mobilebridge.ResolveCloudflared(mobilebridge.LocalCloudflaredLookup(cfg.DataDir)); !res.NeedsInstall {
+		log.Info("mobile remote access available", "cloudflared", res.Path, "source", res.Source)
+		bs.Tunnel = mobilebridge.NewManagedTunnel(mobilebridge.ManagedTunnelDeps{
+			Binary: res.Path, PIDPath: tunnelPID, Log: log,
+		})
+	} else {
+		// Not fatal: the LAN and Tailscale endpoints still work, and Connect
+		// Mobile behaves exactly as it did before remote access existed.
+		log.Info("mobile remote access unavailable; cloudflared not installed",
+			"rejectedSystemPath", res.SystemPath)
+	}
+
+	// Stable, machine-bound host identity, served by the unauthenticated
+	// GET /api/v1/identity probe. A failure here is not fatal: the probe then
+	// answers 501 and the phone falls back to pairing without identity
+	// verification, which is how it behaved before the probe existed.
+	hostIdentity, identityErr := mobilebridge.EnsureLocalIdentity(cfg.DataDir)
+	if identityErr != nil {
+		log.Warn("could not establish host identity; /api/v1/identity will report unimplemented", "error", identityErr)
+	}
+
+	bs.HostID = hostIdentity.HostID
+
 	srv, err := httpd.NewWithDeps(cfg, log, termMgr, httpd.APIDeps{
 		Projects:           projectSvc,
+		HostID:             hostIdentity.HostID,
+		Endpoints:          bs,
 		Agents:             agentSvc,
 		SystemChecks:       systemChecks,
 		Installer:          systemInstall,
@@ -533,6 +621,9 @@ func Run() error {
 		startupReconcileDone = done
 		go func() {
 			defer close(done)
+			if reconcileErr := reconcilePersistentChatHosts(ctx, cfg.DataDir, store); reconcileErr != nil {
+				log.Error("persistent chat host reconciliation on boot failed", "err", reconcileErr)
+			}
 			if reconcileErr := sessMgr.ReconcileBackground(ctx); reconcileErr != nil {
 				log.Error("background session reconciliation on boot failed", "err", reconcileErr)
 			}
@@ -563,14 +654,19 @@ func Run() error {
 	switchCancel()
 	managedPreview.Close()
 	<-previewDone
-	// Close chat controllers before the lifecycle stack: each owns an app-server
-	// child process, and closing them also settles any turn left in flight so a
-	// restart does not read a half-finished turn as still working.
+	// Detach chat controllers before stopping the lifecycle stack. Persistent
+	// provider hosts deliberately survive this daemon and preserve in-flight
+	// turns; the replacement daemon reconnects to the same initialized stream and
+	// consumes host-replayed output. Explicit session termination, not daemon
+	// shutdown, destroys them.
 	chatStopCtx, chatCancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
 	chatSvc.StopAll(chatStopCtx)
 	chatCancel()
 	if usageDone != nil {
 		<-usageDone
+	}
+	if usagePricing != nil {
+		usagePricing.Wait()
 	}
 	lcStack.Stop()
 	// Tear the tailnet proxy down before the listener it fronts. `tailscale
@@ -579,6 +675,11 @@ func Run() error {
 	// authenticated LAN listener behind it. Best-effort and never blocking:
 	// boot restore re-applies it against the next bound port.
 	bs.ShutdownServe()
+	// And the connector before that again, for the same reason: cloudflared is
+	// a separate process that outlives this one, so leaving it would keep a
+	// public hostname resolving to a port that is about to close. Stopping it
+	// does not disable the bridge — boot restore starts a new one.
+	bs.ShutdownTunnel()
 	lanStopCtx, lanCancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
 	defer lanCancel()
 	if err := lan.Stop(lanStopCtx); err != nil {
@@ -588,6 +689,15 @@ func Run() error {
 		log.Error("cdc pipeline shutdown", "err", err)
 	}
 	return runErr
+}
+
+func usagePipelineWatchRoots(roots usagesvc.SourceRoots) []string {
+	return []string{
+		roots.ClaudeProjects,
+		roots.CodexSessions,
+		roots.CodexArchived,
+		roots.KimiHome,
+	}
 }
 
 func seedScratchProjectOnBoot(ctx context.Context, cfg config.Config, projects *projectsvc.Service) error {
