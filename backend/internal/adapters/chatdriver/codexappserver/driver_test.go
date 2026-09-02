@@ -679,6 +679,7 @@ func TestResumeReappliesWorkspaceAndStandingInstructions(t *testing.T) {
 		ProviderConversationID: "thread-1",
 		WorkspacePath:          "/tmp/ws",
 		Model:                  "selected-resume-model",
+		Effort:                 "high",
 		SystemPrompt:           "current AO standing instructions",
 	})
 	if err != nil {
@@ -688,10 +689,11 @@ func TestResumeReappliesWorkspaceAndStandingInstructions(t *testing.T) {
 
 	resume := srv.awaitFrame(func(f frame) bool { return f.Method == "thread/resume" })
 	var params struct {
-		ThreadID              string `json:"threadId"`
-		Cwd                   string `json:"cwd"`
-		Model                 string `json:"model"`
-		DeveloperInstructions string `json:"developerInstructions"`
+		ThreadID              string            `json:"threadId"`
+		Cwd                   string            `json:"cwd"`
+		Model                 string            `json:"model"`
+		Config                map[string]string `json:"config"`
+		DeveloperInstructions string            `json:"developerInstructions"`
 	}
 	if err := json.Unmarshal(resume.Params, &params); err != nil {
 		t.Fatalf("thread/resume params: %v", err)
@@ -701,6 +703,9 @@ func TestResumeReappliesWorkspaceAndStandingInstructions(t *testing.T) {
 	}
 	if params.Model != "selected-resume-model" {
 		t.Fatalf("thread resume model = %q, want selected-resume-model", params.Model)
+	}
+	if params.Config["model_reasoning_effort"] != "high" {
+		t.Fatalf("thread resume effort config = %q, want high", params.Config["model_reasoning_effort"])
 	}
 	if params.DeveloperInstructions != "current AO standing instructions" {
 		t.Fatalf("developerInstructions = %q", params.DeveloperInstructions)
@@ -923,18 +928,19 @@ func TestProbeReportsMissingBinary(t *testing.T) {
 // Chat must not be quietly stricter than the terminal path for the same setting.
 func TestApprovalSettingsMirrorTUIPosture(t *testing.T) {
 	for _, tc := range []struct {
-		mode            ports.PermissionMode
-		policy, sandbox string
+		mode                      ports.PermissionMode
+		policy, sandbox, reviewer string
 	}{
-		{ports.PermissionModeDefault, "never", "danger-full-access"},
-		{ports.PermissionModeBypassPermissions, "never", "danger-full-access"},
-		{ports.PermissionModeAcceptEdits, "on-request", "workspace-write"},
-		{ports.PermissionModeAuto, "on-request", "workspace-write"},
-		{ports.PermissionMode("nonsense"), "never", "danger-full-access"},
+		{ports.PermissionModeDefault, "never", "danger-full-access", "user"},
+		{ports.PermissionModeBypassPermissions, "never", "danger-full-access", "user"},
+		{ports.PermissionModeAcceptEdits, "on-request", "workspace-write", "user"},
+		{ports.PermissionModeAuto, "on-request", "workspace-write", "auto_review"},
+		{ports.PermissionMode("nonsense"), "never", "danger-full-access", "user"},
 	} {
 		policy, sandbox := approvalSettings(tc.mode)
-		if policy != tc.policy || sandbox != tc.sandbox {
-			t.Errorf("approvalSettings(%q) = %q/%q, want %q/%q", tc.mode, policy, sandbox, tc.policy, tc.sandbox)
+		reviewer := approvalReviewer(tc.mode)
+		if policy != tc.policy || sandbox != tc.sandbox || reviewer != tc.reviewer {
+			t.Errorf("approval settings(%q) = %q/%q/%q, want %q/%q/%q", tc.mode, policy, sandbox, reviewer, tc.policy, tc.sandbox, tc.reviewer)
 		}
 	}
 }

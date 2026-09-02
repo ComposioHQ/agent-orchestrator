@@ -18,14 +18,14 @@ func TestMigrateRepairsRenumberedAgentInventoryHistory(t *testing.T) {
 	upTo(t, db, 118)
 	seedCompletedPlanBeforeFinalization(t, db)
 	applyLegacyCodexProfileMigrations(t, db, []legacyCodexProfileMigration{
-		{version: 119, canonicalPath: "migrations/0120_drop_agent_inventory_cache.sql", legacyName: "drop_agent_inventory_cache.sql"},
+		{version: 119, canonicalPath: "migrations/0121_drop_agent_inventory_cache.sql", legacyName: "drop_agent_inventory_cache.sql"},
 	})
 
 	if err := migrate(db); err != nil {
 		t.Fatalf("migrate database with legacy agent-inventory 0119: %v", err)
 	}
 
-	assertAppliedMigrations(t, db, 119, 120)
+	assertAppliedMigrations(t, db, 119, 120, 121)
 	var status string
 	if err := db.QueryRow(`
 SELECT json_extract(plan_json, '$.steps[0].status')
@@ -55,6 +55,46 @@ ORDER BY id DESC LIMIT 1`).Scan(&reapplied119ID); err != nil {
 	}
 	if reapplied119ID != applied119ID {
 		t.Fatalf("canonical 0119 ledger row changed from %d to %d on second pass", applied119ID, reapplied119ID)
+	}
+}
+
+func TestMigrateRepairsAgentInventoryHistoryFromCollidedVersion120(t *testing.T) {
+	db, err := sql.Open("sqlite", "file:"+filepath.Join(t.TempDir(), "ao.db")+pragmas)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	db.SetMaxOpenConns(1)
+	t.Cleanup(func() { _ = db.Close() })
+
+	upTo(t, db, 119)
+	now := time.Now().UTC()
+	if _, err := db.Exec(`
+INSERT INTO projects (id, path, registered_at, config)
+VALUES ('legacy-0120-project', '/repo/legacy-0120', ?, '{}');
+INSERT INTO sessions (
+    id, project_id, num, harness, activity_last_at, created_at, updated_at, session_mode
+) VALUES (
+    'legacy-0120-session', 'legacy-0120-project', 1, 'codex',
+    '2026-06-28 18:45:08.349363 +0800 CST m=+25660.013723251', ?, ?, 'chat'
+);`, now, now, now); err != nil {
+		t.Fatalf("seed local-zone activity timestamp: %v", err)
+	}
+	applyLegacyCodexProfileMigrations(t, db, []legacyCodexProfileMigration{
+		{version: 120, canonicalPath: "migrations/0121_drop_agent_inventory_cache.sql", legacyName: "drop_agent_inventory_cache.sql"},
+	})
+
+	if err := migrate(db); err != nil {
+		t.Fatalf("migrate database with legacy agent-inventory 0120: %v", err)
+	}
+
+	assertAppliedMigrations(t, db, 119, 120, 121)
+	var activityLastAt string
+	if err := db.QueryRow(`
+SELECT CAST(activity_last_at AS TEXT) FROM sessions WHERE id = 'legacy-0120-session'`).Scan(&activityLastAt); err != nil {
+		t.Fatalf("read normalized activity timestamp: %v", err)
+	}
+	if activityLastAt != "2026-06-28 10:45:08.349363 +0000 UTC" {
+		t.Fatalf("activity_last_at = %q, want canonical UTC", activityLastAt)
 	}
 }
 

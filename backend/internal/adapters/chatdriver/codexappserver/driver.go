@@ -268,9 +268,10 @@ func (d *Driver) Start(ctx context.Context, cfg ports.ChatStartConfig) (ports.Ch
 
 	policy, sandbox := approvalSettings(cfg.Permissions)
 	params := map[string]any{
-		"cwd":            cfg.WorkspacePath,
-		"approvalPolicy": policy,
-		"sandbox":        sandbox,
+		"cwd":               cfg.WorkspacePath,
+		"approvalPolicy":    policy,
+		"approvalsReviewer": approvalReviewer(cfg.Permissions),
+		"sandbox":           sandbox,
 	}
 	if cfg.Model != "" {
 		params["model"] = cfg.Model
@@ -325,13 +326,20 @@ func (d *Driver) Resume(ctx context.Context, cfg ports.ChatResumeConfig) (ports.
 
 	policy, sandbox := approvalSettings(cfg.Permissions)
 	params := map[string]any{
-		"threadId":       cfg.ProviderConversationID,
-		"cwd":            cfg.WorkspacePath,
-		"approvalPolicy": policy,
-		"sandbox":        sandbox,
+		"threadId":          cfg.ProviderConversationID,
+		"cwd":               cfg.WorkspacePath,
+		"approvalPolicy":    policy,
+		"approvalsReviewer": approvalReviewer(cfg.Permissions),
+		"sandbox":           sandbox,
 	}
 	if cfg.Model != "" {
 		params["model"] = cfg.Model
+	}
+	// thread/resume has no top-level effort field. Codex exposes persistent
+	// reasoning effort as a config override, so carry the durable AO choice into
+	// the resumed thread instead of silently falling back to the provider default.
+	if cfg.Effort != "" {
+		params["config"] = map[string]any{"model_reasoning_effort": cfg.Effort}
 	}
 	// Developer instructions are launch context, not durable conversation
 	// history. Reapply AO's current standing role when app-server reconstructs a
@@ -469,13 +477,21 @@ func approvalSettings(mode ports.PermissionMode) (policy, sandbox string) {
 	switch ports.NormalizePermissionMode(mode) {
 	case ports.PermissionModeAcceptEdits, ports.PermissionModeAuto:
 		// on-request lets the provider decide when to ask; workspace-write keeps
-		// edits inside the worktree. approvalsReviewer is deliberately not set:
-		// AO has no tested value for it here, and sending an unknown one would
-		// fail thread/start outright.
+		// edits inside the worktree.
 		return "on-request", "workspace-write"
 	default:
 		return "never", "danger-full-access"
 	}
+}
+
+// approvalReviewer selects whether Codex asks the user directly or first lets
+// its built-in reviewer approve routine safe actions. Explicitly sending "user"
+// also resets a thread that previously used auto review.
+func approvalReviewer(mode ports.PermissionMode) string {
+	if ports.NormalizePermissionMode(mode) == ports.PermissionModeAuto {
+		return "auto_review"
+	}
+	return "user"
 }
 
 // spawnAppServer is the real launcher.

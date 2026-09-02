@@ -21,7 +21,7 @@ func TestMigrateRepairsRenumberedCodexProfileHistory(t *testing.T) {
 
 	upTo(t, db, 116)
 	applyLegacyCodexProfileMigrations(t, db, []legacyCodexProfileMigration{
-		{version: 117, canonicalPath: "migrations/0120_drop_agent_inventory_cache.sql", legacyName: "drop_agent_inventory_cache.sql"},
+		{version: 117, canonicalPath: "migrations/0121_drop_agent_inventory_cache.sql", legacyName: "drop_agent_inventory_cache.sql"},
 	})
 	if _, err := db.Exec(`CREATE TABLE conversation_turns_next AS SELECT * FROM conversation_turns`); err != nil {
 		t.Fatalf("seed interrupted conversation-turn migration: %v", err)
@@ -31,7 +31,7 @@ func TestMigrateRepairsRenumberedCodexProfileHistory(t *testing.T) {
 		t.Fatalf("migrate renumbered Codex profile database: %v", err)
 	}
 
-	assertAppliedMigrations(t, db, 117, 118, 119, 120)
+	assertAppliedMigrations(t, db, 117, 118, 119, 120, 121)
 	assertTableSQLContains(t, db, "usage_bindings", "'kimi'")
 	assertTableSQLContains(t, db, "usage_sources", "'kimi_wire'")
 	assertTableSQLContains(t, db, "conversation_turns", "'cancelled'")
