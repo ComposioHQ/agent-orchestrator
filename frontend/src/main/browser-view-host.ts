@@ -26,6 +26,7 @@ import type { AppShortcutId, KeybindingOverrides, ShortcutChord } from "../share
 import type { AgentBrowserRuntime } from "./agent-browser-runtime";
 import type { AgentBrowserTarget, AgentBrowserTargetProvider } from "./agent-browser-cdp-bridge";
 import { matchInstruction } from "./browser-act-matcher";
+import type { ActCandidate } from "./browser-act-matcher";
 
 function isValidAnnotationContext(value: unknown): value is BrowserAnnotationContext {
 	if (typeof value !== "object" || value === null) return false;
@@ -325,6 +326,9 @@ type BrowserEntry = {
 	state: BrowserNavState;
 	annotationEnabled: boolean;
 	annotationDraft: BrowserAnnotationDraft | null;
+	documentGeneration: number;
+	navigationGeneration: number;
+	blockedNavigationGeneration: number;
 	networkCapture?: BrowserNetworkCapture;
 	favicon?: string;
 	// URL of the favicon currently applied to `favicon` (fetch succeeded).
@@ -618,6 +622,9 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 			state,
 			annotationEnabled: false,
 			annotationDraft: null,
+			documentGeneration: 0,
+			navigationGeneration: 0,
+			blockedNavigationGeneration: 0,
 		};
 		session.tabs.set(tabId, entry);
 		tabsByWebContentsId.set(view.webContents.id, entry);
@@ -1685,6 +1692,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 				}
 				case "act": {
 					const instruction = stringArg(args, "instruction", "INVALID_ARGUMENT", "instruction is required");
+					const postcondition = actionPostcondition(args);
 					const verb = typeof args.action === "string" && args.action.trim() ? args.action.trim() : "click";
 					if (!ACT_VERBS.has(verb)) {
 						throw browserError("INVALID_ARGUMENT", `Unsupported act verb: ${verb}`);
@@ -1709,21 +1717,53 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 						snapshot,
 						untrustedExternalContent: true as const,
 					});
+					let inputWasDispatched = false;
+					const performMatchedAction = async (
+						candidate: ActCandidate,
+						retried: boolean,
+						beforeSnapshot: string,
+					) => {
+						const actionEntry = activeEntry(session);
+						const before = actionFacts(actionEntry);
+						const generations = {
+							documentGeneration: actionEntry.documentGeneration,
+							navigationGeneration: actionEntry.navigationGeneration,
+							blockedNavigationGeneration: actionEntry.blockedNavigationGeneration,
+						};
+						const result = await runNative(verb, nativeArgsForRef(candidate.ref));
+						inputWasDispatched = true;
+						const observed = postcondition
+							? await observeActionPostcondition(postcondition, actionEntry, generations, beforeSnapshot, runNative, signal)
+							: undefined;
+						const navigation =
+							actionEntry.blockedNavigationGeneration > generations.blockedNavigationGeneration
+								? { status: "cancelled", reason: "beforeunload" }
+								: actionEntry.navigationGeneration > generations.navigationGeneration
+									? { status: "observed" }
+									: { status: "not-observed" };
+						return {
+							// "matched" remains element-resolution status. inputDispatched and
+							// postcondition report the distinct action/application outcomes.
+							outcome: "matched",
+							resolvedRef: candidate.ref,
+							candidate,
+							result,
+							inputDispatched: true,
+							before,
+							after: actionFacts(actionEntry),
+							navigation,
+							...(observed ? { postcondition: observed } : {}),
+							retried,
+							untrustedExternalContent: true,
+						};
+					};
 
 					const snapshot1 = await snapshotOnce();
 					const match1 = matchInstruction(instruction, snapshot1.refs, { nth });
 					if (match1.outcome !== "matched") return unresolved(match1.outcome, "candidates" in match1 ? match1.candidates : undefined, snapshot1.text);
 
 					try {
-						const result = await runNative(verb, nativeArgsForRef(match1.candidate.ref));
-						return {
-							outcome: "matched",
-							resolvedRef: match1.candidate.ref,
-							candidate: match1.candidate,
-							result,
-							retried: false,
-							untrustedExternalContent: true,
-						};
+						return await performMatchedAction(match1.candidate, false, snapshot1.text);
 					} catch (error) {
 						// Element attributes/positions on real pages shift between the
 						// snapshot that resolved a ref and the action that uses it, going
@@ -1736,21 +1776,16 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 						// mutating action, and this must not become an unbounded loop
 						// (mirrors ensureNativeActiveTab's "retry once, then surface
 						// reality" convention elsewhere in this file).
-						if (!isStaleReferenceError(error)) throw error;
+						// A stale-ref failure is known to happen before dispatch. Once the
+						// native action resolves, no observation failure may replay a
+						// potentially non-idempotent action.
+						if (inputWasDispatched || !isStaleReferenceError(error)) throw error;
 						const snapshot2 = await snapshotOnce();
 						const match2 = matchInstruction(instruction, snapshot2.refs, { nth });
 						if (match2.outcome !== "matched") {
 							return unresolved(match2.outcome, "candidates" in match2 ? match2.candidates : undefined, snapshot2.text);
 						}
-						const result = await runNative(verb, nativeArgsForRef(match2.candidate.ref));
-						return {
-							outcome: "matched",
-							resolvedRef: match2.candidate.ref,
-							candidate: match2.candidate,
-							result,
-							retried: true,
-							untrustedExternalContent: true,
-						};
+						return performMatchedAction(match2.candidate, true, snapshot2.text);
 					}
 				}
 				case "click":
@@ -2041,6 +2076,131 @@ function isAgentBrowserCommandFailure(error: unknown): boolean {
 // from v1.
 const ACT_VERBS = new Set(["click", "dblclick", "focus", "hover", "fill", "type", "check", "uncheck"]);
 
+type ActionPostcondition = {
+	kind: "url" | "text" | "dialog" | "navigation" | "dom-change";
+	value?: string;
+	timeoutMs: number;
+};
+
+function actionFacts(entry: BrowserEntry): Record<string, unknown> {
+	return {
+		tabId: entry.tabId,
+		url: sanitizeBrowserURL(entry.view.webContents.getURL()),
+		documentGeneration: entry.documentGeneration,
+		navigationGeneration: entry.navigationGeneration,
+	};
+}
+
+function actionPostcondition(args: Record<string, unknown>): ActionPostcondition | undefined {
+	if (args.postcondition === undefined) return undefined;
+	if (!args.postcondition || typeof args.postcondition !== "object" || Array.isArray(args.postcondition)) {
+		throw browserError("INVALID_ARGUMENT", "postcondition must be an object");
+	}
+	const raw = args.postcondition as Record<string, unknown>;
+	const kind = raw.kind;
+	if (!["url", "text", "dialog", "navigation", "dom-change"].includes(String(kind))) {
+		throw browserError("INVALID_ARGUMENT", "postcondition.kind must be url, text, dialog, navigation, or dom-change");
+	}
+	const value = typeof raw.value === "string" ? raw.value : undefined;
+	if ((kind === "url" || kind === "text") && !value) {
+		throw browserError("INVALID_ARGUMENT", `postcondition ${kind} requires value`);
+	}
+	const requestedTimeout = typeof raw.timeoutMs === "number" && Number.isFinite(raw.timeoutMs) ? raw.timeoutMs : 10_000;
+	return {
+		kind: kind as ActionPostcondition["kind"],
+		...(value !== undefined ? { value } : {}),
+		timeoutMs: Math.max(1, Math.min(55_000, Math.trunc(requestedTimeout))),
+	};
+}
+
+function waitForActionPoll(signal: AbortSignal | undefined, timeoutMs: number): Promise<void> {
+	return new Promise((resolve, reject) => {
+		const timer = setTimeout(done, timeoutMs);
+		function done() {
+			signal?.removeEventListener("abort", aborted);
+			resolve();
+		}
+		function aborted() {
+			clearTimeout(timer);
+			reject(browserError("BROWSER_COMMAND_CANCELED", "Browser command was canceled"));
+		}
+		if (signal?.aborted) aborted();
+		else signal?.addEventListener("abort", aborted, { once: true });
+	});
+}
+
+async function observeActionPostcondition(
+	postcondition: ActionPostcondition,
+	entry: BrowserEntry,
+	before: { documentGeneration: number; navigationGeneration: number; blockedNavigationGeneration: number },
+	beforeSnapshot: string,
+	runNative: (action: string, args?: Record<string, unknown>) => Promise<Record<string, unknown>>,
+	signal?: AbortSignal,
+): Promise<Record<string, unknown>> {
+	const deadline = Date.now() + postcondition.timeoutMs;
+	const cancelledNavigation = () => entry.blockedNavigationGeneration > before.blockedNavigationGeneration;
+	const satisfiedNavigation = () => entry.navigationGeneration > before.navigationGeneration;
+
+	if (postcondition.kind === "url" || postcondition.kind === "text") {
+		try {
+			await runNative("wait", {
+				[postcondition.kind]: postcondition.value,
+				timeoutMs: postcondition.timeoutMs,
+			});
+			return { status: "satisfied", kind: postcondition.kind, expected: postcondition.value };
+		} catch (error) {
+			throwIfAborted(signal);
+			if (!isAgentBrowserCommandFailure(error)) throw error;
+			return {
+				status: cancelledNavigation() ? "cancelled" : "unmet",
+				kind: postcondition.kind,
+				expected: postcondition.value,
+				reason: cancelledNavigation() ? "beforeunload" : "timeout",
+			};
+		}
+	}
+
+	for (;;) {
+		throwIfAborted(signal);
+		if (cancelledNavigation()) {
+			return { status: "cancelled", kind: postcondition.kind, reason: "beforeunload" };
+		}
+		if (postcondition.kind === "navigation" && satisfiedNavigation()) {
+			return { status: "satisfied", kind: postcondition.kind };
+		}
+		if (postcondition.kind === "dom-change") {
+			if (entry.documentGeneration > before.documentGeneration) {
+				return { status: "satisfied", kind: postcondition.kind };
+			}
+			try {
+				// Compare like-for-like with act's interactive baseline. A full-page
+				// snapshot would differ even when the DOM had not changed.
+				const snapshot = await runNative("snapshot", { interactive: true });
+				if (typeof snapshot.snapshot === "string" && snapshot.snapshot !== beforeSnapshot) {
+					return { status: "satisfied", kind: postcondition.kind };
+				}
+			} catch (error) {
+				throwIfAborted(signal);
+				if (!isAgentBrowserCommandFailure(error)) throw error;
+			}
+		}
+		if (postcondition.kind === "dialog") {
+			try {
+				const dialog = await runNative("dialog", { operation: "status" });
+				if (dialog.open === true || dialog.isOpen === true || typeof dialog.type === "string") {
+					return { status: "satisfied", kind: postcondition.kind, dialog };
+				}
+			} catch (error) {
+				throwIfAborted(signal);
+				if (!isAgentBrowserCommandFailure(error)) throw error;
+			}
+		}
+		const remaining = deadline - Date.now();
+		if (remaining <= 0) return { status: "unmet", kind: postcondition.kind, reason: "timeout" };
+		await waitForActionPoll(signal, Math.min(25, remaining));
+	}
+}
+
 function isStaleReferenceError(error: unknown): boolean {
 	return Boolean(error && typeof error === "object" && "code" in error && error.code === "STALE_REFERENCE");
 }
@@ -2167,6 +2327,8 @@ function wireNavEvents(
 		if (isActive()) pushNavState(options, entry);
 	};
 	contents.on("did-navigate", (_event, url) => {
+		entry.documentGeneration += 1;
+		entry.navigationGeneration += 1;
 		if (entry.annotationDraft && !isSameAnnotationPage(annotationDraftURL(entry.annotationDraft), url)) {
 			cancelAnnotation(options, entry, "navigation");
 		}
@@ -2174,7 +2336,17 @@ function wireNavEvents(
 		if (isActive()) syncActiveBounds();
 		update();
 	});
-	contents.on("did-navigate-in-page", update);
+	contents.on("did-navigate-in-page", () => {
+		entry.navigationGeneration += 1;
+		update();
+	});
+	// Electron emits this when a beforeunload handler cancels a main-frame
+	// navigation. Keep only a monotonic fact: action correlation snapshots the
+	// value before dispatch, so an unrelated earlier guard cannot taint a later
+	// command and we never change Chromium's default cancellation behavior.
+	contents.on("will-prevent-unload", () => {
+		entry.blockedNavigationGeneration += 1;
+	});
 	contents.on("page-title-updated", update);
 	contents.on("did-start-loading", () => {
 		update();

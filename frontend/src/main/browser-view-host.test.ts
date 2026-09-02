@@ -332,6 +332,9 @@ function setupHost(agentBrowserRuntime?: import("./agent-browser-runtime").Agent
 		setBrowserZoomFactor: (zoomFactor: number) => {
 			browserZoomFactor = zoomFactor;
 		},
+		setCurrentURL: (url: string) => {
+			currentURL = url;
+		},
 		view,
 		webContents,
 		webContentsListeners,
@@ -814,6 +817,144 @@ describe("browser:act", () => {
 			expect.objectContaining({ listTargets: expect.any(Function) }),
 			undefined,
 		);
+	});
+
+	it("reports before/after facts and a satisfied navigation postcondition separately from matching", async () => {
+		let page: ReturnType<typeof setupActHost>;
+		page = setupActHost(async (_sessionId, action) => {
+			if (action === "snapshot") {
+				return { snapshot: '- button "Continue" [ref=e1]', refs: { e1: { role: "button", name: "Continue" } } };
+			}
+			if (action === "click") {
+				page.setCurrentURL("http://localhost:5173/next");
+				page.webContentsListeners.get("did-navigate")?.({} as never, "http://localhost:5173/next" as never);
+				return { clicked: true };
+			}
+			return {};
+		});
+		await page.host.execute("sess-1", "tabs");
+		page.setCurrentURL("http://localhost:5173/start");
+
+		const result = (await page.host.execute("sess-1", "act", {
+			instruction: "continue",
+			postcondition: { kind: "navigation", timeoutMs: 50 },
+		})) as Record<string, unknown>;
+
+		expect(result).toMatchObject({
+			outcome: "matched",
+			inputDispatched: true,
+			before: { url: "http://localhost:5173/start", documentGeneration: 0, navigationGeneration: 0 },
+			after: { url: "http://localhost:5173/next", documentGeneration: 1, navigationGeneration: 1 },
+			postcondition: { kind: "navigation", status: "satisfied" },
+		});
+	});
+
+	it("reports a beforeunload-cancelled navigation without retrying the action", async () => {
+		let page: ReturnType<typeof setupActHost>;
+		page = setupActHost(async (_sessionId, action) => {
+			if (action === "snapshot") {
+				return { snapshot: '- button "Leave" [ref=e1]', refs: { e1: { role: "button", name: "Leave" } } };
+			}
+			if (action === "click") {
+				page.webContentsListeners.get("will-prevent-unload")?.({} as never);
+				return { clicked: true };
+			}
+			return {};
+		});
+
+		const result = await page.host.execute("sess-1", "act", {
+			instruction: "leave",
+			postcondition: { kind: "navigation", timeoutMs: 50 },
+		});
+
+		expect(result).toMatchObject({
+			outcome: "matched",
+			navigation: { status: "cancelled", reason: "beforeunload" },
+			postcondition: { kind: "navigation", status: "cancelled", reason: "beforeunload" },
+		});
+		expect(page.runAction.mock.calls.filter(([, action]) => action === "click")).toHaveLength(1);
+	});
+
+	it("reports an unmet postcondition without retrying a non-idempotent action", async () => {
+		const page = setupActHost(async (_sessionId, action) => {
+			if (action === "snapshot") {
+				return { snapshot: '- button "Pay" [ref=e1]', refs: { e1: { role: "button", name: "Pay" } } };
+			}
+			return { clicked: true };
+		});
+
+		const result = await page.host.execute("sess-1", "act", {
+			instruction: "pay",
+			postcondition: { kind: "navigation", timeoutMs: 1 },
+		});
+
+		expect(result).toMatchObject({
+			outcome: "matched",
+			inputDispatched: true,
+			postcondition: { kind: "navigation", status: "unmet" },
+		});
+		expect(page.runAction.mock.calls.filter(([, action]) => action === "click")).toHaveLength(1);
+	});
+
+	it("cancels a pending postcondition promptly without retrying the action", async () => {
+		const controller = new AbortController();
+		const page = setupActHost(async (_sessionId, action) => {
+			if (action === "snapshot") {
+				return { snapshot: '- button "Submit" [ref=e1]', refs: { e1: { role: "button", name: "Submit" } } };
+			}
+			return { clicked: true };
+		});
+
+		const pending = page.host.execute(
+			"sess-1",
+			"act",
+			{ instruction: "submit", postcondition: { kind: "navigation", timeoutMs: 10_000 } },
+			controller.signal,
+		);
+		await vi.waitFor(() => expect(page.runAction).toHaveBeenCalledWith("sess-1", "click", expect.anything(), expect.anything(), controller.signal));
+		controller.abort();
+
+		await expect(pending).rejects.toMatchObject({ code: "BROWSER_COMMAND_CANCELED" });
+		expect(page.runAction.mock.calls.filter(([, action]) => action === "click")).toHaveLength(1);
+	});
+
+	it("satisfies a DOM-change postcondition only from a fresh snapshot", async () => {
+		let snapshots = 0;
+		const page = setupActHost(async (_sessionId, action) => {
+			if (action === "snapshot") {
+				snapshots += 1;
+				return snapshots === 1
+					? { snapshot: '- button "Save" [ref=e1]', refs: { e1: { role: "button", name: "Save" } } }
+					: { snapshot: '- status "Saved"', refs: {} };
+			}
+			return { clicked: true };
+		});
+
+		const result = await page.host.execute("sess-1", "act", {
+			instruction: "save",
+			postcondition: { kind: "dom-change", timeoutMs: 50 },
+		});
+
+		expect(result).toMatchObject({ postcondition: { kind: "dom-change", status: "satisfied" } });
+		expect(snapshots).toBe(2);
+	});
+
+	it("does not treat an identical fresh snapshot as a DOM change", async () => {
+		const page = setupActHost(async (_sessionId, action, args) => {
+			if (action === "snapshot") {
+				expect(args).toMatchObject({ interactive: true });
+				return { snapshot: '- button "Save" [ref=e1]', refs: { e1: { role: "button", name: "Save" } } };
+			}
+			return { clicked: true };
+		});
+
+		const result = await page.host.execute("sess-1", "act", {
+			instruction: "save",
+			postcondition: { kind: "dom-change", timeoutMs: 1 },
+		});
+
+		expect(result).toMatchObject({ postcondition: { kind: "dom-change", status: "unmet", reason: "timeout" } });
+		expect(page.runAction.mock.calls.filter(([, action]) => action === "click")).toHaveLength(1);
 	});
 
 	it("uses --nth to check an unnamed checkbox instead of a button named Check", async () => {
