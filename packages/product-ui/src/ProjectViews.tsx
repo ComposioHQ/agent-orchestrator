@@ -63,13 +63,18 @@ export function ProjectSourcePickerView({
 }: ProjectSourcePickerViewProps) {
 	return (
 		<div
-			className="relative isolate flex w-full max-w-(--size-import-modal-max) flex-col items-stretch gap-6 rounded-welcome-panel border border-[var(--color-border-import-modal)] bg-[var(--color-bg-import-modal)] p-(--size-import-modal-padding) shadow-[var(--shadow-import-modal)]"
+			className={cn(
+				"relative isolate flex w-full flex-col items-stretch gap-6",
+				dialog
+					? "max-w-(--size-import-modal-max) rounded-lg border border-border bg-popover p-4 text-popover-foreground shadow-xl"
+					: "max-w-(--size-import-modal-max) rounded-welcome-panel border border-[var(--color-border-import-modal)] bg-[var(--color-bg-import-modal)] p-(--size-import-modal-padding) shadow-[var(--shadow-import-modal)]",
+			)}
 			role={dialog ? undefined : "group"}
 			aria-label={dialog ? undefined : labels.title}
 		>
 			<div className={cn("relative z-[1] flex flex-col items-start gap-1", onClose && "pr-10")}>
-				<h2 className="import-title text-balance">{labels.title}</h2>
-				<p className="import-description text-pretty">{labels.description}</p>
+				<h2 className={dialog ? "text-base font-semibold text-foreground" : "import-title text-balance"}>{labels.title}</h2>
+				<p className={dialog ? "text-sm text-muted-foreground" : "import-description text-pretty"}>{labels.description}</p>
 			</div>
 			<div className="relative z-[2] grid grid-cols-1 gap-4 self-stretch sm:grid-cols-2 sm:gap-6">
 				<ProjectSourceButton
@@ -78,6 +83,7 @@ export function ProjectSourcePickerView({
 					icon={cloneIcon}
 					kind="clone"
 					labels={labels}
+					dialog={dialog}
 					onClick={() => onSelect("clone")}
 				/>
 				<ProjectSourceButton
@@ -86,28 +92,41 @@ export function ProjectSourcePickerView({
 					icon={folderIcon}
 					kind="local"
 					labels={labels}
+					dialog={dialog}
 					onClick={() => onSelect("local")}
 				/>
 			</div>
 			<button
 				type="button"
 				aria-label={labels.workspace}
-				className="relative z-[2] flex min-h-18 w-full items-center gap-4 rounded-welcome-panel border border-[var(--color-border-import-modal)] bg-[var(--color-bg-import-card)] px-5 py-4 text-left transition-colors hover:bg-[var(--color-bg-import-card-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 disabled:pointer-events-none disabled:opacity-50"
+				className={cn(
+					"relative z-[2] flex min-h-18 w-full items-center gap-4 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 disabled:pointer-events-none disabled:opacity-50",
+					dialog
+						? "rounded-md border border-border bg-muted/50 px-3 py-3 hover:bg-muted"
+						: "rounded-welcome-panel border border-[var(--color-border-import-modal)] bg-[var(--color-bg-import-card)] px-5 py-4 hover:bg-[var(--color-bg-import-card-hover)]",
+				)}
 				disabled={disabled}
 				onClick={() => onSelect("workspace")}
 			>
-				<span className="grid size-10 shrink-0 place-items-center rounded-lg border border-[var(--color-border-import-modal)] bg-[var(--color-bg-import-chip)] text-[var(--color-text-import-muted)]">
+				<span
+					className={cn(
+						"grid shrink-0 place-items-center text-muted-foreground",
+						dialog
+							? "size-8 rounded-md bg-muted"
+							: "size-10 rounded-lg border border-[var(--color-border-import-modal)] bg-[var(--color-bg-import-chip)]",
+					)}
+				>
 					{workspaceIcon}
 				</span>
 				<span className="min-w-0 flex-1">
-					<span className="block text-[15px] font-bold leading-5 text-[var(--color-text-import-title)]">
+					<span className={dialog ? "block text-sm font-medium text-foreground" : "block text-[15px] font-bold leading-5 text-[var(--color-text-import-title)]"}>
 						{labels.workspace}
 					</span>
-					<span className="mt-1 block text-pretty text-[13px] leading-5 text-[var(--color-text-import-muted)]">
+					<span className={dialog ? "mt-0.5 block text-xs text-muted-foreground" : "mt-1 block text-pretty text-[13px] leading-5 text-[var(--color-text-import-muted)]"}>
 						{labels.workspaceDescription}
 					</span>
 				</span>
-				<span className="shrink-0 text-[var(--color-text-import-muted)]" aria-hidden="true">
+				<span className="shrink-0 text-muted-foreground" aria-hidden="true">
 					{arrowIcon}
 				</span>
 			</button>
@@ -131,6 +150,7 @@ function ProjectSourceButton({
 	disabled,
 	icon,
 	kind,
+	dialog,
 	labels,
 	onClick,
 }: {
@@ -139,6 +159,7 @@ function ProjectSourceButton({
 	icon?: ReactNode;
 	kind: Exclude<ProjectSource, "workspace">;
 	labels: ProjectSourcePickerLabels;
+	dialog: boolean;
 	onClick: () => void;
 }) {
 	const isClone = kind === "clone";
@@ -149,29 +170,66 @@ function ProjectSourceButton({
 		<button
 			type="button"
 			aria-label={title}
-			className="flex min-h-56 w-full flex-col justify-start gap-5 rounded-welcome-panel border border-[var(--color-border-import-modal)] bg-[var(--color-bg-import-card)] p-6 text-left transition-colors hover:bg-[var(--color-bg-import-card-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 disabled:pointer-events-none disabled:opacity-50"
+			className={cn(
+				"flex w-full flex-col justify-start text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 disabled:pointer-events-none disabled:opacity-50",
+				dialog
+					? "min-h-36 gap-3 rounded-md border border-border bg-muted/50 p-4 hover:bg-muted"
+					: "min-h-56 gap-5 rounded-welcome-panel border border-[var(--color-border-import-modal)] bg-[var(--color-bg-import-card)] p-6 hover:bg-[var(--color-bg-import-card-hover)]",
+			)}
 			disabled={disabled}
 			onClick={onClick}
 		>
-			<span className="flex min-h-24 w-full items-center justify-center">
-				<span className="flex w-full max-w-[300px] flex-col overflow-hidden rounded-lg border border-[var(--color-border-import-modal)] bg-[var(--color-bg-import-illustration)]">
-					<span className="flex min-w-0 items-center gap-2 border-b border-[var(--color-border-import-modal)] px-4 py-3 text-[var(--color-text-import-muted)]">
+				<span className="flex min-h-24 w-full items-center justify-center">
+					<span
+						className={cn(
+							"flex w-full max-w-[300px] flex-col overflow-hidden rounded-lg",
+							dialog
+								? "border border-border bg-background/50"
+								: "border border-[var(--color-border-import-modal)] bg-[var(--color-bg-import-illustration)]",
+						)}
+					>
+						<span
+							className={cn(
+								"flex min-w-0 items-center gap-2 border-b px-4 py-3",
+								dialog
+									? "border-border text-muted-foreground"
+									: "border-[var(--color-border-import-modal)] text-[var(--color-text-import-muted)]",
+							)}
+						>
 						<span className="shrink-0">{icon}</span>
 						<span className="truncate font-mono text-[12px] leading-4">{example}</span>
 					</span>
 					<span className="flex items-center gap-2 px-4 py-3">
 						<span className="size-2 shrink-0 rounded-full bg-accent-strong" aria-hidden="true" />
-						<span className="font-mono text-[12px] font-bold leading-4 text-[var(--color-text-import-title)]">
+							<span
+								className={
+									dialog
+										? "font-mono text-xs font-medium text-foreground"
+										: "font-mono text-[12px] font-bold leading-4 text-[var(--color-text-import-title)]"
+								}
+							>
 							{branch}
 						</span>
 					</span>
 				</span>
 			</span>
 			<span className="mt-auto flex w-full flex-col items-start gap-2">
-				<span className="text-[16px] font-bold leading-6 text-[var(--color-text-import-title)]">
+				<span
+					className={
+						dialog
+							? "text-sm font-medium text-foreground"
+							: "text-[16px] font-bold leading-6 text-[var(--color-text-import-title)]"
+					}
+				>
 					{title}
 				</span>
-				<span className="text-pretty text-[14px] font-normal leading-[23px] text-[var(--color-text-import-muted)]">
+				<span
+					className={
+						dialog
+							? "text-xs text-muted-foreground"
+							: "text-pretty text-[14px] font-normal leading-[23px] text-[var(--color-text-import-muted)]"
+					}
+				>
 					{description}
 				</span>
 			</span>
@@ -206,13 +264,13 @@ export function ProjectSetupHeaderView({
 	title: string;
 }) {
 	return (
-		<div className="flex items-start justify-between gap-4 border-b border-[var(--color-border-agents-sheet)] p-(--size-import-dialog-padding)">
+		<div className="flex items-start justify-between gap-4 border-b border-border p-4">
 			{leadingAction}
 			<div className="min-w-0">
-				<Title className="text-subtitle font-semibold text-[var(--color-text-agents-sheet-title)]">
+				<Title className="text-subtitle font-semibold text-foreground">
 					{title}
 				</Title>
-				<Description className="mt-1 break-all text-xs text-[var(--color-text-agents-sheet-description)]">
+				<Description className="mt-1 break-all text-xs text-muted-foreground">
 					{path}
 				</Description>
 			</div>
@@ -268,7 +326,7 @@ export function ProjectSetupFormView({
 		if (canSubmit) onSubmit();
 	};
 	return (
-		<form className="space-y-5 p-(--size-import-dialog-padding)" onSubmit={submit}>
+		<form className="space-y-5 p-4" onSubmit={submit}>
 			<div className="grid gap-4 sm:grid-cols-2">
 				{agentControls.worker}
 				{agentControls.orchestrator}
@@ -303,7 +361,7 @@ export function ProjectSetupFormView({
 				</div>
 			)}
 
-			<div className="border-t border-[var(--color-border-agents-sheet)] pt-5">{intakeControl}</div>
+			<div className="border-t border-border pt-5">{intakeControl}</div>
 
 			{setupNotice && (
 				<div className="rounded-lg border border-[var(--color-border-agents-sheet)] bg-[var(--color-bg-agents-sheet-control)]/80 px-3 py-2.5 text-xs leading-body-md text-[var(--color-text-agents-sheet-description)]">

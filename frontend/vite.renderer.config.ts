@@ -80,7 +80,9 @@ function contentSecurityPolicy(mode: "build" | "serve"): string {
 		// impractical because the preamble changes with the plugin version.
 		mode === "serve" ? "script-src 'self' 'unsafe-inline'" : "script-src 'self'",
 		"style-src 'self' 'unsafe-inline'",
-		"img-src 'self' data: http://127.0.0.1:*",
+		// Repository owner avatars are loaded directly by the renderer. Keep the
+		// allowlist narrow to the providers supported by the clone flow.
+		"img-src 'self' data: http://127.0.0.1:* https://github.com https://avatars.githubusercontent.com https://gitlab.com https://bitbucket.org https://unavatar.io",
 		"font-src 'self' data:",
 		[
 			"connect-src",
