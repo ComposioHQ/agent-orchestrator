@@ -5,7 +5,7 @@ import { cn } from "../lib/utils";
 import { Label } from "./ui/label";
 import { SettingsInlineInput, SettingsRow } from "./settings/SettingsRow";
 import { Switch } from "./ui/switch";
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
+import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 
 type TrackerIntakeConfig = components["schemas"]["TrackerIntakeConfig"];
 
@@ -183,20 +183,18 @@ export function IntakeFields({
 					{t("settings.project.enableIssueIntake")}
 				</label>
 				{compact && (
-					<TooltipProvider delayDuration={0}>
-						<Tooltip>
-							<TooltipTrigger asChild>
-								<button
-									type="button"
-									className="grid size-icon-base place-items-center rounded-full text-muted-foreground hover:text-foreground focus-visible:outline-none"
-									aria-label={t("settings.project.intakeHelpAria")}
-								>
-									<Info className="size-3.5" aria-hidden="true" />
-								</button>
-							</TooltipTrigger>
-							<TooltipContent>{t("settings.project.intakeTooltip")}</TooltipContent>
-						</Tooltip>
-					</TooltipProvider>
+					<Tooltip>
+						<TooltipTrigger asChild>
+							<button
+								type="button"
+								className="grid size-icon-base place-items-center rounded-full text-muted-foreground hover:text-foreground focus-visible:outline-none"
+								aria-label={t("settings.project.intakeHelpAria")}
+							>
+								<Info className="size-3.5" aria-hidden="true" />
+							</button>
+						</TooltipTrigger>
+						<TooltipContent>{t("settings.project.intakeTooltip")}</TooltipContent>
+					</Tooltip>
 				)}
 			</div>
 			{form.enabled && (

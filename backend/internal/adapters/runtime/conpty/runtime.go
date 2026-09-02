@@ -73,7 +73,7 @@ func New(opts Options) *Runtime {
 		killHost:      clientKill,
 		pidIsAlive:    pidAlive,
 		processFinder: findProcess,
-		destroyWait:   500 * time.Millisecond,
+		destroyWait:   2 * time.Second,
 		destroyPoll:   25 * time.Millisecond,
 		sessions:      make(map[string]*hostSession),
 	}

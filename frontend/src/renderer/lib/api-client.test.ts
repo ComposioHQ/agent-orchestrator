@@ -206,6 +206,10 @@ describe("normalizeApiOperation", () => {
 	it("keeps static child routes instead of treating them as ids", () => {
 		// These match an exact OpenAPI template, so the trailing segment must not
 		// be collapsed to :id (which would break aggregation and hide the route).
+		expect(normalizeApiOperation("GET", "/api/v1/agents/readiness")).toBe("GET /api/v1/agents/readiness");
+		expect(normalizeApiOperation("POST", "/api/v1/agents/readiness/ensure")).toBe(
+			"POST /api/v1/agents/readiness/ensure",
+		);
 		expect(normalizeApiOperation("POST", "/api/v1/notifications/read-all")).toBe("POST /api/v1/notifications/read-all");
 		expect(normalizeApiOperation("POST", "/api/v1/projects/clone")).toBe("POST /api/v1/projects/clone");
 		expect(normalizeApiOperation("POST", "/api/v1/projects/initialize")).toBe("POST /api/v1/projects/initialize");

@@ -6,6 +6,7 @@ import type { ShellTerminal } from "../hooks/useShellTerminals";
 import { isWindowsPlatform } from "../lib/platform";
 import { cn } from "../lib/utils";
 import { TerminalTabFrame } from "./TerminalTabFrame";
+import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 
 type ShellTerminalTabProps = {
 	shell: ShellTerminal;
@@ -114,7 +115,6 @@ export function ShellTerminalTab({
 		},
 		onDoubleClick: (event: MouseEvent) => event.stopPropagation(),
 		onContextMenu: (event: MouseEvent) => event.stopPropagation(),
-		title: t("terminal.close"),
 		type: "button" as const,
 	};
 	const connectedGlyphClass =
@@ -122,12 +122,17 @@ export function ShellTerminalTab({
 	const isConnected = appearance === "connected";
 	if (isConnected) {
 		const closeAction = isEditing || shell.optimistic ? undefined : (
-			<button
-				{...closeControl}
-				className="relative grid size-icon-sm place-items-center text-passive opacity-0 pointer-events-none before:absolute before:-inset-1.5 before:content-[''] transition-colors duration-fast ease-out hover:text-foreground group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100 focus-visible:pointer-events-auto focus-visible:opacity-100 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50 motion-reduce:transition-none"
-			>
-				<X aria-hidden="true" className="size-icon-sm translate-y-px" />
-			</button>
+			<Tooltip>
+				<TooltipTrigger asChild>
+					<button
+						{...closeControl}
+						className="relative grid size-icon-sm place-items-center text-passive opacity-0 pointer-events-none before:absolute before:-inset-1.5 before:content-[''] transition-colors duration-fast ease-out hover:text-foreground group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100 focus-visible:pointer-events-auto focus-visible:opacity-100 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50 motion-reduce:transition-none"
+					>
+						<X aria-hidden="true" className="size-icon-sm translate-y-px" />
+					</button>
+				</TooltipTrigger>
+				<TooltipContent side="bottom">{t("terminal.closeNamed", { title })}</TooltipContent>
+			</Tooltip>
 		);
 		const editingContent = isEditing ? (
 			<input
@@ -264,19 +269,24 @@ export function ShellTerminalTab({
 				</button>
 			)}
 			{isConnected && (isEditing || shell.optimistic) ? null : (
-				<button
-					{...closeControl}
-					className={
-						isConnected
-							? "absolute top-[calc(50%_-_1px)] left-2 z-20 grid size-icon-sm -translate-y-1/2 place-items-center text-passive opacity-0 pointer-events-none before:absolute before:-inset-1.5 before:content-[''] transition-colors duration-fast ease-out hover:text-foreground group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100 focus-visible:pointer-events-auto focus-visible:opacity-100 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50 motion-reduce:transition-none"
-							: "inline-flex h-control-sm w-control-sm shrink-0 items-center justify-center overflow-hidden text-passive opacity-0 transition-colors duration-fast ease-out hover:text-foreground group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50 motion-reduce:transition-none"
-					}
-				>
-					<X
-						aria-hidden="true"
-						className={isConnected ? "size-icon-sm translate-y-px" : "size-icon-sm"}
-					/>
-				</button>
+				<Tooltip>
+					<TooltipTrigger asChild>
+						<button
+							{...closeControl}
+							className={
+								isConnected
+									? "absolute top-[calc(50%_-_1px)] left-2 z-20 grid size-icon-sm -translate-y-1/2 place-items-center text-passive opacity-0 pointer-events-none before:absolute before:-inset-1.5 before:content-[''] transition-colors duration-fast ease-out hover:text-foreground group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100 focus-visible:pointer-events-auto focus-visible:opacity-100 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50 motion-reduce:transition-none"
+									: "inline-flex h-control-sm w-control-sm shrink-0 items-center justify-center overflow-hidden text-passive opacity-0 transition-colors duration-fast ease-out hover:text-foreground group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50 motion-reduce:transition-none"
+							}
+						>
+							<X
+								aria-hidden="true"
+								className={isConnected ? "size-icon-sm translate-y-px" : "size-icon-sm"}
+							/>
+						</button>
+					</TooltipTrigger>
+					<TooltipContent side="bottom">{t("terminal.closeNamed", { title })}</TooltipContent>
+				</Tooltip>
 			)}
 		</span>
 	);

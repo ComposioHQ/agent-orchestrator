@@ -146,6 +146,15 @@ type Service struct {
 	// override it with a short duration to exercise the timeout path without
 	// a real multi-minute wait.
 	installTimeout time.Duration
+	onSucceeded    func(Target)
+}
+
+// SetOnSucceeded registers the daemon callback invoked after a verified
+// install. It is called outside the job mutex.
+func (s *Service) SetOnSucceeded(callback func(Target)) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.onSucceeded = callback
 }
 
 // New returns a Service backed by explicit host-operation ports. The daemon
@@ -254,25 +263,33 @@ func (s *Service) run(argv []string, job *Job) {
 	now := time.Now()
 
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	job.Output = out.String()
 	job.FinishedAt = &now
 	if ctx.Err() == context.DeadlineExceeded {
 		job.Status = StatusFailed
 		job.Error = fmt.Sprintf("install timed out after %s", s.installTimeout)
+		s.mu.Unlock()
 		return
 	}
 	if runErr != nil {
 		job.Status = StatusFailed
 		job.Error = runErr.Error()
+		s.mu.Unlock()
 		return
 	}
 	if path, err := s.executables.LookPath(string(job.Target)); err != nil || path == "" {
 		job.Status = StatusFailed
 		job.Error = fmt.Sprintf("install command finished but %s is still not in PATH", job.Target)
+		s.mu.Unlock()
 		return
 	}
 	job.Status = StatusSucceeded
+	callback := s.onSucceeded
+	target := job.Target
+	s.mu.Unlock()
+	if callback != nil {
+		callback(target)
+	}
 }
 
 func displayCommand(plan Plan) string {

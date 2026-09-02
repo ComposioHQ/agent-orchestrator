@@ -76,8 +76,8 @@ func TestSessionPersistsReviewerHarness(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if ok, err := s.SetSessionReviewerHarness(ctx, rec.ID, domain.ReviewerCodex, time.Now().UTC()); err != nil || !ok {
-		t.Fatalf("set reviewer harness = %v, %v", ok, err)
+	if ok, err := s.SetSessionReviewerConfig(ctx, rec.ID, domain.ReviewerCodex, domain.AgentConfig{}, time.Now().UTC()); err != nil || !ok {
+		t.Fatalf("set reviewer config = %v, %v", ok, err)
 	}
 	got, ok, err := s.GetSession(ctx, rec.ID)
 	if err != nil || !ok {

@@ -103,6 +103,7 @@ describe("buildDaemonEnv", () => {
 		const env = buildDaemonEnv({ ...minimalProcessEnv, TERM: "dumb" }, null, {});
 		expect(env.TERM).toBe("xterm-256color");
 	});
+
 });
 
 describe("resolveShellPath", () => {

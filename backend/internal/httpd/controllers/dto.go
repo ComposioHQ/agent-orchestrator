@@ -446,7 +446,8 @@ type RenameSessionRequest struct {
 // SetSessionReviewerRequest sets the durable reviewer preference for a session.
 // Empty clears the preference and falls back to project configuration.
 type SetSessionReviewerRequest struct {
-	Harness domain.ReviewerHarness `json:"harness,omitempty" enum:"claude-code,codex,copilot,cursor,kilocode,opencode,kiro,pi,qwen,agy,continue,goose,vibe,devin,droid,kimi,kimchi,muse,amp,aider,grok,crush,auggie,cline,autohand"`
+	Harness     domain.ReviewerHarness `json:"harness,omitempty" enum:"claude-code,codex,copilot,cursor,kilocode,opencode,kiro,pi,qwen,agy,continue,goose,vibe,devin,droid,kimi,kimchi,muse,amp,aider,grok,crush,auggie,cline,autohand"`
+	AgentConfig domain.AgentConfig     `json:"agentConfig,omitempty"`
 }
 
 // SetSessionAutoReviewRequest configures daemon-side review automation.
@@ -1043,6 +1044,25 @@ type RefreshAgentsResponse = agentsvc.Inventory
 
 // ProbeAgentResponse is the body of POST /api/v1/agents/{agent}/probe.
 type ProbeAgentResponse = agentsvc.ProbeResult
+
+// AgentReadinessResponse is the normalized cached or ensured harness view.
+type AgentReadinessResponse = agentsvc.Readiness
+
+// EnsureAgentReadinessRequest selects harnesses and the daemon freshness policy.
+// An omitted or empty agentIds list selects all supported harnesses.
+type EnsureAgentReadinessRequest struct {
+	AgentIDs []string                     `json:"agentIds,omitempty"`
+	Purpose  domain.AgentReadinessPurpose `json:"purpose" enum:"display,launch"`
+}
+
+// AgentReadinessSnapshot is one normalized harness readiness view.
+type AgentReadinessSnapshot = domain.AgentReadinessSnapshot
+
+// AgentInstallationObservation is the normalized binary-presence observation.
+type AgentInstallationObservation = domain.AgentInstallationObservation
+
+// AgentAuthenticationObservation is the normalized authentication observation.
+type AgentAuthenticationObservation = domain.AgentAuthenticationObservation
 
 // AgentModelsQuery scopes a model catalog to a project where providers may be
 // configured per workspace.
@@ -2066,7 +2086,8 @@ func capabilityNames(caps ports.ChatCapabilities) []string {
 // it for this pass only, without editing project config, so one session's choice
 // cannot change what another session in the project runs.
 type TriggerReviewRequest struct {
-	Harness domain.ReviewerHarness `json:"harness,omitempty" enum:"claude-code,codex,copilot,cursor,kilocode,opencode,kiro,pi,qwen,agy,continue,goose,vibe,devin,droid,kimi,kimchi,muse,amp,aider,grok,crush,auggie,cline,autohand"`
+	Harness     domain.ReviewerHarness `json:"harness,omitempty" enum:"claude-code,codex,copilot,cursor,kilocode,opencode,kiro,pi,qwen,agy,continue,goose,vibe,devin,droid,kimi,kimchi,muse,amp,aider,grok,crush,auggie,cline,autohand"`
+	AgentConfig domain.AgentConfig     `json:"agentConfig,omitempty"`
 }
 
 // ResolveReviewCommentRequest is the body of POST /api/v1/sessions/{sessionId}/reviews/comments/resolve.

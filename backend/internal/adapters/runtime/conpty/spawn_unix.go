@@ -1,4 +1,4 @@
-//go:build darwin
+//go:build darwin || linux
 
 package conpty
 
@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
@@ -23,7 +24,7 @@ func defaultSpawnHost(ctx context.Context, sessionID, cwd string, argv []string,
 	}
 	exe, err := os.Executable()
 	if err != nil {
-		return "", 0, fmt.Errorf("darwin pty spawn: resolve executable: %w", err)
+		return "", 0, fmt.Errorf("%s pty spawn: resolve executable: %w", runtime.GOOS, err)
 	}
 
 	envAssignments, argv := stripEnvAssignments(argv)
@@ -44,13 +45,13 @@ func defaultSpawnHost(ctx context.Context, sessionID, cwd string, argv []string,
 	// without leaving a pathname behind.
 	stdout, childStdout, err := os.Pipe()
 	if err != nil {
-		return "", 0, fmt.Errorf("darwin pty spawn: stdout pipe: %w", err)
+		return "", 0, fmt.Errorf("%s pty spawn: stdout pipe: %w", runtime.GOOS, err)
 	}
 	stderrFile, err := os.CreateTemp("", "ao-pty-host-stderr-*.log")
 	if err != nil {
 		_ = stdout.Close()
 		_ = childStdout.Close()
-		return "", 0, fmt.Errorf("darwin pty spawn: stderr file: %w", err)
+		return "", 0, fmt.Errorf("%s pty spawn: stderr file: %w", runtime.GOOS, err)
 	}
 	_ = os.Remove(stderrFile.Name())
 	cmd.Stdout = childStdout
@@ -59,7 +60,7 @@ func defaultSpawnHost(ctx context.Context, sessionID, cwd string, argv []string,
 		_ = stdout.Close()
 		_ = childStdout.Close()
 		_ = stderrFile.Close()
-		return "", 0, fmt.Errorf("darwin pty spawn: start: %w", err)
+		return "", 0, fmt.Errorf("%s pty spawn: start: %w", runtime.GOOS, err)
 	}
 	_ = childStdout.Close()
 
@@ -81,8 +82,8 @@ func defaultSpawnHost(ctx context.Context, sessionID, cwd string, argv []string,
 			readyC <- readyResult{addr: "127.0.0.1:" + strconv.Itoa(port), pid: pid}
 			return
 		}
-		msg := "darwin pty spawn: pty-host exited without printing READY"
-		if diag := strings.TrimSpace(readDarwinSpawnDiagnostics(stderrFile)); diag != "" {
+		msg := fmt.Sprintf("%s pty spawn: pty-host exited without printing READY", runtime.GOOS)
+		if diag := strings.TrimSpace(readUnixSpawnDiagnostics(stderrFile)); diag != "" {
 			msg += ": " + diag
 		}
 		readyC <- readyResult{err: fmt.Errorf("%s", msg)}
@@ -93,7 +94,7 @@ func defaultSpawnHost(ctx context.Context, sessionID, cwd string, argv []string,
 	select {
 	case result := <-readyC:
 		if result.err != nil {
-			stopFailedDarwinSpawn(cmd, stdout, stderrFile)
+			stopFailedUnixSpawn(cmd, stdout, stderrFile)
 			return "", 0, result.err
 		}
 		pid := cmd.Process.Pid
@@ -101,19 +102,19 @@ func defaultSpawnHost(ctx context.Context, sessionID, cwd string, argv []string,
 		_ = stderrFile.Close()
 		// Reap the host if it exits while this daemon is still running. Waiting
 		// in a goroutine does not tie the child's lifetime to the parent; Setsid
-		// still lets it survive daemon exit, after which launchd adopts it.
+		// still lets it survive daemon exit, after which init/launchd adopts it.
 		go func() { _ = cmd.Wait() }()
 		return result.addr, pid, nil
 	case <-timer.C:
-		stopFailedDarwinSpawn(cmd, stdout, stderrFile)
-		return "", 0, fmt.Errorf("darwin pty spawn: pty-host startup timeout (%s)", spawnReadyTimeout)
+		stopFailedUnixSpawn(cmd, stdout, stderrFile)
+		return "", 0, fmt.Errorf("%s pty spawn: pty-host startup timeout (%s)", runtime.GOOS, spawnReadyTimeout)
 	case <-ctx.Done():
-		stopFailedDarwinSpawn(cmd, stdout, stderrFile)
+		stopFailedUnixSpawn(cmd, stdout, stderrFile)
 		return "", 0, ctx.Err()
 	}
 }
 
-func readDarwinSpawnDiagnostics(stderr *os.File) string {
+func readUnixSpawnDiagnostics(stderr *os.File) string {
 	if _, err := stderr.Seek(0, 0); err != nil {
 		return ""
 	}
@@ -122,7 +123,7 @@ func readDarwinSpawnDiagnostics(stderr *os.File) string {
 	return string(buf[:n])
 }
 
-func stopFailedDarwinSpawn(cmd *exec.Cmd, stdout, stderr *os.File) {
+func stopFailedUnixSpawn(cmd *exec.Cmd, stdout, stderr *os.File) {
 	_ = stdout.Close()
 	_ = stderr.Close()
 	if cmd.Process != nil {

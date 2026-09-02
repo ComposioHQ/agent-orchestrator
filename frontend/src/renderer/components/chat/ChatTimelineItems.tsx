@@ -64,7 +64,7 @@ import {
 	exploredFileCount,
 	isNonzeroCommandExit,
 } from "./activity-command";
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "../ui/tooltip";
+import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
 import {
 	DropdownMenu,
 	DropdownMenuContent,
@@ -540,15 +540,19 @@ export function HumanMessage({
 							{formatMessageTimestamp(message.createdAt)}
 						</span>
 						{onEdit && onEditStart && message.turnId ? (
-							<button
-								type="button"
-								onClick={onEditStart}
-								aria-label="Edit user message"
-								title="Edit user message"
-								className="flex size-7 items-center justify-center rounded-md text-muted-foreground transition-[scale,background-color,color] duration-150 ease-out hover:bg-interactive-hover hover:text-foreground active:scale-[0.96] motion-reduce:transition-none motion-reduce:active:scale-100"
-							>
-								<Pencil aria-hidden="true" className="size-3" />
-							</button>
+							<Tooltip>
+								<TooltipTrigger asChild>
+									<button
+										type="button"
+										onClick={onEditStart}
+										aria-label="Edit user message"
+										className="flex size-7 items-center justify-center rounded-md text-muted-foreground transition-[scale,background-color,color] duration-150 ease-out hover:bg-interactive-hover hover:text-foreground active:scale-[0.96] motion-reduce:transition-none motion-reduce:active:scale-100"
+									>
+										<Pencil aria-hidden="true" className="size-3" />
+									</button>
+								</TooltipTrigger>
+								<TooltipContent side="bottom">Edit user message</TooltipContent>
+							</Tooltip>
 						) : null}
 						<CopyButton
 							text={message.text}
@@ -665,15 +669,19 @@ export function AssistantMessage({
 						/>
 					) : null}
 					{onRollback ? (
-						<button
-							type="button"
-							onClick={onRollback}
-							aria-label="Roll back to here"
-							title="Roll back to here"
-							className="flex size-7 items-center justify-center rounded-md text-muted-foreground transition-[scale,background-color,color] duration-150 ease-out hover:bg-interactive-hover hover:text-foreground active:scale-[0.96] motion-reduce:transition-none motion-reduce:active:scale-100"
-						>
-							<Undo2 aria-hidden="true" className="size-3" />
-						</button>
+						<Tooltip>
+							<TooltipTrigger asChild>
+								<button
+									type="button"
+									onClick={onRollback}
+									aria-label="Roll back to here"
+									className="flex size-7 items-center justify-center rounded-md text-muted-foreground transition-[scale,background-color,color] duration-150 ease-out hover:bg-interactive-hover hover:text-foreground active:scale-[0.96] motion-reduce:transition-none motion-reduce:active:scale-100"
+								>
+									<Undo2 aria-hidden="true" className="size-3" />
+								</button>
+							</TooltipTrigger>
+							<TooltipContent side="bottom">Roll back to here</TooltipContent>
+						</Tooltip>
 					) : null}
 					{hasDuration ? <TurnDuration durationMs={durationMs} /> : null}
 					<span
@@ -2257,26 +2265,21 @@ export function TurnChangedFiles({
 					return (
 						<li key={`${file.status}-${file.oldPath ?? ""}-${file.path}`}>
 							{onOpenFile ? (
-								<TooltipProvider delayDuration={200}>
-									<Tooltip>
-										<TooltipTrigger asChild>
-											<button
-												type="button"
-												onClick={() => onOpenFile(openPath)}
-												aria-label={`Open ${openPath} in Files`}
-												className={rowClass}
-											>
-												{body}
-											</button>
-										</TooltipTrigger>
-										<TooltipContent
-											side="top"
-											className="max-w-[min(28rem,90vw)] border-border bg-popover px-2.5 py-1.5 font-mono text-[11px] font-normal text-muted-foreground shadow-none"
+								<Tooltip>
+									<TooltipTrigger asChild>
+										<button
+											type="button"
+											onClick={() => onOpenFile(openPath)}
+											aria-label={`Open ${openPath} in Files`}
+											className={rowClass}
 										>
-											{location}
-										</TooltipContent>
-									</Tooltip>
-								</TooltipProvider>
+											{body}
+										</button>
+									</TooltipTrigger>
+									<TooltipContent side="top" className="max-w-[min(28rem,90vw)] font-mono text-[11px] font-normal">
+										{location}
+									</TooltipContent>
+								</Tooltip>
 							) : (
 								<div className={rowClass}>
 									<span className="sr-only">{status.label}</span>
@@ -2352,29 +2355,24 @@ function FileLocationLabel({
 	const location = fileLocationLabel(locationPath ?? path, locationOldPath ?? oldPath);
 
 	return (
-		<TooltipProvider delayDuration={200}>
-			<Tooltip>
-				<TooltipTrigger asChild>
-					{/* `title=""` blocks Chromium's native ellipsis tooltip so only the
-					    path tooltip below appears — otherwise hover shows the basename. */}
-					<span
-						className={cn(
-							"min-w-0 truncate text-[11.5px] text-foreground/65 outline-none",
-							className,
-						)}
-						title=""
-					>
-						{fileBasename(path)}
-					</span>
-				</TooltipTrigger>
-				<TooltipContent
-					side="top"
-					className="max-w-[min(28rem,90vw)] border-border bg-popover px-2.5 py-1.5 font-mono text-[11px] font-normal text-muted-foreground shadow-none"
+		<Tooltip>
+			<TooltipTrigger asChild>
+				{/* `title=""` blocks Chromium's native ellipsis tooltip so only the
+				    path tooltip below appears — otherwise hover shows the basename. */}
+				<span
+					className={cn(
+						"min-w-0 truncate text-[11.5px] text-foreground/65 outline-none",
+						className,
+					)}
+					title=""
 				>
-					{location}
-				</TooltipContent>
-			</Tooltip>
-		</TooltipProvider>
+					{fileBasename(path)}
+				</span>
+			</TooltipTrigger>
+			<TooltipContent side="top" className="max-w-[min(28rem,90vw)] font-mono text-[11px] font-normal">
+				{location}
+			</TooltipContent>
+		</Tooltip>
 	);
 }
 
