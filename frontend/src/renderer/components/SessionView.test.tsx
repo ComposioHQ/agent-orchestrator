@@ -607,9 +607,6 @@ describe("SessionView", () => {
 			activeShellTerminalHandleId: null,
 			inspectorSessions: {},
 			isSidebarOpen: true,
-			isSidebarAutoCollapsed: false,
-			sidebarAutoCollapseOverride: false,
-			sidebarWorkspaceDemandPx: null,
 			visibleTerminalKindBySession: {},
 		});
 		browserDestroy.mockReset();
@@ -1785,22 +1782,32 @@ describe("SessionView", () => {
 		expect(toggle).toHaveAttribute("aria-pressed", "false");
 	});
 
-	it("compacts non-primary session chrome when Browser pressure collapses the sidebar", () => {
+	it("keeps session chrome expanded when Browser is active", () => {
 		useUiStore.setState({
 			isSidebarOpen: true,
-			isSidebarAutoCollapsed: true,
-			sidebarAutoCollapseOverride: false,
 			inspectorSessions: { "sess-1": { initialized: true, isOpen: true, view: "browser" } },
 		});
 
 		render(<SessionView sessionId="sess-1" />);
 
 		const topbar = screen.getByTestId("mock-session-topbar");
-		expect(topbar).toHaveAttribute("data-compact-actions", "true");
+		expect(topbar).toHaveAttribute("data-compact-actions", "false");
 		expect(topbar.closest("[data-compact-session-chrome]")).toHaveAttribute(
 			"data-compact-session-chrome",
-			"true",
+			"false",
 		);
+	});
+
+	it("never shrinks the inspector when entering Browser", async () => {
+		window.localStorage.setItem("ao.inspector.widthPx", "720");
+		window.localStorage.setItem("ao.workspace.browser.canvasWidthPx", "460");
+		render(<SessionView sessionId="sess-1" />);
+		expect(document.documentElement.style.getPropertyValue("--ao-inspector-w")).toBe("720px");
+
+		fireEvent.click(screen.getByRole("tab", { name: "Browser" }));
+		await waitFor(() => {
+			expect(document.documentElement.style.getPropertyValue("--ao-inspector-w")).toBe("720px");
+		});
 	});
 
 	it("restores and clamps the persisted inspector width in pixels", () => {
@@ -1862,32 +1869,32 @@ describe("SessionView", () => {
 
 		fireEvent.click(screen.getByRole("tab", { name: "Browser" }));
 		expect(document.documentElement.style.getPropertyValue("--ao-inspector-w")).toBe("820px");
-		expect(useUiStore.getState().sidebarWorkspaceDemandPx).toBe(1548);
+		expect(useUiStore.getState().isSidebarOpen).toBe(true);
 
 		fireEvent.click(screen.getByRole("tab", { name: "Summary" }));
 		expect(document.documentElement.style.getPropertyValue("--ao-inspector-w")).toBe("500px");
 	});
 
-	it("raises shell pressure only for Browser and clears it for every utility view", async () => {
+	it("never changes the sidebar preference while browser surfaces open and close", async () => {
 		render(<SessionView sessionId="sess-1" />);
-		expect(useUiStore.getState().sidebarWorkspaceDemandPx).toBeNull();
+		expect(useUiStore.getState().isSidebarOpen).toBe(true);
 
 		fireEvent.click(screen.getByRole("tab", { name: "Reviews" }));
-		expect(useUiStore.getState().sidebarWorkspaceDemandPx).toBeNull();
+		expect(useUiStore.getState().isSidebarOpen).toBe(true);
 
 		fireEvent.click(screen.getByRole("tab", { name: "Browser" }));
-		expect(useUiStore.getState().sidebarWorkspaceDemandPx).toBe(1628);
+		expect(useUiStore.getState().isSidebarOpen).toBe(true);
 
 		fireEvent.click(screen.getByRole("tab", { name: "Summary" }));
-		expect(useUiStore.getState().sidebarWorkspaceDemandPx).toBeNull();
+		expect(useUiStore.getState().isSidebarOpen).toBe(true);
 
 		fireEvent.click(screen.getByRole("tab", { name: "Browser" }));
 		fireEvent.click(screen.getByRole("button", { name: "open files" }));
-		expect(useUiStore.getState().sidebarWorkspaceDemandPx).toBeNull();
+		expect(useUiStore.getState().isSidebarOpen).toBe(true);
 
 		fireEvent.click(screen.getByRole("tab", { name: "Browser" }));
 		fireEvent.click(screen.getByRole("button", { name: "Close inspector panel" }));
-		await waitFor(() => expect(useUiStore.getState().sidebarWorkspaceDemandPx).toBeNull());
+		await waitFor(() => expect(useUiStore.getState().isSidebarOpen).toBe(true));
 	});
 
 	it("mounts the inspector in sync when navigating from an orchestrator session", () => {

@@ -672,7 +672,7 @@ export function BrowserPanelView({
 			>
 				<Tooltip>
 					<TooltipTrigger asChild>
-						<span className="inline-flex">
+						<span className="browser-panel__navigation-control inline-flex">
 							<Button
 								aria-label={t("browser.back")}
 								className="browser-panel__navigation-btn"
@@ -690,7 +690,7 @@ export function BrowserPanelView({
 				</Tooltip>
 				<Tooltip>
 					<TooltipTrigger asChild>
-						<span className="inline-flex">
+						<span className="browser-panel__navigation-control inline-flex">
 							<Button
 								aria-label={t("browser.forward")}
 								className="browser-panel__navigation-btn"

@@ -1,6 +1,6 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { useCanGoBack, useNavigate, useParams, useRouter, useRouterState } from "@tanstack/react-router";
+import { useNavigate, useParams, useRouterState } from "@tanstack/react-router";
 import {
 	DndContext,
 	DragOverlay,
@@ -22,8 +22,6 @@ import { SortableContext, useSortable, verticalListSortingStrategy } from "@dnd-
 import { CSS } from "@dnd-kit/utilities";
 import {
 	AlertTriangle,
-	ArrowLeft,
-	ArrowRight,
 	ChevronRight,
 	Download,
 	Folder,
@@ -126,15 +124,13 @@ import { useKeybindingsStore } from "../stores/keybindings-store";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { CreateProjectFlow, type CloneProjectInput, type CreateProjectInput } from "./CreateProjectFlow";
 import { ResizeHandle } from "./ResizeHandle";
-import { isLinuxPlatform, isMacPlatform, isWindowsPlatform } from "../lib/platform";
+import { isMacPlatform, isWindowsPlatform } from "../lib/platform";
 import { useCloudSession } from "../lib/cloud-session";
-import { useCanGoForward } from "./TitlebarNav";
 
 // macOS paints framed chrome: the fixed TitlebarNav cluster carries the
 // sidebar toggle + history arrows above this surface. Windows hangs the sidebar
 // under its custom titlebar.
 const isMac = isMacPlatform();
-const isLinux = isLinuxPlatform();
 const isWindows = isWindowsPlatform();
 const noDragStyle = isMac ? ({ WebkitAppRegion: "no-drag" } as React.CSSProperties) : undefined;
 
@@ -333,8 +329,6 @@ function readExpandedProjectIds(): ReadonlySet<string> {
 type SidebarProps = {
 	/** Hide the sidebar's right edge stroke on the welcome board inset chrome. */
 	hideEdgeBorder?: boolean;
-	/** Preserve navigation as an icon rail when workspace pressure collapses the expanded sidebar. */
-	autoCompact?: boolean;
 	underTopbar?: boolean;
 	/** Chrome height to clear when underTopbar is set. Defaults to --size-toolbar. */
 	topbarOffset?: "toolbar" | "titlebar" | "trafficLights" | "session";
@@ -412,7 +406,6 @@ function SessionStatusDot({ session }: { session: WorkspaceSession }) {
 // _shell owns the persistent open state. Collapsed sidebars move fully off-canvas.
 export function Sidebar({
 	hideEdgeBorder = false,
-	autoCompact = false,
 	underTopbar = true,
 	topbarOffset = "toolbar",
 	workspaceError,
@@ -427,10 +420,6 @@ export function Sidebar({
 	const { state, setOpen, toggleSidebar } = useSidebar();
 	const isCollapsed = state === "collapsed";
 	const [expandedChromeVisible, setExpandedChromeVisible] = useState(!isCollapsed);
-	const router = useRouter();
-	const canGoBack = useCanGoBack();
-	const canGoForward = useCanGoForward();
-	const showCompactRailHistory = autoCompact && isCollapsed && (isMac || isLinux) && !isWindows;
 	// One IPC subscription for both footer variants of the restart-to-update prompt.
 	const updateStatus = useUpdateStatus();
 	const availableUpdateVersion = updateStatus.state === "available" ? updateStatus.version : undefined;
@@ -641,7 +630,7 @@ export function Sidebar({
 	return (
 		// Pinned sidebars start below shell chrome.
 		<SidebarRoot
-			collapsible={autoCompact ? "icon" : "offcanvas"}
+			collapsible="offcanvas"
 			data-expanded-chrome={expandedChromeVisible ? "visible" : "hidden"}
 			data-topbar-offset={underTopbar ? topbarOffset : undefined}
 			className={cn(
@@ -703,42 +692,6 @@ export function Sidebar({
 						{isCollapsed ? t("shell.expandSidebar") : t("shell.collapseSidebar")}
 					</TooltipContent>
 				</Tooltip>
-				{showCompactRailHistory ? (
-					<div className="flex flex-col items-center gap-1 pb-2">
-						<Tooltip>
-							<TooltipTrigger asChild>
-								<span className="inline-flex">
-									<button
-										aria-label={t("titlebar.goBack")}
-										className="grid size-control-board place-items-center rounded-lg text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground disabled:cursor-not-allowed disabled:opacity-55 disabled:hover:bg-transparent disabled:hover:text-muted-foreground [&_svg]:size-icon-base"
-										disabled={!canGoBack}
-										onClick={() => router.history.back()}
-										type="button"
-									>
-										<ArrowLeft aria-hidden="true" />
-									</button>
-								</span>
-							</TooltipTrigger>
-							<TooltipContent side="right">{t("titlebar.goBack")}</TooltipContent>
-						</Tooltip>
-						<Tooltip>
-							<TooltipTrigger asChild>
-								<span className="inline-flex">
-									<button
-										aria-label={t("titlebar.goForward")}
-										className="grid size-control-board place-items-center rounded-lg text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground disabled:cursor-not-allowed disabled:opacity-55 disabled:hover:bg-transparent disabled:hover:text-muted-foreground [&_svg]:size-icon-base"
-										disabled={!canGoForward}
-										onClick={() => router.history.forward()}
-										type="button"
-									>
-										<ArrowRight aria-hidden="true" />
-									</button>
-								</span>
-							</TooltipTrigger>
-							<TooltipContent side="right">{t("titlebar.goForward")}</TooltipContent>
-						</Tooltip>
-					</div>
-				) : null}
 			</SidebarHeader>
 
 			{/* Keep Search + section chrome fixed; only the project tree scrolls. */}

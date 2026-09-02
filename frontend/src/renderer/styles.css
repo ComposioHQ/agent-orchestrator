@@ -2802,22 +2802,6 @@ html.sidebar-reordering * {
 	flex: 0 0 auto;
 }
 
-.session-topbar-session-chrome[data-compact-session-chrome="true"]
-	.workspace-topbar-actions
-	[data-priority]
-	[data-compact-label] {
-	inline-size: 0;
-	opacity: 0;
-	transform: translateX(-2px);
-}
-
-.session-topbar-session-chrome[data-compact-session-chrome="true"]
-	.workspace-topbar-actions
-	[data-priority].topbar-control {
-	gap: 0;
-	padding-inline: 0;
-}
-
 @container workspace-topbar (max-width: 759px) {
 	.workspace-topbar-actions [data-priority="secondary"] [data-compact-label] {
 		inline-size: 0;
@@ -4302,7 +4286,7 @@ body:has(#root .platform-linux) > .browser-popout-overlay {
 		visibility 0s linear;
 }
 
-.browser-panel__toolbar--url-takeover > :not(.browser-panel__url-wrap):not(.browser-panel__navigation-btn) {
+.browser-panel__toolbar--url-takeover > :not(.browser-panel__url-wrap):not(.browser-panel__navigation-btn):not(.browser-panel__navigation-control) {
 	visibility: hidden;
 	opacity: 0;
 	pointer-events: none;
