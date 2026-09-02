@@ -84,6 +84,7 @@ import {
 import { browserDaemonOwnershipDecision, shouldReplacePortHolder } from "./shared/daemon-takeover";
 import {
 	buildDaemonEnv,
+	devDaemonAllowedOrigins,
 	resolveShellEnv,
 	resolveShellEnvWithSpec,
 	resolveWindowsShellProbe,
@@ -989,6 +990,10 @@ function daemonEnv(forceKeep = keepDaemonAlive(process.env)): NodeJS.ProcessEnv 
 		if (!process.env.AO_PORT) devExtras.AO_PORT = String(DEV_DAEMON_PORT);
 		if (!process.env.AO_RUN_FILE) devExtras.AO_RUN_FILE = runFilePath() ?? "";
 		if (!process.env.AO_DATA_DIR) devExtras.AO_DATA_DIR = path.join(os.homedir(), ".ao", DEV_STATE_SUBDIR, "data");
+		devExtras.AO_ALLOWED_ORIGINS = devDaemonAllowedOrigins(
+			process.env.AO_ALLOWED_ORIGINS,
+			rendererUrl(),
+		);
 	}
 	// Windows keeps its native environment semantics while overlaying values
 	// exported by the selected login-shell probe.
