@@ -4,7 +4,6 @@ import {
   _electron as electron,
   type ElectronApplication,
   type Page,
-  type WebSocket,
 } from "@playwright/test";
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import {
@@ -98,11 +97,24 @@ type TmuxWorkloadIdentity = {
 };
 
 type TmuxFixture = {
+  tmux: string;
   displayName: string;
   sessionId: string;
   launchId: string;
   namespaceArgs: string[];
   identity: TmuxWorkloadIdentity;
+};
+
+type TmuxHandlePayload = {
+  session: string;
+  target: "default" | "named" | "path";
+  value?: string;
+  legacy_binary?: boolean;
+  owner_session: string;
+  owner_launch: string;
+  tmux_server_pid: number;
+  tmux_session_id: string;
+  tmux_pane_id: string;
 };
 
 type ShellTarget = { id: number; url: string };
@@ -227,6 +239,87 @@ class NativeRenderer {
 			return Array.from(document.querySelectorAll("body *")).filter(
 				(element) => visible(element) && normalize(element.textContent) === needle,
 			).length;
+		})()`);
+  }
+
+  async startVisibleExactTextAudit(text: string): Promise<void> {
+    await this.execute(`(() => {
+			const key = "__aoRestartVisibleTextAudit";
+			const previous = window[key];
+			previous?.observer?.disconnect();
+			const visible = ${visibleElementSource};
+			const needle = ${JSON.stringify(text)};
+			const normalize = (value) => (value ?? "").replace(/\\s+/g, " ").trim();
+			const audit = { sightings: 0, observer: null, scan: null };
+			audit.scan = () => {
+				if (Array.from(document.querySelectorAll("body *")).some(
+					(element) => visible(element) && normalize(element.textContent) === needle,
+				)) audit.sightings += 1;
+			};
+			audit.observer = new MutationObserver(audit.scan);
+			audit.observer.observe(document.documentElement, {
+				subtree: true,
+				childList: true,
+				characterData: true,
+				attributes: true,
+			});
+			audit.scan();
+			window[key] = audit;
+		})()`);
+  }
+
+  async stopVisibleExactTextAudit(): Promise<number> {
+    return this.execute(`(() => {
+			const audit = window.__aoRestartVisibleTextAudit;
+			if (!audit) return -1;
+			audit.scan();
+			audit.observer.disconnect();
+			return audit.sightings;
+		})()`);
+  }
+
+  async startTerminalInputAudit(): Promise<void> {
+    await this.execute(`(() => {
+			const key = "__aoRestartTerminalInputAudit";
+			window[key]?.restore?.();
+			const prototype = WebSocket.prototype;
+			const descriptor = Object.getOwnPropertyDescriptor(prototype, "send");
+			if (!descriptor || typeof descriptor.value !== "function") {
+				throw new Error("WebSocket.send descriptor is unavailable");
+			}
+			const frames = [];
+			const original = descriptor.value;
+			const wrapped = function(data) {
+				if (typeof data === "string") frames.push(data);
+				return original.call(this, data);
+			};
+			Object.defineProperty(prototype, "send", { ...descriptor, value: wrapped });
+			window[key] = {
+				frames,
+				restore: () => {
+					if (prototype.send === wrapped) {
+						Object.defineProperty(prototype, "send", descriptor);
+					}
+				},
+			};
+		})()`);
+  }
+
+  async terminalInputAuditFrames(): Promise<string[]> {
+    return this.execute(
+      `Array.from(window.__aoRestartTerminalInputAudit?.frames ?? [])`,
+    );
+  }
+
+  async stopTerminalInputAudit(): Promise<string[]> {
+    return this.execute(`(() => {
+			const key = "__aoRestartTerminalInputAudit";
+			const audit = window[key];
+			if (!audit) return [];
+			const frames = Array.from(audit.frames);
+			audit.restore();
+			delete window[key];
+			return frames;
 		})()`);
   }
 
@@ -401,8 +494,10 @@ async function waitFor<T>(
 // Starts before Electron launches and continuously samples the state-bearing
 // sessions route. A listener that has not appeared yet is expected; once any
 // HTTP response is observable, every response must either be readiness-gated or
-// expose the complete, exact recovered activity set. This is deliberately owned
-// by the test process rather than a production preload hook.
+// expose the complete recovered session set without an Exited fact. Active,
+// idle, and needs-input may legitimately change while the surviving agents run,
+// so they are not treated as immutable restart facts. This observer is
+// deliberately owned by the test process rather than a production preload hook.
 function startSessionAPIObservation(
   port: number,
   expectedActivities: ExpectedSessionActivities,
@@ -475,15 +570,6 @@ function startSessionAPIObservation(
                 ) {
                   recordViolation(
                     `200 exposed Exited for ${session.id}: status=${session.status} activity=${session.activity?.state}`,
-                  );
-                }
-                const expected = expectedActivities[session.id];
-                if (
-                  expected !== undefined &&
-                  session.activity?.state !== expected
-                ) {
-                  recordViolation(
-                    `200 exposed activity ${session.activity?.state} for ${session.id}, want ${expected}`,
                   );
                 }
               }
@@ -638,6 +724,38 @@ function isMissing(error: unknown): boolean {
   return (error as NodeJS.ErrnoException | undefined)?.code === "ENOENT";
 }
 
+function processIsAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code !== "ESRCH";
+  }
+}
+
+async function assertSupervisorListener(socketPath: string): Promise<void> {
+  const stat = await fs.stat(socketPath);
+  if (!stat.isSocket())
+    throw new Error(`${socketPath} is not a supervisor socket`);
+
+  const socket = await new Promise<net.Socket>((resolve, reject) => {
+    const candidate = net.createConnection(socketPath);
+    const timer = setTimeout(() => {
+      candidate.destroy();
+      reject(new Error(`timed out connecting to ${socketPath}`));
+    }, 3_000);
+    candidate.once("connect", () => {
+      clearTimeout(timer);
+      resolve(candidate);
+    });
+    candidate.once("error", (error) => {
+      clearTimeout(timer);
+      reject(error);
+    });
+  });
+  socket.destroy();
+}
+
 async function stopFixtureDaemon(
   runFile: string,
   logs: string[],
@@ -658,7 +776,11 @@ async function stopFixtureDaemon(
       payload.service === "agent-orchestrator-daemon" &&
       payload.pid === info.pid;
   } catch {
-    return true;
+    if (!processIsAlive(info.pid)) return true;
+    logs.push(
+      `[cleanup] preserved daemon ${info.pid}: health was unavailable but the exact PID is still alive`,
+    );
+    return false;
   }
   if (!owned) {
     logs.push(
@@ -670,14 +792,7 @@ async function stopFixtureDaemon(
     method: "POST",
   }).catch(() => undefined);
   try {
-    await waitFor(async () => {
-      try {
-        await fetch(`http://127.0.0.1:${info.port}/healthz`);
-        return null;
-      } catch {
-        return true;
-      }
-    }, 5_000);
+    await waitFor(async () => (!processIsAlive(info.pid) ? true : null), 5_000);
     return true;
   } catch {
     // The identity-safe HTTP control path is the only authority this harness
@@ -688,6 +803,24 @@ async function stopFixtureDaemon(
     );
     return false;
   }
+}
+
+async function proveFixturePIDsStopped(
+  pids: Iterable<number>,
+  logs: string[],
+): Promise<boolean> {
+  let clean = true;
+  for (const pid of pids) {
+    try {
+      await waitFor(async () => (!processIsAlive(pid) ? true : null), 5_000);
+    } catch {
+      clean = false;
+      logs.push(
+        `[cleanup] preserved fixture data: prior daemon PID ${pid} is still alive`,
+      );
+    }
+  }
+  return clean;
 }
 
 async function api<T>(
@@ -726,6 +859,31 @@ function sqlQuote(value: string): string {
 
 function shellQuote(value: string): string {
   return `'${value.replaceAll("'", `'"'"'`)}'`;
+}
+
+function assertCanonicalTmuxHandle(
+  handle: string,
+  fixture: TmuxFixture,
+  target: TmuxHandlePayload["target"],
+  value = "",
+  legacyBinary = false,
+): void {
+  if (!handle.startsWith("tmux-v1:"))
+    throw new Error(`tmux handle is not canonical: ${handle}`);
+  const payload = JSON.parse(
+    Buffer.from(handle.slice("tmux-v1:".length), "base64url").toString("utf8"),
+  ) as TmuxHandlePayload;
+  expect(payload).toMatchObject({
+    session: fixture.sessionId,
+    target,
+    owner_session: fixture.sessionId,
+    owner_launch: fixture.launchId,
+    tmux_server_pid: fixture.identity.serverPid,
+    tmux_session_id: fixture.identity.sessionObjectId,
+    tmux_pane_id: fixture.identity.paneObjectId,
+  });
+  expect(payload.value ?? "").toBe(value);
+  expect(payload.legacy_binary ?? false).toBe(legacyBinary);
 }
 
 function historicalSocket(runFile: string): string {
@@ -795,6 +953,7 @@ function isolatedAppEnv(overrides: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
 async function launchApp(
   env: NodeJS.ProcessEnv,
   logs: string[],
+  auditForbiddenText?: string,
 ): Promise<NativeApp> {
   const appRunId = `restart-e2e-${randomUUID()}`;
   const launchEnv = {
@@ -840,6 +999,8 @@ async function launchApp(
       .windows()
       .find((candidate) => candidate.url() === target.url);
     const renderer = new NativeRenderer(application, target, page);
+    if (auditForbiddenText)
+      await renderer.startVisibleExactTextAudit(auditForbiddenText);
     return { process: launchedChild, application, renderer, appRunId };
   } catch (error) {
     if (application) {
@@ -912,8 +1073,12 @@ async function connectFixtureHost(address: string): Promise<net.Socket> {
   });
 }
 
-function ptyFrame(type: number): Buffer {
-  return Buffer.from([type, 0, 0, 0, 0]);
+function ptyFrame(type: number, payload = Buffer.alloc(0)): Buffer {
+  const frame = Buffer.alloc(5 + payload.length);
+  frame[0] = type;
+  frame.writeUInt32BE(payload.length, 1);
+  payload.copy(frame, 5);
+  return frame;
 }
 
 async function readPtyStatus(socket: net.Socket): Promise<PtyHostStatus> {
@@ -982,6 +1147,76 @@ async function readPtyStatus(socket: net.Socket): Promise<PtyHostStatus> {
     socket.once("close", onClose);
     socket.write(ptyFrame(0x06));
   });
+}
+
+async function readPtyStyledOutput(
+  socket: net.Socket,
+  lines: number,
+): Promise<string> {
+  return new Promise((resolve, reject) => {
+    let buffered = Buffer.alloc(0);
+    const timer = setTimeout(
+      () => finish(new Error("timed out reading fixture PTY output")),
+      3_000,
+    );
+    const finish = (error?: Error, output?: string) => {
+      clearTimeout(timer);
+      socket.off("data", onData);
+      socket.off("error", onError);
+      socket.off("close", onClose);
+      if (error) reject(error);
+      else resolve(output!);
+    };
+    const onError = (error: Error) => finish(error);
+    const onClose = () =>
+      finish(new Error("fixture PTY host closed before output proof"));
+    const onData = (chunk: Buffer) => {
+      buffered = Buffer.concat([buffered, chunk]);
+      while (buffered.length >= 5) {
+        const payloadLength = buffered.readUInt32BE(1);
+        if (payloadLength > 4 * 1024 * 1024) {
+          finish(
+            new Error(
+              `fixture PTY host sent oversized frame (${payloadLength} bytes)`,
+            ),
+          );
+          return;
+        }
+        const frameLength = 5 + payloadLength;
+        if (buffered.length < frameLength) return;
+        const type = buffered[0];
+        const payload = buffered.subarray(5, frameLength);
+        buffered = buffered.subarray(frameLength);
+        if (type !== 0x0a) continue;
+        finish(undefined, payload.toString("utf8"));
+        return;
+      }
+    };
+    socket.on("data", onData);
+    socket.once("error", onError);
+    socket.once("close", onClose);
+    socket.write(
+      ptyFrame(0x09, Buffer.from(JSON.stringify({ lines }), "utf8")),
+    );
+  });
+}
+
+async function readVerifiedPtyStyledOutput(
+  entry: PtyHostRegistryEntry,
+): Promise<string> {
+  const socket = await connectFixtureHost(entry.pipePath);
+  try {
+    const status = await readPtyStatus(socket);
+    assertPtyHostStatusIdentity(entry, status);
+    if (!status.alive) {
+      throw new Error(
+        `fixture PTY host ${entry.sessionId} reports a dead child`,
+      );
+    }
+    return await readPtyStyledOutput(socket, 5_000);
+  } finally {
+    socket.destroy();
+  }
 }
 
 function assertPtyHostStatusIdentity(
@@ -1400,6 +1635,10 @@ async function shutdownChatHost(descriptor: ChatHostDescriptor): Promise<void> {
   } finally {
     socket.destroy();
   }
+  await waitFor(
+    async () => (!processIsAlive(descriptor.pid) ? true : null),
+    10_000,
+  );
 }
 
 async function assertChatControllerAttached(
@@ -1451,95 +1690,87 @@ async function assertChatControllerAttached(
 
 async function typeAndObserveNativeTerminal(
   renderer: NativeRenderer,
+  host: PtyHostRegistryEntry,
+  runtimeHandleID: string,
   root: string,
   label: string,
   displayName = "Native TUI",
 ): Promise<void> {
-  const marker = `NATIVE_${label}_${path.basename(root).replaceAll(/[^A-Za-z0-9]/g, "")}`;
-  const received: string[] = [];
-  const terminalOutput: string[] = [];
-  const terminalInput: string[] = [];
-  const decodeTerminalDataFrame = (payload: string, destination: string[]) => {
-    try {
-      const frame = JSON.parse(payload) as {
-        ch?: unknown;
-        type?: unknown;
-        data?: unknown;
-      };
-      if (
-        frame.ch === "terminal" &&
-        frame.type === "data" &&
-        typeof frame.data === "string"
-      ) {
-        destination.push(Buffer.from(frame.data, "base64").toString("utf8"));
+  const fixtureSuffix = path
+    .basename(root)
+    .slice(-8)
+    .replaceAll(/[^A-Za-z0-9]/g, "");
+  const marker = `native_${label}_${fixtureSuffix}`.toLowerCase();
+  const decodeTerminalInput = (frames: string[]) => {
+    const input: string[] = [];
+    for (const payload of frames) {
+      try {
+        const frame = JSON.parse(payload) as {
+          ch?: unknown;
+          id?: unknown;
+          type?: unknown;
+          data?: unknown;
+        };
+        if (
+          frame.ch === "terminal" &&
+          frame.id === runtimeHandleID &&
+          frame.type === "data" &&
+          typeof frame.data === "string"
+        ) {
+          input.push(Buffer.from(frame.data, "base64").toString("utf8"));
+        }
+      } catch {
+        // Non-terminal/system frames are irrelevant to this exact input proof.
       }
-    } catch {
-      // Binary/raw frames remain available in `received` for diagnostics.
     }
+    return input.join("");
   };
-  const onWebSocket = (socket: WebSocket) => {
-    socket.on("framereceived", ({ payload }) => {
-      const raw =
-        typeof payload === "string" ? payload : payload.toString("utf8");
-      received.push(raw);
-      decodeTerminalDataFrame(raw, terminalOutput);
-    });
-    socket.on("framesent", ({ payload }) => {
-      const raw =
-        typeof payload === "string" ? payload : payload.toString("utf8");
-      decodeTerminalDataFrame(raw, terminalInput);
-    });
-  };
-  renderer.page?.on("websocket", onWebSocket);
+  let terminalInput = "";
+  let terminalOutput = "";
+  await renderer.clickSessionCard(displayName);
+  await waitFor(
+    async () => (await renderer.isTestIdVisible("session-terminal")) || null,
+    30_000,
+  );
+  await waitFor(
+    async () =>
+      (await renderer.testIdCount("terminal-replay-cover")) === 0 || null,
+    30_000,
+  );
+  await renderer.startTerminalInputAudit();
   try {
-    await renderer.clickSessionCard(displayName);
-    await waitFor(
-      async () => (await renderer.isTestIdVisible("session-terminal")) || null,
-      30_000,
-    );
-    await waitFor(
-      async () =>
-        (await renderer.testIdCount("terminal-replay-cover")) === 0 || null,
-      30_000,
-    );
     await renderer.focusWithinTestId(
       "session-terminal",
       ".xterm-helper-textarea",
     );
-    const outputFramesBeforeInput = terminalOutput.length;
     await renderer.type(marker);
-    try {
-      await waitFor(async () => {
-        const visible = await renderer.textContentsWithinTestId(
-          "session-terminal",
-          ".xterm-rows, .xterm-accessibility-tree",
-        );
-        const exactInputReachedMux = terminalInput.join("").includes(marker);
-        const outputReturnedAfterInput =
-          terminalOutput.length > outputFramesBeforeInput;
-        return visible.join("\n").includes(marker) ||
-          (exactInputReachedMux && outputReturnedAfterInput)
-          ? true
-          : null;
-      }, 30_000);
-    } catch (error) {
-      const visible = await renderer.textContentsWithinTestId(
-        "session-terminal",
-        ".xterm-rows, .xterm-accessibility-tree",
+    await waitFor(async () => {
+      terminalInput = decodeTerminalInput(
+        await renderer.terminalInputAuditFrames(),
       );
-      throw new Error(
-        `native terminal input did not round-trip (playwrightPage=${Boolean(renderer.page)}, ` +
-          `visible=${JSON.stringify(visible.join("\n").slice(-500))}, ` +
-          `terminalInput=${JSON.stringify(terminalInput.join("").slice(-500))}, ` +
-          `terminalOutput=${JSON.stringify(terminalOutput.join("").slice(-500))}, ` +
-          `websocket=${JSON.stringify(received.join("").slice(-500))}): ${String(error)}`,
-      );
-    }
+      return terminalInput.includes(marker) ? true : null;
+    }, 30_000);
+    await waitFor(async () => {
+      terminalOutput = await readVerifiedPtyStyledOutput(host);
+      return terminalOutput.includes(marker) ? true : null;
+    }, 30_000);
     // Leave the live agent prompt unsubmitted. Ctrl+U exercises the input path a
     // second time and prevents a later restart from interpreting the probe text.
     await renderer.press("Control+U");
+  } catch (error) {
+    const visible = await renderer.textContentsWithinTestId(
+      "session-terminal",
+      ".xterm-rows, .xterm-accessibility-tree",
+    );
+    throw new Error(
+      `native terminal input did not round-trip through exact host ${host.sessionId} ` +
+        `and runtime ${runtimeHandleID} ` +
+        `(visible=${JSON.stringify(visible.join("\n").slice(-500))}, ` +
+        `terminalInput=${JSON.stringify(terminalInput.slice(-500))}, ` +
+        `terminalOutput=${JSON.stringify(terminalOutput.slice(-500))}): ${String(error)}`,
+    );
   } finally {
-    renderer.page?.off("websocket", onWebSocket);
+    await renderer.stopTerminalInputAudit();
   }
 }
 
@@ -1858,6 +2089,7 @@ async function launchTmuxFixture(options: {
     10_000,
   );
   return {
+    tmux: options.tmux,
     displayName: options.displayName,
     sessionId: options.sessionId,
     launchId: options.launchId,
@@ -1868,12 +2100,11 @@ async function launchTmuxFixture(options: {
 
 async function assertTmuxFixtureUnchanged(
   fixture: TmuxFixture,
-  tmux: string,
   daemon: string,
   env: NodeJS.ProcessEnv,
 ): Promise<void> {
   const observed = await readTmuxWorkloadIdentity(
-    tmux,
+    fixture.tmux,
     fixture.namespaceArgs,
     fixture.sessionId,
     fixture.launchId,
@@ -1963,12 +2194,17 @@ test("packaged desktop restart preserves Chat and TUI continuity without an Exit
   // #4393 fixture must therefore survive through its exact deterministic /tmp
   // alias, not through the easier short-path case.
   const root = await fs.mkdtemp(
-    path.join("/tmp", `ao-restart-continuity-${"x".repeat(80)}-`),
+    path.join("/tmp", `ao-restart-continuity-${"x".repeat(50)}-`),
   );
   const home = path.join(root, "home");
   const dataDir = path.join(root, "data");
   const runFile = path.join(root, "running.json");
-  const tmuxTmp = path.join(root, "tmux-tmp");
+  const supervisorSocket = path.join(root, "supervise.sock");
+  // Keep the named/default tmux socket directory short and independent from
+  // the deliberately overlong historical-private socket path below. tmux -L
+  // resolves inside TMUX_TMPDIR and macOS rejects the otherwise valid named
+  // cohorts before recovery when that inherited path exceeds sockaddr_un.
+  const tmuxTmp = path.join("/tmp", `ao-restart-tmux-${randomUUID()}`);
   const repo = path.join(root, "repo");
   const remote = path.join(root, "remote.git");
   const db = path.join(dataDir, "ao.db");
@@ -1990,6 +2226,7 @@ test("packaged desktop restart preserves Chat and TUI continuity without an Exit
   const tmux = path.join(resources, "tmux", "bin", "tmux");
   const historicalTarget = await historicalSocketAddress(runFile);
   expect(Buffer.byteLength(historicalSocket(runFile))).toBeGreaterThan(103);
+  expect(Buffer.byteLength(supervisorSocket)).toBeLessThanOrEqual(103);
   const env = isolatedAppEnv({
     HOME: home,
     CODEX_HOME: codexHome,
@@ -2005,9 +2242,17 @@ test("packaged desktop restart preserves Chat and TUI continuity without an Exit
     ELECTRON_DISABLE_SANDBOX: "1",
     TMUX_TMPDIR: tmuxTmp,
   });
+  const systemTmux = execFileSync("/usr/bin/which", ["tmux"], {
+    env,
+    encoding: "utf8",
+  }).trim();
+  if (!path.isAbsolute(systemTmux))
+    throw new Error(`could not resolve production PATH tmux: ${systemTmux}`);
 
   const apiObservers: SessionAPIObservation[] = [];
+  const daemonPIDs = new Set<number>();
   const tmuxCleanupTargets: Array<{
+    tmux: string;
     namespaceArgs: string[];
     sessionId: string;
     label: string;
@@ -2032,7 +2277,8 @@ test("packaged desktop restart preserves Chat and TUI continuity without an Exit
       throw new Error(`${sourceAuth} is not a regular file`);
     await fs.copyFile(sourceAuth, codexAuth);
     await fs.chmod(codexAuth, 0o600);
-    await fs.mkdir(tmuxTmp, { recursive: true });
+    await fs.mkdir(tmuxTmp, { recursive: true, mode: 0o700 });
+    await fs.chmod(tmuxTmp, 0o700);
     await fs.mkdir(repo, { recursive: true });
     execFileSync("git", ["init", "-b", "main"], { cwd: repo, stdio: "ignore" });
     execFileSync(
@@ -2066,7 +2312,9 @@ test("packaged desktop restart preserves Chat and TUI continuity without an Exit
     phase("launching initial app");
     const first = await launchApp(env, logs);
     apps.push(first);
-    await waitReady(runFile, port, first.appRunId);
+    const firstDaemon = await waitReady(runFile, port, first.appRunId);
+    daemonPIDs.add(firstDaemon.pid);
+    await assertSupervisorListener(supervisorSocket);
     phase("initial daemon ready");
     await waitFor(
       async () =>
@@ -2119,10 +2367,11 @@ test("packaged desktop restart preserves Chat and TUI continuity without an Exit
       (row) => row.id === defaultLegacyTUI.id,
     )!;
     expect(chatBefore.session_mode).toBe("chat");
+    expect(chatBefore.provider_conversation_id).not.toBe("");
     expect(modernBefore.runtime_handle_id).toMatch(/^ptyhost-v1:/);
     expect(protocolV2Before.runtime_handle_id).toMatch(/^ptyhost-v1:/);
     const expectedChatActivity = chatBefore.activity_state;
-    const expectedNativeActivity = modernBefore.activity_state;
+    const expectedNativeActivity = "active";
     const expectedProtocolV2Activity = "active";
     const expectedLegacyActivity = "active";
     expect(expectedChatActivity).not.toBe("exited");
@@ -2138,6 +2387,44 @@ test("packaged desktop restart preserves Chat and TUI continuity without an Exit
     ) as ChatHostDescriptor;
     await assertChatControllerAttached(chatHostBefore);
 
+    // Create the stale activity history through the real lifecycle boundary so
+    // its timestamps use the same SQLite representation as production. Direct
+    // SQL timestamp strings can compare differently from Go-bound time values
+    // and would turn the recovery CAS itself into a test-fixture artifact.
+    await api(
+      port,
+      `/api/v1/sessions/${encodeURIComponent(modernBefore.id)}/activity`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          state: expectedNativeActivity,
+          launchId: modernBefore.runtime_launch_id,
+        }),
+      },
+    );
+    for (const row of [
+      protocolV2Before,
+      legacyBefore,
+      namedLegacyBefore,
+      defaultLegacyBefore,
+    ]) {
+      const activityRoute = `/api/v1/sessions/${encodeURIComponent(row.id)}/activity`;
+      await api(port, activityRoute, {
+        method: "POST",
+        body: JSON.stringify({
+          state: "active",
+          launchId: row.runtime_launch_id,
+        }),
+      });
+      await api(port, activityRoute, {
+        method: "POST",
+        body: JSON.stringify({
+          state: "exited",
+          launchId: row.runtime_launch_id,
+        }),
+      });
+    }
+
     await quitApp(first);
     await waitStopped(port);
     phase("initial app and daemon stopped cleanly");
@@ -2151,18 +2438,18 @@ test("packaged desktop restart preserves Chat and TUI continuity without an Exit
     expect(
       afterGracefulQuit.find((row) => row.id === protocolV2TUI.id)!
         .activity_state,
-    ).toBe(protocolV2Before.activity_state);
+    ).toBe("exited");
     expect(
       afterGracefulQuit.find((row) => row.id === legacyTUI.id)!.activity_state,
-    ).toBe(legacyBefore.activity_state);
+    ).toBe("exited");
     expect(
       afterGracefulQuit.find((row) => row.id === namedLegacyTUI.id)!
         .activity_state,
-    ).toBe(namedLegacyBefore.activity_state);
+    ).toBe("exited");
     expect(
       afterGracefulQuit.find((row) => row.id === defaultLegacyTUI.id)!
         .activity_state,
-    ).toBe(defaultLegacyBefore.activity_state);
+    ).toBe("exited");
 
     // Preserve one shipped protocol-v3 host exactly. Replace four other native
     // hosts with a faithful protocol-v2 fixture plus historical-private, named,
@@ -2211,43 +2498,46 @@ test("packaged desktop restart preserves Chat and TUI continuity without an Exit
     const namedLaunch = `named-launch-${randomUUID()}`;
     const defaultLiveLaunch = `default-live-launch-${randomUUID()}`;
     const defaultStaleLaunch = `default-stale-launch-${randomUUID()}`;
-    const activeAt = new Date(Date.now() - 2_000).toISOString();
-    const exitedAt = new Date(Date.now() - 1_000).toISOString();
+    const privateNativeSessionID = `private-native-${randomUUID()}`;
+    const namedNativeSessionID = `named-native-${randomUUID()}`;
+    const defaultNativeSessionID = `default-native-${randomUUID()}`;
     for (const fixture of [
-      { sessionId: legacyTUI.id, durableLaunch: privateLaunch },
-      { sessionId: namedLegacyTUI.id, durableLaunch: namedLaunch },
-      { sessionId: defaultLegacyTUI.id, durableLaunch: defaultStaleLaunch },
+      {
+        sessionId: legacyTUI.id,
+        durableLaunch: privateLaunch,
+        nativeSessionID: privateNativeSessionID,
+      },
+      {
+        sessionId: namedLegacyTUI.id,
+        durableLaunch: namedLaunch,
+        nativeSessionID: namedNativeSessionID,
+      },
+      {
+        sessionId: defaultLegacyTUI.id,
+        durableLaunch: defaultStaleLaunch,
+        nativeSessionID: defaultNativeSessionID,
+      },
     ]) {
       execFileSync("sqlite3", [
         db,
-        `UPDATE sessions SET activity_state='active', activity_last_at=${sqlQuote(activeAt)}, updated_at=${sqlQuote(activeAt)} WHERE id=${sqlQuote(fixture.sessionId)};`,
-      ]);
-      execFileSync("sqlite3", [
-        db,
-        `UPDATE sessions SET activity_state='exited', activity_last_at=${sqlQuote(exitedAt)}, updated_at=${sqlQuote(exitedAt)}, runtime_handle_id=${sqlQuote(fixture.sessionId)}, runtime_launch_id=${sqlQuote(fixture.durableLaunch)}, agent_session_id_launch_id=${sqlQuote(fixture.durableLaunch)} WHERE id=${sqlQuote(fixture.sessionId)};`,
+        `UPDATE sessions SET runtime_handle_id=${sqlQuote(fixture.sessionId)}, runtime_launch_id=${sqlQuote(fixture.durableLaunch)}, agent_session_id=${sqlQuote(fixture.nativeSessionID)}, agent_session_id_launch_id=${sqlQuote(fixture.durableLaunch)} WHERE id=${sqlQuote(fixture.sessionId)};`,
       ]);
     }
-    execFileSync("sqlite3", [
-      db,
-      `UPDATE sessions SET activity_state='active', activity_last_at=${sqlQuote(activeAt)}, updated_at=${sqlQuote(activeAt)} WHERE id=${sqlQuote(protocolV2TUI.id)};`,
-    ]);
-    execFileSync("sqlite3", [
-      db,
-      `UPDATE sessions SET activity_state='exited', activity_last_at=${sqlQuote(exitedAt)}, updated_at=${sqlQuote(exitedAt)} WHERE id=${sqlQuote(protocolV2TUI.id)};`,
-    ]);
 
     const socket = historicalTarget.address;
     await fs.mkdir(path.dirname(socket), { recursive: true });
     const tmuxSpecs = [
       {
+        tmux,
         displayName: "Private Legacy TUI",
         sessionId: legacyTUI.id,
         launchId: privateLaunch,
         workspacePath: legacyBefore.workspace_path,
-        namespaceArgs: ["-S", socket],
+        namespaceArgs: ["-S", socket, "-f", "/dev/null"],
         historicalPrivate: true,
       },
       {
+        tmux,
         displayName: "Named Legacy TUI",
         sessionId: namedLegacyTUI.id,
         launchId: namedLaunch,
@@ -2255,6 +2545,7 @@ test("packaged desktop restart preserves Chat and TUI continuity without an Exit
         namespaceArgs: ["-L", "ao"],
       },
       {
+        tmux: systemTmux,
         displayName: "Default Legacy TUI",
         sessionId: defaultLegacyTUI.id,
         launchId: defaultLiveLaunch,
@@ -2265,6 +2556,7 @@ test("packaged desktop restart preserves Chat and TUI continuity without an Exit
     const tmuxFixtures: TmuxFixture[] = [];
     for (const spec of tmuxSpecs) {
       tmuxCleanupTargets.push({
+        tmux: spec.tmux,
         namespaceArgs: spec.namespaceArgs,
         sessionId: spec.sessionId,
         label: spec.displayName,
@@ -2272,7 +2564,6 @@ test("packaged desktop restart preserves Chat and TUI continuity without an Exit
       tmuxFixtures.push(
         await launchTmuxFixture({
           ...spec,
-          tmux,
           daemon,
           runFile,
           env,
@@ -2283,12 +2574,13 @@ test("packaged desktop restart preserves Chat and TUI continuity without an Exit
     // private candidate. It is replaced with an exact duplicate for the final
     // ambiguity-negative phase.
     tmuxCleanupTargets.push({
+      tmux: systemTmux,
       namespaceArgs: ["-L", "default"],
       sessionId: legacyTUI.id,
       label: "foreign",
     });
     await execFileAsync(
-      tmux,
+      systemTmux,
       [
         "-L",
         "default",
@@ -2335,9 +2627,11 @@ test("packaged desktop restart preserves Chat and TUI continuity without an Exit
       "first cold restart",
     );
     apiObservers.push(secondAPI);
-    const second = await launchApp(env, logs);
+    const second = await launchApp(env, logs, "Exited");
     apps.push(second);
-    await waitReady(runFile, port, second.appRunId);
+    const secondDaemon = await waitReady(runFile, port, second.appRunId);
+    daemonPIDs.add(secondDaemon.pid);
+    await assertSupervisorListener(supervisorSocket);
     phase("first cold restart ready");
     await waitFor(
       async () =>
@@ -2378,10 +2672,13 @@ test("packaged desktop restart preserves Chat and TUI continuity without an Exit
     )!;
     expect(chatSecond.activity_state).toBe(expectedChatActivity);
     expect(chatSecond.agent_session_id).toBe(chatBefore.agent_session_id);
+    expect(chatSecond.provider_conversation_id).toBe(
+      chatBefore.provider_conversation_id,
+    );
     expect(chatSecond.controller_generation).not.toBe(
       chatBefore.controller_generation,
     );
-    expect(modernSecond.activity_state).toBe(expectedNativeActivity);
+    expect(modernSecond.activity_state).not.toBe("exited");
     expect(modernSecond.runtime_handle_id).toBe(modernBefore.runtime_handle_id);
     expect(protocolV2Second.activity_state).toBe(expectedProtocolV2Activity);
     expect(protocolV2Second.runtime_handle_id).toBe(
@@ -2390,18 +2687,48 @@ test("packaged desktop restart preserves Chat and TUI continuity without an Exit
     expect(protocolV2Second.runtime_launch_id).toBe(
       protocolV2Before.runtime_launch_id,
     );
+    expect(protocolV2Second.agent_session_id_launch_id).toBe(
+      protocolV2Before.agent_session_id_launch_id,
+    );
     expect(legacySecond.activity_state).toBe(expectedLegacyActivity);
     expect(legacySecond.runtime_launch_id).toBe(privateLaunch);
+    expect(legacySecond.agent_session_id).toBe(privateNativeSessionID);
+    expect(legacySecond.agent_session_id_launch_id).toBe(privateLaunch);
     expect(legacySecond.runtime_handle_id).toMatch(/^tmux-v1:/);
     expect(namedLegacySecond.activity_state).toBe(expectedLegacyActivity);
     expect(namedLegacySecond.runtime_launch_id).toBe(namedLaunch);
+    expect(namedLegacySecond.agent_session_id).toBe(namedNativeSessionID);
+    expect(namedLegacySecond.agent_session_id_launch_id).toBe(namedLaunch);
     expect(namedLegacySecond.runtime_handle_id).toMatch(/^tmux-v1:/);
     expect(defaultLegacySecond.activity_state).toBe(expectedLegacyActivity);
     expect(defaultLegacySecond.runtime_launch_id).toBe(defaultLiveLaunch);
+    expect(defaultLegacySecond.agent_session_id).toBe(defaultNativeSessionID);
+    expect(defaultLegacySecond.agent_session_id_launch_id).toBe(
+      defaultLiveLaunch,
+    );
     expect(defaultLegacySecond.runtime_launch_id).not.toBe(defaultStaleLaunch);
     expect(defaultLegacySecond.runtime_handle_id).toMatch(/^tmux-v1:/);
+    assertCanonicalTmuxHandle(
+      legacySecond.runtime_handle_id,
+      tmuxFixtures[0],
+      "path",
+      historicalSocket(runFile),
+    );
+    assertCanonicalTmuxHandle(
+      namedLegacySecond.runtime_handle_id,
+      tmuxFixtures[1],
+      "named",
+      "ao",
+    );
+    assertCanonicalTmuxHandle(
+      defaultLegacySecond.runtime_handle_id,
+      tmuxFixtures[2],
+      "default",
+      "",
+      true,
+    );
     await execFileAsync(
-      tmux,
+      systemTmux,
       ["-L", "default", "has-session", "-t", `=${legacyTUI.id}`],
       { env },
     );
@@ -2412,17 +2739,25 @@ test("packaged desktop restart preserves Chat and TUI continuity without an Exit
     await assertChatControllerAttached(chatHostSecond);
     await assertPtyRegistryOwnership(registryPath, modernV3Host);
     await assertPtyHostRunning(modernV3Host, modernV3ChildPID);
-    await typeAndObserveNativeTerminal(second.renderer, root, "SECOND");
+    await typeAndObserveNativeTerminal(
+      second.renderer,
+      modernV3Host,
+      modernSecond.runtime_handle_id,
+      root,
+      "SECOND",
+    );
     await assertPtyRegistryOwnership(registryPath, protocolV2Host.entry);
     await assertPtyHostRunning(protocolV2Host.entry, protocolV2Host.childPid);
     await typeAndObserveNativeTerminal(
       second.renderer,
+      protocolV2Host.entry,
+      protocolV2Second.runtime_handle_id,
       root,
       "V2_SECOND",
       "Protocol v2 TUI",
     );
     for (const fixture of tmuxFixtures) {
-      await assertTmuxFixtureUnchanged(fixture, tmux, daemon, env);
+      await assertTmuxFixtureUnchanged(fixture, daemon, env);
       await typeAndObserveTmuxTerminal(
         second.renderer,
         root,
@@ -2437,8 +2772,11 @@ test("packaged desktop restart preserves Chat and TUI continuity without an Exit
     await assertPtyRegistryOwnership(registryPath, modernV3Host);
     await assertPtyHostRunning(modernV3Host, modernV3ChildPID);
     for (const fixture of tmuxFixtures)
-      await assertTmuxFixtureUnchanged(fixture, tmux, daemon, env);
-    await secondAPI.stopAndAssert();
+      await assertTmuxFixtureUnchanged(fixture, daemon, env);
+    await secondAPI.stopAndAssert({
+      requireGateCode: "startup_recovery_in_progress",
+    });
+    expect(await second.renderer.stopVisibleExactTextAudit()).toBe(0);
     phase("first cold restart continuity verified through reaper interval");
 
     await quitApp(second);
@@ -2451,9 +2789,12 @@ test("packaged desktop restart preserves Chat and TUI continuity without an Exit
       "second cold restart",
     );
     apiObservers.push(thirdAPI);
-    const third = await launchApp(env, logs);
+    const thirdLogStart = logs.length;
+    const third = await launchApp(env, logs, "Exited");
     apps.push(third);
-    await waitReady(runFile, port, third.appRunId);
+    const thirdDaemon = await waitReady(runFile, port, third.appRunId);
+    daemonPIDs.add(thirdDaemon.pid);
+    await assertSupervisorListener(supervisorSocket);
     phase("second cold restart ready");
     await waitFor(
       async () =>
@@ -2492,27 +2833,41 @@ test("packaged desktop restart preserves Chat and TUI continuity without an Exit
     expect(chatThird.controller_generation).not.toBe(
       chatSecond.controller_generation,
     );
-    expect(modernThird.activity_state).toBe(expectedNativeActivity);
+    expect(chatThird.provider_conversation_id).toBe(
+      chatBefore.provider_conversation_id,
+    );
+    expect(modernThird.activity_state).not.toBe("exited");
     expect(modernThird.runtime_handle_id).toBe(modernSecond.runtime_handle_id);
-    expect(protocolV2Third.activity_state).toBe(expectedProtocolV2Activity);
+    expect(protocolV2Third.activity_state).not.toBe("exited");
     expect(protocolV2Third.runtime_handle_id).toBe(
       protocolV2Second.runtime_handle_id,
     );
     expect(protocolV2Third.runtime_launch_id).toBe(
       protocolV2Second.runtime_launch_id,
     );
+    expect(protocolV2Third.agent_session_id_launch_id).toBe(
+      protocolV2Second.agent_session_id_launch_id,
+    );
     expect(legacyThird.runtime_handle_id).toBe(legacySecond.runtime_handle_id);
-    expect(legacyThird.activity_state).toBe(expectedLegacyActivity);
+    expect(legacyThird.activity_state).not.toBe("exited");
+    expect(legacyThird.agent_session_id).toBe(privateNativeSessionID);
+    expect(legacyThird.agent_session_id_launch_id).toBe(privateLaunch);
     expect(namedLegacyThird.runtime_handle_id).toBe(
       namedLegacySecond.runtime_handle_id,
     );
-    expect(namedLegacyThird.activity_state).toBe(expectedLegacyActivity);
+    expect(namedLegacyThird.activity_state).not.toBe("exited");
     expect(namedLegacyThird.runtime_launch_id).toBe(namedLaunch);
+    expect(namedLegacyThird.agent_session_id).toBe(namedNativeSessionID);
+    expect(namedLegacyThird.agent_session_id_launch_id).toBe(namedLaunch);
     expect(defaultLegacyThird.runtime_handle_id).toBe(
       defaultLegacySecond.runtime_handle_id,
     );
-    expect(defaultLegacyThird.activity_state).toBe(expectedLegacyActivity);
+    expect(defaultLegacyThird.activity_state).not.toBe("exited");
     expect(defaultLegacyThird.runtime_launch_id).toBe(defaultLiveLaunch);
+    expect(defaultLegacyThird.agent_session_id).toBe(defaultNativeSessionID);
+    expect(defaultLegacyThird.agent_session_id_launch_id).toBe(
+      defaultLiveLaunch,
+    );
     const chatHostThird = JSON.parse(
       await fs.readFile(chatDescriptorPath, "utf8"),
     ) as ChatHostDescriptor;
@@ -2520,17 +2875,25 @@ test("packaged desktop restart preserves Chat and TUI continuity without an Exit
     await assertChatControllerAttached(chatHostThird);
     await assertPtyRegistryOwnership(registryPath, modernV3Host);
     await assertPtyHostRunning(modernV3Host, modernV3ChildPID);
-    await typeAndObserveNativeTerminal(third.renderer, root, "THIRD");
+    await typeAndObserveNativeTerminal(
+      third.renderer,
+      modernV3Host,
+      modernThird.runtime_handle_id,
+      root,
+      "THIRD",
+    );
     await assertPtyRegistryOwnership(registryPath, protocolV2Host.entry);
     await assertPtyHostRunning(protocolV2Host.entry, protocolV2Host.childPid);
     await typeAndObserveNativeTerminal(
       third.renderer,
+      protocolV2Host.entry,
+      protocolV2Third.runtime_handle_id,
       root,
       "V2_THIRD",
       "Protocol v2 TUI",
     );
     for (const fixture of tmuxFixtures) {
-      await assertTmuxFixtureUnchanged(fixture, tmux, daemon, env);
+      await assertTmuxFixtureUnchanged(fixture, daemon, env);
       await typeAndObserveTmuxTerminal(
         third.renderer,
         root,
@@ -2543,14 +2906,24 @@ test("packaged desktop restart preserves Chat and TUI continuity without an Exit
     await assertPtyRegistryOwnership(registryPath, modernV3Host);
     await assertPtyHostRunning(modernV3Host, modernV3ChildPID);
     for (const fixture of tmuxFixtures)
-      await assertTmuxFixtureUnchanged(fixture, tmux, daemon, env);
-    await thirdAPI.stopAndAssert();
+      await assertTmuxFixtureUnchanged(fixture, daemon, env);
+    await thirdAPI.stopAndAssert({
+      requireGateCode: "startup_recovery_in_progress",
+    });
     phase("second cold restart continuity verified through reaper interval");
 
     // Exercise the production relaunch path too. Each Electron launch rotates
     // AO_APP_RUN_ID and the memory-only browser-runtime credential, so the new app
     // must replace (not reuse) the prior daemon, then recover the same workloads
     // without exposing a stale Exited frame.
+    await waitFor(
+      async () =>
+        logs
+          .slice(thirdLogStart)
+          .some((line) => line.includes("AO: supervisor-link: connected")) ||
+        null,
+      10_000,
+    );
     const daemonBeforeHandoff = await readRunFile(runFile);
     expect(daemonBeforeHandoff).not.toBeNull();
     const fourthAPI = startSessionAPIObservation(
@@ -2560,10 +2933,23 @@ test("packaged desktop restart preserves Chat and TUI continuity without an Exit
       "immediate daemon handoff",
     );
     apiObservers.push(fourthAPI);
+    expect(await third.renderer.stopVisibleExactTextAudit()).toBe(0);
     await quitApp(third);
-    const fourth = await launchApp(env, logs);
+    const oldDaemonHealth = await api<{
+      status: string;
+      service: string;
+      pid: number;
+    }>(port, "/healthz");
+    expect(oldDaemonHealth).toMatchObject({
+      status: "ok",
+      service: "agent-orchestrator-daemon",
+      pid: daemonBeforeHandoff!.pid,
+    });
+    const fourth = await launchApp(env, logs, "Exited");
     apps.push(fourth);
     const daemonAfterHandoff = await waitReady(runFile, port, fourth.appRunId);
+    daemonPIDs.add(daemonAfterHandoff.pid);
+    await assertSupervisorListener(supervisorSocket);
     expect(daemonAfterHandoff.pid).not.toBe(daemonBeforeHandoff!.pid);
     await waitFor(
       async () =>
@@ -2605,27 +2991,41 @@ test("packaged desktop restart preserves Chat and TUI continuity without an Exit
       chatThird.controller_generation,
     );
     expect(chatFourth.agent_session_id).toBe(chatThird.agent_session_id);
-    expect(modernFourth.activity_state).toBe(expectedNativeActivity);
+    expect(chatFourth.provider_conversation_id).toBe(
+      chatBefore.provider_conversation_id,
+    );
+    expect(modernFourth.activity_state).not.toBe("exited");
     expect(modernFourth.runtime_handle_id).toBe(modernThird.runtime_handle_id);
-    expect(protocolV2Fourth.activity_state).toBe(expectedProtocolV2Activity);
+    expect(protocolV2Fourth.activity_state).not.toBe("exited");
     expect(protocolV2Fourth.runtime_handle_id).toBe(
       protocolV2Third.runtime_handle_id,
     );
     expect(protocolV2Fourth.runtime_launch_id).toBe(
       protocolV2Third.runtime_launch_id,
     );
-    expect(legacyFourth.activity_state).toBe(expectedLegacyActivity);
+    expect(protocolV2Fourth.agent_session_id_launch_id).toBe(
+      protocolV2Third.agent_session_id_launch_id,
+    );
+    expect(legacyFourth.activity_state).not.toBe("exited");
     expect(legacyFourth.runtime_handle_id).toBe(legacyThird.runtime_handle_id);
-    expect(namedLegacyFourth.activity_state).toBe(expectedLegacyActivity);
+    expect(legacyFourth.agent_session_id).toBe(privateNativeSessionID);
+    expect(legacyFourth.agent_session_id_launch_id).toBe(privateLaunch);
+    expect(namedLegacyFourth.activity_state).not.toBe("exited");
     expect(namedLegacyFourth.runtime_handle_id).toBe(
       namedLegacyThird.runtime_handle_id,
     );
     expect(namedLegacyFourth.runtime_launch_id).toBe(namedLaunch);
-    expect(defaultLegacyFourth.activity_state).toBe(expectedLegacyActivity);
+    expect(namedLegacyFourth.agent_session_id).toBe(namedNativeSessionID);
+    expect(namedLegacyFourth.agent_session_id_launch_id).toBe(namedLaunch);
+    expect(defaultLegacyFourth.activity_state).not.toBe("exited");
     expect(defaultLegacyFourth.runtime_handle_id).toBe(
       defaultLegacyThird.runtime_handle_id,
     );
     expect(defaultLegacyFourth.runtime_launch_id).toBe(defaultLiveLaunch);
+    expect(defaultLegacyFourth.agent_session_id).toBe(defaultNativeSessionID);
+    expect(defaultLegacyFourth.agent_session_id_launch_id).toBe(
+      defaultLiveLaunch,
+    );
     const chatHostFourth = JSON.parse(
       await fs.readFile(chatDescriptorPath, "utf8"),
     ) as ChatHostDescriptor;
@@ -2636,7 +3036,7 @@ test("packaged desktop restart preserves Chat and TUI continuity without an Exit
     await assertPtyRegistryOwnership(registryPath, protocolV2Host.entry);
     await assertPtyHostRunning(protocolV2Host.entry, protocolV2Host.childPid);
     for (const fixture of tmuxFixtures) {
-      await assertTmuxFixtureUnchanged(fixture, tmux, daemon, env);
+      await assertTmuxFixtureUnchanged(fixture, daemon, env);
     }
     // Re-prove the original #4458/default cohort remains attachable after the
     // supervisor handoff, not merely present in SQLite/tmux metadata.
@@ -2646,7 +3046,10 @@ test("packaged desktop restart preserves Chat and TUI continuity without an Exit
       "FOURTH_DEFAULT",
       "Default Legacy TUI",
     );
-    await fourthAPI.stopAndAssert();
+    await fourthAPI.stopAndAssert({
+      requireGateCode: "startup_recovery_in_progress",
+    });
+    expect(await fourth.renderer.stopVisibleExactTextAudit()).toBe(0);
     phase(
       "immediate app handoff safely replaced the daemon and recovered every workload",
     );
@@ -2659,7 +3062,7 @@ test("packaged desktop restart preserves Chat and TUI continuity without an Exit
     // and leave both workloads and the durable row untouched.
     expect(
       await stopFixtureTmuxSession(
-        tmux,
+        systemTmux,
         ["-L", "default"],
         legacyTUI.id,
         env,
@@ -2668,7 +3071,7 @@ test("packaged desktop restart preserves Chat and TUI continuity without an Exit
       ),
     ).toBe(true);
     const duplicateFixture = await launchTmuxFixture({
-      tmux,
+      tmux: systemTmux,
       namespaceArgs: ["-L", "default"],
       displayName: "Ambiguous duplicate",
       sessionId: legacyTUI.id,
@@ -2693,9 +3096,15 @@ test("packaged desktop restart preserves Chat and TUI continuity without an Exit
       "ambiguous startup",
     );
     apiObservers.push(fifthAPI);
-    const fifth = await launchApp(env, logs);
+    const fifth = await launchApp(env, logs, "Exited");
     apps.push(fifth);
-    await waitStartupRecoveryFailure(runFile, port, fifth.appRunId);
+    const failedDaemon = await waitStartupRecoveryFailure(
+      runFile,
+      port,
+      fifth.appRunId,
+    );
+    daemonPIDs.add(failedDaemon.pid);
+    await assertSupervisorListener(supervisorSocket);
     await waitFor(
       async () =>
         (await fifth.renderer.hasVisibleExactText("startup_recovery_failed")) ||
@@ -2723,24 +3132,20 @@ test("packaged desktop restart preserves Chat and TUI continuity without an Exit
     const ambiguousAfter = sqliteRows(db).find(
       (row) => row.id === legacyTUI.id,
     )!;
-    expect({
-      activity: ambiguousAfter.activity_state,
-      handle: ambiguousAfter.runtime_handle_id,
-      launch: ambiguousAfter.runtime_launch_id,
-    }).toEqual({
-      activity: ambiguousBefore.activity_state,
-      handle: ambiguousBefore.runtime_handle_id,
-      launch: ambiguousBefore.runtime_launch_id,
-    });
-    expect(await tmuxSessionNames(tmux, ["-L", "default"], env)).toContain(
-      legacyTUI.id,
-    );
+    expect(ambiguousAfter).toEqual(ambiguousBefore);
     expect(
-      await tmuxSessionNames(tmux, ["-S", historicalTarget.address], env),
+      await tmuxSessionNames(systemTmux, ["-L", "default"], env),
+    ).toContain(legacyTUI.id);
+    expect(
+      await tmuxSessionNames(
+        tmux,
+        ["-S", historicalTarget.address, "-f", "/dev/null"],
+        env,
+      ),
     ).toContain(legacyTUI.id);
     for (const fixture of tmuxFixtures)
-      await assertTmuxFixtureUnchanged(fixture, tmux, daemon, env);
-    await assertTmuxFixtureUnchanged(duplicateFixture, tmux, daemon, env);
+      await assertTmuxFixtureUnchanged(fixture, daemon, env);
+    await assertTmuxFixtureUnchanged(duplicateFixture, daemon, env);
     await assertPtyRegistryOwnership(registryPath, modernV3Host);
     await assertPtyHostRunning(modernV3Host, modernV3ChildPID);
     await assertPtyRegistryOwnership(registryPath, protocolV2Host.entry);
@@ -2750,6 +3155,7 @@ test("packaged desktop restart preserves Chat and TUI continuity without an Exit
       forbidReady: true,
       requireGateCode: "startup_recovery_failed",
     });
+    expect(await fifth.renderer.stopVisibleExactTextAudit()).toBe(0);
     phase(
       "ambiguous ownership failed closed without exposing or mutating the board",
     );
@@ -2761,7 +3167,9 @@ test("packaged desktop restart preserves Chat and TUI continuity without an Exit
     for (const observer of apiObservers)
       await observer.stop().catch(() => undefined);
     for (const app of apps.reverse()) await quitApp(app).catch(() => undefined);
-    const daemonClean = await stopFixtureDaemon(runFile, logs);
+    const currentDaemonClean = await stopFixtureDaemon(runFile, logs);
+    const priorDaemonsClean = await proveFixturePIDsStopped(daemonPIDs, logs);
+    const daemonClean = currentDaemonClean && priorDaemonsClean;
     const hostsClean = await cleanupDetachedHosts(
       root,
       dataDir,
@@ -2774,7 +3182,7 @@ test("packaged desktop restart preserves Chat and TUI continuity without an Exit
     let historicalTmuxClean = true;
     for (const target of tmuxCleanupTargets) {
       const clean = await stopFixtureTmuxSession(
-        tmux,
+        target.tmux,
         target.namespaceArgs,
         target.sessionId,
         env,
@@ -2784,6 +3192,15 @@ test("packaged desktop restart preserves Chat and TUI continuity without an Exit
       tmuxClean = tmuxClean && clean;
       if (target.namespaceArgs[0] === "-S")
         historicalTmuxClean = historicalTmuxClean && clean;
+    }
+    let tmuxDirClean = false;
+    if (tmuxClean) {
+      try {
+        await fs.rm(tmuxTmp, { recursive: true, force: true });
+        tmuxDirClean = true;
+      } catch (error) {
+        logs.push(`[cleanup] could not remove tmux temp dir: ${String(error)}`);
+      }
     }
     let credentialClean = true;
     try {
@@ -2811,6 +3228,7 @@ test("packaged desktop restart preserves Chat and TUI continuity without an Exit
       daemonClean &&
       hostsClean &&
       tmuxClean &&
+      tmuxDirClean &&
       credentialClean &&
       aliasClean
     ) {
