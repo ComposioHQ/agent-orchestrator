@@ -78,6 +78,10 @@ function accountSources() {
 	return EventSourceStub.instances.filter((source) => source.url.endsWith("/agents/codex/accounts/events"));
 }
 
+function claudeAccountSources() {
+	return EventSourceStub.instances.filter((source) => source.url.endsWith("/agents/claude-code/accounts/events"));
+}
+
 beforeEach(() => {
 	EventSourceStub.instances = [];
 	onStatusMock.mockReset().mockReturnValue(removeStatusMock);
@@ -96,20 +100,23 @@ afterEach(() => {
 });
 
 describe("createEventTransport", () => {
-	it("opens the CDC and Codex account SSE connections on connect", () => {
+	it("opens the CDC, Codex, and Claude Code account SSE connections on connect", () => {
 		createEventTransport(fakeQueryClient()).connect();
 
-		expect(EventSourceStub.instances).toHaveLength(2);
+		expect(EventSourceStub.instances).toHaveLength(3);
 		expect(cdcSources()).toHaveLength(1);
 		expect(accountSources()).toHaveLength(1);
+		expect(claudeAccountSources()).toHaveLength(1);
 		expect(cdcSources()[0].url).toBe("http://127.0.0.1:3001/api/v1/events");
 		expect(accountSources()[0].url).toBe("http://127.0.0.1:3001/api/v1/agents/codex/accounts/events");
+		expect(claudeAccountSources()[0].url).toBe("http://127.0.0.1:3001/api/v1/agents/claude-code/accounts/events");
 		// All CDC event types plus onmessage are wired up.
 		expect(cdcSources()[0].listeners).toContain("session_updated");
 		expect(cdcSources()[0].listeners).toContain("review_run_created");
 		expect(cdcSources()[0].listeners).toContain("review_run_updated");
 		expect(cdcSources()[0].onmessage).toBeTypeOf("function");
 		expect(accountSources()[0].listeners).toContain("codex_account");
+		expect(claudeAccountSources()[0].listeners).toContain("claude_code_account");
 	});
 
 	it("does not reconnect when a daemon status keeps the same base URL", () => {
@@ -118,7 +125,7 @@ describe("createEventTransport", () => {
 
 		onStatusHandler();
 
-		expect(EventSourceStub.instances).toHaveLength(2);
+		expect(EventSourceStub.instances).toHaveLength(3);
 	});
 
 	it("closes the old connection and reconnects when the base URL changes", () => {
@@ -182,7 +189,7 @@ describe("createEventTransport", () => {
 
 		expect(first.closed).toBe(true);
 		expect(firstAccount.closed).toBe(true);
-		expect(EventSourceStub.instances).toHaveLength(2);
+		expect(EventSourceStub.instances).toHaveLength(3);
 		expect(getEventsConnectionState()).toBe("disconnected");
 		expect(setTransportHealthyMock).toHaveBeenCalledWith("active", false);
 		expect(setTransportHealthyMock).toHaveBeenCalledWith("history", false);
@@ -315,6 +322,27 @@ describe("createEventTransport", () => {
 		expect(queryClient.invalidateQueries).not.toHaveBeenCalledWith({ queryKey: ["workspaces"] });
 	});
 
+	it("normalizes Claude Code account stream snapshots in their own cache", () => {
+		let cached: unknown;
+		const queryClient = {
+			invalidateQueries: vi.fn(),
+			setQueryData: vi.fn((_key: readonly string[], update: unknown) => {
+				cached = typeof update === "function" ? update(undefined) : update;
+			}),
+		} as unknown as Parameters<typeof createEventTransport>[0];
+		createEventTransport(queryClient).connect();
+
+		claudeAccountSources()[0].emit("claude_code_account", JSON.stringify({
+			activeAccountId: "account-2",
+			accountRevision: 4,
+			accounts: [{ id: "account-2", active: true, createdAt: "2026-09-02T00:00:00Z" }],
+			capabilities: {},
+		}));
+
+		expect(cached).toMatchObject({ activeAccountId: "account-2", accountRevision: 4 });
+		expect(queryClient.invalidateQueries).not.toHaveBeenCalledWith({ queryKey: ["workspaces"] });
+	});
+
 	it("keeps account stream open and CDC invalidation within their own cache domains", () => {
 		vi.useFakeTimers();
 		try {
@@ -340,6 +368,7 @@ describe("createEventTransport", () => {
 
 		expect(cdcSources()[0].closed).toBe(true);
 		expect(accountSources()[0].closed).toBe(true);
+		expect(claudeAccountSources()[0].closed).toBe(true);
 		expect(removeStatusMock).toHaveBeenCalledTimes(1);
 	});
 
