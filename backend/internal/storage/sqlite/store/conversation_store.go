@@ -108,7 +108,7 @@ func (s *Store) createConversation(
 			err = s.inTx(ctx, transactionName, func(q *gen.Queries) error {
 				if err := q.BindProjectConversationSession(ctx, gen.BindProjectConversationSessionParams{
 					CurrentSessionID: &options.session,
-					UpdatedAt:        options.now,
+					UpdatedAt:        utcTime(options.now),
 					ID:               existing.ID,
 				}); err != nil {
 					return fmt.Errorf("bind project conversation %s to %s: %w", existing.ID, options.session, err)
@@ -130,7 +130,7 @@ func (s *Store) createConversation(
 						Status:         reset.Status,
 						Summary:        reset.Summary,
 						DetailJson:     detail,
-						UpdatedAt:      options.now,
+						UpdatedAt:      utcTime(options.now),
 						ConversationID: existing.ID,
 						ProviderItemID: reset.ProviderItemID,
 					})
@@ -139,7 +139,7 @@ func (s *Store) createConversation(
 					return fmt.Errorf("lookup reset boundary %s: %w", reset.ProviderItemID, lookupErr)
 				}
 				sequence, seqErr := q.NextConversationSequence(ctx, gen.NextConversationSequenceParams{
-					UpdatedAt: options.now,
+					UpdatedAt: utcTime(options.now),
 					ID:        existing.ID,
 				})
 				if seqErr != nil {
@@ -157,8 +157,8 @@ func (s *Store) createConversation(
 					DetailJson:     detail,
 					RequestID:      reset.RequestID,
 					ProviderItemID: reset.ProviderItemID,
-					CreatedAt:      options.now,
-					UpdatedAt:      options.now,
+					CreatedAt:      utcTime(options.now),
+					UpdatedAt:      utcTime(options.now),
 				})
 			})
 			if err != nil {
@@ -196,8 +196,8 @@ func (s *Store) createConversation(
 			SessionID:        ownerSession,
 			CurrentSessionID: &options.session,
 			ActiveBranchID:   rootBranchID,
-			CreatedAt:        options.now,
-			UpdatedAt:        options.now,
+			CreatedAt:        utcTime(options.now),
+			UpdatedAt:        utcTime(options.now),
 		}); insertErr != nil {
 			return insertErr
 		}
@@ -208,7 +208,7 @@ func (s *Store) createConversation(
 			ProviderConversationID: owner.ProviderConversationID,
 			ForkAfterSequence:      0,
 			ProviderScopeID:        rootBranchID,
-			CreatedAt:              options.now,
+			CreatedAt:              utcTime(options.now),
 		})
 	})
 	if err != nil {
@@ -221,8 +221,8 @@ func (s *Store) createConversation(
 		ProjectID:      options.project,
 		SessionID:      options.session,
 		ActiveBranchID: rootBranchID,
-		CreatedAt:      options.now,
-		UpdatedAt:      options.now,
+		CreatedAt:      utcTime(options.now),
+		UpdatedAt:      utcTime(options.now),
 	}, nil
 }
 
@@ -301,7 +301,7 @@ func insertConversationBranchTx(
 		ReplayCutoffSequence:   branch.ReplayCutoffSequence,
 		ReplayTruncated:        boolInt(branch.ReplayTruncated),
 		ProviderScopeID:        branch.ProviderScopeID,
-		CreatedAt:              now,
+		CreatedAt:              utcTime(now),
 	}); err != nil {
 		return fmt.Errorf("insert conversation branch %s: %w", branch.ID, err)
 	}
@@ -327,7 +327,7 @@ func (s *Store) CreateAndActivateConversationBranch(
 		}
 		conversationRows, err := q.ActivateConversationBranch(ctx, gen.ActivateConversationBranchParams{
 			ActiveBranchID: branch.ID,
-			UpdatedAt:      now,
+			UpdatedAt:      utcTime(now),
 			ID:             branch.ConversationID,
 		})
 		if err != nil {
@@ -339,7 +339,7 @@ func (s *Store) CreateAndActivateConversationBranch(
 		sessionRows, err := q.ActivateConversationBranchSession(ctx, gen.ActivateConversationBranchSessionParams{
 			ProviderConversationID: branch.ProviderConversationID,
 			ControllerGeneration:   generation,
-			UpdatedAt:              now,
+			UpdatedAt:              utcTime(now),
 			ID:                     sessionID,
 		})
 		if err != nil {
@@ -422,7 +422,7 @@ func (s *Store) commitChatSpawn(
 		}
 		rows, err := q.ActivateConversationBranch(ctx, gen.ActivateConversationBranchParams{
 			ActiveBranchID: branch.ID,
-			UpdatedAt:      rec.UpdatedAt,
+			UpdatedAt:      utcTime(rec.UpdatedAt),
 			ID:             branch.ConversationID,
 		})
 		if err != nil {
@@ -438,7 +438,7 @@ func (s *Store) commitChatSpawn(
 			// terminated target remains unavailable to every concurrent reader.
 			rows, err := q.ClaimChatControllerGeneration(ctx, gen.ClaimChatControllerGenerationParams{
 				ControllerGeneration: rec.Metadata.ControllerGeneration,
-				UpdatedAt:            rec.UpdatedAt,
+				UpdatedAt:            utcTime(rec.UpdatedAt),
 				ID:                   rec.ID,
 			})
 			if err != nil {
@@ -623,7 +623,7 @@ func (s *Store) RepairIncompleteConversationEdit(
 		conversationRows, updateErr := q.ActivateConversationBranch(
 			ctx, gen.ActivateConversationBranchParams{
 				ActiveBranchID: parent.ID,
-				UpdatedAt:      now,
+				UpdatedAt:      utcTime(now),
 				ID:             conversationID,
 			})
 		if updateErr != nil {
@@ -644,7 +644,7 @@ func (s *Store) RepairIncompleteConversationEdit(
 			ctx, gen.ActivateConversationBranchSessionParams{
 				ProviderConversationID: parent.ProviderConversationID,
 				ControllerGeneration:   "",
-				UpdatedAt:              now,
+				UpdatedAt:              utcTime(now),
 				ID:                     sessionID,
 			})
 		if updateErr != nil {
@@ -701,7 +701,7 @@ func (s *Store) ActivateConversationBranch(
 		}
 		conversationRows, err := q.ActivateConversationBranch(ctx, gen.ActivateConversationBranchParams{
 			ActiveBranchID: branchID,
-			UpdatedAt:      now,
+			UpdatedAt:      utcTime(now),
 			ID:             conversationID,
 		})
 		if err != nil {
@@ -714,7 +714,7 @@ func (s *Store) ActivateConversationBranch(
 			gen.ActivateConversationBranchSessionParams{
 				ProviderConversationID: providerConversationID,
 				ControllerGeneration:   generation,
-				UpdatedAt:              now,
+				UpdatedAt:              utcTime(now),
 				ID:                     sessionID,
 			})
 		if err != nil {
@@ -817,7 +817,7 @@ func (s *Store) appendUserMessage(
 
 	err = s.inTx(ctx, "append user message", func(q *gen.Queries) error {
 		sequence, err := q.NextConversationSequence(ctx, gen.NextConversationSequenceParams{
-			UpdatedAt: now,
+			UpdatedAt: utcTime(now),
 			ID:        conversationID,
 		})
 		if err != nil {
@@ -831,7 +831,7 @@ func (s *Store) appendUserMessage(
 			ControllerGeneration: generation,
 			RetryOfTurnID:        nullableString(retryOfTurnID),
 			State:                domain.TurnStateQueued,
-			RequestedAt:          now,
+			RequestedAt:          utcTime(now),
 		}); err != nil {
 			return fmt.Errorf("insert turn: %w", err)
 		}
@@ -847,8 +847,8 @@ func (s *Store) appendUserMessage(
 			ProviderItemID:      "",
 			ClientMessageID:     msg.ClientMessageID,
 			DeliveryContentJson: msg.DeliveryContentJSON,
-			CreatedAt:           now,
-			UpdatedAt:           now,
+			CreatedAt:           utcTime(now),
+			UpdatedAt:           utcTime(now),
 		}); err != nil {
 			return err
 		}
@@ -891,8 +891,8 @@ func (s *Store) AdoptProviderTurn(
 		HandledBySessionID:   session,
 		ProviderTurnID:       providerTurnID,
 		ControllerGeneration: generation,
-		RequestedAt:          now,
-		StartedAt:            sql.NullTime{Time: now, Valid: true},
+		RequestedAt:          utcTime(now),
+		StartedAt:            sql.NullTime{Time: utcTime(now), Valid: true},
 	}); err != nil {
 		return fmt.Errorf("adopt provider turn %s: %w", providerTurnID, err)
 	}
@@ -937,7 +937,7 @@ func (s *Store) AppendImportedUserMessage(
 		return fmt.Errorf("lookup imported provider turn %s: %w", providerTurnID, err)
 	}
 	sequence, err := q.NextConversationSequence(ctx, gen.NextConversationSequenceParams{
-		UpdatedAt: now,
+		UpdatedAt: utcTime(now),
 		ID:        conversationID,
 	})
 	if err != nil {
@@ -954,8 +954,8 @@ func (s *Store) AppendImportedUserMessage(
 		ProviderItemID:      msg.ProviderItemID,
 		ClientMessageID:     msg.ClientMessageID,
 		DeliveryContentJson: msg.DeliveryContentJSON,
-		CreatedAt:           now,
-		UpdatedAt:           now,
+		CreatedAt:           utcTime(now),
+		UpdatedAt:           utcTime(now),
 	}); err != nil {
 		return fmt.Errorf("insert imported user message for turn %s: %w", providerTurnID, err)
 	}
@@ -969,13 +969,13 @@ func (s *Store) BindTurnToProvider(ctx context.Context, turnID, providerTurnID s
 	defer unlock()
 	if err := q.BindConversationTurnProviderID(ctx, gen.BindConversationTurnProviderIDParams{
 		ProviderTurnID: providerTurnID,
-		StartedAt:      sql.NullTime{Time: now, Valid: true},
+		StartedAt:      sql.NullTime{Time: utcTime(now), Valid: true},
 		ID:             turnID,
 	}); err != nil {
 		return fmt.Errorf("bind turn %s to provider turn %s: %w", turnID, providerTurnID, err)
 	}
 	if err := q.MarkConversationTurnStarted(ctx, gen.MarkConversationTurnStartedParams{
-		StartedAt: sql.NullTime{Time: now, Valid: true},
+		StartedAt: sql.NullTime{Time: utcTime(now), Valid: true},
 		ID:        turnID,
 	}); err != nil {
 		return fmt.Errorf("mark turn %s started: %w", turnID, err)
@@ -1012,14 +1012,14 @@ func (s *Store) SettleTurn(
 	if err := q.SettleConversationTurn(ctx, gen.SettleConversationTurnParams{
 		State:        state,
 		ErrorMessage: errMessage,
-		CompletedAt:  sql.NullTime{Time: now, Valid: true},
+		CompletedAt:  sql.NullTime{Time: utcTime(now), Valid: true},
 		ID:           turn.ID,
 	}); err != nil {
 		return fmt.Errorf("settle turn %s: %w", turn.ID, err)
 	}
 	if err := q.SettleStreamingConversationMessagesForTurn(ctx,
 		gen.SettleStreamingConversationMessagesForTurnParams{
-			UpdatedAt:      now,
+			UpdatedAt:      utcTime(now),
 			ConversationID: conversationID,
 			TurnID:         sql.NullString{String: turn.ID, Valid: true},
 		}); err != nil {
@@ -1028,7 +1028,7 @@ func (s *Store) SettleTurn(
 	if err := q.SettleRunningConversationActivitiesForTurn(ctx,
 		gen.SettleRunningConversationActivitiesForTurnParams{
 			Status:         terminalActivityStatus(state),
-			UpdatedAt:      now,
+			UpdatedAt:      utcTime(now),
 			ConversationID: conversationID,
 			TurnID:         sql.NullString{String: turn.ID, Valid: true},
 		}); err != nil {
@@ -1092,7 +1092,7 @@ func finalizeCompletedTurnPlan(
 	if err := q.FinalizeConversationPlanActivity(ctx, gen.FinalizeConversationPlanActivityParams{
 		Summary:        fmt.Sprintf("Plan %d/%d steps done", len(plan.Steps), len(plan.Steps)),
 		DetailJson:     string(encodedDetail),
-		UpdatedAt:      now,
+		UpdatedAt:      utcTime(now),
 		ConversationID: turn.ConversationID,
 		TurnID:         sql.NullString{String: turn.ID, Valid: true},
 	}); err != nil {
@@ -1124,14 +1124,14 @@ func (s *Store) SettleOrphanedTurns(ctx context.Context, session domain.SessionI
 	defer unlock()
 	if err := q.FailOrphanedConversationActivities(ctx,
 		gen.FailOrphanedConversationActivitiesParams{
-			UpdatedAt:          now,
+			UpdatedAt:          utcTime(now),
 			HandledBySessionID: session,
 		}); err != nil {
 		return fmt.Errorf("settle orphaned activities for %s: %w", session, err)
 	}
 	if err := q.SettleOrphanedConversationTurns(ctx,
 		gen.SettleOrphanedConversationTurnsParams{
-			CompletedAt:        sql.NullTime{Time: now, Valid: true},
+			CompletedAt:        sql.NullTime{Time: utcTime(now), Valid: true},
 			HandledBySessionID: session,
 		}); err != nil {
 		return fmt.Errorf("settle orphaned turns for %s: %w", session, err)
@@ -1188,20 +1188,20 @@ func cleanupOwnedControllerWork(
 	}
 	if err := q.FailOrphanedConversationActivities(ctx,
 		gen.FailOrphanedConversationActivitiesParams{
-			UpdatedAt: now, HandledBySessionID: session,
+			UpdatedAt: utcTime(now), HandledBySessionID: session,
 		}); err != nil {
 		return false, fmt.Errorf("settle orphaned activities for %s: %w", session, err)
 	}
 	if err := q.SettleOrphanedConversationTurns(ctx,
 		gen.SettleOrphanedConversationTurnsParams{
-			CompletedAt:        sql.NullTime{Time: now, Valid: true},
+			CompletedAt:        sql.NullTime{Time: utcTime(now), Valid: true},
 			HandledBySessionID: session,
 		}); err != nil {
 		return false, fmt.Errorf("settle orphaned turns for %s: %w", session, err)
 	}
 	if err := q.FailPendingConversationRequestsForSession(ctx,
 		gen.FailPendingConversationRequestsForSessionParams{
-			UpdatedAt:            now,
+			UpdatedAt:            utcTime(now),
 			TargetConversationID: conversationID,
 			HandledBySessionID:   session,
 		}); err != nil {
@@ -1242,7 +1242,7 @@ func (s *Store) SetConversationSettings(
 		Model:           nullableString(settings.Model),
 		ReasoningEffort: nullableString(settings.ReasoningEffort),
 		ApprovalMode:    nullableString(string(settings.ApprovalMode)),
-		UpdatedAt:       now,
+		UpdatedAt:       utcTime(now),
 		ID:              conversationID,
 	}); err != nil {
 		return fmt.Errorf("set conversation settings for %s: %w", conversationID, err)
@@ -1262,8 +1262,8 @@ func (s *Store) MarkCompacted(ctx context.Context, conversationID string, at tim
 	q, unlock := s.conversationWriter(ctx)
 	defer unlock()
 	if err := q.MarkConversationCompacted(ctx, gen.MarkConversationCompactedParams{
-		CompactedAt: sql.NullTime{Time: at, Valid: true},
-		UpdatedAt:   at,
+		CompactedAt: sql.NullTime{Time: utcTime(at), Valid: true},
+		UpdatedAt:   utcTime(at),
 		ID:          conversationID,
 	}); err != nil {
 		return fmt.Errorf("mark conversation %s compacted: %w", conversationID, err)
@@ -1370,7 +1370,7 @@ func (s *Store) RecordModelReroute(
 	if err := q.UpdateConversationModelReroute(ctx,
 		gen.UpdateConversationModelRerouteParams{
 			ModelRerouteJson: sql.NullString{String: string(encoded), Valid: true},
-			UpdatedAt:        reroute.At,
+			UpdatedAt:        utcTime(reroute.At),
 			ID:               conversationID,
 		}); err != nil {
 		return fmt.Errorf("record model reroute for %s: %w", conversationID, err)
@@ -1399,7 +1399,7 @@ func (s *Store) RecordAccount(
 	defer unlock()
 	if err := q.UpdateConversationAccount(ctx, gen.UpdateConversationAccountParams{
 		AccountJson: sql.NullString{String: string(encoded), Valid: true},
-		UpdatedAt:   now,
+		UpdatedAt:   utcTime(now),
 		ID:          conversationID,
 	}); err != nil {
 		return fmt.Errorf("record account for %s: %w", conversationID, err)
@@ -1529,7 +1529,7 @@ func (s *Store) AppendActivityStreamedText(
 		gen.AppendConversationActivityStreamedTextParams{
 			Delta:          delta,
 			MaxTextChars:   MaxStreamedTextChars,
-			UpdatedAt:      now,
+			UpdatedAt:      utcTime(now),
 			ConversationID: conversationID,
 			ProviderItemID: providerItemID,
 		})
@@ -1570,7 +1570,7 @@ func (s *Store) SettleActivityStreamedText(
 	rows, err := q.SettleConversationActivityStreamedText(ctx,
 		gen.SettleConversationActivityStreamedTextParams{
 			StreamedText:   text,
-			UpdatedAt:      now,
+			UpdatedAt:      utcTime(now),
 			ConversationID: conversationID,
 			ProviderItemID: providerItemID,
 		})
@@ -1614,7 +1614,7 @@ func (s *Store) ReserveQueuedTurnForPromotion(
 	defer s.writeMu.Unlock()
 	rows, err := s.qw.ReserveQueuedConversationTurnForPromotion(ctx,
 		gen.ReserveQueuedConversationTurnForPromotionParams{
-			PromotionStartedAt: sql.NullTime{Time: now, Valid: true},
+			PromotionStartedAt: sql.NullTime{Time: utcTime(now), Valid: true},
 			ID:                 turnID, ConversationID: conversationID,
 		})
 	if err != nil {
@@ -1680,7 +1680,7 @@ func (s *Store) CompleteQueuedTurnPromotion(
 		}
 		rows, err := q.CompleteQueuedConversationTurnPromotion(ctx,
 			gen.CompleteQueuedConversationTurnPromotionParams{
-				CompletedAt:      sql.NullTime{Time: now, Valid: true},
+				CompletedAt:      sql.NullTime{Time: utcTime(now), Valid: true},
 				PromotedToTurnID: sql.NullString{String: target.ID, Valid: true},
 				ID:               sourceTurnID,
 				ConversationID:   conversationID,
@@ -1708,7 +1708,7 @@ func (s *Store) CancelQueuedTurns(
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
 	if err := s.qw.CancelQueuedConversationTurns(ctx, gen.CancelQueuedConversationTurnsParams{
-		CompletedAt:    sql.NullTime{Time: now, Valid: true},
+		CompletedAt:    sql.NullTime{Time: utcTime(now), Valid: true},
 		ConversationID: conversationID,
 		RequestedAt:    cutoff,
 	}); err != nil {
@@ -1728,7 +1728,7 @@ func (s *Store) CancelAllQueuedTurns(
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
 	if err := s.qw.CancelAllQueuedConversationTurns(ctx, gen.CancelAllQueuedConversationTurnsParams{
-		CompletedAt:    sql.NullTime{Time: now, Valid: true},
+		CompletedAt:    sql.NullTime{Time: utcTime(now), Valid: true},
 		ConversationID: conversationID,
 	}); err != nil {
 		return fmt.Errorf("cancel all queued turns for %s: %w", conversationID, err)
@@ -1747,7 +1747,7 @@ func (s *Store) CancelQueuedTurnByID(
 	defer s.writeMu.Unlock()
 	rows, err := s.qw.CancelQueuedConversationTurnByID(ctx,
 		gen.CancelQueuedConversationTurnByIDParams{
-			CompletedAt:    sql.NullTime{Time: now, Valid: true},
+			CompletedAt:    sql.NullTime{Time: utcTime(now), Valid: true},
 			ID:             turnID,
 			ConversationID: conversationID,
 		})
@@ -1818,7 +1818,7 @@ func (s *Store) ReorderQueuedTurns(
 	for i, turnID := range turnIDs {
 		rows, err := q.UpdateQueuedConversationTurnRequestedAt(ctx,
 			gen.UpdateQueuedConversationTurnRequestedAtParams{
-				RequestedAt:    requestedAts[i],
+				RequestedAt:    utcTime(requestedAts[i]),
 				ID:             turnID,
 				ConversationID: conversationID,
 			})
@@ -1847,7 +1847,7 @@ func (s *Store) UpdateQueuedTurnMessage(
 	rows, err := s.qw.UpdateQueuedConversationMessageText(ctx,
 		gen.UpdateQueuedConversationMessageTextParams{
 			Text:           text,
-			UpdatedAt:      now,
+			UpdatedAt:      utcTime(now),
 			ConversationID: conversationID,
 			TurnID:         sql.NullString{String: turnID, Valid: true},
 		})
@@ -1877,7 +1877,7 @@ func (s *Store) SettleTurnByID(
 	if err := s.qw.SettleConversationTurn(ctx, gen.SettleConversationTurnParams{
 		State:        state,
 		ErrorMessage: errMessage,
-		CompletedAt:  sql.NullTime{Time: now, Valid: true},
+		CompletedAt:  sql.NullTime{Time: utcTime(now), Valid: true},
 		ID:           turnID,
 	}); err != nil {
 		return fmt.Errorf("settle turn %s: %w", turnID, err)
@@ -1906,7 +1906,7 @@ func (s *Store) AppendAssistantDelta(
 		if appendErr := q.AppendConversationMessageDelta(ctx,
 			gen.AppendConversationMessageDeltaParams{
 				Text:           delta,
-				UpdatedAt:      now,
+				UpdatedAt:      utcTime(now),
 				ConversationID: conversationID,
 				ProviderItemID: providerItemID,
 			}); appendErr != nil {
@@ -1918,7 +1918,7 @@ func (s *Store) AppendAssistantDelta(
 		turnID := s.turnIDFor(ctx, conversationID, providerTurnID)
 		return s.inTx(ctx, "insert assistant message", func(q *gen.Queries) error {
 			sequence, seqErr := q.NextConversationSequence(ctx, gen.NextConversationSequenceParams{
-				UpdatedAt: now,
+				UpdatedAt: utcTime(now),
 				ID:        conversationID,
 			})
 			if seqErr != nil {
@@ -1934,8 +1934,8 @@ func (s *Store) AppendAssistantDelta(
 				Text:           delta,
 				Streaming:      1,
 				ProviderItemID: providerItemID,
-				CreatedAt:      now,
-				UpdatedAt:      now,
+				CreatedAt:      utcTime(now),
+				UpdatedAt:      utcTime(now),
 			})
 		})
 
@@ -1965,7 +1965,7 @@ func (s *Store) SettleAssistantMessage(
 		turnID := s.turnIDFor(ctx, conversationID, providerTurnID)
 		return s.inTx(ctx, "insert assistant message", func(q *gen.Queries) error {
 			sequence, seqErr := q.NextConversationSequence(ctx, gen.NextConversationSequenceParams{
-				UpdatedAt: now,
+				UpdatedAt: utcTime(now),
 				ID:        conversationID,
 			})
 			if seqErr != nil {
@@ -1980,8 +1980,8 @@ func (s *Store) SettleAssistantMessage(
 				Origin:         domain.MessageOriginProvider,
 				Text:           text,
 				ProviderItemID: providerItemID,
-				CreatedAt:      now,
-				UpdatedAt:      now,
+				CreatedAt:      utcTime(now),
+				UpdatedAt:      utcTime(now),
 			})
 		})
 	}
@@ -1991,7 +1991,7 @@ func (s *Store) SettleAssistantMessage(
 
 	if err := q.SettleConversationMessage(ctx, gen.SettleConversationMessageParams{
 		Text:           text,
-		UpdatedAt:      now,
+		UpdatedAt:      utcTime(now),
 		ConversationID: conversationID,
 		ProviderItemID: providerItemID,
 	}); err != nil {
@@ -2024,7 +2024,7 @@ func (s *Store) UpsertActivity(
 					Status:         activity.Status,
 					Summary:        activity.Summary,
 					DetailJson:     detail,
-					UpdatedAt:      now,
+					UpdatedAt:      utcTime(now),
 					ConversationID: conversationID,
 					ProviderItemID: activity.ProviderItemID,
 				}); settleErr != nil {
@@ -2040,7 +2040,7 @@ func (s *Store) UpsertActivity(
 	turnID := s.turnIDFor(ctx, conversationID, providerTurnID)
 	return s.inTx(ctx, "insert activity", func(q *gen.Queries) error {
 		sequence, seqErr := q.NextConversationSequence(ctx, gen.NextConversationSequenceParams{
-			UpdatedAt: now,
+			UpdatedAt: utcTime(now),
 			ID:        conversationID,
 		})
 		if seqErr != nil {
@@ -2057,8 +2057,8 @@ func (s *Store) UpsertActivity(
 			DetailJson:     detail,
 			RequestID:      activity.RequestID,
 			ProviderItemID: activity.ProviderItemID,
-			CreatedAt:      now,
-			UpdatedAt:      now,
+			CreatedAt:      utcTime(now),
+			UpdatedAt:      utcTime(now),
 		})
 	})
 }
@@ -2095,7 +2095,7 @@ func (s *Store) AppendCommandOutput(
 		gen.AppendConversationActivityOutputParams{
 			Delta:          delta,
 			MaxOutputChars: MaxCommandOutputChars,
-			UpdatedAt:      now,
+			UpdatedAt:      utcTime(now),
 			ConversationID: conversationID,
 			ProviderItemID: providerItemID,
 		})
@@ -2161,7 +2161,7 @@ func (s *Store) ResolveApproval(
 	defer unlock()
 	if err := q.ResolveConversationApproval(ctx, gen.ResolveConversationApprovalParams{
 		DetailJson:     detailJSON,
-		UpdatedAt:      now,
+		UpdatedAt:      utcTime(now),
 		ConversationID: conversationID,
 		RequestID:      requestID,
 	}); err != nil {
@@ -2187,7 +2187,7 @@ func (s *Store) FailPendingApprovals(ctx context.Context, conversationID string,
 	defer unlock()
 	if err := q.FailPendingConversationApprovals(ctx,
 		gen.FailPendingConversationApprovalsParams{
-			UpdatedAt:      now,
+			UpdatedAt:      utcTime(now),
 			ConversationID: conversationID,
 		}); err != nil {
 		return fmt.Errorf("fail pending approvals for %s: %w", conversationID, err)
@@ -2204,7 +2204,7 @@ func (s *Store) FailPendingInputs(ctx context.Context, conversationID string, no
 	defer unlock()
 	if err := q.FailPendingConversationInputs(ctx,
 		gen.FailPendingConversationInputsParams{
-			UpdatedAt:      now,
+			UpdatedAt:      utcTime(now),
 			ConversationID: conversationID,
 		}); err != nil {
 		return fmt.Errorf("fail pending inputs for %s: %w", conversationID, err)
@@ -2273,7 +2273,7 @@ func projectProviderEventTx(
 		ProviderEventID: providerEventID,
 		Method:          method,
 		PayloadJson:     payloadJSON,
-		ReceivedAt:      now,
+		ReceivedAt:      utcTime(now),
 	})
 	if err != nil {
 		return false, fmt.Errorf("archive provider event %s: %w", method, err)
@@ -2345,7 +2345,7 @@ func (s *Store) RollbackTurns(
 	err = s.inTx(ctx, "roll back turns", func(q *gen.Queries) error {
 		rows, markErr := q.MarkConversationTurnsRolledBack(ctx,
 			gen.MarkConversationTurnsRolledBackParams{
-				RolledBackAt:   sql.NullTime{Time: now, Valid: true},
+				RolledBackAt:   sql.NullTime{Time: utcTime(now), Valid: true},
 				ConversationID: conversationID,
 				ID:             turnID,
 			})
@@ -2356,7 +2356,7 @@ func (s *Store) RollbackTurns(
 
 		if err := q.InterruptRolledBackQueuedTurns(ctx,
 			gen.InterruptRolledBackQueuedTurnsParams{
-				CompletedAt:    sql.NullTime{Time: now, Valid: true},
+				CompletedAt:    sql.NullTime{Time: utcTime(now), Valid: true},
 				ConversationID: conversationID,
 			}); err != nil {
 			return fmt.Errorf("interrupt rolled back queued turns: %w", err)
@@ -2365,7 +2365,7 @@ func (s *Store) RollbackTurns(
 		if err := q.AttachLegacyCompactionsToRollbackAnchor(ctx,
 			gen.AttachLegacyCompactionsToRollbackAnchorParams{
 				AnchorTurnID:         sql.NullString{String: turnID, Valid: true},
-				UpdatedAt:            now,
+				UpdatedAt:            utcTime(now),
 				TargetConversationID: conversationID,
 			}); err != nil {
 			return fmt.Errorf("correlate legacy compactions with rollback: %w", err)
@@ -2373,7 +2373,7 @@ func (s *Store) RollbackTurns(
 
 		if err := q.RecomputeConversationCompactedAt(ctx,
 			gen.RecomputeConversationCompactedAtParams{
-				UpdatedAt:            now,
+				UpdatedAt:            utcTime(now),
 				TargetConversationID: conversationID,
 			}); err != nil {
 			return fmt.Errorf("recompute compacted conversation state: %w", err)
@@ -2381,7 +2381,7 @@ func (s *Store) RollbackTurns(
 
 		if err := q.FailRolledBackConversationApprovals(ctx,
 			gen.FailRolledBackConversationApprovalsParams{
-				UpdatedAt:        now,
+				UpdatedAt:        utcTime(now),
 				ConversationID:   conversationID,
 				ConversationID_2: conversationID,
 			}); err != nil {
@@ -2406,7 +2406,7 @@ func (s *Store) SetProviderTitle(
 	if err := q.UpdateConversationProviderTitle(ctx,
 		gen.UpdateConversationProviderTitleParams{
 			ProviderTitle: title,
-			UpdatedAt:     now,
+			UpdatedAt:     utcTime(now),
 			ID:            conversationID,
 		}); err != nil {
 		return fmt.Errorf("set provider title for %s: %w", conversationID, err)
@@ -2449,7 +2449,7 @@ func (s *Store) ApplyProviderTitle(
 		rows, updateErr := q.ApplyConversationTitleToSession(ctx,
 			gen.ApplyConversationTitleToSessionParams{
 				DisplayName: title,
-				UpdatedAt:   now,
+				UpdatedAt:   utcTime(now),
 				ID:          session,
 				// The witness: only a label AO itself last wrote may be replaced.
 				DisplayName_2: conversation.AppliedTitle,
@@ -2463,7 +2463,7 @@ func (s *Store) ApplyProviderTitle(
 		applied = true
 		return q.UpdateConversationAppliedTitle(ctx, gen.UpdateConversationAppliedTitleParams{
 			AppliedTitle: title,
-			UpdatedAt:    now,
+			UpdatedAt:    utcTime(now),
 			ID:           conversationID,
 		})
 	})

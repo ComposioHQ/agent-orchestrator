@@ -24,7 +24,7 @@ func (s *Store) InsertShellTerminal(ctx context.Context, rec shelltermsvc.ShellT
 		WorkingDir: rec.WorkingDir,
 		Title:      rec.Title,
 		AppRunID:   rec.AppRunID,
-		CreatedAt:  rec.CreatedAt,
+		CreatedAt:  utcTime(rec.CreatedAt),
 	})
 	if err != nil {
 		return fmt.Errorf("insert shell terminal %s: %w", rec.HandleID, err)
