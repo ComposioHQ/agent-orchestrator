@@ -1,5 +1,7 @@
 import type { QueryClient } from "@tanstack/react-query";
-import { getApiBaseUrl, hasTrustedApiBaseUrl, subscribeApiBaseUrl } from "./api-client";
+import { subscribeApiBaseUrl } from "./api-client";
+import { baseUrlFor, subscribeConnectedHosts } from "./host-clients";
+import { isLocal, refKey, type Ref } from "./hosts";
 
 const INVALIDATE_DEBOUNCE_MS = 150;
 const SSE_RETRY_MS = 5_000;
@@ -28,60 +30,67 @@ const streams = new Map<string, WorkspaceStream>();
 const connectionStates = new Map<string, WorkspaceFileConnectionState>();
 const connectionStateListeners = new Map<string, Set<() => void>>();
 
-export function getWorkspaceFileConnectionState(sessionId: string): WorkspaceFileConnectionState {
-	return connectionStates.get(sessionId) ?? "connecting";
+export function getWorkspaceFileConnectionState(session: Ref): WorkspaceFileConnectionState {
+	return connectionStates.get(refKey(session)) ?? "connecting";
 }
 
-export function subscribeWorkspaceFileConnectionState(sessionId: string, listener: () => void): () => void {
-	let listeners = connectionStateListeners.get(sessionId);
+export function subscribeWorkspaceFileConnectionState(session: Ref, listener: () => void): () => void {
+	const sessionKey = refKey(session);
+	let listeners = connectionStateListeners.get(sessionKey);
 	if (!listeners) {
 		listeners = new Set();
-		connectionStateListeners.set(sessionId, listeners);
+		connectionStateListeners.set(sessionKey, listeners);
 	}
 	listeners.add(listener);
 	return () => {
 		listeners?.delete(listener);
-		if (listeners?.size === 0) connectionStateListeners.delete(sessionId);
-		if (!streams.has(sessionId) && !connectionStateListeners.has(sessionId)) connectionStates.delete(sessionId);
+		if (listeners?.size === 0) connectionStateListeners.delete(sessionKey);
+		if (!streams.has(sessionKey) && !connectionStateListeners.has(sessionKey)) connectionStates.delete(sessionKey);
 	};
 }
 
-function setWorkspaceFileConnectionState(sessionId: string, next: WorkspaceFileConnectionState): void {
-	if (connectionStates.get(sessionId) === next) return;
-	connectionStates.set(sessionId, next);
-	connectionStateListeners.get(sessionId)?.forEach((listener) => listener());
+function setWorkspaceFileConnectionState(sessionKey: string, next: WorkspaceFileConnectionState): void {
+	if (connectionStates.get(sessionKey) === next) return;
+	connectionStates.set(sessionKey, next);
+	connectionStateListeners.get(sessionKey)?.forEach((listener) => listener());
 }
 
 // Shares one daemon watcher between the rail and maximized copies of a Files
 // view. The daemon sends only invalidation edges; Git status and visible diffs
 // are then refetched through the existing typed queries.
-export function subscribeWorkspaceFileChanges(sessionId: string, queryClient: QueryClient): () => void {
-	let stream = streams.get(sessionId);
+export function subscribeWorkspaceFileChanges(session: Ref, queryClient: QueryClient): () => void {
+	const sessionKey = refKey(session);
+	let stream = streams.get(sessionKey);
 	if (!stream) {
-		stream = createWorkspaceStream(sessionId, queryClient);
-		streams.set(sessionId, stream);
+		stream = createWorkspaceStream(session, queryClient);
+		streams.set(sessionKey, stream);
 	}
 	stream.refs += 1;
 
 	return () => {
-		const current = streams.get(sessionId);
+		const current = streams.get(sessionKey);
 		if (!current) return;
 		current.refs -= 1;
 		if (current.refs > 0) return;
 		current.dispose();
-		streams.delete(sessionId);
-		if (!connectionStateListeners.has(sessionId)) connectionStates.delete(sessionId);
+		streams.delete(sessionKey);
+		if (!connectionStateListeners.has(sessionKey)) connectionStates.delete(sessionKey);
 	};
 }
 
-function createWorkspaceStream(sessionId: string, queryClient: QueryClient): WorkspaceStream {
+function subscribeHostBase(session: Ref, listener: () => void): () => void {
+	return isLocal(session.host) ? subscribeApiBaseUrl(listener) : subscribeConnectedHosts(listener);
+}
+
+function createWorkspaceStream(session: Ref, queryClient: QueryClient): WorkspaceStream {
+	const sessionKey = refKey(session);
 	const stream = {} as WorkspaceStream;
 	const invalidate = () => {
 		if (stream.debounce) clearTimeout(stream.debounce);
 		stream.debounce = setTimeout(() => {
-			void queryClient.invalidateQueries({ queryKey: ["session-workspace-files", sessionId] });
-			void queryClient.invalidateQueries({ queryKey: ["session-workspace-file", sessionId] });
-			void queryClient.invalidateQueries({ queryKey: ["session-workspace-tree", sessionId] });
+			void queryClient.invalidateQueries({ queryKey: ["session-workspace-files", sessionKey] });
+			void queryClient.invalidateQueries({ queryKey: ["session-workspace-file", sessionKey] });
+			void queryClient.invalidateQueries({ queryKey: ["session-workspace-tree", sessionKey] });
 		}, INVALIDATE_DEBOUNCE_MS);
 	};
 	const scheduleRetry = (generation: number) => {
@@ -109,7 +118,7 @@ function createWorkspaceStream(sessionId: string, queryClient: QueryClient): Wor
 		stream.source?.close();
 		stream.source = undefined;
 		stream.failures += 1;
-		setWorkspaceFileConnectionState(sessionId, stream.failures >= 3 ? "degraded" : "connecting");
+		setWorkspaceFileConnectionState(sessionKey, stream.failures >= 3 ? "degraded" : "connecting");
 		scheduleRetry(generation);
 	};
 	stream.refs = 0;
@@ -117,23 +126,24 @@ function createWorkspaceStream(sessionId: string, queryClient: QueryClient): Wor
 	stream.phase = "idle";
 	stream.generation = 0;
 	stream.failures = 0;
-	setWorkspaceFileConnectionState(sessionId, "connecting");
+	setWorkspaceFileConnectionState(sessionKey, "connecting");
 	stream.ensureConnected = () => {
 		if (stream.disposed) return;
 		if (typeof EventSource === "undefined") {
-			setWorkspaceFileConnectionState(sessionId, "degraded");
+			setWorkspaceFileConnectionState(sessionKey, "degraded");
 			return;
 		}
-		if (!hasTrustedApiBaseUrl()) {
+		if (baseUrlFor(session.host) === null) {
 			resetConnection();
-			setWorkspaceFileConnectionState(sessionId, "connecting");
+			setWorkspaceFileConnectionState(sessionKey, "connecting");
 			return;
 		}
-		const baseUrl = getApiBaseUrl();
+		const baseUrl = baseUrlFor(session.host);
+		if (baseUrl === null) return;
 		if (stream.sourceBaseUrl && stream.sourceBaseUrl !== baseUrl) {
 			resetConnection();
 			stream.failures = 0;
-			setWorkspaceFileConnectionState(sessionId, "connecting");
+			setWorkspaceFileConnectionState(sessionKey, "connecting");
 		}
 		if (stream.phase !== "idle") return;
 
@@ -142,14 +152,14 @@ function createWorkspaceStream(sessionId: string, queryClient: QueryClient): Wor
 		const generation = ++stream.generation;
 		try {
 			const source = new EventSource(
-				`${baseUrl.replace(/\/+$/, "")}/api/v1/sessions/${encodeURIComponent(sessionId)}/workspace/events`,
+				`${baseUrl.replace(/\/+$/, "")}/api/v1/sessions/${encodeURIComponent(session.id)}/workspace/events`,
 			);
 			stream.source = source;
 			source.onopen = () => {
 				if (stream.disposed || generation !== stream.generation || stream.source !== source) return;
 				stream.phase = "open";
 				stream.failures = 0;
-				setWorkspaceFileConnectionState(sessionId, "connected");
+				setWorkspaceFileConnectionState(sessionKey, "connected");
 				invalidate();
 			};
 			source.onerror = () => {
@@ -159,7 +169,7 @@ function createWorkspaceStream(sessionId: string, queryClient: QueryClient): Wor
 					return;
 				}
 				stream.failures += 1;
-				setWorkspaceFileConnectionState(sessionId, stream.failures >= 3 ? "degraded" : "connecting");
+				setWorkspaceFileConnectionState(sessionKey, stream.failures >= 3 ? "degraded" : "connecting");
 			};
 			source.addEventListener("workspace_changed", () => {
 				if (!stream.disposed && generation === stream.generation && stream.source === source) invalidate();
@@ -169,7 +179,7 @@ function createWorkspaceStream(sessionId: string, queryClient: QueryClient): Wor
 			handleTerminalFailure(generation);
 		}
 	};
-	stream.disconnectBaseUrl = subscribeApiBaseUrl(stream.ensureConnected);
+	stream.disconnectBaseUrl = subscribeHostBase(session, stream.ensureConnected);
 	stream.dispose = () => {
 		stream.disposed = true;
 		if (stream.debounce) clearTimeout(stream.debounce);

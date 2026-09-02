@@ -15,7 +15,7 @@ import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 import { terminalTargetBelongsToSession, type TerminalTarget } from "../types/terminal";
-import { sessionIsActive, type WorkspaceSession } from "../types/workspace";
+import { flattenHostSections, sessionIsActive, type WorkspaceSession } from "../types/workspace";
 import type { Theme } from "../stores/ui-store";
 import {
 	useTerminalSession,
@@ -469,7 +469,7 @@ export function TerminalCacheProvider({
 	useEffect(() => {
 		if (!workspaceQuery.isSuccess) return;
 		const sessions = new Map(
-			(workspaceQuery.data ?? []).flatMap((workspace) =>
+			flattenHostSections(workspaceQuery.data).flatMap((workspace) =>
 				workspace.sessions.map((session) => [session.id, session] as const),
 			),
 		);

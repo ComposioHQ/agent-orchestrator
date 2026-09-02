@@ -39,7 +39,7 @@ describe("restartProjectOrchestrator", () => {
 		spawnMock.mockRejectedValue(failure);
 
 		await restartProjectOrchestrator({
-			projectId: "proj-1",
+			project: { host: "local", id: "proj-1" },
 			queryClient,
 			navigate,
 			setProjectRestarting,
@@ -49,8 +49,8 @@ describe("restartProjectOrchestrator", () => {
 
 		expect(spawnMock).toHaveBeenCalledWith("proj-1", "restart", true, undefined);
 		expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: workspaceQueryKey });
-		expect(setOrchestratorReplacementError).toHaveBeenNthCalledWith(1, "proj-1", null);
-		expect(setOrchestratorReplacementError).toHaveBeenNthCalledWith(2, "proj-1", {
+		expect(setOrchestratorReplacementError).toHaveBeenNthCalledWith(1, { host: "local", id: "proj-1" }, null);
+		expect(setOrchestratorReplacementError).toHaveBeenNthCalledWith(2, { host: "local", id: "proj-1" }, {
 			message: "missing goose binary",
 		});
 		expect(setProjectRestarting).toHaveBeenNthCalledWith(1, "proj-1", true);
@@ -70,7 +70,7 @@ describe("restartProjectOrchestrator", () => {
 		spawnMock.mockRejectedValue(failure);
 
 		await restartProjectOrchestrator({
-			projectId: "proj-1",
+			project: { host: "local", id: "proj-1" },
 			queryClient,
 			navigate,
 			setProjectRestarting,
@@ -78,7 +78,7 @@ describe("restartProjectOrchestrator", () => {
 			onError,
 		});
 
-		expect(setOrchestratorReplacementError).toHaveBeenLastCalledWith("proj-1", {
+		expect(setOrchestratorReplacementError).toHaveBeenLastCalledWith({ host: "local", id: "proj-1" }, {
 			message: "missing goose binary",
 		});
 		expect(setProjectRestarting).toHaveBeenLastCalledWith("proj-1", false);
@@ -100,7 +100,7 @@ describe("restartProjectOrchestrator", () => {
 		);
 
 		await restartProjectOrchestrator({
-			projectId: "proj-1",
+			project: { host: "local", id: "proj-1" },
 			queryClient,
 			navigate: vi.fn(),
 			setProjectRestarting: vi.fn(),
@@ -109,7 +109,7 @@ describe("restartProjectOrchestrator", () => {
 		});
 
 		expect(spawnMock).toHaveBeenCalledWith("proj-1", "restart", true, "tui");
-		expect(setOrchestratorReplacementError).toHaveBeenLastCalledWith("proj-1", {
+		expect(setOrchestratorReplacementError).toHaveBeenLastCalledWith({ host: "local", id: "proj-1" }, {
 			message: "Claude Code is unavailable",
 			code: "CHAT_DRIVER_UNAVAILABLE",
 			requestId: "request-42",

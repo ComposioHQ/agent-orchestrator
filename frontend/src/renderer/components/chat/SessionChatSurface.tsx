@@ -175,7 +175,7 @@ export function SessionChatSurface({
 	const openLinkInBrowser = useSessionBrowserLink(session);
 	// Agent-switch presentation for the chat surface progress track and input locks.
 	const switchMutation = useSwitchAgentState(session.id);
-	const agentSwitches = useAgentSwitches(session.id).data ?? [];
+	const agentSwitches = useAgentSwitches(session).data ?? [];
 	const activeHistorySwitch = findActiveAgentSwitch(agentSwitches);
 	const selectedDurableAgentSwitch = selectDurableAgentSwitch(
 		session.activeAgentSwitch,

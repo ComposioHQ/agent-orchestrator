@@ -1,7 +1,10 @@
 import type { QueryClient } from "@tanstack/react-query";
 import { aoBridge } from "./bridge";
-import { getApiBaseUrl, hasTrustedApiBaseUrl, subscribeApiBaseUrl } from "./api-client";
+import { subscribeApiBaseUrl } from "./api-client";
 import { setEventsConnectionState } from "./events-connection";
+import { connectedHosts, subscribeConnectedHosts } from "./host-clients";
+import { closeAllHostStreams, syncHostStreams } from "./host-events";
+import { LOCAL_HOST, type HostId } from "./hosts";
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { sessionScmSummaryQueryKey } from "../hooks/useSessionScmSummary";
 import { conversationQueryKey, conversationQueryRoot } from "../hooks/useConversation";
@@ -13,58 +16,28 @@ export type EventTransport = {
 };
 
 const INVALIDATE_DEBOUNCE_MS = 150;
-// How long to wait before rebuilding an EventSource the browser gave up on
-// (readyState CLOSED — e.g. the daemon answered with a non-SSE response).
-const SSE_RETRY_MS = 5_000;
-// EventSource.CLOSED, referenced numerically so test stubs without the static
-// constants still work.
-const EVENTSOURCE_CLOSED = 2;
-
-// CDC event types the daemon pushes over the SSE stream (see
-// backend/internal/cdc/event.go). The SSE writer tags each frame with
-// `event: <type>`, so named events bypass EventSource.onmessage and must be
-// subscribed explicitly. Every one of these can change the project/session list
-// the sidebar renders, so they all trigger a (debounced) workspace refetch.
-const CDC_EVENT_TYPES = [
-	"session_created",
-	"session_updated",
-	"pr_created",
-	"pr_updated",
-	"pr_check_recorded",
-	"pr_session_changed",
-	"pr_review_thread_added",
-	"pr_review_thread_resolved",
-	"review_run_created",
-	"review_run_updated",
-] as const;
 
 /**
  * Wires live server state into the TanStack Query cache. Two sources feed it:
  *   - daemon lifecycle over Electron IPC (coming up/down changes session availability)
  *   - the backend CDC stream over SSE (project/session/PR changes)
- * Both invalidate the ["workspaces"] query so the UI refetches. Invalidations are
- * debounced because a single user action can emit a burst of CDC events.
+ * Daemon lifecycle invalidates the workspace root; each SSE stream invalidates
+ * only its host key. Invalidations are debounced because one action can emit a
+ * burst of CDC events.
  */
 export function createEventTransport(queryClient: QueryClient): EventTransport {
 	return {
 		connect() {
+			closeAllHostStreams();
 			let debounce: ReturnType<typeof setTimeout> | undefined;
 			const pendingConversationSessions = new Set<string>();
 			const pendingInterfaceTransitionSessions = new Set<string>();
 			let workspaceInvalidationPending = false;
 			let allConversationsInvalidationPending = false;
-			let retryTimer: ReturnType<typeof setTimeout> | undefined;
-			let source: EventSource | undefined;
-			let sourceBaseUrl: string | undefined;
-			const refreshWorkspaces = (event?: Event) => {
+			const pendingWorkspaceHosts = new Set<HostId>();
+			const refreshWorkspaces = (host?: HostId, event?: Event) => {
 				let conversationOnly = false;
 				if (event === undefined) {
-					// A lifecycle refresh -- reconnect, daemon status change, base-URL change --
-					// carries no event, so we cannot know which conversations moved. Normally the
-					// replay that follows tells us, but when the event log has been truncated the
-					// daemon starts us at head and no CDC arrives at all. EventSource cannot read
-					// the header reporting that clamp, so refresh every conversation instead of
-					// leaving an open chat frozen on its pre-gap snapshot.
 					allConversationsInvalidationPending = true;
 				}
 				if (event && "data" in event) {
@@ -107,7 +80,10 @@ export function createEventTransport(queryClient: QueryClient): EventTransport {
 						// cannot target a conversation cache precisely.
 					}
 				}
-				if (!conversationOnly) workspaceInvalidationPending = true;
+				if (!conversationOnly) {
+					if (host) pendingWorkspaceHosts.add(host);
+					else workspaceInvalidationPending = true;
+				}
 				if (debounce) clearTimeout(debounce);
 				debounce = setTimeout(() => {
 					if (allConversationsInvalidationPending) {
@@ -121,6 +97,12 @@ export function createEventTransport(queryClient: QueryClient): EventTransport {
 						void queryClient.invalidateQueries({ queryKey: sessionUsageQueryRoot });
 						workspaceInvalidationPending = false;
 					}
+					for (const pendingHost of pendingWorkspaceHosts) {
+						void queryClient.invalidateQueries({
+							queryKey: [...workspaceQueryKey, pendingHost],
+						});
+					}
+					pendingWorkspaceHosts.clear();
 					for (const sessionId of pendingConversationSessions) {
 						void queryClient.invalidateQueries({ queryKey: conversationQueryKey(sessionId) });
 					}
@@ -134,71 +116,26 @@ export function createEventTransport(queryClient: QueryClient): EventTransport {
 				}, INVALIDATE_DEBOUNCE_MS);
 			};
 
-			const scheduleRetry = () => {
-				if (retryTimer) return;
-				retryTimer = setTimeout(() => {
-					retryTimer = undefined;
-					connectSource();
-				}, SSE_RETRY_MS);
-			};
-
-			const connectSource = () => {
-				// EventSource is unavailable in jsdom (tests) and some preview surfaces; guard it.
-				if (typeof EventSource === "undefined") return;
-				if (!hasTrustedApiBaseUrl()) {
-					source?.close();
-					source = undefined;
-					sourceBaseUrl = undefined;
-					setEventsConnectionState("disconnected");
-					return;
-				}
-				const baseUrl = getApiBaseUrl();
-				// Keep a still-usable source on the same base URL; replace one the
-				// browser abandoned (CLOSED) or one bound to a stale port.
-				if (source && sourceBaseUrl === baseUrl && source.readyState !== EVENTSOURCE_CLOSED) return;
-				source?.close();
-				source = undefined;
-				sourceBaseUrl = baseUrl;
-				try {
-					source = new EventSource(`${baseUrl.replace(/\/+$/, "")}/api/v1/events`);
-					source.onopen = () => {
-						setEventsConnectionState("connected");
-						// Events emitted during the gap were lost; refetch once on (re)open.
-						refreshWorkspaces();
-					};
-					source.onerror = () => {
-						// While readyState is CONNECTING the browser retries on its own;
-						// either way the stream is not delivering, so surface it instead
-						// of looping silently against a dead daemon.
-						setEventsConnectionState("disconnected");
-						if (source?.readyState === EVENTSOURCE_CLOSED) scheduleRetry();
-					};
-					source.onmessage = refreshWorkspaces; // unnamed events, if any
-					for (const type of CDC_EVENT_TYPES) {
-						source.addEventListener(type, refreshWorkspaces);
-					}
-					// EventSource auto-reconnects and resumes via Last-Event-ID while
-					// CONNECTING; scheduleRetry only covers the terminal CLOSED state.
-				} catch {
-					source = undefined;
-				}
+			const connectSources = () => {
+				syncHostStreams([LOCAL_HOST, ...connectedHosts()], refreshWorkspaces);
 			};
 
 			const removeDaemonListener = aoBridge.daemon.onStatus(() => {
-				connectSource();
+				connectSources();
 				refreshWorkspaces();
 			});
 			// Rebind when the daemon comes back on a different port, independent of
 			// status-event ordering.
-			const removeBaseUrlListener = subscribeApiBaseUrl(connectSource);
-			connectSource();
+			const removeBaseUrlListener = subscribeApiBaseUrl(connectSources);
+			const removeHostsListener = subscribeConnectedHosts(connectSources);
+			connectSources();
 
 			return () => {
 				if (debounce) clearTimeout(debounce);
-				if (retryTimer) clearTimeout(retryTimer);
 				removeDaemonListener();
 				removeBaseUrlListener();
-				source?.close();
+				removeHostsListener();
+				closeAllHostStreams();
 				setEventsConnectionState("idle");
 			};
 		},

@@ -3,7 +3,7 @@ import { useTranslation } from "react-i18next";
 import { Folder, Star } from "lucide-react";
 import { aoBridge } from "../lib/bridge";
 import { useWorkspaceQuery } from "../hooks/useWorkspaceQuery";
-import type { WorkspaceSummary } from "../types/workspace";
+import { flattenHostSections, type WorkspaceSummary } from "../types/workspace";
 import { BoardWelcome } from "./BoardEmptyStates";
 import { TopbarButton } from "./TopbarButton";
 
@@ -38,7 +38,7 @@ export function HomePage() {
 	const navigate = useNavigate();
 	const { t } = useTranslation();
 	const workspaceQuery = useWorkspaceQuery();
-	const projects = (workspaceQuery.data ?? [])
+	const projects = flattenHostSections(workspaceQuery.data)
 		.slice()
 		.sort((left, right) => latestProjectTimestamp(right).localeCompare(latestProjectTimestamp(left)))
 		.slice(0, 3);
@@ -65,7 +65,12 @@ export function HomePage() {
 							<ProjectRow
 								key={project.id}
 								project={project}
-								onClick={() => void navigate({ to: "/projects/$projectId", params: { projectId: project.id } })}
+								onClick={() =>
+									void navigate({
+										to: "/host/$hostId/project/$projectId",
+										params: { hostId: project.host, projectId: project.id },
+									})
+								}
 							/>
 						))}
 					</div>

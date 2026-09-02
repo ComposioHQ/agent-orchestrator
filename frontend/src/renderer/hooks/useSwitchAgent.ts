@@ -1,6 +1,7 @@
 import { type QueryClient, useMutation, useMutationState, useQueryClient } from "@tanstack/react-query";
 import type { components } from "../../api/schema";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
+import type { Ref } from "../lib/hosts";
 import type { WorkspaceSession } from "../types/workspace";
 import { agentSwitchesQueryKey, type AgentSwitch } from "./useAgentSwitches";
 import {
@@ -112,7 +113,7 @@ export function useSwitchAgent() {
 		onSuccess: (agentSwitch, variables) => {
 			if (!agentSwitch) return;
 			queryClient.setQueryData<AgentSwitch[]>(
-				agentSwitchesQueryKey(variables.session.id),
+				agentSwitchesQueryKey(variables.session),
 				(current = []) => [agentSwitch, ...current.filter((entry) => entry.id !== agentSwitch.id)],
 			);
 			void queryClient.invalidateQueries({ queryKey: conversationQueryKey(variables.session.id) });
@@ -123,7 +124,7 @@ export function useSwitchAgent() {
 		},
 		onSettled: (_data, _error, variables) => {
 			void queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
-			void queryClient.invalidateQueries({ queryKey: agentSwitchesQueryKey(variables.session.id) });
+			void queryClient.invalidateQueries({ queryKey: agentSwitchesQueryKey(variables.session) });
 		},
 	});
 }
@@ -132,10 +133,10 @@ export function useRecoverAgentSwitch() {
 	const queryClient = useQueryClient();
 	return useMutation({
 		mutationKey: recoverAgentSwitchMutationKey,
-		mutationFn: async ({ sessionId, switchId }: { sessionId: string; switchId: string }) => {
+		mutationFn: async ({ session, switchId }: { session: Ref; switchId: string }) => {
 			const { data, error, response } = await apiClient.POST(
 				"/api/v1/sessions/{sessionId}/agent-switches/{switchId}/recover",
-				{ params: { path: { sessionId, switchId } } },
+				{ params: { path: { sessionId: session.id, switchId } } },
 			);
 			if (error || response.status !== 202 || !data?.switch) {
 				const fallback = response
@@ -147,13 +148,13 @@ export function useRecoverAgentSwitch() {
 		},
 		onSuccess: (agentSwitch, variables) => {
 			queryClient.setQueryData<AgentSwitch[]>(
-				agentSwitchesQueryKey(variables.sessionId),
+				agentSwitchesQueryKey(variables.session),
 				(current = []) => [agentSwitch, ...current.filter((entry) => entry.id !== agentSwitch.id)],
 			);
 		},
 		onSettled: (_data, _error, variables) => {
 			void queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
-			void queryClient.invalidateQueries({ queryKey: agentSwitchesQueryKey(variables.sessionId) });
+			void queryClient.invalidateQueries({ queryKey: agentSwitchesQueryKey(variables.session) });
 		},
 	});
 }

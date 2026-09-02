@@ -1,3 +1,4 @@
+import { LOCAL_HOST } from "./hosts";
 import type { WorkspaceSession } from "../types/workspace";
 
 const demoUpdatedAt = "2026-08-26T08:00:00Z";
@@ -7,6 +8,7 @@ export function demoBoardSessions(workspaceId: string): WorkspaceSession[] {
 	const base = {
 		activity: { state: "idle" as const, lastActivityAt: demoUpdatedAt },
 		createdAt: "2026-08-25T08:00:00Z",
+		host: LOCAL_HOST,
 		isTerminated: false,
 		provider: "claude-code" as const,
 		prs: [],

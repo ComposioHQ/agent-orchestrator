@@ -13,7 +13,10 @@ vi.mock("@tanstack/react-router", async (importOriginal) => ({
 }));
 
 vi.mock("../hooks/useWorkspaceQuery", () => ({
-	useWorkspaceQuery: () => ({ data: routeMocks.workspaces, isSuccess: true }),
+	useWorkspaceQuery: () => ({
+		data: [{ host: "local", label: "Local", status: "ready", workspaces: routeMocks.workspaces, failure: null }],
+		isSuccess: true,
+	}),
 }));
 
 vi.mock("../components/BoardEmptyStates", () => ({
@@ -39,6 +42,7 @@ describe("shell index route", () => {
 	it("renders the home page instead of redirecting to a scratch board when projects exist", async () => {
 		routeMocks.workspaces = [
 			{
+				host: "local",
 				id: "scratch",
 				name: "Scratch",
 				kind: "scratch",
@@ -55,16 +59,16 @@ describe("shell index route", () => {
 
 	it("opens a project from the recent-project list", async () => {
 		routeMocks.workspaces = [
-			{ id: "scratch", name: "Scratch", kind: "scratch", path: "/scratch", sessions: [] },
-			{ id: "proj-1", name: "Project One", kind: "single_repo", path: "/repo/project-one", sessions: [] },
+			{ host: "local", id: "scratch", name: "Scratch", kind: "scratch", path: "/scratch", sessions: [] },
+			{ host: "local", id: "proj-1", name: "Project One", kind: "single_repo", path: "/repo/project-one", sessions: [] },
 		];
 
 		render(<HomePage />);
 
 		fireEvent.click(screen.getByRole("button", { name: /Project One/ }));
 		expect(routeMocks.navigate).toHaveBeenCalledWith({
-			to: "/projects/$projectId",
-			params: { projectId: "proj-1" },
+			to: "/host/$hostId/project/$projectId",
+			params: { hostId: "local", projectId: "proj-1" },
 		});
 	});
 });
