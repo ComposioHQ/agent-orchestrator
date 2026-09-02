@@ -197,6 +197,7 @@ function toCloudWorkspaceSession(
 			runtimeProvider: session.runtimeProvider,
 			runtimeState: session.runtimeState,
 			runtimeError: session.runtimeError,
+			runtimeStartupStartedAt: session.runtimeStartupStartedAt,
 		},
 	};
 }

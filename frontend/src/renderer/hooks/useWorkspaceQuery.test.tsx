@@ -451,6 +451,7 @@ describe("useWorkspaceQuery", () => {
 					runtimeProvider: "coder",
 					runtimeState: "bootstrapping",
 					runtimeError: "",
+					runtimeStartupStartedAt: "2026-09-02T00:00:30Z",
 					isTerminated: false,
 					createdAt: "2026-09-02T00:00:00Z",
 					updatedAt: "2026-09-02T00:01:00Z",
@@ -468,6 +469,7 @@ describe("useWorkspaceQuery", () => {
 			runtimeProvider: "coder",
 			runtimeState: "bootstrapping",
 			runtimeError: "",
+			runtimeStartupStartedAt: "2026-09-02T00:00:30Z",
 		});
 	});
 

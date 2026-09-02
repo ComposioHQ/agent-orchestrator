@@ -179,6 +179,7 @@ export interface CloudCpSession {
 	runtimeProvider?: string;
 	runtimeState?: string;
 	runtimeError?: string;
+	runtimeStartupStartedAt?: string;
 	isTerminated: boolean;
 	createdAt: string;
 	updatedAt: string;

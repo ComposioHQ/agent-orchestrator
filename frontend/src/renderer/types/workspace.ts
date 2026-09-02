@@ -153,6 +153,8 @@ export type WorkspaceSession = {
 		runtimeProvider?: string;
 		runtimeState?: string;
 		runtimeError?: string;
+		/** Beginning of the current remote workspace create/resume attempt. */
+		runtimeStartupStartedAt?: string;
 	};
 };
 

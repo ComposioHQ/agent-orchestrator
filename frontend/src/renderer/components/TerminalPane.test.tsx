@@ -542,16 +542,21 @@ describe("TerminalPane replay cover", () => {
 		}
 	});
 
-	it("shows a live elapsed timer anchored to cloud session creation", () => {
+	it("shows a live elapsed timer anchored to the current cloud startup attempt", () => {
 		vi.useFakeTimers();
 		vi.setSystemTime("2026-09-02T10:00:35Z");
 		terminalState.value = "reattaching";
 		hasAttached.value = false;
 		const view = renderPane({
 			...worker,
-			createdAt: "2026-09-02T10:00:00Z",
+			createdAt: "2026-09-02T03:07:00Z",
 			terminalHandleId: "cloud-session",
-			cloud: { orgId: "cloud-org", runtimeProvider: "coder", runtimeState: "provisioning" },
+			cloud: {
+				orgId: "cloud-org",
+				runtimeProvider: "coder",
+				runtimeState: "provisioning",
+				runtimeStartupStartedAt: "2026-09-02T10:00:00Z",
+			},
 		});
 		try {
 			expect(screen.getByTestId("terminal-startup-elapsed")).toHaveTextContent("35s");

@@ -1122,7 +1122,10 @@ function AttachedTerminal({
 							)}
 						>
 							{centerCloudStartupBanner ? (
-								<CloudStartupStatus message={banner} startedAt={attachSession?.createdAt} />
+								<CloudStartupStatus
+									message={banner}
+									startedAt={attachSession?.cloud?.runtimeStartupStartedAt}
+								/>
 							) : (
 								banner
 							)}
