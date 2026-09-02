@@ -1,6 +1,5 @@
 -- +goose NO TRANSACTION
 -- +goose Up
--- +goose StatementBegin
 -- SQLite cannot correct the retained-marker CHECK in place. Rebuild the
 -- complete latest agent_switches shape, preserving every column, index, and
 -- trigger while adding the stable failure classification point.
@@ -95,6 +94,7 @@ CREATE UNIQUE INDEX idx_agent_switches_one_active_per_session
 CREATE INDEX idx_agent_switches_session_history
     ON agent_switches (session_id, requested_at DESC, id DESC);
 
+-- +goose StatementBegin
 CREATE TRIGGER agent_switches_target_native_scope_insert
 BEFORE INSERT ON agent_switches
 WHEN NEW.target_native_session_ref IS NOT NULL
@@ -107,7 +107,9 @@ WHEN NEW.target_native_session_ref IS NOT NULL
 BEGIN
     SELECT RAISE(ABORT, 'agent switch target native session scope mismatch');
 END;
+-- +goose StatementEnd
 
+-- +goose StatementBegin
 CREATE TRIGGER agent_switches_target_native_scope_update
 BEFORE UPDATE OF session_id, target_harness, target_native_session_ref ON agent_switches
 WHEN NEW.target_native_session_ref IS NOT NULL
@@ -120,7 +122,9 @@ WHEN NEW.target_native_session_ref IS NOT NULL
 BEGIN
     SELECT RAISE(ABORT, 'agent switch target native session scope mismatch');
 END;
+-- +goose StatementEnd
 
+-- +goose StatementBegin
 CREATE TRIGGER agent_switches_cdc_insert
 AFTER INSERT ON agent_switches
 BEGIN
@@ -130,7 +134,9 @@ BEGIN
         NEW.session_id, 'session_updated', json_object('id', NEW.session_id), NEW.updated_at
     );
 END;
+-- +goose StatementEnd
 
+-- +goose StatementBegin
 CREATE TRIGGER agent_switches_cdc_update
 AFTER UPDATE ON agent_switches
 BEGIN
@@ -140,6 +146,7 @@ BEGIN
         NEW.session_id, 'session_updated', json_object('id', NEW.session_id), NEW.updated_at
     );
 END;
+-- +goose StatementEnd
 
 CREATE TABLE agent_switch_failure_policy (
     singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
@@ -220,7 +227,6 @@ CREATE TABLE agent_switch_failure_delivery_state (
 
 PRAGMA foreign_keys=ON;
 PRAGMA foreign_key_check;
--- +goose StatementEnd
 
 -- +goose Down
 -- +goose StatementBegin

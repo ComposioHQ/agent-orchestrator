@@ -206,15 +206,74 @@ func TestMigration0124AgentSwitchFailureConstraintCDCAndIndexes(t *testing.T) {
 		t.Fatalf("open sqlite: %v", err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
-	upTo(t, db, 124)
+	upTo(t, db, 118)
 
 	now := time.Date(2026, time.August, 28, 9, 0, 0, 0, time.UTC)
 	if _, err := db.Exec(`
 INSERT INTO projects (id, path, registered_at) VALUES ('failure-schema', '/repos/failure-schema', ?);
 INSERT INTO sessions (id, project_id, num, harness, activity_last_at, created_at, updated_at)
 VALUES ('failure-session', 'failure-schema', 1, 'claude-code', ?, ?, ?);
-`, now, now, now, now); err != nil {
+INSERT INTO projects (id,path,registered_at) VALUES ('copy-project','/repos/copy-project',?);
+INSERT INTO sessions (id,project_id,num,harness,activity_last_at,created_at,updated_at)
+VALUES ('copy-session','copy-project',1,'claude-code',?,?,?);
+INSERT INTO projects (id,path,registered_at) VALUES ('legacy-marker-project','/repos/legacy-marker',?);
+INSERT INTO sessions (id,project_id,num,harness,activity_last_at,created_at,updated_at)
+VALUES ('legacy-marker-session','legacy-marker-project',1,'claude-code',?,?,?);
+`, now, now, now, now, now, now, now, now, now, now, now, now); err != nil {
 		t.Fatalf("seed parents: %v", err)
+	}
+	if _, err := db.Exec(`
+INSERT INTO agent_switches (
+ id,session_id,idempotency_key,request_fingerprint,from_harness,target_harness,
+ target_native_session_ref,target_start_mode,state,agent_handoff_status,
+ source_transcript_status,semantic_handoff_included,agent_handoff_path,agent_handoff_hash,
+ source_generation_id,target_generation_id,target_runtime_handle_id,target_acknowledged_at,
+ error_code,requested_at,updated_at,final_handoff_path,final_handoff_hash
+) VALUES (
+ 'copy-switch','copy-session','copy-key',?,'claude-code','codex',NULL,'resumed','failed','received',
+ 'available',1,'handoff.json',?,'source-copy','target-copy','handle-copy',?,
+ 'delivery_unconfirmed',?,?, 'final.json',?
+);`, "v1:"+strings.Repeat("c", 64), strings.Repeat("a", 64),
+		now.Add(time.Second), now, now.Add(2*time.Second), strings.Repeat("b", 64)); err != nil {
+		t.Fatalf("seed pre-0124 switch: %v", err)
+	}
+	const projection = `json_array(
+ id,session_id,idempotency_key,request_fingerprint,from_harness,target_harness,
+ target_native_session_ref,target_start_mode,state,agent_handoff_status,
+ source_transcript_status,semantic_handoff_included,agent_handoff_path,agent_handoff_hash,
+ source_generation_id,target_generation_id,target_runtime_handle_id,target_acknowledged_at,
+ error_code,requested_at,updated_at,final_handoff_path,final_handoff_hash)`
+	var copyBefore string
+	if err := db.QueryRow(`SELECT ` + projection + ` FROM agent_switches WHERE id='copy-switch'`).Scan(&copyBefore); err != nil {
+		t.Fatalf("read switch before 0124: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO agent_switches (
+ id,session_id,idempotency_key,request_fingerprint,from_harness,target_harness,state,
+ agent_handoff_status,source_generation_id,error_code,requested_at,updated_at
+) VALUES (
+ 'legacy-marker-switch','legacy-marker-session','legacy-marker-key',?,'claude-code','codex','failed',
+ 'not_attempted','source-generation','source_stop_unconfirmed',?,?
+);`, "v1:"+strings.Repeat("d", 64), now, now); err != nil {
+		t.Fatalf("seed legacy retained marker: %v", err)
+	}
+
+	upTo(t, db, 124)
+	var copyAfter, copyFailurePoint string
+	if err := db.QueryRow(`SELECT `+projection+`,failure_point FROM agent_switches WHERE id='copy-switch'`).Scan(&copyAfter, &copyFailurePoint); err != nil {
+		t.Fatalf("read switch after 0124: %v", err)
+	}
+	if copyAfter != copyBefore {
+		t.Fatalf("0124 changed an existing switch column:\nbefore=%s\nafter=%s", copyBefore, copyAfter)
+	}
+	if copyFailurePoint != "" {
+		t.Fatalf("migrated failure_point = %q, want empty", copyFailurePoint)
+	}
+	var legacyState, legacyCode, legacyFailurePoint string
+	if err := db.QueryRow(`SELECT state,error_code,failure_point FROM agent_switches WHERE id='legacy-marker-switch'`).Scan(&legacyState, &legacyCode, &legacyFailurePoint); err != nil {
+		t.Fatalf("read migrated retained marker: %v", err)
+	}
+	if legacyState != "stopping_source" || legacyCode != "source_stop_unconfirmed" || legacyFailurePoint != "" {
+		t.Fatalf("migrated marker = (%q,%q,%q), want (stopping_source,source_stop_unconfirmed,empty)", legacyState, legacyCode, legacyFailurePoint)
 	}
 
 	type stateCase struct {
@@ -300,94 +359,5 @@ INSERT INTO agent_switches (
 	var fkViolations int
 	if err := db.QueryRow(`SELECT count(*) FROM pragma_foreign_key_check`).Scan(&fkViolations); err != nil || fkViolations != 0 {
 		t.Fatalf("foreign key violations = %d, err=%v", fkViolations, err)
-	}
-}
-
-func TestMigration0124CopiesEveryExistingAgentSwitchColumn(t *testing.T) {
-	db, err := sql.Open("sqlite", "file:"+filepath.Join(t.TempDir(), "ao.db")+pragmas)
-	if err != nil {
-		t.Fatalf("open sqlite: %v", err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
-	upTo(t, db, 118)
-
-	now := time.Date(2026, time.August, 28, 10, 0, 0, 0, time.UTC)
-	if _, err := db.Exec(`
-INSERT INTO projects (id,path,registered_at) VALUES ('copy-project','/repos/copy-project',?);
-INSERT INTO sessions (id,project_id,num,harness,activity_last_at,created_at,updated_at)
-VALUES ('copy-session','copy-project',1,'claude-code',?,?,?);`, now, now, now, now); err != nil {
-		t.Fatalf("seed pre-0124 parents: %v", err)
-	}
-	if _, err := db.Exec(`
-INSERT INTO agent_switches (
- id,session_id,idempotency_key,request_fingerprint,from_harness,target_harness,
- target_native_session_ref,target_start_mode,state,agent_handoff_status,
- source_transcript_status,semantic_handoff_included,agent_handoff_path,agent_handoff_hash,
- source_generation_id,target_generation_id,target_runtime_handle_id,target_acknowledged_at,
- error_code,requested_at,updated_at,final_handoff_path,final_handoff_hash
-) VALUES (
- 'copy-switch','copy-session','copy-key',?,'claude-code','codex',NULL,'resumed','failed','received',
- 'available',1,'handoff.json',?,'source-copy','target-copy','handle-copy',?,
- 'delivery_unconfirmed',?,?, 'final.json',?
-)`, "v1:"+strings.Repeat("c", 64), strings.Repeat("a", 64),
-		now.Add(time.Second), now, now.Add(2*time.Second), strings.Repeat("b", 64)); err != nil {
-		t.Fatalf("seed pre-0124 switch: %v", err)
-	}
-	const projection = `json_array(
- id,session_id,idempotency_key,request_fingerprint,from_harness,target_harness,
- target_native_session_ref,target_start_mode,state,agent_handoff_status,
- source_transcript_status,semantic_handoff_included,agent_handoff_path,agent_handoff_hash,
- source_generation_id,target_generation_id,target_runtime_handle_id,target_acknowledged_at,
- error_code,requested_at,updated_at,final_handoff_path,final_handoff_hash)`
-	var before string
-	if err := db.QueryRow(`SELECT ` + projection + ` FROM agent_switches WHERE id='copy-switch'`).Scan(&before); err != nil {
-		t.Fatalf("read switch before 0124: %v", err)
-	}
-	upTo(t, db, 124)
-	var after, failurePoint string
-	if err := db.QueryRow(`SELECT `+projection+`,failure_point FROM agent_switches WHERE id='copy-switch'`).Scan(&after, &failurePoint); err != nil {
-		t.Fatalf("read switch after 0124: %v", err)
-	}
-	if after != before {
-		t.Fatalf("0124 changed an existing switch column:\nbefore=%s\nafter=%s", before, after)
-	}
-	if failurePoint != "" {
-		t.Fatalf("migrated failure_point = %q, want empty", failurePoint)
-	}
-}
-
-func TestMigration0124PromotesLegacyFailedSourceStopMarker(t *testing.T) {
-	db, err := sql.Open("sqlite", "file:"+filepath.Join(t.TempDir(), "ao.db")+pragmas)
-	if err != nil {
-		t.Fatalf("open sqlite: %v", err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
-	upTo(t, db, 118)
-
-	now := time.Date(2026, time.August, 30, 9, 0, 0, 0, time.UTC)
-	if _, err := db.Exec(`INSERT INTO projects (id,path,registered_at) VALUES ('legacy-marker-project','/repos/legacy-marker',?)`, now); err != nil {
-		t.Fatalf("seed legacy project: %v", err)
-	}
-	if _, err := db.Exec(`INSERT INTO sessions (id,project_id,num,harness,activity_last_at,created_at,updated_at)
-VALUES ('legacy-marker-session','legacy-marker-project',1,'claude-code',?,?,?)`, now, now, now); err != nil {
-		t.Fatalf("seed legacy session: %v", err)
-	}
-	if _, err := db.Exec(`INSERT INTO agent_switches (
- id,session_id,idempotency_key,request_fingerprint,from_harness,target_harness,state,
- agent_handoff_status,source_generation_id,error_code,requested_at,updated_at
-) VALUES (
- 'legacy-marker-switch','legacy-marker-session','legacy-marker-key',?,'claude-code','codex','failed',
- 'not_attempted','source-generation','source_stop_unconfirmed',?,?
-);`, "v1:"+strings.Repeat("d", 64), now, now); err != nil {
-		t.Fatalf("seed legacy retained marker: %v", err)
-	}
-
-	upTo(t, db, 124)
-	var state, code, failurePoint string
-	if err := db.QueryRow(`SELECT state,error_code,failure_point FROM agent_switches WHERE id='legacy-marker-switch'`).Scan(&state, &code, &failurePoint); err != nil {
-		t.Fatalf("read migrated retained marker: %v", err)
-	}
-	if state != "stopping_source" || code != "source_stop_unconfirmed" || failurePoint != "" {
-		t.Fatalf("migrated marker = (%q,%q,%q), want (stopping_source,source_stop_unconfirmed,empty)", state, code, failurePoint)
 	}
 }
