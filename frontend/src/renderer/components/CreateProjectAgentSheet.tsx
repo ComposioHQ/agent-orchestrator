@@ -198,6 +198,7 @@ export function CreateProjectAgentSheet({
 							) : undefined
 						}
 						path={path ?? ""}
+						showPath={false}
 						title={
 							kind === "workspace"
 								? t("createProject.workspaceAgents")
@@ -268,7 +269,6 @@ export function CreateProjectAgentSheet({
 								: null
 						}
 						canSubmit={canSubmit}
-						cancelLabel={t("createProject.cancel")}
 						intakeControl={
 							<IntakeFields
 								form={intake}
@@ -296,7 +296,7 @@ export function CreateProjectAgentSheet({
 										? t("createProject.cloning")
 										: t("createProject.creating")
 									: action === "clone"
-										? t("createProject.cloneAndStart")
+										? t("createProject.clone")
 										: kind === "workspace"
 											? t("createProject.createWorkspaceAndStart")
 											: t("createProject.createAndStart")

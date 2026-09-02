@@ -251,6 +251,7 @@ export function ProjectSetupHeaderView({
 	disabled,
 	leadingAction,
 	path,
+	showPath = true,
 	title,
 }: {
 	CloseButton: ComponentType<{ "aria-label": string; children: ReactNode; disabled: boolean }>;
@@ -260,19 +261,25 @@ export function ProjectSetupHeaderView({
 	closeLabel: string;
 	disabled: boolean;
 	leadingAction?: ReactNode;
-	path: string;
+	path?: string;
+	showPath?: boolean;
 	title: string;
 }) {
 	return (
-		<div className="flex items-start justify-between gap-4 border-b border-border p-4">
+		<div
+			className={cn(
+				"flex justify-between gap-4",
+				showPath ? "items-start border-b border-border p-4" : "items-center px-4 pt-3",
+			)}
+		>
 			{leadingAction}
 			<div className="min-w-0">
-				<Title className="text-subtitle font-semibold text-foreground">
+				<Title className={showPath ? "text-subtitle font-semibold text-foreground" : "settings-dialog-title"}>
 					{title}
 				</Title>
-				<Description className="mt-1 break-all text-xs text-muted-foreground">
-					{path}
-				</Description>
+				{showPath && path ? (
+					<Description className="mt-1 break-all text-xs text-muted-foreground">{path}</Description>
+				) : null}
 			</div>
 			<CloseButton aria-label={closeLabel} disabled={disabled}>
 				{closeIcon}
@@ -319,7 +326,7 @@ export function ProjectSetupFormView({
 	onSubmit: () => void;
 	setupNotice?: { message: string; warning?: string | null } | null;
 	submitLabel: string;
-	cancelLabel: string;
+	cancelLabel?: string;
 }) {
 	const submit = (event: FormEvent<HTMLFormElement>) => {
 		event.preventDefault();
@@ -396,14 +403,16 @@ export function ProjectSetupFormView({
 			)}
 
 			<div className="flex items-center justify-end gap-3 pt-1">
-				<button
-					className="settings-footer-button disabled:pointer-events-none disabled:opacity-50"
-					type="button"
-					disabled={isBusy}
-					onClick={onCancel}
-				>
-					{cancelLabel}
-				</button>
+				{cancelLabel ? (
+					<button
+						className="settings-footer-button disabled:pointer-events-none disabled:opacity-50"
+						type="button"
+						disabled={isBusy}
+						onClick={onCancel}
+					>
+						{cancelLabel}
+					</button>
+				) : null}
 				<button
 					className="settings-footer-button settings-footer-button-primary disabled:pointer-events-none disabled:opacity-50"
 					type="submit"

@@ -145,6 +145,8 @@
 	"createProject.chooseRepo": "Choose a project repository",
 	"createProject.chooseWorkspace": "Choose a workspace folder",
 	"createProject.cloneAndStart": "Clone and start",
+	"createProject.clone": "Clone",
+	"createProject.workOnAssignedIssues": "Automatically work on assigned issues",
 	"createProject.cloneBack": "Back to code source",
 	"createProject.cloneBackToDetails": "Back to clone details",
 	"createProject.cloneChoose": "Choose",

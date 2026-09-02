@@ -92,6 +92,9 @@ describe("CreateProjectAgentSheet", () => {
 	it("creates without intake when the toggle is left off", async () => {
 		const onSubmit = renderSheet();
 
+		expect(screen.getByRole("dialog")).not.toHaveTextContent("/repo/new-project");
+		expect(screen.queryByRole("button", { name: "Cancel" })).not.toBeInTheDocument();
+
 		await userEvent.click(screen.getByRole("button", { name: "Create and start" }));
 
 		await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
@@ -113,7 +116,7 @@ describe("CreateProjectAgentSheet", () => {
 		await chooseOption(screen.getByLabelText("Worker agent"), "claude-code");
 		await chooseOption(screen.getByLabelText("Orchestrator agent"), "codex");
 
-		await userEvent.click(screen.getByLabelText("Enable issue intake"));
+		await userEvent.click(screen.getByLabelText("Automatically work on assigned issues"));
 		// Enabled with no eligibility rule → submit stays disabled (compact sheet
 		// carries no inline guard prose; gating is the disabled button).
 		expect(screen.getByRole("button", { name: "Create and start" })).toBeDisabled();
@@ -129,13 +132,13 @@ describe("CreateProjectAgentSheet", () => {
 		});
 	});
 
-	it("keeps the create sheet minimal: info tooltip instead of prose, no repo row or credential hint", async () => {
+	it("keeps the create sheet minimal: no repo row or credential hint", async () => {
 		renderSheet();
-		// Info affordance is present even before enabling; the descriptive prose is not.
-		expect(screen.getByLabelText("What does enabling issue intake do?")).toBeInTheDocument();
+		// The compact setup control uses the shared switch styling; descriptive prose is not shown.
+		expect(screen.getByLabelText("Automatically work on assigned issues")).toBeInTheDocument();
 		expect(screen.queryByText(/Auto-spawn worker sessions from matching tracker issues/)).not.toBeInTheDocument();
 
-		await userEvent.click(screen.getByLabelText("Enable issue intake"));
+		await userEvent.click(screen.getByLabelText("Automatically work on assigned issues"));
 		expect(screen.queryByText("Repository")).not.toBeInTheDocument();
 		expect(screen.queryByText(/Reads credentials from/)).not.toBeInTheDocument();
 	});
