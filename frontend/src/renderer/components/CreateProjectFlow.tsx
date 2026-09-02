@@ -7,7 +7,7 @@ import {
 	ChevronRight,
 	Cloud,
 	Folder,
-	FolderOpen,
+	FolderClosed,
 	FolderPlus,
 	Folders,
 	GitBranch,
@@ -877,7 +877,7 @@ function ImportSourcePicker({
 		},
 		{
 			source: "local",
-			icon: <FolderOpen className="size-5" aria-hidden="true" strokeWidth={1.8} />,
+			icon: <FolderClosed className="size-5" aria-hidden="true" strokeWidth={1.8} />,
 			label: t("createProject.openLocal"),
 			description: t("createProject.openLocalDesc"),
 		},
