@@ -126,7 +126,7 @@ beforeEach(() => {
 describe("CreateProjectFlow droppedPath", () => {
 	it("does not open on mount", () => {
 		render(<CreateProjectFlow mode="choose" {...noop} droppedPath={null} />);
-		expect(screen.queryByRole("button", { name: "Add a workspace folder" })).not.toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: "Import a workspace folder" })).not.toBeInTheDocument();
 	});
 
 	it("opens the mode picker without invoking the native folder chooser", async () => {

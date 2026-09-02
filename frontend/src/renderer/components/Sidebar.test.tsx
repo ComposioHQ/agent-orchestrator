@@ -328,7 +328,7 @@ async function openCreateProjectDialog(
 	window.ao!.app.chooseDirectory = vi.fn().mockResolvedValue(path);
 	window.ao!.app.scanImportFolder = vi.fn().mockResolvedValue(scan);
 	await user.click(screen.getByLabelText("New project"));
-	await user.click(screen.getByRole("button", { name: /^Open local repository$/i }));
+	await user.click(screen.getByRole("button", { name: /^Import an existing project$/i }));
 	await screen.findByText(path);
 	await user.click(await screen.findByRole("button", { name: "Continue" }));
 	await chooseOption(screen.getByRole("combobox", { name: "Worker agent" }), "Codex");
@@ -570,7 +570,7 @@ describe("Sidebar", () => {
 			useUiStore.getState().requestCreateProject();
 		});
 
-		expect(await screen.findByRole("dialog", { name: "Add code to Agent Orchestrator" })).toBeInTheDocument();
+		expect(await screen.findByRole("dialog", { name: "Add a project" })).toBeInTheDocument();
 	});
 
 	it("keeps the create-project shortcut available when there are no projects", async () => {
@@ -580,7 +580,7 @@ describe("Sidebar", () => {
 			useUiStore.getState().requestCreateProject();
 		});
 
-		expect(await screen.findByRole("dialog", { name: "Add code to Agent Orchestrator" })).toBeInTheDocument();
+		expect(await screen.findByRole("dialog", { name: "Add a project" })).toBeInTheDocument();
 	});
 
 	it("reveals orchestrator and kebab buttons on the project row (no dashboard button)", () => {
@@ -839,9 +839,9 @@ describe("Sidebar", () => {
 		renderSidebar({ onCreateProject });
 
 		await user.click(screen.getByLabelText("New project"));
-		expect(screen.getByRole("dialog", { name: "Add code to Agent Orchestrator" })).toBeInTheDocument();
+		expect(screen.getByRole("dialog", { name: "Add a project" })).toBeInTheDocument();
 		expect(window.ao!.app.chooseDirectory).not.toHaveBeenCalled();
-		await user.click(screen.getByRole("button", { name: /^Open local repository$/i }));
+		await user.click(screen.getByRole("button", { name: /^Import an existing project$/i }));
 
 		expect(await screen.findByText("/repo/new-project")).toBeInTheDocument();
 		expect(window.ao!.app.chooseDirectory).toHaveBeenCalledWith("Choose a project repository");
@@ -927,7 +927,7 @@ describe("Sidebar", () => {
 
 		await user.click(await screen.findByRole("button", { name: "Back to clone details" }));
 		await user.click(await screen.findByRole("button", { name: "Back to code source" }));
-		await user.click(await screen.findByRole("button", { name: /^Open local repository$/i }));
+		await user.click(await screen.findByRole("button", { name: /^Import an existing project$/i }));
 
 		expect(await screen.findAllByText("/repo/local-project")).not.toHaveLength(0);
 		await user.click(await screen.findByRole("button", { name: "Continue" }));
@@ -964,7 +964,7 @@ describe("Sidebar", () => {
 		renderSidebar({ onCreateProject, seedAgents: false });
 
 		await user.click(screen.getByLabelText("New project"));
-		await user.click(screen.getByRole("button", { name: /^Open local repository$/i }));
+		await user.click(screen.getByRole("button", { name: /^Import an existing project$/i }));
 		expect(await screen.findByText("/repo/new-project")).toBeInTheDocument();
 		await user.click(screen.getByRole("button", { name: "Continue" }));
 		expect(screen.getByRole("combobox", { name: "Worker agent" })).toHaveTextContent(/cursor/i);
@@ -1018,7 +1018,7 @@ describe("Sidebar", () => {
 		renderSidebar({ onCreateProject, onInitializeProject });
 
 		await user.click(screen.getByLabelText("New project"));
-		await user.click(screen.getByRole("button", { name: /^Open local repository$/i }));
+		await user.click(screen.getByRole("button", { name: /^Import an existing project$/i }));
 
 		await screen.findByText("/repo/parent/universe");
 		await user.click(screen.getByRole("button", { name: "Continue" }));
@@ -1089,7 +1089,7 @@ describe("Sidebar", () => {
 		renderSidebar({ onCreateProject });
 
 		await user.click(screen.getByLabelText("New project"));
-		await user.click(screen.getByRole("button", { name: /^Add a workspace folder$/i }));
+		await user.click(screen.getByRole("button", { name: /^Import a workspace folder$/i }));
 
 		expect(await screen.findByText("/repo/workspace")).toBeInTheDocument();
 		expect(window.ao!.app.chooseDirectory).toHaveBeenCalledWith("Choose a workspace folder");
@@ -1123,7 +1123,7 @@ describe("Sidebar", () => {
 		renderSidebar({ onCreateProject, onInitializeProject });
 
 		await user.click(screen.getByLabelText("New project"));
-		await user.click(screen.getByRole("button", { name: /^Add a workspace folder$/i }));
+		await user.click(screen.getByRole("button", { name: /^Import a workspace folder$/i }));
 		await user.click(await screen.findByRole("button", { name: "Continue" }));
 		await screen.findByRole("dialog", { name: "Set up workspace" });
 		await chooseOption(screen.getByRole("combobox", { name: "Orchestrator agent" }), "Claude Code");
@@ -1175,7 +1175,7 @@ describe("Sidebar", () => {
 		renderSidebar({ onCreateProject });
 
 		await user.click(screen.getByLabelText("New project"));
-		await user.click(screen.getByRole("button", { name: /^Add a workspace folder$/i }));
+		await user.click(screen.getByRole("button", { name: /^Import a workspace folder$/i }));
 		await user.click(await screen.findByRole("button", { name: "Continue" }));
 		await screen.findByRole("dialog", { name: "Set up workspace" });
 		await chooseOption(screen.getByRole("combobox", { name: "Orchestrator agent" }), "Claude Code");
@@ -1227,7 +1227,7 @@ describe("Sidebar", () => {
 		renderSidebar({ onCreateProject });
 
 		await user.click(screen.getByLabelText("New project"));
-		await user.click(screen.getByRole("button", { name: /^Add a workspace folder$/i }));
+		await user.click(screen.getByRole("button", { name: /^Import a workspace folder$/i }));
 		await user.click(await screen.findByRole("button", { name: "Continue" }));
 		await screen.findByRole("dialog", { name: "Set up workspace" });
 		await chooseOption(screen.getByRole("combobox", { name: "Orchestrator agent" }), "Claude Code");
@@ -1250,7 +1250,7 @@ describe("Sidebar", () => {
 		renderSidebar({ onCreateProject });
 
 		await user.click(screen.getByLabelText("New project"));
-		await user.click(screen.getByRole("button", { name: /^Add a workspace folder$/i }));
+		await user.click(screen.getByRole("button", { name: /^Import a workspace folder$/i }));
 		await user.click(await screen.findByRole("button", { name: "Continue" }));
 		await screen.findByRole("dialog", { name: "Set up workspace" });
 		await chooseOption(screen.getByRole("combobox", { name: "Orchestrator agent" }), "Claude Code");
@@ -1279,7 +1279,7 @@ describe("Sidebar", () => {
 		renderSidebar({ onCreateProject, onInitializeProject });
 
 		await user.click(screen.getByLabelText("New project"));
-		await user.click(screen.getByRole("button", { name: /^Add a workspace folder$/i }));
+		await user.click(screen.getByRole("button", { name: /^Import a workspace folder$/i }));
 		await user.click(await screen.findByRole("button", { name: "Continue" }));
 		await screen.findByRole("dialog", { name: "Set up workspace" });
 		expect(
@@ -1329,7 +1329,7 @@ describe("Sidebar", () => {
 		renderSidebar({ onCreateProject, seedAgents: false });
 
 		await user.click(screen.getByLabelText("New project"));
-		await user.click(screen.getByRole("button", { name: /^Open local repository$/i }));
+		await user.click(screen.getByRole("button", { name: /^Import an existing project$/i }));
 		expect(await screen.findByText("/repo/new-project")).toBeInTheDocument();
 		await user.click(screen.getByRole("button", { name: "Continue" }));
 
@@ -1367,7 +1367,7 @@ describe("Sidebar", () => {
 		renderSidebar({ onCreateProject, seedAgents: false });
 
 		await user.click(screen.getByLabelText("New project"));
-		await user.click(screen.getByRole("button", { name: /^Open local repository$/i }));
+		await user.click(screen.getByRole("button", { name: /^Import an existing project$/i }));
 		expect(await screen.findByText("/repo/new-project")).toBeInTheDocument();
 		await user.click(screen.getByRole("button", { name: "Continue" }));
 		expect(screen.getByRole("button", { name: "Create and start" })).toBeDisabled();
