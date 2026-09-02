@@ -127,6 +127,7 @@ import { dockBounceType, shouldReplaceBounce, shouldSignalAttention, shouldToast
 import { buildMacAppMenuTemplate, buildWindowsAppMenuTemplate } from "./main/menu";
 import { ancestorRepositorySetupWarning, scanImportFolder } from "./main/import-folder-scan";
 import { parseOpenFolderPathArg } from "./main/open-folder-arg";
+import { registerRemotesIpc, remotesFilePath } from "./main/remotes-main";
 
 // Globals injected at compile time by @electron-forge/plugin-vite.
 declare const MAIN_WINDOW_VITE_DEV_SERVER_URL: string | undefined;
@@ -1928,6 +1929,13 @@ async function chooseDirectory(title: string): Promise<string | null> {
 	if (result.canceled) return null;
 	return result.filePaths[0] ?? null;
 }
+
+registerRemotesIpc(ipcMain, {
+	file: remotesFilePath(),
+	// No host is ever connected yet; the proxy registry that owns live
+	// connections lands in the next change and replaces this.
+	disconnect: async () => undefined,
+});
 
 ipcMain.handle("app:chooseDirectory", async (_event, title?: string) => {
 	return chooseDirectory(typeof title === "string" && title.trim() ? title : "Choose a git repository");
