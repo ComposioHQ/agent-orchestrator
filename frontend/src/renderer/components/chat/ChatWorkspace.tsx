@@ -358,6 +358,7 @@ export interface ChatWorkspaceProps {
 	onPromoteQueuedTurn?: (turnId: string) => Promise<unknown>;
 	onEditQueuedTurn?: (turnId: string, text: string) => Promise<unknown>;
 	onCancelQueuedTurn?: (turnId: string) => Promise<unknown>;
+	onReorderQueuedTurns?: (turnIds: string[]) => Promise<unknown>;
 	promoteQueuedTurnPendingTurnId?: string;
 	cancelQueuedTurnPendingTurnId?: string;
 	editQueuedTurnPendingTurnId?: string;
@@ -443,6 +444,7 @@ export function ChatWorkspace({
 	onPromoteQueuedTurn,
 	onEditQueuedTurn,
 	onCancelQueuedTurn,
+	onReorderQueuedTurns,
 	promoteQueuedTurnPendingTurnId,
 	cancelQueuedTurnPendingTurnId,
 	editQueuedTurnPendingTurnId,
@@ -824,6 +826,7 @@ export function ChatWorkspace({
 				<TurnSettingsBar
 					models={models ?? []}
 					settings={stableSettings}
+					harness={snapshot.harness}
 					reroute={stableModelReroute}
 					onChange={newWorkDisabled ? undefined : onChooseSettings}
 					configOptions={configOptions ?? []}
@@ -874,6 +877,7 @@ export function ChatWorkspace({
 						newWorkDisabled || !onEditQueuedTurn ? undefined : beginQueuedEdit
 					}
 					onCancelQueuedTurn={newWorkDisabled ? undefined : handleCancelQueuedTurn}
+					onReorderQueuedTurns={newWorkDisabled ? undefined : onReorderQueuedTurns}
 					promotePendingTurnId={promoteQueuedTurnPendingTurnId}
 					cancelPendingTurnId={cancelQueuedTurnPendingTurnId}
 				/>
@@ -885,6 +889,7 @@ export function ChatWorkspace({
 			handleCancelQueuedTurn,
 			newWorkDisabled,
 			onEditQueuedTurn,
+			onReorderQueuedTurns,
 			promoteQueuedTurn,
 			promoteQueuedTurnPendingTurnId,
 			queueEdit?.turnId,

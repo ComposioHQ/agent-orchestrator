@@ -139,6 +139,7 @@ type StartConfig struct {
 	WorkspacePath         string
 	Env                   map[string]string
 	Model                 string
+	Effort                string
 	Permissions           ports.PermissionMode
 	SystemPrompt          string
 	AdditionalDirectories []string
@@ -435,6 +436,15 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (result *Controlle
 				activeBranch.ProviderConversationID, cfg.ProviderConversationID)
 		}
 	}
+	// Conversation settings are durable user choices. Restore the selected
+	// model when rebuilding a controller after a daemon restart; the caller's
+	// session default must not silently replace it.
+	if cfg.ProviderConversationID != "" && conversation.Settings.Model != "" {
+		cfg.Model = conversation.Settings.Model
+	}
+	if cfg.ProviderConversationID != "" && conversation.Settings.ReasoningEffort != "" {
+		cfg.Effort = conversation.Settings.ReasoningEffort
+	}
 	if cfg.ProviderConversationID != "" && conversation.Settings.ApprovalMode != "" {
 		cfg.Permissions = conversation.Settings.ApprovalMode
 	}
@@ -443,6 +453,7 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (result *Controlle
 	}
 	if cfg.ProviderConversationID == "" {
 		conversation.Settings.Model = cfg.Model
+		conversation.Settings.ReasoningEffort = cfg.Effort
 		conversation.Settings.ApprovalMode = cfg.Permissions
 		if err := s.store.SetConversationSettings(ctx, conversation.ID, conversation.Settings, s.now()); err != nil {
 			return nil, fmt.Errorf("record initial conversation settings: %w", err)
@@ -466,6 +477,7 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (result *Controlle
 			WorkspacePath:          cfg.WorkspacePath,
 			Env:                    launchEnv,
 			Model:                  cfg.Model,
+			Effort:                 cfg.Effort,
 			Permissions:            cfg.Permissions,
 			SystemPrompt:           cfg.SystemPrompt,
 			ProviderScopeID:        providerScopeID,
@@ -1318,6 +1330,7 @@ type StartRequest struct {
 	WorkspacePath           string
 	Env                     map[string]string
 	Model                   string
+	Effort                  string
 	Permissions             ports.PermissionMode
 	SystemPrompt            string
 	AdditionalDirectories   []string
@@ -1455,7 +1468,38 @@ func (s *Service) SetConfigOption(
 	if !ok {
 		return nil, ErrConfigOptionsUnsupported
 	}
-	return configurer.SetConfigOption(ctx, configID, value)
+	controller.configMu.Lock()
+	defer controller.configMu.Unlock()
+	options, err := configurer.SetConfigOption(ctx, configID, value)
+	if err != nil {
+		return nil, err
+	}
+	if settings, changed := settingsFromConfigOptions(controller.Settings(), options); changed {
+		if err := controller.SetSettings(ctx, settings); err != nil {
+			return nil, err
+		}
+	}
+	return options, nil
+}
+
+func settingsFromConfigOptions(
+	settings domain.ConversationSettings,
+	options []ports.ChatConfigOption,
+) (domain.ConversationSettings, bool) {
+	next := settings
+	for _, option := range options {
+		switch {
+		case option.ID == "model" || option.Category == "model":
+			if option.Current.Select != "" {
+				next.Model = option.Current.Select
+			}
+		case option.ID == "effort" || option.Category == "thought_level":
+			if option.Current.Select != "" {
+				next.ReasoningEffort = option.Current.Select
+			}
+		}
+	}
+	return next, next != settings
 }
 
 // Compact asks the provider to summarize earlier history and reclaim context.

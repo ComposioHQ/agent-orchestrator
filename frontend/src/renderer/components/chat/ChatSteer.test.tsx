@@ -202,6 +202,47 @@ describe("ChatWorkspace steering", () => {
 		expect(screen.queryByText("Queued · sends when the agent finishes")).not.toBeInTheDocument();
 	});
 
+	it("shows drag handles when queue reordering is available", () => {
+		render(
+			<QueuedMessageDock
+				messages={[
+					{
+						turnId: "queued-1",
+						message: {
+							kind: "message",
+							id: "queued-message-1",
+							turnId: "queued-1",
+							sequence: 100,
+							revision: 0,
+							role: "user",
+							origin: "human",
+							text: "first queued",
+							streaming: false,
+							createdAt: "2026-08-11T10:01:00Z",
+						},
+					},
+					{
+						turnId: "queued-2",
+						message: {
+							kind: "message",
+							id: "queued-message-2",
+							turnId: "queued-2",
+							sequence: 101,
+							revision: 0,
+							role: "user",
+							origin: "human",
+							text: "second queued",
+							streaming: false,
+							createdAt: "2026-08-11T10:02:00Z",
+						},
+					},
+				]}
+				onReorderQueuedTurns={vi.fn().mockResolvedValue(undefined)}
+			/>,
+		);
+		expect(screen.getAllByRole("button", { name: "Drag to reorder queued message" })).toHaveLength(2);
+	});
+
 	it("steers, edits, and deletes queued messages from the dock", async () => {
 		const onPromoteQueuedTurn = vi.fn().mockResolvedValue(undefined);
 		const onBeginQueuedEdit = vi.fn();

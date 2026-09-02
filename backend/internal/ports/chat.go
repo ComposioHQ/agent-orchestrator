@@ -253,7 +253,9 @@ type ChatResumeConfig struct {
 	WorkspacePath          string
 	Env                    map[string]string
 	// Model is optional; empty keeps the provider conversation's current model.
-	Model       string
+	Model string
+	// Effort is optional; empty keeps the provider conversation's current effort.
+	Effort      string
 	Permissions PermissionMode
 	// SystemPrompt is recomputed by the session manager on restore and reapplied
 	// to the provider process. It is not persisted in the conversation transcript.

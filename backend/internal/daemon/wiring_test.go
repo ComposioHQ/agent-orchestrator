@@ -21,9 +21,72 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/lifecycle"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	projectsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/project"
+	"github.com/aoagents/agent-orchestrator/backend/internal/service/systeminstall"
 	sessionmanager "github.com/aoagents/agent-orchestrator/backend/internal/session_manager"
 	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite/sqlitetest"
 )
+
+type wiringReadinessProvider struct {
+	snapshot domain.AgentReadinessSnapshot
+	err      error
+	agentID  string
+	purpose  domain.AgentReadinessPurpose
+}
+
+func (p *wiringReadinessProvider) EnsureAgentReadiness(_ context.Context, agentID string, purpose domain.AgentReadinessPurpose) (domain.AgentReadinessSnapshot, error) {
+	p.agentID = agentID
+	p.purpose = purpose
+	return p.snapshot, p.err
+}
+func (*wiringReadinessProvider) InvalidateAgentInstallation(string)   {}
+func (*wiringReadinessProvider) InvalidateAgentAuthentication(string) {}
+func (*wiringReadinessProvider) RecheckAgent(string)                  {}
+
+func TestReviewerAgentAuthUsesLaunchReadinessAndPreservesStrictStates(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		state domain.AgentAuthenticationState
+		want  ports.AgentAuthStatus
+	}{
+		{name: "authorized", state: domain.AgentAuthenticationAuthorized, want: ports.AgentAuthStatusAuthorized},
+		{name: "not applicable", state: domain.AgentAuthenticationNotApplicable, want: ports.AgentAuthStatusAuthorized},
+		{name: "unauthorized", state: domain.AgentAuthenticationUnauthorized, want: ports.AgentAuthStatusUnauthorized},
+		{name: "unknown", state: domain.AgentAuthenticationUnknown, want: ports.AgentAuthStatusUnknown},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			provider := &wiringReadinessProvider{snapshot: domain.AgentReadinessSnapshot{
+				Authentication: domain.AgentAuthenticationObservation{State: test.state},
+			}}
+			got, supported, err := (reviewerAgentAuth{readiness: provider}).AuthStatus(context.Background(), domain.ReviewerCodex)
+			if err != nil || !supported || got != test.want {
+				t.Fatalf("AuthStatus() = (%q, %v, %v), want (%q, true, nil)", got, supported, err, test.want)
+			}
+			if provider.agentID != "codex" || provider.purpose != domain.AgentReadinessPurposeLaunch {
+				t.Fatalf("readiness request = (%q, %q)", provider.agentID, provider.purpose)
+			}
+		})
+	}
+}
+
+func TestInstalledAgentHarnessMapsOnlyManagedHarnessInstalls(t *testing.T) {
+	for _, test := range []struct {
+		target  systeminstall.Target
+		harness string
+		ok      bool
+	}{
+		{target: systeminstall.TargetClaude, harness: "claude-code", ok: true},
+		{target: systeminstall.TargetCodex, harness: "codex", ok: true},
+		{target: systeminstall.TargetOpencode, harness: "opencode", ok: true},
+		{target: systeminstall.TargetCopilot, harness: "copilot", ok: true},
+		{target: systeminstall.TargetTmux},
+		{target: systeminstall.TargetGH},
+	} {
+		got, ok := installedAgentHarness(test.target)
+		if got != test.harness || ok != test.ok {
+			t.Errorf("installedAgentHarness(%q) = (%q, %v), want (%q, %v)", test.target, got, ok, test.harness, test.ok)
+		}
+	}
+}
 
 // TestWiring_WriteFlowsToBroadcaster exercises the real boot path end to end:
 // a lifecycle write -> sqlite -> DB trigger -> change_log -> CDC poller ->
@@ -212,7 +275,7 @@ func TestWiring_StartSessionBuildsSessionService(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildAgentResolver: %v", err)
 	}
-	svc, reviewSvc, lc, err := startSession(context.Background(), cfg, rt, store, lcm, messenger, telemetryadapter.NoopSink{}, agents, nil, nil, nil, nil, nil, nil, log)
+	svc, reviewSvc, lc, err := startSession(context.Background(), cfg, rt, store, lcm, messenger, telemetryadapter.NoopSink{}, agents, nil, nil, nil, nil, nil, nil, nil, log)
 	if err != nil {
 		t.Fatalf("startSession: %v", err)
 	}
@@ -273,7 +336,7 @@ func TestWiring_StartSessionSpawnsScratchWithoutGitRepo(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildAgentResolver: %v", err)
 	}
-	svc, _, _, err := startSession(context.Background(), cfg, runtime, store, lcm, messenger, telemetryadapter.NoopSink{}, agents, nil, nil, nil, nil, nil, nil, log)
+	svc, _, _, err := startSession(context.Background(), cfg, runtime, store, lcm, messenger, telemetryadapter.NoopSink{}, agents, nil, nil, nil, nil, nil, nil, nil, log)
 	if err != nil {
 		t.Fatalf("startSession: %v", err)
 	}
@@ -330,7 +393,7 @@ func TestStartSession_SpawnDoesNotPanicWhenNoTrackerToken(t *testing.T) {
 	if agentsErr != nil {
 		t.Fatalf("buildAgentResolver: %v", agentsErr)
 	}
-	svc, _, _, err := startSession(context.Background(), cfg, rt, store, lcm, messenger, telemetryadapter.NoopSink{}, agents, nil, nil, nil, nil, nil, nil, log)
+	svc, _, _, err := startSession(context.Background(), cfg, rt, store, lcm, messenger, telemetryadapter.NoopSink{}, agents, nil, nil, nil, nil, nil, nil, nil, log)
 	if err != nil {
 		t.Fatalf("startSession: %v", err)
 	}
@@ -389,7 +452,7 @@ func TestStartTrackerIntake_RunsEvenWithoutEnabledProjects(t *testing.T) {
 	if agentsErr != nil {
 		t.Fatalf("buildAgentResolver: %v", agentsErr)
 	}
-	svc, _, _, err := startSession(context.Background(), cfg, rt, store, lcm, messenger, telemetryadapter.NoopSink{}, agents, nil, nil, nil, nil, nil, nil, log)
+	svc, _, _, err := startSession(context.Background(), cfg, rt, store, lcm, messenger, telemetryadapter.NoopSink{}, agents, nil, nil, nil, nil, nil, nil, nil, log)
 	if err != nil {
 		t.Fatalf("startSession: %v", err)
 	}
