@@ -1,6 +1,7 @@
 import { Download, X } from "lucide-react";
 import { useCallback, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { useHasReadyAgent } from "../hooks/useAgentReadinessQuery";
 import { useUiStore } from "../stores/ui-store";
 
 const dismissedStorageKey = "ao.importSessionsHint.dismissed";
@@ -39,6 +40,10 @@ export function ImportSessionsHint() {
 	const { t } = useTranslation();
 	const [dismissed, setDismissed] = useState(readDismissed);
 	const setImportSessionOpen = useUiStore((state) => state.setImportSessionOpen);
+	// An imported conversation has to be resumable, which takes an agent the
+	// user has installed and logged into. Without one this route only
+	// dead-ends, so it is not offered. It appears once an agent is ready.
+	const hasAgent = useHasReadyAgent();
 
 	const dismiss = useCallback(() => {
 		persistDismissed();
@@ -52,7 +57,7 @@ export function ImportSessionsHint() {
 		setImportSessionOpen(true);
 	}, [setImportSessionOpen]);
 
-	if (dismissed) return null;
+	if (dismissed || !hasAgent) return null;
 
 	return (
 		<div

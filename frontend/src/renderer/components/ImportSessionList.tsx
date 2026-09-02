@@ -83,19 +83,38 @@ export function ImportSessionList({ projectId, active = true, onImported }: Impo
 		);
 	}
 
+	// Grouped by folder, the way Codex and Cursor key their own history: the
+	// folder is the identity a user recognizes, and there is no project to set
+	// up first. Importing registers the folder itself.
+	const folders = groupByFolder(sessions);
+
 	return (
 		<>
-			<ul className="flex flex-col gap-2" aria-label={t("importSession.title")}>
-				{sessions.map((session) => (
-					<ImportSessionRow
-						key={`${session.provider}:${session.nativeSessionId}`}
-						session={session}
-						pending={pendingId === session.nativeSessionId}
-						disabled={importMutation.isPending}
-						onImport={() => handleImport(session)}
-					/>
+			<div className="flex flex-col gap-4">
+				{folders.map((folder) => (
+					<section key={folder.path} aria-label={folder.path}>
+						{projectId ? null : (
+							<p
+								className="mb-1.5 truncate text-caption font-medium text-muted-foreground"
+								title={folder.path}
+							>
+								{folder.name}
+							</p>
+						)}
+						<ul className="flex flex-col gap-2" aria-label={folder.path}>
+							{folder.sessions.map((session) => (
+								<ImportSessionRow
+									key={`${session.provider}:${session.nativeSessionId}`}
+									session={session}
+									pending={pendingId === session.nativeSessionId}
+									disabled={importMutation.isPending}
+									onImport={() => handleImport(session)}
+								/>
+							))}
+						</ul>
+					</section>
 				))}
-			</ul>
+			</div>
 			{importMutation.isError ? (
 				<p className="mt-3 text-caption leading-4 text-error" role="alert">
 					{importMutation.error instanceof Error
@@ -133,9 +152,11 @@ function ImportSessionRow({
 				<p className="truncate text-control font-medium text-foreground" title={session.title}>
 					{session.title || session.nativeSessionId}
 				</p>
-				<p className="truncate text-caption text-muted-foreground" title={session.cwd}>
-					{session.branch ? `${session.cwd} · ${session.branch}` : session.cwd}
-				</p>
+				{session.branch ? (
+					<p className="truncate text-caption text-muted-foreground" title={session.branch}>
+						{session.branch}
+					</p>
+				) : null}
 				<p className="mt-0.5 text-micro text-muted-foreground">
 					{meta}
 					{session.messageCount > 0 ? ` · ${t("importSession.messages", { count: session.messageCount })}` : ""}
@@ -177,4 +198,36 @@ function relativeDay(iso: string): { key: RecencyKey; count: number } | null {
 	if (days <= 0) return { key: "importSession.today", count: 0 };
 	if (days === 1) return { key: "importSession.yesterday", count: 1 };
 	return { key: "importSession.daysAgo", count: days };
+}
+
+type ImportFolder = {
+	path: string;
+	name: string;
+	sessions: ImportableSession[];
+};
+
+// groupByFolder buckets conversations by the directory they ran in, keeping the
+// recency order the daemon returned: folders appear in order of their most
+// recent conversation, and rows stay newest-first inside each folder.
+function groupByFolder(sessions: ImportableSession[]): ImportFolder[] {
+	const byPath = new Map<string, ImportFolder>();
+	for (const session of sessions) {
+		const path = session.cwd || "";
+		let folder = byPath.get(path);
+		if (!folder) {
+			folder = { path, name: folderName(path), sessions: [] };
+			byPath.set(path, folder);
+		}
+		folder.sessions.push(session);
+	}
+	return [...byPath.values()];
+}
+
+// folderName is the last path segment, which is what a user recognizes. The
+// full path stays available as a tooltip for the ambiguous cases.
+function folderName(path: string): string {
+	const trimmed = path.replace(/[\\/]+$/, "");
+	if (!trimmed) return path;
+	const segments = trimmed.split(/[\\/]/);
+	return segments[segments.length - 1] || trimmed;
 }

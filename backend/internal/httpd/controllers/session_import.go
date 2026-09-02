@@ -135,7 +135,7 @@ func (c *SessionsController) importSession(w http.ResponseWriter, r *http.Reques
 		case errors.Is(err, sessionimportsvc.ErrImportSessionNotFound):
 			envelope.WriteAPIError(w, r, http.StatusNotFound, "not_found", "IMPORT_SESSION_NOT_FOUND", "no importable session with that id was found", nil)
 		case errors.Is(err, sessionimportsvc.ErrImportProjectUnresolved):
-			envelope.WriteAPIError(w, r, http.StatusUnprocessableEntity, "unprocessable_entity", "IMPORT_PROJECT_UNRESOLVED", "the conversation's working directory is not a git repository, so no project could be resolved", nil)
+			envelope.WriteAPIError(w, r, http.StatusUnprocessableEntity, "unprocessable_entity", "IMPORT_PROJECT_UNRESOLVED", "this conversation ran in a folder that is not a git repository, so AO cannot create a project for it. Initialize the folder as a repository, then import again", nil)
 		default:
 			envelope.WriteError(w, r, err)
 		}

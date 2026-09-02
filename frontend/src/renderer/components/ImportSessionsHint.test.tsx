@@ -3,7 +3,11 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ImportSessionsHint } from "./ImportSessionsHint";
 
-const h = vi.hoisted(() => ({ setImportSessionOpen: vi.fn() }));
+const h = vi.hoisted(() => ({ setImportSessionOpen: vi.fn(), ready: true }));
+
+vi.mock("../hooks/useAgentReadinessQuery", () => ({
+	useHasReadyAgent: () => h.ready,
+}));
 
 vi.mock("../stores/ui-store", () => ({
 	useUiStore: (select: (state: { setImportSessionOpen: typeof h.setImportSessionOpen }) => unknown) =>
@@ -19,6 +23,7 @@ const STORAGE_KEY = "ao.importSessionsHint.dismissed";
 beforeEach(() => {
 	window.localStorage.clear();
 	h.setImportSessionOpen.mockReset();
+	h.ready = true;
 });
 
 afterEach(() => {
@@ -38,6 +43,14 @@ describe("ImportSessionsHint", () => {
 		render(<ImportSessionsHint />);
 		expect(fetchSpy).not.toHaveBeenCalled();
 		fetchSpy.mockRestore();
+	});
+
+	// Importing is only useful if the conversation can then be resumed, which
+	// takes a working agent. Offering it otherwise is a dead end.
+	it("stays hidden until the user has a ready agent", () => {
+		h.ready = false;
+		render(<ImportSessionsHint />);
+		expect(screen.queryByTestId("import-sessions-hint")).not.toBeInTheDocument();
 	});
 
 	it("stays gone once dismissed, across restarts", async () => {
