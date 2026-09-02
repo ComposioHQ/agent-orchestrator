@@ -99,6 +99,7 @@ export function CreateProjectFlow({
 	const [cloneDialogOpen, setCloneDialogOpen] = useState(false);
 	const [cloneProgressOpen, setCloneProgressOpen] = useState(false);
 	const [cloneProgress, setCloneProgress] = useState<CloneProjectProgress>("cloning");
+	const [cloneProgressComplete, setCloneProgressComplete] = useState(false);
 	const [cloneProgressError, setCloneProgressError] = useState<string | null>(null);
 	const [cloneDetails, setCloneDetails] = useState<CloneRepositoryDetails>(() => ({
 		remoteUrl: "",
@@ -295,8 +296,11 @@ export function CreateProjectFlow({
 				);
 				setSelectedPath(null);
 				setCloneSelection(null);
-				setCloneProgressOpen(false);
-				setModePickerOpen(false);
+				setCloneProgressComplete(true);
+				window.setTimeout(() => {
+					setCloneProgressOpen(false);
+					setModePickerOpen(false);
+				}, 450);
 				return;
 			}
 			if (selectedKind === "single_repo" && repositorySetup) {
@@ -427,9 +431,10 @@ export function CreateProjectFlow({
 							onContinue={(next) => {
 								setCloneSelection(next);
 								setSelectedKind("single_repo");
-								setCloneDialogOpen(false);
-								setCloneProgress("cloning");
-								setCloneProgressError(null);
+				setCloneDialogOpen(false);
+				setCloneProgress("cloning");
+				setCloneProgressComplete(false);
+				setCloneProgressError(null);
 								setCloneProgressOpen(true);
 								void createProject(next, next);
 							}}
@@ -438,9 +443,11 @@ export function CreateProjectFlow({
 						/>
 					) : null}
 					<CloneProjectProgressDialog
+						complete={cloneProgressComplete}
 						error={cloneProgressError}
 						onBack={() => {
 							setCloneProgressError(null);
+							setCloneProgressComplete(false);
 							setCloneProgressOpen(false);
 							setCloneDialogOpen(true);
 						}}
@@ -621,11 +628,13 @@ function CreateProjectSourceDialog({
 }
 
 function CloneProjectProgressDialog({
+	complete,
 	error,
 	onBack,
 	open,
 	phase,
 }: {
+	complete: boolean;
 	error: string | null;
 	onBack: () => void;
 	open: boolean;
@@ -642,7 +651,9 @@ function CloneProjectProgressDialog({
 		return () => window.clearInterval(interval);
 	}, [error, open]);
 
-	const status = isStarting
+	const status = complete
+		? "Project ready"
+		: isStarting
 		? "Starting orchestrator"
 		: elapsedSeconds < 15
 			? "Cloning repository"
@@ -674,18 +685,25 @@ function CloneProjectProgressDialog({
 					) : (
 						<div className="mt-4 space-y-4">
 							<div className="flex items-center gap-3">
-								<LoaderCircle className="size-5 animate-spin text-[var(--color-text-import-muted)]" aria-hidden="true" />
+								{complete ? (
+									<CheckCircle2 className="size-5 text-primary" aria-hidden="true" />
+								) : (
+									<LoaderCircle className="size-5 animate-spin text-[var(--color-text-import-muted)]" aria-hidden="true" />
+								)}
 								<p className="text-[14px] font-medium text-foreground">
 									{status}
 								</p>
 							</div>
 							<div
 								aria-label="Project setup progress"
-								className="h-1.5 overflow-hidden rounded-full bg-muted"
+								aria-valuemax={complete ? 100 : undefined}
+								aria-valuemin={complete ? 0 : undefined}
+								aria-valuenow={complete ? 100 : undefined}
 								aria-valuetext={status}
+								className={complete ? "h-1.5 overflow-hidden rounded-full bg-muted" : "ao-install-progress"}
 								role="progressbar"
 							>
-								<div className="h-full w-1/3 animate-pulse rounded-full bg-primary" />
+								{complete ? <div className="h-full w-full rounded-full bg-primary" /> : <div className="ao-install-progress__bar" />}
 							</div>
 						</div>
 					)}
