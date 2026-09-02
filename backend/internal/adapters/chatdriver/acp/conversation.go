@@ -54,11 +54,13 @@ type interruptAttempt struct {
 type parkedPermission struct {
 	options map[string]json.RawMessage
 	result  chan string
+	ready   chan struct{}
 }
 
 type parkedInput struct {
 	request ports.ChatInputRequest
 	result  chan ports.ChatInputResponse
+	ready   chan struct{}
 }
 
 type toolState struct {
@@ -96,6 +98,7 @@ type conversation struct {
 	interrupt          *interruptAttempt
 	pending            map[string]*parkedPermission
 	pendingInputs      map[string]*parkedInput
+	accepted           map[string]persistentInteractionCommand
 	messages           map[string]string
 	thoughts           map[string]string
 	nestedMessages     map[string]nestedMessageState
@@ -165,6 +168,7 @@ func newConversation(
 		providerScopeID:  providerScopeID,
 		pending:          make(map[string]*parkedPermission),
 		pendingInputs:    make(map[string]*parkedInput),
+		accepted:         make(map[string]persistentInteractionCommand),
 		capabilities:     make(ports.ChatCapabilities),
 		messages:         make(map[string]string),
 		thoughts:         make(map[string]string),
@@ -665,14 +669,24 @@ func (c *conversation) ResolveRequest(
 	}
 	delete(c.pending, requestID)
 	c.mu.Unlock()
-
-	select {
-	case request.result <- decision.ID:
-		c.emit(ports.ChatEvent{Kind: ports.ChatEventApprovalResolved, RequestID: requestID})
-		return nil
-	case <-ctx.Done():
-		return ctx.Err()
+	command := persistentInteractionCommand{
+		RequestID: requestID, Kind: persistentInteractionApproval,
+		Decision: &persistentDecision{ID: decision.ID},
 	}
+	eventID, err := c.recordPersistentInteraction(ctx, command)
+	if err != nil {
+		c.mu.Lock()
+		if !c.closed {
+			c.pending[requestID] = request
+		}
+		c.mu.Unlock()
+		return err
+	}
+	command.EventID = eventID
+
+	c.emit(persistentInteractionEvent(command))
+	request.result <- decision.ID
+	return nil
 }
 
 func (c *conversation) Close() error {

@@ -2560,7 +2560,10 @@ func (c *Controller) apply(ctx context.Context, event ports.ChatEvent) error {
 	case ports.ChatEventApprovalResolved:
 		// The provider resolved it, possibly through another client. Mark it so a
 		// card still on screen elsewhere stops being actionable.
-		detail, _ := json.Marshal(map[string]string{"resolvedBy": "provider"})
+		detail := event.Detail
+		if len(detail) == 0 {
+			detail, _ = json.Marshal(map[string]string{"resolvedBy": "provider"})
+		}
 		return c.store.ResolveApproval(ctx, c.conversation.ID, event.RequestID, string(detail), now)
 
 	case ports.ChatEventInputRequested:
@@ -2586,7 +2589,10 @@ func (c *Controller) apply(ctx context.Context, event ports.ChatEvent) error {
 			}, now)
 
 	case ports.ChatEventInputResolved:
-		detail, _ := json.Marshal(map[string]string{"resolvedBy": "provider"})
+		detail := event.Detail
+		if len(detail) == 0 {
+			detail, _ = json.Marshal(map[string]string{"resolvedBy": "provider"})
+		}
 		return c.store.ResolveApproval(ctx, c.conversation.ID, event.RequestID, string(detail), now)
 
 	case ports.ChatEventUsage:

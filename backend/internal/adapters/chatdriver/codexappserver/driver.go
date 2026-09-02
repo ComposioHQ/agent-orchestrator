@@ -255,7 +255,10 @@ func (d *Driver) Start(ctx context.Context, cfg ports.ChatStartConfig) (ports.Ch
 		return nil, fmt.Errorf("workspace path must be absolute, got %q", cfg.WorkspacePath)
 	}
 
-	conv, reconnected, err := d.connectSession(ctx, cfg.SessionID, cfg.DataDir, cfg.WorkspacePath, cfg.Env, cfg.AllowConcurrentHostReplacement)
+	conv, reconnected, err := d.connectSession(
+		ctx, cfg.SessionID, cfg.DataDir, cfg.WorkspacePath, cfg.Env, cfg.PrepareEnv,
+		cfg.AllowConcurrentHostReplacement,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -311,7 +314,10 @@ func (d *Driver) Resume(ctx context.Context, cfg ports.ChatResumeConfig) (ports.
 		return nil, fmt.Errorf("workspace path must be absolute, got %q", cfg.WorkspacePath)
 	}
 
-	conv, reconnected, err := d.connectSession(ctx, cfg.SessionID, cfg.DataDir, cfg.WorkspacePath, cfg.Env, cfg.AllowConcurrentHostReplacement)
+	conv, reconnected, err := d.connectSession(
+		ctx, cfg.SessionID, cfg.DataDir, cfg.WorkspacePath, cfg.Env, cfg.PrepareEnv,
+		cfg.AllowConcurrentHostReplacement,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -382,11 +388,19 @@ func (d *Driver) connectSession(
 	sessionID domain.SessionID,
 	dataDir, workdir string,
 	env map[string]string,
+	prepareEnv func(context.Context) (map[string]string, error),
 	allowConcurrentHostReplacement bool,
 ) (*conversation, bool, error) {
 	// Injected driver tests intentionally retain the direct pipe launcher. The
 	// shipped driver uses spawnAppServer and therefore the persistent host.
 	if !d.persistent {
+		if prepareEnv != nil {
+			var err error
+			env, err = prepareEnv(ctx)
+			if err != nil {
+				return nil, false, err
+			}
+		}
 		conv, err := d.connect(ctx, workdir, env)
 		return conv, false, err
 	}
@@ -394,13 +408,25 @@ func (d *Driver) connectSession(
 	if err != nil {
 		return nil, false, fmt.Errorf("%w: %w", ports.ErrChatDriverUnavailable, err)
 	}
-	transport, err := d.connectHost(ctx, persistenthost.Config{
+	hostConfig := persistenthost.Config{
 		SessionID: string(sessionID),
 		DataDir:   dataDir,
 		Workdir:   workdir,
 		Env:       envSlice(env),
 		Argv:      []string{bin, "app-server"},
-	})
+	}
+	if prepareEnv != nil {
+		hostConfig.Prepare = func(prepareCtx context.Context) (persistenthost.PreparedProvider, error) {
+			preparedEnv, prepareErr := prepareEnv(prepareCtx)
+			if prepareErr != nil {
+				return persistenthost.PreparedProvider{}, prepareErr
+			}
+			return persistenthost.PreparedProvider{
+				Env: envSlice(preparedEnv), Argv: []string{bin, "app-server"},
+			}, nil
+		}
+	}
+	transport, err := d.connectHost(ctx, hostConfig)
 	if err != nil {
 		// Branch activation intentionally stages a replacement controller before
 		// terminating the source. The persistent host correctly refuses that second
@@ -408,6 +434,12 @@ func (d *Driver) connectSession(
 		// a direct app-server. On the next daemon reconciliation it is resumed into a
 		// persistent host. Other host failures fail closed and never spawn a rival.
 		if allowConcurrentHostReplacement && errors.Is(err, persistenthost.ErrAttached) {
+			if prepareEnv != nil {
+				env, err = prepareEnv(ctx)
+				if err != nil {
+					return nil, false, err
+				}
+			}
 			conv, directErr := d.connect(ctx, workdir, env)
 			return conv, false, directErr
 		}

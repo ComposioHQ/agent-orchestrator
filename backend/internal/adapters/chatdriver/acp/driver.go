@@ -40,6 +40,7 @@ type LaunchConfig struct {
 	DataDir                        string
 	WorkspacePath                  string
 	Env                            map[string]string
+	PrepareEnv                     func(context.Context) (map[string]string, error)
 	Model                          string
 	Permissions                    ports.PermissionMode
 	SystemPrompt                   string
@@ -148,7 +149,8 @@ func (d *Driver) Start(ctx context.Context, cfg ports.ChatStartConfig) (ports.Ch
 	}
 	launchCfg := LaunchConfig{
 		SessionID: cfg.SessionID, DataDir: cfg.DataDir, WorkspacePath: cfg.WorkspacePath,
-		Env: cfg.Env, Model: cfg.Model, Permissions: cfg.Permissions, SystemPrompt: cfg.SystemPrompt,
+		Env: cfg.Env, PrepareEnv: cfg.PrepareEnv,
+		Model: cfg.Model, Permissions: cfg.Permissions, SystemPrompt: cfg.SystemPrompt,
 		ProviderScopeID: cfg.ProviderScopeID, AllowConcurrentHostReplacement: cfg.AllowConcurrentHostReplacement,
 	}
 	conv, init, live, err := d.connect(ctx, launchCfg)
@@ -156,7 +158,9 @@ func (d *Driver) Start(ctx context.Context, cfg ports.ChatStartConfig) (ports.Ch
 		return nil, err
 	}
 	if live != nil {
-		_ = conv.Terminate()
+		// A fresh-start request colliding with a surviving host is a durable-state
+		// mismatch. Detach without destroying a provider that may still be working.
+		_ = conv.Close()
 		return nil, fmt.Errorf("%w: fresh ACP start found an existing initialized session", ports.ErrChatRecoveryInconclusive)
 	}
 	// An agent that does not advertise session/resume can still start new
@@ -234,7 +238,8 @@ func (d *Driver) Resume(ctx context.Context, cfg ports.ChatResumeConfig) (ports.
 	}
 	launchCfg := LaunchConfig{
 		SessionID: cfg.SessionID, DataDir: cfg.DataDir, WorkspacePath: cfg.WorkspacePath,
-		Env: cfg.Env, Model: cfg.Model, Permissions: cfg.Permissions, SystemPrompt: cfg.SystemPrompt,
+		Env: cfg.Env, PrepareEnv: cfg.PrepareEnv,
+		Model: cfg.Model, Permissions: cfg.Permissions, SystemPrompt: cfg.SystemPrompt,
 		ProviderScopeID: cfg.ProviderScopeID, AllowConcurrentHostReplacement: cfg.AllowConcurrentHostReplacement,
 	}
 	conv, init, live, err := d.connect(ctx, launchCfg)
@@ -339,6 +344,17 @@ func (d *Driver) connect(
 	ctx context.Context,
 	cfg LaunchConfig,
 ) (*conversation, acpsdk.InitializeResponse, *persistenthost.ACPState, error) {
+	// Non-persistent providers are always launched, so prepare their one-shot
+	// environment before resolving launch configuration. Persistent providers
+	// defer it until the host proves that it cannot adopt a live process.
+	if !d.cfg.Persistent && cfg.PrepareEnv != nil {
+		preparedEnv, err := cfg.PrepareEnv(ctx)
+		if err != nil {
+			return nil, acpsdk.InitializeResponse{}, nil, err
+		}
+		cfg.Env = preparedEnv
+		cfg.PrepareEnv = nil
+	}
 	launch, err := d.cfg.Launch(ctx, cfg)
 	if err != nil {
 		return nil, acpsdk.InitializeResponse{}, nil, err
@@ -438,21 +454,41 @@ func (d *Driver) connectProcess(
 	if !filepath.IsAbs(cfg.DataDir) {
 		return nil, fmt.Errorf("%w: persistent ACP host requires an absolute data directory", ports.ErrChatDriverUnavailable)
 	}
-	argv := append([]string{launch.Command}, launch.Args...)
-	fingerprintEnv := append(processenv.FingerprintEntries(launch.Env),
-		"_AO_MODEL="+cfg.Model,
-		"_AO_PERMISSIONS="+string(ports.NormalizePermissionMode(cfg.Permissions)),
-		"_AO_SYSTEM_PROMPT="+cfg.SystemPrompt,
-	)
-	transport, err := d.connectHost(ctx, persistenthost.Config{
+	provider := preparedACPProvider(cfg, launch)
+	hostConfig := persistenthost.Config{
 		SessionID: string(cfg.SessionID), DataDir: cfg.DataDir, Workdir: cfg.WorkspacePath,
-		Env: processenv.Merge(launch.Env), Argv: argv, Protocol: persistenthost.ProtocolACP,
-		LaunchFingerprint: persistenthost.ComputeLaunchFingerprint(
-			cfg.WorkspacePath, fingerprintEnv, argv, persistenthost.ProtocolACP,
-		),
-	})
+		Env: provider.Env, Argv: provider.Argv, Protocol: persistenthost.ProtocolACP,
+		LaunchFingerprint: provider.LaunchFingerprint,
+	}
+	if cfg.PrepareEnv != nil {
+		hostConfig.Prepare = func(prepareCtx context.Context) (persistenthost.PreparedProvider, error) {
+			preparedEnv, prepareErr := cfg.PrepareEnv(prepareCtx)
+			if prepareErr != nil {
+				return persistenthost.PreparedProvider{}, prepareErr
+			}
+			preparedCfg := cfg
+			preparedCfg.Env = preparedEnv
+			preparedLaunch, prepareErr := d.cfg.Launch(prepareCtx, preparedCfg)
+			if prepareErr != nil {
+				return persistenthost.PreparedProvider{}, prepareErr
+			}
+			return preparedACPProvider(preparedCfg, preparedLaunch), nil
+		}
+	}
+	transport, err := d.connectHost(ctx, hostConfig)
 	if err != nil {
 		if cfg.AllowConcurrentHostReplacement && errors.Is(err, persistenthost.ErrAttached) {
+			if cfg.PrepareEnv != nil {
+				preparedEnv, prepareErr := cfg.PrepareEnv(ctx)
+				if prepareErr != nil {
+					return nil, prepareErr
+				}
+				cfg.Env = preparedEnv
+				launch, prepareErr = d.cfg.Launch(ctx, cfg)
+				if prepareErr != nil {
+					return nil, prepareErr
+				}
+			}
 			proc, directErr := d.spawn(launch, cfg.WorkspacePath)
 			if directErr != nil {
 				return nil, fmt.Errorf("%w: launch replacement ACP agent: %w", ports.ErrChatDriverUnavailable, directErr)
@@ -477,6 +513,22 @@ func (d *Driver) connectProcess(
 		return persistenthost.Shutdown(shutdownCtx, cfg.DataDir, string(cfg.SessionID))
 	})
 	return proc, nil
+}
+
+func preparedACPProvider(cfg LaunchConfig, launch Launch) persistenthost.PreparedProvider {
+	argv := append([]string{launch.Command}, launch.Args...)
+	fingerprintEnv := append(processenv.FingerprintEntries(launch.Env),
+		"_AO_MODEL="+cfg.Model,
+		"_AO_PERMISSIONS="+string(ports.NormalizePermissionMode(cfg.Permissions)),
+		"_AO_SYSTEM_PROMPT="+cfg.SystemPrompt,
+	)
+	return persistenthost.PreparedProvider{
+		Env:  processenv.Merge(launch.Env),
+		Argv: argv,
+		LaunchFingerprint: persistenthost.ComputeLaunchFingerprint(
+			cfg.WorkspacePath, fingerprintEnv, argv, persistenthost.ProtocolACP,
+		),
+	}
 }
 
 type persistentSessionResult struct {

@@ -220,6 +220,10 @@ type ChatStartConfig struct {
 	// shell commands the agent runs. AO passes a HookPATH-augmented copy so the
 	// agent can invoke `ao` — that is how an orchestrator delegates.
 	Env map[string]string
+	// PrepareEnv rotates launch-only credentials. Persistent drivers defer it
+	// until they know a new provider process is required; live adoption must keep
+	// the verifier for the bearer already held by the surviving process.
+	PrepareEnv func(context.Context) (map[string]string, error)
 	// Model is optional; empty defers to the provider's configured default.
 	Model string
 	// Permissions is AO's existing per-session approval policy. Drivers map it
@@ -252,6 +256,8 @@ type ChatResumeConfig struct {
 	DataDir                string
 	WorkspacePath          string
 	Env                    map[string]string
+	// See ChatStartConfig.PrepareEnv.
+	PrepareEnv func(context.Context) (map[string]string, error)
 	// Model is optional; empty keeps the provider conversation's current model.
 	Model       string
 	Permissions PermissionMode

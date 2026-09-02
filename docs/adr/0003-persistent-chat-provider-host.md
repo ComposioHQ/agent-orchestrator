@@ -85,6 +85,12 @@ connection-scoped ACP state that a replacement SDK client cannot infer:
   retained by the host and receive host-stable interaction IDs. Replaying a
   request therefore restores the same durable AO approval/input and its response
   is forwarded once using the provider's original JSON-RPC ID.
+- Before releasing a blocked provider request, the daemon records the user's
+  approval or input as an idempotent host command. The host assigns the durable
+  event ID and replays the request, accepted command, then terminal prompt result
+  in causal order. A replacement daemon can therefore finish the original
+  provider response and project the resolution exactly once even if its
+  predecessor died between host acceptance and the SQLite commit.
 - The shared ACP implementation is enabled for Claude Code, Cursor, and OpenCode,
   whose real restart gates passed. Other ACP bindings stay daemon-owned until
   their own authenticated provider matrix passes. Provider-specific launch
@@ -93,9 +99,12 @@ connection-scoped ACP state that a replacement SDK client cannot infer:
   any provider permission.
 
 The host inherits the already-resolved provider environment once at launch; no
-credentials are written to its descriptor. Possession of the descriptor
-capability grants control, so its directory and file permissions are part of the
-security boundary. The daemon never exposes this transport through its HTTP API.
+credentials are written to its descriptor. Launch-only credential preparation
+is deferred until host adoption has failed conclusively and a new provider must
+be spawned. A live reconnect therefore leaves the stored verifier matching the
+bearer held by the surviving provider. Possession of the descriptor capability
+grants control, so its directory and file permissions are part of the security
+boundary. The daemon never exposes this transport through its HTTP API.
 
 ## Compatibility and update handoff
 

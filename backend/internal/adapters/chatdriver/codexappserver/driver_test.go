@@ -254,6 +254,7 @@ func TestStartCompletesHandshakeAndOpensThread(t *testing.T) {
 
 func TestResumeReconnectsInitializedHostWithoutNativeResume(t *testing.T) {
 	d, srv := newTestDriver(t)
+	prepareCalls := 0
 	proc, err := d.spawn(context.Background(), "codex", "/tmp/ws", nil)
 	if err != nil {
 		t.Fatal(err)
@@ -268,6 +269,10 @@ func TestResumeReconnectsInitializedHostWithoutNativeResume(t *testing.T) {
 	conv, err := d.Resume(context.Background(), ports.ChatResumeConfig{
 		SessionID: "ao-reconnect", ProviderConversationID: "thread-survived",
 		DataDir: t.TempDir(), WorkspacePath: "/tmp/ws",
+		PrepareEnv: func(context.Context) (map[string]string, error) {
+			prepareCalls++
+			return map[string]string{"AO_BROWSER_CAPABILITY": "rotated"}, nil
+		},
 	})
 	if err != nil {
 		t.Fatalf("Resume: %v", err)
@@ -275,6 +280,9 @@ func TestResumeReconnectsInitializedHostWithoutNativeResume(t *testing.T) {
 	defer func() { _ = conv.Close() }()
 	if got := conv.ProviderConversationID(); got != "thread-survived" {
 		t.Fatalf("provider conversation id = %q", got)
+	}
+	if prepareCalls != 0 {
+		t.Fatalf("live Codex reconnect prepared launch-only environment %d times", prepareCalls)
 	}
 	if srv.sentMethod("initialize") || srv.sentMethod("thread/resume") {
 		t.Fatalf("reconnect repeated handshake: initialize=%v resume=%v",

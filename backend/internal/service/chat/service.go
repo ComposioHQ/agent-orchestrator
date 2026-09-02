@@ -416,11 +416,14 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 		}
 	}
 
-	launchEnv := cfg.Env
+	var prepareEnv func(context.Context) (map[string]string, error)
 	if cfg.PrepareControllerEnv != nil {
-		launchEnv, err = cfg.PrepareControllerEnv(ctx, cfg.ExpectedControllerOwner)
-		if err != nil {
-			return nil, fmt.Errorf("prepare chat controller environment: %w", err)
+		prepareEnv = func(prepareCtx context.Context) (map[string]string, error) {
+			env, prepareErr := cfg.PrepareControllerEnv(prepareCtx, cfg.ExpectedControllerOwner)
+			if prepareErr != nil {
+				return nil, fmt.Errorf("prepare chat controller environment: %w", prepareErr)
+			}
+			return env, nil
 		}
 	}
 
@@ -431,7 +434,8 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 			ProviderConversationID: cfg.ProviderConversationID,
 			DataDir:                cfg.DataDir,
 			WorkspacePath:          cfg.WorkspacePath,
-			Env:                    launchEnv,
+			Env:                    cfg.Env,
+			PrepareEnv:             prepareEnv,
 			Model:                  cfg.Model,
 			Permissions:            cfg.Permissions,
 			SystemPrompt:           cfg.SystemPrompt,
@@ -444,7 +448,8 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 			SessionID:             cfg.SessionID,
 			DataDir:               cfg.DataDir,
 			WorkspacePath:         cfg.WorkspacePath,
-			Env:                   launchEnv,
+			Env:                   cfg.Env,
+			PrepareEnv:            prepareEnv,
 			Model:                 cfg.Model,
 			Permissions:           cfg.Permissions,
 			SystemPrompt:          cfg.SystemPrompt,

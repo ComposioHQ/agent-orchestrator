@@ -52,6 +52,9 @@ const (
 	// ACPPromptAckMethod acknowledges that AO durably committed a replayed prompt
 	// result, allowing the host to discard its prompt journal.
 	ACPPromptAckMethod = "_ao/persistent_prompt_ack"
+	// ACPInteractionCommandMethod records a user interaction decision in the host
+	// before the daemon releases the blocked ACP responder.
+	ACPInteractionCommandMethod = "_ao/persistent_interaction_command"
 	// ACPRequestIDMetaKey carries one host-stable identity on replayable
 	// provider-to-client requests such as permissions and elicitations.
 	ACPRequestIDMetaKey = "ao.persistentRequestId"
@@ -92,6 +95,15 @@ type Config struct {
 	Env               []string
 	Argv              []string
 	Protocol          Protocol
+	LaunchFingerprint string
+	Prepare           func(context.Context) (PreparedProvider, error)
+}
+
+// PreparedProvider is resolved only when no compatible live host can be
+// adopted. This keeps launch-only credential rotation out of reconnects.
+type PreparedProvider struct {
+	Env               []string
+	Argv              []string
 	LaunchFingerprint string
 }
 
@@ -340,6 +352,18 @@ func ConnectOrStart(ctx context.Context, cfg Config) (*Transport, error) {
 	}
 	if len(cfg.Argv) == 0 || !filepath.IsAbs(cfg.Workdir) {
 		return nil, errors.New("chat host start requires provider argv and absolute workdir")
+	}
+	if cfg.Prepare != nil {
+		prepared, err := cfg.Prepare(ctx)
+		if err != nil {
+			return nil, err
+		}
+		cfg.Env = prepared.Env
+		cfg.Argv = prepared.Argv
+		cfg.LaunchFingerprint = prepared.LaunchFingerprint
+		if len(cfg.Argv) == 0 {
+			return nil, errors.New("prepared chat host launch requires provider argv")
+		}
 	}
 	if err := spawnDetached(ctx, cfg); err != nil {
 		return nil, err
@@ -721,10 +745,14 @@ func (h *host) handle(conn net.Conn) {
 		frame, readErr := reader.ReadBytes('\n')
 		if len(frame) > 0 {
 			providerFrame := frame
+			var clientFrame []byte
 			h.mu.Lock()
 			if h.acp != nil {
 				var relayErr error
-				providerFrame, relayErr = h.acp.clientFrame(h.ctx, frame, generation)
+				var relayed acpClientFrames
+				relayed, relayErr = h.acp.clientFrame(h.ctx, frame, generation)
+				providerFrame = relayed.provider
+				clientFrame = relayed.client
 				if relayErr != nil {
 					h.shutdownOnce.Do(func() { close(h.shutdown) })
 					h.mu.Unlock()
@@ -733,13 +761,17 @@ func (h *host) handle(conn net.Conn) {
 				}
 			}
 			h.mu.Unlock()
-			if len(providerFrame) == 0 {
-				continue
+			if len(providerFrame) > 0 {
+				if _, err := h.stdin.Write(providerFrame); err != nil {
+					readErr = err
+				} else {
+					h.observeClientFrame(providerFrame)
+				}
 			}
-			if _, err := h.stdin.Write(providerFrame); err != nil {
-				readErr = err
-			} else {
-				h.observeClientFrame(providerFrame)
+			if readErr == nil && len(clientFrame) > 0 {
+				if _, err := conn.Write(clientFrame); err != nil {
+					readErr = err
+				}
 			}
 		}
 		if readErr != nil {
@@ -812,7 +844,7 @@ func (h *host) forwardProvider(stdout io.Reader) error {
 				}
 				continue
 			}
-			if requestID, ok := serverRequestID(frame); ok {
+			if requestID, ok := serverRequestID(frame); ok && !journaled {
 				if _, exists := h.pendingRequests[requestID]; !exists {
 					h.pendingRequests[requestID] = &pendingRequest{frame: append([]byte(nil), frame...)}
 					h.pendingOrder = append(h.pendingOrder, requestID)
@@ -830,8 +862,8 @@ func (h *host) forwardProvider(stdout io.Reader) error {
 						h.bufferFrameLocked(frame)
 					}
 				}
-			} else {
-				if requestID, pending := serverRequestID(frame); !journaled && (!pending || !h.pendingRequests[requestID].buffered) {
+			} else if !journaled {
+				if requestID, pending := serverRequestID(frame); !pending || !h.pendingRequests[requestID].buffered {
 					h.bufferFrameLocked(frame)
 					if pending {
 						h.pendingRequests[requestID].buffered = true

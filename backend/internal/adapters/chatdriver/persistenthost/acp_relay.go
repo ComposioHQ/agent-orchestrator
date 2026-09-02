@@ -1,8 +1,10 @@
 package persistenthost
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 )
@@ -20,6 +22,22 @@ type acpClientRequest struct {
 	generation uint64
 }
 
+type acpServerRequest struct {
+	requestID string
+	frame     []byte
+}
+
+type acpInteractionCommand struct {
+	eventID   string
+	canonical string
+	params    json.RawMessage
+}
+
+type acpClientFrames struct {
+	provider []byte
+	client   []byte
+}
+
 // acpRelay is deliberately only a JSON-RPC correlation layer. The pinned ACP
 // SDK and all provider semantics remain in the adapter; the host owns only the
 // connection state that cannot be reconstructed after a daemon dies.
@@ -28,7 +46,10 @@ type acpRelay struct {
 	nextEventID       uint64
 	nextInteractionID uint64
 	pending           map[string]acpClientRequest
-	serverRequests    map[string]string
+	serverRequests    map[string]acpServerRequest
+	serverOrder       []string
+	commands          map[string]acpInteractionCommand
+	commandOrder      []string
 	state             ACPState
 	promptJournal     *acpPromptJournal
 	promptResult      []byte
@@ -41,7 +62,8 @@ func newACPRelay(ctx context.Context, journalPath string) (*acpRelay, error) {
 		return nil, err
 	}
 	return &acpRelay{
-		pending: make(map[string]acpClientRequest), serverRequests: make(map[string]string),
+		pending: make(map[string]acpClientRequest), serverRequests: make(map[string]acpServerRequest),
+		commands:      make(map[string]acpInteractionCommand),
 		promptJournal: journal,
 	}, nil
 }
@@ -57,6 +79,37 @@ func (r *acpRelay) replayTo(ctx context.Context, dst io.Writer) error {
 	if err := r.promptJournal.replayTo(ctx, dst); err != nil {
 		return err
 	}
+	for _, providerID := range r.serverOrder {
+		request, ok := r.serverRequests[providerID]
+		if !ok {
+			continue
+		}
+		if _, err := dst.Write(request.frame); err != nil {
+			return err
+		}
+	}
+	for _, requestID := range r.commandOrder {
+		command, ok := r.commands[requestID]
+		if !ok {
+			continue
+		}
+		var params map[string]json.RawMessage
+		if err := json.Unmarshal(command.params, &params); err != nil {
+			return err
+		}
+		params["eventId"], _ = json.Marshal(command.eventID)
+		pending := r.hasServerRequest(requestID)
+		params["providerPending"], _ = json.Marshal(pending)
+		encoded, _ := json.Marshal(params)
+		frame := marshalFrame(map[string]json.RawMessage{
+			"jsonrpc": json.RawMessage(`"2.0"`),
+			"method":  json.RawMessage(`"` + ACPInteractionCommandMethod + `"`),
+			"params":  encoded,
+		}, nil)
+		if _, err := dst.Write(frame); err != nil {
+			return err
+		}
+	}
 	if len(r.promptResult) > 0 {
 		_, err := dst.Write(r.promptResult)
 		return err
@@ -66,10 +119,10 @@ func (r *acpRelay) replayTo(ctx context.Context, dst io.Writer) error {
 
 func (r *acpRelay) close() { r.promptJournal.close() }
 
-func (r *acpRelay) clientFrame(ctx context.Context, frame []byte, generation uint64) ([]byte, error) {
+func (r *acpRelay) clientFrame(ctx context.Context, frame []byte, generation uint64) (acpClientFrames, error) {
 	var envelope map[string]json.RawMessage
 	if json.Unmarshal(frame, &envelope) != nil {
-		return frame, nil //nolint:nilerr // preserve malformed input so the ACP peer owns its protocol error
+		return acpClientFrames{provider: frame}, nil //nolint:nilerr // preserve malformed input so the ACP peer owns its protocol error
 	}
 	var method string
 	_ = json.Unmarshal(envelope["method"], &method)
@@ -80,28 +133,33 @@ func (r *acpRelay) clientFrame(ctx context.Context, frame []byte, generation uin
 		_ = json.Unmarshal(envelope["params"], &params)
 		if params.EventID != "" && params.EventID == r.state.PendingResultEventID {
 			if err := r.promptJournal.reset(ctx); err != nil {
-				return nil, err
+				return acpClientFrames{}, err
 			}
 			r.promptResult = nil
 			r.state.PendingResultEventID = ""
+			r.commands = make(map[string]acpInteractionCommand)
+			r.commandOrder = nil
 		}
-		return nil, nil
+		return acpClientFrames{}, nil
+	}
+	if method == ACPInteractionCommandMethod {
+		return r.acceptInteractionCommand(ctx, envelope)
 	}
 	if method == "$/cancel_request" {
-		return r.clientCancellation(envelope, frame, generation), nil
+		return acpClientFrames{provider: r.clientCancellation(envelope, frame, generation)}, nil
 	}
 	if method == "session/cancel" && r.state.ActivePrompt {
 		if r.cancelRequested {
-			return nil, nil
+			return acpClientFrames{}, nil
 		}
 		r.cancelRequested = true
 	}
 	id := envelope["id"]
 	if method == "" && len(id) > 0 {
-		delete(r.serverRequests, string(id))
+		r.removeServerRequest(string(id))
 	}
 	if method == "" || len(id) == 0 || string(id) == "null" {
-		return frame, nil
+		return acpClientFrames{provider: frame}, nil
 	}
 
 	r.nextRequestID++
@@ -116,11 +174,50 @@ func (r *acpRelay) clientFrame(ctx context.Context, frame []byte, generation uin
 		r.state.PendingResultEventID = ""
 		r.cancelRequested = false
 		if err := r.promptJournal.reset(ctx); err != nil {
-			return nil, err
+			return acpClientFrames{}, err
 		}
 		r.promptResult = nil
+		r.commands = make(map[string]acpInteractionCommand)
+		r.commandOrder = nil
 	}
-	return marshalFrame(envelope, frame), nil
+	return acpClientFrames{provider: marshalFrame(envelope, frame)}, nil
+}
+
+func (r *acpRelay) acceptInteractionCommand(
+	ctx context.Context,
+	envelope map[string]json.RawMessage,
+) (acpClientFrames, error) {
+	id := envelope["id"]
+	var identity struct {
+		RequestID string `json:"requestId"`
+	}
+	params := envelope["params"]
+	if len(id) == 0 || string(id) == "null" || json.Unmarshal(params, &identity) != nil || identity.RequestID == "" {
+		return acpClientFrames{client: rpcErrorFrame(id, "invalid persistent interaction command")}, nil //nolint:nilerr // protocol validation errors are returned in-band
+	}
+	canonical, err := canonicalJSON(params)
+	if err != nil {
+		return acpClientFrames{client: rpcErrorFrame(id, "invalid persistent interaction command")}, nil //nolint:nilerr // protocol validation errors are returned in-band
+	}
+	if existing, ok := r.commands[identity.RequestID]; ok {
+		if existing.canonical != canonical {
+			return acpClientFrames{client: rpcErrorFrame(id, "persistent interaction command changed")}, nil
+		}
+		return acpClientFrames{client: rpcResultFrame(id, map[string]string{"eventId": existing.eventID})}, nil
+	}
+	if !r.hasServerRequest(identity.RequestID) {
+		return acpClientFrames{client: rpcErrorFrame(id, "persistent interaction is not pending")}, nil
+	}
+	if err := ctx.Err(); err != nil {
+		return acpClientFrames{}, err
+	}
+	command := acpInteractionCommand{
+		eventID: r.newEventID(), canonical: canonical,
+		params: append(json.RawMessage(nil), params...),
+	}
+	r.commands[identity.RequestID] = command
+	r.commandOrder = append(r.commandOrder, identity.RequestID)
+	return acpClientFrames{client: rpcResultFrame(id, map[string]string{"eventId": command.eventID})}, nil
 }
 
 func (r *acpRelay) clientCancellation(
@@ -164,7 +261,7 @@ func (r *acpRelay) providerFrame(
 
 	if method != "" {
 		if len(id) > 0 && string(id) != "null" {
-			return r.providerRequest(envelope, frame), false, nil
+			return r.providerRequest(envelope, frame), true, nil
 		}
 		if r.state.ActivePrompt {
 			eventID := r.newEventID()
@@ -216,14 +313,66 @@ func (r *acpRelay) providerFrame(
 func (r *acpRelay) providerRequest(envelope map[string]json.RawMessage, fallback []byte) []byte {
 	id := envelope["id"]
 	key := string(id)
-	requestID := r.serverRequests[key]
-	if requestID == "" {
+	request := r.serverRequests[key]
+	if request.requestID == "" {
 		r.nextInteractionID++
-		requestID = fmt.Sprintf("acp-request:%d", r.nextInteractionID)
-		r.serverRequests[key] = requestID
+		request.requestID = fmt.Sprintf("acp-request:%d", r.nextInteractionID)
+		r.serverOrder = append(r.serverOrder, key)
 	}
-	injectMeta(envelope, ACPRequestIDMetaKey, requestID)
-	return marshalFrame(envelope, fallback)
+	injectMeta(envelope, ACPRequestIDMetaKey, request.requestID)
+	request.frame = marshalFrame(envelope, fallback)
+	r.serverRequests[key] = request
+	return request.frame
+}
+
+func (r *acpRelay) hasServerRequest(requestID string) bool {
+	for _, request := range r.serverRequests {
+		if request.requestID == requestID {
+			return true
+		}
+	}
+	return false
+}
+
+func (r *acpRelay) removeServerRequest(providerID string) {
+	if _, ok := r.serverRequests[providerID]; !ok {
+		return
+	}
+	delete(r.serverRequests, providerID)
+	for i, id := range r.serverOrder {
+		if id == providerID {
+			r.serverOrder = append(r.serverOrder[:i], r.serverOrder[i+1:]...)
+			return
+		}
+	}
+}
+
+func canonicalJSON(raw json.RawMessage) (string, error) {
+	if !json.Valid(raw) {
+		return "", errors.New("invalid JSON")
+	}
+	var value any
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	if err := decoder.Decode(&value); err != nil {
+		return "", err
+	}
+	encoded, err := json.Marshal(value)
+	return string(encoded), err
+}
+
+func rpcResultFrame(id json.RawMessage, result any) []byte {
+	encoded, _ := json.Marshal(result)
+	return marshalFrame(map[string]json.RawMessage{
+		"jsonrpc": json.RawMessage(`"2.0"`), "id": id, "result": encoded,
+	}, nil)
+}
+
+func rpcErrorFrame(id json.RawMessage, message string) []byte {
+	encoded, _ := json.Marshal(map[string]any{"code": -32602, "message": message})
+	return marshalFrame(map[string]json.RawMessage{
+		"jsonrpc": json.RawMessage(`"2.0"`), "id": id, "error": encoded,
+	}, nil)
 }
 
 func (r *acpRelay) captureResponse(request acpClientRequest, envelope map[string]json.RawMessage) {

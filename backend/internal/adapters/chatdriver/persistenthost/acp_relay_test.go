@@ -90,6 +90,55 @@ func TestACPRelayGivesReplayedProviderRequestStableIdentity(t *testing.T) {
 	}
 }
 
+func TestACPRelayAcceptsInteractionCommandIdempotently(t *testing.T) {
+	relay := newTestACPRelay(t)
+	prompt := relayClientFrame(t, relay,
+		[]byte(`{"jsonrpc":"2.0","id":1,"method":"session/prompt","params":{}}`+"\n"), 1)
+	request, _ := relayProviderFrame(t, relay,
+		[]byte(`{"jsonrpc":"2.0","id":"permission-7","method":"session/request_permission","params":{}}`+"\n"),
+		1, true)
+	requestID := frameMetaString(t, request, ACPRequestIDMetaKey)
+	command := func(id int, decision string) acpClientFrames {
+		t.Helper()
+		frame, _ := json.Marshal(map[string]any{
+			"jsonrpc": "2.0", "id": id, "method": ACPInteractionCommandMethod,
+			"params": map[string]any{
+				"requestId": requestID, "kind": "approval",
+				"decision": map[string]string{"id": decision},
+			},
+		})
+		result, err := relay.clientFrame(context.Background(), append(frame, '\n'), 1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(result.provider) != 0 {
+			t.Fatalf("private command leaked to provider: %s", result.provider)
+		}
+		return result
+	}
+	eventID := frameResultString(t, command(10, "allow").client, "eventId")
+	if eventID == "" || frameResultString(t, command(11, "allow").client, "eventId") != eventID {
+		t.Fatal("identical command was not acknowledged with one stable event id")
+	}
+	if changed := command(12, "reject").client; !bytes.Contains(changed, []byte(`"error"`)) {
+		t.Fatalf("changed command was accepted: %s", changed)
+	}
+
+	replay := relayReplayFrames(t, relay)
+	if len(replay) != 2 || !bytes.Contains(replay[1], []byte(`"providerPending":true`)) {
+		t.Fatalf("pending interaction replay = %q", replay)
+	}
+	relayClientFrame(t, relay,
+		[]byte(`{"jsonrpc":"2.0","id":"permission-7","result":{"outcome":"cancelled"}}`+"\n"), 1)
+	replay = relayReplayFrames(t, relay)
+	if len(replay) != 1 || !bytes.Contains(replay[0], []byte(`"providerPending":false`)) {
+		t.Fatalf("settled interaction replay = %q", replay)
+	}
+	relayProviderFrame(t, relay,
+		[]byte(`{"jsonrpc":"2.0","id":`+frameID(t, prompt)+`,"result":{"stopReason":"end_turn"}}`+"\n"),
+		1, true)
+}
+
 func TestACPRelayRewritesClientCancellationToProviderRequestID(t *testing.T) {
 	relay := newTestACPRelay(t)
 	relayClientFrame(t, relay, []byte(`{"jsonrpc":"2.0","id":99,"method":"initialize","params":{}}`+"\n"), 7)
@@ -161,7 +210,7 @@ func relayClientFrame(t *testing.T, relay *acpRelay, frame []byte, generation ui
 	if err != nil {
 		t.Fatal(err)
 	}
-	return rewritten
+	return rewritten.provider
 }
 
 func relayProviderFrame(
@@ -202,4 +251,15 @@ func frameMetaString(t *testing.T, frame []byte, key string) string {
 	}
 	value, _ := envelope.Params.Meta[key].(string)
 	return value
+}
+
+func frameResultString(t *testing.T, frame []byte, key string) string {
+	t.Helper()
+	var envelope struct {
+		Result map[string]string `json:"result"`
+	}
+	if err := json.Unmarshal(frame, &envelope); err != nil {
+		t.Fatalf("decode frame %q: %v", frame, err)
+	}
+	return envelope.Result[key]
 }

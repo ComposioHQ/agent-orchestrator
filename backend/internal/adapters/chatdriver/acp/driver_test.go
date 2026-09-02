@@ -2,6 +2,7 @@ package acp
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -115,6 +116,11 @@ func TestPersistentACPDriverSurvivesRealProcessDetach(t *testing.T) {
 	dataDir := t.TempDir()
 	workdir := t.TempDir()
 	callsPath := filepath.Join(t.TempDir(), "calls.log")
+	prepareCalls := 0
+	prepareEnv := func(context.Context) (map[string]string, error) {
+		prepareCalls++
+		return map[string]string{"AO_BROWSER_CAPABILITY": fmt.Sprintf("token-%d", prepareCalls)}, nil
+	}
 	cfg := Config{
 		Harness: domain.HarnessClaudeCode, Persistent: true,
 		Capabilities: ports.ChatCapabilities{
@@ -134,7 +140,7 @@ func TestPersistentACPDriverSurvivesRealProcessDetach(t *testing.T) {
 	firstDriver := New(cfg, log)
 	first, err := firstDriver.Start(context.Background(), ports.ChatStartConfig{
 		SessionID: "persistent-acp-e2e", DataDir: dataDir, WorkspacePath: workdir,
-		ProviderScopeID: "scope",
+		ProviderScopeID: "scope", PrepareEnv: prepareEnv,
 	})
 	if err != nil {
 		t.Fatalf("Start: %v", err)
@@ -162,6 +168,7 @@ func TestPersistentACPDriverSurvivesRealProcessDetach(t *testing.T) {
 	second, err := secondDriver.Resume(context.Background(), ports.ChatResumeConfig{
 		SessionID: "persistent-acp-e2e", DataDir: dataDir, WorkspacePath: workdir,
 		ProviderConversationID: "persistent-provider-session", ProviderScopeID: "scope",
+		PrepareEnv: prepareEnv,
 	})
 	if err != nil {
 		t.Fatalf("Resume live host: %v", err)
@@ -169,6 +176,9 @@ func TestPersistentACPDriverSurvivesRealProcessDetach(t *testing.T) {
 	defer func() { _ = second.(ports.ChatProviderTerminator).Terminate() }()
 	if !second.(ports.ChatLiveReconnector).ReconnectedLive() {
 		t.Fatal("replacement did not identify the same live ACP process")
+	}
+	if prepareCalls != 1 {
+		t.Fatalf("launch-only environment prepared %d times, want only the initial provider launch", prepareCalls)
 	}
 	if err := second.(ports.ChatLiveReconnectActivator).ActivateLiveReconnect(context.Background(), ref.ProviderTurnID); err != nil {
 		t.Fatalf("activate replacement: %v", err)
@@ -256,6 +266,21 @@ func TestPersistentACPDriverReplaysOnePermissionAndOriginalResponder(t *testing.
 	if err := first.Close(); err != nil {
 		t.Fatal(err)
 	}
+	detachSettled := time.After(50 * time.Millisecond)
+detachEvents:
+	for {
+		select {
+		case event, ok := <-first.Events():
+			if !ok {
+				break detachEvents
+			}
+			if event.Kind == ports.ChatEventApprovalResolved {
+				t.Fatalf("daemon detach falsely resolved pending approval: %#v", event)
+			}
+		case <-detachSettled:
+			break detachEvents
+		}
+	}
 
 	second, err := New(cfg, log).Resume(context.Background(), ports.ChatResumeConfig{
 		SessionID: "persistent-acp-approval", DataDir: dataDir, WorkspacePath: workdir,
@@ -280,9 +305,18 @@ func TestPersistentACPDriverReplaysOnePermissionAndOriginalResponder(t *testing.
 	if err := second.ResolveRequest(context.Background(), replayedApproval.RequestID, ports.ChatDecision{ID: "allow"}); err != nil {
 		t.Fatalf("resolve replayed approval: %v", err)
 	}
-	var completed ports.ChatEvent
+	var resolved, completed ports.ChatEvent
 	for completed.Kind != ports.ChatEventTurnCompleted {
-		completed = nextEvent(t, second.Events())
+		event := nextEvent(t, second.Events())
+		if event.Kind == ports.ChatEventApprovalResolved {
+			resolved = event
+		}
+		if event.Kind == ports.ChatEventTurnCompleted {
+			completed = event
+		}
+	}
+	if resolved.ProviderEventID == "" {
+		t.Fatalf("accepted approval has no stable provider event id: %#v", resolved)
 	}
 	if completed.TurnState != domain.TurnStateCompleted || completed.ProviderTurnID != ref.ProviderTurnID {
 		t.Fatalf("completion after approval = %#v", completed)
@@ -398,6 +432,84 @@ func TestPersistentACPResumeAdoptsLivePromptWithoutSecondSetup(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("timed out waiting for host ack")
+	}
+}
+
+func TestPersistentACPReplayAppliesAcceptedPermissionCommand(t *testing.T) {
+	initialize, err := json.Marshal(acpsdk.InitializeResponse{
+		ProtocolVersion: acpsdk.ProtocolVersionNumber,
+		AgentCapabilities: acpsdk.AgentCapabilities{
+			SessionCapabilities: acpsdk.SessionCapabilities{Resume: &acpsdk.SessionResumeCapabilities{}},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	session, err := json.Marshal(acpsdk.NewSessionResponse{SessionId: "provider-session"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	daemon, host := net.Pipe()
+	t.Cleanup(func() { _ = host.Close() })
+	driver := New(Config{
+		Harness: domain.HarnessClaudeCode, Persistent: true,
+		Capabilities: ports.ChatCapabilities{
+			ports.ChatCapabilityStreaming: true, ports.ChatCapabilityApprovals: true,
+			ports.ChatCapabilityResume: true,
+		},
+		Launch: func(context.Context, LaunchConfig) (Launch, error) {
+			return Launch{Command: "fake"}, nil
+		},
+	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	driver.connectHost = func(context.Context, persistenthost.Config) (*persistenthost.Transport, error) {
+		return &persistenthost.Transport{
+			Stdin: daemon, Stdout: daemon, Reconnected: true,
+			ACPState: &persistenthost.ACPState{
+				InitializeResult: initialize, SessionResult: session,
+				SessionID: "provider-session", ActivePrompt: true,
+			},
+		}, nil
+	}
+
+	opened, err := driver.Resume(context.Background(), ports.ChatResumeConfig{
+		SessionID: "ao-session", DataDir: t.TempDir(), WorkspacePath: t.TempDir(),
+		ProviderConversationID: "provider-session", ProviderScopeID: "scope",
+	})
+	if err != nil {
+		t.Fatalf("Resume: %v", err)
+	}
+	conv := opened.(*conversation)
+	t.Cleanup(func() { _ = conv.Close() })
+	if err := conv.ActivateLiveReconnect(context.Background(), "durable-turn"); err != nil {
+		t.Fatalf("ActivateLiveReconnect: %v", err)
+	}
+
+	go func() {
+		_, _ = fmt.Fprintln(host, `{"jsonrpc":"2.0","id":"permission-1","method":"session/request_permission","params":{"_meta":{"ao.persistentRequestId":"acp-request:1"},"sessionId":"provider-session","toolCall":{"toolCallId":"tool-1","title":"Approve"},"options":[{"optionId":"allow","name":"Allow","kind":"allow_once"}]}}`)
+		_, _ = fmt.Fprintln(host, `{"jsonrpc":"2.0","method":"_ao/persistent_interaction_command","params":{"eventId":"acp-host:2","requestId":"acp-request:1","kind":"approval","providerPending":true,"decision":{"id":"allow"}}}`)
+	}()
+
+	_ = nextEvent(t, conv.Events()) // controller.ready
+	requested := nextEvent(t, conv.Events())
+	if requested.Kind != ports.ChatEventApprovalRequested || requested.RequestID != "acp-request:1" {
+		t.Fatalf("requested event = %#v", requested)
+	}
+	resolved := nextEvent(t, conv.Events())
+	if resolved.Kind != ports.ChatEventApprovalResolved || resolved.RequestID != requested.RequestID ||
+		resolved.ProviderEventID != "acp-host:2" || !bytes.Contains(resolved.Detail, []byte(`"decision":"allow"`)) {
+		t.Fatalf("resolved event = %#v", resolved)
+	}
+
+	if err := host.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	response, err := bufio.NewReader(host).ReadBytes('\n')
+	if err != nil {
+		t.Fatalf("provider permission response: %v", err)
+	}
+	if !bytes.Contains(response, []byte(`"id":"permission-1"`)) ||
+		!bytes.Contains(response, []byte(`"optionId":"allow"`)) {
+		t.Fatalf("provider permission response = %s", response)
 	}
 }
 

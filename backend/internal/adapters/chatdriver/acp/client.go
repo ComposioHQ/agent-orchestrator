@@ -121,14 +121,21 @@ func (c *conversation) requestApproval(
 	for _, option := range params.Decisions {
 		options[option.ID] = append(json.RawMessage(nil), option.Raw...)
 	}
-	request := &parkedPermission{options: options, result: make(chan string, 1)}
+	request := &parkedPermission{
+		options: options, result: make(chan string, 1), ready: make(chan struct{}),
+	}
 
 	c.mu.Lock()
 	if c.closed {
 		c.mu.Unlock()
 		return "", nil
 	}
-	c.pending[requestID] = request
+	accepted, hasAccepted := c.accepted[requestID]
+	if hasAccepted && accepted.Kind == persistentInteractionApproval {
+		delete(c.accepted, requestID)
+	} else {
+		c.pending[requestID] = request
+	}
 	turnID := c.activeTurn
 	c.mu.Unlock()
 	c.emit(ports.ChatEvent{
@@ -142,6 +149,11 @@ func (c *conversation) requestApproval(
 		RequestID:      requestID,
 		Decisions:      params.Decisions,
 	})
+	close(request.ready)
+	if hasAccepted && accepted.Kind == persistentInteractionApproval {
+		c.emit(persistentInteractionEvent(accepted))
+		request.result <- accepted.Decision.ID
+	}
 
 	timer := timeAfter(approvalWait)
 	select {
@@ -149,7 +161,9 @@ func (c *conversation) requestApproval(
 		return selected, nil
 	case <-ctx.Done():
 		c.discardPermission(requestID)
-		c.emit(ports.ChatEvent{Kind: ports.ChatEventApprovalResolved, RequestID: requestID})
+		if !c.providerDetaching() {
+			c.emit(ports.ChatEvent{Kind: ports.ChatEventApprovalResolved, RequestID: requestID})
+		}
 		return "", nil
 	case <-timer:
 		c.discardPermission(requestID)
@@ -232,13 +246,20 @@ func (c *conversation) requestInput(
 	if requestID == "" {
 		requestID = uuid.NewString()
 	}
-	parked := &parkedInput{request: request, result: make(chan ports.ChatInputResponse, 1)}
+	parked := &parkedInput{
+		request: request, result: make(chan ports.ChatInputResponse, 1), ready: make(chan struct{}),
+	}
 	c.mu.Lock()
 	if c.closed {
 		c.mu.Unlock()
 		return ports.ChatInputResponse{Action: ports.ChatInputActionCancel}, nil
 	}
-	c.pendingInputs[requestID] = parked
+	accepted, hasAccepted := c.accepted[requestID]
+	if hasAccepted && accepted.Kind == persistentInteractionInput {
+		delete(c.accepted, requestID)
+	} else {
+		c.pendingInputs[requestID] = parked
+	}
 	turnID := c.activeTurn
 	c.mu.Unlock()
 
@@ -246,6 +267,11 @@ func (c *conversation) requestInput(
 		Kind: ports.ChatEventInputRequested, ProviderTurnID: turnID,
 		RequestID: requestID, Input: &request, Summary: request.Message,
 	})
+	close(parked.ready)
+	if hasAccepted && accepted.Kind == persistentInteractionInput {
+		c.emit(persistentInteractionEvent(accepted))
+		parked.result <- *accepted.Input
+	}
 
 	timer := timeAfter(approvalWait)
 	select {
@@ -253,13 +279,21 @@ func (c *conversation) requestInput(
 		return response, nil
 	case <-ctx.Done():
 		c.discardInput(requestID)
-		c.emit(ports.ChatEvent{Kind: ports.ChatEventInputResolved, RequestID: requestID})
+		if !c.providerDetaching() {
+			c.emit(ports.ChatEvent{Kind: ports.ChatEventInputResolved, RequestID: requestID})
+		}
 		return ports.ChatInputResponse{Action: ports.ChatInputActionCancel}, nil
 	case <-timer:
 		c.discardInput(requestID)
 		c.emit(ports.ChatEvent{Kind: ports.ChatEventInputResolved, RequestID: requestID})
 		return ports.ChatInputResponse{Action: ports.ChatInputActionCancel}, nil
 	}
+}
+
+func (c *conversation) providerDetaching() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.detaching
 }
 
 func stableACPRequestID(meta map[string]any) string {
@@ -295,14 +329,23 @@ func (c *conversation) ResolveInput(
 	}
 	delete(c.pendingInputs, requestID)
 	c.mu.Unlock()
-
-	select {
-	case request.result <- response:
-		c.emit(ports.ChatEvent{Kind: ports.ChatEventInputResolved, RequestID: requestID})
-		return nil
-	case <-ctx.Done():
-		return ctx.Err()
+	command := persistentInteractionCommand{
+		RequestID: requestID, Kind: persistentInteractionInput, Input: &response,
 	}
+	eventID, err := c.recordPersistentInteraction(ctx, command)
+	if err != nil {
+		c.mu.Lock()
+		if !c.closed {
+			c.pendingInputs[requestID] = request
+		}
+		c.mu.Unlock()
+		return err
+	}
+	command.EventID = eventID
+
+	c.emit(persistentInteractionEvent(command))
+	request.result <- response
+	return nil
 }
 
 func (c *conversation) UnstableCompleteElicitation(

@@ -80,12 +80,19 @@ func TestProviderHelper(t *testing.T) {
 
 func runACPProviderHelper() {
 	scanner := bufio.NewScanner(os.Stdin)
+	var parkedPromptID json.RawMessage
 	for scanner.Scan() {
 		var frame struct {
 			ID     json.RawMessage `json:"id"`
 			Method string          `json:"method"`
 		}
 		if json.Unmarshal(scanner.Bytes(), &frame) != nil {
+			continue
+		}
+		if frame.Method == "" && string(frame.ID) == `"permission-ledger"` && len(parkedPromptID) > 0 {
+			_, _ = fmt.Fprintln(os.Stdout, `{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"acp-session-live","update":{"agent_message_chunk":{"content":{"type":"text","text":"approved"}}}}}`)
+			_, _ = fmt.Fprintf(os.Stdout, `{"jsonrpc":"2.0","id":%s,"result":{"stopReason":"end_turn"}}`+"\n", parkedPromptID)
+			parkedPromptID = nil
 			continue
 		}
 		switch frame.Method {
@@ -95,12 +102,78 @@ func runACPProviderHelper() {
 			_, _ = fmt.Fprintf(os.Stdout, `{"jsonrpc":"2.0","id":%s,"result":{"sessionId":"acp-session-live"}}`+"\n", frame.ID)
 		case "session/prompt":
 			_, _ = fmt.Fprintln(os.Stdout, `{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"acp-session-live","update":{"agent_message_chunk":{"content":{"type":"text","text":"before restart"}}}}}`)
+			if os.Getenv("AO_CHAT_HOST_ACP_PERMISSION") == "1" {
+				parkedPromptID = append(json.RawMessage(nil), frame.ID...)
+				_, _ = fmt.Fprintln(os.Stdout, `{"jsonrpc":"2.0","id":"permission-ledger","method":"session/request_permission","params":{"sessionId":"acp-session-live","options":[{"optionId":"allow","name":"Allow","kind":"allow_once"}]}}`)
+				continue
+			}
 			time.Sleep(100 * time.Millisecond)
 			_, _ = fmt.Fprintf(os.Stdout, `{"jsonrpc":"2.0","id":%s,"result":{"stopReason":"end_turn","providerPid":%d}}`+"\n", frame.ID, os.Getpid())
 		case "pid":
 			_, _ = fmt.Fprintf(os.Stdout, `{"jsonrpc":"2.0","id":%s,"result":{"pid":%d}}`+"\n", frame.ID, os.Getpid())
 		}
 	}
+}
+
+func TestACPHostReplaysAcceptedInteractionAfterAttachmentDies(t *testing.T) {
+	dataDir := t.TempDir()
+	cfg := Config{
+		SessionID: "acp-command-ledger", DataDir: dataDir, Workdir: t.TempDir(), Protocol: ProtocolACP,
+		Env: append(os.Environ(),
+			"AO_CHAT_HOST_PROVIDER_HELPER=1",
+			"AO_CHAT_HOST_ACP_HELPER=1",
+			"AO_CHAT_HOST_ACP_PERMISSION=1",
+		),
+		Argv: []string{os.Args[0], "-test.run=TestProviderHelper"},
+	}
+	done := make(chan error, 1)
+	go func() { done <- Run(context.Background(), cfg) }()
+	d := awaitDescriptor(t, dataDir, cfg.SessionID)
+	t.Cleanup(func() {
+		_ = Shutdown(context.Background(), dataDir, cfg.SessionID)
+		<-done
+	})
+
+	first := awaitAttach(t, d)
+	reader := bufio.NewReader(first.Stdout)
+	sendFrame(t, first, `{"jsonrpc":"2.0","id":1,"method":"session/prompt","params":{"sessionId":"acp-session-live","prompt":[]}}`)
+	_ = readFrame(t, reader) // prompt update
+	permission := readFrame(t, reader)
+	requestID := frameMetaString(t, permission, ACPRequestIDMetaKey)
+	if requestID == "" {
+		t.Fatalf("permission has no stable request id: %s", permission)
+	}
+
+	conn := first.Stdin.(net.Conn)
+	if err := conn.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	sendFrame(t, first, fmt.Sprintf(
+		`{"jsonrpc":"2.0","id":99,"method":"_ao/persistent_interaction_command","params":{"requestId":%q,"kind":"approval","decision":{"id":"allow"}}}`,
+		requestID,
+	))
+	accepted := readFrame(t, reader)
+	if !bytes.Contains(accepted, []byte(`"id":99`)) || !bytes.Contains(accepted, []byte(`"eventId"`)) {
+		t.Fatalf("command acceptance = %s", accepted)
+	}
+	_ = first.Stdin.Close() // daemon dies before its SDK answers the provider request
+
+	second := awaitAttach(t, d)
+	secondReader := bufio.NewReader(second.Stdout)
+	replayedUpdate := readFrame(t, secondReader)
+	if !bytes.Contains(replayedUpdate, []byte(`"session/update"`)) {
+		t.Fatalf("first replay = %s, want prompt update", replayedUpdate)
+	}
+	replayedPermission := readFrame(t, secondReader)
+	if !bytes.Contains(replayedPermission, []byte(`"session/request_permission"`)) {
+		t.Fatalf("second replay = %s, want pending permission", replayedPermission)
+	}
+	replayedCommand := readFrame(t, secondReader)
+	if !bytes.Contains(replayedCommand, []byte(`"_ao/persistent_interaction_command"`)) ||
+		!bytes.Contains(replayedCommand, []byte(requestID)) {
+		t.Fatalf("third replay = %s, want accepted command", replayedCommand)
+	}
+	_ = second.Stdin.Close()
 }
 
 func TestACPHostPreservesPromptCorrelationAndJournal(t *testing.T) {
@@ -468,6 +541,61 @@ func TestConnectOrStartRejectsChangedProviderLaunch(t *testing.T) {
 	if _, err := ConnectOrStart(context.Background(), changed); !errors.Is(err, ErrIncompatible) {
 		t.Fatalf("changed launch error = %v, want ErrIncompatible", err)
 	}
+}
+
+func TestConnectOrStartPreparesOnlyWhenLaunchingProvider(t *testing.T) {
+	t.Run("live host", func(t *testing.T) {
+		dataDir := t.TempDir()
+		cfg := Config{
+			SessionID: "prepare-live", DataDir: dataDir, Workdir: t.TempDir(),
+			Env:  append(os.Environ(), "AO_CHAT_HOST_PROVIDER_HELPER=1"),
+			Argv: []string{os.Args[0], "-test.run=TestProviderHelper"},
+		}
+		done := make(chan error, 1)
+		go func() { done <- Run(context.Background(), cfg) }()
+		_ = awaitDescriptor(t, dataDir, cfg.SessionID)
+		t.Cleanup(func() {
+			_ = Shutdown(context.Background(), dataDir, cfg.SessionID)
+			<-done
+		})
+		prepareCalls := 0
+		cfg.Prepare = func(context.Context) (PreparedProvider, error) {
+			prepareCalls++
+			return PreparedProvider{}, errors.New("must not prepare a live host")
+		}
+		transport, err := ConnectOrStart(context.Background(), cfg)
+		if err != nil {
+			t.Fatalf("ConnectOrStart: %v", err)
+		}
+		_ = transport.Stdin.Close()
+		if prepareCalls != 0 {
+			t.Fatalf("live host preparation calls = %d", prepareCalls)
+		}
+	})
+
+	t.Run("new host", func(t *testing.T) {
+		dataDir := t.TempDir()
+		cfg := Config{
+			SessionID: "prepare-new", DataDir: dataDir, Workdir: t.TempDir(),
+			Env: os.Environ(), Argv: []string{os.Args[0], "-test.run=TestProviderHelper"},
+		}
+		prepareCalls := 0
+		cfg.Prepare = func(context.Context) (PreparedProvider, error) {
+			prepareCalls++
+			return PreparedProvider{
+				Env: append(os.Environ(), "AO_CHAT_HOST_PROVIDER_HELPER=1"), Argv: cfg.Argv,
+			}, nil
+		}
+		transport, err := ConnectOrStart(context.Background(), cfg)
+		if err != nil {
+			t.Fatalf("ConnectOrStart: %v", err)
+		}
+		_ = transport.Stdin.Close()
+		t.Cleanup(func() { _ = Shutdown(context.Background(), dataDir, cfg.SessionID) })
+		if prepareCalls != 1 {
+			t.Fatalf("new host preparation calls = %d, want 1", prepareCalls)
+		}
+	})
 }
 
 func TestValidateDescriptorAllowsLegacyRawHostOnly(t *testing.T) {
