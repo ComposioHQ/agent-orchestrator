@@ -294,6 +294,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/fs/dirs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List the subdirectories of a directory on the daemon host */
+        get: operations["listDirs"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/identity": {
         parameters: {
             query?: never;
@@ -2678,6 +2695,14 @@ export interface components {
             /** Format: int64 */
             totalNanos: number;
         };
+        FSEntry: {
+            /** @description True when the directory carries a .git entry (clone or worktree checkout). */
+            gitRepo: boolean;
+            /** @description Directory name. */
+            name: string;
+            /** @description Absolute path of the directory on the daemon host. */
+            path: string;
+        };
         IdentityResponse: {
             apiVersion: number;
             hostId: string;
@@ -2756,6 +2781,16 @@ export interface components {
         };
         ListCompactSessionUsageResponse: {
             sessions: components["schemas"]["CompactSessionUsageResponse"][];
+        };
+        ListDirsResponse: {
+            /** @description Subdirectories, excluding dotted names. */
+            entries: components["schemas"]["FSEntry"][];
+            /** @description Absolute path of the listed directory's parent; equals path at the filesystem root. */
+            parent: string;
+            /** @description Absolute path that was listed. */
+            path: string;
+            /** @description True when the listing hit the entry cap and more subdirectories exist. */
+            truncated?: boolean;
         };
         ListNotificationsResponse: {
             nextCursor?: string;
@@ -4607,6 +4642,65 @@ export interface operations {
             };
             /** @description Not Implemented */
             501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    listDirs: {
+        parameters: {
+            query?: {
+                /** @description Absolute directory on the daemon host to list. When omitted, the daemon user's home directory. */
+                path?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ListDirsResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
                 headers: {
                     [name: string]: unknown;
                 };
