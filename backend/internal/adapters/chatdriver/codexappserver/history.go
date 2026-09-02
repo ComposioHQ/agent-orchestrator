@@ -120,9 +120,9 @@ func (c *conversation) ReadHistory(ctx context.Context) ([]ports.ChatEvent, erro
 
 // RecoverLive establishes an ordered boundary on the initialized connection
 // that survived the daemon. thread/read is processed by Codex after all earlier
-// provider output; requestAfterInboundCapture additionally waits until AO has
-// normalized every earlier notification and registered every earlier server
-// request. No persistent-host protocol change is required.
+// provider output; requestThreadReadAfterInboundCapture additionally waits
+// until AO has normalized every earlier notification and registered every
+// earlier server request. No persistent-host protocol change is required.
 func (c *conversation) RecoverLive(ctx context.Context) (ports.ChatLiveRecoverySnapshot, error) {
 	if !c.proc.reconnected {
 		return ports.ChatLiveRecoverySnapshot{}, fmt.Errorf(
@@ -141,9 +141,8 @@ func (c *conversation) RecoverLive(ctx context.Context) (ports.ChatLiveRecoveryS
 	}
 	var resp codexproto.ThreadReadResponse
 	includeTurns := true
-	boundary, established, requestErr := c.conn.requestAfterInboundCapture(
+	boundary, established, requestErr := c.conn.requestThreadReadAfterInboundCapture(
 		ctx,
-		codexproto.MethodThreadRead,
 		codexproto.ThreadReadParams{ThreadID: c.threadID, IncludeTurns: &includeTurns},
 		&resp,
 	)

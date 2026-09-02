@@ -50,18 +50,8 @@ func armClientDeadline(ctx context.Context, conn net.Conn, timeout time.Duration
 	return func() { _ = stop() }
 }
 
-// clientSendMessage chunks message by 512 runes and sends each as a
+// clientSendMessageConn chunks message by 512 runes and sends each as a
 // MsgTerminalInput frame with 15ms gaps, then pauses 300ms and sends "\r".
-// Mirrors ptyHostSendMessage from pty-client.ts.
-func clientSendMessage(addr, message string) error {
-	conn, err := dialHost(addr, dialTimeout)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = conn.Close() }()
-	return clientSendMessageConn(conn, message)
-}
-
 func clientSendMessageConn(conn net.Conn, message string) error {
 	runes := []rune(message)
 	for i := 0; i < len(runes); i += ptyInputChunkRunes {
@@ -121,10 +111,6 @@ func clientSendInputConn(conn net.Conn, input string) error {
 // lines <= 0 is handled by the caller (runtime.go rejects it before calling).
 func clientGetOutput(ctx context.Context, addr string, lines int) (string, error) {
 	return clientReadOutput(ctx, addr, lines, MsgGetOutputReq, MsgGetOutputRes)
-}
-
-func clientGetStyledOutput(ctx context.Context, addr string, lines int) (string, error) {
-	return clientReadOutput(ctx, addr, lines, MsgGetStyledOutputReq, MsgGetStyledOutputRes)
 }
 
 func clientReadOutput(ctx context.Context, addr string, lines int, requestType, responseType byte) (string, error) {
@@ -221,11 +207,11 @@ func clientStatus(addr string) (status StatusPayload, hostAlive bool, transientE
 }
 
 func clientStatusContext(ctx context.Context, addr string) (status StatusPayload, hostAlive bool, transientErr error) {
-	conn, status, _, _, hostAlive, err := clientStatusConnectionContext(ctx, addr, isAliveTimeout)
-	if conn != nil {
-		_ = conn.Close()
+	result, err := clientStatusConnectionContext(ctx, addr, isAliveTimeout)
+	if result.conn != nil {
+		_ = result.conn.Close()
 	}
-	return status, hostAlive, err
+	return result.status, result.reachable, err
 }
 
 type clientFrame struct {
@@ -233,30 +219,39 @@ type clientFrame struct {
 	payload     []byte
 }
 
+type clientStatusConnectionResult struct {
+	conn      net.Conn
+	status    StatusPayload
+	frames    []clientFrame
+	pending   []byte
+	reachable bool
+}
+
 // clientStatusConnectionContext performs the status exchange but retains the
 // same TCP connection for an exact-owner operation. Frames queued before the
 // status response (notably attach scrollback) are returned in order so callers
 // can authenticate first without losing them.
-func clientStatusConnectionContext(ctx context.Context, addr string, timeout time.Duration) (conn net.Conn, status StatusPayload, frames []clientFrame, pending []byte, hostAlive bool, transientErr error) {
+func clientStatusConnectionContext(ctx context.Context, addr string, timeout time.Duration) (clientStatusConnectionResult, error) {
 	conn, err := dialHostContext(ctx, addr, timeout)
 	if err != nil {
 		if ctxErr := ctx.Err(); ctxErr != nil {
-			return nil, StatusPayload{}, nil, nil, false, ctxErr
+			return clientStatusConnectionResult{}, ctxErr
 		}
 		// A dial timeout is transient (the loopback hiccupped). A refused
 		// connection means nothing is listening -> definitively gone. Any
 		// other dial failure is treated as transient ("when unsure, retry").
 		if isTimeout(err) {
-			return nil, StatusPayload{}, nil, nil, false, err
+			return clientStatusConnectionResult{}, err
 		}
 		if isConnRefused(err) {
-			return nil, StatusPayload{}, nil, nil, false, nil
+			return clientStatusConnectionResult{}, nil
 		}
-		return nil, StatusPayload{}, nil, nil, false, err
+		return clientStatusConnectionResult{}, err
 	}
-	closeWithError := func(err error) (net.Conn, StatusPayload, []clientFrame, []byte, bool, error) {
+	result := clientStatusConnectionResult{conn: conn}
+	closeWithError := func(err error) error {
 		_ = conn.Close()
-		return nil, StatusPayload{}, nil, nil, false, err
+		return err
 	}
 	stopCancellation := armClientDeadline(ctx, conn, timeout)
 	defer stopCancellation()
@@ -264,11 +259,11 @@ func clientStatusConnectionContext(ctx context.Context, addr string, timeout tim
 	statusReqFrame, _ := EncodeMessage(MsgStatusReq, nil) // nil payload, never overflows
 	if _, err := conn.Write(statusReqFrame); err != nil {
 		if ctxErr := ctx.Err(); ctxErr != nil {
-			return closeWithError(ctxErr)
+			return clientStatusConnectionResult{}, closeWithError(ctxErr)
 		}
 		// We connected, then the write failed: connected-then-failed I/O is
 		// transient (the host may still be up; the conn was disrupted).
-		return closeWithError(err)
+		return clientStatusConnectionResult{}, closeWithError(err)
 	}
 
 	var (
@@ -277,10 +272,10 @@ func clientStatusConnectionContext(ctx context.Context, addr string, timeout tim
 	)
 	parser := NewMessageParser(func(msgType byte, payload []byte) {
 		if msgType != MsgStatusRes || gotStatus {
-			frames = append(frames, clientFrame{messageType: msgType, payload: payload})
+			result.frames = append(result.frames, clientFrame{messageType: msgType, payload: payload})
 			return
 		}
-		statusErr = json.Unmarshal(payload, &status)
+		statusErr = json.Unmarshal(payload, &result.status)
 		gotStatus = true
 	})
 
@@ -293,19 +288,20 @@ func clientStatusConnectionContext(ctx context.Context, addr string, timeout tim
 		}
 		if gotStatus {
 			if statusErr != nil {
-				return closeWithError(statusErr)
+				return clientStatusConnectionResult{}, closeWithError(statusErr)
 			}
 			_ = conn.SetDeadline(time.Time{})
 			// Feed may have consumed a complete status frame while retaining the
 			// prefix of the next frame. Preserve that prefix when this exact TCP
 			// connection is handed to the authenticated operation; otherwise an
 			// attach or output read would resume in the middle of a frame.
-			pending = append(pending, parser.buf...)
-			return conn, status, frames, pending, true, nil
+			result.pending = append(result.pending, parser.buf...)
+			result.reachable = true
+			return result, nil
 		}
 		if err != nil {
 			if ctxErr := ctx.Err(); ctxErr != nil {
-				return closeWithError(ctxErr)
+				return clientStatusConnectionResult{}, closeWithError(ctxErr)
 			}
 			lastErr = err
 			break
@@ -313,7 +309,7 @@ func clientStatusConnectionContext(ctx context.Context, addr string, timeout tim
 	}
 	// Connected but never got a STATUS_RES: read timeout or mid-read EOF.
 	// lastErr is the error that broke the read loop (always non-nil here).
-	return closeWithError(lastErr)
+	return clientStatusConnectionResult{}, closeWithError(lastErr)
 }
 
 // isTimeout reports whether err is a network timeout (dial timeout or

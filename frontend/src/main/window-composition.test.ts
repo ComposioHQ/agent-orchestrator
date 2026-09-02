@@ -26,16 +26,13 @@ function setup() {
 		},
 		isDestroyed: () => false,
 	};
-	let viewOptions: { webPreferences: Electron.WebPreferences } | undefined;
-	function FakeWebContentsView(options: { webPreferences: Electron.WebPreferences }) {
-		viewOptions = options;
+	function FakeWebContentsView() {
 		return view;
 	}
 	const composition = createWindowComposition({
 		mainWindow: mainWindow as never,
 		WebContentsView: FakeWebContentsView as never,
 		preload: "/preload.js",
-		additionalArguments: ["--fixture-observer"],
 	});
 	return {
 		addChildView,
@@ -50,15 +47,13 @@ function setup() {
 			bounds = next;
 		},
 		view,
-		viewOptions: () => viewOptions,
 	};
 }
 
 describe("createWindowComposition", () => {
 	it("creates a transparent shell at window bounds and reorders it for overlays", () => {
-		const { addChildView, composition, view, viewOptions } = setup();
+		const { addChildView, composition, view } = setup();
 
-		expect(viewOptions()?.webPreferences.additionalArguments).toEqual(["--fixture-observer"]);
 		expect(view.setBackgroundColor).toHaveBeenCalledWith("#00000000");
 		expect(addChildView).toHaveBeenNthCalledWith(1, view, 0);
 		expect(view.setBounds).toHaveBeenCalledWith({ x: 0, y: 0, width: 900, height: 640 });

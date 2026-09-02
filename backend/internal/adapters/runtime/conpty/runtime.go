@@ -23,7 +23,7 @@ import (
 const (
 	runtimeLaunchIDEnv  = "AO_RUNTIME_LAUNCH_ID"
 	runtimeSessionIDEnv = "AO_SESSION_ID"
-	runtimeHostTokenEnv = "AO_PTY_HOST_TOKEN"
+	runtimeHostTokenEnv = "AO_PTY_HOST_TOKEN" // #nosec G101 -- environment variable name, not a credential
 )
 
 // Ensure Runtime satisfies the port at compile time (Attach in attach.go).
@@ -635,7 +635,7 @@ func (r *Runtime) connectVerifiedHost(ctx context.Context, sess *hostSession, ti
 	if !r.pidIsAlive(sess.pid) {
 		return nil, false, nil
 	}
-	conn, status, frames, pending, reachable, err := clientStatusConnectionContext(ctx, sess.addr, timeout)
+	probe, err := clientStatusConnectionContext(ctx, sess.addr, timeout)
 	if err != nil {
 		return nil, false, fmt.Errorf(
 			"conpty: probe exact pty-host %q: %w",
@@ -643,7 +643,7 @@ func (r *Runtime) connectVerifiedHost(ctx context.Context, sess *hostSession, ti
 			errors.Join(ports.ErrRuntimeProbeInconclusive, err),
 		)
 	}
-	if !reachable {
+	if !probe.reachable {
 		return nil, false, fmt.Errorf(
 			"conpty: pty-host %q address is unreachable while recorded pid %d is live: %w",
 			sess.sessionID,
@@ -652,37 +652,37 @@ func (r *Runtime) connectVerifiedHost(ctx context.Context, sess *hostSession, ti
 		)
 	}
 	if strings.TrimSpace(sess.hostToken) == "" {
-		if status.ProtocolVersion != conPTYStyledOutputProtocolVersion {
-			_ = conn.Close()
+		if probe.status.ProtocolVersion != conPTYStyledOutputProtocolVersion {
+			_ = probe.conn.Close()
 			return nil, false, fmt.Errorf(
 				"conpty: pty-host %q has no durable identity token and unsupported legacy protocol %d: %w",
 				sess.sessionID,
-				status.ProtocolVersion,
+				probe.status.ProtocolVersion,
 				ports.ErrRuntimeProbeInconclusive,
 			)
 		}
 		if r.legacyCollector == nil || r.legacyRevalidator == nil {
-			_ = conn.Close()
+			_ = probe.conn.Close()
 			return nil, false, fmt.Errorf(
 				"conpty: no legacy identity verifier for pty-host %q: %w",
 				sess.sessionID,
 				ports.ErrRuntimeProbeInconclusive,
 			)
 		}
-		if err := r.verifyLegacyHostIdentity(ctx, sess, status); err != nil {
-			_ = conn.Close()
+		if err := r.verifyLegacyHostIdentity(ctx, sess, probe.status); err != nil {
+			_ = probe.conn.Close()
 			return nil, false, fmt.Errorf(
 				"conpty: verify shipped protocol-v2 pty-host %q: %w",
 				sess.sessionID,
 				errors.Join(ports.ErrRuntimeProbeInconclusive, err),
 			)
 		}
-	} else if status.ProtocolVersion < conPTYHostIdentityProtocolVersion ||
-		status.SessionID != sess.sessionID ||
-		status.LaunchID != sess.launchID ||
-		status.HostPID != sess.pid ||
-		subtle.ConstantTimeCompare([]byte(status.HostToken), []byte(sess.hostToken)) != 1 {
-		_ = conn.Close()
+	} else if probe.status.ProtocolVersion < conPTYHostIdentityProtocolVersion ||
+		probe.status.SessionID != sess.sessionID ||
+		probe.status.LaunchID != sess.launchID ||
+		probe.status.HostPID != sess.pid ||
+		subtle.ConstantTimeCompare([]byte(probe.status.HostToken), []byte(sess.hostToken)) != 1 {
+		_ = probe.conn.Close()
 		return nil, false, fmt.Errorf(
 			"conpty: endpoint for %q does not match its durable host identity: %w",
 			sess.sessionID,
@@ -690,10 +690,10 @@ func (r *Runtime) connectVerifiedHost(ctx context.Context, sess *hostSession, ti
 		)
 	}
 	return &verifiedHostConnection{
-		conn:          conn,
-		status:        status,
-		initialFrames: frames,
-		pending:       pending,
+		conn:          probe.conn,
+		status:        probe.status,
+		initialFrames: probe.frames,
+		pending:       probe.pending,
 	}, true, nil
 }
 

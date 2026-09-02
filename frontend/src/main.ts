@@ -479,10 +479,6 @@ async function createWindowInternal(): Promise<void> {
 		mainWindow,
 		WebContentsView,
 		preload: preloadPath(),
-		additionalArguments:
-			process.env.AO_RESTART_CONTINUITY_E2E === "1"
-				? ["--ao-restart-continuity-e2e"]
-				: undefined,
 	});
 	windowComposition = composition;
 	syncNativeWindowBackground();

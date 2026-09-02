@@ -439,18 +439,18 @@ func (c *conn) request(ctx context.Context, method string, params, out any) erro
 	return err
 }
 
-// requestAfterInboundCapture sends a normal provider request but does not return
-// its response until all notifications and server-request registrations that
-// preceded that response have reached the conversation. The provider protocol
-// itself is unchanged, so this also works with hosts created by older AO builds.
-// established remains true when that response carries an RPC/decode error: its
-// boundary is still valid and the captured prefix still needs durable ownership.
-func (c *conn) requestAfterInboundCapture(
+// requestThreadReadAfterInboundCapture sends the recovery thread/read request
+// but does not return its response until all notifications and server-request
+// registrations that preceded that response have reached the conversation. The
+// provider protocol itself is unchanged, so this also works with hosts created
+// by older AO builds. established remains true when that response carries an
+// RPC/decode error: its boundary is still valid and the captured prefix still
+// needs durable ownership.
+func (c *conn) requestThreadReadAfterInboundCapture(
 	ctx context.Context,
-	method string,
 	params, out any,
 ) (boundary int64, established bool, err error) {
-	return c.requestWithCaptureBoundary(ctx, method, params, out, true)
+	return c.requestWithCaptureBoundary(ctx, "thread/read", params, out, true)
 }
 
 func (c *conn) requestWithCaptureBoundary(

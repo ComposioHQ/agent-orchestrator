@@ -4,10 +4,59 @@ package conpty
 
 import (
 	"context"
+	"net"
 	"os"
+	"os/exec"
 	"strconv"
 	"testing"
+	"time"
 )
+
+func TestDarwinLegacyRevalidationBindsLiveStatusToCurrentListenerOwner(t *testing.T) {
+	listener, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = listener.Close() }()
+
+	child := exec.Command("/bin/sleep", "30")
+	if err := child.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = child.Process.Kill()
+		_ = child.Wait()
+	})
+
+	hostIdentity, err := darwinProcessIdentity(os.Getpid())
+	if err != nil {
+		t.Fatal(err)
+	}
+	childIdentity, err := darwinProcessIdentity(child.Process.Pid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess := &hostSession{pid: os.Getpid(), addr: listener.Addr().String()}
+	status := StatusPayload{Alive: true, PID: child.Process.Pid, ProtocolVersion: 2}
+	proof := legacyHostIdentityFingerprint{
+		hostPID:        os.Getpid(),
+		hostStartedAt:  hostIdentity.startedAt,
+		childPID:       child.Process.Pid,
+		childStartedAt: childIdentity.startedAt,
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := revalidateLegacyHostIdentity(ctx, sess, status, proof); err != nil {
+		t.Fatalf("revalidate live legacy host: %v", err)
+	}
+
+	if err := listener.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := revalidateLegacyHostIdentity(ctx, sess, status, proof); err == nil {
+		t.Fatal("live legacy status remained trusted after its verified listener disappeared")
+	}
+}
 
 // TestDarwinLegacyIdentityExternal is an opt-in upgrade probe for an actual
 // protocol-v2 host left alive by a released desktop build. It is read-only:

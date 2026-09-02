@@ -51,14 +51,18 @@ func revalidateLegacyHostIdentity(ctx context.Context, sess *hostSession, status
 	if int(host.Proc.P_pid) != sess.pid || !hostStartedAt.Equal(proof.hostStartedAt) {
 		return fmt.Errorf("recorded host pid %d changed process incarnation", sess.pid)
 	}
+	// A stable host/child process incarnation does not by itself prove that the
+	// TCP connection still reached that host: its old port may have been rebound
+	// by another listener. Bind every operation to the current listener owner,
+	// including the live-child fast path.
+	listenerPID, err := darwinTCPListenerPID(ctx, sess.addr)
+	if err != nil {
+		return err
+	}
+	if listenerPID != sess.pid {
+		return fmt.Errorf("listener owner pid = %d, want recorded host pid %d", listenerPID, sess.pid)
+	}
 	if !status.Alive {
-		listenerPID, err := darwinTCPListenerPID(ctx, sess.addr)
-		if err != nil {
-			return err
-		}
-		if listenerPID != sess.pid {
-			return fmt.Errorf("listener owner pid = %d, want recorded host pid %d", listenerPID, sess.pid)
-		}
 		return nil
 	}
 	if status.PID != proof.childPID || proof.childPID <= 0 {
@@ -150,10 +154,11 @@ func darwinProcessArgs(pid int) (string, []string, error) {
 	if len(raw) < 5 {
 		return "", nil, fmt.Errorf("kernel returned a short process-args payload")
 	}
-	argc := int(int32(binary.LittleEndian.Uint32(raw[:4])))
-	if argc <= 0 || argc > 4096 {
-		return "", nil, fmt.Errorf("kernel returned invalid argc %d", argc)
+	argcValue := binary.LittleEndian.Uint32(raw[:4])
+	if argcValue == 0 || argcValue > 4096 {
+		return "", nil, fmt.Errorf("kernel returned invalid argc %d", argcValue)
 	}
+	argc := int(argcValue) // #nosec G115 -- argcValue is explicitly bounded to 1..4096 above
 	rest := raw[4:]
 	executableEnd := bytes.IndexByte(rest, 0)
 	if executableEnd <= 0 {

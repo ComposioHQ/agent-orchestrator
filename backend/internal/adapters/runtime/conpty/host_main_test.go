@@ -7,40 +7,22 @@ import (
 	"testing"
 )
 
-func TestPTYHostIdentityRequiresTokenOutsideRestartE2E(t *testing.T) {
+func TestPTYHostIdentityRequiresToken(t *testing.T) {
 	t.Setenv(runtimeHostTokenEnv, "")
-	t.Setenv(restartContinuityE2EEnv, "1")
-	t.Setenv(legacyPTYV2E2EEnv, "")
-	if _, _, err := ptyHostIdentityFromEnvironment(); err == nil {
-		t.Fatal("one restart-E2E selector allowed a tokenless pty-host")
+	if _, err := ptyHostTokenFromEnvironment(); err == nil {
+		t.Fatal("tokenless pty-host was allowed")
 	}
 }
 
-func TestPTYHostIdentityAllowsTokenlessProtocolV2OnlyForRestartE2E(t *testing.T) {
-	t.Setenv(runtimeHostTokenEnv, "")
-	t.Setenv(restartContinuityE2EEnv, "1")
-	t.Setenv(legacyPTYV2E2EEnv, "1")
-	token, legacyV2, err := ptyHostIdentityFromEnvironment()
-	if err != nil || token != "" || !legacyV2 {
-		t.Fatalf("ptyHostIdentityFromEnvironment = token %q legacy=%v err=%v", token, legacyV2, err)
-	}
-
-	scrubPTYHostIdentityEnvironment()
-	if got := os.Getenv(legacyPTYV2E2EEnv); got != "" {
-		t.Fatalf("legacy selector leaked to child environment: %q", got)
-	}
-	if got := os.Getenv(restartContinuityE2EEnv); got != "" {
-		t.Fatalf("outer restart-E2E selector leaked to child environment: %q", got)
-	}
-}
-
-func TestPTYHostIdentityTokenAlwaysSelectsAuthenticatedProtocol(t *testing.T) {
+func TestPTYHostIdentityReturnsAndScrubsToken(t *testing.T) {
 	t.Setenv(runtimeHostTokenEnv, "token-1")
-	t.Setenv(restartContinuityE2EEnv, "1")
-	t.Setenv(legacyPTYV2E2EEnv, "1")
-	token, legacyV2, err := ptyHostIdentityFromEnvironment()
-	if err != nil || token != "token-1" || legacyV2 {
-		t.Fatalf("ptyHostIdentityFromEnvironment = token %q legacy=%v err=%v", token, legacyV2, err)
+	token, err := ptyHostTokenFromEnvironment()
+	if err != nil || token != "token-1" {
+		t.Fatalf("ptyHostTokenFromEnvironment = token %q err=%v", token, err)
+	}
+	scrubPTYHostTokenEnvironment()
+	if got := os.Getenv(runtimeHostTokenEnv); got != "" {
+		t.Fatalf("host token leaked to child environment: %q", got)
 	}
 }
 

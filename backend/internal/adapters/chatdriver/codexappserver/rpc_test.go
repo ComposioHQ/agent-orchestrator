@@ -186,7 +186,7 @@ func TestRecoveryRequestWaitsForPrecedingNotificationCapture(t *testing.T) {
 	c, fake := newFakeAppServer(t, rejectAllServerRequests)
 	done := make(chan error, 1)
 	go func() {
-		_, _, err := c.requestAfterInboundCapture(context.Background(), "thread/read", nil, nil)
+		_, _, err := c.requestThreadReadAfterInboundCapture(context.Background(), nil, nil)
 		done <- err
 	}()
 
@@ -218,8 +218,8 @@ func TestRecoveryRequestReturnsCapturedBoundaryWithRPCError(t *testing.T) {
 	}
 	done := make(chan result, 1)
 	go func() {
-		boundary, established, err := c.requestAfterInboundCapture(
-			context.Background(), "thread/read", nil, nil,
+		boundary, established, err := c.requestThreadReadAfterInboundCapture(
+			context.Background(), nil, nil,
 		)
 		done <- result{boundary: boundary, established: established, err: err}
 	}()
@@ -257,8 +257,8 @@ func TestRecoveryRequestDrainsPrecedingCaptureAfterResponseThenEOF(t *testing.T)
 	}
 	done := make(chan result, 1)
 	go func() {
-		boundary, established, err := c.requestAfterInboundCapture(
-			context.Background(), "thread/read", nil, nil,
+		boundary, established, err := c.requestThreadReadAfterInboundCapture(
+			context.Background(), nil, nil,
 		)
 		done <- result{boundary: boundary, established: established, err: err}
 	}()
@@ -301,7 +301,7 @@ func TestRecoveryRequestWaitsForPrecedingServerRequestRegistration(t *testing.T)
 	})
 	done := make(chan error, 1)
 	go func() {
-		_, _, err := c.requestAfterInboundCapture(context.Background(), "thread/read", nil, nil)
+		_, _, err := c.requestThreadReadAfterInboundCapture(context.Background(), nil, nil)
 		done <- err
 	}()
 

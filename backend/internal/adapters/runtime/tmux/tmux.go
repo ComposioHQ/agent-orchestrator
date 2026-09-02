@@ -49,8 +49,8 @@ const (
 
 var (
 	sessionIDPattern     = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
-	tmuxSessionIDPattern = regexp.MustCompile(`^\$[0-9]+$`)
-	tmuxPaneIDPattern    = regexp.MustCompile(`^%[0-9]+$`)
+	tmuxSessionIDPattern = regexp.MustCompile(`^\$\d+$`)
+	tmuxPaneIDPattern    = regexp.MustCompile(`^%\d+$`)
 )
 
 var getenv = os.Getenv
@@ -1208,7 +1208,7 @@ func (r *Runtime) inspectTargetIdentityEvidence(
 	tmuxSessionID, tmuxPaneID, command, err := parsePaneIdentityOutput(string(out))
 	if err != nil {
 		return paneIdentityEvidence{}, fmt.Errorf(
-			"%w: inspect pane identity for session %s on %s: %v",
+			"%w: inspect pane identity for session %s on %s: %w",
 			ports.ErrRuntimeProbeInconclusive,
 			tmuxID,
 			target,
@@ -1935,14 +1935,6 @@ func validateHandleSessionID(id string) error {
 		return fmt.Errorf("tmux runtime: invalid handle id %q", id)
 	}
 	return nil
-}
-
-func handleID(handle ports.RuntimeHandle) (string, error) {
-	route, err := decodeRuntimeHandle(handle)
-	if err != nil {
-		return "", err
-	}
-	return route.id, nil
 }
 
 // -- output detection helpers --
