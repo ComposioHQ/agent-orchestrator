@@ -27,7 +27,12 @@ type GitRunner interface {
 type ExecGitRunner struct{}
 
 func (ExecGitRunner) Run(ctx context.Context, dir string, env map[string]string, args ...string) (string, error) {
-	command := exec.CommandContext(ctx, "git", args...)
+	// Pin git wire protocol v0. git 2.39 defaults to protocol v2 over HTTP/2,
+	// which is mangled through some sandbox egress paths: the ref-listing
+	// handshake fails with "expected flush after ref listing" plus a spurious
+	// "could not read Username" prompt, crash-looping checkout for public repos.
+	// v0 is universally compatible; the only cost is slightly larger fetches.
+	command := exec.CommandContext(ctx, "git", append([]string{"-c", "protocol.version=0"}, args...)...)
 	command.Dir = dir
 	command.Env = replaceEnvironment(os.Environ(), env)
 	var output bytes.Buffer
