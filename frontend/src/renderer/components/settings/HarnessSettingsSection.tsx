@@ -401,6 +401,40 @@ export function HarnessSettingsSection({ titleHidden = false }: { titleHidden?: 
 					const instructionsButton = (
 						<Button size="sm" variant="outline" onClick={() => void aoBridge.app.openExternal(plan?.documentationUrl ?? "https://aoagents.dev/docs/installation")}><ExternalLink aria-hidden="true" />{t("settings.harness.instructions")}</Button>
 					);
+					const authControls = authPlan?.action === "instructions" ? (
+						<Button size="sm" variant="outline" onClick={() => void aoBridge.app.openExternal(authPlan.documentationUrl)}>
+							<ExternalLink aria-hidden="true" />
+							{t("settings.harness.instructions")}
+						</Button>
+					) : !authPlan && authPlans.isPending ? (
+						<LoaderCircle className="size-4 animate-spin text-settings-muted" aria-hidden="true" />
+					) : authPlan ? (
+						<>
+							{authStatus === "authorized" ? (
+								<span className="inline-flex items-center gap-1 text-xs font-medium text-success">
+									<Check className="size-4" aria-hidden="true" />
+									{t("settings.harness.loggedIn")}
+								</span>
+							) : (
+								<Button disabled={!authPlan.available || authState?.pending || Boolean(authWorkflow)} size="sm" onClick={() => void startAuth(agentId)}>
+									{authState?.pending ? <LoaderCircle className="animate-spin" aria-hidden="true" /> : null}
+									{authState?.pending
+										? t("settings.harness.loggingIn")
+										: authPlan.action === "setup"
+											? t("settings.harness.setup")
+											: t("settings.harness.login")}
+								</Button>
+							)}
+							{authPlan.available && (authStatus === "unknown" || authStatus === "unauthorized") ? (
+								<Button disabled={authState?.checking} size="sm" variant="outline" onClick={() => void checkAuth(agentId)}>
+									{authState?.checking ? <LoaderCircle className="animate-spin" aria-hidden="true" /> : <RefreshCw aria-hidden="true" />}
+									{authState?.checking ? t("settings.harness.checkingLogin") : t("settings.harness.checkLogin")}
+								</Button>
+							) : null}
+						</>
+					) : (
+						<span className="text-xs text-settings-muted">{t("settings.harness.installed")}</span>
+					);
 					return (
 						<div className="settings-row-bar min-h-14 flex-wrap gap-3" data-agent={agentId} key={agentId}>
 							<AgentAvatar className="size-7 shrink-0" decorative provider={agentId} />
@@ -428,48 +462,15 @@ export function HarnessSettingsSection({ titleHidden = false }: { titleHidden?: 
 									<Button size="sm" variant="outline" disabled={pending} onClick={() => void verifyInstall(agentId)}>{t("settings.harness.verifyAgain")}</Button>
 									{selectedMethodId ? <Button size="sm" onClick={() => void startInstall(agentId, selectedMethodId, operation)} disabled={pending}>{isInstalled ? t("settings.harness.reinstall") : t("settings.harness.retry")}</Button> : instructionsButton}
 								</div>
-							) : isInstalled && availableMethods.length > 0 ? (
-								<div className="flex items-center gap-1.5">
-									<span className="inline-flex items-center gap-1 text-xs font-medium text-success"><Check className="size-4" aria-hidden="true" />{t("settings.harness.installed")}</span>
-									{methodSelect}
-									<Button size="sm" variant="outline" onClick={() => selectedMethodId && void startInstall(agentId, selectedMethodId, "reinstall")} disabled={pending || !selectedMethodId}>{t("settings.harness.reinstall")}</Button>
-								</div>
 							) : isInstalled ? (
 								<div className="flex shrink-0 items-center gap-2">
-									{authPlan?.action === "instructions" ? (
-										<Button size="sm" variant="outline" onClick={() => void aoBridge.app.openExternal(authPlan.documentationUrl)}>
-											<ExternalLink aria-hidden="true" />
-											{t("settings.harness.instructions")}
-										</Button>
-									) : !authPlan && authPlans.isPending ? (
-										<LoaderCircle className="size-4 animate-spin text-settings-muted" aria-hidden="true" />
-									) : authPlan ? (
+									{authControls}
+									{availableMethods.length > 0 ? (
 										<>
-											{authStatus === "authorized" ? (
-												<span className="inline-flex items-center gap-1 text-xs font-medium text-success">
-													<Check className="size-4" aria-hidden="true" />
-													{t("settings.harness.loggedIn")}
-												</span>
-											) : (
-											<Button disabled={!authPlan.available || authState?.pending || Boolean(authWorkflow)} size="sm" onClick={() => void startAuth(agentId)}>
-													{authState?.pending ? <LoaderCircle className="animate-spin" aria-hidden="true" /> : null}
-													{authState?.pending
-														? t("settings.harness.loggingIn")
-														: authPlan.action === "setup"
-															? t("settings.harness.setup")
-															: t("settings.harness.login")}
-												</Button>
-											)}
-											{authPlan.available && (authStatus === "unknown" || authStatus === "unauthorized") ? (
-												<Button disabled={authState?.checking} size="sm" variant="outline" onClick={() => void checkAuth(agentId)}>
-													{authState?.checking ? <LoaderCircle className="animate-spin" aria-hidden="true" /> : <RefreshCw aria-hidden="true" />}
-													{authState?.checking ? t("settings.harness.checkingLogin") : t("settings.harness.checkLogin")}
-												</Button>
-											) : null}
+											{methodSelect}
+											<Button size="sm" variant="outline" onClick={() => selectedMethodId && void startInstall(agentId, selectedMethodId, "reinstall")} disabled={pending || !selectedMethodId}>{t("settings.harness.reinstall")}</Button>
 										</>
-									) : (
-									<span className="text-xs text-settings-muted">{t("settings.harness.installed")}</span>
-									)}
+									) : plan && authPlan?.action !== "instructions" ? instructionsButton : null}
 								</div>
 							) : !plan && installers.isPending ? (
 								<span className="inline-flex items-center gap-1.5 text-xs text-settings-muted" role="status"><LoaderCircle className="size-4 animate-spin" aria-hidden="true" /></span>

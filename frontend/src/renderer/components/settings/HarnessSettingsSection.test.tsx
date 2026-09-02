@@ -18,24 +18,32 @@ vi.mock("../TerminalPane", () => ({
 	},
 }));
 
-function catalogWithInstalled(...installed: string[]) {
+type TestAuthState = "authorized" | "unauthorized" | "unknown";
+
+function readinessCatalog(installed: string[], authentication: Partial<Record<string, TestAuthState>> = {}) {
 	return {
 		agents: [
 			{ id: "claude-code", label: "Claude Code" },
 			{ id: "codex", label: "Codex" },
+			{ id: "aider", label: "Aider" },
+			{ id: "devin", label: "Devin" },
 			{ id: "cursor", label: "Cursor" },
 			{ id: "goose", label: "Goose" },
 		].map((agent) => ({
 			...agent,
 			installation: { state: installed.includes(agent.id) ? "installed" : "not_installed", freshness: "fresh", reason: "", reasonCode: "", attemptedAt: null, checkedAt: null },
-			authentication: { state: "unknown", freshness: "fresh", reason: "", reasonCode: "", attemptedAt: null, checkedAt: null },
+			authentication: { state: authentication[agent.id] ?? "unknown", freshness: "fresh", reason: "", reasonCode: "", attemptedAt: null, checkedAt: null },
 			effectiveReadiness: installed.includes(agent.id) ? "ready" : "not_ready",
 			usageCount: 0,
 		})),
 	};
 }
 
-const catalog = catalogWithInstalled("claude-code");
+function catalogWithInstalled(...installed: string[]) {
+	return readinessCatalog(installed);
+}
+
+const catalog = readinessCatalog(["claude-code"], { "claude-code": "authorized" });
 
 const authPlans = {
 	plans: [
@@ -124,23 +132,10 @@ describe("HarnessSettingsSection", () => {
 	});
 
 	it("shows login, setup, unavailable, and authorized states", async () => {
-		const rowCatalog = {
-			supported: [
-				{ id: "claude-code", label: "Claude Code" }, { id: "codex", label: "Codex" },
-				{ id: "aider", label: "Aider" }, { id: "devin", label: "Devin" }, { id: "goose", label: "Goose" },
-			],
-			installed: [
-				{ id: "claude-code", label: "Claude Code", authStatus: "authorized" },
-				{ id: "codex", label: "Codex", authStatus: "unauthorized" },
-				{ id: "aider", label: "Aider", authStatus: "unknown" },
-				{ id: "devin", label: "Devin", authStatus: "authorized" },
-				{ id: "goose", label: "Goose", authStatus: "unknown" },
-			],
-			authorized: [
-				{ id: "claude-code", label: "Claude Code", authStatus: "authorized" },
-				{ id: "devin", label: "Devin", authStatus: "authorized" },
-			],
-		};
+		const rowCatalog = readinessCatalog(
+			["claude-code", "codex", "aider", "devin", "goose"],
+			{ "claude-code": "authorized", codex: "unauthorized", devin: "authorized" },
+		);
 		const rowPlans = { plans: [
 			{ agentId: "claude-code", action: "login", available: true, documentationUrl: "https://example.test/claude" },
 			{ agentId: "codex", action: "login", available: true, documentationUrl: "https://example.test/codex" },
@@ -149,13 +144,15 @@ describe("HarnessSettingsSection", () => {
 			{ agentId: "goose", action: "setup", available: false, reason: "goose is not on PATH", documentationUrl: "https://example.test/goose" },
 		] };
 		vi.mocked(apiClient.GET).mockImplementation(async (path) => {
-			if (path === "/api/v1/agents") return { data: rowCatalog } as never;
+			if (path === "/api/v1/agents/readiness") return { data: rowCatalog } as never;
 			if (path === "/api/v1/agents/installers") return { data: plans } as never;
+			if (path === "/api/v1/agents/install-jobs") return { data: { jobs: [] } } as never;
 			if (path === "/api/v1/agents/auth-plans") return { data: rowPlans } as never;
 			return { data: undefined } as never;
 		});
 		vi.mocked(apiClient.POST).mockImplementation(async (path) => {
 			if (path === "/api/v1/agents/refresh") return { data: rowCatalog } as never;
+			if (path === "/api/v1/agents/readiness/ensure") return { data: rowCatalog } as never;
 			return { data: undefined } as never;
 		});
 
@@ -182,18 +179,16 @@ describe("HarnessSettingsSection", () => {
 	});
 
 	it("shows the returned authentication terminal inline when Login is clicked", async () => {
-		const unauthorized = {
-			...catalog,
-			installed: [{ id: "codex", label: "Codex", authStatus: "unauthorized" }],
-			authorized: [],
-		};
+		const unauthorized = readinessCatalog(["codex"], { codex: "unauthorized" });
 		vi.mocked(apiClient.GET).mockImplementation(async (path) => {
-			if (path === "/api/v1/agents") return { data: unauthorized } as never;
+			if (path === "/api/v1/agents/readiness") return { data: unauthorized } as never;
 			if (path === "/api/v1/agents/installers") return { data: plans } as never;
+			if (path === "/api/v1/agents/install-jobs") return { data: { jobs: [] } } as never;
 			if (path === "/api/v1/agents/auth-plans") return { data: authPlans } as never;
 			return { data: undefined } as never;
 		});
 		vi.mocked(apiClient.POST).mockImplementation(async (path) => {
+			if (path === "/api/v1/agents/readiness/ensure") return { data: unauthorized } as never;
 			if (path === "/api/v1/agents/{agent}/auth") {
 				return { data: { agentId: "codex", action: "login", terminal: { handleId: "shellterm-login", workingDir: "/tmp/ao", title: "Log in to Codex", createdAt: new Date().toISOString() } } } as never;
 			}
@@ -211,25 +206,23 @@ describe("HarnessSettingsSection", () => {
 	});
 
 	it("verifies login and closes the inline terminal when the command exits", async () => {
-		let currentCatalog = {
-			...catalog,
-			installed: [{ id: "codex", label: "Codex", authStatus: "unauthorized" }],
-			authorized: [] as typeof catalog.authorized,
-		};
+		let currentCatalog = readinessCatalog(["codex"], { codex: "unauthorized" });
 		vi.mocked(apiClient.GET).mockImplementation(async (path) => {
-			if (path === "/api/v1/agents") return { data: currentCatalog } as never;
+			if (path === "/api/v1/agents/readiness") return { data: currentCatalog } as never;
 			if (path === "/api/v1/agents/installers") return { data: plans } as never;
+			if (path === "/api/v1/agents/install-jobs") return { data: { jobs: [] } } as never;
 			if (path === "/api/v1/agents/auth-plans") return { data: authPlans } as never;
 			return { data: undefined } as never;
 		});
 		vi.mocked(apiClient.POST).mockImplementation(async (path) => {
 			if (path === "/api/v1/agents/refresh") return { data: currentCatalog } as never;
+			if (path === "/api/v1/agents/readiness/ensure") return { data: currentCatalog } as never;
 			if (path === "/api/v1/agents/{agent}/auth") {
 				return { data: { agentId: "codex", action: "login", terminal: { handleId: "shellterm-login", workingDir: "/tmp/ao", title: "Log in to Codex", createdAt: new Date().toISOString() } } } as never;
 			}
 			if (path === "/api/v1/agents/{agent}/probe") {
+				currentCatalog = readinessCatalog(["codex"], { codex: "authorized" });
 				const agent = { id: "codex", label: "Codex", authStatus: "authorized" };
-				currentCatalog = { ...currentCatalog, installed: [agent], authorized: [agent] };
 				return { data: { agent, supported: true, installed: true } } as never;
 			}
 			return { data: undefined } as never;
@@ -252,25 +245,23 @@ describe("HarnessSettingsSection", () => {
 	});
 
 	it("retries after the daemon has already pruned the previous authentication terminal", async () => {
-		const unauthorized = {
-			...catalog,
-			installed: [{ id: "codex", label: "Codex", authStatus: "unauthorized" }],
-			authorized: [],
-		};
+		const unauthorized = readinessCatalog(["codex"], { codex: "unauthorized" });
 		let authStarts = 0;
 		vi.mocked(apiClient.GET).mockImplementation(async (path) => {
-			if (path === "/api/v1/agents") return { data: unauthorized } as never;
+			if (path === "/api/v1/agents/readiness") return { data: unauthorized } as never;
 			if (path === "/api/v1/agents/installers") return { data: plans } as never;
+			if (path === "/api/v1/agents/install-jobs") return { data: { jobs: [] } } as never;
 			if (path === "/api/v1/agents/auth-plans") return { data: authPlans } as never;
 			return { data: undefined } as never;
 		});
 		vi.mocked(apiClient.POST).mockImplementation(async (path) => {
+			if (path === "/api/v1/agents/readiness/ensure") return { data: unauthorized } as never;
 			if (path === "/api/v1/agents/{agent}/auth") {
 				authStarts += 1;
 				return { data: { agentId: "codex", action: "login", terminal: { handleId: `shellterm-login-${authStarts}`, workingDir: "/tmp/ao", title: "Log in to Codex", createdAt: new Date().toISOString() } } } as never;
 			}
 			if (path === "/api/v1/agents/{agent}/probe") {
-				return { data: { agent: unauthorized.installed[0], supported: true, installed: true } } as never;
+				return { data: { agent: { id: "codex", label: "Codex", authStatus: "unauthorized" }, supported: true, installed: true } } as never;
 			}
 			return { data: undefined } as never;
 		});
@@ -291,13 +282,9 @@ describe("HarnessSettingsSection", () => {
 	it("refreshes authentication availability after installation succeeds", async () => {
 		let authPlanRequests = 0;
 		let installStarted = false;
-		let currentCatalog = {
-			supported: [{ id: "codex", label: "Codex" }],
-			installed: [] as typeof catalog.installed,
-			authorized: [] as typeof catalog.authorized,
-		};
+		let currentCatalog = readinessCatalog([]);
 		vi.mocked(apiClient.GET).mockImplementation(async (path) => {
-			if (path === "/api/v1/agents") return { data: currentCatalog } as never;
+			if (path === "/api/v1/agents/readiness") return { data: currentCatalog } as never;
 			if (path === "/api/v1/agents/installers") return { data: plans } as never;
 			if (path === "/api/v1/agents/auth-plans") {
 				authPlanRequests += 1;
@@ -314,13 +301,14 @@ describe("HarnessSettingsSection", () => {
 		});
 		vi.mocked(apiClient.POST).mockImplementation(async (path) => {
 			if (path === "/api/v1/agents/refresh") return { data: currentCatalog } as never;
+			if (path === "/api/v1/agents/readiness/ensure") return { data: currentCatalog } as never;
 			if (path === "/api/v1/agents/{agent}/install") {
 				installStarted = true;
 				return { data: { target: "codex", status: "installing" } } as never;
 			}
 			if (path === "/api/v1/agents/{agent}/probe") {
 				const agent = { id: "codex", label: "Codex", authStatus: "unknown" };
-				currentCatalog = { ...currentCatalog, installed: [agent] };
+				currentCatalog = readinessCatalog(["codex"]);
 				return { data: { agent, supported: true, installed: true } } as never;
 			}
 			return { data: undefined } as never;

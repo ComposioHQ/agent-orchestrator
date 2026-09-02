@@ -6093,6 +6093,28 @@ components:
       required:
       - path
       type: object
+    AgentAuthPlan:
+      properties:
+        action:
+          type: string
+        agentId:
+          type: string
+        available:
+          type: boolean
+        displayCommand:
+          type: string
+        documentationUrl:
+          type: string
+        guidance:
+          type: string
+        reason:
+          type: string
+      required:
+      - agentId
+      - action
+      - available
+      - documentationUrl
+      type: object
     AgentAuthenticationObservation:
       properties:
         attemptedAt:
@@ -6129,28 +6151,6 @@ components:
       - attemptedAt
       - reasonCode
       - reason
-      type: object
-    AgentAuthPlan:
-      properties:
-        action:
-          type: string
-        agentId:
-          type: string
-        available:
-          type: boolean
-        displayCommand:
-          type: string
-        documentationUrl:
-          type: string
-        guidance:
-          type: string
-        reason:
-          type: string
-      required:
-      - agentId
-      - action
-      - available
-      - documentationUrl
       type: object
     AgentConfig:
       properties:

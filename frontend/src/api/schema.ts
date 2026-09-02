@@ -2074,6 +2074,15 @@ export interface components {
             path: string;
             projectId?: null | string;
         };
+        AgentAuthPlan: {
+            action: string;
+            agentId: string;
+            available: boolean;
+            displayCommand?: string;
+            documentationUrl: string;
+            guidance?: string;
+            reason?: string;
+        };
         AgentAuthenticationObservation: {
             /** Format: date-time */
             attemptedAt: null | string;
@@ -2085,15 +2094,6 @@ export interface components {
             reasonCode: string;
             /** @enum {string} */
             state: "authorized" | "unauthorized" | "unknown" | "not_applicable";
-        };
-        AgentAuthPlan: {
-            action: string;
-            agentId: string;
-            available: boolean;
-            displayCommand?: string;
-            documentationUrl: string;
-            guidance?: string;
-            reason?: string;
         };
         AgentConfig: {
             mode?: string;
