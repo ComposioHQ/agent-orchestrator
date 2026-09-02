@@ -300,6 +300,7 @@ export function CreateProjectAgentSheet({
 											? t("createProject.createWorkspaceAndStart")
 											: t("createProject.createAndStart")
 						}
+						submitClassName="h-control-form rounded-md bg-primary px-3 text-sm text-primary-foreground hover:bg-primary/80"
 					/>
 				</Dialog.Content>
 			</Dialog.Portal>

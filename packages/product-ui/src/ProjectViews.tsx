@@ -273,7 +273,7 @@ export function ProjectSetupHeaderView({
 			)}
 		>
 			{leadingAction}
-			<div className="min-w-0">
+			<div className={cn("min-w-0", !showPath && "flex-1")}>
 				<Title className={showPath ? "text-subtitle font-semibold text-foreground" : "settings-dialog-title text-left"}>
 					{title}
 				</Title>
@@ -306,6 +306,7 @@ export function ProjectSetupFormView({
 	onSubmit,
 	setupNotice,
 	submitLabel,
+	submitClassName,
 	cancelLabel,
 }: {
 	agentControls: { worker: ReactNode; orchestrator: ReactNode };
@@ -326,6 +327,7 @@ export function ProjectSetupFormView({
 	onSubmit: () => void;
 	setupNotice?: { message: string; warning?: string | null } | null;
 	submitLabel: string;
+	submitClassName?: string;
 	cancelLabel?: string;
 }) {
 	const submit = (event: FormEvent<HTMLFormElement>) => {
@@ -416,7 +418,10 @@ export function ProjectSetupFormView({
 					</button>
 				) : null}
 				<button
-					className="settings-footer-button settings-footer-button-primary disabled:pointer-events-none disabled:opacity-50"
+					className={cn(
+						"settings-footer-button settings-footer-button-primary disabled:pointer-events-none disabled:opacity-50",
+						submitClassName,
+					)}
 					type="submit"
 					disabled={!canSubmit}
 				>
