@@ -156,12 +156,12 @@ func readClaudeCodeAccountDescriptor(path string) (claudeCodeAccountDescriptor, 
 	return descriptor, nil
 }
 
-func (c *claudeCodeAccountCatalog) upsert(ctx context.Context, identity domain.ClaudeCodeAccountIdentity, credential []byte, now time.Time) (claudeCodeAccountRecord, bool, error) {
+func (c *claudeCodeAccountCatalog) upsert(ctx context.Context, identity domain.ClaudeCodeAccountIdentity, credential []byte, now time.Time) (claudeCodeAccountRecord, error) {
 	if !validClaudeCodeAccountIdentity(identity) {
-		return claudeCodeAccountRecord{}, false, errors.New("Claude Code account identity is invalid")
+		return claudeCodeAccountRecord{}, errors.New("account identity is invalid for Claude Code")
 	}
 	if _, err := claudecode.AccountCredentialFields(credential); err != nil {
-		return claudeCodeAccountRecord{}, false, errors.New("Claude Code account credential is invalid")
+		return claudeCodeAccountRecord{}, errors.New("account credential is invalid for Claude Code")
 	}
 	id := identity.AccountUUID
 	existing, exists := c.record(id)
@@ -171,10 +171,10 @@ func (c *claudeCodeAccountCatalog) upsert(ctx context.Context, identity domain.C
 	}
 	dir := filepath.Join(c.root, id)
 	if !pathWithin(c.root, dir) {
-		return claudeCodeAccountRecord{}, false, errors.New("Claude Code account path is unsafe")
+		return claudeCodeAccountRecord{}, errors.New("account path is unsafe for Claude Code")
 	}
 	if err := ensurePrivateDirectory(dir); err != nil {
-		return claudeCodeAccountRecord{}, false, err
+		return claudeCodeAccountRecord{}, err
 	}
 	descriptor := claudeCodeAccountDescriptor{
 		SchemaVersion: claudeCodeAccountDescriptorVersion, ID: id, Label: claudeCodeAccountLabel(identity),
@@ -182,26 +182,26 @@ func (c *claudeCodeAccountCatalog) upsert(ctx context.Context, identity domain.C
 	}
 	data, err := json.MarshalIndent(descriptor, "", "  ")
 	if err != nil {
-		return claudeCodeAccountRecord{}, false, err
+		return claudeCodeAccountRecord{}, err
 	}
 	data = append(data, '\n')
 	if err := c.keychain.Set(ctx, claudecode.ClaudeAccountVaultService, id, credential); err != nil {
-		return claudeCodeAccountRecord{}, false, err
+		return claudeCodeAccountRecord{}, err
 	}
 	if err := writePrivateFileAtomic(filepath.Join(dir, claudeCodeAccountDescriptorFilename), data); err != nil {
 		if !exists {
 			_ = c.keychain.Delete(context.WithoutCancel(ctx), claudecode.ClaudeAccountVaultService, id)
 		}
-		return claudeCodeAccountRecord{}, false, err
+		return claudeCodeAccountRecord{}, err
 	}
 	if err := c.refresh(ctx, now); err != nil {
-		return claudeCodeAccountRecord{}, false, err
+		return claudeCodeAccountRecord{}, err
 	}
 	record, ok := c.record(id)
 	if !ok || record.Snapshot.Status != domain.ClaudeCodeAccountStatusValid {
-		return claudeCodeAccountRecord{}, false, errors.New("saved Claude Code account failed validation")
+		return claudeCodeAccountRecord{}, errors.New("saved Claude Code account failed validation")
 	}
-	return record, !exists, nil
+	return record, nil
 }
 
 func (c *claudeCodeAccountCatalog) record(id string) (claudeCodeAccountRecord, bool) {
@@ -256,7 +256,7 @@ func (c *claudeCodeAccountCatalog) deleteSignedOut(ctx context.Context, id strin
 	}
 	dir := filepath.Join(c.root, id)
 	if validateCodexDirectory(dir, true) != nil {
-		return errors.New("Claude Code account directory is unsafe")
+		return errors.New("account directory is unsafe for Claude Code")
 	}
 	if err := os.Remove(filepath.Join(dir, claudeCodeAccountDescriptorFilename)); err != nil {
 		return err

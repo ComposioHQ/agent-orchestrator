@@ -10,12 +10,14 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
+// WarmClaudeCodeAccounts starts background account reconciliation.
 func (s *Service) WarmClaudeCodeAccounts() {
 	if s.claudeCodeAccounts != nil {
 		go s.claudeCodeAccounts.bootstrap()
 	}
 }
 
+// WaitClaudeCodeAccountBootstrap waits until initial account reconciliation completes.
 func (s *Service) WaitClaudeCodeAccountBootstrap(ctx context.Context) error {
 	if s.claudeCodeAccounts == nil {
 		return apierr.Unavailable("CLAUDE_CODE_ACCOUNT_MANAGEMENT_UNAVAILABLE", "Claude Code account management is unavailable")
@@ -32,6 +34,7 @@ func (s *Service) WaitClaudeCodeAccountBootstrap(ctx context.Context) error {
 	}
 }
 
+// CachedClaudeCodeAccounts returns the current non-secret account snapshot.
 func (s *Service) CachedClaudeCodeAccounts(ctx context.Context) (ClaudeCodeAccounts, error) {
 	if err := s.WaitClaudeCodeAccountBootstrap(ctx); err != nil {
 		return ClaudeCodeAccounts{}, err
@@ -45,6 +48,7 @@ func (s *Service) CachedClaudeCodeAccounts(ctx context.Context) (ClaudeCodeAccou
 	return result, nil
 }
 
+// EnsureClaudeCodeAccounts reconciles external Claude login changes before returning state.
 func (s *Service) EnsureClaudeCodeAccounts(ctx context.Context) (ClaudeCodeAccounts, error) {
 	if err := s.WaitClaudeCodeAccountBootstrap(ctx); err != nil {
 		return ClaudeCodeAccounts{}, err
@@ -56,6 +60,7 @@ func (s *Service) EnsureClaudeCodeAccounts(ctx context.Context) (ClaudeCodeAccou
 	return s.CachedClaudeCodeAccounts(ctx)
 }
 
+// SubscribeClaudeCodeAccounts streams account and switch snapshots.
 func (s *Service) SubscribeClaudeCodeAccounts(ctx context.Context) (<-chan ClaudeCodeAccounts, error) {
 	if err := s.WaitClaudeCodeAccountBootstrap(ctx); err != nil {
 		return nil, err
@@ -80,10 +85,12 @@ func (s *Service) SubscribeClaudeCodeAccounts(ctx context.Context) (<-chan Claud
 	return out, nil
 }
 
+// SetClaudeCodeAccountSwitchCoordinator attaches durable switch orchestration.
 func (s *Service) SetClaudeCodeAccountSwitchCoordinator(coordinator ClaudeCodeAccountSwitchCoordinator) {
 	s.claudeCodeSwitches = coordinator
 }
 
+// StartClaudeCodeAccountSwitch starts an idempotent device-global hot switch.
 func (s *Service) StartClaudeCodeAccountSwitch(ctx context.Context, cfg ports.ClaudeCodeAccountSwitchConfig) (domain.ClaudeCodeAccountSwitch, error) {
 	if s.claudeCodeSwitches == nil {
 		return domain.ClaudeCodeAccountSwitch{}, apierr.Unavailable("CLAUDE_CODE_ACCOUNT_MANAGEMENT_UNAVAILABLE", "Claude Code account switching is unavailable")
@@ -92,6 +99,7 @@ func (s *Service) StartClaudeCodeAccountSwitch(ctx context.Context, cfg ports.Cl
 	return sw, mapClaudeCodeAccountError(err)
 }
 
+// RecoverClaudeCodeAccountSwitch retries recovery for a fenced switch.
 func (s *Service) RecoverClaudeCodeAccountSwitch(ctx context.Context, id string) (domain.ClaudeCodeAccountSwitch, error) {
 	if s.claudeCodeSwitches == nil {
 		return domain.ClaudeCodeAccountSwitch{}, apierr.Unavailable("CLAUDE_CODE_ACCOUNT_MANAGEMENT_UNAVAILABLE", "Claude Code account switching is unavailable")
@@ -100,12 +108,14 @@ func (s *Service) RecoverClaudeCodeAccountSwitch(ctx context.Context, id string)
 	return sw, mapClaudeCodeAccountError(err)
 }
 
+// SetClaudeCodeAccountLoginTerminalOpener attaches native login terminal support.
 func (s *Service) SetClaudeCodeAccountLoginTerminalOpener(opener claudeCodeAccountLoginTerminalService) {
 	if s.claudeCodeAccounts != nil {
 		s.claudeCodeAccounts.terminal = opener
 	}
 }
 
+// OpenClaudeCodeAccountLoginTerminal starts an isolated add-account login.
 func (s *Service) OpenClaudeCodeAccountLoginTerminal(ctx context.Context) (ClaudeCodeAccountLoginTerminalStart, error) {
 	if err := s.WaitClaudeCodeAccountBootstrap(ctx); err != nil {
 		return ClaudeCodeAccountLoginTerminalStart{}, err
@@ -113,6 +123,7 @@ func (s *Service) OpenClaudeCodeAccountLoginTerminal(ctx context.Context) (Claud
 	return s.claudeCodeAccounts.openLoginTerminal(ctx, "")
 }
 
+// OpenClaudeCodeAccountReauthenticationTerminal starts isolated reauthentication.
 func (s *Service) OpenClaudeCodeAccountReauthenticationTerminal(ctx context.Context, accountID string) (ClaudeCodeAccountLoginTerminalStart, error) {
 	if err := s.WaitClaudeCodeAccountBootstrap(ctx); err != nil {
 		return ClaudeCodeAccountLoginTerminalStart{}, err
@@ -120,6 +131,7 @@ func (s *Service) OpenClaudeCodeAccountReauthenticationTerminal(ctx context.Cont
 	return s.claudeCodeAccounts.openLoginTerminal(ctx, strings.TrimSpace(accountID))
 }
 
+// VerifyClaudeCodeAccountLogin verifies and commits an isolated login.
 func (s *Service) VerifyClaudeCodeAccountLogin(ctx context.Context, operationID string) (domain.ClaudeCodeAccountLoginOperation, error) {
 	if err := s.WaitClaudeCodeAccountBootstrap(ctx); err != nil {
 		return domain.ClaudeCodeAccountLoginOperation{}, err
@@ -127,6 +139,7 @@ func (s *Service) VerifyClaudeCodeAccountLogin(ctx context.Context, operationID 
 	return s.claudeCodeAccounts.verifyLogin(ctx, strings.TrimSpace(operationID))
 }
 
+// CancelClaudeCodeAccountLogin cancels and cleans up an isolated login.
 func (s *Service) CancelClaudeCodeAccountLogin(ctx context.Context, operationID string) (domain.ClaudeCodeAccountLoginOperation, error) {
 	if err := s.WaitClaudeCodeAccountBootstrap(ctx); err != nil {
 		return domain.ClaudeCodeAccountLoginOperation{}, err
@@ -134,6 +147,7 @@ func (s *Service) CancelClaudeCodeAccountLogin(ctx context.Context, operationID 
 	return s.claudeCodeAccounts.cancelLogin(ctx, strings.TrimSpace(operationID))
 }
 
+// LogoutClaudeCodeAccount deletes local account credentials while retaining its card.
 func (s *Service) LogoutClaudeCodeAccount(ctx context.Context, accountID string) (ClaudeCodeAccounts, error) {
 	if err := s.WaitClaudeCodeAccountBootstrap(ctx); err != nil {
 		return ClaudeCodeAccounts{}, err
@@ -144,6 +158,7 @@ func (s *Service) LogoutClaudeCodeAccount(ctx context.Context, accountID string)
 	return s.claudeCodeAccounts.cached(), nil
 }
 
+// DeleteClaudeCodeAccount removes an inactive signed-out account descriptor.
 func (s *Service) DeleteClaudeCodeAccount(ctx context.Context, accountID string) (ClaudeCodeAccounts, error) {
 	if err := s.WaitClaudeCodeAccountBootstrap(ctx); err != nil {
 		return ClaudeCodeAccounts{}, err

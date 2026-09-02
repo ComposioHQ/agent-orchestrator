@@ -1292,18 +1292,22 @@ type CodexAccountSwitchSessionResponse struct {
 	RestartedAt   *time.Time `json:"restartedAt,omitempty"`
 }
 
+// ClaudeCodeAccountIDParam identifies a saved Claude Code account.
 type ClaudeCodeAccountIDParam struct {
 	AccountID string `path:"accountId" description:"Stable Claude Code account UUID."`
 }
 
+// ClaudeCodeAccountLoginIDParam identifies an isolated login operation.
 type ClaudeCodeAccountLoginIDParam struct {
 	OperationID string `path:"operationId" description:"Claude Code login operation identifier."`
 }
 
+// ClaudeCodeAccountSwitchIDParam identifies a durable account switch.
 type ClaudeCodeAccountSwitchIDParam struct {
 	SwitchID string `path:"switchId" description:"Durable Claude Code account switch identifier."`
 }
 
+// ClaudeCodeAccountsResponse is the complete account-management snapshot.
 type ClaudeCodeAccountsResponse struct {
 	ActiveAccountID        string                                    `json:"activeAccountId,omitempty"`
 	AccountRevision        int64                                     `json:"accountRevision"`
@@ -1314,6 +1318,7 @@ type ClaudeCodeAccountsResponse struct {
 	CurrentSwitch          *ClaudeCodeAccountSwitchResponse          `json:"currentSwitch,omitempty"`
 }
 
+// ClaudeCodeAccountResponse is one non-secret saved-account projection.
 type ClaudeCodeAccountResponse struct {
 	ID             string                            `json:"id"`
 	Label          string                            `json:"label"`
@@ -1328,6 +1333,7 @@ type ClaudeCodeAccountResponse struct {
 	UpdatedAt      time.Time                         `json:"updatedAt"`
 }
 
+// ClaudeCodeAccountIdentityResponse is the allowlisted identity projection.
 type ClaudeCodeAccountIdentityResponse struct {
 	AccountUUID           string  `json:"accountUuid"`
 	EmailAddress          string  `json:"emailAddress,omitempty"`
@@ -1340,6 +1346,7 @@ type ClaudeCodeAccountIdentityResponse struct {
 	SubscriptionCreatedAt *string `json:"subscriptionCreatedAt,omitempty"`
 }
 
+// ClaudeCodeAuthenticationResponse describes current credential usability.
 type ClaudeCodeAuthenticationResponse struct {
 	State       string     `json:"state" enum:"authorized,unauthorized,unknown,not_applicable"`
 	Freshness   string     `json:"freshness" enum:"fresh,stale,checking"`
@@ -1349,12 +1356,14 @@ type ClaudeCodeAuthenticationResponse struct {
 	Reason      string     `json:"reason"`
 }
 
+// ClaudeCodeCapabilityObservationResponse describes one supported operation.
 type ClaudeCodeCapabilityObservationResponse struct {
 	State      string `json:"state" enum:"supported,unsupported,unknown"`
 	ReasonCode string `json:"reasonCode"`
 	Reason     string `json:"reason"`
 }
 
+// ClaudeCodeAccountCapabilitiesResponse reports all Claude account capabilities.
 type ClaudeCodeAccountCapabilitiesResponse struct {
 	AccountRead       ClaudeCodeCapabilityObservationResponse `json:"accountRead"`
 	NativeLogin       ClaudeCodeCapabilityObservationResponse `json:"nativeLogin"`
@@ -1364,6 +1373,7 @@ type ClaudeCodeAccountCapabilitiesResponse struct {
 	SessionExitResume ClaudeCodeCapabilityObservationResponse `json:"sessionExitResume"`
 }
 
+// ClaudeCodeUnmanagedGlobalAccountResponse describes an unreconciled canonical login.
 type ClaudeCodeUnmanagedGlobalAccountResponse struct {
 	Label        string  `json:"label"`
 	AccountEmail *string `json:"accountEmail,omitempty"`
@@ -1371,6 +1381,7 @@ type ClaudeCodeUnmanagedGlobalAccountResponse struct {
 	Reason       string  `json:"reason"`
 }
 
+// ClaudeCodeAccountLoginResponse is the public state of an isolated login.
 type ClaudeCodeAccountLoginResponse struct {
 	OperationID string                     `json:"operationId"`
 	AccountID   string                     `json:"accountId,omitempty"`
@@ -1381,6 +1392,7 @@ type ClaudeCodeAccountLoginResponse struct {
 	ExpiresAt   time.Time                  `json:"expiresAt"`
 }
 
+// ClaudeCodeActiveLoginResponse includes the terminal backing an active login.
 type ClaudeCodeActiveLoginResponse struct {
 	OperationID   string                                 `json:"operationId"`
 	AccountID     string                                 `json:"accountId,omitempty"`
@@ -1391,23 +1403,27 @@ type ClaudeCodeActiveLoginResponse struct {
 	ShellTerminal ClaudeCodeAccountLoginTerminalResponse `json:"shellTerminal"`
 }
 
+// ClaudeCodeAccountLoginTerminalResponse identifies an AO shell terminal.
 type ClaudeCodeAccountLoginTerminalResponse struct {
 	HandleID  string    `json:"handleId"`
 	Title     string    `json:"title"`
 	CreatedAt time.Time `json:"createdAt"`
 }
 
+// OpenClaudeCodeAccountLoginTerminalResponse starts an isolated native login.
 type OpenClaudeCodeAccountLoginTerminalResponse struct {
 	Operation     ClaudeCodeAccountLoginResponse         `json:"operation"`
 	ShellTerminal ClaudeCodeAccountLoginTerminalResponse `json:"shellTerminal"`
 }
 
+// StartClaudeCodeAccountSwitchRequest starts an idempotent revision-checked switch.
 type StartClaudeCodeAccountSwitchRequest struct {
 	TargetAccountID         string `json:"targetAccountId" minLength:"1"`
 	ExpectedAccountRevision int64  `json:"expectedAccountRevision" minimum:"1"`
 	IdempotencyKey          string `json:"idempotencyKey" minLength:"1" maxLength:"200"`
 }
 
+// ClaudeCodeAccountSwitchResponse is the safe durable switch projection.
 type ClaudeCodeAccountSwitchResponse struct {
 	ID                        string     `json:"id"`
 	SourceAccountID           string     `json:"sourceAccountId"`

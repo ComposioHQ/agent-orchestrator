@@ -23,11 +23,11 @@ func claudeCodeAccountSwitchFingerprint(target string, revision int64) string {
 func (m *Manager) claudeCodeAccountSwitchDependencies() (ports.ClaudeCodeAccountCredentialManager, ports.ClaudeCodeAccountSwitchStore, error) {
 	credentials, ok := m.agentReadiness.(ports.ClaudeCodeAccountCredentialManager)
 	if !ok {
-		return nil, nil, errors.New("Claude Code account credential manager is unavailable")
+		return nil, nil, errors.New("account credential manager is unavailable for Claude Code")
 	}
 	store, ok := m.store.(ports.ClaudeCodeAccountSwitchStore)
 	if !ok {
-		return nil, nil, errors.New("Claude Code account switch store is unavailable")
+		return nil, nil, errors.New("account switch store is unavailable for Claude Code")
 	}
 	return credentials, store, nil
 }
@@ -78,10 +78,12 @@ func (m *Manager) claimClaudeCodeRecoveryWorker(ctx context.Context) bool {
 	return m.acquireClaudeCodeAccountSwitchGate(ctx) == nil
 }
 
+// ClaudeCodeAccountSwitchInProgress reports whether Claude launches are fenced.
 func (m *Manager) ClaudeCodeAccountSwitchInProgress() bool {
 	return m.claudeCodeOperationGate != nil && m.claudeCodeOperationGate.ExclusivePendingOrHeld()
 }
 
+// StartClaudeCodeAccountSwitch records and asynchronously executes a hot switch.
 func (m *Manager) StartClaudeCodeAccountSwitch(ctx context.Context, cfg ports.ClaudeCodeAccountSwitchConfig) (domain.ClaudeCodeAccountSwitch, error) {
 	cfg.TargetAccountID = strings.TrimSpace(cfg.TargetAccountID)
 	cfg.IdempotencyKey = strings.TrimSpace(cfg.IdempotencyKey)
@@ -262,12 +264,13 @@ func (m *Manager) advanceClaudeCodeAccountSwitch(ctx context.Context, store port
 		return err
 	}
 	if !ok {
-		return errors.New("Claude Code account switch changed concurrently")
+		return errors.New("account switch changed concurrently for Claude Code")
 	}
 	m.publishClaudeCodeAccountSwitchChanged()
 	return nil
 }
 
+// GetActiveClaudeCodeAccountSwitch returns the current nonterminal switch.
 func (m *Manager) GetActiveClaudeCodeAccountSwitch(ctx context.Context) (domain.ClaudeCodeAccountSwitch, bool, error) {
 	_, store, err := m.claudeCodeAccountSwitchDependencies()
 	if err != nil {
@@ -282,6 +285,7 @@ func (m *Manager) GetActiveClaudeCodeAccountSwitch(ctx context.Context) (domain.
 	return sw, ok, err
 }
 
+// RecoverClaudeCodeAccountSwitch retries a durable switch recovery operation.
 func (m *Manager) RecoverClaudeCodeAccountSwitch(ctx context.Context, id string) (domain.ClaudeCodeAccountSwitch, error) {
 	credentials, store, err := m.claudeCodeAccountSwitchDependencies()
 	if err != nil {
@@ -295,7 +299,7 @@ func (m *Manager) RecoverClaudeCodeAccountSwitch(ctx context.Context, id string)
 		return sw, ports.ErrClaudeCodeAccountSwitchNotFound
 	}
 	if sw.Phase.Terminal() {
-		return sw, errors.New("Claude Code account switch is already terminal")
+		return sw, errors.New("account switch is already terminal for Claude Code")
 	}
 	if !m.claimClaudeCodeRecoveryWorker(ctx) {
 		return sw, ports.ErrClaudeCodeAccountSwitchInProgress
@@ -340,9 +344,11 @@ func (m *Manager) recoverClaudeCodeAccountSwitch(ctx context.Context, credential
 	_ = m.advanceClaudeCodeAccountSwitch(ctx, store, &sw, domain.ClaudeCodeAccountSwitchFailed, "recovered_source")
 }
 
+// ReconcileClaudeCodeAccountSwitches resumes any nonterminal switch after startup.
 func (m *Manager) ReconcileClaudeCodeAccountSwitches(ctx context.Context) error {
-	credentials, store, err := m.claudeCodeAccountSwitchDependencies()
-	if err != nil {
+	credentials, credentialsOK := m.agentReadiness.(ports.ClaudeCodeAccountCredentialManager)
+	store, storeOK := m.store.(ports.ClaudeCodeAccountSwitchStore)
+	if !credentialsOK || !storeOK {
 		return nil
 	}
 	sw, ok, err := store.GetActiveClaudeCodeAccountSwitch(ctx)
@@ -367,6 +373,7 @@ func (m *Manager) ReconcileClaudeCodeAccountSwitches(ctx context.Context) error 
 	return nil
 }
 
+// SetClaudeCodeAccountSwitchObserver installs a state-change callback.
 func (m *Manager) SetClaudeCodeAccountSwitchObserver(observer func()) {
 	m.claudeCodeAccountSwitchObserverMu.Lock()
 	m.claudeCodeAccountSwitchObserver = observer

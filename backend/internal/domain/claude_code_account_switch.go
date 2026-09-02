@@ -2,12 +2,16 @@ package domain
 
 import "time"
 
+// ClaudeCodeAccountSwitchPolicy identifies how a device-global account is activated.
 type ClaudeCodeAccountSwitchPolicy string
 
+// ClaudeCodeSwitchPolicyHotReload keeps running Claude processes alive during activation.
 const ClaudeCodeSwitchPolicyHotReload ClaudeCodeAccountSwitchPolicy = "hot_reload"
 
+// ClaudeCodeAccountSwitchPhase is a durable coordinator checkpoint.
 type ClaudeCodeAccountSwitchPhase string
 
+// Durable Claude Code account-switch phases.
 const (
 	ClaudeCodeAccountSwitchRequested           ClaudeCodeAccountSwitchPhase = "requested"
 	ClaudeCodeAccountSwitchVerifyingTarget     ClaudeCodeAccountSwitchPhase = "verifying_target"
@@ -21,10 +25,12 @@ const (
 	ClaudeCodeAccountSwitchFailed              ClaudeCodeAccountSwitchPhase = "failed"
 )
 
+// Terminal reports whether the switch can no longer advance.
 func (p ClaudeCodeAccountSwitchPhase) Terminal() bool {
 	return p == ClaudeCodeAccountSwitchCompleted || p == ClaudeCodeAccountSwitchFailed
 }
 
+// ClaudeCodeAccountSwitch records one durable, idempotent hot-switch attempt.
 type ClaudeCodeAccountSwitch struct {
 	ID                        string                        `json:"id"`
 	SourceAccountID           string                        `json:"sourceAccountId"`

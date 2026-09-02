@@ -35,7 +35,7 @@ func (s *Store) GetClaudeCodeActiveAccount(ctx context.Context) (domain.ClaudeCo
 }
 
 // SetClaudeCodeActiveAccount atomically creates or advances the active-account pointer.
-func (s *Store) SetClaudeCodeActiveAccount(ctx context.Context, accountID string, expectedRevision int64, at time.Time) (domain.ClaudeCodeActiveAccount, error) {
+func (s *Store) SetClaudeCodeActiveAccount(ctx context.Context, accountID string, expectedRevision int64, at time.Time) (domain.ClaudeCodeActiveAccount, error) { //nolint:dupl // Claude uses a separate durable contract from Codex.
 	if expectedRevision < 0 || (accountID == "" && expectedRevision == 0) {
 		return domain.ClaudeCodeActiveAccount{}, ports.ErrClaudeCodeAccountRevisionConflict
 	}

@@ -16,6 +16,7 @@ const claudeCredentialLockStale = 60 * time.Second
 
 type claudeLockAcquirer func(context.Context, string, time.Duration, time.Duration) (func(), error)
 
+// AcquireCredentialLocks acquires Claude Code's refresh locks in native order.
 func AcquireCredentialLocks(ctx context.Context, claudeDir string) (func(), error) {
 	return acquireClaudeCredentialLocksWith(ctx, claudeDir, acquireClaudeProperLock)
 }
@@ -56,7 +57,7 @@ func acquireClaudeProperLock(ctx context.Context, path string, staleAfter, timeo
 			continue
 		}
 		if time.Now().After(deadline) {
-			return nil, errors.New("Claude Code appears to be updating credentials; retry shortly")
+			return nil, errors.New("credential update already in progress for Claude Code; retry shortly")
 		}
 		select {
 		case <-ctx.Done():

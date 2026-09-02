@@ -26,6 +26,7 @@ type claudeCodeCredentialSwitch struct {
 	mutated      bool
 }
 
+// CurrentClaudeCodeActiveAccount returns the cached revisioned active pointer.
 func (s *Service) CurrentClaudeCodeActiveAccount() domain.ClaudeCodeActiveAccount {
 	if s.claudeCodeAccounts == nil {
 		return domain.ClaudeCodeActiveAccount{}
@@ -35,6 +36,7 @@ func (s *Service) CurrentClaudeCodeActiveAccount() domain.ClaudeCodeActiveAccoun
 	return s.claudeCodeAccounts.active
 }
 
+// ClaudeCodeAccountLoginInProgress reports whether an isolated login is active.
 func (s *Service) ClaudeCodeAccountLoginInProgress() bool {
 	if s.claudeCodeAccounts == nil {
 		return false
@@ -44,6 +46,7 @@ func (s *Service) ClaudeCodeAccountLoginInProgress() bool {
 	return s.claudeCodeAccounts.login != nil && !terminalClaudeCodeLoginStatus(s.claudeCodeAccounts.login.snapshot.Status)
 }
 
+// BeginClaudeCodeAccountMutation acquires the account manager's exclusive mutation token.
 func (s *Service) BeginClaudeCodeAccountMutation(ctx context.Context) error {
 	if s.claudeCodeAccounts == nil {
 		return ports.ErrClaudeCodeAccountManagementUnsupported
@@ -52,6 +55,7 @@ func (s *Service) BeginClaudeCodeAccountMutation(ctx context.Context) error {
 	return err
 }
 
+// EndClaudeCodeAccountMutation releases the account manager's mutation token.
 func (s *Service) EndClaudeCodeAccountMutation() {
 	if s.claudeCodeAccounts == nil {
 		return
@@ -62,6 +66,7 @@ func (s *Service) EndClaudeCodeAccountMutation() {
 	}
 }
 
+// StageClaudeCodeAccountForSwitch verifies target credentials in an isolated profile.
 func (s *Service) StageClaudeCodeAccountForSwitch(ctx context.Context, switchID, targetAccountID string) error {
 	m := s.claudeCodeAccounts
 	if m == nil {
@@ -77,18 +82,18 @@ func (s *Service) StageClaudeCodeAccountForSwitch(ctx context.Context, switchID,
 	}
 	credential, found, err := m.keychain.Get(ctx, claudecode.ClaudeAccountVaultService, targetAccountID)
 	if err != nil || !found {
-		return errors.New("Claude Code target credential is unavailable")
+		return errors.New("target credential is unavailable for Claude Code")
 	}
 	stagingDir := filepath.Join(m.switchStagingRoot, switchID)
 	configDir, authDir := filepath.Join(stagingDir, "config"), filepath.Join(stagingDir, "auth")
 	for _, path := range []string{stagingDir, configDir, authDir} {
 		if !pathWithin(m.switchStagingRoot, path) || ensurePrivateDirectory(path) != nil {
-			return errors.New("Claude Code switch staging is unavailable")
+			return errors.New("switch staging is unavailable for Claude Code")
 		}
 	}
 	fields, err := claudecode.AccountCredentialFields(credential)
 	if err != nil {
-		return errors.New("Claude Code target credential is invalid")
+		return errors.New("target credential is invalid for Claude Code")
 	}
 	staged, err := claudecode.MergeCredentialFields(fields, []byte(`{}`))
 	if err != nil {
@@ -96,7 +101,7 @@ func (s *Service) StageClaudeCodeAccountForSwitch(ctx context.Context, switchID,
 	}
 	service := claudecode.IsolatedCredentialService(authDir)
 	if err := m.keychain.Set(ctx, service, m.keychainAccount, staged); err != nil {
-		return errors.New("Claude Code target credential could not be staged")
+		return errors.New("target credential could not be staged for Claude Code")
 	}
 	identityMap := claudeCodeIdentityMap(record.Snapshot.Identity)
 	if err := writePrivateFileAtomic(filepath.Join(configDir, ".claude.json"), []byte("{}\n")); err != nil {
@@ -106,24 +111,25 @@ func (s *Service) StageClaudeCodeAccountForSwitch(ctx context.Context, switchID,
 		return err
 	}
 	if err := m.verifyAuth(ctx, isolatedClaudeCodeEnvironment(configDir, authDir)); err != nil {
-		return errors.New("Claude Code target account requires reauthentication")
+		return errors.New("target account requires reauthentication for Claude Code")
 	}
 	rotated, found, err := m.keychain.Get(ctx, service, m.keychainAccount)
 	if err != nil || !found {
-		return errors.New("Claude Code target credential refresh could not be captured")
+		return errors.New("target credential refresh could not be captured for Claude Code")
 	}
 	accountFields, err := claudecode.AccountCredentialFields(rotated)
 	if err != nil {
-		return errors.New("Claude Code target credential refresh is invalid")
+		return errors.New("target credential refresh is invalid for Claude Code")
 	}
 	accountCredential, err := json.Marshal(accountFields)
 	if err != nil {
 		return err
 	}
-	_, _, err = m.catalog.upsert(ctx, record.Snapshot.Identity, accountCredential, m.now())
+	_, err = m.catalog.upsert(ctx, record.Snapshot.Identity, accountCredential, m.now())
 	return err
 }
 
+// BeginClaudeCodeCredentialSwitch snapshots canonical state and acquires native locks.
 func (s *Service) BeginClaudeCodeCredentialSwitch(ctx context.Context, sw domain.ClaudeCodeAccountSwitch) (ports.ClaudeCodeCredentialSwitch, error) {
 	m := s.claudeCodeAccounts
 	if m == nil {
@@ -156,7 +162,7 @@ func (s *Service) BeginClaudeCodeCredentialSwitch(ctx context.Context, sw domain
 		return nil, err
 	}
 	if err := m.keychain.Set(ctx, claudecode.ClaudeSwitchRollbackVaultService, sw.ID, data); err != nil {
-		return nil, errors.New("Claude Code rollback snapshot could not be saved")
+		return nil, errors.New("rollback snapshot could not be saved for Claude Code")
 	}
 	abort = false
 	return &claudeCodeCredentialSwitch{manager: m, switchRecord: sw, rollback: snapshot, releaseLocks: releaseLocks}, nil
@@ -179,14 +185,14 @@ func (t *claudeCodeCredentialSwitch) CheckpointSource(ctx context.Context) error
 	if !ok {
 		return ports.ErrClaudeCodeActiveAccountUnavailable
 	}
-	_, _, err = t.manager.catalog.upsert(ctx, source.Snapshot.Identity, accountCredential, t.manager.now())
+	_, err = t.manager.catalog.upsert(ctx, source.Snapshot.Identity, accountCredential, t.manager.now())
 	return err
 }
 
 func (t *claudeCodeCredentialSwitch) ActivateTarget(ctx context.Context) error {
 	target, found, err := t.manager.keychain.Get(ctx, claudecode.ClaudeAccountVaultService, t.switchRecord.TargetAccountID)
 	if err != nil || !found {
-		return errors.New("Claude Code target credential is unavailable")
+		return errors.New("target credential is unavailable for Claude Code")
 	}
 	live, found, err := t.manager.keychain.Get(ctx, claudecode.ClaudeCanonicalCredentialService, t.manager.keychainAccount)
 	if err != nil || !found {
@@ -201,7 +207,7 @@ func (t *claudeCodeCredentialSwitch) ActivateTarget(ctx context.Context) error {
 		return err
 	}
 	if err := t.manager.keychain.Set(ctx, claudecode.ClaudeCanonicalCredentialService, t.manager.keychainAccount, merged); err != nil {
-		return errors.New("Claude Code target credential could not be activated")
+		return errors.New("target credential could not be activated for Claude Code")
 	}
 	t.mutated = true
 	return nil
@@ -231,7 +237,7 @@ func (t *claudeCodeCredentialSwitch) VerifyGlobal(ctx context.Context) error {
 	}
 	identity, _, err := readClaudeCodeOAuthIdentity(t.manager.configPath)
 	if err != nil || identity.AccountUUID != t.switchRecord.TargetAccountID {
-		return errors.New("Claude Code global identity does not match the switch target")
+		return errors.New("global identity does not match the Claude Code switch target")
 	}
 	return nil
 }
@@ -260,18 +266,18 @@ func (t *claudeCodeCredentialSwitch) Rollback(ctx context.Context) error {
 		t.releaseLocks = release
 	}
 	if err := t.manager.keychain.Set(ctx, claudecode.ClaudeCanonicalCredentialService, t.manager.keychainAccount, t.rollback.Credential); err != nil {
-		return errors.New("Claude Code rollback credential could not be restored")
+		return errors.New("rollback credential could not be restored for Claude Code")
 	}
 	if err := claudecode.WriteOAuthAccount(ctx, t.manager.configPath, t.rollback.OAuthAccount); err != nil {
 		return err
 	}
 	t.ReleaseNativeLocks()
 	if err := t.manager.verifyAuth(ctx, nil); err != nil {
-		return errors.New("Claude Code rollback could not be verified")
+		return errors.New("rollback could not be verified for Claude Code")
 	}
 	identity, _, err := readClaudeCodeOAuthIdentity(t.manager.configPath)
 	if err != nil || identity.AccountUUID != t.switchRecord.SourceAccountID {
-		return errors.New("Claude Code rollback identity could not be verified")
+		return errors.New("rollback identity could not be verified for Claude Code")
 	}
 	t.mutated = false
 	return nil
@@ -306,6 +312,7 @@ func claudeCodeIdentityMap(identity domain.ClaudeCodeAccountIdentity) map[string
 	return values
 }
 
+// RecoverClaudeCodeCredentialSwitch reconciles canonical state after an interrupted switch.
 func (s *Service) RecoverClaudeCodeCredentialSwitch(ctx context.Context, sw domain.ClaudeCodeAccountSwitch) (ports.ClaudeCodeCredentialRecoveryOutcome, *time.Time, error) {
 	m := s.claudeCodeAccounts
 	if m == nil {
@@ -337,11 +344,11 @@ func (s *Service) RecoverClaudeCodeCredentialSwitch(ctx context.Context, sw doma
 	}
 	data, found, err := m.keychain.Get(ctx, claudecode.ClaudeSwitchRollbackVaultService, sw.ID)
 	if err != nil || !found {
-		return "", nil, errors.New("Claude Code rollback snapshot is unavailable")
+		return "", nil, errors.New("rollback snapshot is unavailable for Claude Code")
 	}
 	var snapshot claudeCodeRollbackSnapshot
 	if json.Unmarshal(data, &snapshot) != nil || len(snapshot.Credential) == 0 || len(snapshot.OAuthAccount) == 0 {
-		return "", nil, errors.New("Claude Code rollback snapshot is invalid")
+		return "", nil, errors.New("rollback snapshot is invalid for Claude Code")
 	}
 	txn := &claudeCodeCredentialSwitch{manager: m, switchRecord: sw, rollback: snapshot}
 	if err := txn.Rollback(ctx); err != nil {
@@ -363,6 +370,7 @@ func (m *claudeCodeAccountManager) cleanupClaudeCodeSwitchArtifacts(ctx context.
 	return nil
 }
 
+// CleanupClaudeCodeSwitchArtifacts removes staging and rollback data after terminal success.
 func (s *Service) CleanupClaudeCodeSwitchArtifacts(ctx context.Context, switchID string) error {
 	if s.claudeCodeAccounts == nil {
 		return ports.ErrClaudeCodeAccountManagementUnsupported
@@ -370,6 +378,7 @@ func (s *Service) CleanupClaudeCodeSwitchArtifacts(ctx context.Context, switchID
 	return s.claudeCodeAccounts.cleanupClaudeCodeSwitchArtifacts(ctx, switchID)
 }
 
+// PublishClaudeCodeAccounts broadcasts the current account snapshot.
 func (s *Service) PublishClaudeCodeAccounts() {
 	if s.claudeCodeAccounts != nil {
 		s.claudeCodeAccounts.publish()

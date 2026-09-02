@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"sync"
 	"testing"
 	"time"
 )
@@ -150,4 +151,71 @@ func TestWriteClaudeOAuthAccountPreservesUnrelatedConfig(t *testing.T) {
 	if projects["/work"].(map[string]any)["hasTrustDialogAccepted"] != true {
 		t.Fatalf("workspace trust was lost: %#v", got)
 	}
+}
+
+func TestClaudeConfigLockSerializesConcurrentTrustAndAccountMutations(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), ".claude.json")
+	if err := os.WriteFile(configPath, []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	start := make(chan struct{})
+	errs := make(chan error, 2)
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		<-start
+		errs <- ensureWorkspaceTrusted(configPath, "/work/project")
+	}()
+	go func() {
+		defer wg.Done()
+		<-start
+		errs <- writeClaudeOAuthAccount(context.Background(), configPath, map[string]any{"accountUuid": "account-b"})
+	}()
+	close(start)
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got["oauthAccount"].(map[string]any)["accountUuid"] != "account-b" {
+		t.Fatalf("OAuth identity was lost: %#v", got)
+	}
+	projects := got["projects"].(map[string]any)
+	if projects["/work/project"].(map[string]any)["hasTrustDialogAccepted"] != true {
+		t.Fatalf("workspace trust was lost: %#v", got)
+	}
+}
+
+func TestClaudeCredentialLocksExcludeConcurrentRefresh(t *testing.T) {
+	claudeDir := filepath.Join(t.TempDir(), ".claude")
+	if err := os.Mkdir(claudeDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	release, err := AcquireCredentialLocks(context.Background(), claudeDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	blockedCtx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	if secondRelease, err := AcquireCredentialLocks(blockedCtx, claudeDir); err == nil {
+		secondRelease()
+		t.Fatal("concurrent Claude credential refresh acquired locks during switch")
+	}
+	release()
+	afterRelease, err := AcquireCredentialLocks(context.Background(), claudeDir)
+	if err != nil {
+		t.Fatalf("locks were not released: %v", err)
+	}
+	afterRelease()
 }

@@ -27,6 +27,7 @@ func newMacOSClaudeKeychain() *macOSClaudeKeychain {
 	return &macOSClaudeKeychain{run: runClaudeSecurity}
 }
 
+// NewKeychain returns the macOS Claude Code credential store.
 func NewKeychain() Keychain { return newMacOSClaudeKeychain() }
 
 func (*macOSClaudeKeychain) Supported() bool { return true }
@@ -50,7 +51,7 @@ func runClaudeSecurity(ctx context.Context, args []string, input []byte) ([]byte
 	cmd.Stdin = bytes.NewReader(input)
 	out, err := cmd.Output()
 	if callCtx.Err() != nil {
-		return nil, -1, fmt.Errorf("Claude Keychain operation timed out: %w", callCtx.Err())
+		return nil, -1, fmt.Errorf("keychain operation timed out for Claude Code: %w", callCtx.Err())
 	}
 	if err == nil {
 		return out, 0, nil
@@ -71,7 +72,7 @@ func (s *macOSClaudeKeychain) get(ctx context.Context, service, account string) 
 		return nil, false, nil
 	}
 	if code != 0 {
-		return nil, false, fmt.Errorf("Claude Keychain read failed with status %d", code)
+		return nil, false, fmt.Errorf("keychain read failed for Claude Code with status %d", code)
 	}
 	return bytes.TrimSuffix(out, []byte("\n")), true, nil
 }
@@ -79,14 +80,14 @@ func (s *macOSClaudeKeychain) get(ctx context.Context, service, account string) 
 func (s *macOSClaudeKeychain) set(ctx context.Context, service, account string, value []byte) error {
 	command := "add-generic-password -U -a " + quoteSecurityInput(account) + " -s " + quoteSecurityInput(service) + " -X " + hex.EncodeToString(value) + "\n"
 	if len(command) > claudeSecurityCommandMaxSize {
-		return errors.New("Claude credential is too large for a secret-safe Keychain write")
+		return errors.New("credential is too large for a secret-safe Claude Code Keychain write")
 	}
 	_, code, err := s.run(ctx, []string{"-i"}, []byte(command))
 	if err != nil {
 		return err
 	}
 	if code != 0 {
-		return fmt.Errorf("Claude Keychain write failed with status %d", code)
+		return fmt.Errorf("keychain write failed for Claude Code with status %d", code)
 	}
 	return nil
 }
@@ -97,7 +98,7 @@ func (s *macOSClaudeKeychain) delete(ctx context.Context, service, account strin
 		return err
 	}
 	if code != 0 && code != 44 {
-		return fmt.Errorf("Claude Keychain delete failed with status %d", code)
+		return fmt.Errorf("keychain delete failed for Claude Code with status %d", code)
 	}
 	return nil
 }

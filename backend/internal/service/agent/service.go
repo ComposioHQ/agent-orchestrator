@@ -66,6 +66,7 @@ type Service struct {
 	claudeCodeSwitches ClaudeCodeAccountSwitchCoordinator
 }
 
+// ClaudeCodeAccountSwitchCoordinator owns global switch execution and recovery.
 type ClaudeCodeAccountSwitchCoordinator interface {
 	ClaudeCodeAccountSwitchInProgress() bool
 	StartClaudeCodeAccountSwitch(context.Context, ports.ClaudeCodeAccountSwitchConfig) (domain.ClaudeCodeAccountSwitch, error)

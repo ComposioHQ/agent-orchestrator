@@ -2,6 +2,7 @@ package sessionmanager
 
 import (
 	"context"
+	"errors"
 	"reflect"
 	"strings"
 	"sync"
@@ -113,9 +114,14 @@ func (f *fakeClaudeCredentialSwitch) Rollback(context.Context) error { f.call("r
 func (f *fakeClaudeCredentialSwitch) Cleanup(context.Context) error  { f.call("cleanup"); return nil }
 
 type fakeClaudeCredentialManager struct {
-	txn      *fakeClaudeCredentialSwitch
-	active   domain.ClaudeCodeActiveAccount
-	mutation bool
+	txn               *fakeClaudeCredentialSwitch
+	active            domain.ClaudeCodeActiveAccount
+	mutation          bool
+	recoveryOutcome   ports.ClaudeCodeCredentialRecoveryOutcome
+	recoveryCommitted *time.Time
+	recoveryErr       error
+	recoveryCalls     int
+	cleanupCalls      int
 }
 
 func (*fakeClaudeCredentialManager) EnsureAgentReadiness(context.Context, string, domain.AgentReadinessPurpose) (domain.AgentReadinessSnapshot, error) {
@@ -140,10 +146,12 @@ func (*fakeClaudeCredentialManager) StageClaudeCodeAccountForSwitch(context.Cont
 func (f *fakeClaudeCredentialManager) BeginClaudeCodeCredentialSwitch(context.Context, domain.ClaudeCodeAccountSwitch) (ports.ClaudeCodeCredentialSwitch, error) {
 	return f.txn, nil
 }
-func (*fakeClaudeCredentialManager) RecoverClaudeCodeCredentialSwitch(context.Context, domain.ClaudeCodeAccountSwitch) (ports.ClaudeCodeCredentialRecoveryOutcome, *time.Time, error) {
-	return ports.ClaudeCodeCredentialRecoveryFailed, nil, nil
+func (f *fakeClaudeCredentialManager) RecoverClaudeCodeCredentialSwitch(context.Context, domain.ClaudeCodeAccountSwitch) (ports.ClaudeCodeCredentialRecoveryOutcome, *time.Time, error) {
+	f.recoveryCalls++
+	return f.recoveryOutcome, f.recoveryCommitted, f.recoveryErr
 }
-func (*fakeClaudeCredentialManager) CleanupClaudeCodeSwitchArtifacts(context.Context, string) error {
+func (f *fakeClaudeCredentialManager) CleanupClaudeCodeSwitchArtifacts(context.Context, string) error {
+	f.cleanupCalls++
 	return nil
 }
 func (*fakeClaudeCredentialManager) PublishClaudeCodeAccounts() {}
@@ -154,6 +162,14 @@ func TestClaudeCodeHotSwitchRunsDurablePhasesWithoutSessionRestart(t *testing.T)
 	txn := &fakeClaudeCredentialSwitch{}
 	credentials := &fakeClaudeCredentialManager{txn: txn, active: domain.ClaudeCodeActiveAccount{AccountID: "account-a", Revision: 1}}
 	m.store, m.agentReadiness = store, credentials
+	session := domain.SessionRecord{
+		ID: "claude-session", ProjectID: "project-1", Kind: domain.KindWorker, Harness: domain.HarnessClaudeCode,
+		Mode: domain.SessionModeTUI, Metadata: domain.SessionMetadata{
+			RuntimeHandleID: "runtime-1", RuntimeLaunchID: "launch-1", AgentSessionID: "native-session-1",
+			AgentSessionIDLaunchID: "launch-1", ControllerGeneration: "controller-1", NativeTranscriptPath: "/claude/native-session-1.jsonl",
+		},
+	}
+	base.sessions[session.ID] = session
 
 	sw, err := m.StartClaudeCodeAccountSwitch(context.Background(), ports.ClaudeCodeAccountSwitchConfig{
 		TargetAccountID: "account-b", ExpectedAccountRevision: 1, IdempotencyKey: "request-1",
@@ -178,7 +194,84 @@ func TestClaudeCodeHotSwitchRunsDurablePhasesWithoutSessionRestart(t *testing.T)
 	if got := strings.Join(txn.calls, ","); !strings.Contains(got, "checkpoint,activate,identity,release,verify,commit,cleanup") {
 		t.Fatalf("credential calls = %s", got)
 	}
-	if len(base.sessions) != 0 {
-		t.Fatalf("hot switch touched sessions: %+v", base.sessions)
+	if got := base.sessions[session.ID]; !reflect.DeepEqual(got, session) {
+		t.Fatalf("hot switch changed native session identity or controller generation: got %+v want %+v", got, session)
 	}
+}
+
+func TestClaudeCodeStartupRecoveryHandlesEveryDurableNonterminalPhase(t *testing.T) {
+	phases := []domain.ClaudeCodeAccountSwitchPhase{
+		domain.ClaudeCodeAccountSwitchRequested,
+		domain.ClaudeCodeAccountSwitchVerifyingTarget,
+		domain.ClaudeCodeAccountSwitchCheckpointingSource,
+		domain.ClaudeCodeAccountSwitchActivatingTarget,
+		domain.ClaudeCodeAccountSwitchUpdatingIdentity,
+		domain.ClaudeCodeAccountSwitchVerifyingGlobal,
+		domain.ClaudeCodeAccountSwitchRollbackRequired,
+		domain.ClaudeCodeAccountSwitchRecoveryRequired,
+	}
+	for _, phase := range phases {
+		t.Run(string(phase), func(t *testing.T) {
+			m, base, _, _ := newManager()
+			sw := domain.ClaudeCodeAccountSwitch{
+				ID: "switch-" + string(phase), SourceAccountID: "account-a", TargetAccountID: "account-b",
+				Policy: domain.ClaudeCodeSwitchPolicyHotReload, Phase: phase, ExpectedAccountRevision: 1,
+				CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC(),
+			}
+			store := &claudeSwitchTestStore{fakeStore: base, switches: map[string]domain.ClaudeCodeAccountSwitch{sw.ID: sw}, byKey: map[string]string{}}
+			credentials := &fakeClaudeCredentialManager{
+				active:          domain.ClaudeCodeActiveAccount{AccountID: "account-a", Revision: 1},
+				recoveryOutcome: ports.ClaudeCodeCredentialRecoveryFailed,
+			}
+			m.store, m.agentReadiness = store, credentials
+
+			if err := m.ReconcileClaudeCodeAccountSwitches(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			m.agentSwitchWorkers.Wait()
+			got, ok, err := store.GetClaudeCodeAccountSwitch(context.Background(), sw.ID)
+			if err != nil || !ok || got.Phase != domain.ClaudeCodeAccountSwitchFailed || got.FailureCode != "recovered_source" {
+				t.Fatalf("recovered switch = %+v ok=%v err=%v", got, ok, err)
+			}
+			if credentials.recoveryCalls != 1 || credentials.mutation || m.ClaudeCodeAccountSwitchInProgress() {
+				t.Fatalf("recovery calls=%d mutation=%v fence=%v", credentials.recoveryCalls, credentials.mutation, m.ClaudeCodeAccountSwitchInProgress())
+			}
+		})
+	}
+}
+
+func TestClaudeCodeStartupRecoveryCompletesTargetAndRetainsFenceWhenUnverifiable(t *testing.T) {
+	t.Run("target already active", func(t *testing.T) {
+		m, base, _, _ := newManager()
+		now := time.Now().UTC()
+		sw := domain.ClaudeCodeAccountSwitch{ID: "switch-target", SourceAccountID: "account-a", TargetAccountID: "account-b", Policy: domain.ClaudeCodeSwitchPolicyHotReload, Phase: domain.ClaudeCodeAccountSwitchVerifyingGlobal, ExpectedAccountRevision: 1, CreatedAt: now, UpdatedAt: now}
+		store := &claudeSwitchTestStore{fakeStore: base, switches: map[string]domain.ClaudeCodeAccountSwitch{sw.ID: sw}, byKey: map[string]string{}}
+		credentials := &fakeClaudeCredentialManager{active: domain.ClaudeCodeActiveAccount{AccountID: "account-a", Revision: 1}, recoveryOutcome: ports.ClaudeCodeCredentialRecoveryCompleted, recoveryCommitted: &now}
+		m.store, m.agentReadiness = store, credentials
+		if err := m.ReconcileClaudeCodeAccountSwitches(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		m.agentSwitchWorkers.Wait()
+		got, _, _ := store.GetClaudeCodeAccountSwitch(context.Background(), sw.ID)
+		if got.Phase != domain.ClaudeCodeAccountSwitchCompleted || got.PropagationUncertainUntil == nil || !got.PropagationUncertainUntil.Equal(now.Add(30*time.Second)) {
+			t.Fatalf("completed recovery = %+v", got)
+		}
+	})
+
+	t.Run("identity cannot be verified", func(t *testing.T) {
+		m, base, _, _ := newManager()
+		now := time.Now().UTC()
+		sw := domain.ClaudeCodeAccountSwitch{ID: "switch-unverified", SourceAccountID: "account-a", TargetAccountID: "account-b", Policy: domain.ClaudeCodeSwitchPolicyHotReload, Phase: domain.ClaudeCodeAccountSwitchActivatingTarget, ExpectedAccountRevision: 1, CreatedAt: now, UpdatedAt: now}
+		store := &claudeSwitchTestStore{fakeStore: base, switches: map[string]domain.ClaudeCodeAccountSwitch{sw.ID: sw}, byKey: map[string]string{}}
+		credentials := &fakeClaudeCredentialManager{active: domain.ClaudeCodeActiveAccount{AccountID: "account-a", Revision: 1}, recoveryErr: errors.New("verification unavailable")}
+		m.store, m.agentReadiness = store, credentials
+		if err := m.ReconcileClaudeCodeAccountSwitches(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		m.agentSwitchWorkers.Wait()
+		got, _, _ := store.GetClaudeCodeAccountSwitch(context.Background(), sw.ID)
+		if got.Phase != domain.ClaudeCodeAccountSwitchRecoveryRequired || !m.ClaudeCodeAccountSwitchInProgress() {
+			t.Fatalf("unverified recovery = %+v fence=%v", got, m.ClaudeCodeAccountSwitchInProgress())
+		}
+	})
 }

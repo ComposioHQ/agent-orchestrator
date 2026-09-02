@@ -107,7 +107,7 @@ func claudeIdentityJSON(id, email string) []byte {
 }
 
 func claudeCredentialJSON(token string) []byte {
-	return []byte(`{"claudeAiOauth":{"accessToken":"` + token + `","refreshToken":"refresh-` + token + `"},"trustedDeviceToken":"device-` + token + `","mcpOAuth":{"shared":"keep"}}`)
+	return []byte(`{"claudeAiOauth":{"accessToken":"` + token + `","refreshToken":"refresh-` + token + `"},"trustedDeviceToken":"device-` + token + `","futureAccountField":{"owner":"` + token + `"},"mcpOAuth":{"shared":"keep"}}`)
 }
 
 func newTestClaudeCodeManager(t *testing.T) (*claudeCodeAccountManager, *fakeClaudeCodeKeychain, *fakeClaudeCodeStateStore, string) {
@@ -380,7 +380,7 @@ func TestClaudeCodeCredentialSwitchPreservesSharedFieldsAndRollsBack(t *testing.
 		t.Fatal(err)
 	}
 	credentialB, _ := json.Marshal(fieldsB)
-	if _, _, err := m.catalog.upsert(context.Background(), identityB, credentialB, m.now()); err != nil {
+	if _, err := m.catalog.upsert(context.Background(), identityB, credentialB, m.now()); err != nil {
 		t.Fatal(err)
 	}
 	svc := &Service{claudeCodeAccounts: m}
@@ -410,7 +410,7 @@ func TestClaudeCodeCredentialSwitchPreservesSharedFieldsAndRollsBack(t *testing.
 		t.Fatal(err)
 	}
 	canonicalB, _, _ := keychain.Get(context.Background(), claudecode.ClaudeCanonicalCredentialService, "test-user")
-	if !containsAny(string(canonicalB), "secret-b", `"shared":"keep"`, "device-secret-b") || containsAny(string(canonicalB), "secret-a", "device-secret-a") {
+	if !containsAny(string(canonicalB), "secret-b", `"shared":"keep"`, "device-secret-b", `"owner":"secret-b"`) || containsAny(string(canonicalB), "secret-a", "device-secret-a", `"owner":"secret-a"`) {
 		t.Fatalf("activated credential crossed account fields: %s", canonicalB)
 	}
 	if err := txn.Rollback(context.Background()); err != nil {
@@ -423,6 +423,75 @@ func TestClaudeCodeCredentialSwitchPreservesSharedFieldsAndRollsBack(t *testing.
 	identityA, _, err := readClaudeCodeOAuthIdentity(filepath.Join(home, ".claude.json"))
 	if err != nil || identityA.AccountUUID != testClaudeAccountA {
 		t.Fatalf("rollback identity = %+v err=%v", identityA, err)
+	}
+}
+
+func TestClaudeCodeCredentialSwitchRoundTripPreservesSharedFieldsWithoutCrossingAccountFields(t *testing.T) {
+	m, keychain, state, home := newTestClaudeCodeManager(t)
+	keychain.items[claudecode.ClaudeCanonicalCredentialService+"\x00test-user"] = claudeCredentialJSON("secret-a")
+	if err := os.WriteFile(filepath.Join(home, ".claude.json"), claudeIdentityJSON(testClaudeAccountA, "a@example.com"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.bootstrapInner(); err != nil {
+		t.Fatal(err)
+	}
+	identityB, _, err := readClaudeCodeOAuthIdentityFromBytes(claudeIdentityJSON(testClaudeAccountB, "b@example.com"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	fieldsB, err := claudecode.AccountCredentialFields(claudeCredentialJSON("secret-b"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	credentialB, _ := json.Marshal(fieldsB)
+	if _, err := m.catalog.upsert(context.Background(), identityB, credentialB, m.now()); err != nil {
+		t.Fatal(err)
+	}
+	svc := &Service{claudeCodeAccounts: m}
+	switchOnce := func(id, source, target string, revision int64) {
+		t.Helper()
+		sw := domain.ClaudeCodeAccountSwitch{ID: id, SourceAccountID: source, TargetAccountID: target, Policy: domain.ClaudeCodeSwitchPolicyHotReload, ExpectedAccountRevision: revision}
+		if err := svc.StageClaudeCodeAccountForSwitch(context.Background(), sw.ID, target); err != nil {
+			t.Fatal(err)
+		}
+		txn, err := svc.BeginClaudeCodeCredentialSwitch(context.Background(), sw)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer txn.ReleaseNativeLocks()
+		if err := txn.CheckpointSource(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		if err := txn.ActivateTarget(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := txn.UpdateIdentity(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		txn.ReleaseNativeLocks()
+		if err := txn.VerifyGlobal(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := txn.CommitActivePointer(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		if err := txn.Cleanup(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	switchOnce("switch-a-b", testClaudeAccountA, testClaudeAccountB, 1)
+	switchOnce("switch-b-a", testClaudeAccountB, testClaudeAccountA, 2)
+	if state.active.AccountID != testClaudeAccountA || state.active.Revision != 3 {
+		t.Fatalf("round-trip active pointer = %+v", state.active)
+	}
+	canonical, _, err := keychain.Get(context.Background(), claudecode.ClaudeCanonicalCredentialService, "test-user")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !containsAny(string(canonical), "secret-a", "device-secret-a", `"owner":"secret-a"`, `"shared":"keep"`) ||
+		containsAny(string(canonical), "secret-b", "device-secret-b", `"owner":"secret-b"`) {
+		t.Fatalf("round-trip credential crossed account fields: %s", canonical)
 	}
 }
 

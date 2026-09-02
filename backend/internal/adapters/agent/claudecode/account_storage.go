@@ -27,7 +27,7 @@ func claudeAccountCredentialFields(data []byte) (map[string]json.RawMessage, err
 		return nil, err
 	}
 	if len(root["claudeAiOauth"]) == 0 || string(root["claudeAiOauth"]) == "null" {
-		return nil, errors.New("Claude credential is missing claudeAiOauth")
+		return nil, errors.New("claude credential is missing claudeAiOauth")
 	}
 	for key := range claudeSharedCredentialFields {
 		delete(root, key)

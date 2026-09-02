@@ -8,31 +8,35 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
 
+// Claude Code account-management errors used across service boundaries.
 var (
-	ErrClaudeCodeAccountSwitchInProgress          = errors.New("Claude Code account switch already in progress")
-	ErrClaudeCodeAccountAlreadyActive             = errors.New("Claude Code account is already active")
-	ErrClaudeCodeAccountNotFound                  = errors.New("Claude Code account not found")
+	ErrClaudeCodeAccountSwitchInProgress          = errors.New("account switch already in progress for Claude Code")
+	ErrClaudeCodeAccountAlreadyActive             = errors.New("account is already active for Claude Code")
+	ErrClaudeCodeAccountNotFound                  = errors.New("account not found for Claude Code")
 	ErrClaudeCodeActiveAccountUnavailable         = errors.New("active Claude Code account is unavailable")
-	ErrClaudeCodeAccountSwitchNotFound            = errors.New("Claude Code account switch not found")
-	ErrClaudeCodeAccountRevisionConflict          = errors.New("Claude Code account revision conflict")
-	ErrClaudeCodeAccountSwitchIdempotencyConflict = errors.New("Claude Code account switch idempotency conflict")
-	ErrClaudeCodeAccountLoginInProgress           = errors.New("Claude Code account login in progress")
+	ErrClaudeCodeAccountSwitchNotFound            = errors.New("account switch not found for Claude Code")
+	ErrClaudeCodeAccountRevisionConflict          = errors.New("account revision conflict for Claude Code")
+	ErrClaudeCodeAccountSwitchIdempotencyConflict = errors.New("account switch idempotency conflict for Claude Code")
+	ErrClaudeCodeAccountLoginInProgress           = errors.New("account login in progress for Claude Code")
 	ErrClaudeCodeGlobalAccountChanged             = errors.New("global Claude Code account changed")
-	ErrClaudeCodeAccountManagementUnsupported     = errors.New("Claude Code account management unsupported")
-	ErrClaudeCodeKeychainUnavailable              = errors.New("Claude Code Keychain unavailable")
+	ErrClaudeCodeAccountManagementUnsupported     = errors.New("account management unsupported for Claude Code")
+	ErrClaudeCodeKeychainUnavailable              = errors.New("keychain unavailable for Claude Code")
 )
 
+// ClaudeCodeAccountStateStore persists the revisioned active-account pointer.
 type ClaudeCodeAccountStateStore interface {
 	GetClaudeCodeActiveAccount(context.Context) (domain.ClaudeCodeActiveAccount, bool, error)
 	SetClaudeCodeActiveAccount(context.Context, string, int64, time.Time) (domain.ClaudeCodeActiveAccount, error)
 }
 
+// ClaudeCodeAccountSwitchConfig contains client concurrency and idempotency controls.
 type ClaudeCodeAccountSwitchConfig struct {
 	TargetAccountID         string
 	ExpectedAccountRevision int64
 	IdempotencyKey          string
 }
 
+// ClaudeCodeAccountSwitchStore persists durable account-switch state.
 type ClaudeCodeAccountSwitchStore interface {
 	CreateClaudeCodeAccountSwitch(context.Context, domain.ClaudeCodeAccountSwitch) (domain.ClaudeCodeAccountSwitch, bool, error)
 	GetClaudeCodeAccountSwitch(context.Context, string) (domain.ClaudeCodeAccountSwitch, bool, error)
@@ -41,14 +45,17 @@ type ClaudeCodeAccountSwitchStore interface {
 	UpdateClaudeCodeAccountSwitch(context.Context, domain.ClaudeCodeAccountSwitch, domain.ClaudeCodeAccountSwitchPhase) (bool, error)
 }
 
+// ClaudeCodeOperationLease owns an exclusive Claude account-operation fence.
 type ClaudeCodeOperationLease interface{ Release() }
 
+// ClaudeCodeOperationGate coordinates shared launches with exclusive credential mutations.
 type ClaudeCodeOperationGate interface {
 	AcquireShared(context.Context) (func(), error)
 	AcquireExclusive(context.Context) (ClaudeCodeOperationLease, error)
 	ExclusivePendingOrHeld() bool
 }
 
+// ClaudeCodeCredentialSwitch performs one credential transaction under native locks.
 type ClaudeCodeCredentialSwitch interface {
 	CheckpointSource(context.Context) error
 	ActivateTarget(context.Context) error
@@ -60,13 +67,16 @@ type ClaudeCodeCredentialSwitch interface {
 	Cleanup(context.Context) error
 }
 
+// ClaudeCodeCredentialRecoveryOutcome identifies which side recovery verified.
 type ClaudeCodeCredentialRecoveryOutcome string
 
+// Claude Code credential-recovery outcomes.
 const (
 	ClaudeCodeCredentialRecoveryCompleted ClaudeCodeCredentialRecoveryOutcome = "completed"
 	ClaudeCodeCredentialRecoveryFailed    ClaudeCodeCredentialRecoveryOutcome = "failed"
 )
 
+// ClaudeCodeAccountCredentialManager supplies credential transactions to the coordinator.
 type ClaudeCodeAccountCredentialManager interface {
 	WaitClaudeCodeAccountBootstrap(context.Context) error
 	CurrentClaudeCodeActiveAccount() domain.ClaudeCodeActiveAccount

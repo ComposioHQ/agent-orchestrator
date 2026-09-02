@@ -51,7 +51,7 @@ func (m *claudeCodeAccountManager) logout(ctx context.Context, accountID string)
 	}
 	vault, vaultFound, err := m.keychain.Get(ctx, claudecode.ClaudeAccountVaultService, accountID)
 	if err != nil || !vaultFound {
-		return errors.New("Claude Code account credential is unavailable")
+		return errors.New("account credential is unavailable for Claude Code")
 	}
 	_, previousIdentity, err := readClaudeCodeOAuthIdentity(m.configPath)
 	if err != nil {

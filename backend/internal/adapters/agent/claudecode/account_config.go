@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-var errClaudeConfigUnchanged = errors.New("Claude config unchanged")
+var errClaudeConfigUnchanged = errors.New("claude config unchanged")
 
 const (
 	claudeConfigLockStale = 10 * time.Second
@@ -40,13 +40,13 @@ func mutateClaudeConfig(ctx context.Context, configPath string, mutate func(map[
 	data, err := os.ReadFile(configPath)
 	switch {
 	case err == nil && len(bytes.TrimSpace(data)) == 0:
-		return fmt.Errorf("Claude config %s is empty; refusing to overwrite", configPath)
+		return fmt.Errorf("claude config %s is empty; refusing to overwrite", configPath)
 	case err == nil:
 		if err := json.Unmarshal(data, &root); err != nil {
 			return fmt.Errorf("parse Claude config: %w", err)
 		}
 	case os.IsNotExist(err):
-	case err != nil:
+	default:
 		return fmt.Errorf("read Claude config: %w", err)
 	}
 	if err := mutate(root); err != nil {
@@ -66,7 +66,7 @@ func mutateClaudeConfig(ctx context.Context, configPath string, mutate func(map[
 		return err
 	}
 	tmpPath := tmp.Name()
-	defer os.Remove(tmpPath)
+	defer func() { _ = os.Remove(tmpPath) }()
 	if err := tmp.Chmod(0o600); err != nil {
 		_ = tmp.Close()
 		return err

@@ -36,6 +36,7 @@ var claudeCodeAuthOverrideVariables = []string{
 	"CLAUDE_CODE_API_KEY_FILE_DESCRIPTOR",
 }
 
+// ClaudeCodeAccounts is the service-level account-management snapshot.
 type ClaudeCodeAccounts struct {
 	ActiveAccountID        string                                   `json:"activeAccountId,omitempty"`
 	AccountRevision        int64                                    `json:"accountRevision"`
@@ -46,6 +47,7 @@ type ClaudeCodeAccounts struct {
 	CurrentSwitch          *domain.ClaudeCodeAccountSwitch          `json:"currentSwitch,omitempty"`
 }
 
+// ClaudeCodeActiveLogin describes a running isolated native login.
 type ClaudeCodeActiveLogin struct {
 	OperationID   string                              `json:"operationId"`
 	AccountID     string                              `json:"accountId,omitempty"`
@@ -56,12 +58,14 @@ type ClaudeCodeActiveLogin struct {
 	ShellTerminal ClaudeCodeLoginTerminalDisplay      `json:"shellTerminal"`
 }
 
+// ClaudeCodeLoginTerminalDisplay is the safe terminal projection exposed to clients.
 type ClaudeCodeLoginTerminalDisplay struct {
 	HandleID  string    `json:"handleId"`
 	Title     string    `json:"title"`
 	CreatedAt time.Time `json:"createdAt"`
 }
 
+// ClaudeCodeAccountLoginTerminalStart pairs a login operation with its terminal.
 type ClaudeCodeAccountLoginTerminalStart struct {
 	Operation     domain.ClaudeCodeAccountLoginOperation `json:"operation"`
 	ShellTerminal shellterm.ShellTerminal                `json:"shellTerminal"`
@@ -390,7 +394,7 @@ func (m *claudeCodeAccountManager) reconcileGlobal(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if _, _, err := m.catalog.upsert(ctx, identity, accountCredential, m.now()); err != nil {
+	if _, err := m.catalog.upsert(ctx, identity, accountCredential, m.now()); err != nil {
 		return err
 	}
 	latestCredential, latestFound, latestErr := m.keychain.Get(ctx, claudecode.ClaudeCanonicalCredentialService, m.keychainAccount)
@@ -551,13 +555,13 @@ func (m *claudeCodeAccountManager) verifyAuth(ctx context.Context, isolatedEnv m
 	defer cancel()
 	out, err := m.run(checkCtx, binary, []string{"auth", "status", "--json"}, env)
 	if err != nil {
-		return errors.New("Claude Code authentication could not be verified")
+		return errors.New("authentication could not be verified for Claude Code")
 	}
 	var status struct {
 		LoggedIn bool `json:"loggedIn"`
 	}
 	if err := json.Unmarshal(out, &status); err != nil || !status.LoggedIn {
-		return errors.New("Claude Code is not signed in")
+		return errors.New("authentication is signed out for Claude Code")
 	}
 	return nil
 }
@@ -573,7 +577,7 @@ func readClaudeCodeOAuthIdentity(configPath string) (domain.ClaudeCodeAccountIde
 	}
 	var raw map[string]any
 	if len(root["oauthAccount"]) == 0 || json.Unmarshal(root["oauthAccount"], &raw) != nil {
-		return domain.ClaudeCodeAccountIdentity{}, nil, errors.New("Claude Code OAuth identity is missing")
+		return domain.ClaudeCodeAccountIdentity{}, nil, errors.New("OAuth identity is missing for Claude Code")
 	}
 	stringField := func(key string) string {
 		value, _ := raw[key].(string)
@@ -591,7 +595,7 @@ func readClaudeCodeOAuthIdentity(configPath string) (domain.ClaudeCodeAccountIde
 		identity.SubscriptionCreatedAt = &value
 	}
 	if !validClaudeCodeAccountIdentity(identity) {
-		return domain.ClaudeCodeAccountIdentity{}, nil, errors.New("Claude Code OAuth identity is invalid")
+		return domain.ClaudeCodeAccountIdentity{}, nil, errors.New("OAuth identity is invalid for Claude Code")
 	}
 	allowed := map[string]struct{}{
 		"accountUuid": {}, "emailAddress": {}, "displayName": {}, "organizationUuid": {}, "organizationName": {},

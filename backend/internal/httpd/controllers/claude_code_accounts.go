@@ -19,6 +19,7 @@ import (
 	agentsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/agent"
 )
 
+// ClaudeCodeAccountService is the HTTP-facing Claude account-management contract.
 type ClaudeCodeAccountService interface {
 	CachedClaudeCodeAccounts(context.Context) (agentsvc.ClaudeCodeAccounts, error)
 	EnsureClaudeCodeAccounts(context.Context) (agentsvc.ClaudeCodeAccounts, error)
@@ -33,8 +34,10 @@ type ClaudeCodeAccountService interface {
 	RecoverClaudeCodeAccountSwitch(context.Context, string) (domain.ClaudeCodeAccountSwitch, error)
 }
 
+// ClaudeCodeAccountsController exposes Claude Code account-management routes.
 type ClaudeCodeAccountsController struct{ Svc ClaudeCodeAccountService }
 
+// Register installs Claude Code account-management request routes.
 func (c *ClaudeCodeAccountsController) Register(r chi.Router) {
 	r.Get("/agents/claude-code/accounts", c.list)
 	r.Post("/agents/claude-code/accounts/ensure", c.ensure)
@@ -48,6 +51,7 @@ func (c *ClaudeCodeAccountsController) Register(r chi.Router) {
 	r.Post("/agents/claude-code/account-switches/{switchId}/recover", c.recoverSwitch)
 }
 
+// RegisterStreams installs Claude Code account-management event streams.
 func (c *ClaudeCodeAccountsController) RegisterStreams(r chi.Router) {
 	r.Get("/agents/claude-code/accounts/events", c.events)
 }
@@ -259,7 +263,7 @@ func writeClaudeCodeAccountError(w http.ResponseWriter, r *http.Request, err err
 	}
 }
 
-func (c *ClaudeCodeAccountsController) events(w http.ResponseWriter, r *http.Request) {
+func (c *ClaudeCodeAccountsController) events(w http.ResponseWriter, r *http.Request) { //nolint:dupl // Provider-specific event names and DTOs are intentionally explicit.
 	if c.Svc == nil {
 		apispec.NotImplemented(w, r, "GET", "/api/v1/agents/claude-code/accounts/events")
 		return

@@ -11,12 +11,16 @@ import (
 )
 
 const (
+	// ClaudeCanonicalCredentialService is Claude Code's device-global credential service.
 	ClaudeCanonicalCredentialService = claudeCanonicalKeychainService
-	ClaudeAccountVaultService        = "Agent Orchestrator Claude Accounts"
+	// ClaudeAccountVaultService stores per-account credentials owned by AO.
+	ClaudeAccountVaultService = "Agent Orchestrator Claude Accounts"
+	// ClaudeSwitchRollbackVaultService stores temporary rollback snapshots owned by AO.
 	ClaudeSwitchRollbackVaultService = "Agent Orchestrator Claude Switch Rollbacks"
 )
 
-var ErrKeychainUnavailable = errors.New("Claude Code Keychain unavailable")
+// ErrKeychainUnavailable reports that the native credential store cannot be used safely.
+var ErrKeychainUnavailable = errors.New("keychain unavailable for Claude Code")
 
 // Keychain stores opaque Claude credential JSON. Implementations never include
 // values in process arguments or returned error text.
@@ -27,10 +31,12 @@ type Keychain interface {
 	Delete(context.Context, string, string) error
 }
 
+// IsolatedCredentialService derives Claude Code's hashed service for an isolated secure-storage directory.
 func IsolatedCredentialService(secureStorageDir string) string {
 	return claudeKeychainServiceName(secureStorageDir)
 }
 
+// KeychainAccount returns the OS account name Claude Code uses for Keychain entries.
 func KeychainAccount() string {
 	return claudeKeychainAccount(os.Getenv("USER"), func() (string, error) {
 		current, err := user.LookupId(strconv.Itoa(os.Geteuid()))
@@ -53,18 +59,22 @@ func claudeKeychainAccount(envUser string, lookup func() (string, error)) string
 	return "claude-code-user"
 }
 
+// AccountCredentialFields extracts only fields owned by one Claude Code account.
 func AccountCredentialFields(data []byte) (map[string]json.RawMessage, error) {
 	return claudeAccountCredentialFields(data)
 }
 
+// MergeCredentialFields combines account-owned fields with allowlisted live machine-shared fields.
 func MergeCredentialFields(account map[string]json.RawMessage, live []byte) ([]byte, error) {
 	return mergeClaudeCredentialFields(account, live)
 }
 
+// SharedCredentialProjection returns only allowlisted machine-shared credential fields.
 func SharedCredentialProjection(live []byte) ([]byte, error) {
 	return claudeSharedCredentialProjection(live)
 }
 
+// WriteOAuthAccount replaces only oauthAccount in Claude Code's configuration.
 func WriteOAuthAccount(ctx context.Context, configPath string, identity map[string]any) error {
 	return writeClaudeOAuthAccount(ctx, configPath, identity)
 }

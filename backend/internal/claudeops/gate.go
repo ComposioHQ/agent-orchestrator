@@ -9,6 +9,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
+// Gate coordinates Claude launches with exclusive device-credential mutations.
 type Gate struct {
 	mu        sync.Mutex
 	shared    int
@@ -16,12 +17,14 @@ type Gate struct {
 	drained   chan struct{}
 }
 
+// NewGate creates an idle Claude operation gate.
 func NewGate() *Gate {
 	drained := make(chan struct{})
 	close(drained)
 	return &Gate{drained: drained}
 }
 
+// AcquireShared admits one Claude launch unless an exclusive mutation is pending.
 func (g *Gate) AcquireShared(ctx context.Context) (func(), error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -49,6 +52,7 @@ func (g *Gate) AcquireShared(ctx context.Context) (func(), error) {
 	}, nil
 }
 
+// AcquireExclusive fences new launches and waits for admitted launches to drain.
 func (g *Gate) AcquireExclusive(ctx context.Context) (ports.ClaudeCodeOperationLease, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -72,6 +76,7 @@ func (g *Gate) AcquireExclusive(ctx context.Context) (ports.ClaudeCodeOperationL
 	}
 }
 
+// ExclusivePendingOrHeld reports whether credentials are fenced for mutation.
 func (g *Gate) ExclusivePendingOrHeld() bool {
 	g.mu.Lock()
 	defer g.mu.Unlock()

@@ -6,6 +6,7 @@ import "context"
 
 type unsupportedClaudeKeychain struct{}
 
+// NewKeychain returns an unsupported credential store on non-macOS platforms.
 func NewKeychain() Keychain { return unsupportedClaudeKeychain{} }
 
 func (unsupportedClaudeKeychain) Supported() bool { return false }

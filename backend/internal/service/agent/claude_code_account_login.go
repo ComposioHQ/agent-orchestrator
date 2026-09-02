@@ -189,7 +189,7 @@ func (m *claudeCodeAccountManager) verifyLogin(ctx context.Context, operationID 
 			return m.finishLogin(operationID, domain.ClaudeCodeAccountLoginFailed, "identity_mismatch", "Sign in with the same Claude Code account to replace its credentials.", nil), nil
 		}
 	}
-	record, _, err := m.catalog.upsert(ctx, identity, accountCredential, m.now())
+	record, err := m.catalog.upsert(ctx, identity, accountCredential, m.now())
 	if err != nil {
 		return m.finishLogin(operationID, domain.ClaudeCodeAccountLoginFailed, "credential_save_failed", "The verified Claude Code credential could not be saved.", nil), nil
 	}

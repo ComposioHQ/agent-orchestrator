@@ -2,28 +2,34 @@ package domain
 
 import "time"
 
+// ClaudeCodeAccountStatus describes whether a saved account can authenticate.
 type ClaudeCodeAccountStatus string
 
+// Claude Code account status values.
 const (
 	ClaudeCodeAccountStatusValid     ClaudeCodeAccountStatus = "valid"
 	ClaudeCodeAccountStatusSignedOut ClaudeCodeAccountStatus = "signed_out"
 	ClaudeCodeAccountStatusBroken    ClaudeCodeAccountStatus = "broken"
 )
 
+// ClaudeCodeCapabilityState describes support for one account-management operation.
 type ClaudeCodeCapabilityState string
 
+// Claude Code capability support states.
 const (
 	ClaudeCodeCapabilitySupported   ClaudeCodeCapabilityState = "supported"
 	ClaudeCodeCapabilityUnsupported ClaudeCodeCapabilityState = "unsupported"
 	ClaudeCodeCapabilityUnknown     ClaudeCodeCapabilityState = "unknown"
 )
 
+// ClaudeCodeCapabilityObservation pairs capability support with a safe explanation.
 type ClaudeCodeCapabilityObservation struct {
 	State      ClaudeCodeCapabilityState `json:"state" enum:"supported,unsupported,unknown"`
 	ReasonCode string                    `json:"reasonCode"`
 	Reason     string                    `json:"reason"`
 }
 
+// ClaudeCodeAccountCapabilities reports each independently gated account operation.
 type ClaudeCodeAccountCapabilities struct {
 	AccountRead       ClaudeCodeCapabilityObservation `json:"accountRead"`
 	NativeLogin       ClaudeCodeCapabilityObservation `json:"nativeLogin"`
@@ -33,6 +39,7 @@ type ClaudeCodeAccountCapabilities struct {
 	SessionExitResume ClaudeCodeCapabilityObservation `json:"sessionExitResume"`
 }
 
+// ClaudeCodeAccountIdentity is the allowlisted non-secret identity projection.
 type ClaudeCodeAccountIdentity struct {
 	AccountUUID           string  `json:"accountUuid"`
 	EmailAddress          string  `json:"emailAddress,omitempty"`
@@ -45,6 +52,7 @@ type ClaudeCodeAccountIdentity struct {
 	SubscriptionCreatedAt *string `json:"subscriptionCreatedAt,omitempty"`
 }
 
+// ClaudeCodeAccountSnapshot is the public state of a saved Claude Code account.
 type ClaudeCodeAccountSnapshot struct {
 	ID             string                         `json:"id"`
 	Label          string                         `json:"label"`
@@ -59,6 +67,7 @@ type ClaudeCodeAccountSnapshot struct {
 	UpdatedAt      time.Time                      `json:"updatedAt"`
 }
 
+// ClaudeCodeActiveAccount is the revisioned device-global active-account pointer.
 type ClaudeCodeActiveAccount struct {
 	AccountID   string    `json:"accountId"`
 	Revision    int64     `json:"revision"`
@@ -66,6 +75,7 @@ type ClaudeCodeActiveAccount struct {
 	UpdatedAt   time.Time `json:"updatedAt"`
 }
 
+// ClaudeCodeUnmanagedGlobalAccount describes a canonical login AO cannot reconcile safely.
 type ClaudeCodeUnmanagedGlobalAccount struct {
 	Label        string  `json:"label"`
 	AccountEmail *string `json:"accountEmail,omitempty"`
@@ -73,8 +83,10 @@ type ClaudeCodeUnmanagedGlobalAccount struct {
 	Reason       string  `json:"reason"`
 }
 
+// ClaudeCodeAccountLoginStatus describes an isolated login operation.
 type ClaudeCodeAccountLoginStatus string
 
+// Claude Code isolated-login states.
 const (
 	ClaudeCodeAccountLoginPending      ClaudeCodeAccountLoginStatus = "pending"
 	ClaudeCodeAccountLoginVerifying    ClaudeCodeAccountLoginStatus = "verifying"
@@ -86,6 +98,7 @@ const (
 	ClaudeCodeAccountLoginExpired      ClaudeCodeAccountLoginStatus = "expired"
 )
 
+// ClaudeCodeAccountLoginOperation is the safe public state of an isolated login.
 type ClaudeCodeAccountLoginOperation struct {
 	OperationID string                       `json:"operationId"`
 	AccountID   string                       `json:"accountId,omitempty"`
@@ -96,6 +109,7 @@ type ClaudeCodeAccountLoginOperation struct {
 	ExpiresAt   time.Time                    `json:"expiresAt"`
 }
 
+// Claude Code account and capability reason codes.
 const (
 	ClaudeCodeAccountReasonValid                   = "account_valid"
 	ClaudeCodeAccountReasonSignedOut               = "account_signed_out"
