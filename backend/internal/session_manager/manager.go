@@ -47,6 +47,8 @@ var (
 	// ErrMissingHarness means neither the spawn request nor the project's role
 	// config selected an agent. Worker/orchestrator spawns must be explicit.
 	ErrMissingHarness = errors.New("session: agent harness required")
+	// ErrHarnessInstallActive prevents launch while the harness executable is replaced.
+	ErrHarnessInstallActive = errors.New("session: harness install active")
 	// ErrUnsupportedModel means the requested model is not supported by the
 	// selected harness's catalog and the harness does not accept arbitrary model
 	// ids. The API maps it to a 400.
@@ -261,6 +263,12 @@ type ShellTerminalCloser interface {
 	BeginSessionTeardown(ctx context.Context, id domain.SessionID) (release func(), err error)
 }
 
+// HarnessUseGate coordinates session lifecycle operations with harness binary
+// replacement so a launch cannot observe a partially installed executable.
+type HarnessUseGate interface {
+	TryBeginHarnessUse(domain.AgentHarness) (release func(), ok bool)
+}
+
 // TerminalInputGate closes the raw terminal input path while an interface
 // transition drains and stops a TUI controller. It is separate from Messenger:
 // xterm keystrokes travel over the terminal mux and never pass through Send.
@@ -379,6 +387,7 @@ type Manager struct {
 	// deterministically prove that a post-stop transcript read failure falls
 	// back without advertising the provider path.
 	openTranscriptFile func(string) (*os.File, error)
+	harnessUseGate     HarnessUseGate
 	// lookPath is exec.LookPath in production; tests substitute a stub so
 	// they don't need real binaries on PATH. Returns ports.ErrAgentBinaryNotFound
 	// when the binary is missing so the sentinel propagates through toAPIError.
@@ -454,6 +463,22 @@ type Manager struct {
 
 	reviewersMu sync.Mutex
 	reviewers   ReviewerTerminator
+}
+
+// SetHarnessUseGate late-binds the installer interlock after daemon wiring.
+func (m *Manager) SetHarnessUseGate(gate HarnessUseGate) {
+	m.harnessUseGate = gate
+}
+
+func (m *Manager) beginHarnessUse(harness domain.AgentHarness) (func(), error) {
+	if m.harnessUseGate == nil {
+		return func() {}, nil
+	}
+	release, ok := m.harnessUseGate.TryBeginHarnessUse(harness)
+	if !ok {
+		return nil, ErrHarnessInstallActive
+	}
+	return release, nil
 }
 
 // latestUserPromptRecorder narrows the post-delivery write to the single fact
@@ -764,6 +789,11 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	if cfg.Harness == "" {
 		return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn: %w: configure project %s.agent or pass --harness", ErrMissingHarness, roleConfigName(cfg.Kind))
 	}
+	releaseHarness, err := m.beginHarnessUse(cfg.Harness)
+	if err != nil {
+		return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn: %w", err)
+	}
+	defer releaseHarness()
 	// Reject an unknown harness before any durable state is created. Doing this
 	// after CreateSession would leave a terminated orphan row and waste a
 	// worktree on a spawn that can never launch.
@@ -1843,6 +1873,11 @@ func (m *Manager) RestoreWithMode(ctx context.Context, id domain.SessionID) (Res
 	if !ok {
 		return RestoreResult{}, fmt.Errorf("restore %s: %w", id, ErrNotFound)
 	}
+	releaseHarness, err := m.beginHarnessUse(rec.Harness)
+	if err != nil {
+		return RestoreResult{}, fmt.Errorf("restore %s: %w", id, err)
+	}
+	defer releaseHarness()
 	if !rec.IsTerminated {
 		return RestoreResult{}, fmt.Errorf("restore %s: %w", id, ErrNotRestorable)
 	}
@@ -1905,6 +1940,11 @@ func (m *Manager) ResumeAgentWithMode(ctx context.Context, id domain.SessionID) 
 	if !ok {
 		return RestoreResult{}, fmt.Errorf("resume agent %s: %w", id, ErrNotFound)
 	}
+	releaseHarness, err := m.beginHarnessUse(rec.Harness)
+	if err != nil {
+		return RestoreResult{}, fmt.Errorf("resume agent %s: %w", id, err)
+	}
+	defer releaseHarness()
 	if rec.IsTerminated {
 		return RestoreResult{}, fmt.Errorf("resume agent %s: %w", id, ErrTerminated)
 	}

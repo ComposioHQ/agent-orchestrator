@@ -324,9 +324,22 @@ func Run() error {
 	}
 	lcStack.trackerDone = startTrackerIntake(ctx, store, sessionSvc, tracker, log)
 
-	hostCommands := systemexec.Adapter{}
+	hostCommands := systemexec.New(cfg.DataDir)
 	systemChecks := systemcheck.New(agentSvc, hostCommands)
-	systemInstall := systeminstall.New(hostCommands, hostCommands)
+	systemInstall := systeminstall.NewWithDeps(hostCommands, hostCommands, systeminstall.Deps{
+		JobStore: store,
+		Verifier: systeminstall.NewVerifier(agents, hostCommands),
+		Sessions: store,
+	})
+	if err := systemInstall.Recover(ctx); err != nil {
+		stop()
+		lcStack.Stop()
+		if cdcErr := cdcPipe.Stop(); cdcErr != nil {
+			log.Error("cdc pipeline shutdown", "err", cdcErr)
+		}
+		return fmt.Errorf("recover harness install jobs: %w", err)
+	}
+	sessMgr.SetHarnessUseGate(systemInstall)
 	systemInstall.SetOnSucceeded(func(target systeminstall.Target) {
 		harness, ok := installedAgentHarness(target)
 		if !ok {
@@ -654,6 +667,11 @@ func Run() error {
 	// via defer) avoids the LIFO trap where a Stop() that blocks on ctx-cancel
 	// runs before the cancel: a non-signal exit path would hang otherwise.
 	stop()
+	installStopCtx, installStopCancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
+	if err := systemInstall.Close(installStopCtx); err != nil {
+		log.Error("harness installer shutdown", "err", err)
+	}
+	installStopCancel()
 	if startupReconcileDone != nil {
 		<-startupReconcileDone
 	}
@@ -702,18 +720,13 @@ func Run() error {
 }
 
 func installedAgentHarness(target systeminstall.Target) (string, bool) {
-	switch target {
-	case systeminstall.TargetClaude:
+	if target == systeminstall.TargetClaude {
 		return "claude-code", true
-	case systeminstall.TargetCodex:
-		return "codex", true
-	case systeminstall.TargetOpencode:
-		return "opencode", true
-	case systeminstall.TargetCopilot:
-		return "copilot", true
-	default:
-		return "", false
 	}
+	if systeminstall.IsAgentTarget(target) {
+		return string(target), true
+	}
+	return "", false
 }
 
 func usagePipelineWatchRoots(roots usagesvc.SourceRoots) []string {

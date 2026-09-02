@@ -68,16 +68,20 @@ func TestReviewerAgentAuthUsesLaunchReadinessAndPreservesStrictStates(t *testing
 	}
 }
 
-func TestInstalledAgentHarnessMapsOnlyManagedHarnessInstalls(t *testing.T) {
+func TestInstalledAgentHarnessMapsManagedHarnessInstalls(t *testing.T) {
 	for _, test := range []struct {
 		target  systeminstall.Target
 		harness string
 		ok      bool
 	}{
 		{target: systeminstall.TargetClaude, harness: "claude-code", ok: true},
+		{target: systeminstall.TargetClaudeCode, harness: "claude-code", ok: true},
 		{target: systeminstall.TargetCodex, harness: "codex", ok: true},
 		{target: systeminstall.TargetOpencode, harness: "opencode", ok: true},
 		{target: systeminstall.TargetCopilot, harness: "copilot", ok: true},
+		{target: systeminstall.TargetKiro, harness: "kiro", ok: true},
+		{target: systeminstall.TargetPi, harness: "pi", ok: true},
+		{target: systeminstall.TargetVibe, harness: "vibe", ok: true},
 		{target: systeminstall.TargetTmux},
 		{target: systeminstall.TargetGH},
 	} {
@@ -773,6 +777,7 @@ func (f *fakeSessionLifecycle) AcquireSessionInput(domain.SessionID) (func(), bo
 
 func (f *fakeSessionLifecycle) SessionMutationInProgress(domain.SessionID) bool         { return false }
 func (f *fakeSessionLifecycle) SetReviewerTerminator(sessionmanager.ReviewerTerminator) {}
+func (f *fakeSessionLifecycle) SetHarnessUseGate(sessionmanager.HarnessUseGate)         {}
 
 // TestWiring_SessionLifecycleInterfaceInvokedByDaemon asserts the
 // sessionLifecycle interface is satisfied by *sessionmanager.Manager (compile

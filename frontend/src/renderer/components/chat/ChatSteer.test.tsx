@@ -1,7 +1,7 @@
-import { render as rtlRender, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render as rtlRender, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactElement } from "react";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { ChatComposer } from "./ChatComposer";
 import { ChatWorkspace } from "./ChatWorkspace";
 import { QueuedMessageDock } from "./QueuedMessageDock";
@@ -16,6 +16,11 @@ function render(ui: ReactElement) {
 		rerender: (nextUi: ReactElement) => result.rerender(<TooltipProvider>{nextUi}</TooltipProvider>),
 	};
 }
+
+const png = (name = "shot.png") =>
+	new File([new Uint8Array([137, 80, 78, 71])], name, { type: "image/png" });
+
+afterEach(() => vi.unstubAllGlobals());
 
 // Steering sends guidance INTO the running turn instead of queueing behind it. The
 // thing these tests protect is that the choice is legible: Enter changing meaning
@@ -131,6 +136,115 @@ describe("ChatComposer steering", () => {
 		await waitFor(() => expect(onPromoteQueuedTurn).toHaveBeenCalledWith("queued-1"));
 		resolveFirstPromotion?.();
 		await waitFor(() => expect(onPromoteQueuedTurn).toHaveBeenNthCalledWith(2, "queued-2"));
+	});
+
+	it("keeps focus on a refused steer so Enter can queue the retained draft", async () => {
+		let rejectSteer!: (reason?: unknown) => void;
+		const onSteer = vi.fn(
+			() =>
+				new Promise<void>((_resolve, reject) => {
+					rejectSteer = reject;
+				}),
+		);
+		const onSend = vi.fn().mockResolvedValue(undefined);
+		composer({ onSteer, onSend });
+
+		const field = screen.getByRole("combobox");
+		await typeInLexicalEditor(field, "actually, skip it");
+		await userEvent.keyboard("{Control>}{Enter}{/Control}");
+		await waitFor(() => expect(field).toHaveAttribute("aria-disabled", "true"));
+
+		// Chromium can move focus to the document when the editor becomes non-editable.
+		// Model that explicitly because jsdom leaves focus in place.
+		const previousTabIndex = document.body.getAttribute("tabindex");
+		try {
+			document.body.tabIndex = -1;
+			document.body.focus();
+			expect(field).not.toHaveFocus();
+			await act(async () => rejectSteer(new Error("not steerable")));
+			await waitFor(() => expect(field).not.toHaveAttribute("aria-disabled"));
+			expect(field).toHaveTextContent("actually, skip it");
+			expect(field).toHaveFocus();
+
+			await userEvent.keyboard("{Enter}");
+			await waitFor(() => expect(onSend).toHaveBeenCalledWith("actually, skip it"));
+		} finally {
+			if (previousTabIndex === null) document.body.removeAttribute("tabindex");
+			else document.body.setAttribute("tabindex", previousTabIndex);
+		}
+	});
+
+	it("stages attachment-only drafts and includes them in steer", async () => {
+		const onSteer = vi.fn().mockResolvedValue(undefined);
+		const onSend = vi.fn();
+		const stage = vi.fn().mockResolvedValue([".ao/attachments/shot.png"]);
+		composer({ onSteer, onSend, onStageAttachments: stage, nativeImages: true });
+
+		const field = screen.getByRole("combobox");
+		await userEvent.click(field);
+		fireEvent.paste(field, { clipboardData: { files: [png()], items: [] } });
+		await waitFor(() => expect(screen.getAllByRole("listitem")).toHaveLength(1));
+
+		await userEvent.keyboard("{Control>}{Enter}{/Control}");
+		await waitFor(() => expect(stage).toHaveBeenCalledOnce());
+		expect(onSteer).toHaveBeenCalledWith(
+			"Attached files (read these files in the workspace):\n- .ao/attachments/shot.png",
+			[{ mimeType: "image/png", data: expect.any(String) }],
+		);
+		expect(onSend).not.toHaveBeenCalled();
+		await waitFor(() => expect(screen.queryAllByRole("listitem")).toHaveLength(0));
+	});
+
+	it("waits for a pasted image read and ignores repeated Enter while steering", async () => {
+		let finishRead!: () => void;
+		class SlowFileReader {
+			error: Error | null = null;
+			result: string | ArrayBuffer | null = null;
+			onerror: (() => void) | null = null;
+			onload: (() => void) | null = null;
+
+			readAsDataURL(file: File) {
+				finishRead = () => {
+					this.result = `data:${file.type};base64,iVBORw==`;
+					this.onload?.();
+				};
+			}
+		}
+		vi.stubGlobal("FileReader", SlowFileReader);
+
+		let finishSteer!: () => void;
+		const steerPromise = new Promise<void>((resolve) => {
+			finishSteer = resolve;
+		});
+		const onSteer = vi.fn(() => steerPromise);
+		const stage = vi.fn().mockResolvedValue([".ao/attachments/slow.png"]);
+		composer({ onSteer, onStageAttachments: stage, nativeImages: true });
+
+		const field = screen.getByRole("combobox");
+		await typeInLexicalEditor(field, "inspect this");
+		fireEvent.paste(field, { clipboardData: { files: [png("slow.png")], items: [] } });
+		act(() => {
+			fireEvent.keyDown(field, { key: "Enter", ctrlKey: true });
+			fireEvent.keyDown(field, { key: "Enter", ctrlKey: true, repeat: true });
+		});
+
+		expect(stage).not.toHaveBeenCalled();
+		expect(onSteer).not.toHaveBeenCalled();
+		expect(field).toHaveTextContent("inspect this");
+		expect(field).toHaveAttribute("aria-disabled", "true");
+		expect(screen.getByRole("button", { name: "Send message" })).toBeDisabled();
+		expect(screen.getByRole("button", { name: "Attach a file" })).toBeDisabled();
+
+		await act(async () => finishRead());
+		await waitFor(() => expect(stage).toHaveBeenCalledOnce());
+		await waitFor(() =>
+			expect(onSteer).toHaveBeenCalledWith(
+				"inspect this\n\nAttached files (read these files in the workspace):\n- .ao/attachments/slow.png",
+				[{ mimeType: "image/png", data: "iVBORw==" }],
+			),
+		);
+		expect(onSteer).toHaveBeenCalledOnce();
+		await act(async () => finishSteer());
 	});
 
 	it("reports the daemon's refusal without a second message of its own", () => {
@@ -491,6 +605,64 @@ describe("ChatWorkspace steering", () => {
 	it("renders a landed steer as the user's own words", () => {
 		render(<ChatWorkspace snapshot={chatFixture} />);
 		expect(screen.getByText(/Steered into the running turn/)).toBeInTheDocument();
+	});
+
+	it("renders a staged image reference on a landed steer in chat history", () => {
+		const snapshot = {
+			...chatFixture,
+			items: chatFixture.items.map((item) =>
+				item.kind === "activity" && item.id === "a-steer-1"
+					? {
+							...item,
+							detail: {
+								...item.detail,
+								text: "inspect this\n\nAttached files (read these files in the workspace):\n- .ao/attachments/attachment-steer123.png",
+								content: undefined,
+							},
+						}
+					: item,
+			),
+		};
+		render(<ChatWorkspace snapshot={snapshot} />);
+
+		const image = screen.getByRole("img", { name: "attachment-steer123.png" });
+		expect(image).toBeInTheDocument();
+		expect(image).toHaveAttribute(
+			"src",
+			expect.stringContaining(
+				"/api/v1/sessions/ao-14/preview/files/.ao/attachments/attachment-steer123.png",
+			),
+		);
+		expect(screen.getByText("inspect this")).toBeInTheDocument();
+		expect(screen.queryByText(/Attached files \(read these files/)).not.toBeInTheDocument();
+	});
+
+	it("suppresses only native images matched by staged steer images", () => {
+		const snapshot = {
+			...chatFixture,
+			items: chatFixture.items.map((item) =>
+				item.kind === "activity" && item.id === "a-steer-1"
+					? {
+							...item,
+							detail: {
+								...item.detail,
+								text: "inspect this\n\nAttached files (read these files in the workspace):\n- .ao/attachments/attachment-steer123.png",
+								content: [
+									{ type: "image", data: "Zmlyc3Q=", mimeType: "image/png" },
+									{ type: "image", data: "c2Vjb25k", mimeType: "image/png" },
+								],
+							},
+						}
+					: item,
+			),
+		};
+		render(<ChatWorkspace snapshot={snapshot} />);
+
+		expect(screen.getAllByRole("img", { name: "attachment-steer123.png" })).toHaveLength(1);
+		expect(screen.getByRole("img", { name: "Steered attachment 1" })).toHaveAttribute(
+			"src",
+			"data:image/png;base64,c2Vjb25k",
+		);
 	});
 
 	it("renders every promoted steer content block on the running turn", () => {

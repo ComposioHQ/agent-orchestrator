@@ -350,7 +350,10 @@ export interface ChatWorkspaceProps {
 	 * Claude answers `CHAT_STEER_UNSUPPORTED`, and an affordance that only ever fails
 	 * is worse than none.
 	 */
-	onSteer?: (text: string) => Promise<unknown>;
+	onSteer?: (
+		text: string,
+		attachments?: { mimeType: string; data: string }[],
+	) => Promise<unknown>;
 	sendPending?: boolean;
 	steerPending?: boolean;
 	/** Why the last steer was refused, from the daemon's typed answer. */
@@ -615,7 +618,13 @@ export function ChatWorkspace({
 		async (turnId: string) => stablePromoteQueuedTurn(turnId),
 		[stablePromoteQueuedTurn],
 	);
-	const steer = useCallback(async (text: string) => stableSteer(text), [stableSteer]);
+	const steer = useCallback(
+		async (
+			text: string,
+			attachments?: { mimeType: string; data: string }[],
+		) => stableSteer(text, attachments),
+		[stableSteer],
+	);
 	// The turn a confirmation is open for. Undo is not reversible and it changes what
 	// the agent knows, so it is never one click.
 	const [confirming, setConfirming] = useState<string | undefined>(undefined);
@@ -2692,7 +2701,7 @@ function TimelineItem({
 	// because that is AO's only durable write that can attach to a turn in flight,
 	// but it is the user speaking and the timeline shows it that way.
 	if (isSteer(item)) {
-		return <SteerMessage activity={item} />;
+		return <SteerMessage activity={item} sessionId={sessionId} apiBaseUrl={apiBaseUrl} />;
 	}
 	// A plan whose turn AO never correlated — one from before this controller
 	// started. The turn-level checklist cannot show it, so the row carries it.

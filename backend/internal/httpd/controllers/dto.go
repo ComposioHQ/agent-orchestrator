@@ -1163,7 +1163,7 @@ type SystemRequirementsResponse = systemcheck.Report
 
 // InstallTargetParam is the {target} path parameter for /system/install routes.
 type InstallTargetParam struct {
-	Target string `path:"target" description:"Install target identifier: tmux, gh, claude, codex, opencode, copilot, or cloudflared."`
+	Target string `path:"target" enum:"tmux,gh,claude,codex,opencode,copilot,cloudflared" description:"Install target identifier: tmux, gh, claude, codex, opencode, copilot, or cloudflared."`
 }
 
 // StartInstallResponse is the body of POST /api/v1/system/install/{target} (202).
@@ -1171,6 +1171,22 @@ type StartInstallResponse = systeminstall.Job
 
 // InstallStatusResponse is the body of GET /api/v1/system/install/{target}.
 type InstallStatusResponse = systeminstall.Job
+
+// AgentInstallResponse is shared by the agent harness start and status routes.
+type AgentInstallResponse = systeminstall.Job
+
+// StartAgentInstallRequest selects one method returned by the installer
+// catalog. The daemon still owns the argv behind the method id.
+type StartAgentInstallRequest struct {
+	Method    string                       `json:"method,omitempty" description:"Server-issued installation method id. Omit to use the recommended viable method."`
+	Operation systeminstall.AgentOperation `json:"operation,omitempty" enum:"install,reinstall" description:"Requested operation. Defaults to install for older clients."`
+}
+
+// AgentInstallJobsResponse hydrates Settings with the latest durable job for
+// every harness that has been installed or verified.
+type AgentInstallJobsResponse struct {
+	Jobs []systeminstall.Job `json:"jobs"`
+}
 
 // ListNotificationsQuery is the query string accepted by GET /api/v1/notifications.
 type ListNotificationsQuery struct {
@@ -1492,6 +1508,29 @@ type SendConversationMessageResponse struct {
 	// Duplicate is true when this client message id was already delivered, so a
 	// retrying client can stop instead of assuming a new turn began.
 	Duplicate bool `json:"duplicate"`
+}
+
+// SteerConversationRequest is guidance for a turn that is already running.
+type SteerConversationRequest struct {
+	// Text is the correction to hand the agent mid-turn.
+	Text string `json:"text"`
+	// Attachments are native image prompt blocks delivered with the correction.
+	Attachments []ConversationImageContentRequest `json:"attachments,omitempty"`
+	// ClientMessageID makes a retry idempotent: the same handle updates the recorded
+	// guidance instead of adding a second copy of it, and the provider echoes it back
+	// on the item it replays so a client can recognize its own steer.
+	ClientMessageID string `json:"clientMessageId,omitempty"`
+}
+
+// SteerConversationResponse reports the turn the guidance joined.
+type SteerConversationResponse struct {
+	// ProviderTurnID is the turn that absorbed it. Against Codex this is the turn
+	// that was already running — steering does not open a new one — so a client
+	// matches it against the turn it is already rendering.
+	ProviderTurnID string `json:"providerTurnId"`
+	// ActivityID is the timeline row recording the guidance, so an optimistic bubble
+	// can be reconciled with the durable one rather than shown twice.
+	ActivityID string `json:"activityId,omitempty"`
 }
 
 // EditConversationMessageRequest changes the readable text of one durable human
@@ -2046,6 +2085,11 @@ type SettingsResponse struct {
 	// CloudControlPlaneURL is the cloud control plane base URL; empty when no
 	// control plane is configured.
 	CloudControlPlaneURL string `json:"cloudControlPlaneUrl"`
+}
+
+// AgentInstallerCatalogResponse is the body of GET /api/v1/agents/installers.
+type AgentInstallerCatalogResponse struct {
+	Agents []systeminstall.AgentPlan `json:"agents"`
 }
 
 // UpdateSessionInterfaceRequest changes the default interface for new sessions.

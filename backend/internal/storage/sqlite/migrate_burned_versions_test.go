@@ -127,7 +127,8 @@ var shippedMigrations = map[int64]string{
 	120: "0120_normalize_activity_last_at.sql",
 	121: "0121_session_reviewer_agent_config.sql",
 	122: "0122_drop_agent_inventory_cache.sql",
-	123: "0123_pr_author_avatar_url.sql",
+	123: "0123_agent_install_jobs.sql",
+	124: "0124_pr_author_avatar_url.sql",
 }
 
 // burnedVersion reports version numbers that must never be (re)used: they

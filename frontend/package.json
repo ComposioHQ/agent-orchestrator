@@ -33,11 +33,13 @@
 		"api:ts": "openapi-typescript ../backend/internal/httpd/apispec/openapi.yaml -o src/api/schema.ts"
 	},
 	"devDependencies": {
+		"@electron/rebuild": "^4.0.4",
 		"@electron-forge/cli": "^7.8.0",
 		"@electron-forge/maker-base": "^7.8.0",
 		"@electron-forge/maker-deb": "^7.8.0",
 		"@electron-forge/maker-rpm": "^7.8.0",
 		"@electron-forge/maker-zip": "^7.8.0",
+		"@electron-forge/plugin-auto-unpack-natives": "^7.8.0",
 		"@electron-forge/plugin-vite": "^7.8.0",
 		"@electron-forge/publisher-github": "^7.8.0",
 		"@playwright/test": "^1.60.0",
@@ -87,6 +89,7 @@
 		"@xterm/addon-web-links": "^0.11.0",
 		"@xterm/addon-webgl": "^0.19.0",
 		"@xterm/xterm": "^5.5.0",
+		"better-sqlite3": "^12.11.1",
 		"class-variance-authority": "^0.7.1",
 		"clsx": "^2.1.1",
 		"cmdk": "^1.1.1",
