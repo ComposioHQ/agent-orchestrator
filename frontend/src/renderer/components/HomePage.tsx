@@ -65,7 +65,12 @@ export function HomePage() {
 							<ProjectRow
 								key={project.id}
 								project={project}
-								onClick={() => void navigate({ to: "/projects/$projectId", params: { projectId: project.id } })}
+								onClick={() =>
+									void navigate({
+										to: "/host/$hostId/project/$projectId",
+										params: { hostId: project.host, projectId: project.id },
+									})
+								}
 							/>
 						))}
 					</div>

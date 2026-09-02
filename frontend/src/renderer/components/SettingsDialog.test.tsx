@@ -45,7 +45,7 @@ describe("SettingsDialog", () => {
 	});
 
 	it("does not dismiss project settings while a save is pending", async () => {
-		useUiStore.getState().openProjectSettings("proj-1");
+		useUiStore.getState().openProjectSettings({ host: "local", id: "proj-1" });
 		render(<SettingsDialog />);
 
 		await userEvent.click(await screen.findByRole("button", { name: "Start pending save" }));
@@ -53,7 +53,7 @@ describe("SettingsDialog", () => {
 		expect(closeButton).toBeDisabled();
 
 		await userEvent.keyboard("{Escape}");
-		expect(useUiStore.getState().settingsModal).toEqual({ scope: "project", projectId: "proj-1" });
+		expect(useUiStore.getState().settingsModal).toEqual({ scope: "project", project: { host: "local", id: "proj-1" } });
 	});
 
 	it("opens the requested global settings page", async () => {

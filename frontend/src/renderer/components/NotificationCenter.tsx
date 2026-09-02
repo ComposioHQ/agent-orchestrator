@@ -41,6 +41,7 @@ import { TopbarButton } from "./TopbarButton";
 import { Popover, PopoverContent, PopoverTrigger } from "./ui/popover";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 
+import { LOCAL_HOST } from "../lib/hosts";
 type NotificationCenterProps = {
 	style?: React.CSSProperties;
 };
@@ -52,7 +53,7 @@ function useNotificationTargetNavigation() {
 			const sessionId = notification.target.sessionId || notification.sessionId;
 			if (!sessionId) return;
 			void captureRendererEvent("ao.renderer.notification_opened", { target: "session" });
-			navigateToSession(notification.projectId, sessionId);
+			navigateToSession({ host: LOCAL_HOST, id: sessionId });
 		},
 		[navigateToSession],
 	);

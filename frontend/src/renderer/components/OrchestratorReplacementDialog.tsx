@@ -1,4 +1,5 @@
 import * as Dialog from "@radix-ui/react-dialog";
+import type { Ref } from "../lib/hosts";
 import { useNavigate } from "@tanstack/react-router";
 import { AlertTriangle, RotateCw, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
@@ -13,16 +14,16 @@ import {
 } from "./ui/dialog";
 
 type OrchestratorReplacementDialogProps = {
-	projectId: string | null;
+	project: Ref | null;
 	error?: OrchestratorReplacementFailure;
 	workspaces: WorkspaceSummary[];
 	onOpenChange: (open: boolean) => void;
-	onRetry: (projectId: string) => void;
-	onRetryAsTui: (projectId: string) => void;
+	onRetry: (project: Ref) => void;
+	onRetryAsTui: (project: Ref) => void;
 };
 
 export function OrchestratorReplacementDialog({
-	projectId,
+	project,
 	error,
 	workspaces,
 	onOpenChange,
@@ -31,15 +32,15 @@ export function OrchestratorReplacementDialog({
 }: OrchestratorReplacementDialogProps) {
 	const { t } = useTranslation();
 	const navigate = useNavigate();
-	const open = Boolean(projectId && error);
-	const orchestrator = projectId ? findProjectOrchestrator(workspaces, projectId) : undefined;
+	const open = Boolean(project && error);
+	const orchestrator = project ? findProjectOrchestrator(workspaces, project) : undefined;
 
 	const openCurrent = () => {
-		if (!projectId || !orchestrator) return;
+		if (!project || !orchestrator) return;
 		onOpenChange(false);
 		void navigate({
-			to: "/projects/$projectId/sessions/$sessionId",
-			params: { projectId, sessionId: orchestrator.id },
+			to: "/host/$hostId/session/$sessionId",
+			params: { hostId: orchestrator.host, sessionId: orchestrator.id },
 		});
 	};
 
@@ -74,7 +75,7 @@ export function OrchestratorReplacementDialog({
 					</div>
 					<div className={settingsDialogFooterClass}>
 						{error && isChatPreflightCode(error.code) ? (
-							<Button type="button" variant="footer" onClick={() => projectId && onRetryAsTui(projectId)}>
+							<Button type="button" variant="footer" onClick={() => project && onRetryAsTui(project)}>
 								{t("newTask.createAsTui")}
 							</Button>
 						) : null}
@@ -86,7 +87,7 @@ export function OrchestratorReplacementDialog({
 						<Button
 							type="button"
 							variant="footer-primary"
-							onClick={() => projectId && onRetry(projectId)}
+							onClick={() => project && onRetry(project)}
 						>
 							<RotateCw className="size-3.5" aria-hidden="true" />
 							{t("orchestratorReplacement.retry")}

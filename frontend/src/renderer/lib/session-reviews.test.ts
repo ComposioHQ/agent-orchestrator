@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { appI18n } from "../i18n";
+import { refKey } from "./hosts";
 import type { PullRequestFacts, WorkspaceSession } from "../types/workspace";
 import {
 	openReviewStatesFor,
@@ -12,6 +13,7 @@ import {
 
 function session(overrides: Partial<WorkspaceSession> = {}): WorkspaceSession {
 	return {
+		host: "local",
 		workspaceId: "proj-1",
 		workspaceName: "app",
 		title: "review work",
@@ -30,7 +32,7 @@ describe("sessionReviewsQueryOptions", () => {
 	it("owns the shared reviews query key", () => {
 		expect(sessionReviewsQueryOptions(session(), true).queryKey).toEqual([
 			"session-reviews",
-			"session-1",
+			refKey(session()),
 		]);
 	});
 

@@ -492,8 +492,8 @@ describe("NotificationCenter", () => {
 
 		await userEvent.click(screen.getByText("The agent is waiting for your response."));
 		expect(navigateMock).toHaveBeenCalledWith({
-			to: "/projects/$projectId/sessions/$sessionId",
-			params: { projectId: "proj-1", sessionId: "sess-1" },
+			to: "/host/$hostId/session/$sessionId",
+			params: { hostId: "local", sessionId: "sess-1" },
 		});
 	});
 
@@ -504,8 +504,8 @@ describe("NotificationCenter", () => {
 		await userEvent.click(screen.getByLabelText("Fix checkout totals · PR #67"));
 		expect(window.open).not.toHaveBeenCalled();
 		expect(navigateMock).toHaveBeenCalledWith({
-			to: "/projects/$projectId/sessions/$sessionId",
-			params: { projectId: "proj-1", sessionId: "sess-2" },
+			to: "/host/$hostId/session/$sessionId",
+			params: { hostId: "local", sessionId: "sess-2" },
 		});
 	});
 
@@ -574,8 +574,8 @@ describe("NotificationCenter", () => {
 		await userEvent.keyboard("{Enter}");
 
 		expect(navigateMock).toHaveBeenCalledWith({
-			to: "/projects/$projectId/sessions/$sessionId",
-			params: { projectId: "proj-1", sessionId: "sess-1" },
+			to: "/host/$hostId/session/$sessionId",
+			params: { hostId: "local", sessionId: "sess-1" },
 		});
 	});
 
@@ -590,8 +590,8 @@ describe("NotificationCenter", () => {
 		await userEvent.click(screen.getByRole("button", { name: "Restore session" }));
 		await waitFor(() => expect(restoreSessionMock).toHaveBeenCalledWith("sess-dead"));
 		expect(navigateMock).toHaveBeenCalledWith({
-			to: "/projects/$projectId/sessions/$sessionId",
-			params: { projectId: "proj-1", sessionId: "sess-dead" },
+			to: "/host/$hostId/session/$sessionId",
+			params: { hostId: "local", sessionId: "sess-dead" },
 		});
 	});
 
@@ -637,8 +637,8 @@ describe("NotificationCenter", () => {
 		await userEvent.click(screen.getByText("The agent session has ended."));
 		expect(restoreSessionMock).not.toHaveBeenCalled();
 		expect(navigateMock).toHaveBeenCalledWith({
-			to: "/projects/$projectId/sessions/$sessionId",
-			params: { projectId: "proj-1", sessionId: "sess-dead" },
+			to: "/host/$hostId/session/$sessionId",
+			params: { hostId: "local", sessionId: "sess-dead" },
 		});
 	});
 

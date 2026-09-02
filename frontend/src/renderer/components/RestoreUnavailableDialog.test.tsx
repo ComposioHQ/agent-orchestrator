@@ -19,6 +19,7 @@ vi.mock("../lib/spawn-orchestrator", () => ({
 }));
 
 const session: WorkspaceSession = {
+	host: "local",
 	id: "orch-old",
 	workspaceId: "proj-1",
 	workspaceName: "Project One",
@@ -31,6 +32,7 @@ const session: WorkspaceSession = {
 };
 
 const workspace: WorkspaceSummary = {
+	host: "local",
 	id: "proj-1",
 	name: "Project One",
 	path: "/repo/project-one",
@@ -64,7 +66,7 @@ describe("RestoreUnavailableDialog", () => {
 		await userEvent.click(screen.getByRole("button", { name: "Configure orchestrator agent" }));
 
 		expect(onOpenChange).toHaveBeenCalledWith(false);
-		expect(useUiStore.getState().settingsModal).toEqual({ scope: "project", projectId: "proj-1" });
+		expect(useUiStore.getState().settingsModal).toEqual({ scope: "project", project: { host: "local", id: "proj-1" } });
 		expect(spawnMock).not.toHaveBeenCalled();
 		expect(onRecreated).not.toHaveBeenCalled();
 	});

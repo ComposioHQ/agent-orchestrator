@@ -1,4 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { refKey, type Ref } from "../lib/hosts";
 import { PanelRight, Plus } from "lucide-react";
 import { motion, useReducedMotion } from "motion/react";
 import {
@@ -59,9 +60,10 @@ import { useWorkspaceSession } from "../hooks/useWorkspaceQuery";
 import { useSessionHandoffMenu } from "../hooks/useSessionHandoffMenu";
 import { clearSwitchAgentState } from "../hooks/useSwitchAgent";
 import { useWindowFullScreen } from "../hooks/useWindowFullScreen";
-import { apiClient, apiErrorCode, apiErrorMessage } from "../lib/api-client";
 import { sessionWorkspaceFilesQueryOptions } from "../hooks/useSessionWorkspaceFiles";
 import { matchWorkspaceFilePath } from "../lib/workspace-file-path";
+import { apiErrorCode, apiErrorMessage } from "../lib/api-client";
+import { clientFor } from "../lib/host-clients";
 import { SHELL_PANEL_SPRING } from "../lib/motion-spring";
 import {
 	activateSessionFile,
@@ -243,7 +245,7 @@ function reviewerTerminalFromReviews(data?: ReviewsResponse): ReviewerTerminalTa
 }
 
 type SessionViewProps = {
-	sessionId: string;
+	sessionRef: Ref;
 };
 
 // Mirrors the left sidebar: a Motion gap takes layout width while a sibling
@@ -376,10 +378,11 @@ function SessionInspectorRail({
 // x-transform). Summary/Reviews/Files share a utility width, while Browser
 // automatically grows into a co-work canvas. Chat readability clamps either
 // profile before the conversation can become unusably narrow.
-export function SessionView({ sessionId }: SessionViewProps) {
+export function SessionView({ sessionRef }: SessionViewProps) {
+	const sessionId = sessionRef.id;
 	const { t } = useTranslation();
 	const queryClient = useQueryClient();
-	const workspaceQuery = useWorkspaceSession(sessionId);
+	const workspaceQuery = useWorkspaceSession(sessionRef);
 	const theme = useResolvedTheme();
 	const prefersReducedMotion = useReducedMotion();
 	const isInspectorOpen = useUiStore((state) => state.inspectorSessions[sessionId]?.isOpen ?? true);
@@ -509,7 +512,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	const session = workspaceQuery.data;
 	const interfaceSwitch = useSessionInterfaceTransition(session?.id);
 	const reviewerQuery = useQuery({
-		queryKey: ["session-reviews", sessionId],
+		queryKey: ["session-reviews", refKey(sessionRef)],
 		enabled: Boolean(
 			window.ao && session && sessionIsActive(session) && !isOrchestratorSession(session) && session.prs.length > 0,
 		),
@@ -518,7 +521,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 			return data?.reviews?.some((review) => review.status === "running") ? 2500 : false;
 		},
 		queryFn: async () => {
-			const { data, error } = await apiClient.GET("/api/v1/sessions/{sessionId}/reviews", {
+			const { data, error } = await clientFor(sessionRef.host).GET("/api/v1/sessions/{sessionId}/reviews", {
 				params: { path: { sessionId } },
 			});
 			if (error) throw new Error(apiErrorMessage(error, "Unable to load reviews"));
@@ -1198,9 +1201,9 @@ export function SessionView({ sessionId }: SessionViewProps) {
 
 	const fetchWorkspaceFiles = useCallback(async () => {
 		return queryClient.fetchQuery(
-			sessionWorkspaceFilesQueryOptions(sessionId, t("files.error.loadWorkspace")),
+			sessionWorkspaceFilesQueryOptions(sessionRef, t("files.error.loadWorkspace")),
 		);
-	}, [queryClient, sessionId, t]);
+	}, [queryClient, sessionRef, t]);
 
 	const openResolvedWorkspaceFile = useCallback(
 		async (rawPath: string) => {
