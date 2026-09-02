@@ -2672,6 +2672,7 @@ export interface components {
             /** @enum {string} */
             nextStep: "error" | "choose_import_kind" | "prepare_git" | "continue";
             root: components["schemas"]["RepoGitStatus"];
+            warning?: string;
         };
         InitializeRepositoryInput: {
             path: string;
