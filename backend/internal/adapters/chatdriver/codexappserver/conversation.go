@@ -401,15 +401,12 @@ func listModels(ctx context.Context, connection *conn) ([]ports.ChatModel, error
 // wants to know whether they have quota BEFORE spending a turn finding out. The
 // controller reads once at startup for exactly that reason.
 func (c *conversation) ReadRateLimits(ctx context.Context) (ports.ChatRateLimits, error) {
-	var resp rateLimitsEnvelope
+	var resp capacityReadEnvelope
 	if err := c.conn.request(ctx, "account/rateLimits/read", map[string]any{}, &resp); err != nil {
 		return ports.ChatRateLimits{}, fmt.Errorf("account/rateLimits/read: %w", err)
 	}
-	// The read result also carries rateLimitsByLimitId, a per-model breakdown, and
-	// rateLimitResetCredits. Neither is read: the meter's job is to say whether the
-	// account is near a wall, and a per-model table would be a second, finer answer
-	// to a question the user has not asked yet.
-	return rateLimitsFrom(resp, time.Now()), nil
+	observedAt := time.Now().UTC()
+	return chatRateLimitsFromCapacity(capacityObservationFromEnvelope(resp, observedAt, false), observedAt), nil
 }
 
 // Compact asks the provider to summarize earlier history and reclaim context.

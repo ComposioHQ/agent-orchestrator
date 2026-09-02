@@ -733,13 +733,15 @@ func TestResumeRequiresStoredThreadID(t *testing.T) {
 	}
 }
 
-func TestProbeReportsAuthRequired(t *testing.T) {
-	d := &Driver{
-		plugin: fakePlugin{bin: "codex", authStatus: ports.AgentAuthStatusUnauthorized},
-		log:    slog.New(slog.DiscardHandler),
+func TestProbeIgnoresAmbientAuthStatus(t *testing.T) {
+	d, _ := newTestDriver(t)
+	d.plugin = fakePlugin{bin: "codex", authStatus: ports.AgentAuthStatusUnauthorized}
+	caps, err := d.Probe(context.Background())
+	if err != nil {
+		t.Fatalf("Probe: %v", err)
 	}
-	if _, err := d.Probe(context.Background()); !errors.Is(err, ports.ErrChatAuthRequired) {
-		t.Fatalf("err = %v, want ErrChatAuthRequired", err)
+	if missing := ports.MissingProductionCapabilities(caps); len(missing) != 0 {
+		t.Fatalf("codex is missing production capabilities: %v", missing)
 	}
 }
 
