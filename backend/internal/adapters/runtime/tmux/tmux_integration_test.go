@@ -374,6 +374,14 @@ func TestRuntimeIntegrationOwnerFencedHandleRelocatesWithoutDestroyingForeignRep
 	if err != nil {
 		t.Fatal(err)
 	}
+	handle, found, err := r.ResolveExactRuntimeHandle(
+		context.Background(),
+		handle,
+		ports.SupervisedProcessRef{SessionID: sessionID, LaunchID: launchID},
+	)
+	if err != nil || !found {
+		t.Fatalf("canonicalize relocated exact owner = (%q, %v, %v)", handle.ID, found, err)
+	}
 
 	if err := r.SendMessage(context.Background(), handle, "echo exact-owner-route-ok"); err != nil {
 		t.Fatalf("send through relocated owner-fenced handle: %v", err)
@@ -388,6 +396,83 @@ func TestRuntimeIntegrationOwnerFencedHandleRelocatesWithoutDestroyingForeignRep
 		systemTmux, "-L", currentSocketName, "has-session", "-t", "="+sessionID,
 	).CombinedOutput(); probeErr != nil {
 		t.Fatalf("foreign same-name replacement was destroyed: %v: %s", probeErr, out)
+	}
+}
+
+func TestRuntimeIntegrationCanonicalHandleRejectsReplacementServerReusingObjectIDs(t *testing.T) {
+	systemTmux, err := exec.LookPath("tmux")
+	if err != nil {
+		t.Skip("tmux unavailable")
+	}
+	tmuxTmpDir, err := os.MkdirTemp("/tmp", "ao-tmux-server-fence-test-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(tmuxTmpDir) })
+	t.Setenv("TMUX_TMPDIR", tmuxTmpDir)
+	const (
+		socketName = "ao-server-fence"
+		sessionID  = "server-fence-session"
+	)
+	t.Cleanup(func() { _ = exec.Command(systemTmux, "-L", socketName, "kill-server").Run() })
+
+	r := New(Options{Binary: systemTmux, SocketName: socketName, Timeout: 5 * time.Second, Shell: "/bin/sh"})
+	r.enterDelay = 0
+	handle, err := r.Create(context.Background(), ports.RuntimeConfig{
+		SessionID:     sessionID,
+		WorkspacePath: "/tmp",
+		Argv:          []string{"sleep", "300"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	original, err := decodeRuntimeHandle(handle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out, killErr := exec.Command(systemTmux, "-L", socketName, "kill-server").CombinedOutput(); killErr != nil {
+		t.Fatalf("kill original server: %v: %s", killErr, out)
+	}
+	if out, startErr := exec.Command(
+		systemTmux, "-L", socketName,
+		"new-session", "-d", "-s", sessionID,
+		"sh", "-c", "printf foreign-ready; sleep 300",
+	).CombinedOutput(); startErr != nil {
+		t.Fatalf("start replacement server: %v: %s", startErr, out)
+	}
+	identityOut, err := exec.Command(
+		systemTmux, "-L", socketName,
+		"list-panes", "-t", "="+sessionID, "-F", paneIdentityFormat,
+	).CombinedOutput()
+	if err != nil {
+		t.Fatal(err)
+	}
+	replacementPID, replacementSessionID, replacementPaneID, _, err := parsePaneIdentityOutput(string(identityOut))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if replacementSessionID != original.tmuxSessionID || replacementPaneID != original.tmuxPaneID {
+		t.Fatalf("replacement object ids = %s/%s, want reused %s/%s", replacementSessionID, replacementPaneID, original.tmuxSessionID, original.tmuxPaneID)
+	}
+	if replacementPID == original.tmuxServerPID {
+		t.Fatalf("replacement unexpectedly reused live server pid %d", replacementPID)
+	}
+
+	if err := r.SendInput(context.Background(), handle, "FOREIGN-MUST-NOT-RECEIVE"); !errors.Is(err, ports.ErrRuntimeProbeInconclusive) {
+		t.Fatalf("SendInput error = %v, want ErrRuntimeProbeInconclusive", err)
+	}
+	if err := r.Destroy(context.Background(), handle); !errors.Is(err, ports.ErrRuntimeProbeInconclusive) {
+		t.Fatalf("Destroy error = %v, want ErrRuntimeProbeInconclusive", err)
+	}
+	if out, probeErr := exec.Command(systemTmux, "-L", socketName, "has-session", "-t", "="+sessionID).CombinedOutput(); probeErr != nil {
+		t.Fatalf("replacement was destroyed: %v: %s", probeErr, out)
+	}
+	out, err := exec.Command(systemTmux, "-L", socketName, "capture-pane", "-p", "-t", replacementPaneID).CombinedOutput()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(out), "FOREIGN-MUST-NOT-RECEIVE") {
+		t.Fatalf("replacement received fenced input: %q", out)
 	}
 }
 

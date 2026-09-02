@@ -117,7 +117,7 @@ func (s *Store) ReconcileRuntimeActivity(
 	expectedActivity domain.Activity,
 	recovered domain.Activity,
 ) (bool, error) {
-	if !isRecoverableRuntimeActivity(recovered.State) || recovered.LastActivityAt.IsZero() {
+	if !recovered.State.IsRecoverable() || recovered.LastActivityAt.IsZero() {
 		return false, fmt.Errorf("reconcile runtime activity for %s: invalid recovered activity %q", id, recovered.State)
 	}
 	s.writeMu.Lock()
@@ -156,19 +156,10 @@ func (s *Store) LatestNonExitedSessionActivity(ctx context.Context, id domain.Se
 		return domain.Activity{}, false, fmt.Errorf("latest non-exited activity for %s: %w", id, err)
 	}
 	state := domain.ActivityState(row.ActivityState)
-	if !isRecoverableRuntimeActivity(state) {
+	if !state.IsRecoverable() {
 		return domain.Activity{}, false, fmt.Errorf("latest non-exited activity for %s: invalid state %q", id, state)
 	}
 	return domain.Activity{State: state, LastActivityAt: row.ObservedAt}, true, nil
-}
-
-func isRecoverableRuntimeActivity(state domain.ActivityState) bool {
-	switch state {
-	case domain.ActivityActive, domain.ActivityIdle, domain.ActivityWaitingInput, domain.ActivityBlocked:
-		return true
-	default:
-		return false
-	}
 }
 
 // UpdateSessionFromActivitySignal projects activity-derived session metadata

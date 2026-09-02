@@ -3,6 +3,7 @@ package tmux
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os/exec"
 	"strings"
 	"testing"
@@ -14,15 +15,36 @@ import (
 const (
 	objectFenceSessionID = "sess-1"
 	objectFenceLaunchID  = "launch-owned"
+	objectFenceServerPID = 41001
 	objectFenceTmuxSID   = "$41"
 	objectFenceTmuxPID   = "%73"
 )
 
 type replacementAfterProofRunner struct {
-	calls                    []runnerCall
-	replaced                 bool
-	foreignTouched           bool
-	returnMismatchedPanePIDs bool
+	calls          []runnerCall
+	replaced       bool
+	foreignTouched bool
+}
+
+type replacementBeforeResolveRunner struct {
+	calls []runnerCall
+}
+
+func (r *replacementBeforeResolveRunner) Run(_ context.Context, env []string, name string, args ...string) ([]byte, error) {
+	r.calls = append(r.calls, runnerCall{env: append([]string(nil), env...), name: name, args: append([]string(nil), args...)})
+	command := tmuxCommandArgs(args)
+	if len(command) == 0 {
+		return nil, errors.New("missing tmux command")
+	}
+	switch command[0] {
+	case "has-session":
+		return nil, nil
+	case "list-panes":
+		return []byte(fmt.Sprintf("%d\t%s\t%s\t", objectFenceServerPID+1, objectFenceTmuxSID, objectFenceTmuxPID) +
+			ownedPaneCommand("/tmp/ao/running.json", objectFenceSessionID, objectFenceLaunchID) + "\n"), nil
+	default:
+		return nil, fmt.Errorf("replacement reached unexpected command %s", command[0])
+	}
 }
 
 func (r *replacementAfterProofRunner) Run(_ context.Context, env []string, name string, args ...string) ([]byte, error) {
@@ -31,29 +53,27 @@ func (r *replacementAfterProofRunner) Run(_ context.Context, env []string, name 
 	if len(command) == 0 {
 		return nil, errors.New("missing tmux command")
 	}
-	target := commandTarget(command)
 	switch command[0] {
 	case "has-session":
-		if !r.replaced {
-			return nil, nil
-		}
+		return nil, nil
 	case "list-panes":
 		format := command[len(command)-1]
 		if format == paneIdentityFormat && !r.replaced {
 			r.replaced = true
-			return []byte(objectFenceTmuxSID + "\t" + objectFenceTmuxPID + "\t" +
+			return []byte(fmt.Sprintf("%d\t%s\t%s\t", objectFenceServerPID, objectFenceTmuxSID, objectFenceTmuxPID) +
 				ownedPaneCommand("/tmp/ao/running.json", objectFenceSessionID, objectFenceLaunchID) + "\n"), nil
 		}
-		if format == panePIDFormat && target == objectFenceTmuxSID && r.returnMismatchedPanePIDs {
-			return []byte(objectFenceTmuxSID + "\t%74\t999\n"), nil
+	case "if-shell":
+		if r.replaced {
+			return []byte(tmuxObjectFenceMismatch + "\n"), nil
 		}
 	}
 
-	if target == objectFenceSessionID || target == "="+objectFenceSessionID || target == objectFenceSessionID+":0.0" {
+	if r.replaced && command[0] != "has-session" && command[0] != "list-panes" {
 		r.foreignTouched = true
 		return []byte("foreign replacement accepted the name target"), nil
 	}
-	return []byte("can't find session: immutable target"), &exec.ExitError{}
+	return nil, nil
 }
 
 func commandTarget(command []string) string {
@@ -68,11 +88,15 @@ func commandTarget(command []string) string {
 func newReplacementFenceRuntime(t *testing.T) (*Runtime, ports.RuntimeHandle, *replacementAfterProofRunner, *recordingReaper) {
 	t.Helper()
 	owner := ports.SupervisedProcessRef{SessionID: objectFenceSessionID, LaunchID: objectFenceLaunchID}
-	handle, err := qualifiedRuntimeHandleForOwner(
-		objectFenceSessionID,
-		socketTarget{kind: socketTargetNamed, value: "ao"},
-		owner,
-	)
+	handle, err := qualifiedRuntimeHandleForRoute(runtimeRoute{
+		id:            objectFenceSessionID,
+		target:        socketTarget{kind: socketTargetNamed, value: "ao"},
+		qualified:     true,
+		owner:         owner,
+		tmuxServerPID: objectFenceServerPID,
+		tmuxSessionID: objectFenceTmuxSID,
+		tmuxPaneID:    objectFenceTmuxPID,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -91,7 +115,7 @@ func newReplacementFenceRuntime(t *testing.T) (*Runtime, ports.RuntimeHandle, *r
 	return runtime, handle, runner, reaper
 }
 
-func TestOwnerProofTargetsImmutablePaneWhenNameIsImmediatelyReplaced(t *testing.T) {
+func TestCanonicalOperationsFailClosedWhenServerIsReplacedAfterOwnerProof(t *testing.T) {
 	tests := []struct {
 		name       string
 		operation  func(*Runtime, ports.RuntimeHandle) error
@@ -99,7 +123,15 @@ func TestOwnerProofTargetsImmutablePaneWhenNameIsImmediatelyReplaced(t *testing.
 		wantTarget string
 	}{
 		{
-			name: "send-keys",
+			name: "send-message",
+			operation: func(runtime *Runtime, handle ports.RuntimeHandle) error {
+				return runtime.SendMessage(context.Background(), handle, "continue")
+			},
+			subcommand: "send-keys",
+			wantTarget: objectFenceTmuxPID,
+		},
+		{
+			name: "send-input",
 			operation: func(runtime *Runtime, handle ports.RuntimeHandle) error {
 				return runtime.SendInput(context.Background(), handle, "continue")
 			},
@@ -107,9 +139,26 @@ func TestOwnerProofTargetsImmutablePaneWhenNameIsImmediatelyReplaced(t *testing.
 			wantTarget: objectFenceTmuxPID,
 		},
 		{
-			name: "capture-pane",
+			name: "interrupt",
+			operation: func(runtime *Runtime, handle ports.RuntimeHandle) error {
+				return runtime.Interrupt(context.Background(), handle)
+			},
+			subcommand: "send-keys",
+			wantTarget: objectFenceTmuxPID,
+		},
+		{
+			name: "get-output",
 			operation: func(runtime *Runtime, handle ports.RuntimeHandle) error {
 				_, err := runtime.GetOutput(context.Background(), handle, 10)
+				return err
+			},
+			subcommand: "capture-pane",
+			wantTarget: objectFenceTmuxPID,
+		},
+		{
+			name: "get-styled-output",
+			operation: func(runtime *Runtime, handle ports.RuntimeHandle) error {
+				_, err := runtime.GetStyledOutput(context.Background(), handle, 10)
 				return err
 			},
 			subcommand: "capture-pane",
@@ -139,21 +188,62 @@ func TestOwnerProofTargetsImmutablePaneWhenNameIsImmediatelyReplaced(t *testing.
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			runtime, handle, runner, _ := newReplacementFenceRuntime(t)
-			if err := tt.operation(runtime, handle); err == nil {
-				t.Fatal("operation unexpectedly reached the same-name replacement")
+			if err := tt.operation(runtime, handle); !errors.Is(err, ports.ErrRuntimeProbeInconclusive) {
+				t.Fatalf("operation error = %v, want ErrRuntimeProbeInconclusive", err)
 			}
 			if runner.foreignTouched {
 				t.Fatal("operation targeted the same-name foreign replacement")
 			}
-			var action []string
+			var guarded []string
 			for _, call := range runner.calls {
 				command := tmuxCommandArgs(call.args)
-				if len(command) > 0 && command[0] == tt.subcommand {
-					action = command
+				if len(command) > 0 && command[0] == "if-shell" {
+					guarded = command
 				}
 			}
-			if got := commandTarget(action); got != tt.wantTarget {
-				t.Fatalf("%s target = %q, want immutable %q; command=%#v", tt.subcommand, got, tt.wantTarget, action)
+			if got := commandTarget(guarded); got != tt.wantTarget {
+				t.Fatalf("guard target = %q, want immutable %q; command=%#v", got, tt.wantTarget, guarded)
+			}
+			if len(guarded) < 7 || !strings.Contains(guarded[4], fmt.Sprint(objectFenceServerPID)) ||
+				!strings.Contains(guarded[5], `"`+tt.subcommand+`"`) {
+				t.Fatalf("guard does not bind server pid and %s action: %#v", tt.subcommand, guarded)
+			}
+		})
+	}
+}
+
+func TestCanonicalResolversRejectReplacementServerReusingObjectIDsAndOwner(t *testing.T) {
+	owner := ports.SupervisedProcessRef{SessionID: objectFenceSessionID, LaunchID: objectFenceLaunchID}
+	tests := []struct {
+		name    string
+		resolve func(*Runtime, ports.RuntimeHandle) (ports.RuntimeHandle, bool, error)
+	}{
+		{
+			name: "recovery",
+			resolve: func(runtime *Runtime, handle ports.RuntimeHandle) (ports.RuntimeHandle, bool, error) {
+				return runtime.ResolveRuntimeHandle(context.Background(), handle, owner)
+			},
+		},
+		{
+			name: "terminated reap",
+			resolve: func(runtime *Runtime, handle ports.RuntimeHandle) (ports.RuntimeHandle, bool, error) {
+				return runtime.ResolveExactRuntimeHandle(context.Background(), handle, owner)
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			runtime, handle, _, _ := newReplacementFenceRuntime(t)
+			runner := &replacementBeforeResolveRunner{}
+			runtime.runner = runner
+			resolved, found, err := tt.resolve(runtime, handle)
+			if !errors.Is(err, ports.ErrRuntimeProbeInconclusive) || found || resolved.ID != "" {
+				t.Fatalf("resolve = (%q, %v, %v), want empty, false, ErrRuntimeProbeInconclusive", resolved.ID, found, err)
+			}
+			for _, call := range runner.calls {
+				if got := probeNamespace(call.args); got != "named:ao" {
+					t.Fatalf("canonical resolver rediscovered another namespace %q", got)
+				}
 			}
 		})
 	}
@@ -164,55 +254,47 @@ func TestOwnerProofTargetsImmutableSessionForAttachAfterNameReplacement(t *testi
 	var attachArgv []string
 	runtime.spawnAttach = func(_ context.Context, argv, _ []string, _, _ uint16) (ports.Stream, error) {
 		attachArgv = append([]string(nil), argv...)
-		return nil, errors.New("immutable session disappeared")
+		return nil, fmt.Errorf("%w: immutable session disappeared", ports.ErrRuntimeProbeInconclusive)
 	}
-	if _, err := runtime.Attach(context.Background(), handle, 50, 220); err == nil {
-		t.Fatal("Attach unexpectedly reached the same-name replacement")
+	if _, err := runtime.Attach(context.Background(), handle, 50, 220); !errors.Is(err, ports.ErrRuntimeProbeInconclusive) {
+		t.Fatalf("Attach error = %v, want ErrRuntimeProbeInconclusive", err)
 	}
 	if runner.foreignTouched {
 		t.Fatal("Attach proof touched the same-name foreign replacement")
 	}
-	if got := commandTarget(tmuxCommandArgs(attachArgv[1:])); got != objectFenceTmuxSID {
-		t.Fatalf("attach target = %q, want immutable %q; argv=%#v", got, objectFenceTmuxSID, attachArgv)
+	command := tmuxCommandArgs(attachArgv[1:])
+	if got := commandTarget(command); got != objectFenceTmuxPID {
+		t.Fatalf("attach guard target = %q, want immutable %q; argv=%#v", got, objectFenceTmuxPID, attachArgv)
+	}
+	joined := strings.Join(command, " ")
+	if !strings.Contains(joined, `"attach-session"`) ||
+		!strings.Contains(joined, `"\$41"`) {
+		t.Fatalf("attach was not queued behind the object guard: %#v", command)
 	}
 }
 
 func TestDestroyUsesImmutableSessionForPaneListAndKillAfterNameReplacement(t *testing.T) {
 	runtime, handle, runner, reaper := newReplacementFenceRuntime(t)
-	if err := runtime.Destroy(context.Background(), handle); err != nil {
-		t.Fatalf("idempotent destroy of replaced owner: %v", err)
+	if err := runtime.Destroy(context.Background(), handle); !errors.Is(err, ports.ErrRuntimeProbeInconclusive) {
+		t.Fatalf("Destroy error = %v, want ErrRuntimeProbeInconclusive", err)
 	}
 	if runner.foreignTouched {
 		t.Fatal("Destroy targeted the same-name foreign replacement")
 	}
-	targets := map[string]string{}
+	var guarded []string
 	for _, call := range runner.calls {
 		command := tmuxCommandArgs(call.args)
-		if len(command) > 0 && (command[0] == "list-panes" || command[0] == "kill-session") && runner.replaced {
-			targets[command[0]] = commandTarget(command)
+		if len(command) > 0 && command[0] == "if-shell" {
+			guarded = command
 		}
 	}
-	for _, subcommand := range []string{"list-panes", "kill-session"} {
-		if got := targets[subcommand]; got != objectFenceTmuxSID {
-			t.Fatalf("%s target = %q, want immutable %q", subcommand, got, objectFenceTmuxSID)
-		}
+	if len(guarded) < 7 || commandTarget(guarded) != objectFenceTmuxPID ||
+		!strings.Contains(guarded[5], `"list-panes"`) || !strings.Contains(guarded[5], `"kill-session"`) {
+		t.Fatalf("destroy was not one guarded list+kill queue: %#v", guarded)
 	}
 	for _, pids := range reaper.pids {
 		if len(pids) != 0 {
 			t.Fatalf("foreign replacement descendants were reaped: %v", pids)
-		}
-	}
-}
-
-func TestDestroyRejectsMismatchedPaneIDsBeforeReaping(t *testing.T) {
-	runtime, handle, runner, reaper := newReplacementFenceRuntime(t)
-	runner.returnMismatchedPanePIDs = true
-	if err := runtime.Destroy(context.Background(), handle); err != nil {
-		t.Fatalf("idempotent destroy of replaced owner: %v", err)
-	}
-	for _, pids := range reaper.pids {
-		if len(pids) != 0 {
-			t.Fatalf("mismatched pane identity was reaped: %v", pids)
 		}
 	}
 }

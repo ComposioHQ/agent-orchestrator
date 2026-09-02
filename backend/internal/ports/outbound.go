@@ -137,9 +137,11 @@ type SupervisedProcessRef struct {
 
 // RuntimeHandleResolver upgrades a persisted legacy handle into the concrete
 // runtime adapter's durable handle format. Implementations must not mutate the
-// runtime while resolving. found is false only when every runtime namespace
-// the adapter owns was conclusively inspected and the handle was absent from
-// all of them; an incomplete probe must return an error instead.
+// runtime while resolving. Legacy locators require an exhaustive search of the
+// adapter's owned namespaces before found may be false. A fully canonical
+// object-fenced handle is inspected only at its persisted route and must never
+// be rediscovered by a reusable name. Any incomplete or contradictory probe
+// must return an error instead.
 type RuntimeHandleResolver interface {
 	ResolveRuntimeHandle(ctx context.Context, legacy RuntimeHandle, owner SupervisedProcessRef) (resolved RuntimeHandle, found bool, err error)
 }
@@ -148,9 +150,9 @@ type RuntimeHandleResolver interface {
 // durable session/launch owner. It is the destructive-operation counterpart to
 // RuntimeHandleResolver: recovery may adopt a newer fully-proven generation,
 // while cleanup of a terminated row must never destroy that replacement.
-// Implementations must search every owned namespace when a durable route was
-// replaced, and must fail closed when a same-named runtime cannot be proven to
-// belong to owner.
+// Legacy locators may require an exhaustive namespace search for owner. Fully
+// canonical object-fenced handles must inspect only their persisted route and
+// fail closed instead of rediscovering a same-named replacement.
 type ExactRuntimeHandleResolver interface {
 	ResolveExactRuntimeHandle(ctx context.Context, handle RuntimeHandle, owner SupervisedProcessRef) (resolved RuntimeHandle, found bool, err error)
 }

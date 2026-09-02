@@ -19,10 +19,11 @@ import (
 // -- fakeRunner test seam --
 
 type fakeRunner struct {
-	calls   []runnerCall
-	outputs [][]byte
-	err     error
-	hook    func(context.Context, int) error
+	calls       []runnerCall
+	outputs     [][]byte
+	err         error
+	hook        func(context.Context, int) error
+	paneCommand string
 }
 
 type runnerCall struct {
@@ -31,8 +32,46 @@ type runnerCall struct {
 	args []string
 }
 
+type canonicalRouteRunner struct {
+	calls       []runnerCall
+	paneCommand string
+}
+
+func (f *canonicalRouteRunner) Run(_ context.Context, env []string, name string, args ...string) ([]byte, error) {
+	f.calls = append(f.calls, runnerCall{env: append([]string(nil), env...), name: name, args: append([]string(nil), args...)})
+	if name == "ps" {
+		return []byte("100 1 /bin/sh\n101 100 /opt/ao agent-process supervise --session sess-1 --launch launch-1 -- codex\n102 101 codex\n"), nil
+	}
+	command := tmuxCommandArgs(args)
+	if len(command) == 0 {
+		return nil, nil
+	}
+	switch command[0] {
+	case "list-panes":
+		return []byte("4242\t$1\t%1\t" + f.paneCommand + "\n"), nil
+	case "if-shell":
+		if len(command) <= 5 {
+			return nil, nil
+		}
+		action := command[5]
+		switch {
+		case strings.Contains(action, "#{pane_start_command}"):
+			return []byte("4242\t$1\t%1\t" + f.paneCommand + "\n"), nil
+		case strings.Contains(action, "#{pane_pid}"):
+			return []byte("4242\t$1\t%1\t100\n"), nil
+		case strings.Contains(action, `"capture-pane"`):
+			return []byte("screen\n"), nil
+		}
+	}
+	return nil, nil
+}
+
 func (f *fakeRunner) Run(ctx context.Context, env []string, name string, args ...string) ([]byte, error) {
 	f.calls = append(f.calls, runnerCall{env: append([]string(nil), env...), name: name, args: append([]string(nil), args...)})
+	command := tmuxCommandArgs(args)
+	if len(command) > 0 && command[0] == "new-session" && len(command) > 1 {
+		f.paneCommand = command[len(command)-1]
+	}
 	var out []byte
 	if len(f.outputs) > 0 {
 		out = f.outputs[0]
@@ -46,6 +85,13 @@ func (f *fakeRunner) Run(ctx context.Context, env []string, name string, args ..
 	if f.err != nil {
 		return scriptedTmuxOutput(args, out), f.err
 	}
+	if len(out) == 0 && len(command) > 0 && command[0] == "new-session" {
+		out = []byte("4242\t$1\t%1\t" + f.paneCommand + "\n")
+	}
+	if len(out) == 0 && len(command) > 0 && command[0] == "list-panes" &&
+		command[len(command)-1] == paneIdentityFormat && f.paneCommand != "" {
+		out = []byte("4242\t$1\t%1\t" + f.paneCommand + "\n")
+	}
 	return scriptedTmuxOutput(args, out), nil
 }
 
@@ -58,17 +104,29 @@ func scriptedTmuxOutput(args []string, out []byte) []byte {
 		return out
 	}
 	format := command[len(command)-1]
+	if command[0] == "if-shell" && len(command) > 5 {
+		switch {
+		case strings.Contains(command[5], "#{pane_start_command}"):
+			format = paneIdentityFormat
+		case strings.Contains(command[5], "#{pane_pid}"):
+			format = panePIDFormat
+		}
+	}
 	if format != paneIdentityFormat && format != panePIDFormat {
 		return out
 	}
 	trailingNewline := strings.HasSuffix(string(out), "\n")
 	lines := strings.Split(strings.TrimSuffix(string(out), "\n"), "\n")
 	for i, line := range lines {
-		fields := strings.SplitN(strings.TrimSuffix(line, "\r"), "\t", 3)
-		if len(fields) == 3 && tmuxSessionIDPattern.MatchString(fields[0]) && tmuxPaneIDPattern.MatchString(fields[1]) {
+		fields := strings.SplitN(strings.TrimSuffix(line, "\r"), "\t", 4)
+		if len(fields) == 4 && tmuxSessionIDPattern.MatchString(fields[1]) && tmuxPaneIDPattern.MatchString(fields[2]) {
 			continue
 		}
-		lines[i] = "$1\t%" + strconv.Itoa(i+1) + "\t" + line
+		if len(fields) == 3 && tmuxSessionIDPattern.MatchString(fields[0]) && tmuxPaneIDPattern.MatchString(fields[1]) {
+			lines[i] = "4242\t" + line
+			continue
+		}
+		lines[i] = "4242\t$1\t%" + strconv.Itoa(i+1) + "\t" + line
 	}
 	result := strings.Join(lines, "\n")
 	if trailingNewline {
@@ -110,6 +168,17 @@ func countCalls(fr *fakeRunner, subcommand string) int {
 	n := 0
 	for _, c := range fr.calls {
 		if tmuxSubcommand(c.args) == subcommand {
+			n++
+		}
+	}
+	return n
+}
+
+func countGuardedActions(fr *fakeRunner, fragment string) int {
+	n := 0
+	for _, call := range fr.calls {
+		command := tmuxCommandArgs(call.args)
+		if len(command) > 5 && command[0] == "if-shell" && strings.Contains(command[5], fragment) {
 			n++
 		}
 	}
@@ -260,7 +329,7 @@ func TestExecRunnerFallsBackWhenTempDirMissing(t *testing.T) {
 
 func TestCommandBuilders(t *testing.T) {
 	if got, want := newSessionArgs("sess-1", "/tmp/ws", "/bin/sh", `echo hi; exec "${SHELL:-/bin/sh}" -i`),
-		[]string{"new-session", "-d", "-s", "sess-1", "-x", "220", "-y", "50", "-c", "/tmp/ws", "/bin/sh", "-c", `echo hi; exec "${SHELL:-/bin/sh}" -i`}; !reflect.DeepEqual(got, want) {
+		[]string{"new-session", "-d", "-P", "-F", paneIdentityFormat, "-s", "sess-1", "-x", "220", "-y", "50", "-c", "/tmp/ws", "/bin/sh", "-c", `echo hi; exec "${SHELL:-/bin/sh}" -i`}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("newSessionArgs = %#v, want %#v", got, want)
 	}
 	if got, want := respawnPaneArgs("sess-1", "/tmp/ws", "/bin/sh", "echo hi"),
@@ -386,10 +455,10 @@ func TestCreateIssuesNewSessionAndStatusOff(t *testing.T) {
 	if !strings.HasPrefix(h.ID, "tmux-v1:") {
 		t.Fatalf("handle ID = %q, want durable tmux-v1 qualified handle", h.ID)
 	}
-	// Expect 6 calls: new-session, display-message cwd verification,
-	// set-option status, set-option mouse, set-option window-size, has-session.
-	if len(fr.calls) != 6 {
-		t.Fatalf("calls = %d, want 6", len(fr.calls))
+	// Expect 7 calls: new-session, four guarded setup actions, then the
+	// has-session + identity reads used by the final exact-route proof.
+	if len(fr.calls) != 7 {
+		t.Fatalf("calls = %d, want 7", len(fr.calls))
 	}
 
 	// Call 0: new-session
@@ -410,29 +479,32 @@ func TestCreateIssuesNewSessionAndStatusOff(t *testing.T) {
 	}
 
 	// Call 1: verify pane cwd.
-	if got, want := tmuxCommandArgs(fr.calls[1].args), paneCurrentPathArgs("sess-1"); !reflect.DeepEqual(got, want) {
-		t.Fatalf("call[1] = %#v, want %#v", got, want)
+	if got := strings.Join(tmuxCommandArgs(fr.calls[1].args), " "); !strings.Contains(got, `"display-message"`) || !strings.Contains(got, `"#{pane_current_path}"`) {
+		t.Fatalf("call[1] = %q, want guarded pane cwd probe", got)
 	}
 
 	// Call 2: set-option status off (plain target, pane-targeting does not use =).
-	if got, want := tmuxCommandArgs(fr.calls[2].args), setStatusOffArgs("sess-1"); !reflect.DeepEqual(got, want) {
-		t.Fatalf("call[2] = %#v, want %#v", got, want)
+	if got := strings.Join(tmuxCommandArgs(fr.calls[2].args), " "); !strings.Contains(got, `"set-option"`) || !strings.Contains(got, `"status" "off"`) {
+		t.Fatalf("call[2] = %q, want guarded status option", got)
 	}
 
 	// Call 3: set-option mouse on (enables wheel-scroll of the pane).
-	if got, want := tmuxCommandArgs(fr.calls[3].args), setMouseOnArgs("sess-1"); !reflect.DeepEqual(got, want) {
-		t.Fatalf("call[3] = %#v, want %#v", got, want)
+	if got := strings.Join(tmuxCommandArgs(fr.calls[3].args), " "); !strings.Contains(got, `"mouse" "on"`) {
+		t.Fatalf("call[3] = %q, want guarded mouse option", got)
 	}
 
 	// Call 4: set-option window-size largest (multi-client sizing, see
 	// setWindowSizeLargestArgs).
-	if got, want := tmuxCommandArgs(fr.calls[4].args), setWindowSizeLargestArgs("sess-1"); !reflect.DeepEqual(got, want) {
-		t.Fatalf("call[4] = %#v, want %#v", got, want)
+	if got := strings.Join(tmuxCommandArgs(fr.calls[4].args), " "); !strings.Contains(got, `"window-size" "largest"`) {
+		t.Fatalf("call[4] = %q, want guarded window-size option", got)
 	}
 
-	// Call 5: has-session (IsAlive, uses exact-match target =sess-1).
+	// Calls 5-6: exact liveness proof.
 	if got, want := tmuxCommandArgs(fr.calls[5].args), hasSessionArgs("sess-1"); !reflect.DeepEqual(got, want) {
 		t.Fatalf("call[5] = %#v, want %#v", got, want)
+	}
+	if got := tmuxSubcommand(fr.calls[6].args); got != "list-panes" {
+		t.Fatalf("call[6] = %q, want identity list-panes", got)
 	}
 }
 
@@ -523,20 +595,7 @@ func TestQualifiedHandleRoutesEveryOperationAfterRuntimeRestart(t *testing.T) {
 		Timeout:    time.Second,
 		Shell:      "/bin/sh",
 	})
-	routeRunner := &fakeRunner{outputs: [][]byte{
-		nil,                // IsAlive
-		[]byte("screen\n"), // GetOutput
-		[]byte("styled\n"), // GetStyledOutput
-		nil,                // Interrupt
-		nil,                // SendInput
-		nil, nil,           // SendMessage text + Enter
-		nil, nil, // Restart respawn + liveness
-		[]byte("100\n"),
-		[]byte("100 1 /bin/sh\n101 100 /opt/ao agent-process supervise --session sess-1 --launch launch-1 -- codex\n102 101 codex\n"),
-		[]byte("100\n"),
-		[]byte("100 1 /bin/sh\n101 100 /opt/ao agent-process supervise --session sess-1 --launch launch-1 -- codex\n102 101 codex\n"),
-		nil, nil, // Destroy pane list + kill
-	}}
+	routeRunner := &canonicalRouteRunner{paneCommand: createRunner.paneCommand}
 	restarted.runner = routeRunner
 	restarted.enterDelay = 0
 	restarted.reapSessions = (&recordingReaper{}).reap
@@ -622,7 +681,7 @@ func TestQualifiedMutationRediscoverExactOwnerWhenPersistedRouteWasReplaced(t *t
 		"named:ao/list-panes":                       {out: []byte(ownedPaneCommand(runFile, "sess-1", "launch-foreign") + "\n")},
 		"path:" + historicalSocket + "/has-session": {},
 		"path:" + historicalSocket + "/list-panes":  {out: []byte(ownedPaneCommand(runFile, "sess-1", owner.LaunchID) + "\n")},
-		"path:" + historicalSocket + "/send-keys":   {},
+		"path:" + historicalSocket + "/if-shell":    {},
 		"default/has-session":                       missing,
 	}}
 	r := New(Options{
@@ -635,12 +694,16 @@ func TestQualifiedMutationRediscoverExactOwnerWhenPersistedRouteWasReplaced(t *t
 	})
 	r.runner = fr
 
-	if err := r.SendInput(context.Background(), handle, "continue"); err != nil {
+	resolved, found, err := r.ResolveExactRuntimeHandle(context.Background(), handle, owner)
+	if err != nil || !found {
+		t.Fatalf("ResolveExactRuntimeHandle = (%q, %v, %v), want relocated canonical route", resolved.ID, found, err)
+	}
+	if err := r.SendInput(context.Background(), resolved, "continue"); err != nil {
 		t.Fatalf("SendInput: %v", err)
 	}
 	var sends []runnerCall
 	for _, call := range fr.calls {
-		if tmuxSubcommand(call.args) == "send-keys" {
+		if tmuxSubcommand(call.args) == "if-shell" {
 			sends = append(sends, call)
 		}
 	}
@@ -739,12 +802,12 @@ func TestCreateOnDefaultPinsCreationAndReturnedHandleToSameNamespace(t *testing.
 	}
 
 	fresh := New(Options{Binary: "tmux-test", SocketName: "replacement", Timeout: time.Second})
-	routeRunner := &fakeRunner{}
+	routeRunner := &fakeRunner{paneCommand: createRunner.paneCommand}
 	fresh.runner = routeRunner
 	if alive, probeErr := fresh.IsAlive(context.Background(), handle); probeErr != nil || !alive {
 		t.Fatalf("fresh IsAlive = (%v, %v)", alive, probeErr)
 	}
-	if len(routeRunner.calls) != 1 || len(routeRunner.calls[0].args) < 3 ||
+	if len(routeRunner.calls) != 2 || len(routeRunner.calls[0].args) < 3 ||
 		routeRunner.calls[0].args[0] != "-L" || routeRunner.calls[0].args[1] != "default" {
 		t.Fatalf("qualified operation = %+v, want explicit -L default", routeRunner.calls)
 	}
@@ -857,10 +920,10 @@ func TestCreateDestroysAndReturnsErrorWhenPaneCWDDoesNotMatch(t *testing.T) {
 	if !errors.Is(err, ports.ErrRuntimeWorkspaceCwdMismatch) {
 		t.Fatalf("Create err = %v, want wrapped ports.ErrRuntimeWorkspaceCwdMismatch", err)
 	}
-	if got := countCalls(fr, "display-message"); got != paneCwdVerifyAttempts {
+	if got := countGuardedActions(fr, "#{pane_current_path}"); got != paneCwdVerifyAttempts {
 		t.Fatalf("pane cwd verification attempts = %d, want %d", got, paneCwdVerifyAttempts)
 	}
-	if countCalls(fr, "kill-session") == 0 {
+	if countGuardedActions(fr, `"kill-session"`) == 0 {
 		t.Fatal("expected kill-session cleanup call when pane cwd verification fails")
 	}
 }
@@ -912,7 +975,7 @@ func TestVerifyPaneWorkingDirectoryRetriesUntilMatch(t *testing.T) {
 	if !strings.HasPrefix(h.ID, "tmux-v1:") {
 		t.Fatalf("handle ID = %q, want durable tmux-v1 qualified handle", h.ID)
 	}
-	if got := countCalls(fr, "display-message"); got != 2 {
+	if got := countGuardedActions(fr, "#{pane_current_path}"); got != 2 {
 		t.Fatalf("pane cwd verification attempts = %d, want 2 (stale then matching)", got)
 	}
 }
@@ -973,16 +1036,9 @@ func TestCreateDestroysAndReturnsErrorWhenNotAlive(t *testing.T) {
 	if !sawHasSession {
 		t.Fatal("Create never reached the has-session liveness probe")
 	}
-	// Verify Destroy was called (kill-session).
-	hasKill := false
-	for _, c := range fr3.calls {
-		if tmuxSubcommand(c.args) == "kill-session" {
-			hasKill = true
-		}
-	}
-	if !hasKill {
-		t.Fatal("expected kill-session cleanup call when session not alive")
-	}
+	// Cleanup rechecks the exact route. Since the scripted server conclusively
+	// reports the session absent, Destroy is idempotent and must not issue a
+	// name-targeted kill.
 }
 
 // fakeRunnerSelectiveErr returns an exec.ExitError (carrying errOutput) for the
@@ -998,10 +1054,14 @@ type fakeRunnerSelectiveErr struct {
 
 func (f *fakeRunnerSelectiveErr) Run(_ context.Context, env []string, name string, args ...string) ([]byte, error) {
 	f.calls = append(f.calls, runnerCall{env: append([]string(nil), env...), name: name, args: append([]string(nil), args...)})
-	if tmuxSubcommand(args) == f.exitErrOn {
+	command := tmuxCommandArgs(args)
+	if len(command) > 0 && command[0] == f.exitErrOn {
 		return f.errOutput, &exec.ExitError{}
 	}
-	if tmuxSubcommand(args) == "display-message" {
+	if len(command) > 0 && command[0] == "new-session" {
+		return []byte("4242\t$1\t%1\t" + command[len(command)-1] + "\n"), nil
+	}
+	if len(command) > 5 && command[0] == "if-shell" && strings.Contains(command[5], "#{pane_current_path}") {
 		return []byte("/tmp/ws\n"), nil
 	}
 	return nil, nil
@@ -1440,8 +1500,13 @@ func TestResolveRuntimeHandleRepairsStaleLaunchFromUniqueOwnedHistoricalPane(t *
 	if err != nil || !identity.OwnershipProven || identity.LaunchID != actualLaunch {
 		t.Fatalf("InspectRuntimeIdentity = (%+v, %v), want proven launch %q", identity, err, actualLaunch)
 	}
-	if len(identityRunner.calls) != 1 || tmuxSubcommand(identityRunner.calls[0].args) != "list-panes" {
-		t.Fatalf("identity calls = %+v, want one fresh pane_start_command read", identityRunner.calls)
+	if len(identityRunner.calls) != 1 {
+		t.Fatalf("identity calls = %+v, want one fresh guarded pane_start_command read", identityRunner.calls)
+	}
+	identityCommand := tmuxCommandArgs(identityRunner.calls[0].args)
+	if len(identityCommand) < 6 || identityCommand[0] != "if-shell" ||
+		!strings.Contains(identityCommand[5], "#{pane_start_command}") {
+		t.Fatalf("identity command = %+v, want guarded pane_start_command read", identityCommand)
 	}
 }
 
@@ -1507,11 +1572,14 @@ func TestResolveRuntimeHandlePreservesRawIdentityForSanitizedSessionAcrossRuntim
 	if err != nil || !identity.OwnershipProven || identity.LaunchID != actualLaunch {
 		t.Fatalf("InspectRuntimeIdentity = (%+v, %v), want raw-session ownership for launch %q", identity, err, actualLaunch)
 	}
-	if len(inspectRunner.calls) != 1 || !reflect.DeepEqual(
-		tmuxCommandArgs(inspectRunner.calls[0].args),
-		paneStartCommandsArgs(tmuxID),
-	) {
-		t.Fatalf("identity calls = %+v, want direct pane lookup by sanitized tmux id %q", inspectRunner.calls, tmuxID)
+	if len(inspectRunner.calls) != 1 {
+		t.Fatalf("identity calls = %+v, want guarded pane lookup by sanitized tmux id %q", inspectRunner.calls, tmuxID)
+	}
+	identityCommand := tmuxCommandArgs(inspectRunner.calls[0].args)
+	if len(identityCommand) < 6 || identityCommand[0] != "if-shell" ||
+		!strings.Contains(identityCommand[5], `"\$1"`) ||
+		!strings.Contains(identityCommand[5], "#{pane_start_command}") {
+		t.Fatalf("identity command = %+v, want guarded pane lookup by sanitized tmux id %q", identityCommand, tmuxID)
 	}
 
 	// A second replacement must restart and probe the same qualified target;
@@ -1528,7 +1596,7 @@ func TestResolveRuntimeHandlePreservesRawIdentityForSanitizedSessionAcrossRuntim
 	restartRunner := &fakeRunnerSequence{results: []fakeRunnerResult{
 		{},
 		{out: []byte(ownedPaneCommand(runFile, string(rawSessionID), actualLaunch) + "\n")},
-		{},
+		{out: []byte(ownedPaneCommand(runFile, string(rawSessionID), nextLaunch) + "\n")},
 		{},
 		{out: []byte(ownedPaneCommand(runFile, string(rawSessionID), nextLaunch) + "\n")},
 	}}
@@ -1558,7 +1626,8 @@ func TestResolveRuntimeHandlePreservesRawIdentityForSanitizedSessionAcrossRuntim
 			t.Errorf("restart call %d namespace = %q, want historical socket", i, got)
 		}
 	}
-	if got := tmuxCommandArgs(restartRunner.calls[2].args); len(got) < 4 || got[0] != "respawn-pane" || got[3] != "%1" {
+	if got := tmuxCommandArgs(restartRunner.calls[2].args); len(got) < 6 || got[0] != "if-shell" ||
+		!strings.Contains(got[5], `"respawn-pane"`) || !strings.Contains(got[5], `"%1"`) {
 		t.Fatalf("restart argv = %#v, want proven immutable pane target %%1", got)
 	}
 	if got := tmuxCommandArgs(restartRunner.calls[3].args); !reflect.DeepEqual(got, hasSessionArgs(tmuxID)) {
@@ -1684,20 +1753,21 @@ func TestResolveRuntimeHandleWithoutOwnerRejectsLegacyDuplicates(t *testing.T) {
 	assertOnlyLegacyProbes(t, fr.calls, "named:ao", "path:"+historicalSocket, "default")
 }
 
-func TestResolveRuntimeHandleReturnsQualifiedHandleUnchangedWithoutProbing(t *testing.T) {
+func TestResolveRuntimeHandleCanonicalizesLegacyQualifiedHandle(t *testing.T) {
 	r := New(Options{Binary: "tmux-test", SocketName: "replacement", Timeout: time.Second})
-	fr := &fakeRunner{err: errors.New("must not probe")}
+	fr := &fakeRunner{paneCommand: "sleep 300"}
 	r.runner = fr
 	handle, err := qualifiedRuntimeHandle("sess-1", socketTarget{kind: socketTargetNamed, value: "ao"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	resolved, found, err := r.ResolveRuntimeHandle(context.Background(), handle, ports.SupervisedProcessRef{})
-	if err != nil || !found || resolved != handle {
-		t.Fatalf("ResolveRuntimeHandle = (%q, %v, %v), want unchanged qualified handle", resolved.ID, found, err)
+	if err != nil || !found || resolved == handle {
+		t.Fatalf("ResolveRuntimeHandle = (%q, %v, %v), want canonical object-fenced handle", resolved.ID, found, err)
 	}
-	if len(fr.calls) != 0 {
-		t.Fatalf("qualified resolution probed runtime: %+v", fr.calls)
+	route, err := decodeRuntimeHandle(resolved)
+	if err != nil || !route.hasObjectFence() {
+		t.Fatalf("resolved route = (%+v, %v), want complete object fence", route, err)
 	}
 }
 

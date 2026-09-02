@@ -6,8 +6,8 @@ import (
 )
 
 const (
-	paneIdentityFormat = "#{session_id}\t#{pane_id}\t#{pane_start_command}"
-	panePIDFormat      = "#{session_id}\t#{pane_id}\t#{pane_pid}"
+	paneIdentityFormat = "#{pid}\t#{session_id}\t#{pane_id}\t#{pane_start_command}"
+	panePIDFormat      = "#{pid}\t#{session_id}\t#{pane_id}\t#{pane_pid}"
 )
 
 // newSessionArgs builds args for `tmux new-session -d -s <id> -x 220 -y 50
@@ -15,7 +15,7 @@ const (
 // inside the configured shell so exported env vars and quoting work correctly.
 func newSessionArgs(id, cwd, shellPath, launchCmd string) []string {
 	return []string{
-		"new-session", "-d",
+		"new-session", "-d", "-P", "-F", paneIdentityFormat,
 		"-s", id,
 		"-x", "220",
 		"-y", "50",

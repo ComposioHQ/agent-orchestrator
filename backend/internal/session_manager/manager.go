@@ -2577,7 +2577,7 @@ func (m *Manager) reconcileActivityFromExactRuntime(
 		}
 		if found && current.ControllerOwner() == rec.ControllerOwner() &&
 			current.Metadata.RuntimeHandleID == handle.ID &&
-			recoverableActivityState(current.Activity.State) &&
+			current.Activity.State.IsRecoverable() &&
 			!current.Activity.LastActivityAt.Before(recovered.LastActivityAt) {
 			// Another current-generation observation won the race. Its equal-or-newer
 			// activity fact is authoritative.
@@ -2620,7 +2620,7 @@ func (m *Manager) recoverRuntimeActivity(
 			if err != nil {
 				return domain.Activity{}, false, errors.Join(ports.ErrRuntimeProbeInconclusive, err)
 			}
-			if state, authoritative := detector.DetectTerminalActivity(output); authoritative && recoverableActivityState(state) {
+			if state, authoritative := detector.DetectTerminalActivity(output); authoritative && state.IsRecoverable() {
 				return domain.Activity{State: state, LastActivityAt: m.clock()}, true, nil
 			}
 		}
@@ -2632,7 +2632,7 @@ func (m *Manager) runtimeActivityFallback(
 	ctx context.Context,
 	rec domain.SessionRecord,
 ) (domain.Activity, bool, error) {
-	if rec.Activity.State != domain.ActivityExited && recoverableActivityState(rec.Activity.State) {
+	if rec.Activity.State != domain.ActivityExited && rec.Activity.State.IsRecoverable() {
 		return rec.Activity, false, nil
 	}
 	activity, err := m.latestDurableRuntimeActivity(ctx, rec.ID)
@@ -2651,7 +2651,7 @@ func (m *Manager) latestDurableRuntimeActivity(
 	if err != nil {
 		return domain.Activity{}, err
 	}
-	if !found || !recoverableActivityState(activity.State) {
+	if !found || !activity.State.IsRecoverable() {
 		return domain.Activity{}, errors.New("no prior non-exited activity fact exists")
 	}
 	return activity, nil
@@ -2669,15 +2669,6 @@ func activityFromTerminalSurface(work ports.TerminalSurfaceWorkState) (domain.Ac
 		return domain.ActivityBlocked, true
 	default:
 		return "", false
-	}
-}
-
-func recoverableActivityState(state domain.ActivityState) bool {
-	switch state {
-	case domain.ActivityActive, domain.ActivityIdle, domain.ActivityWaitingInput, domain.ActivityBlocked:
-		return true
-	default:
-		return false
 	}
 }
 

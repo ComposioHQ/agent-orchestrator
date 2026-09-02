@@ -1321,7 +1321,7 @@ func (m *Manager) ReconcileRuntimeActivity(
 		expected.IsTerminated ||
 		strings.TrimSpace(expectedHandleID) == "" ||
 		strings.TrimSpace(expected.RuntimeLaunchID) == "" ||
-		!recoverableRuntimeActivity(recovered.State) {
+		!recovered.State.IsRecoverable() {
 		return false, errors.New("lifecycle: invalid runtime activity repair")
 	}
 	writer, ok := m.store.(runtimeRecoveryStore)
@@ -1368,15 +1368,6 @@ func (m *Manager) ReconcileRuntimeActivity(
 	m.emitNotification(ctx, intent)
 	m.resolveNotifications(ctx, resolutions...)
 	return true, nil
-}
-
-func recoverableRuntimeActivity(state domain.ActivityState) bool {
-	switch state {
-	case domain.ActivityActive, domain.ActivityIdle, domain.ActivityWaitingInput, domain.ActivityBlocked:
-		return true
-	default:
-		return false
-	}
 }
 
 // CommitControllerEpoch atomically changes which controller owns a live
