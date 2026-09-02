@@ -1,9 +1,8 @@
 import type { QueryClient } from "@tanstack/react-query";
 import { getApiBaseUrl, hasTrustedApiBaseUrl, subscribeApiBaseUrl } from "./api-client";
+import { computeSseRetryDelayMs } from "./sse-backoff";
 
 const INVALIDATE_DEBOUNCE_MS = 150;
-const SSE_RETRY_MS = 5_000;
-const SSE_RETRY_JITTER_MS = 1_000;
 const EVENTSOURCE_CLOSED = 2;
 
 export type WorkspaceFileConnectionState = "connecting" | "connected" | "degraded";
@@ -87,7 +86,10 @@ function createWorkspaceStream(sessionId: string, queryClient: QueryClient): Wor
 	const scheduleRetry = (generation: number) => {
 		if (stream.disposed || stream.retry) return;
 		stream.phase = "waiting";
-		const delay = SSE_RETRY_MS + (Math.random() * 2 - 1) * SSE_RETRY_JITTER_MS;
+		// stream.failures counts consecutive failures since the last successful
+		// open (reset in onopen), so the delay grows only while the stream is
+		// actually broken.
+		const delay = computeSseRetryDelayMs(stream.failures);
 		stream.retry = setTimeout(() => {
 			stream.retry = undefined;
 			if (stream.disposed || generation !== stream.generation) return;

@@ -2,6 +2,7 @@ import type { InfiniteData, QueryClient } from "@tanstack/react-query";
 import type { components } from "../../api/schema";
 import { aoBridge } from "./bridge";
 import { apiClient, apiErrorMessage, getApiBaseUrl, subscribeApiBaseUrl } from "./api-client";
+import { computeSseRetryDelayMs } from "./sse-backoff";
 
 export type NotificationDTO = components["schemas"]["NotificationResponse"];
 export type NotificationsPage = components["schemas"]["ListNotificationsResponse"];
@@ -12,7 +13,6 @@ export const unreadNotificationsQueryKey = ["notifications", "history", "unread"
 export const recentNotificationsQueryKey = ["notifications", "history", "all"] as const;
 export const NOTIFICATION_PAGE_SIZE = 100;
 
-const SSE_RETRY_MS = 5_000;
 const EVENTSOURCE_CLOSED = 2;
 
 /**
@@ -296,12 +296,17 @@ export function createNotificationsTransport(
 				void queryClient.invalidateQueries({ queryKey: recentNotificationsQueryKey });
 			};
 
+			// Consecutive rebuilds since the stream last opened; paces the retry
+			// instead of knocking on a flat cadence forever (#4323).
+			let failures = 0;
+
 			const scheduleRetry = () => {
 				if (retryTimer) return;
+				failures += 1;
 				retryTimer = setTimeout(() => {
 					retryTimer = undefined;
 					connectSource();
-				}, SSE_RETRY_MS);
+				}, computeSseRetryDelayMs(failures));
 			};
 
 			const connectSource = () => {
@@ -313,7 +318,10 @@ export function createNotificationsTransport(
 				sourceBaseUrl = baseUrl;
 				try {
 					source = new EventSource(`${baseUrl.replace(/\/+$/, "")}/api/v1/notifications/stream`);
-					source.onopen = invalidateNotifications;
+					source.onopen = () => {
+						failures = 0;
+						invalidateNotifications();
+					};
 					source.onerror = () => {
 						if (source?.readyState === EVENTSOURCE_CLOSED) scheduleRetry();
 					};
