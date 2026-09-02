@@ -1054,6 +1054,43 @@ func TestManager_AddValidationAndConflicts(t *testing.T) {
 	wantCode(t, err, "ID_ALREADY_REGISTERED")
 }
 
+func TestManager_AddAllocatesUniqueIDForCollidingDerivedIDs(t *testing.T) {
+	ctx := context.Background()
+	m := newManager(t)
+	configureCommitter(t)
+
+	root := t.TempDir()
+	repoA := filepath.Join(root, "one", "app")
+	repoB := filepath.Join(root, "two", "app")
+	for _, repo := range []string{repoA, repoB} {
+		if err := os.MkdirAll(repo, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if out, err := exec.Command("git", "init", "-b", "main", repo).CombinedOutput(); err != nil {
+			t.Fatalf("git init: %v (%s)", err, out)
+		}
+		commitEmpty(t, repo)
+	}
+
+	first, err := m.Add(ctx, project.AddInput{Path: repoA})
+	if err != nil {
+		t.Fatalf("add first project: %v", err)
+	}
+	second, err := m.Add(ctx, project.AddInput{Path: repoB})
+	if err != nil {
+		t.Fatalf("add second project with colliding derived id: %v", err)
+	}
+	if first.ID != "app" {
+		t.Fatalf("first project id = %q, want app", first.ID)
+	}
+	if second.ID != "app1" {
+		t.Fatalf("second project id = %q, want app1", second.ID)
+	}
+	if second.Name != "app" {
+		t.Fatalf("second project display name = %q, want app", second.Name)
+	}
+}
+
 // gitRepoWithOrigin creates a real git repo with an `origin` remote pointing
 // at `originURL`. Used to assert project.Add captures the origin at add time.
 func gitRepoWithOrigin(t *testing.T, originURL string) string {
