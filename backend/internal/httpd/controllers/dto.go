@@ -1292,6 +1292,137 @@ type CodexAccountSwitchSessionResponse struct {
 	RestartedAt   *time.Time `json:"restartedAt,omitempty"`
 }
 
+type ClaudeCodeAccountIDParam struct {
+	AccountID string `path:"accountId" description:"Stable Claude Code account UUID."`
+}
+
+type ClaudeCodeAccountLoginIDParam struct {
+	OperationID string `path:"operationId" description:"Claude Code login operation identifier."`
+}
+
+type ClaudeCodeAccountSwitchIDParam struct {
+	SwitchID string `path:"switchId" description:"Durable Claude Code account switch identifier."`
+}
+
+type ClaudeCodeAccountsResponse struct {
+	ActiveAccountID        string                                    `json:"activeAccountId,omitempty"`
+	AccountRevision        int64                                     `json:"accountRevision"`
+	Accounts               []ClaudeCodeAccountResponse               `json:"accounts"`
+	Capabilities           ClaudeCodeAccountCapabilitiesResponse     `json:"capabilities"`
+	UnmanagedGlobalAccount *ClaudeCodeUnmanagedGlobalAccountResponse `json:"unmanagedGlobalAccount,omitempty"`
+	ActiveLogin            *ClaudeCodeActiveLoginResponse            `json:"activeLogin,omitempty"`
+	CurrentSwitch          *ClaudeCodeAccountSwitchResponse          `json:"currentSwitch,omitempty"`
+}
+
+type ClaudeCodeAccountResponse struct {
+	ID             string                            `json:"id"`
+	Label          string                            `json:"label"`
+	Status         string                            `json:"status" enum:"valid,signed_out,broken"`
+	ReasonCode     string                            `json:"reasonCode"`
+	Reason         string                            `json:"reason"`
+	Active         bool                              `json:"active"`
+	Authentication ClaudeCodeAuthenticationResponse  `json:"authentication"`
+	Identity       ClaudeCodeAccountIdentityResponse `json:"identity"`
+	AccountEmail   *string                           `json:"accountEmail,omitempty"`
+	CreatedAt      time.Time                         `json:"createdAt"`
+	UpdatedAt      time.Time                         `json:"updatedAt"`
+}
+
+type ClaudeCodeAccountIdentityResponse struct {
+	AccountUUID           string  `json:"accountUuid"`
+	EmailAddress          string  `json:"emailAddress,omitempty"`
+	DisplayName           string  `json:"displayName,omitempty"`
+	OrganizationUUID      string  `json:"organizationUuid,omitempty"`
+	OrganizationName      string  `json:"organizationName,omitempty"`
+	BillingType           string  `json:"billingType,omitempty"`
+	SeatTier              string  `json:"seatTier,omitempty"`
+	AccountCreatedAt      *string `json:"accountCreatedAt,omitempty"`
+	SubscriptionCreatedAt *string `json:"subscriptionCreatedAt,omitempty"`
+}
+
+type ClaudeCodeAuthenticationResponse struct {
+	State       string     `json:"state" enum:"authorized,unauthorized,unknown,not_applicable"`
+	Freshness   string     `json:"freshness" enum:"fresh,stale,checking"`
+	CheckedAt   *time.Time `json:"checkedAt"`
+	AttemptedAt *time.Time `json:"attemptedAt"`
+	ReasonCode  string     `json:"reasonCode"`
+	Reason      string     `json:"reason"`
+}
+
+type ClaudeCodeCapabilityObservationResponse struct {
+	State      string `json:"state" enum:"supported,unsupported,unknown"`
+	ReasonCode string `json:"reasonCode"`
+	Reason     string `json:"reason"`
+}
+
+type ClaudeCodeAccountCapabilitiesResponse struct {
+	AccountRead       ClaudeCodeCapabilityObservationResponse `json:"accountRead"`
+	NativeLogin       ClaudeCodeCapabilityObservationResponse `json:"nativeLogin"`
+	AccountManagement ClaudeCodeCapabilityObservationResponse `json:"accountManagement"`
+	GlobalSwitch      ClaudeCodeCapabilityObservationResponse `json:"globalSwitch"`
+	HotReload         ClaudeCodeCapabilityObservationResponse `json:"hotReload"`
+	SessionExitResume ClaudeCodeCapabilityObservationResponse `json:"sessionExitResume"`
+}
+
+type ClaudeCodeUnmanagedGlobalAccountResponse struct {
+	Label        string  `json:"label"`
+	AccountEmail *string `json:"accountEmail,omitempty"`
+	ReasonCode   string  `json:"reasonCode"`
+	Reason       string  `json:"reason"`
+}
+
+type ClaudeCodeAccountLoginResponse struct {
+	OperationID string                     `json:"operationId"`
+	AccountID   string                     `json:"accountId,omitempty"`
+	Status      string                     `json:"status" enum:"pending,verifying,unauthorized,unverified,completed,cancelled,failed,expired"`
+	ReasonCode  string                     `json:"reasonCode"`
+	Reason      string                     `json:"reason"`
+	Account     *ClaudeCodeAccountResponse `json:"account,omitempty"`
+	ExpiresAt   time.Time                  `json:"expiresAt"`
+}
+
+type ClaudeCodeActiveLoginResponse struct {
+	OperationID   string                                 `json:"operationId"`
+	AccountID     string                                 `json:"accountId,omitempty"`
+	Status        string                                 `json:"status" enum:"pending,verifying,unauthorized,unverified,completed,cancelled,failed,expired"`
+	ReasonCode    string                                 `json:"reasonCode"`
+	Reason        string                                 `json:"reason"`
+	ExpiresAt     time.Time                              `json:"expiresAt"`
+	ShellTerminal ClaudeCodeAccountLoginTerminalResponse `json:"shellTerminal"`
+}
+
+type ClaudeCodeAccountLoginTerminalResponse struct {
+	HandleID  string    `json:"handleId"`
+	Title     string    `json:"title"`
+	CreatedAt time.Time `json:"createdAt"`
+}
+
+type OpenClaudeCodeAccountLoginTerminalResponse struct {
+	Operation     ClaudeCodeAccountLoginResponse         `json:"operation"`
+	ShellTerminal ClaudeCodeAccountLoginTerminalResponse `json:"shellTerminal"`
+}
+
+type StartClaudeCodeAccountSwitchRequest struct {
+	TargetAccountID         string `json:"targetAccountId" minLength:"1"`
+	ExpectedAccountRevision int64  `json:"expectedAccountRevision" minimum:"1"`
+	IdempotencyKey          string `json:"idempotencyKey" minLength:"1" maxLength:"200"`
+}
+
+type ClaudeCodeAccountSwitchResponse struct {
+	ID                        string     `json:"id"`
+	SourceAccountID           string     `json:"sourceAccountId"`
+	TargetAccountID           string     `json:"targetAccountId"`
+	SwitchPolicy              string     `json:"switchPolicy" enum:"hot_reload"`
+	Phase                     string     `json:"phase" enum:"requested,verifying_target,checkpointing_source,activating_target,updating_identity,verifying_global,rollback_required,recovery_required,completed,failed"`
+	FailureCode               string     `json:"failureCode,omitempty"`
+	CanRecover                bool       `json:"canRecover"`
+	CredentialsCommittedAt    *time.Time `json:"credentialsCommittedAt,omitempty"`
+	PropagationUncertainUntil *time.Time `json:"propagationUncertainUntil,omitempty"`
+	CreatedAt                 time.Time  `json:"createdAt"`
+	UpdatedAt                 time.Time  `json:"updatedAt"`
+	CompletedAt               *time.Time `json:"completedAt,omitempty"`
+}
+
 // AgentReadinessSnapshot is one normalized harness readiness view.
 type AgentReadinessSnapshot = domain.AgentReadinessSnapshot
 

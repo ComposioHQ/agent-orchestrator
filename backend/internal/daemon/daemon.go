@@ -776,6 +776,7 @@ func Run() error {
 		Endpoints:          bs,
 		Agents:             agentSvc,
 		CodexAccounts:      agentSvc,
+		ClaudeCodeAccounts: agentSvc,
 		SystemChecks:       systemChecks,
 		Installer:          systemInstall,
 		Sessions:           sessionSvc,
