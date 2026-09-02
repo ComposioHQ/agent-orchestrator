@@ -131,6 +131,9 @@ func migrate(db *sql.DB) error {
 	if err := goose.SetDialect("sqlite3"); err != nil {
 		return fmt.Errorf("set goose dialect: %w", err)
 	}
+	if err := repairRenumberedAgentInstallJobsMigrationHistory(db); err != nil {
+		return fmt.Errorf("repair renumbered agent-install-jobs migration history: %w", err)
+	}
 	if err := repairRenumberedChatMigrationHistory(db); err != nil {
 		return fmt.Errorf("repair renumbered chat migration history: %w", err)
 	}
@@ -181,6 +184,61 @@ func migrate(db *sql.DB) error {
 		return fmt.Errorf("run migrations: %w", err)
 	}
 	return reconcileSchema(db)
+}
+
+// repairRenumberedAgentInstallJobsMigrationHistory preserves development
+// databases opened while the harness-installer branch owned versions 0119 or
+// 0120. Main later assigned those versions to idempotent data repairs, so move
+// the exact installer-table shape to its canonical 0123 ledger entry and let
+// Goose replay the real 0119 and 0120 migrations.
+func repairRenumberedAgentInstallJobsMigrationHistory(db *sql.DB) error {
+	var gooseTable int
+	if err := db.QueryRow(
+		`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'goose_db_version'`,
+	).Scan(&gooseTable); err != nil {
+		return err
+	}
+	if gooseTable == 0 {
+		return nil
+	}
+
+	var installJobShape int
+	if err := db.QueryRow(`
+SELECT COUNT(*) FROM pragma_table_info('agent_install_jobs')
+WHERE name IN (
+    'target', 'status', 'method', 'command', 'expected_destination',
+    'output', 'error', 'started_at', 'finished_at', 'updated_at'
+)`).Scan(&installJobShape); err != nil {
+		return err
+	}
+	if installJobShape != 10 {
+		return nil
+	}
+
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var canonicalApplied int
+	if err := tx.QueryRow(`
+SELECT COALESCE((
+    SELECT is_applied FROM goose_db_version
+    WHERE version_id = 123 ORDER BY id DESC LIMIT 1
+), 0)`).Scan(&canonicalApplied); err != nil {
+		return err
+	}
+	if canonicalApplied != 0 {
+		return tx.Commit()
+	}
+	if _, err := tx.Exec(`INSERT INTO goose_db_version (version_id, is_applied) VALUES (123, 1)`); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM goose_db_version WHERE version_id IN (119, 120)`); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // prepareCancelledConversationTurnsMigration repairs the staging table left

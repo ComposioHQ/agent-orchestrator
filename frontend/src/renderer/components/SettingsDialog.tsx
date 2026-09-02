@@ -53,6 +53,7 @@ export function SettingsDialog() {
 
 	const globalSections: Array<{ id: GlobalSettingsSection; label: string; icon: typeof Settings2 }> = [
 		{ id: "general", label: t("settings.general"), icon: Settings2 },
+		{ id: "harness", label: t("settings.harness"), icon: Bot },
 		{ id: "browserProfiles", label: t("settings.browserProfiles"), icon: Globe2 },
 		// Only deployments with the cloud offering get the Cloud page.
 		...(cloudEnabled ? [{ id: "cloud" as const, label: t("settings.cloud"), icon: Cloud }] : []),

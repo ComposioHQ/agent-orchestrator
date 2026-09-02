@@ -382,6 +382,11 @@ func (m *Manager) admitAgentSwitch(ctx context.Context, id domain.SessionID, cfg
 }
 
 func (m *Manager) executeAgentSwitch(ctx context.Context, admitted *admittedAgentSwitch) (result domain.AgentSwitch, retErr error) {
+	releaseHarness, err := m.beginHarnessUse(admitted.config.TargetHarness)
+	if err != nil {
+		return admitted.record, fmt.Errorf("switch agent %s: %w", admitted.session.ID, err)
+	}
+	defer releaseHarness()
 	if domain.NormalizeSessionMode(admitted.session.Mode) == domain.SessionModeChat {
 		return m.executeChatAgentSwitch(ctx, admitted)
 	}
@@ -479,7 +484,7 @@ func (m *Manager) executeAgentSwitch(ctx context.Context, admitted *admittedAgen
 	// Resolve credentials, native-resume evidence, and launch commands before
 	// asking the source to spend a model turn. This preflight does not install
 	// target workspace files or reserve a target generation in durable storage.
-	target, err := m.prepareTargetActivation(ctx, store, rec, project, targetAgent, targetCapabilities, result, cfg.Model)
+	target, err = m.prepareTargetActivation(ctx, store, rec, project, targetAgent, targetCapabilities, result, cfg.Model)
 	if err != nil {
 		return result, fmt.Errorf("switch agent %s: target preflight: %w", id, err)
 	}

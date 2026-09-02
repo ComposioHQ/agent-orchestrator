@@ -12,6 +12,19 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
 
+type AgentInstallJob struct {
+	Target              string
+	Status              string
+	Method              string
+	Command             string
+	ExpectedDestination string
+	Output              string
+	Error               string
+	StartedAt           time.Time
+	FinishedAt          sql.NullTime
+	UpdatedAt           time.Time
+}
+
 type AgentModelCatalog struct {
 	AgentID       string
 	ProjectID     string

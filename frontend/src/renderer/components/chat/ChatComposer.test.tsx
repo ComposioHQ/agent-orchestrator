@@ -217,7 +217,7 @@ describe("send keys", () => {
 		fireEvent.keyDown(field, { key: "Enter" });
 		fireEvent.keyDown(field, { key: "Enter" });
 
-		expect(onSend).toHaveBeenCalledTimes(1);
+		await waitFor(() => expect(onSend).toHaveBeenCalledTimes(1));
 		provider.resolve();
 		await act(async () => {
 			await provider.promise;
