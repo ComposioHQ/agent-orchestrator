@@ -40,6 +40,7 @@ type Service interface {
 	PrepareGit(ctx context.Context, in GitPreparationInput) (GitPreparationResult, error)
 }
 
+// Import kinds, next steps, Git preparation actions, and event states shared by the import API.
 const (
 	ImportKindProject   = "project"
 	ImportKindWorkspace = "workspace"
@@ -165,9 +166,9 @@ func (m *Manager) Validate(ctx context.Context, in ImportValidationInput) (Impor
 	if importKind != ImportKindProject && importKind != ImportKindWorkspace {
 		return ImportValidationResult{}, apierr.Invalid("UNSUPPORTED_IMPORT_KIND", "Only project and workspace imports are supported.", map[string]any{"importKind": in.ImportKind})
 	}
-	path, err := normalizeImportPath(in.Path)
-	if err != nil {
-		return invalidImportResult(importKind, strings.TrimSpace(in.Path), "INVALID_PATH"), nil
+	path, normalizeErr := normalizeImportPath(in.Path)
+	if normalizeErr != nil {
+		return invalidImportResult(importKind, strings.TrimSpace(in.Path), "INVALID_PATH"), nil //nolint:nilerr // validation failures are reported in-band so the UI can show blocking errors
 	}
 	result := ImportValidationResult{
 		ImportKind:     importKind,
@@ -176,9 +177,9 @@ func (m *Manager) Validate(ctx context.Context, in ImportValidationInput) (Impor
 		Root:           RepoGitStatus{RepoPath: path, BlockingErrors: []string{}, RequiredActions: []string{}},
 		NextStep:       ImportNextStepContinue,
 	}
-	info, err := os.Stat(path)
-	if err != nil {
-		return invalidImportResult(importKind, path, "INVALID_PATH"), nil
+	info, statErr := os.Stat(path)
+	if statErr != nil {
+		return invalidImportResult(importKind, path, "INVALID_PATH"), nil //nolint:nilerr // validation failures are reported in-band so the UI can show blocking errors
 	}
 	if !info.IsDir() {
 		return invalidImportResult(importKind, path, "PATH_NOT_DIRECTORY"), nil
@@ -197,9 +198,9 @@ func (m *Manager) Validate(ctx context.Context, in ImportValidationInput) (Impor
 	root := inspectImportRepo(ctx, path)
 	result.Root = root
 	if importKind == ImportKindWorkspace {
-		children, err := directChildImportStatuses(ctx, path)
-		if err != nil {
-			return invalidImportResult(importKind, path, "CHILD_REPO_SCAN_FAILED"), nil
+		children, scanErr := directChildImportStatuses(ctx, path)
+		if scanErr != nil {
+			return invalidImportResult(importKind, path, "CHILD_REPO_SCAN_FAILED"), nil //nolint:nilerr // validation failures are reported in-band so the UI can show blocking errors
 		}
 		result.ChildRepos = children
 		for _, child := range children {
@@ -215,9 +216,9 @@ func (m *Manager) Validate(ctx context.Context, in ImportValidationInput) (Impor
 		return result, nil
 	}
 	if !root.IsRepo {
-		children, err := directChildImportRepos(ctx, path)
-		if err != nil {
-			return invalidImportResult(importKind, path, "CHILD_REPO_SCAN_FAILED"), nil
+		children, scanErr := directChildImportRepos(ctx, path)
+		if scanErr != nil {
+			return invalidImportResult(importKind, path, "CHILD_REPO_SCAN_FAILED"), nil //nolint:nilerr // validation failures are reported in-band so the UI can show blocking errors
 		}
 		if len(children) > 0 {
 			result.ChildRepos = children
@@ -264,12 +265,14 @@ func (m *Manager) PrepareGit(ctx context.Context, in GitPreparationInput) (GitPr
 			if !required[action] {
 				continue
 			}
-			events = append(events, GitPreparationEvent{RepoPath: target.Status.RepoPath, Action: action, State: GitPreparationEventPending})
-			events = append(events, GitPreparationEvent{RepoPath: target.Status.RepoPath, Action: action, State: GitPreparationEventRunning})
-			if err := runGitPreparationAction(ctx, target.Status.RepoPath, action, target.Input); err != nil {
-				events = append(events, GitPreparationEvent{RepoPath: target.Status.RepoPath, Action: action, State: GitPreparationEventError, Error: err.Error()})
+			events = append(events,
+				GitPreparationEvent{RepoPath: target.Status.RepoPath, Action: action, State: GitPreparationEventPending},
+				GitPreparationEvent{RepoPath: target.Status.RepoPath, Action: action, State: GitPreparationEventRunning},
+			)
+			if actionErr := runGitPreparationAction(ctx, target.Status.RepoPath, action, target.Input); actionErr != nil {
+				events = append(events, GitPreparationEvent{RepoPath: target.Status.RepoPath, Action: action, State: GitPreparationEventError, Error: actionErr.Error()})
 				latest, _ := m.Validate(ctx, ImportValidationInput{ImportKind: importKind, Path: validation.Root.RepoPath})
-				return GitPreparationResult{Events: events, Validation: latest}, nil
+				return GitPreparationResult{Events: events, Validation: latest}, nil //nolint:nilerr // action failures are reported in-band as progress events for partial recovery
 			}
 			events = append(events, GitPreparationEvent{RepoPath: target.Status.RepoPath, Action: action, State: GitPreparationEventSuccess})
 		}

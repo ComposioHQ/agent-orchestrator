@@ -191,6 +191,15 @@ export function CreateProjectFlow({
 					setWorkspacePrepOpen(true);
 					return;
 				}
+				try {
+					const warning = await aoBridge.app.checkAncestorRepo(path);
+					if (warning) {
+						setRepositorySetupWarning(warning);
+						setRepositorySetup("NOT_A_GIT_REPO");
+					}
+				} catch {
+					// Ancestor check failed — proceed without warning
+				}
 			}
 			if (path) {
 				setModePickerOpen(false);

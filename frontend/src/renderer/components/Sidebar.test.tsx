@@ -46,6 +46,7 @@ const {
 	historyBackMock,
 	historyForwardMock,
 	navigateMock,
+	postMock,
 	mockParams,
 	renameSessionMock,
 	spawnMock,
@@ -65,6 +66,7 @@ const {
 		dragOvers: new Map<string, (event: DragOverTestEvent) => void>(),
 		dragStarts: new Map<string, (event: { active: { id: string } }) => void>(),
 		getMock: vi.fn(),
+		postMock: vi.fn(),
 		navigateMock: vi.fn(),
 		mockParams: { projectId: undefined as string | undefined, sessionId: undefined as string | undefined },
 		renameSessionMock: vi.fn().mockResolvedValue(undefined),
@@ -154,7 +156,7 @@ vi.mock("../lib/bridge", async (importOriginal) => {
 });
 
 vi.mock("../lib/api-client", () => ({
-	apiClient: { GET: getMock },
+	apiClient: { GET: getMock, POST: postMock },
 	apiErrorMessage: (error: unknown) => {
 		if (error instanceof Error) return error.message;
 		if (typeof error === "object" && error !== null && "message" in error && typeof error.message === "string") {
@@ -309,6 +311,26 @@ function codedError(message: string, code: "NOT_A_GIT_REPO" | "PROJECT_UNBORN") 
 	return error;
 }
 
+function readyWorkspaceImportValidation(path: string) {
+	return {
+		importKind: "workspace",
+		isValid: true,
+		blockingErrors: [],
+		root: {
+			repoPath: path,
+			isRepo: false,
+			hasCommit: false,
+			hasOrigin: false,
+			isEmptyFolder: false,
+			needsGitInit: true,
+			requiredActions: [],
+			blockingErrors: [],
+		},
+		childRepos: [],
+		nextStep: "continue",
+	};
+}
+
 async function openCreateProjectDialog(
 	path = "/repo/new-project",
 	scan: {
@@ -379,6 +401,14 @@ beforeEach(() => {
 			],
 		},
 		error: undefined,
+	});
+	postMock.mockReset();
+	postMock.mockImplementation((path: string, options: { body?: { path?: string } } = {}) => {
+		if (path === "/api/v1/imports/validate") {
+			const selectedPath = options.body?.path ?? "/repo/workspace";
+			return Promise.resolve({ data: readyWorkspaceImportValidation(selectedPath), error: undefined });
+		}
+		return Promise.resolve({ data: undefined, error: undefined });
 	});
 	navigateMock.mockReset();
 	renameSessionMock.mockReset().mockResolvedValue(undefined);
