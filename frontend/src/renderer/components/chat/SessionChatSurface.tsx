@@ -8,7 +8,7 @@
  */
 
 import { AlertTriangle, CheckCircle2, Loader2, X } from "lucide-react";
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import {
 	findActiveAgentSwitch,
@@ -39,7 +39,6 @@ import type { ConversationSnapshot } from "../../types/conversation";
 import type { TerminalTarget } from "../../types/terminal";
 import type { AgentSwitchSummary, WorkspaceSession } from "../../types/workspace";
 import { AgentSwitchProgressTrack } from "../AgentSwitchProgressTrack";
-import { TerminalSwitchAgentButton } from "../TerminalSwitchAgentButton";
 import { ChatWorkspace } from "./ChatWorkspace";
 
 export interface ConversationWorkState {
@@ -67,8 +66,14 @@ export function SessionChatSurface({
 	onOpenFiles,
 	onOpenFile,
 	headerActions,
+	sessionTabAction,
+	tabStripAction,
+	handoffDialogOpen = false,
 	workspaceTabs,
-	workspaceFileActive,
+	workspaceTabActions,
+	workspaceActiveTabKey,
+	auxiliaryTabOrder,
+	onAuxiliaryTabOrderChange,
 	controllerTransitioning,
 	newWorkDisabled,
 	onConversationWorkChange,
@@ -95,8 +100,15 @@ export function SessionChatSurface({
 	/** Opens the Files inspector focused on one changed path. */
 	onOpenFile?: (path: string) => void;
 	headerActions?: ReactNode;
-	workspaceTabs?: ReactNode;
-	workspaceFileActive?: boolean;
+	sessionTabAction?: ReactNode;
+	tabStripAction?: ReactNode;
+	handoffDialogOpen?: boolean;
+	workspaceTabs?: Array<{ key: string; content: ReactNode; onSelect: () => void }>;
+	workspaceTabActions?: ReactNode;
+	workspaceActiveTabKey?: string;
+	/** Session-owned order shared with the terminal UI surface. */
+	auxiliaryTabOrder?: string[];
+	onAuxiliaryTabOrderChange?: (keys: string[]) => void;
 	/** The target controller is being installed by an interface handoff. */
 	controllerTransitioning?: boolean;
 	/** An interface handoff fences new agent work while current-turn decisions remain available. */
@@ -149,7 +161,7 @@ export function SessionChatSurface({
 		(option) => option.category === "mode" || option.id === "mode",
 	);
 	const hasProviderModel = providerOptions.some(
-		(option) => option.category === "model" || option.id === "model" || option.id === "agent",
+		(option) => option.category === "model" || option.id === "model",
 	);
 	// Only asked for once the conversation is actually readable: the catalog comes
 	// from the live controller, so there is nothing to fetch before then.
@@ -161,15 +173,7 @@ export function SessionChatSurface({
 	const { paths, truncated } = useWorkspaceFilePaths(session.id, Boolean(snapshot));
 	const stageAttachments = useStageAttachments(session.id);
 	const openLinkInBrowser = useSessionBrowserLink(session);
-	// In-place agent switching is the same session-level operation in either
-	// interface; the chat header offers the same entry point the terminal pane's
-	// tab strip does. Mirrors CenterPane: dialog open flag plus the element the
-	// dialog anchors to (the workspace body, handed up by ChatWorkspace).
-	const [switchSelectorOpen, setSwitchSelectorOpen] = useState(false);
-	const [switchSelectorContainer, setSwitchSelectorContainer] = useState<HTMLDivElement | null>(null);
-	useEffect(() => {
-		if (newWorkDisabled) setSwitchSelectorOpen(false);
-	}, [newWorkDisabled]);
+	// Agent-switch presentation for the chat surface progress track and input locks.
 	const switchMutation = useSwitchAgentState(session.id);
 	const agentSwitches = useAgentSwitches(session.id).data ?? [];
 	const activeHistorySwitch = findActiveAgentSwitch(agentSwitches);
@@ -241,8 +245,6 @@ export function SessionChatSurface({
 					? transientSuccessNotice?.presentation
 					: undefined
 				: switchPresentation ?? transientSuccessNotice?.presentation;
-	const switchControlPresentation =
-		switchPresentation ?? transientSuccessNotice?.presentation;
 	const switchLocksChat = Boolean(
 		switchPresentation?.lockAgentTerminal && !switchPresentation.allowSourceInput,
 	);
@@ -297,7 +299,7 @@ export function SessionChatSurface({
 			<ChatWorkspace
 				key={session.id}
 				snapshot={renderSnapshot}
-				agentInputDisabled={switchLocksChat || switchSelectorOpen}
+				agentInputDisabled={switchLocksChat || handoffDialogOpen}
 				newWorkDisabled={newWorkDisabled}
 				onLinkOpen={openLinkInBrowser}
 				sessionTitle={session.title}
@@ -312,24 +314,16 @@ export function SessionChatSurface({
 				onSelectShellTerminal={onSelectShellTerminal}
 				onCloseShellTerminal={onCloseShellTerminal}
 				onRenameShellTerminal={onRenameShellTerminal}
-				switchAgentControl={
-					<TerminalSwitchAgentButton
-						agentSwitch={selectedDurableAgentSwitch}
-						container={switchSelectorContainer}
-						disabled={newWorkDisabled}
-						onOpenChange={setSwitchSelectorOpen}
-						open={switchSelectorOpen && !newWorkDisabled}
-						presentation={switchControlPresentation}
-						session={session}
-						switchError={switchMutation.error}
-					/>
-				}
-				switchDialogContainer={setSwitchSelectorContainer}
 				daemonReady={daemonReady}
 				theme={theme}
 				headerActions={headerActions}
+				sessionTabAction={sessionTabAction}
+				tabStripAction={tabStripAction}
 				workspaceTabs={workspaceTabs}
-				workspaceFileActive={workspaceFileActive}
+				workspaceTabActions={workspaceTabActions}
+				workspaceActiveTabKey={workspaceActiveTabKey}
+				auxiliaryTabOrder={auxiliaryTabOrder}
+				onAuxiliaryTabOrderChange={onAuxiliaryTabOrderChange}
 				controllerTransitioning={controllerTransitioning}
 				hasOlder={hasOlder}
 				loadingOlder={isLoadingOlder}
@@ -379,8 +373,20 @@ export function SessionChatSurface({
 				// covers the window before the controller reports, and it is the last word
 				// afterwards, since the capability is a property of the driver.
 				onSteer={can(renderSnapshot, "steer") && !commands.steerUnsupported ? commands.steer : undefined}
+				sendPending={commands.sendPending}
 				steerPending={commands.steerPending}
 				steerRefusal={commands.steerRefusal}
+				onPromoteQueuedTurn={
+					can(renderSnapshot, "steer") && !commands.steerUnsupported
+						? commands.promoteQueuedTurn
+						: undefined
+				}
+				onEditQueuedTurn={commands.editQueuedTurn}
+				onCancelQueuedTurn={commands.cancelQueuedTurn}
+				onReorderQueuedTurns={commands.reorderQueuedTurns}
+				promoteQueuedTurnPendingTurnId={commands.promoteQueuedTurnPendingTurnId}
+				cancelQueuedTurnPendingTurnId={commands.cancelQueuedTurnPendingTurnId}
+				editQueuedTurnPendingTurnId={commands.editQueuedTurnPendingTurnId}
 				onReloadMcpServers={
 					!can(renderSnapshot, "mcp_reload") || commands.mcpReloadUnsupported
 						? undefined

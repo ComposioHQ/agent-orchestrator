@@ -15,6 +15,8 @@ import (
 	sessionsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/session"
 	"github.com/aoagents/agent-orchestrator/backend/internal/service/systemcheck"
 	"github.com/aoagents/agent-orchestrator/backend/internal/service/systeminstall"
+
+	"github.com/aoagents/agent-orchestrator/backend/internal/mobilebridge"
 )
 
 // HTTP response envelopes for the projects surface — the SINGLE definition of
@@ -444,7 +446,8 @@ type RenameSessionRequest struct {
 // SetSessionReviewerRequest sets the durable reviewer preference for a session.
 // Empty clears the preference and falls back to project configuration.
 type SetSessionReviewerRequest struct {
-	Harness domain.ReviewerHarness `json:"harness,omitempty" enum:"claude-code,codex,copilot,cursor,kilocode,opencode,kiro,pi,qwen,agy,continue,goose,vibe,devin,droid,kimi,kimchi,muse,amp,aider,grok,crush,auggie,cline,autohand"`
+	Harness     domain.ReviewerHarness `json:"harness,omitempty" enum:"claude-code,codex,copilot,cursor,kilocode,opencode,kiro,pi,qwen,agy,continue,goose,vibe,devin,droid,kimi,kimchi,muse,amp,aider,grok,crush,auggie,cline,autohand"`
+	AgentConfig domain.AgentConfig     `json:"agentConfig,omitempty"`
 }
 
 // SetSessionAutoReviewRequest configures daemon-side review automation.
@@ -1040,6 +1043,25 @@ type RefreshAgentsResponse = agentsvc.Inventory
 // ProbeAgentResponse is the body of POST /api/v1/agents/{agent}/probe.
 type ProbeAgentResponse = agentsvc.ProbeResult
 
+// AgentReadinessResponse is the normalized cached or ensured harness view.
+type AgentReadinessResponse = agentsvc.Readiness
+
+// EnsureAgentReadinessRequest selects harnesses and the daemon freshness policy.
+// An omitted or empty agentIds list selects all supported harnesses.
+type EnsureAgentReadinessRequest struct {
+	AgentIDs []string                     `json:"agentIds,omitempty"`
+	Purpose  domain.AgentReadinessPurpose `json:"purpose" enum:"display,launch"`
+}
+
+// AgentReadinessSnapshot is one normalized harness readiness view.
+type AgentReadinessSnapshot = domain.AgentReadinessSnapshot
+
+// AgentInstallationObservation is the normalized binary-presence observation.
+type AgentInstallationObservation = domain.AgentInstallationObservation
+
+// AgentAuthenticationObservation is the normalized authentication observation.
+type AgentAuthenticationObservation = domain.AgentAuthenticationObservation
+
 // AgentModelsQuery scopes a model catalog to a project where providers may be
 // configured per workspace.
 type AgentModelsQuery struct {
@@ -1139,7 +1161,7 @@ type SystemRequirementsResponse = systemcheck.Report
 
 // InstallTargetParam is the {target} path parameter for /system/install routes.
 type InstallTargetParam struct {
-	Target string `path:"target" description:"Install target identifier: tmux, gh, claude, codex, opencode, or copilot."`
+	Target string `path:"target" description:"Install target identifier: tmux, gh, claude, codex, opencode, copilot, or cloudflared."`
 }
 
 // StartInstallResponse is the body of POST /api/v1/system/install/{target} (202).
@@ -1219,6 +1241,7 @@ type ShellTerminalHandleIDParam struct {
 type OpenShellTerminalRequest struct {
 	ProjectID string `json:"projectId,omitempty" description:"Project whose root the shell starts in. Omitted opens the shell in the daemon data dir."`
 	SessionID string `json:"sessionId,omitempty" description:"Agent session the shell is scoped to, so it appears only in that session's tab strip. Omitted makes it a standalone shell."`
+	Shell     string `json:"shell,omitempty" description:"Windows shell selector: auto, git-bash, pwsh, powershell, cmd, or a custom executable path. Ignored on macOS and Linux."`
 }
 
 // UpdateShellTerminalRequest is the body of PATCH /api/v1/shell-terminals/{handleId}.
@@ -1313,12 +1336,38 @@ type ResolveCommentsResponse struct {
 	Resolved int  `json:"resolved"`
 }
 
+// EndpointsResponse is the body of GET /api/v1/endpoints. The phone re-reads
+// it after every successful connect, so a rotated tunnel hostname or a changed
+// LAN address is picked up without re-pairing.
+type EndpointsResponse struct {
+	Endpoints []mobilebridge.Endpoint `json:"endpoints"`
+}
+
+// IdentityResponse is the body of the unauthenticated GET /api/v1/identity
+// probe. It is deliberately minimal: the route is reachable without the
+// connection password, so it must carry nothing but an opaque host id and the
+// mobile contract version.
+type IdentityResponse struct {
+	HostID     string `json:"hostId"`
+	APIVersion int    `json:"apiVersion"`
+}
+
 // MobileStatusResponse is the body of the Connect Mobile status/enable/disable/
 // regenerate endpoints. Password is populated only transiently, on enable and
 // regenerate responses (empty otherwise) — it is never persisted in plaintext.
 type MobileStatusResponse struct {
-	Enabled bool   `json:"enabled"`
-	Host    string `json:"host"`
+	Enabled bool `json:"enabled"`
+	// Endpoints is every way the phone can reach this daemon, in the client's
+	// preference order. The phone races them; Host/TailscaleHost below are the
+	// head of each kind, kept for the existing renderer.
+	Endpoints []mobilebridge.Endpoint `json:"endpoints"`
+	// HostID is this machine's stable identity, echoed into the pairing code.
+	// The phone checks every endpoint it races against this value.
+	HostID string `json:"hostId"`
+	// Tunnel is the managed remote-access connector's state, so the desktop can
+	// show progress during the tens of seconds before it is advertisable.
+	Tunnel mobilebridge.TunnelStatus `json:"tunnel"`
+	Host   string                    `json:"host"`
 	// TailscaleHost is this machine's 100.64.0.0/10 Tailscale address, or "" when
 	// Tailscale is not up. The renderer encodes it into the pairing QR when the
 	// user selects the Tailscale tab, and shows a hint instead when it is empty.
@@ -1441,6 +1490,29 @@ type SendConversationMessageResponse struct {
 	// Duplicate is true when this client message id was already delivered, so a
 	// retrying client can stop instead of assuming a new turn began.
 	Duplicate bool `json:"duplicate"`
+}
+
+// SteerConversationRequest is guidance for a turn that is already running.
+type SteerConversationRequest struct {
+	// Text is the correction to hand the agent mid-turn.
+	Text string `json:"text"`
+	// Attachments are native image prompt blocks delivered with the correction.
+	Attachments []ConversationImageContentRequest `json:"attachments,omitempty"`
+	// ClientMessageID makes a retry idempotent: the same handle updates the recorded
+	// guidance instead of adding a second copy of it, and the provider echoes it back
+	// on the item it replays so a client can recognize its own steer.
+	ClientMessageID string `json:"clientMessageId,omitempty"`
+}
+
+// SteerConversationResponse reports the turn the guidance joined.
+type SteerConversationResponse struct {
+	// ProviderTurnID is the turn that absorbed it. Against Codex this is the turn
+	// that was already running — steering does not open a new one — so a client
+	// matches it against the turn it is already rendering.
+	ProviderTurnID string `json:"providerTurnId"`
+	// ActivityID is the timeline row recording the guidance, so an optimistic bubble
+	// can be reconciled with the durable one rather than shown twice.
+	ActivityID string `json:"activityId,omitempty"`
 }
 
 // EditConversationMessageRequest changes the readable text of one durable human
@@ -1606,7 +1678,7 @@ type CompactConversationResponse struct {
 // ConversationTurnResponse is one request and the work that followed it.
 type ConversationTurnResponse struct {
 	ID             string `json:"id"`
-	State          string `json:"state" enum:"queued,running,completed,recovered,interrupted,failed"`
+	State          string `json:"state" enum:"queued,running,completed,recovered,interrupted,failed,cancelled"`
 	ProviderTurnID string `json:"providerTurnId,omitempty"`
 	// RetryOfTurnID is the failed source whose durable prompt created this turn.
 	RetryOfTurnID string `json:"retryOfTurnId,omitempty"`
@@ -2035,7 +2107,8 @@ func capabilityNames(caps ports.ChatCapabilities) []string {
 // it for this pass only, without editing project config, so one session's choice
 // cannot change what another session in the project runs.
 type TriggerReviewRequest struct {
-	Harness domain.ReviewerHarness `json:"harness,omitempty" enum:"claude-code,codex,copilot,cursor,kilocode,opencode,kiro,pi,qwen,agy,continue,goose,vibe,devin,droid,kimi,kimchi,muse,amp,aider,grok,crush,auggie,cline,autohand"`
+	Harness     domain.ReviewerHarness `json:"harness,omitempty" enum:"claude-code,codex,copilot,cursor,kilocode,opencode,kiro,pi,qwen,agy,continue,goose,vibe,devin,droid,kimi,kimchi,muse,amp,aider,grok,crush,auggie,cline,autohand"`
+	AgentConfig domain.AgentConfig     `json:"agentConfig,omitempty"`
 }
 
 // ResolveReviewCommentRequest is the body of POST /api/v1/sessions/{sessionId}/reviews/comments/resolve.

@@ -130,6 +130,7 @@ if (typeof window !== "undefined") {
 		},
 		theme: {
 			set: async () => undefined,
+			persistTerminal: async () => undefined,
 		},
 		menu: {
 			action: async () => undefined,
@@ -185,6 +186,7 @@ if (typeof window !== "undefined") {
 				canGoForward: false,
 				isLoading: false,
 			}),
+			historySuggestions: async () => [],
 			clear: async (viewId: string) => ({
 				viewId,
 				url: "",
@@ -229,6 +231,12 @@ if (typeof window !== "undefined") {
 			selectTab: async ({ viewId, tabId }) => ({ viewId, activeTabId: tabId, tabs: [] }),
 			closeTab: async ({ viewId }) => ({ viewId, activeTabId: "", tabs: [] }),
 			openTab: async ({ viewId }) => ({ viewId, activeTabId: "", tabs: [] }),
+			getProfile: async (viewId: string) => ({ viewId, profileId: null, temporary: true }),
+			showProfileMenu: async () => undefined,
+			notifyPanelUsed: () => undefined,
+			notifyPanelBlur: () => undefined,
+			onFocusLocation: () => () => undefined,
+			onReopenClosedTab: () => () => undefined,
 			devtools: async ({ viewId, operation }) => ({
 				viewId,
 				open: operation !== "close",
@@ -237,11 +245,30 @@ if (typeof window !== "undefined") {
 			destroy: () => undefined,
 			setAnnotationMode: async () => undefined,
 			onNavState: () => () => undefined,
+			onPageFocus: () => () => undefined,
 			onTabsState: () => () => undefined,
 			onAgentActivity: () => () => undefined,
 			onDevToolsState: () => () => undefined,
+			onProfileState: () => () => undefined,
+			onProfileManage: () => () => undefined,
 			onAnnotationSubmit: () => () => undefined,
 			onAnnotationCancel: () => () => undefined,
+		},
+		browserProfiles: {
+			list: async () => ({ profiles: [] }),
+			create: async (name: string) => {
+				const now = new Date().toISOString();
+				return { id: `test-${name}`, name, createdAt: now, updatedAt: now };
+			},
+			rename: async ({ id, name }: { id: string; name: string }) => {
+				const now = new Date().toISOString();
+				return { id, name, createdAt: now, updatedAt: now };
+			},
+			clear: async () => undefined,
+			delete: async () => undefined,
+			discoverImportSources: async () => ({ sources: [] }),
+			import: async () => ({ sourceName: "", entries: [] }),
+			onImportProgress: () => () => undefined,
 		},
 		notifications: {
 			show: async () => undefined,

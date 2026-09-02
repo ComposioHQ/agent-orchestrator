@@ -1,4 +1,5 @@
 import { SidebarProvider } from "@/components/ui/sidebar";
+import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 // Disable motion animations so AnimatePresence unmounts children immediately
@@ -19,7 +20,8 @@ import {
 	SIDEBAR_MIN_WIDTH,
 } from "./Sidebar";
 import type { WorkspaceSession, WorkspaceSummary } from "../types/workspace";
-import { agentsQueryKey } from "../hooks/useAgentsQuery";
+import { agentReadinessQueryKey } from "../hooks/useAgentReadinessQuery";
+import { agentReadiness } from "../test/agent-readiness-fixtures";
 import { useUiStore } from "../stores/ui-store";
 
 type DragOverTestEvent = {
@@ -36,11 +38,15 @@ const {
 	checkUpdateMock,
 	cloudGateState,
 	cloudSessionState,
+	compactRailCanGoBack,
+	compactRailCanGoForward,
 	dragEnds,
 	dragOvers,
 	dragStarts,
 	downloadUpdateMock,
 	getMock,
+	historyBackMock,
+	historyForwardMock,
 	navigateMock,
 	mockParams,
 	renameSessionMock,
@@ -69,6 +75,10 @@ const {
 		downloadUpdateMock: vi.fn(),
 		checkUpdateMock: vi.fn(),
 		commandPaletteEnabled: { current: true },
+		compactRailCanGoBack: { current: false },
+		compactRailCanGoForward: { current: false },
+		historyBackMock: vi.fn(),
+		historyForwardMock: vi.fn(),
 	}),
 );
 
@@ -86,7 +96,7 @@ vi.mock("@dnd-kit/core", async (importOriginal) => {
 			if (id && onDragEnd) dragEnds.set(id, onDragEnd);
 			if (id && onDragOver) dragOvers.set(id, onDragOver);
 			if (id && onDragStart) dragStarts.set(id, onDragStart);
-			return children;
+			return <div data-dnd-context={id}>{children}</div>;
 		},
 		DragOverlay: ({ children }: { children: React.ReactNode }) => children,
 	};
@@ -100,16 +110,35 @@ vi.mock("../hooks/useCommandPaletteEnabled", () => ({
 	useCommandPaletteEnabled: () => commandPaletteEnabled.current,
 }));
 
+vi.mock("../lib/platform", () => ({
+	isLinuxPlatform: () => false,
+	isMacPlatform: () => true,
+	isWindowsPlatform: () => false,
+}));
+
 vi.mock("@tanstack/react-router", async (importOriginal) => {
 	const actual = await importOriginal<typeof import("@tanstack/react-router")>();
 	return {
 		...actual,
+		useCanGoBack: () => compactRailCanGoBack.current,
 		useNavigate: () => navigateMock,
 		useParams: () => ({ ...mockParams }),
+		useRouter: () => ({
+			history: {
+				back: historyBackMock,
+				forward: historyForwardMock,
+				location: { state: { __TSR_index: 0 } },
+				subscribe: vi.fn(() => () => undefined),
+			},
+		}),
 		useRouterState: ({ select }: { select: (state: { location: { pathname: string } }) => unknown }) =>
 			select({ location: { pathname: "/" } }),
 	};
 });
+
+vi.mock("./TitlebarNav", () => ({
+	useCanGoForward: () => compactRailCanGoForward.current,
+}));
 
 vi.mock("../lib/bridge", async (importOriginal) => {
 	const actual = await importOriginal<typeof import("../lib/bridge")>();
@@ -212,6 +241,7 @@ function renderSidebar({
 	workspaces = [workspace],
 	initialOpen = true,
 	autoCompact = false,
+	topbarOffset = "toolbar",
 	expandedProjectIds,
 }: {
 	onCloneProject?: CloneProjectHandler;
@@ -222,6 +252,7 @@ function renderSidebar({
 	workspaces?: WorkspaceSummary[];
 	initialOpen?: boolean;
 	autoCompact?: boolean;
+	topbarOffset?: "toolbar" | "titlebar" | "trafficLights" | "session";
 	expandedProjectIds?: string[];
 } = {}) {
 	// Most legacy sidebar tests exercise session rows and assume their fixture
@@ -234,33 +265,25 @@ function renderSidebar({
 		defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
 	});
 	if (seedAgents) {
-		queryClient.setQueryData(agentsQueryKey, {
-			supported: [
-				{ id: "claude-code", label: "Claude Code" },
-				{ id: "codex", label: "Codex" },
-			],
-			installed: [
-				{ id: "claude-code", label: "Claude Code" },
-				{ id: "codex", label: "Codex" },
-			],
-			authorized: [
-				{ id: "claude-code", label: "Claude Code", authStatus: "authorized" },
-				{ id: "codex", label: "Codex", authStatus: "authorized" },
-			],
+		queryClient.setQueryData(agentReadinessQueryKey, {
+			agents: [agentReadiness("claude-code", "Claude Code"), agentReadiness("codex", "Codex")],
 		});
 	}
 	render(
 		<QueryClientProvider client={queryClient}>
-			<SidebarProvider defaultOpen={initialOpen}>
-				<Sidebar
-					autoCompact={autoCompact}
-					onCloneProject={onCloneProject}
-					onCreateProject={onCreateProject}
-					onInitializeProject={onInitializeProject}
-					onRemoveProject={onRemoveProject}
-					workspaces={workspaces}
-				/>
-			</SidebarProvider>
+			<TooltipProvider>
+				<SidebarProvider defaultOpen={initialOpen}>
+					<Sidebar
+						autoCompact={autoCompact}
+						topbarOffset={topbarOffset}
+						onCloneProject={onCloneProject}
+						onCreateProject={onCreateProject}
+						onInitializeProject={onInitializeProject}
+						onRemoveProject={onRemoveProject}
+						workspaces={workspaces}
+					/>
+				</SidebarProvider>
+			</TooltipProvider>
 		</QueryClientProvider>,
 	);
 	return onRemoveProject;
@@ -319,6 +342,8 @@ beforeEach(() => {
 	dragStarts.clear();
 	document.documentElement.style.removeProperty("--ao-sidebar-w");
 	commandPaletteEnabled.current = true;
+	compactRailCanGoBack.current = false;
+	compactRailCanGoForward.current = false;
 	cloudGateState.cloudEnabled = true;
 	cloudGateState.localEnabled = true;
 	cloudGateState.client = "";
@@ -327,22 +352,13 @@ beforeEach(() => {
 	cloudSessionState.status = "unauthenticated";
 	cloudSessionState.signIn.mockReset();
 	cloudSessionState.signOut.mockReset().mockResolvedValue(undefined);
+	historyBackMock.mockReset();
+	historyForwardMock.mockReset();
 	useUiStore.setState({ isCommandPaletteOpen: false, settingsModal: null });
 	getMock.mockReset();
 	getMock.mockResolvedValue({
 		data: {
-			supported: [
-				{ id: "claude-code", label: "Claude Code" },
-				{ id: "codex", label: "Codex" },
-			],
-			installed: [
-				{ id: "claude-code", label: "Claude Code" },
-				{ id: "codex", label: "Codex" },
-			],
-			authorized: [
-				{ id: "claude-code", label: "Claude Code", authStatus: "authorized" },
-				{ id: "codex", label: "Codex", authStatus: "authorized" },
-			],
+			agents: [agentReadiness("claude-code", "Claude Code"), agentReadiness("codex", "Codex")],
 		},
 		error: undefined,
 	});
@@ -929,26 +945,12 @@ describe("Sidebar", () => {
 		window.ao!.app.chooseDirectory = vi.fn().mockResolvedValue("/repo/new-project");
 		getMock.mockResolvedValueOnce({
 			data: {
-				supported: [
-					{ id: "goose", label: "Goose" },
-					{ id: "devin", label: "Devin" },
-					{ id: "aider", label: "Aider" },
-					{ id: "opencode", label: "OpenCode" },
-					{ id: "cursor", label: "Cursor" },
-				],
-				installed: [
-					{ id: "goose", label: "Goose", authStatus: "authorized" },
-					{ id: "devin", label: "Devin", authStatus: "authorized" },
-					{ id: "aider", label: "Aider", authStatus: "authorized" },
-					{ id: "opencode", label: "OpenCode", authStatus: "authorized" },
-					{ id: "cursor", label: "Cursor", authStatus: "authorized" },
-				],
-				authorized: [
-					{ id: "goose", label: "Goose", authStatus: "authorized" },
-					{ id: "devin", label: "Devin", authStatus: "authorized" },
-					{ id: "aider", label: "Aider", authStatus: "authorized" },
-					{ id: "opencode", label: "OpenCode", authStatus: "authorized" },
-					{ id: "cursor", label: "Cursor", authStatus: "authorized" },
+				agents: [
+					agentReadiness("goose", "Goose"),
+					agentReadiness("devin", "Devin"),
+					agentReadiness("aider", "Aider"),
+					agentReadiness("opencode", "OpenCode"),
+					agentReadiness("cursor", "Cursor"),
 				],
 			},
 			error: undefined,
@@ -1298,16 +1300,11 @@ describe("Sidebar", () => {
 		window.ao!.app.chooseDirectory = vi.fn().mockResolvedValue("/repo/new-project");
 		getMock.mockResolvedValueOnce({
 			data: {
-				supported: [
-					{ id: "claude-code", label: "Claude Code" },
-					{ id: "cursor", label: "Cursor" },
-					{ id: "aider", label: "Aider" },
+				agents: [
+					agentReadiness("claude-code", "Claude Code"),
+					agentReadiness("cursor", "Cursor", { authentication: "unauthorized" }),
+					agentReadiness("aider", "Aider", { installation: "not_installed", authentication: "unknown" }),
 				],
-				installed: [
-					{ id: "claude-code", label: "Claude Code", authStatus: "authorized" },
-					{ id: "cursor", label: "Cursor", authStatus: "unauthorized" },
-				],
-				authorized: [{ id: "claude-code", label: "Claude Code", authStatus: "authorized" }],
 			},
 			error: undefined,
 		});
@@ -1340,11 +1337,7 @@ describe("Sidebar", () => {
 		const onCreateProject = vi.fn().mockResolvedValue(undefined) as CreateProjectHandler;
 		window.ao!.app.chooseDirectory = vi.fn().mockResolvedValue("/repo/new-project");
 		let resolveAgents!: (value: {
-			data: {
-				supported: { id: string; label: string }[];
-				installed: { id: string; label: string }[];
-				authorized: { id: string; label: string; authStatus: "authorized" }[];
-			};
+			data: { agents: ReturnType<typeof agentReadiness>[] };
 			error: undefined;
 		}) => void;
 		getMock.mockReturnValueOnce(
@@ -1361,18 +1354,7 @@ describe("Sidebar", () => {
 
 		resolveAgents({
 			data: {
-				supported: [
-					{ id: "claude-code", label: "Claude Code" },
-					{ id: "codex", label: "Codex" },
-				],
-				installed: [
-					{ id: "claude-code", label: "Claude Code" },
-					{ id: "codex", label: "Codex" },
-				],
-				authorized: [
-					{ id: "claude-code", label: "Claude Code", authStatus: "authorized" },
-					{ id: "codex", label: "Codex", authStatus: "authorized" },
-				],
+				agents: [agentReadiness("claude-code", "Claude Code"), agentReadiness("codex", "Codex")],
 			},
 			error: undefined,
 		});
@@ -1588,14 +1570,35 @@ describe("Sidebar", () => {
 		expect(document.documentElement.style.getPropertyValue("--ao-sidebar-w")).toBe(`${SIDEBAR_MIN_WIDTH}px`);
 	});
 
-	it("keeps an icon navigation rail when workspace pressure compacts the sidebar", () => {
-		renderSidebar({ autoCompact: true, initialOpen: false });
+	it("keeps the compact icon rail below the macOS traffic-light band", () => {
+		renderSidebar({ autoCompact: true, initialOpen: false, topbarOffset: "trafficLights" });
 
 		const sidebar = document.querySelector('[data-slot="sidebar"][data-state="collapsed"]');
 		expect(sidebar).toHaveAttribute("data-collapsible", "icon");
+		const compactToggle = document.querySelector('[data-slot="sidebar-header"] button[aria-label="Expand sidebar"]');
+		expect(compactToggle).toBeInTheDocument();
+		expect(compactToggle?.querySelector("svg")).toBeInTheDocument();
+		expect(screen.queryByText("Connect Mobile")).not.toBeVisible();
+		expect(screen.queryByText("Settings")).not.toBeVisible();
+		expect(document.querySelector('[data-slot="sidebar-container"]')).toHaveAttribute(
+			"data-topbar-offset",
+			"trafficLights",
+		);
 		expect(document.querySelector('[data-slot="sidebar-gap"]')).toHaveStyle({
 			width: "var(--sidebar-width-icon)",
 		});
+	});
+
+	it("keeps back and forward accessible from the compact rail on macOS/Linux", async () => {
+		compactRailCanGoBack.current = true;
+		compactRailCanGoForward.current = true;
+		renderSidebar({ autoCompact: true, initialOpen: false, topbarOffset: "trafficLights" });
+
+		await userEvent.click(screen.getByRole("button", { name: "Go back" }));
+		await userEvent.click(screen.getByRole("button", { name: "Go forward" }));
+
+		expect(historyBackMock).toHaveBeenCalledTimes(1);
+		expect(historyForwardMock).toHaveBeenCalledTimes(1);
 	});
 
 	it("flushes any queued rAF frame on pointer-up and persists the clamped width", async () => {
@@ -1923,12 +1926,30 @@ describe("Sidebar", () => {
 		const buttons = await screen.findAllByLabelText("Download update v9.9.9");
 		expect(buttons.length).toBeGreaterThan(0);
 		expect(screen.getByText("Update available")).toBeInTheDocument();
-		expect(screen.getByText("v9.9.9")).toBeInTheDocument();
+		const availableRow = screen.getByTestId("sidebar-update-available");
+		expect(within(availableRow).getByText("v9.9.9")).toBeVisible();
+		expect(availableRow.querySelector(".rounded-full")).toBeNull();
+		expect(screen.getByRole("button", { name: "Hide update v9.9.9 for 24 hours" })).not.toHaveClass(
+			"bg-interactive-hover",
+		);
 		// Nothing is staged yet, so the restart action must not be offered.
 		expect(screen.queryByLabelText(/Restart to install update/)).not.toBeInTheDocument();
 
 		await userEvent.click(buttons[0]);
 		expect(downloadUpdateMock).toHaveBeenCalledTimes(1);
+	});
+
+	it("dismisses the current available update without downloading it", async () => {
+		updateStatusMock.mockResolvedValue({ state: "available", version: "9.9.9" });
+		renderSidebar();
+
+		await userEvent.click(await screen.findByRole("button", {
+			name: "Hide update v9.9.9 for 24 hours",
+		}));
+
+		expect(screen.queryByText("Update available")).not.toBeInTheDocument();
+		expect(screen.queryByLabelText("Download update v9.9.9")).not.toBeInTheDocument();
+		expect(downloadUpdateMock).not.toHaveBeenCalled();
 	});
 
 	it("keeps showing update activity while the automatic download is in progress", async () => {
@@ -1937,9 +1958,13 @@ describe("Sidebar", () => {
 
 		await waitFor(() => expect(updateStatusMock).toHaveBeenCalled());
 		expect(screen.getByText("Downloading… 42%")).toBeInTheDocument();
+		const downloadingRow = screen.getByTestId("sidebar-update-downloading");
+		expect(downloadingRow).not.toHaveClass("border");
+		expect(downloadingRow.querySelector("svg circle")).toBeNull();
 		expect(screen.queryByLabelText(/Restart to install update/)).not.toBeInTheDocument();
 		// A download already in flight must not offer a second one.
 		expect(screen.queryByLabelText(/Download update/)).not.toBeInTheDocument();
+		expect(screen.queryByLabelText(/Hide update/)).not.toBeInTheDocument();
 	});
 
 	it("offers a retry when automatic update checks keep failing", async () => {
@@ -1952,6 +1977,10 @@ describe("Sidebar", () => {
 		const buttons = await screen.findAllByLabelText("Retry update check");
 		expect(buttons.length).toBeGreaterThan(0);
 		expect(screen.getByText("Update check failed")).toBeInTheDocument();
+		const failedRow = screen.getByTestId("sidebar-update-failed");
+		expect(failedRow).toHaveClass("border", "border-warning/35", "bg-warning/12", "text-warning");
+		expect(within(failedRow).getByText("Retry update check")).toBeVisible();
+		expect(failedRow.querySelector(".rounded-full")).toBeNull();
 
 		await userEvent.click(buttons[0]);
 		expect(checkUpdateMock).toHaveBeenCalledTimes(1);
@@ -1968,7 +1997,12 @@ describe("Sidebar", () => {
 
 		// A build ready to install is more actionable than "checks are failing".
 		expect(await screen.findAllByLabelText("Restart to install update v9.9.9")).not.toHaveLength(0);
+		const readyRow = screen.getByTestId("sidebar-update-ready");
+		expect(readyRow).toHaveClass("border", "border-primary/35", "bg-primary/12", "text-primary");
+		expect(within(readyRow).getByText("v9.9.9 ready")).toBeVisible();
+		expect(readyRow.querySelector(".rounded-full")).toBeNull();
 		expect(screen.queryByLabelText("Retry update check")).not.toBeInTheDocument();
+		expect(screen.queryByLabelText(/Hide update/)).not.toBeInTheDocument();
 	});
 
 	it("stays quiet for a one-off update failure that has not become a streak", async () => {
@@ -2009,6 +2043,22 @@ describe("Sidebar", () => {
 		act(() => dragEnds.get("sidebar-projects")?.({ active: { id: "bravo" }, over: { id: "alpha" } }));
 
 		expect(Array.from(document.querySelectorAll("[data-project-label]"), (node) => node.textContent)).toEqual(["Bravo", "Alpha"]);
+	});
+
+	it("pauses nested session drag contexts during a project drag", async () => {
+		renderSidebar({
+			workspaces: [
+				{ ...workspace, id: "alpha", name: "Alpha", sessions: [{ ...session, id: "alpha-session", workspaceId: "alpha" }] },
+				{ ...workspace, id: "bravo", name: "Bravo", sessions: [{ ...session, id: "bravo-session", workspaceId: "bravo" }] },
+			],
+		});
+
+		expect(document.querySelectorAll('[data-dnd-context^="sidebar-sessions-"]')).toHaveLength(2);
+
+		act(() => dragStarts.get("sidebar-projects")?.({ active: { id: "alpha" } }));
+
+		await waitFor(() => expect(document.querySelectorAll('[data-dnd-context^="sidebar-sessions-"]')).toHaveLength(0));
+		expect(screen.getAllByRole("button", { name: "Open fix login" })).toHaveLength(2);
 	});
 
 	it("commits a session drop within its project", () => {
@@ -2060,7 +2110,9 @@ describe("Sidebar", () => {
 		act(() => dragEnds.get("sidebar-sessions-proj-1")?.({ active: { id: "second" }, over: { id: "first" } }));
 		act(() => dragStarts.get("sidebar-projects")?.({ active: { id: "proj-1" } }));
 
-		expect(document.querySelector("[data-project-drag-overlay]")).toHaveTextContent(/Project One.*Second.*First/);
+		const overlay = document.querySelector("[data-project-drag-overlay]");
+		expect(overlay).toHaveTextContent(/Project One.*Second.*First/);
+		expect(overlay?.querySelector("[data-project-drag-preview-session]")).toHaveClass("pl-0.5");
 	});
 
 	it("keeps hidden sessions out of compact project drag previews", () => {
@@ -2098,7 +2150,9 @@ describe("Sidebar", () => {
 				over: { id: "alpha", rect: { height: 32, top: 0 } },
 			}));
 
-			const indicator = document.querySelector("[data-project-drop-indicator]");
+			const target = document.querySelector('[data-project-id="alpha"]');
+			expect(target).toHaveAttribute("data-drop-indicator", "before");
+			const indicator = target?.querySelector('[data-project-drop-indicator="before"]');
 			expect(indicator).toHaveClass("bg-foreground");
 			expect(indicator).not.toHaveClass("bg-white");
 		} finally {

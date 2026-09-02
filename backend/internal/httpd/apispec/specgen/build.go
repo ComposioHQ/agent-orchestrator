@@ -156,6 +156,8 @@ var schemaNames = map[string]string{
 	"ControllersConversationResourceContentRequest":        "ConversationResourceContentRequest",
 	"ControllersSendConversationMessageResponse":           "SendConversationMessageResponse",
 	"ControllersEditConversationMessageRequest":            "EditConversationMessageRequest",
+	"ControllersEditQueuedConversationMessageRequest":      "EditQueuedConversationMessageRequest",
+	"ControllersReorderQueuedConversationTurnsRequest":     "ReorderQueuedConversationTurnsRequest",
 	"ControllersConversationContentSummaryResponse":        "ConversationContentSummaryResponse",
 	"ControllersEditConversationMessageResponse":           "EditConversationMessageResponse",
 	"ControllersActivateConversationBranchResponse":        "ActivateConversationBranchResponse",
@@ -293,6 +295,11 @@ var schemaNames = map[string]string{
 	"AgentInventory":                                      "ListAgentsResponse",
 	"AgentInfo":                                           "AgentInfo",
 	"AgentProbeResult":                                    "ProbeAgentResponse",
+	"AgentReadiness":                                      "AgentReadinessResponse",
+	"ControllersEnsureAgentReadinessRequest":              "EnsureAgentReadinessRequest",
+	"DomainAgentReadinessSnapshot":                        "AgentReadinessSnapshot",
+	"DomainAgentInstallationObservation":                  "AgentInstallationObservation",
+	"DomainAgentAuthenticationObservation":                "AgentAuthenticationObservation",
 	// service/systemcheck: "SystemcheckReport" is a generic default name that
 	// reads like an internal type, not a wire response — rename to match the
 	// endpoint it serves, same treatment as AgentInventory above.
@@ -356,6 +363,10 @@ var schemaNames = map[string]string{
 	"ControllersDevImportProjectsResponse": "DevImportProjectsResponse",
 	// httpd/controllers: mobile wire envelopes
 	"ControllersMobileStatusResponse":  "MobileStatusResponse",
+	"MobilebridgeEndpoint":             "MobileEndpoint",
+	"MobilebridgeTunnelStatus":         "MobileTunnelStatus",
+	"ControllersIdentityResponse":      "IdentityResponse",
+	"ControllersEndpointsResponse":     "EndpointsResponse",
 	"ControllersMobileDeviceResponse":  "MobileDeviceResponse",
 	"ControllersMobileDevicesResponse": "MobileDevicesResponse",
 	"ControllersMuteDeviceRequest":     "MuteDeviceRequest",
@@ -491,7 +502,42 @@ func operations() []operation {
 	ops = append(ops, browserOperations()...)
 	ops = append(ops, shellTerminalOperations()...)
 	ops = append(ops, systemOperations()...)
+	ops = append(ops, identityOperations()...)
+	ops = append(ops, endpointsOperations()...)
 	return ops
+}
+
+// endpointsOperations declares the phone's endpoint refresh. Not under
+// /api/v1/mobile, which lanControlBlock 404s on the only listener a phone can
+// reach.
+func endpointsOperations() []operation {
+	return []operation{
+		{
+			method: http.MethodGet, path: "/api/v1/endpoints", id: "getEndpoints", tag: "identity",
+			summary: "List the ways this daemon can currently be reached",
+			resps: []respUnit{
+				{http.StatusOK, controllers.EndpointsResponse{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+	}
+}
+
+// identityOperations declares the unauthenticated host-identity probe. It is
+// the one route the Connect Mobile LAN listener serves without the connection
+// password, so the phone can confirm which machine answered before presenting
+// a credential. See docs/adr/0003-unauthenticated-identity-probe.md.
+func identityOperations() []operation {
+	return []operation{
+		{
+			method: http.MethodGet, path: "/api/v1/identity", id: "getIdentity", tag: "identity",
+			summary: "Identify the daemon so a client can confirm which machine answered",
+			resps: []respUnit{
+				{http.StatusOK, controllers.IdentityResponse{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+	}
 }
 
 // systemOperations declares the startup requirements gate the desktop loading
@@ -841,6 +887,46 @@ func shellTerminalOperations() []operation {
 			},
 		},
 		{
+			method: http.MethodPost, path: "/api/v1/sessions/{sessionId}/conversation/turns/{turnId}/cancel", id: "cancelQueuedSessionConversationTurn", tag: "conversations",
+			summary:    "Remove one queued message without stopping the running turn",
+			pathParams: []any{controllers.SessionIDParam{}, controllers.ConversationTurnIDParam{}},
+			resps: []respUnit{
+				{http.StatusNoContent, nil},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusConflict, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPost, path: "/api/v1/sessions/{sessionId}/conversation/turns/{turnId}/queue/edit", id: "editQueuedSessionConversationTurn", tag: "conversations",
+			summary:    "Rewrite one queued message before it dispatches",
+			pathParams: []any{controllers.SessionIDParam{}, controllers.ConversationTurnIDParam{}},
+			reqBody:    controllers.EditQueuedConversationMessageRequest{},
+			resps: []respUnit{
+				{http.StatusNoContent, nil},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusConflict, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPost, path: "/api/v1/sessions/{sessionId}/conversation/queue/reorder", id: "reorderQueuedSessionConversationTurns", tag: "conversations",
+			summary:    "Rewrite the durable queue order for undispatched turns",
+			pathParams: []any{controllers.SessionIDParam{}},
+			reqBody:    controllers.ReorderQueuedConversationTurnsRequest{},
+			resps: []respUnit{
+				{http.StatusNoContent, nil},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusConflict, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
 			method: http.MethodPost, path: "/api/v1/sessions/{sessionId}/conversation/turns/{turnId}/rollback", id: "rollbackSessionConversation", tag: "conversations",
 			summary:    "Discard a turn and everything after it from the agent's memory",
 			pathParams: []any{controllers.SessionIDParam{}, controllers.ConversationTurnIDParam{}},
@@ -940,6 +1026,26 @@ func agentOperations() []operation {
 			},
 		},
 		{
+			method: http.MethodGet, path: "/api/v1/agents/readiness", id: "getAgentReadiness", tag: "agents",
+			summary: "Return cached normalized agent readiness without running native checks",
+			resps: []respUnit{
+				{http.StatusOK, controllers.AgentReadinessResponse{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPost, path: "/api/v1/agents/readiness/ensure", id: "ensureAgentReadiness", tag: "agents",
+			summary: "Ensure normalized readiness for selected agent adapters",
+			reqBody: controllers.EnsureAgentReadinessRequest{},
+			resps: []respUnit{
+				{http.StatusOK, controllers.AgentReadinessResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
 			method: http.MethodPost, path: "/api/v1/agents/refresh", id: "refreshAgents", tag: "agents",
 			summary: "Refresh the cached local agent adapter catalog",
 			resps: []respUnit{
@@ -950,7 +1056,7 @@ func agentOperations() []operation {
 		},
 		{
 			method: http.MethodPost, path: "/api/v1/agents/{agent}/probe", id: "probeAgent", tag: "agents",
-			summary:    "Run a fresh local readiness probe for one agent adapter",
+			summary:    "Ensure launch-fresh readiness for one agent adapter",
 			pathParams: []any{controllers.AgentIDParam{}},
 			resps: []respUnit{
 				{http.StatusOK, controllers.ProbeAgentResponse{}},
@@ -999,6 +1105,15 @@ func mobileOperations() []operation {
 			resps: []respUnit{
 				{http.StatusOK, controllers.MobileStatusResponse{}},
 				{http.StatusForbidden, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPost, path: "/api/v1/mobile/remote-access", id: "startMobileRemoteAccess", tag: "mobile",
+			summary: "Look for a connector again and start it, without rotating the password",
+			resps: []respUnit{
+				{http.StatusOK, controllers.MobileStatusResponse{}},
+				{http.StatusForbidden, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
 			},
 		},
 		{

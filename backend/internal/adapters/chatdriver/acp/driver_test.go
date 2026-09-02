@@ -1510,6 +1510,151 @@ func TestACPDriverMapsCostRateLimitsAndAuthRecovery(t *testing.T) {
 	}
 }
 
+func TestACPDriverNormalizesClaudeRetryStatus(t *testing.T) {
+	agent := &fakeAgent{
+		promptBlock:   true,
+		promptStarted: make(chan struct{}, 1),
+	}
+	driver := New(Config{
+		Harness:      domain.HarnessClaudeCode,
+		Capabilities: ports.ChatCapabilities{ports.ChatCapabilityStreaming: true},
+		Probe:        func(context.Context) error { return nil },
+		Launch:       func(context.Context, LaunchConfig) (Launch, error) { return Launch{Command: "fake"}, nil },
+	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	driver.spawn = fakeSpawn(agent)
+	opened, err := driver.Start(context.Background(), ports.ChatStartConfig{WorkspacePath: t.TempDir()})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer opened.Close()
+	_ = nextEvent(t, opened.Events())
+	agent.mu.Lock()
+	clientMeta := agent.initParams.ClientCapabilities.Meta
+	agent.mu.Unlock()
+	jetbrains, _ := clientMeta["jetbrains"].(map[string]any)
+	air, _ := jetbrains["air"].(map[string]any)
+	version, versionOK := number(air["version"])
+	capabilities, _ := air["capabilities"].([]any)
+	capability := ""
+	if len(capabilities) == 1 {
+		capability, _ = capabilities[0].(string)
+	}
+	if !versionOK || version != 1 || capability != "sessionFailure" {
+		t.Fatalf("session failure capability = %#v", air)
+	}
+
+	ref, err := opened.SendTurn(context.Background(), ports.ChatUserMessage{Text: "continue"})
+	if err != nil {
+		t.Fatalf("SendTurn: %v", err)
+	}
+	if err := opened.(ports.ChatDeferredTurnStarter).StartDeferredTurn(ref.ProviderTurnID); err != nil {
+		t.Fatalf("StartDeferredTurn: %v", err)
+	}
+	select {
+	case <-agent.promptStarted:
+	case <-time.After(time.Second):
+		t.Fatal("ACP prompt did not start")
+	}
+
+	if err := agent.conn.SessionUpdate(context.Background(), acpsdk.SessionNotification{
+		SessionId: acpsdk.SessionId(opened.ProviderConversationID()),
+		Update: acpsdk.SessionUpdate{SessionInfoUpdate: &acpsdk.SessionSessionInfoUpdate{
+			SessionUpdate: "session_info_update",
+			Meta: map[string]any{
+				"jetbrains": map[string]any{
+					"air": map[string]any{
+						"version": float64(1),
+						"sessionFailure": map[string]any{
+							"id":       "claude-turn:error",
+							"revision": float64(2),
+							"category": "connection",
+							"severity": "warning",
+							"title":    "Reconnecting to Claude, attempt 2 of 10.",
+							"details":  "The API request failed. Trying again in 4s.",
+							"actions":  []any{"new_session"},
+						},
+					},
+				},
+			},
+		}},
+	}); err != nil {
+		t.Fatalf("session retry update: %v", err)
+	}
+
+	var retry ports.ChatEvent
+	retryItemID := "session-failure:" + ref.ProviderTurnID
+	for retry.Kind == "" {
+		event := nextEvent(t, opened.Events())
+		if event.Kind == ports.ChatEventActivityStarted && event.ProviderItemID == retryItemID {
+			retry = event
+		}
+	}
+	if retry.ProviderTurnID != ref.ProviderTurnID ||
+		retry.ActivityKind != domain.ActivityKindSystem ||
+		retry.ActivityStatus != domain.ActivityStatusRunning ||
+		retry.Summary != "Reconnecting to Claude, attempt 2 of 10." {
+		t.Fatalf("retry event = %#v", retry)
+	}
+	var detail map[string]any
+	if err := json.Unmarshal(retry.Detail, &detail); err != nil {
+		t.Fatalf("retry detail: %v", err)
+	}
+	if detail["event"] != "provider.failure" ||
+		detail["category"] != "connection" ||
+		detail["severity"] != "warning" ||
+		detail["text"] != "The API request failed. Trying again in 4s." {
+		t.Fatalf("retry detail = %#v", detail)
+	}
+
+	// Claude can use a new extension incident id for each attempt before its
+	// provider turn id is available. AO must still update one per-turn activity.
+	if err := agent.conn.SessionUpdate(context.Background(), acpsdk.SessionNotification{
+		SessionId: acpsdk.SessionId(opened.ProviderConversationID()),
+		Update: acpsdk.SessionUpdate{SessionInfoUpdate: &acpsdk.SessionSessionInfoUpdate{
+			SessionUpdate: "session_info_update",
+			Meta: map[string]any{
+				"jetbrains": map[string]any{
+					"air": map[string]any{
+						"version": float64(1),
+						"sessionFailure": map[string]any{
+							"id":       "another-incident-id",
+							"revision": float64(1),
+							"category": "connection",
+							"severity": "warning",
+							"title":    "Reconnecting to Claude, attempt 3 of 10.",
+							"details":  "Connection error. Trying again in 8s.",
+						},
+					},
+				},
+			},
+		}},
+	}); err != nil {
+		t.Fatalf("next session retry update: %v", err)
+	}
+	nextRetry := nextEvent(t, opened.Events())
+	if nextRetry.Kind != ports.ChatEventActivityStarted ||
+		nextRetry.ProviderItemID != retry.ProviderItemID ||
+		nextRetry.Summary != "Reconnecting to Claude, attempt 3 of 10." {
+		t.Fatalf("next retry event = %#v", nextRetry)
+	}
+
+	if err := agent.conn.SessionUpdate(context.Background(), acpsdk.SessionNotification{
+		SessionId: acpsdk.SessionId(opened.ProviderConversationID()),
+		Update: acpsdk.SessionUpdate{AgentMessageChunk: &acpsdk.SessionUpdateAgentMessageChunk{
+			SessionUpdate: "agent_message_chunk",
+			Content:       acpsdk.ContentBlock{Text: &acpsdk.ContentBlockText{Text: "Back online."}},
+		}},
+	}); err != nil {
+		t.Fatalf("recovery update: %v", err)
+	}
+	recovered := nextEvent(t, opened.Events())
+	if recovered.Kind != ports.ChatEventActivityCompleted ||
+		recovered.ProviderItemID != retry.ProviderItemID ||
+		recovered.ActivityStatus != domain.ActivityStatusCompleted {
+		t.Fatalf("recovered retry event = %#v", recovered)
+	}
+}
+
 func TestACPDriverExposesAndMutatesAdvertisedConfigOptions(t *testing.T) {
 	initial := []acpsdk.SessionConfigOption{
 		selectConfigOption("model", "Model", "model", "sonnet", "sonnet", "opus"),

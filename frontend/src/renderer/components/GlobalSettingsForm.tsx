@@ -8,6 +8,7 @@ import { KeyboardShortcutsContent } from "./settings/KeyboardShortcutsContent";
 import { MobileDevicesSection } from "./settings/MobileDevicesSection";
 import { ReportProblemContent } from "./settings/ReportProblemContent";
 import { SettingsSection } from "./settings/SettingsSection";
+import { BrowserProfilesSection } from "./settings/BrowserProfilesSection";
 
 const UpdatesSection = lazy(async () => {
 	const module = await import("./settings/UpdatesSection");
@@ -41,6 +42,7 @@ export function GlobalSettingsForm({
 		>
 			{(all || section === "general") && <GeneralSettingsSection titleHidden={titleHidden} />}
 
+			{(all || section === "browserProfiles") && <BrowserProfilesSection titleHidden={titleHidden} />}
 			{(all || section === "cloud") && <CloudCredentialsSection titleHidden={titleHidden} />}
 
 			{(all || section === "mobile") && (

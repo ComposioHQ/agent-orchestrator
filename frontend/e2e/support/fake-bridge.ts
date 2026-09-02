@@ -100,7 +100,10 @@ export async function installFakeBridge(page: Page, opts: FakeBridgeOptions = {}
 					isFullScreen: async () => false,
 					onFullScreen: () => () => undefined,
 				},
-				theme: { set: async () => undefined },
+				theme: {
+					set: async () => undefined,
+					persistTerminal: async () => undefined,
+				},
 				menu: { action: async () => undefined, notifyShellFocus: () => undefined },
 				clipboard: {
 					writeText: async () => undefined,
@@ -137,6 +140,7 @@ export async function installFakeBridge(page: Page, opts: FakeBridgeOptions = {}
 					setBounds: () => undefined,
 					setOverlayOpen: () => undefined,
 					navigate: async ({ viewId }: { viewId: string }) => navState(viewId),
+					historySuggestions: async () => [],
 					clear: async (viewId: string) => navState(viewId),
 					goBack: async (viewId: string) => navState(viewId),
 					goForward: async (viewId: string) => navState(viewId),
@@ -162,6 +166,12 @@ export async function installFakeBridge(page: Page, opts: FakeBridgeOptions = {}
 						activeTabId: "t1",
 						tabs: [{ id: "t1", url: "", title: "", active: true }],
 					}),
+					getProfile: async (viewId: string) => ({ viewId, profileId: null, temporary: true }),
+					showProfileMenu: async () => undefined,
+					notifyPanelUsed: () => undefined,
+					notifyPanelBlur: () => undefined,
+					onFocusLocation: unsubscribe,
+					onReopenClosedTab: unsubscribe,
 					devtools: async (input: { viewId: string }) => ({ viewId: input.viewId, open: false, activeTabId: "" }),
 					destroy: () => undefined,
 					// Annotation contract (mirrors src/preload.ts): useBrowserView subscribes
@@ -174,6 +184,25 @@ export async function installFakeBridge(page: Page, opts: FakeBridgeOptions = {}
 					onTabsState: unsubscribe,
 					onAgentActivity: unsubscribe,
 					onDevToolsState: unsubscribe,
+					onProfileState: unsubscribe,
+					onProfileManage: unsubscribe,
+					onPageFocus: unsubscribe,
+				},
+				browserProfiles: {
+					list: async () => ({ profiles: [] }),
+					create: async (name: string) => {
+						const now = new Date().toISOString();
+						return { id: `fake-${name}`, name, createdAt: now, updatedAt: now };
+					},
+					rename: async ({ id, name }: { id: string; name: string }) => {
+						const now = new Date().toISOString();
+						return { id, name, createdAt: now, updatedAt: now };
+					},
+					clear: async () => undefined,
+					delete: async () => undefined,
+					discoverImportSources: async () => ({ sources: [] }),
+					import: async () => ({ sourceName: "", entries: [] }),
+					onImportProgress: () => () => undefined,
 				},
 				notifications: {
 					show: async () => undefined,
@@ -331,6 +360,30 @@ export async function installFakeAgent(page: Page, opts: FakeAgentOptions = {}):
 
 			const nowIso = new Date().toISOString();
 			type Session = Record<string, unknown>;
+			// The daemon derives the board lane; the fake stands in for it so
+			// driving a spec's status through setStatus still moves the card.
+			const kanbanColumnFor = (status: string): string => {
+				switch (status) {
+					case "merged":
+					case "approved":
+					case "mergeable":
+						return "ready";
+					case "terminated":
+						return "archive";
+					case "review_pending":
+					case "pr_open":
+					case "draft":
+						return "validating";
+					case "needs_input":
+					case "exited":
+					case "no_signal":
+					case "ci_failed":
+					case "changes_requested":
+						return "needs_review";
+					default:
+						return "building";
+				}
+			};
 			const makeWorker = (w: (typeof workers)[number]): Session => ({
 				id: w.id,
 				terminalHandleId: (w.mode ?? "tui") === "tui" ? `${w.id}/terminal_0` : undefined,
@@ -342,6 +395,7 @@ export async function installFakeAgent(page: Page, opts: FakeAgentOptions = {}):
 				mode: w.mode ?? "tui",
 				branch: w.branch ?? `session/${w.id}`,
 				status: w.status ?? "working",
+				kanbanColumn: kanbanColumnFor(w.status ?? "working"),
 				createdAt: nowIso,
 				updatedAt: new Date().toISOString(),
 				activity: { state: w.activity ?? "active", lastActivityAt: new Date().toISOString() },
@@ -368,6 +422,7 @@ export async function installFakeAgent(page: Page, opts: FakeAgentOptions = {}):
 						kind: "orchestrator",
 						branch: "main",
 						status: "working",
+						kanbanColumn: "building",
 						createdAt: nowIso,
 						updatedAt: nowIso,
 						activity: { state: "active", lastActivityAt: nowIso },
@@ -472,6 +527,7 @@ export async function installFakeAgent(page: Page, opts: FakeAgentOptions = {}):
 					const s = findSession(id);
 					if (!s) return;
 					s.status = status;
+					s.kanbanColumn = kanbanColumnFor(status);
 					s.displayStatus = undefined;
 					if (activity) s.activity = { state: activity, lastActivityAt: new Date().toISOString() };
 					touch(s);
@@ -555,7 +611,10 @@ export async function installFakeAgent(page: Page, opts: FakeAgentOptions = {}):
 					isFullScreen: async () => false,
 					onFullScreen: () => () => undefined,
 				},
-				theme: { set: async () => undefined },
+				theme: {
+					set: async () => undefined,
+					persistTerminal: async () => undefined,
+				},
 				menu: { action: async () => undefined, notifyShellFocus: () => undefined },
 				clipboard: { writeText: async () => undefined, readText: async () => "" },
 				daemon: {
@@ -588,6 +647,7 @@ export async function installFakeAgent(page: Page, opts: FakeAgentOptions = {}):
 					setOverlayOpen: () => undefined,
 					navigate: async ({ viewId, url }: { viewId: string; url: string }) =>
 						state.browserError ? navState(viewId, "", state.browserError) : navState(viewId, url),
+					historySuggestions: async () => [],
 					clear: async (viewId: string) => navState(viewId),
 					goBack: async (viewId: string) => navState(viewId),
 					goForward: async (viewId: string) => navState(viewId),
@@ -613,6 +673,12 @@ export async function installFakeAgent(page: Page, opts: FakeAgentOptions = {}):
 						activeTabId: "t1",
 						tabs: [{ id: "t1", url: "", title: "", active: true }],
 					}),
+					getProfile: async (viewId: string) => ({ viewId, profileId: null, temporary: true }),
+					showProfileMenu: async () => undefined,
+					notifyPanelUsed: () => undefined,
+					notifyPanelBlur: () => undefined,
+					onFocusLocation: unsubscribe,
+					onReopenClosedTab: unsubscribe,
 					devtools: async (input: { viewId: string }) => ({ viewId: input.viewId, open: false, activeTabId: "" }),
 					destroy: () => undefined,
 					// Annotation contract (mirrors src/preload.ts): useBrowserView subscribes
@@ -625,6 +691,25 @@ export async function installFakeAgent(page: Page, opts: FakeAgentOptions = {}):
 					onTabsState: unsubscribe,
 					onAgentActivity: unsubscribe,
 					onDevToolsState: unsubscribe,
+					onProfileState: unsubscribe,
+					onProfileManage: unsubscribe,
+					onPageFocus: unsubscribe,
+				},
+				browserProfiles: {
+					list: async () => ({ profiles: [] }),
+					create: async (name: string) => {
+						const now = new Date().toISOString();
+						return { id: `fake-${name}`, name, createdAt: now, updatedAt: now };
+					},
+					rename: async ({ id, name }: { id: string; name: string }) => {
+						const now = new Date().toISOString();
+						return { id, name, createdAt: now, updatedAt: now };
+					},
+					clear: async () => undefined,
+					delete: async () => undefined,
+					discoverImportSources: async () => ({ sources: [] }),
+					import: async () => ({ sourceName: "", entries: [] }),
+					onImportProgress: () => () => undefined,
 				},
 				notifications: {
 					show: async () => undefined,

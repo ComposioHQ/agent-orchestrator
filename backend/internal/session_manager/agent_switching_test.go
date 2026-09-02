@@ -22,6 +22,20 @@ func buildTargetContinuationMessage(sw domain.AgentSwitch, snapshot deterministi
 	return buildTargetContinuationMessageWithLimit(sw, snapshot, transcript, handoffContinuationMaxBytes)
 }
 
+type switchReadinessProvider struct {
+	snapshot domain.AgentReadinessSnapshot
+	err      error
+	calls    int
+}
+
+func (p *switchReadinessProvider) EnsureAgentReadiness(context.Context, string, domain.AgentReadinessPurpose) (domain.AgentReadinessSnapshot, error) {
+	p.calls++
+	return p.snapshot, p.err
+}
+func (*switchReadinessProvider) InvalidateAgentInstallation(string)   {}
+func (*switchReadinessProvider) InvalidateAgentAuthentication(string) {}
+func (*switchReadinessProvider) RecheckAgent(string)                  {}
+
 type switchTestStore struct {
 	*fakeStore
 	mu                            sync.Mutex
@@ -482,8 +496,16 @@ type switchAgentChatLauncher struct {
 	live  bool
 }
 
-func (l *switchAgentChatLauncher) StartChat(_ context.Context, cfg ChatStart) (ChatStarted, error) {
+func (l *switchAgentChatLauncher) StartChat(ctx context.Context, cfg ChatStart) (ChatStarted, error) {
+	var err error
+	cfg, err = prepareTestChatStart(ctx, cfg)
+	if err != nil {
+		return ChatStarted{}, err
+	}
 	l.started = append(l.started, cfg)
+	if l.beforeStart != nil {
+		l.beforeStart(cfg)
+	}
 	if l.startErr != nil {
 		return ChatStarted{}, l.startErr
 	}
@@ -926,6 +948,20 @@ func TestSwitchAgentChatSessionKeepsChatModeAndNeedsNoRuntime(t *testing.T) {
 		live:              true,
 	}
 	manager.chat = launcher
+	issuedWhileSourceLive := false
+	issuer := &scriptedBrowserCapabilities{
+		issues: []browserCapabilityIssue{{token: "target-token", verifier: "target-verifier"}},
+		onIssue: func(_ int, _ domain.SessionID) {
+			issuedWhileSourceLive = launcher.live
+		},
+	}
+	manager.browserCapabilities = issuer
+	verifierAtTargetStart := ""
+	launcher.beforeStart = func(cfg ChatStart) {
+		store.mu.Lock()
+		verifierAtTargetStart = store.sessions[cfg.SessionID].Metadata.BrowserCapabilityVerifier
+		store.mu.Unlock()
+	}
 
 	sw, err := switchAgentSynchronously(context.Background(), manager, rec.ID, SwitchAgentConfig{
 		TargetHarness:  domain.HarnessCodex,
@@ -948,6 +984,16 @@ func TestSwitchAgentChatSessionKeepsChatModeAndNeedsNoRuntime(t *testing.T) {
 		got.Metadata.ControllerGeneration != "target-generation" {
 		t.Fatalf("Chat target identity = provider %q generation %q",
 			got.Metadata.ProviderConversationID, got.Metadata.ControllerGeneration)
+	}
+	if issuedWhileSourceLive {
+		t.Fatal("target capability was issued before the source Chat controller stopped")
+	}
+	if issuer.calls != 1 || verifierAtTargetStart != "target-verifier" ||
+		launcher.started[0].Env[EnvBrowserCapability] != "target-token" ||
+		got.Metadata.BrowserCapabilityVerifier != "target-verifier" {
+		t.Fatalf("target capability rotation = calls %d start verifier %q token %q verifier %q",
+			issuer.calls, verifierAtTargetStart, launcher.started[0].Env[EnvBrowserCapability],
+			got.Metadata.BrowserCapabilityVerifier)
 	}
 	if len(launcher.started) != 1 ||
 		launcher.started[0].ProviderScopeID != chatSwitchProviderBoundaryID(sw.ID) {
@@ -1041,6 +1087,11 @@ func TestSwitchAgentChatActivationFailureRestoresSourceController(t *testing.T) 
 		live:              true,
 	}
 	manager.chat = launcher
+	issuer := &scriptedBrowserCapabilities{issues: []browserCapabilityIssue{
+		{token: "failed-target-token", verifier: "failed-target-verifier"},
+		{token: "restored-source-token", verifier: "restored-source-verifier"},
+	}}
+	manager.browserCapabilities = issuer
 	activationErr := errors.New("target ownership commit unavailable")
 	store.activateErr = activationErr
 
@@ -1065,6 +1116,16 @@ func TestSwitchAgentChatActivationFailureRestoresSourceController(t *testing.T) 
 	}
 	if len(launcher.started) != 2 || launcher.started[1].ProviderConversationID != "source-chat-native" {
 		t.Fatalf("Chat starts = %+v, want target attempt then source resume", launcher.started)
+	}
+	if issuer.calls != 2 ||
+		launcher.started[0].Env[EnvBrowserCapability] != "failed-target-token" ||
+		launcher.started[1].Env[EnvBrowserCapability] != "restored-source-token" ||
+		got.Metadata.BrowserCapabilityVerifier != "restored-source-verifier" {
+		t.Fatalf("rollback capability rotation = calls %d target %q source %q verifier %q",
+			issuer.calls,
+			launcher.started[0].Env[EnvBrowserCapability],
+			launcher.started[1].Env[EnvBrowserCapability],
+			got.Metadata.BrowserCapabilityVerifier)
 	}
 }
 
@@ -2528,6 +2589,48 @@ func TestSwitchAgentRejectsDefinitelyUnauthenticatedTargetBeforeStoppingSource(t
 	}
 	if got := store.sessions["proj-1"].Harness; got != domain.HarnessClaudeCode {
 		t.Fatalf("session harness = %q, want source harness", got)
+	}
+}
+
+func TestSwitchAgentUsesCoordinatorUnauthorizedPolicyBeforeStoppingSource(t *testing.T) {
+	runtime := &fakeRestartRuntime{fakeRuntime: &fakeRuntime{}}
+	manager, store, _ := newSwitchTestManager(t, runtime)
+	readiness := &switchReadinessProvider{snapshot: domain.AgentReadinessSnapshot{
+		Installation:   domain.AgentInstallationObservation{State: domain.AgentInstallationInstalled},
+		Authentication: domain.AgentAuthenticationObservation{State: domain.AgentAuthenticationUnauthorized},
+	}}
+	manager.SetAgentReadiness(readiness)
+
+	sw, err := switchAgentSynchronously(context.Background(), manager, "proj-1", SwitchAgentConfig{TargetHarness: domain.HarnessCodex, IdempotencyKey: "coordinator-unauthenticated"})
+	if !errors.Is(err, ErrTargetAgentUnauthorized) {
+		t.Fatalf("switch error = %v, want ErrTargetAgentUnauthorized", err)
+	}
+	if sw.State != domain.AgentSwitchFailed || readiness.calls != 1 {
+		t.Fatalf("switch=%+v readiness calls=%d", sw, readiness.calls)
+	}
+	if runtime.restarted != 0 || runtime.destroyed != 0 {
+		t.Fatalf("source runtime changed: restarts=%d destroys=%d", runtime.restarted, runtime.destroyed)
+	}
+	if got := store.sessions["proj-1"].Harness; got != domain.HarnessClaudeCode {
+		t.Fatalf("session harness = %q, want source harness", got)
+	}
+}
+
+func TestSwitchAgentTreatsCoordinatorUnknownAsAdvisory(t *testing.T) {
+	runtime := &fakeRestartRuntime{fakeRuntime: &fakeRuntime{}}
+	manager, _, _ := newSwitchTestManager(t, runtime)
+	readiness := &switchReadinessProvider{snapshot: domain.AgentReadinessSnapshot{
+		Installation:   domain.AgentInstallationObservation{State: domain.AgentInstallationUnknown},
+		Authentication: domain.AgentAuthenticationObservation{State: domain.AgentAuthenticationUnknown},
+	}}
+	manager.SetAgentReadiness(readiness)
+
+	sw, err := switchAgentSynchronously(context.Background(), manager, "proj-1", SwitchAgentConfig{TargetHarness: domain.HarnessCodex, IdempotencyKey: "coordinator-unknown"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sw.State != domain.AgentSwitchCompleted || readiness.calls != 1 {
+		t.Fatalf("switch=%+v readiness calls=%d", sw, readiness.calls)
 	}
 }
 

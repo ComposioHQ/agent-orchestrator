@@ -15,6 +15,7 @@ import (
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
+	"github.com/aoagents/agent-orchestrator/backend/internal/reqid"
 	"github.com/aoagents/agent-orchestrator/backend/internal/sessionguard"
 )
 
@@ -1021,6 +1022,9 @@ func (m *Manager) emitTelemetry(ctx context.Context, ev ports.TelemetryEvent) {
 	if m.telemetry == nil {
 		return
 	}
+	if ev.RequestID == "" {
+		ev.RequestID = reqid.FromContext(ctx)
+	}
 	m.telemetry.Emit(ctx, ev)
 }
 
@@ -1446,6 +1450,7 @@ func mergeMetadata(base, in domain.SessionMetadata) domain.SessionMetadata {
 	}
 	set(&base.LatestAssistantUpdate, in.LatestAssistantUpdate)
 	set(&base.NativeTranscriptPath, in.NativeTranscriptPath)
+	set(&base.Model, in.Model)
 	set(&base.BrowserCapabilityVerifier, in.BrowserCapabilityVerifier)
 	// The chat controller's resume handle. Without this a restart has no thread to
 	// resume and the conversation is stranded — the provider still holds it, but

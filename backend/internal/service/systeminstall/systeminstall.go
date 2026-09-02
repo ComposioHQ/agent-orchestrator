@@ -1,5 +1,6 @@
 // Package systeminstall executes real install commands for a small, fixed
-// allowlist of targets: tmux, gh, claude, codex, opencode, copilot. This is
+// allowlist of targets: tmux, gh, claude, codex, opencode, copilot,
+// cloudflared. This is
 // the core security invariant of the package — a caller can only select
 // which of the six known Target values to install; the actual argv run on
 // the machine is always built from hardcoded command shapes, never from
@@ -30,16 +31,21 @@ const (
 	TargetCodex    Target = "codex"
 	TargetOpencode Target = "opencode"
 	TargetCopilot  Target = "copilot"
+	// TargetCloudflared is the connector that makes a paired phone reachable
+	// from outside the local network. Optional: without it the mobile bridge
+	// still works on the LAN and over Tailscale.
+	TargetCloudflared Target = "cloudflared"
 )
 
 // knownTargets is the exhaustive allowlist backing Valid.
 var knownTargets = map[Target]bool{
-	TargetTmux:     true,
-	TargetGH:       true,
-	TargetClaude:   true,
-	TargetCodex:    true,
-	TargetOpencode: true,
-	TargetCopilot:  true,
+	TargetTmux:        true,
+	TargetGH:          true,
+	TargetClaude:      true,
+	TargetCodex:       true,
+	TargetOpencode:    true,
+	TargetCloudflared: true,
+	TargetCopilot:     true,
 }
 
 // Valid reports whether target is one of the six known install targets.
@@ -111,7 +117,7 @@ const defaultInstallTimeout = 15 * time.Minute
 
 // Job is the tracked state of one install run for a Target.
 type Job struct {
-	Target  Target `json:"target" enum:"tmux,gh,claude,codex,opencode,copilot" description:"Install target this job ran (or is running) for."`
+	Target  Target `json:"target" enum:"tmux,gh,claude,codex,opencode,copilot,cloudflared" description:"Install target this job ran (or is running) for."`
 	Status  Status `json:"status" enum:"idle,running,succeeded,failed,unsupported" description:"Current lifecycle state of the job."`
 	Command string `json:"command,omitempty" description:"Human-readable install command, e.g. \"brew install tmux\", for display even before/without output."`
 	Output  string `json:"output,omitempty" description:"Combined stdout+stderr from the install command, tail-capped to the last ~4000 bytes."`
@@ -140,6 +146,15 @@ type Service struct {
 	// override it with a short duration to exercise the timeout path without
 	// a real multi-minute wait.
 	installTimeout time.Duration
+	onSucceeded    func(Target)
+}
+
+// SetOnSucceeded registers the daemon callback invoked after a verified
+// install. It is called outside the job mutex.
+func (s *Service) SetOnSucceeded(callback func(Target)) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.onSucceeded = callback
 }
 
 // New returns a Service backed by explicit host-operation ports. The daemon
@@ -248,25 +263,33 @@ func (s *Service) run(argv []string, job *Job) {
 	now := time.Now()
 
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	job.Output = out.String()
 	job.FinishedAt = &now
 	if ctx.Err() == context.DeadlineExceeded {
 		job.Status = StatusFailed
 		job.Error = fmt.Sprintf("install timed out after %s", s.installTimeout)
+		s.mu.Unlock()
 		return
 	}
 	if runErr != nil {
 		job.Status = StatusFailed
 		job.Error = runErr.Error()
+		s.mu.Unlock()
 		return
 	}
 	if path, err := s.executables.LookPath(string(job.Target)); err != nil || path == "" {
 		job.Status = StatusFailed
 		job.Error = fmt.Sprintf("install command finished but %s is still not in PATH", job.Target)
+		s.mu.Unlock()
 		return
 	}
 	job.Status = StatusSucceeded
+	callback := s.onSucceeded
+	target := job.Target
+	s.mu.Unlock()
+	if callback != nil {
+		callback(target)
+	}
 }
 
 func displayCommand(plan Plan) string {
@@ -319,6 +342,8 @@ func (s *Service) planFor(target Target) Plan {
 		return s.planNPM(TargetCopilot, "@github/copilot")
 	case TargetOpencode:
 		return s.planOpencode()
+	case TargetCloudflared:
+		return s.planCloudflared()
 	default:
 		return Plan{Target: target, Unsupported: true, Reason: "unknown install target"}
 	}
@@ -355,6 +380,31 @@ func (s *Service) planGH() Plan {
 		})
 	default:
 		return Plan{Target: TargetGH, Unsupported: true, Reason: "gh installation is not supported on this platform."}
+	}
+}
+
+// planCloudflared mirrors planGH: Cloudflare publishes cloudflared through
+// Homebrew and winget, and Linux distributions package it too.
+//
+// Deliberately not a downloaded binary. Fetching a release archive ourselves
+// would mean pinning per-platform URLs, verifying checksums and clearing
+// macOS quarantine before executing it — a fourth install shape this package
+// does not have, for a tool the three it does have already cover. The one
+// curl-piped target here is opencode, and only because that is the vendor's
+// own documented installer.
+func (s *Service) planCloudflared() Plan {
+	switch s.goos {
+	case "windows":
+		return s.planWinget(TargetCloudflared, "Cloudflare.cloudflared")
+	case "darwin":
+		return s.planBrew(TargetCloudflared, "cloudflared")
+	case "linux":
+		return s.planLinuxPackage(TargetCloudflared, func(string) string { return "cloudflared" })
+	default:
+		return Plan{
+			Target: TargetCloudflared, Unsupported: true,
+			Reason: "cloudflared installation is not supported on this platform.",
+		}
 	}
 }
 

@@ -14,6 +14,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/go-chi/chi/v5/middleware"
+
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apierr"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
@@ -27,6 +29,36 @@ func (f *fakeTelemetrySink) Emit(_ context.Context, ev ports.TelemetryEvent) {
 }
 func (f *fakeTelemetrySink) Close(context.Context) error { return nil }
 
+type fakeAgentReadiness struct {
+	snapshot                domain.AgentReadinessSnapshot
+	err                     error
+	calls                   int
+	agentID                 string
+	purpose                 domain.AgentReadinessPurpose
+	installationInvalidated []string
+	authInvalidated         []string
+	rechecks                []string
+}
+
+func (f *fakeAgentReadiness) EnsureAgentReadiness(_ context.Context, agentID string, purpose domain.AgentReadinessPurpose) (domain.AgentReadinessSnapshot, error) {
+	f.calls++
+	f.agentID = agentID
+	f.purpose = purpose
+	return f.snapshot, f.err
+}
+
+func (f *fakeAgentReadiness) InvalidateAgentInstallation(agentID string) {
+	f.installationInvalidated = append(f.installationInvalidated, agentID)
+}
+
+func (f *fakeAgentReadiness) InvalidateAgentAuthentication(agentID string) {
+	f.authInvalidated = append(f.authInvalidated, agentID)
+}
+
+func (f *fakeAgentReadiness) RecheckAgent(agentID string) {
+	f.rechecks = append(f.rechecks, agentID)
+}
+
 type fakeStore struct {
 	sessions            map[domain.SessionID]domain.SessionRecord
 	getSessionErr       error
@@ -34,6 +66,7 @@ type fakeStore struct {
 	activeSwitchGetErr  error
 	activeSwitchListErr error
 	pr                  map[domain.SessionID]domain.PRFacts
+	prFacts             map[domain.SessionID][]domain.PRFacts
 	prs                 map[domain.SessionID][]domain.PullRequest
 	projects            map[string]domain.ProjectRecord
 	worktrees           map[domain.SessionID][]domain.SessionWorktreeRecord
@@ -43,6 +76,9 @@ type fakeStore struct {
 	threads             map[string][]domain.PullRequestReviewThread
 	comments            map[string][]domain.PullRequestComment
 	commentsErr         error
+	reviewRuns          map[domain.SessionID][]domain.CurrentHeadReviewRun
+	listPRFactsCalls    int
+	listReviewRunsCalls int
 	num                 int
 }
 
@@ -51,6 +87,7 @@ func newFakeStore() *fakeStore {
 		sessions:       map[domain.SessionID]domain.SessionRecord{},
 		activeSwitches: map[domain.SessionID]domain.AgentSwitch{},
 		pr:             map[domain.SessionID]domain.PRFacts{},
+		prFacts:        map[domain.SessionID][]domain.PRFacts{},
 		prs:            map[domain.SessionID][]domain.PullRequest{},
 		projects:       map[string]domain.ProjectRecord{},
 		worktrees:      map[domain.SessionID][]domain.SessionWorktreeRecord{},
@@ -58,6 +95,31 @@ func newFakeStore() *fakeStore {
 		reviews:        map[string][]domain.PullRequestReview{},
 		threads:        map[string][]domain.PullRequestReviewThread{},
 		comments:       map[string][]domain.PullRequestComment{},
+		reviewRuns:     map[domain.SessionID][]domain.CurrentHeadReviewRun{},
+	}
+}
+
+func TestListBatchesKanbanReads(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer"}
+	st.sessions["mer-2"] = domain.SessionRecord{ID: "mer-2", ProjectID: "mer"}
+	st.pr["mer-1"] = domain.PRFacts{URL: "pr-1", HeadSHA: "head-1"}
+	st.pr["mer-2"] = domain.PRFacts{URL: "pr-2", HeadSHA: "head-2"}
+	st.reviewRuns["mer-1"] = []domain.CurrentHeadReviewRun{{SessionID: "mer-1", PRURL: "pr-1", Status: domain.ReviewRunRunning, ID: "run-1", CreatedAt: time.Now().UTC()}}
+	st.reviewRuns["mer-2"] = []domain.CurrentHeadReviewRun{{SessionID: "mer-2", PRURL: "pr-2", Status: domain.ReviewRunRunning, ID: "run-2", CreatedAt: time.Now().UTC()}}
+
+	list, err := (&Service{store: st}).List(context.Background(), ListFilter{ProjectID: "mer"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 2 {
+		t.Fatalf("len(list) = %d, want 2", len(list))
+	}
+	if st.listPRFactsCalls != 1 {
+		t.Fatalf("ListPRFacts calls = %d, want 1 batched call", st.listPRFactsCalls)
+	}
+	if st.listReviewRunsCalls != 1 {
+		t.Fatalf("ListCurrentHeadReviewRuns calls = %d, want 1 batched call", st.listReviewRunsCalls)
 	}
 }
 
@@ -229,12 +291,13 @@ func (f *fakeStore) SetSessionAutoInjectCI(_ context.Context, id domain.SessionI
 	return true, nil
 }
 
-func (f *fakeStore) SetSessionReviewerHarness(_ context.Context, id domain.SessionID, harness domain.ReviewerHarness, updatedAt time.Time) (bool, error) {
+func (f *fakeStore) SetSessionReviewerConfig(_ context.Context, id domain.SessionID, harness domain.ReviewerHarness, config domain.AgentConfig, updatedAt time.Time) (bool, error) {
 	r, ok := f.sessions[id]
 	if !ok {
 		return false, nil
 	}
 	r.ReviewerHarness = harness
+	r.ReviewerConfig = config
 	r.UpdatedAt = updatedAt
 	f.sessions[id] = r
 	return true, nil
@@ -268,11 +331,47 @@ func (f *fakeStore) ListPRsBySession(_ context.Context, id domain.SessionID) ([]
 }
 
 func (f *fakeStore) ListPRFactsForSession(_ context.Context, id domain.SessionID) ([]domain.PRFacts, error) {
+	f.listPRFactsCalls++
+	if prs, ok := f.prFacts[id]; ok {
+		return append([]domain.PRFacts(nil), prs...), nil
+	}
 	pr, ok := f.pr[id]
 	if !ok {
 		return nil, nil
 	}
 	return []domain.PRFacts{pr}, nil
+}
+
+func (f *fakeStore) ListPRFactsForSessions(_ context.Context, ids []domain.SessionID) (map[domain.SessionID][]domain.PRFacts, error) {
+	f.listPRFactsCalls++
+	out := make(map[domain.SessionID][]domain.PRFacts, len(ids))
+	for _, id := range ids {
+		if prs, ok := f.prFacts[id]; ok {
+			out[id] = append([]domain.PRFacts(nil), prs...)
+			continue
+		}
+		pr, ok := f.pr[id]
+		if ok {
+			out[id] = []domain.PRFacts{pr}
+			continue
+		}
+		out[id] = []domain.PRFacts{}
+	}
+	return out, nil
+}
+
+func (f *fakeStore) ListCurrentHeadReviewRunsForSession(_ context.Context, id domain.SessionID) ([]domain.CurrentHeadReviewRun, error) {
+	f.listReviewRunsCalls++
+	return f.reviewRuns[id], nil
+}
+
+func (f *fakeStore) ListCurrentHeadReviewRunsForSessions(_ context.Context, ids []domain.SessionID) (map[domain.SessionID][]domain.CurrentHeadReviewRun, error) {
+	f.listReviewRunsCalls++
+	out := make(map[domain.SessionID][]domain.CurrentHeadReviewRun, len(ids))
+	for _, id := range ids {
+		out[id] = append([]domain.CurrentHeadReviewRun(nil), f.reviewRuns[id]...)
+	}
+	return out, nil
 }
 
 func (f *fakeStore) ListChecks(_ context.Context, prURL string) ([]domain.PullRequestCheck, error) {
@@ -505,7 +604,7 @@ func TestSessionSetReviewerHarnessPersistsPerSession(t *testing.T) {
 	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", Kind: domain.KindWorker}
 	st.sessions["mer-2"] = domain.SessionRecord{ID: "mer-2", ProjectID: "mer", Kind: domain.KindWorker}
 
-	sess, err := (&Service{store: st}).SetReviewerHarness(context.Background(), "mer-1", domain.ReviewerOpenCode)
+	sess, err := (&Service{store: st}).SetReviewerHarness(context.Background(), "mer-1", domain.ReviewerOpenCode, domain.AgentConfig{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -520,8 +619,24 @@ func TestSessionSetReviewerHarnessPersistsPerSession(t *testing.T) {
 func TestSessionSetReviewerHarnessRejectsUnknownHarness(t *testing.T) {
 	st := newFakeStore()
 	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1"}
-	if _, err := (&Service{store: st}).SetReviewerHarness(context.Background(), "mer-1", "unknown"); err == nil {
+	if _, err := (&Service{store: st}).SetReviewerHarness(context.Background(), "mer-1", "unknown", domain.AgentConfig{}); err == nil {
 		t.Fatal("expected invalid harness error")
+	}
+}
+
+func TestSessionSetReviewerHarnessAllowsConfigWithoutHarness(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1"}
+
+	sess, err := (&Service{store: st}).SetReviewerHarness(context.Background(), "mer-1", "", domain.AgentConfig{Model: "gpt-5"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sess.ReviewerHarness != "" || sess.ReviewerConfig.Model != "gpt-5" {
+		t.Fatalf("session reviewer override = (%q, %+v), want default harness with model override", sess.ReviewerHarness, sess.ReviewerConfig)
+	}
+	if stored := st.sessions["mer-1"]; stored.ReviewerHarness != "" || stored.ReviewerConfig.Model != "gpt-5" {
+		t.Fatalf("stored reviewer override = (%q, %+v), want default harness with model override", stored.ReviewerHarness, stored.ReviewerConfig)
 	}
 }
 
@@ -2369,6 +2484,82 @@ func TestSpawnUnknownProjectReturns404(t *testing.T) {
 	}
 }
 
+func TestSpawnBlocksDefinitelyMissingHarnessBeforeManager(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer"}
+	fc := &fakeCommander{}
+	readiness := &fakeAgentReadiness{snapshot: domain.AgentReadinessSnapshot{
+		ID: "codex", Installation: domain.AgentInstallationObservation{State: domain.AgentInstallationNotInstalled},
+		Authentication: domain.AgentAuthenticationObservation{State: domain.AgentAuthenticationUnknown},
+	}}
+	svc := NewWithDeps(Deps{Manager: fc, Store: st, AgentReadiness: readiness})
+
+	_, _, _, err := svc.Spawn(context.Background(), ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Harness: "codex"})
+	var apiError *apierr.Error
+	if !errors.As(err, &apiError) || apiError.Code != "AGENT_BINARY_NOT_FOUND" {
+		t.Fatalf("Spawn error = %v, want AGENT_BINARY_NOT_FOUND", err)
+	}
+	if fc.spawnCalls != 0 {
+		t.Fatal("manager.Spawn ran before a definitely-missing harness was blocked")
+	}
+	if readiness.calls != 1 || readiness.purpose != domain.AgentReadinessPurposeLaunch {
+		t.Fatalf("readiness call = count %d purpose %q", readiness.calls, readiness.purpose)
+	}
+}
+
+func TestSpawnTreatsUnauthorizedReadinessAsAdvisory(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer"}
+	fc := &fakeCommander{}
+	readiness := &fakeAgentReadiness{snapshot: domain.AgentReadinessSnapshot{
+		ID: "codex", Installation: domain.AgentInstallationObservation{State: domain.AgentInstallationInstalled},
+		Authentication: domain.AgentAuthenticationObservation{State: domain.AgentAuthenticationUnauthorized},
+	}}
+	svc := NewWithDeps(Deps{Manager: fc, Store: st, AgentReadiness: readiness})
+
+	if _, _, _, err := svc.Spawn(context.Background(), ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Harness: "codex"}); err != nil {
+		t.Fatalf("Spawn: %v", err)
+	}
+	if fc.spawnCalls != 1 {
+		t.Fatalf("manager.Spawn calls = %d, want unauthorized readiness to remain advisory", fc.spawnCalls)
+	}
+}
+
+func TestSpawnInvalidatesReadinessAfterTypedLaunchFailure(t *testing.T) {
+	tests := []struct {
+		name             string
+		err              error
+		wantInstallation bool
+		wantAuth         bool
+	}{
+		{name: "binary missing", err: ports.ErrAgentBinaryNotFound, wantInstallation: true},
+		{name: "auth required", err: ports.ErrChatAuthRequired, wantAuth: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			st := newFakeStore()
+			st.projects["mer"] = domain.ProjectRecord{ID: "mer"}
+			fc := &fakeCommander{spawnErr: tt.err}
+			readiness := &fakeAgentReadiness{snapshot: domain.AgentReadinessSnapshot{
+				ID: "codex", Installation: domain.AgentInstallationObservation{State: domain.AgentInstallationInstalled},
+				Authentication: domain.AgentAuthenticationObservation{State: domain.AgentAuthenticationAuthorized},
+			}}
+			svc := NewWithDeps(Deps{Manager: fc, Store: st, AgentReadiness: readiness})
+
+			_, _, _, _ = svc.Spawn(context.Background(), ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Harness: "codex"})
+			if got := len(readiness.installationInvalidated) == 1; got != tt.wantInstallation {
+				t.Fatalf("installation invalidated = %v, want %v", got, tt.wantInstallation)
+			}
+			if got := len(readiness.authInvalidated) == 1; got != tt.wantAuth {
+				t.Fatalf("auth invalidated = %v, want %v", got, tt.wantAuth)
+			}
+			if len(readiness.rechecks) != 1 || readiness.rechecks[0] != "codex" {
+				t.Fatalf("rechecks = %#v, want codex", readiness.rechecks)
+			}
+		})
+	}
+}
+
 func TestSpawnEmitsFirstSessionOnboardingAndDuration(t *testing.T) {
 	st := newFakeStore()
 	st.projects["mer"] = domain.ProjectRecord{ID: "mer", RegisteredAt: time.Unix(100, 0).UTC()}
@@ -2978,7 +3169,7 @@ func TestEmitSpawnFailedClassifiesRawStageSentinel(t *testing.T) {
 	})
 
 	raw := fmt.Errorf("spawn mer-1: %w: tmux runtime: create session mer-1: boom", sessionmanager.ErrRuntimeCreate)
-	svc.emitSpawnFailed(ports.SpawnConfig{
+	svc.emitSpawnFailed(context.Background(), ports.SpawnConfig{
 		ProjectID: "mer",
 		Kind:      domain.KindWorker,
 		Harness:   domain.HarnessCodex,
@@ -4267,28 +4458,146 @@ func TestDeduplicatePRFactsCollapsesTransferredRepoAliasesWithSameHead(t *testin
 	now := time.Date(2026, 7, 31, 10, 0, 0, 0, time.UTC)
 	got := deduplicatePRFacts([]domain.PRFacts{
 		{
-			URL:            "https://github.com/AgentWrapper/agent-orchestrator/pull/3193",
-			Number:         3193,
-			ReviewComments: true,
-			SourceBranch:   "ao/mer-1/fix-sigpipe",
-			TargetBranch:   "main",
-			HeadSHA:        "same-head",
-			UpdatedAt:      now,
+			URL:                      "https://github.com/AgentWrapper/agent-orchestrator/pull/3193",
+			Number:                   3193,
+			ReviewComments:           true,
+			ExternalChangesRequested: true,
+			ExternalComments:         true,
+			SourceBranch:             "ao/mer-1/fix-sigpipe",
+			TargetBranch:             "main",
+			HeadSHA:                  "same-head",
+			UpdatedAt:                now,
 		},
 		{
-			URL:          "https://github.com/Untrivial-ai/agent-orchestrator/pull/3193",
-			Number:       3193,
-			SourceBranch: "ao/mer-1/fix-sigpipe",
-			TargetBranch: "main",
-			HeadSHA:      "same-head",
-			UpdatedAt:    now.Add(time.Minute),
+			URL:              "https://github.com/Untrivial-ai/agent-orchestrator/pull/3193",
+			Number:           3193,
+			ExternalApproved: true,
+			SourceBranch:     "ao/mer-1/fix-sigpipe",
+			TargetBranch:     "main",
+			HeadSHA:          "same-head",
+			UpdatedAt:        now.Add(time.Minute),
 		},
 	})
 	if len(got) != 1 {
 		t.Fatalf("facts = %d, want transferred aliases collapsed: %+v", len(got), got)
 	}
-	if got[0].URL != "https://github.com/Untrivial-ai/agent-orchestrator/pull/3193" || !got[0].ReviewComments {
+	if got[0].URL != "https://github.com/Untrivial-ai/agent-orchestrator/pull/3193" ||
+		!got[0].ReviewComments ||
+		!got[0].ExternalChangesRequested ||
+		!got[0].ExternalComments ||
+		!got[0].ExternalApproved {
 		t.Fatalf("merged facts = %+v, want newest URL and preserved comments", got[0])
+	}
+}
+
+func TestToSessionWithFactsRemapsTransferredAliasReviewRuns(t *testing.T) {
+	st := newFakeStore()
+	rec := domain.SessionRecord{
+		ID:                "mer-1",
+		ProjectID:         "mer",
+		UpdatedAt:         time.Date(2026, 8, 28, 10, 0, 0, 0, time.UTC),
+		AutoReviewEnabled: true,
+		AutoInjectReview:  true,
+	}
+	oldURL := "https://github.com/AgentWrapper/agent-orchestrator/pull/3193"
+	newURL := "https://github.com/Untrivial-ai/agent-orchestrator/pull/3193"
+	st.prFacts[rec.ID] = []domain.PRFacts{
+		{
+			URL:                      oldURL,
+			Number:                   3193,
+			Review:                   domain.ReviewRequired,
+			SourceBranch:             "ao/mer-1/fix-sigpipe",
+			TargetBranch:             "main",
+			HeadSHA:                  "same-head",
+			UpdatedAt:                rec.UpdatedAt,
+			ExternalChangesRequested: false,
+		},
+		{
+			URL:          newURL,
+			Number:       3193,
+			Review:       domain.ReviewRequired,
+			SourceBranch: "ao/mer-1/fix-sigpipe",
+			TargetBranch: "main",
+			HeadSHA:      "same-head",
+			UpdatedAt:    rec.UpdatedAt.Add(time.Minute),
+		},
+	}
+	st.reviewRuns[rec.ID] = []domain.CurrentHeadReviewRun{{
+		SessionID: rec.ID,
+		Harness:   "claude-code",
+		PRURL:     oldURL,
+		Status:    domain.ReviewRunRunning,
+		ID:        "run-old",
+		CreatedAt: rec.UpdatedAt,
+	}}
+
+	sess, err := (&Service{store: st, clock: func() time.Time { return rec.UpdatedAt.Add(2 * time.Minute) }}).toSessionWithFacts(rec, st.prFacts[rec.ID], st.reviewRuns[rec.ID])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sess.KanbanColumn != "validating" {
+		t.Fatalf("column = %q, want validating", sess.KanbanColumn)
+	}
+	if sess.DisplayStatus != "Reviewing" {
+		t.Fatalf("displayStatus = %q, want Reviewing", sess.DisplayStatus)
+	}
+	if len(sess.PRs) != 1 || sess.PRs[0].URL != newURL {
+		t.Fatalf("deduped PRs = %+v, want newest alias only", sess.PRs)
+	}
+}
+
+func TestToSessionWithFactsCanonicalAliasRunSupersedesOlderAliasRun(t *testing.T) {
+	st := newFakeStore()
+	rec := domain.SessionRecord{
+		ID:                "mer-2",
+		ProjectID:         "mer",
+		UpdatedAt:         time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC),
+		AutoReviewEnabled: true,
+		AutoInjectReview:  true,
+	}
+	oldURL := "https://github.com/AgentWrapper/agent-orchestrator/pull/4000"
+	newURL := "https://github.com/Untrivial-ai/agent-orchestrator/pull/4000"
+	st.prFacts[rec.ID] = []domain.PRFacts{
+		{
+			URL:          oldURL,
+			Number:       4000,
+			Review:       domain.ReviewRequired,
+			SourceBranch: "ao/mer-2/fix-review",
+			TargetBranch: "main",
+			HeadSHA:      "same-head",
+			UpdatedAt:    rec.UpdatedAt,
+		},
+		{
+			URL:          newURL,
+			Number:       4000,
+			Review:       domain.ReviewRequired,
+			SourceBranch: "ao/mer-2/fix-review",
+			TargetBranch: "main",
+			HeadSHA:      "same-head",
+			UpdatedAt:    rec.UpdatedAt.Add(time.Minute),
+		},
+	}
+	st.reviewRuns[rec.ID] = []domain.CurrentHeadReviewRun{
+		{
+			SessionID: rec.ID, Harness: "claude-code", PRURL: oldURL,
+			Status: domain.ReviewRunRunning, ID: "run-old", CreatedAt: rec.UpdatedAt,
+		},
+		{
+			SessionID: rec.ID, Harness: "claude-code", PRURL: newURL,
+			Status: domain.ReviewRunComplete, Verdict: domain.VerdictApproved,
+			ID: "run-new", CreatedAt: rec.UpdatedAt.Add(time.Minute),
+		},
+	}
+
+	sess, err := (&Service{store: st, clock: func() time.Time { return rec.UpdatedAt.Add(2 * time.Minute) }}).toSessionWithFacts(rec, st.prFacts[rec.ID], st.reviewRuns[rec.ID])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sess.KanbanColumn != "needs_review" {
+		t.Fatalf("column = %q, want needs_review", sess.KanbanColumn)
+	}
+	if sess.DisplayStatus != "Needs human review" {
+		t.Fatalf("displayStatus = %q, want Needs human review", sess.DisplayStatus)
 	}
 }
 
@@ -4333,4 +4642,57 @@ func sameStrings(got, want []string) bool {
 		}
 	}
 	return true
+}
+
+// TestSpawnTelemetryCarriesRequestID pins the correlation the daemon needs:
+// spawn telemetry detaches from the request context on purpose, so the request
+// id has to be read at the emit site or every session_service row lands with an
+// empty request_id and cannot be joined to the HTTP request that caused it.
+func TestSpawnTelemetryCarriesRequestID(t *testing.T) {
+	requestCtx := context.WithValue(context.Background(), middleware.RequestIDKey, "req-1")
+	cases := []struct {
+		name     string
+		ctx      context.Context
+		spawnErr error
+		want     string
+	}{
+		{name: "request scoped", ctx: requestCtx, want: "req-1"},
+		{
+			name: "spawn failure",
+			ctx:  requestCtx,
+			spawnErr: fmt.Errorf(
+				"spawn mer-1: %w: tmux runtime: create session mer-1: boom",
+				sessionmanager.ErrRuntimeCreate,
+			),
+			want: "req-1",
+		},
+		{name: "background context", ctx: context.Background(), want: ""},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			st := newFakeStore()
+			st.projects["mer"] = domain.ProjectRecord{ID: "mer", RegisteredAt: time.Unix(100, 0).UTC()}
+			sink := &fakeTelemetrySink{}
+			svc := NewWithDeps(Deps{
+				Manager:   &fakeCommander{spawnErr: tc.spawnErr},
+				Store:     st,
+				Telemetry: sink,
+				Clock:     func() time.Time { return time.Unix(102, 0).UTC() },
+			})
+
+			_, _, _, err := svc.Spawn(tc.ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
+			if (err != nil) != (tc.spawnErr != nil) {
+				t.Fatalf("Spawn err = %v, want error: %t", err, tc.spawnErr != nil)
+			}
+			if len(sink.events) == 0 {
+				t.Fatal("no telemetry events emitted")
+			}
+			for _, ev := range sink.events {
+				if ev.RequestID != tc.want {
+					t.Fatalf("%s RequestID = %q, want %q", ev.Name, ev.RequestID, tc.want)
+				}
+			}
+		})
+	}
 }

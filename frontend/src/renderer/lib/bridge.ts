@@ -41,6 +41,7 @@ export const aoBridge: AoBridge =
 		},
 		theme: {
 			set: async () => undefined,
+			persistTerminal: async () => undefined,
 		},
 		menu: {
 			action: async () => undefined,
@@ -98,6 +99,7 @@ export const aoBridge: AoBridge =
 				canGoForward: false,
 				isLoading: false,
 			}),
+			historySuggestions: async () => [],
 			clear: async (viewId: string) => ({
 				viewId,
 				url: "",
@@ -142,6 +144,12 @@ export const aoBridge: AoBridge =
 			selectTab: async ({ viewId, tabId }) => ({ viewId, activeTabId: tabId, tabs: [] }),
 			closeTab: async ({ viewId }) => ({ viewId, activeTabId: "", tabs: [] }),
 			openTab: async ({ viewId }) => ({ viewId, activeTabId: "", tabs: [] }),
+			getProfile: async (viewId) => ({ viewId, profileId: null, temporary: true }),
+			showProfileMenu: async () => undefined,
+			notifyPanelUsed: () => undefined,
+			notifyPanelBlur: () => undefined,
+			onFocusLocation: () => () => undefined,
+			onReopenClosedTab: () => () => undefined,
 			devtools: async ({ viewId, operation }) => ({
 				viewId,
 				open: operation !== "close",
@@ -150,11 +158,30 @@ export const aoBridge: AoBridge =
 			destroy: () => undefined,
 			setAnnotationMode: async () => undefined,
 			onNavState: () => () => undefined,
+			onPageFocus: () => () => undefined,
 			onTabsState: () => () => undefined,
 			onAgentActivity: () => () => undefined,
 			onDevToolsState: () => () => undefined,
+			onProfileState: () => () => undefined,
+			onProfileManage: () => () => undefined,
 			onAnnotationSubmit: () => () => undefined,
 			onAnnotationCancel: () => () => undefined,
+		},
+		browserProfiles: {
+			list: async () => ({ profiles: [] }),
+			create: async (name: string) => {
+				const now = new Date().toISOString();
+				return { id: `preview-${name}`, name, createdAt: now, updatedAt: now };
+			},
+			rename: async ({ id, name }) => {
+				const now = new Date().toISOString();
+				return { id, name, createdAt: now, updatedAt: now };
+			},
+			clear: async () => undefined,
+			delete: async () => undefined,
+			discoverImportSources: async () => ({ sources: [] }),
+			import: async () => ({ sourceName: "", entries: [] }),
+			onImportProgress: () => () => undefined,
 		},
 		notifications: {
 			show: async () => undefined,

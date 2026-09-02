@@ -25,19 +25,22 @@ import {
 import { NotificationCenter } from "./NotificationCenter";
 import { ResizeHandle } from "./ResizeHandle";
 import { SessionFileExplorer } from "./SessionFileExplorer";
-import { SessionFileTabs } from "./SessionFileTabs";
+import { SessionFileTab, SessionFileTabActions } from "./SessionFileTabs";
 import { SessionFileWorkspace } from "./SessionFileWorkspace";
-import { SessionBranchBadge } from "./SessionBranchBadge";
+import { SessionActionsMenu } from "./SessionActionsMenu";
 import { SessionInspector } from "./SessionInspector";
 import {
-	SessionInterfaceActionGroup,
 	SessionInterfaceSwitchButton,
 	SessionInterfaceSwitchDialog,
+	SessionInterfaceSwitchMenuItem,
 	SessionInterfaceTransitionNotice,
 } from "./SessionInterfaceSwitch";
 import { ShellTopbar } from "./ShellTopbar";
+import { SwitchAgentDialog } from "./SwitchAgentDialog";
 import { SessionTopbarHost } from "./SessionTopbarPortal";
+import { TerminalSwitchAgentButton } from "./TerminalSwitchAgentButton";
 import { TopbarButton } from "./TopbarButton";
+import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 import { useBrowserView } from "../hooks/useBrowserView";
 import { useFileAnnotation } from "../hooks/useFileAnnotation";
 import { useResizable } from "../hooks/useResizable";
@@ -52,9 +55,11 @@ import {
 	interfaceTransitionIsActive,
 	useSessionInterfaceTransition,
 } from "../hooks/useSessionInterfaceTransition";
-import { useWorkspaceQuery } from "../hooks/useWorkspaceQuery";
+import { useWorkspaceSession } from "../hooks/useWorkspaceQuery";
+import { useSessionHandoffMenu } from "../hooks/useSessionHandoffMenu";
+import { clearSwitchAgentState } from "../hooks/useSwitchAgent";
 import { useWindowFullScreen } from "../hooks/useWindowFullScreen";
-import { apiClient, apiErrorMessage } from "../lib/api-client";
+import { apiClient, apiErrorCode, apiErrorMessage } from "../lib/api-client";
 import { sessionWorkspaceFilesQueryOptions } from "../hooks/useSessionWorkspaceFiles";
 import { matchWorkspaceFilePath } from "../lib/workspace-file-path";
 import { SHELL_PANEL_SPRING } from "../lib/motion-spring";
@@ -94,6 +99,7 @@ const BROWSER_CHAT_MIN_PX = 440;
 const BROWSER_CHAT_COMFORT_PX = 720;
 const WORKSPACE_ABSOLUTE_MIN_PX = 300;
 const INSPECTOR_SEPARATOR_RESERVE_PX = 8;
+const EMPTY_AUXILIARY_TAB_ORDER: string[] = [];
 // The inspector tab labels respond to the tablist's remaining width. The
 // 239px tablist breakpoint plus the 76px pinned-action reserve and 10px leading
 // inset gives a 325px inspector breakpoint for the animation lock.
@@ -372,8 +378,8 @@ function SessionInspectorRail({
 // profile before the conversation can become unusably narrow.
 export function SessionView({ sessionId }: SessionViewProps) {
 	const { t } = useTranslation();
-	const workspaceQuery = useWorkspaceQuery();
-	const workspaces = workspaceQuery.data ?? [];
+	const queryClient = useQueryClient();
+	const workspaceQuery = useWorkspaceSession(sessionId);
 	const theme = useResolvedTheme();
 	const prefersReducedMotion = useReducedMotion();
 	const isInspectorOpen = useUiStore((state) => state.inspectorSessions[sessionId]?.isOpen ?? true);
@@ -383,7 +389,6 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	const setInspectorViewForSession = useUiStore((state) => state.setInspectorView);
 	const setFilesChangedOnly = useUiStore((state) => state.setFilesChangedOnly);
 	const initializeInspectorSession = useUiStore((state) => state.initializeInspectorSession);
-	const queryClient = useQueryClient();
 	const setBrowserContentRevealed = useUiStore((state) => state.setBrowserContentRevealed);
 	const setBrowserUnseen = useUiStore((state) => state.setBrowserUnseen);
 	const setSidebarWorkspaceDemand = useUiStore((state) => state.setSidebarWorkspaceDemand);
@@ -403,8 +408,47 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	const [filesPoppedOut, setFilesPoppedOut] = useState(false);
 	const [fileTabsBySession, setFileTabsBySession] = useState<Record<string, SessionFileTabState>>({});
 	const fileTabs = fileTabsBySession[sessionId] ?? EMPTY_SESSION_FILE_TABS;
+	const [auxiliaryTabOrderBySession, setAuxiliaryTabOrderBySession] = useState<Record<string, string[]>>({});
+	const auxiliaryTabOrder = auxiliaryTabOrderBySession[sessionId] ?? EMPTY_AUXILIARY_TAB_ORDER;
+	const setAuxiliaryTabOrder = useCallback(
+		(nextOrder: string[]) => {
+			setAuxiliaryTabOrderBySession((current) => {
+				const currentOrder = current[sessionId] ?? [];
+				const visibleKeys = new Set(nextOrder);
+				let nextIndex = 0;
+				const mergedOrder = currentOrder.map((key) =>
+					visibleKeys.has(key) ? nextOrder[nextIndex++]! : key,
+				);
+				while (nextIndex < nextOrder.length) mergedOrder.push(nextOrder[nextIndex++]!);
+				return { ...current, [sessionId]: mergedOrder };
+			});
+		},
+		[sessionId],
+	);
+	const removeAuxiliaryTab = useCallback(
+		(key: string) => {
+			setAuxiliaryTabOrderBySession((current) => {
+				const currentOrder = current[sessionId];
+				if (!currentOrder?.includes(key)) return current;
+				const nextOrder = currentOrder.filter((candidate) => candidate !== key);
+				if (nextOrder.length === 0) {
+					const { [sessionId]: _removed, ...rest } = current;
+					return rest;
+				}
+				return { ...current, [sessionId]: nextOrder };
+			});
+		},
+		[sessionId],
+	);
 	const browserPopOutPhase = browserPopOutState.sessionId === sessionId ? browserPopOutState.phase : "docked";
 	const browserPoppedOut = browserPopOutPhase !== "docked";
+	const [handoffDialogOpen, setHandoffDialogOpen] = useState(false);
+	const handoffDialogContainerRef = useRef<HTMLDivElement | null>(null);
+	const [handoffDialogContainer, setHandoffDialogContainer] = useState<HTMLDivElement | null>(null);
+	const bindHandoffDialogContainer = useCallback((node: HTMLDivElement | null) => {
+		handoffDialogContainerRef.current = node;
+		setHandoffDialogContainer(node);
+	}, []);
 	const [interfaceSwitchDialogScope, setInterfaceSwitchDialogScope] =
 		useState<InterfaceSwitchDialogScope>();
 	const [chatConversationWork, setChatConversationWork] = useState<
@@ -462,7 +506,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 
 	useEffect(() => stopTerminalLiveResize, [stopTerminalLiveResize]);
 
-	const session = workspaces.flatMap((workspace) => workspace.sessions).find((s) => s.id === sessionId);
+	const session = workspaceQuery.data;
 	const interfaceSwitch = useSessionInterfaceTransition(session?.id);
 	const reviewerQuery = useQuery({
 		queryKey: ["session-reviews", sessionId],
@@ -491,6 +535,19 @@ export function SessionView({ sessionId }: SessionViewProps) {
 		() => allShellTerminals.filter((shell) => shell.sessionId === sessionId),
 		[allShellTerminals, sessionId],
 	);
+	const resolvedAuxiliaryTabOrder = useMemo(() => {
+		const available = [
+			...(reviewerTerminal ? [`reviewer:${reviewerTerminal.handleId}`] : []),
+			...shellTerminals.map((shell) => shell.handleId),
+			...fileTabs.openPaths.map((path) => `file:${path}`),
+		];
+		const availableKeys = new Set(available);
+		const resolved = auxiliaryTabOrder.filter((key) => availableKeys.has(key));
+		for (const key of available) {
+			if (!resolved.includes(key)) resolved.push(key);
+		}
+		return resolved;
+	}, [auxiliaryTabOrder, fileTabs.openPaths, reviewerTerminal, shellTerminals]);
 	const openShellTerminal = useOpenShellTerminal();
 	const closeShellTerminal = useCloseShellTerminal();
 	const renameShellTerminal = useRenameShellTerminal();
@@ -507,22 +564,99 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	// session's worktree (the project id is only the fallback when the session's
 	// workspace can no longer be resolved).
 	const addShellTerminal = useCallback(() => {
-		openShellTerminal.mutate(
+		const shell = openShellTerminal.open(
 			{ projectId: session?.workspaceId, sessionId },
 			{
-				onSuccess: (shell) => {
-					setActiveShellTerminal(shell.handleId);
+				onSuccess: (openedShell) => {
+					setActiveShellTerminal(openedShell.handleId);
+					setFileTabsBySession((current) => ({
+						...current,
+						[sessionId]: activateSessionFile(current[sessionId] ?? EMPTY_SESSION_FILE_TABS, null),
+					}));
 					setTerminalTarget({
-						generation: shell.createdAt,
+						generation: openedShell.createdAt,
 						kind: "shell",
-						handleId: shell.handleId,
+						handleId: openedShell.handleId,
 						sessionId,
-						title: shell.title,
+						title: openedShell.title,
 					});
 				},
 			},
 		);
+		if (!shell) return;
+		setFileTabsBySession((current) => ({
+			...current,
+			[sessionId]: activateSessionFile(current[sessionId] ?? EMPTY_SESSION_FILE_TABS, null),
+		}));
+		setActiveShellTerminal(shell.handleId);
+		setTerminalTarget({
+			generation: shell.createdAt,
+			kind: "shell",
+			handleId: shell.handleId,
+			sessionId,
+			title: shell.title,
+		});
 	}, [openShellTerminal, sessionId, session?.workspaceId, setActiveShellTerminal]);
+
+	const activateAuxiliaryTab = useCallback(
+		(key?: string) => {
+			if (key?.startsWith("file:")) {
+				const path = key.slice("file:".length);
+				setActiveShellTerminal(null);
+				setTerminalTarget({ kind: "worker" });
+				setFileTabsBySession((current) => ({
+					...current,
+					[sessionId]: activateSessionFile(current[sessionId] ?? EMPTY_SESSION_FILE_TABS, path),
+				}));
+				return;
+			}
+			if (reviewerTerminal && key === `reviewer:${reviewerTerminal.handleId}`) {
+				setActiveShellTerminal(null);
+				setTerminalTarget({
+					kind: "reviewer",
+					handleId: reviewerTerminal.handleId,
+					harness: reviewerTerminal.harness,
+					sessionId,
+				});
+				setFileTabsBySession((current) => ({
+					...current,
+					[sessionId]: activateSessionFile(current[sessionId] ?? EMPTY_SESSION_FILE_TABS, null),
+				}));
+				return;
+			}
+			const shell = shellTerminals.find((candidate) => candidate.handleId === key);
+			if (shell) {
+				setActiveShellTerminal(shell.handleId);
+				setTerminalTarget({
+					generation: shell.createdAt,
+					kind: "shell",
+					handleId: shell.handleId,
+					sessionId,
+					title: shell.title,
+				});
+				setFileTabsBySession((current) => ({
+					...current,
+					[sessionId]: activateSessionFile(current[sessionId] ?? EMPTY_SESSION_FILE_TABS, null),
+				}));
+				return;
+			}
+			setActiveShellTerminal(null);
+			setTerminalTarget({ kind: "worker" });
+			setFileTabsBySession((current) => ({
+				...current,
+				[sessionId]: activateSessionFile(current[sessionId] ?? EMPTY_SESSION_FILE_TABS, null),
+			}));
+		},
+		[reviewerTerminal, sessionId, shellTerminals, setActiveShellTerminal],
+	);
+	const adjacentAuxiliaryTab = useCallback(
+		(closingKey: string) => {
+			const closingIndex = resolvedAuxiliaryTabOrder.indexOf(closingKey);
+			if (closingIndex < 0) return undefined;
+			return resolvedAuxiliaryTabOrder[closingIndex - 1] ?? resolvedAuxiliaryTabOrder[closingIndex + 1];
+		},
+		[resolvedAuxiliaryTabOrder],
+	);
 
 	const selectShellTerminal = useCallback(
 		(handleId: string) => {
@@ -547,35 +681,25 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	const closeShellTerminalByHandle = useCallback(
 		(handleId: string) => {
 			if (terminalTarget.kind === "shell" && terminalTarget.handleId === handleId) {
-				const closingIndex = shellTerminals.findIndex((shell) => shell.handleId === handleId);
-				// Match browser-tab ergonomics: closing the selected auxiliary terminal
-				// reveals its nearest predecessor, then the next tab when the first one
-				// closes. The permanent agent terminal is only the final fallback.
-				const nextShell = shellTerminals[closingIndex - 1] ?? shellTerminals[closingIndex + 1];
-				if (nextShell) {
-					setActiveShellTerminal(nextShell.handleId);
-					setTerminalTarget({
-						generation: nextShell.createdAt,
-						kind: "shell",
-						handleId: nextShell.handleId,
-						sessionId,
-						title: nextShell.title,
-					});
-				} else {
-					setActiveShellTerminal(null);
-					setTerminalTarget({ kind: "worker" });
-				}
+				// Match the visible mixed strip, not the shell-only creation order.
+				activateAuxiliaryTab(adjacentAuxiliaryTab(handleId));
 			} else if (activeShellTerminalHandleId === handleId) {
 				setActiveShellTerminal(null);
 			}
-			closeShellTerminal.mutate(handleId);
+			closeShellTerminal.mutate(handleId, {
+				onSuccess: () => removeAuxiliaryTab(handleId),
+				onError: (error) => {
+					if (apiErrorCode(error) === "SHELL_TERMINAL_NOT_FOUND") removeAuxiliaryTab(handleId);
+				},
+			});
 		},
 		[
 			activeShellTerminalHandleId,
+			activateAuxiliaryTab,
+			adjacentAuxiliaryTab,
 			closeShellTerminal,
+			removeAuxiliaryTab,
 			setActiveShellTerminal,
-			sessionId,
-			shellTerminals,
 			terminalTarget,
 		],
 	);
@@ -615,9 +739,23 @@ export function SessionView({ sessionId }: SessionViewProps) {
 			...current,
 			[sessionId]: closeSessionFile(current[sessionId] ?? EMPTY_SESSION_FILE_TABS, path),
 		}));
-	}, [sessionId]);
+		if (fileTabs.activePath === path) {
+			activateAuxiliaryTab(adjacentAuxiliaryTab(`file:${path}`));
+		}
+		removeAuxiliaryTab(`file:${path}`);
+	}, [activateAuxiliaryTab, adjacentAuxiliaryTab, fileTabs.activePath, removeAuxiliaryTab, sessionId]);
 	const closeAllCenterFiles = useCallback(() => {
 		setFileTabsBySession((current) => ({ ...current, [sessionId]: closeAllSessionFiles() }));
+		setAuxiliaryTabOrderBySession((current) => {
+			const currentOrder = current[sessionId];
+			if (!currentOrder?.some((key) => key.startsWith("file:"))) return current;
+			const nextOrder = currentOrder.filter((key) => !key.startsWith("file:"));
+			if (nextOrder.length === 0) {
+				const { [sessionId]: _removed, ...rest } = current;
+				return rest;
+			}
+			return { ...current, [sessionId]: nextOrder };
+		});
 	}, [sessionId]);
 
 	// The shell layout owns opening (it is mounted on every route, so the button
@@ -668,8 +806,14 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	// Orchestrators get the full workspace width; only workers need the inspector rail.
 	const hasInspector = Boolean(session && !isOrchestrator);
 	const sizing = useMemo(() => inspectorSizing(inspectorView), [inspectorView]);
-	const adaptiveWorkspaceActive =
-		hasInspector && isInspectorOpen && !browserPoppedOut && !filesPoppedOut;
+	// Utility views remain ordinary inspector rails. Only the docked Browser is a
+	// co-work canvas that may reclaim navigation width from the shell.
+	const browserWorkspacePressureActive = useCallback(
+		(view: InspectorView, inspectorOpen = isInspectorOpen) =>
+			hasInspector && view === "browser" && inspectorOpen && !browserPoppedOut && !filesPoppedOut,
+		[browserPoppedOut, filesPoppedOut, hasInspector, isInspectorOpen],
+	);
+	const adaptiveWorkspaceActive = browserWorkspacePressureActive(inspectorView);
 
 	// Arm the shared width transition before the selected inspector surface
 	// changes its CSS variable. Browser becomes a co-work canvas; utility views
@@ -720,10 +864,11 @@ export function SessionView({ sessionId }: SessionViewProps) {
 			if (next === inspectorView) return;
 			const nextSizing = inspectorSizing(next);
 			if (!sizingGeometryEqual(sizing, nextSizing)) prepareWorkspaceProfile(nextSizing);
-			publishWorkspaceDemand(nextSizing);
+			publishWorkspaceDemand(nextSizing, browserWorkspacePressureActive(next));
 			setInspectorViewForSession(sessionId, next);
 		},
 		[
+			browserWorkspacePressureActive,
 			inspectorView,
 			prepareWorkspaceProfile,
 			publishWorkspaceDemand,
@@ -847,59 +992,47 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	const showInterfaceSwitchAction = Boolean(
 		!interfaceSwitchUnsupported && (interfaceSwitch.status || interfaceSwitch.isLoading || interfaceSwitch.statusError),
 	);
-	const interfaceSwitchAction = session && showInterfaceSwitchAction ? (
-		<SessionInterfaceSwitchButton
-			target={interfaceTarget}
-			supported={Boolean(interfaceSwitch.status?.supported) && !activeInterfaceTransition}
-			disabledReason={
-				interfaceSwitch.isLoading
-					? "Checking whether this agent can switch interfaces…"
-					: interfaceSwitch.status?.reason || interfaceSwitch.statusError
-			}
-			pending={interfaceSwitch.starting || activeInterfaceTransition}
-			transition={interfaceSwitch.transition}
-			cancelling={interfaceSwitch.cancelling}
-			cancelError={interfaceSwitch.cancelError}
-			onClick={requestInterfaceSwitch}
-			onCancel={() => {
-				void interfaceSwitch.cancel().catch(() => {});
-			}}
-		/>
-	) : null;
 	const newTerminalError = openShellTerminal.error ? apiErrorMessage(openShellTerminal.error) : undefined;
-	const sessionLocalActions = session ? (
-		<SessionInterfaceActionGroup>
-			{!isOrchestrator ? (
-				<TopbarButton
-					aria-label={t("shortcut.new-shell-terminal")}
-					disabled={openShellTerminal.isPending}
-					onClick={addShellTerminal}
-					title={newTerminalError ?? t("terminal.newWithShortcut", { shortcut: newTerminalShortcutLabel })}
-					type="button"
-					variant="icon"
-				>
-					<Plus aria-hidden="true" className="size-icon-md" />
-				</TopbarButton>
-			) : null}
-			{interfaceSwitchAction}
-		</SessionInterfaceActionGroup>
-	) : null;
-	const sessionHeaderActions = (
-		<>
-			<SessionBranchBadge branch={session?.branch} />
-			<ShellTopbar embedded sessionAction={sessionLocalActions} />
-		</>
-	);
+	const newShellTerminalAction =
+		session && !isOrchestrator ? (
+			<Tooltip>
+				<TooltipTrigger asChild>
+					<TopbarButton
+						aria-label={t("shortcut.new-shell-terminal")}
+						onClick={addShellTerminal}
+						type="button"
+						variant="icon"
+					>
+						<Plus aria-hidden="true" className="size-icon-md" />
+					</TopbarButton>
+				</TooltipTrigger>
+				<TooltipContent side="bottom">
+					{newTerminalError ?? t("terminal.newWithShortcut", { shortcut: newTerminalShortcutLabel })}
+				</TooltipContent>
+			</Tooltip>
+		) : null;
 	const fileAnnotation = useFileAnnotation(sessionId);
-	const centerFileTabs = (
-		<SessionFileTabs
-			state={fileTabs}
-			onAddFeedback={(path) => fileAnnotation.begin({ path, side: "file" })}
-			onActivateFile={activateCenterFile}
-			onCloseFile={closeCenterFile}
-			onCloseAll={closeAllCenterFiles}
-		/>
+	const centerFileTabs = useMemo(
+		() =>
+			fileTabs.openPaths.map((path) => ({
+				key: `file:${path}`,
+				content: (
+					<SessionFileTab
+						active={fileTabs.activePath === path}
+						onActivate={() => activateCenterFile(path)}
+						onAddFeedback={() => fileAnnotation.begin({ path, side: "file" })}
+						onClose={() => closeCenterFile(path)}
+						path={path}
+					/>
+				),
+				onSelect: () => activateCenterFile(path),
+			})),
+		[activateCenterFile, closeCenterFile, fileAnnotation, fileTabs.activePath, fileTabs.openPaths],
 	);
+	const centerFileTabActions = fileTabs.openPaths.length > 0 ? (
+		<SessionFileTabActions onCloseAll={closeAllCenterFiles} />
+	) : undefined;
+	const activeWorkspaceTabKey = fileTabs.activePath ? `file:${fileTabs.activePath}` : undefined;
 	const previewUrl = session?.previewUrl?.trim() || undefined;
 	const previewRevision = session?.previewRevision;
 	const browserSlotVisible = Boolean(
@@ -963,6 +1096,88 @@ export function SessionView({ sessionId }: SessionViewProps) {
 		session !== undefined &&
 		renderedSessionMode === "chat" &&
 		(chatTargetKind === "worker" || chatTargetKind === "reviewer" || chatTargetKind === "shell");
+	const {
+		agentSwitch: handoffAgentSwitch,
+		switchControlPresentation: handoffControlPresentation,
+		switchError: handoffSwitchError,
+	} = useSessionHandoffMenu(session);
+	const handleHandoffDialogOpenChange = useCallback(
+		(nextOpen: boolean) => {
+			setHandoffDialogOpen(nextOpen);
+			if (!nextOpen && handoffSwitchError && session) {
+				clearSwitchAgentState(queryClient, session.id);
+			}
+		},
+		[handoffSwitchError, queryClient, session],
+	);
+	useEffect(() => {
+		if (handoffSwitchError) setHandoffDialogOpen(true);
+	}, [handoffSwitchError]);
+	const interfaceSwitchInlineStatus =
+		session && showInterfaceSwitchAction && activeInterfaceTransition ? (
+			<SessionInterfaceSwitchButton
+				target={interfaceTarget}
+				supported={Boolean(interfaceSwitch.status?.supported) && !activeInterfaceTransition}
+				disabledReason={
+					interfaceSwitch.isLoading
+						? "Checking whether this agent can switch interfaces…"
+						: interfaceSwitch.status?.reason || interfaceSwitch.statusError
+				}
+				pending={interfaceSwitch.starting || activeInterfaceTransition}
+				transition={interfaceSwitch.transition}
+				cancelling={interfaceSwitch.cancelling}
+				cancelError={interfaceSwitch.cancelError}
+				onClick={requestInterfaceSwitch}
+				onCancel={() => {
+					void interfaceSwitch.cancel().catch(() => {});
+				}}
+			/>
+		) : null;
+	const interfaceSwitchMenuItem =
+		session && showInterfaceSwitchAction && !activeInterfaceTransition ? (
+			<SessionInterfaceSwitchMenuItem
+				target={interfaceTarget}
+				supported={Boolean(interfaceSwitch.status?.supported)}
+				disabledReason={
+					interfaceSwitch.isLoading
+						? "Checking whether this agent can switch interfaces…"
+						: interfaceSwitch.status?.reason || interfaceSwitch.statusError
+				}
+				pending={interfaceSwitch.starting}
+				onClick={requestInterfaceSwitch}
+			/>
+		) : null;
+	const handoffMenuItem = session ? (
+		<TerminalSwitchAgentButton
+			key={session.id}
+			variant="menu-item"
+			agentSwitch={handoffAgentSwitch}
+			onOpenChange={handleHandoffDialogOpenChange}
+			open={handoffDialogOpen}
+			presentation={handoffControlPresentation}
+			session={session}
+			switchError={handoffSwitchError}
+		/>
+	) : null;
+	const sessionTabActions = (
+		<SessionActionsMenu inlineStatus={interfaceSwitchInlineStatus}>
+			{interfaceSwitchMenuItem}
+			{handoffMenuItem}
+		</SessionActionsMenu>
+	);
+	const compactSessionChrome = adaptiveWorkspaceActive;
+	const sessionHeaderActions = (
+		<div
+			className="session-topbar-session-chrome flex shrink-0 items-center"
+			data-compact-session-chrome={compactSessionChrome ? "true" : "false"}
+		>
+			<ShellTopbar compactActions={compactSessionChrome} embedded />
+		</div>
+	);
+
+	useEffect(() => {
+		setHandoffDialogOpen(false);
+	}, [sessionId]);
 
 	// The pane shows one terminal at a time, so selecting a shell or the reviewer
 	// takes the agent's terminal off screen while the route still points here.
@@ -1191,11 +1406,11 @@ export function SessionView({ sessionId }: SessionViewProps) {
 
 	const handleToggleInspector = useCallback(() => {
 		const nextOpen = !isInspectorOpen;
-		publishWorkspaceDemand(sizing, nextOpen && !browserPoppedOut && !filesPoppedOut);
+		publishWorkspaceDemand(sizing, browserWorkspacePressureActive(inspectorView, nextOpen));
 		toggleInspector(sessionId);
 	}, [
-		browserPoppedOut,
-		filesPoppedOut,
+		browserWorkspacePressureActive,
+		inspectorView,
 		isInspectorOpen,
 		publishWorkspaceDemand,
 		sessionId,
@@ -1291,7 +1506,16 @@ export function SessionView({ sessionId }: SessionViewProps) {
 							className="relative z-chrome flex h-inspector-tabs w-full shrink-0 overflow-hidden"
 							data-testid="session-topbar-host"
 						/>
-						<div className="relative min-h-0 flex-1">
+						<div className="relative min-h-0 flex-1" ref={bindHandoffDialogContainer}>
+							{session && handoffDialogContainer ? (
+								<SwitchAgentDialog
+									agentSwitch={handoffAgentSwitch}
+									container={handoffDialogContainer}
+									onOpenChange={handleHandoffDialogOpenChange}
+									open={handoffDialogOpen}
+									session={session}
+								/>
+							) : null}
 							{/* The committed mode owns the agent surface. Auxiliary shell and
 							    reviewer targets remain terminal surfaces in either mode. */}
 							<div
@@ -1318,8 +1542,14 @@ export function SessionView({ sessionId }: SessionViewProps) {
 									daemonReady={daemonStatus.state === "ready"}
 									theme={theme}
 									headerActions={sessionHeaderActions}
+									sessionTabAction={sessionTabActions}
+									tabStripAction={newShellTerminalAction}
+									handoffDialogOpen={handoffDialogOpen}
 									workspaceTabs={centerFileTabs}
-									workspaceFileActive={Boolean(fileTabs.activePath)}
+									workspaceTabActions={centerFileTabActions}
+									workspaceActiveTabKey={activeWorkspaceTabKey}
+									auxiliaryTabOrder={resolvedAuxiliaryTabOrder}
+									onAuxiliaryTabOrderChange={setAuxiliaryTabOrder}
 									controllerTransitioning={chatControllerTransitioning}
 									newWorkDisabled={chatNewWorkDisabled}
 									onConversationWorkChange={handleConversationWorkChange}
@@ -1348,8 +1578,14 @@ export function SessionView({ sessionId }: SessionViewProps) {
 									terminalTarget={routedTerminalTarget}
 									theme={theme}
 									topbarActions={sessionHeaderActions}
+									sessionTabAction={sessionTabActions}
+									tabStripAction={newShellTerminalAction}
+									handoffDialogOpen={handoffDialogOpen}
 									workspaceTabs={centerFileTabs}
-									workspaceFileActive={Boolean(fileTabs.activePath)}
+									workspaceTabActions={centerFileTabActions}
+									workspaceActiveTabKey={activeWorkspaceTabKey}
+									auxiliaryTabOrder={resolvedAuxiliaryTabOrder}
+									onAuxiliaryTabOrderChange={setAuxiliaryTabOrder}
 								/>
 							)}
 							</div>
@@ -1415,16 +1651,22 @@ export function SessionView({ sessionId }: SessionViewProps) {
 			</div>
 			{hasInspector ? (
 				<div className="session-pinned-actions" data-testid="session-pinned-actions" style={noDragStyle}>
-					<TopbarButton
-						aria-label={isInspectorOpen ? t("shell.closeInspector") : t("shell.openInspector")}
-						aria-pressed={isInspectorOpen}
-						onClick={handleToggleInspector}
-						style={noDragStyle}
-						title={isInspectorOpen ? t("shell.closeInspectorTitle") : t("shell.openInspectorTitle")}
-						variant="icon"
-					>
-						<PanelRight className="size-icon-md" aria-hidden="true" />
-					</TopbarButton>
+					<Tooltip>
+						<TooltipTrigger asChild>
+							<TopbarButton
+								aria-label={isInspectorOpen ? t("shell.closeInspector") : t("shell.openInspector")}
+								aria-pressed={isInspectorOpen}
+								onClick={handleToggleInspector}
+								style={noDragStyle}
+								variant="icon"
+							>
+								<PanelRight className="size-icon-md" aria-hidden="true" />
+							</TopbarButton>
+						</TooltipTrigger>
+						<TooltipContent side="bottom">
+							{isInspectorOpen ? t("shell.closeInspectorTitle") : t("shell.openInspectorTitle")}
+						</TooltipContent>
+					</Tooltip>
 					{/* Keep the global notification action trailing at the window edge. */}
 					<NotificationCenter style={noDragStyle} />
 				</div>

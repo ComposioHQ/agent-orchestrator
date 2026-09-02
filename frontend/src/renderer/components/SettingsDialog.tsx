@@ -1,4 +1,4 @@
-import { Bot, CircleHelp, Cloud, GitBranch, Inbox, Keyboard, MonitorCog, RefreshCw, Settings2, Smartphone, TriangleAlert, X } from "lucide-react";
+import { Bot, CircleHelp, Cloud, GitBranch, Globe2, Inbox, Keyboard, MonitorCog, RefreshCw, Settings2, Smartphone, TriangleAlert, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useCloudGate } from "../hooks/useCloudGate";
@@ -53,6 +53,7 @@ export function SettingsDialog() {
 
 	const globalSections: Array<{ id: GlobalSettingsSection; label: string; icon: typeof Settings2 }> = [
 		{ id: "general", label: t("settings.general"), icon: Settings2 },
+		{ id: "browserProfiles", label: t("settings.browserProfiles"), icon: Globe2 },
 		// Only deployments with the cloud offering get the Cloud page.
 		...(cloudEnabled ? [{ id: "cloud" as const, label: t("settings.cloud"), icon: Cloud }] : []),
 		{ id: "mobile", label: t("settings.mobile"), icon: Smartphone },

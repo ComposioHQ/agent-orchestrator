@@ -14,6 +14,7 @@ import { spawnSync } from "node:child_process";
 import {
 	createWorkDirectory,
 	npmInvocation,
+	patchClaudeRetryDetails,
 	pruneNodeDistribution,
 	runtimeSourceFiles,
 } from "./build-acp-runtime-helpers.mjs";
@@ -71,6 +72,14 @@ for (const source of runtimeSources) {
 
 const npm = npmInvocation(["ci", "--omit=dev", "--omit=optional", "--ignore-scripts"]);
 run(npm.command, npm.args, { cwd: outDir });
+patchClaudeRetryDetails(join(
+	outDir,
+	"node_modules",
+	"@agentclientprotocol",
+	"claude-agent-acp",
+	"dist",
+	"acp-agent.js",
+));
 
 // The Claude Agent SDK declares platform-native Claude executables as optional
 // dependencies. --omit=optional excludes them; this removal is defense-in-depth.

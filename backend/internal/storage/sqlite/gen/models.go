@@ -12,12 +12,6 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
 
-type AgentInventoryCache struct {
-	ID            int64
-	InventoryJson string
-	ObservedAt    time.Time
-}
-
 type AgentModelCatalog struct {
 	AgentID       string
 	ProjectID     string
@@ -69,7 +63,7 @@ type AppSetting struct {
 	ID                 int64
 	DefaultSessionMode domain.SessionMode
 	UpdatedAt          time.Time
-	CloudOffering      bool
+	CloudOffering      int64
 }
 
 type ChangeLog struct {
@@ -425,6 +419,7 @@ type Session struct {
 	AgentSessionIDLaunchID    string
 	Model                     string
 	LatestUserPromptAt        sql.NullTime
+	ReviewerAgentConfig       string
 }
 
 type SessionCleanupFact struct {

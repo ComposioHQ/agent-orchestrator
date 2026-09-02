@@ -10,6 +10,7 @@
  */
 
 import {
+	type InfiniteData,
 	type QueryClient,
 	useInfiniteQuery,
 	useMutation,
@@ -114,7 +115,7 @@ function claimConversationDispatch(
 		queryClient.getQueryData<ConversationDispatchTrackingBySession>(
 			conversationDispatchTrackingQueryKey,
 		) ?? {};
-	if (current[targetSessionId]) return false;
+	if (current[targetSessionId]?.state === "pending") return false;
 	queryClient.setQueryData<ConversationDispatchTrackingBySession>(
 		conversationDispatchTrackingQueryKey,
 		{
@@ -279,14 +280,20 @@ export function useConversationCommands(sessionId: string | undefined) {
 		},
 		[queryClient],
 	);
-	const invalidate = useCallback(async () => {
+	const invalidate = useCallback(() => {
 		if (sessionId) {
-			// Keep the mutation pending until the active conversation has refreshed. A
-			// queued message or landed steer should be visible before the composer clears,
-			// otherwise the action looks dropped even though the daemon accepted it.
-			await invalidateSession(sessionId);
+			// Refresh in the background. Awaiting the refetch in mutation onSuccess kept
+			// steer, queue, and approval mutations pending after the daemon had already
+			// answered, which left the composer spinner stuck and blocked further sends.
+			void invalidateSession(sessionId).catch(() => {});
 		}
 	}, [invalidateSession, sessionId]);
+	const refreshSessionInBackground = useCallback(
+		(targetSessionId: string) => {
+			void invalidateSession(targetSessionId).catch(() => {});
+		},
+		[invalidateSession],
+	);
 
 	const send = useMutation({
 		onMutate: (variables: ConversationSendMutationInput) => {
@@ -323,17 +330,29 @@ export function useConversationCommands(sessionId: string | undefined) {
 			if (error) throw error;
 			return data;
 		},
-		onSuccess: async (data, variables) => {
+		onSuccess: (data, variables) => {
 			const acceptedTurnId = data?.turnId;
 			if (acceptedTurnId) {
-				// A refetch can briefly return the pre-send snapshot. Keep the accepted
-				// turn locally visible as pending until that exact durable row arrives.
-				acceptConversationDispatch(
-					queryClient,
-					variables.targetSessionId,
-					variables.clientMessageId,
-					acceptedTurnId,
-				);
+				if (data.state === "queued") {
+					// A queued row is already durable and did not start a new provider turn,
+					// so keeping the accepted-turn safety marker would block the next queue
+					// entry until a refetch observes this id — and the composer would swallow
+					// further Enter presses with no error.
+					releaseConversationDispatch(
+						queryClient,
+						variables.targetSessionId,
+						variables.clientMessageId,
+					);
+				} else {
+					// A refetch can briefly return the pre-send snapshot. Keep the accepted
+					// turn locally visible as pending until that exact durable row arrives.
+					acceptConversationDispatch(
+						queryClient,
+						variables.targetSessionId,
+						variables.clientMessageId,
+						acceptedTurnId,
+					);
+				}
 			} else {
 				// A duplicate response intentionally has no turn id: the daemon already
 				// delivered this idempotency key, so there is no exact new row this
@@ -344,10 +363,11 @@ export function useConversationCommands(sessionId: string | undefined) {
 					variables.clientMessageId,
 				);
 			}
-			// Delivery is already authoritative at this point. A failed follow-up
-			// refresh must not reject the mutation: TanStack would then run onError
-			// and misclassify transport success, clearing the accepted safety marker.
-			await invalidateSession(variables.targetSessionId).catch(() => {});
+			// Delivery is already authoritative at this point. Refresh in the
+			// background so a slow conversation refetch cannot keep send.isPending
+			// true and leave the composer disabled or spinning after the daemon
+			// accepted the message.
+			void refreshSessionInBackground(variables.targetSessionId);
 		},
 		onError: (_error, variables) => {
 			releaseConversationDispatch(
@@ -408,11 +428,11 @@ export function useConversationCommands(sessionId: string | undefined) {
 			);
 			if (error) throw error;
 		},
-		onSuccess: (_data, variables) => invalidateSession(variables.targetSessionId),
+		onSuccess: (_data, variables) => refreshSessionInBackground(variables.targetSessionId),
 		// A failed interrupt (e.g. CHAT_NO_ACTIVE_TURN) means the cached turn
 		// state is wrong. Refetch so the UI discovers the real state instead of
 		// keeping a Working bar the user cannot dismiss.
-		onError: (_error, variables) => invalidateSession(variables.targetSessionId),
+		onError: (_error, variables) => refreshSessionInBackground(variables.targetSessionId),
 	});
 
 	const resume = useMutation({
@@ -496,12 +516,12 @@ export function useConversationCommands(sessionId: string | undefined) {
 	 * means "wait and try again", and one means this harness cannot do it at all.
 	 */
 	const steer = useMutation({
-		mutationFn: async (text: string) => {
+		mutationFn: async (input: { text: string; attachments?: WireImageContent[] }) => {
 			const { data, error } = await apiClient.POST(
 				"/api/v1/sessions/{sessionId}/conversation/steer",
 				{
 					params: { path: { sessionId: sessionId as string } },
-					body: { text, clientMessageId: crypto.randomUUID() },
+					body: { ...input, clientMessageId: crypto.randomUUID() },
 				},
 			);
 			if (error) throw error;
@@ -524,6 +544,72 @@ export function useConversationCommands(sessionId: string | undefined) {
 			return data;
 		},
 		onSuccess: invalidate,
+	});
+
+	const cancelQueuedTurn = useMutation({
+		mutationFn: async (turnId: string) => {
+			const { error } = await apiClient.POST(
+				"/api/v1/sessions/{sessionId}/conversation/turns/{turnId}/cancel",
+				{
+					params: {
+						path: { sessionId: sessionId as string, turnId },
+					},
+				},
+			);
+			if (error) throw error;
+		},
+		onSuccess: invalidate,
+	});
+
+	const editQueuedTurn = useMutation({
+		mutationFn: async ({ turnId, text }: { turnId: string; text: string }) => {
+			const { error } = await apiClient.POST(
+				"/api/v1/sessions/{sessionId}/conversation/turns/{turnId}/queue/edit",
+				{
+					params: {
+						path: { sessionId: sessionId as string, turnId },
+					},
+					body: { text },
+				},
+			);
+			if (error) throw new Error(apiErrorMessage(error, "Could not save queued message edit"));
+		},
+		onSuccess: invalidate,
+	});
+
+	const reorderQueuedTurns = useMutation({
+		mutationFn: async (turnIds: string[]) => {
+			const { error } = await apiClient.POST(
+				"/api/v1/sessions/{sessionId}/conversation/queue/reorder",
+				{
+					params: {
+						path: { sessionId: sessionId as string },
+					},
+					body: { turnIds },
+				},
+			);
+			if (error) throw new Error(apiErrorMessage(error, "Could not reorder queued messages"));
+		},
+		onMutate: async (turnIds) => {
+			if (!sessionId) return;
+			const queryKey = conversationQueryKey(sessionId);
+			await queryClient.cancelQueries({ queryKey });
+			const previous = queryClient.getQueryData<InfiniteData<ConversationSnapshot>>(queryKey);
+			if (previous) {
+				queryClient.setQueryData<InfiniteData<ConversationSnapshot>>(
+					queryKey,
+					applyQueuedTurnOrderToPages(previous, turnIds),
+				);
+			}
+			return { previous };
+		},
+		onError: (_error, _turnIds, context) => {
+			if (!sessionId || !context?.previous) return;
+			queryClient.setQueryData(conversationQueryKey(sessionId), context.previous);
+		},
+		onSettled: () => {
+			invalidate();
+		},
 	});
 
 	/**
@@ -577,7 +663,7 @@ export function useConversationCommands(sessionId: string | undefined) {
 			if (error) throw error;
 			return data;
 		},
-		onSuccess: async (data, variables) => {
+		onSuccess: (data, variables) => {
 			if (data?.turnId) {
 				acceptConversationDispatch(
 					queryClient,
@@ -588,7 +674,7 @@ export function useConversationCommands(sessionId: string | undefined) {
 			} else {
 				releaseConversationDispatch(queryClient, variables.targetSessionId, variables.requestId);
 			}
-			await invalidateSession(variables.targetSessionId).catch(() => {});
+			void refreshSessionInBackground(variables.targetSessionId);
 		},
 		onError: (_error, variables) => {
 			releaseConversationDispatch(queryClient, variables.targetSessionId, variables.requestId);
@@ -614,7 +700,7 @@ export function useConversationCommands(sessionId: string | undefined) {
 			if (error) throw error;
 			return data;
 		},
-		onSuccess: async (data, variables) => {
+		onSuccess: (data, variables) => {
 			if (data?.turnId) {
 				acceptConversationDispatch(
 					queryClient,
@@ -625,7 +711,7 @@ export function useConversationCommands(sessionId: string | undefined) {
 			} else {
 				releaseConversationDispatch(queryClient, variables.targetSessionId, variables.requestId);
 			}
-			await invalidateSession(variables.targetSessionId).catch(() => {});
+			void refreshSessionInBackground(variables.targetSessionId);
 		},
 		onError: (_error, variables) => {
 			releaseConversationDispatch(queryClient, variables.targetSessionId, variables.requestId);
@@ -767,8 +853,27 @@ export function useConversationCommands(sessionId: string | undefined) {
 		activateBranch: (branchId: string) => activateBranch.mutateAsync(branchId),
 		activateBranchPending: activateBranch.isPending,
 		activateBranchError: activateBranch.error ? apiErrorMessage(activateBranch.error) : undefined,
-		steer: (text: string) => steer.mutateAsync(text),
+		steer: (text: string, attachments?: WireImageContent[]) =>
+			steer.mutateAsync({
+				text,
+				...(attachments?.length ? { attachments } : {}),
+			}),
 		promoteQueuedTurn: (turnId: string) => promoteQueuedTurn.mutateAsync(turnId),
+		cancelQueuedTurn: (turnId: string) => cancelQueuedTurn.mutateAsync(turnId),
+		editQueuedTurn: (turnId: string, text: string) => {
+			if (!sessionId) return Promise.reject(new Error("No conversation session is selected."));
+			return editQueuedTurn.mutateAsync({ turnId, text });
+		},
+		reorderQueuedTurns: (turnIds: string[]) => {
+			if (!sessionId) return Promise.reject(new Error("No conversation session is selected."));
+			return reorderQueuedTurns.mutateAsync(turnIds);
+		},
+		promoteQueuedTurnPendingTurnId: promoteQueuedTurn.isPending
+			? promoteQueuedTurn.variables
+			: undefined,
+		cancelQueuedTurnPendingTurnId: cancelQueuedTurn.isPending ? cancelQueuedTurn.variables : undefined,
+		editQueuedTurnPendingTurnId: editQueuedTurn.isPending ? editQueuedTurn.variables?.turnId : undefined,
+		sendPending: send.isPending && sendTargetsCurrentSession,
 		steerPending: steer.isPending,
 		/**
 		 * Why the last steer was refused, or undefined. Only the retryable and
@@ -790,7 +895,7 @@ export function useConversationCommands(sessionId: string | undefined) {
 				? apiErrorMessage(reloadMcp.error)
 				: undefined,
 		busy:
-			Boolean(trackedDispatch) ||
+			trackedDispatch?.state === "pending" ||
 			(send.isPending && sendTargetsCurrentSession) ||
 			resolve.isPending ||
 			resolveInput.isPending ||
@@ -1173,6 +1278,48 @@ function toSnapshot(wire: WireSnapshot): ConversationSnapshot {
 			rolledBack: turn.rolledBack ?? undefined,
 		})),
 		items,
+	};
+}
+
+function applyQueuedTurnOrder(
+	snapshot: ConversationSnapshot,
+	fifoTurnIds: readonly string[],
+): ConversationSnapshot {
+	const queuedTurns = snapshot.turns.filter((turn) => turn.state === "queued");
+	if (queuedTurns.length !== fifoTurnIds.length) return snapshot;
+
+	const queuedById = new Map(queuedTurns.map((turn) => [turn.id, turn]));
+	const requestedAts = [...queuedTurns]
+		.sort((left, right) => left.requestedAt.localeCompare(right.requestedAt))
+		.map((turn) => turn.requestedAt);
+	const reorderedQueued = fifoTurnIds.flatMap((turnId, index) => {
+		const turn = queuedById.get(turnId);
+		return turn
+			? [{ ...turn, requestedAt: requestedAts[index] ?? turn.requestedAt }]
+			: [];
+	});
+	if (reorderedQueued.length !== queuedTurns.length) return snapshot;
+
+	const queuedIds = new Set(fifoTurnIds);
+	const otherTurns = snapshot.turns.filter((turn) => !queuedIds.has(turn.id));
+	return {
+		...snapshot,
+		turns: [...otherTurns, ...reorderedQueued].sort((left, right) =>
+			left.requestedAt.localeCompare(right.requestedAt),
+		),
+	};
+}
+
+function applyQueuedTurnOrderToPages(
+	data: InfiniteData<ConversationSnapshot>,
+	fifoTurnIds: readonly string[],
+): InfiniteData<ConversationSnapshot> {
+	if (data.pages.length === 0) return data;
+	return {
+		...data,
+		pages: data.pages.map((page, index) =>
+			index === 0 ? applyQueuedTurnOrder(page, fifoTurnIds) : page,
+		),
 	};
 }
 

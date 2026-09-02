@@ -3,9 +3,10 @@ import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { appI18n } from "../i18n";
-import { GlobalSettingsForm } from "./GlobalSettingsForm";
+import { GlobalSettingsForm, type GlobalSettingsSection } from "./GlobalSettingsForm";
 import { useLocaleStore } from "../stores/locale-store";
 import { useSoundNotificationsStore } from "../stores/sound-notifications-store";
+import { useTerminalShellStore } from "../stores/terminal-shell-store";
 import { useUiStore } from "../stores/ui-store";
 import { TooltipProvider } from "./ui/tooltip";
 
@@ -61,6 +62,11 @@ vi.mock("@tanstack/react-router", async (importOriginal) => {
 	};
 });
 
+vi.mock("../lib/platform", async (importOriginal) => {
+	const actual = await importOriginal<typeof import("../lib/platform")>();
+	return { ...actual, isWindowsPlatform: () => true };
+});
+
 vi.mock("../lib/bridge", () => ({
 	aoBridge: {
 		app: { getVersion, openExternal },
@@ -85,12 +91,12 @@ vi.mock("../lib/bridge", () => ({
 	},
 }));
 
-function renderForm() {
+function renderForm(section: GlobalSettingsSection = "all") {
 	const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 	render(
 		<QueryClientProvider client={qc}>
 			<TooltipProvider>
-				<GlobalSettingsForm />
+				<GlobalSettingsForm section={section} />
 			</TooltipProvider>
 		</QueryClientProvider>,
 	);
@@ -124,10 +130,11 @@ beforeEach(async () => {
 	}
 	getUpdate.mockResolvedValue({ enabled: true, channel: "latest", nightlyAck: false, feature: null });
 	setUpdate.mockResolvedValue(undefined);
-	getUiSettings.mockResolvedValue({ locale: "en", soundNotificationsEnabled: true });
-	setUiSettings.mockImplementation(async (settings: { locale?: string; soundNotificationsEnabled?: boolean }) => ({
+	getUiSettings.mockResolvedValue({ locale: "en", soundNotificationsEnabled: true, terminalShell: { kind: "auto" } });
+	setUiSettings.mockImplementation(async (settings: { locale?: string; soundNotificationsEnabled?: boolean; terminalShell?: { kind: string; path?: string } }) => ({
 		locale: "en",
 		soundNotificationsEnabled: true,
+		terminalShell: { kind: "auto" },
 		...settings,
 	}));
 	updGetStatus.mockResolvedValue({ state: "idle" });
@@ -149,11 +156,23 @@ beforeEach(async () => {
 	await appI18n.changeLanguage("en");
 	useLocaleStore.setState({ locale: "en", loaded: false, saving: false, saveError: false });
 	useSoundNotificationsStore.setState({ enabled: true, loaded: false, saving: false, saveError: false });
+	useTerminalShellStore.setState({
+		preference: { kind: "auto" },
+		loaded: false,
+		saving: false,
+		saveError: false,
+	});
 	useUiStore.setState({ developerMode: false });
 	document.documentElement.lang = "en";
 });
 
 describe("GlobalSettingsForm", () => {
+	it("keeps Browser in its dedicated settings page", async () => {
+		renderForm("general");
+		expect(await screen.findByLabelText("Settings")).toBeInTheDocument();
+		expect(document.querySelector('[data-section="browserProfiles"]')).not.toBeInTheDocument();
+	});
+
 	it("renders the settings sections", async () => {
 		renderForm();
 		expect(await screen.findByLabelText("Settings")).toBeInTheDocument();
@@ -216,6 +235,36 @@ describe("GlobalSettingsForm", () => {
 
 		await waitFor(() => expect(setUiSettings).toHaveBeenCalledWith({ soundNotificationsEnabled: false }));
 		expect(toggle).not.toBeChecked();
+	});
+
+	it("selects Git Bash as the default Windows terminal", async () => {
+		const user = userEvent.setup();
+		renderForm();
+		const selector = await screen.findByLabelText("Default terminal");
+
+		await user.click(selector);
+		await user.click(await screen.findByRole("menuitem", { name: "Git Bash" }));
+
+		await waitFor(() => expect(setUiSettings).toHaveBeenCalledWith({ terminalShell: { kind: "git-bash" } }));
+	});
+
+	it("discards an uncommitted custom shell path when editing is cancelled", async () => {
+		const user = userEvent.setup();
+		renderForm();
+
+		await user.click(await screen.findByLabelText("Default terminal"));
+		await user.click(await screen.findByRole("menuitem", { name: "Custom path" }));
+		await waitFor(() => expect(setUiSettings).toHaveBeenCalledWith({ terminalShell: { kind: "custom" } }));
+
+		setUiSettings.mockClear();
+		await user.click(screen.getByRole("button", { name: "Edit Shell executable" }));
+		const input = screen.getByLabelText("Shell executable");
+		await user.type(input, "C:\\Tools\\bash.exe");
+		await user.keyboard("{Escape}");
+
+		expect(screen.queryByLabelText("Shell executable")).not.toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Edit Shell executable" })).toHaveTextContent("C:\\path\\to\\shell.exe");
+		expect(setUiSettings).not.toHaveBeenCalled();
 	});
 
 	it("keeps the current sound notifications value and reports a persistence failure", async () => {
@@ -329,19 +378,19 @@ describe("GlobalSettingsForm", () => {
 
 	it("shows the current app version", async () => {
 		renderForm();
-		expect(await screen.findByTestId("app-version")).toHaveTextContent("v1.4.0");
-		expect(screen.getByTestId("installed-update-channel")).toHaveTextContent("Stable");
+		await waitFor(() => expect(screen.getByTestId("app-version")).toHaveTextContent("v1.4.0"));
+		await waitFor(() => expect(screen.getByTestId("installed-update-channel")).toHaveTextContent("Stable"));
 	});
 
 	it("shows the installed Nightly channel separately from the selected update feed", async () => {
 		getVersion.mockResolvedValue("1.4.0-nightly.202608271030");
 		renderForm();
-		expect(await screen.findByTestId("installed-update-channel")).toHaveTextContent("Nightly (Pre-release)");
+		await waitFor(() => expect(screen.getByTestId("installed-update-channel")).toHaveTextContent("Nightly (Pre-release)"));
 	});
 
 	it("shows an explicit idle update state and triggers a manual check", async () => {
 		renderForm();
-		expect(await screen.findByTestId("app-version")).toHaveTextContent("v1.4.0");
+		await waitFor(() => expect(screen.getByTestId("app-version")).toHaveTextContent("v1.4.0"));
 		expect(screen.getByText("Updates haven't been checked yet.")).toBeInTheDocument();
 		await userEvent.click(screen.getByRole("button", { name: "Check for updates" }));
 		expect(updCheck).toHaveBeenCalled();

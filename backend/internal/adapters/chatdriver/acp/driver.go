@@ -252,7 +252,7 @@ func (d *Driver) Resume(ctx context.Context, cfg ports.ChatResumeConfig) (ports.
 	}
 	if d.cfg.ValidateTurnSettings != nil {
 		if err := d.cfg.ValidateTurnSettings(cfg.Permissions, ports.ChatTurnSettings{
-			Model: cfg.Model, Approval: cfg.Permissions,
+			Model: cfg.Model, Effort: cfg.Effort, Approval: cfg.Permissions,
 		}); err != nil {
 			return nil, fmt.Errorf("%w: validate ACP session settings: %w", ports.ErrChatResumeFailed, err)
 		}
@@ -331,7 +331,7 @@ func (d *Driver) Resume(ctx context.Context, cfg ports.ChatResumeConfig) (ports.
 		cfg.Permissions, d.cfg.ValidateTurnSettings, configOptions,
 		conv.legacyWire.modelState(), modes,
 	)
-	if err := conv.applyTurnSettings(ctx, ports.ChatTurnSettings{Model: cfg.Model, Approval: cfg.Permissions}); err != nil {
+	if err := conv.applyTurnSettings(ctx, ports.ChatTurnSettings{Model: cfg.Model, Effort: cfg.Effort, Approval: cfg.Permissions}); err != nil {
 		if !errors.Is(err, ErrACPSetterUnsupported) {
 			_ = conv.Close()
 			return nil, fmt.Errorf("%w: configure ACP session: %w", ports.ErrChatResumeFailed, err)
@@ -374,6 +374,15 @@ func (d *Driver) connect(
 			Meta: map[string]any{
 				"subagent-transcript": true,
 				"terminal_output":     true,
+				// claude-agent-acp publishes retryable API/transport failures only
+				// when the client opts into this namespaced metadata extension. It is
+				// observational: AO receives status, but grants no new capability.
+				"jetbrains": map[string]any{
+					"air": map[string]any{
+						"version":      1,
+						"capabilities": []string{"sessionFailure"},
+					},
+				},
 			},
 			Elicitation: &acpsdk.ElicitationCapabilities{
 				Form: &acpsdk.ElicitationFormCapabilities{},

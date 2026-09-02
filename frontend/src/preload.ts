@@ -39,6 +39,19 @@ import type {
 	BrowserAnnotationModeInput,
 	BrowserAnnotationSubmitPayload,
 } from "./shared/browser-annotations";
+import type {
+	BrowserProfile,
+	BrowserProfileListState,
+	BrowserProfileMenuInput,
+	BrowserProfileViewState,
+} from "./shared/browser-profiles";
+import type {
+	BrowserHistorySuggestion,
+	BrowserImportDiscovery,
+	BrowserImportProgress,
+	BrowserImportRequest,
+	BrowserImportResult,
+} from "./shared/browser-profile-import";
 
 if (typeof document !== "undefined") {
 	const markNativeBrowserComposition = () => {
@@ -245,6 +258,8 @@ const api = {
 		// WebContentsView previews (which follow prefers-color-scheme) stay in sync
 		// with the shell. "system" lets both follow the OS.
 		set: (preference: "light" | "dark" | "system") => ipcRenderer.invoke("theme:set", preference) as Promise<void>,
+		persistTerminal: (scheme: "light" | "dark") =>
+			ipcRenderer.invoke("theme:persist-terminal", scheme) as Promise<void>,
 	},
 	menu: {
 		action: (action: string) => ipcRenderer.invoke("menu:action", action) as Promise<void>,
@@ -283,6 +298,8 @@ const api = {
 		setOverlayOpen: (open: boolean) => ipcRenderer.send("browser:overlay", open),
 		navigate: (input: BrowserNavigateInput) =>
 			ipcRenderer.invoke("browser:navigate", input) as Promise<BrowserNavState>,
+		historySuggestions: (input: { viewId: string; query: string }) =>
+			ipcRenderer.invoke("browser:history:suggest", input) as Promise<BrowserHistorySuggestion[]>,
 		clear: (viewId: string) => ipcRenderer.invoke("browser:clear", viewId) as Promise<BrowserNavState>,
 		goBack: (viewId: string) => ipcRenderer.invoke("browser:goBack", viewId) as Promise<BrowserNavState>,
 		goForward: (viewId: string) => ipcRenderer.invoke("browser:goForward", viewId) as Promise<BrowserNavState>,
@@ -295,6 +312,26 @@ const api = {
 			ipcRenderer.invoke("browser:closeTab", input) as Promise<BrowserTabsState>,
 		openTab: (input: { viewId: string; url?: string }) =>
 			ipcRenderer.invoke("browser:openTab", input) as Promise<BrowserTabsState>,
+		getProfile: (viewId: string) =>
+			ipcRenderer.invoke("browser:profile:get", viewId) as Promise<BrowserProfileViewState>,
+		showProfileMenu: (input: BrowserProfileMenuInput) =>
+			ipcRenderer.invoke("browser:profile:menu", input) as Promise<void>,
+		notifyPanelUsed: (viewId: string) => ipcRenderer.send("browser:panelUsed", viewId),
+		notifyPanelBlur: (viewId: string) => ipcRenderer.send("browser:panelBlur", viewId),
+		onFocusLocation: (listener: (viewId: string) => void) => {
+			const wrapped = (_event: Electron.IpcRendererEvent, viewId: string) => listener(viewId);
+			ipcRenderer.on("browser:focusLocation", wrapped);
+			return () => {
+				ipcRenderer.off("browser:focusLocation", wrapped);
+			};
+		},
+		onReopenClosedTab: (listener: (viewId: string) => void) => {
+			const wrapped = (_event: Electron.IpcRendererEvent, viewId: string) => listener(viewId);
+			ipcRenderer.on("browser:reopenClosedTab", wrapped);
+			return () => {
+				ipcRenderer.off("browser:reopenClosedTab", wrapped);
+			};
+		},
 		devtools: (input: BrowserDevToolsInput) =>
 			ipcRenderer.invoke("browser:devtools", input) as Promise<BrowserDevToolsState>,
 		destroy: (viewId: string) => ipcRenderer.send("browser:destroy", viewId),
@@ -305,6 +342,13 @@ const api = {
 			ipcRenderer.on("browser:navState", wrapped);
 			return () => {
 				ipcRenderer.off("browser:navState", wrapped);
+			};
+		},
+		onPageFocus: (listener: (viewId: string) => void) => {
+			const wrapped = (_event: Electron.IpcRendererEvent, viewId: string) => listener(viewId);
+			ipcRenderer.on("browser:pageFocus", wrapped);
+			return () => {
+				ipcRenderer.off("browser:pageFocus", wrapped);
 			};
 		},
 		onTabsState: (listener: (state: BrowserTabsState) => void) => {
@@ -328,6 +372,22 @@ const api = {
 				ipcRenderer.off("browser:devtoolsState", wrapped);
 			};
 		},
+		onProfileState: (listener: (state: BrowserProfileViewState) => void) => {
+			const wrapped = (_event: Electron.IpcRendererEvent, state: BrowserProfileViewState) => listener(state);
+			ipcRenderer.on("browser:profileState", wrapped);
+			return () => {
+				ipcRenderer.off("browser:profileState", wrapped);
+			};
+		},
+		onProfileManage: (listener: (viewId: string) => void) => {
+			const wrapped = (_event: Electron.IpcRendererEvent, payload: { viewId?: unknown }) => {
+				if (typeof payload?.viewId === "string") listener(payload.viewId);
+			};
+			ipcRenderer.on("browser:profileManage", wrapped);
+			return () => {
+				ipcRenderer.off("browser:profileManage", wrapped);
+			};
+		},
 		onAnnotationSubmit: (listener: (payload: BrowserAnnotationSubmitPayload) => void) => {
 			const wrapped = (_event: Electron.IpcRendererEvent, payload: BrowserAnnotationSubmitPayload) => listener(payload);
 			ipcRenderer.on("browser:annotation:submitted", wrapped);
@@ -340,6 +400,25 @@ const api = {
 			ipcRenderer.on("browser:annotation:canceled", wrapped);
 			return () => {
 				ipcRenderer.off("browser:annotation:canceled", wrapped);
+			};
+		},
+	},
+	browserProfiles: {
+		list: () => ipcRenderer.invoke("browserProfiles:list") as Promise<BrowserProfileListState>,
+		create: (name: string) => ipcRenderer.invoke("browserProfiles:create", { name }) as Promise<BrowserProfile>,
+		rename: (input: { id: string; name: string }) =>
+			ipcRenderer.invoke("browserProfiles:rename", input) as Promise<BrowserProfile>,
+		clear: (id: string) => ipcRenderer.invoke("browserProfiles:clear", { id }) as Promise<void>,
+		delete: (id: string) => ipcRenderer.invoke("browserProfiles:delete", { id }) as Promise<void>,
+		discoverImportSources: () =>
+			ipcRenderer.invoke("browserProfiles:import:discover") as Promise<BrowserImportDiscovery>,
+		import: (input: BrowserImportRequest) =>
+			ipcRenderer.invoke("browserProfiles:import:start", input) as Promise<BrowserImportResult>,
+		onImportProgress: (listener: (progress: BrowserImportProgress) => void) => {
+			const wrapped = (_event: Electron.IpcRendererEvent, progress: BrowserImportProgress) => listener(progress);
+			ipcRenderer.on("browserProfiles:import:progress", wrapped);
+			return () => {
+				ipcRenderer.off("browserProfiles:import:progress", wrapped);
 			};
 		},
 	},

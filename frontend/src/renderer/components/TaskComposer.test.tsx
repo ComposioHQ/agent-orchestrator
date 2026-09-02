@@ -8,15 +8,20 @@ const h = vi.hoisted(() => ({
 	get: vi.fn(),
 	post: vi.fn(),
 	capture: vi.fn(),
+	ensureReadiness: vi.fn(),
+	ensureTargetedReadiness: vi.fn(),
 	agentValues: [] as string[],
 }));
 
-vi.mock("../hooks/useAgentsQuery", () => ({
-	agentsQueryKey: ["agents"],
-	agentsQueryOptions: { queryKey: ["agents"], queryFn: async () => ({}) },
-	refreshAgents: vi.fn(),
-	refreshAgentsIfStale: vi.fn(async () => undefined),
-}));
+vi.mock("../hooks/useAgentReadinessQuery", async (importOriginal) => {
+	const actual = await importOriginal<typeof import("../hooks/useAgentReadinessQuery")>();
+	return {
+		...actual,
+		ensureAgentReadiness: h.ensureTargetedReadiness,
+		useAgentReadinessQuery: () => ({ data: undefined, isFetching: false }),
+		useEnsureAgentReadiness: h.ensureReadiness,
+	};
+});
 
 vi.mock("./CreateProjectAgentSheet", () => ({
 	RequiredAgentField: ({
@@ -57,9 +62,13 @@ vi.mock("../lib/api-client", () => ({
 vi.mock("../lib/telemetry", () => ({ captureRendererEvent: h.capture }));
 
 import { TaskComposer } from "./TaskComposer";
+import { agentReadiness } from "../test/agent-readiness-fixtures";
+import { agentReadinessQueryKey } from "../hooks/useAgentReadinessQuery";
 
-function Wrap({ children }: { children: ReactNode }) {
-	const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+function Wrap({ children, queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } }) }: {
+	children: ReactNode;
+	queryClient?: QueryClient;
+}) {
 	return <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>;
 }
 
@@ -86,11 +95,79 @@ afterEach(() => {
 	h.get.mockReset();
 	h.post.mockReset();
 	h.capture.mockReset();
+	h.ensureReadiness.mockReset();
+	h.ensureTargetedReadiness.mockReset();
 	vi.unstubAllGlobals();
 	h.agentValues.length = 0;
 });
 
 describe("TaskComposer", () => {
+	it("ensures display readiness for every harness when the composer opens", async () => {
+		render(
+			<Wrap>
+				<TaskComposer projectId="proj-1" onCreated={vi.fn()} />
+			</Wrap>,
+		);
+
+		await waitFor(() => expect(h.ensureReadiness).toHaveBeenCalledWith());
+	});
+
+	it("ensures the selected harness when agent selection changes", async () => {
+		render(
+			<Wrap>
+				<TaskComposer projectId="proj-1" onCreated={vi.fn()} />
+			</Wrap>,
+		);
+
+		fireEvent.click(screen.getByLabelText("Agent"));
+		await waitFor(() =>
+			expect(h.ensureReadiness).toHaveBeenCalledWith({
+				agentIds: ["codex"],
+				enabled: true,
+				purpose: "launch",
+			}),
+		);
+	});
+
+	it("waits for and caches targeted readiness after a binary launch failure", async () => {
+		h.get.mockImplementation(async (path: string) => {
+			if (path.includes("/models")) {
+				return { data: { agent: "codex", selectionMode: "text", models: [], allowCustom: true } };
+			}
+			return { data: { status: "ok", project: { agent: "codex", config: {} } } };
+		});
+		h.post.mockResolvedValueOnce({
+			error: { code: "AGENT_BINARY_NOT_FOUND", message: "Codex is not installed" },
+		});
+		let finishReadiness!: (value: { agents: ReturnType<typeof agentReadiness>[] }) => void;
+		h.ensureTargetedReadiness.mockReturnValueOnce(
+			new Promise((resolve) => {
+				finishReadiness = resolve;
+			}),
+		);
+		const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+		const stale = agentReadiness("codex", "Codex", { freshness: "stale" });
+		const completed = agentReadiness("codex", "Codex", { installation: "not_installed" });
+		queryClient.setQueryData(agentReadinessQueryKey, { agents: [stale] });
+
+		render(
+			<Wrap queryClient={queryClient}>
+				<TaskComposer projectId="proj-1" onCreated={vi.fn()} />
+			</Wrap>,
+		);
+		await waitFor(() => expect(screen.getByTestId("agent-field")).toHaveAttribute("data-value", "codex"));
+		fireEvent.click(screen.getByRole("button", { name: "Start task" }));
+
+		await waitFor(() =>
+			expect(h.ensureTargetedReadiness).toHaveBeenCalledWith(["codex"], "launch"),
+		);
+		expect(screen.queryByText("Codex is not installed")).not.toBeInTheDocument();
+
+		await act(async () => finishReadiness({ agents: [completed] }));
+		expect(await screen.findByText("Codex is not installed")).toBeInTheDocument();
+		expect(queryClient.getQueryData(agentReadinessQueryKey)).toEqual({ agents: [completed] });
+	});
+
 	it("starts a promptless worker when the task is empty", async () => {
 		const onCreated = vi.fn();
 		h.post.mockResolvedValueOnce({ data: { workerId: "sess-empty" } });

@@ -317,6 +317,7 @@ type Store interface {
 	ListWorkspaceRepos(ctx context.Context, projectID string) ([]domain.WorkspaceRepoRecord, error)
 	CreateSession(ctx context.Context, rec domain.SessionRecord) (domain.SessionRecord, error)
 	UpdateSession(ctx context.Context, rec domain.SessionRecord) error
+	UpdateBrowserCapabilityVerifier(ctx context.Context, id domain.SessionID, expected domain.SessionControllerOwner, verifier string, updatedAt time.Time) (bool, error)
 	GetSession(ctx context.Context, id domain.SessionID) (domain.SessionRecord, bool, error)
 	ListSessions(ctx context.Context, project domain.ProjectID) ([]domain.SessionRecord, error)
 	ListAllSessions(ctx context.Context) ([]domain.SessionRecord, error)
@@ -344,10 +345,11 @@ type Store interface {
 // Manager coordinates internal session spawn, restore, kill, and cleanup over
 // the outbound ports. User-facing read-model assembly lives in the service package.
 type Manager struct {
-	runtime   runtimeController
-	agents    ports.AgentResolver
-	workspace ports.Workspace
-	store     Store
+	runtime        runtimeController
+	agents         ports.AgentResolver
+	workspace      ports.Workspace
+	store          Store
+	agentReadiness ports.AgentReadinessProvider
 	// messenger is a sessionguard.Guard wrapping the raw messenger, so every
 	// pane write is guarded (re-read state, refuse a blocked session) without
 	// each call site re-deriving the check. Send/confirmActive use Deliver for
@@ -478,6 +480,11 @@ func (m *Manager) SetTerminalInputGate(gate TerminalInputGate) {
 	m.terminalInputGateMu.Lock()
 	defer m.terminalInputGateMu.Unlock()
 	m.terminalInputGate = gate
+}
+
+// SetAgentReadiness completes daemon wiring before request handling begins.
+func (m *Manager) SetAgentReadiness(provider ports.AgentReadinessProvider) {
+	m.agentReadiness = provider
 }
 
 func (m *Manager) beginTerminalInputDrain(rec domain.SessionRecord) (lastInputAt time.Time, release func()) {
@@ -899,12 +906,8 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		m.rollbackSeedSpawnWorkspace(ctx, rec, ws, workspaceProject, false)
 		return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn %s: %w: no agent adapter for harness %q", id, ErrUnknownHarness, cfg.Harness)
 	}
-	env, browserCapabilityVerifier, err := m.launchRuntimeEnv(id, cfg.ProjectID, cfg.IssueID, project.Config.Env)
-	if err != nil {
-		m.rollbackSeedSpawnWorkspace(ctx, rec, ws, workspaceProject, true)
-		return domain.SessionRecord{}, 0, 0, wrapSpawnStage(id, ErrSpawnBrowser, err)
-	}
-	rec, err = m.persistBrowserCapabilityVerifier(ctx, rec, browserCapabilityVerifier)
+	var env map[string]string
+	rec, env, err = m.prepareWorkerLaunchEnv(ctx, rec, project.Config.Env)
 	if err != nil {
 		m.rollbackSeedSpawnWorkspace(ctx, rec, ws, workspaceProject, true)
 		return domain.SessionRecord{}, 0, 0, wrapSpawnStage(id, ErrSpawnBrowser, err)
@@ -978,7 +981,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		RuntimeLaunchID:           launchID,
 		Prompt:                    prompt,
 		LatestUserPrompt:          prompt,
-		BrowserCapabilityVerifier: browserCapabilityVerifier,
+		BrowserCapabilityVerifier: rec.Metadata.BrowserCapabilityVerifier,
 		// The user-visible resolved selection is Model for regular harnesses and
 		// Mode for adapters whose catalog is a mode list (e.g. Amp). If an explicit
 		// Model override exists it wins; otherwise fall back to the resolved Mode.
@@ -1981,13 +1984,10 @@ func (m *Manager) relaunchSessionWithPolicy(ctx context.Context, operation strin
 	// Restore re-applies the project's resolved agent config so a configured
 	// model/permissions carry across a restore, matching fresh spawn.
 	agentConfig := effectiveAgentConfig(rec.Kind, project.Config)
-	env, browserCapabilityVerifier, err := m.launchRuntimeEnv(rec.ID, rec.ProjectID, rec.IssueID, project.Config.Env)
+	var env map[string]string
+	rec, env, err = m.prepareWorkerLaunchEnv(ctx, rec, project.Config.Env)
 	if err != nil {
 		return RestoreResult{}, fmt.Errorf("%s %s: browser capability: %w", operation, rec.ID, err)
-	}
-	rec, err = m.persistBrowserCapabilityVerifier(ctx, rec, browserCapabilityVerifier)
-	if err != nil {
-		return RestoreResult{}, fmt.Errorf("%s %s: persist browser capability: %w", operation, rec.ID, err)
 	}
 	m.augmentAgentRuntimeEnv(agent, env)
 	pinRuntimePermissionEnv(env, agentConfig.Permissions)
@@ -2047,7 +2047,7 @@ func (m *Manager) relaunchSessionWithPolicy(ctx context.Context, operation strin
 		RuntimeLaunchID:           launchID,
 		AgentSessionID:            rec.Metadata.AgentSessionID,
 		Prompt:                    rec.Metadata.Prompt,
-		BrowserCapabilityVerifier: browserCapabilityVerifier,
+		BrowserCapabilityVerifier: rec.Metadata.BrowserCapabilityVerifier,
 	}
 	// Bind an exact native resume to the target launch immediately. Passive Codex
 	// resumes do not necessarily emit SessionStart until the next user turn, but
@@ -2283,6 +2283,9 @@ func (m *Manager) reconcileLive(ctx context.Context, rec domain.SessionRecord) e
 		_, relaunchErr := m.relaunchRestoredSession(ctx, rec, project, ws)
 		if relaunchErr == nil {
 			return nil
+		}
+		if errors.Is(relaunchErr, ports.ErrChatRecoveryInconclusive) {
+			return fmt.Errorf("reconcile %s: preserve detached Chat provider: %w", rec.ID, relaunchErr)
 		}
 		restoreErr = relaunchErr
 	}
@@ -3907,20 +3910,87 @@ func (m *Manager) launchRuntimeEnv(id domain.SessionID, project domain.ProjectID
 	return env, verifier, nil
 }
 
-// persistBrowserCapabilityVerifier runs before the worker runtime starts. This
-// closes the launch race where an eager worker could present its freshly
+// prepareWorkerLaunchEnv couples capability issuance with durable verifier
+// persistence. Callers receive the bearer only after authorization can validate
+// it, so an eager worker cannot race its own launch bookkeeping.
+func (m *Manager) prepareWorkerLaunchEnv(
+	ctx context.Context,
+	rec domain.SessionRecord,
+	projectEnv map[string]string,
+) (domain.SessionRecord, map[string]string, error) {
+	env, verifier, err := m.launchRuntimeEnv(rec.ID, rec.ProjectID, rec.IssueID, projectEnv)
+	if err != nil {
+		return rec, nil, err
+	}
+	rec, err = m.persistBrowserCapabilityVerifier(ctx, rec, rec.ControllerOwner(), verifier)
+	if err != nil {
+		return rec, nil, fmt.Errorf("persist browser capability verifier: %w", err)
+	}
+	return rec, env, nil
+}
+
+// prepareChatControllerEnv is the Chat launch variant: the service supplies the
+// exact durable owner selected under its controller gate, while Session Manager
+// retains responsibility for issuing and persisting the split credential.
+func (m *Manager) prepareChatControllerEnv(
+	ctx context.Context,
+	rec domain.SessionRecord,
+	projectEnv map[string]string,
+	expected domain.SessionControllerOwner,
+) (domain.SessionRecord, map[string]string, error) {
+	env, verifier, err := m.launchRuntimeEnv(rec.ID, rec.ProjectID, rec.IssueID, projectEnv)
+	if err != nil {
+		return rec, nil, err
+	}
+	rec, err = m.persistBrowserCapabilityVerifier(ctx, rec, expected, verifier)
+	if err != nil {
+		return rec, nil, fmt.Errorf("persist browser capability verifier: %w", err)
+	}
+	return rec, env, nil
+}
+
+// persistBrowserCapabilityVerifier runs before the worker controller starts.
+// This closes the launch race where an eager worker could present its freshly
 // injected token before the daemon had stored the verifier needed to validate
 // it. The bearer token remains only in the runtime environment.
-func (m *Manager) persistBrowserCapabilityVerifier(ctx context.Context, rec domain.SessionRecord, verifier string) (domain.SessionRecord, error) {
+func (m *Manager) persistBrowserCapabilityVerifier(
+	ctx context.Context,
+	rec domain.SessionRecord,
+	expected domain.SessionControllerOwner,
+	verifier string,
+) (domain.SessionRecord, error) {
 	if verifier == "" {
 		return rec, nil
 	}
-	rec.Metadata.BrowserCapabilityVerifier = verifier
-	rec.UpdatedAt = m.clock()
-	if err := m.store.UpdateSession(ctx, rec); err != nil {
+	updatedAt := m.clock()
+	applied, err := m.store.UpdateBrowserCapabilityVerifier(ctx, rec.ID, expected, verifier, updatedAt)
+	if err != nil {
 		return rec, err
 	}
+	if !applied {
+		return rec, errors.New("session controller ownership changed before browser capability rotation")
+	}
+	rec.Metadata.BrowserCapabilityVerifier = verifier
+	if rec.UpdatedAt.Before(updatedAt) {
+		rec.UpdatedAt = updatedAt
+	}
 	return rec, nil
+}
+
+func chatControllerOwner(
+	rec domain.SessionRecord,
+	harness domain.AgentHarness,
+	providerConversationID string,
+	controllerGeneration string,
+) domain.SessionControllerOwner {
+	owner := rec.ControllerOwner()
+	owner.Harness = harness
+	owner.Mode = domain.SessionModeChat
+	owner.IsTerminated = false
+	owner.RuntimeLaunchID = ""
+	owner.ProviderConversationID = providerConversationID
+	owner.ControllerGeneration = controllerGeneration
+	return owner
 }
 
 // HookPATH builds the PATH value pinned into a spawned session: the daemon
@@ -4368,11 +4438,11 @@ func AugmentRuntimePATHForLaunchBinary(ctx context.Context, env map[string]strin
 }
 
 func (m *Manager) validateRuntimePrerequisites() error {
-	if runtime.GOOS == "windows" {
+	if runtime.GOOS == "windows" || runtime.GOOS == "linux" {
 		return nil
 	}
 	if resolution, err := tmuxbin.ResolveWith(os.Getenv("AO_TMUX_BINARY"), m.executable, m.lookPath); err != nil || resolution.Path == "" {
-		return fmt.Errorf("%w: tmux required on macOS/Linux but AO's configured, bundled, or system tmux was not found", ports.ErrRuntimePrerequisite)
+		return fmt.Errorf("%w: tmux required on macOS but AO's configured, bundled, or system tmux was not found", ports.ErrRuntimePrerequisite)
 	}
 	return nil
 }
