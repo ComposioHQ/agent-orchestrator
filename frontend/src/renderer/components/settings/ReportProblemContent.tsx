@@ -171,45 +171,45 @@ export function ReportProblemContent({ active }: { active: boolean }) {
 				/>
 			</div>
 
-			<RadioGroup.Root
-				value={selectedOutput}
-				onValueChange={(value) => {
-					setSelectedOutput(value as ReportProblemOutput);
-					clearStatus();
-				}}
-				aria-label={t("report.destination")}
-				className="settings-segment self-start"
-			>
-				{destinations.map((option) => (
-					<RadioGroup.Item key={option.value} value={option.value} className="settings-segment-item">
-						<option.icon className="size-icon-sm" aria-hidden="true" />
-						{option.label}
-					</RadioGroup.Item>
-				))}
-			</RadioGroup.Root>
-
-			{copyError && (
-				<p role="alert" className="text-caption leading-4 text-error">
-					{copyError}
-				</p>
-			)}
-			{copiedLabel && !copyError && (
-				<p className="text-caption leading-4 text-success">{t("report.draftCopied", { label: copiedLabel })}</p>
-			)}
-
-			<div className="flex items-center justify-end gap-3">
-				<Button
-					type="button"
-					variant="footer-primary"
-					className="rounded-md"
-					disabled={!canSubmit}
-					onClick={() => {
-						if (!canSubmit) return;
-						void copyDraft();
-					}}
-				>
-					{destination.action}
-				</Button>
+			<div className="flex flex-col gap-2">
+				<div className="flex flex-wrap items-center justify-between gap-2">
+					<RadioGroup.Root
+						value={selectedOutput}
+						onValueChange={(value) => {
+							setSelectedOutput(value as ReportProblemOutput);
+							clearStatus();
+						}}
+						aria-label={t("report.destination")}
+						className="settings-segment self-start"
+					>
+						{destinations.map((option) => (
+							<RadioGroup.Item key={option.value} value={option.value} className="settings-segment-item">
+								<option.icon className="size-icon-sm" aria-hidden="true" />
+								{option.label}
+							</RadioGroup.Item>
+						))}
+					</RadioGroup.Root>
+					<Button
+						type="button"
+						variant="footer-primary"
+						className="shrink-0 rounded-md"
+						disabled={!canSubmit}
+						onClick={() => {
+							if (!canSubmit) return;
+							void copyDraft();
+						}}
+					>
+						{destination.action}
+					</Button>
+				</div>
+				{copyError ? (
+					<p role="alert" className="text-caption leading-4 text-error">
+						{copyError}
+					</p>
+				) : null}
+				{copiedLabel && !copyError ? (
+					<p className="text-caption leading-4 text-success">{t("report.draftCopied", { label: copiedLabel })}</p>
+				) : null}
 			</div>
 		</div>
 	);
