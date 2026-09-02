@@ -122,7 +122,12 @@ import { cn } from "../lib/utils";
 import { useUiStore } from "../stores/ui-store"
 import { useKeybindingsStore } from "../stores/keybindings-store";
 import { ConfirmDialog } from "./ConfirmDialog";
-import { CreateProjectFlow, type CloneProjectInput, type CreateProjectInput } from "./CreateProjectFlow";
+import {
+	CreateProjectFlow,
+	type CloneProjectInput,
+	type CloneProjectProgressListener,
+	type CreateProjectInput,
+} from "./CreateProjectFlow";
 import { ResizeHandle } from "./ResizeHandle";
 import { isLinuxPlatform, isMacPlatform, isWindowsPlatform } from "../lib/platform";
 import { useCloudSession } from "../lib/cloud-session";
@@ -338,7 +343,7 @@ type SidebarProps = {
 	topbarOffset?: "toolbar" | "titlebar" | "trafficLights" | "session";
 	workspaceError?: string;
 	workspaces: WorkspaceSummary[];
-	onCloneProject: (input: CloneProjectInput) => Promise<void>;
+	onCloneProject: (input: CloneProjectInput, onProgress?: CloneProjectProgressListener) => Promise<void>;
 	onCreateProject: (input: CreateProjectInput) => Promise<void>;
 	onInitializeProject: (path: string) => Promise<void>;
 	onRemoveProject: (projectId: string) => Promise<void>;
@@ -507,8 +512,11 @@ export function Sidebar({
 
 	const [projectOrder, setProjectOrder] = useState<string[]>([]);
 	const [sessionOrderByProject, setSessionOrderByProject] = useState<Record<string, string[]>>({});
+	// Projects added after a manual reorder are intentionally shown first; the
+	// creation flow prepends them optimistically and they should not disappear
+	// at the bottom just because the persisted order has not seen their id yet.
 	const orderedWorkspaces = useMemo(
-		() => applyOrder(workspaces, (workspace) => workspace.id, projectOrder, "end"),
+		() => applyOrder(workspaces, (workspace) => workspace.id, projectOrder, "start"),
 		[projectOrder, workspaces],
 	);
 	const projectIds = useMemo(() => orderedWorkspaces.map((workspace) => workspace.id), [orderedWorkspaces]);

@@ -39,9 +39,6 @@ func (m *Service) Clone(ctx context.Context, in CloneInput) (Project, error) {
 	if err != nil {
 		return Project{}, err
 	}
-	if err := ensureDirectoryPath(parent); err != nil {
-		return Project{}, err
-	}
 	if in.Config != nil {
 		if err := in.Config.Validate(); err != nil {
 			return Project{}, apierr.Invalid("INVALID_PROJECT_CONFIG", err.Error(), nil)
@@ -55,6 +52,12 @@ func (m *Service) Clone(ctx context.Context, in CloneInput) (Project, error) {
 
 	target := filepath.Join(parent, repositoryName)
 	if err := validateRepositorySetupPathSafety(target); err != nil {
+		return Project{}, err
+	}
+	if err := os.MkdirAll(parent, 0o750); err != nil {
+		return Project{}, apierr.Invalid("INVALID_PATH", "Selected folder could not be read", map[string]any{"path": parent})
+	}
+	if err := ensureDirectoryPath(parent); err != nil {
 		return Project{}, err
 	}
 	if _, err := os.Lstat(target); err == nil {

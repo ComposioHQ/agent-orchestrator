@@ -210,6 +210,24 @@ func TestManager_CloneRegistersRepositoryAndPreservesOrigin(t *testing.T) {
 	}
 }
 
+func TestManager_CloneCreatesMissingDestinationParent(t *testing.T) {
+	ctx := context.Background()
+	m := newManager(t)
+	source := gitRepo(t)
+	destinationParent := filepath.Join(t.TempDir(), "Projects")
+
+	cloned, err := m.Clone(ctx, project.CloneInput{
+		RemoteURL:         (&url.URL{Scheme: "file", Path: source}).String(),
+		DestinationParent: destinationParent,
+	})
+	if err != nil {
+		t.Fatalf("Clone: %v", err)
+	}
+	if cloned.Path != filepath.Join(destinationParent, filepath.Base(source)) {
+		t.Fatalf("Clone path = %q, want under %q", cloned.Path, destinationParent)
+	}
+}
+
 func TestManager_CloneRejectsUnsafeURLsAndExistingDestination(t *testing.T) {
 	ctx := context.Background()
 	m := newManager(t)

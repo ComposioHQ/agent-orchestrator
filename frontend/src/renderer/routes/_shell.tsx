@@ -388,6 +388,7 @@ function ShellLayout() {
 			project: components["schemas"]["Project"],
 			input: CreateProjectConfigInput,
 			source: "project_add" | "project_clone",
+			onProgress?: (phase: "cloning" | "starting") => void,
 		) => {
 			const workspace: WorkspaceSummary = {
 				id: project.id,
@@ -403,6 +404,7 @@ function ShellLayout() {
 			updateWorkspaces((current) => [workspace, ...current.filter((item) => item.id !== workspace.id)]);
 			setOrchestratorStartupError(workspace.id, null);
 			try {
+				onProgress?.("starting");
 				void captureRendererEvent("ao.renderer.orchestrator_spawn_requested", {
 					project_id: workspace.id,
 					source,
@@ -496,7 +498,7 @@ function ShellLayout() {
 			workerAgent: string;
 			orchestratorAgent: string;
 			trackerIntake?: components["schemas"]["TrackerIntakeConfig"];
-		}) => {
+		}, onProgress?: (phase: "cloning" | "starting") => void) => {
 			void addRendererExceptionStep("Project clone requested", {
 				source: "project-clone",
 				operation: "project_clone",
@@ -507,6 +509,7 @@ function ShellLayout() {
 			if (status.state !== "ready" || !status.port) {
 				throw new Error(status.message || "AO daemon is not ready.");
 			}
+			onProgress?.("cloning");
 			const { data, error } = await apiClient.POST("/api/v1/projects/clone", {
 				body: {
 					remoteUrl: input.remoteUrl,
@@ -525,7 +528,7 @@ function ShellLayout() {
 				throw failure;
 			}
 			if (!data?.project) throw new Error("Project clone returned no project");
-			await completeProjectCreation(data.project, input, "project_clone");
+			await completeProjectCreation(data.project, input, "project_clone", onProgress);
 		},
 		[completeProjectCreation],
 	);

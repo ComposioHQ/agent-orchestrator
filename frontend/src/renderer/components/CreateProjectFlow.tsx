@@ -13,6 +13,7 @@ import {
 	GitBranch,
 	GitFork,
 	Link2,
+	LoaderCircle,
 	X,
 	XCircle,
 } from "lucide-react";
@@ -36,8 +37,22 @@ import { Tabs, TabsList, TabsTrigger } from "./ui/tabs";
 export type CreateProjectInput = { path: string; asWorkspace?: boolean } & CreateProjectAgentSelection;
 export type CloneProjectInput = Pick<CloneRepositorySelection, "remoteUrl" | "destinationParent"> &
 	CreateProjectAgentSelection;
+export type CloneProjectProgress = "cloning" | "starting";
+export type CloneProjectProgressListener = (progress: CloneProjectProgress) => void;
 
 const LAST_CLONE_DESTINATION_KEY = "ao.clone.lastDestinationParent";
+
+function defaultCloneDestination(homeDirectory: string): string {
+	const home = homeDirectory.replace(/[\\/]+$/, "");
+	return `${home}${home.includes("\\") ? "\\" : "/"}Projects`;
+}
+
+function isAoStatePath(candidate: string, homeDirectory: string): boolean {
+	const home = homeDirectory.replace(/[\\/]+$/, "");
+	const normalizedCandidate = candidate.replace(/[\\/]+$/, "");
+	const aoState = `${home}${home.includes("\\") ? "\\" : "/"}.ao`;
+	return normalizedCandidate === aoState || normalizedCandidate.startsWith(`${aoState}/`) || normalizedCandidate.startsWith(`${aoState}\\`);
+}
 
 type CreateProjectFlowMode = ProjectKind | "choose";
 type ProjectSource = "clone" | "local" | "workspace";
@@ -69,7 +84,7 @@ export function CreateProjectFlow({
 	embedded?: boolean;
 	idleLabel?: string;
 	mode?: CreateProjectFlowMode;
-	onCloneProject: (input: CloneProjectInput) => Promise<void>;
+	onCloneProject: (input: CloneProjectInput, onProgress?: CloneProjectProgressListener) => Promise<void>;
 	onCreateProject: (input: CreateProjectInput) => Promise<void>;
 	onInitializeProject: (path: string) => Promise<void>;
 	// Monotonic counter: each new value opens the flow programmatically (the ⌘N
@@ -82,17 +97,27 @@ export function CreateProjectFlow({
 	const [error, setError] = useState<string | null>(null);
 	const [modePickerOpen, setModePickerOpen] = useState(false);
 	const [cloneDialogOpen, setCloneDialogOpen] = useState(false);
+	const [cloneProgressOpen, setCloneProgressOpen] = useState(false);
+	const [cloneProgress, setCloneProgress] = useState<CloneProjectProgress>("cloning");
+	const [cloneProgressError, setCloneProgressError] = useState<string | null>(null);
 	const [cloneDetails, setCloneDetails] = useState<CloneRepositoryDetails>(() => ({
 		remoteUrl: "",
-		destinationParent:
-			typeof window === "undefined" ? "" : (window.localStorage.getItem(LAST_CLONE_DESTINATION_KEY) ?? ""),
+		destinationParent: "",
 	}));
 	useEffect(() => {
 		if (cloneDetails.destinationParent) return;
 		let active = true;
 		void aoBridge.app.getHomeDirectory().then((homeDirectory) => {
 			if (!active || !homeDirectory) return;
-			const defaultDestination = `${homeDirectory.replace(/[\\/]+$/, "")}/.ao`;
+			let rememberedDestination = "";
+			try {
+				rememberedDestination = window.localStorage.getItem(LAST_CLONE_DESTINATION_KEY) ?? "";
+			} catch {
+				// Use the default when browser storage is unavailable.
+			}
+			const defaultDestination = isAoStatePath(rememberedDestination, homeDirectory)
+				? defaultCloneDestination(homeDirectory)
+				: rememberedDestination || defaultCloneDestination(homeDirectory);
 			setCloneDetails((current) => current.destinationParent ? current : { ...current, destinationParent: defaultDestination });
 		});
 		return () => {
@@ -126,7 +151,7 @@ export function CreateProjectFlow({
 
 	const hasModePicker = mode === "choose";
 	const agentSheetOpen = selectedPath !== null;
-	const isBusy = isChoosingPath || isCreating || isInitializing;
+	const isBusy = isChoosingPath || isCreating || isInitializing || cloneProgressOpen;
 
 	const transitionToChild = (open: () => void) => {
 		setChildTransitioning(true);
@@ -260,13 +285,18 @@ export function CreateProjectFlow({
 		setIsCreating(true);
 		try {
 			if (activeClone) {
-				await onCloneProject({
-					remoteUrl: activeClone.remoteUrl,
-					destinationParent: activeClone.destinationParent,
-					...selection,
-				});
+				await onCloneProject(
+					{
+						remoteUrl: activeClone.remoteUrl,
+						destinationParent: activeClone.destinationParent,
+						...selection,
+					},
+					(setupProgress) => setCloneProgress(setupProgress),
+				);
 				setSelectedPath(null);
 				setCloneSelection(null);
+				setCloneProgressOpen(false);
+				setModePickerOpen(false);
 				return;
 			}
 			if (selectedKind === "single_repo" && repositorySetup) {
@@ -287,10 +317,7 @@ export function CreateProjectFlow({
 				setRepositorySetup(code);
 			}
 			setError(message);
-			if (activeClone) {
-				setModePickerOpen(true);
-				setCloneDialogOpen(true);
-			}
+			if (activeClone) setCloneProgressError(message);
 			if (hasModePicker && !activeClone) {
 				if (shouldScanCreateFailure(message)) {
 					try {
@@ -358,7 +385,7 @@ export function CreateProjectFlow({
 			{hasModePicker && (
 				<>
 					<CreateProjectSourceDialog
-						childOpen={childTransitioning || cloneDialogOpen || folderPickerOpen || agentSheetOpen}
+						childOpen={childTransitioning || cloneDialogOpen || cloneProgressOpen || folderPickerOpen || agentSheetOpen}
 						cloudAvailable={cloudAvailable}
 						cloudEnabled={cloudEnabled}
 						disabled={isBusy}
@@ -401,13 +428,25 @@ export function CreateProjectFlow({
 								setCloneSelection(next);
 								setSelectedKind("single_repo");
 								setCloneDialogOpen(false);
-								setModePickerOpen(false);
+								setCloneProgress("cloning");
+								setCloneProgressError(null);
+								setCloneProgressOpen(true);
 								void createProject(next, next);
 							}}
 							open
 							value={cloneDetails}
 						/>
 					) : null}
+					<CloneProjectProgressDialog
+						error={cloneProgressError}
+						onBack={() => {
+							setCloneProgressError(null);
+							setCloneProgressOpen(false);
+							setCloneDialogOpen(true);
+						}}
+						open={cloneProgressOpen}
+						phase={cloneProgress}
+					/>
 					<CreateProjectFolderDialog
 						disabled={isBusy}
 						error={error}
@@ -575,6 +614,67 @@ function CreateProjectSourceDialog({
 							<ImportSourcePicker disabled={disabled} onClose={() => onOpenChange(false)} onSelect={onSelect} dialog />
 						)}
 					</div>
+				</Dialog.Content>
+			</Dialog.Portal>
+		</Dialog.Root>
+	);
+}
+
+function CloneProjectProgressDialog({
+	error,
+	onBack,
+	open,
+	phase,
+}: {
+	error: string | null;
+	onBack: () => void;
+	open: boolean;
+	phase: CloneProjectProgress;
+}) {
+	const { t } = useTranslation();
+	const isStarting = phase === "starting";
+	const progress = isStarting ? 78 : 42;
+
+	return (
+		<Dialog.Root open={open} onOpenChange={() => undefined}>
+			<Dialog.Portal>
+				<Dialog.Content className="fixed left-1/2 top-1/2 z-overlay w-[min(420px,calc(100vw-32px))] -translate-x-1/2 -translate-y-1/2 rounded-lg border border-border bg-popover p-6 text-popover-foreground shadow-xl data-[state=open]:animate-modal-in data-[state=closed]:animate-modal-out motion-reduce:animate-none">
+					<Dialog.Title className="text-balance text-[18px] font-semibold text-[var(--color-text-import-title)]">
+						{error ? "Could not finish setup" : "Setting up your project"}
+					</Dialog.Title>
+					<Dialog.Description className="mt-2 text-[13px] leading-5 text-muted-foreground">
+						{error ? "The project was not opened." : "This will only take a moment."}
+					</Dialog.Description>
+
+					{error ? (
+						<div className="mt-5 space-y-4">
+							<div className="rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2.5 text-pretty text-[12px] leading-5 text-destructive" role="alert">
+								{error}
+							</div>
+							<Button type="button" variant="primary" onClick={onBack}>
+								{t("createProject.cloneBack")}
+							</Button>
+						</div>
+					) : (
+						<div className="mt-6 space-y-4">
+							<div className="flex items-center gap-3">
+								<LoaderCircle className="size-5 animate-spin text-[var(--color-text-import-muted)]" aria-hidden="true" />
+								<p className="text-[14px] font-medium text-foreground">
+									{isStarting ? "Starting orchestrator" : "Cloning repository"}
+								</p>
+							</div>
+							<div
+								aria-label="Project setup progress"
+								aria-valuemax={100}
+								aria-valuemin={0}
+								aria-valuenow={progress}
+								className="h-1.5 overflow-hidden rounded-full bg-muted"
+								role="progressbar"
+							>
+								<div className="h-full rounded-full bg-primary transition-[width] duration-500" style={{ width: `${progress}%` }} />
+							</div>
+						</div>
+					)}
 				</Dialog.Content>
 			</Dialog.Portal>
 		</Dialog.Root>
