@@ -19,6 +19,7 @@ const workspaceSubscriptionMock = vi.hoisted(() => vi.fn());
 const ctx = vi.hoisted(() => {
 	const workspaces: WorkspaceSummary[] = [
 		{
+			host: "local",
 			id: "proj-1",
 			name: "app",
 			path: "/repos/app",
@@ -26,6 +27,7 @@ const ctx = vi.hoisted(() => {
 			orchestratorAgent: "codex",
 			sessions: [
 				{
+					host: "local",
 					id: "w-merge",
 					workspaceId: "proj-1",
 					workspaceName: "app",
@@ -38,6 +40,7 @@ const ctx = vi.hoisted(() => {
 					prs: [],
 				},
 				{
+					host: "local",
 					id: "w-fix",
 					workspaceId: "proj-1",
 					workspaceName: "app",
@@ -50,6 +53,7 @@ const ctx = vi.hoisted(() => {
 					prs: [],
 				},
 				{
+					host: "local",
 					id: "w-archived",
 					workspaceId: "proj-1",
 					workspaceName: "app",
@@ -62,6 +66,7 @@ const ctx = vi.hoisted(() => {
 					prs: [],
 				},
 				{
+					host: "local",
 					id: "orch",
 					workspaceId: "proj-1",
 					workspaceName: "app",
@@ -76,6 +81,7 @@ const ctx = vi.hoisted(() => {
 			],
 		},
 		{
+			host: "local",
 			id: "proj-2",
 			name: "lib",
 			path: "/repos/lib",
@@ -85,7 +91,7 @@ const ctx = vi.hoisted(() => {
 		},
 	];
 	return {
-		params: {} as { projectId?: string; sessionId?: string },
+		params: {} as { hostId?: string; projectId?: string; sessionId?: string },
 		enabled: true,
 		workspaces,
 	};
@@ -104,7 +110,7 @@ vi.mock("../hooks/useCommandPaletteEnabled", () => ({
 vi.mock("../hooks/useWorkspaceQuery", () => ({
 	useWorkspaceQuery: (options: { subscribed?: boolean }) => {
 		workspaceSubscriptionMock(options);
-		return { data: ctx.workspaces };
+		return { data: [{ host: "local", label: "Local", status: "ready", workspaces: ctx.workspaces, failure: null }] };
 	},
 	workspaceQueryKey: ["workspaces"],
 }));
@@ -130,6 +136,24 @@ vi.mock("../lib/api-client", () => ({
 }));
 
 
+// clientFor(LOCAL_HOST) is the client apiClient already was, so the local
+// host resolves to the same fake the api-client mock installs.
+vi.mock("../lib/host-clients", () => ({
+	baseUrlFor: () => "http://127.0.0.1:3001",
+	connectedHosts: (() => {
+		// useSyncExternalStore requires a stable snapshot: a fresh [] each call
+		// re-renders forever.
+		const hosts: string[] = [];
+		return () => hosts;
+	})(),
+	subscribeConnectedHosts: () => () => undefined,
+	isHostReady: () => true,
+	clientFor: () => ({
+		GET: getMock,
+		POST: postMock,
+	}),
+}));
+
 vi.mock("../lib/bridge", () => ({
 	aoBridge: {
 		app: { openExternal: openExternalMock },
@@ -153,13 +177,13 @@ function StubNestedLayer() {
 
 vi.mock("./TaskComposer", () => ({
 	TaskComposer: (props: {
-		projectId?: string;
+		project?: { host: string; id: string };
 		onCreated: (id: string) => void;
 		onDirtyChange?: (dirty: boolean) => void;
 		onSubmittingChange?: (submitting: boolean) => void;
 	}) => (
 		<div data-testid="task-composer">
-			<span>composer {props.projectId}</span>
+			<span>composer {props.project?.id}</span>
 			<StubNestedLayer />
 			<button type="button" onClick={() => props.onDirtyChange?.(true)}>
 				stub-dirty
@@ -375,8 +399,8 @@ describe("CommandPalette drill-in + Enter", () => {
 		fireEvent.keyDown(actionsInput, { key: "Enter" });
 
 		expect(navigateMock).toHaveBeenCalledWith({
-			to: "/projects/$projectId/sessions/$sessionId",
-			params: { projectId: "proj-1", sessionId: "w-merge" },
+			to: "/host/$hostId/session/$sessionId",
+			params: { hostId: "local", sessionId: "w-merge" },
 		});
 		await waitFor(() => expect(paletteInput()).toBeNull());
 	});
@@ -396,7 +420,7 @@ describe("CommandPalette drill-in + Enter", () => {
 		});
 		fireEvent.keyDown(input, { key: "Enter" });
 
-		expect(navigateMock).toHaveBeenCalledWith({ to: "/projects/$projectId", params: { projectId: "proj-1" } });
+		expect(navigateMock).toHaveBeenCalledWith({ to: "/host/$hostId/project/$projectId", params: { hostId: "local", projectId: "proj-1" } });
 	});
 
 	it("jumps to an archived (terminated) session via search + Enter", async () => {
@@ -456,8 +480,8 @@ describe("CommandPalette drill-in + Enter", () => {
 		await waitFor(() => expect(restoreMock).toHaveBeenCalledWith("w-archived"));
 		await waitFor(() =>
 			expect(navigateMock).toHaveBeenCalledWith({
-				to: "/projects/$projectId/sessions/$sessionId",
-				params: { projectId: "proj-1", sessionId: "w-archived" },
+				to: "/host/$hostId/session/$sessionId",
+				params: { hostId: "local", sessionId: "w-archived" },
 			}),
 		);
 		await waitFor(() => expect(paletteInput()).toBeNull());
@@ -538,7 +562,7 @@ describe("CommandPalette actions", () => {
 		await screen.findByPlaceholderText(/search projects/i);
 		fireEvent.click(screen.getByText("Open orchestrator"));
 
-		expect(useUiStore.getState().settingsModal).toEqual({ scope: "project", projectId: "proj-2" });
+		expect(useUiStore.getState().settingsModal).toEqual({ scope: "project", project: { host: "local", id: "proj-2" } });
 		expect(navigateMock).not.toHaveBeenCalled();
 		expect(spawnMock).not.toHaveBeenCalled();
 		await waitFor(() => expect(paletteInput()).toBeNull());
@@ -550,7 +574,7 @@ describe("CommandPalette actions", () => {
 		act(() => useUiStore.getState().setCommandPaletteOpen(true));
 		await screen.findByPlaceholderText(/search projects/i);
 		fireEvent.click(screen.getByText("lib"));
-		expect(navigateMock).toHaveBeenCalledWith({ to: "/projects/$projectId", params: { projectId: "proj-2" } });
+		expect(navigateMock).toHaveBeenCalledWith({ to: "/host/$hostId/project/$projectId", params: { hostId: "local", projectId: "proj-2" } });
 		await waitFor(() => expect(paletteInput()).toBeNull());
 	});
 
@@ -931,8 +955,8 @@ describe("CommandPalette inline task composer", () => {
 		fireEvent.click(screen.getByText("stub-create"));
 		await waitFor(() =>
 			expect(navigateMock).toHaveBeenCalledWith({
-				to: "/projects/$projectId/sessions/$sessionId",
-				params: { projectId: "proj-1", sessionId: "new-session" },
+				to: "/host/$hostId/session/$sessionId",
+				params: { hostId: "local", sessionId: "new-session" },
 			}),
 		);
 		await waitFor(() => expect(paletteInput()).toBeNull());
@@ -972,9 +996,55 @@ describe("CommandPalette inline task composer", () => {
 		fireEvent.click(screen.getByText("stub-create"));
 		await waitFor(() =>
 			expect(navigateMock).toHaveBeenCalledWith({
-				to: "/projects/$projectId/sessions/$sessionId",
-				params: { projectId: "proj-1", sessionId: "new-session" },
+				to: "/host/$hostId/session/$sessionId",
+				params: { hostId: "local", sessionId: "new-session" },
 			}),
 		);
+	});
+});
+
+describe("CommandPalette across hosts", () => {
+	// A second host running the same project: session ids repeat across hosts, so
+	// the palette must scope the route's session to the route's host.
+	beforeEach(() => {
+		ctx.workspaces.push({
+			host: "remote",
+			id: "proj-1",
+			name: "app",
+			path: "/repos/app",
+			type: "main",
+			orchestratorAgent: "codex",
+			sessions: [
+				{
+					host: "remote",
+					id: "w-merge",
+					workspaceId: "proj-1",
+					workspaceName: "app",
+					title: "remote banner",
+					provider: "codex",
+					kind: "worker",
+					branch: "feature/remote-banner",
+					status: "mergeable",
+					updatedAt: "2026-06-10T00:00:00Z",
+					prs: [],
+				},
+			],
+		});
+	});
+
+	afterEach(() => {
+		ctx.workspaces.length = 2;
+	});
+
+	it("copies the branch of the session on the route's host", async () => {
+		ctx.params = { hostId: "remote", sessionId: "w-merge" };
+		renderPalette();
+		act(() => useUiStore.getState().setCommandPaletteOpen(true));
+		const input = await screen.findByPlaceholderText(/search projects/i);
+
+		fireEvent.change(input, { target: { value: "copy branch" } });
+
+		await waitFor(() => expect(screen.getByText("feature/remote-banner")).toBeInTheDocument());
+		expect(screen.queryByText("feature/ship")).toBeNull();
 	});
 });

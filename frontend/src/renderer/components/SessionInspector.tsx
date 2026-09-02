@@ -38,8 +38,10 @@ import {
 } from "lucide-react";
 import type { components } from "../../api/schema";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
-import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
+import { workspaceHostQueryKey, workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { captureRendererEvent } from "../lib/telemetry";
+import { refKey, type Ref } from "../lib/hosts";
+import { clientFor } from "../lib/host-clients";
 import { formatTimeCompact } from "../lib/format-time";
 import { AgentAvatar } from "./AgentAvatar";
 import { ProductExternalLink } from "./ProductExternalLink";
@@ -55,8 +57,8 @@ import { clearTerminateSessionState, useTerminateSession } from "../hooks/useTer
 import { formatEstimatedCost, type EstimatedCost } from "../lib/format-cost";
 import { prBrowserUrl, prCardPresentation, prNounKeys, sessionPRDisplaySummaries } from "../lib/pr-display";
 import { formatTokenCount } from "../lib/format-token-count";
-import type { WorkspaceSession, WorkspaceSummary } from "../types/workspace";
-import { findProjectOrchestrator, sortedPRs } from "../types/workspace";
+import type { HostSection, WorkspaceSession, WorkspaceSummary } from "../types/workspace";
+import { findProjectOrchestrator, flattenHostSections, sortedPRs, updateHostWorkspaces } from "../types/workspace";
 import { getAgentActivityView, getSessionTimelinePillView } from "../lib/session-presentation";
 import { aoBridge } from "../lib/bridge";
 import { BrowserPanelView, type BrowserAnnotationQueueModel } from "./BrowserPanel";
@@ -272,9 +274,9 @@ const SummaryView = memo(function SummaryView({
 	session: WorkspaceSession;
 }) {
 	const { t } = useTranslation();
-	const query = useSessionScmSummary(session.id);
+	const query = useSessionScmSummary(session);
 	const developerMode = useUiStore((state) => state.developerMode);
-	const usageQuery = useSessionUsage(session.id, developerMode);
+	const usageQuery = useSessionUsage(session, developerMode);
 	const showUsage =
 		developerMode &&
 		!usageQuery.isLoading &&
@@ -303,7 +305,7 @@ const SummaryView = memo(function SummaryView({
 								key={pr.url || pr.htmlUrl || pr.number}
 								onOpenReviews={onOpenReviews}
 								pr={pr}
-								sessionId={session.id}
+								session={session}
 							/>
 						))
 					) : (
@@ -549,16 +551,20 @@ function AutoInjectCIPolicyControl({ session }: { session: WorkspaceSession }) {
 			if (error) throw new Error(apiErrorMessage(error, t("inspector.ci.autoInjectError", { status: response.status })));
 		},
 		onMutate: async (autoInjectCI) => {
-			await queryClient.cancelQueries({ queryKey: workspaceQueryKey });
-			const previous = queryClient.getQueryData<WorkspaceSummary[]>(workspaceQueryKey);
-			queryClient.setQueryData<WorkspaceSummary[]>(workspaceQueryKey, (current) =>
-				updateSessionAutoInjectCI(current, session.id, autoInjectCI),
+			// The cache is per host, so the optimistic edit names the session's own.
+			const hostKey = workspaceHostQueryKey(session.host);
+			await queryClient.cancelQueries({ queryKey: hostKey });
+			const previous = queryClient.getQueryData<HostSection[]>(hostKey);
+			queryClient.setQueryData<HostSection[]>(hostKey, (current) =>
+				updateHostWorkspaces(current, session.host, (workspaces) =>
+					updateSessionAutoInjectCI(workspaces, session.id, autoInjectCI),
+				),
 			);
 			return { previous };
 		},
 		onError: (_error, _next, context) => {
 			setEnabled(session.autoInjectCI ?? true);
-			if (context?.previous) queryClient.setQueryData(workspaceQueryKey, context.previous);
+			if (context?.previous) queryClient.setQueryData(workspaceHostQueryKey(session.host), context.previous);
 		},
 		onSettled: () => {
 			void queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
@@ -683,11 +689,11 @@ function AutoInjectReviewPolicyControl({ session }: { session: WorkspaceSession 
 }
 
 function updateSessionAutoInjectCI(
-	workspaces: WorkspaceSummary[] | undefined,
+	workspaces: WorkspaceSummary[],
 	sessionId: string,
 	autoInjectCI: boolean,
-): WorkspaceSummary[] | undefined {
-	return workspaces?.map((workspace) => ({
+): WorkspaceSummary[] {
+	return workspaces.map((workspace) => ({
 		...workspace,
 		sessions: workspace.sessions.map((candidate) =>
 			candidate.id === sessionId ? { ...candidate, autoInjectCI } : candidate,
@@ -1074,15 +1080,19 @@ function SessionControls({ session }: { session: WorkspaceSession }) {
 			if (error) throw new Error(apiErrorMessage(error, `Failed to update merge policy (${response.status})`));
 		},
 		onMutate: async (terminateOnPrMerge) => {
-			await queryClient.cancelQueries({ queryKey: workspaceQueryKey });
-			const previous = queryClient.getQueryData<WorkspaceSummary[]>(workspaceQueryKey);
-			queryClient.setQueryData<WorkspaceSummary[]>(workspaceQueryKey, (current) =>
-				updateSessionMergePolicy(current, session.id, terminateOnPrMerge),
+			// The cache is per host, so the optimistic edit names the session's own.
+			const hostKey = workspaceHostQueryKey(session.host);
+			await queryClient.cancelQueries({ queryKey: hostKey });
+			const previous = queryClient.getQueryData<HostSection[]>(hostKey);
+			queryClient.setQueryData<HostSection[]>(hostKey, (current) =>
+				updateHostWorkspaces(current, session.host, (workspaces) =>
+					updateSessionMergePolicy(workspaces, session.id, terminateOnPrMerge),
+				),
 			);
 			return { previous };
 		},
 		onError: (_error, _next, context) => {
-			if (context?.previous) queryClient.setQueryData(workspaceQueryKey, context.previous);
+			if (context?.previous) queryClient.setQueryData(workspaceHostQueryKey(session.host), context.previous);
 		},
 		onSettled: () => {
 			void queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
@@ -1092,18 +1102,21 @@ function SessionControls({ session }: { session: WorkspaceSession }) {
 	const canTerminateNow = session.status === "merged";
 
 	const confirmTermination = () => {
-		const workspaces = queryClient.getQueryData<WorkspaceSummary[]>(workspaceQueryKey) ?? [];
-		const orchestrator = findProjectOrchestrator(workspaces, session.workspaceId);
+		const workspaces = flattenHostSections(queryClient.getQueryData<HostSection[]>(workspaceHostQueryKey(session.host)));
+		const orchestrator = findProjectOrchestrator(workspaces, { host: session.host, id: session.workspaceId });
 		setConfirmOpen(false);
 		terminate.mutate(session);
 		if (orchestrator) {
 			void navigate({
-				to: "/projects/$projectId/sessions/$sessionId",
-				params: { projectId: session.workspaceId, sessionId: orchestrator.id },
+				to: "/host/$hostId/session/$sessionId",
+				params: { hostId: orchestrator.host, sessionId: orchestrator.id },
 			});
 			return;
 		}
-		void navigate({ to: "/projects/$projectId", params: { projectId: session.workspaceId } });
+		void navigate({
+			to: "/host/$hostId/project/$projectId",
+			params: { hostId: session.host, projectId: session.workspaceId },
+		});
 	};
 
 	if (session.isTerminated === true) return null;
@@ -1163,11 +1176,11 @@ function SessionControls({ session }: { session: WorkspaceSession }) {
 }
 
 function updateSessionMergePolicy(
-	workspaces: WorkspaceSummary[] | undefined,
+	workspaces: WorkspaceSummary[],
 	sessionId: string,
 	terminateOnPrMerge: boolean,
-): WorkspaceSummary[] | undefined {
-	return workspaces?.map((workspace) => ({
+): WorkspaceSummary[] {
+	return workspaces.map((workspace) => ({
 		...workspace,
 		sessions: workspace.sessions.map((candidate) =>
 			candidate.id === sessionId ? { ...candidate, terminateOnPrMerge } : candidate,
@@ -1179,12 +1192,12 @@ function PRSummaryCard({
 	canOpenReviews,
 	onOpenReviews,
 	pr,
-	sessionId,
+	session,
 }: {
 	canOpenReviews: boolean;
 	onOpenReviews: () => void;
 	pr: SessionPRSummary;
-	sessionId: string;
+	session: Ref;
 }) {
 	const { t } = useTranslation();
 	const queryClient = useQueryClient();
@@ -1206,7 +1219,7 @@ function PRSummaryCard({
 		},
 		onSuccess: async () => {
 			await Promise.all([
-				queryClient.invalidateQueries({ queryKey: sessionScmSummaryQueryKey(sessionId) }),
+				queryClient.invalidateQueries({ queryKey: sessionScmSummaryQueryKey(session) }),
 				queryClient.invalidateQueries({ queryKey: workspaceQueryKey }),
 			]);
 		},
@@ -1480,14 +1493,14 @@ function ReviewsSection({
 			return session.autoReviewEnabled === true ? 10_000 : false;
 		},
 	});
-	const agentsQuery = useAgentReadinessQuery();
+	const agentsQuery = useAgentReadinessQuery(true, session.host);
 	useEnsureAgentReadiness();
 	const projectConfigQuery = useQuery({
-		queryKey: ["project-config", session.workspaceId],
+		queryKey: ["project-config", refKey({ host: session.host, id: session.workspaceId })],
 		enabled: hasPr,
 		queryFn: async () => {
 			if (usePreviewData) return mockProjectConfig();
-			const { data, error } = await apiClient.GET("/api/v1/projects/{id}", {
+			const { data, error } = await clientFor(session.host).GET("/api/v1/projects/{id}", {
 				params: { path: { id: session.workspaceId } },
 			});
 			if (error) return undefined;
@@ -1612,7 +1625,7 @@ function ReviewsSection({
 	});
 	const reviewStates = reviewsQuery.data?.reviews ?? [];
 	const autoReviewEnabled = session.autoReviewEnabled === true;
-	const scmSummary = useSessionScmSummary(session.id);
+	const scmSummary = useSessionScmSummary(session);
 	const prSummaries = sessionPRDisplaySummaries(session, scmSummary.data);
 	const githubReviews = prSummaries.filter(
 		(pr) =>
@@ -1730,7 +1743,7 @@ function MergedReviewsSection({
 			body: { pullRequestUrl: comment.pullRequestUrl, commentUrl: comment.url ?? "" },
 		});
 		if (error) throw new Error(apiErrorMessage(error, "Unable to resolve review comment"));
-		void queryClient.invalidateQueries({ queryKey: sessionScmSummaryQueryKey(session.id) });
+		void queryClient.invalidateQueries({ queryKey: sessionScmSummaryQueryKey(session) });
 		void queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
 	};
 	const sendInlineCommentToWorker = async (comment: InspectorInlineComment & { reviewerId?: string }) => {
@@ -2269,7 +2282,7 @@ function ReviewPanel({
 							onConfigChange={(harness, config) => onReviewerOverrideChange(harness as ReviewerHarness | "", config)}
 							model={reviewerModel}
 							mode={reviewerMode}
-							projectId={session.workspaceId}
+							project={{ host: session.host, id: session.workspaceId }}
 							triggerClassName="review-run-agent-select ml-auto h-control-md w-auto min-w-0 max-w-[11rem] shrink-0 justify-end px-2 text-right text-xs"
 							value={reviewerOverride}
 							showDefaultOption

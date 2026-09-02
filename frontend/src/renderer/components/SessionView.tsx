@@ -1,4 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { refKey, type Ref } from "../lib/hosts";
 import { PanelRight, Plus } from "lucide-react";
 import { motion, useReducedMotion } from "motion/react";
 import {
@@ -59,9 +60,10 @@ import { useWorkspaceSession } from "../hooks/useWorkspaceQuery";
 import { useSessionHandoffMenu } from "../hooks/useSessionHandoffMenu";
 import { clearSwitchAgentState } from "../hooks/useSwitchAgent";
 import { useWindowFullScreen } from "../hooks/useWindowFullScreen";
-import { apiClient, apiErrorCode, apiErrorMessage } from "../lib/api-client";
 import { sessionWorkspaceFilesQueryOptions } from "../hooks/useSessionWorkspaceFiles";
 import { matchWorkspaceFilePath } from "../lib/workspace-file-path";
+import { apiErrorCode, apiErrorMessage } from "../lib/api-client";
+import { clientFor } from "../lib/host-clients";
 import { SHELL_PANEL_SPRING } from "../lib/motion-spring";
 import {
 	activateSessionFile,
@@ -243,7 +245,7 @@ function reviewerTerminalFromReviews(data?: ReviewsResponse): ReviewerTerminalTa
 }
 
 type SessionViewProps = {
-	sessionId: string;
+	sessionRef: Ref;
 };
 
 // Mirrors the left sidebar: a Motion gap takes layout width while a sibling
@@ -376,10 +378,11 @@ function SessionInspectorRail({
 // x-transform). Summary/Reviews/Files share a utility width, while Browser
 // automatically grows into a co-work canvas. Chat readability clamps either
 // profile before the conversation can become unusably narrow.
-export function SessionView({ sessionId }: SessionViewProps) {
+export function SessionView({ sessionRef }: SessionViewProps) {
+	const sessionId = sessionRef.id;
 	const { t } = useTranslation();
 	const queryClient = useQueryClient();
-	const workspaceQuery = useWorkspaceSession(sessionId);
+	const workspaceQuery = useWorkspaceSession(sessionRef);
 	const theme = useResolvedTheme();
 	const prefersReducedMotion = useReducedMotion();
 	const isInspectorOpen = useUiStore((state) => state.inspectorSessions[sessionId]?.isOpen ?? true);
@@ -509,7 +512,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	const session = workspaceQuery.data;
 	const interfaceSwitch = useSessionInterfaceTransition(session?.id);
 	const reviewerQuery = useQuery({
-		queryKey: ["session-reviews", sessionId],
+		queryKey: ["session-reviews", refKey(sessionRef)],
 		enabled: Boolean(
 			window.ao && session && sessionIsActive(session) && !isOrchestratorSession(session) && session.prs.length > 0,
 		),
@@ -518,7 +521,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 			return data?.reviews?.some((review) => review.status === "running") ? 2500 : false;
 		},
 		queryFn: async () => {
-			const { data, error } = await apiClient.GET("/api/v1/sessions/{sessionId}/reviews", {
+			const { data, error } = await clientFor(sessionRef.host).GET("/api/v1/sessions/{sessionId}/reviews", {
 				params: { path: { sessionId } },
 			});
 			if (error) throw new Error(apiErrorMessage(error, "Unable to load reviews"));
@@ -529,8 +532,10 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	const reviewerTerminal = session && sessionIsActive(session) ? availableReviewerTerminal : undefined;
 
 	// Shell terminals opened inside a session live beside its pane as extra tabs,
-	// scoped to the session on screen so each session has its own shell set.
-	const allShellTerminals = useShellTerminals().data ?? [];
+	// scoped to the session on screen so each session has its own shell set. They
+	// live on that session's host, so that is the host that gets asked — and
+	// filtering the answer by bare session id is then unambiguous.
+	const allShellTerminals = useShellTerminals(sessionRef.host).data ?? [];
 	const shellTerminals = useMemo(
 		() => allShellTerminals.filter((shell) => shell.sessionId === sessionId),
 		[allShellTerminals, sessionId],
@@ -556,7 +561,8 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	const setVisibleTerminalKind = useUiStore((state) => state.setVisibleTerminalKind);
 	const clearVisibleTerminalKind = useUiStore((state) => state.clearVisibleTerminalKind);
 	const renameShellTerminalByHandle = useCallback(
-		(handleId: string, title: string) => renameShellTerminal.mutate({ handleId, title }),
+		(handleId: string, title: string) =>
+			renameShellTerminal.mutate({ terminal: { host: sessionRef.host, id: handleId }, title }),
 		[renameShellTerminal],
 	);
 
@@ -565,7 +571,10 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	// workspace can no longer be resolved).
 	const addShellTerminal = useCallback(() => {
 		const shell = openShellTerminal.open(
-			{ projectId: session?.workspaceId, sessionId },
+			{
+				project: session ? { host: session.host, id: session.workspaceId } : undefined,
+				session: sessionRef,
+			},
 			{
 				onSuccess: (openedShell) => {
 					setActiveShellTerminal(openedShell.handleId);
@@ -575,9 +584,10 @@ export function SessionView({ sessionId }: SessionViewProps) {
 					}));
 					setTerminalTarget({
 						generation: openedShell.createdAt,
+						host: openedShell.host,
 						kind: "shell",
 						handleId: openedShell.handleId,
-						sessionId,
+						session: sessionRef,
 						title: openedShell.title,
 					});
 				},
@@ -591,12 +601,13 @@ export function SessionView({ sessionId }: SessionViewProps) {
 		setActiveShellTerminal(shell.handleId);
 		setTerminalTarget({
 			generation: shell.createdAt,
+			host: shell.host,
 			kind: "shell",
 			handleId: shell.handleId,
-			sessionId,
+			session: sessionRef,
 			title: shell.title,
 		});
-	}, [openShellTerminal, sessionId, session?.workspaceId, setActiveShellTerminal]);
+	}, [openShellTerminal, sessionId, session, sessionRef, setActiveShellTerminal]);
 
 	const activateAuxiliaryTab = useCallback(
 		(key?: string) => {
@@ -669,9 +680,10 @@ export function SessionView({ sessionId }: SessionViewProps) {
 			}));
 			setTerminalTarget({
 				generation: shell.createdAt,
+				host: shell.host,
 				kind: "shell",
 				handleId: shell.handleId,
-				sessionId,
+				session: sessionRef,
 				title: shell.title,
 			});
 		},
@@ -686,12 +698,15 @@ export function SessionView({ sessionId }: SessionViewProps) {
 			} else if (activeShellTerminalHandleId === handleId) {
 				setActiveShellTerminal(null);
 			}
-			closeShellTerminal.mutate(handleId, {
-				onSuccess: () => removeAuxiliaryTab(handleId),
-				onError: (error) => {
-					if (apiErrorCode(error) === "SHELL_TERMINAL_NOT_FOUND") removeAuxiliaryTab(handleId);
+			closeShellTerminal.mutate(
+				{ host: sessionRef.host, id: handleId },
+				{
+					onSuccess: () => removeAuxiliaryTab(handleId),
+					onError: (error) => {
+						if (apiErrorCode(error) === "SHELL_TERMINAL_NOT_FOUND") removeAuxiliaryTab(handleId);
+					},
 				},
-			});
+			);
 		},
 		[
 			activeShellTerminalHandleId,
@@ -699,6 +714,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 			adjacentAuxiliaryTab,
 			closeShellTerminal,
 			removeAuxiliaryTab,
+			sessionRef,
 			setActiveShellTerminal,
 			terminalTarget,
 		],
@@ -716,12 +732,12 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	}, [sessionId, setActiveShellTerminal]);
 	const selectReviewerTerminal = useCallback((target: ReviewerTerminalTarget) => {
 		setActiveShellTerminal(null);
-		setTerminalTarget({ kind: "reviewer", handleId: target.handleId, harness: target.harness, sessionId });
+		setTerminalTarget({ kind: "reviewer", handleId: target.handleId, harness: target.harness, session: sessionRef });
 		setFileTabsBySession((current) => ({
 			...current,
 			[sessionId]: activateSessionFile(current[sessionId] ?? EMPTY_SESSION_FILE_TABS, null),
 		}));
-	}, [sessionId, setActiveShellTerminal]);
+	}, [sessionId, sessionRef, setActiveShellTerminal]);
 	const openCenterFile = useCallback((path: string) => {
 		setFileTabsBySession((current) => ({
 			...current,
@@ -774,9 +790,10 @@ export function SessionView({ sessionId }: SessionViewProps) {
 				? current
 				: {
 						generation: shell.createdAt,
+						host: shell.host,
 						kind: "shell",
 						handleId: shell.handleId,
-						sessionId,
+						session: sessionRef,
 						title: shell.title,
 					},
 		);
@@ -1081,7 +1098,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	// Route props change one render before the passive reset above. Reject the
 	// previous session's shell/reviewer synchronously so its handle can never be
 	// cached under the destination session.
-	const routedTerminalTarget = terminalTargetBelongsToSession(terminalTarget, sessionId)
+	const routedTerminalTarget = terminalTargetBelongsToSession(terminalTarget, sessionRef)
 		? terminalTarget
 		: ({ kind: "worker" } satisfies TerminalTarget);
 	// Chat surface stays mounted in chat mode for worker, reviewer, and shell
@@ -1198,9 +1215,9 @@ export function SessionView({ sessionId }: SessionViewProps) {
 
 	const fetchWorkspaceFiles = useCallback(async () => {
 		return queryClient.fetchQuery(
-			sessionWorkspaceFilesQueryOptions(sessionId, t("files.error.loadWorkspace")),
+			sessionWorkspaceFilesQueryOptions(sessionRef, t("files.error.loadWorkspace")),
 		);
-	}, [queryClient, sessionId, t]);
+	}, [queryClient, sessionRef, t]);
 
 	const openResolvedWorkspaceFile = useCallback(
 		async (rawPath: string) => {

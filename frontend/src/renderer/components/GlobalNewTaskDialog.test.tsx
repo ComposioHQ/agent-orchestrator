@@ -17,18 +17,18 @@ vi.mock("@tanstack/react-router", () => ({
 vi.mock("./NewTaskDialog", () => ({
 	NewTaskDialog: ({
 		open,
-		projectId,
+		project,
 		onCreated,
 		onOpenChange,
 	}: {
 		open: boolean;
-		projectId?: string;
+		project?: { host: string; id: string };
 		onCreated: (id: string) => void;
 		onOpenChange: (open: boolean) => void;
 	}) => {
 		const [draft, setDraft] = useState("");
 		return open ? (
-			<div data-testid="new-task-dialog" data-project={projectId}>
+			<div data-testid="new-task-dialog" data-project={project?.id}>
 				<label>
 					task
 					<input aria-label="task" value={draft} onChange={(event) => setDraft(event.currentTarget.value)} />
@@ -73,7 +73,7 @@ describe("GlobalNewTaskDialog", () => {
 		renderDialog();
 
 		act(() => {
-			useUiStore.getState().requestNewTask("proj-7");
+			useUiStore.getState().requestNewTask({ host: "local", id: "proj-7" });
 		});
 
 		const dialog = await screen.findByTestId("new-task-dialog");
@@ -81,8 +81,8 @@ describe("GlobalNewTaskDialog", () => {
 
 		await user.click(screen.getByRole("button", { name: "create" }));
 		expect(navigateMock).toHaveBeenCalledWith({
-			to: "/projects/$projectId/sessions/$sessionId",
-			params: { projectId: "proj-7", sessionId: "sess-9" },
+			to: "/host/$hostId/session/$sessionId",
+			params: { hostId: "local", sessionId: "sess-9" },
 		});
 	});
 
@@ -91,7 +91,7 @@ describe("GlobalNewTaskDialog", () => {
 		renderDialog();
 
 		act(() => {
-			useUiStore.getState().requestNewTask("proj-7");
+			useUiStore.getState().requestNewTask({ host: "local", id: "proj-7" });
 		});
 		await screen.findByTestId("new-task-dialog");
 
@@ -99,7 +99,7 @@ describe("GlobalNewTaskDialog", () => {
 		expect(screen.queryByTestId("new-task-dialog")).not.toBeInTheDocument();
 
 		act(() => {
-			useUiStore.getState().requestNewTask("proj-7");
+			useUiStore.getState().requestNewTask({ host: "local", id: "proj-7" });
 		});
 		expect(await screen.findByTestId("new-task-dialog")).toHaveAttribute("data-project", "proj-7");
 	});
@@ -109,13 +109,13 @@ describe("GlobalNewTaskDialog", () => {
 		renderDialog();
 
 		act(() => {
-			useUiStore.getState().requestNewTask("proj-7");
+			useUiStore.getState().requestNewTask({ host: "local", id: "proj-7" });
 		});
 		const dialog = await screen.findByTestId("new-task-dialog");
 		await user.type(screen.getByRole("textbox", { name: "task" }), "keep this draft");
 
 		act(() => {
-			useUiStore.getState().requestNewTask("proj-8");
+			useUiStore.getState().requestNewTask({ host: "local", id: "proj-8" });
 		});
 		expect(dialog).toHaveAttribute("data-project", "proj-7");
 		expect(screen.getByRole("textbox", { name: "task" })).toHaveValue("keep this draft");
@@ -124,7 +124,7 @@ describe("GlobalNewTaskDialog", () => {
 		expect(screen.queryByTestId("new-task-dialog")).not.toBeInTheDocument();
 
 		act(() => {
-			useUiStore.getState().requestNewTask("proj-8");
+			useUiStore.getState().requestNewTask({ host: "local", id: "proj-8" });
 		});
 		expect(await screen.findByTestId("new-task-dialog")).toHaveAttribute("data-project", "proj-8");
 	});

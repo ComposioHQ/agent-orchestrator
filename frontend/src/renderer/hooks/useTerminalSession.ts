@@ -14,9 +14,9 @@
 
 import { useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { getApiBaseUrl } from "../lib/api-client";
+import { LOCAL_HOST, type HostId } from "../lib/hosts";
 import { captureRendererEvent } from "../lib/telemetry";
-import { createTerminalMux, muxUrlFromApiBase, type TerminalMux } from "../lib/terminal-mux";
+import { createTerminalMux, muxUrlForHost, type TerminalMux } from "../lib/terminal-mux";
 import { sessionIsActive, type WorkspaceSession } from "../types/workspace";
 import { workspaceQueryKey } from "./useWorkspaceQuery";
 
@@ -71,8 +71,8 @@ export type UseTerminalSessionOptions = {
 	 * recovery continue, but hidden panes cannot send user input or PTY resizes.
 	 */
 	isVisible?: boolean;
-	/** Test seam: build the mux client. Defaults to a fresh socket against the current API base. */
-	createMux?: () => TerminalMux;
+	/** Test seam: build the mux client. Defaults to a fresh socket against the session's host. */
+	createMux?: (host: HostId) => TerminalMux;
 	/**
 	 * Attach to a standalone shell terminal (POST /api/v1/shell-terminals)
 	 * instead of a session's pane. When set it wins over `session`, which
@@ -148,9 +148,9 @@ const REPLAY_WRITE_BATCH_BYTES = 256 * 1024;
 // QUIET_MS would uncover panes that were about to draw.
 const REPLAY_FIRST_BYTE_MS = 250;
 
-function defaultCreateMux(): TerminalMux {
+function defaultCreateMux(host: HostId): TerminalMux {
 	// Resolved per connect, not per hook: a daemon restart can change the port.
-	return createTerminalMux(muxUrlFromApiBase(getApiBaseUrl()));
+	return createTerminalMux(muxUrlForHost(host));
 }
 
 export function useTerminalSession(session: WorkspaceSession | undefined, options: UseTerminalSessionOptions) {
@@ -355,7 +355,7 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 		r.inputReady = false;
 		teardownMux();
 
-		const mux = (optionsRef.current.createMux ?? defaultCreateMux)();
+		const mux = (optionsRef.current.createMux ?? defaultCreateMux)(sessionRef.current?.host ?? LOCAL_HOST);
 		r.mux = mux;
 
 		let pendingReplayWrites = 0;

@@ -95,6 +95,7 @@ vi.mock("../hooks/useBrowserView", () => ({
 }));
 
 const session: WorkspaceSession = {
+	host: "local",
 	id: "sess-1",
 	workspaceId: "ws-1",
 	workspaceName: "my-app",

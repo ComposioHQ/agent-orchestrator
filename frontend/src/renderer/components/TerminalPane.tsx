@@ -1,4 +1,4 @@
-import { useQueryClient } from "@tanstack/react-query";
+import { useQueries, useQueryClient } from "@tanstack/react-query";
 import { RotateCcw } from "lucide-react";
 import {
 	createContext,
@@ -15,7 +15,7 @@ import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 import { terminalTargetBelongsToSession, type TerminalTarget } from "../types/terminal";
-import { sessionIsActive, type WorkspaceSession } from "../types/workspace";
+import { flattenHostSections, sessionIsActive, type WorkspaceSession } from "../types/workspace";
 import type { Theme } from "../stores/ui-store";
 import {
 	useTerminalSession,
@@ -23,18 +23,18 @@ import {
 	type TerminalSessionState,
 } from "../hooks/useTerminalSession";
 import { useSessionBrowserLink } from "../hooks/useSessionBrowserLink";
-import { getApiBaseUrl } from "../lib/api-client";
 import {
 	createTerminalMux,
 	createTerminalMuxPool,
-	muxUrlFromApiBase,
+	muxUrlForHost,
 	type TerminalMux,
 	type TerminalMuxPool,
 } from "../lib/terminal-mux";
+import { refKey, type HostId } from "../lib/hosts";
 import { cn } from "../lib/utils";
 import { useWorkspaceQuery, workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { useRestoreSession } from "../hooks/useRestoreSession";
-import { useShellTerminals } from "../hooks/useShellTerminals";
+import { shellTerminalsQueryOptions } from "../hooks/useShellTerminals";
 import { useCloudCp } from "../hooks/useCloudCp";
 import { createCloudTerminalMux } from "../lib/cloud-terminal-mux";
 import { XtermTerminal } from "./XtermTerminal";
@@ -57,7 +57,7 @@ type TerminalPaneProps = {
 	/** Focus the terminal when an in-flight controller asks for human input. */
 	focusRequested?: boolean;
 	/** Provider-owned shared transport lease factory. */
-	createMux?: () => TerminalMux;
+	createMux?: (host: HostId) => TerminalMux;
 };
 
 type TerminalCacheDescriptor = {
@@ -66,7 +66,8 @@ type TerminalCacheDescriptor = {
 	handleId: string;
 	kind: "shell" | "worker";
 	ownerKey: string;
-	sessionId?: string;
+	host: HostId;
+	sessionKey?: string;
 };
 
 type CachedTerminalEntry = TerminalCacheDescriptor & {
@@ -96,10 +97,16 @@ function terminalTargetMatches(left?: TerminalTarget, right?: TerminalTarget): b
 	if (!left || !right || left.kind !== right.kind) return false;
 	if (left.kind === "worker" && right.kind === "worker") return true;
 	if (left.kind === "reviewer" && right.kind === "reviewer") {
-		return left.handleId === right.handleId && left.harness === right.harness;
+		return (
+			refKey(left.session) === refKey(right.session) &&
+			left.handleId === right.handleId &&
+			left.harness === right.harness
+		);
 	}
 	if (left.kind === "shell" && right.kind === "shell") {
 		return (
+			left.host === right.host &&
+			(left.session ? refKey(left.session) : undefined) === (right.session ? refKey(right.session) : undefined) &&
 			left.handleId === right.handleId &&
 			left.generation === right.generation &&
 			left.title === right.title
@@ -129,15 +136,17 @@ function cacheDescriptor(
 	terminalTarget: TerminalTarget | undefined,
 ): TerminalCacheDescriptor | null {
 	if (terminalTarget?.kind === "shell") {
-		if (!terminalTargetBelongsToSession(terminalTarget, session?.id)) return null;
-		const ownerKey = `shell:${session?.id ?? "standalone"}:${terminalTarget.handleId}`;
+		if (!terminalTargetBelongsToSession(terminalTarget, session)) return null;
+		const sessionKey = session ? refKey(session) : undefined;
+		const ownerKey = `shell:${sessionKey ?? terminalTarget.host}:${terminalTarget.handleId}`;
 		return {
 			cacheKey: `${ownerKey}|handle:${terminalTarget.handleId}|generation:${terminalTarget.generation}`,
 			generation: terminalTarget.generation,
 			handleId: terminalTarget.handleId,
+			host: terminalTarget.host,
 			kind: "shell",
 			ownerKey,
-			sessionId: session?.id,
+			sessionKey,
 		};
 	}
 
@@ -146,13 +155,15 @@ function cacheDescriptor(
 	if (terminalTarget?.kind === "reviewer") return null;
 	const handleId = session?.terminalHandleId;
 	if (!session?.id || !handleId) return null;
-	const ownerKey = `session:${session.id}:worker`;
+	const sessionKey = refKey(session);
+	const ownerKey = `session:${sessionKey}:worker`;
 	return {
 		cacheKey: `${ownerKey}|handle:${handleId}`,
 		handleId,
+		host: session.host,
 		kind: "worker",
 		ownerKey,
-		sessionId: session.id,
+		sessionKey,
 	};
 }
 
@@ -267,15 +278,16 @@ export function TerminalCacheProvider({
 	theme: Theme;
 }) {
 	const workspaceQuery = useWorkspaceQuery();
-	const shellTerminalsQuery = useShellTerminals();
+	// One shell-terminal query per host the board knows about, so a remote's
+	// shells are tracked without the local host waiting on it.
+	const hosts = workspaceQuery.data?.map((section) => section.host) ?? [];
+	const shellTerminalsQueries = useQueries({ queries: hosts.map(shellTerminalsQueryOptions) });
 	const entriesRef = useRef(new Map<string, CachedTerminalEntry>());
 	const activeRef = useRef<ActiveTerminalEntry | null>(null);
 	const parkingRef = useRef<HTMLDivElement | null>(null);
 	const muxPoolRef = useRef<TerminalMuxPool | null>(null);
 	if (!muxPoolRef.current) {
-		muxPoolRef.current = createTerminalMuxPool(() =>
-			createTerminalMux(muxUrlFromApiBase(getApiBaseUrl())),
-		);
+		muxPoolRef.current = createTerminalMuxPool((host) => createTerminalMux(muxUrlForHost(host)));
 	}
 	const muxPool = muxPoolRef.current;
 	// Cloud sessions do not share the pooled local-daemon socket: each runs in its
@@ -291,16 +303,16 @@ export function TerminalCacheProvider({
 	// connect time rather than whatever was resolved on first render.
 	const cloudCpRef = useRef({ client: cloudClient, baseUrl: cloudBaseUrl });
 	cloudCpRef.current = { client: cloudClient, baseUrl: cloudBaseUrl };
-	const cloudMuxFactoriesRef = useRef(new Map<string, () => TerminalMux>());
+	const cloudMuxFactoriesRef = useRef(new Map<string, (host: HostId) => TerminalMux>());
 	const resolveCreateMux = useCallback(
-		(paneSession?: WorkspaceSession): (() => TerminalMux) => {
+		(paneSession?: WorkspaceSession): ((host: HostId) => TerminalMux) => {
 			const cloud = paneSession?.cloud;
 			if (!cloud) return muxPool.acquire;
 			const cached = cloudMuxFactoriesRef.current.get(paneSession.id);
 			if (cached) return cached;
 			const sessionId = paneSession.id;
 			const orgId = cloud.orgId;
-			const factory = () =>
+			const factory = (_host: HostId) =>
 				createCloudTerminalMux({
 					wsBaseUrl: `${cloudCpRef.current.baseUrl.replace(/^http/i, "ws").replace(/\/+$/, "")}/api/cloud/v1`,
 					kind: "agent",
@@ -468,14 +480,19 @@ export function TerminalCacheProvider({
 	// snapshot no longer contains their logical session.
 	useEffect(() => {
 		if (!workspaceQuery.isSuccess) return;
+		// Only a host that actually answered is authoritative about its sessions;
+		// a failed section must not evict the terminals it could not report.
+		const readySections = (workspaceQuery.data ?? []).filter((section) => section.status === "ready");
+		const authoritativeHosts = new Set(readySections.map((section) => section.host));
 		const sessions = new Map(
-			(workspaceQuery.data ?? []).flatMap((workspace) =>
-				workspace.sessions.map((session) => [session.id, session] as const),
+			flattenHostSections(readySections).flatMap((workspace) =>
+				workspace.sessions.map((session) => [refKey(session), session] as const),
 			),
 		);
 		for (const entry of entriesRef.current.values()) {
-			const session = entry.sessionId ? sessions.get(entry.sessionId) : undefined;
-			if (entry.sessionId && !session) {
+			if (!authoritativeHosts.has(entry.host)) continue;
+			const session = entry.sessionKey ? sessions.get(entry.sessionKey) : undefined;
+			if (entry.sessionKey && !session) {
 				removeEntry(entry.cacheKey);
 				continue;
 			}
@@ -497,17 +514,25 @@ export function TerminalCacheProvider({
 	// Shell handles have their own lifecycle outside WorkspaceSession. Closing a
 	// shell must close its retained mux writer even if it was parked.
 	useEffect(() => {
-		if (!shellTerminalsQuery.isSuccess) return;
+		if (!workspaceQuery.isSuccess) return;
+		const authoritativeHosts = new Set<HostId>();
 		const shells = new Map(
-			(shellTerminalsQuery.data ?? []).map((terminal) => [terminal.handleId, terminal] as const),
+			shellTerminalsQueries
+				.flatMap((query, index) => {
+					const section = workspaceQuery.data?.[index];
+					if (section?.status !== "ready" || !query.isSuccess) return [];
+					authoritativeHosts.add(section.host);
+					return query.data ?? [];
+				})
+				.map((terminal) => [refKey({ host: terminal.host, id: terminal.handleId }), terminal] as const),
 		);
 		for (const entry of entriesRef.current.values()) {
-			if (entry.kind !== "shell") continue;
-			const shell = shells.get(entry.handleId);
+			if (entry.kind !== "shell" || !authoritativeHosts.has(entry.host)) continue;
+			const shell = shells.get(refKey({ host: entry.host, id: entry.handleId }));
 			if (
 				!shell ||
 				shell.createdAt !== entry.generation ||
-				shell.sessionId !== entry.sessionId
+				(shell.sessionId ? refKey({ host: shell.host, id: shell.sessionId }) : undefined) !== entry.sessionKey
 			) {
 				removeEntry(entry.cacheKey);
 				continue;
@@ -521,7 +546,7 @@ export function TerminalCacheProvider({
 				rerender();
 			}
 		}
-	}, [removeEntry, shellTerminalsQuery.data, shellTerminalsQuery.isSuccess]);
+	}, [removeEntry, shellTerminalsQueries, workspaceQuery.data, workspaceQuery.isSuccess]);
 
 	// The provider is the final shell ownership boundary. React disposes the
 	// portals; remove their externally-created host nodes as well.
@@ -580,7 +605,7 @@ function CachedTerminalSlot({
 		if (!cache || !slot) return;
 		cache.activate(descriptor, props, slot);
 		return () => cache.deactivate(descriptor.cacheKey, slot);
-	}, [cache, descriptor.cacheKey, descriptor.handleId, descriptor.kind, descriptor.ownerKey, descriptor.sessionId]);
+	}, [cache, descriptor.cacheKey, descriptor.handleId, descriptor.host, descriptor.kind, descriptor.ownerKey, descriptor.sessionKey]);
 
 	useLayoutEffect(() => {
 		cache?.update(descriptor.cacheKey, props);
@@ -604,16 +629,20 @@ export function TerminalPane({
 	const { t } = useTranslation();
 	const terminalTarget =
 		requestedTerminalTarget &&
-		terminalTargetBelongsToSession(requestedTerminalTarget, session?.id)
+		terminalTargetBelongsToSession(requestedTerminalTarget, session)
 			? requestedTerminalTarget
 			: ({ kind: "worker" } satisfies TerminalTarget);
 	const isOptimisticShell =
 		terminalTarget.kind === "shell" && terminalTarget.handleId.startsWith("pending-shell:");
 	const cache = useContext(TerminalCacheContext);
 	const terminalKey =
-		terminalTarget?.kind === "reviewer" || terminalTarget?.kind === "shell"
-			? terminalTarget.handleId
-			: (session?.terminalHandleId ?? "empty");
+		terminalTarget?.kind === "reviewer"
+			? `reviewer:${refKey(terminalTarget.session)}:${terminalTarget.handleId}`
+			: terminalTarget?.kind === "shell"
+				? `shell:${terminalTarget.host}:${terminalTarget.handleId}:${terminalTarget.generation}`
+				: session?.terminalHandleId
+					? `worker:${refKey(session)}:${session.terminalHandleId}`
+					: "empty";
 
 	if (!window.ao) {
 		// A standalone shell has no agent and no branch, so it previews as a plain

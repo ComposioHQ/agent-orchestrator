@@ -16,6 +16,8 @@ vi.mock("../lib/api-client", () => ({
 	},
 }));
 
+
+vi.mock("../lib/host-clients", () => ({ clientFor: () => ({ GET: getMock }) }));
 function renderWithQuery(children: ReactNode) {
 	const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 	const view = render(<QueryClientProvider client={client}>{children}</QueryClientProvider>);

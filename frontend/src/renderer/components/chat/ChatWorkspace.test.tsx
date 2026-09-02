@@ -183,6 +183,7 @@ const chatSession = {
 	updatedAt: "2026-08-15T00:00:00Z",
 	activity: { state: "active", lastActivityAt: "2026-08-15T00:00:00Z" },
 	prs: [],
+	host: "local",
 } satisfies WorkspaceSession;
 
 describe("HumanMessage attachments", () => {
@@ -190,8 +191,7 @@ describe("HumanMessage attachments", () => {
 		render(
 			<HumanMessage
 				message={humanMessage(`check again\n\n${header}\n- .ao/attachments/${name}`)}
-				sessionId="ao session/1"
-			/>,
+				sessionId="ao session/1" />,
 		);
 
 		const image = screen.getByRole("img", { name });
@@ -234,8 +234,7 @@ describe("HumanMessage attachments", () => {
 				message={humanMessage(
 					`${authoredBody}\n\nAttached files (read these files in the workspace):\n- .ao/attachments/attachment-ab12.png`,
 				)}
-				sessionId="ao-1"
-			/>,
+				sessionId="ao-1" />,
 		);
 
 		expect(container.querySelector(".cursor-chat-human-message > p")?.textContent).toBe(
@@ -249,8 +248,7 @@ describe("HumanMessage attachments", () => {
 				message={humanMessage(
 					"inspect these\n\nAttached files (read these files in the workspace):\n- .ao/attachments/attachment-ab12.png\n- .ao/attachments/attachment-cd34.pdf",
 				)}
-				sessionId="ao-1"
-			/>,
+				sessionId="ao-1" />,
 		);
 
 		expect(screen.getByRole("img", { name: "attachment-ab12.png" })).toBeInTheDocument();
@@ -1922,7 +1920,7 @@ describe("ChatWorkspace reviewer tabs", () => {
 	const reviewerTarget = {
 		kind: "reviewer" as const,
 		...reviewerTerminal,
-		sessionId: chatSession.id,
+		session: { host: chatSession.host, id: chatSession.id },
 	};
 
 	it("makes each full-height tile its semantic click target", () => {
@@ -2124,6 +2122,37 @@ describe("ChatWorkspace reviewer tabs", () => {
 		act(() => [...previousTabListeners][0]?.());
 		expect(onSelectChat).toHaveBeenCalledOnce();
 	});
+
+	it("keeps reviewer and shell tabs in the auxiliary scroll strip", () => {
+		const shells = [
+			{
+				handleId: "shell-1",
+				host: "local",
+				sessionId: chatFixture.sessionId,
+				title: "chat worktree shell",
+				workingDir: "/p",
+				createdAt: "2026-08-04T00:00:00Z",
+			},
+		];
+		render(
+			<ChatWorkspace
+				snapshot={idleSnapshot()}
+				session={chatSession}
+				reviewerTerminal={reviewerTerminal}
+				shellTerminals={shells}
+			/>,
+		);
+
+		const tabList = screen.getByRole("tablist", { name: "Chat tabs" });
+		const scrollRegion = tabList.querySelector(".overflow-x-auto");
+		const chatTab = screen.getByRole("tab", { name: /^Codex/ });
+		const reviewerTab = screen.getByRole("tab", { name: "Reviewer" });
+		const shellTab = screen.getByRole("tab", { name: "chat worktree shell" });
+
+		expect(scrollRegion?.contains(chatTab)).toBe(false);
+		expect(scrollRegion?.contains(reviewerTab)).toBe(true);
+		expect(scrollRegion?.contains(shellTab)).toBe(true);
+	});
 });
 
 describe("promptSpacerHeight", () => {
@@ -2156,6 +2185,7 @@ describe("promptSpacerHeight", () => {
 describe("ChatWorkspace shell tabs", () => {
 	const shells = [
 		{
+			host: "local",
 			handleId: "shell-1",
 			sessionId: chatFixture.sessionId,
 			title: "chat worktree shell",
@@ -2163,6 +2193,7 @@ describe("ChatWorkspace shell tabs", () => {
 			createdAt: "2026-08-04T00:00:00Z",
 		},
 		{
+			host: "local",
 			handleId: "shell-2",
 			sessionId: chatFixture.sessionId,
 			title: "second shell",
@@ -2175,8 +2206,9 @@ describe("ChatWorkspace shell tabs", () => {
 		return {
 			kind: "shell" as const,
 			generation: shell.createdAt,
+			host: "local",
 			handleId,
-			sessionId: chatFixture.sessionId,
+			session: { host: "local", id: chatFixture.sessionId },
 			title: shell.title,
 		};
 	};
@@ -2257,7 +2289,7 @@ describe("ChatWorkspace shell tabs", () => {
 					kind: "reviewer",
 					handleId: "review-1",
 					harness: "codex",
-					sessionId: chatFixture.sessionId,
+					session: { host: "local", id: chatFixture.sessionId },
 				}}
 			/>,
 		);
@@ -2317,7 +2349,7 @@ describe("ChatWorkspace shell tabs", () => {
 					kind: "reviewer",
 					handleId: "review-1",
 					harness: "codex",
-					sessionId: chatFixture.sessionId,
+					session: { host: "local", id: chatFixture.sessionId },
 				}}
 			/>,
 		);

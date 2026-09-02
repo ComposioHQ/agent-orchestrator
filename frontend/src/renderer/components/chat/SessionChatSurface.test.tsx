@@ -64,6 +64,21 @@ vi.mock("../../lib/api-client", () => ({
 	apiErrorMessage: (_error: unknown, fallback: string) => fallback,
 }));
 
+// clientFor(LOCAL_HOST) is the client apiClient already was, so the local
+// host resolves to the same fake the api-client mock installs.
+vi.mock("../../lib/host-clients", () => ({
+	baseUrlFor: () => "http://127.0.0.1:3001",
+	connectedHosts: (() => {
+		// useSyncExternalStore requires a stable snapshot: a fresh [] each call
+		// re-renders forever.
+		const hosts: string[] = [];
+		return () => hosts;
+	})(),
+	subscribeConnectedHosts: () => () => undefined,
+	isHostReady: () => true,
+	clientFor: () => ({ GET: getMock, POST: postMock }),
+}));
+
 vi.mock("../../hooks/useConversation", () => ({
 	useConversation: (sessionId: string) => ({
 		...conversationState,
@@ -137,6 +152,7 @@ const session = {
 	status: "working",
 	updatedAt: "2026-08-08T00:00:00Z",
 	prs: [],
+	host: "local",
 } satisfies WorkspaceSession;
 
 function Wrapper({ client, children }: { client: QueryClient; children: ReactNode }) {
@@ -498,7 +514,7 @@ describe("SessionChatSurface link routing", () => {
 		const queryClient = new QueryClient({
 			defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
 		});
-		queryClient.setQueryData(agentSwitchesQueryKey(session.id), [historicalSwitch]);
+		queryClient.setQueryData(agentSwitchesQueryKey(session), [historicalSwitch]);
 
 		render(
 			<Wrapper client={queryClient}>
@@ -543,7 +559,7 @@ describe("SessionChatSurface link routing", () => {
 
 		agentSwitchState.data = [failedSwitch];
 		act(() => {
-			queryClient.setQueryData(agentSwitchesQueryKey(session.id), [failedSwitch]);
+			queryClient.setQueryData(agentSwitchesQueryKey(session), [failedSwitch]);
 		});
 		view.rerender(
 			<Wrapper client={queryClient}>
@@ -571,7 +587,7 @@ describe("SessionChatSurface link routing", () => {
 		} satisfies AgentSwitchSummary;
 		agentSwitchState.data = [retrySwitch, failedSwitch];
 		act(() => {
-			queryClient.setQueryData(agentSwitchesQueryKey(session.id), [retrySwitch, failedSwitch]);
+			queryClient.setQueryData(agentSwitchesQueryKey(session), [retrySwitch, failedSwitch]);
 		});
 		view.rerender(
 			<Wrapper client={queryClient}>
@@ -591,7 +607,7 @@ describe("SessionChatSurface link routing", () => {
 		conversationState.snapshot = { capabilities: [], controller: { state: "ready" } };
 		agentSwitchState.data = [completedRetry, failedSwitch];
 		act(() => {
-			queryClient.setQueryData(agentSwitchesQueryKey(session.id), [completedRetry, failedSwitch]);
+			queryClient.setQueryData(agentSwitchesQueryKey(session), [completedRetry, failedSwitch]);
 		});
 		view.rerender(
 			<Wrapper client={queryClient}>
@@ -637,9 +653,10 @@ describe("SessionChatSurface link routing", () => {
 				<SessionChatSurface
 					session={session}
 					shellTarget={{
+						host: "local",
 						kind: "shell",
 						handleId: "shell-1",
-						sessionId: session.id,
+						session: { host: "local", id: session.id },
 						title: "shell",
 						generation: "2026-08-16T00:00:00Z",
 					}}

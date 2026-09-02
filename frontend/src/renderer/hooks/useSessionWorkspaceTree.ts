@@ -1,19 +1,26 @@
 import type { components } from "../../api/schema";
-import { apiClient, apiErrorMessage } from "../lib/api-client";
-import { isChangedWorkspaceFile, type WorkspaceFileSummary } from "./useSessionWorkspaceFiles";
+import { apiErrorMessage } from "../lib/api-client";
+import { clientFor } from "../lib/host-clients";
+import { refKey, type Ref } from "../lib/hosts";
+import {
+	isChangedWorkspaceFile,
+	workspaceSessionRef,
+	type WorkspaceFileSummary,
+	type WorkspaceSessionRef,
+} from "./useSessionWorkspaceFiles";
 
 export type WorkspaceTreeEntry = components["schemas"]["WorkspaceTreeEntry"];
 export type WorkspaceTreeResponse = components["schemas"]["ListWorkspaceTreeResponse"];
 
-export const sessionWorkspaceTreeQueryKey = (sessionId: string, dir: string) =>
-	["session-workspace-tree", sessionId, dir] as const;
+export const sessionWorkspaceTreeQueryKey = (session: WorkspaceSessionRef, dir: string) =>
+	["session-workspace-tree", refKey(workspaceSessionRef(session)), dir] as const;
 
-async function fetchSessionWorkspaceTree(sessionId: string, dir: string, errorMessage: string): Promise<WorkspaceTreeResponse> {
-	const { data, error } = await apiClient.GET("/api/v1/sessions/{sessionId}/workspace/tree", {
-		params: { path: { sessionId }, query: dir ? { path: dir } : {} },
+async function fetchSessionWorkspaceTree(session: Ref, dir: string, errorMessage: string): Promise<WorkspaceTreeResponse> {
+	const { data, error } = await clientFor(session.host).GET("/api/v1/sessions/{sessionId}/workspace/tree", {
+		params: { path: { sessionId: session.id }, query: dir ? { path: dir } : {} },
 	});
 	if (error) throw new Error(apiErrorMessage(error, errorMessage));
-	return (data ?? { sessionId, path: dir, entries: [], truncated: false }) as WorkspaceTreeResponse;
+	return (data ?? { sessionId: session.id, path: dir, entries: [], truncated: false }) as WorkspaceTreeResponse;
 }
 
 // dir is a directory path relative to the workspace root, "" for the root.
@@ -21,10 +28,15 @@ async function fetchSessionWorkspaceTree(sessionId: string, dir: string, errorMe
 // coarse "something changed" signal (see workspace-file-events.ts), which
 // invalidates every mounted directory query by key prefix — a directory the
 // user isn't currently looking at just stays stale until they revisit it.
-export function sessionWorkspaceTreeQueryOptions(sessionId: string, dir: string, errorMessage = "Unable to load workspace tree") {
+export function sessionWorkspaceTreeQueryOptions(
+	session: WorkspaceSessionRef,
+	dir: string,
+	errorMessage = "Unable to load workspace tree",
+) {
+	const ref = workspaceSessionRef(session);
 	return {
-		queryKey: sessionWorkspaceTreeQueryKey(sessionId, dir),
-		queryFn: () => fetchSessionWorkspaceTree(sessionId, dir, errorMessage),
+		queryKey: sessionWorkspaceTreeQueryKey(ref, dir),
+		queryFn: () => fetchSessionWorkspaceTree(ref, dir, errorMessage),
 	};
 }
 

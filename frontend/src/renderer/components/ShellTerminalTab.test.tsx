@@ -10,6 +10,7 @@ vi.mock("../lib/platform", () => ({ isWindowsPlatform }));
 afterEach(() => isWindowsPlatform.mockReturnValue(false));
 
 const shell: ShellTerminal = {
+	host: "local",
 	handleId: "shellterm-1",
 	projectId: "ao",
 	workingDir: "/repos/ao",

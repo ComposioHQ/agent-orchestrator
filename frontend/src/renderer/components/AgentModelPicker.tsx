@@ -1,4 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { refKey, type Ref } from "../lib/hosts";
 import { Loader2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -15,7 +16,7 @@ import { SettingsOptionMenu } from "./settings/SettingsOptionMenu";
 type AgentModelPickerProps = {
 	agentId: string;
 	agentLabel: string;
-	projectId: string;
+	project: Ref;
 	value: string;
 	mode: string;
 	disabled?: boolean;
@@ -27,7 +28,7 @@ type AgentModelPickerProps = {
 export function AgentModelPicker({
 	agentId,
 	agentLabel,
-	projectId,
+	project,
 	value,
 	mode,
 	disabled = false,
@@ -38,20 +39,20 @@ export function AgentModelPicker({
 	const { t } = useTranslation();
 	const queryClient = useQueryClient();
 	const [customAgentId, setCustomAgentId] = useState<string | null>(null);
-	const query = useQuery(agentModelsQueryOptions(agentId, projectId));
+	const query = useQuery(agentModelsQueryOptions(agentId, project));
 	const catalog: AgentModelCatalog | undefined = query.data;
 	const revalidationQuery = useQuery({
-		queryKey: ["agent-model-revalidation", agentId, projectId, catalog?.validatedAt ?? ""],
-		queryFn: () => revalidateAgentModels(agentId, projectId),
+		queryKey: ["agent-model-revalidation", agentId, refKey(project), catalog?.validatedAt ?? ""],
+		queryFn: () => revalidateAgentModels(agentId, project),
 		enabled: agentId !== "" && catalog?.refreshRecommended === true,
 		staleTime: Number.POSITIVE_INFINITY,
 		retry: false,
 	});
 	useEffect(() => {
 		if (revalidationQuery.data) {
-			queryClient.setQueryData(agentModelsQueryKey(agentId, projectId), revalidationQuery.data);
+			queryClient.setQueryData(agentModelsQueryKey(agentId, project), revalidationQuery.data);
 		}
-	}, [agentId, projectId, queryClient, revalidationQuery.data]);
+	}, [agentId, project, queryClient, revalidationQuery.data]);
 	const warning =
 		(revalidationQuery.isError
 			? revalidationQuery.error instanceof Error

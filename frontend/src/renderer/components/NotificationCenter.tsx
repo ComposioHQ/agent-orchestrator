@@ -19,7 +19,7 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode
 import { useMarkAllNotificationsReadMutation, useNotificationsQuery } from "../hooks/useNotificationsQuery";
 import { useRestoreSession } from "../hooks/useRestoreSession";
 import { useWorkspaceQuery } from "../hooks/useWorkspaceQuery";
-import type { WorkspaceSummary } from "../types/workspace";
+import { flattenHostSections, type WorkspaceSummary } from "../types/workspace";
 import { aoBridge } from "../lib/bridge";
 import { openLinkInSystemBrowser } from "../lib/external-link-policy";
 import { formatTimeCompact } from "../lib/format-time";
@@ -41,6 +41,7 @@ import { TopbarButton } from "./TopbarButton";
 import { Popover, PopoverContent, PopoverTrigger } from "./ui/popover";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 
+import { LOCAL_HOST } from "../lib/hosts";
 type NotificationCenterProps = {
 	style?: React.CSSProperties;
 };
@@ -52,7 +53,7 @@ function useNotificationTargetNavigation() {
 			const sessionId = notification.target.sessionId || notification.sessionId;
 			if (!sessionId) return;
 			void captureRendererEvent("ao.renderer.notification_opened", { target: "session" });
-			navigateToSession(notification.projectId, sessionId);
+			navigateToSession({ host: LOCAL_HOST, id: sessionId });
 		},
 		[navigateToSession],
 	);
@@ -121,24 +122,25 @@ function NotificationWorkspaceState({
 	}) => ReactNode;
 }) {
 	const workspaceQuery = useWorkspaceQuery();
+	const workspaces = flattenHostSections(workspaceQuery.data);
 	const retryWorkspace = useCallback(() => {
 		void workspaceQuery.refetch();
 	}, [workspaceQuery.refetch]);
 	const { sessionsReady, terminatedIds, workspaceError } = useSessionTerminationLookup(
-		workspaceQuery.data,
+		workspaces,
 		workspaceQuery.isError,
 		workspaceQuery.isSuccess,
 		retryWorkspace,
 	);
 	const sessionMeta = useMemo(() => {
 		const map = new Map<string, { projectName: string; sessionName: string }>();
-		for (const workspace of workspaceQuery.data ?? []) {
+		for (const workspace of workspaces) {
 			for (const session of workspace.sessions) {
 				map.set(session.id, { projectName: workspace.name, sessionName: session.title });
 			}
 		}
 		return map;
-	}, [workspaceQuery.data]);
+	}, [workspaces]);
 	return <>{children({ retryWorkspace, sessionMeta, sessionsReady, terminatedIds, workspaceError })}</>;
 }
 

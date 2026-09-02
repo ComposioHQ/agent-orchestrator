@@ -16,10 +16,15 @@ const { deleteMock, postMock, isWindowsMock } = vi.hoisted(() => ({
 }));
 
 vi.mock("../lib/api-client", () => ({
-	apiClient: { DELETE: deleteMock, PATCH: patchMock, POST: postMock },
 	apiErrorCode: (error: unknown) =>
 		typeof error === "object" && error !== null && "code" in error ? (error as { code?: string }).code : undefined,
-	hasTrustedApiBaseUrl: () => true,
+}));
+
+vi.mock("../lib/host-clients", () => ({
+	clientFor: () => ({ DELETE: deleteMock, PATCH: patchMock, POST: postMock }),
+	connectedHosts: () => [],
+	isHostReady: () => true,
+	subscribeConnectedHosts: () => () => {},
 }));
 
 vi.mock("../lib/platform", () => ({ isWindowsPlatform: isWindowsMock }));
@@ -41,16 +46,20 @@ const shells: ShellTerminal[] = [
 	{
 		createdAt: "2026-08-27T00:00:00Z",
 		handleId: "ptyhost-v1:shellterm-one",
+		host: "local",
 		title: "one",
 		workingDir: "/tmp",
 	},
 	{
 		createdAt: "2026-08-27T00:01:00Z",
 		handleId: "ptyhost-v1:shellterm-two",
+		host: "local",
 		title: "two",
 		workingDir: "/tmp",
 	},
 ];
+const localShellsQueryKey = shellTerminalsQueryKey("local");
+const shellRef = (shell: ShellTerminal) => ({ host: shell.host, id: shell.handleId });
 
 function wrapper(queryClient: QueryClient) {
 	return function Wrapper({ children }: { children: ReactNode }) {
@@ -62,7 +71,7 @@ function queryClientWithShells() {
 	const queryClient = new QueryClient({
 		defaultOptions: { mutations: { retry: false }, queries: { retry: false } },
 	});
-	queryClient.setQueryData(shellTerminalsQueryKey, shells);
+	queryClient.setQueryData(localShellsQueryKey, shells);
 	return queryClient;
 }
 
@@ -92,12 +101,12 @@ describe("useOpenShellTerminal", () => {
 		const queryClient = new QueryClient({
 			defaultOptions: { mutations: { retry: false }, queries: { retry: false } },
 		});
-		queryClient.setQueryData(shellTerminalsQueryKey, []);
+		queryClient.setQueryData(localShellsQueryKey, []);
 		const { result } = renderHook(() => useOpenShellTerminal(), { wrapper: wrapper(queryClient) });
 
 		await act(async () => result.current.mutateAsync({}));
 
-		expect(queryClient.getQueryData(shellTerminalsQueryKey)).toEqual([shell]);
+		expect(queryClient.getQueryData(localShellsQueryKey)).toEqual([shell]);
 	});
 
 	it("sends the saved Windows shell preference to the daemon", async () => {
@@ -161,10 +170,10 @@ describe("useRenameShellTerminal", () => {
 		const queryClient = queryClientWithShells();
 		const { result } = renderHook(() => useRenameShellTerminal(), { wrapper: wrapper(queryClient) });
 
-		act(() => result.current.mutate({ handleId: shells[0].handleId, title: "server — zsh" }));
+		act(() => result.current.mutate({ terminal: shellRef(shells[0]), title: "server — zsh" }));
 
 		await waitFor(() =>
-			expect(queryClient.getQueryData<ShellTerminal[]>(shellTerminalsQueryKey)?.[0]?.title).toBe("server — zsh"),
+			expect(queryClient.getQueryData<ShellTerminal[]>(localShellsQueryKey)?.[0]?.title).toBe("server — zsh"),
 		);
 		act(() => finishRename({ data: { shellTerminal: { ...shells[0], title: "server — zsh" } } }));
 		await waitFor(() => expect(result.current.isPending).toBe(false));
@@ -184,9 +193,9 @@ describe("useCloseShellTerminal", () => {
 		);
 		const { result } = renderHook(() => useCloseShellTerminal(), { wrapper: wrapper(queryClient) });
 
-		act(() => result.current.mutate(shells[0].handleId));
+		act(() => result.current.mutate(shellRef(shells[0])));
 
-		await waitFor(() => expect(queryClient.getQueryData(shellTerminalsQueryKey)).toEqual([shells[1]]));
+		await waitFor(() => expect(queryClient.getQueryData(localShellsQueryKey)).toEqual([shells[1]]));
 		expect(deleteMock).not.toHaveBeenCalled();
 		expect(result.current.isPending).toBe(true);
 
@@ -202,11 +211,11 @@ describe("useCloseShellTerminal", () => {
 		const queryClient = queryClientWithShells();
 		const { result } = renderHook(() => useCloseShellTerminal(), { wrapper: wrapper(queryClient) });
 
-		act(() => result.current.mutate(shells[0].handleId));
-		await waitFor(() => expect(queryClient.getQueryData(shellTerminalsQueryKey)).toEqual([shells[1]]));
+		act(() => result.current.mutate(shellRef(shells[0])));
+		await waitFor(() => expect(queryClient.getQueryData(localShellsQueryKey)).toEqual([shells[1]]));
 
 		act(() => finishDelete({ error: { code: "SHELL_TERMINAL_CLOSE_FAILED" } }));
-		await waitFor(() => expect(queryClient.getQueryData(shellTerminalsQueryKey)).toEqual(shells));
+		await waitFor(() => expect(queryClient.getQueryData(localShellsQueryKey)).toEqual(shells));
 	});
 
 	it("does not restore a stale tab when the daemon reports that its PTY is already gone", async () => {
@@ -214,9 +223,9 @@ describe("useCloseShellTerminal", () => {
 		const queryClient = queryClientWithShells();
 		const { result } = renderHook(() => useCloseShellTerminal(), { wrapper: wrapper(queryClient) });
 
-		await expect(result.current.mutateAsync(shells[0].handleId)).rejects.toEqual({
+		await expect(result.current.mutateAsync(shellRef(shells[0]))).rejects.toEqual({
 			code: "SHELL_TERMINAL_NOT_FOUND",
 		});
-		expect(queryClient.getQueryData(shellTerminalsQueryKey)).toEqual([shells[1]]);
+		expect(queryClient.getQueryData(localShellsQueryKey)).toEqual([shells[1]]);
 	});
 });

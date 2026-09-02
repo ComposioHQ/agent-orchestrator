@@ -12,6 +12,8 @@ import {
 } from "@aoagents/product-ui";
 
 import type { ReviewerHarnessId } from "../lib/reviewer-harnesses";
+import type { EventsConnectionState } from "../lib/events-connection";
+import type { HostId, Ref } from "../lib/hosts";
 
 export { toKanbanColumn, toSessionActivity, toSessionStatus };
 export type { KanbanColumn, SessionActivity, SessionActivityState, SessionStatus };
@@ -61,6 +63,7 @@ export type AgentSwitchSummary = {
 };
 
 export type WorkspaceSession = {
+	host: HostId;
 	id: string;
 	terminalHandleId?: string;
 	workspaceId: string;
@@ -225,9 +228,9 @@ export function isOrchestratorSession(session: WorkspaceSession): boolean {
  */
 export function findProjectOrchestrator(
 	workspaces: WorkspaceSummary[],
-	projectId: string,
+	project: Ref,
 ): WorkspaceSession | undefined {
-	const workspace = workspaces.find((w) => w.id === projectId);
+	const workspace = workspaces.find((w) => w.host === project.host && w.id === project.id);
 	return newestActiveOrchestrator(workspace?.sessions ?? []);
 }
 
@@ -301,6 +304,7 @@ export { attentionZone, attentionZoneLabel, attentionZoneOrder } from "../lib/se
 export type { AttentionZone } from "../lib/session-presentation";
 
 export type WorkspaceSummary = {
+	host: HostId;
 	id: string;
 	name: string;
 	/**
@@ -322,6 +326,35 @@ export type WorkspaceSummary = {
 	};
 	sessions: WorkspaceSession[];
 };
+
+export type HostSection = {
+	host: HostId;
+	label: string;
+	status: "ready" | "failed";
+	/**
+	 * This host's live event stream when the section was built. Absent means
+	 * unknown (no stream was ever opened — jsdom, preview surfaces); only
+	 * "disconnected" means the board is quietly falling back to polling.
+	 */
+	streamState?: EventsConnectionState;
+	workspaces: WorkspaceSummary[];
+	failure: string | null;
+};
+
+export function flattenHostSections(sections: readonly HostSection[] | undefined): WorkspaceSummary[] {
+	return sections?.flatMap((section) => section.workspaces) ?? [];
+}
+
+export function updateHostWorkspaces(
+	sections: HostSection[] | undefined,
+	host: HostId,
+	update: (workspaces: WorkspaceSummary[]) => WorkspaceSummary[],
+): HostSection[] | undefined {
+	if (!sections) return sections;
+	return sections.map((section) =>
+		section.host === host ? { ...section, workspaces: update(section.workspaces) } : section,
+	);
+}
 
 export function hasConfiguredOrchestratorAgent(
 	workspace: Pick<WorkspaceSummary, "orchestratorAgent"> | undefined,

@@ -1,4 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
+import { setApiBaseUrl } from "./api-client";
+import { forgetHost, registerHostBase } from "./host-clients";
+import { LOCAL_HOST } from "./hosts";
 import {
 	base64ToBytes,
 	bytesToBase64,
@@ -7,9 +10,75 @@ import {
 	createTerminalMuxPool,
 	dataFrame,
 	muxUrlFromApiBase,
+	muxUrlForHost,
 	openFrame,
 	resizeFrame,
+	type TerminalMux,
 } from "./terminal-mux";
+
+const REMOTE_HOST = "http://192.0.2.1:3011";
+
+function fakeMux(onDispose: () => void = () => undefined): TerminalMux {
+	return {
+		open: () => undefined,
+		sendInput: () => undefined,
+		resize: () => undefined,
+		close: () => undefined,
+		onData: () => () => undefined,
+		onExit: () => () => undefined,
+		onOpened: () => () => undefined,
+		onError: () => () => undefined,
+		onConnectionChange: () => () => undefined,
+		dispose: onDispose,
+	};
+}
+
+describe("mux across hosts", () => {
+	afterEach(() => {
+		forgetHost(REMOTE_HOST);
+		setApiBaseUrl("http://127.0.0.1:3001");
+	});
+
+	it("builds each host's mux url from that host's base", () => {
+		registerHostBase(REMOTE_HOST, "http://127.0.0.1:9999/tok");
+		setApiBaseUrl("http://127.0.0.1:3001");
+
+		expect(muxUrlForHost(LOCAL_HOST)).toBe("ws://127.0.0.1:3001/mux");
+		expect(muxUrlForHost(REMOTE_HOST)).toBe("ws://127.0.0.1:9999/tok/mux");
+	});
+
+	it("keeps one live socket per host, not one globally", () => {
+		const made: string[] = [];
+		const pool = createTerminalMuxPool((host) => {
+			made.push(host);
+			return fakeMux();
+		});
+		const local = pool.acquire(LOCAL_HOST);
+		const remote = pool.acquire(REMOTE_HOST);
+		const secondLocal = pool.acquire(LOCAL_HOST);
+
+		expect(made).toEqual([LOCAL_HOST, REMOTE_HOST]);
+
+		local.dispose();
+		remote.dispose();
+		secondLocal.dispose();
+	});
+
+	it("closing one host's mux leaves the other open", () => {
+		const closed: string[] = [];
+		const pool = createTerminalMuxPool((host) => fakeMux(() => closed.push(host)));
+		const local = pool.acquire(LOCAL_HOST);
+		const remote = pool.acquire(REMOTE_HOST);
+		const secondLocal = pool.acquire(LOCAL_HOST);
+
+		remote.dispose();
+		expect(closed).toEqual([REMOTE_HOST]);
+		local.dispose();
+		expect(closed).toEqual([REMOTE_HOST]);
+		secondLocal.dispose();
+		expect(closed).toEqual([REMOTE_HOST, LOCAL_HOST]);
+	});
+});
 
 describe("terminal-mux framing", () => {
 	it("round-trips arbitrary (non-UTF8) bytes through base64", () => {

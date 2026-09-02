@@ -26,6 +26,7 @@ const session = {
 	updatedAt: "2026-06-10T00:00:00Z",
 	workspaceId: "proj-1",
 	workspaceName: "my-app",
+	host: "local",
 } satisfies WorkspaceSession;
 
 function wrapper(queryClient: QueryClient) {

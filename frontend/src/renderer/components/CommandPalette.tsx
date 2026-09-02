@@ -24,7 +24,7 @@ import { isMacPlatform } from "../lib/platform";
 import { sessionReviewsQueryOptions, type PRReviewState } from "../lib/session-reviews";
 import { spawnOrchestrator } from "../lib/spawn-orchestrator";
 import { useShell } from "../lib/shell-context";
-import { findProjectOrchestrator, hasConfiguredOrchestratorAgent, openPRs, workerSessions } from "../types/workspace";
+import { flattenHostSections, findProjectOrchestrator, hasConfiguredOrchestratorAgent, openPRs, workerSessions } from "../types/workspace";
 import { useUiStore } from "../stores/ui-store";
 import { matchesRendererShortcut } from "../stores/keybindings-store";
 import { Button } from "./ui/button";
@@ -32,11 +32,12 @@ import { CreateProjectFlow } from "./CreateProjectFlow";
 import { TaskComposer } from "./TaskComposer";
 import { CommandDialog, CommandEmpty, CommandFooter, CommandGroup, CommandInput, CommandItem, CommandList } from "./ui/command";
 
+import { LOCAL_HOST, type Ref } from "../lib/hosts";
 const PALETTE_REVIEW_STALE_TIME_MS = 60_000;
 type PaletteView =
 	| { mode: "root" }
-	| { mode: "session-actions"; sessionId: string }
-	| { mode: "new-task"; projectId: string };
+	| { mode: "session-actions"; session: Ref }
+	| { mode: "new-task"; project: Ref };
 
 function terminalHasFocus(): boolean {
 	if (typeof document === "undefined") return false;
@@ -50,7 +51,8 @@ export function CommandPalette() {
 	const navigate = useNavigate();
 	const queryClient = useQueryClient();
 	const restoreSessionById = useRestoreSession();
-	const params = useParams({ strict: false }) as { projectId?: string; sessionId?: string };
+	const params = useParams({ strict: false }) as { hostId?: string; projectId?: string; sessionId?: string };
+	const routeHost = params.hostId ?? LOCAL_HOST;
 	const { cloneProject, createProject, initializeProjectRepository } = useShell();
 	const resolvedTheme = useUiStore((s) => s.resolvedTheme);
 	const setThemePreference = useUiStore((s) => s.setThemePreference);
@@ -60,7 +62,7 @@ export function CommandPalette() {
 	// The palette stays mounted to preserve its close animation and global
 	// shortcut. While closed, commands are invisible, so retain the cached
 	// snapshot without subscribing this hidden surface to streamed updates.
-	const workspaces = useWorkspaceQuery({ subscribed: isOpen }).data ?? [];
+	const workspaces = flattenHostSections(useWorkspaceQuery({ subscribed: isOpen }).data);
 
 	const [view, setView] = useState<PaletteView>({ mode: "root" });
 	const [query, setQuery] = useState("");
@@ -78,7 +80,9 @@ export function CommandPalette() {
 	viewRef.current = view;
 	const closeResetTimerRef = useRef<number | null>(null);
 
-	const currentSession = params.sessionId ? findSession(workspaces, params.sessionId)?.session : undefined;
+	const currentSession = params.sessionId
+		? findSession(workspaces, { host: routeHost, id: params.sessionId })?.session
+		: undefined;
 	const currentProjectId = currentSession?.workspaceId ?? params.projectId;
 
 	const sessionsWithOpenPRs = useMemo(
@@ -134,15 +138,16 @@ export function CommandPalette() {
 		() =>
 			buildCommands({
 				workspaces,
+				currentHostId: routeHost,
 				currentProjectId,
 				currentSessionId: params.sessionId,
 				restartingProjectIds,
 				reviewStatesBySessionId: reviewStatesSnapshot,
 			}, t),
-		[workspaces, currentProjectId, params.sessionId, restartingProjectIds, reviewStatesSnapshot, t, i18n.resolvedLanguage],
+		[workspaces, routeHost, currentProjectId, params.sessionId, restartingProjectIds, reviewStatesSnapshot, t, i18n.resolvedLanguage],
 	);
 	const scoped = useMemo(
-		() => (view.mode === "session-actions" ? findSession(workspaces, view.sessionId) : undefined),
+		() => (view.mode === "session-actions" ? findSession(workspaces, view.session) : undefined),
 		[view, workspaces],
 	);
 	const sessionActionItems = useMemo(
@@ -279,13 +284,13 @@ export function CommandPalette() {
 					// Modal — do not route to /settings (that legacy path redirects home).
 					useUiStore.getState().openGlobalSettings();
 					break;
-				case "/projects/$projectId":
+				case "/host/$hostId/project/$projectId":
 					void navigate({ to: target.to, params: target.params });
 					break;
-				case "/projects/$projectId/settings":
-					useUiStore.getState().openProjectSettings(target.params.projectId);
+				case "/host/$hostId/project/$projectId/settings":
+					useUiStore.getState().openProjectSettings({ host: target.params.hostId, id: target.params.projectId });
 					break;
-				case "/projects/$projectId/sessions/$sessionId":
+				case "/host/$hostId/session/$sessionId":
 					void navigate({ to: target.to, params: target.params });
 					break;
 			}
@@ -300,38 +305,46 @@ export function CommandPalette() {
 	}, [t]);
 
 	const openOrchestrator = useCallback(
-		async (projectId: string) => {
-			if (blockedByRestart(projectId)) return;
-			const orchestrator = findProjectOrchestrator(workspaces, projectId);
+		async (project: Ref) => {
+			if (blockedByRestart(project.id)) return;
+			const orchestrator = findProjectOrchestrator(workspaces, project);
 			if (orchestrator) {
 				navigateToTarget({
-					to: "/projects/$projectId/sessions/$sessionId",
-					params: { projectId, sessionId: orchestrator.id },
+					to: "/host/$hostId/session/$sessionId",
+					params: { hostId: orchestrator.host, sessionId: orchestrator.id },
 				});
 				closePalette();
 				return;
 			}
-			const workspace = workspaces.find((candidate) => candidate.id === projectId);
+			const workspace = workspaces.find(
+				(candidate) => candidate.host === project.host && candidate.id === project.id,
+			);
 			// Cloud projects carry no local orchestrator-agent config; spawn the
 			// orchestrator as a cloud session in its own sandbox instead of falling
 			// through to the project-settings page.
 			if (workspace?.kind === "cloud") {
-				const sessionId = await spawnCloudOrchestrator(queryClient, projectId);
+				const sessionId = await spawnCloudOrchestrator(queryClient, project.id);
 				await queryClient.invalidateQueries({ queryKey: cloudSessionsQueryKey });
-				navigateToTarget({ to: "/projects/$projectId/sessions/$sessionId", params: { projectId, sessionId } });
+				navigateToTarget({
+					to: "/host/$hostId/session/$sessionId",
+					params: { hostId: project.host, sessionId },
+				});
 				closePalette();
 				return;
 			}
 			if (!hasConfiguredOrchestratorAgent(workspace)) {
 				if (workspace) {
-					navigateToTarget({ to: "/projects/$projectId/settings", params: { projectId } });
+					navigateToTarget({
+						to: "/host/$hostId/project/$projectId/settings",
+						params: { hostId: project.host, projectId: project.id },
+					});
 					closePalette();
 				}
 				return;
 			}
-			const sessionId = await spawnOrchestrator(projectId, "command_palette");
+			const sessionId = await spawnOrchestrator(project.id, "command_palette");
 			await queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
-			navigateToTarget({ to: "/projects/$projectId/sessions/$sessionId", params: { projectId, sessionId } });
+			navigateToTarget({ to: "/host/$hostId/session/$sessionId", params: { hostId: project.host, sessionId } });
 			closePalette();
 		},
 		[workspaces, navigateToTarget, queryClient, closePalette, blockedByRestart],
@@ -389,32 +402,32 @@ export function CommandPalette() {
 					break;
 				}
 				case "open-session-actions":
-					pushView({ mode: "session-actions", sessionId: action.sessionId });
+					pushView({ mode: "session-actions", session: action.session });
 					break;
 				case "resume-session": {
-					const message = await resumeSession(action.sessionId);
+					const message = await resumeSession(action.session.id);
 					if (!isCurrentRun()) break;
 					if (message) {
 						setError(message);
 						break;
 					}
 					navigateToTarget({
-						to: "/projects/$projectId/sessions/$sessionId",
-						params: { projectId: action.projectId, sessionId: action.sessionId },
+						to: "/host/$hostId/session/$sessionId",
+						params: { hostId: action.session.host, sessionId: action.session.id },
 					});
 						closePalette();
 						break;
 					}
 					case "open-new-task":
-						if (blockedByRestart(action.projectId)) break;
-						pushView({ mode: "new-task", projectId: action.projectId });
+						if (blockedByRestart(action.project.id)) break;
+						pushView({ mode: "new-task", project: action.project });
 						break;
 					case "open-new-project":
 						closePalette();
 						choosePathRef.current?.();
 						break;
 					case "open-orchestrator":
-							await openOrchestrator(action.projectId);
+							await openOrchestrator(action.project);
 							break;
 				}
 			} catch (err) {
@@ -437,12 +450,12 @@ export function CommandPalette() {
 	);
 
 	const handleTaskCreated = useCallback(
-		async (projectId: string, sessionId: string) => {
+		async (project: Ref, sessionId: string) => {
 			closePalette();
 			await queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
 			void navigate({
-				to: "/projects/$projectId/sessions/$sessionId",
-				params: { projectId, sessionId },
+				to: "/host/$hostId/session/$sessionId",
+				params: { hostId: project.host, sessionId },
 			});
 		},
 		[navigate, queryClient, closePalette],
@@ -551,11 +564,11 @@ export function CommandPalette() {
 							</div>
 						)}
 						<TaskComposer
-							projectId={view.projectId}
+							project={view.project}
 							autoFocusTitle
 							onDirtyChange={onComposerDirtyChange}
 							onSubmittingChange={onComposerSubmittingChange}
-							onCreated={(sessionId) => void handleTaskCreated(view.projectId, sessionId)}
+							onCreated={(sessionId) => void handleTaskCreated(view.project, sessionId)}
 						/>
 					</div>
 				) : (

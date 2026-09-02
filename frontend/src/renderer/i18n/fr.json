@@ -646,6 +646,7 @@
 	"settings.close": "Fermer les paramètres",
 	"settings.connectMobile": "Connecter le mobile",
 	"settings.developerMode": "Mode développeur",
+	"settings.remoteHosts": "Hôtes distants (expérimental)",
 	"settings.general": "Général",
 	"settings.appearance": "Apparence",
 	"settings.sessions": "Sessions",
