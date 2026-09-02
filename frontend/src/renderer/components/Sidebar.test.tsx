@@ -348,7 +348,12 @@ beforeEach(() => {
 	cloudSessionState.status = "unauthenticated";
 	cloudSessionState.signIn.mockReset();
 	cloudSessionState.signOut.mockReset().mockResolvedValue(undefined);
-	useUiStore.setState({ isCommandPaletteOpen: false, settingsModal: null });
+	useUiStore.setState({
+		browserSidebarAutoResizeAttempted: false,
+		browserSidebarAutoResizeRequested: false,
+		isCommandPaletteOpen: false,
+		settingsModal: null,
+	});
 	getMock.mockReset();
 	postMock.mockReset();
 	getMock.mockResolvedValue({
@@ -1746,6 +1751,82 @@ describe("Sidebar", () => {
 		// Sidebar stays expanded; dragging no longer collapses it.
 		expect(document.querySelector('[data-slot="sidebar"][data-state="expanded"]')).toBeInTheDocument();
 		expect(document.documentElement.style.getPropertyValue("--ao-sidebar-w")).toBe(`${SIDEBAR_MIN_WIDTH}px`);
+	});
+
+	it("springs the first Browser open to 200 without persisting the automatic width", async () => {
+		const storedWidth = SIDEBAR_MIN_WIDTH + 80;
+		window.localStorage.setItem("ao-sidebar-w", String(storedWidth));
+		const seen: number[] = [];
+		const setProperty = CSSStyleDeclaration.prototype.setProperty;
+		const spy = vi.spyOn(CSSStyleDeclaration.prototype, "setProperty").mockImplementation(function (
+			this: CSSStyleDeclaration,
+			name: string,
+			value: string | null,
+			priority?: string,
+		) {
+			if (name === "--ao-sidebar-w" && typeof value === "string") seen.push(Number.parseFloat(value));
+			return setProperty.call(this, name, value, priority);
+		});
+
+		try {
+			renderSidebar();
+			expect(document.documentElement.style.getPropertyValue("--ao-sidebar-w")).toBe(`${storedWidth}px`);
+
+			act(() => useUiStore.getState().setInspectorView("session-1", "browser"));
+
+			await waitFor(() =>
+				expect(document.documentElement.style.getPropertyValue("--ao-sidebar-w")).toBe(`${SIDEBAR_MIN_WIDTH}px`),
+			);
+			expect(seen.some((width) => width > SIDEBAR_MIN_WIDTH && width < storedWidth)).toBe(true);
+			expect(useUiStore.getState()).toMatchObject({
+				browserSidebarAutoResizeAttempted: true,
+				browserSidebarAutoResizeRequested: false,
+			});
+			expect(window.localStorage.getItem("ao-sidebar-w")).toBe(String(storedWidth));
+		} finally {
+			spy.mockRestore();
+		}
+	});
+
+	it("applies the first Browser width immediately for reduced motion", () => {
+		const storedWidth = SIDEBAR_MIN_WIDTH + 80;
+		window.localStorage.setItem("ao-sidebar-w", String(storedWidth));
+		const matchMedia = vi.spyOn(window, "matchMedia").mockImplementation((query) => ({
+			matches: query === "(prefers-reduced-motion: reduce)",
+			media: query,
+			onchange: null,
+			addEventListener: () => undefined,
+			removeEventListener: () => undefined,
+			addListener: () => undefined,
+			removeListener: () => undefined,
+			dispatchEvent: () => false,
+		}));
+
+		try {
+			renderSidebar();
+			act(() => useUiStore.getState().setInspectorView("session-1", "browser"));
+
+			expect(document.documentElement.style.getPropertyValue("--ao-sidebar-w")).toBe(`${SIDEBAR_MIN_WIDTH}px`);
+			expect(useUiStore.getState().browserSidebarAutoResizeAttempted).toBe(true);
+			expect(window.localStorage.getItem("ao-sidebar-w")).toBe(String(storedWidth));
+		} finally {
+			matchMedia.mockRestore();
+		}
+	});
+
+	it("keeps a manually closed sidebar closed when the first Browser opens", () => {
+		const storedWidth = SIDEBAR_MIN_WIDTH + 80;
+		window.localStorage.setItem("ao-sidebar-w", String(storedWidth));
+		renderSidebar({ initialOpen: false });
+
+		act(() => useUiStore.getState().setInspectorView("session-1", "browser"));
+
+		expect(document.documentElement.style.getPropertyValue("--ao-sidebar-w")).toBe(`${storedWidth}px`);
+		expect(useUiStore.getState()).toMatchObject({
+			browserSidebarAutoResizeAttempted: true,
+			browserSidebarAutoResizeRequested: false,
+		});
+		expect(document.querySelector('[data-slot="sidebar"][data-state="collapsed"]')).toBeInTheDocument();
 	});
 
 	it("flushes any queued rAF frame on pointer-up and persists the clamped width", async () => {

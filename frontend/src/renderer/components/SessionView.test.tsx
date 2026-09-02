@@ -631,6 +631,8 @@ describe("SessionView", () => {
 		workspaceQueryState.isLoading = false;
 		useUiStore.setState({
 			activeShellTerminalHandleId: null,
+			browserSidebarAutoResizeAttempted: false,
+			browserSidebarAutoResizeRequested: false,
 			inspectorSessions: {},
 			isSidebarOpen: true,
 			visibleTerminalKindBySession: {},
@@ -1953,11 +1955,14 @@ describe("SessionView", () => {
 
 		fireEvent.click(screen.getByRole("tab", { name: "Browser" }));
 		expect(useUiStore.getState().isSidebarOpen).toBe(true);
+		expect(useUiStore.getState().browserSidebarAutoResizeRequested).toBe(true);
+		act(() => useUiStore.getState().consumeBrowserSidebarAutoResize());
 
 		fireEvent.click(screen.getByRole("tab", { name: "Summary" }));
 		expect(useUiStore.getState().isSidebarOpen).toBe(true);
 
 		fireEvent.click(screen.getByRole("tab", { name: "Browser" }));
+		expect(useUiStore.getState().browserSidebarAutoResizeRequested).toBe(false);
 		fireEvent.click(screen.getByRole("button", { name: "open files" }));
 		expect(useUiStore.getState().isSidebarOpen).toBe(true);
 

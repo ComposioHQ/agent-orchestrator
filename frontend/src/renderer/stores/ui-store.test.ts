@@ -4,7 +4,29 @@ import { sidebarIsVisible, sidebarOccupiesLayout, useUiStore } from "./ui-store"
 describe("sidebar visibility", () => {
 	beforeEach(() => {
 		window.localStorage.clear();
-		useUiStore.setState({ isSidebarOpen: true });
+		useUiStore.setState({
+			browserSidebarAutoResizeAttempted: false,
+			browserSidebarAutoResizeRequested: false,
+			inspectorSessions: {},
+			isSidebarOpen: true,
+		});
+	});
+
+	it("requests the automatic sidebar resize only for the first Browser open in the app session", () => {
+		useUiStore.getState().setInspectorView("session-1", "browser");
+		expect(useUiStore.getState()).toMatchObject({
+			browserSidebarAutoResizeAttempted: false,
+			browserSidebarAutoResizeRequested: true,
+		});
+
+		useUiStore.getState().consumeBrowserSidebarAutoResize();
+		useUiStore.getState().setInspectorView("session-1", "summary");
+		useUiStore.getState().setInspectorView("session-2", "browser");
+
+		expect(useUiStore.getState()).toMatchObject({
+			browserSidebarAutoResizeAttempted: true,
+			browserSidebarAutoResizeRequested: false,
+		});
 	});
 
 	it("changes only through the explicit toggle and persists the preference", () => {

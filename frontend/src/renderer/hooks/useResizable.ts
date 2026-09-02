@@ -1,4 +1,10 @@
+import { animate } from "motion/react";
 import { useCallback, useLayoutEffect, useRef } from "react";
+import { SHELL_PANEL_SPRING } from "../lib/motion-spring";
+
+function prefersReducedMotion(): boolean {
+	return typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+}
 
 type ResizableConstraint = number | (() => number);
 
@@ -44,8 +50,13 @@ export function useResizable({
 	const widthRef = useRef(defaultWidth);
 	const frameRef = useRef<number | null>(null);
 	const pendingWidthRef = useRef<number | null>(null);
+	const animationRef = useRef<{ stop: () => void } | null>(null);
 	const minValue = useCallback(() => (typeof min === "function" ? min() : min), [min]);
 	const maxValue = useCallback(() => (typeof max === "function" ? max() : max), [max]);
+	const stopAnimation = useCallback(() => {
+		animationRef.current?.stop();
+		animationRef.current = null;
+	}, []);
 
 	const apply = useCallback(
 		(next: number) => {
@@ -80,6 +91,28 @@ export function useResizable({
 		if (pending !== null) apply(pending);
 	}, [apply]);
 
+	const animateWidth = useCallback(
+		(next: number) => {
+			const target = Math.min(maxValue(), Math.max(minValue(), next));
+			const from = widthRef.current;
+			stopAnimation();
+			if (from === target || prefersReducedMotion()) {
+				apply(target);
+				return;
+			}
+			const controls = animate(from, target, {
+				...SHELL_PANEL_SPRING,
+				onUpdate: (value) => apply(value),
+				onComplete: () => {
+					apply(target);
+					if (animationRef.current === controls) animationRef.current = null;
+				},
+			});
+			animationRef.current = controls;
+		},
+		[apply, maxValue, minValue, stopAnimation],
+	);
+
 	// Restore persisted width before first paint so the sidebar does not appear
 	// at the default width on reload and then jump/animate to the stored width.
 	useLayoutEffect(() => {
@@ -87,14 +120,16 @@ export function useResizable({
 		const restored = Number.isFinite(saved) && saved > 0 ? saved : defaultWidth;
 		apply(restoreMin === undefined ? restored : Math.max(restoreMin, restored));
 		return () => {
+			stopAnimation();
 			if (frameRef.current !== null) window.cancelAnimationFrame(frameRef.current);
 			document.documentElement.style.removeProperty(cssVar);
 		};
-	}, [apply, cssVar, defaultWidth, restoreMin, storageKey]);
+	}, [apply, cssVar, defaultWidth, restoreMin, stopAnimation, storageKey]);
 
 	const onPointerDown = useCallback(
 		(event: React.PointerEvent<HTMLElement>) => {
 			event.preventDefault();
+			stopAnimation();
 			const startX = event.clientX;
 			const startWidth = Math.min(maxValue(), Math.max(minValue(), widthRef.current));
 			const sign = edge === "right" ? 1 : -1;
@@ -115,11 +150,12 @@ export function useResizable({
 			window.addEventListener("pointermove", onMove);
 			window.addEventListener("pointerup", onUp);
 		},
-		[applyOnFrame, edge, flushPending, maxValue, minValue, storageKey],
+		[applyOnFrame, edge, flushPending, maxValue, minValue, stopAnimation, storageKey],
 	);
 
 	const onCollapsedPointerDown = useCallback(
 		(event: React.PointerEvent<HTMLElement>) => {
+			stopAnimation();
 			const startX = event.clientX;
 			const sign = edge === "right" ? 1 : -1;
 			let expanded = false;
@@ -144,14 +180,15 @@ export function useResizable({
 			window.addEventListener("pointermove", onMove);
 			window.addEventListener("pointerup", onUp);
 		},
-		[applyOnFrame, edge, expandDragThreshold, flushPending, minValue, onExpand, storageKey],
+		[applyOnFrame, edge, expandDragThreshold, flushPending, minValue, onExpand, stopAnimation, storageKey],
 	);
 
 	/** Double-click the handle to reset to the default width. */
 	const onDoubleClick = useCallback(() => {
+		stopAnimation();
 		apply(defaultWidth);
 		window.localStorage.setItem(storageKey, String(defaultWidth));
-	}, [apply, defaultWidth, storageKey]);
+	}, [apply, defaultWidth, stopAnimation, storageKey]);
 
-	return { onPointerDown, onCollapsedPointerDown, onDoubleClick };
+	return { onPointerDown, onCollapsedPointerDown, onDoubleClick, animateWidth };
 }

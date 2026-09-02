@@ -67,6 +67,10 @@ export type UiState = {
 	workbenchTab: WorkbenchTab;
 	/** The user's durable sidebar preference. */
 	isSidebarOpen: boolean;
+	/** A transient first-Browser-open request consumed by the mounted Sidebar. */
+	browserSidebarAutoResizeRequested: boolean;
+	/** The first-Browser-open request has already been consumed in this app session. */
+	browserSidebarAutoResizeAttempted: boolean;
 	inspectorSessions: Record<string, InspectorSessionState>;
 	isCommandPaletteOpen: boolean;
 	settingsModal: SettingsModal | null;
@@ -121,6 +125,7 @@ export type UiState = {
 	/** Refresh resolvedTheme from OS without writing light/dark to storage. */
 	syncSystemTheme: () => void;
 	toggleSidebar: () => void;
+	consumeBrowserSidebarAutoResize: () => void;
 	setInspectorOpen: (sessionId: string, isOpen: boolean) => void;
 	toggleInspector: (sessionId: string) => void;
 	setInspectorView: (sessionId: string, view: InspectorView) => void;
@@ -190,6 +195,8 @@ const initialThemeStyle = readStoredThemeStyle();
 export const useUiStore = create<UiState>((set, get) => ({
 	workbenchTab: "changes",
 	isSidebarOpen: initialSidebarOpen(),
+	browserSidebarAutoResizeRequested: false,
+	browserSidebarAutoResizeAttempted: false,
 	inspectorSessions: {},
 	isCommandPaletteOpen: false,
 	settingsModal: null,
@@ -248,6 +255,8 @@ export const useUiStore = create<UiState>((set, get) => ({
 			getLocalStorage()?.setItem(sidebarStorageKey, String(isSidebarOpen));
 			return { isSidebarOpen };
 		}),
+	consumeBrowserSidebarAutoResize: () =>
+		set({ browserSidebarAutoResizeRequested: false, browserSidebarAutoResizeAttempted: true }),
 	setInspectorOpen: (sessionId, isOpen) =>
 		set((state) => {
 			const current = inspectorState(state.inspectorSessions, sessionId);
@@ -272,7 +281,12 @@ export const useUiStore = create<UiState>((set, get) => ({
 		set((state) => {
 			const current = inspectorState(state.inspectorSessions, sessionId);
 			const browserUnseen = view === "browser" ? false : current.browserUnseen;
+			const requestSidebarResize =
+				view === "browser" &&
+				!state.browserSidebarAutoResizeRequested &&
+				!state.browserSidebarAutoResizeAttempted;
 			return {
+				...(requestSidebarResize ? { browserSidebarAutoResizeRequested: true } : {}),
 				inspectorSessions: {
 					...state.inspectorSessions,
 					[sessionId]: { ...current, view, browserUnseen },

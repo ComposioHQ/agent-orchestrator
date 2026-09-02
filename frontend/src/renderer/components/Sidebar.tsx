@@ -419,6 +419,8 @@ export function Sidebar({
 	const selection = useSelection();
 	const { state, setOpen, toggleSidebar } = useSidebar();
 	const isCollapsed = state === "collapsed";
+	const browserSidebarAutoResizeRequested = useUiStore((s) => s.browserSidebarAutoResizeRequested);
+	const consumeBrowserSidebarAutoResize = useUiStore((s) => s.consumeBrowserSidebarAutoResize);
 	const [expandedChromeVisible, setExpandedChromeVisible] = useState(!isCollapsed);
 	// One IPC subscription for both footer variants of the restart-to-update prompt.
 	const updateStatus = useUpdateStatus();
@@ -486,6 +488,7 @@ export function Sidebar({
 		onPointerDown: onResizePointerDown,
 		onCollapsedPointerDown: onCollapsedResizePointerDown,
 		onDoubleClick: onResizeDoubleClick,
+		animateWidth: animateSidebarWidth,
 	} = useResizable({
 		cssVar: "--ao-sidebar-w",
 		storageKey: "ao-sidebar-w",
@@ -495,6 +498,14 @@ export function Sidebar({
 		edge: "right",
 		onExpand: () => setOpen(true),
 	});
+	useLayoutEffect(() => {
+		if (!browserSidebarAutoResizeRequested) return;
+		// A manually closed sidebar stays closed. Consume the one-shot request even
+		// in that case so a later manual reopen is never treated as Browser's first
+		// open. Visible sidebars shrink to the minimum on the shared shell spring.
+		if (!isCollapsed) animateSidebarWidth(SIDEBAR_MIN_WIDTH);
+		consumeBrowserSidebarAutoResize();
+	}, [animateSidebarWidth, browserSidebarAutoResizeRequested, consumeBrowserSidebarAutoResize, isCollapsed]);
 
 	const [projectOrder, setProjectOrder] = useState<string[]>([]);
 	const [sessionOrderByProject, setSessionOrderByProject] = useState<Record<string, string[]>>({});
