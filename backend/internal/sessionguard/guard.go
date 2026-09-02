@@ -285,12 +285,34 @@ func (g *Guard) Nudge(ctx context.Context, id domain.SessionID, msg string) (Out
 // reserved for alerts where a human parked at that prompt may be exactly who
 // needs to act (e.g. a merge conflict needing a rebase or a redirected agent),
 // unlike a routine reaction nudge that can simply wait for the agent to resume
-// on its own. It reuses refuseDeliver, the same policy real user messages take:
-// it still refuses while the session is blocked on a live permission decision
-// (an unsolicited write there risks answering the dialog rather than merely
-// being read late) and while a TUI session has not yet signalled startup.
-func (g *Guard) NudgeUrgent(ctx context.Context, id domain.SessionID, msg string) (Outcome, error) {
-	return g.send(ctx, id, msg, g.refuseDeliver)
+// on its own. It still refuses while a TUI session has not yet signalled
+// startup and while the session is blocked on a live permission decision (an
+// unsolicited paste+Enter there answers the dialog rather than merely being
+// read late).
+//
+// waiting_input is only safe on a harness that reports a permission dialog AS
+// blocked. Harnesses that instead surface an ambiguous permission state as
+// waiting_input (codex maps permission-request to waiting_input — see
+// ports.BlockedActivitySignaler) would have this unsolicited write land on that
+// hidden dialog. acceptsWaitingInput is the adapter-declared capability that a
+// waiting_input prompt is a genuine idle composer, not a masked decision; a nil
+// predicate is treated as "cannot distinguish", so an unknown harness never
+// takes an urgent write while waiting_input. This mirrors
+// CoordinationUnderMutation's waiting_input gating.
+func (g *Guard) NudgeUrgent(ctx context.Context, id domain.SessionID, msg string, acceptsWaitingInput func(domain.AgentHarness) bool) (Outcome, error) {
+	return g.send(ctx, id, msg, func(rec domain.SessionRecord) (Outcome, bool) {
+		if g.tuiAwaitingStartupInput(rec) {
+			return SuppressedStartupPending, true
+		}
+		switch rec.Activity.State {
+		case domain.ActivityBlocked:
+			return SuppressedAwaitingUser, true
+		case domain.ActivityWaitingInput:
+			return SuppressedAwaitingUser, acceptsWaitingInput == nil || !acceptsWaitingInput(rec.Harness)
+		default:
+			return SuppressedUnknown, false
+		}
+	})
 }
 
 // NudgeCoordination writes an AO-initiated coordination message under the full

@@ -182,10 +182,26 @@ func (m *Manager) ApplyPRObservation(ctx context.Context, id domain.SessionID, o
 	if err != nil || !ok {
 		return err
 	}
+	// Re-arm the merge-conflict dedup on a definitively-cleared observation
+	// BEFORE the dead-session delivery gate below. Re-arming is non-delivery
+	// bookkeeping — it only drops this PR's dedup entry in the store, it writes
+	// nothing to a pane — so it must run even for a session that has exited or is
+	// terminated. Otherwise conflicting -> agent exits -> mergeable -> agent
+	// restored -> conflicting keeps the durable "conflicting" signature and
+	// sendOnce swallows the recurrence: exited sessions are still polled, and a
+	// terminated session that is later restored resumes polling, so the cleared
+	// state must land regardless of current liveness. The error is deferred past
+	// the nudge send loop (returned as rearmErr) so a persist failure here cannot
+	// discard CI/review nudges an unstable PR still queues below.
+	var rearmErr error
+	if mergeabilityClearsConflict(o.Mergeability) {
+		rearmErr = m.rearmMergeConflict(ctx, o.URL)
+	}
 	// A genuinely dead session — terminated, or its pane already exited to a
-	// shell — has nowhere to deliver any nudge, merge-conflict included.
+	// shell — has nowhere to deliver any nudge, merge-conflict included, so
+	// return once the non-delivery re-arm above has run.
 	if rec.IsTerminated || rec.Activity.State == domain.ActivityExited {
-		return nil
+		return rearmErr
 	}
 	// cannotNudge's remaining condition, needs-input, defers CI-failure and
 	// review-feedback nudges until the agent is active again: both are
@@ -195,9 +211,11 @@ func (m *Manager) ApplyPRObservation(ctx context.Context, id domain.SessionID, o
 	// or redirect the agent), so the merge-conflict nudge below is deliberately
 	// exempted from this gate instead of loosening it for every nudge type. It
 	// still funnels through sendOnce's urgent path (sessionguard.NudgeUrgent),
-	// which continues to refuse a write while the session is blocked on a live
-	// permission dialog — only an idle needs-input prompt is safe to paste into
-	// unsolicited.
+	// which refuses while the session is blocked on a live permission dialog and
+	// while it sits at a waiting_input prompt on a harness that cannot prove that
+	// prompt is a genuine idle composer rather than a masked permission decision
+	// (the urgentNudgeWaitingInputSafe gate) — so only a provably-idle needs-input
+	// prompt is pasted into unsolicited.
 	needsInput := rec.Activity.State.NeedsInput()
 	// A single PR can trip several actionable conditions at once (failing CI,
 	// unresolved review comments, a merge conflict). Queue every applicable nudge
@@ -290,9 +308,7 @@ func (m *Manager) ApplyPRObservation(ctx context.Context, id domain.SessionID, o
 	// defer the error past the send loop, still surfacing it so the observer logs
 	// and re-polls.
 	var blockedCheckErr error
-	var rearmErr error
-	switch {
-	case o.Mergeability == domain.MergeConflicting:
+	if o.Mergeability == domain.MergeConflicting {
 		// Only the bottom of a stack is eligible for the rebase nudge. A PR
 		// stacked on an open parent is expected to report conflicts against its
 		// parent branch until the parent merges and it retargets, so nudging the
@@ -309,15 +325,11 @@ func (m *Manager) ApplyPRObservation(ctx context.Context, id domain.SessionID, o
 			}
 			nudges = append(nudges, pendingNudge{key: mergeConflictKey(o.URL), sig: string(o.Mergeability), msg: msg, maxAttempts: 0, urgent: true})
 		}
-	case mergeabilityClearsConflict(o.Mergeability):
-		// The conflict is definitively gone, so drop this PR's merge-conflict
-		// dedup entry (#4528). Without the re-arm the "conflicting" signature
-		// persists forever and the next real conflict — typically a base-branch
-		// advance after the agent rebased clean — is silently swallowed as a
-		// duplicate. Deferred like blockedCheckErr so a store failure here
-		// cannot discard the CI/review nudges already queued above.
-		rearmErr = m.rearmMergeConflict(ctx, o.URL)
 	}
+	// The definitively-cleared re-arm (#4528) runs above the dead-session gate,
+	// not here, so an exited/restored session still drops its stale "conflicting"
+	// signature; rearmErr is surfaced at the end of this function alongside the
+	// other deferred read errors.
 
 	for _, n := range nudges {
 		if _, err := m.sendOnce(ctx, id, o.URL, n.key, n.sig, n.msg, n.maxAttempts, n.urgent); err != nil {
@@ -980,9 +992,13 @@ func (m *Manager) sendOnce(ctx context.Context, id domain.SessionID, prURL, key,
 	if urgent {
 		// Merge-conflict nudges (the only urgent nudge today) must still reach
 		// a session idle at a needs-input prompt; NudgeUrgent keeps refusing
-		// only while a live permission dialog is on screen. See
-		// ApplyPRObservation's needsInput carve-out for the reasoning.
-		nudge = m.guard.NudgeUrgent
+		// while a live permission dialog is on screen — including the
+		// waiting_input prompts that harnesses without a blocked signal use to
+		// represent a masked permission decision (see the urgentNudgeGate
+		// predicate). See ApplyPRObservation's needsInput carve-out.
+		nudge = func(ctx context.Context, id domain.SessionID, msg string) (sessionguard.Outcome, error) {
+			return m.guard.NudgeUrgent(ctx, id, msg, m.urgentNudgeWaitingInputSafe)
+		}
 	}
 	outcome, err := nudge(ctx, id, msg)
 	if err != nil {

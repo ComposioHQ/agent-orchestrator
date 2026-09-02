@@ -63,6 +63,7 @@ func startLifecycle(ctx context.Context, store *sqlite.Store, runtime ports.Runt
 		lifecycle.WithContainerReaper(dockerreap.New(), store),
 		lifecycle.WithActiveSteering(activeTurnSteering(agents)),
 		lifecycle.WithStartupSignalGate(startupSignalGatesInput(agents)),
+		lifecycle.WithUrgentNudgeGate(urgentNudgeWaitingInputSafe(agents)),
 	)
 	rp := reaper.New(lcm, store, runtime, reaper.Config{Logger: logger})
 	activityPoller := activityobserver.New(store, lcm, runtime, agents, activityobserver.Config{Logger: logger})
@@ -88,6 +89,27 @@ func startupSignalGatesInput(agents ports.AgentResolver) func(domain.AgentHarnes
 		}
 		signaler, ok := agent.(ports.StartupInputReadinessSignaler)
 		return ok && signaler.FirstSignalProvesInputReady()
+	}
+}
+
+// urgentNudgeWaitingInputSafe resolves whether an adapter reports a permission
+// dialog AS blocked (ports.BlockedActivitySignaler) rather than as
+// waiting_input. Only then is an urgent merge-conflict nudge safe to paste at a
+// waiting_input prompt — a harness like codex, which maps permission-request to
+// waiting_input and opts out of the signal, must not receive that unsolicited
+// write while it could be sitting on a masked decision. Unknown and opted-out
+// adapters answer false, so lifecycle withholds the urgent nudge there.
+func urgentNudgeWaitingInputSafe(agents ports.AgentResolver) func(domain.AgentHarness) bool {
+	return func(harness domain.AgentHarness) bool {
+		if agents == nil {
+			return false
+		}
+		agent, ok := agents.Agent(harness)
+		if !ok {
+			return false
+		}
+		signaler, ok := agent.(ports.BlockedActivitySignaler)
+		return ok && signaler.EmitsBlockedActivity()
 	}
 }
 

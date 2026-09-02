@@ -117,31 +117,38 @@ func TestGuard_OutcomeByState(t *testing.T) {
 
 // TestGuard_NudgeUrgentReachesNeedsInputButNotBlocked pins NudgeUrgent's
 // outcome table directly: it is the only nudge method that may write into a
-// session idle at a needs-input prompt, and it must still refuse every state
-// Deliver refuses — above all blocked, where a paste+Enter would answer a live
-// permission dialog on the user's behalf.
+// session idle at a needs-input prompt, and it must still refuse blocked (where
+// a paste+Enter would answer a live permission dialog on the user's behalf) and
+// a waiting_input prompt on a harness that cannot prove the prompt is a genuine
+// idle composer rather than a masked permission decision.
 func TestGuard_NudgeUrgentReachesNeedsInputButNotBlocked(t *testing.T) {
+	acceptsAll := func(domain.AgentHarness) bool { return true }
+	refusesAll := func(domain.AgentHarness) bool { return false }
 	cases := []struct {
-		name string
-		rec  domain.SessionRecord
-		ok   bool
-		want Outcome
+		name    string
+		rec     domain.SessionRecord
+		ok      bool
+		accepts func(domain.AgentHarness) bool
+		want    Outcome
 	}{
-		{"active", record(domain.ActivityActive, false), true, Sent},
-		{"idle", record(domain.ActivityIdle, false), true, Sent},
+		{"active", record(domain.ActivityActive, false), true, acceptsAll, Sent},
+		{"idle", record(domain.ActivityIdle, false), true, acceptsAll, Sent},
 		// The whole point of the method: unlike Nudge, an urgent nudge lands at
-		// an idle waiting_input prompt.
-		{"waiting_input", record(domain.ActivityWaitingInput, false), true, Sent},
-		{"blocked", record(domain.ActivityBlocked, false), true, SuppressedAwaitingUser},
-		{"exited", record(domain.ActivityExited, false), true, SuppressedExited},
-		{"terminated", record(domain.ActivityIdle, true), true, SuppressedTerminated},
-		{"missing", domain.SessionRecord{}, false, SuppressedNotFound},
+		// an idle waiting_input prompt — but only when the harness proves that
+		// prompt is a real composer, not an ambiguous permission state.
+		{"waiting_input capability-safe", record(domain.ActivityWaitingInput, false), true, acceptsAll, Sent},
+		{"waiting_input ambiguous suppressed", record(domain.ActivityWaitingInput, false), true, refusesAll, SuppressedAwaitingUser},
+		{"waiting_input nil predicate suppressed", record(domain.ActivityWaitingInput, false), true, nil, SuppressedAwaitingUser},
+		{"blocked", record(domain.ActivityBlocked, false), true, acceptsAll, SuppressedAwaitingUser},
+		{"exited", record(domain.ActivityExited, false), true, acceptsAll, SuppressedExited},
+		{"terminated", record(domain.ActivityIdle, true), true, acceptsAll, SuppressedTerminated},
+		{"missing", domain.SessionRecord{}, false, acceptsAll, SuppressedNotFound},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			msgr := &fakeMessenger{}
 			g := New(&fakeStore{rec: tc.rec, ok: tc.ok}, msgr, nil)
-			got, err := g.NudgeUrgent(context.Background(), "s1", "hello")
+			got, err := g.NudgeUrgent(context.Background(), "s1", "hello", tc.accepts)
 			if err != nil {
 				t.Fatalf("NudgeUrgent: %v", err)
 			}
@@ -169,7 +176,7 @@ func TestGuard_NudgeUrgentRespectsTUIStartupGate(t *testing.T) {
 	g := New(&fakeStore{rec: rec, ok: true}, msgr, nil)
 	g.SetStartupSignalGate(func(domain.AgentHarness) bool { return true })
 
-	got, err := g.NudgeUrgent(context.Background(), "s1", "rebase")
+	got, err := g.NudgeUrgent(context.Background(), "s1", "rebase", func(domain.AgentHarness) bool { return true })
 	if err != nil {
 		t.Fatalf("NudgeUrgent: %v", err)
 	}

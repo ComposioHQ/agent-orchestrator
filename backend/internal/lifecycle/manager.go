@@ -182,6 +182,20 @@ func WithStartupSignalGate(pred func(domain.AgentHarness) bool) Option {
 	}
 }
 
+// WithUrgentNudgeGate supplies the adapter capability predicate that decides
+// whether an urgent (merge-conflict) nudge may reach a session at a
+// waiting_input prompt: true only for harnesses that report a permission dialog
+// as blocked rather than as waiting_input. Without it the reducer treats every
+// waiting_input prompt as a possible masked decision and withholds the urgent
+// nudge until the session is active or idle.
+func WithUrgentNudgeGate(pred func(domain.AgentHarness) bool) Option {
+	return func(m *Manager) {
+		if pred != nil {
+			m.urgentNudgeWaitingInputSafe = pred
+		}
+	}
+}
+
 // Manager reduces runtime, activity, spawn, and termination observations into durable session facts.
 // It also owns agent nudges caused by PR observations, including merge-conflict, CI-failure, and review-feedback prompts.
 type Manager struct {
@@ -224,6 +238,12 @@ type Manager struct {
 	// unknown harness is only written to while idle.
 	steerActive             func(domain.AgentHarness) bool
 	startupSignalGatesInput func(domain.AgentHarness) bool
+	// urgentNudgeWaitingInputSafe reports whether a harness surfaces a permission
+	// dialog AS blocked (rather than as waiting_input), so an urgent merge-conflict
+	// nudge is safe to paste at a waiting_input prompt. Supplied by the agent
+	// adapter via WithUrgentNudgeGate; the default answers false, so an unknown
+	// harness never takes an urgent write while waiting_input.
+	urgentNudgeWaitingInputSafe func(domain.AgentHarness) bool
 }
 
 // New builds a Lifecycle Manager over the session store it writes and the messenger it uses for agent nudges.
@@ -234,14 +254,15 @@ func New(store sessionStore, messenger ports.AgentMessenger, opts ...Option) *Ma
 	// WithClock option may still override this in tests.
 	clock := func() time.Time { return time.Now().UTC() }
 	m := &Manager{
-		store:                   store,
-		window:                  defaultRecentActivityWindow,
-		clock:                   clock,
-		react:                   newReactionState(),
-		flights:                 map[domain.SessionID]*toolFlight{},
-		pendingLaunches:         map[domain.SessionID]pendingLaunch{},
-		steerActive:             func(domain.AgentHarness) bool { return false },
-		startupSignalGatesInput: func(domain.AgentHarness) bool { return false },
+		store:                       store,
+		window:                      defaultRecentActivityWindow,
+		clock:                       clock,
+		react:                       newReactionState(),
+		flights:                     map[domain.SessionID]*toolFlight{},
+		pendingLaunches:             map[domain.SessionID]pendingLaunch{},
+		steerActive:                 func(domain.AgentHarness) bool { return false },
+		startupSignalGatesInput:     func(domain.AgentHarness) bool { return false },
+		urgentNudgeWaitingInputSafe: func(domain.AgentHarness) bool { return false },
 	}
 	if messenger != nil {
 		m.guard = sessionguard.New(store, messenger, nil)

@@ -387,10 +387,10 @@ func (f *fakeMessenger) Send(_ context.Context, id domain.SessionID, msg string)
 	return nil
 }
 
-func newManager() (*Manager, *fakeStore, *fakeMessenger) {
+func newManager(opts ...Option) (*Manager, *fakeStore, *fakeMessenger) {
 	st := newFakeStore()
 	msg := &fakeMessenger{}
-	return New(st, msg), st, msg
+	return New(st, msg, opts...), st, msg
 }
 
 func working(id domain.SessionID) domain.SessionRecord {
@@ -2429,29 +2429,119 @@ func TestPRObservation_ExitedAgentIsNotNudged(t *testing.T) {
 	}
 }
 
+// TestPRObservation_ReArmClearsConflictWhileSessionExited is the regression
+// test for the delivery-gate finding: a definitively-cleared observation must
+// re-arm the merge-conflict dedup even when it arrives while the session is
+// exited. Exited sessions are still polled, so the sequence
+// conflicting -> exit -> mergeable -> restore -> conflicting must nudge on the
+// final conflict; a re-arm placed behind the dead-session return would skip the
+// clear and let the stale "conflicting" signature swallow the recurrence.
+func TestPRObservation_ReArmClearsConflictWhileSessionExited(t *testing.T) {
+	m, st, msg := newManager()
+	st.sessions["mer-1"] = working("mer-1")
+	conflicting := ports.PRObservation{Fetched: true, URL: "pr1", Mergeability: domain.MergeConflicting}
+	mergeable := ports.PRObservation{Fetched: true, URL: "pr1", Mergeability: domain.MergeMergeable}
+
+	if err := m.ApplyPRObservation(ctx, "mer-1", conflicting); err != nil {
+		t.Fatal(err)
+	}
+	if len(msg.msgs) != 1 {
+		t.Fatalf("first conflict should nudge, got %v", msg.msgs)
+	}
+
+	// The agent exits, then the PR is observed mergeable while exited. No nudge
+	// is delivered (nowhere to write), but the re-arm bookkeeping must still run.
+	exited := working("mer-1")
+	exited.Activity.State = domain.ActivityExited
+	st.sessions["mer-1"] = exited
+	if err := m.ApplyPRObservation(ctx, "mer-1", mergeable); err != nil {
+		t.Fatal(err)
+	}
+	if len(msg.msgs) != 1 {
+		t.Fatalf("mergeable-while-exited must deliver nothing, got %v", msg.msgs)
+	}
+
+	// The agent is restored and the base advances into a fresh conflict. The
+	// re-arm during the exited window must let this recurrence nudge again.
+	st.sessions["mer-1"] = working("mer-1")
+	if err := m.ApplyPRObservation(ctx, "mer-1", conflicting); err != nil {
+		t.Fatal(err)
+	}
+	if len(msg.msgs) != 2 {
+		t.Fatalf("a conflict returning after a clear-while-exited must nudge again, got %d: %v", len(msg.msgs), msg.msgs)
+	}
+}
+
+// TestPRObservation_ReArmClearsConflictSurvivesTerminatedRestore covers the
+// terminated variant of the same hazard: a terminated session is excluded from
+// polling, so the clear typically arrives on the first observation after
+// restore. The re-arm still runs ahead of the dead-session return, so even a
+// clear observed in the terminated window (before restore is reflected) drops
+// the stale signature and a later conflict nudges again.
+func TestPRObservation_ReArmClearsConflictSurvivesTerminatedRestore(t *testing.T) {
+	conflicting := ports.PRObservation{Fetched: true, URL: "pr1", Mergeability: domain.MergeConflicting}
+	mergeable := ports.PRObservation{Fetched: true, URL: "pr1", Mergeability: domain.MergeMergeable}
+
+	m, st, msg := newManager()
+	st.sessions["mer-1"] = working("mer-1")
+	if err := m.ApplyPRObservation(ctx, "mer-1", conflicting); err != nil {
+		t.Fatal(err)
+	}
+
+	// Session terminates; a mergeable observation lands before restore. It must
+	// re-arm despite the terminated gate returning before any delivery.
+	terminated := working("mer-1")
+	terminated.IsTerminated = true
+	st.sessions["mer-1"] = terminated
+	if err := m.ApplyPRObservation(ctx, "mer-1", mergeable); err != nil {
+		t.Fatal(err)
+	}
+	if len(msg.msgs) != 1 {
+		t.Fatalf("mergeable-while-terminated must deliver nothing, got %v", msg.msgs)
+	}
+
+	// Restored, then a fresh conflict: the re-arm during the terminated window
+	// must let it nudge again rather than dedup against the stale signature.
+	st.sessions["mer-1"] = working("mer-1")
+	if err := m.ApplyPRObservation(ctx, "mer-1", conflicting); err != nil {
+		t.Fatal(err)
+	}
+	if len(msg.msgs) != 2 {
+		t.Fatalf("a conflict after a clear-while-terminated must nudge again, got %d: %v", len(msg.msgs), msg.msgs)
+	}
+}
+
 // TestPRObservation_MergeConflictReachesNeedsInputSession is the regression
 // test for #2173: a session parked awaiting the human (waiting_input) must
 // still receive a merge-conflict nudge, because the human sitting at that
 // prompt may be exactly who needs to act (rebase it themselves, or redirect
 // the agent) — unlike CI-failure/review-feedback nudges, which only the agent
 // can act on and which correctly wait for it to resume (see the sibling test
-// below). A session blocked on a live permission dialog is a different,
-// narrower hazard (an unsolicited paste there risks answering the dialog) and
-// must still be refused.
+// below). Two states are still refused: a session blocked on a live permission
+// dialog, and a waiting_input session on a harness that cannot prove that
+// prompt is a genuine idle composer rather than a masked permission decision
+// (codex maps permission-request to waiting_input) — the harness-aware gate the
+// urgent route consults, so an unsolicited paste never answers a hidden dialog.
 func TestPRObservation_MergeConflictReachesNeedsInputSession(t *testing.T) {
+	const safeHarness = domain.AgentHarness("claude-code")
+	const ambiguousHarness = domain.AgentHarness("codex")
+	urgentGate := func(h domain.AgentHarness) bool { return h == safeHarness }
 	cases := []struct {
 		name      string
 		state     domain.ActivityState
+		harness   domain.AgentHarness
 		wantNudge bool
 	}{
-		{"waiting_input reaches the agent", domain.ActivityWaitingInput, true},
-		{"blocked stays suppressed", domain.ActivityBlocked, false},
+		{"waiting_input on a blocked-signalling harness reaches the agent", domain.ActivityWaitingInput, safeHarness, true},
+		{"waiting_input on an ambiguous harness stays suppressed", domain.ActivityWaitingInput, ambiguousHarness, false},
+		{"blocked stays suppressed", domain.ActivityBlocked, safeHarness, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			m, st, msg := newManager()
+			m, st, msg := newManager(WithUrgentNudgeGate(urgentGate))
 			rec := working("mer-1")
 			rec.Activity.State = tc.state
+			rec.Harness = tc.harness
 			st.sessions["mer-1"] = rec
 
 			o := ports.PRObservation{Fetched: true, URL: "pr1", Mergeability: domain.MergeConflicting}
