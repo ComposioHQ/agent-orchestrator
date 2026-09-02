@@ -623,6 +623,145 @@ describe("ProjectSettingsForm", () => {
 		expect(screen.getByRole("menuitem", { name: "Custom model…" })).toBeInTheDocument();
 	});
 
+
+	it("preserves existing reviewer-only config fields when saving project settings", async () => {
+		getMock.mockImplementation(async (path: string) => {
+			if (path === "/api/v1/agents/readiness") return agentCatalogResponse;
+			return {
+				data: {
+					status: "ok",
+					project: {
+						id: "proj-1",
+						name: "Project One",
+						kind: "single_repo",
+						path: "/repo/project-one",
+						repo: "",
+						defaultBranch: "main",
+						config: {
+							worker: { agent: "codex" },
+							orchestrator: { agent: "claude-code" },
+							reviewers: [
+								{ harness: "codex", agentConfig: { model: "gpt-5", permissions: "bypass-permissions" } },
+							],
+						},
+					},
+				},
+				error: undefined,
+			};
+		});
+
+		renderSettings("proj-1");
+		await screen.findByRole("button", { name: "Edit Project name" });
+		submitSettings();
+
+		await waitFor(() => expect(putMock).toHaveBeenCalledTimes(1));
+		expect(putMock).toHaveBeenCalledWith("/api/v1/projects/{id}", {
+			params: { path: { id: "proj-1" } },
+			body: expect.objectContaining({
+				config: expect.objectContaining({
+					reviewers: [
+						expect.objectContaining({
+							harness: "codex",
+							agentConfig: expect.objectContaining({
+								model: "gpt-5",
+								permissions: "bypass-permissions",
+							}),
+						}),
+					],
+				}),
+			}),
+		});
+	});
+
+	it("clears the saved reviewer model and reviewer-only config when switching the project reviewer harness", async () => {
+		getMock.mockImplementation(async (path: string, init?: { params?: { path?: { agent?: string } } }) => {
+			if (path === "/api/v1/agents/readiness") return agentCatalogResponse;
+			if (path === "/api/v1/agents/{agent}/models") {
+				const agent = init?.params?.path?.agent;
+				if (agent === "codex") {
+					return {
+						data: {
+							agentId: "codex",
+							selectionMode: "catalog",
+							models: [
+								{ id: "gpt-5", label: "GPT-5", isDefault: true },
+								{ id: "gpt-5-mini", label: "GPT-5 Mini" },
+							],
+							allowCustom: true,
+							source: "official-catalog",
+							fetchedAt: "2026-08-30T00:00:00Z",
+							stale: false,
+						},
+						error: undefined,
+					};
+				}
+				return {
+					data: {
+						agentId: agent ?? "unknown",
+						selectionMode: "text",
+						models: [],
+						allowCustom: true,
+						source: "manual",
+						fetchedAt: "2026-08-30T00:00:00Z",
+						stale: false,
+					},
+					error: undefined,
+				};
+			}
+			return {
+				data: {
+					status: "ok",
+					project: {
+						id: "proj-1",
+						name: "Project One",
+						kind: "single_repo",
+						path: "/repo/project-one",
+						repo: "",
+						defaultBranch: "main",
+						config: {
+							worker: { agent: "codex" },
+							orchestrator: { agent: "claude-code" },
+							reviewers: [
+								{ harness: "codex", agentConfig: { permissions: "bypass-permissions" } },
+							],
+						},
+					},
+				},
+				error: undefined,
+			};
+		});
+
+		renderSettings("proj-1", undefined, "agents");
+
+		const reviewer = await screen.findByRole("button", { name: "Default reviewer agent" });
+		await userEvent.click(reviewer);
+		const codexOption = (await screen.findAllByRole("menuitem")).find((option) => option.textContent?.includes("Codex"));
+		expect(codexOption).toBeTruthy();
+		await userEvent.click(codexOption!);
+		await userEvent.click(await screen.findByRole("menuitem", { name: /GPT-5 Mini/i }));
+		expect(reviewer).toHaveTextContent("Codex · GPT-5 Mini");
+
+		await chooseOption(reviewer, "OpenCode");
+		expect(reviewer).toHaveTextContent("OpenCode · Agent default");
+
+		submitSettings();
+
+		await waitFor(() => expect(putMock).toHaveBeenCalledTimes(1));
+		expect(putMock).toHaveBeenCalledWith("/api/v1/projects/{id}", {
+			params: { path: { id: "proj-1" } },
+			body: expect.objectContaining({
+				config: expect.objectContaining({
+					reviewers: [
+						expect.objectContaining({
+							harness: "opencode",
+							agentConfig: undefined,
+						}),
+					],
+				}),
+			}),
+		});
+	});
+
 	it("shows a warning when background model revalidation fails", async () => {
 		getMock.mockImplementation(async (path: string) => {
 			if (path === "/api/v1/agents/readiness") return agentCatalogResponse;
@@ -946,7 +1085,7 @@ describe("ProjectSettingsForm", () => {
 		await userEvent.click(await screen.findByRole("button", { name: "Default reviewer agent" }));
 		const reviewerLabels = (await screen.findAllByRole("menuitem"))
 			.map((option) => option.textContent)
-			.filter((label) => label !== "Project default");
+			.filter((label) => label !== "Project default" && label !== "Custom model…");
 
 		expect(reviewerLabels).toEqual([
 			"Claude Code",

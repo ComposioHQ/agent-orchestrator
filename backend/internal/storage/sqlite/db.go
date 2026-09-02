@@ -170,6 +170,9 @@ func migrate(db *sql.DB) error {
 	if err := prepareQueuedTurnPromotionMigration(db); err != nil {
 		return fmt.Errorf("prepare queued-turn promotion migration: %w", err)
 	}
+	if err := prepareSessionReviewerAgentConfigMigration(db); err != nil {
+		return fmt.Errorf("prepare session reviewer agent-config migration: %w", err)
+	}
 	// Builds can advance a database past a migration that is added or
 	// renumbered later (notably across fast-moving Nightly releases). Apply
 	// those embedded migrations instead of permanently wedging daemon startup
@@ -370,6 +373,41 @@ SELECT COALESCE((
 // owns both numbers, so record the promotion schema as version 89. If version 88
 // came from the old promotion migration, remove that ledger entry so goose can
 // apply upstream's auto-inject-CI migration at its canonical version.
+// prepareSessionReviewerAgentConfigMigration preserves databases that
+// already have sessions.reviewer_agent_config from an in-flight local run but
+// do not yet record the canonical 0118 migration version. Recording that
+// physically present effect prevents goose from replaying the ALTER TABLE over
+// the existing column on the next startup.
+func prepareSessionReviewerAgentConfigMigration(db *sql.DB) error {
+	var gooseTable int
+	if err := db.QueryRow(
+		`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'goose_db_version'`,
+	).Scan(&gooseTable); err != nil {
+		return err
+	}
+	if gooseTable == 0 {
+		return nil
+	}
+
+	var applied, reviewerConfigColumn int
+	if err := db.QueryRow(`
+SELECT
+    COALESCE((
+        SELECT is_applied FROM goose_db_version
+        WHERE version_id = 118 ORDER BY id DESC LIMIT 1
+    ), 0),
+    (SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name = 'reviewer_agent_config')
+`).Scan(&applied, &reviewerConfigColumn); err != nil {
+		return err
+	}
+	if applied != 0 || reviewerConfigColumn == 0 {
+		return nil
+	}
+
+	_, err := db.Exec(`INSERT INTO goose_db_version (version_id, is_applied) VALUES (118, 1)`)
+	return err
+}
+
 func prepareQueuedTurnPromotionMigration(db *sql.DB) error {
 	tx, err := db.Begin()
 	if err != nil {
@@ -927,7 +965,7 @@ WHERE name = 'cloud_offering'`).Scan(&cloudShape); err != nil {
 // of version numbers subsequently claimed by main. Early Phase 1 builds used
 // 0117 to drop agent_inventory_cache; 0117 now enables Kimi usage. Release the
 // collided ledger entry only when the canonical physical effect is absent so
-// goose can apply the real migration. The drop remains safe at canonical 0121.
+// goose can apply the real migration. The drop remains safe at canonical 0122.
 func repairRenumberedCodexProfileMigrationHistory(db *sql.DB) error {
 	var gooseTable int
 	if err := db.QueryRow(
@@ -970,13 +1008,13 @@ SELECT (SELECT COUNT(*) FROM sqlite_master
 }
 
 // repairRenumberedAgentInventoryMigrationHistory preserves development
-// databases opened while this branch used 0119 or 0120 to drop
+// databases opened while this branch used 0119, 0120, or 0121 to drop
 // agent_inventory_cache. Main now owns those versions for completed-plan
-// finalization and activity timestamp normalization; the identical cache drop
-// lives at 0121. An absent cache table plus either collided ledger entry
-// identifies the branch history: mark the physical drop at 0121, then release
-// the newest collided version so goose can apply main's migration with
-// WithAllowMissing.
+// finalization, activity timestamp normalization, and reviewer configuration;
+// the identical cache drop lives at 0122. An absent cache table plus a collided
+// ledger entry identifies the branch history: mark the physical drop at 0122,
+// then release the newest collided version so goose can apply main's migration
+// with WithAllowMissing.
 func repairRenumberedAgentInventoryMigrationHistory(db *sql.DB) error {
 	var gooseTable int
 	if err := db.QueryRow(
@@ -1012,7 +1050,15 @@ SELECT COALESCE((
 ), 0)`).Scan(&applied121); err != nil {
 		return err
 	}
-	if applied121 != 0 || (applied119 == 0 && applied120 == 0) {
+	var applied122 int
+	if err := db.QueryRow(`
+SELECT COALESCE((
+    SELECT is_applied FROM goose_db_version
+    WHERE version_id = 122 ORDER BY id DESC LIMIT 1
+), 0)`).Scan(&applied122); err != nil {
+		return err
+	}
+	if applied122 != 0 || (applied119 == 0 && applied120 == 0 && applied121 == 0) {
 		return nil
 	}
 
@@ -1032,12 +1078,15 @@ SELECT COALESCE((
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	if _, err := tx.Exec(`INSERT INTO goose_db_version (version_id, is_applied) VALUES (121, 1)`); err != nil {
+	if _, err := tx.Exec(`INSERT INTO goose_db_version (version_id, is_applied) VALUES (122, 1)`); err != nil {
 		return err
 	}
 	collidedVersion := int64(119)
 	if applied120 != 0 {
 		collidedVersion = 120
+	}
+	if applied121 != 0 {
+		collidedVersion = 121
 	}
 	if _, err := tx.Exec(`DELETE FROM goose_db_version WHERE version_id = ?`, collidedVersion); err != nil {
 		return err

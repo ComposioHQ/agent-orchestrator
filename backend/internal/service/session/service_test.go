@@ -291,12 +291,13 @@ func (f *fakeStore) SetSessionAutoInjectCI(_ context.Context, id domain.SessionI
 	return true, nil
 }
 
-func (f *fakeStore) SetSessionReviewerHarness(_ context.Context, id domain.SessionID, harness domain.ReviewerHarness, updatedAt time.Time) (bool, error) {
+func (f *fakeStore) SetSessionReviewerConfig(_ context.Context, id domain.SessionID, harness domain.ReviewerHarness, config domain.AgentConfig, updatedAt time.Time) (bool, error) {
 	r, ok := f.sessions[id]
 	if !ok {
 		return false, nil
 	}
 	r.ReviewerHarness = harness
+	r.ReviewerConfig = config
 	r.UpdatedAt = updatedAt
 	f.sessions[id] = r
 	return true, nil
@@ -603,7 +604,7 @@ func TestSessionSetReviewerHarnessPersistsPerSession(t *testing.T) {
 	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", Kind: domain.KindWorker}
 	st.sessions["mer-2"] = domain.SessionRecord{ID: "mer-2", ProjectID: "mer", Kind: domain.KindWorker}
 
-	sess, err := (&Service{store: st}).SetReviewerHarness(context.Background(), "mer-1", domain.ReviewerOpenCode)
+	sess, err := (&Service{store: st}).SetReviewerHarness(context.Background(), "mer-1", domain.ReviewerOpenCode, domain.AgentConfig{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -618,8 +619,24 @@ func TestSessionSetReviewerHarnessPersistsPerSession(t *testing.T) {
 func TestSessionSetReviewerHarnessRejectsUnknownHarness(t *testing.T) {
 	st := newFakeStore()
 	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1"}
-	if _, err := (&Service{store: st}).SetReviewerHarness(context.Background(), "mer-1", "unknown"); err == nil {
+	if _, err := (&Service{store: st}).SetReviewerHarness(context.Background(), "mer-1", "unknown", domain.AgentConfig{}); err == nil {
 		t.Fatal("expected invalid harness error")
+	}
+}
+
+func TestSessionSetReviewerHarnessAllowsConfigWithoutHarness(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1"}
+
+	sess, err := (&Service{store: st}).SetReviewerHarness(context.Background(), "mer-1", "", domain.AgentConfig{Model: "gpt-5"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sess.ReviewerHarness != "" || sess.ReviewerConfig.Model != "gpt-5" {
+		t.Fatalf("session reviewer override = (%q, %+v), want default harness with model override", sess.ReviewerHarness, sess.ReviewerConfig)
+	}
+	if stored := st.sessions["mer-1"]; stored.ReviewerHarness != "" || stored.ReviewerConfig.Model != "gpt-5" {
+		t.Fatalf("stored reviewer override = (%q, %+v), want default harness with model override", stored.ReviewerHarness, stored.ReviewerConfig)
 	}
 }
 

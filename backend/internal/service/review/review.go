@@ -52,7 +52,7 @@ func reviewErrorKind(err error) string {
 
 // Manager is the reviews surface the HTTP controller depends on.
 type Manager interface {
-	Trigger(ctx context.Context, workerID domain.SessionID, harness domain.ReviewerHarness) (reviewcore.TriggerResult, error)
+	Trigger(ctx context.Context, workerID domain.SessionID, harness domain.ReviewerHarness, config domain.AgentConfig) (reviewcore.TriggerResult, error)
 	RequestRereview(ctx context.Context, workerID domain.SessionID, prURL, reviewer string) error
 	ResolveReviewComment(ctx context.Context, workerID domain.SessionID, prURL, commentURL string) error
 	TriggerAuto(ctx context.Context, workerID domain.SessionID, harness domain.ReviewerHarness) (reviewcore.TriggerResult, error)
@@ -60,7 +60,7 @@ type Manager interface {
 	TerminateReviewer(ctx context.Context, workerID domain.SessionID, body string) error
 	TeardownReviewerTerminal(ctx context.Context, workerID domain.SessionID) error
 	RestoreReviewer(ctx context.Context, workerID domain.SessionID) error
-	SwitchReviewer(ctx context.Context, workerID domain.SessionID, harness domain.ReviewerHarness) (reviewcore.SessionReviews, error)
+	SwitchReviewer(ctx context.Context, workerID domain.SessionID, harness domain.ReviewerHarness, config domain.AgentConfig) (reviewcore.SessionReviews, error)
 	ApplyReviewActivitySignal(ctx context.Context, reviewSessionID string, signal ActivitySignal) error
 	Submit(ctx context.Context, workerID domain.SessionID, runID string, verdict domain.ReviewVerdict, body, githubReviewID string) (domain.ReviewRun, error)
 	SubmitMany(ctx context.Context, workerID domain.SessionID, reviews []SubmittedReview) ([]domain.ReviewRun, error)
@@ -79,7 +79,7 @@ type Service struct {
 	// engineTrigger indirects the engine's source-tagged trigger so the
 	// instrumented path can be exercised without standing up a full engine and
 	// its eighteen-method store. Defaulted in New; only tests replace it.
-	engineTrigger func(context.Context, domain.SessionID, domain.ReviewerHarness, domain.ReviewTriggerSource) (reviewcore.TriggerResult, error)
+	engineTrigger func(context.Context, domain.SessionID, domain.ReviewerHarness, domain.AgentConfig, domain.ReviewTriggerSource) (reviewcore.TriggerResult, error)
 }
 
 var _ Manager = (*Service)(nil)
@@ -174,9 +174,10 @@ func New(engine *reviewcore.Engine, store Store, opts ...Option) *Service {
 			ctx context.Context,
 			workerID domain.SessionID,
 			harness domain.ReviewerHarness,
+			config domain.AgentConfig,
 			source domain.ReviewTriggerSource,
 		) (reviewcore.TriggerResult, error) {
-			return s.engine.TriggerWithSource(ctx, workerID, harness, source)
+			return s.engine.TriggerWithSource(ctx, workerID, harness, config, source)
 		}
 	}
 	return s
@@ -392,13 +393,14 @@ func (s *Service) Trigger(
 	ctx context.Context,
 	workerID domain.SessionID,
 	harness domain.ReviewerHarness,
+	config domain.AgentConfig,
 ) (reviewcore.TriggerResult, error) {
-	return s.triggerWithSource(ctx, workerID, harness, domain.ReviewTriggerManual)
+	return s.triggerWithSource(ctx, workerID, harness, config, domain.ReviewTriggerManual)
 }
 
 // TriggerAuto starts a daemon-initiated review pass.
 func (s *Service) TriggerAuto(ctx context.Context, workerID domain.SessionID, harness domain.ReviewerHarness) (reviewcore.TriggerResult, error) {
-	return s.triggerWithSource(ctx, workerID, harness, domain.ReviewTriggerAuto)
+	return s.triggerWithSource(ctx, workerID, harness, domain.AgentConfig{}, domain.ReviewTriggerAuto)
 }
 
 // triggerWithSource is the single instrumented trigger path. Both entry points
@@ -410,9 +412,18 @@ func (s *Service) triggerWithSource(
 	ctx context.Context,
 	workerID domain.SessionID,
 	harness domain.ReviewerHarness,
+	config domain.AgentConfig,
 	source domain.ReviewTriggerSource,
 ) (reviewcore.TriggerResult, error) {
-	result, err := s.engineTrigger(ctx, workerID, harness, source)
+	if err := config.Validate(); err != nil {
+		err = fmt.Errorf("%w: reviewer config: %w", ErrInvalid, err)
+		s.emit(ctx, "ao.review.trigger_failed", workerID, map[string]any{
+			"error_kind": reviewErrorKind(err),
+			"trigger":    string(source),
+		})
+		return reviewcore.TriggerResult{}, err
+	}
+	result, err := s.engineTrigger(ctx, workerID, harness, config, source)
 	if err != nil {
 		s.emit(ctx, "ao.review.trigger_failed", workerID, map[string]any{
 			"error_kind": reviewErrorKind(err),
@@ -431,14 +442,16 @@ func (s *Service) triggerWithSource(
 	if source == domain.ReviewTriggerAuto && (result.SkipReason != "" || len(result.CreatedRuns) == 0) {
 		return result, nil
 	}
-	// created_runs distinguishes a genuinely new pass from a reuse of a running
-	// or up-to-date one, which the engine also reports as success. harness is the
-	// one actually used, resolved by the engine, not the caller's override, which
-	// may be empty.
+	// created_runs counts brand-new rows, while Created also covers restart flows
+	// that relaunch a pass against an existing row after a reviewer config change.
+	// reused must stay false for those restarts even though created_runs is zero.
+	// harness is the one actually used, resolved by the engine, not the caller's
+	// override, which may be empty.
+	createdOrRestarted := result.Created || len(result.CreatedRuns) > 0
 	s.emit(ctx, "ao.review.triggered", workerID, map[string]any{
 		"harness":      string(result.Run.Harness),
 		"created_runs": len(result.CreatedRuns),
-		"reused":       len(result.CreatedRuns) == 0,
+		"reused":       !createdOrRestarted,
 		"trigger":      string(source),
 	})
 	return result, nil
@@ -477,8 +490,8 @@ func (s *Service) RestoreReviewer(ctx context.Context, workerID domain.SessionID
 
 // SwitchReviewer atomically persists a worker's reviewer preference and returns
 // the authoritative post-switch review state.
-func (s *Service) SwitchReviewer(ctx context.Context, workerID domain.SessionID, harness domain.ReviewerHarness) (reviewcore.SessionReviews, error) {
-	return s.engine.SwitchReviewer(ctx, workerID, harness)
+func (s *Service) SwitchReviewer(ctx context.Context, workerID domain.SessionID, harness domain.ReviewerHarness, config domain.AgentConfig) (reviewcore.SessionReviews, error) {
+	return s.engine.SwitchReviewer(ctx, workerID, harness, config)
 }
 
 // ActivitySignal is reviewer-owned hook metadata. It deliberately does not

@@ -18,14 +18,14 @@ func TestMigrateRepairsRenumberedAgentInventoryHistory(t *testing.T) {
 	upTo(t, db, 118)
 	seedCompletedPlanBeforeFinalization(t, db)
 	applyLegacyCodexProfileMigrations(t, db, []legacyCodexProfileMigration{
-		{version: 119, canonicalPath: "migrations/0121_drop_agent_inventory_cache.sql", legacyName: "drop_agent_inventory_cache.sql"},
+		{version: 119, canonicalPath: "migrations/0122_drop_agent_inventory_cache.sql", legacyName: "drop_agent_inventory_cache.sql"},
 	})
 
 	if err := migrate(db); err != nil {
 		t.Fatalf("migrate database with legacy agent-inventory 0119: %v", err)
 	}
 
-	assertAppliedMigrations(t, db, 119, 120, 121)
+	assertAppliedMigrations(t, db, 119, 120, 121, 122)
 	var status string
 	if err := db.QueryRow(`
 SELECT json_extract(plan_json, '$.steps[0].status')
@@ -80,14 +80,14 @@ INSERT INTO sessions (
 		t.Fatalf("seed local-zone activity timestamp: %v", err)
 	}
 	applyLegacyCodexProfileMigrations(t, db, []legacyCodexProfileMigration{
-		{version: 120, canonicalPath: "migrations/0121_drop_agent_inventory_cache.sql", legacyName: "drop_agent_inventory_cache.sql"},
+		{version: 120, canonicalPath: "migrations/0122_drop_agent_inventory_cache.sql", legacyName: "drop_agent_inventory_cache.sql"},
 	})
 
 	if err := migrate(db); err != nil {
 		t.Fatalf("migrate database with legacy agent-inventory 0120: %v", err)
 	}
 
-	assertAppliedMigrations(t, db, 119, 120, 121)
+	assertAppliedMigrations(t, db, 119, 120, 121, 122)
 	var activityLastAt string
 	if err := db.QueryRow(`
 SELECT CAST(activity_last_at AS TEXT) FROM sessions WHERE id = 'legacy-0120-session'`).Scan(&activityLastAt); err != nil {
@@ -95,6 +95,34 @@ SELECT CAST(activity_last_at AS TEXT) FROM sessions WHERE id = 'legacy-0120-sess
 	}
 	if activityLastAt != "2026-06-28 10:45:08.349363 +0000 UTC" {
 		t.Fatalf("activity_last_at = %q, want canonical UTC", activityLastAt)
+	}
+}
+
+func TestMigrateRepairsAgentInventoryHistoryFromCollidedVersion121(t *testing.T) {
+	db, err := sql.Open("sqlite", "file:"+filepath.Join(t.TempDir(), "ao.db")+pragmas)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	db.SetMaxOpenConns(1)
+	t.Cleanup(func() { _ = db.Close() })
+
+	upTo(t, db, 120)
+	applyLegacyCodexProfileMigrations(t, db, []legacyCodexProfileMigration{
+		{version: 121, canonicalPath: "migrations/0122_drop_agent_inventory_cache.sql", legacyName: "drop_agent_inventory_cache.sql"},
+	})
+
+	if err := migrate(db); err != nil {
+		t.Fatalf("migrate database with legacy agent-inventory 0121: %v", err)
+	}
+
+	assertAppliedMigrations(t, db, 119, 120, 121, 122)
+	var reviewerConfigColumn int
+	if err := db.QueryRow(`
+SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name = 'reviewer_agent_config'`).Scan(&reviewerConfigColumn); err != nil {
+		t.Fatalf("read reviewer agent-config column: %v", err)
+	}
+	if reviewerConfigColumn != 1 {
+		t.Fatalf("reviewer_agent_config columns = %d, want 1", reviewerConfigColumn)
 	}
 }
 
