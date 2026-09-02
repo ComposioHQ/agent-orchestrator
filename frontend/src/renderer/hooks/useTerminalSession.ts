@@ -317,18 +317,31 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 		if (stateRef.current === "exited" || stateRef.current === "error") {
 			return;
 		}
+		const cloud = sessionRef.current?.cloud;
+		// `terminated` is the control plane's final startup verdict, not another
+		// transient disconnect. Retrying tickets against it can never succeed and
+		// leaves the pane saying "reattaching" forever. Preserve the backend's
+		// diagnostic so the user can distinguish a dead workspace from a pause.
+		if (cloud?.runtimeState === "terminated") {
+			setError(
+				cloud.runtimeError?.trim() ||
+					"The cloud workspace was stopped after its worker failed to start.",
+			);
+			transition("error");
+			return;
+		}
 		transition("reattaching");
 		// Parked cloud panes keep their rendered scrollback, but they must not keep
 		// waking an auto-paused remote workspace or competing with the pane the user
 		// is actually viewing. The visibility effect reconnects immediately when the
 		// user returns to this pane.
-		if (sessionRef.current?.cloud && optionsRef.current.isVisible === false) {
+		if (cloud && optionsRef.current.isVisible === false) {
 			return;
 		}
 		// Not ready → no timer; the daemonReady effect reconnects when it flips.
 		// A cloud pane targets its sandbox worker, not the local daemon, so it
 		// keeps retrying on its own backoff regardless of local daemon state.
-		if (!optionsRef.current.daemonReady && !sessionRef.current?.cloud) {
+		if (!optionsRef.current.daemonReady && !cloud) {
 			return;
 		}
 		if (r.retryTimer) {
@@ -338,7 +351,7 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 		// flat (see CLOUD_CONNECT_RETRY_MS). After a real attachment, drops back
 		// to exponential backoff like every other reconnect.
 		const delay =
-			!r.hasAttachedOnce && sessionRef.current?.cloud
+			!r.hasAttachedOnce && cloud
 				? CLOUD_CONNECT_RETRY_MS
 				: Math.min(RETRY_BASE_MS * 2 ** r.attempts, RETRY_MAX_MS);
 		r.attempts += 1;

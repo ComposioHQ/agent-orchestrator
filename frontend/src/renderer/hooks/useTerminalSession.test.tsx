@@ -954,6 +954,28 @@ describe("useTerminalSession", () => {
 		expect(muxes[1].opens).toEqual([["handle-1", 80, 24]]);
 	});
 
+	it("surfaces a terminalized cloud workspace instead of retrying forever", () => {
+		const cloudSession: WorkspaceSession = {
+			...session,
+			cloud: {
+				orgId: "cloud-org",
+				runtimeProvider: "coder",
+				runtimeState: "terminated",
+				runtimeError: "The worker never started and the workspace was stopped.",
+			},
+		};
+		const { view, muxes } = setup({ attachedSession: cloudSession });
+
+		act(() => muxes[0].emitConnection("closed"));
+
+		expect(view.result.current.state).toBe("error");
+		expect(view.result.current.error).toBe(
+			"The worker never started and the workspace was stopped.",
+		);
+		act(() => void vi.advanceTimersByTime(60_000));
+		expect(muxes).toHaveLength(1);
+	});
+
 	it("ignores stale frames after a reconnect starts", () => {
 		const { view, terminal, muxes } = setup();
 		act(() => muxes[0].emitConnection("closed"));
