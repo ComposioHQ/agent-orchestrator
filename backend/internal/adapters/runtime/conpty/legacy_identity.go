@@ -12,7 +12,12 @@ import (
 // cannot be taught a token after they already own a live PTY, so upgrade
 // recovery proves the immutable OS process incarnation and its listener
 // instead. New hosts never use this path.
-const legacyRegistrationWindow = 30 * time.Second
+const (
+	legacyRegistrationWindow = 30 * time.Second
+	// The initial Windows proof may cold-start PowerShell and CIM twice. Keep
+	// this separate from the short loopback STATUS probe deadline.
+	legacyIdentityProofTimeout = 15 * time.Second
+)
 
 type legacyProcessIdentity struct {
 	pid        int
@@ -39,7 +44,7 @@ func (r *Runtime) verifyLegacyHostIdentity(ctx context.Context, sess *hostSessio
 	if err := validateLegacyStatusEnvelope(status); err != nil {
 		return err
 	}
-	verifyCtx, cancel := context.WithTimeout(ctx, isAliveTimeout)
+	verifyCtx, cancel := context.WithTimeout(ctx, legacyIdentityProofTimeout)
 	defer cancel()
 
 	sess.legacyMu.Lock()
@@ -154,6 +159,13 @@ func isAOExecutable(path string) bool {
 	name := strings.ToLower(filepath.Base(strings.TrimSpace(path)))
 	name = strings.TrimSuffix(name, ".exe")
 	return name == "ao" || name == "agent-orchestrator"
+}
+
+// normalizeLinuxProcExecutable removes the exact suffix Linux adds to
+// /proc/<pid>/exe after the running executable has been unlinked. Strip only
+// one trailing kernel marker so lookalike paths remain rejected.
+func normalizeLinuxProcExecutable(path string) string {
+	return strings.TrimSuffix(path, " (deleted)")
 }
 
 func supervisedOwnerFromArgv(argv []string) (sessionID, launchID string, found bool) {

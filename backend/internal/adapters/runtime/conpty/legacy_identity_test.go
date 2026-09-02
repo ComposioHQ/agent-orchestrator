@@ -1,10 +1,78 @@
 package conpty
 
 import (
+	"context"
 	"strings"
 	"testing"
 	"time"
 )
+
+func TestNormalizeLinuxProcExecutable(t *testing.T) {
+	tests := []struct {
+		name       string
+		path       string
+		want       string
+		wantAOExec bool
+	}{
+		{name: "deleted host", path: "/opt/ao (deleted)", want: "/opt/ao", wantAOExec: true},
+		{name: "deleted child supervisor", path: "/opt/agent-orchestrator (deleted)", want: "/opt/agent-orchestrator", wantAOExec: true},
+		{name: "live host", path: "/opt/ao", want: "/opt/ao", wantAOExec: true},
+		{name: "foreign deleted executable", path: "/usr/bin/python (deleted)", want: "/usr/bin/python", wantAOExec: false},
+		{name: "embedded marker", path: "/opt/ao (deleted)/child", want: "/opt/ao (deleted)/child", wantAOExec: false},
+		{name: "trailing whitespace", path: "/opt/ao (deleted) ", want: "/opt/ao (deleted) ", wantAOExec: false},
+		{name: "different case", path: "/opt/ao (Deleted)", want: "/opt/ao (Deleted)", wantAOExec: false},
+		{name: "repeated marker", path: "/opt/ao (deleted) (deleted)", want: "/opt/ao (deleted)", wantAOExec: false},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got := normalizeLinuxProcExecutable(test.path)
+			if got != test.want {
+				t.Fatalf("normalizeLinuxProcExecutable(%q) = %q, want %q", test.path, got, test.want)
+			}
+			if gotAOExec := isAOExecutable(got); gotAOExec != test.wantAOExec {
+				t.Fatalf("isAOExecutable(%q) = %v, want %v", got, gotAOExec, test.wantAOExec)
+			}
+		})
+	}
+}
+
+func TestVerifyLegacyHostIdentityAllowsCollectionBeyondStatusProbeTimeout(t *testing.T) {
+	startedAt := time.Now().Add(-time.Second).UTC()
+	sess := &hostSession{
+		sessionID:    "project-slow-proof",
+		pid:          15287,
+		registeredAt: startedAt.Add(500 * time.Millisecond).Format(time.RFC3339Nano),
+	}
+	status := StatusPayload{Alive: true, PID: 15289, ProtocolVersion: 2}
+	delay := isAliveTimeout + 100*time.Millisecond
+	runtime := &Runtime{
+		legacyCollector: func(ctx context.Context, _ *hostSession, _ StatusPayload) (legacyHostIdentityEvidence, error) {
+			timer := time.NewTimer(delay)
+			defer timer.Stop()
+			select {
+			case <-timer.C:
+				return legacyHostIdentityEvidence{
+					listenerPID: sess.pid,
+					host: legacyProcessIdentity{
+						pid: sess.pid, startedAt: startedAt, executable: "/app/ao",
+						argv: []string{"/app/ao", "pty-host", sess.sessionID, "/workspace", "/bin/zsh"},
+					},
+					child: &legacyProcessIdentity{
+						pid: status.PID, ppid: sess.pid, startedAt: startedAt.Add(time.Millisecond),
+						executable: "/bin/zsh", argv: []string{"/bin/zsh"},
+					},
+				}, nil
+			case <-ctx.Done():
+				return legacyHostIdentityEvidence{}, ctx.Err()
+			}
+		},
+	}
+
+	if err := runtime.verifyLegacyHostIdentity(context.Background(), sess, status); err != nil {
+		t.Fatalf("verifyLegacyHostIdentity after %s collection: %v", delay, err)
+	}
+}
 
 func TestValidateLegacyHostIdentityAcceptsExactShippedProcess(t *testing.T) {
 	startedAt := time.Date(2026, 8, 29, 6, 3, 37, 200_000_000, time.UTC)

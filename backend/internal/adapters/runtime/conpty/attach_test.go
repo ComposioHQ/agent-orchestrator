@@ -15,7 +15,7 @@ import (
 // resolves it without a real Windows spawn.
 func runtimeForFixture(id string, f *serveFixture) *Runtime {
 	r := New(Options{})
-	r.pidIsAlive = func(pid int) bool { return pid == f.pty.PID() }
+	r.pidLiveness = func(pid int) (bool, error) { return pid == f.pty.PID(), nil }
 	r.mu.Lock()
 	r.sessions[id] = &hostSession{
 		sessionID: f.sessionID,

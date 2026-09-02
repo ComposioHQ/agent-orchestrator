@@ -375,7 +375,7 @@ func TestCreate_RegistryFailureRollsBackSpawnedHost(t *testing.T) {
 		Spawner:     spawner,
 		RunFilePath: filepath.Join(instanceDir, "running.json"),
 	})
-	rt.pidIsAlive = func(int) bool { return host == nil || host.running() }
+	rt.pidLiveness = func(int) (bool, error) { return host == nil || host.running(), nil }
 
 	handle, err := rt.Create(context.Background(), ports.RuntimeConfig{
 		SessionID:     "sess-registry-failure",
@@ -462,6 +462,69 @@ func TestCreate_DoesNotSpawnOverExistingRegisteredHost(t *testing.T) {
 	}
 	if spawned {
 		t.Fatal("Create spawned a duplicate over a registered live pty-host")
+	}
+}
+
+func TestPIDProbeFailureFailsRecoveryClosedAndPreventsReplacement(t *testing.T) {
+	isolateRegistry(t)
+	entry := ptyregistry.Entry{
+		SessionID:    "sess-pid-probe",
+		PtyHostPID:   livePID(),
+		PipePath:     "127.0.0.1:1",
+		LaunchID:     "launch-pid-probe",
+		HostToken:    "token-pid-probe",
+		RegisteredAt: time.Now().UTC().Format(time.RFC3339Nano),
+	}
+	if err := ptyregistry.Register(entry); err != nil {
+		t.Fatal(err)
+	}
+	probeFailure := errors.New("injected Windows process-query failure")
+	failedProbe := func(pid int) (bool, error) {
+		if pid != entry.PtyHostPID {
+			t.Fatalf("pid probe = %d, want %d", pid, entry.PtyHostPID)
+		}
+		return false, probeFailure
+	}
+
+	// Startup recovery resolves the exact durable owner before publishing
+	// readiness. An OS-level PID probe failure must stop recovery rather than
+	// report the runtime absent and permit a replacement.
+	recovery := New(Options{})
+	recovery.pidLiveness = failedProbe
+	handle := ports.RuntimeHandle{ID: entry.SessionID}
+	owner := ports.SupervisedProcessRef{SessionID: domain.SessionID(entry.SessionID), LaunchID: entry.LaunchID}
+	resolved, found, err := recovery.ResolveExactRuntimeHandle(context.Background(), handle, owner)
+	if found || resolved.ID != "" || !errors.Is(err, ports.ErrRuntimeProbeInconclusive) || !errors.Is(err, probeFailure) {
+		t.Fatalf("ResolveExactRuntimeHandle() = (%q, %v, %v), want injected inconclusive failure", resolved.ID, found, err)
+	}
+	if alive, err := recovery.IsAlive(context.Background(), handle); alive || !errors.Is(err, ports.ErrRuntimeProbeInconclusive) || !errors.Is(err, probeFailure) {
+		t.Fatalf("IsAlive() = (%v, %v), want injected inconclusive failure", alive, err)
+	}
+
+	spawned := false
+	replacement := New(Options{Spawner: func(context.Context, string, string, []string, map[string]string) (string, int, error) {
+		spawned = true
+		return "", 0, errors.New("must not spawn")
+	}})
+	replacement.pidLiveness = failedProbe
+	if _, err := replacement.Create(context.Background(), ports.RuntimeConfig{
+		SessionID:     domain.SessionID(entry.SessionID),
+		WorkspacePath: "/tmp/workspace",
+		Argv:          []string{"sh"},
+		Env:           map[string]string{runtimeLaunchIDEnv: entry.LaunchID},
+	}); !errors.Is(err, ports.ErrRuntimeProbeInconclusive) || !errors.Is(err, probeFailure) {
+		t.Fatalf("Create() error = %v, want injected inconclusive failure", err)
+	}
+	if spawned {
+		t.Fatal("Create spawned a replacement after an inconclusive PID probe")
+	}
+
+	entries, err := ptyregistry.List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0] != entry {
+		t.Fatalf("registry after inconclusive PID probes = %+v, want unchanged %+v", entries, entry)
 	}
 }
 
@@ -827,7 +890,7 @@ func TestIsAlive_TrueWhileServing_FalseAfterClose(t *testing.T) {
 		Argv:          []string{"sh"},
 	})
 	h := hosts["sess-ia"]
-	rt.pidIsAlive = func(int) bool { return h.running() }
+	rt.pidLiveness = func(int) (bool, error) { return h.running(), nil }
 
 	alive, err := rt.IsAlive(ctx, handle)
 	if err != nil {
@@ -940,7 +1003,7 @@ func TestDestroy_KillsHostAndCleansUp(t *testing.T) {
 		t.Fatalf("Create: %v", err)
 	}
 	h := hosts["sess-destroy"]
-	rt.pidIsAlive = func(int) bool { return h.running() }
+	rt.pidLiveness = func(int) (bool, error) { return h.running(), nil }
 
 	// Destroy should succeed.
 	if err := rt.Destroy(ctx, handle); err != nil {
@@ -981,6 +1044,58 @@ func TestDestroy_KillsHostAndCleansUp(t *testing.T) {
 	// Second Destroy must be idempotent (returns nil).
 	if err := rt.Destroy(ctx, handle); err != nil {
 		t.Fatalf("second Destroy: expected nil, got %v", err)
+	}
+}
+
+func TestDestroy_PIDWaitProbeFailurePreservesRecoveryOwner(t *testing.T) {
+	isolateRegistry(t)
+	hosts := map[string]*inProcHost{}
+	rt := New(Options{Spawner: fakeSpawnerFor(t, hosts, livePID())})
+	handle, err := rt.Create(context.Background(), ports.RuntimeConfig{
+		SessionID:     "sess-destroy-probe",
+		WorkspacePath: "/tmp/workspace",
+		Argv:          []string{"sh"},
+		Env:           map[string]string{runtimeLaunchIDEnv: "launch-destroy-probe"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	host := hosts[handle.ID]
+	t.Cleanup(func() { host.cleanup(t) })
+
+	probeFailure := errors.New("injected Windows wait failure")
+	probeCalls := 0
+	rt.pidLiveness = func(pid int) (bool, error) {
+		if pid != host.pid {
+			t.Fatalf("pid probe = %d, want %d", pid, host.pid)
+		}
+		probeCalls++
+		if probeCalls == 1 {
+			return true, nil // authenticate the exact host before KILL
+		}
+		return false, probeFailure
+	}
+
+	err = rt.Destroy(context.Background(), handle)
+	if !errors.Is(err, ports.ErrRuntimeProbeInconclusive) || !errors.Is(err, probeFailure) {
+		t.Fatalf("Destroy() error = %v, want injected inconclusive PID-wait failure", err)
+	}
+	if probeCalls != 2 {
+		t.Fatalf("pid probe calls = %d, want connect plus first exit check", probeCalls)
+	}
+
+	entries, err := ptyregistry.List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].SessionID != handle.ID {
+		t.Fatalf("registry after inconclusive teardown = %+v, want recovery owner retained", entries)
+	}
+	rt.mu.Lock()
+	retained := rt.sessions[handle.ID]
+	rt.mu.Unlock()
+	if retained == nil {
+		t.Fatal("inconclusive teardown removed the in-memory recovery owner")
 	}
 }
 

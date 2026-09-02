@@ -65,7 +65,7 @@ type Options struct {
 // Runtime is the conpty runtime adapter.
 type Runtime struct {
 	spawner     hostSpawner
-	pidIsAlive  func(int) bool
+	pidLiveness func(int) (bool, error)
 	destroyWait time.Duration
 	destroyPoll time.Duration
 	// The legacy seams perform a one-time OS-level adoption proof for shipped
@@ -86,7 +86,7 @@ func New(opts Options) *Runtime {
 	}
 	return &Runtime{
 		spawner:           sp,
-		pidIsAlive:        pidAlive,
+		pidLiveness:       probePIDLiveness,
 		destroyWait:       2 * time.Second,
 		destroyPoll:       25 * time.Millisecond,
 		legacyCollector:   collectLegacyHostIdentity,
@@ -344,7 +344,11 @@ func (r *Runtime) deleteSession(id string, expected *hostSession) {
 }
 
 func (r *Runtime) waitForPIDExit(ctx context.Context, pid int) (bool, error) {
-	if !r.pidIsAlive(pid) {
+	alive, err := r.probePIDLiveness(pid)
+	if err != nil {
+		return false, err
+	}
+	if !alive {
 		return true, nil
 	}
 	wait := r.destroyWait
@@ -364,13 +368,33 @@ func (r *Runtime) waitForPIDExit(ctx context.Context, pid int) (bool, error) {
 		case <-ctx.Done():
 			return false, ctx.Err()
 		case <-timer.C:
-			return !r.pidIsAlive(pid), nil
+			alive, err := r.probePIDLiveness(pid)
+			if err != nil {
+				return false, err
+			}
+			return !alive, nil
 		case <-ticker.C:
-			if !r.pidIsAlive(pid) {
+			alive, err := r.probePIDLiveness(pid)
+			if err != nil {
+				return false, err
+			}
+			if !alive {
 				return true, nil
 			}
 		}
 	}
+}
+
+func (r *Runtime) probePIDLiveness(pid int) (bool, error) {
+	alive, err := r.pidLiveness(pid)
+	if err != nil {
+		return false, fmt.Errorf(
+			"conpty: probe pty-host pid %d: %w",
+			pid,
+			errors.Join(ports.ErrRuntimeProbeInconclusive, err),
+		)
+	}
+	return alive, nil
 }
 
 // IsAlive distinguishes three outcomes so the reaper never spuriously reaps a
@@ -632,7 +656,11 @@ func (r *Runtime) connectVerifiedHost(ctx context.Context, sess *hostSession, ti
 			ports.ErrRuntimeProbeInconclusive,
 		)
 	}
-	if !r.pidIsAlive(sess.pid) {
+	pidAlive, err := r.probePIDLiveness(sess.pid)
+	if err != nil {
+		return nil, false, err
+	}
+	if !pidAlive {
 		return nil, false, nil
 	}
 	probe, err := clientStatusConnectionContext(ctx, sess.addr, timeout)

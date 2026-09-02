@@ -97,6 +97,7 @@ func linuxLegacyProcessIdentity(ctx context.Context, pid int) (legacyProcessIden
 	if err != nil {
 		return legacyProcessIdentity{}, err
 	}
+	executable = normalizeLinuxProcExecutable(executable)
 	commandLine, err := os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", pid))
 	if err != nil {
 		return legacyProcessIdentity{}, err

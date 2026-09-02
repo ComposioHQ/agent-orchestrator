@@ -79,7 +79,7 @@ func TestDarwinLegacyIdentityExternal(t *testing.T) {
 		registeredAt: os.Getenv("AO_TEST_LEGACY_PTY_REGISTERED_AT"),
 	}
 	runtime := New(Options{})
-	runtime.pidIsAlive = func(candidate int) bool { return candidate == pid }
+	runtime.pidLiveness = func(candidate int) (bool, error) { return candidate == pid, nil }
 	host, alive, err := runtime.connectVerifiedHost(context.Background(), sess, isAliveTimeout)
 	if host != nil {
 		_ = host.conn.Close()
