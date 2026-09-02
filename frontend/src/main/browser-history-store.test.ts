@@ -54,4 +54,16 @@ describe("BrowserHistoryStore", () => {
 		expect(outcome.truncated).toBe(entries.length - outcome.imported);
 		expect(await store.suggest(profileId, "entry 5099")).toEqual([]);
 	});
+
+	it("drains queued fire-and-forget records before shutdown completes", async () => {
+		const stateDir = await temporaryState();
+		const store = new BrowserHistoryStore({ stateDir });
+
+		void store.record(profileId, "https://first.example/", "First", true);
+		void store.record(profileId, "https://second.example/", "Second", true);
+		await store.drain();
+
+		const reloaded = new BrowserHistoryStore({ stateDir });
+		expect(await reloaded.suggest(profileId, "example")).toHaveLength(2);
+	});
 });

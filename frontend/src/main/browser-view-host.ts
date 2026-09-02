@@ -241,6 +241,8 @@ type BrowserWebContents = Pick<
 	session?: Pick<Session, "setPermissionCheckHandler" | "setPermissionRequestHandler" | "webRequest">;
 };
 
+type BrowserElectronSession = NonNullable<BrowserWebContents["session"]>;
+
 const browserScrollbarCSS = (zoomFactor: number): string => {
 	const effectiveZoom = Number.isFinite(zoomFactor) && zoomFactor > 0 ? zoomFactor : 1;
 	const thickness = Number((8 / effectiveZoom).toFixed(3));
@@ -385,8 +387,6 @@ type BrowserSessionEntry = {
 	// Bounded browser diagnostics exposed only through an explicit errors query.
 	signals: {
 		entries: BrowserSignalEntry[];
-		webRequestRegistered: boolean;
-		webRequest?: Session["webRequest"];
 	};
 	devtools?: {
 		contents: BrowserWebContents;
@@ -544,6 +544,10 @@ export function scaleBoundsForZoom(rect: BrowserRect, zoomFactor: number): Brows
 
 export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserViewHost {
 	const entries = new Map<string, BrowserSessionEntry>();
+	const signalWatchers = new Map<
+		BrowserElectronSession,
+		{ viewIds: Set<string>; webRequest: BrowserElectronSession["webRequest"] }
+	>();
 	const shellWebContents = options.shellWebContents ?? options.mainWindow.webContents;
 	if (!shellWebContents) throw new Error("Browser view host requires shell WebContents");
 	const viewIdsBySessionId = new Map<string, string>();
@@ -809,7 +813,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 				profileSwitchTargetId: null,
 				nativeOperationQueue: Promise.resolve(),
 				devtoolsPlacement: DEFAULT_NATIVE_DEVTOOLS_PLACEMENT,
-				signals: { entries: [], webRequestRegistered: false },
+				signals: { entries: [] },
 			};
 			entries.set(viewId, session);
 			viewIdsBySessionId.set(sessionId, viewId);
@@ -880,35 +884,63 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		}
 	};
 
-	// Failed XHR/fetch calls are session-partition-scoped (Electron's webRequest
-	// lives on the Session object, shared by every tab in this browser session),
-	// so this registers once per session rather than once per tab. resourceType
-	// "xhr" is Electron's classification for both real XHR and fetch() — there
-	// is no separate "fetch" resourceType in this Electron version.
+	// Electron reuses one Session for every worker attached to the same named
+	// profile. Register one watcher on that shared object, then route each event
+	// back to the owning AO worker by webContentsId. Never broadcast an event to
+	// every worker sharing the profile.
 	const registerBrowserSignalWatcher = (session: BrowserSessionEntry): void => {
-		if (session.signals.webRequestRegistered) return;
 		const firstTab = session.tabs.values().next().value;
 		const electronSession = firstTab?.view.webContents.session;
 		// Optional in BrowserWebContents (real Electron always provides it; test
 		// doubles that don't care about network-failure signals can omit it).
 		if (!electronSession?.webRequest) return;
-		session.signals.webRequestRegistered = true;
-		session.signals.webRequest = electronSession.webRequest;
+		const existing = signalWatchers.get(electronSession);
+		if (existing) {
+			existing.viewIds.add(session.viewId);
+			return;
+		}
+		const watcher = { viewIds: new Set([session.viewId]), webRequest: electronSession.webRequest };
+		signalWatchers.set(electronSession, watcher);
+		const ownerFor = (webContentsId: number | undefined): BrowserSessionEntry | undefined => {
+			if (typeof webContentsId !== "number") return undefined;
+			const tab = tabsByWebContentsId.get(webContentsId);
+			if (!tab || tab.view.webContents.session !== electronSession) return undefined;
+			const owner = entries.get(tab.state.viewId);
+			if (!owner || !watcher.viewIds.has(owner.viewId) || owner.tabs.get(tab.tabId) !== tab) return undefined;
+			return owner;
+		};
 		const filter = { urls: ["*://*/*"] };
 		electronSession.webRequest.onCompleted(filter, (details) => {
 			if (details.resourceType !== "xhr" || details.statusCode < 400) return;
-			recordBrowserSignal(session, {
+			const owner = ownerFor(details.webContentsId);
+			if (!owner) return;
+			recordBrowserSignal(owner, {
 				kind: "network-failure",
 				message: `${details.method} ${sanitizeBrowserURL(details.url)} → ${details.statusCode}`,
 			});
 		});
 		electronSession.webRequest.onErrorOccurred(filter, (details) => {
 			if (details.resourceType !== "xhr") return;
-			recordBrowserSignal(session, {
+			const owner = ownerFor(details.webContentsId);
+			if (!owner) return;
+			recordBrowserSignal(owner, {
 				kind: "network-failure",
 				message: `${details.method} ${sanitizeBrowserURL(details.url)} failed: ${details.error}`,
 			});
 		});
+	};
+
+	const unregisterBrowserSignalWatcher = (session: BrowserSessionEntry): void => {
+		const firstTab = session.tabs.values().next().value;
+		const electronSession = firstTab?.view.webContents.session;
+		if (!electronSession) return;
+		const watcher = signalWatchers.get(electronSession);
+		if (!watcher) return;
+		watcher.viewIds.delete(session.viewId);
+		if (watcher.viewIds.size > 0) return;
+		watcher.webRequest.onCompleted(null);
+		watcher.webRequest.onErrorOccurred(null);
+		signalWatchers.delete(electronSession);
 	};
 
 	const recordBrowserSignal = (
@@ -1492,9 +1524,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		const session = entries.get(viewId);
 		if (!session) return;
 		session.signals.entries.length = 0;
-		session.signals.webRequest?.onCompleted(null);
-		session.signals.webRequest?.onErrorOccurred(null);
-		session.signals.webRequest = undefined;
+		unregisterBrowserSignalWatcher(session);
 		if (options.mainWindow.isDestroyed?.()) session.devtools = undefined;
 		else destroyDevTools(session);
 		void options.agentBrowserRuntime?.closeSession(session.sessionId);
@@ -1656,6 +1686,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 			bindingChanged = true;
 			assertCurrentSession();
 
+			unregisterBrowserSignalWatcher(session);
 			disposeSessionTabs(session);
 			didTearDown = true;
 			session.profileId = normalizedRequestedProfileId;
@@ -1663,6 +1694,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 				? browserProfilePartition(normalizedRequestedProfileId)
 				: `ao-browser-${randomUUID()}`;
 			await rebuildSessionTabs(session, savedTabs, previousActiveTabId, previousNextTabNumber, assertCurrentSession);
+			registerBrowserSignalWatcher(session);
 			pushTabsState(options, session);
 			pushProfileState(session);
 			pushDevToolsState(session);
@@ -1677,7 +1709,10 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 				}
 			}
 			const sessionIsCurrent = entries.get(viewId) === session;
-			if (sessionIsCurrent && didTearDown && session.tabs.size > 0) disposeSessionTabs(session);
+			if (sessionIsCurrent && didTearDown && session.tabs.size > 0) {
+				unregisterBrowserSignalWatcher(session);
+				disposeSessionTabs(session);
+			}
 			session.profileId = previousProfileId;
 			session.profilePartition = previousPartition;
 			if (sessionIsCurrent && didTearDown) {
@@ -1689,6 +1724,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 						previousNextTabNumber,
 						assertCurrentSession,
 					);
+					registerBrowserSignalWatcher(session);
 					pushTabsState(options, session);
 					pushProfileState(session);
 					pushDevToolsState(session);
@@ -2251,6 +2287,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 				for (const viewId of [...entries.keys()]) {
 					destroy(viewId);
 				}
+				if (options.browserHistoryStore) await options.browserHistoryStore.drain();
 				await options.agentBrowserRuntime?.dispose();
 			})();
 			return disposePromise;

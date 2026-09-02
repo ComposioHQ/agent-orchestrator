@@ -174,6 +174,12 @@ export class BrowserHistoryStore {
 		return queued;
 	}
 
+	async drain(): Promise<void> {
+		while (this.queues.size > 0) {
+			await Promise.all([...this.queues.values()]);
+		}
+	}
+
 	async mergeImportedEntries(
 		profileId: string,
 		imported: BrowserHistoryEntry[],

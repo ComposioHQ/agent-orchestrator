@@ -541,8 +541,19 @@ function setupTabHost(
 	// Populated by tests that need a specific navigation to fail, e.g. a dead
 	// localhost dev server — every view's loadURL checks this shared set.
 	const failNavigationTo = new Set<string>();
-	const makeView = () => {
+	const makeElectronSession = () => ({
+		setPermissionCheckHandler: vi.fn(),
+		setPermissionRequestHandler: vi.fn(),
+		webRequest: {
+			onCompleted: vi.fn(),
+			onErrorOccurred: vi.fn(),
+		},
+	});
+	const electronSessions = new Map<string, ReturnType<typeof makeElectronSession>>();
+	const makeView = (partition: string) => {
 		const viewIndex = views.length;
+		const electronSession = electronSessions.get(partition) ?? makeElectronSession();
+		electronSessions.set(partition, electronSession);
 		let currentURL = "";
 		let windowOpenHandler:
 			| ((details: { url: string }) => {
@@ -601,14 +612,7 @@ function setupTabHost(
 			focus: vi.fn(),
 			openDevTools: vi.fn(),
 			closeDevTools: vi.fn(),
-			session: {
-				setPermissionCheckHandler: vi.fn(),
-				setPermissionRequestHandler: vi.fn(),
-				webRequest: {
-					onCompleted: vi.fn(),
-					onErrorOccurred: vi.fn(),
-				},
-			},
+			session: electronSession,
 			openWindow: (url: string) => {
 				const result = windowOpenHandler?.({ url });
 				if (result?.action === "allow") {
@@ -684,7 +688,7 @@ function setupTabHost(
 		WebContentsView: function (options: { webPreferences: { partition?: string } }) {
 			if (failViewConstruction) throw new Error("browser view startup failed");
 			constructorOptions.push(options);
-			return makeView();
+			return makeView(options.webPreferences.partition ?? "");
 		} as never,
 		annotatePreloadPath: "/preload.js",
 		rendererOrigin: "http://localhost:5173",
@@ -1259,6 +1263,54 @@ describe("browser profile partitions and replacement", () => {
 		const reconstructed = setupTabHost(store);
 		await reconstructed.invoke("browser:ensure", "worker-1");
 		expect(reconstructed.constructorOptions[0]!.webPreferences.partition).toBe(browserProfilePartition(profile.id));
+	});
+
+	it("routes shared-profile request failures only to their owning worker and retains the watcher", async () => {
+		const store = fakeBrowserProfileStore(profile, { "worker-1": profile.id, "worker-2": profile.id });
+		const { host, invoke, views } = setupTabHost(store);
+		const first = (await invoke("browser:ensure", "worker-1")) as BrowserNavState;
+		const second = (await invoke("browser:ensure", "worker-2")) as BrowserNavState;
+		const webRequest = views[0]!.webContents.session.webRequest;
+
+		expect(views[1]!.webContents.session).toBe(views[0]!.webContents.session);
+		expect(webRequest.onCompleted).toHaveBeenCalledTimes(1);
+		const onCompleted = webRequest.onCompleted.mock.calls[0]?.[1] as
+			| ((details: {
+					webContentsId: number;
+					resourceType: string;
+					method: string;
+					url: string;
+					statusCode: number;
+			  }) => void)
+			| undefined;
+		onCompleted?.({
+			webContentsId: views[0]!.webContents.id,
+			resourceType: "xhr",
+			method: "GET",
+			url: "https://first.example.test/api",
+			statusCode: 500,
+		});
+
+		const firstErrors = (await host.execute("worker-1", "errors")) as { messages: unknown[] };
+		const secondErrors = (await host.execute("worker-2", "errors")) as { messages: unknown[] };
+		expect(firstErrors.messages).toHaveLength(1);
+		expect(secondErrors.messages).toHaveLength(0);
+
+		host.destroy(first.viewId);
+		expect(webRequest.onCompleted).not.toHaveBeenCalledWith(null);
+		onCompleted?.({
+			webContentsId: views[1]!.webContents.id,
+			resourceType: "xhr",
+			method: "GET",
+			url: "https://second.example.test/api",
+			statusCode: 503,
+		});
+		const survivingErrors = (await host.execute("worker-2", "errors")) as { messages: unknown[] };
+		expect(survivingErrors.messages).toHaveLength(1);
+
+		host.destroy(second.viewId);
+		expect(webRequest.onCompleted).toHaveBeenLastCalledWith(null);
+		expect(webRequest.onErrorOccurred).toHaveBeenLastCalledWith(null);
 	});
 
 	it("records and suggests history only for an explicitly selected named profile", async () => {
@@ -2000,6 +2052,7 @@ describe("agent browser runtime", () => {
 			);
 			const onCompleted = views[0].webContents.session.webRequest.onCompleted.mock.calls[0]?.[1] as
 				| ((details: {
+						webContentsId: number;
 						resourceType: string;
 						method: string;
 						url: string;
@@ -2007,6 +2060,7 @@ describe("agent browser runtime", () => {
 				  }) => void)
 				| undefined;
 			onCompleted?.({
+				webContentsId: views[0]!.webContents.id,
 				resourceType: "xhr",
 				method: "POST",
 				url: "https://alice:completed-password@example.test/api/data?token=completed-secret#private",
@@ -2014,6 +2068,7 @@ describe("agent browser runtime", () => {
 			});
 			const onErrorOccurred = views[0].webContents.session.webRequest.onErrorOccurred.mock.calls[0]?.[1] as
 				| ((details: {
+						webContentsId: number;
 						resourceType: string;
 						method: string;
 						url: string;
@@ -2021,6 +2076,7 @@ describe("agent browser runtime", () => {
 				  }) => void)
 				| undefined;
 			onErrorOccurred?.({
+				webContentsId: views[0]!.webContents.id,
 				resourceType: "xhr",
 				method: "GET",
 				url: "http://bob:error-password@localhost:3000/api/data?token=request-secret#private",
