@@ -86,6 +86,12 @@ type interfaceTransitionCommander interface {
 	AcknowledgeInterfaceTransitionNotice(context.Context, domain.SessionID, string) (domain.SessionInterfaceTransition, error)
 }
 
+// exitAgentCommander keeps the process-only lifecycle optional for focused
+// service fakes while production delegates to Session Manager.
+type exitAgentCommander interface {
+	ExitAgent(context.Context, domain.SessionID) (domain.SessionRecord, error)
+}
+
 // RollbackOutcome reports what happened in a rollback: either the seed row was
 // deleted, or the partially-spawned session was killed (runtime+workspace torn
 // down, row marked terminated).
@@ -129,6 +135,12 @@ type RestoreOutcome struct {
 type ResumeAgentOutcome struct {
 	Session domain.Session  `json:"session"`
 	Mode    RestoreModeView `json:"resumeMode"`
+}
+
+// ExitAgentOutcome reports the still-live AO session after only its agent
+// controller has exited.
+type ExitAgentOutcome struct {
+	Session domain.Session `json:"session"`
 }
 
 // InterfaceTransitionStatus describes whether this session can cross between
@@ -257,6 +269,11 @@ func (s *Service) spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		}
 		if readiness.Installation.State == domain.AgentInstallationNotInstalled {
 			return domain.Session{}, 0, 0, apierr.Invalid("AGENT_BINARY_NOT_FOUND", "The selected agent harness is not installed", map[string]any{"agentId": cfg.Harness})
+		}
+		if cfg.Harness == domain.HarnessCodex &&
+			readiness.Authentication.State == domain.AgentAuthenticationUnauthorized &&
+			readiness.Authentication.Freshness == domain.AgentReadinessFresh {
+			return domain.Session{}, 0, 0, apierr.Conflict("CODEX_ACCOUNT_AUTH_UNVERIFIED", "Add or sign in to a Codex account in Settings before starting a Codex session", nil)
 		}
 	}
 	start := s.now()
@@ -560,6 +577,25 @@ func (s *Service) Restore(ctx context.Context, id domain.SessionID) (RestoreOutc
 		return RestoreOutcome{}, err
 	}
 	return RestoreOutcome{Session: session, Mode: restoreModeView(res.Mode)}, nil
+}
+
+// ExitAgent stops only the agent controller while preserving the AO session,
+// worktree, terminal identity, and provider-native conversation.
+func (s *Service) ExitAgent(ctx context.Context, id domain.SessionID) (ExitAgentOutcome, error) {
+	manager, ok := s.manager.(exitAgentCommander)
+	if !ok {
+		return ExitAgentOutcome{}, apierr.Conflict(
+			"AGENT_EXIT_UNSUPPORTED", "This build cannot exit an agent independently", nil)
+	}
+	rec, err := manager.ExitAgent(ctx, id)
+	if err != nil {
+		return ExitAgentOutcome{}, toAPIError(err)
+	}
+	session, err := s.toSession(ctx, rec)
+	if err != nil {
+		return ExitAgentOutcome{}, err
+	}
+	return ExitAgentOutcome{Session: session}, nil
 }
 
 // ResumeAgent relaunches an exited agent without restoring a terminated
@@ -985,6 +1021,12 @@ func toAPIError(err error) error {
 	case errors.Is(err, sessionmanager.ErrResumeInProgress):
 		return apierr.Conflict("AGENT_RESUME_IN_PROGRESS",
 			"The agent is already being resumed", nil)
+	case errors.Is(err, sessionmanager.ErrAgentExitInProgress):
+		return apierr.Conflict("AGENT_EXIT_IN_PROGRESS",
+			"The agent is already exiting", nil)
+	case errors.Is(err, ports.ErrCodexAccountSwitchInProgress):
+		return apierr.Conflict("CODEX_ACCOUNT_SWITCH_IN_PROGRESS",
+			"AO is switching the global Codex account; Codex session mutations are temporarily blocked", nil)
 	case errors.Is(err, sessionmanager.ErrInterfaceTransitionInProgress):
 		return apierr.Conflict("INTERFACE_TRANSITION_IN_PROGRESS",
 			"This session is already switching interfaces", nil)

@@ -1242,7 +1242,8 @@ func shellQuote(s string) string {
 }
 
 // buildLaunchCommand builds the shell command string passed to `sh -c`. It
-// exports env vars, runs argv, then keeps the tmux session alive. Supervised
+// exports env vars and runs argv. Short-lived command terminals exit with the
+// command; ordinary interactive runtimes keep the tmux session alive. Supervised
 // launches park on a non-interpreting stdin sink after exit so bytes racing a
 // process exit can never become shell commands; legacy/unsupervised launches
 // retain the interactive-shell fallback used by manual recovery.
@@ -1291,7 +1292,12 @@ func buildLaunchCommand(cfg ports.RuntimeConfig) string {
 		parts[i] = shellQuote(a)
 	}
 	b.WriteString(strings.Join(parts, " "))
-	if cfg.Env["AO_SUPERVISED_PROCESS"] == "1" {
+	if cfg.ExitOnCommandCompletion {
+		// Let the tmux session disappear as soon as its one backend-owned command
+		// completes. The terminal mux then emits `exited`, which drives exact
+		// post-command work such as Codex account verification.
+		b.WriteString(`; exit $?`)
+	} else if cfg.Env["AO_SUPERVISED_PROCESS"] == "1" {
 		// cat consumes and discards any input that arrived while the supervised
 		// child was exiting. Runtime Restart/Destroy replaces or kills the pane.
 		b.WriteString(`; exec cat >/dev/null`)

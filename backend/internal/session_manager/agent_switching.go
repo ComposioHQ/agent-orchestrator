@@ -238,6 +238,9 @@ func (m *Manager) admitAgentSwitch(ctx context.Context, id domain.SessionID, cfg
 	if !ok {
 		return domain.AgentSwitch{}, nil, fmt.Errorf("switch agent %s: %w", id, ErrNotFound)
 	}
+	if (rec.Harness == domain.HarnessCodex || cfg.TargetHarness == domain.HarnessCodex) && m.codexAccountSwitchIsActive() {
+		return domain.AgentSwitch{}, nil, fmt.Errorf("switch agent %s: %w", id, ErrCodexAccountSwitchInProgress)
+	}
 	if rec.IsTerminated {
 		return domain.AgentSwitch{}, nil, fmt.Errorf("switch agent %s: %w", id, ErrTerminated)
 	}
@@ -697,6 +700,15 @@ func (m *Manager) executeAgentSwitch(ctx context.Context, admitted *admittedAgen
 	runtimeCfg := ports.RuntimeConfig{
 		SessionID: id, WorkspacePath: rec.Metadata.WorkspacePath, Argv: target.argv, Env: target.env,
 	}
+	// The post-stop preparation budget may expire while hooks are being
+	// finalized. Controller admission belongs to the durable switch worker, not
+	// that short-lived child context, so target launch and acknowledgement retain
+	// their independent delivery window.
+	releaseCodexAdmission, admissionErr := m.acquireCodexControllerAdmission(workerCtx, target.harness)
+	if admissionErr != nil {
+		return result, fmt.Errorf("switch agent %s: %w", id, admissionErr)
+	}
+	defer releaseCodexAdmission()
 	handle, createErr := m.runtime.Create(ctx, runtimeCfg)
 	if strings.TrimSpace(handle.ID) == "" {
 		// Without an opaque target handle AO cannot safely prove or clean up a

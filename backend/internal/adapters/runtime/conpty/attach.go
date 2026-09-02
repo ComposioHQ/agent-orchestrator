@@ -51,6 +51,14 @@ func (r *Runtime) Attach(ctx context.Context, handle ports.RuntimeHandle, rows, 
 			return nil, err
 		}
 	}
+	// A detached host deliberately survives its child for scrollback. Ask for
+	// the child status on every attach so a pane opened after process exit gets
+	// the same definitive exit signal as a pane that observed the live event.
+	statusFrame, _ := EncodeMessage(MsgStatusReq, nil)
+	if _, err := conn.Write(statusFrame); err != nil {
+		_ = s.Close()
+		return nil, err
+	}
 	return s, nil
 }
 
@@ -68,10 +76,17 @@ type loopbackStream struct {
 // pump reads framed host messages and writes MsgTerminalData payloads into the
 // pipe. It closes the pipe when the connection ends so Read returns EOF.
 func (s *loopbackStream) pump() {
+	processExited := false
 	parser := NewMessageParser(func(msgType byte, payload []byte) {
-		if msgType == MsgTerminalData {
+		switch msgType {
+		case MsgTerminalData:
 			// Write blocks until Read drains, preserving back-pressure and order.
 			_, _ = s.pw.Write(payload)
+		case MsgStatusRes:
+			var status StatusPayload
+			if json.Unmarshal(payload, &status) == nil && !status.Alive {
+				processExited = true
+			}
 		}
 	})
 	buf := make([]byte, 4096)
@@ -79,6 +94,11 @@ func (s *loopbackStream) pump() {
 		n, err := s.conn.Read(buf)
 		if n > 0 {
 			parser.Feed(buf[:n])
+			if processExited {
+				_ = s.conn.Close()
+				_ = s.pw.CloseWithError(ports.ErrRuntimeProcessExited)
+				return
+			}
 		}
 		if err != nil {
 			_ = s.pw.CloseWithError(err)

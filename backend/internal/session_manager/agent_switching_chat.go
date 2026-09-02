@@ -305,6 +305,11 @@ func (m *Manager) executeChatAgentSwitch(
 	}
 	targetLaunchEnv := m.runtimeEnv(id, credentialRecord.ProjectID, credentialRecord.IssueID, project.Config.Env)
 	m.augmentAgentRuntimeEnv(targetAgent, targetLaunchEnv)
+	releaseCodexAdmission, admissionErr := m.acquireCodexControllerAdmission(ctx, cfg.TargetHarness)
+	if admissionErr != nil {
+		return result, fmt.Errorf("switch Chat agent %s: %w", id, admissionErr)
+	}
+	defer releaseCodexAdmission()
 
 	_, err = m.chat.StartChat(ctx, ChatStart{
 		SessionID:               id,
