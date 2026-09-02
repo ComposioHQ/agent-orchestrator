@@ -53,6 +53,8 @@ import { SessionTopbarPortal } from "./SessionTopbarPortal";
 
 type CenterPaneProps = {
 	session?: WorkspaceSession;
+	/** Cloud Chat -> TUI handoffs receive a new PTY/cache generation. */
+	terminalGeneration?: string;
 	theme: Theme;
 	daemonReady: boolean;
 	terminalTarget?: TerminalTarget;
@@ -135,6 +137,7 @@ function initialTerminalFontSize(): number {
 
 export function CenterPane({
 	session,
+	terminalGeneration,
 	theme,
 	daemonReady,
 	terminalTarget,
@@ -707,6 +710,7 @@ export function CenterPane({
 						onChangeFontSize={updateFontSize}
 						onToggleFullscreen={toggleFullscreen}
 						session={session}
+						terminalGeneration={terminalGeneration}
 						terminalTarget={target}
 						theme={theme}
 					/>
