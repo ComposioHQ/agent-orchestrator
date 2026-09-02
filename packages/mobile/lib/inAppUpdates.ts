@@ -127,13 +127,17 @@ export async function openOrStartUpdate(check: StoreCheck | null): Promise<"play
 	return (await openStore(check)) ? "store" : "none";
 }
 
+/** Public App Store listing — the fallback when the version lookup fails. */
+const IOS_APP_STORE_URL = "https://apps.apple.com/app/ao-mobile/id6792552173";
+
 /** Open the store listing. Never rejects; returns whether a URL actually opened. */
 export async function openStore(check: StoreCheck | null): Promise<boolean> {
 	if (Platform.OS === "ios") {
 		// The lookup carries the app's own store page, so there is no id to
-		// configure. Before the listing exists there is no page to send anyone to,
-		// and the build they need is in TestFlight — which `itms-beta://` opens.
-		return check?.storeUrl ? await open(check.storeUrl) : await open("itms-beta://");
+		// configure. The constant is the fallback for when the lookup failed
+		// outright (offline, or the iTunes API is having a day) — the listing is
+		// public, so there is always somewhere real to send people.
+		return await open(check?.storeUrl ?? IOS_APP_STORE_URL);
 	}
 	const pkg = Application.applicationId;
 	if (!pkg) return false;

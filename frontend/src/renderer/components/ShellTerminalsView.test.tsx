@@ -1,6 +1,12 @@
-import { render, screen } from "@testing-library/react";
+import { render as rtlRender, screen } from "@testing-library/react";
+import type { ReactElement } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { ShellTerminalsView } from "./ShellTerminalsView";
+import { TooltipProvider } from "./ui/tooltip";
+
+function render(ui: ReactElement) {
+	return rtlRender(<TooltipProvider>{ui}</TooltipProvider>);
+}
 
 vi.mock("../hooks/useShellTerminals", () => ({
 	useCloseShellTerminal: () => ({ mutate: vi.fn() }),

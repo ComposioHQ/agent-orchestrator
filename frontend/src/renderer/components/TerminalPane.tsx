@@ -39,6 +39,7 @@ import { useCloudCp } from "../hooks/useCloudCp";
 import { createCloudTerminalMux } from "../lib/cloud-terminal-mux";
 import { XtermTerminal } from "./XtermTerminal";
 import { RestoreUnavailableDialog } from "./RestoreUnavailableDialog";
+import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 
 type TerminalPaneProps = {
 	session?: WorkspaceSession;
@@ -1125,16 +1126,22 @@ function TerminalEndedStrip({ canRestore, error, isRestoring, onRestore, variant
 				</div>
 				{error && <div className="max-w-content-max truncate text-xs text-destructive">{error}</div>}
 				{canRestore && (
-					<button
-						type="button"
-						aria-label={t("terminal.restoreSession")}
-						title={t("terminal.restoreSession")}
-						className="inline-flex size-control-form shrink-0 items-center justify-center rounded-md border border-border bg-raised text-foreground transition hover:bg-interactive-hover disabled:cursor-not-allowed disabled:opacity-50"
-						disabled={isRestoring}
-						onClick={onRestore}
-					>
-						<RotateCcw className={cn("size-icon-base", isRestoring && "animate-spin")} aria-hidden="true" />
-					</button>
+					<Tooltip>
+						<TooltipTrigger asChild>
+							<span className="inline-flex">
+								<button
+									type="button"
+									aria-label={t("terminal.restoreSession")}
+									className="inline-flex size-control-form shrink-0 items-center justify-center rounded-md border border-border bg-raised text-foreground transition hover:bg-interactive-hover disabled:cursor-not-allowed disabled:opacity-50"
+									disabled={isRestoring}
+									onClick={onRestore}
+								>
+									<RotateCcw className={cn("size-icon-base", isRestoring && "animate-spin")} aria-hidden="true" />
+								</button>
+							</span>
+						</TooltipTrigger>
+						<TooltipContent side="bottom">{t("terminal.restoreSession")}</TooltipContent>
+					</Tooltip>
 				)}
 			</div>
 		</div>

@@ -522,7 +522,9 @@ func TestResumeUsesPersistedBypassPermissionForCapabilityAdmission(t *testing.T)
 		t.Fatalf("CreateConversation: %v", err)
 	}
 	if err := st.SetConversationSettings(ctx, conversation.ID, domain.ConversationSettings{
-		ApprovalMode: domain.PermissionModeBypassPermissions,
+		Model:           "gpt-5.6-luna",
+		ReasoningEffort: "high",
+		ApprovalMode:    domain.PermissionModeBypassPermissions,
 	}, now); err != nil {
 		t.Fatalf("SetConversationSettings: %v", err)
 	}
@@ -554,6 +556,19 @@ func TestResumeUsesPersistedBypassPermissionForCapabilityAdmission(t *testing.T)
 	}
 	if resumed.Permissions != ports.PermissionModeBypassPermissions {
 		t.Fatalf("resume permissions = %q, want persisted bypass", resumed.Permissions)
+	}
+	if resumed.Model != "gpt-5.6-luna" {
+		t.Fatalf("resume model = %q, want persisted model", resumed.Model)
+	}
+	if resumed.Effort != "high" {
+		t.Fatalf("resume effort = %q, want persisted effort", resumed.Effort)
+	}
+	controller, err := svc.Controller(testSession)
+	if err != nil {
+		t.Fatalf("Controller: %v", err)
+	}
+	if settings := controller.Settings(); settings.Model != "gpt-5.6-luna" || settings.ReasoningEffort != "high" {
+		t.Fatalf("controller settings = %+v, want persisted model and effort", settings)
 	}
 }
 

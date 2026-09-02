@@ -10,6 +10,7 @@
  */
 
 import {
+	type InfiniteData,
 	type QueryClient,
 	useInfiniteQuery,
 	useMutation,
@@ -576,6 +577,41 @@ export function useConversationCommands(sessionId: string | undefined) {
 		onSuccess: invalidate,
 	});
 
+	const reorderQueuedTurns = useMutation({
+		mutationFn: async (turnIds: string[]) => {
+			const { error } = await apiClient.POST(
+				"/api/v1/sessions/{sessionId}/conversation/queue/reorder",
+				{
+					params: {
+						path: { sessionId: sessionId as string },
+					},
+					body: { turnIds },
+				},
+			);
+			if (error) throw new Error(apiErrorMessage(error, "Could not reorder queued messages"));
+		},
+		onMutate: async (turnIds) => {
+			if (!sessionId) return;
+			const queryKey = conversationQueryKey(sessionId);
+			await queryClient.cancelQueries({ queryKey });
+			const previous = queryClient.getQueryData<InfiniteData<ConversationSnapshot>>(queryKey);
+			if (previous) {
+				queryClient.setQueryData<InfiniteData<ConversationSnapshot>>(
+					queryKey,
+					applyQueuedTurnOrderToPages(previous, turnIds),
+				);
+			}
+			return { previous };
+		},
+		onError: (_error, _turnIds, context) => {
+			if (!sessionId || !context?.previous) return;
+			queryClient.setQueryData(conversationQueryKey(sessionId), context.previous);
+		},
+		onSettled: () => {
+			invalidate();
+		},
+	});
+
 	/**
 	 * Restart the tool servers.
 	 *
@@ -823,6 +859,10 @@ export function useConversationCommands(sessionId: string | undefined) {
 		editQueuedTurn: (turnId: string, text: string) => {
 			if (!sessionId) return Promise.reject(new Error("No conversation session is selected."));
 			return editQueuedTurn.mutateAsync({ turnId, text });
+		},
+		reorderQueuedTurns: (turnIds: string[]) => {
+			if (!sessionId) return Promise.reject(new Error("No conversation session is selected."));
+			return reorderQueuedTurns.mutateAsync(turnIds);
 		},
 		promoteQueuedTurnPendingTurnId: promoteQueuedTurn.isPending
 			? promoteQueuedTurn.variables
@@ -1234,6 +1274,48 @@ function toSnapshot(wire: WireSnapshot): ConversationSnapshot {
 			rolledBack: turn.rolledBack ?? undefined,
 		})),
 		items,
+	};
+}
+
+function applyQueuedTurnOrder(
+	snapshot: ConversationSnapshot,
+	fifoTurnIds: readonly string[],
+): ConversationSnapshot {
+	const queuedTurns = snapshot.turns.filter((turn) => turn.state === "queued");
+	if (queuedTurns.length !== fifoTurnIds.length) return snapshot;
+
+	const queuedById = new Map(queuedTurns.map((turn) => [turn.id, turn]));
+	const requestedAts = [...queuedTurns]
+		.sort((left, right) => left.requestedAt.localeCompare(right.requestedAt))
+		.map((turn) => turn.requestedAt);
+	const reorderedQueued = fifoTurnIds.flatMap((turnId, index) => {
+		const turn = queuedById.get(turnId);
+		return turn
+			? [{ ...turn, requestedAt: requestedAts[index] ?? turn.requestedAt }]
+			: [];
+	});
+	if (reorderedQueued.length !== queuedTurns.length) return snapshot;
+
+	const queuedIds = new Set(fifoTurnIds);
+	const otherTurns = snapshot.turns.filter((turn) => !queuedIds.has(turn.id));
+	return {
+		...snapshot,
+		turns: [...otherTurns, ...reorderedQueued].sort((left, right) =>
+			left.requestedAt.localeCompare(right.requestedAt),
+		),
+	};
+}
+
+function applyQueuedTurnOrderToPages(
+	data: InfiniteData<ConversationSnapshot>,
+	fifoTurnIds: readonly string[],
+): InfiniteData<ConversationSnapshot> {
+	if (data.pages.length === 0) return data;
+	return {
+		...data,
+		pages: data.pages.map((page, index) =>
+			index === 0 ? applyQueuedTurnOrder(page, fifoTurnIds) : page,
+		),
 	};
 }
 

@@ -888,6 +888,24 @@ WHERE conversation_messages.conversation_id = ?
         AND conversation_turns.promotion_started_at IS NULL
   );
 
+-- Current queue order for reorder validation and timestamp permutation.
+-- name: SelectQueuedConversationTurnOrder :many
+SELECT id, requested_at
+FROM conversation_turns
+WHERE conversation_id = ?
+  AND state = 'queued'
+  AND promotion_started_at IS NULL
+ORDER BY requested_at, rowid;
+
+-- Reassign one queued turn's dispatch position without changing its state.
+-- name: UpdateQueuedConversationTurnRequestedAt :execrows
+UPDATE conversation_turns
+SET requested_at = ?
+WHERE id = ?
+  AND conversation_id = ?
+  AND state = 'queued'
+  AND promotion_started_at IS NULL;
+
 -- name: InsertConversationMessage :exec
 INSERT INTO conversation_messages (
     id, conversation_id, turn_id, sequence, revision, role, origin,

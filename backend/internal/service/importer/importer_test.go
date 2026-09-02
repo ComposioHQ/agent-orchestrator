@@ -95,6 +95,9 @@ func TestValidateProjectImportReadyRepositoryContinues(t *testing.T) {
 	if !result.Root.IsRepo || !result.Root.HasCommit || !result.Root.HasOrigin || len(result.Root.RequiredActions) != 0 {
 		t.Fatalf("root status = %#v, want ready git repo", result.Root)
 	}
+	if result.Warning != "" {
+		t.Fatalf("warning = %q, want none", result.Warning)
+	}
 }
 
 func TestValidateProjectImportPlainFolderNeedsPreparation(t *testing.T) {
@@ -133,6 +136,24 @@ func TestValidateProjectImportMissingPathReturnsBlockingError(t *testing.T) {
 	}
 }
 
+func TestValidateProjectImportFilePathReturnsBlockingError(t *testing.T) {
+	ctx := context.Background()
+	file := filepath.Join(t.TempDir(), "not-a-directory")
+	if err := os.WriteFile(file, []byte("not a directory"), 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+	svc := New(Deps{Store: newFakeStore()})
+
+	result, err := svc.Validate(ctx, ImportValidationInput{ImportKind: ImportKindProject, Path: file})
+	if err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	if result.IsValid || result.NextStep != ImportNextStepError {
+		t.Fatalf("result = %#v, want invalid error", result)
+	}
+	wantActions(t, result.BlockingErrors, []string{"PATH_NOT_DIRECTORY"})
+}
+
 func TestValidateProjectImportUnbornRepositoryNeedsCommitAndRemote(t *testing.T) {
 	ctx := context.Background()
 	repo := filepath.Join(t.TempDir(), "repo")
@@ -149,6 +170,22 @@ func TestValidateProjectImportUnbornRepositoryNeedsCommitAndRemote(t *testing.T)
 		t.Fatalf("result = %#v, want unborn repo needing preparation", result)
 	}
 	wantActions(t, result.Root.RequiredActions, []string{GitPreparationActionCommit, GitPreparationActionSetRemote})
+}
+
+func TestValidateProjectImportRepositoryWithCommitNoOriginNeedsRemote(t *testing.T) {
+	ctx := context.Background()
+	repo := filepath.Join(t.TempDir(), "repo")
+	gitRepoWithCommitNoOrigin(t, repo)
+	svc := New(Deps{Store: newFakeStore()})
+
+	result, err := svc.Validate(ctx, ImportValidationInput{ImportKind: ImportKindProject, Path: repo})
+	if err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	if !result.IsValid || result.NextStep != ImportNextStepPrepareGit || !result.Root.IsRepo || !result.Root.HasCommit || result.Root.HasOrigin {
+		t.Fatalf("result = %#v, want committed repo needing origin", result)
+	}
+	wantActions(t, result.Root.RequiredActions, []string{GitPreparationActionSetRemote})
 }
 
 func TestValidateProjectImportParentWithChildReposChoosesImportKind(t *testing.T) {
@@ -170,6 +207,54 @@ func TestValidateProjectImportParentWithChildReposChoosesImportKind(t *testing.T
 	}
 	if _, err := os.Stat(filepath.Join(root, ".git")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("Validate mutated parent git metadata: %v", err)
+	}
+	if result.Warning != "" {
+		t.Fatalf("warning = %q, want none when import kind must still be chosen", result.Warning)
+	}
+}
+
+func TestValidateProjectImportRootWithOriginAndChildReposWarnsProjectImport(t *testing.T) {
+	ctx := context.Background()
+	root := gitRepoWithOrigin(t)
+	child := filepath.Join(root, "child")
+	gitRepoWithCommitNoOrigin(t, child)
+	svc := New(Deps{Store: newFakeStore()})
+
+	result, err := svc.Validate(ctx, ImportValidationInput{ImportKind: ImportKindProject, Path: root})
+	if err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	if !result.IsValid || result.NextStep != ImportNextStepContinue {
+		t.Fatalf("result = %#v, want valid continue", result)
+	}
+	if len(result.ChildRepos) != 1 || result.ChildRepos[0].RepoPath != child {
+		t.Fatalf("childRepos = %#v, want direct child repo", result.ChildRepos)
+	}
+	if result.Warning == "" {
+		t.Fatal("warning = empty, want project import warning")
+	}
+	if got, want := result.Warning, "Selected folder has direct child repositories, but because the root repository already has an origin remote AO will import it as a project, not a workspace."; got != want {
+		t.Fatalf("warning = %q, want %q", got, want)
+	}
+}
+
+func TestValidateProjectImportRootWithoutOriginAndChildReposDoesNotWarn(t *testing.T) {
+	ctx := context.Background()
+	root := filepath.Join(t.TempDir(), "repo")
+	gitRepoWithCommitNoOrigin(t, root)
+	child := filepath.Join(root, "child")
+	gitRepoWithCommitNoOrigin(t, child)
+	svc := New(Deps{Store: newFakeStore()})
+
+	result, err := svc.Validate(ctx, ImportValidationInput{ImportKind: ImportKindProject, Path: root})
+	if err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	if !result.IsValid || result.NextStep != ImportNextStepPrepareGit {
+		t.Fatalf("result = %#v, want prepare_git", result)
+	}
+	if result.Warning != "" {
+		t.Fatalf("warning = %q, want none without root origin", result.Warning)
 	}
 }
 

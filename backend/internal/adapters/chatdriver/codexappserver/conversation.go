@@ -288,6 +288,7 @@ func applyTurnSettings(params map[string]any, settings ports.ChatTurnSettings) {
 		// rather than assumed to be interchangeable.
 		policy, sandbox := approvalSettings(settings.Approval)
 		params["approvalPolicy"] = policy
+		params["approvalsReviewer"] = approvalReviewer(settings.Approval)
 		params["sandboxPolicy"] = turnSandboxPolicy(sandbox)
 	}
 }

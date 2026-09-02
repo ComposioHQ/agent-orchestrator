@@ -2,6 +2,7 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ShellTerminal } from "../hooks/useShellTerminals";
 import { ShellTerminalTab } from "./ShellTerminalTab";
+import { TooltipProvider } from "./ui/tooltip";
 
 const { isWindowsPlatform } = vi.hoisted(() => ({ isWindowsPlatform: vi.fn(() => false) }));
 vi.mock("../lib/platform", () => ({ isWindowsPlatform }));
@@ -21,14 +22,16 @@ function renderTab(overrides: Partial<Parameters<typeof ShellTerminalTab>[0]> = 
 	const onClose = vi.fn();
 	const onRename = vi.fn();
 	render(
-		<ShellTerminalTab
-			isActive={false}
-			onClose={onClose}
-			onRename={onRename}
-			onSelect={onSelect}
-			shell={shell}
-			{...overrides}
-		/>,
+		<TooltipProvider>
+			<ShellTerminalTab
+				isActive={false}
+				onClose={onClose}
+				onRename={onRename}
+				onSelect={onSelect}
+				shell={shell}
+				{...overrides}
+			/>
+		</TooltipProvider>,
 	);
 	return { onSelect, onClose, onRename };
 }

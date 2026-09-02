@@ -104,7 +104,9 @@ type ImportValidationResult struct {
 	BlockingErrors []string        `json:"blockingErrors"`
 	Root           RepoGitStatus   `json:"root"`
 	ChildRepos     []RepoGitStatus `json:"childRepos,omitempty"`
-	NextStep       string          `json:"nextStep" enum:"error,choose_import_kind,prepare_git,continue"`
+	// Warning is advisory UI copy for non-blocking classification details.
+	Warning  string `json:"warning,omitempty"`
+	NextStep string `json:"nextStep" enum:"error,choose_import_kind,prepare_git,continue"`
 }
 
 // GitPreparationEvent reports one state transition for a requested Git action.
@@ -215,16 +217,21 @@ func (m *Manager) Validate(ctx context.Context, in ImportValidationInput) (Impor
 		}
 		return result, nil
 	}
+	children, scanErr := directChildImportRepos(ctx, path)
+	if scanErr != nil {
+		return invalidImportResult(importKind, path, "CHILD_REPO_SCAN_FAILED"), nil //nolint:nilerr // validation failures are reported in-band so the UI can show blocking errors
+	}
+	if len(children) > 0 {
+		result.ChildRepos = children
+	}
 	if !root.IsRepo {
-		children, scanErr := directChildImportRepos(ctx, path)
-		if scanErr != nil {
-			return invalidImportResult(importKind, path, "CHILD_REPO_SCAN_FAILED"), nil //nolint:nilerr // validation failures are reported in-band so the UI can show blocking errors
-		}
 		if len(children) > 0 {
-			result.ChildRepos = children
 			result.NextStep = ImportNextStepChooseImportKind
 			return result, nil
 		}
+	}
+	if root.HasOrigin && len(children) > 0 {
+		result.Warning = "Selected folder has direct child repositories, but because the root repository already has an origin remote AO will import it as a project, not a workspace."
 	}
 	if len(root.RequiredActions) > 0 {
 		result.NextStep = ImportNextStepPrepareGit

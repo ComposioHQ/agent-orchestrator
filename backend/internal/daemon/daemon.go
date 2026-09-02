@@ -285,6 +285,8 @@ func Run() error {
 		NewID:    uuid.NewString,
 	})
 
+	agentSvc := agentsvc.NewWithDeps(agentsvc.Deps{Cache: store, Discoverer: modelcatalog.Discoverer{}, Projects: store, Sessions: store, Context: ctx, Logger: log})
+
 	// Build the multi-tracker dispatching to both GitHub and GitLab once,
 	// shared between the session service and the intake observer below.
 	// Env-configured tokens are validated eagerly here; CLI credential probing
@@ -293,7 +295,7 @@ func Run() error {
 	// nil-guard and the intake resolver's backoff both tolerate that
 	// (issue #2685).
 	tracker := newMultiTracker(cfg.GitLab, log)
-	sessionSvc, reviewSvc, sessMgr, err := startSession(ctx, cfg, runtimeAdapter, store, lcStack.LCM, messenger, telemetrySink, agents, managedPreview, browserBroker, browserAuthority, chatLauncher{svc: chatSvc}, settingsSvc, tracker, log)
+	sessionSvc, reviewSvc, sessMgr, err := startSession(ctx, cfg, runtimeAdapter, store, lcStack.LCM, messenger, telemetrySink, agents, agentSvc, managedPreview, browserBroker, browserAuthority, chatLauncher{svc: chatSvc}, settingsSvc, tracker, log)
 	if err != nil {
 		stop()
 		lcStack.Stop()
@@ -322,10 +324,18 @@ func Run() error {
 	}
 	lcStack.trackerDone = startTrackerIntake(ctx, store, sessionSvc, tracker, log)
 
-	agentSvc := agentsvc.NewWithDeps(agentsvc.Deps{Cache: store, InventoryCache: store, Discoverer: modelcatalog.Discoverer{}, Projects: store, Sessions: store})
 	hostCommands := systemexec.Adapter{}
 	systemChecks := systemcheck.New(agentSvc, hostCommands)
 	systemInstall := systeminstall.New(hostCommands, hostCommands)
+	systemInstall.SetOnSucceeded(func(target systeminstall.Target) {
+		harness, ok := installedAgentHarness(target)
+		if !ok {
+			return
+		}
+		agentSvc.InvalidateAgentInstallation(harness)
+		agentSvc.RecheckAgent(harness)
+	})
+	agentSvc.WarmReadiness()
 
 	// Connect Mobile: the bridge service needs the LAN listener, but the LAN
 	// listener needs the built router's handler, which only exists once srv is
@@ -689,6 +699,21 @@ func Run() error {
 		log.Error("cdc pipeline shutdown", "err", err)
 	}
 	return runErr
+}
+
+func installedAgentHarness(target systeminstall.Target) (string, bool) {
+	switch target {
+	case systeminstall.TargetClaude:
+		return "claude-code", true
+	case systeminstall.TargetCodex:
+		return "codex", true
+	case systeminstall.TargetOpencode:
+		return "opencode", true
+	case systeminstall.TargetCopilot:
+		return "copilot", true
+	default:
+		return "", false
+	}
 }
 
 func usagePipelineWatchRoots(roots usagesvc.SourceRoots) []string {

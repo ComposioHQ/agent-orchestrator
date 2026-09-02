@@ -71,6 +71,12 @@ export type WorkspaceSession = {
 	provider: AgentProvider;
 	/** Reviewer selected for this session; absent means use the project default. */
 	reviewerHarness?: ReviewerHarnessId;
+	/** Per-session reviewer override, including hidden fields preserved across saves. */
+	reviewerConfig?: {
+		model?: string;
+		mode?: string;
+		permissions?: string;
+	};
 	/** Whether the daemon may automatically review this session after it becomes idle. */
 	autoReviewEnabled?: boolean;
 	kind?: SessionKind;
