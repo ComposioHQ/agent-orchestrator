@@ -162,7 +162,7 @@ func TestDiscovererReturnsStaticClaudeCatalogWithoutTerminal(t *testing.T) {
 		t.Fatalf("catalog = %#v", got)
 	}
 	wantIDs := map[string]bool{
-		"opus[1m]": true, "claude-fable-5-1[1m]": true, "sonnet": true, "haiku": true,
+		"sonnet": true, "claude-fable-5-1": true, "opus": true, "haiku": true, "opus[1m]": true,
 	}
 	if len(got.Models) != len(wantIDs) {
 		t.Fatalf("models = %#v, want %d entries", got.Models, len(wantIDs))

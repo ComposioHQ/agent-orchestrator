@@ -167,10 +167,11 @@ func (d Discoverer) Discover(ctx context.Context, request ports.AgentModelDiscov
 // real list; refresh this snapshot when the advertised models change.
 func claudeCodeModels() []ports.AgentModelInfo {
 	return []ports.AgentModelInfo{
-		{ID: "opus[1m]", Label: "Opus (1M context)"},
-		{ID: "claude-fable-5-1[1m]", Label: "Fable"},
 		{ID: "sonnet", Label: "Sonnet"},
+		{ID: "claude-fable-5-1", Label: "Fable"},
+		{ID: "opus", Label: "Opus"},
 		{ID: "haiku", Label: "Haiku"},
+		{ID: "opus[1m]", Label: "Opus (1M context)"},
 	}
 }
 
