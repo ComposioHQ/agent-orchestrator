@@ -492,23 +492,25 @@ export function BrowserPanelView({
 		};
 	}, [cancelPicking, enqueue, viewId]);
 
+	const navigateFromAddressBar = (url: string) => {
+		urlInputRef.current?.blur();
+		setUrlEditing(false);
+		setUrlInput(url);
+		setHistorySuggestions([]);
+		void navigate(url);
+	};
+
 	const submit = (event: FormEvent<HTMLFormElement>) => {
 		event.preventDefault();
 		const nextURL = urlInput.trim();
-		if (nextURL) {
-			setUrlEditing(false);
-			setHistorySuggestions([]);
-			void navigate(nextURL);
-		}
+		if (nextURL) navigateFromAddressBar(nextURL);
 	};
 
 	const handleURLChange = (value: string) => {
 		setUrlInput(value);
 		const selected = historySuggestions.find((suggestion) => suggestion.url === value.trim());
 		if (!selected) return;
-		setUrlEditing(false);
-		setHistorySuggestions([]);
-		void navigate(selected.url);
+		navigateFromAddressBar(selected.url);
 	};
 
 	const endUrlEditing = () => {

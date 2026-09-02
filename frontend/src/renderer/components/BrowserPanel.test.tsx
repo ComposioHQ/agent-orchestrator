@@ -254,6 +254,22 @@ describe("BrowserPanel", () => {
 		await userEvent.type(input, "localhost:5173{Enter}");
 
 		expect(hookState.navigate).toHaveBeenCalledWith("localhost:5173");
+		expect(input).not.toHaveFocus();
+	});
+
+	it("supports consecutive address-bar navigations after refocusing", async () => {
+		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
+		const input = screen.getByRole("textbox", { name: /browser url/i });
+
+		await userEvent.clear(input);
+		await userEvent.type(input, "first.example{Enter}");
+		await userEvent.click(input);
+		await userEvent.clear(input);
+		await userEvent.type(input, "second.example{Enter}");
+
+		expect(hookState.navigate).toHaveBeenNthCalledWith(1, "first.example");
+		expect(hookState.navigate).toHaveBeenNthCalledWith(2, "second.example");
+		expect(input).not.toHaveFocus();
 	});
 
 	it("shows imported history through native address-bar suggestions without adding an overlay", async () => {
@@ -282,6 +298,7 @@ describe("BrowserPanel", () => {
 
 		fireEvent.change(input, { target: { value: "https://github.com/openai" } });
 		expect(hookState.navigate).toHaveBeenCalledWith("https://github.com/openai");
+		expect(input).not.toHaveFocus();
 		expect(document.querySelector("datalist option")).toBeNull();
 	});
 
