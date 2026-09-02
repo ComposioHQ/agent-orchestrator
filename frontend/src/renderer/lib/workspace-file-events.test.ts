@@ -165,6 +165,33 @@ describe("subscribeWorkspaceFileChanges", () => {
 		unsubscribe();
 	});
 
+	it("does not let the browser's own retries inflate the scheduled delay", () => {
+		vi.useFakeTimers();
+		vi.spyOn(Math, "random").mockReturnValue(0.5);
+		const unsubscribe = subscribeWorkspaceFileChanges("sess-native", fakeQueryClient());
+
+		// readyState CONNECTING means the browser is retrying by itself; those
+		// errors drive the degraded label but are not rebuilds we scheduled, so
+		// they must not advance the backoff exponent.
+		const source = EventSourceStub.instances.at(-1)!;
+		for (let i = 0; i < 10; i += 1) {
+			source.readyState = 0;
+			source.onerror?.();
+		}
+		expect(EventSourceStub.instances).toHaveLength(1);
+
+		// The first failure we actually schedule a retry for must still wait the
+		// initial delay, not the 60s ceiling.
+		source.readyState = 2;
+		source.onerror?.();
+		const firstRetryMs = computeSseRetryDelayMs(1, () => 0.5);
+		vi.advanceTimersByTime(firstRetryMs - 1);
+		expect(EventSourceStub.instances).toHaveLength(1);
+		vi.advanceTimersByTime(1);
+		expect(EventSourceStub.instances).toHaveLength(2);
+		unsubscribe();
+	});
+
 	it("drops back to the initial delay once the stream opens again", () => {
 		vi.useFakeTimers();
 		vi.spyOn(Math, "random").mockReturnValue(0.5);

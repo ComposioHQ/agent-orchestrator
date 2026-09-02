@@ -14,6 +14,12 @@ type WorkspaceStream = {
 	phase: ConnectionPhase;
 	generation: number;
 	failures: number;
+	/**
+	 * Scheduled rebuilds since the last successful open. Distinct from
+	 * `failures`, which also counts the browser's own non-terminal retries and
+	 * so would inflate the backoff exponent past what we actually retried.
+	 */
+	retries: number;
 	source?: EventSource;
 	sourceBaseUrl?: string;
 	debounce?: ReturnType<typeof setTimeout>;
@@ -86,10 +92,8 @@ function createWorkspaceStream(sessionId: string, queryClient: QueryClient): Wor
 	const scheduleRetry = (generation: number) => {
 		if (stream.disposed || stream.retry) return;
 		stream.phase = "waiting";
-		// stream.failures counts consecutive failures since the last successful
-		// open (reset in onopen), so the delay grows only while the stream is
-		// actually broken.
-		const delay = computeSseRetryDelayMs(stream.failures);
+		stream.retries += 1;
+		const delay = computeSseRetryDelayMs(stream.retries);
 		stream.retry = setTimeout(() => {
 			stream.retry = undefined;
 			if (stream.disposed || generation !== stream.generation) return;
@@ -119,6 +123,7 @@ function createWorkspaceStream(sessionId: string, queryClient: QueryClient): Wor
 	stream.phase = "idle";
 	stream.generation = 0;
 	stream.failures = 0;
+	stream.retries = 0;
 	setWorkspaceFileConnectionState(sessionId, "connecting");
 	stream.ensureConnected = () => {
 		if (stream.disposed) return;
@@ -135,6 +140,7 @@ function createWorkspaceStream(sessionId: string, queryClient: QueryClient): Wor
 		if (stream.sourceBaseUrl && stream.sourceBaseUrl !== baseUrl) {
 			resetConnection();
 			stream.failures = 0;
+			stream.retries = 0;
 			setWorkspaceFileConnectionState(sessionId, "connecting");
 		}
 		if (stream.phase !== "idle") return;
@@ -151,6 +157,7 @@ function createWorkspaceStream(sessionId: string, queryClient: QueryClient): Wor
 				if (stream.disposed || generation !== stream.generation || stream.source !== source) return;
 				stream.phase = "open";
 				stream.failures = 0;
+				stream.retries = 0;
 				setWorkspaceFileConnectionState(sessionId, "connected");
 				invalidate();
 			};

@@ -132,18 +132,18 @@ export function createEventTransport(queryClient: QueryClient): EventTransport {
 				}, INVALIDATE_DEBOUNCE_MS);
 			};
 
-			// Consecutive rebuilds since the stream last opened. Paces the retry
-			// so a daemon that keeps refusing the stream is not hammered on a
-			// flat cadence (#4323).
-			let failures = 0;
+			// Consecutive scheduled rebuilds since the stream last opened. Paces
+			// the retry so a daemon that keeps refusing the stream is not
+			// hammered on a flat cadence (#4323).
+			let retries = 0;
 
 			const scheduleRetry = () => {
 				if (retryTimer) return;
-				failures += 1;
+				retries += 1;
 				retryTimer = setTimeout(() => {
 					retryTimer = undefined;
 					connectSource();
-				}, computeSseRetryDelayMs(failures));
+				}, computeSseRetryDelayMs(retries));
 			};
 
 			const connectSource = () => {
@@ -160,13 +160,17 @@ export function createEventTransport(queryClient: QueryClient): EventTransport {
 				// Keep a still-usable source on the same base URL; replace one the
 				// browser abandoned (CLOSED) or one bound to a stale port.
 				if (source && sourceBaseUrl === baseUrl && source.readyState !== EVENTSOURCE_CLOSED) return;
+				// A daemon that came back on a different port is a fresh target, not
+				// a continuation of the dead one: do not make it serve the delay the
+				// old port earned.
+				if (sourceBaseUrl && sourceBaseUrl !== baseUrl) retries = 0;
 				source?.close();
 				source = undefined;
 				sourceBaseUrl = baseUrl;
 				try {
 					source = new EventSource(`${baseUrl.replace(/\/+$/, "")}/api/v1/events`);
 					source.onopen = () => {
-						failures = 0;
+						retries = 0;
 						setEventsConnectionState("connected");
 						// Events emitted during the gap were lost; refetch once on (re)open.
 						refreshWorkspaces();

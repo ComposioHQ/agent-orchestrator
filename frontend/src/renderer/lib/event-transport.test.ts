@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { computeSseRetryDelayMs } from "./sse-backoff";
 
 const {
 	onStatusMock,
@@ -111,6 +112,38 @@ describe("createEventTransport", () => {
 		expect(first.closed).toBe(true);
 		expect(EventSourceStub.instances).toHaveLength(2);
 		expect(EventSourceStub.instances[1].url).toBe("http://127.0.0.1:3099/api/v1/events");
+	});
+
+	it("does not make a new daemon port serve the dead port's backoff delay", () => {
+		vi.useFakeTimers();
+		vi.spyOn(Math, "random").mockReturnValue(0.5);
+		createEventTransport(fakeQueryClient()).connect();
+		const onStatusHandler = onStatusMock.mock.calls[0][0] as () => void;
+
+		// Fail the old port repeatedly so the delay grows well past the initial step.
+		for (let failure = 1; failure <= 4; failure += 1) {
+			const source = EventSourceStub.instances.at(-1)!;
+			source.readyState = 2;
+			source.onerror?.();
+			vi.advanceTimersByTime(computeSseRetryDelayMs(failure, () => 0.5));
+		}
+		const beforeMove = EventSourceStub.instances.length;
+
+		// The daemon comes back on a different port: a fresh target.
+		getApiBaseUrlMock.mockReturnValue("http://127.0.0.1:3099");
+		onStatusHandler();
+		expect(EventSourceStub.instances).toHaveLength(beforeMove + 1);
+
+		const moved = EventSourceStub.instances.at(-1)!;
+		moved.readyState = 2;
+		moved.onerror?.();
+		const firstRetryMs = computeSseRetryDelayMs(1, () => 0.5);
+		const beforeRetry = EventSourceStub.instances.length;
+		vi.advanceTimersByTime(firstRetryMs - 1);
+		expect(EventSourceStub.instances).toHaveLength(beforeRetry);
+		vi.advanceTimersByTime(1);
+		expect(EventSourceStub.instances).toHaveLength(beforeRetry + 1);
+		vi.useRealTimers();
 	});
 
 	it("closes the source and skips reconnecting when the base URL is untrusted", () => {

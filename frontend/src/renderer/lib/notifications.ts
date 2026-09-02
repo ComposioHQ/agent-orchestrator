@@ -296,30 +296,33 @@ export function createNotificationsTransport(
 				void queryClient.invalidateQueries({ queryKey: recentNotificationsQueryKey });
 			};
 
-			// Consecutive rebuilds since the stream last opened; paces the retry
-			// instead of knocking on a flat cadence forever (#4323).
-			let failures = 0;
+			// Consecutive scheduled rebuilds since the stream last opened; paces
+			// the retry instead of knocking on a flat cadence forever (#4323).
+			let retries = 0;
 
 			const scheduleRetry = () => {
 				if (retryTimer) return;
-				failures += 1;
+				retries += 1;
 				retryTimer = setTimeout(() => {
 					retryTimer = undefined;
 					connectSource();
-				}, computeSseRetryDelayMs(failures));
+				}, computeSseRetryDelayMs(retries));
 			};
 
 			const connectSource = () => {
 				if (typeof EventSource === "undefined") return;
 				const baseUrl = getApiBaseUrl();
 				if (source && sourceBaseUrl === baseUrl && source.readyState !== EVENTSOURCE_CLOSED) return;
+				// A new daemon port is a fresh target; it should not inherit the
+				// delay the dead port earned.
+				if (sourceBaseUrl && sourceBaseUrl !== baseUrl) retries = 0;
 				source?.close();
 				source = undefined;
 				sourceBaseUrl = baseUrl;
 				try {
 					source = new EventSource(`${baseUrl.replace(/\/+$/, "")}/api/v1/notifications/stream`);
 					source.onopen = () => {
-						failures = 0;
+						retries = 0;
 						invalidateNotifications();
 					};
 					source.onerror = () => {
