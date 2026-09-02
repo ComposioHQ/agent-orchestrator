@@ -372,7 +372,7 @@ export function ProjectSetupFormView({
 				</div>
 			)}
 
-			<div className="border-t border-border pt-5">{intakeControl}</div>
+			<div className="pt-5">{intakeControl}</div>
 
 			{setupNotice && (
 				<div className="rounded-lg border border-[var(--color-border-agents-sheet)] bg-[var(--color-bg-agents-sheet-control)]/80 px-3 py-2.5 text-xs leading-body-md text-[var(--color-text-agents-sheet-description)]">
