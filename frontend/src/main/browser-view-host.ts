@@ -1648,30 +1648,34 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 			setAgentBrowserActivity(session, action, true, commandId, "started");
 			try {
 				const entry = activeEntry(session);
-			const runNative = async (nativeAction: string, nativeArgs: Record<string, unknown> = {}) => {
-				if (!options.agentBrowserRuntime) {
-					throw browserError("BROWSER_AUTOMATION_UNAVAILABLE", "Browser automation runtime is unavailable");
-				}
-				return queueNativeOperation(session, async () => {
-					await ensureNativeActiveTab(session, signal);
-					await activeEntry(session).ready;
-					const result = await options.agentBrowserRuntime!.runAction(
-						sessionId,
-						nativeAction,
-						nativeArgs,
-						agentBrowserTargets(session),
-						signal,
-					);
-					if (nativeAction === "tab-select" && typeof nativeArgs.tabId === "string") {
-						session.nativeActiveTabId = nativeArgs.tabId;
+				const runNative = async (
+					nativeAction: string,
+					nativeArgs: Record<string, unknown> = {},
+					nativeSignal: AbortSignal | undefined = signal,
+				) => {
+					if (!options.agentBrowserRuntime) {
+						throw browserError("BROWSER_AUTOMATION_UNAVAILABLE", "Browser automation runtime is unavailable");
 					}
-					if (nativeAction === "tab-new" || nativeAction === "tab-close") {
-						session.nativeActiveTabId = undefined;
-					}
-					if (nativeAction.startsWith("tab-")) await ensureNativeActiveTab(session, signal);
-					return result;
-				});
-			};
+					return queueNativeOperation(session, async () => {
+						await ensureNativeActiveTab(session, nativeSignal);
+						await activeEntry(session).ready;
+						const result = await options.agentBrowserRuntime!.runAction(
+							sessionId,
+							nativeAction,
+							nativeArgs,
+							agentBrowserTargets(session),
+							nativeSignal,
+						);
+						if (nativeAction === "tab-select" && typeof nativeArgs.tabId === "string") {
+							session.nativeActiveTabId = nativeArgs.tabId;
+						}
+						if (nativeAction === "tab-new" || nativeAction === "tab-close") {
+							session.nativeActiveTabId = undefined;
+						}
+						if (nativeAction.startsWith("tab-")) await ensureNativeActiveTab(session, nativeSignal);
+						return result;
+					});
+				};
 			switch (action) {
 				case "open": {
 					const url = stringArg(args, "url", "URL_REQUIRED", "url is required");
@@ -1730,16 +1734,35 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 							navigationGeneration: actionEntry.navigationGeneration,
 							blockedNavigationGeneration: actionEntry.blockedNavigationGeneration,
 						};
+						// URL/text expectations can already be true before the input is
+						// dispatched. Capture that fact first so an immediately successful
+						// native wait is not misreported as an application effect caused by
+						// this action.
+						const postconditionWasSatisfied = postcondition
+							? await actionPostconditionSatisfiedBeforeDispatch(postcondition, actionEntry, runNative)
+							: false;
 						const result = await runNative(verb, nativeArgsForRef(candidate.ref));
 						inputWasDispatched = true;
 						const observed = postcondition
-							? await observeActionPostcondition(postcondition, actionEntry, generations, beforeSnapshot, runNative, signal)
+							? await observeActionPostcondition(
+									postcondition,
+									session,
+									actionEntry,
+									generations,
+									beforeSnapshot,
+									postconditionWasSatisfied,
+									result,
+									runNative,
+									signal,
+								)
 							: undefined;
+						const resultEntry = activeEntry(session);
 						const navigation =
-							actionEntry.blockedNavigationGeneration > generations.blockedNavigationGeneration
-								? { status: "cancelled", reason: "beforeunload" }
-								: actionEntry.navigationGeneration > generations.navigationGeneration
-									? { status: "observed" }
+							resultEntry.tabId !== actionEntry.tabId ||
+							actionEntry.navigationGeneration > generations.navigationGeneration
+								? { status: "observed" }
+								: actionEntry.blockedNavigationGeneration > generations.blockedNavigationGeneration
+									? { status: "cancelled", reason: "beforeunload" }
 									: { status: "not-observed" };
 						return {
 							// "matched" remains element-resolution status. inputDispatched and
@@ -1750,7 +1773,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 							result,
 							inputDispatched: true,
 							before,
-							after: actionFacts(actionEntry),
+							after: actionFacts(resultEntry),
 							navigation,
 							...(observed ? { postcondition: observed } : {}),
 							retried,
@@ -2068,6 +2091,10 @@ function isAgentBrowserCommandFailure(error: unknown): boolean {
 	return Boolean(error && typeof error === "object" && "code" in error && error.code === "AGENT_BROWSER_COMMAND_FAILED");
 }
 
+function isAgentBrowserWaitTimeout(error: unknown): boolean {
+	return Boolean(error && typeof error === "object" && "code" in error && error.code === "AGENT_BROWSER_WAIT_TIMEOUT");
+}
+
 // The `{ref[, text]}`-shaped action family "act" can resolve a target for and
 // then perform, matching every case in the switch above that only ever needs a
 // ref (or a ref plus text). "drag" (needs two independently-matched targets)
@@ -2081,6 +2108,15 @@ type ActionPostcondition = {
 	value?: string;
 	timeoutMs: number;
 };
+
+type ActionNativeRunner = (
+	action: string,
+	args?: Record<string, unknown>,
+	signal?: AbortSignal,
+) => Promise<Record<string, unknown>>;
+
+const ACTION_POSTCONDITION_POLL_INTERVAL_MS = 200;
+const ACTION_OBSERVATION_DEADLINE = Symbol("action-observation-deadline");
 
 function actionFacts(entry: BrowserEntry): Record<string, unknown> {
 	return {
@@ -2105,11 +2141,20 @@ function actionPostcondition(args: Record<string, unknown>): ActionPostcondition
 	if ((kind === "url" || kind === "text") && !value) {
 		throw browserError("INVALID_ARGUMENT", `postcondition ${kind} requires value`);
 	}
-	const requestedTimeout = typeof raw.timeoutMs === "number" && Number.isFinite(raw.timeoutMs) ? raw.timeoutMs : 10_000;
+	if (
+		raw.timeoutMs !== undefined &&
+		(typeof raw.timeoutMs !== "number" ||
+			!Number.isInteger(raw.timeoutMs) ||
+			raw.timeoutMs < 1 ||
+			raw.timeoutMs > 55_000)
+	) {
+		throw browserError("INVALID_ARGUMENT", "postcondition.timeoutMs must be an integer between 1 and 55000");
+	}
+	const requestedTimeout = typeof raw.timeoutMs === "number" ? raw.timeoutMs : 10_000;
 	return {
 		kind: kind as ActionPostcondition["kind"],
 		...(value !== undefined ? { value } : {}),
-		timeoutMs: Math.max(1, Math.min(55_000, Math.trunc(requestedTimeout))),
+		timeoutMs: requestedTimeout,
 	};
 }
 
@@ -2129,28 +2174,124 @@ function waitForActionPoll(signal: AbortSignal | undefined, timeoutMs: number): 
 	});
 }
 
-async function observeActionPostcondition(
+async function actionPostconditionSatisfiedBeforeDispatch(
 	postcondition: ActionPostcondition,
 	entry: BrowserEntry,
+	runNative: ActionNativeRunner,
+): Promise<boolean> {
+	if (postcondition.kind === "url") {
+		return entry.view.webContents.getURL().includes(postcondition.value!);
+	}
+	if (postcondition.kind !== "text") return false;
+	const result = await runNative("get", { property: "text" });
+	const text = typeof result.text === "string" ? result.text : typeof result.value === "string" ? result.value : undefined;
+	if (text === undefined) {
+		throw browserError("BROWSER_AUTOMATION_INVALID_OUTPUT", "Browser text output was invalid");
+	}
+	return text.includes(postcondition.value!);
+}
+
+async function runActionObservationUntil(
+	deadline: number,
+	runNative: ActionNativeRunner,
+	action: string,
+	args: Record<string, unknown>,
+	signal?: AbortSignal,
+): Promise<Record<string, unknown> | typeof ACTION_OBSERVATION_DEADLINE> {
+	throwIfAborted(signal);
+	const remaining = deadline - Date.now();
+	if (remaining <= 0) return ACTION_OBSERVATION_DEADLINE;
+
+	const controller = new AbortController();
+	let deadlineReached = false;
+	let timeout: ReturnType<typeof setTimeout> | undefined;
+	let rejectExternalAbort: ((error: unknown) => void) | undefined;
+	const externalAbort = new Promise<never>((_resolve, reject) => {
+		rejectExternalAbort = reject;
+	});
+	const onExternalAbort = () => {
+		controller.abort();
+		rejectExternalAbort?.(browserError("BROWSER_COMMAND_CANCELED", "Browser command was canceled"));
+	};
+	signal?.addEventListener("abort", onExternalAbort, { once: true });
+	// AbortSignal does not replay an abort that raced with listener
+	// registration. Close that narrow gap before starting provider I/O.
+	if (signal?.aborted) {
+		signal.removeEventListener("abort", onExternalAbort);
+		throw browserError("BROWSER_COMMAND_CANCELED", "Browser command was canceled");
+	}
+
+	const operation = runNative(action, args, controller.signal);
+	const internalDeadline = new Promise<typeof ACTION_OBSERVATION_DEADLINE>((resolve) => {
+		timeout = setTimeout(() => {
+			deadlineReached = true;
+			controller.abort();
+			resolve(ACTION_OBSERVATION_DEADLINE);
+		}, remaining);
+	});
+
+	try {
+		return await Promise.race([operation, internalDeadline, externalAbort]);
+	} catch (error) {
+		if (signal?.aborted) throw browserError("BROWSER_COMMAND_CANCELED", "Browser command was canceled");
+		if (deadlineReached) return ACTION_OBSERVATION_DEADLINE;
+		throw error;
+	} finally {
+		if (timeout) clearTimeout(timeout);
+		signal?.removeEventListener("abort", onExternalAbort);
+		// A provider that ignores cancellation must not produce an unhandled
+		// rejection after the bounded caller has already returned. The real native
+		// runner kills its process on this signal; this catch is the defensive edge.
+		void operation.catch(() => undefined);
+	}
+}
+
+async function observeActionPostcondition(
+	postcondition: ActionPostcondition,
+	session: BrowserSessionEntry,
+	sourceEntry: BrowserEntry,
 	before: { documentGeneration: number; navigationGeneration: number; blockedNavigationGeneration: number },
 	beforeSnapshot: string,
-	runNative: (action: string, args?: Record<string, unknown>) => Promise<Record<string, unknown>>,
+	wasSatisfiedBeforeDispatch: boolean,
+	actionResult: Record<string, unknown>,
+	runNative: ActionNativeRunner,
 	signal?: AbortSignal,
 ): Promise<Record<string, unknown>> {
 	const deadline = Date.now() + postcondition.timeoutMs;
-	const cancelledNavigation = () => entry.blockedNavigationGeneration > before.blockedNavigationGeneration;
-	const satisfiedNavigation = () => entry.navigationGeneration > before.navigationGeneration;
+	const activeTabChanged = () => activeEntry(session).tabId !== sourceEntry.tabId;
+	const satisfiedNavigation = () =>
+		activeTabChanged() || sourceEntry.navigationGeneration > before.navigationGeneration;
+	const cancelledNavigation = () =>
+		!satisfiedNavigation() && sourceEntry.blockedNavigationGeneration > before.blockedNavigationGeneration;
+	const correlatedPageEffect = () =>
+		satisfiedNavigation() || sourceEntry.documentGeneration > before.documentGeneration;
 
 	if (postcondition.kind === "url" || postcondition.kind === "text") {
+		if (wasSatisfiedBeforeDispatch && !correlatedPageEffect()) {
+			return {
+				status: "already-satisfied",
+				kind: postcondition.kind,
+				expected: postcondition.value,
+				reason: "pre-existing",
+			};
+		}
 		try {
-			await runNative("wait", {
+			const result = await runActionObservationUntil(deadline, runNative, "wait", {
 				[postcondition.kind]: postcondition.value,
-				timeoutMs: postcondition.timeoutMs,
-			});
+				timeoutMs: Math.max(1, deadline - Date.now()),
+			}, signal);
+			if (result === ACTION_OBSERVATION_DEADLINE) {
+				return {
+					status: cancelledNavigation() ? "cancelled" : "unmet",
+					kind: postcondition.kind,
+					expected: postcondition.value,
+					reason: cancelledNavigation() ? "beforeunload" : "timeout",
+				};
+			}
 			return { status: "satisfied", kind: postcondition.kind, expected: postcondition.value };
 		} catch (error) {
 			throwIfAborted(signal);
-			if (!isAgentBrowserCommandFailure(error)) throw error;
+			if (!isAgentBrowserWaitTimeout(error)) throw error;
 			return {
 				status: cancelledNavigation() ? "cancelled" : "unmet",
 				kind: postcondition.kind,
@@ -2159,45 +2300,57 @@ async function observeActionPostcondition(
 			};
 		}
 	}
+	if (postcondition.kind === "dialog" && actionResult.dialogOpened === true) {
+		return { status: "satisfied", kind: postcondition.kind };
+	}
 
 	for (;;) {
 		throwIfAborted(signal);
-		if (cancelledNavigation()) {
-			return { status: "cancelled", kind: postcondition.kind, reason: "beforeunload" };
-		}
 		if (postcondition.kind === "navigation" && satisfiedNavigation()) {
 			return { status: "satisfied", kind: postcondition.kind };
 		}
+		if (cancelledNavigation()) {
+			return { status: "cancelled", kind: postcondition.kind, reason: "beforeunload" };
+		}
 		if (postcondition.kind === "dom-change") {
-			if (entry.documentGeneration > before.documentGeneration) {
+			if (sourceEntry.documentGeneration > before.documentGeneration) {
 				return { status: "satisfied", kind: postcondition.kind };
 			}
-			try {
-				// Compare like-for-like with act's interactive baseline. A full-page
-				// snapshot would differ even when the DOM had not changed.
-				const snapshot = await runNative("snapshot", { interactive: true });
-				if (typeof snapshot.snapshot === "string" && snapshot.snapshot !== beforeSnapshot) {
-					return { status: "satisfied", kind: postcondition.kind };
-				}
-			} catch (error) {
-				throwIfAborted(signal);
-				if (!isAgentBrowserCommandFailure(error)) throw error;
+			// Compare like-for-like with act's interactive baseline. A full-page
+			// snapshot would differ even when the DOM had not changed. Each process-
+			// backed observation receives only the remaining postcondition budget.
+			const snapshot = await runActionObservationUntil(
+				deadline,
+				runNative,
+				"snapshot",
+				{ interactive: true },
+				signal,
+			);
+			if (snapshot === ACTION_OBSERVATION_DEADLINE) {
+				return { status: "unmet", kind: postcondition.kind, reason: "timeout" };
+			}
+			if (typeof snapshot.snapshot === "string" && snapshot.snapshot !== beforeSnapshot) {
+				return { status: "satisfied", kind: postcondition.kind };
 			}
 		}
 		if (postcondition.kind === "dialog") {
-			try {
-				const dialog = await runNative("dialog", { operation: "status" });
-				if (dialog.open === true || dialog.isOpen === true || typeof dialog.type === "string") {
-					return { status: "satisfied", kind: postcondition.kind, dialog };
-				}
-			} catch (error) {
-				throwIfAborted(signal);
-				if (!isAgentBrowserCommandFailure(error)) throw error;
+			const dialog = await runActionObservationUntil(
+				deadline,
+				runNative,
+				"dialog",
+				{ operation: "status" },
+				signal,
+			);
+			if (dialog === ACTION_OBSERVATION_DEADLINE) {
+				return { status: "unmet", kind: postcondition.kind, reason: "timeout" };
+			}
+			if (dialog.open === true || dialog.isOpen === true || typeof dialog.type === "string") {
+				return { status: "satisfied", kind: postcondition.kind, dialog };
 			}
 		}
 		const remaining = deadline - Date.now();
 		if (remaining <= 0) return { status: "unmet", kind: postcondition.kind, reason: "timeout" };
-		await waitForActionPoll(signal, Math.min(25, remaining));
+		await waitForActionPoll(signal, Math.min(ACTION_POSTCONDITION_POLL_INTERVAL_MS, remaining));
 	}
 }
 
@@ -2336,7 +2489,10 @@ function wireNavEvents(
 		if (isActive()) syncActiveBounds();
 		update();
 	});
-	contents.on("did-navigate-in-page", () => {
+	contents.on("did-navigate-in-page", (_event, _url, isMainFrame) => {
+		// Subframe hash/history changes are not application-level navigation for
+		// the action postcondition contract.
+		if (isMainFrame === false) return;
 		entry.navigationGeneration += 1;
 		update();
 	});

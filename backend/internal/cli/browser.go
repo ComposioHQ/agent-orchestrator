@@ -150,7 +150,7 @@ func newBrowserCommand(ctx *commandContext) *cobra.Command {
 	act.Flags().IntVar(&actNth, "nth", 0, "0-based index to disambiguate when multiple candidates match equally")
 	act.Flags().StringVar(&actExpectURL, "expect-url", "", "wait for a URL containing this value after dispatch")
 	act.Flags().StringVar(&actExpectText, "expect-text", "", "wait for this page text after dispatch")
-	act.Flags().BoolVar(&actExpectDialog, "expect-dialog", false, "wait for a JavaScript dialog after dispatch")
+	act.Flags().BoolVar(&actExpectDialog, "expect-dialog", false, "wait for a pending confirm or prompt dialog after dispatch")
 	act.Flags().BoolVar(&actExpectNavigation, "expect-navigation", false, "wait for a main-frame or in-page navigation after dispatch")
 	act.Flags().BoolVar(&actExpectDOMChange, "expect-dom-change", false, "wait for the accessibility snapshot to change after dispatch")
 	act.Flags().IntVar(&actPostconditionTimeout, "postcondition-timeout", 10_000, "postcondition timeout in milliseconds")

@@ -53,9 +53,15 @@ Element references such as `e1` are short-lived. After navigation or a substanti
 does **not** prove the application accepted the action. For consequential
 controls, request one postcondition with `--expect-url`, `--expect-text`,
 `--expect-dialog`, `--expect-navigation`, or `--expect-dom-change`. The result
-then reports `satisfied`, `unmet`, or `cancelled` separately and includes the
-before/after URL and document/navigation generations. AO never retries merely
+then reports `satisfied`, `already-satisfied`, `unmet`, or `cancelled`
+separately and includes the before/after URL and document/navigation
+generations. `already-satisfied` means the requested URL or text existed before
+dispatch, so it cannot be attributed to this action. AO never retries merely
 because an application postcondition is unknown or unmet.
+
+`--expect-dialog` observes pending `confirm` and `prompt` dialogs. Chromium
+auto-handles alerts and `beforeunload`; guarded navigation is reported through
+`--expect-navigation` as `cancelled (beforeunload)` when the page remains.
 
 - Matched: AO resolved the element and dispatched `--action`; inspect the
   postcondition result when one was requested.
