@@ -315,12 +315,14 @@ INSERT INTO agent_switches (
 	}
 
 	wantObjects := map[string]string{
-		"idx_agent_switches_one_active_per_session": "WHERE state NOT IN ('completed', 'failed')",
-		"idx_agent_switches_session_history":        "requested_at DESC, id DESC",
-		"agent_switches_target_native_scope_insert": "scope mismatch",
-		"agent_switches_target_native_scope_update": "scope mismatch",
-		"agent_switches_cdc_insert":                 "json_object('id', NEW.session_id)",
-		"agent_switches_cdc_update":                 "json_object('id', NEW.session_id)",
+		"idx_agent_switches_one_active_per_session":    "WHERE state NOT IN ('completed', 'failed')",
+		"idx_agent_switches_session_history":           "requested_at DESC, id DESC",
+		"agent_switches_target_native_scope_insert":    "scope mismatch",
+		"agent_switches_target_native_scope_update":    "scope mismatch",
+		"agent_switches_cdc_insert":                    "json_object('id', NEW.session_id)",
+		"agent_switches_cdc_update":                    "json_object('id', NEW.session_id)",
+		"agent_switches_failed_recovery_marker_insert": "recovery marker requires a nonterminal state",
+		"agent_switches_failed_recovery_marker_update": "recovery marker requires a nonterminal state",
 	}
 	for name, fragment := range wantObjects {
 		var definition string
