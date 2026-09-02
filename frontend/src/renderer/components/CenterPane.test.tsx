@@ -128,6 +128,7 @@ const worker = {
 	updatedAt: "2026-06-10T00:00:00Z",
 	activity: { state: "active", lastActivityAt: "2026-06-10T00:00:00Z" },
 	prs: [],
+	host: "local",
 } satisfies WorkspaceSession;
 
 function switchRecord(overrides: Partial<AgentSwitch> = {}): AgentSwitch {
@@ -291,6 +292,7 @@ describe("CenterPane toolbar session label", () => {
 			...worker,
 			provider: "codex",
 			terminalHandleId: "settled-target-terminal",
+			host: "local",
 		} satisfies WorkspaceSession;
 		agentSwitchMocks.switches.push(switchRecord({ state: "completed" }));
 		agentSwitchMocks.mutation.input = {
@@ -392,6 +394,7 @@ describe("CenterPane toolbar session label", () => {
 			...worker,
 			activeAgentSwitch: requestedSwitch,
 			activity: { state: "waiting_input", lastActivityAt: "2026-06-10T00:00:02Z" },
+			host: "local",
 		} satisfies WorkspaceSession;
 		const view = renderCenterPane({
 			onSelectSessionTerminal,

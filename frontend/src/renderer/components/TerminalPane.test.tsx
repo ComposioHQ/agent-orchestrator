@@ -56,6 +56,25 @@ vi.mock("../lib/api-client", () => ({
 	apiErrorMessage: (_error: unknown, fallback: string) => fallback,
 }));
 
+// clientFor(LOCAL_HOST) is the client apiClient already was, so the local
+// host resolves to the same fake the api-client mock installs.
+vi.mock("../lib/host-clients", () => ({
+	baseUrlFor: () => "http://127.0.0.1:3001",
+	connectedHosts: (() => {
+		const hosts: string[] = [];
+		return () => hosts;
+	})(),
+	subscribeConnectedHosts: () => () => undefined,
+	isHostReady: () => true,
+	clientFor: () => ({
+		GET: (
+			path: string,
+			options: { params?: { path?: { sessionId?: string } } },
+		) => getMock(path, options),
+		POST: (...args: unknown[]) => postMock(...args),
+	}),
+}));
+
 vi.mock("./XtermTerminal", () => ({
 	XtermTerminal: (props: {
 		onLinkOpen?: (uri: string) => void;
@@ -115,6 +134,7 @@ const worker = {
 	status: "working",
 	updatedAt: "2026-06-10T00:00:00Z",
 	prs: [],
+	host: "local",
 } satisfies WorkspaceSession;
 
 const orchestrator = {
@@ -122,6 +142,7 @@ const orchestrator = {
 	id: "sess-orch",
 	title: "orchestrate",
 	kind: "orchestrator",
+	host: "local",
 } satisfies WorkspaceSession;
 
 beforeEach(() => {
@@ -651,6 +672,7 @@ describe("terminal restore", () => {
 			...worker,
 			status: "terminated",
 			terminalHandleId: "term-1",
+			host: "local",
 		} satisfies WorkspaceSession;
 		const view = renderCachedPane({ session: terminated, sessions: [terminated] });
 		try {

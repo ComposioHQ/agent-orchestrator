@@ -1,19 +1,16 @@
 import { useNavigate } from "@tanstack/react-router";
 import { useCallback } from "react";
 
-export function useNavigateToSession(): (projectId: string | undefined, sessionId: string) => void {
+import type { Ref } from "./hosts";
+export function useNavigateToSession(): (session: Ref) => void {
 	const navigate = useNavigate();
 	return useCallback(
-		(projectId: string | undefined, sessionId: string) => {
-			if (!sessionId) return;
-			if (projectId) {
-				void navigate({
-					to: "/projects/$projectId/sessions/$sessionId",
-					params: { projectId, sessionId },
-				});
-				return;
-			}
-			void navigate({ to: "/sessions/$sessionId", params: { sessionId } });
+		(session: Ref) => {
+			if (!session.id) return;
+			void navigate({
+				to: "/host/$hostId/session/$sessionId",
+				params: { hostId: session.host, sessionId: session.id },
+			});
 		},
 		[navigate],
 	);

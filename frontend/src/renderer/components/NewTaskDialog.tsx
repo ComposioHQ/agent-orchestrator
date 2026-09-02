@@ -1,15 +1,16 @@
 import * as Dialog from "@radix-ui/react-dialog";
+import type { Ref } from "../lib/hosts";
 import { useTranslation } from "react-i18next";
 import { TaskComposer } from "./TaskComposer";
 
 type NewTaskDialogProps = {
 	open: boolean;
-	projectId?: string;
+	project?: Ref;
 	onCreated: (sessionId: string) => void;
 	onOpenChange: (open: boolean) => void;
 };
 
-export function NewTaskDialog({ open, projectId, onCreated, onOpenChange }: NewTaskDialogProps) {
+export function NewTaskDialog({ open, project, onCreated, onOpenChange }: NewTaskDialogProps) {
 	const { t } = useTranslation();
 	return (
 		<Dialog.Root open={open} onOpenChange={onOpenChange}>
@@ -21,7 +22,7 @@ export function NewTaskDialog({ open, projectId, onCreated, onOpenChange }: NewT
 					<Dialog.Title className="settings-dialog-title px-4 pt-3">{t("newTask.title")}</Dialog.Title>
 					<Dialog.Description className="sr-only">{t("newTask.description")}</Dialog.Description>
 					<TaskComposer
-						projectId={projectId}
+						project={project}
 						autoFocusTitle
 						onCreated={(sessionId) => {
 							onCreated(sessionId);

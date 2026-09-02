@@ -1,20 +1,21 @@
 import type { QueryClient } from "@tanstack/react-query";
+import type { Ref } from "./hosts";
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import type { SessionMode } from "../types/conversation";
 import { OrchestratorSpawnError, spawnOrchestrator } from "./spawn-orchestrator";
 import type { OrchestratorReplacementFailure } from "../stores/ui-store";
 
 type NavigateToSession = (options: {
-	to: "/projects/$projectId/sessions/$sessionId";
-	params: { projectId: string; sessionId: string };
+	to: "/host/$hostId/session/$sessionId";
+	params: { hostId: string; sessionId: string };
 }) => unknown;
 
 type RestartProjectOrchestratorOptions = {
-	projectId: string;
+	project: Ref;
 	queryClient: QueryClient;
 	navigate: NavigateToSession;
 	setProjectRestarting: (projectId: string, restarting: boolean) => void;
-	setOrchestratorReplacementError: (projectId: string, failure: OrchestratorReplacementFailure | null) => void;
+	setOrchestratorReplacementError: (project: Ref, failure: OrchestratorReplacementFailure | null) => void;
 	onError?: (error: unknown) => void;
 	mode?: SessionMode;
 };
@@ -29,7 +30,7 @@ async function refreshWorkspaceState(queryClient: QueryClient) {
 }
 
 export async function restartProjectOrchestrator({
-	projectId,
+	project,
 	queryClient,
 	navigate,
 	setProjectRestarting,
@@ -37,18 +38,18 @@ export async function restartProjectOrchestrator({
 	onError,
 	mode,
 }: RestartProjectOrchestratorOptions) {
-	setProjectRestarting(projectId, true);
-	setOrchestratorReplacementError(projectId, null);
+	setProjectRestarting(project.id, true);
+	setOrchestratorReplacementError(project, null);
 	try {
-		const sessionId = await spawnOrchestrator(projectId, "restart", true, mode);
+		const sessionId = await spawnOrchestrator(project.id, "restart", true, mode);
 		await refreshWorkspaceState(queryClient);
 		void navigate({
-			to: "/projects/$projectId/sessions/$sessionId",
-			params: { projectId, sessionId },
+			to: "/host/$hostId/session/$sessionId",
+			params: { hostId: project.host, sessionId },
 		});
 	} catch (error) {
 		await refreshWorkspaceState(queryClient);
-		setOrchestratorReplacementError(projectId, {
+		setOrchestratorReplacementError(project, {
 			message: error instanceof Error ? error.message : "Could not replace orchestrator",
 			...(error instanceof OrchestratorSpawnError
 				? { code: error.code, requestId: error.requestId }
@@ -56,6 +57,6 @@ export async function restartProjectOrchestrator({
 		});
 		onError?.(error);
 	} finally {
-		setProjectRestarting(projectId, false);
+		setProjectRestarting(project.id, false);
 	}
 }

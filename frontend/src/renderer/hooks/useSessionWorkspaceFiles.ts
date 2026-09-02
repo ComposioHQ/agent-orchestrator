@@ -2,6 +2,8 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useSyncExternalStore } from "react";
 import type { components } from "../../api/schema";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
+import { clientFor } from "../lib/host-clients";
+import { refKey, type Ref } from "../lib/hosts";
 import {
 	getWorkspaceFileConnectionState,
 	subscribeWorkspaceFileChanges,
@@ -24,16 +26,24 @@ export type WorkspaceFileDetail = components["schemas"]["WorkspaceFileResponse"]
 	compareMode?: WorkspaceCompareMode;
 };
 
-export const sessionWorkspaceFilesQueryKey = (sessionId: string) => ["session-workspace-files", sessionId] as const;
+type WorkspaceSessionRef = string | Ref;
+
+const sessionId = (session: WorkspaceSessionRef) => (typeof session === "string" ? session : session.id);
+const sessionKey = (session: WorkspaceSessionRef) => (typeof session === "string" ? session : refKey(session));
+const sessionClient = (session: WorkspaceSessionRef) => (typeof session === "string" ? apiClient : clientFor(session.host));
+
+export const sessionWorkspaceFilesQueryKey = (session: WorkspaceSessionRef) =>
+	["session-workspace-files", sessionKey(session)] as const;
 const WORKSPACE_FILES_DEGRADED_REFETCH_MS = 30_000;
 
-async function fetchSessionWorkspaceFiles(sessionId: string, errorMessage: string): Promise<WorkspaceFilesResponse> {
-	const { data, error } = await apiClient.GET("/api/v1/sessions/{sessionId}/workspace/files", {
-		params: { path: { sessionId } },
+async function fetchSessionWorkspaceFiles(session: WorkspaceSessionRef, errorMessage: string): Promise<WorkspaceFilesResponse> {
+	const id = sessionId(session);
+	const { data, error } = await sessionClient(session).GET("/api/v1/sessions/{sessionId}/workspace/files", {
+		params: { path: { sessionId: id } },
 	});
 	if (error) throw new Error(apiErrorMessage(error, errorMessage));
 	return (data ?? {
-		sessionId,
+		sessionId: id,
 		files: [],
 		truncated: false,
 		sections: { staged: [], unstaged: [], untracked: [], committed: [] },
@@ -42,12 +52,16 @@ async function fetchSessionWorkspaceFiles(sessionId: string, errorMessage: strin
 	}) as WorkspaceFilesResponse;
 }
 
-export const sessionWorkspaceFileQueryKey = (sessionId: string, path: string) =>
-	["session-workspace-file", sessionId, path] as const;
+export const sessionWorkspaceFileQueryKey = (session: WorkspaceSessionRef, path: string) =>
+	["session-workspace-file", sessionKey(session), path] as const;
 
-async function fetchSessionWorkspaceFile(sessionId: string, path: string, errorMessage: string): Promise<WorkspaceFileDetail> {
-	const { data, error } = await apiClient.GET("/api/v1/sessions/{sessionId}/workspace/file", {
-		params: { path: { sessionId }, query: { path } },
+async function fetchSessionWorkspaceFile(
+	session: WorkspaceSessionRef,
+	path: string,
+	errorMessage: string,
+): Promise<WorkspaceFileDetail> {
+	const { data, error } = await sessionClient(session).GET("/api/v1/sessions/{sessionId}/workspace/file", {
+		params: { path: { sessionId: sessionId(session) }, query: { path } },
 	});
 	if (error) throw new Error(apiErrorMessage(error, errorMessage));
 	if (!data) throw new Error(errorMessage);
@@ -56,19 +70,26 @@ async function fetchSessionWorkspaceFile(sessionId: string, path: string, errorM
 
 // Shared so the diff view (expand-on-demand) and the plain read-only viewer
 // always resolve to the same cache entry for a given (session, path).
-export function sessionWorkspaceFileQueryOptions(sessionId: string, path: string, errorMessage = "Unable to load workspace file") {
+export function sessionWorkspaceFileQueryOptions(
+	session: WorkspaceSessionRef,
+	path: string,
+	errorMessage = "Unable to load workspace file",
+) {
 	return {
-		queryKey: sessionWorkspaceFileQueryKey(sessionId, path),
-		queryFn: () => fetchSessionWorkspaceFile(sessionId, path, errorMessage),
+		queryKey: sessionWorkspaceFileQueryKey(session, path),
+		queryFn: () => fetchSessionWorkspaceFile(session, path, errorMessage),
 	};
 }
 
 // Shared so SessionFileExplorer and SessionInspector resolve to the same cache
 // entry while SSE invalidation remains the normal refresh path.
-export function sessionWorkspaceFilesQueryOptions(sessionId: string, errorMessage = "Unable to load workspace files") {
+export function sessionWorkspaceFilesQueryOptions(
+	session: WorkspaceSessionRef,
+	errorMessage = "Unable to load workspace files",
+) {
 	return {
-		queryKey: sessionWorkspaceFilesQueryKey(sessionId),
-		queryFn: () => fetchSessionWorkspaceFiles(sessionId, errorMessage),
+		queryKey: sessionWorkspaceFilesQueryKey(session),
+		queryFn: () => fetchSessionWorkspaceFiles(session, errorMessage),
 	};
 }
 

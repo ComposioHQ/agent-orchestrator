@@ -1,18 +1,18 @@
 import { type QueryClient, useMutation, useMutationState, useQueryClient } from "@tanstack/react-query";
 import type { WorkspaceSession } from "../types/workspace";
 import { workspaceQueryKey } from "./useWorkspaceQuery";
-import { apiClient, apiErrorMessage } from "../lib/api-client";
+import { apiErrorMessage } from "../lib/api-client";
+import { clientFor } from "../lib/host-clients";
+import { refKey, type Ref } from "../lib/hosts";
 import { captureRendererEvent } from "../lib/telemetry";
 
-type TerminateSessionOptions = {
-	onSuccess?: (session: WorkspaceSession) => void;
-};
+type TerminateSessionTarget = Ref & Partial<WorkspaceSession>;
 
 export const terminateSessionMutationKey = ["terminate-session"] as const;
 
 type TerminateSessionMutationState = {
 	error: unknown;
-	session?: WorkspaceSession;
+	session?: TerminateSessionTarget;
 	status: "error" | "idle" | "pending" | "success";
 	submittedAt: number;
 };
@@ -22,7 +22,7 @@ function useTerminateSessionMutations() {
 		filters: { mutationKey: terminateSessionMutationKey },
 		select: (mutation) => ({
 			error: mutation.state.error,
-			session: mutation.state.variables as WorkspaceSession | undefined,
+			session: mutation.state.variables as TerminateSessionTarget | undefined,
 			status: mutation.state.status,
 			submittedAt: mutation.state.submittedAt,
 		}),
@@ -32,13 +32,14 @@ function useTerminateSessionMutations() {
 function summarizeBySession(mutations: TerminateSessionMutationState[]) {
 	const summaries = new Map<
 		string,
-		{ isPending: boolean; latest: TerminateSessionMutationState; session: WorkspaceSession }
+		{ isPending: boolean; latest: TerminateSessionMutationState; session: TerminateSessionTarget }
 	>();
 	for (const mutation of mutations) {
 		if (!mutation.session) continue;
-		const current = summaries.get(mutation.session.id);
+		const key = refKey(mutation.session);
+		const current = summaries.get(key);
 		if (!current) {
-			summaries.set(mutation.session.id, {
+			summaries.set(key, {
 				isPending: mutation.status === "pending",
 				latest: mutation,
 				session: mutation.session,
@@ -51,13 +52,15 @@ function summarizeBySession(mutations: TerminateSessionMutationState[]) {
 	return [...summaries.values()];
 }
 
-export function useTerminateSession(options: TerminateSessionOptions = {}) {
+export function useTerminateSession() {
 	const queryClient = useQueryClient();
 	return useMutation({
 		mutationKey: terminateSessionMutationKey,
-		mutationFn: async (session: WorkspaceSession) => {
-			void captureRendererEvent("ao.renderer.session_kill_requested", { project_id: session.workspaceId });
-			const { error, response } = await apiClient.POST("/api/v1/sessions/{sessionId}/kill", {
+		mutationFn: async (session: TerminateSessionTarget) => {
+			void captureRendererEvent("ao.renderer.session_kill_requested", {
+				...(session.workspaceId ? { project_id: session.workspaceId } : {}),
+			});
+			const { error, response } = await clientFor(session.host).POST("/api/v1/sessions/{sessionId}/kill", {
 				params: { path: { sessionId: session.id } },
 			});
 			if (error) {
@@ -66,18 +69,22 @@ export function useTerminateSession(options: TerminateSessionOptions = {}) {
 			}
 		},
 		onSuccess: async (_data, session) => {
-			void captureRendererEvent("ao.renderer.session_kill_succeeded", { project_id: session.workspaceId });
+			void captureRendererEvent("ao.renderer.session_kill_succeeded", {
+				...(session.workspaceId ? { project_id: session.workspaceId } : {}),
+			});
 			await queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
-			options.onSuccess?.(session);
 		},
 		onError: (_error, session) => {
-			void captureRendererEvent("ao.renderer.session_kill_failed", { project_id: session.workspaceId });
+			void captureRendererEvent("ao.renderer.session_kill_failed", {
+				...(session.workspaceId ? { project_id: session.workspaceId } : {}),
+			});
 		},
 	});
 }
 
-export function useTerminateSessionState(sessionId: string) {
-	const summary = summarizeBySession(useTerminateSessionMutations()).find(({ session }) => session.id === sessionId);
+export function useTerminateSessionState(ref: Ref) {
+	const key = refKey(ref);
+	const summary = summarizeBySession(useTerminateSessionMutations()).find(({ session }) => refKey(session) === key);
 
 	return {
 		error:
@@ -88,10 +95,15 @@ export function useTerminateSessionState(sessionId: string) {
 	};
 }
 
-export function useProjectTerminateSessionStates(workspaceId: string | undefined) {
+export function useProjectTerminateSessionStates(project: Ref | undefined) {
 	return summarizeBySession(useTerminateSessionMutations())
 		.filter(({ isPending, latest, session }) => {
-			return session.workspaceId === workspaceId && (isPending || latest.status === "error");
+			return (
+				project !== undefined &&
+				session.host === project.host &&
+				session.workspaceId === project.id &&
+				(isPending || latest.status === "error")
+			);
 		})
 		.sort((a, b) => b.latest.submittedAt - a.latest.submittedAt)
 		.map(({ isPending, latest, session }) => ({
@@ -101,11 +113,12 @@ export function useProjectTerminateSessionStates(workspaceId: string | undefined
 		}));
 }
 
-export function clearTerminateSessionState(queryClient: QueryClient, sessionId: string) {
+export function clearTerminateSessionState(queryClient: QueryClient, ref: Ref) {
+	const key = refKey(ref);
 	const mutationCache = queryClient.getMutationCache();
 	for (const mutation of mutationCache.findAll({ mutationKey: terminateSessionMutationKey })) {
-		const target = mutation.state.variables as WorkspaceSession | undefined;
-		if (target?.id === sessionId && mutation.state.status !== "pending") {
+		const target = mutation.state.variables as TerminateSessionTarget | undefined;
+		if (target && refKey(target) === key && mutation.state.status !== "pending") {
 			mutationCache.remove(mutation);
 		}
 	}
