@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/chatdriver/persistenthost"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
@@ -248,6 +249,86 @@ func TestStartCompletesHandshakeAndOpensThread(t *testing.T) {
 	// Default permissions must match what AO already gives a Codex TUI session.
 	if params.ApprovalPolicy != "never" || params.Sandbox != "danger-full-access" {
 		t.Errorf("default posture = %q/%q, want never/danger-full-access", params.ApprovalPolicy, params.Sandbox)
+	}
+}
+
+func TestResumeReconnectsInitializedHostWithoutNativeResume(t *testing.T) {
+	d, srv := newTestDriver(t)
+	proc, err := d.spawn(context.Background(), "codex", "/tmp/ws", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d.persistent = true
+	d.connectHost = func(context.Context, persistenthost.Config) (*persistenthost.Transport, error) {
+		return &persistenthost.Transport{
+			Stdin: proc.stdin, Stdout: proc.stdout, Reconnected: true, NextRequestID: 41,
+		}, nil
+	}
+
+	conv, err := d.Resume(context.Background(), ports.ChatResumeConfig{
+		SessionID: "ao-reconnect", ProviderConversationID: "thread-survived",
+		DataDir: t.TempDir(), WorkspacePath: "/tmp/ws",
+	})
+	if err != nil {
+		t.Fatalf("Resume: %v", err)
+	}
+	defer func() { _ = conv.Close() }()
+	if got := conv.ProviderConversationID(); got != "thread-survived" {
+		t.Fatalf("provider conversation id = %q", got)
+	}
+	if srv.sentMethod("initialize") || srv.sentMethod("thread/resume") {
+		t.Fatalf("reconnect repeated handshake: initialize=%v resume=%v",
+			srv.sentMethod("initialize"), srv.sentMethod("thread/resume"))
+	}
+
+	lister := conv.(ports.ChatModelLister)
+	if _, err := lister.ListModels(context.Background()); err != nil {
+		t.Fatalf("ListModels: %v", err)
+	}
+	request := srv.awaitFrame(func(f frame) bool { return f.Method == "model/list" })
+	if request.ID == nil || string(*request.ID) != "42" {
+		t.Fatalf("first request id after reconnect = %v, want 42", request.ID)
+	}
+}
+
+func TestResumeStagesDirectProcessWhenBranchSourceOwnsHost(t *testing.T) {
+	d, srv := newTestDriver(t)
+	d.persistent = true
+	d.connectHost = func(context.Context, persistenthost.Config) (*persistenthost.Transport, error) {
+		return nil, persistenthost.ErrAttached
+	}
+	conv, err := d.Resume(context.Background(), ports.ChatResumeConfig{
+		SessionID: "ao-branch", ProviderConversationID: "thread-branch",
+		DataDir: t.TempDir(), WorkspacePath: "/tmp/ws", AllowConcurrentHostReplacement: true,
+	})
+	if err != nil {
+		t.Fatalf("Resume: %v", err)
+	}
+	defer func() { _ = conv.Close() }()
+	if !srv.sentMethod("initialize") || !srv.sentMethod("thread/resume") {
+		t.Fatalf("branch staging handshake: initialize=%v resume=%v",
+			srv.sentMethod("initialize"), srv.sentMethod("thread/resume"))
+	}
+}
+
+func TestResumeDoesNotCompeteWithAttachedHostDuringDaemonOverlap(t *testing.T) {
+	d, srv := newTestDriver(t)
+	d.persistent = true
+	d.connectHost = func(context.Context, persistenthost.Config) (*persistenthost.Transport, error) {
+		return nil, persistenthost.ErrAttached
+	}
+	_, err := d.Resume(context.Background(), ports.ChatResumeConfig{
+		SessionID: "ao-overlap", ProviderConversationID: "thread-live",
+		DataDir: t.TempDir(), WorkspacePath: "/tmp/ws",
+	})
+	if err == nil || !errors.Is(err, persistenthost.ErrAttached) {
+		t.Fatalf("Resume error = %v, want attached-host refusal", err)
+	}
+	if !errors.Is(err, ports.ErrChatRecoveryInconclusive) {
+		t.Fatalf("Resume error = %v, want recovery-inconclusive classification", err)
+	}
+	if srv.sentMethod("initialize") || srv.sentMethod("thread/resume") {
+		t.Fatal("daemon overlap launched a competing direct provider")
 	}
 }
 
@@ -551,6 +632,42 @@ func TestUnauthorizedTurnStopsTheStaleController(t *testing.T) {
 	}
 }
 
+// Persistent hosts normally survive controller Close so a replacement daemon can
+// reconnect to in-flight work. Authentication failure is different: this process
+// has proved its in-memory credentials stale and must be destroyed before Resume
+// launches a replacement that reloads the credential file.
+func TestUnauthorizedTurnTerminatesPersistentStaleProvider(t *testing.T) {
+	d, srv := newTestDriver(t)
+	terminated := make(chan struct{})
+	spawn := d.spawn
+	d.spawn = func(ctx context.Context, bin, workspace string, env []string) (*process, error) {
+		proc, err := spawn(ctx, bin, workspace, env)
+		if err != nil {
+			return nil, err
+		}
+		stop := proc.stop
+		proc.terminate = func() error {
+			close(terminated)
+			return stop()
+		}
+		return proc, nil
+	}
+
+	conv, err := d.Start(context.Background(), ports.ChatStartConfig{WorkspacePath: "/tmp/ws"})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer func() { _ = conv.Close() }()
+
+	srv.push(`{"method":"turn/completed","params":{"threadId":"thread-1","turn":{"id":"turn-1","status":"failed","items":[],"error":{"message":"Authentication rejected.","codexErrorInfo":"unauthorized"}}}}`)
+
+	select {
+	case <-terminated:
+	case <-time.After(3 * time.Second):
+		t.Fatal("authentication failure detached instead of terminating the persistent provider")
+	}
+}
+
 // Codex emits a non-retrying error notification before turn/completed. The
 // account warning is useful immediately, but stopping on it would make AO settle
 // through generic controller cleanup and discard the provider's authoritative
@@ -707,6 +824,7 @@ func TestResumeReappliesWorkspaceAndStandingInstructions(t *testing.T) {
 		ProviderConversationID: "thread-1",
 		WorkspacePath:          "/tmp/ws",
 		Model:                  "selected-resume-model",
+		Effort:                 "high",
 		SystemPrompt:           "current AO standing instructions",
 	})
 	if err != nil {
@@ -716,10 +834,11 @@ func TestResumeReappliesWorkspaceAndStandingInstructions(t *testing.T) {
 
 	resume := srv.awaitFrame(func(f frame) bool { return f.Method == "thread/resume" })
 	var params struct {
-		ThreadID              string `json:"threadId"`
-		Cwd                   string `json:"cwd"`
-		Model                 string `json:"model"`
-		DeveloperInstructions string `json:"developerInstructions"`
+		ThreadID              string            `json:"threadId"`
+		Cwd                   string            `json:"cwd"`
+		Model                 string            `json:"model"`
+		Config                map[string]string `json:"config"`
+		DeveloperInstructions string            `json:"developerInstructions"`
 	}
 	if err := json.Unmarshal(resume.Params, &params); err != nil {
 		t.Fatalf("thread/resume params: %v", err)
@@ -729,6 +848,9 @@ func TestResumeReappliesWorkspaceAndStandingInstructions(t *testing.T) {
 	}
 	if params.Model != "selected-resume-model" {
 		t.Fatalf("thread resume model = %q, want selected-resume-model", params.Model)
+	}
+	if params.Config["model_reasoning_effort"] != "high" {
+		t.Fatalf("thread resume effort config = %q, want high", params.Config["model_reasoning_effort"])
 	}
 	if params.DeveloperInstructions != "current AO standing instructions" {
 		t.Fatalf("developerInstructions = %q", params.DeveloperInstructions)
@@ -951,18 +1073,19 @@ func TestProbeReportsMissingBinary(t *testing.T) {
 // Chat must not be quietly stricter than the terminal path for the same setting.
 func TestApprovalSettingsMirrorTUIPosture(t *testing.T) {
 	for _, tc := range []struct {
-		mode            ports.PermissionMode
-		policy, sandbox string
+		mode                      ports.PermissionMode
+		policy, sandbox, reviewer string
 	}{
-		{ports.PermissionModeDefault, "never", "danger-full-access"},
-		{ports.PermissionModeBypassPermissions, "never", "danger-full-access"},
-		{ports.PermissionModeAcceptEdits, "on-request", "workspace-write"},
-		{ports.PermissionModeAuto, "on-request", "workspace-write"},
-		{ports.PermissionMode("nonsense"), "never", "danger-full-access"},
+		{ports.PermissionModeDefault, "never", "danger-full-access", "user"},
+		{ports.PermissionModeBypassPermissions, "never", "danger-full-access", "user"},
+		{ports.PermissionModeAcceptEdits, "on-request", "workspace-write", "user"},
+		{ports.PermissionModeAuto, "on-request", "workspace-write", "auto_review"},
+		{ports.PermissionMode("nonsense"), "never", "danger-full-access", "user"},
 	} {
 		policy, sandbox := approvalSettings(tc.mode)
-		if policy != tc.policy || sandbox != tc.sandbox {
-			t.Errorf("approvalSettings(%q) = %q/%q, want %q/%q", tc.mode, policy, sandbox, tc.policy, tc.sandbox)
+		reviewer := approvalReviewer(tc.mode)
+		if policy != tc.policy || sandbox != tc.sandbox || reviewer != tc.reviewer {
+			t.Errorf("approval settings(%q) = %q/%q/%q, want %q/%q/%q", tc.mode, policy, sandbox, reviewer, tc.policy, tc.sandbox, tc.reviewer)
 		}
 	}
 }

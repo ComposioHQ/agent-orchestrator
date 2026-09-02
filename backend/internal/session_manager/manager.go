@@ -345,10 +345,11 @@ type Store interface {
 // Manager coordinates internal session spawn, restore, kill, and cleanup over
 // the outbound ports. User-facing read-model assembly lives in the service package.
 type Manager struct {
-	runtime   runtimeController
-	agents    ports.AgentResolver
-	workspace ports.Workspace
-	store     Store
+	runtime        runtimeController
+	agents         ports.AgentResolver
+	workspace      ports.Workspace
+	store          Store
+	agentReadiness ports.AgentReadinessProvider
 	// messenger is a sessionguard.Guard wrapping the raw messenger, so every
 	// pane write is guarded (re-read state, refuse a blocked session) without
 	// each call site re-deriving the check. Send/confirmActive use Deliver for
@@ -479,6 +480,11 @@ func (m *Manager) SetTerminalInputGate(gate TerminalInputGate) {
 	m.terminalInputGateMu.Lock()
 	defer m.terminalInputGateMu.Unlock()
 	m.terminalInputGate = gate
+}
+
+// SetAgentReadiness completes daemon wiring before request handling begins.
+func (m *Manager) SetAgentReadiness(provider ports.AgentReadinessProvider) {
+	m.agentReadiness = provider
 }
 
 func (m *Manager) beginTerminalInputDrain(rec domain.SessionRecord) (lastInputAt time.Time, release func()) {
@@ -2291,6 +2297,9 @@ func (m *Manager) reconcileLive(ctx context.Context, rec domain.SessionRecord) e
 		_, relaunchErr := m.relaunchRestoredSession(ctx, rec, project, ws)
 		if relaunchErr == nil {
 			return nil
+		}
+		if errors.Is(relaunchErr, ports.ErrChatRecoveryInconclusive) {
+			return fmt.Errorf("reconcile %s: preserve detached Chat provider: %w", rec.ID, relaunchErr)
 		}
 		restoreErr = relaunchErr
 	}
@@ -4443,11 +4452,11 @@ func AugmentRuntimePATHForLaunchBinary(ctx context.Context, env map[string]strin
 }
 
 func (m *Manager) validateRuntimePrerequisites() error {
-	if runtime.GOOS == "windows" {
+	if runtime.GOOS == "windows" || runtime.GOOS == "linux" {
 		return nil
 	}
 	if resolution, err := tmuxbin.ResolveWith(os.Getenv("AO_TMUX_BINARY"), m.executable, m.lookPath); err != nil || resolution.Path == "" {
-		return fmt.Errorf("%w: tmux required on macOS/Linux but AO's configured, bundled, or system tmux was not found", ports.ErrRuntimePrerequisite)
+		return fmt.Errorf("%w: tmux required on macOS but AO's configured, bundled, or system tmux was not found", ports.ErrRuntimePrerequisite)
 	}
 	return nil
 }

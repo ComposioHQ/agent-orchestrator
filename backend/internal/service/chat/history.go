@@ -680,7 +680,7 @@ func (s *Service) activateBranchLocked(ctx context.Context, id domain.SessionID,
 	replacement := newController(id, conversation, generation, provider, s.store, s.activity, s.log, s.newID, s.now)
 	if err := s.store.ActivateConversationBranch(operationCtx, id, conversation.ID, branch.ID,
 		branch.ProviderConversationID, generation, s.now()); err != nil {
-		_ = provider.Close()
+		cleanupUnpublishedConversation(provider, true)
 		activateErr := err
 		if restoreErr := s.restoreClosedSourceController(
 			operationCtx, id, source, activeBranch, cfg, driver); restoreErr != nil {
@@ -809,7 +809,7 @@ func (s *Service) installStartedBranchController(
 	s.mu.Lock()
 	if s.controllers[id] != source {
 		s.mu.Unlock()
-		_ = replacement.Close(ctx)
+		_ = replacement.Terminate(ctx)
 		if err := s.store.ActivateConversationBranch(ctx, id, source.conversation.ID,
 			sourceBranchID, source.ProviderConversationID(), source.generation, s.now()); err != nil {
 			return fmt.Errorf("restore source branch after controller swap conflict: %w", err)

@@ -40,6 +40,7 @@ import { SwitchAgentDialog } from "./SwitchAgentDialog";
 import { SessionTopbarHost } from "./SessionTopbarPortal";
 import { TerminalSwitchAgentButton } from "./TerminalSwitchAgentButton";
 import { TopbarButton } from "./TopbarButton";
+import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 import { useBrowserView } from "../hooks/useBrowserView";
 import { useFileAnnotation } from "../hooks/useFileAnnotation";
 import { useResizable } from "../hooks/useResizable";
@@ -54,7 +55,7 @@ import {
 	interfaceTransitionIsActive,
 	useSessionInterfaceTransition,
 } from "../hooks/useSessionInterfaceTransition";
-import { useWorkspaceQuery } from "../hooks/useWorkspaceQuery";
+import { useWorkspaceSession } from "../hooks/useWorkspaceQuery";
 import { useSessionHandoffMenu } from "../hooks/useSessionHandoffMenu";
 import { clearSwitchAgentState } from "../hooks/useSwitchAgent";
 import { useWindowFullScreen } from "../hooks/useWindowFullScreen";
@@ -378,8 +379,7 @@ function SessionInspectorRail({
 export function SessionView({ sessionId }: SessionViewProps) {
 	const { t } = useTranslation();
 	const queryClient = useQueryClient();
-	const workspaceQuery = useWorkspaceQuery();
-	const workspaces = workspaceQuery.data ?? [];
+	const workspaceQuery = useWorkspaceSession(sessionId);
 	const theme = useResolvedTheme();
 	const prefersReducedMotion = useReducedMotion();
 	const isInspectorOpen = useUiStore((state) => state.inspectorSessions[sessionId]?.isOpen ?? true);
@@ -506,7 +506,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 
 	useEffect(() => stopTerminalLiveResize, [stopTerminalLiveResize]);
 
-	const session = workspaces.flatMap((workspace) => workspace.sessions).find((s) => s.id === sessionId);
+	const session = workspaceQuery.data;
 	const interfaceSwitch = useSessionInterfaceTransition(session?.id);
 	const reviewerQuery = useQuery({
 		queryKey: ["session-reviews", sessionId],
@@ -564,25 +564,38 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	// session's worktree (the project id is only the fallback when the session's
 	// workspace can no longer be resolved).
 	const addShellTerminal = useCallback(() => {
-		openShellTerminal.mutate(
+		const shell = openShellTerminal.open(
 			{ projectId: session?.workspaceId, sessionId },
 			{
-				onSuccess: (shell) => {
-					setActiveShellTerminal(shell.handleId);
+				onSuccess: (openedShell) => {
+					setActiveShellTerminal(openedShell.handleId);
 					setFileTabsBySession((current) => ({
 						...current,
 						[sessionId]: activateSessionFile(current[sessionId] ?? EMPTY_SESSION_FILE_TABS, null),
 					}));
 					setTerminalTarget({
-						generation: shell.createdAt,
+						generation: openedShell.createdAt,
 						kind: "shell",
-						handleId: shell.handleId,
+						handleId: openedShell.handleId,
 						sessionId,
-						title: shell.title,
+						title: openedShell.title,
 					});
 				},
 			},
 		);
+		if (!shell) return;
+		setFileTabsBySession((current) => ({
+			...current,
+			[sessionId]: activateSessionFile(current[sessionId] ?? EMPTY_SESSION_FILE_TABS, null),
+		}));
+		setActiveShellTerminal(shell.handleId);
+		setTerminalTarget({
+			generation: shell.createdAt,
+			kind: "shell",
+			handleId: shell.handleId,
+			sessionId,
+			title: shell.title,
+		});
 	}, [openShellTerminal, sessionId, session?.workspaceId, setActiveShellTerminal]);
 
 	const activateAuxiliaryTab = useCallback(
@@ -982,16 +995,21 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	const newTerminalError = openShellTerminal.error ? apiErrorMessage(openShellTerminal.error) : undefined;
 	const newShellTerminalAction =
 		session && !isOrchestrator ? (
-			<TopbarButton
-				aria-label={t("shortcut.new-shell-terminal")}
-				disabled={openShellTerminal.isPending}
-				onClick={addShellTerminal}
-				title={newTerminalError ?? t("terminal.newWithShortcut", { shortcut: newTerminalShortcutLabel })}
-				type="button"
-				variant="icon"
-			>
-				<Plus aria-hidden="true" className="size-icon-md" />
-			</TopbarButton>
+			<Tooltip>
+				<TooltipTrigger asChild>
+					<TopbarButton
+						aria-label={t("shortcut.new-shell-terminal")}
+						onClick={addShellTerminal}
+						type="button"
+						variant="icon"
+					>
+						<Plus aria-hidden="true" className="size-icon-md" />
+					</TopbarButton>
+				</TooltipTrigger>
+				<TooltipContent side="bottom">
+					{newTerminalError ?? t("terminal.newWithShortcut", { shortcut: newTerminalShortcutLabel })}
+				</TooltipContent>
+			</Tooltip>
 		) : null;
 	const fileAnnotation = useFileAnnotation(sessionId);
 	const centerFileTabs = useMemo(
@@ -1633,16 +1651,22 @@ export function SessionView({ sessionId }: SessionViewProps) {
 			</div>
 			{hasInspector ? (
 				<div className="session-pinned-actions" data-testid="session-pinned-actions" style={noDragStyle}>
-					<TopbarButton
-						aria-label={isInspectorOpen ? t("shell.closeInspector") : t("shell.openInspector")}
-						aria-pressed={isInspectorOpen}
-						onClick={handleToggleInspector}
-						style={noDragStyle}
-						title={isInspectorOpen ? t("shell.closeInspectorTitle") : t("shell.openInspectorTitle")}
-						variant="icon"
-					>
-						<PanelRight className="size-icon-md" aria-hidden="true" />
-					</TopbarButton>
+					<Tooltip>
+						<TooltipTrigger asChild>
+							<TopbarButton
+								aria-label={isInspectorOpen ? t("shell.closeInspector") : t("shell.openInspector")}
+								aria-pressed={isInspectorOpen}
+								onClick={handleToggleInspector}
+								style={noDragStyle}
+								variant="icon"
+							>
+								<PanelRight className="size-icon-md" aria-hidden="true" />
+							</TopbarButton>
+						</TooltipTrigger>
+						<TooltipContent side="bottom">
+							{isInspectorOpen ? t("shell.closeInspectorTitle") : t("shell.openInspectorTitle")}
+						</TooltipContent>
+					</Tooltip>
 					{/* Keep the global notification action trailing at the window edge. */}
 					<NotificationCenter style={noDragStyle} />
 				</div>

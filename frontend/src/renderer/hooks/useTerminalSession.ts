@@ -663,6 +663,7 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 			if (!isCurrentAttachment(generation, handle, mux)) {
 				return;
 			}
+			// Protocol replies must bypass visibility and ownership gates so hidden panes stay connected.
 			if (source === "protocol") {
 				if (!r.inputReady) {
 					r.queuedProtocolInputs.push(data);

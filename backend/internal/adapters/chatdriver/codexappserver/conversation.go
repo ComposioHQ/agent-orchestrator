@@ -117,7 +117,7 @@ func newConversation(proc *process, log *slog.Logger) *conversation {
 		pending:  make(map[string]*parkedRequest),
 		pumpDone: make(chan struct{}),
 	}
-	c.conn = newConn(proc.stdin, proc.stdout, log, c.handleServerRequest)
+	c.conn = newConnAt(proc.stdin, proc.stdout, log, c.handleServerRequest, proc.nextRequestID)
 	return c
 }
 
@@ -133,6 +133,14 @@ func (c *conversation) start(threadID, model, effort string) {
 
 // ProviderConversationID is the Codex thread id AO persists for resume.
 func (c *conversation) ProviderConversationID() string { return c.threadID }
+
+// PreservesProviderOnClose tells the daemon controller that Close only detaches
+// from a host; it must not project provider death or fail in-flight work.
+func (c *conversation) PreservesProviderOnClose() bool { return c.proc.terminate != nil }
+
+// ReconnectedLive distinguishes attachment to the same initialized process from
+// native-history resume in a replacement process.
+func (c *conversation) ReconnectedLive() bool { return c.proc.reconnected }
 
 // Capabilities reports what this conversation can do.
 func (c *conversation) Capabilities() ports.ChatCapabilities { return capabilities() }
@@ -236,14 +244,14 @@ pumpLoop:
 				// already proved that the credentials it holds in memory are stale. End
 				// only this controller after its terminal work is emitted; Resume agent
 				// can then open a process against the same thread with fresh credentials.
-				_ = c.Close()
+				_ = c.Terminate()
 				break pumpLoop
 			}
 
 		case <-reauthTimeout:
 			c.log.Warn("turn completion missing after authentication failure; stopping stale app-server",
 				"turn", reauthTurn)
-			_ = c.Close()
+			_ = c.Terminate()
 			break pumpLoop
 		}
 	}
@@ -347,6 +355,7 @@ func applyTurnSettings(params map[string]any, settings ports.ChatTurnSettings) {
 		// rather than assumed to be interchangeable.
 		policy, sandbox := approvalSettings(settings.Approval)
 		params["approvalPolicy"] = policy
+		params["approvalsReviewer"] = approvalReviewer(settings.Approval)
 		params["sandboxPolicy"] = turnSandboxPolicy(sandbox)
 	}
 }
@@ -860,8 +869,24 @@ func (c *conversation) failPendingApprovals() {
 // Close releases the controller without touching provider-side history.
 func (c *conversation) Close() error {
 	c.closeOnce.Do(func() {
-		c.failPendingApprovals()
+		if c.proc.terminate == nil {
+			c.failPendingApprovals()
+		}
 		if c.proc.stop != nil {
+			_ = c.proc.stop()
+		}
+	})
+	return nil
+}
+
+// Terminate destroys the provider host. Close only detaches and is used by
+// daemon-wide shutdown; explicit session/controller replacement calls this.
+func (c *conversation) Terminate() error {
+	c.closeOnce.Do(func() {
+		c.failPendingApprovals()
+		if c.proc.terminate != nil {
+			_ = c.proc.terminate()
+		} else if c.proc.stop != nil {
 			_ = c.proc.stop()
 		}
 	})

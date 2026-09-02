@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { agentModelsQueryKey } from "../hooks/useAgentModelsQuery";
 import type { AgentSwitchSummary, WorkspaceSession } from "../types/workspace";
 import { SwitchAgentDialog } from "./SwitchAgentDialog";
+import { TooltipProvider } from "./ui/tooltip";
 
 const switchMocks = vi.hoisted(() => ({
 	clear: vi.fn(),
@@ -74,13 +75,15 @@ function renderDialog(
 	}
 	const result = render(
 		<QueryClientProvider client={queryClient}>
-			<SwitchAgentDialog
-				agentSwitch={agentSwitch}
-				container={document.body}
-				onOpenChange={onOpenChange}
-				open
-				session={session}
-			/>
+			<TooltipProvider>
+				<SwitchAgentDialog
+					agentSwitch={agentSwitch}
+					container={document.body}
+					onOpenChange={onOpenChange}
+					open
+					session={session}
+				/>
+			</TooltipProvider>
 		</QueryClientProvider>,
 	);
 	return { ...result, onOpenChange, queryClient };
@@ -163,12 +166,14 @@ describe("SwitchAgentDialog", () => {
 		const switchedSession = { ...worker, provider: "codex" as const };
 		rerender(
 			<QueryClientProvider client={queryClient}>
-				<SwitchAgentDialog
-					container={document.body}
-					onOpenChange={vi.fn()}
-					open
-					session={switchedSession}
-				/>
+				<TooltipProvider>
+					<SwitchAgentDialog
+						container={document.body}
+						onOpenChange={vi.fn()}
+						open
+						session={switchedSession}
+					/>
+				</TooltipProvider>
 			</QueryClientProvider>,
 		);
 

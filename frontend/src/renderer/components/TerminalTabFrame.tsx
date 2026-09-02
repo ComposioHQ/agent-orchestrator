@@ -65,7 +65,7 @@ export function TerminalTabFrame({
 				{action ? (
 					<div
 						className={cn(
-							"absolute inset-y-0 z-10 flex items-center",
+							"absolute inset-y-0 z-20 flex items-center",
 							actionPosition === "leading" ? "left-2" : "right-1",
 						)}
 						data-terminal-tab-action

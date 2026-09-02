@@ -11,10 +11,10 @@ const spawnMock = vi.hoisted(() => vi.fn());
 const choosePathMock = vi.hoisted(() => vi.fn());
 const getMock = vi.hoisted(() => vi.fn());
 const postMock = vi.hoisted(() => vi.fn());
-const captureEventMock = vi.hoisted(() => vi.fn());
 const openExternalMock = vi.hoisted(() => vi.fn());
 const writeTextMock = vi.hoisted(() => vi.fn());
 const restoreMock = vi.hoisted(() => vi.fn());
+const workspaceSubscriptionMock = vi.hoisted(() => vi.fn());
 
 const ctx = vi.hoisted(() => {
 	const workspaces: WorkspaceSummary[] = [
@@ -102,7 +102,10 @@ vi.mock("../hooks/useCommandPaletteEnabled", () => ({
 }));
 
 vi.mock("../hooks/useWorkspaceQuery", () => ({
-	useWorkspaceQuery: () => ({ data: ctx.workspaces }),
+	useWorkspaceQuery: (options: { subscribed?: boolean }) => {
+		workspaceSubscriptionMock(options);
+		return { data: ctx.workspaces };
+	},
 	workspaceQueryKey: ["workspaces"],
 }));
 
@@ -126,7 +129,6 @@ vi.mock("../lib/api-client", () => ({
 	},
 }));
 
-vi.mock("../lib/telemetry", () => ({ captureRendererEvent: captureEventMock }));
 
 vi.mock("../lib/bridge", () => ({
 	aoBridge: {
@@ -229,10 +231,10 @@ beforeEach(() => {
 	choosePathMock.mockReset();
 	getMock.mockReset();
 	postMock.mockReset();
-	captureEventMock.mockReset();
 	openExternalMock.mockReset();
 	writeTextMock.mockReset();
 	restoreMock.mockReset();
+	workspaceSubscriptionMock.mockReset();
 	restoreMock.mockResolvedValue({ status: "success" });
 	act(() => {
 		useUiStore.setState({
@@ -250,6 +252,14 @@ afterEach(() => {
 });
 
 describe("CommandPalette gating", () => {
+	it("subscribes to workspace updates only while open", () => {
+		renderPalette();
+		expect(workspaceSubscriptionMock).toHaveBeenLastCalledWith({ subscribed: false });
+
+		act(() => useUiStore.getState().setCommandPaletteOpen(true));
+		expect(workspaceSubscriptionMock).toHaveBeenLastCalledWith({ subscribed: true });
+	});
+
 	it("renders nothing and binds no shortcut on a disabled (stable) build", () => {
 		ctx.enabled = false;
 		renderPalette();
@@ -675,26 +685,11 @@ describe("CommandPalette PR and review actions", () => {
 		await waitFor(() => expect(paletteInput()).toBeNull());
 	});
 
-	// The palette is a manual on-ramp of its own. Before it was instrumented,
-	// every review started from here was missing from the adoption signal.
-	it("reports the palette as the surface that started the review", async () => {
-		mockReviews([reviewState("needs_review")]);
-		await openPaletteWithQuery("review");
-		fireEvent.click(await screen.findByText("Review latest commit #7"));
-		await waitFor(() =>
-			expect(captureEventMock).toHaveBeenCalledWith("ao.renderer.review_triggered", {
-				action: "run_latest",
-				has_override: false,
-				source: "command_palette",
-			}),
-		);
-	});
-
-	it("reports nothing when the review item is not eligible to run", async () => {
+	it("does not post when the review item is not eligible to run", async () => {
 		await openPaletteWithQuery("review");
 		expect(await screen.findByText("Not eligible for review")).toBeInTheDocument();
 		fireEvent.click(screen.getByText("Run review #7"));
-		expect(captureEventMock).not.toHaveBeenCalled();
+		expect(postMock).not.toHaveBeenCalled();
 	});
 
 	it("shows Not eligible for review once the session review state loads", async () => {

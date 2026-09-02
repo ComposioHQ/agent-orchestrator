@@ -534,12 +534,18 @@ vi.mock("../hooks/useWorkspaceQuery", () => ({
 		data: workspaceQueryState.data,
 		isLoading: workspaceQueryState.isLoading,
 	}),
+	useWorkspaceSession: (sessionId: string) => ({
+		data: workspaceQueryState.data
+			?.flatMap((workspace) => workspace.sessions)
+			.find((session) => session.id === sessionId),
+		isLoading: workspaceQueryState.isLoading,
+	}),
 }));
 // Standalone shell terminals are orthogonal to the split under test, and their
 // real hooks would need a QueryClientProvider this suite deliberately omits.
 vi.mock("../hooks/useShellTerminals", () => ({
 	useShellTerminals: () => ({ data: shellTerminalsState.data, isLoading: false }),
-	useOpenShellTerminal: () => ({ mutate: openShellTerminalMock }),
+	useOpenShellTerminal: () => ({ open: openShellTerminalMock, isPending: false }),
 	useCloseShellTerminal: () => ({ mutate: closeShellTerminalMock }),
 	useRenameShellTerminal: () => ({ mutate: vi.fn() }),
 }));
@@ -613,6 +619,15 @@ describe("SessionView", () => {
 		shellTerminalsState.data = [];
 		navigateMock.mockReset();
 		openShellTerminalMock.mockReset();
+		openShellTerminalMock.mockImplementation((input: { projectId?: string; sessionId?: string }) => ({
+			handleId: "pending-shell:test",
+			projectId: input.projectId,
+			sessionId: input.sessionId,
+			workingDir: "",
+			title: "Terminal 1",
+			createdAt: "2026-08-31T00:00:00Z",
+			optimistic: true,
+		}));
 		closeShellTerminalMock.mockReset();
 		interfaceTransitionMock.start.mockReset();
 		interfaceTransitionMock.resetStartError.mockReset();
@@ -754,9 +769,9 @@ describe("SessionView", () => {
 		render(<SessionView sessionId="sess-2" />);
 
 		const newTerminalButton = screen.getByRole("button", { name: "New terminal" });
-		expect(newTerminalButton).toHaveAttribute("title", "New terminal (Ctrl+T)");
 		fireEvent.click(newTerminalButton);
 		expect(openShellTerminalMock).toHaveBeenCalledWith({ projectId: "proj-1", sessionId: "sess-2" }, expect.anything());
+		expect(useUiStore.getState().activeShellTerminalHandleId).toBe("pending-shell:test");
 	});
 
 	it("activates a new terminal opened while a file tab is selected", async () => {
@@ -823,6 +838,7 @@ describe("SessionView", () => {
 		openShellTerminalMock.mockImplementation((_input, options) => {
 			shellTerminalsState.data = [shell];
 			options.onSuccess(shell);
+			return shell;
 		});
 
 		render(<SessionView sessionId="sess-1" />);
