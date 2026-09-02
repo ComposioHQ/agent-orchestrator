@@ -156,6 +156,10 @@ function cacheDescriptor(
 	};
 }
 
+export function cloudTerminalKind(terminalTarget?: TerminalTarget): "agent" | "workspace" {
+	return terminalTarget?.kind === "shell" ? "workspace" : "agent";
+}
+
 function blurTerminal(container: HTMLElement): void {
 	const active = document.activeElement;
 	if (active instanceof HTMLElement && container.contains(active)) {
@@ -293,25 +297,28 @@ export function TerminalCacheProvider({
 	cloudCpRef.current = { client: cloudClient, baseUrl: cloudBaseUrl };
 	const cloudMuxFactoriesRef = useRef(new Map<string, () => TerminalMux>());
 	const resolveCreateMux = useCallback(
-		(paneSession?: WorkspaceSession): (() => TerminalMux) => {
+		(paneSession?: WorkspaceSession, terminalTarget?: TerminalTarget): (() => TerminalMux) => {
 			const cloud = paneSession?.cloud;
 			if (!cloud) return muxPool.acquire;
-			const cached = cloudMuxFactoriesRef.current.get(paneSession.id);
+			const kind = cloudTerminalKind(terminalTarget);
+			const identity = terminalTarget?.kind === "shell" ? terminalTarget.handleId : "agent";
+			const factoryKey = `${paneSession.id}:${kind}:${identity}`;
+			const cached = cloudMuxFactoriesRef.current.get(factoryKey);
 			if (cached) return cached;
 			const sessionId = paneSession.id;
 			const orgId = cloud.orgId;
 			const factory = () =>
 				createCloudTerminalMux({
 					wsBaseUrl: `${cloudCpRef.current.baseUrl.replace(/^http/i, "ws").replace(/\/+$/, "")}/api/cloud/v1`,
-					kind: "agent",
+					kind,
 					mintTicket: async () => {
 						const response = await cloudCpRef.current.client.createTerminalTicket(orgId, sessionId, {
-							kind: "agent",
+							kind,
 						});
 						return response.ticket;
 					},
 				});
-			cloudMuxFactoriesRef.current.set(sessionId, factory);
+			cloudMuxFactoriesRef.current.set(factoryKey, factory);
 			return factory;
 		},
 		[muxPool],
@@ -340,7 +347,7 @@ export function TerminalCacheProvider({
 		(descriptor: TerminalCacheDescriptor, props: TerminalPaneProps, slot: HTMLDivElement) => {
 			const parking = parkingRef.current;
 			if (!parking) return;
-			const cachedProps = { ...props, createMux: resolveCreateMux(props.session) };
+			const cachedProps = { ...props, createMux: resolveCreateMux(props.session, props.terminalTarget) };
 
 			const previous = activeRef.current;
 			if (previous && previous.key !== descriptor.cacheKey) {
@@ -416,7 +423,7 @@ export function TerminalCacheProvider({
 	const update = useCallback(
 		(cacheKey: string, props: TerminalPaneProps) => {
 			const entry = entriesRef.current.get(cacheKey);
-			const cachedProps = { ...props, createMux: resolveCreateMux(props.session) };
+			const cachedProps = { ...props, createMux: resolveCreateMux(props.session, props.terminalTarget) };
 			if (!entry || terminalPropsMatch(entry.props, cachedProps)) return;
 			entry.props = cachedProps;
 			rerender();

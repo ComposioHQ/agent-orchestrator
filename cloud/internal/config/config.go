@@ -88,6 +88,15 @@ type Config struct {
 	DockerNamespace      string
 	DockerWorkerTokenTTL time.Duration
 
+	CoderURL            string
+	CoderAPIToken       string
+	CoderOwner          string
+	CoderTemplateID     string
+	CoderAgentName      string
+	CoderParameters     map[string]string
+	CoderDurableRoot    string
+	CoderWorkerTokenTTL time.Duration
+
 	GitHub GitHubConfig
 }
 
@@ -136,6 +145,12 @@ func Load() (Config, error) {
 	if raw := strings.TrimSpace(os.Getenv("AO_CLOUD_NODEOPS_ROOTFS_BY_HARNESS")); raw != "" {
 		if err := json.Unmarshal([]byte(raw), &rootFSByHarnessEnv); err != nil {
 			return Config{}, fmt.Errorf("invalid AO_CLOUD_NODEOPS_ROOTFS_BY_HARNESS: %w", err)
+		}
+	}
+	coderParametersEnv := map[string]string{}
+	if raw := strings.TrimSpace(os.Getenv("AO_CLOUD_CODER_PARAMETERS_JSON")); raw != "" {
+		if err := json.Unmarshal([]byte(raw), &coderParametersEnv); err != nil {
+			return Config{}, fmt.Errorf("invalid AO_CLOUD_CODER_PARAMETERS_JSON: %w", err)
 		}
 	}
 
@@ -199,6 +214,19 @@ func Load() (Config, error) {
 		DockerNamespace:   envOrDefault("AO_CLOUD_DOCKER_NAMESPACE", "ao-cloud-local"),
 		DockerWorkerTokenTTL: durationEnv(
 			"AO_CLOUD_DOCKER_WORKER_TOKEN_TTL", sandbox.DefaultWorkerTokenTTL,
+		),
+
+		CoderURL:        strings.TrimRight(strings.TrimSpace(os.Getenv("AO_CLOUD_CODER_URL")), "/"),
+		CoderAPIToken:   strings.TrimSpace(os.Getenv("AO_CLOUD_CODER_TOKEN")),
+		CoderOwner:      strings.TrimSpace(os.Getenv("AO_CLOUD_CODER_OWNER")),
+		CoderTemplateID: strings.TrimSpace(os.Getenv("AO_CLOUD_CODER_TEMPLATE_ID")),
+		CoderAgentName:  strings.TrimSpace(os.Getenv("AO_CLOUD_CODER_AGENT_NAME")),
+		CoderParameters: coderParametersEnv,
+		CoderDurableRoot: strings.TrimSpace(
+			os.Getenv("AO_CLOUD_CODER_DURABLE_ROOT"),
+		),
+		CoderWorkerTokenTTL: durationEnv(
+			"AO_CLOUD_CODER_WORKER_TOKEN_TTL", sandbox.DefaultWorkerTokenTTL,
 		),
 
 		GitHub: GitHubConfig{
@@ -296,12 +324,12 @@ func Load() (Config, error) {
 		return Config{}, errors.New("AO_CLOUD_LOCAL_SESSION_TTL must be positive")
 	}
 	switch cfg.SandboxProvider {
-	case "ecs", "daytona", "docker", "nodeops":
+	case "ecs", "daytona", "docker", "nodeops", "coder":
 	default:
-		return Config{}, errors.New("AO_CLOUD_SANDBOX_PROVIDER must be ecs, daytona, docker, or nodeops")
+		return Config{}, errors.New("AO_CLOUD_SANDBOX_PROVIDER must be coder, daytona, docker, ecs, or nodeops")
 	}
-	if cfg.Hosted() && cfg.SandboxProvider != "nodeops" {
-		return Config{}, errors.New("AO_CLOUD_SANDBOX_PROVIDER must be nodeops in staging and production")
+	if cfg.Hosted() && cfg.SandboxProvider != "nodeops" && cfg.SandboxProvider != "coder" {
+		return Config{}, errors.New("AO_CLOUD_SANDBOX_PROVIDER must be coder or nodeops in staging and production")
 	}
 	if cfg.SandboxProvider == "docker" {
 		if err := (sandbox.DockerConfig{
@@ -314,7 +342,7 @@ func Load() (Config, error) {
 			return Config{}, err
 		}
 	}
-	if cfg.SandboxProvider == "nodeops" || cfg.Hosted() {
+	if cfg.SandboxProvider == "nodeops" {
 		if err := (sandbox.NodeOpsConfig{
 			BaseURL:          cfg.NodeOpsBaseURL,
 			APIKey:           cfg.NodeOpsAPIKey,
@@ -329,7 +357,27 @@ func Load() (Config, error) {
 			return Config{}, err
 		}
 	}
-	if cfg.SandboxProvider == "nodeops" || cfg.SandboxProvider == "docker" {
+	if cfg.SandboxProvider == "coder" {
+		if err := (sandbox.CoderConfig{
+			BaseURL:        cfg.CoderURL,
+			Owner:          cfg.CoderOwner,
+			TemplateID:     cfg.CoderTemplateID,
+			AgentName:      cfg.CoderAgentName,
+			Parameters:     cfg.CoderParameters,
+			DurableRoot:    cfg.CoderDurableRoot,
+			WorkerTokenTTL: cfg.CoderWorkerTokenTTL,
+		}).Validate(); err != nil {
+			return Config{}, err
+		}
+		if cfg.CoderAPIToken == "" {
+			return Config{}, errors.New("AO_CLOUD_CODER_TOKEN is required")
+		}
+		coderURL, _ := url.Parse(cfg.CoderURL)
+		if cfg.Hosted() && coderURL.Scheme != "https" {
+			return Config{}, errors.New("AO_CLOUD_CODER_URL must use HTTPS in hosted environments")
+		}
+	}
+	if cfg.SandboxProvider == "nodeops" || cfg.SandboxProvider == "docker" || cfg.SandboxProvider == "coder" {
 		// A worker can only dial home if it is told where home is, and can only
 		// be trusted if its token is signed by a key strong enough to matter.
 		if cfg.PublicURL == "" {
@@ -356,12 +404,12 @@ func Load() (Config, error) {
 			)
 		}
 	}
-	if cfg.SandboxProvider == "nodeops" {
+	if cfg.SandboxProvider == "nodeops" || cfg.SandboxProvider == "coder" {
 		if cfg.WorkerBinaryPath == "" {
-			return Config{}, errors.New("AO_CLOUD_WORKER_BINARY_PATH is required when AO_CLOUD_SANDBOX_PROVIDER=nodeops")
+			return Config{}, fmt.Errorf("AO_CLOUD_WORKER_BINARY_PATH is required when AO_CLOUD_SANDBOX_PROVIDER=%s", cfg.SandboxProvider)
 		}
 		if cfg.WorkerHelperBinaryPath == "" {
-			return Config{}, errors.New("AO_CLOUD_WORKER_HELPER_BINARY_PATH is required when AO_CLOUD_SANDBOX_PROVIDER=nodeops")
+			return Config{}, fmt.Errorf("AO_CLOUD_WORKER_HELPER_BINARY_PATH is required when AO_CLOUD_SANDBOX_PROVIDER=%s", cfg.SandboxProvider)
 		}
 	}
 	if cfg.ReconcileInterval <= 0 {
@@ -477,6 +525,9 @@ func (c Config) Hosted() bool {
 func (c Config) WorkerTokenTTL() time.Duration {
 	if c.SandboxProvider == sandbox.ProviderDocker {
 		return c.DockerWorkerTokenTTL
+	}
+	if c.SandboxProvider == sandbox.ProviderCoder {
+		return c.CoderWorkerTokenTTL
 	}
 	return c.NodeOpsWorkerTokenTTL
 }

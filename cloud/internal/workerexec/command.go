@@ -455,11 +455,10 @@ func (b HarnessBuilder) configureCodexCredential(
 	command *Command,
 	credential worker.CredentialResponse,
 ) error {
-	parent := strings.TrimSpace(b.DataDir)
-	if parent == "" {
-		return errors.New("worker data directory is required for Codex configuration")
+	home, err := b.codexHome()
+	if err != nil {
+		return err
 	}
-	home := filepath.Join(parent, "codex")
 	if err := os.MkdirAll(home, 0o700); err != nil {
 		return fmt.Errorf("create Codex home: %w", err)
 	}
@@ -472,6 +471,17 @@ func (b HarnessBuilder) configureCodexCredential(
 	}
 	command.Env["CODEX_HOME"] = home
 	return nil
+}
+
+func (b HarnessBuilder) codexHome() (string, error) {
+	if home := strings.TrimSpace(os.Getenv("CODEX_HOME")); home != "" {
+		return home, nil
+	}
+	parent := strings.TrimSpace(b.DataDir)
+	if parent == "" {
+		return "", errors.New("worker data directory is required for Codex configuration")
+	}
+	return filepath.Join(parent, "codex"), nil
 }
 
 func loginCodex(binary, home, credentialType, secret string) error {

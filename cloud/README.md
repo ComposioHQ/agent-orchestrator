@@ -194,10 +194,12 @@ If a production migration fails, promotion stops and the existing production
 API keeps running. Application rollback does not reverse an applied migration,
 so migrations must remain compatible with the previous API release.
 
-Only migration code and the tested application artifacts are promoted. NodeOps
-and worker settings come from the target environment's `nodeops` and `worker`
-Secrets Manager JSON entries; deployment validates every required field before
-registering ECS tasks. No provider auto-pause value is set by deployment.
+Only migration code and the tested application artifacts are promoted. Sandbox
+provider and worker settings come from the target environment's `nodeops` or
+`coder` document and its `worker` Secrets Manager JSON entry; deployment
+validates every required field before registering ECS tasks. Production uses
+the provider verified in staging. No provider auto-pause value is set by
+deployment.
 Staging database rows are never copied to production: users, organizations,
 projects, sessions, events, credentials, and all other data remain isolated in
 their respective databases. The AWS instances are named

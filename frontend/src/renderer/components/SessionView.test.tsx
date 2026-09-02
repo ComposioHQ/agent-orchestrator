@@ -774,6 +774,19 @@ describe("SessionView", () => {
 		expect(useUiStore.getState().activeShellTerminalHandleId).toBe("pending-shell:test");
 	});
 
+	it("routes a cloud session's new terminal through its control-plane identity", () => {
+		const session = workerSession("sess-2");
+		session.cloud = { orgId: "cloud-org" };
+
+		render(<SessionView sessionId="sess-2" />);
+		fireEvent.click(screen.getByRole("button", { name: "New terminal" }));
+
+		expect(openShellTerminalMock).toHaveBeenCalledWith(
+			{ projectId: "proj-1", sessionId: "sess-2", cloud: { orgId: "cloud-org" } },
+			expect.anything(),
+		);
+	});
+
 	it("activates a new terminal opened while a file tab is selected", async () => {
 		const shell = {
 			handleId: "sh-after-file",

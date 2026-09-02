@@ -19,6 +19,7 @@ const (
 	maxOutstandingWorkerRequests    = 10
 	maxOutstandingWorkspaceRequests = 6
 	maxTerminalOutputBytes          = 4 << 20
+	maxActiveTerminalSessions       = 8
 	// interactiveSessionLease prevents the idle scanner from pausing a sandbox
 	// while a user is connecting to either terminal surface.
 	interactiveSessionLease = 2 * time.Minute
@@ -570,7 +571,7 @@ func (s *Store) OpenTerminal(
 				return err
 			}
 		}
-		if kind == "workspace" || kind == "agent" {
+		if kind == "agent" {
 			var retiredIDs []string
 			if err := tx.QueryRow(ctx,
 				`WITH retired AS (
@@ -617,7 +618,7 @@ func (s *Store) OpenTerminal(
 		).Scan(&active); err != nil {
 			return err
 		}
-		if active >= 2 {
+		if active >= maxActiveTerminalSessions {
 			return ErrConflict
 		}
 		if err := tx.QueryRow(ctx,
