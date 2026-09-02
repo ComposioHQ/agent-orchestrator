@@ -1099,7 +1099,7 @@ describe("ensureNativeActiveTab automation-runtime resync", () => {
 
 		expect(mutations).toEqual([]);
 		expect(activeTargets.get("sess-1")).toBe("t2");
-		const repeated = await invoke("browser:selectTab", { viewId, tabId: "t1" }).catch((error) => error as Error);
+		const repeated = (await invoke("browser:selectTab", { viewId, tabId: "t1" }).catch((error) => error)) as Error;
 		expect(repeated.message).not.toContain("agent-browser");
 	});
 
@@ -1819,7 +1819,9 @@ describe("agent browser runtime", () => {
 			"https://alice:password@example.test/access?token=opaque-high-entropy-value&state=another-secret#private";
 		const safe = "https://example.test/access?token=%5Bredacted%5D&state=%5Bredacted%5D";
 
-		const opened = (await host.execute("sess-1", "open", { url: signed })) as BrowserNavState;
+		const opened = (await host.execute("sess-1", "open", { url: signed })) as BrowserNavState & {
+			target: { tabId: string; url: string; origin: string };
+		};
 		const ensured = (await invoke("browser:ensure", "sess-1")) as BrowserNavState;
 		const agentTabs = (await host.execute("sess-1", "tabs")) as BrowserTabsState;
 		const current = await host.execute("sess-1", "get", { property: "url" });
@@ -1827,6 +1829,7 @@ describe("agent browser runtime", () => {
 		const rendererTabs = (await invoke("browser:getTabs", ensured.viewId)) as BrowserTabsState;
 
 		expect(opened).toMatchObject({ url: safe, title: `Title ${safe}` });
+		expect(opened.target).toEqual({ tabId: "t1", url: safe, origin: "https://example.test" });
 		expect(agentTabs.tabs[0]).toMatchObject({ url: safe, title: `Title ${safe}` });
 		expect(current).toMatchObject({ value: safe });
 		expect(unhighlighted).toMatchObject({ url: safe });
@@ -2245,8 +2248,14 @@ describe("agent browser runtime", () => {
 			expect(fetchSpy).not.toHaveBeenCalled();
 			const result = (await host.execute("sess-1", "errors")) as {
 				messages: Array<{ level: string; message: string }>;
+				target: { tabId: string; url: string; origin: string };
 			};
 
+			expect(result.target).toEqual({
+				tabId: "t1",
+				url: "http://localhost:3000/",
+				origin: "http://localhost:3000",
+			});
 			expect(result.messages).toHaveLength(3);
 			expect(result.messages[0]).toMatchObject({ level: "error" });
 			expect(result.messages[0]?.message).toContain(

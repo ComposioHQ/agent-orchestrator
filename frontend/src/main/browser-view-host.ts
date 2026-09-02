@@ -2035,7 +2035,10 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 			setAgentBrowserActivity(session, action, true, commandId, "started");
 			try {
 				const entry = activeEntry(session);
-			const runNative = async (nativeAction: string, nativeArgs: Record<string, unknown> = {}) => {
+			const runNative = async (
+				nativeAction: string,
+				nativeArgs: Record<string, unknown> = {},
+			): Promise<Record<string, unknown>> => {
 				if (!options.agentBrowserRuntime) {
 					throw browserError("BROWSER_AUTOMATION_UNAVAILABLE", "Browser automation runtime is unavailable");
 				}
@@ -2081,8 +2084,8 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 			switch (action) {
 				case "open": {
 					const url = stringArg(args, "url", "URL_REQUIRED", "url is required");
-					await runNative(action, { url: normalizeAgentBrowserURL(url) });
-					return agentNavState(pushNavState(options, activeEntry(session)));
+					const result = await runNative(action, { url: normalizeAgentBrowserURL(url) });
+					return { ...agentNavState(pushNavState(options, activeEntry(session))), target: result.target };
 				}
 				case "snapshot": {
 					const result = await runNative(action, { interactive: Boolean(args.interactive) });
@@ -3188,7 +3191,7 @@ function browserSignalMessages(session: BrowserSessionEntry): BrowserLogEntry[] 
 function normalizeNativeMessages(
 	result: Record<string, unknown>,
 	action: string,
-): { messages: BrowserLogEntry[]; untrustedExternalContent: true } {
+): { messages: BrowserLogEntry[]; target: unknown; untrustedExternalContent: true } {
 	const raw = Array.isArray(result.messages) ? result.messages : Array.isArray(result.value) ? result.value : [];
 	const messages = raw.map((item): BrowserLogEntry => {
 		if (typeof item === "string") {
@@ -3219,7 +3222,7 @@ function normalizeNativeMessages(
 			timestamp: typeof record.timestamp === "string" ? record.timestamp : new Date().toISOString(),
 		};
 	});
-	return { messages, untrustedExternalContent: true };
+	return { messages, target: result.target, untrustedExternalContent: true };
 }
 
 function throwIfAborted(signal?: AbortSignal): void {
