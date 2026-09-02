@@ -27,8 +27,11 @@ function deps(overrides: Partial<EditorHandoffDeps> = {}): EditorHandoffDeps {
 function winDeps(overrides: Partial<EditorHandoffDeps> = {}): EditorHandoffDeps {
 	return deps({
 		platform: "win32",
+		// PATH uses a drive letter without a trailing colon. The resolver splits
+		// PATH by path.delimiter, which is ":" on POSIX CI runners — a "C:" entry
+		// would be broken in two ("C" and "/bin") and the directory never found.
 		env: {
-			PATH: path.join("C:", "bin"),
+			PATH: path.join("C", "bin"),
 			LOCALAPPDATA: path.join("C:", "Users", "tester", "AppData", "Local"),
 			ProgramFiles: path.join("C:", "Program Files"),
 			PATHEXT: ".COM;.EXE;.BAT;.CMD",
@@ -118,7 +121,7 @@ describe("editor handoff (win32 fallback discovery)", () => {
 	it("prefers a Windows-native .cmd shim over a bare extension-less sh script on PATH", async () => {
 		// VS Code/Cursor ship a bare `code` sh script and a `code.cmd` batch
 		// side by side; spawn must use the .cmd so cmd.exe can run it.
-		const dir = path.join("C:", "bin");
+		const dir = path.join("C", "bin");
 		const shScript = path.join(dir, "code");
 		const cmdShim = path.join(dir, "code.cmd");
 		const input = winDeps({ isExecutable: installedExecutables(shScript, cmdShim) });
@@ -135,7 +138,7 @@ describe("editor handoff (win32 fallback discovery)", () => {
 	});
 
 	it("prefers a PATH install over the fallback install dirs", async () => {
-		const pathCode = path.join("C:", "bin", "code.cmd");
+		const pathCode = path.join("C", "bin", "code.cmd");
 		const input = winDeps({ isExecutable: installedExecutables(pathCode, vscodeAgentExec) });
 		const handoff = createEditorHandoff(input);
 		await handoff.open({ sessionId: "ao-1", targetId: "vscode" });
@@ -151,7 +154,7 @@ describe("editor handoff (win32 fallback discovery)", () => {
 	it("safely ignores nonexistent fallback roots (unset env vars) instead of throwing", async () => {
 		const input = winDeps({
 			env: {
-				PATH: path.join("C:", "bin"),
+				PATH: path.join("C", "bin"),
 				PATHEXT: ".COM;.EXE;.BAT;.CMD",
 			},
 			isExecutable: () => false,
