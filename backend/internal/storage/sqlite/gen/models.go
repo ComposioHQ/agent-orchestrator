@@ -158,6 +158,31 @@ type ChangeLog struct {
 	CreatedAt time.Time
 }
 
+type ClaudeCodeAccountSwitch struct {
+	ID                        string
+	SourceAccountID           string
+	TargetAccountID           string
+	SwitchPolicy              string
+	IdempotencyKey            string
+	RequestFingerprint        string
+	ExpectedAccountRevision   int64
+	Phase                     string
+	FailureCode               string
+	CredentialsCommittedAt    sql.NullTime
+	PropagationUncertainUntil sql.NullTime
+	CreatedAt                 time.Time
+	UpdatedAt                 time.Time
+	CompletedAt               sql.NullTime
+}
+
+type ClaudeCodeActiveAccount struct {
+	SingletonID int64
+	AccountID   string
+	Revision    int64
+	ActivatedAt time.Time
+	UpdatedAt   time.Time
+}
+
 type CodexAccountSwitch struct {
 	ID                      string
 	SourceAccountID         string
