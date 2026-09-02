@@ -543,13 +543,21 @@ func (m *Manager) ApplyActivitySignal(ctx context.Context, id domain.SessionID, 
 		m.mu.Unlock()
 		return nil
 	}
-	if rec.Metadata.RuntimeLaunchID != "" && s.LaunchID != rec.Metadata.RuntimeLaunchID {
+	mode := domain.NormalizeSessionMode(rec.Mode)
+	currentChatController := mode == domain.SessionModeChat &&
+		s.ControllerGeneration != "" &&
+		s.ControllerGeneration == rec.Metadata.ControllerGeneration
+	// Controller ownership is mode-specific. A Chat controller has no terminal
+	// launch id, so stale TUI metadata must not veto its current generation.
+	// Provider hooks inherited from a shell never receive that internal
+	// credential and therefore cannot mutate structured Chat lifecycle facts.
+	if mode != domain.SessionModeChat && rec.Metadata.RuntimeLaunchID != "" &&
+		s.LaunchID != rec.Metadata.RuntimeLaunchID {
 		m.mu.Unlock()
 		return nil
 	}
-	if s.ControllerGeneration != "" &&
-		(domain.NormalizeSessionMode(rec.Mode) != domain.SessionModeChat ||
-			s.ControllerGeneration != rec.Metadata.ControllerGeneration) {
+	if (mode == domain.SessionModeChat && !currentChatController) ||
+		(mode != domain.SessionModeChat && s.ControllerGeneration != "") {
 		m.mu.Unlock()
 		return nil
 	}
@@ -1126,6 +1134,14 @@ func (m *Manager) markSpawned(
 		// a stale "signals worked once" fact.
 		rec.FirstSignalAt = time.Time{}
 		rec.Metadata = mergeMetadata(rec.Metadata, metadata)
+		if domain.NormalizeSessionMode(rec.Mode) == domain.SessionModeChat &&
+			strings.TrimSpace(metadata.ControllerGeneration) != "" {
+			// A committed Chat controller is the sole session owner. Clear any
+			// terminal identity retained by an older handoff/recovery build so it
+			// cannot confuse runtime observation or a later daemon restart.
+			rec.Metadata.RuntimeHandleID = ""
+			rec.Metadata.RuntimeLaunchID = ""
+		}
 		rec.UpdatedAt = now
 		if boundary == nil {
 			if err := m.store.UpdateSession(ctx, rec); err != nil {

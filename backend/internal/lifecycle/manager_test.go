@@ -3649,7 +3649,13 @@ func TestRuntimeObservation_WorkloadDeathAloneDoesNotReap(t *testing.T) {
 func TestMarkSpawnedPersistsChatControllerFacts(t *testing.T) {
 	ctx := context.Background()
 	st := newFakeStore()
-	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", Mode: domain.SessionModeChat}
+	st.sessions["mer-1"] = domain.SessionRecord{
+		ID: "mer-1", ProjectID: "mer", Mode: domain.SessionModeChat,
+		Metadata: domain.SessionMetadata{
+			RuntimeHandleID: "stale-tui-runtime",
+			RuntimeLaunchID: "stale-tui-generation",
+		},
+	}
 	m := New(st, nil)
 
 	if err := m.MarkSpawned(ctx, "mer-1", domain.SessionMetadata{
@@ -3670,6 +3676,9 @@ func TestMarkSpawnedPersistsChatControllerFacts(t *testing.T) {
 	}
 	if got.Metadata.ControllerGeneration != "gen-1" {
 		t.Fatalf("controller generation = %q", got.Metadata.ControllerGeneration)
+	}
+	if got.Metadata.RuntimeHandleID != "" || got.Metadata.RuntimeLaunchID != "" {
+		t.Fatalf("Chat spawn retained terminal ownership metadata: %+v", got.Metadata)
 	}
 
 	// A relaunch rotates the generation: the new value must replace the old, or
@@ -3834,6 +3843,44 @@ func TestActivitySignalRejectsStaleChatControllerGenerationAcrossHandoff(t *test
 	}
 	if got := st.sessions["mer-1"].Activity.State; got != domain.ActivityIdle {
 		t.Fatalf("old Chat controller changed TUI activity to %q", got)
+	}
+}
+
+func TestActivitySignalFencesChatByControllerGenerationDespiteStaleRuntimeMetadata(t *testing.T) {
+	ctx := context.Background()
+	st := newFakeStore()
+	st.sessions["mer-1"] = domain.SessionRecord{
+		ID: "mer-1", ProjectID: "mer", Mode: domain.SessionModeChat,
+		Metadata: domain.SessionMetadata{
+			RuntimeHandleID:      "stale-tui-runtime",
+			RuntimeLaunchID:      "stale-tui-generation",
+			ControllerGeneration: "chat-generation",
+		},
+		Activity: domain.Activity{State: domain.ActivityIdle},
+	}
+	m := New(st, nil)
+
+	for _, signal := range []ports.ActivitySignal{
+		{Valid: true, State: domain.ActivityActive, LaunchID: "stale-tui-generation"},
+		{Valid: true, State: domain.ActivityActive, ControllerGeneration: "foreign-generation"},
+	} {
+		if err := m.ApplyActivitySignal(ctx, "mer-1", signal); err != nil {
+			t.Fatalf("reject non-owner signal: %v", err)
+		}
+		if got := st.sessions["mer-1"].Activity.State; got != domain.ActivityIdle {
+			t.Fatalf("non-owner signal changed activity to %q", got)
+		}
+	}
+
+	for _, state := range []domain.ActivityState{domain.ActivityActive, domain.ActivityIdle} {
+		if err := m.ApplyActivitySignal(ctx, "mer-1", ports.ActivitySignal{
+			Valid: true, State: state, ControllerGeneration: "chat-generation",
+		}); err != nil {
+			t.Fatalf("apply current Chat signal %q: %v", state, err)
+		}
+		if got := st.sessions["mer-1"].Activity.State; got != state {
+			t.Fatalf("current Chat signal left activity at %q, want %q", got, state)
+		}
 	}
 }
 
