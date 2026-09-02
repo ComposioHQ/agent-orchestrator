@@ -118,9 +118,11 @@ export function CreateProjectAgentSheet({
 	const contentOpen = open || isExiting;
 	const displayedAction = useRef(action);
 	const displayedError = useRef(error);
+	const displayedOnBack = useRef(onBack);
 	if (open) {
 		displayedAction.current = action;
 		displayedError.current = error;
+		displayedOnBack.current = onBack;
 	}
 	const agentsQuery = useAgentReadinessQuery(contentOpen);
 	useEnsureAgentReadiness({ enabled: contentOpen });
@@ -208,14 +210,14 @@ export function CreateProjectAgentSheet({
 						closeLabel={t("createProject.closeAgents")}
 						disabled={isBusy}
 						leadingAction={
-							onBack ? (
+							displayedOnBack.current ? (
 								<Button
 									type="button"
 									variant="outline"
 									size="icon"
 									aria-label={t("createProject.cloneBackToDetails")}
 									disabled={isBusy}
-									onClick={onBack}
+								onClick={displayedOnBack.current}
 								>
 									<ChevronLeft className="size-4" aria-hidden="true" />
 								</Button>
