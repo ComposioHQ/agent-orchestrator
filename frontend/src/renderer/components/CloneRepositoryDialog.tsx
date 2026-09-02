@@ -329,6 +329,9 @@ function RepositoryOwnerIcon({
 
 	useEffect(() => {
 		setAvatarState(avatarUrl ? "loading" : "failed");
+		if (!avatarUrl) return;
+		const timeout = window.setTimeout(() => setAvatarState("failed"), 4000);
+		return () => window.clearTimeout(timeout);
 	}, [avatarUrl]);
 
 	const visible = hasOwner;
@@ -344,8 +347,9 @@ function RepositoryOwnerIcon({
 					<img
 						alt=""
 						className={`${showAvatar ? "opacity-100" : "opacity-0"} absolute inset-0 size-4 rounded-full object-cover outline outline-1 -outline-offset-1 outline-black/10 transition-none dark:outline-white/10`}
-						draggable={false}
-						onError={() => setAvatarState("failed")}
+										draggable={false}
+										loading="eager"
+										onError={() => setAvatarState("failed")}
 						onLoad={() => setAvatarState("loaded")}
 						referrerPolicy="no-referrer"
 						src={avatarUrl}
@@ -413,7 +417,7 @@ export function repositoryAvatarFromGitUrl(raw: string): { owner: string; url: s
 	const encodedOwner = encodeURIComponent(remote.owner);
 	switch (remote.host) {
 		case "github.com":
-			return { owner: remote.owner, url: `https://github.com/${encodedOwner}.png` };
+			return { owner: remote.owner, url: `https://github.com/${encodedOwner}.png?size=64` };
 		case "gitlab.com":
 			return { owner: remote.owner, url: `https://gitlab.com/-/avatar?username=${encodedOwner}` };
 		case "bitbucket.org":
