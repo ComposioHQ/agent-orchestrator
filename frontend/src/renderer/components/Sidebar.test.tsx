@@ -106,6 +106,20 @@ vi.mock("../lib/rename-session", () => ({ renameSession: renameSessionMock }));
 vi.mock("../lib/spawn-orchestrator", () => ({ spawnOrchestrator: spawnMock }));
 vi.mock("../lib/cloud-session", () => ({ useCloudSession: () => cloudSessionState }));
 vi.mock("../hooks/useCloudGate", () => ({ useCloudGate: () => cloudGateState }));
+// Local (dev-only) cloud sign-in is off in these tests; mock it like its cloud
+// siblings so the sign-in row never fires a real settings fetch.
+vi.mock("../hooks/useCloudLocalAuth", () => ({
+	useCloudLocalAuth: () => ({
+		available: false,
+		cpUrl: "",
+		register: async () => {
+			throw new Error("useCloudLocalAuth is mocked");
+		},
+		login: async () => {
+			throw new Error("useCloudLocalAuth is mocked");
+		},
+	}),
+}));
 vi.mock("../hooks/useCommandPaletteEnabled", () => ({
 	useCommandPaletteEnabled: () => commandPaletteEnabled.current,
 }));

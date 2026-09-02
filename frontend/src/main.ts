@@ -97,6 +97,7 @@ import {
 	registerCloudProtocol,
 	showCloudSignInFailure,
 } from "./main/cloud-auth";
+import { installCloudLocalAuthIPC } from "./main/cloud-auth-local";
 import { installCloudCpProxy } from "./main/cloud-cp-proxy";
 import { DEFAULT_POSTHOG_HOST, DEFAULT_POSTHOG_PROJECT_KEY } from "./shared/posthog-config";
 import { DEFAULT_SENTRY_DSN } from "./shared/sentry-config";
@@ -2184,6 +2185,11 @@ function notifyRenderersOfCloudSession(account: import("./shared/cloud-account")
 }
 
 installCloudIPC(cloudDataDir, notifyRenderersOfCloudSession);
+
+// Dev-only local (email/password) sign-in against a loopback Docker control
+// plane running AO_CLOUD_LOCAL_AUTH. Gated to unpackaged/dev builds + loopback
+// CP inside the handlers; a no-op surface for production/WorkOS users.
+installCloudLocalAuthIPC(cloudDataDir, notifyRenderersOfCloudSession);
 
 // Cloud control-plane proxy IPC — cloudCp:request/openStream/closeStream.
 // CP calls go through main so the WorkOS bearer token never reaches a renderer.
