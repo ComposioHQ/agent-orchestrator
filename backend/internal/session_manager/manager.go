@@ -913,10 +913,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		return domain.SessionRecord{}, 0, 0, wrapSpawnStageEarly(ErrSpawnCreate, err)
 	}
 	id := rec.ID
-	if rec.Metadata.ArtifactDir, err = m.reserveArtifactDir(id); err != nil {
-		m.rollbackSpawnSeedRow(ctx, id)
-		return domain.SessionRecord{}, 0, 0, wrapSpawnStage(id, ErrSpawnArtifactDir, err)
-	}
+	rec.Metadata.ArtifactDir = m.reserveArtifactDir(id)
 	if err := m.store.UpdateSession(ctx, rec); err != nil {
 		m.cleanupArtifactDir(id)
 		m.rollbackSpawnSeedRow(ctx, id)
@@ -4101,15 +4098,15 @@ func (m *Manager) artifactDir(id domain.SessionID) string {
 	return filepath.Join(m.dataDir, "artifacts", string(id))
 }
 
-func (m *Manager) reserveArtifactDir(id domain.SessionID) (string, error) {
+func (m *Manager) reserveArtifactDir(id domain.SessionID) string {
 	dir := m.artifactDir(id)
 	if dir == "" {
-		return "", nil
+		return ""
 	}
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		m.logger.Warn("artifact dir unavailable; reserving path only", "session", id, "path", dir, "err", err)
 	}
-	return dir, nil
+	return dir
 }
 
 func (m *Manager) cleanupArtifactDir(id domain.SessionID) {
