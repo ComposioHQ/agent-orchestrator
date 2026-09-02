@@ -846,7 +846,7 @@ describe("Sidebar", () => {
 		expect(await screen.findByText("/repo/new-project")).toBeInTheDocument();
 		expect(window.ao!.app.chooseDirectory).toHaveBeenCalledWith("Choose a project repository");
 		await user.click(screen.getByRole("button", { name: "Continue" }));
-		const dialog = screen.getByRole("dialog", { name: "Project agents" });
+		const dialog = screen.getByRole("dialog", { name: "Set up project" });
 		expect(dialog).toHaveClass("left-1/2", "top-1/2", "-translate-x-1/2", "-translate-y-1/2");
 		await user.click(screen.getByRole("button", { name: "Create and start" }));
 
@@ -879,8 +879,8 @@ describe("Sidebar", () => {
 		expect(window.ao!.app.chooseDirectory).toHaveBeenCalledWith("Choose where to clone the repository");
 		await user.click(screen.getByRole("button", { name: "Continue" }));
 
-		expect(await screen.findByRole("dialog", { name: "Project agents" })).toBeInTheDocument();
-		await user.click(screen.getByRole("button", { name: "Clone and start" }));
+		expect(await screen.findByRole("dialog", { name: "Set up project" })).toBeInTheDocument();
+		await user.click(screen.getByRole("button", { name: "Clone" }));
 		await waitFor(() =>
 			expect(onCloneProject).toHaveBeenCalledWith({
 				remoteUrl: "git@github.com:acme/web-app.git",
@@ -1022,7 +1022,7 @@ describe("Sidebar", () => {
 
 		await screen.findByText("/repo/parent/universe");
 		await user.click(screen.getByRole("button", { name: "Continue" }));
-		expect(await screen.findByRole("dialog", { name: "Project agents" })).toBeInTheDocument();
+		expect(await screen.findByRole("dialog", { name: "Set up project" })).toBeInTheDocument();
 		expect(screen.getByText(/If this folder needs Git setup/i)).toBeInTheDocument();
 		expect(screen.getByText(/inside an existing Git repository at \/repo\/parent/i)).toBeInTheDocument();
 		expect(onInitializeProject).not.toHaveBeenCalled();
@@ -1067,9 +1067,9 @@ describe("Sidebar", () => {
 		const onInitializeProject = vi.fn().mockResolvedValue(undefined) as InitializeProjectHandler;
 		renderSidebar({ onCreateProject, onInitializeProject });
 		const user = await openCreateProjectDialog("/repo/new-project", { path: "/repo/new-project", repos: [] });
-		await user.click(screen.getByRole("button", { name: "Cancel" }));
+	await user.click(screen.getByRole("button", { name: "Close project agents dialog" }));
 		expect(onInitializeProject).not.toHaveBeenCalled();
-		expect(screen.queryByRole("dialog", { name: "Project agents" })).not.toBeInTheDocument();
+		expect(screen.queryByRole("dialog", { name: "Set up project" })).not.toBeInTheDocument();
 	});
 
 	it("surfaces repository initialization failures", async () => {
@@ -1094,7 +1094,7 @@ describe("Sidebar", () => {
 		expect(await screen.findByText("/repo/workspace")).toBeInTheDocument();
 		expect(window.ao!.app.chooseDirectory).toHaveBeenCalledWith("Choose a workspace folder");
 		await user.click(screen.getByRole("button", { name: "Continue" }));
-		expect(screen.getByRole("dialog", { name: "Workspace agents" })).toBeInTheDocument();
+		expect(screen.getByRole("dialog", { name: "Set up workspace" })).toBeInTheDocument();
 		await chooseOption(screen.getByRole("combobox", { name: "Worker agent" }), "Codex");
 		await chooseOption(screen.getByRole("combobox", { name: "Orchestrator agent" }), "Claude Code");
 		await user.click(screen.getByRole("button", { name: "Create workspace and start" }));
@@ -1125,7 +1125,7 @@ describe("Sidebar", () => {
 		await user.click(screen.getByLabelText("New project"));
 		await user.click(screen.getByRole("button", { name: /^Add a workspace folder$/i }));
 		await user.click(await screen.findByRole("button", { name: "Continue" }));
-		await screen.findByRole("dialog", { name: "Workspace agents" });
+		await screen.findByRole("dialog", { name: "Set up workspace" });
 		await chooseOption(screen.getByRole("combobox", { name: "Orchestrator agent" }), "Claude Code");
 		await user.click(screen.getByRole("button", { name: "Create workspace and start" }));
 
@@ -1177,7 +1177,7 @@ describe("Sidebar", () => {
 		await user.click(screen.getByLabelText("New project"));
 		await user.click(screen.getByRole("button", { name: /^Add a workspace folder$/i }));
 		await user.click(await screen.findByRole("button", { name: "Continue" }));
-		await screen.findByRole("dialog", { name: "Workspace agents" });
+		await screen.findByRole("dialog", { name: "Set up workspace" });
 		await chooseOption(screen.getByRole("combobox", { name: "Orchestrator agent" }), "Claude Code");
 		await user.click(screen.getByRole("button", { name: "Create workspace and start" }));
 
@@ -1229,7 +1229,7 @@ describe("Sidebar", () => {
 		await user.click(screen.getByLabelText("New project"));
 		await user.click(screen.getByRole("button", { name: /^Add a workspace folder$/i }));
 		await user.click(await screen.findByRole("button", { name: "Continue" }));
-		await screen.findByRole("dialog", { name: "Workspace agents" });
+		await screen.findByRole("dialog", { name: "Set up workspace" });
 		await chooseOption(screen.getByRole("combobox", { name: "Orchestrator agent" }), "Claude Code");
 		await user.click(screen.getByRole("button", { name: "Create workspace and start" }));
 
@@ -1252,7 +1252,7 @@ describe("Sidebar", () => {
 		await user.click(screen.getByLabelText("New project"));
 		await user.click(screen.getByRole("button", { name: /^Add a workspace folder$/i }));
 		await user.click(await screen.findByRole("button", { name: "Continue" }));
-		await screen.findByRole("dialog", { name: "Workspace agents" });
+		await screen.findByRole("dialog", { name: "Set up workspace" });
 		await chooseOption(screen.getByRole("combobox", { name: "Orchestrator agent" }), "Claude Code");
 		await user.click(screen.getByRole("button", { name: "Create workspace and start" }));
 
@@ -1281,7 +1281,7 @@ describe("Sidebar", () => {
 		await user.click(screen.getByLabelText("New project"));
 		await user.click(screen.getByRole("button", { name: /^Add a workspace folder$/i }));
 		await user.click(await screen.findByRole("button", { name: "Continue" }));
-		await screen.findByRole("dialog", { name: "Workspace agents" });
+		await screen.findByRole("dialog", { name: "Set up workspace" });
 		expect(
 			screen.getByText(
 				"Selected folder is inside an existing Git repository at /repo. AO will initialize this folder as a separate repository.",

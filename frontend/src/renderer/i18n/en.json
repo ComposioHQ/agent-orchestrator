@@ -147,6 +147,8 @@
 	"createProject.cloneAndStart": "Clone and start",
 	"createProject.clone": "Clone",
 	"createProject.workOnAssignedIssues": "Automatically work on assigned issues",
+	"createProject.setupProject": "Set up project",
+	"createProject.setupWorkspace": "Set up workspace",
 	"createProject.cloneBack": "Back to code source",
 	"createProject.cloneBackToDetails": "Back to clone details",
 	"createProject.cloneChoose": "Choose",

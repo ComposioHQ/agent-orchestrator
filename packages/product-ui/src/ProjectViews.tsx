@@ -274,7 +274,7 @@ export function ProjectSetupHeaderView({
 		>
 			{leadingAction}
 			<div className="min-w-0">
-				<Title className={showPath ? "text-subtitle font-semibold text-foreground" : "settings-dialog-title"}>
+				<Title className={showPath ? "text-subtitle font-semibold text-foreground" : "settings-dialog-title text-left"}>
 					{title}
 				</Title>
 				{showPath && path ? (
@@ -310,7 +310,7 @@ export function ProjectSetupFormView({
 }: {
 	agentControls: { worker: ReactNode; orchestrator: ReactNode };
 	agents: {
-		cacheMessage: string;
+		cacheMessage?: string;
 		error?: string | null;
 		loading: boolean;
 		loadingMessage: string;
@@ -345,9 +345,11 @@ export function ProjectSetupFormView({
 				</p>
 			)}
 
-			<p className="text-xs leading-row text-[var(--color-text-agents-sheet-description)]">
-				{agents.cacheMessage}
-			</p>
+			{agents.cacheMessage ? (
+				<p className="text-xs leading-row text-[var(--color-text-agents-sheet-description)]">
+					{agents.cacheMessage}
+				</p>
+			) : null}
 
 			{agents.error && (
 				<div

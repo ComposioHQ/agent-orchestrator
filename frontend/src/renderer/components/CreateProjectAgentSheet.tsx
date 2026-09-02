@@ -201,8 +201,8 @@ export function CreateProjectAgentSheet({
 						showPath={false}
 						title={
 							kind === "workspace"
-								? t("createProject.workspaceAgents")
-								: t("createProject.projectAgents")
+								? t("createProject.setupWorkspace")
+								: t("createProject.setupProject")
 						}
 					/>
 					<ProjectSetupFormView
@@ -243,7 +243,6 @@ export function CreateProjectAgentSheet({
 							),
 						}}
 						agents={{
-							cacheMessage: t("createProject.agentsCached"),
 							error: displayError,
 							loading: isLoadingAgents,
 							loadingMessage: t("createProject.loadingAgents"),
