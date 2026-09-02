@@ -362,6 +362,83 @@ func TestClaudeCodeActiveReauthenticationUpdatesCanonicalAndAdvancesRevision(t *
 	}
 }
 
+func TestClaudeCodeCredentialSwitchPreservesSharedFieldsAndRollsBack(t *testing.T) {
+	m, keychain, _, home := newTestClaudeCodeManager(t)
+	keychain.items[claudecode.ClaudeCanonicalCredentialService+"\x00test-user"] = claudeCredentialJSON("secret-a")
+	if err := os.WriteFile(filepath.Join(home, ".claude.json"), claudeIdentityJSON(testClaudeAccountA, "a@example.com"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.bootstrapInner(); err != nil {
+		t.Fatal(err)
+	}
+	identityB, _, err := readClaudeCodeOAuthIdentityFromBytes(claudeIdentityJSON(testClaudeAccountB, "b@example.com"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	fieldsB, err := claudecode.AccountCredentialFields(claudeCredentialJSON("secret-b"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	credentialB, _ := json.Marshal(fieldsB)
+	if _, _, err := m.catalog.upsert(context.Background(), identityB, credentialB, m.now()); err != nil {
+		t.Fatal(err)
+	}
+	svc := &Service{claudeCodeAccounts: m}
+	sw := domain.ClaudeCodeAccountSwitch{
+		ID: "switch-test", SourceAccountID: testClaudeAccountA, TargetAccountID: testClaudeAccountB,
+		Policy: domain.ClaudeCodeSwitchPolicyHotReload, ExpectedAccountRevision: 1,
+	}
+	if err := svc.StageClaudeCodeAccountForSwitch(context.Background(), sw.ID, sw.TargetAccountID); err != nil {
+		t.Fatal(err)
+	}
+	txn, err := svc.BeginClaudeCodeCredentialSwitch(context.Background(), sw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer txn.ReleaseNativeLocks()
+	if err := txn.CheckpointSource(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := txn.ActivateTarget(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := txn.UpdateIdentity(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	txn.ReleaseNativeLocks()
+	if err := txn.VerifyGlobal(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	canonicalB, _, _ := keychain.Get(context.Background(), claudecode.ClaudeCanonicalCredentialService, "test-user")
+	if !containsAny(string(canonicalB), "secret-b", `"shared":"keep"`, "device-secret-b") || containsAny(string(canonicalB), "secret-a", "device-secret-a") {
+		t.Fatalf("activated credential crossed account fields: %s", canonicalB)
+	}
+	if err := txn.Rollback(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	canonicalA, _, _ := keychain.Get(context.Background(), claudecode.ClaudeCanonicalCredentialService, "test-user")
+	if !reflect.DeepEqual(canonicalA, claudeCredentialJSON("secret-a")) {
+		t.Fatalf("rollback credential = %s", canonicalA)
+	}
+	identityA, _, err := readClaudeCodeOAuthIdentity(filepath.Join(home, ".claude.json"))
+	if err != nil || identityA.AccountUUID != testClaudeAccountA {
+		t.Fatalf("rollback identity = %+v err=%v", identityA, err)
+	}
+}
+
+func readClaudeCodeOAuthIdentityFromBytes(data []byte) (domain.ClaudeCodeAccountIdentity, map[string]any, error) {
+	dir, err := os.MkdirTemp("", "ao-claude-identity-test-")
+	if err != nil {
+		return domain.ClaudeCodeAccountIdentity{}, nil, err
+	}
+	defer os.RemoveAll(dir)
+	path := filepath.Join(dir, ".claude.json")
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		return domain.ClaudeCodeAccountIdentity{}, nil, err
+	}
+	return readClaudeCodeOAuthIdentity(path)
+}
+
 func containsAny(value string, needles ...string) bool {
 	for _, needle := range needles {
 		if len(needle) > 0 && strings.Contains(value, needle) {

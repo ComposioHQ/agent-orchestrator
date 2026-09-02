@@ -63,6 +63,14 @@ type Service struct {
 	codexAccounts      *codexAccountManager
 	codexSwitches      CodexAccountSwitchCoordinator
 	claudeCodeAccounts *claudeCodeAccountManager
+	claudeCodeSwitches ClaudeCodeAccountSwitchCoordinator
+}
+
+type ClaudeCodeAccountSwitchCoordinator interface {
+	ClaudeCodeAccountSwitchInProgress() bool
+	StartClaudeCodeAccountSwitch(context.Context, ports.ClaudeCodeAccountSwitchConfig) (domain.ClaudeCodeAccountSwitch, error)
+	RecoverClaudeCodeAccountSwitch(context.Context, string) (domain.ClaudeCodeAccountSwitch, error)
+	GetActiveClaudeCodeAccountSwitch(context.Context) (domain.ClaudeCodeAccountSwitch, bool, error)
 }
 
 // CodexAccountSwitchCoordinator owns global switch execution and recovery.

@@ -48,3 +48,34 @@ type ClaudeCodeOperationGate interface {
 	AcquireExclusive(context.Context) (ClaudeCodeOperationLease, error)
 	ExclusivePendingOrHeld() bool
 }
+
+type ClaudeCodeCredentialSwitch interface {
+	CheckpointSource(context.Context) error
+	ActivateTarget(context.Context) error
+	UpdateIdentity(context.Context) (time.Time, error)
+	ReleaseNativeLocks()
+	VerifyGlobal(context.Context) error
+	CommitActivePointer(context.Context) (domain.ClaudeCodeActiveAccount, error)
+	Rollback(context.Context) error
+	Cleanup(context.Context) error
+}
+
+type ClaudeCodeCredentialRecoveryOutcome string
+
+const (
+	ClaudeCodeCredentialRecoveryCompleted ClaudeCodeCredentialRecoveryOutcome = "completed"
+	ClaudeCodeCredentialRecoveryFailed    ClaudeCodeCredentialRecoveryOutcome = "failed"
+)
+
+type ClaudeCodeAccountCredentialManager interface {
+	WaitClaudeCodeAccountBootstrap(context.Context) error
+	CurrentClaudeCodeActiveAccount() domain.ClaudeCodeActiveAccount
+	ClaudeCodeAccountLoginInProgress() bool
+	BeginClaudeCodeAccountMutation(context.Context) error
+	EndClaudeCodeAccountMutation()
+	StageClaudeCodeAccountForSwitch(context.Context, string, string) error
+	BeginClaudeCodeCredentialSwitch(context.Context, domain.ClaudeCodeAccountSwitch) (ClaudeCodeCredentialSwitch, error)
+	RecoverClaudeCodeCredentialSwitch(context.Context, domain.ClaudeCodeAccountSwitch) (ClaudeCodeCredentialRecoveryOutcome, *time.Time, error)
+	CleanupClaudeCodeSwitchArtifacts(context.Context, string) error
+	PublishClaudeCodeAccounts()
+}

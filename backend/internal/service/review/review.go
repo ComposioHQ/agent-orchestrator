@@ -69,14 +69,15 @@ type Manager interface {
 
 // Service is the API-facing review service. It delegates to the core engine.
 type Service struct {
-	engine             *reviewcore.Engine
-	store              Store
-	requester          ports.SCMReviewRequester
-	resolver           ports.SCMReviewResolver
-	lifecycle          Reducer
-	clock              func() time.Time
-	telemetry          ports.EventSink
-	codexOperationGate ports.CodexOperationGate
+	engine                  *reviewcore.Engine
+	store                   Store
+	requester               ports.SCMReviewRequester
+	resolver                ports.SCMReviewResolver
+	lifecycle               Reducer
+	clock                   func() time.Time
+	telemetry               ports.EventSink
+	codexOperationGate      ports.CodexOperationGate
+	claudeCodeOperationGate ports.ClaudeCodeOperationGate
 	// engineTrigger indirects the engine's source-tagged trigger so the
 	// instrumented path can be exercised without standing up a full engine and
 	// its eighteen-method store. Defaulted in New; only tests replace it.
@@ -142,6 +143,12 @@ func WithTelemetry(sink ports.EventSink) Option {
 // entering while the device-global Codex credential is changing.
 func WithCodexAccountOperationGate(gate ports.CodexOperationGate) Option {
 	return func(s *Service) { s.codexOperationGate = gate }
+}
+
+// WithClaudeCodeAccountOperationGate prevents new Claude reviewer controllers
+// from entering while the device-global Claude credential is changing.
+func WithClaudeCodeAccountOperationGate(gate ports.ClaudeCodeOperationGate) Option {
+	return func(s *Service) { s.claudeCodeOperationGate = gate }
 }
 
 // emit reports an event when a sink is wired.
@@ -432,16 +439,11 @@ func (s *Service) triggerWithSource(
 		s.emit(ctx, "ao.review.triggered", workerID, triggeredPayload)
 		return reviewcore.TriggerResult{}, err
 	}
-	usesCodex := s.codexReviewUsesCodex(ctx, workerID, harness)
-	var release func()
-	if usesCodex && s.codexOperationGate != nil {
-		var err error
-		release, err = s.codexOperationGate.AcquireShared(ctx)
-		if err != nil {
-			return reviewcore.TriggerResult{}, err
-		}
-		defer release()
+	release, err := s.acquireReviewerProviderAdmission(ctx, workerID, harness)
+	if err != nil {
+		return reviewcore.TriggerResult{}, err
 	}
+	defer release()
 	result, err := s.engineTrigger(ctx, workerID, harness, config, source)
 	if err != nil {
 		s.emit(ctx, "ao.review.trigger_failed", workerID, map[string]any{
@@ -492,7 +494,7 @@ func (s *Service) TeardownReviewerTerminal(ctx context.Context, workerID domain.
 
 // RestoreReviewer relaunches an idle reviewer pane after its worker has been restored.
 func (s *Service) RestoreReviewer(ctx context.Context, workerID domain.SessionID) error {
-	release, err := s.acquireReviewerCodexAdmission(ctx, workerID, "")
+	release, err := s.acquireReviewerProviderAdmission(ctx, workerID, "")
 	if err != nil {
 		return err
 	}
@@ -544,7 +546,7 @@ func (s *Service) RestoreCodexReviewerExact(ctx context.Context, workerID domain
 // SwitchReviewer atomically persists a worker's reviewer preference and returns
 // the authoritative post-switch review state.
 func (s *Service) SwitchReviewer(ctx context.Context, workerID domain.SessionID, harness domain.ReviewerHarness, config domain.AgentConfig) (reviewcore.SessionReviews, error) {
-	release, err := s.acquireReviewerCodexAdmission(ctx, workerID, harness)
+	release, err := s.acquireReviewerProviderAdmission(ctx, workerID, harness)
 	if err != nil {
 		return reviewcore.SessionReviews{}, err
 	}
@@ -563,11 +565,25 @@ func (s *Service) codexReviewUsesCodex(ctx context.Context, workerID domain.Sess
 	return err == nil && ok && (rec.Harness == domain.HarnessCodex || rec.ReviewerHarness == domain.ReviewerCodex)
 }
 
-func (s *Service) acquireReviewerCodexAdmission(ctx context.Context, workerID domain.SessionID, harness domain.ReviewerHarness) (func(), error) {
-	if s.codexOperationGate == nil || !s.codexReviewUsesCodex(ctx, workerID, harness) {
-		return func() {}, nil
+func (s *Service) claudeCodeReviewUsesClaudeCode(ctx context.Context, workerID domain.SessionID, harness domain.ReviewerHarness) bool {
+	if harness == domain.ReviewerClaudeCode {
+		return true
 	}
-	return s.codexOperationGate.AcquireShared(ctx)
+	if harness != "" {
+		return false
+	}
+	rec, ok, err := s.store.GetSession(ctx, workerID)
+	return err == nil && ok && (rec.Harness == domain.HarnessClaudeCode || rec.ReviewerHarness == domain.ReviewerClaudeCode)
+}
+
+func (s *Service) acquireReviewerProviderAdmission(ctx context.Context, workerID domain.SessionID, harness domain.ReviewerHarness) (func(), error) {
+	if s.codexOperationGate != nil && s.codexReviewUsesCodex(ctx, workerID, harness) {
+		return s.codexOperationGate.AcquireShared(ctx)
+	}
+	if s.claudeCodeOperationGate != nil && s.claudeCodeReviewUsesClaudeCode(ctx, workerID, harness) {
+		return s.claudeCodeOperationGate.AcquireShared(ctx)
+	}
+	return func() {}, nil
 }
 
 // ActivitySignal is reviewer-owned hook metadata. It deliberately does not

@@ -968,7 +968,18 @@ func (f *fakeSessionLifecycle) RecoverCodexAccountSwitch(context.Context, string
 func (f *fakeSessionLifecycle) GetActiveCodexAccountSwitch(context.Context) (domain.CodexAccountSwitch, bool, error) {
 	return domain.CodexAccountSwitch{}, false, nil
 }
-func (f *fakeSessionLifecycle) SetCodexAccountSwitchObserver(func()) {}
+func (f *fakeSessionLifecycle) SetCodexAccountSwitchObserver(func())    {}
+func (f *fakeSessionLifecycle) ClaudeCodeAccountSwitchInProgress() bool { return false }
+func (f *fakeSessionLifecycle) StartClaudeCodeAccountSwitch(context.Context, ports.ClaudeCodeAccountSwitchConfig) (domain.ClaudeCodeAccountSwitch, error) {
+	return domain.ClaudeCodeAccountSwitch{}, nil
+}
+func (f *fakeSessionLifecycle) RecoverClaudeCodeAccountSwitch(context.Context, string) (domain.ClaudeCodeAccountSwitch, error) {
+	return domain.ClaudeCodeAccountSwitch{}, nil
+}
+func (f *fakeSessionLifecycle) GetActiveClaudeCodeAccountSwitch(context.Context) (domain.ClaudeCodeAccountSwitch, bool, error) {
+	return domain.ClaudeCodeAccountSwitch{}, false, nil
+}
+func (f *fakeSessionLifecycle) SetClaudeCodeAccountSwitchObserver(func()) {}
 
 // TestWiring_SessionLifecycleInterfaceInvokedByDaemon asserts the
 // sessionLifecycle interface is satisfied by *sessionmanager.Manager (compile

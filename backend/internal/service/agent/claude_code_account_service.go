@@ -36,7 +36,13 @@ func (s *Service) CachedClaudeCodeAccounts(ctx context.Context) (ClaudeCodeAccou
 	if err := s.WaitClaudeCodeAccountBootstrap(ctx); err != nil {
 		return ClaudeCodeAccounts{}, err
 	}
-	return s.claudeCodeAccounts.cached(), nil
+	result := s.claudeCodeAccounts.cached()
+	if s.claudeCodeSwitches != nil {
+		if sw, ok, err := s.claudeCodeSwitches.GetActiveClaudeCodeAccountSwitch(ctx); err == nil && ok {
+			result.CurrentSwitch = &sw
+		}
+	}
+	return result, nil
 }
 
 func (s *Service) EnsureClaudeCodeAccounts(ctx context.Context) (ClaudeCodeAccounts, error) {
@@ -47,14 +53,51 @@ func (s *Service) EnsureClaudeCodeAccounts(ctx context.Context) (ClaudeCodeAccou
 		return ClaudeCodeAccounts{}, mapClaudeCodeAccountError(err)
 	}
 	s.claudeCodeAccounts.publish()
-	return s.claudeCodeAccounts.cached(), nil
+	return s.CachedClaudeCodeAccounts(ctx)
 }
 
 func (s *Service) SubscribeClaudeCodeAccounts(ctx context.Context) (<-chan ClaudeCodeAccounts, error) {
 	if err := s.WaitClaudeCodeAccountBootstrap(ctx); err != nil {
 		return nil, err
 	}
-	return s.claudeCodeAccounts.subscribe(ctx), nil
+	source := s.claudeCodeAccounts.subscribe(ctx)
+	out := make(chan ClaudeCodeAccounts, 1)
+	go func() {
+		defer close(out)
+		for item := range source {
+			if s.claudeCodeSwitches != nil {
+				if sw, ok, err := s.claudeCodeSwitches.GetActiveClaudeCodeAccountSwitch(ctx); err == nil && ok {
+					item.CurrentSwitch = &sw
+				}
+			}
+			select {
+			case out <- item:
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+	return out, nil
+}
+
+func (s *Service) SetClaudeCodeAccountSwitchCoordinator(coordinator ClaudeCodeAccountSwitchCoordinator) {
+	s.claudeCodeSwitches = coordinator
+}
+
+func (s *Service) StartClaudeCodeAccountSwitch(ctx context.Context, cfg ports.ClaudeCodeAccountSwitchConfig) (domain.ClaudeCodeAccountSwitch, error) {
+	if s.claudeCodeSwitches == nil {
+		return domain.ClaudeCodeAccountSwitch{}, apierr.Unavailable("CLAUDE_CODE_ACCOUNT_MANAGEMENT_UNAVAILABLE", "Claude Code account switching is unavailable")
+	}
+	sw, err := s.claudeCodeSwitches.StartClaudeCodeAccountSwitch(ctx, cfg)
+	return sw, mapClaudeCodeAccountError(err)
+}
+
+func (s *Service) RecoverClaudeCodeAccountSwitch(ctx context.Context, id string) (domain.ClaudeCodeAccountSwitch, error) {
+	if s.claudeCodeSwitches == nil {
+		return domain.ClaudeCodeAccountSwitch{}, apierr.Unavailable("CLAUDE_CODE_ACCOUNT_MANAGEMENT_UNAVAILABLE", "Claude Code account switching is unavailable")
+	}
+	sw, err := s.claudeCodeSwitches.RecoverClaudeCodeAccountSwitch(ctx, strings.TrimSpace(id))
+	return sw, mapClaudeCodeAccountError(err)
 }
 
 func (s *Service) SetClaudeCodeAccountLoginTerminalOpener(opener claudeCodeAccountLoginTerminalService) {
@@ -121,6 +164,12 @@ func mapClaudeCodeAccountError(err error) error {
 		return apierr.Conflict("CLAUDE_CODE_ACCOUNT_REVISION_CONFLICT", "Claude Code account state changed; refresh and try again", nil)
 	case errors.Is(err, ports.ErrClaudeCodeGlobalAccountChanged):
 		return apierr.Conflict("CLAUDE_CODE_GLOBAL_ACCOUNT_CHANGED", "The device Claude Code account changed; refresh and try again", nil)
+	case errors.Is(err, ports.ErrClaudeCodeAccountSwitchInProgress):
+		return apierr.Conflict("CLAUDE_CODE_ACCOUNT_SWITCH_IN_PROGRESS", "A Claude Code account switch is already in progress", nil)
+	case errors.Is(err, ports.ErrClaudeCodeAccountSwitchNotFound):
+		return apierr.NotFound("CLAUDE_CODE_ACCOUNT_SWITCH_NOT_FOUND", "Claude Code account switch not found")
+	case errors.Is(err, ports.ErrClaudeCodeAccountSwitchIdempotencyConflict):
+		return apierr.Conflict("CLAUDE_CODE_ACCOUNT_SWITCH_IDEMPOTENCY_CONFLICT", "The idempotency key was already used for a different Claude Code account switch", nil)
 	default:
 		return err
 	}
