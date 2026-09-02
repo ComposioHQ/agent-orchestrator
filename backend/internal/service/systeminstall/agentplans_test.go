@@ -22,18 +22,6 @@ type installCapabilitiesStub struct {
 	probe             func(context.Context) error
 }
 
-type resolvingHarnessVerifier struct {
-	path string
-}
-
-func (v resolvingHarnessVerifier) Verify(context.Context, Target) (VerifyResult, error) {
-	return VerifyResult{ResolvedPath: v.path}, nil
-}
-
-func (v resolvingHarnessVerifier) Resolve(context.Context, Target) (string, error) {
-	return v.path, nil
-}
-
 func (s installCapabilitiesStub) Probe(ctx context.Context) (ports.InstallCapabilities, error) {
 	if s.calls != nil {
 		(*s.calls)++
@@ -306,63 +294,40 @@ func TestHomebrewReinstallRepairsThroughInstallWhenPackageIsNotOwned(t *testing.
 	}
 }
 
-func TestKiroReinstallUsesHeadlessForcedSelfUpdate(t *testing.T) {
+func TestKiroReinstallIsUnavailableWithoutVerifiedHeadlessRecipe(t *testing.T) {
 	s := newTestService("darwin", "bash", "kiro-cli")
 	planner, err := s.newRequestPlanner(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
-	plan, err := planner.resolveAgentMethod(TargetKiro, "official-installer", AgentOperationReinstall)
-	if err != nil {
-		t.Fatal(err)
+	plans := planner.agentMethodPlans(TargetKiro, AgentOperationReinstall)
+	if len(plans) != 1 {
+		t.Fatalf("Kiro reinstall plans = %d, want 1", len(plans))
 	}
-	if got := strings.Join(plan.Command, " "); got != "/usr/bin/kiro-cli update --non-interactive --force" {
-		t.Fatalf("Kiro reinstall command = %q", got)
+	plan := plans[0]
+	if !plan.Unsupported || len(plan.Command) != 0 || plan.Script != nil {
+		t.Fatalf("Kiro reinstall plan = %+v, want instructions-only", plan)
 	}
-	if plan.Script != nil {
-		t.Fatal("Kiro reinstall must not use the interactive vendor script")
+	if !strings.Contains(plan.Reason, "verified headless reinstall") {
+		t.Fatalf("Kiro reinstall reason = %q", plan.Reason)
+	}
+	_, err = planner.resolveAgentMethod(TargetKiro, "official-installer", AgentOperationReinstall)
+	if !errors.Is(err, ErrInstallMethod) {
+		t.Fatalf("Kiro reinstall error = %v, want ErrInstallMethod", err)
 	}
 }
 
-func TestKiroFreshInstallRequiresWritableApplicationsButReinstallUsesSelfUpdater(t *testing.T) {
-	s := newTestService("darwin", "bash", "kiro-cli")
-	s.installCapabilities = installCapabilitiesStub{
-		prefix: "/Users/test/.npm", writable: true,
-	}
+func TestKiroFreshInstallRequiresWritableApplications(t *testing.T) {
+	s := newTestService("darwin", "bash")
 	planner, err := s.newRequestPlanner(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
 	planner.capabilities.MacApplicationsWritable = false
 
-	_, installErr := planner.resolveAgentMethod(TargetKiro, "official-installer", AgentOperationInstall)
-	if !errors.Is(installErr, ErrInstallMethod) || !strings.Contains(installErr.Error(), "/Applications") {
-		t.Fatalf("fresh Kiro install error = %v", installErr)
-	}
-	reinstall, reinstallErr := planner.resolveAgentMethod(TargetKiro, "official-installer", AgentOperationReinstall)
-	if reinstallErr != nil {
-		t.Fatal(reinstallErr)
-	}
-	if got := strings.Join(reinstall.Command, " "); got != "/usr/bin/kiro-cli update --non-interactive --force" {
-		t.Fatalf("Kiro reinstall command = %q", got)
-	}
-}
-
-func TestKiroReinstallUsesAdapterResolvedBinaryOutsideDaemonPATH(t *testing.T) {
-	s := newTestService("darwin", "bash")
-	s.verifier = resolvingHarnessVerifier{path: "/Users/test/.kiro/bin/kiro-cli"}
-	planner, err := s.newRequestPlanner(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	planner.capabilities = &ports.InstallCapabilities{MacApplicationsWritable: false}
-
-	plan, err := planner.resolveAgentMethod(TargetKiro, "official-installer", AgentOperationReinstall)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := strings.Join(plan.Command, " "); got != "/Users/test/.kiro/bin/kiro-cli update --non-interactive --force" {
-		t.Fatalf("Kiro reinstall command = %q", got)
+	_, err = planner.resolveAgentMethod(TargetKiro, "official-installer", AgentOperationInstall)
+	if !errors.Is(err, ErrInstallMethod) || !strings.Contains(err.Error(), "/Applications") {
+		t.Fatalf("fresh Kiro install error = %v", err)
 	}
 }
 

@@ -249,12 +249,6 @@ type HarnessVerifier interface {
 	Verify(ctx context.Context, target Target) (VerifyResult, error)
 }
 
-// HarnessBinaryResolver exposes the same adapter-backed binary lookup used by
-// verification so repair commands can execute an installed CLI outside PATH.
-type HarnessBinaryResolver interface {
-	Resolve(ctx context.Context, target Target) (string, error)
-}
-
 // SessionLister exposes durable lifecycle facts used to keep the Droid vendor
 // installer away from active Droid processes.
 type SessionLister interface {

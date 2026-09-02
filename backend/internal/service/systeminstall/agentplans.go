@@ -257,15 +257,6 @@ func (s requestPlanner) planKiroInstall() Plan {
 }
 
 func (s requestPlanner) planForOperation(plan Plan, operation AgentOperation) Plan {
-	if operation == AgentOperationReinstall && plan.Target == TargetKiro && plan.Method == "official-installer" {
-		if binary, err := s.resolveHarnessBinary(TargetKiro); err == nil {
-			plan.Unsupported = false
-			plan.Reason = ""
-			plan.Script = nil
-			plan.Command = []string{binary, "update", "--non-interactive", "--force"}
-			return plan
-		}
-	}
 	if operation == AgentOperationInstall || plan.Unsupported {
 		return plan
 	}
@@ -295,19 +286,6 @@ func (s requestPlanner) planForOperation(plan Plan, operation AgentOperation) Pl
 		plan.Reason = "This installation method does not provide an explicit reinstall operation."
 	}
 	return plan
-}
-
-func (s requestPlanner) resolveHarnessBinary(target Target) (string, error) {
-	ctx := s.ctx
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	if resolver, ok := s.verifier.(HarnessBinaryResolver); ok {
-		if path, err := resolver.Resolve(ctx, target); err == nil && path != "" {
-			return path, nil
-		}
-	}
-	return s.executables.LookPath("kiro-cli")
 }
 
 // planAgent preserves the legacy single-plan call sites while selecting from
