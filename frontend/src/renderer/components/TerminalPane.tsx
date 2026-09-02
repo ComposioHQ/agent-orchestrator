@@ -42,6 +42,8 @@ import { RestoreUnavailableDialog } from "./RestoreUnavailableDialog";
 
 type TerminalPaneProps = {
 	session?: WorkspaceSession;
+	/** Changes after a Cloud Chat -> TUI handoff so the PTY is reattached fresh. */
+	terminalGeneration?: string;
 	theme: Theme;
 	daemonReady: boolean;
 	terminalTarget?: TerminalTarget;
@@ -126,6 +128,7 @@ function terminalPropsMatch(left: TerminalPaneProps, right: TerminalPaneProps): 
 function cacheDescriptor(
 	session: WorkspaceSession | undefined,
 	terminalTarget: TerminalTarget | undefined,
+	terminalGeneration?: string,
 ): TerminalCacheDescriptor | null {
 	if (terminalTarget?.kind === "shell") {
 		if (!terminalTargetBelongsToSession(terminalTarget, session?.id)) return null;
@@ -147,7 +150,8 @@ function cacheDescriptor(
 	if (!session?.id || !handleId) return null;
 	const ownerKey = `session:${session.id}:worker`;
 	return {
-		cacheKey: `${ownerKey}|handle:${handleId}`,
+		cacheKey: `${ownerKey}|handle:${handleId}|generation:${terminalGeneration ?? "initial"}`,
+		generation: terminalGeneration,
 		handleId,
 		kind: "worker",
 		ownerKey,
@@ -600,6 +604,7 @@ function CachedTerminalSlot({
 
 export function TerminalPane({
 	session,
+	terminalGeneration,
 	theme,
 	daemonReady,
 	terminalTarget: requestedTerminalTarget,
@@ -700,7 +705,7 @@ export function TerminalPane({
 		inputDisabled,
 		focusRequested,
 	};
-	const descriptor = cacheDescriptor(session, terminalTarget);
+	const descriptor = cacheDescriptor(session, terminalTarget, terminalGeneration);
 	if (cache && descriptor) {
 		return <CachedTerminalSlot descriptor={descriptor} props={props} />;
 	}
