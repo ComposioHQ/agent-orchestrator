@@ -345,10 +345,11 @@ type Store interface {
 // Manager coordinates internal session spawn, restore, kill, and cleanup over
 // the outbound ports. User-facing read-model assembly lives in the service package.
 type Manager struct {
-	runtime   runtimeController
-	agents    ports.AgentResolver
-	workspace ports.Workspace
-	store     Store
+	runtime        runtimeController
+	agents         ports.AgentResolver
+	workspace      ports.Workspace
+	store          Store
+	agentReadiness ports.AgentReadinessProvider
 	// messenger is a sessionguard.Guard wrapping the raw messenger, so every
 	// pane write is guarded (re-read state, refuse a blocked session) without
 	// each call site re-deriving the check. Send/confirmActive use Deliver for
@@ -479,6 +480,11 @@ func (m *Manager) SetTerminalInputGate(gate TerminalInputGate) {
 	m.terminalInputGateMu.Lock()
 	defer m.terminalInputGateMu.Unlock()
 	m.terminalInputGate = gate
+}
+
+// SetAgentReadiness completes daemon wiring before request handling begins.
+func (m *Manager) SetAgentReadiness(provider ports.AgentReadinessProvider) {
+	m.agentReadiness = provider
 }
 
 func (m *Manager) beginTerminalInputDrain(rec domain.SessionRecord) (lastInputAt time.Time, release func()) {

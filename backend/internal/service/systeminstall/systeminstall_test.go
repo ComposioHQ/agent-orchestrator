@@ -239,6 +239,45 @@ func TestStartAndStatus_Succeeded(t *testing.T) {
 	}
 }
 
+func TestStart_SuccessCallbackRunsAfterVerifiedInstall(t *testing.T) {
+	s := newTestService("darwin", "npm", "codex")
+	s.commands = testCommandRunner(func(context.Context, []string) *exec.Cmd { return exec.Command("true") })
+	succeeded := make(chan Target, 1)
+	s.SetOnSucceeded(func(target Target) { succeeded <- target })
+
+	if _, err := s.Start(context.Background(), TargetCodex); err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	waitForStatus(t, s, TargetCodex, StatusSucceeded)
+
+	select {
+	case target := <-succeeded:
+		if target != TargetCodex {
+			t.Fatalf("callback target = %q, want %q", target, TargetCodex)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for success callback")
+	}
+}
+
+func TestStart_FailedInstallDoesNotRunSuccessCallback(t *testing.T) {
+	s := newTestService("darwin", "npm")
+	s.commands = testCommandRunner(func(context.Context, []string) *exec.Cmd { return exec.Command("false") })
+	called := make(chan Target, 1)
+	s.SetOnSucceeded(func(target Target) { called <- target })
+
+	if _, err := s.Start(context.Background(), TargetCodex); err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	waitForStatus(t, s, TargetCodex, StatusFailed)
+
+	select {
+	case target := <-called:
+		t.Fatalf("success callback ran for failed target %q", target)
+	case <-time.After(20 * time.Millisecond):
+	}
+}
+
 func TestStart_ExitZeroWithoutTargetOnPATHFails(t *testing.T) {
 	s := newTestService("darwin", "brew")
 	s.commands = testCommandRunner(func(context.Context, []string) *exec.Cmd { return exec.Command("true") })

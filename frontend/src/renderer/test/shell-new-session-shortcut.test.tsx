@@ -80,7 +80,6 @@ const shellMocks = vi.hoisted(() => {
 			prefetchQuery: vi.fn(async () => undefined),
 			setQueryData: vi.fn(),
 		},
-		refreshAgents: vi.fn(),
 		state,
 	};
 });
@@ -154,14 +153,13 @@ vi.mock("../hooks/useShellTerminals", () => ({
 	useOpenShellTerminal: () => ({ mutate: shellMocks.openShellTerminal }),
 }));
 
-vi.mock("../hooks/useAgentsQuery", () => ({
-	agentsQueryKey: ["agents"],
-	agentsQueryOptions: { queryKey: ["agents"] },
-	refreshAgents: shellMocks.refreshAgents,
+vi.mock("../hooks/useAgentReadinessQuery", () => ({
+	agentReadinessQueryKey: ["agent-readiness"],
 	// The shell reports the install's agent inventory once per launch, so the
 	// mock has to answer this too. Undefined data means the hook reports nothing,
 	// which keeps these shortcut tests free of telemetry side effects.
-	useAgentsQuery: () => ({ data: undefined }),
+	useAgentReadinessQuery: () => ({ data: undefined }),
+	useEnsureAgentReadiness: vi.fn(),
 }));
 
 vi.mock("../components/NotificationCenter", () => ({ NotificationRuntime: () => null }));
@@ -313,7 +311,6 @@ beforeEach(() => {
 	shellMocks.state.daemonStatus = { state: "error", code: "not_ready" };
 	shellMocks.state.shellValue = undefined;
 	shellMocks.queryClient.fetchQuery.mockReset();
-	shellMocks.refreshAgents.mockReset();
 	shellMocks.queryClient.getQueryState.mockReset().mockReturnValue({ dataUpdatedAt: 0 });
 	useUiStore.setState({
 		createProjectNonce: 0,
@@ -329,17 +326,6 @@ beforeEach(() => {
 });
 
 describe("shell workspace startup", () => {
-	it("does not schedule an all-agent auth refresh when the daemon becomes ready", async () => {
-		shellMocks.state.daemonStatus = { state: "ready", port: 4777 };
-		shellMocks.queryClient.fetchQuery.mockResolvedValue(workspaces);
-
-		await renderShell();
-
-		expect(shellMocks.queryClient.fetchQuery).not.toHaveBeenCalledWith(
-			expect.objectContaining({ queryFn: shellMocks.refreshAgents }),
-		);
-	});
-
 	it("leaves the session topbar row to the session split instead of reserving a full-width shell row", async () => {
 		shellMocks.state.routeParams = { sessionId: "sess-1" };
 		await renderShell();
