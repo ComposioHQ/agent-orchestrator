@@ -97,21 +97,10 @@ func (m *Service) Clone(ctx context.Context, in CloneInput) (Project, error) {
 	}
 	cleanupPath = target
 
-	projectID := in.ProjectID
-	projectName := in.Name
-	if projectID == nil {
-		id := m.availableProjectID(ctx, defaultProjectID(target))
-		idString := string(id)
-		projectID = &idString
-	}
-	if projectName == nil {
-		name := repositoryName
-		projectName = &name
-	}
 	project, err := m.Add(ctx, AddInput{
 		Path:      target,
-		ProjectID: projectID,
-		Name:      projectName,
+		ProjectID: in.ProjectID,
+		Name:      in.Name,
 		Config:    in.Config,
 	})
 	if err != nil {
