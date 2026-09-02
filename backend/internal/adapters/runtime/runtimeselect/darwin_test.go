@@ -4,9 +4,12 @@ import (
 	"context"
 	"errors"
 	"io"
+	"os"
+	"path/filepath"
 	"reflect"
 	"testing"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/runtime/conpty"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
@@ -97,6 +100,14 @@ func (f *fakeBackend) ResolveRuntimeHandle(_ context.Context, handle ports.Runti
 	return handle, true, nil
 }
 
+func (f *fakeBackend) ResolveExactRuntimeHandle(_ context.Context, handle ports.RuntimeHandle, _ ports.SupervisedProcessRef) (ports.RuntimeHandle, bool, error) {
+	f.record("resolve-exact", handle)
+	if f.resolveHandle.ID != "" || f.resolveErr != nil || f.resolveFound {
+		return f.resolveHandle, f.resolveFound, f.resolveErr
+	}
+	return handle, true, nil
+}
+
 func (f *fakeBackend) InspectRuntimeIdentity(_ context.Context, handle ports.RuntimeHandle, _ domain.SessionID) (ports.RuntimeIdentity, error) {
 	f.record("identity", handle)
 	return f.identity, f.identityErr
@@ -147,6 +158,21 @@ func TestDarwinRuntimeFallsBackToTmuxWhenDirectCreateFails(t *testing.T) {
 	}
 	if !reflect.DeepEqual(legacy.calls, []string{"create:session-1"}) {
 		t.Fatalf("legacy calls = %v", legacy.calls)
+	}
+}
+
+func TestDarwinRuntimeDoesNotFallbackWhenDirectRuntimeStateIsUnknown(t *testing.T) {
+	directErr := errors.Join(ports.ErrRuntimeProbeInconclusive, errors.New("registry unreadable"))
+	legacy := &restartableFakeBackend{}
+	direct := &fakeBackend{createErr: directErr}
+	runtime := newDarwinRuntime(legacy, direct, nil)
+
+	handle, err := runtime.Create(context.Background(), ports.RuntimeConfig{SessionID: "session-1"})
+	if !errors.Is(err, directErr) || handle.ID != "" {
+		t.Fatalf("Create() = (%q, %v), want direct inconclusive error", handle.ID, err)
+	}
+	if len(legacy.calls) != 0 {
+		t.Fatalf("legacy calls = %v, want no duplicate-producing fallback", legacy.calls)
 	}
 }
 
@@ -242,16 +268,19 @@ func TestDarwinRuntimeResolvesOnlyLegacyTmuxHandles(t *testing.T) {
 		t.Fatalf("direct calls after legacy resolution = %v, want none", direct.calls)
 	}
 
+	direct.resolveHandle = ports.RuntimeHandle{ID: "native-session"}
+	direct.resolveFound = true
 	directHandle := ports.RuntimeHandle{ID: darwinDirectHandlePrefix + "native-session"}
-	resolved, found, err = runtime.ResolveRuntimeHandle(ctx, directHandle, owner)
+	directOwner := ports.SupervisedProcessRef{SessionID: "native-session", LaunchID: "launch-native"}
+	resolved, found, err = runtime.ResolveRuntimeHandle(ctx, directHandle, directOwner)
 	if err != nil || !found || resolved != directHandle {
 		t.Fatalf("direct ResolveRuntimeHandle = (%q, %v, %v), want unchanged", resolved.ID, found, err)
 	}
 	if !reflect.DeepEqual(legacy.calls, []string{"resolve"}) {
 		t.Fatalf("ptyhost handle was forwarded to legacy backend: %v", legacy.calls)
 	}
-	if len(direct.calls) != 0 {
-		t.Fatalf("ptyhost handle invoked direct backend resolution: %v", direct.calls)
+	if !reflect.DeepEqual(direct.calls, []string{"resolve"}) {
+		t.Fatalf("ptyhost handle direct calls = %v, want ownership resolution", direct.calls)
 	}
 
 	identity, err := runtime.InspectRuntimeIdentity(ctx, ports.RuntimeHandle{ID: "tmux-v1:resolved"}, "existing-session")
@@ -268,6 +297,87 @@ func TestDarwinRuntimeResolvesOnlyLegacyTmuxHandles(t *testing.T) {
 	}
 	if !reflect.DeepEqual(legacy.calls, []string{"resolve", "identity"}) {
 		t.Fatalf("ptyhost identity was forwarded to tmux: %v", legacy.calls)
+	}
+}
+
+func TestDarwinRuntimePropagatesDirectRecoveryOwnershipError(t *testing.T) {
+	recoveryErr := errors.New("native launch ownership mismatch")
+	legacy := &restartableFakeBackend{}
+	direct := &fakeBackend{resolveErr: recoveryErr}
+	runtime := newDarwinRuntime(legacy, direct, nil)
+	handle := ports.RuntimeHandle{ID: darwinDirectHandlePrefix + "native-session"}
+
+	resolved, found, err := runtime.ResolveRuntimeHandle(
+		context.Background(),
+		handle,
+		ports.SupervisedProcessRef{SessionID: "native-session", LaunchID: "launch-expected"},
+	)
+	if !errors.Is(err, recoveryErr) || found || resolved.ID != "" {
+		t.Fatalf("ResolveRuntimeHandle() = (%q, %v, %v), want direct ownership error", resolved.ID, found, err)
+	}
+	if len(legacy.calls) != 0 {
+		t.Fatalf("legacy calls = %v, want none", legacy.calls)
+	}
+}
+
+func TestDarwinRuntimeDoesNotTrustPtyhostPrefixWhenRegistryIsCorrupt(t *testing.T) {
+	instanceDir := t.TempDir()
+	if err := os.WriteFile(
+		filepath.Join(instanceDir, "windows-pty-hosts.json"),
+		[]byte("not-json"),
+		0o600,
+	); err != nil {
+		t.Fatal(err)
+	}
+	legacy := &restartableFakeBackend{}
+	direct := conpty.New(conpty.Options{RunFilePath: filepath.Join(instanceDir, "running.json")})
+	runtime := newDarwinRuntime(legacy, direct, nil)
+
+	resolved, found, err := runtime.ResolveRuntimeHandle(
+		context.Background(),
+		ports.RuntimeHandle{ID: darwinDirectHandlePrefix + "native-session"},
+		ports.SupervisedProcessRef{SessionID: "native-session", LaunchID: "launch-expected"},
+	)
+	if err == nil || found || resolved.ID != "" {
+		t.Fatalf("ResolveRuntimeHandle() = (%q, %v, %v), want corrupt-registry error", resolved.ID, found, err)
+	}
+	if !errors.Is(err, ports.ErrRuntimeProbeInconclusive) {
+		t.Fatalf("ResolveRuntimeHandle() error = %v, want inconclusive", err)
+	}
+	if len(legacy.calls) != 0 {
+		t.Fatalf("legacy calls = %v, want no tmux routing for ptyhost handle", legacy.calls)
+	}
+}
+
+func TestDarwinRuntimeRoutesExactHandleResolutionWithoutLosingBackend(t *testing.T) {
+	legacy := &restartableFakeBackend{fakeBackend: fakeBackend{
+		resolveHandle: ports.RuntimeHandle{ID: "tmux-v1:exact"},
+		resolveFound:  true,
+	}}
+	direct := &fakeBackend{
+		resolveHandle: ports.RuntimeHandle{ID: "native-session"},
+		resolveFound:  true,
+	}
+	runtime := newDarwinRuntime(legacy, direct, nil)
+	owner := ports.SupervisedProcessRef{SessionID: "native-session", LaunchID: "launch-exact"}
+
+	legacyResolved, found, err := runtime.ResolveExactRuntimeHandle(
+		context.Background(), ports.RuntimeHandle{ID: "legacy-session"}, owner,
+	)
+	if err != nil || !found || legacyResolved.ID != "tmux-v1:exact" {
+		t.Fatalf("legacy exact resolution = (%q, %v, %v)", legacyResolved.ID, found, err)
+	}
+	directResolved, found, err := runtime.ResolveExactRuntimeHandle(
+		context.Background(), ports.RuntimeHandle{ID: darwinDirectHandlePrefix + "native-session"}, owner,
+	)
+	if err != nil || !found || directResolved.ID != darwinDirectHandlePrefix+"native-session" {
+		t.Fatalf("direct exact resolution = (%q, %v, %v)", directResolved.ID, found, err)
+	}
+	if got := legacy.handles[0].ID; got != "legacy-session" {
+		t.Fatalf("legacy exact raw handle = %q", got)
+	}
+	if got := direct.handles[0].ID; got != "native-session" {
+		t.Fatalf("direct exact raw handle = %q, want stripped", got)
 	}
 }
 

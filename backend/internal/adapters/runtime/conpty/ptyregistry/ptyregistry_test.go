@@ -2,9 +2,11 @@ package ptyregistry
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -84,6 +86,25 @@ func TestRegisterReplaceSameID(t *testing.T) {
 	}
 }
 
+func TestRegisterIfAbsentDoesNotReplaceOwner(t *testing.T) {
+	setupHome(t)
+	first := Entry{SessionID: "s1", PtyHostPID: 111, PipePath: "127.0.0.1:50001", RegisteredAt: nowRFC3339()}
+	second := Entry{SessionID: "s1", PtyHostPID: 222, PipePath: "127.0.0.1:50002", RegisteredAt: nowRFC3339()}
+	if err := RegisterIfAbsent(first); err != nil {
+		t.Fatal(err)
+	}
+	if err := RegisterIfAbsent(second); !errors.Is(err, ErrEntryExists) {
+		t.Fatalf("RegisterIfAbsent(second) = %v, want ErrEntryExists", err)
+	}
+	got, err := List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0] != first {
+		t.Fatalf("registry = %+v, want original owner %+v", got, first)
+	}
+}
+
 func TestConcurrentRegistersPreserveEveryHost(t *testing.T) {
 	setupHome(t)
 	withFakePidAlive(t, func(int) bool { return true })
@@ -140,6 +161,25 @@ func TestUnregisterRemoves(t *testing.T) {
 	}
 }
 
+func TestUnregisterExactDoesNotDeleteReplacement(t *testing.T) {
+	setupHome(t)
+	first := Entry{SessionID: "s1", PtyHostPID: 111, PipePath: "127.0.0.1:50001", RegisteredAt: nowRFC3339()}
+	replacement := Entry{SessionID: "s1", PtyHostPID: 222, PipePath: "127.0.0.1:50002", RegisteredAt: nowRFC3339()}
+	if err := Register(replacement); err != nil {
+		t.Fatal(err)
+	}
+	if err := UnregisterExact(first); !errors.Is(err, ErrEntryChanged) {
+		t.Fatalf("UnregisterExact(stale) = %v, want ErrEntryChanged", err)
+	}
+	got, err := List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0] != replacement {
+		t.Fatalf("registry = %+v, want replacement %+v", got, replacement)
+	}
+}
+
 func TestUnregisterNoOpWhenAbsent(t *testing.T) {
 	setupHome(t)
 	withFakePidAlive(t, func(int) bool { return true })
@@ -149,7 +189,7 @@ func TestUnregisterNoOpWhenAbsent(t *testing.T) {
 	}
 }
 
-func TestListPrunesDeadPIDs(t *testing.T) {
+func TestListDoesNotPruneByPIDLivenessAlone(t *testing.T) {
 	regPath := setupHome(t)
 
 	// PID 1 alive, PID 2 dead.
@@ -169,11 +209,12 @@ func TestListPrunesDeadPIDs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != 1 || got[0].SessionID != "s1" {
-		t.Fatalf("expected [s1], got %v", got)
+	if len(got) != 2 || got[0].SessionID != "s1" || got[1].SessionID != "s2" {
+		t.Fatalf("expected both durable entries, got %v", got)
 	}
 
-	// Verify the on-disk file was rewritten with only the live entry.
+	// A PID probe cannot authenticate ownership, so List must leave the durable
+	// record untouched for the runtime's exact-host probe.
 	data, err := os.ReadFile(regPath)
 	if err != nil {
 		t.Fatal(err)
@@ -182,8 +223,8 @@ func TestListPrunesDeadPIDs(t *testing.T) {
 	if err := json.Unmarshal(data, &disk); err != nil {
 		t.Fatal(err)
 	}
-	if len(disk) != 1 || disk[0].SessionID != "s1" {
-		t.Fatalf("disk should have only s1, got %v", disk)
+	if len(disk) != 2 || disk[0].SessionID != "s1" || disk[1].SessionID != "s2" {
+		t.Fatalf("disk should retain both entries, got %v", disk)
 	}
 }
 
@@ -220,7 +261,7 @@ func TestClearDeletesFile(t *testing.T) {
 	}
 }
 
-func TestMalformedJSONReturnsEmpty(t *testing.T) {
+func TestMalformedJSONReturnsError(t *testing.T) {
 	setupHome(t)
 	withFakePidAlive(t, func(int) bool { return true })
 
@@ -234,11 +275,79 @@ func TestMalformedJSONReturnsEmpty(t *testing.T) {
 	}
 
 	got, err := List()
-	if err != nil {
+	if err == nil {
+		t.Fatalf("List() = (%v, nil), want malformed-registry error", got)
+	}
+	if !strings.Contains(err.Error(), "decode") {
+		t.Fatalf("List() error = %v, want decode context", err)
+	}
+}
+
+func TestRegisterDoesNotOverwriteMalformedRegistry(t *testing.T) {
+	setupHome(t)
+	withFakePidAlive(t, func(int) bool { return true })
+
+	path, _ := registryFile()
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != 0 {
-		t.Fatalf("expected empty on malformed JSON, got %v", got)
+	malformed := []byte("not json {{{")
+	if err := os.WriteFile(path, malformed, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	err := Register(Entry{
+		SessionID: "new-session", PtyHostPID: 1234, PipePath: "127.0.0.1:50000",
+		RegisteredAt: nowRFC3339(),
+	})
+	if err == nil {
+		t.Fatal("Register() succeeded over malformed registry")
+	}
+	got, readErr := os.ReadFile(path)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if string(got) != string(malformed) {
+		t.Fatalf("Register() replaced unknown registry state with %q", got)
+	}
+}
+
+func TestMalformedEntryReturnsError(t *testing.T) {
+	setupHome(t)
+	withFakePidAlive(t, func(int) bool { return true })
+
+	path, _ := registryFile()
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(`[{"sessionId":"s1","ptyHostPid":1234}]`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := List()
+	if err == nil {
+		t.Fatalf("List() = (%v, nil), want invalid-entry error", got)
+	}
+	if !strings.Contains(err.Error(), "entry 0") {
+		t.Fatalf("List() error = %v, want entry index", err)
+	}
+}
+
+func TestUnreadableRegistryReturnsError(t *testing.T) {
+	setupHome(t)
+	withFakePidAlive(t, func(int) bool { return true })
+
+	path, _ := registryFile()
+	if err := os.MkdirAll(path, 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := List()
+	if err == nil {
+		t.Fatalf("List() = (%v, nil), want read error", got)
+	}
+	if !strings.Contains(err.Error(), "read") {
+		t.Fatalf("List() error = %v, want read context", err)
 	}
 }
 

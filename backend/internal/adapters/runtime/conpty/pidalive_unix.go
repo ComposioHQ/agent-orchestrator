@@ -4,7 +4,6 @@ package conpty
 
 import (
 	"errors"
-	"os"
 	"syscall"
 )
 
@@ -17,10 +16,4 @@ func pidAlive(pid int) bool {
 		return true
 	}
 	return errors.Is(err, syscall.EPERM)
-}
-
-// defaultOSProcessFinder wraps os.FindProcess for Unix (always succeeds on
-// Unix; the returned handle is valid for Kill).
-func defaultOSProcessFinder(pid int) (processKiller, error) {
-	return os.FindProcess(pid)
 }

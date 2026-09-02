@@ -29,6 +29,8 @@ export type DaemonProbe = {
 	status: string;
 	service: string;
 	pid: number;
+	code?: "startup_recovery_failed";
+	message?: string;
 	executablePath?: string;
 	workingDirectory?: string;
 	startupWorkingDirectory?: string;
@@ -57,13 +59,23 @@ export function expectedDaemonPort(env: Record<string, string | undefined>): num
 export function parseDaemonProbe(endpoint: "healthz" | "readyz", body: unknown): DaemonProbe | null {
 	if (typeof body !== "object" || body === null) return null;
 	const candidate = body as Partial<DaemonProbe>;
-	if (candidate.status !== (endpoint === "healthz" ? "ok" : "ready")) return null;
+	const terminalRecoveryFailure =
+		endpoint === "readyz" &&
+		candidate.status === "error" &&
+		candidate.code === "startup_recovery_failed" &&
+		typeof candidate.message === "string" &&
+		candidate.message.length > 0;
+	const expectedStatus = endpoint === "healthz" ? candidate.status === "ok" : candidate.status === "ready";
+	if (!expectedStatus && !terminalRecoveryFailure) return null;
 	if (candidate.service !== DAEMON_SERVICE_NAME) return null;
 	if (typeof candidate.pid !== "number" || !Number.isInteger(candidate.pid)) return null;
 	return {
-		status: candidate.status,
+		status: terminalRecoveryFailure ? "error" : endpoint === "healthz" ? "ok" : "ready",
 		service: candidate.service,
 		pid: candidate.pid,
+		...(terminalRecoveryFailure
+			? { code: "startup_recovery_failed" as const, message: candidate.message }
+			: {}),
 		executablePath: typeof candidate.executablePath === "string" ? candidate.executablePath : undefined,
 		workingDirectory: typeof candidate.workingDirectory === "string" ? candidate.workingDirectory : undefined,
 		startupWorkingDirectory:
@@ -164,6 +176,17 @@ async function readinessStatus(
 			workingDirectory: health.workingDirectory,
 			message: "An AO daemon is already running, but it is not ready yet.",
 			code: "not_ready",
+		};
+	}
+	if (ready.status === "error" && ready.code === "startup_recovery_failed") {
+		return {
+			state: "error",
+			port,
+			pid,
+			executablePath: ready.executablePath ?? health.executablePath,
+			workingDirectory: ready.workingDirectory ?? health.workingDirectory,
+			message: ready.message ?? "AO could not recover existing sessions.",
+			code: "startup_recovery_failed",
 		};
 	}
 

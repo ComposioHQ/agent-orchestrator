@@ -5,9 +5,14 @@ package conpty
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/subtle"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"net"
 	"regexp"
+	"strings"
 	"sync"
 	"time"
 
@@ -15,22 +20,31 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
-const runtimeLaunchIDEnv = "AO_RUNTIME_LAUNCH_ID"
+const (
+	runtimeLaunchIDEnv  = "AO_RUNTIME_LAUNCH_ID"
+	runtimeSessionIDEnv = "AO_SESSION_ID"
+	runtimeHostTokenEnv = "AO_PTY_HOST_TOKEN"
+)
 
 // Ensure Runtime satisfies the port at compile time (Attach in attach.go).
 var _ ports.Runtime = (*Runtime)(nil)
 var _ ports.StyledTerminalOutputReader = (*Runtime)(nil)
+var _ ports.RuntimeHandleResolver = (*Runtime)(nil)
+var _ ports.ExactRuntimeHandleResolver = (*Runtime)(nil)
 
 // validSessionID matches agent-orchestrator's assertValidSessionId.
 var validSessionID = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
 
 // hostSession is the in-memory state for a live pty-host connection.
 type hostSession struct {
-	addr             string
-	pid              int
-	launchID         string
-	protocolVersion  int
-	protocolResolved bool
+	sessionID    string
+	addr         string
+	pid          int
+	launchID     string
+	hostToken    string
+	registeredAt string
+	legacyMu     sync.Mutex
+	legacyProof  *legacyHostIdentityFingerprint
 }
 
 // Options configures the Runtime. All fields are optional; zero values use
@@ -50,12 +64,14 @@ type Options struct {
 
 // Runtime is the conpty runtime adapter.
 type Runtime struct {
-	spawner       hostSpawner
-	killHost      func(string) error
-	pidIsAlive    func(int) bool
-	processFinder func(int) (processKiller, error)
-	destroyWait   time.Duration
-	destroyPoll   time.Duration
+	spawner     hostSpawner
+	pidIsAlive  func(int) bool
+	destroyWait time.Duration
+	destroyPoll time.Duration
+	// The legacy seams perform a one-time OS-level adoption proof for shipped
+	// protocol-v2 hosts, then a cheap incarnation check on later operations.
+	legacyCollector   func(context.Context, *hostSession, StatusPayload) (legacyHostIdentityEvidence, error)
+	legacyRevalidator func(context.Context, *hostSession, StatusPayload, legacyHostIdentityFingerprint) error
 
 	mu       sync.Mutex
 	sessions map[string]*hostSession // sessionID -> live session
@@ -69,14 +85,22 @@ func New(opts Options) *Runtime {
 		sp = defaultSpawnHost
 	}
 	return &Runtime{
-		spawner:       sp,
-		killHost:      clientKill,
-		pidIsAlive:    pidAlive,
-		processFinder: findProcess,
-		destroyWait:   500 * time.Millisecond,
-		destroyPoll:   25 * time.Millisecond,
-		sessions:      make(map[string]*hostSession),
+		spawner:           sp,
+		pidIsAlive:        pidAlive,
+		destroyWait:       2 * time.Second,
+		destroyPoll:       25 * time.Millisecond,
+		legacyCollector:   collectLegacyHostIdentity,
+		legacyRevalidator: revalidateLegacyHostIdentity,
+		sessions:          make(map[string]*hostSession),
 	}
+}
+
+func newHostToken() (string, error) {
+	var token [32]byte
+	if _, err := rand.Read(token[:]); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(token[:]), nil
 }
 
 // Create spawns a detached pty-host for the session, waits for READY, stores
@@ -93,88 +117,230 @@ func (r *Runtime) Create(ctx context.Context, cfg ports.RuntimeConfig) (ports.Ru
 	if len(cfg.Argv) == 0 {
 		return ports.RuntimeHandle{}, fmt.Errorf("conpty: argv required")
 	}
+	if envSessionID := strings.TrimSpace(cfg.Env[runtimeSessionIDEnv]); envSessionID != "" {
+		if envSessionID != id {
+			return ports.RuntimeHandle{}, fmt.Errorf(
+				"conpty: runtime session env %q does not match session %q: %w",
+				envSessionID,
+				id,
+				ports.ErrRuntimeProbeInconclusive,
+			)
+		}
+		if strings.TrimSpace(cfg.Env[runtimeLaunchIDEnv]) == "" {
+			return ports.RuntimeHandle{}, fmt.Errorf(
+				"conpty: managed session %q requires a runtime launch id: %w",
+				id,
+				ports.ErrRuntimeProbeInconclusive,
+			)
+		}
+	}
 
 	r.mu.Lock()
 	if _, dup := r.sessions[id]; dup {
 		r.mu.Unlock()
-		return ports.RuntimeHandle{}, fmt.Errorf("conpty: session %q already exists; destroy before re-creating", id)
+		return ports.RuntimeHandle{}, fmt.Errorf(
+			"conpty: session %q already exists; destroy before re-creating: %w",
+			id,
+			ports.ErrRuntimeProbeInconclusive,
+		)
 	}
 	// Reserve the slot before the async spawn so a concurrent Create for the
 	// same id fails immediately (no gap between check and set).
 	r.sessions[id] = nil
 	r.mu.Unlock()
 
-	addr, pid, err := r.spawner(ctx, id, cfg.WorkspacePath, cfg.Argv, cfg.Env)
+	// A detached host from an earlier daemon may already own this session id.
+	// Read the durable registry before spawning so corrupt/unreadable state is
+	// never interpreted as permission to create a duplicate workload. This
+	// check is serialized within one daemon by the reservation above; the
+	// run-file supervisor remains responsible for enforcing one daemon per
+	// registry directory during process handoff.
+	entries, registryErr := ptyregistry.List()
+	if registryErr != nil {
+		r.deleteSession(id, nil)
+		return ports.RuntimeHandle{}, fmt.Errorf(
+			"conpty: inspect pty-host registry before creating %q: %w",
+			id,
+			errors.Join(ports.ErrRuntimeProbeInconclusive, registryErr),
+		)
+	}
+	for _, entry := range entries {
+		if entry.SessionID != id {
+			continue
+		}
+		existing := hostSessionFromRegistry(entry)
+		host, alive, probeErr := r.connectVerifiedHost(ctx, existing, isAliveTimeout)
+		if host != nil {
+			_ = host.conn.Close()
+		}
+		if probeErr != nil {
+			r.deleteSession(id, nil)
+			return ports.RuntimeHandle{}, fmt.Errorf(
+				"conpty: prove existing pty-host ownership for %q: %w",
+				id,
+				probeErr,
+			)
+		}
+		if alive {
+			r.deleteSession(id, nil)
+			return ports.RuntimeHandle{}, fmt.Errorf(
+				"conpty: detached pty-host already owns session %q: %w",
+				id,
+				ports.ErrRuntimeProbeInconclusive,
+			)
+		}
+		// A dead recorded PID conclusively identifies the durable entry as
+		// stale. Remove only that session entry before allocating its successor.
+		if err := ptyregistry.UnregisterExact(entry); err != nil {
+			r.deleteSession(id, nil)
+			return ports.RuntimeHandle{}, fmt.Errorf(
+				"conpty: remove exact dead pty-host registry entry for %q: %w",
+				id,
+				errors.Join(ports.ErrRuntimeProbeInconclusive, err),
+			)
+		}
+	}
+
+	hostToken, err := newHostToken()
 	if err != nil {
-		r.mu.Lock()
-		delete(r.sessions, id)
-		r.mu.Unlock()
+		r.deleteSession(id, nil)
+		return ports.RuntimeHandle{}, fmt.Errorf("conpty: generate pty-host identity for %q: %w", id, err)
+	}
+	hostEnv := make(map[string]string, len(cfg.Env)+1)
+	for key, value := range cfg.Env {
+		hostEnv[key] = value
+	}
+	hostEnv[runtimeHostTokenEnv] = hostToken
+
+	addr, pid, err := r.spawner(ctx, id, cfg.WorkspacePath, cfg.Argv, hostEnv)
+	if err != nil {
+		r.deleteSession(id, nil)
 		return ports.RuntimeHandle{}, fmt.Errorf("conpty: spawn pty-host for %q: %w", id, err)
 	}
 
 	sess := &hostSession{
-		addr: addr, pid: pid, launchID: cfg.Env[runtimeLaunchIDEnv],
-		protocolVersion: conPTYHostProtocolVersion, protocolResolved: true,
+		sessionID:    id,
+		addr:         addr,
+		pid:          pid,
+		launchID:     strings.TrimSpace(cfg.Env[runtimeLaunchIDEnv]),
+		hostToken:    hostToken,
+		registeredAt: time.Now().UTC().Format(time.RFC3339Nano),
 	}
 
 	r.mu.Lock()
 	r.sessions[id] = sess
 	r.mu.Unlock()
 
-	// Register in B2 registry for daemon-restart recovery (best-effort).
-	_ = ptyregistry.Register(ptyregistry.Entry{
-		SessionID:    id,
-		PtyHostPID:   pid,
-		PipePath:     addr, // ponytail: reuse PipePath field for loopback addr
-		LaunchID:     sess.launchID,
-		RegisteredAt: time.Now().UTC().Format(time.RFC3339),
-	})
+	// The host is not publishable until its recovery record is durable. If the
+	// write fails, stop the just-spawned host before returning so the caller can
+	// never receive a handle that disappears (or duplicates) after a restart.
+	entry := registryEntryForSession(sess)
+	if err := ptyregistry.RegisterIfAbsent(entry); err != nil {
+		registrationErr := fmt.Errorf(
+			"conpty: durably register pty-host for %q: %w",
+			id,
+			errors.Join(ports.ErrRuntimeProbeInconclusive, err),
+		)
+		stopped, rollbackErr := r.stopHost(context.Background(), sess)
+		if stopped {
+			if unregisterErr := ptyregistry.UnregisterExact(entry); unregisterErr != nil &&
+				!errors.Is(unregisterErr, ptyregistry.ErrEntryChanged) {
+				rollbackErr = errors.Join(
+					rollbackErr,
+					fmt.Errorf("remove partially published registry entry: %w", unregisterErr),
+				)
+			}
+			r.deleteSession(id, sess)
+		}
+		if rollbackErr != nil {
+			return ports.RuntimeHandle{}, errors.Join(
+				registrationErr,
+				fmt.Errorf("conpty: roll back unregistered pty-host for %q: %w", id, rollbackErr),
+			)
+		}
+		return ports.RuntimeHandle{}, registrationErr
+	}
 
 	return ports.RuntimeHandle{ID: id}, nil
 }
 
-// Destroy gracefully kills the pty-host, then force-kills it when necessary.
+// Destroy gracefully stops an authenticated pty-host. It never force-kills a
+// bare PID because process-id reuse would make that unsafe.
 // The session remains registered until its PID is confirmed gone so callers
 // never receive a false-success teardown while a provider may still be alive.
 // Unknown/already-gone sessions remain idempotent.
 func (r *Runtime) Destroy(ctx context.Context, handle ports.RuntimeHandle) error {
-	sess := r.resolve(handle.ID)
+	sess, err := r.resolve(handle.ID)
+	if err != nil {
+		return fmt.Errorf("conpty: resolve session %q for destroy: %w", handle.ID, err)
+	}
 	if sess == nil {
 		return nil // unknown or already gone
 	}
+	stopped, err := r.stopHost(ctx, sess)
+	if err != nil {
+		return err
+	}
+	if !stopped {
+		return fmt.Errorf("conpty: pty-host pid %d was not stopped", sess.pid)
+	}
 
-	// Ask host to shut down gracefully (triggers shutdown() in Serve).
-	gracefulErr := r.killHost(sess.addr)
+	if err := ptyregistry.UnregisterExact(registryEntryForSession(sess)); err != nil {
+		if errors.Is(err, ptyregistry.ErrEntryChanged) {
+			// Drop only our stale in-memory route. The changed durable owner is
+			// preserved and will be resolved on the next operation.
+			r.deleteSession(handle.ID, sess)
+		}
+		return fmt.Errorf(
+			"conpty: unregister exact destroyed session %q: %w",
+			handle.ID,
+			errors.Join(ports.ErrRuntimeProbeInconclusive, err),
+		)
+	}
+	r.deleteSession(handle.ID, sess)
+	return nil
+}
+
+func (r *Runtime) stopHost(ctx context.Context, sess *hostSession) (bool, error) {
+	host, alive, err := r.connectVerifiedHost(ctx, sess, isAliveTimeout)
+	if err != nil {
+		return false, fmt.Errorf("conpty: authenticate pty-host before teardown: %w", err)
+	}
+	if !alive {
+		return true, nil
+	}
+	defer func() { _ = host.conn.Close() }()
+	// Keep authentication and the mutation on one TCP connection. A separate
+	// dial would reopen a port-reuse race between ownership proof and KILL.
+	if err := clientKillConn(host.conn); err != nil {
+		return false, err
+	}
 	exited, waitErr := r.waitForPIDExit(ctx, sess.pid)
 	if waitErr != nil {
-		return errors.Join(gracefulErr, waitErr)
-	}
-
-	var forceErr error
-	if !exited {
-		process, findErr := r.processFinder(sess.pid)
-		if findErr != nil {
-			forceErr = fmt.Errorf("find pty-host pid %d: %w", sess.pid, findErr)
-		} else if err := process.Kill(); err != nil {
-			forceErr = fmt.Errorf("force-kill pty-host pid %d: %w", sess.pid, err)
-		}
-		exited, waitErr = r.waitForPIDExit(ctx, sess.pid)
-		if waitErr != nil {
-			return errors.Join(gracefulErr, forceErr, waitErr)
-		}
+		return false, waitErr
 	}
 	if !exited {
-		return errors.Join(gracefulErr, forceErr, fmt.Errorf("conpty: pty-host pid %d is still alive after teardown", sess.pid))
+		// Never force-kill by a bare PID. The original host may have exited and
+		// that PID may now name an unrelated process; preserving the registry is
+		// safer than turning an inconclusive teardown into foreign termination.
+		return false, fmt.Errorf(
+			"conpty: authenticated pty-host pid %d did not exit after teardown: %w",
+			sess.pid,
+			ports.ErrRuntimeProbeInconclusive,
+		)
 	}
+	return true, nil
+}
 
+// deleteSession releases either an in-progress reservation (expected nil) or
+// one exact host. Pointer matching prevents cleanup from deleting a later host
+// if lifecycle operations race.
+func (r *Runtime) deleteSession(id string, expected *hostSession) {
 	r.mu.Lock()
-	delete(r.sessions, handle.ID)
-	r.mu.Unlock()
-
-	if err := ptyregistry.Unregister(handle.ID); err != nil {
-		return fmt.Errorf("conpty: unregister destroyed session %q: %w", handle.ID, err)
+	if current, ok := r.sessions[id]; ok && current == expected {
+		delete(r.sessions, id)
 	}
-	return nil
+	r.mu.Unlock()
 }
 
 func (r *Runtime) waitForPIDExit(ctx context.Context, pid int) (bool, error) {
@@ -212,8 +378,7 @@ func (r *Runtime) waitForPIDExit(ctx context.Context, pid int) (bool, error) {
 //
 //   - (true, nil):  the pty-host answered a status probe -> alive.
 //   - (false, nil): DEFINITIVELY gone. Either the session resolves to nothing
-//     (no in-memory entry and no registry entry), or the dial was refused
-//     (nothing listening on the loopback addr).
+//     (no in-memory entry and no registry entry), or the recorded PID is gone.
 //   - (false, err): a TRANSIENT probe failure (loopback timeout, connected-
 //     then-failed I/O). The reaper records ProbeFailed and retries rather than
 //     treating it as a death conclusion.
@@ -221,11 +386,18 @@ func (r *Runtime) waitForPIDExit(ctx context.Context, pid int) (bool, error) {
 // tmux returns a non-nil error for transient failures for the same
 // reason; conpty matches that contract here.
 func (r *Runtime) IsAlive(ctx context.Context, handle ports.RuntimeHandle) (bool, error) {
-	sess := r.resolve(handle.ID)
+	sess, err := r.resolve(handle.ID)
+	if err != nil {
+		return false, err
+	}
 	if sess == nil {
 		return false, nil // no in-memory entry, no registry entry -> definitively gone
 	}
-	return clientIsAlive(sess.addr)
+	host, alive, err := r.connectVerifiedHost(ctx, sess, isAliveTimeout)
+	if host != nil {
+		_ = host.conn.Close()
+	}
+	return alive, err
 }
 
 // IsSupervisedProcessAlive uses the pty-host's child status. For a supervised
@@ -233,24 +405,37 @@ func (r *Runtime) IsAlive(ctx context.Context, handle ports.RuntimeHandle) (bool
 // agent process. When a generation ref is supplied, the launch id captured at
 // Create (and persisted in the recovery registry) must match exactly.
 func (r *Runtime) IsSupervisedProcessAlive(ctx context.Context, handle ports.RuntimeHandle, ref ports.SupervisedProcessRef) (bool, error) {
-	sess := r.resolve(handle.ID)
+	sess, err := r.resolve(handle.ID)
+	if err != nil {
+		return false, err
+	}
 	if sess == nil {
 		return false, nil
 	}
 	if ref.SessionID != "" && string(ref.SessionID) != handle.ID {
-		return false, nil
+		return false, fmt.Errorf(
+			"conpty: runtime handle %q does not match supervised owner session %q: %w",
+			handle.ID,
+			ref.SessionID,
+			ports.ErrRuntimeProbeInconclusive,
+		)
 	}
 	if ref.LaunchID != "" && (sess.launchID == "" || sess.launchID != ref.LaunchID) {
-		return false, nil
+		return false, fmt.Errorf(
+			"conpty: runtime handle %q launch ownership does not match: %w",
+			handle.ID,
+			ports.ErrRuntimeProbeInconclusive,
+		)
 	}
-	status, hostAlive, err := clientStatus(sess.addr)
+	host, hostAlive, err := r.connectVerifiedHost(ctx, sess, isAliveTimeout)
 	if err != nil {
 		return false, err
 	}
 	if !hostAlive {
 		return false, nil
 	}
-	return status.Alive, nil
+	defer func() { _ = host.conn.Close() }()
+	return host.status.Alive, nil
 }
 
 // IsExactSupervisedProcessAlive has the same implementation on ConPTY because
@@ -262,32 +447,108 @@ func (r *Runtime) IsExactSupervisedProcessAlive(ctx context.Context, handle port
 	return r.IsSupervisedProcessAlive(ctx, handle, ref)
 }
 
+// ResolveRuntimeHandle proves that a persisted native handle still resolves to
+// the exact detached host generation owned by the session. A launch mismatch
+// is unknown ownership, not evidence that the old workload is dead: recovery
+// must stop rather than start a duplicate process behind the same handle.
+func (r *Runtime) ResolveRuntimeHandle(ctx context.Context, handle ports.RuntimeHandle, owner ports.SupervisedProcessRef) (ports.RuntimeHandle, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return ports.RuntimeHandle{}, false, err
+	}
+	sess, err := r.resolve(handle.ID)
+	if err != nil {
+		return ports.RuntimeHandle{}, false, err
+	}
+	if sess == nil {
+		return ports.RuntimeHandle{}, false, nil
+	}
+	if owner.SessionID == "" || string(owner.SessionID) != handle.ID {
+		return ports.RuntimeHandle{}, false, fmt.Errorf(
+			"conpty: persisted handle %q does not match owner session %q: %w",
+			handle.ID,
+			owner.SessionID,
+			ports.ErrRuntimeProbeInconclusive,
+		)
+	}
+	if owner.LaunchID == "" || sess.launchID == "" || sess.launchID != owner.LaunchID {
+		return ports.RuntimeHandle{}, false, fmt.Errorf(
+			"conpty: persisted handle %q launch ownership does not match: %w",
+			handle.ID,
+			ports.ErrRuntimeProbeInconclusive,
+		)
+	}
+	host, alive, err := r.connectVerifiedHost(ctx, sess, isAliveTimeout)
+	if host != nil {
+		_ = host.conn.Close()
+	}
+	if err != nil || !alive {
+		return ports.RuntimeHandle{}, false, err
+	}
+	return handle, true, nil
+}
+
+// ResolveExactRuntimeHandle uses the same immutable launch proof for native
+// hosts. Unlike tmux, a pty-host has one registry route and one child, so
+// recovery adoption and destructive cleanup share the exact same resolver.
+func (r *Runtime) ResolveExactRuntimeHandle(ctx context.Context, handle ports.RuntimeHandle, owner ports.SupervisedProcessRef) (ports.RuntimeHandle, bool, error) {
+	return r.ResolveRuntimeHandle(ctx, handle, owner)
+}
+
 // SendMessage chunks message and writes it to the pty-host followed by Enter.
 func (r *Runtime) SendMessage(ctx context.Context, handle ports.RuntimeHandle, message string) error {
-	sess := r.resolve(handle.ID)
+	sess, err := r.resolve(handle.ID)
+	if err != nil {
+		return err
+	}
 	if sess == nil {
 		return fmt.Errorf("conpty: session %q not found", handle.ID)
 	}
-	return clientSendMessage(sess.addr, message)
+	host, alive, err := r.connectVerifiedHost(ctx, sess, dialTimeout)
+	if err != nil {
+		return err
+	}
+	if !alive {
+		return fmt.Errorf("conpty: session %q not found", handle.ID)
+	}
+	defer func() { _ = host.conn.Close() }()
+	return clientSendMessageConn(host.conn, message)
 }
 
 // Interrupt sends Ctrl-C to the PTY without tearing down the terminal host.
 func (r *Runtime) Interrupt(ctx context.Context, handle ports.RuntimeHandle) error {
-	sess := r.resolve(handle.ID)
+	sess, err := r.resolve(handle.ID)
+	if err != nil {
+		return err
+	}
 	if sess == nil {
 		return fmt.Errorf("conpty: session %q not found", handle.ID)
 	}
-	return clientSendInput(sess.addr, "\x03")
+	return r.sendInputToExactHost(ctx, handle.ID, sess, "\x03")
 }
 
 // SendInput writes raw terminal input without appending Enter. It is intended
 // for TUI keybindings such as Escape rather than prompt text.
 func (r *Runtime) SendInput(ctx context.Context, handle ports.RuntimeHandle, input string) error {
-	sess := r.resolve(handle.ID)
+	sess, err := r.resolve(handle.ID)
+	if err != nil {
+		return err
+	}
 	if sess == nil {
 		return fmt.Errorf("conpty: session %q not found", handle.ID)
 	}
-	return clientSendInput(sess.addr, input)
+	return r.sendInputToExactHost(ctx, handle.ID, sess, input)
+}
+
+func (r *Runtime) sendInputToExactHost(ctx context.Context, id string, sess *hostSession, input string) error {
+	host, alive, err := r.connectVerifiedHost(ctx, sess, dialTimeout)
+	if err != nil {
+		return err
+	}
+	if !alive {
+		return fmt.Errorf("conpty: session %q not found", id)
+	}
+	defer func() { _ = host.conn.Close() }()
+	return clientSendInputConn(host.conn, input)
 }
 
 // GetOutput returns the last lines lines from the pty-host ring buffer.
@@ -295,11 +556,26 @@ func (r *Runtime) GetOutput(ctx context.Context, handle ports.RuntimeHandle, lin
 	if lines <= 0 {
 		return "", fmt.Errorf("conpty: lines must be > 0")
 	}
-	sess := r.resolve(handle.ID)
+	sess, err := r.resolve(handle.ID)
+	if err != nil {
+		return "", err
+	}
 	if sess == nil {
 		return "", fmt.Errorf("conpty: session %q not found", handle.ID)
 	}
-	return clientGetOutput(ctx, sess.addr, lines)
+	host, alive, err := r.connectVerifiedHost(ctx, sess, getOutputTimeout)
+	if err != nil {
+		return "", err
+	}
+	if !alive {
+		return "", fmt.Errorf("conpty: session %q not found", handle.ID)
+	}
+	defer func() { _ = host.conn.Close() }()
+	stopCancellation := armClientDeadline(ctx, host.conn, getOutputTimeout)
+	defer stopCancellation()
+	return clientReadOutputConnWithPending(
+		ctx, host.conn, host.pending, lines, MsgGetOutputReq, MsgGetOutputRes,
+	)
 }
 
 // GetStyledOutput returns the current rendered ConPTY viewport with ANSI cell
@@ -309,74 +585,165 @@ func (r *Runtime) GetStyledOutput(ctx context.Context, handle ports.RuntimeHandl
 	if lines <= 0 {
 		return "", fmt.Errorf("conpty: lines must be > 0")
 	}
-	sess := r.resolve(handle.ID)
-	if sess == nil {
-		return "", fmt.Errorf("conpty: session %q not found", handle.ID)
-	}
-	protocolVersion, err := r.resolveHostProtocol(ctx, sess)
+	sess, err := r.resolve(handle.ID)
 	if err != nil {
 		return "", err
 	}
-	if protocolVersion < conPTYStyledOutputProtocolVersion {
-		return "", fmt.Errorf("conpty: pty-host protocol version %d: %w",
-			protocolVersion, ports.ErrStyledTerminalOutputUnavailable)
+	if sess == nil {
+		return "", fmt.Errorf("conpty: session %q not found", handle.ID)
 	}
-	return clientGetStyledOutput(ctx, sess.addr, lines)
+	host, alive, err := r.connectVerifiedHost(ctx, sess, getOutputTimeout)
+	if err != nil {
+		return "", err
+	}
+	if !alive {
+		return "", fmt.Errorf("conpty: session %q not found", handle.ID)
+	}
+	defer func() { _ = host.conn.Close() }()
+	if host.status.ProtocolVersion < conPTYStyledOutputProtocolVersion {
+		return "", fmt.Errorf("conpty: pty-host protocol version %d: %w",
+			host.status.ProtocolVersion, ports.ErrStyledTerminalOutputUnavailable)
+	}
+	stopCancellation := armClientDeadline(ctx, host.conn, getOutputTimeout)
+	defer stopCancellation()
+	return clientReadOutputConnWithPending(
+		ctx, host.conn, host.pending, lines, MsgGetStyledOutputReq, MsgGetStyledOutputRes,
+	)
 }
 
-// resolveHostProtocol negotiates capabilities when a daemon adopts a detached
-// pty-host from the recovery registry. Hosts created by this Runtime already
-// have a known version. Older hosts omit protocolVersion from MsgStatusRes, so
-// they resolve to version zero without receiving an unsupported styled-output
-// request or incurring that request's timeout on every drain poll.
-func (r *Runtime) resolveHostProtocol(ctx context.Context, sess *hostSession) (int, error) {
-	r.mu.Lock()
-	if sess.protocolResolved {
-		version := sess.protocolVersion
-		r.mu.Unlock()
-		return version, nil
-	}
-	r.mu.Unlock()
+type verifiedHostConnection struct {
+	conn          net.Conn
+	status        StatusPayload
+	initialFrames []clientFrame
+	pending       []byte
+}
 
-	status, hostAlive, err := clientStatusContext(ctx, sess.addr)
+// connectVerifiedHost proves the endpoint against all immutable identity
+// fields before returning the same connection for use. A recorded PID that is
+// gone is conclusive death; a live PID by itself proves nothing, so any
+// missing credential, unreachable address, or identity mismatch fails closed.
+func (r *Runtime) connectVerifiedHost(ctx context.Context, sess *hostSession, timeout time.Duration) (*verifiedHostConnection, bool, error) {
+	if sess == nil {
+		return nil, false, nil
+	}
+	if sess.pid <= 0 || strings.TrimSpace(sess.sessionID) == "" || strings.TrimSpace(sess.addr) == "" {
+		return nil, false, fmt.Errorf(
+			"conpty: incomplete pty-host recovery identity: %w",
+			ports.ErrRuntimeProbeInconclusive,
+		)
+	}
+	if !r.pidIsAlive(sess.pid) {
+		return nil, false, nil
+	}
+	conn, status, frames, pending, reachable, err := clientStatusConnectionContext(ctx, sess.addr, timeout)
 	if err != nil {
-		return 0, fmt.Errorf("conpty: negotiate pty-host protocol: %w", err)
+		return nil, false, fmt.Errorf(
+			"conpty: probe exact pty-host %q: %w",
+			sess.sessionID,
+			errors.Join(ports.ErrRuntimeProbeInconclusive, err),
+		)
 	}
-	if !hostAlive {
-		return 0, errors.New("conpty: negotiate pty-host protocol: host is not reachable")
+	if !reachable {
+		return nil, false, fmt.Errorf(
+			"conpty: pty-host %q address is unreachable while recorded pid %d is live: %w",
+			sess.sessionID,
+			sess.pid,
+			ports.ErrRuntimeProbeInconclusive,
+		)
 	}
+	if strings.TrimSpace(sess.hostToken) == "" {
+		if status.ProtocolVersion != conPTYStyledOutputProtocolVersion {
+			_ = conn.Close()
+			return nil, false, fmt.Errorf(
+				"conpty: pty-host %q has no durable identity token and unsupported legacy protocol %d: %w",
+				sess.sessionID,
+				status.ProtocolVersion,
+				ports.ErrRuntimeProbeInconclusive,
+			)
+		}
+		if r.legacyCollector == nil || r.legacyRevalidator == nil {
+			_ = conn.Close()
+			return nil, false, fmt.Errorf(
+				"conpty: no legacy identity verifier for pty-host %q: %w",
+				sess.sessionID,
+				ports.ErrRuntimeProbeInconclusive,
+			)
+		}
+		if err := r.verifyLegacyHostIdentity(ctx, sess, status); err != nil {
+			_ = conn.Close()
+			return nil, false, fmt.Errorf(
+				"conpty: verify shipped protocol-v2 pty-host %q: %w",
+				sess.sessionID,
+				errors.Join(ports.ErrRuntimeProbeInconclusive, err),
+			)
+		}
+	} else if status.ProtocolVersion < conPTYHostIdentityProtocolVersion ||
+		status.SessionID != sess.sessionID ||
+		status.LaunchID != sess.launchID ||
+		status.HostPID != sess.pid ||
+		subtle.ConstantTimeCompare([]byte(status.HostToken), []byte(sess.hostToken)) != 1 {
+		_ = conn.Close()
+		return nil, false, fmt.Errorf(
+			"conpty: endpoint for %q does not match its durable host identity: %w",
+			sess.sessionID,
+			ports.ErrRuntimeProbeInconclusive,
+		)
+	}
+	return &verifiedHostConnection{
+		conn:          conn,
+		status:        status,
+		initialFrames: frames,
+		pending:       pending,
+	}, true, nil
+}
 
-	r.mu.Lock()
-	if !sess.protocolResolved {
-		sess.protocolVersion = status.ProtocolVersion
-		sess.protocolResolved = true
+func hostSessionFromRegistry(entry ptyregistry.Entry) *hostSession {
+	return &hostSession{
+		sessionID:    entry.SessionID,
+		addr:         entry.PipePath,
+		pid:          entry.PtyHostPID,
+		launchID:     entry.LaunchID,
+		hostToken:    entry.HostToken,
+		registeredAt: entry.RegisteredAt,
 	}
-	version := sess.protocolVersion
-	r.mu.Unlock()
-	return version, nil
+}
+
+func registryEntryForSession(sess *hostSession) ptyregistry.Entry {
+	return ptyregistry.Entry{
+		SessionID:    sess.sessionID,
+		PtyHostPID:   sess.pid,
+		PipePath:     sess.addr,
+		LaunchID:     sess.launchID,
+		HostToken:    sess.hostToken,
+		RegisteredAt: sess.registeredAt,
+	}
 }
 
 // resolve looks up a session by id: first the in-memory map, then the B2
 // registry (for daemon-restart recovery). Returns nil if not found either way.
-func (r *Runtime) resolve(id string) *hostSession {
+func (r *Runtime) resolve(id string) (*hostSession, error) {
 	r.mu.Lock()
 	sess := r.sessions[id]
 	r.mu.Unlock()
 	if sess != nil {
-		return sess
+		return sess, nil
 	}
 
 	// Registry fallback: scan for the entry by session id.
 	entries, err := ptyregistry.List()
 	if err != nil {
-		return nil
+		return nil, fmt.Errorf(
+			"conpty: read pty-host registry for %q: %w",
+			id,
+			errors.Join(ports.ErrRuntimeProbeInconclusive, err),
+		)
 	}
 	for _, e := range entries {
 		if e.SessionID != id {
 			continue
 		}
 		// Re-populate the map so subsequent calls skip the file scan.
-		recovered := &hostSession{addr: e.PipePath, pid: e.PtyHostPID, launchID: e.LaunchID}
+		recovered := hostSessionFromRegistry(e)
 		r.mu.Lock()
 		// Only store if another goroutine hasn't beaten us.
 		if r.sessions[id] == nil {
@@ -385,24 +752,7 @@ func (r *Runtime) resolve(id string) *hostSession {
 			recovered = r.sessions[id]
 		}
 		r.mu.Unlock()
-		return recovered
+		return recovered, nil
 	}
-	return nil
+	return nil, nil
 }
-
-// findProcess wraps os.FindProcess to make it swappable in tests.
-// ponytail: direct call; no interface needed at this scale.
-func findProcess(pid int) (processKiller, error) {
-	p, err := osProcessFinder(pid)
-	return p, err
-}
-
-// processKiller is the subset of *os.Process used by Destroy.
-type processKiller interface {
-	Kill() error
-}
-
-// osProcessFinder is the production implementation; tests may replace it.
-// The real defaultOSProcessFinder is in pidalive_unix.go / pidalive_windows.go
-// (same files that provide pidAlive).
-var osProcessFinder = defaultOSProcessFinder

@@ -74,11 +74,11 @@ WHERE id = sqlc.arg(id)
   AND provider_conversation_id = sqlc.arg(expected_provider_conversation_id)
   AND controller_generation = sqlc.arg(expected_controller_generation);
 
--- name: RepairExitedActivityFromRuntime :execrows
--- Startup may repair a stale Exited fact only after the exact current TUI
--- supervisor generation was proved alive and recovery supplied a non-exited
--- activity fact. Full owner + handle fencing keeps a delayed observation from
--- resurrecting a replaced or terminated controller.
+-- name: ReconcileRuntimeActivity :execrows
+-- Startup records an authoritative current terminal observation only after the
+-- exact current TUI supervisor generation was proved alive. Full activity +
+-- owner + handle fencing keeps a delayed observation from overwriting a newer
+-- signal or a replaced/terminated controller.
 UPDATE sessions SET
     activity_state = sqlc.arg(recovered_activity_state),
     activity_last_at = sqlc.arg(observed_at),
@@ -88,7 +88,8 @@ WHERE id = sqlc.arg(id)
   AND session_mode = sqlc.arg(expected_session_mode)
   AND is_terminated = 0
   AND is_terminated = sqlc.arg(expected_is_terminated)
-  AND activity_state = 'exited'
+  AND activity_state = sqlc.arg(expected_activity_state)
+  AND activity_last_at = sqlc.arg(expected_activity_last_at)
   AND harness = sqlc.arg(expected_harness)
   AND runtime_handle_id = sqlc.arg(expected_runtime_handle_id)
   AND runtime_launch_id = sqlc.arg(expected_runtime_launch_id)
@@ -134,12 +135,47 @@ WHERE id = sqlc.arg(id)
   AND (latest_user_prompt_at IS NULL OR latest_user_prompt_at <= sqlc.arg(latest_user_prompt_at));
 
 -- name: ClaimChatControllerGeneration :execrows
--- A Chat controller claims ownership before its event goroutine starts. Provider
--- projections compare against this value in the same transaction as their write,
--- so an older controller cannot mutate a session after a replacement takes over.
+-- A Chat controller claims ownership before its event goroutine starts, but only
+-- if the complete controller owner observed before provider launch is still
+-- current. Provider open happens outside SQLite; without this old-owner ->
+-- new-generation CAS, a delayed launcher could steal ownership from a replacement
+-- that published while the first launcher was doing provider I/O.
 UPDATE sessions
-SET controller_generation = ?, updated_at = ?
-WHERE id = ? AND session_mode = 'chat';
+SET controller_generation = sqlc.arg(new_controller_generation),
+    updated_at = MAX(updated_at, sqlc.arg(claimed_at))
+WHERE id = sqlc.arg(id)
+  AND session_mode = 'chat'
+  AND harness = sqlc.arg(expected_harness)
+  AND session_mode = sqlc.arg(expected_session_mode)
+  AND is_terminated = sqlc.arg(expected_is_terminated)
+  AND runtime_launch_id = sqlc.arg(expected_runtime_launch_id)
+  AND agent_session_id = sqlc.arg(expected_agent_session_id)
+  AND agent_session_id_launch_id = sqlc.arg(expected_agent_session_id_launch_id)
+  AND provider_conversation_id = sqlc.arg(expected_provider_conversation_id)
+  AND controller_generation = sqlc.arg(expected_controller_generation);
+
+-- name: CommitChatLiveReconnect :execrows
+-- Publish restart recovery only while the exact Chat controller generation that
+-- reconnected is still current. The ordered provider snapshot is authoritative
+-- for Active, Idle, and WaitingInput, so it replaces stale durable activity from
+-- before the detach. This deliberately updates only lifecycle facts: a delayed
+-- reconnect must not replay a stale full SessionRecord over a newer controller,
+-- rename, pin, or other write.
+UPDATE sessions SET
+    activity_state = sqlc.arg(recovered_activity_state),
+    activity_last_at = sqlc.arg(recovered_activity_at),
+    updated_at = MAX(updated_at, sqlc.arg(reconnected_at))
+WHERE id = sqlc.arg(id)
+  AND session_mode = 'chat'
+  AND session_mode = sqlc.arg(expected_session_mode)
+  AND is_terminated = 0
+  AND is_terminated = sqlc.arg(expected_is_terminated)
+  AND harness = sqlc.arg(expected_harness)
+  AND runtime_launch_id = sqlc.arg(expected_runtime_launch_id)
+  AND agent_session_id = sqlc.arg(expected_agent_session_id)
+  AND agent_session_id_launch_id = sqlc.arg(expected_agent_session_id_launch_id)
+  AND provider_conversation_id = sqlc.arg(expected_provider_conversation_id)
+  AND controller_generation = sqlc.arg(expected_controller_generation);
 
 -- name: ActivateConversationBranchSession :execrows
 UPDATE sessions

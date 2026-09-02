@@ -15,8 +15,14 @@ import (
 // resolves it without a real Windows spawn.
 func runtimeForFixture(id string, f *serveFixture) *Runtime {
 	r := New(Options{})
+	r.pidIsAlive = func(pid int) bool { return pid == f.pty.PID() }
 	r.mu.Lock()
-	r.sessions[id] = &hostSession{addr: f.addr, pid: f.pty.PID()}
+	r.sessions[id] = &hostSession{
+		sessionID: f.sessionID,
+		addr:      f.addr,
+		pid:       f.pty.PID(),
+		hostToken: f.hostToken,
+	}
 	r.mu.Unlock()
 	return r
 }
@@ -61,8 +67,8 @@ func TestAttachReplaysScrollback(t *testing.T) {
 	defer f.cancel()
 	f.ring.Append([]byte("scrollback-line\n"))
 
-	r := runtimeForFixture("sess", f)
-	s, err := r.Attach(context.Background(), nameHandle("sess"), 0, 0)
+	r := runtimeForFixture(f.sessionID, f)
+	s, err := r.Attach(context.Background(), nameHandle(f.sessionID), 0, 0)
 	if err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
@@ -80,8 +86,8 @@ func TestAttachWriteReachesPTY(t *testing.T) {
 	f := startServe(t, 301)
 	defer f.cancel()
 
-	r := runtimeForFixture("sess", f)
-	s, err := r.Attach(context.Background(), nameHandle("sess"), 0, 0)
+	r := runtimeForFixture(f.sessionID, f)
+	s, err := r.Attach(context.Background(), nameHandle(f.sessionID), 0, 0)
 	if err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
@@ -106,9 +112,9 @@ func TestAttachResizeReachesPTY(t *testing.T) {
 	f := startServe(t, 302)
 	defer f.cancel()
 
-	r := runtimeForFixture("sess", f)
+	r := runtimeForFixture(f.sessionID, f)
 	// Attach with a birth size: the implementation sends an initial MsgResize.
-	s, err := r.Attach(context.Background(), nameHandle("sess"), 40, 132)
+	s, err := r.Attach(context.Background(), nameHandle(f.sessionID), 40, 132)
 	if err != nil {
 		t.Fatalf("Attach: %v", err)
 	}

@@ -2,6 +2,7 @@ package integration
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"path/filepath"
@@ -392,34 +393,45 @@ func TestReconcileFailureKeepsDaemonLiveButNotReady(t *testing.T) {
 	}
 	runCtx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	reconcileDone := make(chan struct{})
 	runErr := make(chan error, 1)
 	go func() {
-		runErr <- srv.RunWithReady(runCtx, func() error {
-			defer close(reconcileDone)
-			return st.mgr.ReconcileBackground(runCtx)
+		runErr <- srv.RunWithReady(runCtx, func(reconcileCtx context.Context) error {
+			return st.mgr.ReconcileBackground(reconcileCtx)
 		})
 	}()
-	select {
-	case <-reconcileDone:
-	case <-time.After(5 * time.Second):
-		t.Fatal("session reconciliation did not finish")
-	}
 
 	base := "http://" + srv.Addr().String()
 	client := &http.Client{Timeout: time.Second}
-	for path, want := range map[string]int{
-		"/healthz": http.StatusOK,
-		"/readyz":  http.StatusServiceUnavailable,
-	} {
-		resp, requestErr := client.Get(base + path)
+	health, requestErr := client.Get(base + "/healthz")
+	if requestErr != nil {
+		t.Fatalf("GET /healthz after reconciliation failure: %v", requestErr)
+	}
+	health.Body.Close()
+	if health.StatusCode != http.StatusOK {
+		t.Fatalf("GET /healthz after reconciliation failure = %d, want %d", health.StatusCode, http.StatusOK)
+	}
+
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		resp, requestErr := client.Get(base + "/readyz")
 		if requestErr != nil {
-			t.Fatalf("GET %s after reconciliation failure: %v", path, requestErr)
+			t.Fatalf("GET /readyz after reconciliation failure: %v", requestErr)
 		}
+		var ready struct {
+			Status string `json:"status"`
+		}
+		decodeErr := json.NewDecoder(resp.Body).Decode(&ready)
 		resp.Body.Close()
-		if resp.StatusCode != want {
-			t.Fatalf("GET %s after reconciliation failure = %d, want %d", path, resp.StatusCode, want)
+		if decodeErr == nil && ready.Status == "error" {
+			if resp.StatusCode != http.StatusServiceUnavailable {
+				t.Fatalf("GET /readyz after reconciliation failure = %d, want %d", resp.StatusCode, http.StatusServiceUnavailable)
+			}
+			break
 		}
+		if time.Now().After(deadline) {
+			t.Fatalf("GET /readyz did not report terminal reconciliation failure: status=%q decodeErr=%v", ready.Status, decodeErr)
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
 	after, ok, err := st.store.GetSession(ctx, sess.ID)
 	if err != nil || !ok || after.Activity != before.Activity || after.IsTerminated != before.IsTerminated {

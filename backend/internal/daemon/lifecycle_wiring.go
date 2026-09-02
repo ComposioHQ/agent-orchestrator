@@ -60,7 +60,7 @@ type lifecycleStack struct {
 // synchronously, then calls StartObservers immediately before publishing ready.
 // The messenger is the per-daemon agent messenger the LCM uses to nudge agents
 // in response to SCM observations (CI failure, review feedback, merge conflict).
-func startLifecycle(ctx context.Context, store *sqlite.Store, runtime ports.Runtime, messenger ports.AgentMessenger, notifier notificationSink, telemetry ports.EventSink, agents ports.AgentResolver, logger *slog.Logger) *lifecycleStack {
+func startLifecycle(store *sqlite.Store, runtime ports.Runtime, messenger ports.AgentMessenger, notifier notificationSink, telemetry ports.EventSink, agents ports.AgentResolver, logger *slog.Logger) *lifecycleStack {
 	lcm := lifecycle.New(store, messenger,
 		lifecycle.WithNotificationSink(notifier),
 		lifecycle.WithTelemetry(telemetry),
@@ -109,7 +109,7 @@ func startupSignalGatesInput(agents ports.AgentResolver) func(domain.AgentHarnes
 // the periodic reaper. The daemon calls it after session-manager reconciliation
 // so exits missed while AO was stopped are folded before the API starts serving.
 func (l *lifecycleStack) ReconcileRuntime(ctx context.Context) error {
-	return l.runtimeReaper.Tick(ctx)
+	return l.runtimeReaper.Reconcile(ctx)
 }
 
 // activeTurnSteering resolves the per-harness active-turn steering capability
@@ -527,6 +527,8 @@ func (c chatLauncher) StartChat(ctx context.Context, cfg sessionmanager.ChatStar
 				ProviderConversationID: out.ProviderConversationID,
 				ControllerGeneration:   out.ControllerGeneration,
 				Conversation:           out.Conversation,
+				ReconnectedLive:        out.ReconnectedLive,
+				RecoveredActivity:      out.RecoveredActivity,
 				ProviderBoundary:       out.ProviderBoundary,
 				CommitProviderHistory:  out.CommitProviderHistory,
 			})
@@ -542,6 +544,8 @@ func (c chatLauncher) StartChat(ctx context.Context, cfg sessionmanager.ChatStar
 	return sessionmanager.ChatStarted{
 		ProviderConversationID: out.ProviderConversationID,
 		ControllerGeneration:   out.ControllerGeneration,
+		ReconnectedLive:        out.ReconnectedLive,
+		RecoveredActivity:      out.RecoveredActivity,
 	}, nil
 }
 

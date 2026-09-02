@@ -63,8 +63,9 @@ type controllerEpochStore interface {
 
 // runtimeRecoveryStore owns the two narrow startup-reconciliation writes.
 // Both are full controller-owner CAS operations: runtime observations may
-// refine provenance or repair a historical false exit, but may never replay a
-// stale SessionRecord over a concurrent controller transition.
+// refine provenance or synchronize activity from an exact live workload, but
+// may never replay a stale SessionRecord over a concurrent controller
+// transition.
 type runtimeRecoveryStore interface {
 	CanonicalizeRuntimeHandle(
 		context.Context,
@@ -74,12 +75,27 @@ type runtimeRecoveryStore interface {
 		string,
 		string,
 	) (bool, error)
-	RepairExitedActivityFromRuntime(
+	ReconcileRuntimeActivity(
 		context.Context,
 		domain.SessionID,
 		domain.SessionControllerOwner,
 		string,
 		domain.Activity,
+		domain.Activity,
+	) (bool, error)
+}
+
+// chatReconnectStore atomically publishes a surviving native Chat provider's
+// reconnect only while its newly claimed controller generation still owns the
+// session. The storage CAS is required because Chat Service claims generations
+// outside Manager.mu.
+type chatReconnectStore interface {
+	CommitChatLiveReconnect(
+		context.Context,
+		domain.SessionID,
+		domain.SessionControllerOwner,
+		domain.Activity,
+		time.Time,
 	) (bool, error)
 }
 
@@ -1082,6 +1098,83 @@ func (m *Manager) MarkSpawned(ctx context.Context, id domain.SessionID, metadata
 	return m.markSpawned(ctx, id, metadata, nil, nil)
 }
 
+// MarkChatReconnected rotates the daemon-owned Chat controller generation while
+// publishing activity from the same surviving native provider's ordered
+// recovery snapshot. That observation replaces stale pre-detach activity.
+func (m *Manager) MarkChatReconnected(
+	ctx context.Context,
+	id domain.SessionID,
+	expected domain.SessionControllerOwner,
+	metadata domain.SessionMetadata,
+	recoveredActivity domain.Activity,
+) error {
+	if strings.TrimSpace(string(id)) == "" ||
+		domain.NormalizeSessionMode(expected.Mode) != domain.SessionModeChat ||
+		expected.IsTerminated ||
+		strings.TrimSpace(expected.ProviderConversationID) == "" ||
+		strings.TrimSpace(metadata.ProviderConversationID) == "" ||
+		metadata.ProviderConversationID != expected.ProviderConversationID ||
+		strings.TrimSpace(metadata.ControllerGeneration) == "" ||
+		(recoveredActivity.State != domain.ActivityActive &&
+			recoveredActivity.State != domain.ActivityIdle &&
+			recoveredActivity.State != domain.ActivityWaitingInput) ||
+		recoveredActivity.LastActivityAt.IsZero() {
+		return errors.New("lifecycle: invalid live Chat reconnect")
+	}
+	expected.Mode = domain.SessionModeChat
+	claimedOwner := expected
+	claimedOwner.ProviderConversationID = metadata.ProviderConversationID
+	claimedOwner.ControllerGeneration = metadata.ControllerGeneration
+	writer, ok := m.store.(chatReconnectStore)
+	if !ok {
+		return errors.New("lifecycle: atomic live Chat reconnect persistence is unavailable")
+	}
+
+	now := m.clock()
+	m.mu.Lock()
+	previous, found, err := m.store.GetSession(ctx, id)
+	if err != nil {
+		m.mu.Unlock()
+		return err
+	}
+	if !found || previous.ControllerOwner() != claimedOwner {
+		m.mu.Unlock()
+		return fmt.Errorf("lifecycle: live Chat reconnect owner changed for %q", id)
+	}
+	applied, err := writer.CommitChatLiveReconnect(
+		ctx, id, claimedOwner, recoveredActivity, now,
+	)
+	if err != nil || !applied {
+		m.mu.Unlock()
+		if err != nil {
+			return err
+		}
+		return fmt.Errorf("lifecycle: live Chat reconnect owner changed for %q", id)
+	}
+
+	// Mirror the owner-fenced reconnect for lifecycle-owned notification side
+	// effects. A provider can cross the needs-input boundary while AO is down;
+	// publish that recovered transition before startup readiness opens.
+	next := previous
+	next.Activity = recoveredActivity
+	var intent *ports.NotificationIntent
+	if !previous.Activity.State.NeedsInput() && recoveredActivity.State.NeedsInput() {
+		intent = &ports.NotificationIntent{
+			Type:               domain.NotificationNeedsInput,
+			SessionID:          next.ID,
+			ProjectID:          next.ProjectID,
+			CreatedAt:          recoveredActivity.LastActivityAt,
+			SessionDisplayName: next.DisplayName,
+		}
+	}
+	resolutions := needsInputResolutions(previous, next, now)
+	m.mu.Unlock()
+	m.emitNotification(ctx, intent)
+	m.resolveNotifications(ctx, resolutions...)
+	reactivateSessionUsage(ctx, id, "", m.usageReactivator)
+	return nil
+}
+
 // MarkChatSpawned atomically marks a Chat controller live and publishes the
 // fresh provider boundary reserved before the provider process connected.
 func (m *Manager) MarkChatSpawned(
@@ -1211,14 +1304,16 @@ func (m *Manager) CanonicalizeRuntimeHandle(
 	)
 }
 
-// RepairExitedActivityFromRuntime repairs a historical false-exit only after
+// ReconcileRuntimeActivity commits a synchronous terminal observation only after
 // reconciliation proved the exact current TUI supervisor and workload alive.
-// The owner and handle CAS makes any concurrent controller change a no-op.
-func (m *Manager) RepairExitedActivityFromRuntime(
+// The activity, owner, and handle CAS makes any concurrent signal or controller
+// change a no-op.
+func (m *Manager) ReconcileRuntimeActivity(
 	ctx context.Context,
 	id domain.SessionID,
 	expected domain.SessionControllerOwner,
 	expectedHandleID string,
+	expectedActivity domain.Activity,
 	recovered domain.Activity,
 ) (bool, error) {
 	if strings.TrimSpace(string(id)) == "" ||
@@ -1238,8 +1333,41 @@ func (m *Manager) RepairExitedActivityFromRuntime(
 	}
 
 	m.mu.Lock()
-	defer m.mu.Unlock()
-	return writer.RepairExitedActivityFromRuntime(ctx, id, expected, expectedHandleID, recovered)
+	previous, found, err := m.store.GetSession(ctx, id)
+	if err != nil || !found || previous.ControllerOwner() != expected ||
+		previous.Metadata.RuntimeHandleID != expectedHandleID || previous.Activity != expectedActivity {
+		m.mu.Unlock()
+		return false, err
+	}
+	applied, err := writer.ReconcileRuntimeActivity(
+		ctx, id, expected, expectedHandleID, expectedActivity, recovered,
+	)
+	if err != nil || !applied {
+		m.mu.Unlock()
+		return applied, err
+	}
+
+	// Mirror the CAS write for the notification side effects owned by lifecycle.
+	// Startup surface recovery can cross the needs-input boundary just like a
+	// live hook, so it must create or resolve the same notification before the
+	// daemon publishes readiness.
+	next := previous
+	next.Activity = recovered
+	var intent *ports.NotificationIntent
+	if !previous.Activity.State.NeedsInput() && recovered.State.NeedsInput() {
+		intent = &ports.NotificationIntent{
+			Type:               domain.NotificationNeedsInput,
+			SessionID:          next.ID,
+			ProjectID:          next.ProjectID,
+			CreatedAt:          recovered.LastActivityAt,
+			SessionDisplayName: next.DisplayName,
+		}
+	}
+	resolutions := needsInputResolutions(previous, next, m.clock())
+	m.mu.Unlock()
+	m.emitNotification(ctx, intent)
+	m.resolveNotifications(ctx, resolutions...)
+	return true, nil
 }
 
 func recoverableRuntimeActivity(state domain.ActivityState) bool {

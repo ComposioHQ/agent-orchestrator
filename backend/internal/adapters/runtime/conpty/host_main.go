@@ -5,12 +5,19 @@ package conpty
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
+)
+
+const (
+	restartContinuityE2EEnv = "AO_RESTART_CONTINUITY_E2E"
+	legacyPTYV2E2EEnv       = "AO_RESTART_CONTINUITY_PTY_V2"
 )
 
 // RunHost is the "ao pty-host" entrypoint. argv is everything after the
@@ -21,9 +28,9 @@ import (
 // port), installs SIGTERM/SIGINT handlers, then runs Serve. Returns a process
 // exit code.
 //
-// ponytail: loopback bind only; any local process on this host can connect to
-// the assigned port. A per-session random token handshake is the upgrade path
-// if multi-user isolation is needed.
+// ponytail: loopback bind only. The immutable per-host random token prevents a
+// stale registry route from authorizing an unrelated listener; same-user local
+// processes remain inside AO's host trust boundary.
 func RunHost(args []string, stdout io.Writer) int {
 	if len(args) < 3 {
 		fmt.Fprintf(os.Stderr, "usage: ao pty-host <sessionId> <cwd> <shellCmd> [shellArg...]\n")
@@ -34,6 +41,16 @@ func RunHost(args []string, stdout io.Writer) int {
 	cwd := args[1]
 	shellCmd := args[2]
 	shellArgs := args[3:]
+	hostToken, legacyV2, identityErr := ptyHostIdentityFromEnvironment()
+	if identityErr != nil {
+		fmt.Fprintf(os.Stderr, "pty-host [%s]: %v\n", sessionID, identityErr)
+		return 1
+	}
+	launchID := strings.TrimSpace(os.Getenv(runtimeLaunchIDEnv))
+	// The token authenticates the host process, not the supervised workload.
+	// Remove it and the narrowly test-gated legacy selector before creating the
+	// PTY so agent processes cannot inherit recovery credentials or fixture mode.
+	scrubPTYHostIdentityEnvironment()
 	if err := os.Chdir(cwd); err != nil {
 		fmt.Fprintf(os.Stderr, "pty-host [%s]: chdir %s: %v\n", sessionID, cwd, err)
 		return 1
@@ -81,9 +98,15 @@ func RunHost(args []string, stdout io.Writer) int {
 	ring := NewRing()
 	cfg := ServeConfig{
 		SessionID: sessionID,
+		LaunchID:  launchID,
+		HostPID:   os.Getpid(),
+		HostToken: hostToken,
 		Listener:  ln,
 		PTY:       pty,
 		Ring:      ring,
+	}
+	if legacyV2 {
+		cfg.protocolVersion = conPTYStyledOutputProtocolVersion
 	}
 
 	if err := Serve(ctx, cfg); err != nil {
@@ -91,4 +114,27 @@ func RunHost(args []string, stdout io.Writer) int {
 		return 1
 	}
 	return 0
+}
+
+// ptyHostIdentityFromEnvironment keeps the production rule strict: every new
+// host needs a random token. The sole exception lets the packaged restart E2E
+// reproduce the already-shipped protocol-v2 wire contract. Requiring two
+// explicit test selectors prevents an ordinary missing-token launch from
+// silently creating a legacy host.
+func ptyHostIdentityFromEnvironment() (hostToken string, legacyV2 bool, err error) {
+	hostToken = strings.TrimSpace(os.Getenv(runtimeHostTokenEnv))
+	if hostToken != "" {
+		return hostToken, false, nil
+	}
+	legacyV2 = os.Getenv(restartContinuityE2EEnv) == "1" && os.Getenv(legacyPTYV2E2EEnv) == "1"
+	if legacyV2 {
+		return "", true, nil
+	}
+	return "", false, errors.New("missing host identity token")
+}
+
+func scrubPTYHostIdentityEnvironment() {
+	_ = os.Unsetenv(runtimeHostTokenEnv)
+	_ = os.Unsetenv(legacyPTYV2E2EEnv)
+	_ = os.Unsetenv(restartContinuityE2EEnv)
 }

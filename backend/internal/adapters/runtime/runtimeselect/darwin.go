@@ -39,6 +39,7 @@ var _ ports.StyledTerminalOutputReader = (*darwinRuntime)(nil)
 var _ ports.SupervisedProcessInspector = (*darwinRuntime)(nil)
 var _ ports.ExactSupervisedProcessInspector = (*darwinRuntime)(nil)
 var _ ports.RuntimeHandleResolver = (*darwinRuntime)(nil)
+var _ ports.ExactRuntimeHandleResolver = (*darwinRuntime)(nil)
 var _ ports.RuntimeIdentityInspector = (*darwinRuntime)(nil)
 
 func newDarwinRuntime(legacy, direct routedBackend, log *slog.Logger) *darwinRuntime {
@@ -56,6 +57,12 @@ func (r *darwinRuntime) Create(ctx context.Context, cfg ports.RuntimeConfig) (po
 	if err == nil {
 		handle.ID = darwinDirectHandlePrefix + handle.ID
 		return handle, nil
+	}
+	// An inconclusive direct-runtime error means a native host may already own
+	// this session or its recovery registry could not be made durable. Starting
+	// tmux behind the same session id would turn uncertainty into a duplicate.
+	if errors.Is(err, ports.ErrRuntimeProbeInconclusive) {
+		return ports.RuntimeHandle{}, err
 	}
 	r.log.Warn("macOS direct PTY host unavailable; falling back to tmux",
 		"session_id", cfg.SessionID,
@@ -121,18 +128,56 @@ func (r *darwinRuntime) IsExactSupervisedProcessAlive(ctx context.Context, handl
 	return backend.IsExactSupervisedProcessAlive(ctx, raw, ref)
 }
 
-// ResolveRuntimeHandle only canonicalizes legacy tmux identities. A ptyhost
-// handle already carries its backend and protocol version in the outer prefix,
-// so it is durable as-is and must never be offered to the tmux migration path.
+// ResolveRuntimeHandle routes legacy tmux migration to tmux and asks the native
+// backend to prove a ptyhost handle's exact registry and launch ownership. The
+// outer prefix makes the backend route durable; it is not itself ownership
+// evidence.
 func (r *darwinRuntime) ResolveRuntimeHandle(ctx context.Context, handle ports.RuntimeHandle, owner ports.SupervisedProcessRef) (ports.RuntimeHandle, bool, error) {
 	if strings.HasPrefix(handle.ID, darwinDirectHandlePrefix) {
-		return handle, true, nil
+		resolver, ok := r.direct.(ports.RuntimeHandleResolver)
+		if !ok {
+			return ports.RuntimeHandle{}, false, fmt.Errorf("macOS direct runtime does not support handle resolution")
+		}
+		raw := handle
+		raw.ID = strings.TrimPrefix(raw.ID, darwinDirectHandlePrefix)
+		resolved, found, err := resolver.ResolveRuntimeHandle(ctx, raw, owner)
+		if err != nil || !found {
+			return ports.RuntimeHandle{}, found, err
+		}
+		if strings.TrimSpace(resolved.ID) == "" {
+			return ports.RuntimeHandle{}, false, fmt.Errorf("macOS direct runtime returned an empty handle")
+		}
+		resolved.ID = darwinDirectHandlePrefix + resolved.ID
+		return resolved, true, nil
 	}
 	resolver, ok := r.legacy.(ports.RuntimeHandleResolver)
 	if !ok {
 		return ports.RuntimeHandle{}, false, fmt.Errorf("macOS legacy runtime does not support handle resolution")
 	}
 	return resolver.ResolveRuntimeHandle(ctx, handle, owner)
+}
+
+// ResolveExactRuntimeHandle keeps destructive recovery on the handle's native
+// backend and requires that backend to prove the exact persisted launch owner.
+// Versioned ptyhost handles are stripped only for the direct adapter call and
+// restored before returning to Session Manager.
+func (r *darwinRuntime) ResolveExactRuntimeHandle(ctx context.Context, handle ports.RuntimeHandle, owner ports.SupervisedProcessRef) (ports.RuntimeHandle, bool, error) {
+	backend, raw := r.route(handle)
+	resolver, ok := backend.(ports.ExactRuntimeHandleResolver)
+	if !ok {
+		return ports.RuntimeHandle{}, false, fmt.Errorf("macOS runtime does not support exact handle resolution")
+	}
+	resolved, found, err := resolver.ResolveExactRuntimeHandle(ctx, raw, owner)
+	if err != nil || !found {
+		return ports.RuntimeHandle{}, found, err
+	}
+	if strings.TrimSpace(resolved.ID) == "" {
+		return ports.RuntimeHandle{}, false, fmt.Errorf("macOS runtime returned an empty exact handle")
+	}
+	if backend == r.direct {
+		resolved.ID = darwinDirectHandlePrefix + resolved.ID
+	}
+	return resolved, true, nil
 }
 
 func (r *darwinRuntime) InspectRuntimeIdentity(ctx context.Context, handle ports.RuntimeHandle, expectedSessionID domain.SessionID) (ports.RuntimeIdentity, error) {

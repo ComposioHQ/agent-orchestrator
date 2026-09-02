@@ -479,6 +479,10 @@ async function createWindowInternal(): Promise<void> {
 		mainWindow,
 		WebContentsView,
 		preload: preloadPath(),
+		additionalArguments:
+			process.env.AO_RESTART_CONTINUITY_E2E === "1"
+				? ["--ao-restart-continuity-e2e"]
+				: undefined,
 	});
 	windowComposition = composition;
 	syncNativeWindowBackground();
@@ -960,8 +964,8 @@ async function readDaemonProbe(port: number, endpoint: "healthz" | "readyz"): Pr
 	const timer = setTimeout(() => controller.abort(), DAEMON_PROBE_TIMEOUT_MS);
 	try {
 		const response = await net.fetch(`http://127.0.0.1:${port}/${endpoint}`, { signal: controller.signal });
-		if (!response.ok) return null;
-		return parseDaemonProbe(endpoint, await response.json());
+		const probe = parseDaemonProbe(endpoint, await response.json());
+		return !response.ok && probe?.status !== "error" ? null : probe;
 	} catch {
 		return null;
 	} finally {
@@ -1525,6 +1529,19 @@ async function startDaemonInner(startEpoch: number): Promise<DaemonStatus> {
 		}
 
 		readinessPollingStopped = true;
+		if (ready.status === "error" && ready.code === "startup_recovery_failed") {
+			setDaemonStatus({
+				state: "error",
+				port,
+				pid: ready.pid,
+				executablePath: ready.executablePath,
+				workingDirectory: ready.workingDirectory,
+				message: ready.message ?? "AO could not recover existing sessions.",
+				details: daemonOutput.trim() || undefined,
+				code: "startup_recovery_failed",
+			});
+			return;
+		}
 		const identityMessage = daemonIdentityError(launch, ready);
 		if (identityMessage) {
 			setDaemonStatus({

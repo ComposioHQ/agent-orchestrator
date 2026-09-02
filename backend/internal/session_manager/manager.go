@@ -250,11 +250,12 @@ type runtimeRecoveryRecorder interface {
 		string,
 		string,
 	) (bool, error)
-	RepairExitedActivityFromRuntime(
+	ReconcileRuntimeActivity(
 		context.Context,
 		domain.SessionID,
 		domain.SessionControllerOwner,
 		string,
+		domain.Activity,
 		domain.Activity,
 	) (bool, error)
 }
@@ -1973,7 +1974,11 @@ func (m *Manager) ResumeAgentWithMode(ctx context.Context, id domain.SessionID) 
 	if found {
 		handle = resolvedHandle
 	}
-	if rec.Activity.State != domain.ActivityExited && found {
+	// Exited is an observation, not proof that the durable controller generation
+	// is gone. Older builds could persist a false Exited fact during daemon
+	// replacement, so every resume must fence the existing runtime before it may
+	// respawn or destroy its pane.
+	if found {
 		alive, probeErr := m.runtime.IsAlive(ctx, handle)
 		switch {
 		case probeErr == nil:
@@ -2423,8 +2428,19 @@ func (m *Manager) refreshQualifiedRuntimeIdentity(
 	rec domain.SessionRecord,
 	handle ports.RuntimeHandle,
 ) (domain.SessionRecord, error) {
+	// tmux-v1 is a persisted, namespace-qualified route. Unlike the direct PTY
+	// host, a same-named tmux session can be foreign after daemon replacement;
+	// qualified routing is therefore not sufficient ownership evidence.
+	requiresProvenOwnership := strings.HasPrefix(handle.ID, "tmux-v1:")
 	inspector, ok := m.runtime.(ports.RuntimeIdentityInspector)
 	if !ok {
+		if requiresProvenOwnership {
+			return rec, fmt.Errorf(
+				"inspect ownership for qualified tmux handle %q: %w",
+				handle.ID,
+				ports.ErrRuntimeProbeInconclusive,
+			)
+		}
 		return rec, nil
 	}
 	identity, err := inspector.InspectRuntimeIdentity(ctx, handle, rec.ID)
@@ -2436,8 +2452,17 @@ func (m *Manager) refreshQualifiedRuntimeIdentity(
 		)
 	}
 	identity.LaunchID = strings.TrimSpace(identity.LaunchID)
+	durableLaunchID := strings.TrimSpace(rec.Metadata.RuntimeLaunchID)
+	if requiresProvenOwnership && (identity.LaunchID == "" ||
+		(!identity.OwnershipProven && identity.LaunchID != durableLaunchID)) {
+		return rec, fmt.Errorf(
+			"qualified tmux handle %q has no matching AO launch identity: %w",
+			handle.ID,
+			ports.ErrRuntimeProbeInconclusive,
+		)
+	}
 	if !identity.OwnershipProven || identity.LaunchID == "" ||
-		identity.LaunchID == strings.TrimSpace(rec.Metadata.RuntimeLaunchID) {
+		identity.LaunchID == durableLaunchID {
 		return rec, nil
 	}
 	recorder, ok := m.lcm.(runtimeRecoveryRecorder)
@@ -2468,17 +2493,16 @@ func (m *Manager) refreshQualifiedRuntimeIdentity(
 	return rec, nil
 }
 
-// repairExitedFromExactRuntime repairs a stale Exited activity fact only when
+// reconcileActivityFromExactRuntime synchronously refreshes activity only when
 // the canonical route contains the exact current supervisor generation and its
 // managed workload. Runtime-session liveness by itself is deliberately not
-// enough evidence to resurrect a session.
-func (m *Manager) repairExitedFromExactRuntime(
+// enough evidence to change a session's activity.
+func (m *Manager) reconcileActivityFromExactRuntime(
 	ctx context.Context,
 	rec domain.SessionRecord,
 	handle ports.RuntimeHandle,
 ) error {
-	if rec.Activity.State != domain.ActivityExited ||
-		strings.TrimSpace(rec.Metadata.RuntimeLaunchID) == "" {
+	if strings.TrimSpace(rec.Metadata.RuntimeLaunchID) == "" {
 		return nil
 	}
 	inspector, ok := m.runtime.(ports.ExactSupervisedProcessInspector)
@@ -2499,9 +2523,14 @@ func (m *Manager) repairExitedFromExactRuntime(
 	if !exactAlive {
 		return nil
 	}
-	recovered, err := m.recoverRuntimeActivity(ctx, rec, handle)
+	recovered, observed, err := m.recoverRuntimeActivity(ctx, rec, handle)
 	if err != nil {
 		return fmt.Errorf("recover activity for %s: %w", rec.ID, err)
+	}
+	if !observed && rec.Activity.State != domain.ActivityExited {
+		// No current terminal observation is available. A pre-existing non-exited
+		// durable fact is still evidence; do not replace it with older history.
+		return nil
 	}
 	// Close the observation race between the first exact-workload proof and the
 	// activity read. A controller that exited while its screen/history was being
@@ -2520,18 +2549,35 @@ func (m *Manager) repairExitedFromExactRuntime(
 	if !exactAlive {
 		return nil
 	}
+	if observed && recovered.State == rec.Activity.State {
+		// The screen confirms the durable lane. Preserve activity_last_at: it is
+		// when activity changed, not when the daemon happened to observe it again.
+		return nil
+	}
 	recorder, ok := m.lcm.(runtimeRecoveryRecorder)
 	if !ok {
 		return errors.New("runtime recovery lifecycle persistence is unavailable")
 	}
-	applied, err := recorder.RepairExitedActivityFromRuntime(
-		ctx, rec.ID, rec.ControllerOwner(), handle.ID, recovered,
+	applied, err := recorder.ReconcileRuntimeActivity(
+		ctx, rec.ID, rec.ControllerOwner(), handle.ID, rec.Activity, recovered,
 	)
 	if err != nil {
-		return fmt.Errorf("repair exited activity for %s: %w", rec.ID, err)
+		return fmt.Errorf("reconcile runtime activity for %s: %w", rec.ID, err)
 	}
 	if !applied {
-		return fmt.Errorf("repair exited activity for %s: controller ownership changed", rec.ID)
+		current, found, readErr := m.store.GetSession(ctx, rec.ID)
+		if readErr != nil {
+			return fmt.Errorf("reconcile runtime activity for %s: verify lost CAS: %w", rec.ID, readErr)
+		}
+		if found && current.ControllerOwner() == rec.ControllerOwner() &&
+			current.Metadata.RuntimeHandleID == handle.ID &&
+			recoverableActivityState(current.Activity.State) &&
+			!current.Activity.LastActivityAt.Before(recovered.LastActivityAt) {
+			// Another current-generation observation won the race. Its equal-or-newer
+			// activity fact is authoritative.
+			return nil
+		}
+		return fmt.Errorf("reconcile runtime activity for %s: activity or controller ownership changed", rec.ID)
 	}
 	return nil
 }
@@ -2544,11 +2590,11 @@ func (m *Manager) recoverRuntimeActivity(
 	ctx context.Context,
 	rec domain.SessionRecord,
 	handle ports.RuntimeHandle,
-) (domain.Activity, error) {
+) (domain.Activity, bool, error) {
 	if m.agents != nil {
 		agent, ok := m.agents.Agent(rec.Harness)
 		if !ok {
-			return m.latestDurableRuntimeActivity(ctx, rec.ID)
+			return m.runtimeActivityFallback(ctx, rec)
 		}
 		if surface, ok := agent.(ports.TerminalSurfaceInspector); ok {
 			if styled, ok := m.runtime.(ports.StyledTerminalOutputReader); ok {
@@ -2556,24 +2602,35 @@ func (m *Manager) recoverRuntimeActivity(
 				switch {
 				case err == nil:
 					if state, known := activityFromTerminalSurface(surface.InspectTerminalSurface(output).Work); known {
-						return domain.Activity{State: state, LastActivityAt: m.clock()}, nil
+						return domain.Activity{State: state, LastActivityAt: m.clock()}, true, nil
 					}
 				case !errors.Is(err, ports.ErrStyledTerminalOutputUnavailable):
-					return domain.Activity{}, errors.Join(ports.ErrRuntimeProbeInconclusive, err)
+					return domain.Activity{}, false, errors.Join(ports.ErrRuntimeProbeInconclusive, err)
 				}
 			}
 		}
 		if detector, ok := agent.(ports.TerminalActivityDetector); ok {
 			output, err := m.runtime.GetOutput(ctx, handle, interfaceTransitionOutputLines)
 			if err != nil {
-				return domain.Activity{}, errors.Join(ports.ErrRuntimeProbeInconclusive, err)
+				return domain.Activity{}, false, errors.Join(ports.ErrRuntimeProbeInconclusive, err)
 			}
 			if state, authoritative := detector.DetectTerminalActivity(output); authoritative && recoverableActivityState(state) {
-				return domain.Activity{State: state, LastActivityAt: m.clock()}, nil
+				return domain.Activity{State: state, LastActivityAt: m.clock()}, true, nil
 			}
 		}
 	}
-	return m.latestDurableRuntimeActivity(ctx, rec.ID)
+	return m.runtimeActivityFallback(ctx, rec)
+}
+
+func (m *Manager) runtimeActivityFallback(
+	ctx context.Context,
+	rec domain.SessionRecord,
+) (domain.Activity, bool, error) {
+	if rec.Activity.State != domain.ActivityExited && recoverableActivityState(rec.Activity.State) {
+		return rec.Activity, false, nil
+	}
+	activity, err := m.latestDurableRuntimeActivity(ctx, rec.ID)
+	return activity, false, err
 }
 
 func (m *Manager) latestDurableRuntimeActivity(
@@ -2619,9 +2676,10 @@ func recoverableActivityState(state domain.ActivityState) bool {
 }
 
 // reconcileLive handles a single non-terminated session on boot. If its exact
-// runtime route is still alive, it is adopted without changing activity. If a
-// historical false Exited fact exists, only exact current-workload proof may
-// repair it. If the runtime is conclusively gone, reconciliation reattaches the
+// runtime route is still alive, it is adopted and its activity is synchronized
+// from an authoritative current surface when available. Historical activity is
+// used only to repair a false Exited fact and only after exact current-workload
+// proof. If the runtime is conclusively gone, reconciliation reattaches the
 // existing worktree and relaunches the controller in place.
 //
 // If in-place recovery fails, preserve the live record, worktree, lifecycle,
@@ -2636,9 +2694,9 @@ func (m *Manager) reconcileLive(ctx context.Context, rec domain.SessionRecord) e
 	if rec.Metadata.WorkspacePath == "" || (rec.Metadata.Branch == "" && projectKind != domain.ProjectKindScratch) {
 		return nil
 	}
-	// A chat controller is an in-process child of the daemon, so unlike tmux it can
-	// never have survived the crash: there is nothing to adopt and nothing to
-	// probe. It falls through to the same in-place relaunch as a dead TUI runtime.
+	// The daemon-side Chat controller cannot survive replacement, but its detached
+	// provider host can. Chat therefore skips terminal-runtime probing and falls
+	// through to the reconnect path, which adopts that exact persistent host.
 	isChat := domain.NormalizeSessionMode(rec.Mode) == domain.SessionModeChat
 
 	if !isChat {
@@ -2673,11 +2731,11 @@ func (m *Manager) reconcileLive(ctx context.Context, rec domain.SessionRecord) e
 						return fmt.Errorf("reconcile %s: %w", rec.ID, err)
 					}
 				}
-				return m.repairExitedFromExactRuntime(ctx, rec, handle)
+				return m.reconcileActivityFromExactRuntime(ctx, rec, handle)
 			}
 		}
 	}
-	if projectKind == domain.ProjectKindScratch {
+	if !isChat && projectKind == domain.ProjectKindScratch {
 		return m.lcm.MarkTerminated(ctx, rec.ID)
 	}
 	ws, restoreErr := m.restoreSessionWorkspace(ctx, project, rec)
@@ -2740,6 +2798,32 @@ func (m *Manager) reconcileReap(ctx context.Context, rec domain.SessionRecord) e
 	handle := runtimeHandle(rec.Metadata)
 	if handle.ID == "" {
 		return nil
+	}
+	if resolver, ok := m.runtime.(ports.ExactRuntimeHandleResolver); ok {
+		resolved, found, err := resolver.ResolveExactRuntimeHandle(ctx, handle, ports.SupervisedProcessRef{
+			SessionID: rec.ID,
+			LaunchID:  rec.Metadata.RuntimeLaunchID,
+		})
+		if err != nil {
+			return fmt.Errorf("reconcile reap %s: prove exact owner: %w", rec.ID, err)
+		}
+		if !found {
+			return nil
+		}
+		if strings.TrimSpace(resolved.ID) == "" {
+			return fmt.Errorf(
+				"reconcile reap %s: exact owner resolution returned an empty handle: %w",
+				rec.ID,
+				ports.ErrRuntimeProbeInconclusive,
+			)
+		}
+		handle = resolved
+	} else if strings.HasPrefix(handle.ID, "tmux-v1:") {
+		return fmt.Errorf(
+			"reconcile reap %s: exact tmux ownership resolution unavailable: %w",
+			rec.ID,
+			ports.ErrRuntimeProbeInconclusive,
+		)
 	}
 	alive, err := m.runtime.IsAlive(ctx, handle)
 	if err != nil {
@@ -2816,15 +2900,18 @@ func (m *Manager) ReconcileBackground(ctx context.Context) error {
 	if err := m.reconcileLivePass(ctx, recs); err != nil {
 		unresolved = append(unresolved, fmt.Errorf("reconcile: live pass: %w", err))
 	}
+	unsafeRestore := make(map[domain.SessionID]struct{})
 	for _, rec := range recs {
 		if !rec.IsTerminated {
 			continue
 		}
 		if err := m.reconcileReap(ctx, rec); err != nil {
-			m.logger.Error("reconcile: reap pass failed, skipping", "sessionID", rec.ID, "error", err)
+			m.logger.Error("reconcile: reap pass failed, blocking restore", "sessionID", rec.ID, "error", err)
+			unsafeRestore[rec.ID] = struct{}{}
+			unresolved = append(unresolved, fmt.Errorf("reconcile: reap session %s: %w", rec.ID, err))
 		}
 	}
-	if err := m.RestoreAll(ctx); err != nil {
+	if err := m.restoreAll(ctx, unsafeRestore); err != nil {
 		unresolved = append(unresolved, err)
 	}
 	if err := m.deliverAllTransitionMessages(ctx); err != nil {
@@ -2918,20 +3005,31 @@ func (m *Manager) reconcileLivePass(ctx context.Context, recs []domain.SessionRe
 //     log and continue (still relaunch the agent, never delete the ref).
 //  3. Relaunch via the existing Restore method.
 //
-// Failures on individual sessions are logged and do not abort the loop.
+// Operational failures on individual sessions are aggregated after every
+// candidate has been attempted. Intentional skips and preserve conflicts remain
+// non-errors.
 func (m *Manager) RestoreAll(ctx context.Context) error {
+	return m.restoreAll(ctx, nil)
+}
+
+func (m *Manager) restoreAll(ctx context.Context, unsafe map[domain.SessionID]struct{}) error {
 	recs, err := m.store.ListAllSessions(ctx)
 	if err != nil {
 		return fmt.Errorf("restore-all: list sessions: %w", err)
 	}
+	var failures []error
 	for _, rec := range recs {
 		if !rec.IsTerminated {
+			continue
+		}
+		if _, blocked := unsafe[rec.ID]; blocked {
 			continue
 		}
 		// Check the shutdown-saved marker: is there a session_worktrees row?
 		rows, err := m.store.ListSessionWorktrees(ctx, rec.ID)
 		if err != nil {
 			m.logger.Error("restore-all: list worktrees failed", "sessionID", rec.ID, "error", err)
+			failures = append(failures, fmt.Errorf("restore-all: session %s: list worktrees: %w", rec.ID, err))
 			continue
 		}
 		if len(rows) == 0 {
@@ -2948,6 +3046,7 @@ func (m *Manager) RestoreAll(ctx context.Context) error {
 		project, err := m.loadProject(ctx, rec.ProjectID)
 		if err != nil {
 			m.logger.Error("restore-all: load project failed", "sessionID", rec.ID, "error", err)
+			failures = append(failures, fmt.Errorf("restore-all: session %s: load project: %w", rec.ID, err))
 			continue
 		}
 		var ws ports.WorkspaceInfo
@@ -2958,11 +3057,13 @@ func (m *Manager) RestoreAll(ctx context.Context) error {
 			projectRows, rowErr = m.workspaceProjectRestoreRowsFromMarkers(ctx, project, rec, rows)
 			if rowErr != nil {
 				m.logger.Error("restore-all: workspace rows failed", "sessionID", rec.ID, "error", rowErr)
+				failures = append(failures, fmt.Errorf("restore-all: session %s: workspace rows: %w", rec.ID, rowErr))
 				continue
 			}
 			root, restoreErr := m.restoreWorkspaceProjectRows(ctx, projectRows)
 			if restoreErr != nil {
 				m.logger.Error("restore-all: workspace project restore failed", "sessionID", rec.ID, "error", restoreErr)
+				failures = append(failures, fmt.Errorf("restore-all: session %s: workspace project restore: %w", rec.ID, restoreErr))
 				continue
 			}
 			ws = workspaceInfoFromRepoInfo(root)
@@ -2980,21 +3081,28 @@ func (m *Manager) RestoreAll(ctx context.Context) error {
 			})
 			if restoreErr != nil {
 				m.logger.Error("restore-all: workspace restore failed", "sessionID", rec.ID, "error", restoreErr)
+				failures = append(failures, fmt.Errorf("restore-all: session %s: workspace restore: %w", rec.ID, restoreErr))
 				continue
 			}
 		}
 		if ws.Path == "" {
-			m.logger.Error("restore-all: workspace restore failed", "sessionID", rec.ID, "error", "empty restored root path")
+			emptyRootErr := errors.New("empty restored root path")
+			m.logger.Error("restore-all: workspace restore failed", "sessionID", rec.ID, "error", emptyRootErr)
+			failures = append(failures, fmt.Errorf("restore-all: session %s: workspace restore: %w", rec.ID, emptyRootErr))
 			continue
 		}
 		if err := m.restoreAttachments(ctx, rec.ID, ws); err != nil {
 			m.logger.Error("restore-all: restore attachments failed", "sessionID", rec.ID, "error", err)
+			failures = append(failures, fmt.Errorf("restore-all: session %s: restore attachments: %w", rec.ID, err))
 			continue
 		}
 
 		// Step 2: replay preserve ref when one was recorded.
 		if restoredWorkspaceProject {
-			m.applyWorkspaceProjectPreserved(ctx, projectRows)
+			if applyErr := m.applyWorkspaceProjectPreserved(ctx, projectRows); applyErr != nil {
+				failures = append(failures, fmt.Errorf("restore-all: session %s: apply preserved: %w", rec.ID, applyErr))
+				continue
+			}
 		} else {
 			var preserveRef string
 			for _, r := range rows {
@@ -3010,8 +3118,11 @@ func (m *Manager) RestoreAll(ctx context.Context) error {
 							"sessionID", rec.ID, "ref", preserveRef, "error", applyErr)
 					} else {
 						m.logger.Error("restore-all: apply preserved failed", "sessionID", rec.ID, "error", applyErr)
+						failures = append(failures, fmt.Errorf("restore-all: session %s: apply preserved: %w", rec.ID, applyErr))
+						continue
 					}
-					// Continue: always relaunch even on conflict (never delete the ref here).
+					// A conflict is a recovered workspace state: relaunch with its
+					// conflict markers and keep the preserve ref for manual recovery.
 				}
 			}
 		}
@@ -3029,6 +3140,7 @@ func (m *Manager) RestoreAll(ctx context.Context) error {
 				m.logger.Warn("restore-all: session vanished before relaunch, skipping", "sessionID", rec.ID)
 			default:
 				m.logger.Error("restore-all: relaunch failed", "sessionID", rec.ID, "error", err)
+				failures = append(failures, fmt.Errorf("restore-all: session %s: relaunch: %w", rec.ID, err))
 			}
 			continue
 		}
@@ -3050,7 +3162,7 @@ func (m *Manager) RestoreAll(ctx context.Context) error {
 			}
 		}
 	}
-	return nil
+	return errors.Join(failures...)
 }
 
 func restorableWorktreeRows(rows []domain.SessionWorktreeRecord) []domain.SessionWorktreeRecord {
@@ -3334,12 +3446,14 @@ func (m *Manager) restoreWorkspaceProjectRows(ctx context.Context, rows []ports.
 	return root, nil
 }
 
-func (m *Manager) applyWorkspaceProjectPreserved(ctx context.Context, rows []ports.WorkspaceRepoInfo) {
+func (m *Manager) applyWorkspaceProjectPreserved(ctx context.Context, rows []ports.WorkspaceRepoInfo) error {
+	var failures []error
 	for _, row := range rows {
 		var preserveRef string
 		sessionRows, err := m.store.ListSessionWorktrees(ctx, row.SessionID)
 		if err != nil {
 			m.logger.Error("restore-all: list worktrees failed", "sessionID", row.SessionID, "error", err)
+			failures = append(failures, fmt.Errorf("repo %s: list worktrees: %w", row.RepoName, err))
 			continue
 		}
 		for _, sessionRow := range sessionRows {
@@ -3357,9 +3471,11 @@ func (m *Manager) applyWorkspaceProjectPreserved(ctx context.Context, rows []por
 					"sessionID", row.SessionID, "repo", row.RepoName, "ref", preserveRef, "error", applyErr)
 			} else {
 				m.logger.Error("restore-all: apply preserved failed", "sessionID", row.SessionID, "repo", row.RepoName, "error", applyErr)
+				failures = append(failures, fmt.Errorf("repo %s: apply preserved: %w", row.RepoName, applyErr))
 			}
 		}
 	}
+	return errors.Join(failures...)
 }
 
 // Send delivers a message to a running session's agent through the guarded

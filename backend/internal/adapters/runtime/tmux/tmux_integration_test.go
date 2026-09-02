@@ -319,6 +319,78 @@ func TestRuntimeIntegrationAdoptsHistoricalPrivateSocket(t *testing.T) {
 	}
 }
 
+func TestRuntimeIntegrationOwnerFencedHandleRelocatesWithoutDestroyingForeignReplacement(t *testing.T) {
+	systemTmux, err := exec.LookPath("tmux")
+	if err != nil {
+		t.Skip("tmux unavailable")
+	}
+
+	tmuxTmpDir, err := os.MkdirTemp("/tmp", "ao-tmux-owner-fence-test-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(tmuxTmpDir) })
+	t.Setenv("TMUX_TMPDIR", tmuxTmpDir)
+	const (
+		currentSocketName = "ao-owner-fence"
+		sessionID         = "owner-fence-session"
+		launchID          = "owner-fence-launch"
+	)
+	historicalSocket := filepath.Join(tmuxTmpDir, "tmux-historical.sock")
+	runFile := filepath.Join(tmuxTmpDir, "running.json")
+	t.Cleanup(func() {
+		_ = exec.Command(systemTmux, "-L", currentSocketName, "kill-server").Run()
+		_ = exec.Command(systemTmux, "-S", historicalSocket, "-f", os.DevNull, "kill-server").Run()
+	})
+
+	if out, startErr := exec.Command(
+		systemTmux, "-S", historicalSocket, "-f", os.DevNull,
+		"new-session", "-d", "-s", sessionID,
+		ownedPaneCommand(runFile, sessionID, launchID),
+	).CombinedOutput(); startErr != nil {
+		t.Fatalf("start exact historical owner: %v: %s", startErr, out)
+	}
+	if out, startErr := exec.Command(
+		systemTmux, "-L", currentSocketName,
+		"new-session", "-d", "-s", sessionID, "sleep 300",
+	).CombinedOutput(); startErr != nil {
+		t.Fatalf("start foreign same-name replacement: %v: %s", startErr, out)
+	}
+
+	r := New(Options{
+		Binary:           systemTmux,
+		LegacyBinary:     systemTmux,
+		SocketName:       currentSocketName,
+		LegacySocketPath: historicalSocket,
+		RunFilePath:      runFile,
+		Timeout:          5 * time.Second,
+	})
+	r.enterDelay = 0
+	handle, err := qualifiedRuntimeHandleForOwner(
+		sessionID,
+		socketTarget{kind: socketTargetNamed, value: currentSocketName},
+		ports.SupervisedProcessRef{SessionID: sessionID, LaunchID: launchID},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := r.SendMessage(context.Background(), handle, "echo exact-owner-route-ok"); err != nil {
+		t.Fatalf("send through relocated owner-fenced handle: %v", err)
+	}
+	if out := waitForOutput(t, r, handle, "exact-owner-route-ok", 5*time.Second); !strings.Contains(out, "exact-owner-route-ok") {
+		t.Fatalf("relocated owner output = %q", out)
+	}
+	if err := r.Destroy(context.Background(), handle); err != nil {
+		t.Fatalf("destroy relocated exact owner: %v", err)
+	}
+	if out, probeErr := exec.Command(
+		systemTmux, "-L", currentSocketName, "has-session", "-t", "="+sessionID,
+	).CombinedOutput(); probeErr != nil {
+		t.Fatalf("foreign same-name replacement was destroyed: %v: %s", probeErr, out)
+	}
+}
+
 func TestRuntimeIntegrationSanitizedLegacyHandleSurvivesCanonicalizationAndTwoRuntimeReplacements(t *testing.T) {
 	systemTmux, err := exec.LookPath("tmux")
 	if err != nil {
@@ -397,16 +469,32 @@ func TestRuntimeIntegrationSanitizedLegacyHandleSurvivesCanonicalizationAndTwoRu
 		Timeout:      5 * time.Second,
 	})
 	secondReplacement.enterDelay = 0
+	const restartedLaunchID = "launch-2"
+	agentProcessDir := t.TempDir()
+	agentProcessPath := filepath.Join(agentProcessDir, "agent-process")
+	if err := os.WriteFile(agentProcessPath, []byte("#!/bin/sh\nwhile [ \"$1\" != \"--\" ]; do shift; done\nshift\nexec \"$@\"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	restarted, err := secondReplacement.Restart(context.Background(), resolved, ports.RuntimeConfig{
 		SessionID:     rawSessionID,
 		WorkspacePath: t.TempDir(),
-		Argv:          []string{"sh", "-c", "echo sanitized-restart-ok"},
+		Argv: []string{
+			"agent-process", "supervise", "--session", string(rawSessionID),
+			"--launch", restartedLaunchID, "--", "sh", "-c", "echo sanitized-restart-ok",
+		},
+		Env: map[string]string{
+			"AO_RUN_FILE":           runFile,
+			"AO_SESSION_ID":         string(rawSessionID),
+			"AO_SUPERVISED_PROCESS": "1",
+			runtimeLaunchEnv:        restartedLaunchID,
+			"PATH":                  agentProcessDir + string(os.PathListSeparator) + os.Getenv("PATH"),
+		},
 	})
 	if err != nil {
 		t.Fatalf("Restart after second Runtime replacement: %v", err)
 	}
-	if restarted != resolved {
-		t.Fatalf("Restart handle = %+v, want canonical handle %+v", restarted, resolved)
+	if restarted == resolved {
+		t.Fatalf("Restart handle retained stale launch owner: %+v", restarted)
 	}
 	out := waitForOutput(t, secondReplacement, restarted, "sanitized-restart-ok", 5*time.Second)
 	if !strings.Contains(out, "sanitized-restart-ok") {

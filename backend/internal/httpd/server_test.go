@@ -10,6 +10,8 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -212,7 +214,7 @@ func TestServerRunWithReadyPublishesBeforeCallback(t *testing.T) {
 	ready := make(chan struct{})
 	runErr := make(chan error, 1)
 	go func() {
-		runErr <- srv.RunWithReady(ctx, func() error {
+		runErr <- srv.RunWithReady(ctx, func(context.Context) error {
 			close(ready)
 			return nil
 		})
@@ -259,7 +261,7 @@ func TestServerRunWithReadyGatesReadinessUntilStartupRecoveryCompletes(t *testin
 	}()
 	runErr := make(chan error, 1)
 	go func() {
-		runErr <- srv.RunWithReady(ctx, func() error {
+		runErr <- srv.RunWithReady(ctx, func(context.Context) error {
 			close(recoveryStarted)
 			<-releaseRecovery
 			return nil
@@ -312,7 +314,288 @@ func TestServerRunWithReadyGatesReadinessUntilStartupRecoveryCompletes(t *testin
 	}
 }
 
-func TestServerRunWithReadyFailureKeepsLivenessAndReadinessGated(t *testing.T) {
+func TestServerRunWithReadyRetriesTransientStartupRecoveryFailure(t *testing.T) {
+	runPath := filepath.Join(t.TempDir(), "running.json")
+	srv, err := NewWithDeps(config.Config{
+		Host:            "127.0.0.1",
+		Port:            0,
+		ShutdownTimeout: 5 * time.Second,
+		RunFilePath:     runPath,
+	}, discardLogger(), nil, APIDeps{})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var attempts atomic.Int32
+	runErr := make(chan error, 1)
+	go func() {
+		runErr <- srv.RunWithReady(ctx, func(context.Context) error {
+			if attempts.Add(1) < 3 {
+				return errors.New("temporary runtime probe failure")
+			}
+			return nil
+		})
+	}()
+
+	base := "http://" + srv.Addr().String()
+	waitForHealth(t, base)
+	client := &http.Client{Timeout: 500 * time.Millisecond}
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		resp, requestErr := client.Get(base + "/readyz")
+		if requestErr == nil {
+			resp.Body.Close()
+			if resp.StatusCode == http.StatusOK {
+				break
+			}
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("GET /readyz did not become ready after transient recovery failures: attempts=%d err=%v", attempts.Load(), requestErr)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if got := attempts.Load(); got != 3 {
+		t.Fatalf("startup recovery attempts = %d, want 3", got)
+	}
+
+	cancel()
+	if err := <-runErr; err != nil {
+		t.Fatalf("RunWithReady returned error after recovery succeeded: %v", err)
+	}
+}
+
+func TestRunStartupRecoveryStopsBlockedAttemptWhenContextIsCancelled(t *testing.T) {
+	srv := &Server{
+		log:               discardLogger(),
+		shutdownRequested: make(chan struct{}),
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	recoveryStarted := make(chan struct{})
+	releaseRecovery := make(chan struct{})
+	recoveryErr := make(chan error, 1)
+	go func() {
+		recoveryErr <- srv.runStartupRecovery(ctx, func(context.Context) error {
+			close(recoveryStarted)
+			<-releaseRecovery
+			return nil
+		})
+	}()
+
+	select {
+	case <-recoveryStarted:
+	case <-time.After(time.Second):
+		t.Fatal("startup recovery callback was not called")
+	}
+	cancel()
+
+	select {
+	case <-recoveryErr:
+		t.Fatal("startup recovery returned before its callback had unwound")
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(releaseRecovery)
+	select {
+	case err := <-recoveryErr:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("startup recovery error = %v, want cancellation", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("startup recovery did not return after its callback unwound")
+	}
+}
+
+func TestRunStartupRecoveryWarnsButStillDrainsCallbackThatIgnoresCancellation(t *testing.T) {
+	srv := &Server{
+		log:                           discardLogger(),
+		shutdownRequested:             make(chan struct{}),
+		startupRecoveryAttemptTimeout: 10 * time.Millisecond,
+		startupRecoveryDrainWarning:   15 * time.Millisecond,
+	}
+	recoveryStarted := make(chan struct{})
+	releaseRecovery := make(chan struct{})
+	recoveryErr := make(chan error, 1)
+	go func() {
+		recoveryErr <- srv.runStartupRecovery(context.Background(), func(context.Context) error {
+			close(recoveryStarted)
+			<-releaseRecovery
+			return nil
+		})
+	}()
+
+	select {
+	case <-recoveryStarted:
+	case <-time.After(time.Second):
+		t.Fatal("startup recovery callback was not called")
+	}
+	deadline := time.Now().Add(time.Second)
+	for !srv.startupFailed.Load() && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if !srv.startupFailed.Load() {
+		t.Fatal("non-cooperative recovery did not publish terminal startup failure")
+	}
+	select {
+	case <-recoveryErr:
+		t.Fatal("startup recovery returned while its callback could still mutate dependencies")
+	default:
+	}
+
+	close(releaseRecovery)
+	select {
+	case err := <-recoveryErr:
+		if err == nil || !strings.Contains(err.Error(), "ignored cancellation") ||
+			!errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("startup recovery error = %v, want timeout plus cancellation-contract failure", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("startup recovery did not return after non-cooperative callback unwound")
+	}
+}
+
+func TestServerRunWithReadyTimesOutBlockedRecoveryAndReportsTerminalFailure(t *testing.T) {
+	runPath := filepath.Join(t.TempDir(), "running.json")
+	srv, err := NewWithDeps(config.Config{
+		Host:            "127.0.0.1",
+		Port:            0,
+		ShutdownTimeout: 5 * time.Second,
+		RunFilePath:     runPath,
+	}, discardLogger(), nil, APIDeps{})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	srv.startupRecoveryAttemptTimeout = 20 * time.Millisecond
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var attempts atomic.Int32
+	var missingDeadline atomic.Bool
+	runErr := make(chan error, 1)
+	go func() {
+		runErr <- srv.RunWithReady(ctx, func(attemptCtx context.Context) error {
+			attempts.Add(1)
+			if _, ok := attemptCtx.Deadline(); !ok {
+				missingDeadline.Store(true)
+			}
+			<-attemptCtx.Done()
+			return attemptCtx.Err()
+		})
+	}()
+
+	base := "http://" + srv.Addr().String()
+	waitForHealth(t, base)
+	client := &http.Client{Timeout: 500 * time.Millisecond}
+	health, err := client.Get(base + "/healthz")
+	if err != nil {
+		t.Fatalf("GET /healthz during blocked startup recovery: %v", err)
+	}
+	health.Body.Close()
+	if health.StatusCode != http.StatusOK {
+		t.Fatalf("GET /healthz during blocked startup recovery = %d, want 200", health.StatusCode)
+	}
+
+	var failure struct {
+		Status string `json:"status"`
+		Code   string `json:"code"`
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		resp, requestErr := client.Get(base + "/readyz")
+		if requestErr == nil {
+			failure = struct {
+				Status string `json:"status"`
+				Code   string `json:"code"`
+			}{}
+			decodeErr := json.NewDecoder(resp.Body).Decode(&failure)
+			resp.Body.Close()
+			if decodeErr == nil && failure.Status == "error" {
+				break
+			}
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("GET /readyz stayed in starting state: attempts=%d body=%+v err=%v", attempts.Load(), failure, requestErr)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if got := attempts.Load(); got != 1 {
+		t.Fatalf("timed-out startup recovery attempts = %d, want 1 (no overlapping retry)", got)
+	}
+	if missingDeadline.Load() {
+		t.Fatal("startup recovery callback received a context without an attempt deadline")
+	}
+	if failure.Code != startupRecoveryFailureCode {
+		t.Fatalf("terminal readiness code = %q, want %q", failure.Code, startupRecoveryFailureCode)
+	}
+
+	cancel()
+	select {
+	case err := <-runErr:
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("RunWithReady error = %v, want attempt deadline error", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("RunWithReady did not return after terminal startup failure")
+	}
+}
+
+func TestServerRunWithReadyShutdownStopsBlockedRecovery(t *testing.T) {
+	runPath := filepath.Join(t.TempDir(), "running.json")
+	srv, err := NewWithDeps(config.Config{
+		Host:            "127.0.0.1",
+		Port:            0,
+		ShutdownTimeout: 5 * time.Second,
+		RunFilePath:     runPath,
+	}, discardLogger(), nil, APIDeps{})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	srv.startupRecoveryAttemptTimeout = time.Hour
+
+	recoveryStarted := make(chan struct{})
+	releaseRecovery := make(chan struct{})
+	runErr := make(chan error, 1)
+	go func() {
+		runErr <- srv.RunWithReady(context.Background(), func(context.Context) error {
+			close(recoveryStarted)
+			<-releaseRecovery
+			return nil
+		})
+	}()
+
+	select {
+	case <-recoveryStarted:
+	case <-time.After(time.Second):
+		t.Fatal("startup recovery callback was not called")
+	}
+	base := "http://" + srv.Addr().String()
+	waitForHealth(t, base)
+	resp, err := http.Post(base+"/shutdown", "application/json", nil)
+	if err != nil {
+		t.Fatalf("POST /shutdown during startup recovery: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusAccepted {
+		t.Fatalf("POST /shutdown during startup recovery = %d, want 202", resp.StatusCode)
+	}
+
+	select {
+	case err := <-runErr:
+		t.Fatalf("RunWithReady returned before startup recovery drained: %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(releaseRecovery)
+	select {
+	case err := <-runErr:
+		if err != nil {
+			t.Fatalf("RunWithReady returned error on graceful shutdown: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("RunWithReady did not stop after startup recovery drained")
+	}
+}
+
+func TestServerRunWithReadyFailureKeepsLivenessAndReportsTerminalReadinessError(t *testing.T) {
 	runPath := filepath.Join(t.TempDir(), "running.json")
 	srv, err := NewWithDeps(config.Config{
 		Host:            "127.0.0.1",
@@ -327,35 +610,60 @@ func TestServerRunWithReadyFailureKeepsLivenessAndReadinessGated(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	startupErr := errors.New("session reconciliation unresolved")
-	callbackDone := make(chan struct{})
+	var attempts atomic.Int32
 	runErr := make(chan error, 1)
 	go func() {
-		runErr <- srv.RunWithReady(ctx, func() error {
-			close(callbackDone)
+		runErr <- srv.RunWithReady(ctx, func(context.Context) error {
+			attempts.Add(1)
 			return startupErr
 		})
 	}()
 
-	select {
-	case <-callbackDone:
-	case <-time.After(5 * time.Second):
-		t.Fatal("startup recovery callback was not called")
-	}
 	base := "http://" + srv.Addr().String()
 	waitForHealth(t, base)
 	client := &http.Client{Timeout: 500 * time.Millisecond}
-	for path, want := range map[string]int{
-		"/healthz": http.StatusOK,
-		"/readyz":  http.StatusServiceUnavailable,
-	} {
-		resp, requestErr := client.Get(base + path)
-		if requestErr != nil {
-			t.Fatalf("GET %s after startup failure: %v", path, requestErr)
+	health, err := client.Get(base + "/healthz")
+	if err != nil {
+		t.Fatalf("GET /healthz after startup failure: %v", err)
+	}
+	health.Body.Close()
+	if health.StatusCode != http.StatusOK {
+		t.Fatalf("GET /healthz after startup failure = %d, want 200", health.StatusCode)
+	}
+
+	type readinessFailure struct {
+		Status  string `json:"status"`
+		Code    string `json:"code"`
+		Message string `json:"message"`
+	}
+	var failure readinessFailure
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		resp, requestErr := client.Get(base + "/readyz")
+		if requestErr == nil {
+			failure = readinessFailure{}
+			decodeErr := json.NewDecoder(resp.Body).Decode(&failure)
+			resp.Body.Close()
+			if decodeErr == nil && failure.Status == "error" {
+				if resp.StatusCode != http.StatusServiceUnavailable {
+					t.Fatalf("GET /readyz after terminal startup failure = %d, want 503", resp.StatusCode)
+				}
+				break
+			}
 		}
-		resp.Body.Close()
-		if resp.StatusCode != want {
-			t.Fatalf("GET %s after startup failure = %d, want %d", path, resp.StatusCode, want)
+		if time.Now().After(deadline) {
+			t.Fatalf("GET /readyz did not report terminal startup failure: attempts=%d body=%+v err=%v", attempts.Load(), failure, requestErr)
 		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if got := attempts.Load(); got != startupRecoveryMaxAttempts {
+		t.Fatalf("startup recovery attempts = %d, want %d", got, startupRecoveryMaxAttempts)
+	}
+	if failure.Code != "startup_recovery_failed" {
+		t.Fatalf("terminal readiness code = %q, want startup_recovery_failed", failure.Code)
+	}
+	if failure.Message != "AO could not recover existing sessions. Restart AO and check the daemon log for details." {
+		t.Fatalf("terminal readiness message = %q", failure.Message)
 	}
 
 	cancel()

@@ -141,9 +141,7 @@ func TestActivateChatAgentSwitchTargetKeepsRuntimeEmptyAcrossNativeSwitchBack(t 
 	if err := s.UpdateSession(ctx, credentialed); err != nil {
 		t.Fatalf("persist target Chat verifier: %v", err)
 	}
-	if err := s.ClaimChatControllerGeneration(ctx, session.ID, "target-chat-generation", now.Add(4*time.Second)); err != nil {
-		t.Fatalf("claim target Chat generation: %v", err)
-	}
+	claimCurrentChatControllerGeneration(t, s, session.ID, "target-chat-generation", now.Add(4*time.Second))
 	activatedAt := now.Add(5 * time.Second)
 	if ok, err := s.ActivateChatAgentSwitchTarget(ctx, domain.AgentSwitchChatTargetActivation{
 		SwitchID: sw.ID, SessionID: session.ID,
@@ -292,9 +290,7 @@ func TestActivateChatAgentSwitchTargetKeepsRuntimeEmptyAcrossNativeSwitchBack(t 
 	advanceAgentSwitchFixtureWithMutation(ctx, t, s, &returnSwitch, domain.AgentSwitchStartingTarget, now.Add(13*time.Second), func(next *domain.AgentSwitch) {
 		next.TargetNativeSessionRef = &returnTarget.ID
 	})
-	if err := s.ClaimChatControllerGeneration(ctx, session.ID, "return-chat-generation", now.Add(14*time.Second)); err != nil {
-		t.Fatalf("claim return Chat generation: %v", err)
-	}
+	claimCurrentChatControllerGeneration(t, s, session.ID, "return-chat-generation", now.Add(14*time.Second))
 	if ok, err := s.ActivateChatAgentSwitchTarget(ctx, domain.AgentSwitchChatTargetActivation{
 		SwitchID: returnSwitch.ID, SessionID: session.ID,
 		SourceHarness: domain.HarnessCodex, SourceGenerationID: "target-chat-generation",

@@ -21,17 +21,28 @@ var _ ports.Attacher = (*Runtime)(nil)
 // pty-host. rows/cols size the host's PTY from birth when known (a MsgResize is
 // sent right after connect). ctx cancellation closes the Stream.
 func (r *Runtime) Attach(ctx context.Context, handle ports.RuntimeHandle, rows, cols uint16) (ports.Stream, error) {
-	sess := r.resolve(handle.ID)
+	sess, err := r.resolve(handle.ID)
+	if err != nil {
+		return nil, err
+	}
 	if sess == nil {
 		return nil, fmt.Errorf("conpty: session %q not found", handle.ID)
 	}
-	conn, err := dialHost(sess.addr, dialTimeout)
+	host, alive, err := r.connectVerifiedHost(ctx, sess, dialTimeout)
 	if err != nil {
-		return nil, fmt.Errorf("conpty: dial host for %q: %w", handle.ID, err)
+		return nil, fmt.Errorf("conpty: authenticate host for %q: %w", handle.ID, err)
+	}
+	if !alive {
+		return nil, fmt.Errorf("conpty: session %q not found", handle.ID)
 	}
 
 	pr, pw := io.Pipe()
-	s := &loopbackStream{conn: conn, pr: pr, pw: pw}
+	s := &loopbackStream{conn: host.conn, pr: pr, pw: pw, pending: host.pending}
+	for _, frame := range host.initialFrames {
+		if frame.messageType == MsgTerminalData {
+			s.initial = append(s.initial, frame.payload)
+		}
+	}
 
 	// Pump host frames: MsgTerminalData payloads go into the pipe that Read
 	// drains. The first such frame is the scrollback snapshot, so the replay
@@ -61,6 +72,15 @@ type loopbackStream struct {
 	conn io.ReadWriteCloser
 	pr   *io.PipeReader
 	pw   *io.PipeWriter
+	// initial contains terminal frames consumed while authenticating this same
+	// connection. Replaying them before the read loop preserves the host's
+	// scrollback-before-live ordering without trusting data from an unverified
+	// endpoint.
+	initial [][]byte
+	// pending is the incomplete frame prefix retained by the status parser at
+	// the authentication boundary. It must seed the attach parser before any
+	// subsequent socket bytes are read.
+	pending []byte
 
 	closeOnce sync.Once
 }
@@ -68,12 +88,20 @@ type loopbackStream struct {
 // pump reads framed host messages and writes MsgTerminalData payloads into the
 // pipe. It closes the pipe when the connection ends so Read returns EOF.
 func (s *loopbackStream) pump() {
+	for _, payload := range s.initial {
+		if _, err := s.pw.Write(payload); err != nil {
+			return
+		}
+	}
 	parser := NewMessageParser(func(msgType byte, payload []byte) {
 		if msgType == MsgTerminalData {
 			// Write blocks until Read drains, preserving back-pressure and order.
 			_, _ = s.pw.Write(payload)
 		}
 	})
+	if len(s.pending) > 0 {
+		parser.Feed(s.pending)
+	}
 	buf := make([]byte, 4096)
 	for {
 		n, err := s.conn.Read(buf)

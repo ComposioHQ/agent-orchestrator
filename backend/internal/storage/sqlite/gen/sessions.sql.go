@@ -104,21 +104,113 @@ func (q *Queries) CanonicalizeRuntimeHandle(ctx context.Context, arg Canonicaliz
 
 const claimChatControllerGeneration = `-- name: ClaimChatControllerGeneration :execrows
 UPDATE sessions
-SET controller_generation = ?, updated_at = ?
-WHERE id = ? AND session_mode = 'chat'
+SET controller_generation = ?1,
+    updated_at = MAX(updated_at, ?2)
+WHERE id = ?3
+  AND session_mode = 'chat'
+  AND harness = ?4
+  AND session_mode = ?5
+  AND is_terminated = ?6
+  AND runtime_launch_id = ?7
+  AND agent_session_id = ?8
+  AND agent_session_id_launch_id = ?9
+  AND provider_conversation_id = ?10
+  AND controller_generation = ?11
 `
 
 type ClaimChatControllerGenerationParams struct {
-	ControllerGeneration string
-	UpdatedAt            time.Time
-	ID                   domain.SessionID
+	NewControllerGeneration        string
+	ClaimedAt                      interface{}
+	ID                             domain.SessionID
+	ExpectedHarness                domain.AgentHarness
+	ExpectedSessionMode            domain.SessionMode
+	ExpectedIsTerminated           bool
+	ExpectedRuntimeLaunchID        string
+	ExpectedAgentSessionID         string
+	ExpectedAgentSessionIDLaunchID string
+	ExpectedProviderConversationID string
+	ExpectedControllerGeneration   string
 }
 
-// A Chat controller claims ownership before its event goroutine starts. Provider
-// projections compare against this value in the same transaction as their write,
-// so an older controller cannot mutate a session after a replacement takes over.
+// A Chat controller claims ownership before its event goroutine starts, but only
+// if the complete controller owner observed before provider launch is still
+// current. Provider open happens outside SQLite; without this old-owner ->
+// new-generation CAS, a delayed launcher could steal ownership from a replacement
+// that published while the first launcher was doing provider I/O.
 func (q *Queries) ClaimChatControllerGeneration(ctx context.Context, arg ClaimChatControllerGenerationParams) (int64, error) {
-	result, err := q.db.ExecContext(ctx, claimChatControllerGeneration, arg.ControllerGeneration, arg.UpdatedAt, arg.ID)
+	result, err := q.db.ExecContext(ctx, claimChatControllerGeneration,
+		arg.NewControllerGeneration,
+		arg.ClaimedAt,
+		arg.ID,
+		arg.ExpectedHarness,
+		arg.ExpectedSessionMode,
+		arg.ExpectedIsTerminated,
+		arg.ExpectedRuntimeLaunchID,
+		arg.ExpectedAgentSessionID,
+		arg.ExpectedAgentSessionIDLaunchID,
+		arg.ExpectedProviderConversationID,
+		arg.ExpectedControllerGeneration,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const commitChatLiveReconnect = `-- name: CommitChatLiveReconnect :execrows
+UPDATE sessions SET
+    activity_state = ?1,
+    activity_last_at = ?2,
+    updated_at = MAX(updated_at, ?3)
+WHERE id = ?4
+  AND session_mode = 'chat'
+  AND session_mode = ?5
+  AND is_terminated = 0
+  AND is_terminated = ?6
+  AND harness = ?7
+  AND runtime_launch_id = ?8
+  AND agent_session_id = ?9
+  AND agent_session_id_launch_id = ?10
+  AND provider_conversation_id = ?11
+  AND controller_generation = ?12
+`
+
+type CommitChatLiveReconnectParams struct {
+	RecoveredActivityState         domain.ActivityState
+	RecoveredActivityAt            time.Time
+	ReconnectedAt                  interface{}
+	ID                             domain.SessionID
+	ExpectedSessionMode            domain.SessionMode
+	ExpectedIsTerminated           bool
+	ExpectedHarness                domain.AgentHarness
+	ExpectedRuntimeLaunchID        string
+	ExpectedAgentSessionID         string
+	ExpectedAgentSessionIDLaunchID string
+	ExpectedProviderConversationID string
+	ExpectedControllerGeneration   string
+}
+
+// Publish restart recovery only while the exact Chat controller generation that
+// reconnected is still current. The ordered provider snapshot is authoritative
+// for Active, Idle, and WaitingInput, so it replaces stale durable activity from
+// before the detach. This deliberately updates only lifecycle facts: a delayed
+// reconnect must not replay a stale full SessionRecord over a newer controller,
+// rename, pin, or other write.
+func (q *Queries) CommitChatLiveReconnect(ctx context.Context, arg CommitChatLiveReconnectParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, commitChatLiveReconnect,
+		arg.RecoveredActivityState,
+		arg.RecoveredActivityAt,
+		arg.ReconnectedAt,
+		arg.ID,
+		arg.ExpectedSessionMode,
+		arg.ExpectedIsTerminated,
+		arg.ExpectedHarness,
+		arg.ExpectedRuntimeLaunchID,
+		arg.ExpectedAgentSessionID,
+		arg.ExpectedAgentSessionIDLaunchID,
+		arg.ExpectedProviderConversationID,
+		arg.ExpectedControllerGeneration,
+	)
 	if err != nil {
 		return 0, err
 	}
@@ -676,6 +768,71 @@ func (q *Queries) NextSessionNum(ctx context.Context, projectID domain.ProjectID
 	return next, err
 }
 
+const reconcileRuntimeActivity = `-- name: ReconcileRuntimeActivity :execrows
+UPDATE sessions SET
+    activity_state = ?1,
+    activity_last_at = ?2,
+    updated_at = MAX(updated_at, ?2)
+WHERE id = ?3
+  AND session_mode = 'tui'
+  AND session_mode = ?4
+  AND is_terminated = 0
+  AND is_terminated = ?5
+  AND activity_state = ?6
+  AND activity_last_at = ?7
+  AND harness = ?8
+  AND runtime_handle_id = ?9
+  AND runtime_launch_id = ?10
+  AND agent_session_id = ?11
+  AND agent_session_id_launch_id = ?12
+  AND provider_conversation_id = ?13
+  AND controller_generation = ?14
+`
+
+type ReconcileRuntimeActivityParams struct {
+	RecoveredActivityState         domain.ActivityState
+	ObservedAt                     time.Time
+	ID                             domain.SessionID
+	ExpectedSessionMode            domain.SessionMode
+	ExpectedIsTerminated           bool
+	ExpectedActivityState          domain.ActivityState
+	ExpectedActivityLastAt         time.Time
+	ExpectedHarness                domain.AgentHarness
+	ExpectedRuntimeHandleID        string
+	ExpectedRuntimeLaunchID        string
+	ExpectedAgentSessionID         string
+	ExpectedAgentSessionIDLaunchID string
+	ExpectedProviderConversationID string
+	ExpectedControllerGeneration   string
+}
+
+// Startup records an authoritative current terminal observation only after the
+// exact current TUI supervisor generation was proved alive. Full activity +
+// owner + handle fencing keeps a delayed observation from overwriting a newer
+// signal or a replaced/terminated controller.
+func (q *Queries) ReconcileRuntimeActivity(ctx context.Context, arg ReconcileRuntimeActivityParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, reconcileRuntimeActivity,
+		arg.RecoveredActivityState,
+		arg.ObservedAt,
+		arg.ID,
+		arg.ExpectedSessionMode,
+		arg.ExpectedIsTerminated,
+		arg.ExpectedActivityState,
+		arg.ExpectedActivityLastAt,
+		arg.ExpectedHarness,
+		arg.ExpectedRuntimeHandleID,
+		arg.ExpectedRuntimeLaunchID,
+		arg.ExpectedAgentSessionID,
+		arg.ExpectedAgentSessionIDLaunchID,
+		arg.ExpectedProviderConversationID,
+		arg.ExpectedControllerGeneration,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const recordSessionHumanMessage = `-- name: RecordSessionHumanMessage :execrows
 UPDATE sessions SET
     latest_user_prompt = ?1,
@@ -739,66 +896,6 @@ type RenameSessionParams struct {
 
 func (q *Queries) RenameSession(ctx context.Context, arg RenameSessionParams) (int64, error) {
 	result, err := q.db.ExecContext(ctx, renameSession, arg.DisplayName, arg.UpdatedAt, arg.ID)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected()
-}
-
-const repairExitedActivityFromRuntime = `-- name: RepairExitedActivityFromRuntime :execrows
-UPDATE sessions SET
-    activity_state = ?1,
-    activity_last_at = ?2,
-    updated_at = MAX(updated_at, ?2)
-WHERE id = ?3
-  AND session_mode = 'tui'
-  AND session_mode = ?4
-  AND is_terminated = 0
-  AND is_terminated = ?5
-  AND activity_state = 'exited'
-  AND harness = ?6
-  AND runtime_handle_id = ?7
-  AND runtime_launch_id = ?8
-  AND agent_session_id = ?9
-  AND agent_session_id_launch_id = ?10
-  AND provider_conversation_id = ?11
-  AND controller_generation = ?12
-`
-
-type RepairExitedActivityFromRuntimeParams struct {
-	RecoveredActivityState         domain.ActivityState
-	ObservedAt                     time.Time
-	ID                             domain.SessionID
-	ExpectedSessionMode            domain.SessionMode
-	ExpectedIsTerminated           bool
-	ExpectedHarness                domain.AgentHarness
-	ExpectedRuntimeHandleID        string
-	ExpectedRuntimeLaunchID        string
-	ExpectedAgentSessionID         string
-	ExpectedAgentSessionIDLaunchID string
-	ExpectedProviderConversationID string
-	ExpectedControllerGeneration   string
-}
-
-// Startup may repair a stale Exited fact only after the exact current TUI
-// supervisor generation was proved alive and recovery supplied a non-exited
-// activity fact. Full owner + handle fencing keeps a delayed observation from
-// resurrecting a replaced or terminated controller.
-func (q *Queries) RepairExitedActivityFromRuntime(ctx context.Context, arg RepairExitedActivityFromRuntimeParams) (int64, error) {
-	result, err := q.db.ExecContext(ctx, repairExitedActivityFromRuntime,
-		arg.RecoveredActivityState,
-		arg.ObservedAt,
-		arg.ID,
-		arg.ExpectedSessionMode,
-		arg.ExpectedIsTerminated,
-		arg.ExpectedHarness,
-		arg.ExpectedRuntimeHandleID,
-		arg.ExpectedRuntimeLaunchID,
-		arg.ExpectedAgentSessionID,
-		arg.ExpectedAgentSessionIDLaunchID,
-		arg.ExpectedProviderConversationID,
-		arg.ExpectedControllerGeneration,
-	)
 	if err != nil {
 		return 0, err
 	}

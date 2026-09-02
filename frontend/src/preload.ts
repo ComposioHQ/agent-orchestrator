@@ -40,6 +40,43 @@ import type {
 	BrowserAnnotationSubmitPayload,
 } from "./shared/browser-annotations";
 
+if (process.argv.includes("--ao-restart-continuity-e2e") && typeof document !== "undefined") {
+	const exitedFrames: string[] = [];
+	const observerId = `${Date.now()}-${Math.random()}`;
+	const containsExitedTextNode = (root: Node): boolean => {
+		if (root.nodeType === Node.TEXT_NODE) return root.nodeValue?.trim() === "Exited";
+		const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+		for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+			if (node.nodeValue?.trim() === "Exited") return true;
+		}
+		return false;
+	};
+	// Preload executes before renderer JavaScript. Observe the Document itself so
+	// React cannot insert even a transient Exited state before the E2E is watching.
+	// Inspect text nodes rather than innerText so the observer cannot force layout
+	// and perturb the startup race it is measuring.
+	new MutationObserver((records) => {
+		if (
+			records.some(
+				(record) =>
+					(record.type === "characterData" && containsExitedTextNode(record.target)) ||
+					[...record.addedNodes].some(containsExitedTextNode),
+			)
+		) {
+			exitedFrames.push(document.body?.textContent ?? "Exited");
+		}
+	}).observe(document, {
+		characterData: true,
+		childList: true,
+		subtree: true,
+	});
+	contextBridge.exposeInMainWorld("__aoRestartObservation", {
+		id: observerId,
+		exitedFrames: () => [...exitedFrames],
+	});
+	if (containsExitedTextNode(document)) exitedFrames.push(document.body?.textContent ?? "Exited");
+}
+
 if (typeof document !== "undefined") {
 	const markNativeBrowserComposition = () => {
 		const root = document.documentElement;

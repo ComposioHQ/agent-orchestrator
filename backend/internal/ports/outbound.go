@@ -144,6 +144,17 @@ type RuntimeHandleResolver interface {
 	ResolveRuntimeHandle(ctx context.Context, legacy RuntimeHandle, owner SupervisedProcessRef) (resolved RuntimeHandle, found bool, err error)
 }
 
+// ExactRuntimeHandleResolver resolves only the runtime belonging to the exact
+// durable session/launch owner. It is the destructive-operation counterpart to
+// RuntimeHandleResolver: recovery may adopt a newer fully-proven generation,
+// while cleanup of a terminated row must never destroy that replacement.
+// Implementations must search every owned namespace when a durable route was
+// replaced, and must fail closed when a same-named runtime cannot be proven to
+// belong to owner.
+type ExactRuntimeHandleResolver interface {
+	ResolveExactRuntimeHandle(ctx context.Context, handle RuntimeHandle, owner SupervisedProcessRef) (resolved RuntimeHandle, found bool, err error)
+}
+
 // RuntimeIdentity is immutable ownership provenance recovered from a surviving
 // runtime. OwnershipProven means the adapter matched this AO instance and
 // session, rather than merely finding a same-named runtime.

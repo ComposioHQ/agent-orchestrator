@@ -61,13 +61,15 @@ func (d fixedSessionModeDefaults) DefaultSessionMode(context.Context) domain.Ses
 // chat launcher. Anything else means two writers on one conversation.
 
 type recordingLauncher struct {
-	preflightErr     error
-	startErr         error
-	turnErr          error
-	live             bool
-	beforeStart      func(ChatStart)
-	afterReady       func()
-	providerBoundary *domain.ConversationBranch
+	preflightErr      error
+	startErr          error
+	turnErr           error
+	live              bool
+	reconnectedLive   bool
+	recoveredActivity domain.Activity
+	beforeStart       func(ChatStart)
+	afterReady        func()
+	providerBoundary  *domain.ConversationBranch
 
 	preflighted          []domain.AgentHarness
 	preflightPermissions []ports.PermissionMode
@@ -153,7 +155,16 @@ func (l *recordingLauncher) StartChat(ctx context.Context, cfg ChatStart) (ChatS
 	started := ChatStarted{
 		ProviderConversationID: "thread-1",
 		ControllerGeneration:   "gen-1",
+		ReconnectedLive:        l.reconnectedLive,
 		ProviderBoundary:       l.providerBoundary,
+	}
+	if l.reconnectedLive {
+		started.RecoveredActivity = l.recoveredActivity
+		if started.RecoveredActivity.State == "" {
+			started.RecoveredActivity = domain.Activity{
+				State: domain.ActivityIdle, LastActivityAt: time.Now(),
+			}
+		}
 	}
 	if cfg.ControllerGeneration != "" {
 		started.ControllerGeneration = cfg.ControllerGeneration
@@ -167,6 +178,27 @@ func (l *recordingLauncher) StartChat(ctx context.Context, cfg ChatStart) (ChatS
 		l.afterReady()
 	}
 	return started, nil
+}
+
+func (l *fakeLCM) MarkChatReconnected(
+	_ context.Context,
+	id domain.SessionID,
+	expected domain.SessionControllerOwner,
+	metadata domain.SessionMetadata,
+	recovered domain.Activity,
+) error {
+	l.completed++
+	rec := l.store.sessions[id]
+	if rec.ControllerOwner() != expected {
+		return errors.New("live Chat reconnect owner changed")
+	}
+	rec.IsTerminated = false
+	if rec.Activity.State == domain.ActivityExited || rec.Activity.State == "" {
+		rec.Activity = recovered
+	}
+	rec.Metadata = metadata
+	l.store.sessions[id] = rec
+	return nil
 }
 
 func (l *recordingLauncher) StartChatTurn(_ context.Context, _ domain.SessionID, text string) (string, error) {
@@ -263,6 +295,106 @@ func TestReconcileLive_ChatRelaunchesInExistingWorktree(t *testing.T) {
 	}
 	if len(ws.restoreConfigs) != 1 || ws.restoreConfigs[0].Path != rec.Metadata.WorkspacePath {
 		t.Fatalf("Restore configs = %+v, want existing Chat worktree", ws.restoreConfigs)
+	}
+}
+
+func TestReconcileLive_LiveChatReconnectPreservesDurableActivity(t *testing.T) {
+	launcher := &recordingLauncher{reconnectedLive: true}
+	m, st, _ := newChatManager(launcher)
+	activityAt := time.Date(2026, time.September, 2, 1, 30, 0, 0, time.UTC)
+	firstSignalAt := activityAt.Add(-time.Minute)
+	rec := domain.SessionRecord{
+		ID: "mer-1", ProjectID: chatTestProject, Kind: domain.KindWorker,
+		Harness: domain.HarnessCodex, Mode: domain.SessionModeChat,
+		Activity:      domain.Activity{State: domain.ActivityActive, LastActivityAt: activityAt},
+		FirstSignalAt: firstSignalAt,
+		Metadata: domain.SessionMetadata{
+			Branch: "ao/mer-1/root", WorkspacePath: "/ws/mer-1",
+			ProviderConversationID: "thread-1", ControllerGeneration: "generation-old",
+		},
+	}
+	st.sessions[rec.ID] = rec
+
+	if err := m.reconcileLive(context.Background(), rec); err != nil {
+		t.Fatalf("reconcileLive: %v", err)
+	}
+
+	got := st.sessions[rec.ID]
+	if got.Activity != rec.Activity || !got.FirstSignalAt.Equal(firstSignalAt) {
+		t.Fatalf("live Chat reconnect changed lifecycle: got activity=%+v firstSignalAt=%v, want %+v / %v",
+			got.Activity, got.FirstSignalAt, rec.Activity, firstSignalAt)
+	}
+	if got.Metadata.ControllerGeneration != "gen-1" {
+		t.Fatalf("controller generation = %q, want rotated generation gen-1", got.Metadata.ControllerGeneration)
+	}
+}
+
+func TestReconcileLive_LiveChatRunningTurnRepairsFalseExitedToActive(t *testing.T) {
+	observedAt := time.Date(2026, time.September, 2, 1, 45, 0, 0, time.UTC)
+	launcher := &recordingLauncher{
+		reconnectedLive: true,
+		recoveredActivity: domain.Activity{
+			State: domain.ActivityActive, LastActivityAt: observedAt,
+		},
+	}
+	m, st, _ := newChatManager(launcher)
+	rec := domain.SessionRecord{
+		ID: "mer-1", ProjectID: chatTestProject, Kind: domain.KindWorker,
+		Harness: domain.HarnessCodex, Mode: domain.SessionModeChat,
+		Activity: domain.Activity{State: domain.ActivityExited, LastActivityAt: observedAt.Add(-time.Minute)},
+		Metadata: domain.SessionMetadata{
+			Branch: "ao/mer-1/root", WorkspacePath: "/ws/mer-1",
+			ProviderConversationID: "thread-1", ControllerGeneration: "generation-old",
+		},
+	}
+	st.sessions[rec.ID] = rec
+
+	if err := m.reconcileLive(context.Background(), rec); err != nil {
+		t.Fatalf("reconcileLive: %v", err)
+	}
+
+	got := st.sessions[rec.ID]
+	if got.Activity != launcher.recoveredActivity {
+		t.Fatalf("live running turn activity = %+v, want %+v", got.Activity, launcher.recoveredActivity)
+	}
+	if got.Metadata.ControllerGeneration != "gen-1" {
+		t.Fatalf("controller generation = %q, want gen-1", got.Metadata.ControllerGeneration)
+	}
+}
+
+func TestReconcileLive_BranchlessScratchChatReconnectsInsteadOfTerminating(t *testing.T) {
+	launcher := &recordingLauncher{reconnectedLive: true}
+	m, st, rt := newChatManager(launcher)
+	st.projects["scratch"] = domain.ProjectRecord{
+		ID: "scratch", Kind: domain.ProjectKindScratch, Config: testRoleAgents(),
+	}
+	lcm := m.lcm.(*fakeLCM)
+	rec := domain.SessionRecord{
+		ID: "scratch-1", ProjectID: "scratch", Kind: domain.KindWorker,
+		Harness: domain.HarnessCodex, Mode: domain.SessionModeChat,
+		Activity: domain.Activity{State: domain.ActivityActive, LastActivityAt: time.Now().UTC()},
+		Metadata: domain.SessionMetadata{
+			WorkspacePath:          "/ws/scratch-1",
+			ProviderConversationID: "thread-existing",
+			ControllerGeneration:   "generation-old",
+		},
+	}
+	st.sessions[rec.ID] = rec
+
+	if err := m.reconcileLive(context.Background(), rec); err != nil {
+		t.Fatalf("reconcileLive: %v", err)
+	}
+	if len(launcher.started) != 1 || launcher.started[0].ProviderConversationID != "thread-existing" {
+		t.Fatalf("scratch Chat starts = %+v, want one native reconnect", launcher.started)
+	}
+	if got := st.sessions[rec.ID]; got.IsTerminated || got.Activity != rec.Activity {
+		t.Fatalf("scratch Chat lifecycle = %+v, want live activity %+v", got, rec.Activity)
+	}
+	if lcm.terminated[rec.ID] != 0 {
+		t.Fatalf("scratch Chat termination calls = %d, want 0", lcm.terminated[rec.ID])
+	}
+	if rt.created != 0 || rt.destroyed != 0 {
+		t.Fatalf("scratch Chat touched terminal runtime: created=%d destroyed=%d", rt.created, rt.destroyed)
 	}
 }
 

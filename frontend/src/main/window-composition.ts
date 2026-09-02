@@ -26,10 +26,12 @@ export function createWindowComposition(options: {
 	mainWindow: MainWindowHost;
 	WebContentsView: WebContentsViewConstructor;
 	preload: string;
+	additionalArguments?: string[];
 }): WindowComposition {
 	const shellView = new options.WebContentsView({
 		webPreferences: {
 			preload: options.preload,
+			additionalArguments: options.additionalArguments,
 			contextIsolation: true,
 			nodeIntegration: false,
 			sandbox: true,

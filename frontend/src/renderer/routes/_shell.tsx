@@ -6,6 +6,7 @@ import { useTranslation } from "react-i18next";
 import { CommandPalette } from "../components/CommandPalette";
 import { CenterPanelShell } from "../components/CenterPanelShell";
 import { DaemonFailureBanner } from "../components/DaemonFailureBanner";
+import { DaemonStartupLoader } from "../components/DaemonStartupLoader";
 import { NotificationRuntime } from "../components/NotificationCenter";
 import { TrayRuntime } from "../components/TrayRuntime";
 import { GlobalNewTaskDialog } from "../components/GlobalNewTaskDialog";
@@ -348,6 +349,7 @@ function ShellLayout() {
 	const setOrchestratorReplacementError = useUiStore((state) => state.setOrchestratorReplacementError);
 	const setOrchestratorStartupError = useUiStore((state) => state.setOrchestratorStartupError);
 	const replacementErrorProjectId = Object.keys(orchestratorReplacementErrors)[0] ?? null;
+	const startupRecoveryFailed = daemonStatus.code === "startup_recovery_failed";
 	const isStartupLoading =
 		!usesPreviewWorkspaceData &&
 		!daemonStatus.code &&
@@ -922,7 +924,6 @@ function ShellLayout() {
 						</div>
 					</main>
 					</div>
-					<DaemonFailureBanner status={daemonStatus} />
 					{/* When ShellTopbar is hidden, keep a macOS window-drag strip over
               the traffic-light band only. The fixed TitlebarNav renders after
               this strip so its no-drag buttons remain clickable. */}
@@ -963,6 +964,16 @@ function ShellLayout() {
 					workspaces={workspaces}
 				/>
 					<CommandPalette />
+				{startupRecoveryFailed ? (
+					<div
+						className="fixed inset-0"
+						data-testid="startup-recovery-cover"
+						style={{ zIndex: "calc(var(--z-overlay) + 1)" }}
+					>
+						<DaemonStartupLoader />
+					</div>
+				) : null}
+				<DaemonFailureBanner status={daemonStatus} />
 				</div>
 				</TerminalCacheProvider>
 			</SessionTopbarProvider>

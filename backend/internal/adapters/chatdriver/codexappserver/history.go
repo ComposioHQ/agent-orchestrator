@@ -45,11 +45,13 @@ import (
 // feature-detects each interface, and a missing method would read as "the provider
 // cannot do this" with nothing anywhere to notice.
 var (
-	_ ports.ChatRollbacker       = (*conversation)(nil)
-	_ ports.ChatForker           = (*conversation)(nil)
-	_ ports.ChatRenamer          = (*conversation)(nil)
-	_ ports.ChatHistoryReader    = (*conversation)(nil)
-	_ ports.ChatHistoryRefresher = (*conversation)(nil)
+	_ ports.ChatRollbacker            = (*conversation)(nil)
+	_ ports.ChatForker                = (*conversation)(nil)
+	_ ports.ChatRenamer               = (*conversation)(nil)
+	_ ports.ChatHistoryReader         = (*conversation)(nil)
+	_ ports.ChatHistoryRefresher      = (*conversation)(nil)
+	_ ports.ChatLiveRecoveryReader    = (*conversation)(nil)
+	_ ports.ChatLiveRecoveryFinalizer = (*conversation)(nil)
 )
 
 // providerRefusal marks a request the provider rejected on its own terms, as
@@ -113,16 +115,135 @@ func (c *conversation) ReadHistory(ctx context.Context) ([]ports.ChatEvent, erro
 	}, &resp); err != nil {
 		return nil, asRefusal(fmt.Errorf("thread/read history: %w", err))
 	}
-	for _, turn := range resp.Thread.Turns {
+	return c.historyEvents(resp.Thread, false)
+}
+
+// RecoverLive establishes an ordered boundary on the initialized connection
+// that survived the daemon. thread/read is processed by Codex after all earlier
+// provider output; requestAfterInboundCapture additionally waits until AO has
+// normalized every earlier notification and registered every earlier server
+// request. No persistent-host protocol change is required.
+func (c *conversation) RecoverLive(ctx context.Context) (ports.ChatLiveRecoverySnapshot, error) {
+	if !c.proc.reconnected {
+		return ports.ChatLiveRecoverySnapshot{}, fmt.Errorf(
+			"%w: provider process was not reconnected", ports.ErrChatRecoveryInconclusive)
+	}
+	c.recoveryMu.Lock()
+	recovering := c.recoveringLive && !c.recoveryStarted
+	if recovering {
+		c.recoveryStarted = true
+	}
+	c.recoveryMu.Unlock()
+	if !recovering {
+		return ports.ChatLiveRecoverySnapshot{}, fmt.Errorf(
+			"%w: live provider recovery was already started or finalized",
+			ports.ErrChatRecoveryInconclusive)
+	}
+	var resp codexproto.ThreadReadResponse
+	includeTurns := true
+	boundary, established, requestErr := c.conn.requestAfterInboundCapture(
+		ctx,
+		codexproto.MethodThreadRead,
+		codexproto.ThreadReadParams{ThreadID: c.threadID, IncludeTurns: &includeTurns},
+		&resp,
+	)
+	snapshot := ports.ChatLiveRecoverySnapshot{}
+	if established {
+		// An RPC/decode error still follows a real response boundary. Transfer the
+		// captured prefix before reporting that the authoritative snapshot failed,
+		// otherwise the host has already replayed frames that no retry can recover.
+		snapshot.ReplayEvents = c.captureLiveRecoveryBoundary(boundary)
+	} else {
+		c.abandonLiveRecovery()
+	}
+	if requestErr != nil {
+		return snapshot, fmt.Errorf(
+			"%w: read surviving provider state: %w",
+			ports.ErrChatRecoveryInconclusive, requestErr)
+	}
+	if resp.Thread.ID != c.threadID {
+		return snapshot, fmt.Errorf(
+			"%w: thread/read returned %q for %q",
+			ports.ErrChatRecoveryInconclusive, resp.Thread.ID, c.threadID)
+	}
+	activity, err := liveRecoveryActivity(resp.Thread.Status)
+	if err != nil {
+		return snapshot, err
+	}
+	history, err := c.historyEvents(resp.Thread, true)
+	if err != nil {
+		return snapshot, fmt.Errorf(
+			"%w: %w", ports.ErrChatRecoveryInconclusive, err)
+	}
+	if activity == domain.ActivityIdle {
+		for _, turn := range resp.Thread.Turns {
+			state := turnStateFrom(string(turn.Status))
+			if state == domain.TurnStateRunning || state == domain.TurnStateQueued {
+				return snapshot, fmt.Errorf(
+					"%w: provider reports idle with live turn %s",
+					ports.ErrChatRecoveryInconclusive, turn.ID)
+			}
+		}
+	}
+	snapshot.HistoryEvents = history
+	snapshot.ActivityState = activity
+	return snapshot, nil
+}
+
+func liveRecoveryActivity(status codexproto.ThreadStatus) (domain.ActivityState, error) {
+	switch status.Type {
+	case codexproto.ThreadStatusTypeIdle:
+		if len(status.ActiveFlags) != 0 {
+			return "", fmt.Errorf("%w: idle provider reported active wait flags",
+				ports.ErrChatRecoveryInconclusive)
+		}
+		return domain.ActivityIdle, nil
+	case codexproto.ThreadStatusTypeActive:
+		waiting := false
+		for _, flag := range status.ActiveFlags {
+			switch flag {
+			case codexproto.ThreadActiveFlagWaitingOnApproval,
+				codexproto.ThreadActiveFlagWaitingOnUserInput:
+				waiting = true
+			default:
+				return "", fmt.Errorf(
+					"%w: active provider reported unknown wait flag %q",
+					ports.ErrChatRecoveryInconclusive, flag)
+			}
+		}
+		if waiting {
+			return domain.ActivityWaitingInput, nil
+		}
+		return domain.ActivityActive, nil
+	default:
+		return "", fmt.Errorf("%w: provider thread status is %q",
+			ports.ErrChatRecoveryInconclusive, status.Type)
+	}
+}
+
+func (c *conversation) historyEvents(
+	thread codexproto.Thread,
+	allowUnsettled bool,
+) ([]ports.ChatEvent, error) {
+	for _, turn := range thread.Turns {
+		if strings.TrimSpace(turn.ID) == "" {
+			return nil, errors.New("codex history contains a turn with no id")
+		}
+		if allowUnsettled && !knownHistoryTurnStatus(string(turn.Status)) {
+			return nil, fmt.Errorf("codex turn %s has unknown status %q", turn.ID, turn.Status)
+		}
 		state := turnStateFrom(string(turn.Status))
 		if state == domain.TurnStateRunning || state == domain.TurnStateQueued {
+			if allowUnsettled {
+				continue
+			}
 			return nil, fmt.Errorf("%w: Codex turn %s is %s",
 				ports.ErrChatHistoryUnsettled, turn.ID, turn.Status)
 		}
 	}
 
-	events := make([]ports.ChatEvent, 0, len(resp.Thread.Turns)*4)
-	for _, turn := range resp.Thread.Turns {
+	events := make([]ports.ChatEvent, 0, len(thread.Turns)*4)
+	for _, turn := range thread.Turns {
 		state := turnStateFrom(string(turn.Status))
 
 		events = append(events, ports.ChatEvent{
@@ -130,6 +251,12 @@ func (c *conversation) ReadHistory(ctx context.Context) ([]ports.ChatEvent, erro
 			ProviderEventID: historyEventID(c.threadID, turn.ID, "started"),
 			ProviderTurnID:  turn.ID,
 		})
+		if state == domain.TurnStateRunning || state == domain.TurnStateQueued {
+			// Items on an in-progress turn are not a settled restatement. Detached
+			// notifications above carry its progress; the authoritative history
+			// contributes only the live ownership fact.
+			continue
+		}
 
 		for itemIndex, nativeItem := range turn.Items {
 			item := nativeItem
@@ -192,6 +319,19 @@ func (c *conversation) ReadHistory(ctx context.Context) ([]ports.ChatEvent, erro
 		events = append(events, completed)
 	}
 	return events, nil
+}
+
+func knownHistoryTurnStatus(status string) bool {
+	switch status {
+	case string(codexproto.TurnStatusCompleted),
+		string(codexproto.TurnStatusInterrupted),
+		string(codexproto.TurnStatusFailed),
+		string(codexproto.TurnStatusInProgress),
+		"in_progress", "running", "active", "queued", "pending", "cancelled", "canceled":
+		return true
+	default:
+		return false
+	}
 }
 
 // RefreshHistory performs another authoritative thread/read. Codex exposes a
