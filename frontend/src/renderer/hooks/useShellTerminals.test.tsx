@@ -77,6 +77,88 @@ beforeEach(() => {
 });
 
 describe("useOpenShellTerminal", () => {
+	it("publishes and selects a distinct optimistic shell before the daemon responds", async () => {
+		let finishOpen!: (result: { data: { shellTerminal: ShellTerminal } }) => void;
+		postMock.mockReturnValue(new Promise((resolve) => (finishOpen = resolve)));
+		const queryClient = new QueryClient({ defaultOptions: { mutations: { retry: false } } });
+		queryClient.setQueryData(shellTerminalsQueryKey, []);
+		const onSuccess = vi.fn();
+		const { result } = renderHook(() => useOpenShellTerminal(), { wrapper: wrapper(queryClient) });
+
+		let optimisticShell!: ShellTerminal;
+		act(() => {
+			optimisticShell = result.current.open({ sessionId: "session-1" }, { onSuccess });
+		});
+
+		expect(optimisticShell).toMatchObject({
+			handleId: expect.stringMatching(/^pending-shell:/),
+			optimistic: true,
+			sessionId: "session-1",
+			title: "Terminal 1",
+		});
+		expect(queryClient.getQueryData(shellTerminalsQueryKey)).toEqual([optimisticShell]);
+
+		const openedShell = { ...shells[0], sessionId: "session-1", title: optimisticShell.title };
+		act(() => finishOpen({ data: { shellTerminal: openedShell } }));
+
+		await waitFor(() => expect(queryClient.getQueryData(shellTerminalsQueryKey)).toEqual([openedShell]));
+		expect(onSuccess).toHaveBeenCalledWith(openedShell, optimisticShell);
+	});
+
+	it("reconciles concurrent opens independently when responses finish out of order", async () => {
+		const finishOpen: Array<(result: { data: { shellTerminal: ShellTerminal } }) => void> = [];
+		postMock.mockImplementation(() => new Promise((resolve) => finishOpen.push(resolve)));
+		const queryClient = new QueryClient({ defaultOptions: { mutations: { retry: false } } });
+		queryClient.setQueryData(shellTerminalsQueryKey, []);
+		const firstSuccess = vi.fn();
+		const secondSuccess = vi.fn();
+		const { result } = renderHook(() => useOpenShellTerminal(), { wrapper: wrapper(queryClient) });
+
+		let firstOptimistic!: ShellTerminal;
+		let secondOptimistic!: ShellTerminal;
+		act(() => {
+			firstOptimistic = result.current.open({}, { onSuccess: firstSuccess });
+			secondOptimistic = result.current.open({}, { onSuccess: secondSuccess });
+		});
+
+		expect(firstOptimistic.handleId).not.toBe(secondOptimistic.handleId);
+		expect([firstOptimistic.title, secondOptimistic.title]).toEqual(["Terminal 1", "Terminal 2"]);
+		expect(queryClient.getQueryData(shellTerminalsQueryKey)).toEqual([firstOptimistic, secondOptimistic]);
+		await waitFor(() => expect(postMock).toHaveBeenCalledTimes(2));
+
+		const firstOpened = { ...shells[0], title: firstOptimistic.title };
+		const secondOpened = { ...shells[1], title: secondOptimistic.title };
+		act(() => finishOpen[1]?.({ data: { shellTerminal: secondOpened } }));
+		await waitFor(() =>
+			expect(queryClient.getQueryData(shellTerminalsQueryKey)).toEqual([firstOptimistic, secondOpened]),
+		);
+		act(() => finishOpen[0]?.({ data: { shellTerminal: firstOpened } }));
+
+		await waitFor(() => expect(queryClient.getQueryData(shellTerminalsQueryKey)).toEqual([firstOpened, secondOpened]));
+		expect(firstSuccess).toHaveBeenCalledWith(firstOpened, firstOptimistic);
+		expect(secondSuccess).toHaveBeenCalledWith(secondOpened, secondOptimistic);
+	});
+
+	it("removes only the failed optimistic shell and reports its matching context", async () => {
+		let finishOpen!: (result: { error: unknown }) => void;
+		postMock.mockReturnValue(new Promise((resolve) => (finishOpen = resolve)));
+		const queryClient = queryClientWithShells();
+		const onError = vi.fn();
+		const { result } = renderHook(() => useOpenShellTerminal(), { wrapper: wrapper(queryClient) });
+
+		let optimisticShell!: ShellTerminal;
+		act(() => {
+			optimisticShell = result.current.open({}, { onError });
+		});
+		expect(queryClient.getQueryData(shellTerminalsQueryKey)).toEqual([...shells, optimisticShell]);
+
+		const error = { code: "SHELL_TERMINAL_OPEN_FAILED" };
+		act(() => finishOpen({ error }));
+
+		await waitFor(() => expect(queryClient.getQueryData(shellTerminalsQueryKey)).toEqual(shells));
+		expect(onError).toHaveBeenCalledWith(error, optimisticShell);
+	});
+
 	it("publishes the returned shell immediately without waiting for a list refetch", async () => {
 		const shell = shells[0];
 		postMock.mockResolvedValue({

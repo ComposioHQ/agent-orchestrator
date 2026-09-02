@@ -82,8 +82,14 @@ export function useShellTerminals() {
 }
 
 export type OpenShellTerminalInput = { projectId?: string; sessionId?: string; shell?: string };
-type OpenShellTerminalMutationInput = OpenShellTerminalInput & { optimisticShell?: ShellTerminal };
-type OpenShellTerminalCallbacks = { onSuccess?: (shell: ShellTerminal) => void };
+type OpenShellTerminalCallbacks = {
+	onSuccess?: (shell: ShellTerminal, optimisticShell: ShellTerminal) => void;
+	onError?: (error: unknown, optimisticShell: ShellTerminal) => void;
+};
+type OpenShellTerminalMutationInput = OpenShellTerminalInput & {
+	optimisticShell?: ShellTerminal;
+	callbacks?: OpenShellTerminalCallbacks;
+};
 
 function nextShellTerminalTitle(terminals: ShellTerminal[]): string {
 	let maxNumber = 0;
@@ -159,24 +165,26 @@ export function useOpenShellTerminal() {
 				input.optimisticShell ??
 				createOptimisticShellTerminal(input, queryClient.getQueryData<ShellTerminal[]>(shellTerminalsQueryKey) ?? []);
 			addOptimisticShell(queryClient, optimisticShell);
-			return { optimisticHandleId: optimisticShell.handleId };
+			return { optimisticShell };
 		},
-		onSuccess: (shell, _input, context) => {
+		onSuccess: (shell, input, context) => {
 			// Replace, rather than append to, the tab that was visible while the POST
 			// ran. This preserves selection and prevents a duplicate tab flash.
 			queryClient.setQueryData<ShellTerminal[]>(shellTerminalsQueryKey, (current) => {
 				if (current?.some((candidate) => candidate.handleId === shell.handleId)) return current;
-				const optimisticHandleId = context?.optimisticHandleId;
+				const optimisticHandleId = context?.optimisticShell.handleId;
 				const index = current?.findIndex((candidate) => candidate.handleId === optimisticHandleId) ?? -1;
 				if (index < 0) return [...(current ?? []), shell];
 				return current?.map((candidate, candidateIndex) => (candidateIndex === index ? shell : candidate)) ?? [shell];
 			});
+			if (context?.optimisticShell) input.callbacks?.onSuccess?.(shell, context.optimisticShell);
 			void queryClient.invalidateQueries({ queryKey: shellTerminalsQueryKey });
 		},
-		onError: (error, _input, context) => {
+		onError: (error, input, context) => {
 			queryClient.setQueryData<ShellTerminal[]>(shellTerminalsQueryKey, (current) =>
-				current?.filter((shell) => shell.handleId !== context?.optimisticHandleId),
+				current?.filter((shell) => shell.handleId !== context?.optimisticShell.handleId),
 			);
+			if (context?.optimisticShell) input.callbacks?.onError?.(error, context.optimisticShell);
 			console.error("Failed to open shell terminal:", error);
 			if (isWindowsPlatform() && apiErrorCode(error) === "SHELL_TERMINAL_SHELL_UNAVAILABLE") {
 				void useTerminalShellStore.getState().setPreference({ kind: "auto" });
@@ -196,7 +204,11 @@ export function useOpenShellTerminal() {
 			queryClient.getQueryData<ShellTerminal[]>(shellTerminalsQueryKey) ?? [],
 		);
 		addOptimisticShell(queryClient, optimisticShell);
-		mutation.mutate({ ...input, optimisticShell }, callbacks);
+		// Keep callbacks with their mutation input instead of mutate's per-call
+		// observer. TanStack replaces that observer on consecutive mutate calls;
+		// carrying them here guarantees every rapidly opened shell reconciles its
+		// own optimistic tab even when responses complete out of order.
+		mutation.mutate({ ...input, optimisticShell, callbacks });
 		return optimisticShell;
 	};
 

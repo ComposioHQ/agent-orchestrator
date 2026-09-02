@@ -27,6 +27,13 @@ describe("KeyboardShortcutsDialog", () => {
 		expect(screen.getByLabelText("Ctrl+PageDown")).toBeInTheDocument();
 	});
 
+	it("explains that the new-terminal shortcut is contextual", () => {
+		render(<KeyboardShortcutsDialog isMac={false} onOpenChange={vi.fn()} open />);
+
+		expect(screen.getByText("New terminal")).toBeInTheDocument();
+		expect(screen.getByText("Available in worker sessions and the Terminals view")).toBeInTheDocument();
+	});
+
 	it("uses macOS key labels when requested", () => {
 		render(<KeyboardShortcutsDialog open onOpenChange={vi.fn()} isMac />);
 

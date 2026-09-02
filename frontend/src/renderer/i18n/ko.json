@@ -961,6 +961,7 @@
 	"shortcut.movedBody": "{{binding}}을(를) {{from}}에서 {{to}}(으)로 이동했습니다",
 	"shortcut.new-session": "새 세션",
 	"shortcut.new-shell-terminal": "새 터미널",
+	"shortcut.new-shell-terminal-context": "작업자 세션 및 터미널 보기에서 사용할 수 있습니다",
 	"shortcut.next-session": "다음 세션",
 	"shortcut.next-tab": "다음 탭",
 	"shortcut.noMatching": "일치하는 명령이 없습니다.",

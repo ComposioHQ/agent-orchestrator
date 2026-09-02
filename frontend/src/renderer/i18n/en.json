@@ -979,6 +979,7 @@
 	"shortcut.movedBody": "{{binding}} moved from {{from}} to {{to}}",
 	"shortcut.new-session": "New session",
 	"shortcut.new-shell-terminal": "New terminal",
+	"shortcut.new-shell-terminal-context": "Available in worker sessions and the Terminals view",
 	"shortcut.next-session": "Next session",
 	"shortcut.next-tab": "Next tab",
 	"shortcut.noMatching": "No matching commands.",

@@ -962,6 +962,7 @@
 	"shortcut.movedBody": "{{binding}} 已从 {{from}} 移至 {{to}}",
 	"shortcut.new-session": "新建会话",
 	"shortcut.new-shell-terminal": "新建终端",
+	"shortcut.new-shell-terminal-context": "可在工作会话和终端视图中使用",
 	"shortcut.next-session": "下一个会话",
 	"shortcut.next-tab": "下一个标签页",
 	"shortcut.noMatching": "没有匹配的命令。",
