@@ -2,6 +2,8 @@ import {
 	memo,
 	useCallback,
 	useEffect,
+	useId,
+	useLayoutEffect,
 	useRef,
 	useState,
 	type FocusEvent,
@@ -50,6 +52,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { Input } from "./ui/input";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 import { BrowserTabsRail, type BrowserTabsRailHandle } from "./BrowserTabsRail";
+import { BrowserProfileButton } from "./BrowserProfileButton";
 import { cn } from "../lib/utils";
 import { appI18n, type MessageKey } from "../i18n";
 import { browserTabLabel } from "../lib/browser-tab-label";
@@ -333,12 +336,15 @@ export function BrowserPanelView({
 		agentBrowserActive,
 		agentBrowserActivity,
 		devtoolsState = { viewId: "", open: false, activeTabId: "" },
+		profileState = { viewId: "", profileId: null, temporary: true },
 		openDevTools = async () => undefined,
 		closeDevTools = async () => undefined,
 		annotationMode,
 		setAnnotationMode,
 	} = browserView;
 	const [urlInput, setUrlInput] = useState(navState.url);
+	const [historySuggestions, setHistorySuggestions] = useState<Array<{ url: string; title?: string }>>([]);
+	const historyListId = useId();
 	const [urlEditing, setUrlEditing] = useState(false);
 	const urlTakeover = urlEditing && !poppedOut;
 	const { beginPicking, cancelPicking, enqueue, error, failPicking, queuedCount, retryQueued, status } =
@@ -415,6 +421,7 @@ export function BrowserPanelView({
 
 	useEffect(() => {
 		setUrlInput(navState.url);
+		setHistorySuggestions([]);
 		// A prior submit (typed, or pasted, then Enter) leaves the caret at the
 		// end of the old value; the browser keeps that same horizontal scroll
 		// position for the new value, scrolling the scheme/host off the left
@@ -428,9 +435,34 @@ export function BrowserPanelView({
 	}, [navState.url]);
 
 	useEffect(() => {
+		const query = urlInput.trim();
+		if (
+			!urlEditing ||
+			!window.ao?.browser ||
+			!viewId ||
+			!profileState.profileId ||
+			query === navState.url ||
+			query.length < 2
+		) {
+			setHistorySuggestions([]);
+			return;
+		}
+		let current = true;
+		const timer = window.setTimeout(() => {
+			void window.ao!.browser.historySuggestions({ viewId, query }).then(
+				(suggestions) => current && setHistorySuggestions(suggestions),
+				() => current && setHistorySuggestions([]),
+			);
+		}, 120);
+		return () => {
+			current = false;
+			window.clearTimeout(timer);
+		};
+	}, [navState.url, profileState.profileId, urlEditing, urlInput, viewId]);
+
+	useLayoutEffect(() => {
 		if (!urlEditing) return;
-		const frame = window.requestAnimationFrame(() => urlInputRef.current?.select());
-		return () => window.cancelAnimationFrame(frame);
+		urlInputRef.current?.select();
 	}, [urlEditing]);
 
 	useEffect(() => {
@@ -440,8 +472,10 @@ export function BrowserPanelView({
 			if (focusedViewId !== viewId) return;
 			urlInputRef.current?.blur();
 			setUrlEditing(false);
+			setUrlInput(navState.url);
+			setHistorySuggestions([]);
 		});
-	}, [viewId]);
+	}, [navState.url, viewId]);
 
 	useEffect(() => {
 		const offSubmit = window.ao?.browser.onAnnotationSubmit((payload) => {
@@ -458,10 +492,31 @@ export function BrowserPanelView({
 		};
 	}, [cancelPicking, enqueue, viewId]);
 
+	const navigateFromAddressBar = (url: string) => {
+		urlInputRef.current?.blur();
+		setUrlEditing(false);
+		setUrlInput(url);
+		setHistorySuggestions([]);
+		void navigate(url);
+	};
+
 	const submit = (event: FormEvent<HTMLFormElement>) => {
 		event.preventDefault();
 		const nextURL = urlInput.trim();
-		if (nextURL) void navigate(nextURL);
+		if (nextURL) navigateFromAddressBar(nextURL);
+	};
+
+	const handleURLChange = (value: string) => {
+		setUrlInput(value);
+		const selected = historySuggestions.find((suggestion) => suggestion.url === value.trim());
+		if (!selected) return;
+		navigateFromAddressBar(selected.url);
+	};
+
+	const endUrlEditing = () => {
+		setUrlEditing(false);
+		setUrlInput(navState.url);
+		setHistorySuggestions([]);
 	};
 
 	const beginUrlEditing = () => {
@@ -477,7 +532,6 @@ export function BrowserPanelView({
 			wrapper.style.setProperty("--browser-url-expand-left", `${targetLeft + 2 - wrapperRect.left}px`);
 			wrapper.style.setProperty("--browser-url-expand-right", `${wrapperRect.right - toolbarRect.right + 4}px`);
 		}
-		setUrlInput(navState.url);
 		setUrlEditing(true);
 	};
 
@@ -722,19 +776,28 @@ export function BrowserPanelView({
 					<Input
 						aria-label={t("browser.url")}
 						className="browser-panel__url-input h-browser-url font-mono text-xs"
-						onBlur={() => setUrlEditing(false)}
-						onChange={(event) => setUrlInput(event.target.value)}
+						list={historySuggestions.length > 0 ? historyListId : undefined}
+						onBlur={endUrlEditing}
+						onChange={(event) => handleURLChange(event.target.value)}
 						onFocus={beginUrlEditing}
 						placeholder={t("browser.urlPlaceholder")}
 						ref={urlInputRef}
 						value={urlEditing || poppedOut ? urlInput : compactBrowserAddress(navState.url)}
 					/>
+					<datalist id={historyListId}>
+						{historySuggestions.map((suggestion) => (
+							<option key={suggestion.url} value={suggestion.url}>
+								{suggestion.title}
+							</option>
+						))}
+					</datalist>
 				</div>
 				{tabNotice ? (
 					<span className="max-w-24 truncate text-caption text-accent" role="status">
 						{tabNotice}
 					</span>
 				) : null}
+				<BrowserProfileButton profileState={profileState} viewId={viewId} />
 				<DropdownMenu>
 					<Tooltip>
 						<TooltipTrigger asChild>

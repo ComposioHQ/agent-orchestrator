@@ -18,14 +18,14 @@ import {
 export type { Theme, ThemePreference, ThemeStyle } from "../lib/theme";
 export { readStoredThemePreference, readStoredThemeStyle, resolveTheme } from "../lib/theme";
 
-export type GlobalSettingsSection = "general" | "cloud" | "mobile" | "shortcuts" | "updates" | "help";
+export type GlobalSettingsSection = "general" | "cloud" | "mobile" | "shortcuts" | "browserProfiles" | "updates" | "help";
 
 export type SettingsModal =
 	| { scope: "global"; section?: GlobalSettingsSection }
 	| {
 			scope: "project";
 			projectId: string;
-	  };
+	};
 
 /** Worker detail view toggles — Changes (Git rail) is the default. */
 export type WorkbenchTab = "changes" | "files" | "terminal";
