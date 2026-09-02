@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { memo, useEffect, useRef } from "react";
 import QRCodeStyling from "qr-code-styling";
 import aoLogo from "../../assets/ao-logo.svg";
 
@@ -44,7 +44,7 @@ function quietZonePx(size: number, modules: number): number {
 	return Math.ceil((QUIET_ZONE_MODULES * size) / (modules + 2 * QUIET_ZONE_MODULES));
 }
 
-export function StyledQRCode({
+export const StyledQRCode = memo(function StyledQRCode({
 	value,
 	size,
 	showLogo = true,
@@ -95,4 +95,4 @@ export function StyledQRCode({
 	}, [value, size, showLogo]);
 
 	return <div ref={ref} className={className} data-qr-value={dataQrValue} />;
-}
+});
