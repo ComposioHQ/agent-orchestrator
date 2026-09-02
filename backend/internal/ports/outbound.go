@@ -103,6 +103,12 @@ type StyledTerminalOutputReader interface {
 // inconclusive probe and must fail closed.
 var ErrStyledTerminalOutputUnavailable = errors.New("runtime: styled terminal output unavailable for handle")
 
+// ErrRuntimeProcessExited is returned by an attached runtime stream when the
+// hosted command has definitively exited while its detached terminal host
+// remains available for scrollback. Terminal transport treats this as a clean
+// exit instead of attempting to reattach to the dead command.
+var ErrRuntimeProcessExited = errors.New("runtime: process exited")
+
 // RuntimeRestarter is an optional runtime capability for replacing the process
 // inside an existing terminal session. Implementations should preserve the
 // handle when possible so attached clients do not need a new terminal identity.
@@ -119,6 +125,11 @@ type RuntimeConfig struct {
 	WorkspacePath string
 	Argv          []string
 	Env           map[string]string
+	// ExitOnCommandCompletion is reserved for short-lived, backend-owned
+	// command terminals. Interactive agent and shell runtimes deliberately keep
+	// their terminal alive after the launched command exits so scrollback and
+	// manual recovery remain available.
+	ExitOnCommandCompletion bool
 }
 
 // RuntimeHandle identifies a live runtime instance. Its ID is opaque outside

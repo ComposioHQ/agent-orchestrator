@@ -99,9 +99,10 @@ type GitLabConfig struct {
 }
 
 // DefaultAllowedOrigins are the browser origins the daemon's CORS boundary
-// trusts, beyond loopback-served content (which the middleware always trusts —
-// local pages can reach the no-auth daemon directly anyway). The daemon has no
-// auth, so every entry must be an origin web content cannot present:
+// trusts. General routes additionally admit loopback-served content, while
+// credential-management routes accept only this exact list (plus native
+// callers without an Origin header). The daemon has no auth, so every default
+// entry must be an origin ordinary web content cannot present:
 // app://renderer is the packaged Electron renderer, served from a custom
 // scheme only the desktop app registers — no website can bear it. The opaque
 // "null" origin (file:// pages, sandboxed iframes on any website) must never
@@ -127,6 +128,10 @@ type Config struct {
 	// DataDir is the directory holding durable SQLite state: DB and WAL files.
 	// It is created on first use by the storage layer.
 	DataDir string
+	// StateDir is the root for non-SQLite AO state. It defaults to ~/.ao. When
+	// AO_DATA_DIR is explicitly set, that override is also the state root so an
+	// isolated daemon never leaks account state into the default home.
+	StateDir string
 	// Agent is the compatibility agent adapter id selected by AO_AGENT;
 	// startSession fails fast if no adapter with this id is registered.
 	Agent string
@@ -375,6 +380,11 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 	cfg.DataDir = dataDir
+	if raw, ok := os.LookupEnv("AO_DATA_DIR"); ok && raw != "" {
+		cfg.StateDir = dataDir
+	} else {
+		cfg.StateDir = filepath.Dir(dataDir)
+	}
 
 	return cfg, nil
 }

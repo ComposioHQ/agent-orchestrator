@@ -128,6 +128,7 @@ var shippedMigrations = map[int64]string{
 	121: "0121_session_reviewer_agent_config.sql",
 	122: "0122_drop_agent_inventory_cache.sql",
 	123: "0123_agent_install_jobs.sql",
+	124: "0124_codex_account_management.sql",
 }
 
 // burnedVersion reports version numbers that must never be (re)used: they

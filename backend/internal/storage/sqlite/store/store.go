@@ -104,8 +104,14 @@ func (s *Store) Close() error {
 // inTx runs fn inside a single write transaction on the writer connection,
 // rolling back on error. The caller must already hold writeMu.
 func (s *Store) inTx(ctx context.Context, what string, fn func(*gen.Queries) error) error {
+	return s.inTxDB(ctx, what, func(q *gen.Queries, _ gen.DBTX) error { return fn(q) })
+}
+
+// inTxDB is the raw-database variant used by handwritten transactional stores
+// while their sqlc artifacts are intentionally regenerated in a later slice.
+func (s *Store) inTxDB(ctx context.Context, what string, fn func(*gen.Queries, gen.DBTX) error) error {
 	if q, ok := ctx.Value(conversationProjectionTxKey{}).(*gen.Queries); ok && q != nil {
-		if err := fn(q); err != nil {
+		if err := fn(q, nil); err != nil {
 			return fmt.Errorf("%s: %w", what, err)
 		}
 		return nil
@@ -115,7 +121,7 @@ func (s *Store) inTx(ctx context.Context, what string, fn func(*gen.Queries) err
 		return fmt.Errorf("begin %s: %w", what, err)
 	}
 	defer func() { _ = tx.Rollback() }()
-	if err := fn(s.qw.WithTx(tx)); err != nil {
+	if err := fn(s.qw.WithTx(tx), tx); err != nil {
 		return fmt.Errorf("%s: %w", what, err)
 	}
 	return tx.Commit()
