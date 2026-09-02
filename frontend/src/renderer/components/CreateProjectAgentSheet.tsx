@@ -109,6 +109,7 @@ export function CreateProjectAgentSheet({
 	onOpenChange,
 	onSubmit,
 	open,
+	path,
 	repositorySetupNeeded = false,
 	repositorySetupWarning = null,
 }: CreateProjectAgentSheetProps) {
