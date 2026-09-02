@@ -102,6 +102,7 @@ func (s *CodexSource) Discover(ctx context.Context, opts DiscoverOptions) ([]Imp
 		}
 		if merged, ok := signalsByRoot[rootID]; ok {
 			session.Meaning = Classify(*merged)
+			session.FirstPrompt = merged.FirstPrompt
 		}
 		found = append(found, *session)
 	}

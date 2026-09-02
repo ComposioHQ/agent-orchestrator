@@ -545,7 +545,7 @@ func Run() error {
 	sessionImportSvc := sessionimportsvc.New(sessionSvc, store, projectSvc,
 		sessionimport.NewClaudeSource(),
 		sessionimport.NewCodexSource(),
-	)
+	).WithClassification(agents, cfg.DataDir, log)
 
 	srv, err := httpd.NewWithDeps(cfg, log, termMgr, httpd.APIDeps{
 		Projects:           projectSvc,

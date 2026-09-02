@@ -12,6 +12,7 @@ package sessionimport
 import (
 	"context"
 	"errors"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -55,6 +56,10 @@ type ImportableSession struct {
 	// Meaning is the import verdict from the transcript's own content. Sources
 	// set it; the Service drops trivial conversations before returning.
 	Meaning Meaning
+	// FirstPrompt is the first typed human turn. It stays inside the daemon as
+	// input for classifying an ambiguous conversation and is never sent to the
+	// renderer, which has no use for it.
+	FirstPrompt string
 }
 
 // DiscoverOptions bounds a discovery scan so a large history directory cannot
@@ -69,6 +74,11 @@ type DiscoverOptions struct {
 	// MaxScanBytes caps the bytes read from each transcript's head and tail when
 	// extracting metadata. 0 selects a sensible default.
 	MaxScanBytes int64
+	// ExcludeRoots drops conversations whose working directory lies inside one
+	// of these paths. AO passes its own data directory: asking a user's agent to
+	// classify conversations records a transcript of that question, and it must
+	// never come back as something to import.
+	ExcludeRoots []string
 	// IncludeTrivial keeps conversations classified MeaningTrivial — greetings,
 	// aborted attempts, failed logins, smoke tests. The default (false) drops
 	// them, so they never reach the sidebar, the board, or the import list.
@@ -141,6 +151,9 @@ func (s *Service) Discover(ctx context.Context, opts DiscoverOptions) ([]Importa
 			continue
 		}
 		for _, session := range found {
+			if underAnyRoot(session.CWD, opts.ExcludeRoots) {
+				continue
+			}
 			// Importing junk is worse than importing nothing: a trivial
 			// conversation is withheld outright rather than shown in a
 			// low-value section, which would still be clutter.
@@ -238,4 +251,30 @@ func normalizeTitle(s string) string {
 		s = strings.TrimSpace(s[:maxTitleLen]) + "…"
 	}
 	return s
+}
+
+// underAnyRoot reports whether dir is one of roots or sits inside one.
+func underAnyRoot(dir string, roots []string) bool {
+	if dir == "" || len(roots) == 0 {
+		return false
+	}
+	dir = filepath.Clean(dir)
+	for _, root := range roots {
+		root = strings.TrimSpace(root)
+		if root == "" {
+			continue
+		}
+		root = filepath.Clean(root)
+		if dir == root {
+			return true
+		}
+		rel, err := filepath.Rel(root, dir)
+		if err != nil {
+			continue
+		}
+		if rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			return true
+		}
+	}
+	return false
 }

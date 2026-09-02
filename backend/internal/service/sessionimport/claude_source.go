@@ -166,6 +166,7 @@ func (s *ClaudeSource) readSession(ctx context.Context, configDir, path, fileNam
 		MessageCount:    count,
 		SizeBytes:       size,
 		Meaning:         Classify(signals),
+		FirstPrompt:     signals.FirstPrompt,
 	}, true, nil
 }
 

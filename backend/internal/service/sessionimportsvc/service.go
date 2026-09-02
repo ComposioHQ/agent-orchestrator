@@ -9,6 +9,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -55,10 +56,15 @@ var (
 // Service discovers on-disk agent conversations and imports one as a resumable
 // AO chat session.
 type Service struct {
-	disco    *sessionimport.Service
-	sessions SessionService
-	store    SessionStore
-	projects ProjectService
+	disco      *sessionimport.Service
+	sessions   SessionService
+	store      SessionStore
+	projects   ProjectService
+	classifier *classifier
+	// excludeRoots are directories whose conversations are never importable.
+	// AO's own data directory is one: classification asks the user's agent a
+	// question, and some CLIs record that as a conversation.
+	excludeRoots []string
 }
 
 // New builds the import service over the given provider sources. Discovery flags
@@ -69,14 +75,52 @@ func New(sessions SessionService, store SessionStore, projects ProjectService, s
 	return s
 }
 
+// WithClassification lets the service settle conversations the local heuristic
+// could not place, by asking the user's own authorized agent.
+//
+// It is opt-in at construction so the daemon can leave it off, and so tests get
+// a service that never shells out. dataDir is where the verdict cache lives and
+// where the classifier runs, and it is excluded from discovery for that reason.
+func (s *Service) WithClassification(agents AgentRegistry, dataDir string, logger *slog.Logger) *Service {
+	if agents == nil || strings.TrimSpace(dataDir) == "" {
+		return s
+	}
+	if logger == nil {
+		logger = slog.Default()
+	}
+	workDir := filepath.Join(dataDir, "classifier")
+	// The directory must exist before a CLI is asked to run there.
+	if err := os.MkdirAll(workDir, 0o755); err != nil {
+		logger.Warn("session import: no classifier working directory; keeping local classification only", "error", err)
+		return s
+	}
+	s.classifier = &classifier{
+		agents:  agents,
+		cache:   newVerdictCache(dataDir),
+		workDir: workDir,
+		logger:  logger,
+	}
+	s.excludeRoots = append(s.excludeRoots, dataDir)
+	return s
+}
+
 // Discover lists importable conversations across every provider. A non-empty
 // projectID narrows the list to conversations that ran inside that project, so
 // a project's own settings can offer just its history instead of everything on
 // the machine.
 func (s *Service) Discover(ctx context.Context, opts sessionimport.DiscoverOptions, projectID domain.ProjectID) ([]sessionimport.ImportableSession, error) {
+	opts.ExcludeRoots = append(opts.ExcludeRoots, s.excludeRoots...)
 	found, err := s.disco.Discover(ctx, opts)
-	if err != nil || projectID == "" {
+	if err != nil {
 		return found, err
+	}
+	// Settle what the local heuristic could not, before scoping: a conversation
+	// judged trivial should not reach any surface, project-scoped or not.
+	if !opts.IncludeTrivial {
+		found = s.classifier.resolve(ctx, found)
+	}
+	if projectID == "" {
+		return found, nil
 	}
 
 	projects, err := s.projects.List(ctx)

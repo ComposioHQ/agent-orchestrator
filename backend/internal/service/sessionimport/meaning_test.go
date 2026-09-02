@@ -199,3 +199,43 @@ func TestLocateFindsATrivialConversation(t *testing.T) {
 		t.Errorf("want the trivial verdict preserved, got %q", found.Meaning)
 	}
 }
+
+// A classification question asked of the user's own agent is recorded by some
+// CLIs as a conversation. Those live under AO's data directory and must never
+// come back as something to import.
+func TestDiscoverExcludesAOsOwnDirectories(t *testing.T) {
+	root := t.TempDir()
+	claudeDir := filepath.Join(root, ".claude")
+	aoData := filepath.Join(root, "ao-data")
+
+	inAO := strings.Replace(claudeToolTranscript, "/Users/dev/project", filepath.Join(aoData, "classifier"), 1)
+	writeFile(t, filepath.Join(claudeDir, "projects", "-ao", "44444444-4444-4444-8444-444444444444.jsonl"), inAO)
+	writeFile(t, filepath.Join(claudeDir, "projects", "-Users-dev-project", "33333333-3333-4333-8333-333333333333.jsonl"), claudeToolTranscript)
+
+	svc := NewService(nil, NewClaudeSourceAt(claudeDir))
+	got, err := svc.Discover(context.Background(), DiscoverOptions{ExcludeRoots: []string{aoData}})
+	if err != nil {
+		t.Fatalf("discover: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("AO's own conversation should be excluded, got %d: %+v", len(got), got)
+	}
+	if !strings.HasPrefix(got[0].NativeSessionID, "33333333") {
+		t.Errorf("excluded the wrong conversation: %q", got[0].NativeSessionID)
+	}
+}
+
+func TestUnderAnyRoot(t *testing.T) {
+	if !underAnyRoot("/a/b/c", []string{"/a/b"}) {
+		t.Error("a directory inside a root is under it")
+	}
+	if !underAnyRoot("/a/b", []string{"/a/b"}) {
+		t.Error("a root is under itself")
+	}
+	if underAnyRoot("/a/bc", []string{"/a/b"}) {
+		t.Error("a sibling sharing a name prefix is not inside the root")
+	}
+	if underAnyRoot("/a/b", nil) || underAnyRoot("", []string{"/a"}) {
+		t.Error("empty inputs must not match")
+	}
+}
