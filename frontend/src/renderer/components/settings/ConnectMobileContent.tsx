@@ -7,13 +7,11 @@ import { aoBridge } from "../../lib/bridge";
 import { captureRendererEvent } from "../../lib/telemetry";
 import { ANDROID_PLAY_STORE_URL, IOS_APP_STORE_URL } from "./ConnectMobileGetApp";
 import { reasonMessage, type SetupMode } from "./ConnectMobileSetup";
-// SettingsOptionMenu/SettingsOption return with the commented-out picker below.
-// import { SettingsOptionMenu, type SettingsOption } from "./SettingsOptionMenu";
+import { SettingsOptionMenu, type SettingsOption } from "./SettingsOptionMenu";
 import { StyledQRCode } from "./StyledQRCode";
 import { PairingQr } from "./PairingQr";
 import { InstallCloudflared } from "./InstallCloudflared";
 import { Button } from "../ui/button";
-import { Switch } from "../ui/switch";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
 
 const QR_CODE_SIZE = 204;
@@ -217,16 +215,11 @@ export function ConnectMobileContent({ active }: { active: boolean }) {
 	const queryClient = useQueryClient();
 	const [copied, setCopied] = useState(false);
 	const copiedTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-	// mode stays pinned to "lan" while the connection picker below is commented
-	// out — setMode is still called by the close-reset effect. Restore both
-	// together.
 	const [mode, setMode] = useState<SetupMode>("lan");
-	/*
 	const modeOptions = [
 		{ value: "lan", label: t("mobile.lan") },
 		{ value: "tailscale", label: t("mobile.tailscale") },
 	] satisfies SettingsOption<SetupMode>[];
-	*/
 
 	useEffect(() => {
 		return () => {
@@ -303,6 +296,28 @@ export function ConnectMobileContent({ active }: { active: boolean }) {
 		},
 		onSuccess: invalidate,
 	});
+
+	// Selecting Tailscale turns TLS on by itself — it is no longer a switch.
+	// iOS refuses cleartext to a 100.x address, so a Tailscale pairing without
+	// it works on Android and fails on iPhone with nothing on either side to
+	// say why. That is not a choice worth offering.
+	//
+	// secureAttempted keeps this to one attempt per visit to Tailscale mode: a
+	// tailnet with no certificates fails every time, and retrying on each status
+	// poll would hammer the daemon. The failure is already surfaced by
+	// secureReasonText, and switching modes away and back is the retry.
+	const secureAttempted = useRef(false);
+	useEffect(() => {
+		if (mode !== "tailscale") {
+			secureAttempted.current = false;
+			return;
+		}
+		const secure = query.data?.securePairing;
+		if (!secure || secure.enabled || !secure.available) return;
+		if (secureAttempted.current || setSecure.isPending) return;
+		secureAttempted.current = true;
+		setSecure.mutate(true);
+	}, [mode, query.data?.securePairing, setSecure]);
 
 	const status = query.data;
 	const enabled = status?.enabled ?? false;
@@ -401,15 +416,8 @@ export function ConnectMobileContent({ active }: { active: boolean }) {
 			<p className="text-xs leading-4 text-settings-muted">{t("mobile.description")}</p>
 
 			<div className="flex flex-col gap-6 sm:flex-row sm:items-start">
-				{/* Left: the walkthrough. */}
+				{/* Left: the connection picker above the walkthrough. */}
 				<div className="flex min-w-0 flex-1 flex-col">
-					{/* Connection picker hidden for now (2026-09-01). `mode` stays wired
-					    up and pinned to its "lan" default, so the QR — which races every
-					    advertised endpoint, tunnel included — is unaffected. What this
-					    does take off-screen is Tailscale's setup step and the
-					    secure-pairing toggle, which iPhone-over-Tailscale requires.
-					    Restore this block to bring both back. */}
-					{/*
 					<div className="flex flex-nowrap items-center gap-2">
 						<SettingsOptionMenu
 							aria-label={t("mobile.connectionMethod")}
@@ -421,7 +429,6 @@ export function ConnectMobileContent({ active }: { active: boolean }) {
 							menuAlign="start"
 						/>
 					</div>
-					*/}
 
 					{/* One walkthrough per connection method. Steps are plain text with
 					    trailing store links; address/password join the list once the QR
@@ -516,20 +523,14 @@ export function ConnectMobileContent({ active }: { active: boolean }) {
 										{t("mobile.securePairing.hint")}
 									</span>
 								</div>
-								<Switch
-									checked={status.securePairing?.enabled ?? false}
-									onCheckedChange={(on) => {
-										clearActionErrors();
-										setSecure.mutate(on);
-									}}
-									disabled={busy}
-									aria-label={t("mobile.securePairing")}
-								/>
+								<span
+									data-testid="secure-pairing-state"
+									className="shrink-0 self-center text-caption leading-(--leading-settings-mobile-hint) text-settings-muted"
+								>
+									{setSecure.isPending ? t("mobile.securePairing.turningOn") : t("mobile.securePairing.on")}
+								</span>
 							</div>
-							<p className="text-caption leading-(--leading-settings-mobile-hint) text-settings-muted">
-								{t("mobile.tailscale.iosHint")}
-							</p>
-							{(status.securePairing?.enabled ?? false) && secureReasonText && (
+							{secureReasonText && (
 								<p className="text-caption leading-(--leading-settings-mobile-hint) text-warning">{secureReasonText}</p>
 							)}
 						</div>
