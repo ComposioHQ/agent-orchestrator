@@ -740,6 +740,13 @@ func (m *Service) suggestID(ctx context.Context, base domain.ProjectID) domain.P
 	}
 }
 
+func (m *Service) availableProjectID(ctx context.Context, base domain.ProjectID) domain.ProjectID {
+	if _, ok, _ := m.store.GetProject(ctx, string(base)); !ok {
+		return base
+	}
+	return m.suggestID(ctx, base)
+}
+
 func (m *Service) projectFromRow(ctx context.Context, row domain.ProjectRecord) Project {
 	kind := row.Kind.WithDefault()
 	defaultBranch := ""

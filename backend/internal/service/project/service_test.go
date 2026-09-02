@@ -228,6 +228,30 @@ func TestManager_CloneCreatesMissingDestinationParent(t *testing.T) {
 	}
 }
 
+func TestManager_CloneSuggestsProjectIDWhenRepositoryNameIsRegistered(t *testing.T) {
+	ctx := context.Background()
+	m := newManager(t)
+	existing := filepath.Join(t.TempDir(), "agent-orchestrator")
+	gitRepoWithCommit(t, existing)
+	if _, err := m.Add(ctx, project.AddInput{Path: existing}); err != nil {
+		t.Fatalf("Add existing project: %v", err)
+	}
+
+	source := filepath.Join(t.TempDir(), "agent-orchestrator")
+	gitRepoWithCommit(t, source)
+	destinationParent := filepath.Join(t.TempDir(), "Projects")
+	cloned, err := m.Clone(ctx, project.CloneInput{
+		RemoteURL:         (&url.URL{Scheme: "file", Path: source}).String(),
+		DestinationParent: destinationParent,
+	})
+	if err != nil {
+		t.Fatalf("Clone: %v", err)
+	}
+	if cloned.ID != "agent-orchestrator1" || cloned.Name != "agent-orchestrator" {
+		t.Fatalf("Clone identity = %#v, want id agent-orchestrator1 and name agent-orchestrator", cloned)
+	}
+}
+
 func TestManager_CloneRejectsUnsafeURLsAndExistingDestination(t *testing.T) {
 	ctx := context.Background()
 	m := newManager(t)
