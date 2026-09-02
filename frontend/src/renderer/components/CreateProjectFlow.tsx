@@ -58,6 +58,7 @@ export function CreateProjectFlow({
 	onCreateProject,
 	onInitializeProject,
 	openSignal,
+	sourceSignal,
 }: {
 	children?: (state: { choosePath: () => void; disabled: boolean; error: string | null; label: string }) => ReactNode;
 	// A folder was dropped on the app window (ShellLayout owns the global
@@ -76,6 +77,8 @@ export function CreateProjectFlow({
 	// "no project in scope" fallback). Lets the shortcut reuse the sidebar's own
 	// create-project flow instead of a separate delegating component.
 	openSignal?: number;
+	// Home-page action cards: each new nonce jumps straight to clone/local/workspace.
+	sourceSignal?: { source: ProjectSource; nonce: number } | null;
 }) {
 	const { t } = useTranslation();
 	const resolvedIdleLabel = idleLabel ?? t("createProject.newProject");
@@ -241,6 +244,14 @@ export function CreateProjectFlow({
 		if (isBusy || modePickerOpen || cloneDialogOpen || folderPickerOpen || selectedPath !== null) return;
 		startFlow(droppedPath.path);
 	}, [droppedPath]);
+
+	const lastSourceNonce = useRef(sourceSignal?.nonce);
+	useEffect(() => {
+		if (!sourceSignal || sourceSignal.nonce === lastSourceNonce.current) return;
+		lastSourceNonce.current = sourceSignal.nonce;
+		if (isBusy || modePickerOpen || cloneDialogOpen || folderPickerOpen || selectedPath !== null) return;
+		selectSource(sourceSignal.source);
+	}, [sourceSignal]);
 
 	const createProject = async (selection: CreateProjectAgentSelection) => {
 		if (!selectedPath) return;

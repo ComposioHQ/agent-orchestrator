@@ -16,6 +16,18 @@ vi.mock("../hooks/useWorkspaceQuery", () => ({
 	useWorkspaceQuery: () => ({ data: routeMocks.workspaces, isSuccess: true }),
 }));
 
+vi.mock("../lib/shell-context", () => ({
+	useShell: () => ({
+		cloneProject: vi.fn(),
+		createProject: vi.fn(),
+		initializeProjectRepository: vi.fn(),
+	}),
+}));
+
+vi.mock("../components/CreateProjectFlow", () => ({
+	CreateProjectFlow: () => null,
+}));
+
 vi.mock("../components/BoardEmptyStates", () => ({
 	BoardWelcome: () => <div data-testid="board-welcome" />,
 }));

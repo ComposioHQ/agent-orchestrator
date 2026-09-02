@@ -44,6 +44,8 @@
 	"board.empty.body": "描述一个任务后，编排器会进行规划、创建 worker 会话，并在工作推进时在此跟踪。",
 	"board.empty.title": "还没有 worker 会话",
 	"home.jumpBack": "继续进行",
+	"home.recentProjects": "最近的项目",
+	"home.currentProjects": "当前项目",
 	"home.starUs": "点个星标",
 	"browser.agentAction": "代理正在{{verb}}",
 	"browser.agentUsing": "代理正在使用浏览器",
