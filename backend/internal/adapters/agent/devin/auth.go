@@ -23,7 +23,7 @@ func (p *Plugin) AuthStatus(ctx context.Context) (ports.AgentAuthStatus, error) 
 	} else if ok {
 		return status, nil
 	}
-	return authprobe.CLIStatusWithTimeout(ctx, binary, [][]string{{"auth", "status"}}, 8*time.Second)
+	return ports.AgentAuthStatusUnknown, nil
 }
 
 func devinLocalAuthStatus(ctx context.Context, binary string) (ports.AgentAuthStatus, bool, error) {
@@ -33,7 +33,7 @@ func devinLocalAuthStatus(ctx context.Context, binary string) (ports.AgentAuthSt
 	if key := strings.TrimSpace(os.Getenv("DEVIN_API_KEY")); strings.HasPrefix(key, "cog_") && len(key) > len("cog_") {
 		return ports.AgentAuthStatusAuthorized, true, nil
 	}
-	status, err := authprobe.CLIStatus(ctx, binary, [][]string{{"auth", "status"}})
+	status, err := authprobe.CLIStatusWithTimeout(ctx, binary, [][]string{{"auth", "status"}}, 8*time.Second)
 	if err != nil {
 		return ports.AgentAuthStatusUnknown, false, err
 	}
