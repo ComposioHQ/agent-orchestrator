@@ -35,11 +35,6 @@ const chatSurfaceWorkState = vi.hoisted(() => ({
 
 async function chooseSessionAction(name: string) {
 	const user = userEvent.setup();
-	const directAction = screen.queryByRole("button", { name });
-	if (directAction) {
-		await user.click(directAction);
-		return;
-	}
 	await user.click(screen.getByRole("button", { name: "Session actions" }));
 	await user.click(await screen.findByRole("menuitem", { name }));
 }
@@ -604,6 +599,7 @@ describe("SessionView", () => {
 			delete session.isTerminated;
 			session.status = "working";
 			delete session.mode;
+			delete session.cloud;
 			session.prs = [];
 		}
 		workspaceQueryState.data = workspaces;
@@ -1023,6 +1019,7 @@ describe("SessionView", () => {
 	it("shows the supported interface switch as a direct session-tab button", () => {
 		interfaceTransitionState.status = { supported: true, targetMode: "chat" };
 		const session = workerSession("sess-1");
+		session.cloud = { orgId: "org-1" };
 		session.mode = "tui";
 		session.status = "idle";
 		session.activity = { state: "idle", lastActivityAt: "2026-08-06T00:00:00Z" };
@@ -1408,7 +1405,8 @@ describe("SessionView", () => {
 
 		render(<SessionView sessionId={sessionId} />);
 
-		expect(screen.queryByRole("button", { name: "Switch to chat UI" })).not.toBeInTheDocument();
+		await userEvent.click(screen.getByRole("button", { name: "Session actions" }));
+		expect(screen.queryByRole("menuitem", { name: "Switch to chat UI" })).not.toBeInTheDocument();
 	});
 
 	it("shows the switch button when the adapter only reports a generic unsupported reason", async () => {
@@ -1420,7 +1418,8 @@ describe("SessionView", () => {
 
 		render(<SessionView sessionId="sess-1" />);
 
-		expect(screen.getByRole("button", { name: "Switch to chat UI" })).toBeInTheDocument();
+		await userEvent.click(screen.getByRole("button", { name: "Session actions" }));
+		expect(screen.getByRole("menuitem", { name: "Switch to chat UI" })).toBeInTheDocument();
 	});
 
 	it("walks backward through auxiliary terminals before returning to the permanent terminal", () => {
