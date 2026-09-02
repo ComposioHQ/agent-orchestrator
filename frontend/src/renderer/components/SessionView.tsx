@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { PanelRight, Plus } from "lucide-react";
+import { LoaderCircle, PanelRight, Plus } from "lucide-react";
 import { motion, useReducedMotion } from "motion/react";
 import {
 	useCallback,
@@ -42,6 +42,8 @@ import { TerminalSwitchAgentButton } from "./TerminalSwitchAgentButton";
 import { TopbarButton } from "./TopbarButton";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 import { useBrowserView } from "../hooks/useBrowserView";
+import { useCodexAccountsQuery } from "../hooks/useCodexAccountsQuery";
+import { codexSwitchDisplay } from "../hooks/codex-accounts-state";
 import { useFileAnnotation } from "../hooks/useFileAnnotation";
 import { useResizable } from "../hooks/useResizable";
 import {
@@ -506,6 +508,16 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	useEffect(() => stopTerminalLiveResize, [stopTerminalLiveResize]);
 
 	const session = workspaceQuery.data;
+	const codexAccounts = useCodexAccountsQuery(session?.provider === "codex");
+	const codexAccountSwitch = codexAccounts.data?.currentSwitch;
+	const codexAccountSwitchPresentation = codexAccountSwitch ? codexSwitchDisplay(codexAccountSwitch) : null;
+	const codexAccountSwitchBlocksSession = Boolean(
+		session?.provider === "codex" &&
+			codexAccountSwitch &&
+			!["completed", "failed"].includes(codexAccountSwitch.phase) &&
+			(codexAccountSwitch.sessions.length === 0 ||
+				codexAccountSwitch.sessions.some((entry) => entry.sessionId === session.id)),
+	);
 	const interfaceSwitch = useSessionInterfaceTransition(session?.id);
 	const reviewerQuery = useQuery({
 		queryKey: ["session-reviews", sessionId],
@@ -1461,6 +1473,20 @@ export function SessionView({ sessionId }: SessionViewProps) {
 
 	return (
 		<div className="relative flex h-full min-h-0 flex-col bg-background text-foreground" data-testid="session-detail">
+			{codexAccountSwitchBlocksSession ? (
+				<div
+					aria-live="assertive"
+					className="absolute inset-0 z-50 grid place-items-center bg-background/80 p-6 backdrop-blur-sm"
+					data-testid="codex-account-switch-blocker"
+					role="status"
+				>
+					<div className="flex max-w-sm flex-col items-center gap-3 rounded-xl border border-border bg-card px-6 py-5 text-center shadow-lg">
+						{codexAccountSwitchPresentation?.busy ? <LoaderCircle className="size-5 animate-spin text-passive" aria-label={t(codexAccountSwitchPresentation.key)} /> : null}
+						<p className="text-sm font-medium">{t("settings.codexAccounts.switchingSessions")}</p>
+						{codexAccountSwitchPresentation ? <p className="text-xs text-passive">{t(codexAccountSwitchPresentation.key)}</p> : null}
+					</div>
+				</div>
+			) : null}
 			<div
 				className="session-split relative flex min-h-0 flex-1 overflow-hidden"
 				data-testid="panel-group"

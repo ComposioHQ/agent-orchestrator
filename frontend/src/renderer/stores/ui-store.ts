@@ -18,7 +18,16 @@ import {
 export type { Theme, ThemePreference, ThemeStyle } from "../lib/theme";
 export { readStoredThemePreference, readStoredThemeStyle, resolveTheme } from "../lib/theme";
 
-export type GlobalSettingsSection = "general" | "harness" | "cloud" | "mobile" | "shortcuts" | "browserProfiles" | "updates" | "help";
+export type GlobalSettingsSection =
+	| "general"
+	| "harness"
+	| "agents"
+	| "cloud"
+	| "mobile"
+	| "shortcuts"
+	| "browserProfiles"
+	| "updates"
+	| "help";
 
 export type SettingsModal =
 	| { scope: "global"; section?: GlobalSettingsSection }

@@ -60,7 +60,15 @@ class EventSourceStub {
 }
 
 function fakeQueryClient() {
-	return { invalidateQueries: vi.fn() } as unknown as Parameters<typeof createEventTransport>[0];
+	return { invalidateQueries: vi.fn(), setQueryData: vi.fn() } as unknown as Parameters<typeof createEventTransport>[0];
+}
+
+function cdcSources() {
+	return EventSourceStub.instances.filter((source) => source.url.endsWith("/api/v1/events"));
+}
+
+function accountSources() {
+	return EventSourceStub.instances.filter((source) => source.url.endsWith("/agents/codex/accounts/events"));
 }
 
 beforeEach(() => {
@@ -80,16 +88,20 @@ afterEach(() => {
 });
 
 describe("createEventTransport", () => {
-	it("opens a single SSE connection to the current base URL on connect", () => {
+	it("opens the CDC and Codex account SSE connections on connect", () => {
 		createEventTransport(fakeQueryClient()).connect();
 
-		expect(EventSourceStub.instances).toHaveLength(1);
-		expect(EventSourceStub.instances[0].url).toBe("http://127.0.0.1:3001/api/v1/events");
+		expect(EventSourceStub.instances).toHaveLength(2);
+		expect(cdcSources()).toHaveLength(1);
+		expect(accountSources()).toHaveLength(1);
+		expect(cdcSources()[0].url).toBe("http://127.0.0.1:3001/api/v1/events");
+		expect(accountSources()[0].url).toBe("http://127.0.0.1:3001/api/v1/agents/codex/accounts/events");
 		// All CDC event types plus onmessage are wired up.
-		expect(EventSourceStub.instances[0].listeners).toContain("session_updated");
-		expect(EventSourceStub.instances[0].listeners).toContain("review_run_created");
-		expect(EventSourceStub.instances[0].listeners).toContain("review_run_updated");
-		expect(EventSourceStub.instances[0].onmessage).toBeTypeOf("function");
+		expect(cdcSources()[0].listeners).toContain("session_updated");
+		expect(cdcSources()[0].listeners).toContain("review_run_created");
+		expect(cdcSources()[0].listeners).toContain("review_run_updated");
+		expect(cdcSources()[0].onmessage).toBeTypeOf("function");
+		expect(accountSources()[0].listeners).toContain("codex_account");
 	});
 
 	it("does not reconnect when a daemon status keeps the same base URL", () => {
@@ -98,20 +110,23 @@ describe("createEventTransport", () => {
 
 		onStatusHandler();
 
-		expect(EventSourceStub.instances).toHaveLength(1);
+		expect(EventSourceStub.instances).toHaveLength(2);
 	});
 
 	it("closes the old connection and reconnects when the base URL changes", () => {
 		createEventTransport(fakeQueryClient()).connect();
-		const first = EventSourceStub.instances[0];
+		const first = cdcSources()[0];
+		const firstAccount = accountSources()[0];
 		const onStatusHandler = onStatusMock.mock.calls[0][0] as () => void;
 
 		getApiBaseUrlMock.mockReturnValue("http://127.0.0.1:3099");
 		onStatusHandler();
 
 		expect(first.closed).toBe(true);
-		expect(EventSourceStub.instances).toHaveLength(2);
-		expect(EventSourceStub.instances[1].url).toBe("http://127.0.0.1:3099/api/v1/events");
+		expect(firstAccount.closed).toBe(true);
+		expect(cdcSources()).toHaveLength(2);
+		expect(accountSources()).toHaveLength(2);
+		expect(cdcSources()[1].url).toBe("http://127.0.0.1:3099/api/v1/events");
 	});
 
 	it("does not make a new daemon port serve the dead port's backoff delay", () => {
@@ -148,14 +163,16 @@ describe("createEventTransport", () => {
 
 	it("closes the source and skips reconnecting when the base URL is untrusted", () => {
 		createEventTransport(fakeQueryClient()).connect();
-		const first = EventSourceStub.instances[0];
+		const first = cdcSources()[0];
+		const firstAccount = accountSources()[0];
 		const onStatusHandler = onStatusMock.mock.calls[0][0] as () => void;
 
 		hasTrustedApiBaseUrlMock.mockReturnValue(false);
 		onStatusHandler();
 
 		expect(first.closed).toBe(true);
-		expect(EventSourceStub.instances).toHaveLength(1);
+		expect(firstAccount.closed).toBe(true);
+		expect(EventSourceStub.instances).toHaveLength(2);
 		expect(getEventsConnectionState()).toBe("disconnected");
 	});
 
@@ -188,7 +205,7 @@ describe("createEventTransport", () => {
 		try {
 			const queryClient = fakeQueryClient();
 			createEventTransport(queryClient).connect();
-			EventSourceStub.instances[0].onopen?.();
+			cdcSources()[0].onopen?.();
 
 			vi.advanceTimersByTime(200);
 
@@ -203,7 +220,7 @@ describe("createEventTransport", () => {
 		try {
 			const queryClient = fakeQueryClient();
 			createEventTransport(queryClient).connect();
-			EventSourceStub.instances[0].emit(
+			cdcSources()[0].emit(
 				"session_updated",
 				JSON.stringify({
 					seq: 42,
@@ -239,7 +256,7 @@ describe("createEventTransport", () => {
 		try {
 			const queryClient = fakeQueryClient();
 			createEventTransport(queryClient).connect();
-			EventSourceStub.instances[0].emit(
+			cdcSources()[0].emit(
 				"session_updated",
 				JSON.stringify({
 					seq: 43,
@@ -264,12 +281,53 @@ describe("createEventTransport", () => {
 		}
 	});
 
+	it("normalizes account stream snapshots without invalidating workspaces", () => {
+		let cached: unknown;
+		const queryClient = {
+			invalidateQueries: vi.fn(),
+			setQueryData: vi.fn((_key: readonly string[], update: unknown) => {
+				cached = typeof update === "function" ? update(undefined) : update;
+			}),
+		} as unknown as Parameters<typeof createEventTransport>[0];
+		createEventTransport(queryClient).connect();
+
+		accountSources()[0].emit("codex_account", JSON.stringify({
+			activeAccountId: "account-1",
+			accountRevision: 2,
+			accounts: [{ id: "account-1", active: true }],
+			capabilities: {},
+		}));
+
+		expect(cached).toMatchObject({ activeAccountId: "account-1", accountRevision: 2 });
+		expect(cached).toMatchObject({ accounts: [{ id: "account-1", active: true }] });
+		expect(queryClient.invalidateQueries).not.toHaveBeenCalledWith({ queryKey: ["workspaces"] });
+	});
+
+	it("keeps account stream open and CDC invalidation within their own cache domains", () => {
+		vi.useFakeTimers();
+		try {
+			const queryClient = fakeQueryClient();
+			createEventTransport(queryClient).connect();
+			accountSources()[0].onopen?.();
+			expect(queryClient.invalidateQueries).toHaveBeenCalledWith({ queryKey: ["codex-accounts"] });
+			expect(queryClient.invalidateQueries).not.toHaveBeenCalledWith({ queryKey: ["workspaces"] });
+
+			vi.mocked(queryClient.invalidateQueries).mockClear();
+			cdcSources()[0].emit("session_updated", JSON.stringify({ sessionId: "session-1", payload: {} }));
+			vi.advanceTimersByTime(200);
+			expect(queryClient.invalidateQueries).not.toHaveBeenCalledWith({ queryKey: ["codex-accounts"] });
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
 	it("tears down the source and the daemon listener on disconnect", () => {
 		const disconnect = createEventTransport(fakeQueryClient()).connect();
 
 		disconnect();
 
-		expect(EventSourceStub.instances[0].closed).toBe(true);
+		expect(cdcSources()[0].closed).toBe(true);
+		expect(accountSources()[0].closed).toBe(true);
 		expect(removeStatusMock).toHaveBeenCalledTimes(1);
 	});
 
@@ -282,7 +340,7 @@ describe("createEventTransport", () => {
 
 	it("marks the stream connected on open and disconnected on error", () => {
 		createEventTransport(fakeQueryClient()).connect();
-		const source = EventSourceStub.instances[0];
+		const source = cdcSources()[0];
 
 		source.readyState = 1; // OPEN
 		source.onopen?.();
@@ -301,15 +359,15 @@ describe("createEventTransport", () => {
 		vi.useFakeTimers();
 		try {
 			createEventTransport(fakeQueryClient()).connect();
-			const source = EventSourceStub.instances[0];
+			const source = cdcSources()[0];
 
 			source.readyState = 2; // CLOSED — EventSource gave up for good
 			source.onerror?.();
 
-			expect(EventSourceStub.instances).toHaveLength(1);
+			expect(cdcSources()).toHaveLength(1);
 			vi.advanceTimersByTime(5_000);
-			expect(EventSourceStub.instances).toHaveLength(2);
-			expect(EventSourceStub.instances[1].url).toBe("http://127.0.0.1:3001/api/v1/events");
+			expect(cdcSources()).toHaveLength(2);
+			expect(cdcSources()[1].url).toBe("http://127.0.0.1:3001/api/v1/events");
 		} finally {
 			vi.useRealTimers();
 		}
@@ -319,19 +377,22 @@ describe("createEventTransport", () => {
 		createEventTransport(fakeQueryClient()).connect();
 		expect(subscribeApiBaseUrlMock).toHaveBeenCalledTimes(1);
 		const onBaseUrlChange = subscribeApiBaseUrlMock.mock.calls[0][0] as () => void;
-		const first = EventSourceStub.instances[0];
+		const first = cdcSources()[0];
+		const firstAccount = accountSources()[0];
 
 		getApiBaseUrlMock.mockReturnValue("http://127.0.0.1:4555");
 		onBaseUrlChange();
 
 		expect(first.closed).toBe(true);
-		expect(EventSourceStub.instances).toHaveLength(2);
-		expect(EventSourceStub.instances[1].url).toBe("http://127.0.0.1:4555/api/v1/events");
+		expect(firstAccount.closed).toBe(true);
+		expect(cdcSources()).toHaveLength(2);
+		expect(accountSources()).toHaveLength(2);
+		expect(cdcSources()[1].url).toBe("http://127.0.0.1:4555/api/v1/events");
 	});
 
 	it("resets the connection state and unsubscribes on disconnect", () => {
 		const disconnect = createEventTransport(fakeQueryClient()).connect();
-		const source = EventSourceStub.instances[0];
+		const source = cdcSources()[0];
 		source.readyState = 1;
 		source.onopen?.();
 		expect(getEventsConnectionState()).toBe("connected");

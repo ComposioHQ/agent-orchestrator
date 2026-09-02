@@ -196,6 +196,12 @@ describe("normalizeApiOperation", () => {
 		expect(normalizeApiOperation("POST", "/api/v1/agents/codex/models/refresh")).toBe(
 			"POST /api/v1/agents/:id/models/refresh",
 		);
+		expect(normalizeApiOperation("POST", "/api/v1/agents/codex/accounts/login-operations/72d4db6e-da2c-414c-a6a9-fdbd09a006b6/verify")).toBe(
+			"POST /api/v1/agents/codex/accounts/login-operations/:id/verify",
+		);
+		expect(normalizeApiOperation("POST", "/api/v1/agents/codex/account-switches/switch-1/recover")).toBe(
+			"POST /api/v1/agents/codex/account-switches/:id/recover",
+		);
 	});
 
 	it("leaves collection and non-resource paths untouched", () => {
@@ -231,6 +237,8 @@ describe("normalizeApiOperation", () => {
 	it("normalizes ids for resources a collection heuristic would miss", () => {
 		expect(normalizeApiOperation("GET", "/api/v1/orchestrators/orch-abc")).toBe("GET /api/v1/orchestrators/:id");
 		expect(normalizeApiOperation("POST", "/api/v1/prs/pr-1/merge")).toBe("POST /api/v1/prs/:id/merge");
+		expect(normalizeApiOperation("POST", "/api/v1/agents/codex/accounts/ensure")).toBe("POST /api/v1/agents/codex/accounts/ensure");
+		expect(normalizeApiOperation("DELETE", "/api/v1/agents/codex/accounts/private-account-id")).toBe("DELETE /api/v1/agents/codex/accounts/:id");
 	});
 });
 

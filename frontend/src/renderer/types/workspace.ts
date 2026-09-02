@@ -63,6 +63,8 @@ export type AgentSwitchSummary = {
 export type WorkspaceSession = {
 	id: string;
 	terminalHandleId?: string;
+	/** Opaque controller generation; changes even when a restarted PTY reuses its handle. */
+	terminalGeneration?: string;
 	workspaceId: string;
 	workspaceName: string;
 	title: string;

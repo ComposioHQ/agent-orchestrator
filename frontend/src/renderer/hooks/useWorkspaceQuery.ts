@@ -109,6 +109,7 @@ async function fetchWorkspaces(): Promise<WorkspaceSummary[]> {
 					return {
 						id: session.id,
 						terminalHandleId: session.terminalHandleId,
+						terminalGeneration: session.terminalGeneration,
 						workspaceId: project.id,
 						workspaceName: project.name,
 						title: session.displayName ?? session.issueId ?? session.id,
