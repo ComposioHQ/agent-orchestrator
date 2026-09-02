@@ -7,10 +7,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"net"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -163,8 +163,21 @@ func linuxProcessStartTime(ctx context.Context, startTicks uint64) (time.Time, e
 	if bootSeconds <= 0 {
 		return time.Time{}, errors.New("parse Linux boot time: btime is missing or invalid")
 	}
-	seconds := int64(startTicks / clockTicks)
-	nanos := int64(startTicks%clockTicks) * int64(time.Second) / int64(clockTicks)
+	wholeSeconds := startTicks / clockTicks
+	fractionTicks := startTicks % clockTicks
+	if wholeSeconds > uint64(math.MaxInt64-bootSeconds) {
+		return time.Time{}, errors.New("parse Linux process start: timestamp overflows int64")
+	}
+	// This bound makes both the uint64-to-int64 conversion and the subsequent
+	// nanosecond multiplication safe. Real CLK_TCK values are several orders of
+	// magnitude smaller; an impossible value keeps recovery inconclusive.
+	if clockTicks > uint64(math.MaxInt64/int64(time.Second)) {
+		return time.Time{}, fmt.Errorf("parse Linux clock ticks: value %d is too large", clockTicks)
+	}
+	seconds := int64(wholeSeconds)   // #nosec G115 -- bounded against MaxInt64 above
+	fraction := int64(fractionTicks) // #nosec G115 -- fraction is below bounded clockTicks
+	tickRate := int64(clockTicks)    // #nosec G115 -- clockTicks is explicitly bounded above
+	nanos := fraction * int64(time.Second) / tickRate
 	return time.Unix(bootSeconds+seconds, nanos), nil
 }
 
@@ -201,7 +214,7 @@ func linuxTCP4ListenerPID(addr string, expectedPID int) (int, error) {
 	}
 	wantSocket := "socket:[" + inode + "]"
 	for _, fd := range fds {
-		target, readErr := os.Readlink(filepath.Join("/proc", strconv.Itoa(expectedPID), "fd", fd.Name()))
+		target, readErr := os.Readlink(fmt.Sprintf("/proc/%d/fd/%s", expectedPID, fd.Name()))
 		if readErr == nil && target == wantSocket {
 			return expectedPID, nil
 		}
