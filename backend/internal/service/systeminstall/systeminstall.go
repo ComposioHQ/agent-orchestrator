@@ -296,6 +296,7 @@ type Service struct {
 	installTimeout time.Duration
 	// persistenceTimeout bounds worker-owned transition and terminal writes.
 	persistenceTimeout time.Duration
+	onSucceeded        func(Target)
 }
 
 // requestPlanner carries one immutable capability snapshot through all recipe
@@ -317,6 +318,14 @@ func (s *Service) newRequestPlanner(ctx context.Context) (requestPlanner, error)
 	}
 	planner.capabilities = &capabilities
 	return planner, nil
+}
+
+// SetOnSucceeded registers the daemon callback invoked after a verified
+// install. It is called outside the job mutex.
+func (s *Service) SetOnSucceeded(callback func(Target)) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.onSucceeded = callback
 }
 
 // New returns a Service backed by explicit host-operation ports. The daemon
@@ -834,32 +843,41 @@ func (s *Service) run(parent context.Context, argv []string, job *Job) {
 	now := time.Now()
 
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	job.Output = out.String()
 	job.FinishedAt = &now
 	if ctx.Err() == context.DeadlineExceeded {
 		job.Status = StatusFailed
 		job.Error = fmt.Sprintf("install timed out after %s", s.installTimeout)
+		s.mu.Unlock()
 		return
 	}
 	if ctx.Err() == context.Canceled {
 		job.Status = StatusInterrupted
 		job.Error = "daemon shutdown interrupted the install"
+		s.mu.Unlock()
 		return
 	}
 	if runErr != nil {
 		job.Status = StatusFailed
 		job.Error = runErr.Error()
+		s.mu.Unlock()
 		return
 	}
 	if !IsAgentTarget(job.Target) {
 		if path, err := s.executables.LookPath(string(job.Target)); err != nil || path == "" {
 			job.Status = StatusFailed
 			job.Error = fmt.Sprintf("install command finished but %s is still not in PATH", job.Target)
+			s.mu.Unlock()
 			return
 		}
 	}
 	job.Status = StatusSucceeded
+	callback := s.onSucceeded
+	target := job.Target
+	s.mu.Unlock()
+	if callback != nil {
+		callback(target)
+	}
 }
 
 func (s *Service) runAgentInstall(parent context.Context, plan Plan, job *Job) {
@@ -955,12 +973,18 @@ func (s *Service) finishAgentJob(job *Job, status Status, output, errorMessage, 
 	job.FinishedAt = &now
 	job.UpdatedAt = &now
 	snapshot := *job
+	callback := s.onSucceeded
+	target := job.Target
 	s.mu.Unlock()
 	if err := s.persistJobBestEffort(snapshot); err != nil {
 		s.mu.Lock()
 		job.Status = StatusFailed
 		job.Error = fmt.Sprintf("persist terminal install state: %v", err)
 		s.mu.Unlock()
+		return
+	}
+	if status == StatusSucceeded && callback != nil {
+		callback(target)
 	}
 }
 

@@ -3,7 +3,13 @@ import { Check, Copy, Download, ExternalLink, LoaderCircle, RefreshCw, Search, T
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { components } from "../../../api/schema";
-import { agentsQueryKey, refreshAgents, refreshAgentsIfStale, useAgentsQuery } from "../../hooks/useAgentsQuery";
+import {
+	agentReadinessQueryKey,
+	cacheAgentReadiness,
+	ensureAgentReadiness,
+	useAgentReadinessQuery,
+	useEnsureAgentReadiness,
+} from "../../hooks/useAgentReadinessQuery";
 import { agentLabel, AGENT_OPTIONS, type AgentId } from "../../lib/agent-options";
 import { apiClient, apiErrorMessage } from "../../lib/api-client";
 import { aoBridge } from "../../lib/bridge";
@@ -52,7 +58,8 @@ function diagnosticsText(agentId: AgentId, job: InstallJob): string {
 export function HarnessSettingsSection({ titleHidden = false }: { titleHidden?: boolean }) {
 	const { t } = useTranslation();
 	const queryClient = useQueryClient();
-	const agents = useAgentsQuery();
+	const agents = useAgentReadinessQuery();
+	useEnsureAgentReadiness();
 	const installers = useQuery({ queryKey: installerQueryKey, queryFn: fetchInstallers, staleTime: 60_000 });
 	const jobs = useQuery({ queryKey: installJobsQueryKey, queryFn: fetchInstallJobs, retry: false });
 	const [search, setSearch] = useState("");
@@ -65,15 +72,12 @@ export function HarnessSettingsSection({ titleHidden = false }: { titleHidden?: 
 	const pendingActions = useRef(new Set<AgentId>());
 	const [pendingAgentIds, setPendingAgentIds] = useState<Set<AgentId>>(new Set());
 
-	useEffect(() => {
-		void refreshAgentsIfStale().then((fresh) => {
-			if (fresh) queryClient.setQueryData(agentsQueryKey, fresh);
-		});
-	}, [queryClient]);
-
 	const plans = useMemo(() => new Map(installers.data?.map((plan) => [plan.agentId, plan]) ?? []), [installers.data]);
 	const jobMap = useMemo(() => new Map(jobs.data?.map((job) => [job.target, job]) ?? []), [jobs.data]);
-	const installed = useMemo(() => new Set(agents.data?.installed.map((agent) => agent.id) ?? []), [agents.data]);
+	const installed = useMemo(
+		() => new Set(agents.data?.agents.filter((agent) => agent.installation.state === "installed").map((agent) => agent.id) ?? []),
+		[agents.data],
+	);
 	const normalizedSearch = search.trim().toLowerCase();
 	const rows = AGENT_OPTIONS.filter((agentId) => agentLabel(agentId).toLowerCase().includes(normalizedSearch));
 	const activeKey = useMemo(
@@ -99,10 +103,16 @@ export function HarnessSettingsSection({ titleHidden = false }: { titleHidden?: 
 			setActionErrors((current) => ({ ...current, [agentId]: undefined }));
 			void apiClient.POST("/api/v1/agents/{agent}/probe", {
 				params: { path: { agent: agentId } },
-			}).finally(() => Promise.all([
-				queryClient.invalidateQueries({ queryKey: agentsQueryKey }),
-				queryClient.invalidateQueries({ queryKey: installerQueryKey }),
-			]));
+			}).finally(async () => {
+				try {
+					const readiness = await ensureAgentReadiness([agentId], "display");
+					cacheAgentReadiness(queryClient, readiness);
+				} catch {
+					await queryClient.invalidateQueries({ queryKey: agentReadinessQueryKey });
+				} finally {
+					await queryClient.invalidateQueries({ queryKey: installerQueryKey });
+				}
+			});
 		}
 	}, [queryClient, succeededKey]);
 
@@ -167,12 +177,13 @@ export function HarnessSettingsSection({ titleHidden = false }: { titleHidden?: 
 	const refresh = async () => {
 		setRefreshError(null);
 		try {
-			const [fresh] = await Promise.all([
-				refreshAgents(),
+			const [{ error }] = await Promise.all([
+				apiClient.POST("/api/v1/agents/refresh"),
 				queryClient.invalidateQueries({ queryKey: installerQueryKey }),
 				queryClient.invalidateQueries({ queryKey: installJobsQueryKey }),
 			]);
-			queryClient.setQueryData(agentsQueryKey, fresh);
+			if (error) throw new Error(apiErrorMessage(error));
+			await queryClient.invalidateQueries({ queryKey: agentReadinessQueryKey });
 		} catch (error) {
 			setRefreshError(error instanceof Error ? error.message : t("settings.harness.loadFailed"));
 		}

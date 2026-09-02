@@ -79,6 +79,16 @@ type AgentBinaryPresenceResolver interface {
 	ResolveBinaryPresence(ctx context.Context) (path string, err error)
 }
 
+// AgentReadinessProvider is the daemon-owned coordination boundary used by
+// launch and policy consumers. Implementations coalesce native checks and keep
+// the resulting snapshots in memory.
+type AgentReadinessProvider interface {
+	EnsureAgentReadiness(ctx context.Context, agentID string, purpose domain.AgentReadinessPurpose) (domain.AgentReadinessSnapshot, error)
+	InvalidateAgentInstallation(agentID string)
+	InvalidateAgentAuthentication(agentID string)
+	RecheckAgent(agentID string)
+}
+
 // AgentNativeSessionTerminator is an optional adapter capability used before
 // AO destroys a terminal runtime or worktree whose agent may keep running in a
 // detached native process. Implementations must affect only the supplied
@@ -163,13 +173,6 @@ type CachedAgentModelCatalog struct {
 	CatalogJSON   string
 	Source        string
 	FetchedAt     time.Time
-}
-
-// AgentInventoryCache persists the last successful advisory installation and
-// authentication probe across daemon restarts.
-type AgentInventoryCache interface {
-	GetAgentInventoryCache(ctx context.Context) (inventoryJSON string, observedAt time.Time, ok bool, err error)
-	UpsertAgentInventoryCache(ctx context.Context, inventoryJSON string, observedAt time.Time) error
 }
 
 // AgentModelCatalogCache persists normalized model catalogs across daemon

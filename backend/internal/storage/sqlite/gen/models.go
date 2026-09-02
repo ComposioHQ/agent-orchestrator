@@ -25,12 +25,6 @@ type AgentInstallJob struct {
 	UpdatedAt           time.Time
 }
 
-type AgentInventoryCache struct {
-	ID            int64
-	InventoryJson string
-	ObservedAt    time.Time
-}
-
 type AgentModelCatalog struct {
 	AgentID       string
 	ProjectID     string
@@ -438,6 +432,7 @@ type Session struct {
 	AgentSessionIDLaunchID    string
 	Model                     string
 	LatestUserPromptAt        sql.NullTime
+	ReviewerAgentConfig       string
 }
 
 type SessionCleanupFact struct {

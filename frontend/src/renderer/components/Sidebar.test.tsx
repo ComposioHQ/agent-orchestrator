@@ -1,4 +1,5 @@
 import { SidebarProvider } from "@/components/ui/sidebar";
+import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 // Disable motion animations so AnimatePresence unmounts children immediately
@@ -19,7 +20,8 @@ import {
 	SIDEBAR_MIN_WIDTH,
 } from "./Sidebar";
 import type { WorkspaceSession, WorkspaceSummary } from "../types/workspace";
-import { agentsQueryKey } from "../hooks/useAgentsQuery";
+import { agentReadinessQueryKey } from "../hooks/useAgentReadinessQuery";
+import { agentReadiness } from "../test/agent-readiness-fixtures";
 import { useUiStore } from "../stores/ui-store";
 
 type DragOverTestEvent = {
@@ -263,34 +265,25 @@ function renderSidebar({
 		defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
 	});
 	if (seedAgents) {
-		queryClient.setQueryData(agentsQueryKey, {
-			supported: [
-				{ id: "claude-code", label: "Claude Code" },
-				{ id: "codex", label: "Codex" },
-			],
-			installed: [
-				{ id: "claude-code", label: "Claude Code" },
-				{ id: "codex", label: "Codex" },
-			],
-			authorized: [
-				{ id: "claude-code", label: "Claude Code", authStatus: "authorized" },
-				{ id: "codex", label: "Codex", authStatus: "authorized" },
-			],
+		queryClient.setQueryData(agentReadinessQueryKey, {
+			agents: [agentReadiness("claude-code", "Claude Code"), agentReadiness("codex", "Codex")],
 		});
 	}
 	render(
 		<QueryClientProvider client={queryClient}>
-			<SidebarProvider defaultOpen={initialOpen}>
-				<Sidebar
-					autoCompact={autoCompact}
-					topbarOffset={topbarOffset}
-					onCloneProject={onCloneProject}
-					onCreateProject={onCreateProject}
-					onInitializeProject={onInitializeProject}
-					onRemoveProject={onRemoveProject}
-					workspaces={workspaces}
-				/>
-			</SidebarProvider>
+			<TooltipProvider>
+				<SidebarProvider defaultOpen={initialOpen}>
+					<Sidebar
+						autoCompact={autoCompact}
+						topbarOffset={topbarOffset}
+						onCloneProject={onCloneProject}
+						onCreateProject={onCreateProject}
+						onInitializeProject={onInitializeProject}
+						onRemoveProject={onRemoveProject}
+						workspaces={workspaces}
+					/>
+				</SidebarProvider>
+			</TooltipProvider>
 		</QueryClientProvider>,
 	);
 	return onRemoveProject;
@@ -365,18 +358,7 @@ beforeEach(() => {
 	getMock.mockReset();
 	getMock.mockResolvedValue({
 		data: {
-			supported: [
-				{ id: "claude-code", label: "Claude Code" },
-				{ id: "codex", label: "Codex" },
-			],
-			installed: [
-				{ id: "claude-code", label: "Claude Code" },
-				{ id: "codex", label: "Codex" },
-			],
-			authorized: [
-				{ id: "claude-code", label: "Claude Code", authStatus: "authorized" },
-				{ id: "codex", label: "Codex", authStatus: "authorized" },
-			],
+			agents: [agentReadiness("claude-code", "Claude Code"), agentReadiness("codex", "Codex")],
 		},
 		error: undefined,
 	});
@@ -963,26 +945,12 @@ describe("Sidebar", () => {
 		window.ao!.app.chooseDirectory = vi.fn().mockResolvedValue("/repo/new-project");
 		getMock.mockResolvedValueOnce({
 			data: {
-				supported: [
-					{ id: "goose", label: "Goose" },
-					{ id: "devin", label: "Devin" },
-					{ id: "aider", label: "Aider" },
-					{ id: "opencode", label: "OpenCode" },
-					{ id: "cursor", label: "Cursor" },
-				],
-				installed: [
-					{ id: "goose", label: "Goose", authStatus: "authorized" },
-					{ id: "devin", label: "Devin", authStatus: "authorized" },
-					{ id: "aider", label: "Aider", authStatus: "authorized" },
-					{ id: "opencode", label: "OpenCode", authStatus: "authorized" },
-					{ id: "cursor", label: "Cursor", authStatus: "authorized" },
-				],
-				authorized: [
-					{ id: "goose", label: "Goose", authStatus: "authorized" },
-					{ id: "devin", label: "Devin", authStatus: "authorized" },
-					{ id: "aider", label: "Aider", authStatus: "authorized" },
-					{ id: "opencode", label: "OpenCode", authStatus: "authorized" },
-					{ id: "cursor", label: "Cursor", authStatus: "authorized" },
+				agents: [
+					agentReadiness("goose", "Goose"),
+					agentReadiness("devin", "Devin"),
+					agentReadiness("aider", "Aider"),
+					agentReadiness("opencode", "OpenCode"),
+					agentReadiness("cursor", "Cursor"),
 				],
 			},
 			error: undefined,
@@ -1332,16 +1300,11 @@ describe("Sidebar", () => {
 		window.ao!.app.chooseDirectory = vi.fn().mockResolvedValue("/repo/new-project");
 		getMock.mockResolvedValueOnce({
 			data: {
-				supported: [
-					{ id: "claude-code", label: "Claude Code" },
-					{ id: "cursor", label: "Cursor" },
-					{ id: "aider", label: "Aider" },
+				agents: [
+					agentReadiness("claude-code", "Claude Code"),
+					agentReadiness("cursor", "Cursor", { authentication: "unauthorized" }),
+					agentReadiness("aider", "Aider", { installation: "not_installed", authentication: "unknown" }),
 				],
-				installed: [
-					{ id: "claude-code", label: "Claude Code", authStatus: "authorized" },
-					{ id: "cursor", label: "Cursor", authStatus: "unauthorized" },
-				],
-				authorized: [{ id: "claude-code", label: "Claude Code", authStatus: "authorized" }],
 			},
 			error: undefined,
 		});
@@ -1374,11 +1337,7 @@ describe("Sidebar", () => {
 		const onCreateProject = vi.fn().mockResolvedValue(undefined) as CreateProjectHandler;
 		window.ao!.app.chooseDirectory = vi.fn().mockResolvedValue("/repo/new-project");
 		let resolveAgents!: (value: {
-			data: {
-				supported: { id: string; label: string }[];
-				installed: { id: string; label: string }[];
-				authorized: { id: string; label: string; authStatus: "authorized" }[];
-			};
+			data: { agents: ReturnType<typeof agentReadiness>[] };
 			error: undefined;
 		}) => void;
 		getMock.mockReturnValueOnce(
@@ -1395,18 +1354,7 @@ describe("Sidebar", () => {
 
 		resolveAgents({
 			data: {
-				supported: [
-					{ id: "claude-code", label: "Claude Code" },
-					{ id: "codex", label: "Codex" },
-				],
-				installed: [
-					{ id: "claude-code", label: "Claude Code" },
-					{ id: "codex", label: "Codex" },
-				],
-				authorized: [
-					{ id: "claude-code", label: "Claude Code", authStatus: "authorized" },
-					{ id: "codex", label: "Codex", authStatus: "authorized" },
-				],
+				agents: [agentReadiness("claude-code", "Claude Code"), agentReadiness("codex", "Codex")],
 			},
 			error: undefined,
 		});

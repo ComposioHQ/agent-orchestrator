@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { SessionFileExplorer } from "./SessionFileExplorer";
+import { TooltipProvider } from "./ui/tooltip";
 import { useUiStore } from "../stores/ui-store";
 
 const { getMock, postMock } = vi.hoisted(() => ({ getMock: vi.fn(), postMock: vi.fn() }));
@@ -45,7 +46,11 @@ vi.mock("./FileContentPane", () => ({
 
 function renderWithQuery(children: ReactNode) {
 	const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-	return render(<QueryClientProvider client={client}>{children}</QueryClientProvider>);
+	return render(
+		<QueryClientProvider client={client}>
+			<TooltipProvider>{children}</TooltipProvider>
+		</QueryClientProvider>,
+	);
 }
 
 describe("SessionFileExplorer", () => {

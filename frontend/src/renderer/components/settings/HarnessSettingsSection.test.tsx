@@ -6,16 +6,24 @@ import { apiClient } from "../../lib/api-client";
 import { appI18n } from "../../i18n";
 import { HarnessSettingsSection } from "./HarnessSettingsSection";
 
-const catalog = {
-	supported: [
-		{ id: "claude-code", label: "Claude Code" },
-		{ id: "codex", label: "Codex" },
-		{ id: "cursor", label: "Cursor" },
-		{ id: "goose", label: "Goose" },
-	],
-	installed: [{ id: "claude-code", label: "Claude Code" }],
-	authorized: [],
-};
+function catalogWithInstalled(...installed: string[]) {
+	return {
+		agents: [
+			{ id: "claude-code", label: "Claude Code" },
+			{ id: "codex", label: "Codex" },
+			{ id: "cursor", label: "Cursor" },
+			{ id: "goose", label: "Goose" },
+		].map((agent) => ({
+			...agent,
+			installation: { state: installed.includes(agent.id) ? "installed" : "not_installed", freshness: "fresh", reason: "", reasonCode: "", attemptedAt: null, checkedAt: null },
+			authentication: { state: "unknown", freshness: "fresh", reason: "", reasonCode: "", attemptedAt: null, checkedAt: null },
+			effectiveReadiness: installed.includes(agent.id) ? "ready" : "not_ready",
+			usageCount: 0,
+		})),
+	};
+}
+
+const catalog = catalogWithInstalled("claude-code");
 
 const plans = {
 	agents: [
@@ -64,12 +72,13 @@ describe("HarnessSettingsSection", () => {
 		await appI18n.changeLanguage("en");
 		window.ao!.clipboard.writeText = vi.fn().mockResolvedValue(undefined);
 		vi.spyOn(apiClient, "GET").mockImplementation(async (path) => {
-			if (path === "/api/v1/agents") return { data: catalog } as never;
+			if (path === "/api/v1/agents/readiness") return { data: catalog } as never;
 			if (path === "/api/v1/agents/installers") return { data: plans } as never;
 			if (path === "/api/v1/agents/install-jobs") return { data: { jobs: [] } } as never;
 			return { data: undefined } as never;
 		});
 		vi.spyOn(apiClient, "POST").mockImplementation(async (path) => {
+			if (path === "/api/v1/agents/readiness/ensure") return { data: catalog } as never;
 			if (path === "/api/v1/agents/refresh") return { data: catalog } as never;
 			if (path === "/api/v1/agents/{agent}/install") {
 				return { data: { target: "codex", status: "failed", error: "npm failed" } } as never;
@@ -129,7 +138,7 @@ describe("HarnessSettingsSection", () => {
 
 	it("shows vendor instructions when an installed harness has no headless reinstall method", async () => {
 		vi.mocked(apiClient.GET).mockImplementation(async (path) => {
-			if (path === "/api/v1/agents") return { data: { ...catalog, installed: [...catalog.installed, { id: "cursor", label: "Cursor" }] } } as never;
+			if (path === "/api/v1/agents/readiness") return { data: catalogWithInstalled("claude-code", "cursor") } as never;
 			if (path === "/api/v1/agents/installers") return { data: plans } as never;
 			if (path === "/api/v1/agents/install-jobs") return { data: { jobs: [] } } as never;
 			return { data: undefined } as never;
@@ -172,7 +181,7 @@ describe("HarnessSettingsSection", () => {
 
 	it("does not treat a historical successful job as current installation inventory", async () => {
 		vi.mocked(apiClient.GET).mockImplementation(async (path) => {
-			if (path === "/api/v1/agents") return { data: catalog } as never;
+			if (path === "/api/v1/agents/readiness") return { data: catalog } as never;
 			if (path === "/api/v1/agents/installers") return { data: plans } as never;
 			if (path === "/api/v1/agents/install-jobs") return { data: { jobs: [{ target: "codex", status: "succeeded", method: "npm", updatedAt: "2026-08-01T00:00:00Z" }] } } as never;
 			return { data: undefined } as never;
@@ -187,7 +196,7 @@ describe("HarnessSettingsSection", () => {
 		let installed = false;
 		let installerFetches = 0;
 		vi.mocked(apiClient.GET).mockImplementation(async (path) => {
-			if (path === "/api/v1/agents") return { data: installed ? { ...catalog, installed: [...catalog.installed, { id: "codex", label: "Codex" }] } : catalog } as never;
+			if (path === "/api/v1/agents/readiness") return { data: installed ? catalogWithInstalled("claude-code", "codex") : catalog } as never;
 			if (path === "/api/v1/agents/installers") {
 				installerFetches += 1;
 				return { data: plans } as never;
@@ -199,6 +208,9 @@ describe("HarnessSettingsSection", () => {
 			if (path === "/api/v1/agents/{agent}/probe") {
 				installed = true;
 				return { data: { agent: { id: "codex", label: "Codex" }, supported: true, installed: true } } as never;
+			}
+			if (path === "/api/v1/agents/readiness/ensure") {
+				return { data: installed ? catalogWithInstalled("claude-code", "codex") : catalog } as never;
 			}
 			return { data: undefined } as never;
 		});
@@ -261,7 +273,7 @@ describe("HarnessSettingsSection", () => {
 
 	it("hydrates interrupted jobs and offers separate verify and reinstall actions", async () => {
 		vi.mocked(apiClient.GET).mockImplementation(async (path) => {
-			if (path === "/api/v1/agents") return { data: catalog } as never;
+			if (path === "/api/v1/agents/readiness") return { data: catalog } as never;
 			if (path === "/api/v1/agents/installers") return { data: plans } as never;
 			if (path === "/api/v1/agents/install-jobs") return { data: { jobs: [{ target: "codex", status: "interrupted", method: "npm", error: "AO restarted", output: "partial output", expectedDestination: "/Users/test/.npm/bin/codex" }] } } as never;
 			return { data: undefined } as never;
@@ -282,7 +294,7 @@ describe("HarnessSettingsSection", () => {
 
 	it("shows and copies daemon diagnostics", async () => {
 		vi.mocked(apiClient.GET).mockImplementation(async (path) => {
-			if (path === "/api/v1/agents") return { data: catalog } as never;
+			if (path === "/api/v1/agents/readiness") return { data: catalog } as never;
 			if (path === "/api/v1/agents/installers") return { data: plans } as never;
 			if (path === "/api/v1/agents/install-jobs") return { data: { jobs: [{ target: "codex", status: "failed", method: "npm", error: "exit status 1", output: "permission denied", expectedDestination: "/Users/test/.npm/bin/codex" }] } } as never;
 			return { data: undefined } as never;
@@ -299,7 +311,7 @@ describe("HarnessSettingsSection", () => {
 
 	it("surfaces install job polling failures", async () => {
 		vi.mocked(apiClient.GET).mockImplementation(async (path) => {
-			if (path === "/api/v1/agents") return { data: catalog } as never;
+			if (path === "/api/v1/agents/readiness") return { data: catalog } as never;
 			if (path === "/api/v1/agents/installers") return { data: plans } as never;
 			if (path === "/api/v1/agents/install-jobs") return { error: { error: { message: "Could not poll installation status." } } } as never;
 			return { data: undefined } as never;

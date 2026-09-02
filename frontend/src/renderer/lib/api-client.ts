@@ -64,6 +64,8 @@ const ROUTE_TEMPLATES = [
 	"/api/v1/agents/install-jobs",
 	"/api/v1/agents/installers",
 	"/api/v1/agents/refresh",
+	"/api/v1/agents/readiness",
+	"/api/v1/agents/readiness/ensure",
 	"/api/v1/agents/{agent}/install",
 	"/api/v1/agents/{agent}/models",
 	"/api/v1/agents/{agent}/models/refresh",

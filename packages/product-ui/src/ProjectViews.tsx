@@ -250,7 +250,7 @@ export function ProjectSetupFormView({
 		loading: boolean;
 		loadingMessage: string;
 		onRetry?: () => void;
-		refreshing?: boolean;
+		retrying?: boolean;
 		retryLabel?: string;
 	};
 	alert?: ProjectSetupAlert | null;
@@ -294,7 +294,7 @@ export function ProjectSetupFormView({
 						<button
 							type="button"
 							className="shrink-0 rounded text-[var(--color-text-agents-sheet-title)] underline-offset-2 hover:underline disabled:pointer-events-none disabled:opacity-50"
-							disabled={agents.refreshing}
+							disabled={agents.retrying}
 							onClick={agents.onRetry}
 						>
 							{agents.retryLabel}

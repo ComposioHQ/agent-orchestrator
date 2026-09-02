@@ -352,6 +352,48 @@ func TestStartAndStatus_Succeeded(t *testing.T) {
 	}
 }
 
+func TestStart_SuccessCallbackRunsAfterVerifiedInstall(t *testing.T) {
+	s := newTestService("darwin", "npm", "codex")
+	s.commands = testCommandRunner(func(context.Context, []string) *exec.Cmd { return exec.Command("true") })
+	s.verifier = harnessVerifierFunc(func(context.Context, Target) (VerifyResult, error) {
+		return VerifyResult{ResolvedPath: "/Users/test/.npm/bin/codex"}, nil
+	})
+	succeeded := make(chan Target, 1)
+	s.SetOnSucceeded(func(target Target) { succeeded <- target })
+
+	if _, err := s.Start(context.Background(), TargetCodex); err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	waitForStatus(t, s, TargetCodex, StatusSucceeded)
+
+	select {
+	case target := <-succeeded:
+		if target != TargetCodex {
+			t.Fatalf("callback target = %q, want %q", target, TargetCodex)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for success callback")
+	}
+}
+
+func TestStart_FailedInstallDoesNotRunSuccessCallback(t *testing.T) {
+	s := newTestService("darwin", "npm")
+	s.commands = testCommandRunner(func(context.Context, []string) *exec.Cmd { return exec.Command("false") })
+	called := make(chan Target, 1)
+	s.SetOnSucceeded(func(target Target) { called <- target })
+
+	if _, err := s.Start(context.Background(), TargetCodex); err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	waitForStatus(t, s, TargetCodex, StatusFailed)
+
+	select {
+	case target := <-called:
+		t.Fatalf("success callback ran for failed target %q", target)
+	case <-time.After(20 * time.Millisecond):
+	}
+}
+
 func TestStart_ExitZeroWithoutTargetOnPATHFails(t *testing.T) {
 	s := newTestService("darwin", "brew")
 	s.commands = testCommandRunner(func(context.Context, []string) *exec.Cmd { return exec.Command("true") })
@@ -559,6 +601,33 @@ func TestAgentInstallPersistsInstallVerifySuccessLifecycle(t *testing.T) {
 	}
 	if strings.Join(statuses, ",") != "installing,verifying,succeeded" {
 		t.Fatalf("persisted statuses = %v", statuses)
+	}
+}
+
+func TestStartAgentSuccessCallbackRunsAfterPersistedVerification(t *testing.T) {
+	store := newInstallJobStoreFake()
+	s := newTestService("darwin", "npm")
+	s.installCapabilities = installCapabilitiesStub{prefix: "/Users/test/.npm", writable: true}
+	s.jobStore = store
+	s.commands = commandRunnerFunc(func(context.Context, []string, io.Writer, io.Writer) error { return nil })
+	s.verifier = harnessVerifierFunc(func(context.Context, Target) (VerifyResult, error) {
+		return VerifyResult{ResolvedPath: "/Users/test/.npm/bin/codex"}, nil
+	})
+	succeeded := make(chan Target, 1)
+	s.SetOnSucceeded(func(target Target) { succeeded <- target })
+
+	if _, err := s.StartAgent(context.Background(), TargetCodex, "npm"); err != nil {
+		t.Fatalf("StartAgent: %v", err)
+	}
+	waitForStatus(t, s, TargetCodex, StatusSucceeded)
+
+	select {
+	case target := <-succeeded:
+		if target != TargetCodex {
+			t.Fatalf("callback target = %q, want %q", target, TargetCodex)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for durable agent-install success callback")
 	}
 }
 
