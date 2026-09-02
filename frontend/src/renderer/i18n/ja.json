@@ -448,8 +448,6 @@
 	"mobile.securePairing": "セキュアペアリング（TLS）",
 	"mobile.securePairing.clearFailed": "セキュアペアリングはオフですが、Tailscale のプロキシがまだ動作している可能性があります。`tailscale serve --https=443 off` を実行して削除してください。",
 	"mobile.securePairing.hint": "Tailscale では常に有効です。iOS は Tailscale アドレスへの暗号化されていない接続をブロックします。Android はどちらでも動作します。",
-	"mobile.securePairing.on": "オン",
-	"mobile.securePairing.turningOn": "有効化中…",
 	"mobile.securePairing.noCerts": "Tailscale 管理コンソール（DNS ページ）で、あなたの tailnet の HTTPS 証明書を有効にしてから、このウィンドウを開き直してください。",
 	"mobile.securePairing.noCli": "tailscale コマンドが利用できないか、MagicDNS がオフです。Tailscale CLI をインストールし MagicDNS を有効にしてから、このウィンドウを開き直してください。",
 	"mobile.securePairing.portMismatch": "Tailscale のプロキシが別の場所を指しています。セキュアペアリングをオフにしてから再度オンにしてください。",

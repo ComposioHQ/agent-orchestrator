@@ -450,8 +450,6 @@
 	"mobile.securePairing": "Pareamento seguro (TLS)",
 	"mobile.securePairing.clearFailed": "O pareamento seguro está desativado, mas o proxy do Tailscale ainda pode estar em execução. Execute `tailscale serve --https=443 off` para removê-lo.",
 	"mobile.securePairing.hint": "Sempre ativado para Tailscale. O iOS bloqueia conexões não criptografadas com endereços Tailscale; o Android funciona de qualquer maneira.",
-	"mobile.securePairing.on": "Ativado",
-	"mobile.securePairing.turningOn": "Ativando…",
 	"mobile.securePairing.noCerts": "Ative os certificados HTTPS da sua tailnet no console de administração do Tailscale (página DNS) e reabra esta janela.",
 	"mobile.securePairing.noCli": "O comando tailscale não está disponível, ou o MagicDNS está desativado. Instale a CLI do Tailscale e ative o MagicDNS, e reabra esta janela.",
 	"mobile.securePairing.portMismatch": "O proxy do Tailscale está apontando para outro lugar. Desative e reative o pareamento seguro.",

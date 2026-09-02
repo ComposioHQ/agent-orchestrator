@@ -512,28 +512,13 @@ export function ConnectMobileContent({ active }: { active: boolean }) {
 					</ol>
 
 					{/* Tailscale extras: secure pairing (required on iPhone) + status. */}
-					{mode === "tailscale" && (
-						<div className="mt-4 flex flex-col gap-3">
-							<div className="relative flex items-start justify-between gap-3 rounded-md border border-[var(--color-border-settings-input)] bg-[var(--color-bg-settings-input)] px-3.5 py-2.5">
-								<div className="flex min-w-0 flex-col gap-1 pr-2">
-									<span className="text-subtitle leading-(--leading-settings-mobile-title) text-settings-label">
-										{t("mobile.securePairing")}
-									</span>
-									<span className="text-caption leading-(--leading-settings-mobile-hint) text-settings-muted">
-										{t("mobile.securePairing.hint")}
-									</span>
-								</div>
-								<span
-									data-testid="secure-pairing-state"
-									className="shrink-0 self-center text-caption leading-(--leading-settings-mobile-hint) text-settings-muted"
-								>
-									{setSecure.isPending ? t("mobile.securePairing.turningOn") : t("mobile.securePairing.on")}
-								</span>
-							</div>
-							{secureReasonText && (
-								<p className="text-caption leading-(--leading-settings-mobile-hint) text-warning">{secureReasonText}</p>
-							)}
-						</div>
+					{mode === "tailscale" && secureReasonText && (
+						<p
+							data-testid="secure-pairing-reason"
+							className="mt-4 text-caption leading-(--leading-settings-mobile-hint) text-warning"
+						>
+							{secureReasonText}
+						</p>
 					)}
 
 					{remoteAccessUnavailable && (

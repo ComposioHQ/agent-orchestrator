@@ -316,6 +316,9 @@ test("turns secure pairing on by itself when Tailscale is selected", async () =>
 		expect(apiClient.POST).toHaveBeenCalledWith("/api/v1/mobile/secure-pairing", { body: { enabled: true } }),
 	);
 	expect(screen.queryByRole("switch", { name: "Secure pairing (TLS)" })).not.toBeInTheDocument();
+	// Nothing to report while it works: the panel guarantees TLS, so only a
+	// failure earns space.
+	expect(screen.queryByTestId("secure-pairing-reason")).not.toBeInTheDocument();
 });
 
 // A tailnet with no certificates rejects every attempt. Retrying on each status
@@ -333,7 +336,7 @@ test("does not retry enabling secure pairing when it is unavailable", async () =
 	await waitFor(() => expect(qrPayload()).not.toBeNull());
 	await selectConnectionMethod("Tailscale");
 
-	await waitFor(() => expect(screen.getByTestId("secure-pairing-state")).toBeInTheDocument());
+	await waitFor(() => expect(screen.getByTestId("secure-pairing-reason")).toBeInTheDocument());
 	expect(apiClient.POST).not.toHaveBeenCalledWith("/api/v1/mobile/secure-pairing", { body: { enabled: true } });
 });
 

@@ -448,8 +448,6 @@
 	"mobile.securePairing": "安全配对（TLS）",
 	"mobile.securePairing.clearFailed": "安全配对已关闭，但 Tailscale 代理可能仍在运行。请运行 `tailscale serve --https=443 off` 将其移除。",
 	"mobile.securePairing.hint": "在 Tailscale 下始终开启。iOS 会阻止与 Tailscale 地址之间的未加密连接；Android 两种方式都可用。",
-	"mobile.securePairing.on": "已开启",
-	"mobile.securePairing.turningOn": "正在开启…",
 	"mobile.securePairing.noCerts": "请在 Tailscale 管理控制台（DNS 页面）中为你的 tailnet 启用 HTTPS 证书，然后重新打开此窗口。",
 	"mobile.securePairing.noCli": "tailscale 命令不可用，或 MagicDNS 已关闭。请安装 Tailscale CLI 并启用 MagicDNS，然后重新打开此窗口。",
 	"mobile.securePairing.portMismatch": "Tailscale 代理指向了别处。请关闭安全配对后重新开启。",
