@@ -16,6 +16,9 @@ export interface ImportableSession {
 	messageCount: number;
 	sizeBytes: number;
 	alreadyImported: boolean;
+	// Import verdict from the transcript's content. Trivial conversations are
+	// withheld by the daemon and never appear here.
+	meaning?: "meaningful" | "ambiguous";
 }
 
 export const importableSessionsQueryKey = ["importable-sessions"] as const;

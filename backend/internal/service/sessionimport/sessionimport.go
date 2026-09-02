@@ -52,6 +52,9 @@ type ImportableSession struct {
 	// AlreadyImported is true when an AO session is already bound to
 	// NativeSessionID. Stamped by the Service, not by a Source.
 	AlreadyImported bool
+	// Meaning is the import verdict from the transcript's own content. Sources
+	// set it; the Service drops trivial conversations before returning.
+	Meaning Meaning
 }
 
 // DiscoverOptions bounds a discovery scan so a large history directory cannot
@@ -66,6 +69,11 @@ type DiscoverOptions struct {
 	// MaxScanBytes caps the bytes read from each transcript's head and tail when
 	// extracting metadata. 0 selects a sensible default.
 	MaxScanBytes int64
+	// IncludeTrivial keeps conversations classified MeaningTrivial — greetings,
+	// aborted attempts, failed logins, smoke tests. The default (false) drops
+	// them, so they never reach the sidebar, the board, or the import list.
+	// Diagnostics set it to see what was withheld.
+	IncludeTrivial bool
 }
 
 func (o DiscoverOptions) normalized() DiscoverOptions {
@@ -132,7 +140,15 @@ func (s *Service) Discover(ctx context.Context, opts DiscoverOptions) ([]Importa
 			errs = append(errs, err)
 			continue
 		}
-		all = append(all, found...)
+		for _, session := range found {
+			// Importing junk is worse than importing nothing: a trivial
+			// conversation is withheld outright rather than shown in a
+			// low-value section, which would still be clutter.
+			if !opts.IncludeTrivial && !session.Meaning.Imported() {
+				continue
+			}
+			all = append(all, session)
+		}
 	}
 
 	if err := s.flagImported(ctx, all); err != nil {
@@ -157,7 +173,9 @@ func (s *Service) Locate(ctx context.Context, provider domain.AgentHarness, nati
 	nativeID = strings.TrimSpace(nativeID)
 	// Normalize so the bounded head/tail reads use their real default size; a
 	// zero MaxScanBytes would read nothing and leave cwd/title empty.
-	opts := DiscoverOptions{}.normalized()
+	// IncludeTrivial: an id the caller names explicitly is always importable,
+	// even if the heuristic would have withheld it from the browse list.
+	opts := DiscoverOptions{IncludeTrivial: true}.normalized()
 	for _, src := range s.sources {
 		if src.Provider() != provider {
 			continue

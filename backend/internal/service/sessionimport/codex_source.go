@@ -64,6 +64,7 @@ type codexSegment struct {
 	transcriptPath string
 	sizeBytes      int64
 	messageCount   int
+	signals        Signals
 }
 
 // Discover walks the Codex sessions tree, groups rollout segments by root
@@ -85,16 +86,22 @@ func (s *CodexSource) Discover(ctx context.Context, opts DiscoverOptions) ([]Imp
 	// Group segments by root conversation id, keeping the most recent segment as
 	// the representative for path/cwd/title and the max message count seen.
 	grouped := map[string]*ImportableSession{}
+	// Import signals accumulate per conversation, not per segment, so a
+	// conversation that did real work in any segment is judged on that.
+	signalsByRoot := map[string]*Signals{}
 	for _, root := range roots {
-		if err := s.scanRoot(ctx, home, root, titles, opts, grouped); err != nil {
+		if err := s.scanRoot(ctx, home, root, titles, opts, grouped, signalsByRoot); err != nil {
 			return nil, err
 		}
 	}
 
 	found := make([]ImportableSession, 0, len(grouped))
-	for _, session := range grouped {
+	for rootID, session := range grouped {
 		if !opts.Since.IsZero() && session.LastActivity.Before(opts.Since) {
 			continue
+		}
+		if merged, ok := signalsByRoot[rootID]; ok {
+			session.Meaning = Classify(*merged)
 		}
 		found = append(found, *session)
 	}
@@ -102,7 +109,7 @@ func (s *CodexSource) Discover(ctx context.Context, opts DiscoverOptions) ([]Imp
 	return capRecent(found, opts.MaxPerProvider), nil
 }
 
-func (s *CodexSource) scanRoot(ctx context.Context, home, root string, titles map[string]codexTitle, opts DiscoverOptions, grouped map[string]*ImportableSession) error {
+func (s *CodexSource) scanRoot(ctx context.Context, home, root string, titles map[string]codexTitle, opts DiscoverOptions, grouped map[string]*ImportableSession, signalsByRoot map[string]*Signals) error {
 	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			if errors.Is(walkErr, os.ErrNotExist) {
@@ -122,6 +129,12 @@ func (s *CodexSource) scanRoot(ctx context.Context, home, root string, titles ma
 		}
 		if ok {
 			mergeCodexSegment(grouped, seg, titles)
+			if existing, found := signalsByRoot[seg.rootID]; found {
+				*existing = mergeSignals(*existing, seg.signals)
+			} else {
+				merged := seg.signals
+				signalsByRoot[seg.rootID] = &merged
+			}
 		}
 		return nil
 	})
@@ -237,9 +250,14 @@ func (s *CodexSource) readSegment(ctx context.Context, path string, opts Discove
 		}
 	}
 
+	// One full pass yields both the display count and the import signals.
+	signals := Signals{FirstPrompt: meta.firstUserText}
 	count := 0
 	if size <= fullCountMaxBytes {
-		count = countCodexMessages(path)
+		signals, count = scanCodexSignals(path)
+		if signals.FirstPrompt == "" {
+			signals.FirstPrompt = meta.firstUserText
+		}
 	}
 
 	return codexSegment{
@@ -251,6 +269,7 @@ func (s *CodexSource) readSegment(ctx context.Context, path string, opts Discove
 		transcriptPath: path,
 		sizeBytes:      size,
 		messageCount:   count,
+		signals:        signals,
 	}, true, nil
 }
 
@@ -368,10 +387,23 @@ func codexLineTimestamp(raw []byte) string {
 	return env.Timestamp
 }
 
-// countCodexMessages counts user and assistant messages recorded as
-// response_items, matching what a reader would see as conversation turns.
-func countCodexMessages(path string) int {
-	count := 0
+// codexToolCallTypes are the response_item payload types Codex writes when the
+// agent does something to the machine rather than talk: shell commands, patch
+// application, and tool invocations.
+var codexToolCallTypes = map[string]struct{}{
+	"function_call":    {},
+	"local_shell_call": {},
+	"custom_tool_call": {},
+	"exec_command":     {},
+	"apply_patch":      {},
+}
+
+// scanCodexSignals reads a rollout segment once and returns the import signals
+// plus the visible message count, mirroring scanClaudeSignals so the two
+// providers are classified on identical terms.
+func scanCodexSignals(path string) (Signals, int) {
+	signals := Signals{Scanned: true}
+	visible := 0
 	_ = scanLines(path, func(raw []byte) bool {
 		var env codexEnvelope
 		if err := json.Unmarshal(raw, &env); err != nil {
@@ -387,12 +419,32 @@ func countCodexMessages(path string) int {
 		if err := json.Unmarshal(env.Payload, &item); err != nil {
 			return true
 		}
-		if item.Type == "message" && (item.Role == "user" || item.Role == "assistant") {
-			count++
+		if _, isTool := codexToolCallTypes[item.Type]; isTool {
+			signals.ToolCalls++
+			return true
+		}
+		if item.Type != "message" || (item.Role != "user" && item.Role != "assistant") {
+			return true
+		}
+		visible++
+		if !signals.AuthFailure && hasAuthFailureMarker(strings.ToLower(string(raw))) {
+			signals.AuthFailure = true
+		}
+		if item.Role == "assistant" {
+			signals.AssistantMessages++
+			return true
+		}
+		text := firstCodexUserText(env.Payload)
+		if strings.TrimSpace(text) == "" {
+			return true
+		}
+		signals.UserMessages++
+		if signals.FirstPrompt == "" {
+			signals.FirstPrompt = text
 		}
 		return true
 	})
-	return count
+	return signals, visible
 }
 
 type codexTitle struct {

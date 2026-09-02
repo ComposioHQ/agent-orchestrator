@@ -140,9 +140,16 @@ func (s *ClaudeSource) readSession(ctx context.Context, configDir, path, fileNam
 		return ImportableSession{}, false, nil
 	}
 
+	// One full pass yields both the display count and the import signals. A
+	// transcript too large to scan keeps count 0 (unknown) and is classified
+	// meaningful on size alone.
+	signals := Signals{FirstPrompt: meta.firstUserText}
 	count := 0
 	if size <= fullCountMaxBytes {
-		count = countClaudeMessages(path)
+		signals, count = scanClaudeSignals(path)
+		if signals.FirstPrompt == "" {
+			signals.FirstPrompt = meta.firstUserText
+		}
 	}
 
 	title := titleFrom(meta.aiTitle, meta.firstUserText, nativeID)
@@ -158,6 +165,7 @@ func (s *ClaudeSource) readSession(ctx context.Context, configDir, path, fileNam
 		LastActivity:    last,
 		MessageCount:    count,
 		SizeBytes:       size,
+		Meaning:         Classify(signals),
 	}, true, nil
 }
 
@@ -255,15 +263,24 @@ func claudeLineTimestamp(raw []byte) string {
 	return line.Timestamp
 }
 
-// countClaudeMessages counts user and assistant events in a transcript,
-// excluding sub-agent (side-chain) events so the number reflects the main
-// conversation the user would recognize.
-func countClaudeMessages(path string) int {
-	count := 0
+// scanClaudeSignals reads a transcript once and returns both the signals that
+// decide whether the conversation is worth importing and the visible message
+// count shown in the list. Sub-agent (side-chain) events are excluded so the
+// numbers reflect the conversation the user would recognize as theirs.
+//
+// The two counts differ on purpose. The display count includes every user and
+// assistant event, matching what a reader would scroll through. The signal
+// count includes only typed human turns, because a user event carrying a tool
+// result is the transcript echoing the agent's own work back, and counting it
+// would make an unattended session look like a conversation.
+func scanClaudeSignals(path string) (Signals, int) {
+	signals := Signals{Scanned: true}
+	visible := 0
 	_ = scanLines(path, func(raw []byte) bool {
 		var line struct {
-			Type        string `json:"type"`
-			IsSidechain bool   `json:"isSidechain"`
+			Type        string     `json:"type"`
+			IsSidechain bool       `json:"isSidechain"`
+			Message     *claudeMsg `json:"message"`
 		}
 		if err := json.Unmarshal(raw, &line); err != nil {
 			return true
@@ -271,11 +288,55 @@ func countClaudeMessages(path string) int {
 		if line.IsSidechain {
 			return true
 		}
-		if line.Type == "user" || line.Type == "assistant" {
-			count++
+		if line.Type != "user" && line.Type != "assistant" {
+			return true
+		}
+		visible++
+		if !signals.AuthFailure && hasAuthFailureMarker(strings.ToLower(string(raw))) {
+			signals.AuthFailure = true
+		}
+		switch line.Type {
+		case "user":
+			text := ""
+			if line.Message != nil {
+				text = firstClaudeUserText(line.Message.Content)
+			}
+			if strings.TrimSpace(text) == "" {
+				return true
+			}
+			signals.UserMessages++
+			if signals.FirstPrompt == "" {
+				signals.FirstPrompt = text
+			}
+		case "assistant":
+			signals.AssistantMessages++
+			if line.Message != nil {
+				signals.ToolCalls += countClaudeToolUses(line.Message.Content)
+			}
 		}
 		return true
 	})
+	return signals, visible
+}
+
+// countClaudeToolUses counts tool_use blocks in an assistant message. Each one
+// is a file edit, a command, or another tool invocation: evidence of real work.
+func countClaudeToolUses(content json.RawMessage) int {
+	if len(content) == 0 {
+		return 0
+	}
+	var blocks []struct {
+		Type string `json:"type"`
+	}
+	if err := json.Unmarshal(content, &blocks); err != nil {
+		return 0
+	}
+	count := 0
+	for _, b := range blocks {
+		if b.Type == "tool_use" {
+			count++
+		}
+	}
 	return count
 }
 

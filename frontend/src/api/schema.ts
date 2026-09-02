@@ -2308,6 +2308,8 @@ export interface components {
             cwd: string;
             /** @description RFC3339 timestamp of the most recent activity. */
             lastActivity: string;
+            /** @description Import verdict from the transcript's content: meaningful, or ambiguous when the local heuristic could not decide. Trivial conversations are withheld and never listed. */
+            meaning: string;
             /** @description Best-effort visible message count; 0 when the transcript is too large to count cheaply. */
             messageCount: number;
             /** @description The provider's own session id, used to bind and resume the imported session. */

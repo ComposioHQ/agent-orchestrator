@@ -43,6 +43,7 @@ type ImportableSessionView struct {
 	MessageCount    int    `json:"messageCount" description:"Best-effort visible message count; 0 when the transcript is too large to count cheaply."`
 	SizeBytes       int64  `json:"sizeBytes" description:"Transcript size on disk in bytes."`
 	AlreadyImported bool   `json:"alreadyImported" description:"True when an AO session is already bound to this native session id."`
+	Meaning         string `json:"meaning" description:"Import verdict from the transcript's content: meaningful, or ambiguous when the local heuristic could not decide. Trivial conversations are withheld and never listed."`
 }
 
 // ListImportableSessionsQuery is the discovery query.
@@ -164,5 +165,6 @@ func importableView(s sessionimport.ImportableSession) ImportableSessionView {
 		MessageCount:    s.MessageCount,
 		SizeBytes:       s.SizeBytes,
 		AlreadyImported: s.AlreadyImported,
+		Meaning:         string(s.Meaning),
 	}
 }

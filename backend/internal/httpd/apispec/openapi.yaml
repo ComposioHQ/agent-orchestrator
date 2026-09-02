@@ -6742,6 +6742,11 @@ components:
         lastActivity:
           description: RFC3339 timestamp of the most recent activity.
           type: string
+        meaning:
+          description: 'Import verdict from the transcript''s content: meaningful,
+            or ambiguous when the local heuristic could not decide. Trivial conversations
+            are withheld and never listed.'
+          type: string
         messageCount:
           description: Best-effort visible message count; 0 when the transcript is
             too large to count cheaply.
@@ -6771,6 +6776,7 @@ components:
       - messageCount
       - sizeBytes
       - alreadyImported
+      - meaning
       type: object
     ControllersListImportableSessionsResponse:
       properties:
