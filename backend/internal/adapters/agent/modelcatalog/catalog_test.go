@@ -101,7 +101,7 @@ func TestBaseClassifiesStaticTextAndModeAgents(t *testing.T) {
 		{agent: "claude-code", mode: ports.ModelSelectionCatalog},
 		{agent: "codex", mode: ports.ModelSelectionCatalog},
 		{agent: "amp", mode: ports.ModelSelectionModeList, count: 4},
-		{agent: "muse", mode: ports.ModelSelectionCatalog},
+		{agent: "muse", mode: ports.ModelSelectionCatalog, count: 3},
 		{agent: "aider", mode: ports.ModelSelectionCatalog},
 		{agent: "autohand", mode: ports.ModelSelectionCatalog},
 		{agent: "kimchi", mode: ports.ModelSelectionCatalog},
@@ -120,6 +120,53 @@ func TestBaseClassifiesStaticTextAndModeAgents(t *testing.T) {
 				t.Fatalf("Base(%q) = %#v", tc.agent, got)
 			}
 		})
+	}
+}
+
+func TestMuseReturnsStaticCatalogWithoutStartingAgent(t *testing.T) {
+	got, err := (Discoverer{}).Discover(context.Background(), ports.AgentModelDiscoveryRequest{
+		AgentID: "muse",
+		Binary:  "/missing/muse",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []ports.AgentModelInfo{
+		{ID: "muse-spark", Label: "Muse Spark", IsDefault: true},
+		{ID: "muse-spark-1.1", Label: "Muse Spark 1.1"},
+		{ID: "muse-spark-1.2", Label: "Muse Spark 1.2"},
+	}
+	if got.Source != "official-catalog" || !reflect.DeepEqual(got.Models, want) {
+		t.Fatalf("catalog = %#v, want models %#v", got, want)
+	}
+}
+
+func TestClaudeReturnsStaticCatalogWithConfiguredFallback(t *testing.T) {
+	t.Setenv("ANTHROPIC_MODEL", "")
+	t.Setenv("HOME", t.TempDir())
+	got, err := (Discoverer{}).Discover(context.Background(), ports.AgentModelDiscoveryRequest{
+		AgentID: "claude-code",
+		Binary:  "/missing/claude",
+		Env:     map[string]string{"ANTHROPIC_MODEL": "claude-opus-4-5-20251101"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantLabels := map[string]string{
+		"sonnet": "Sonnet", "fable": "Fable 5.1", "opus": "Opus",
+		"haiku": "Haiku", "opus[1m]": "Opus (1M context)",
+		"claude-opus-4-5-20251101": "claude-opus-4-5-20251101",
+	}
+	if got.Source != "catalog" || len(got.Models) != len(wantLabels) {
+		t.Fatalf("catalog = %#v", got)
+	}
+	for _, item := range got.Models {
+		if wantLabels[item.ID] != item.Label {
+			t.Fatalf("unexpected model %#v", item)
+		}
+		if item.IsDefault != (item.ID == "claude-opus-4-5-20251101") {
+			t.Fatalf("default marker = %#v", item)
+		}
 	}
 }
 
@@ -210,8 +257,8 @@ openai     gpt-5.6-sol           400K     128K     yes       yes
 	}
 }
 
-func TestBaseDiscoverableCatalogsContainNoAOOwnedModelIDs(t *testing.T) {
-	for _, agentID := range []string{"claude-code", "codex", "muse"} {
+func TestBaseDynamicCatalogsContainNoAOOwnedModelIDs(t *testing.T) {
+	for _, agentID := range []string{"claude-code", "codex"} {
 		t.Run(agentID, func(t *testing.T) {
 			got := Base(agentID)
 			if got.SelectionMode != ports.ModelSelectionCatalog || !got.AllowCustom || got.Source != "cli" {

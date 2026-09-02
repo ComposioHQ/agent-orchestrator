@@ -67,6 +67,12 @@ func Base(agentID string) ports.AgentModelCatalog {
 	now := time.Now().UTC()
 	entryMode := customModelEntryMode(agentID)
 	switch agentID {
+	case "muse":
+		return catalog(agentID, "official-catalog", entryMode, now,
+			model("muse-spark", "Muse Spark", true),
+			model("muse-spark-1.1", "Muse Spark 1.1", false),
+			model("muse-spark-1.2", "Muse Spark 1.2", false),
+		)
 	case "amp":
 		c := catalog(agentID, "official-modes", entryMode, now,
 			model("low", "Low", false),
@@ -127,9 +133,8 @@ func customModelEntryMode(agentID string) ports.CustomModelEntryMode {
 
 // Discoverer implements the model-discovery port for production daemon wiring.
 type Discoverer struct {
-	TerminalSpawner TerminalSpawnFunc
-	CodexModels     CodexModelListFunc
-	ClineOptions    ClineConfigOptionListFunc
+	CodexModels  CodexModelListFunc
+	ClineOptions ClineConfigOptionListFunc
 }
 
 // CodexModelListFunc obtains Codex's account-scoped app-server catalog without
@@ -146,7 +151,7 @@ func (d Discoverer) Discover(ctx context.Context, request ports.AgentModelDiscov
 		return discoverClaudeCatalog(request), nil
 	}
 	if request.AgentID == "muse" {
-		return discoverTerminalCatalog(ctx, request, d.TerminalSpawner)
+		return Base(request.AgentID), nil
 	}
 	if request.AgentID == "codex" {
 		return discoverCodexCatalog(ctx, request, d.CodexModels)
@@ -187,6 +192,24 @@ func discoverClaudeCatalog(request ports.AgentModelDiscoveryRequest) ports.Agent
 	return base
 }
 
+func applyClaudeConfiguredDefault(models []ports.AgentModelInfo, workingDir string, env map[string]string) []ports.AgentModelInfo {
+	configured := claudeCodeResolvedModel(workingDir, env)
+	if configured == "" {
+		return models
+	}
+	matched := false
+	for i := range models {
+		models[i].IsDefault = strings.EqualFold(models[i].ID, configured)
+		matched = matched || models[i].IsDefault
+	}
+	if !matched {
+		// Claude accepts custom aliases and pinned snapshots beyond the static
+		// picker snapshot. Keep the effective configured model visible.
+		models = append(models, ports.AgentModelInfo{ID: configured, Label: configured, IsDefault: true})
+	}
+	return models
+}
+
 // CatalogFingerprint returns a stable fingerprint of the discovery inputs: the
 // installed agent binary plus the configuration this adapter reads to build the
 // catalog. Folding configuration in is what lets a settings edit invalidate a
@@ -205,7 +228,7 @@ func Discover(ctx context.Context, agentID, binary, workingDir string, env map[s
 		return discoverClaudeCatalog(ports.AgentModelDiscoveryRequest{AgentID: agentID, WorkingDir: workingDir, Env: env}), nil
 	}
 	if agentID == "muse" {
-		return base, errors.New("interactive model discovery requires a private terminal")
+		return base, nil
 	}
 	if agentID == "codex" {
 		return base, errors.New("codex model discovery requires app-server")
@@ -378,7 +401,7 @@ func claudeCodeSettingsModel(path string) string {
 
 func hasDiscoverySource(agentID string) bool {
 	switch agentID {
-	case "claude-code", "codex", "muse":
+	case "claude-code", "codex":
 		return true
 	}
 	if hasConfigDiscoverySource(agentID) {

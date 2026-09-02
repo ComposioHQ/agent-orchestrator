@@ -2,14 +2,14 @@
 
 ## Goal
 
-Remove every release-time model-ID list from AO. Claude Code ships a static catalog snapshot mirroring the model choices its ACP sessions advertise, Muse uses `/model`, and Codex reads its structured app-server `model/list`. Amp's documented execution modes remain because they are modes, not provider model IDs.
+Remove stale release-time model-ID lists where an agent exposes a safe structured source. Claude Code and Muse ship small static catalog snapshots, while Codex reads its structured app-server `model/list`. Amp's documented execution modes remain because they are modes, not provider model IDs.
 
 ## Scope
 
-- Remove the hardcoded Codex and Muse model catalogs.
+- Remove the hardcoded Codex catalog.
 - Ship a static Claude Code catalog snapshot mirroring its ACP session model choices, refreshed manually when advertised models change.
+- Keep Muse's existing static Spark catalog so opening the picker never starts Muse or creates terminal-side effects.
 - Discover Codex choices from the installed Codex app-server protocol and cache them.
-- Discover Muse choices from the installed Muse TUI and cache them.
 - Reuse the existing `AgentModelCatalog` response, SQLite cache, HTTP routes, frontend controls, and manual Refresh action.
 - Warm previously cached Claude Code and Muse project scopes after daemon startup without blocking readiness.
 - Preserve the last successful agent-provided catalog when discovery fails.
@@ -22,10 +22,10 @@ AO chooses a catalog source in this order:
 
 1. A documented machine-readable command owned by the agent.
 2. A structured local protocol owned by the agent.
-3. A narrowly scoped interactive probe when the user has explicitly accepted that compatibility tradeoff.
+3. A small manually refreshed static snapshot when runtime discovery would require starting an interactive agent.
 4. Unrestricted free-text entry when no reliable discovery surface exists.
 
-AO does not fall back to a bundled model-ID table. A failed discovery returns the last successful cache; without one, it returns the manual text catalog and a warning.
+Dynamic discovery does not fall back to an unrelated bundled table. Claude and Muse are explicit static-source exceptions. A failed dynamic discovery returns the last successful cache; without one, it returns the manual text catalog and a warning.
 
 ## Claude Code Discovery
 
@@ -43,13 +43,11 @@ The catalog uses provider-returned IDs, display names, default flags, and availa
 
 Codex discovery failure follows the shared cached/manual fallback. The existing model cache and six-hour lazy revalidation apply; no separate startup refresh is required for Codex.
 
-## Muse Discovery
+## Muse Catalog
 
-Muse 0.2.1 has no non-interactive model-list command, but its installed TUI exposes `/model` as the native model picker. AO removes the static Muse Spark list and uses a private PTY: start Muse with no initial prompt and session logging disabled, wait for the empty composer, submit only `/model`, capture a complete stable menu, and close without selecting a model or submitting a provider prompt.
+Muse has no side-effect-free machine-readable model-list command. AO therefore keeps the existing static catalog: `muse-spark`, `muse-spark-1.1`, and `muse-spark-1.2`.
 
-Muse has its own parser because its menu layout and launch values are agent-owned and need not match Claude's alias conventions. AO records only model identifiers that the menu exposes unambiguously. It preserves Muse's display label, provider information, and default marker when present. If a row exposes only a display name with no reliable `--model` value, discovery fails all-or-nothing rather than inventing an identifier.
-
-Authentication, stale local broker state, workspace interaction, timeout, incomplete menus, and process exit follow the shared failure policy: retain the last successful cache, otherwise expose unrestricted text entry with a warning. Muse discovery does not repair or terminate existing Muse sessions.
+Catalog reads never launch Muse, allocate a PTY, write `/model`, create session logs, or interact with authentication and workspace prompts. The snapshot is refreshed manually when Muse's supported selectors change, and direct custom model entry remains available.
 
 ## Cache and Refresh
 
@@ -57,34 +55,34 @@ Catalogs remain keyed by agent and project because environment, configuration, a
 
 For normal reads, AO returns the valid stored catalog immediately. A binary or relevant configuration fingerprint change invalidates it. Successful discovered catalogs use the existing six-hour trust window; once expired, the next catalog request serves cache first and triggers background revalidation. Manual Refresh forces discovery. In-flight loads for the same agent/project/mode remain coalesced.
 
-### Interactive Startup Warm
+### Static Startup Warm
 
 The cache port gains a read operation that lists previously cached project scopes for an agent. After daemon services are constructed, AO warms cached Claude Code and Muse scopes asynchronously and sequentially. Daemon readiness never waits for either agent.
 
-A successful validation within the preceding ten minutes suppresses startup refresh for that scope, preventing crash/restart loops. A daemon with no previously cached scope for an interactive agent performs no speculative probe; the first picker request creates it. Discovery failure cannot replace a more useful cached catalog.
+A successful validation within the preceding ten minutes suppresses startup refresh for that scope. A daemon with no previously cached static scope performs no speculative work; the first picker request creates it.
 
 Codex relies on fingerprint invalidation and six-hour/manual refresh rather than startup warming.
 
 ## Boundaries and Safety
 
 - No discovery starts an AO session, worktree, or provider turn.
-- Claude Code discovery launches no SDK or interactive client; Muse sends only `/model` and Enter.
+- Claude Code and Muse catalog reads launch no SDK, interactive client, or PTY.
 - Codex discovery sends only app-server initialization and `model/list` before closing.
-- Startup work is background-only and interactive scopes run sequentially.
+- Startup work is background-only and cached static scopes run sequentially.
 - Raw terminal/protocol output is not persisted; only normalized catalog data and existing metadata enter SQLite.
 - Last-known-good cache, request coalescing, timeouts, warnings, and custom model support remain authoritative.
-- Amp modes remain the only static picker values among these four agents, explicitly classified as a mode enum rather than a model catalog.
+- Claude and Muse use explicit static model snapshots; Amp's static values are classified separately as execution modes.
 
 ## Testing
 
 Claude model-catalog tests assert the static catalog is returned without launching the Agent SDK or a terminal, and that the configured-model default marker is applied.
 
-Muse adapter tests use a fake PTY and recorded `/model` transcripts to cover explicit IDs, labels, providers, defaults, fragmented output, stale-broker/authentication errors, ambiguous label-only rows, timeout, cancellation, session-log disabling, and cleanup.
+Muse model-catalog tests assert the three legacy Spark selectors, labels, and default marker are returned without starting the agent or allocating a PTY.
 
 Codex adapter tests use a fake app-server transport to prove that `model/list` returns provider IDs, names, defaults, and hidden filtering without starting a thread. They also cover protocol errors, timeout, and process cleanup.
 
-Model-catalog tests prove that Claude returns the static catalog without the terminal spawner or Agent SDK; Codex and Muse no longer receive bundled model IDs; discovery returns manual selection only when it has no cache; Amp remains a mode list; and existing command-discovered agents are unchanged.
+Model-catalog tests prove that Claude and Muse return their static catalogs without a terminal or SDK; Codex receives no bundled model IDs; discovery returns manual selection only when it has no cache; Amp remains a mode list; and existing command-discovered agents are unchanged.
 
 Agent-service tests cover cache-first reads, successful replacement, failure preservation, six-hour lazy revalidation, in-flight coalescing, Claude/Muse startup scope enumeration, sequential warmup, and the ten-minute restart guard. Storage tests cover listing cached scopes without a schema change. Daemon tests prove startup warming is scheduled after construction and does not block readiness.
 
-Verification runs focused adapter, model-catalog, service, storage, and daemon tests; the complete backend suite; frontend typecheck; and real AO desktop checks confirming Claude Fable, the live Codex catalog, and Muse's native model choices appear; cached catalogs survive restart; failure retains prior choices; and Amp modes remain unchanged.
+Verification runs focused adapter, model-catalog, service, storage, and daemon tests; the complete backend suite; frontend typecheck; and real AO desktop checks confirming Claude Fable, the live Codex catalog, and Muse's static Spark choices appear; cached catalogs survive restart; failure retains prior choices; and Amp modes remain unchanged.
