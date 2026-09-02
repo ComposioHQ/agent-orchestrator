@@ -1542,5 +1542,9 @@
 	"settings.models.customAgentModelAria": "Custom {{label}} model",
 	"settings.importSessions": "Import sessions",
 	"importSession.descriptionProject": "Bring a Claude Code or Codex conversation from this project's folder into AO as a resumable session.",
-	"importSession.emptyBodyProject": "Nothing from Claude Code or Codex in this project in the last {{days}} days."
+	"importSession.emptyBodyProject": "Nothing from Claude Code or Codex in this project in the last {{days}} days.",
+	"importSession.hintBody": "Bring your existing Claude Code and Codex conversations into AO.",
+	"importSession.hintAction": "Take a look",
+	"importSession.hintDismiss": "Dismiss the import suggestion",
+	"importSession.hintTitle": "Coming from another agent?"
 }

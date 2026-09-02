@@ -1560,5 +1560,9 @@
 	"importSession.today": "오늘",
 	"importSession.yesterday": "어제",
 	"importSession.daysAgo_one": "{{count}}일 전",
-	"importSession.daysAgo_other": "{{count}}일 전"
+	"importSession.daysAgo_other": "{{count}}일 전",
+	"importSession.hintBody": "기존 Claude Code 및 Codex 대화를 AO로 가져오세요.",
+	"importSession.hintAction": "살펴보기",
+	"importSession.hintDismiss": "가져오기 제안 닫기",
+	"importSession.hintTitle": "다른 에이전트에서 오셨나요?"
 }

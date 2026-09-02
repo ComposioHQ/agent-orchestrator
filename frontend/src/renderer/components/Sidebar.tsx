@@ -125,6 +125,7 @@ import { useUiStore } from "../stores/ui-store"
 import { useKeybindingsStore } from "../stores/keybindings-store";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { CreateProjectFlow, type CloneProjectInput, type CreateProjectInput } from "./CreateProjectFlow";
+import { ImportSessionsHint } from "./ImportSessionsHint";
 import { ResizeHandle } from "./ResizeHandle";
 import { isLinuxPlatform, isMacPlatform, isWindowsPlatform } from "../lib/platform";
 import { useCloudSession } from "../lib/cloud-session";
@@ -854,6 +855,8 @@ export function Sidebar({
 					</SidebarGroupContent>
 				</SidebarGroup>
 			</SidebarContent>
+
+			<ImportSessionsHint />
 
 			{/* Footer — Settings opens the global settings page directly.
 			    Its hairline and row height match the board Archive bar. Bottom

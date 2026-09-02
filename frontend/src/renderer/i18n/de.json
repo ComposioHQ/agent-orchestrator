@@ -1560,5 +1560,9 @@
 	"importSession.today": "Heute",
 	"importSession.yesterday": "Gestern",
 	"importSession.daysAgo_one": "vor {{count}} Tag",
-	"importSession.daysAgo_other": "vor {{count}} Tagen"
+	"importSession.daysAgo_other": "vor {{count}} Tagen",
+	"importSession.hintBody": "Übernehmen Sie Ihre vorhandenen Claude-Code- und Codex-Unterhaltungen in AO.",
+	"importSession.hintAction": "Ansehen",
+	"importSession.hintDismiss": "Importvorschlag ausblenden",
+	"importSession.hintTitle": "Von einem anderen Agenten?"
 }

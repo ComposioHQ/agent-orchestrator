@@ -1579,5 +1579,9 @@
 	"importSession.yesterday": "Hier",
 	"importSession.daysAgo_one": "il y a {{count}} jour",
 	"importSession.daysAgo_many": "il y a {{count}} jours",
-	"importSession.daysAgo_other": "il y a {{count}} jours"
+	"importSession.daysAgo_other": "il y a {{count}} jours",
+	"importSession.hintBody": "Importez dans AO vos conversations Claude Code et Codex existantes.",
+	"importSession.hintAction": "Jeter un œil",
+	"importSession.hintDismiss": "Masquer la suggestion d'importation",
+	"importSession.hintTitle": "Vous venez d'un autre agent ?"
 }

@@ -1560,5 +1560,9 @@
 	"importSession.today": "今日",
 	"importSession.yesterday": "昨日",
 	"importSession.daysAgo_one": "{{count}} 日前",
-	"importSession.daysAgo_other": "{{count}} 日前"
+	"importSession.daysAgo_other": "{{count}} 日前",
+	"importSession.hintBody": "既存の Claude Code や Codex の会話を AO に取り込みましょう。",
+	"importSession.hintAction": "確認する",
+	"importSession.hintDismiss": "インポートの提案を閉じる",
+	"importSession.hintTitle": "他のエージェントから移行しますか？"
 }

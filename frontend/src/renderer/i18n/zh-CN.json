@@ -1542,5 +1542,9 @@
 	"importSession.today": "今天",
 	"importSession.yesterday": "昨天",
 	"importSession.daysAgo_one": "{{count}} 天前",
-	"importSession.daysAgo_other": "{{count}} 天前"
+	"importSession.daysAgo_other": "{{count}} 天前",
+	"importSession.hintBody": "把你已有的 Claude Code 和 Codex 对话导入 AO。",
+	"importSession.hintAction": "去看看",
+	"importSession.hintDismiss": "忽略导入建议",
+	"importSession.hintTitle": "从其他代理迁移过来？"
 }

@@ -1579,5 +1579,9 @@
 	"importSession.yesterday": "Ontem",
 	"importSession.daysAgo_one": "há {{count}} dia",
 	"importSession.daysAgo_many": "há {{count}} dias",
-	"importSession.daysAgo_other": "há {{count}} dias"
+	"importSession.daysAgo_other": "há {{count}} dias",
+	"importSession.hintBody": "Traga suas conversas do Claude Code e do Codex para o AO.",
+	"importSession.hintAction": "Dar uma olhada",
+	"importSession.hintDismiss": "Dispensar a sugestão de importação",
+	"importSession.hintTitle": "Vindo de outro agente?"
 }
