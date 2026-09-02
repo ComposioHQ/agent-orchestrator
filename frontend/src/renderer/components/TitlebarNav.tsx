@@ -82,7 +82,7 @@ export function TitlebarNav({
       ? "top-1.5"
       : isFullScreen
         ? "top-0"
-        : "-top-0.6";
+        : "top-[2.9px]";
   const heightClass =
     isMac && isFullScreen
       ? "h-traffic-light-clearance-fullscreen"
