@@ -133,6 +133,24 @@ func TestValidateProjectImportMissingPathReturnsBlockingError(t *testing.T) {
 	}
 }
 
+func TestValidateProjectImportFilePathReturnsBlockingError(t *testing.T) {
+	ctx := context.Background()
+	file := filepath.Join(t.TempDir(), "not-a-directory")
+	if err := os.WriteFile(file, []byte("not a directory"), 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+	svc := New(Deps{Store: newFakeStore()})
+
+	result, err := svc.Validate(ctx, ImportValidationInput{ImportKind: ImportKindProject, Path: file})
+	if err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	if result.IsValid || result.NextStep != ImportNextStepError {
+		t.Fatalf("result = %#v, want invalid error", result)
+	}
+	wantActions(t, result.BlockingErrors, []string{"PATH_NOT_DIRECTORY"})
+}
+
 func TestValidateProjectImportUnbornRepositoryNeedsCommitAndRemote(t *testing.T) {
 	ctx := context.Background()
 	repo := filepath.Join(t.TempDir(), "repo")
@@ -149,6 +167,22 @@ func TestValidateProjectImportUnbornRepositoryNeedsCommitAndRemote(t *testing.T)
 		t.Fatalf("result = %#v, want unborn repo needing preparation", result)
 	}
 	wantActions(t, result.Root.RequiredActions, []string{GitPreparationActionCommit, GitPreparationActionSetRemote})
+}
+
+func TestValidateProjectImportRepositoryWithCommitNoOriginNeedsRemote(t *testing.T) {
+	ctx := context.Background()
+	repo := filepath.Join(t.TempDir(), "repo")
+	gitRepoWithCommitNoOrigin(t, repo)
+	svc := New(Deps{Store: newFakeStore()})
+
+	result, err := svc.Validate(ctx, ImportValidationInput{ImportKind: ImportKindProject, Path: repo})
+	if err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	if !result.IsValid || result.NextStep != ImportNextStepPrepareGit || !result.Root.IsRepo || !result.Root.HasCommit || result.Root.HasOrigin {
+		t.Fatalf("result = %#v, want committed repo needing origin", result)
+	}
+	wantActions(t, result.Root.RequiredActions, []string{GitPreparationActionSetRemote})
 }
 
 func TestValidateProjectImportParentWithChildReposChoosesImportKind(t *testing.T) {

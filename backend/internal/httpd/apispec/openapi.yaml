@@ -182,7 +182,69 @@ paths:
               schema:
                 $ref: '#/components/schemas/APIError'
           description: Not Implemented
-      summary: Run a fresh local readiness probe for one agent adapter
+      summary: Ensure launch-fresh readiness for one agent adapter
+      tags:
+      - agents
+  /api/v1/agents/readiness:
+    get:
+      operationId: getAgentReadiness
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentReadinessResponse'
+          description: OK
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Return cached normalized agent readiness without running native checks
+      tags:
+      - agents
+  /api/v1/agents/readiness/ensure:
+    post:
+      operationId: ensureAgentReadiness
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EnsureAgentReadinessRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentReadinessResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Ensure normalized readiness for selected agent adapters
       tags:
       - agents
   /api/v1/agents/refresh:
@@ -2895,6 +2957,59 @@ paths:
                 $ref: '#/components/schemas/APIError'
           description: Not Implemented
       summary: List the models the provider offers for a chat session
+      tags:
+      - conversations
+  /api/v1/sessions/{sessionId}/conversation/queue/reorder:
+    post:
+      operationId: reorderQueuedSessionConversationTurns
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReorderQueuedConversationTurnsRequest'
+        required: true
+      responses:
+        "204":
+          description: No Content
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Rewrite the durable queue order for undispatched turns
       tags:
       - conversations
   /api/v1/sessions/{sessionId}/conversation/settings:
@@ -5783,6 +5898,43 @@ components:
       required:
       - path
       type: object
+    AgentAuthenticationObservation:
+      properties:
+        attemptedAt:
+          format: date-time
+          type:
+          - "null"
+          - string
+        checkedAt:
+          format: date-time
+          type:
+          - "null"
+          - string
+        freshness:
+          enum:
+          - fresh
+          - stale
+          - checking
+          type: string
+        reason:
+          type: string
+        reasonCode:
+          type: string
+        state:
+          enum:
+          - authorized
+          - unauthorized
+          - unknown
+          - not_applicable
+          type: string
+      required:
+      - state
+      - freshness
+      - checkedAt
+      - attemptedAt
+      - reasonCode
+      - reason
+      type: object
     AgentConfig:
       properties:
         mode:
@@ -5819,6 +5971,42 @@ components:
       required:
       - id
       - label
+      type: object
+    AgentInstallationObservation:
+      properties:
+        attemptedAt:
+          format: date-time
+          type:
+          - "null"
+          - string
+        checkedAt:
+          format: date-time
+          type:
+          - "null"
+          - string
+        freshness:
+          enum:
+          - fresh
+          - stale
+          - checking
+          type: string
+        reason:
+          type: string
+        reasonCode:
+          type: string
+        state:
+          enum:
+          - installed
+          - not_installed
+          - unknown
+          type: string
+      required:
+      - state
+      - freshness
+      - checkedAt
+      - attemptedAt
+      - reasonCode
+      - reason
       type: object
     AgentModelInfo:
       properties:
@@ -5874,6 +6062,46 @@ components:
       - source
       - fetchedAt
       - stale
+      type: object
+    AgentReadinessResponse:
+      properties:
+        agents:
+          items:
+            $ref: '#/components/schemas/AgentReadinessSnapshot'
+          type: array
+      required:
+      - agents
+      type: object
+    AgentReadinessSnapshot:
+      properties:
+        authentication:
+          $ref: '#/components/schemas/AgentAuthenticationObservation'
+        effectiveReadiness:
+          enum:
+          - ready
+          - not_ready
+          - unknown
+          type: string
+        id:
+          type: string
+        installation:
+          $ref: '#/components/schemas/AgentInstallationObservation'
+        label:
+          type: string
+        lastUsedAt:
+          format: date-time
+          type:
+          - "null"
+          - string
+        usageCount:
+          type: integer
+      required:
+      - id
+      - label
+      - installation
+      - authentication
+      - effectiveReadiness
+      - usageCount
       type: object
     AgentSwitch:
       properties:
@@ -6318,6 +6546,8 @@ components:
           items:
             $ref: '#/components/schemas/SessionPRFacts'
           type: array
+        reviewerConfig:
+          $ref: '#/components/schemas/AgentConfig'
         reviewerHarness:
           enum:
           - claude-code
@@ -7232,6 +7462,8 @@ components:
       type: object
     DomainReviewerConfig:
       properties:
+        agentConfig:
+          $ref: '#/components/schemas/AgentConfig'
         harness:
           type: string
       required:
@@ -7284,6 +7516,20 @@ components:
           type: array
       required:
       - endpoints
+      type: object
+    EnsureAgentReadinessRequest:
+      properties:
+        agentIds:
+          items:
+            type: string
+          type: array
+        purpose:
+          enum:
+          - display
+          - launch
+          type: string
+      required:
+      - purpose
       type: object
     EstimatedCostResponse:
       properties:
@@ -8341,6 +8587,15 @@ components:
       - sessionId
       - displayName
       type: object
+    ReorderQueuedConversationTurnsRequest:
+      properties:
+        turnIds:
+          items:
+            type: string
+          type: array
+      required:
+      - turnIds
+      type: object
     RepoGitStatus:
       properties:
         blockingErrors:
@@ -9253,6 +9508,8 @@ components:
       type: object
     SetSessionReviewerRequest:
       properties:
+        agentConfig:
+          $ref: '#/components/schemas/AgentConfig'
         harness:
           enum:
           - claude-code
@@ -9648,6 +9905,8 @@ components:
       type: object
     TriggerReviewRequest:
       properties:
+        agentConfig:
+          $ref: '#/components/schemas/AgentConfig'
         harness:
           enum:
           - claude-code

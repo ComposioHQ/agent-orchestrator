@@ -10,6 +10,7 @@ import { useUiStore } from "../stores/ui-store";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Switch } from "./ui/switch";
+import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "./ui/resizable";
 import { FileTree } from "./FileTree";
 import { FileContentPane } from "./FileContentPane";
@@ -114,36 +115,46 @@ export function SessionFileExplorer({
 					/>
 					{t("files.explorer.changedOnly")}
 				</label>
-				<Button
-					aria-label={split ? t("files.unifiedDiff") : t("files.splitDiff")}
-					aria-pressed={split}
-					className="shrink-0"
-					onClick={() => setSplit((current) => !current)}
-					size="icon-sm"
-					type="button"
-					variant="ghost"
-				>
-					{split ? (
-						<Columns2 className="size-icon-sm" aria-hidden="true" />
-					) : (
-						<Rows3 className="size-icon-sm" aria-hidden="true" />
-					)}
-				</Button>
+				<Tooltip>
+					<TooltipTrigger asChild>
+						<Button
+							aria-label={split ? t("files.unifiedDiff") : t("files.splitDiff")}
+							aria-pressed={split}
+							className="shrink-0"
+							onClick={() => setSplit((current) => !current)}
+							size="icon-sm"
+							type="button"
+							variant="ghost"
+						>
+							{split ? (
+								<Columns2 className="size-icon-sm" aria-hidden="true" />
+							) : (
+								<Rows3 className="size-icon-sm" aria-hidden="true" />
+							)}
+						</Button>
+					</TooltipTrigger>
+					<TooltipContent side="bottom">{split ? t("files.unifiedDiff") : t("files.splitDiff")}</TooltipContent>
+				</Tooltip>
 				{onToggleMaximized ? (
-					<Button
-						aria-label={isMaximized ? t("files.minimize") : t("files.maximize")}
-						className="shrink-0"
-						onClick={() => onToggleMaximized(!isMaximized)}
-						size="icon-sm"
-						type="button"
-						variant="ghost"
-					>
-						{isMaximized ? (
-							<Minimize2 className="size-icon-sm" aria-hidden="true" />
-						) : (
-							<Maximize2 className="size-icon-sm" aria-hidden="true" />
-						)}
-					</Button>
+					<Tooltip>
+						<TooltipTrigger asChild>
+							<Button
+								aria-label={isMaximized ? t("files.minimize") : t("files.maximize")}
+								className="shrink-0"
+								onClick={() => onToggleMaximized(!isMaximized)}
+								size="icon-sm"
+								type="button"
+								variant="ghost"
+							>
+								{isMaximized ? (
+									<Minimize2 className="size-icon-sm" aria-hidden="true" />
+								) : (
+									<Maximize2 className="size-icon-sm" aria-hidden="true" />
+								)}
+							</Button>
+						</TooltipTrigger>
+						<TooltipContent side="bottom">{isMaximized ? t("files.minimize") : t("files.maximize")}</TooltipContent>
+					</Tooltip>
 				) : null}
 			</header>
 			{isMaximized ? (

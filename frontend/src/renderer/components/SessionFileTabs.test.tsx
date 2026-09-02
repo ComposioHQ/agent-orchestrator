@@ -2,6 +2,7 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { SessionFileTabs } from "./SessionFileTabs";
+import { TooltipProvider } from "./ui/tooltip";
 
 describe("SessionFileTabs", () => {
 	it("activates and closes language-aware file tabs", async () => {
@@ -9,15 +10,17 @@ describe("SessionFileTabs", () => {
 		const onAddFeedback = vi.fn();
 		const onCloseFile = vi.fn();
 		render(
-			<div role="tablist">
-				<SessionFileTabs
-					state={{ openPaths: ["src/App.tsx"], activePath: "src/App.tsx" }}
-					onAddFeedback={onAddFeedback}
-					onActivateFile={onActivateFile}
-					onCloseFile={onCloseFile}
-					onCloseAll={vi.fn()}
-				/>
-			</div>,
+			<TooltipProvider>
+				<div role="tablist">
+					<SessionFileTabs
+						state={{ openPaths: ["src/App.tsx"], activePath: "src/App.tsx" }}
+						onAddFeedback={onAddFeedback}
+						onActivateFile={onActivateFile}
+						onCloseFile={onCloseFile}
+						onCloseAll={vi.fn()}
+					/>
+				</div>
+			</TooltipProvider>,
 		);
 		const tab = screen.getByRole("tab", { name: "App.tsx" });
 		const languageIcon = tab.querySelector('[aria-hidden="true"]');
@@ -38,15 +41,17 @@ describe("SessionFileTabs", () => {
 	it("offers close all for open files", async () => {
 		const onCloseAll = vi.fn();
 		render(
-			<div role="tablist">
-				<SessionFileTabs
-					state={{ openPaths: ["README.md"], activePath: null }}
-					onAddFeedback={vi.fn()}
-					onActivateFile={vi.fn()}
-					onCloseFile={vi.fn()}
-					onCloseAll={onCloseAll}
-				/>
-			</div>,
+			<TooltipProvider>
+				<div role="tablist">
+					<SessionFileTabs
+						state={{ openPaths: ["README.md"], activePath: null }}
+						onAddFeedback={vi.fn()}
+						onActivateFile={vi.fn()}
+						onCloseFile={vi.fn()}
+						onCloseAll={onCloseAll}
+					/>
+				</div>
+			</TooltipProvider>,
 		);
 		await userEvent.click(screen.getByRole("button", { name: "File tab actions" }));
 		await userEvent.click(await screen.findByRole("menuitem", { name: "Close all files" }));

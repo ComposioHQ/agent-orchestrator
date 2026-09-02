@@ -2,12 +2,19 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { agentReadiness } from "../test/agent-readiness-fixtures";
 import { NewTaskDialog } from "./NewTaskDialog";
 
-const { getMock, postMock } = vi.hoisted(() => ({
+const { getMock, postMock, ensureAgentReadinessMock } = vi.hoisted(() => ({
 	getMock: vi.fn(),
 	postMock: vi.fn(),
+	ensureAgentReadinessMock: vi.fn(),
 }));
+
+vi.mock("../hooks/useAgentReadinessQuery", async (importOriginal) => {
+	const actual = await importOriginal<typeof import("../hooks/useAgentReadinessQuery")>();
+	return { ...actual, useEnsureAgentReadiness: ensureAgentReadinessMock };
+});
 
 vi.mock("../lib/api-client", () => ({
 	apiClient: {
@@ -45,20 +52,15 @@ function requestBody() {
 	return (call[1] as { body: Record<string, unknown> }).body;
 }
 
+function delegateCalls() {
+	return postMock.mock.calls.filter(([path]) => path === "/api/v1/orchestrators/delegate");
+}
+
 const agentInventory = {
-	supported: [
-		{ id: "claude-code", label: "Claude Code" },
-		{ id: "cursor", label: "Cursor" },
-		{ id: "kiro", label: "Kiro" },
-	],
-	installed: [
-		{ id: "claude-code", label: "Claude Code", authStatus: "authorized" },
-		{ id: "cursor", label: "Cursor", authStatus: "authorized" },
-		{ id: "kiro", label: "Kiro", authStatus: "unknown" },
-	],
-	authorized: [
-		{ id: "claude-code", label: "Claude Code", authStatus: "authorized" },
-		{ id: "cursor", label: "Cursor", authStatus: "authorized" },
+	agents: [
+		agentReadiness("claude-code", "Claude Code"),
+		agentReadiness("cursor", "Cursor"),
+		agentReadiness("kiro", "Kiro", { authentication: "unknown" }),
 	],
 };
 
@@ -67,8 +69,9 @@ async function waitForAgentCatalog() {
 }
 
 beforeEach(() => {
+	ensureAgentReadinessMock.mockReset();
 	getMock.mockReset().mockImplementation(async (path: string) => {
-		if (path === "/api/v1/agents") {
+		if (path === "/api/v1/agents/readiness") {
 			return { data: agentInventory, error: undefined };
 		}
 		return {
@@ -77,7 +80,7 @@ beforeEach(() => {
 		};
 	});
 	postMock.mockReset().mockImplementation(async (path: string) => {
-		if (path === "/api/v1/agents/refresh") return { data: agentInventory, error: undefined };
+		if (path === "/api/v1/agents/readiness/ensure") return { data: agentInventory, error: undefined };
 		return { data: { ok: true, workerId: "worker-1", orchestratorId: "orch-1" }, error: undefined };
 	});
 });
@@ -142,12 +145,18 @@ describe("NewTaskDialog", () => {
 	}, 20_000);
 
 	it("offers an explicit Terminal UI retry when Chat preflight fails", async () => {
-		postMock
-			.mockResolvedValueOnce({
-				data: undefined,
-				error: { code: "CHAT_AUTH_REQUIRED", message: "Claude Code needs login" },
-			})
-			.mockResolvedValueOnce({ data: { ok: true, workerId: "worker-tui" }, error: undefined });
+		let delegateAttempts = 0;
+		postMock.mockImplementation(async (path: string) => {
+			if (path === "/api/v1/agents/readiness/ensure") return { data: agentInventory, error: undefined };
+			delegateAttempts += 1;
+			if (delegateAttempts === 1) {
+				return {
+					data: undefined,
+					error: { code: "CHAT_AUTH_REQUIRED", message: "Claude Code needs login" },
+				};
+			}
+			return { data: { ok: true, workerId: "worker-tui" }, error: undefined };
+		});
 		const { onCreated } = renderDialog();
 		const user = userEvent.setup();
 		await waitForAgentCatalog();
@@ -159,8 +168,8 @@ describe("NewTaskDialog", () => {
 		expect(requestBody()).not.toHaveProperty("mode");
 		await user.click(fallback);
 
-		await waitFor(() => expect(postMock).toHaveBeenCalledTimes(2));
-		const retryBody = (postMock.mock.calls[1][1] as { body: Record<string, unknown> }).body;
+		await waitFor(() => expect(delegateCalls()).toHaveLength(2));
+		const retryBody = (delegateCalls()[1][1] as { body: Record<string, unknown> }).body;
 		expect(retryBody.mode).toBe("tui");
 		expect(onCreated).toHaveBeenCalledWith("worker-tui");
 	});
@@ -218,12 +227,10 @@ describe("NewTaskDialog", () => {
 
 	it("shows an empty Model field for scratch projects and omits it from delegation", async () => {
 		getMock.mockImplementation(async (path: string) => {
-			if (path === "/api/v1/agents") {
+			if (path === "/api/v1/agents/readiness") {
 				return {
 					data: {
-						supported: [{ id: "claude-code", label: "Claude Code" }],
-						installed: [{ id: "claude-code", label: "Claude Code", authStatus: "authorized" }],
-						authorized: [{ id: "claude-code", label: "Claude Code", authStatus: "authorized" }],
+						agents: [agentReadiness("claude-code", "Claude Code")],
 					},
 					error: undefined,
 				};

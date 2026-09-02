@@ -1,8 +1,14 @@
-import { render, screen } from "@testing-library/react";
+import { render as rtlRender, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import type { ReactElement } from "react";
 import { describe, expect, it } from "vitest";
 import { ActivityRow, SteerMessage } from "./ChatTimelineItems";
 import type { ConversationActivity } from "../../types/conversation";
+import { TooltipProvider } from "../ui/tooltip";
+
+function render(ui: ReactElement) {
+	return rtlRender(<TooltipProvider>{ui}</TooltipProvider>);
+}
 
 // One test file per new provider signal the daemon started serving. What each covers
 // is the claim the row makes, not its markup: an MCP call must not read as a command
