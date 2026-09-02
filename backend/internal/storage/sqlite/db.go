@@ -131,6 +131,9 @@ func migrate(db *sql.DB) error {
 	if err := goose.SetDialect("sqlite3"); err != nil {
 		return fmt.Errorf("set goose dialect: %w", err)
 	}
+	if err := retirePublishedPipelinesProfile(context.Background(), db); err != nil {
+		return fmt.Errorf("retire published Pipelines migration profile: %w", err)
+	}
 	if err := repairRenumberedChatMigrationHistory(db); err != nil {
 		return fmt.Errorf("repair renumbered chat migration history: %w", err)
 	}
