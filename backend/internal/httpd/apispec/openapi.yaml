@@ -312,6 +312,447 @@ paths:
       summary: Verify an installed harness without reinstalling or probing authentication
       tags:
       - agents
+  /api/v1/agents/codex/account-switches:
+    post:
+      operationId: startCodexAccountSwitch
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StartCodexAccountSwitchRequest'
+        required: true
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CodexAccountSwitchResponse'
+          description: Accepted
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Service Unavailable
+      summary: Start a global AO Codex account switch
+      tags:
+      - agents
+  /api/v1/agents/codex/account-switches/{switchId}/recover:
+    post:
+      operationId: recoverCodexAccountSwitch
+      parameters:
+      - description: Durable Codex account switch identifier.
+        in: path
+        name: switchId
+        required: true
+        schema:
+          description: Durable Codex account switch identifier.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CodexAccountSwitchResponse'
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+      summary: Retry incomplete restarts for one Codex account switch
+      tags:
+      - agents
+  /api/v1/agents/codex/accounts:
+    get:
+      operationId: getCodexAccounts
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CodexAccountsResponse'
+          description: OK
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Service Unavailable
+      summary: Return cached AO Codex accounts and active-account state
+      tags:
+      - agents
+  /api/v1/agents/codex/accounts/{accountId}:
+    delete:
+      operationId: deleteCodexAccount
+      parameters:
+      - description: AO Codex account identifier.
+        in: path
+        name: accountId
+        required: true
+        schema:
+          description: AO Codex account identifier.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CodexAccountsResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Service Unavailable
+      summary: Delete one inactive signed-out Codex account
+      tags:
+      - agents
+  /api/v1/agents/codex/accounts/{accountId}/login-terminal:
+    post:
+      operationId: openCodexAccountReauthenticationTerminal
+      parameters:
+      - description: AO Codex account identifier.
+        in: path
+        name: accountId
+        required: true
+        schema:
+          description: AO Codex account identifier.
+          type: string
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OpenCodexAccountLoginTerminalResponse'
+          description: Accepted
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Service Unavailable
+      summary: Open native Codex sign-in for one retained account
+      tags:
+      - agents
+  /api/v1/agents/codex/accounts/{accountId}/logout:
+    post:
+      operationId: logoutCodexAccount
+      parameters:
+      - description: AO Codex account identifier.
+        in: path
+        name: accountId
+        required: true
+        schema:
+          description: AO Codex account identifier.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CodexAccountsResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Service Unavailable
+      summary: Log out one retained Codex account
+      tags:
+      - agents
+  /api/v1/agents/codex/accounts/{accountId}/reset-credit/consume:
+    post:
+      operationId: consumeCodexAccountResetCredit
+      parameters:
+      - description: AO Codex account identifier.
+        in: path
+        name: accountId
+        required: true
+        schema:
+          description: AO Codex account identifier.
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ConsumeCodexAccountResetCreditRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CodexAccountsResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Service Unavailable
+      summary: Consume one provider-reported Codex usage-limit reset credit
+      tags:
+      - agents
+  /api/v1/agents/codex/accounts/ensure:
+    post:
+      operationId: ensureCodexAccounts
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EnsureCodexAccountsRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CodexAccountsResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Service Unavailable
+      summary: Discover Codex accounts and ensure authentication, capacity, and optional
+        usage
+      tags:
+      - agents
+  /api/v1/agents/codex/accounts/events:
+    get:
+      operationId: streamCodexAccounts
+      responses:
+        "200":
+          content:
+            text/event-stream:
+              schema:
+                $ref: '#/components/schemas/CodexAccountsResponse'
+          description: OK
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Service Unavailable
+      summary: Stream cached and live Codex account state
+      tags:
+      - agents
+  /api/v1/agents/codex/accounts/login-operations/{operationId}/cancel:
+    post:
+      operationId: cancelCodexAccountLogin
+      parameters:
+      - description: In-memory Codex account login operation identifier.
+        in: path
+        name: operationId
+        required: true
+        schema:
+          description: In-memory Codex account login operation identifier.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CodexAccountLoginResponse'
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Service Unavailable
+      summary: Cancel one native Codex account login operation
+      tags:
+      - agents
+  /api/v1/agents/codex/accounts/login-operations/{operationId}/verify:
+    post:
+      operationId: verifyCodexAccountLogin
+      parameters:
+      - description: In-memory Codex account login operation identifier.
+        in: path
+        name: operationId
+        required: true
+        schema:
+          description: In-memory Codex account login operation identifier.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CodexAccountLoginResponse'
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Service Unavailable
+      summary: Verify one native Codex account login operation
+      tags:
+      - agents
+  /api/v1/agents/codex/accounts/login-terminal:
+    post:
+      operationId: openCodexAccountLoginTerminal
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OpenCodexAccountLoginTerminalResponse'
+          description: Accepted
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Service Unavailable
+      summary: Open an inline native login terminal for a new AO Codex account
+      tags:
+      - agents
   /api/v1/agents/install-jobs:
     get:
       operationId: listAgentInstallJobs
@@ -3689,6 +4130,51 @@ paths:
       summary: Promote a queued message into the in-flight turn
       tags:
       - conversations
+  /api/v1/sessions/{sessionId}/exit-agent:
+    post:
+      operationId: exitAgent
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExitAgentResponse'
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Exit the agent while preserving its AO session
+      tags:
+      - sessions
   /api/v1/sessions/{sessionId}/interface-transition:
     delete:
       operationId: cancelSessionInterfaceTransition
@@ -6566,6 +7052,502 @@ components:
       - remoteUrl
       - destinationParent
       type: object
+    CodexAccountCapabilitiesResponse:
+      properties:
+        globalSwitch:
+          $ref: '#/components/schemas/CodexCapabilityObservationResponse'
+        nativeLogin:
+          $ref: '#/components/schemas/CodexCapabilityObservationResponse'
+        resetCreditConsume:
+          $ref: '#/components/schemas/CodexCapabilityObservationResponse'
+      required:
+      - nativeLogin
+      - resetCreditConsume
+      - globalSwitch
+      type: object
+    CodexAccountCapacityResponse:
+      properties:
+        additionalBuckets:
+          items:
+            $ref: '#/components/schemas/CodexCapacityBucketResponse'
+          type: array
+        attemptedAt:
+          format: date-time
+          type:
+          - "null"
+          - string
+        checkedAt:
+          format: date-time
+          type:
+          - "null"
+          - string
+        freshness:
+          enum:
+          - fresh
+          - stale
+          - checking
+          type: string
+        observedAt:
+          format: date-time
+          type:
+          - "null"
+          - string
+        overall:
+          $ref: '#/components/schemas/CodexCapacityBucketResponse'
+        plan:
+          type:
+          - "null"
+          - string
+        reason:
+          type: string
+        reasonCode:
+          type: string
+        remainingPercent:
+          maximum: 100
+          minimum: 0
+          type:
+          - "null"
+          - number
+        resetCredits:
+          $ref: '#/components/schemas/CodexResetCreditsSummaryResponse'
+        resetsAt:
+          format: date-time
+          type:
+          - "null"
+          - string
+        state:
+          enum:
+          - available
+          - near_limit
+          - exhausted
+          - unknown
+          - unsupported
+          type: string
+        usedPercent:
+          maximum: 100
+          minimum: 0
+          type:
+          - "null"
+          - number
+      required:
+      - state
+      - freshness
+      - reasonCode
+      - reason
+      - additionalBuckets
+      type: object
+    CodexAccountLoginResponse:
+      properties:
+        account:
+          $ref: '#/components/schemas/CodexAccountResponse'
+        accountId:
+          type: string
+        expiresAt:
+          format: date-time
+          type: string
+        operationId:
+          type: string
+        reason:
+          type: string
+        reasonCode:
+          type: string
+        status:
+          enum:
+          - pending
+          - verifying
+          - unauthorized
+          - unverified
+          - completed
+          - cancelled
+          - failed
+          - expired
+          type: string
+      required:
+      - operationId
+      - status
+      - reasonCode
+      - reason
+      - expiresAt
+      type: object
+    CodexAccountLoginTerminalResponse:
+      properties:
+        createdAt:
+          format: date-time
+          type: string
+        handleId:
+          type: string
+        title:
+          type: string
+      required:
+      - handleId
+      - title
+      - createdAt
+      type: object
+    CodexAccountResponse:
+      properties:
+        accountEmail:
+          type:
+          - "null"
+          - string
+        active:
+          type: boolean
+        authMethod:
+          enum:
+          - chatgpt
+          - api_key
+          - other
+          - unknown
+          type: string
+        authentication:
+          $ref: '#/components/schemas/CodexAuthenticationResponse'
+        capacity:
+          $ref: '#/components/schemas/CodexAccountCapacityResponse'
+        createdAt:
+          format: date-time
+          type: string
+        id:
+          type: string
+        label:
+          type: string
+        reason:
+          type: string
+        reasonCode:
+          type: string
+        status:
+          enum:
+          - valid
+          - signed_out
+          - broken
+          type: string
+        usageSummary:
+          $ref: '#/components/schemas/CodexAccountUsageSummaryResponse'
+      required:
+      - id
+      - label
+      - status
+      - reasonCode
+      - reason
+      - active
+      - authentication
+      - authMethod
+      - capacity
+      - createdAt
+      type: object
+    CodexAccountSwitchResponse:
+      properties:
+        canRecover:
+          type: boolean
+        completedAt:
+          format: date-time
+          type:
+          - "null"
+          - string
+        createdAt:
+          format: date-time
+          type: string
+        credentialsCommittedAt:
+          format: date-time
+          type:
+          - "null"
+          - string
+        failureCode:
+          type: string
+        id:
+          type: string
+        phase:
+          enum:
+          - requested
+          - stopping_sessions
+          - sessions_stopped
+          - checkpointing_source
+          - activating_target
+          - verifying_target
+          - restarting_sessions
+          - rollback_required
+          - recovery_required
+          - completed
+          - failed
+          type: string
+        sessions:
+          items:
+            $ref: '#/components/schemas/CodexAccountSwitchSessionResponse'
+          type: array
+        sourceAccountId:
+          type: string
+        targetAccountId:
+          type: string
+        updatedAt:
+          format: date-time
+          type: string
+      required:
+      - id
+      - sourceAccountId
+      - targetAccountId
+      - phase
+      - sessions
+      - canRecover
+      - createdAt
+      - updatedAt
+      type: object
+    CodexAccountSwitchSessionResponse:
+      properties:
+        errorCode:
+          type: string
+        interfaceMode:
+          enum:
+          - tui
+          - chat
+          type: string
+        restartState:
+          type: string
+        restartedAt:
+          format: date-time
+          type:
+          - "null"
+          - string
+        sessionId:
+          type: string
+        stopState:
+          type: string
+        stoppedAt:
+          format: date-time
+          type:
+          - "null"
+          - string
+        wasRunning:
+          type: boolean
+      required:
+      - sessionId
+      - interfaceMode
+      - wasRunning
+      - stopState
+      - restartState
+      type: object
+    CodexAccountUsageSummaryResponse:
+      properties:
+        currentStreakDays:
+          type:
+          - "null"
+          - integer
+        latestDayStartDate:
+          type:
+          - "null"
+          - string
+        latestDayTokens:
+          type:
+          - "null"
+          - integer
+        lifetimeTokens:
+          type:
+          - "null"
+          - integer
+        longestRunningTurnSeconds:
+          type:
+          - "null"
+          - integer
+        longestStreakDays:
+          type:
+          - "null"
+          - integer
+        observedAt:
+          format: date-time
+          type: string
+        peakDailyTokens:
+          type:
+          - "null"
+          - integer
+      required:
+      - observedAt
+      type: object
+    CodexAccountsResponse:
+      properties:
+        accountRevision:
+          format: int64
+          type: integer
+        accounts:
+          items:
+            $ref: '#/components/schemas/CodexAccountResponse'
+          type: array
+        activeAccountId:
+          type: string
+        activeLogin:
+          $ref: '#/components/schemas/CodexActiveLoginResponse'
+        capabilities:
+          $ref: '#/components/schemas/CodexAccountCapabilitiesResponse'
+        currentSwitch:
+          $ref: '#/components/schemas/CodexAccountSwitchResponse'
+        unmanagedGlobalAccount:
+          $ref: '#/components/schemas/CodexUnmanagedGlobalAccountResponse'
+      required:
+      - accountRevision
+      - accounts
+      - capabilities
+      type: object
+    CodexActiveLoginResponse:
+      properties:
+        accountId:
+          type: string
+        expiresAt:
+          format: date-time
+          type: string
+        operationId:
+          type: string
+        reason:
+          type: string
+        reasonCode:
+          type: string
+        shellTerminal:
+          $ref: '#/components/schemas/CodexAccountLoginTerminalResponse'
+        status:
+          enum:
+          - pending
+          - verifying
+          - unauthorized
+          - unverified
+          - completed
+          - cancelled
+          - failed
+          - expired
+          type: string
+      required:
+      - operationId
+      - status
+      - reasonCode
+      - reason
+      - expiresAt
+      - shellTerminal
+      type: object
+    CodexAuthenticationResponse:
+      properties:
+        attemptedAt:
+          format: date-time
+          type:
+          - "null"
+          - string
+        checkedAt:
+          format: date-time
+          type:
+          - "null"
+          - string
+        freshness:
+          enum:
+          - fresh
+          - stale
+          - checking
+          type: string
+        reason:
+          type: string
+        reasonCode:
+          type: string
+        state:
+          enum:
+          - authorized
+          - unauthorized
+          - unknown
+          - not_applicable
+          type: string
+      required:
+      - state
+      - freshness
+      - checkedAt
+      - attemptedAt
+      - reasonCode
+      - reason
+      type: object
+    CodexCapabilityObservationResponse:
+      properties:
+        reason:
+          type: string
+        reasonCode:
+          type: string
+        state:
+          enum:
+          - supported
+          - unsupported
+          - unknown
+          type: string
+      required:
+      - state
+      - reasonCode
+      - reason
+      type: object
+    CodexCapacityBucketResponse:
+      properties:
+        displayName:
+          type:
+          - "null"
+          - string
+        primary:
+          $ref: '#/components/schemas/CodexCapacityWindowResponse'
+        reached:
+          enum:
+          - not_reached
+          - reached
+          - unknown
+          type: string
+        secondary:
+          $ref: '#/components/schemas/CodexCapacityWindowResponse'
+      required:
+      - reached
+      type: object
+    CodexCapacityWindowResponse:
+      properties:
+        resetsAt:
+          format: date-time
+          type:
+          - "null"
+          - string
+        usedPercent:
+          format: double
+          maximum: 100
+          minimum: 0
+          type: number
+        windowDurationMinutes:
+          type:
+          - "null"
+          - integer
+      required:
+      - usedPercent
+      type: object
+    CodexResetCreditsSummaryResponse:
+      properties:
+        availableCount:
+          format: int64
+          minimum: 0
+          type: integer
+        nearestExpiresAt:
+          format: date-time
+          type:
+          - "null"
+          - string
+      required:
+      - availableCount
+      type: object
+    CodexUnmanagedGlobalAccountResponse:
+      properties:
+        accountEmail:
+          type:
+          - "null"
+          - string
+        authMethod:
+          enum:
+          - chatgpt
+          - api_key
+          - other
+          - unknown
+          type: string
+        label:
+          type: string
+        reason:
+          type: string
+        reasonCode:
+          type: string
+      required:
+      - label
+      - authMethod
+      - reasonCode
+      - reason
+      type: object
     CompactConversationResponse:
       properties:
         tokensAfter:
@@ -6604,6 +7586,15 @@ components:
       - totalTokens
       - incomplete
       - estimatedCost
+      type: object
+    ConsumeCodexAccountResetCreditRequest:
+      properties:
+        idempotencyKey:
+          maxLength: 200
+          minLength: 1
+          type: string
+      required:
+      - idempotencyKey
       type: object
     ContainerReapConfig:
       properties:
@@ -6818,6 +7809,8 @@ components:
           - idle
           - terminated
           - no_signal
+          type: string
+        terminalGeneration:
           type: string
         terminalHandleId:
           type: string
@@ -7746,6 +8739,15 @@ components:
       required:
       - purpose
       type: object
+    EnsureCodexAccountsRequest:
+      properties:
+        accountIds:
+          items:
+            type: string
+          type: array
+        includeUsage:
+          type: boolean
+      type: object
     EstimatedCostResponse:
       properties:
         cachedInputNanos:
@@ -7791,6 +8793,19 @@ components:
       - outputNanos
       - coverage
       - providerAttribution
+      type: object
+    ExitAgentResponse:
+      properties:
+        ok:
+          type: boolean
+        session:
+          $ref: '#/components/schemas/ControllersSessionView'
+        sessionId:
+          type: string
+      required:
+      - ok
+      - sessionId
+      - session
       type: object
     IdentityResponse:
       properties:
@@ -8406,6 +9421,16 @@ components:
       required:
       - kind
       - sessionId
+      type: object
+    OpenCodexAccountLoginTerminalResponse:
+      properties:
+        operation:
+          $ref: '#/components/schemas/CodexAccountLoginResponse'
+        shellTerminal:
+          $ref: '#/components/schemas/CodexAccountLoginTerminalResponse'
+      required:
+      - operation
+      - shellTerminal
       type: object
     OpenShellTerminalRequest:
       properties:
@@ -9853,6 +10878,23 @@ components:
           - install
           - reinstall
           type: string
+      type: object
+    StartCodexAccountSwitchRequest:
+      properties:
+        expectedAccountRevision:
+          format: int64
+          minimum: 0
+          type: integer
+        idempotencyKey:
+          minLength: 1
+          type: string
+        targetAccountId:
+          minLength: 1
+          type: string
+      required:
+      - targetAccountId
+      - expectedAccountRevision
+      - idempotencyKey
       type: object
     StartPreviewServerRequest:
       properties:
