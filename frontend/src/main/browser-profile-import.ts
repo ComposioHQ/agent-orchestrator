@@ -31,6 +31,7 @@ import {
 } from "../shared/browser-profile-import";
 import {
 	browserProfilePartition,
+	BROWSER_PROFILE_MAX_COUNT,
 	isBrowserProfileId,
 	normalizeBrowserProfileName,
 	type BrowserProfile,
@@ -113,6 +114,10 @@ class SourceBudget {
 		}
 		this.used += bytes;
 	}
+}
+
+function throwIfImportAborted(signal: AbortSignal): void {
+	if (signal.aborted) throw new Error("Browser import was canceled because the app is closing.");
 }
 
 const DESCRIPTORS: BrowserDescriptor[] = [
@@ -346,7 +351,10 @@ function cookieCapability(
 export class BrowserProfileImportService {
 	private readonly context: DiscoveryContext;
 	private readonly now: () => Date;
-	private active = false;
+	private activeImport: Promise<BrowserImportResult> | null = null;
+	private activeController: AbortController | null = null;
+	private disposePromise: Promise<void> | null = null;
+	private disposed = false;
 
 	constructor(private readonly options: BrowserProfileImportOptions) {
 		this.context = {
@@ -355,6 +363,28 @@ export class BrowserProfileImportService {
 			env: options.env ?? process.env,
 		};
 		this.now = options.now ?? (() => new Date());
+	}
+
+	async initialize(): Promise<void> {
+		if (this.disposed) throw new Error("Browser profile import is unavailable.");
+		if (this.activeImport) throw new Error("Another browser import is already running.");
+		await rm(this.stagingRoot(), { recursive: true, force: true });
+	}
+
+	dispose(): Promise<void> {
+		if (this.disposePromise) return this.disposePromise;
+		this.disposed = true;
+		this.activeController?.abort();
+		const activeImport = this.activeImport;
+		this.disposePromise = (async () => {
+			if (activeImport) await activeImport.catch(() => undefined);
+			await rm(this.stagingRoot(), { recursive: true, force: true }).catch(() => undefined);
+		})();
+		return this.disposePromise;
+	}
+
+	private stagingRoot(): string {
+		return path.join(this.options.stateDir, "browser-import-staging");
 	}
 
 	async discover(): Promise<BrowserImportDiscovery> {
@@ -397,12 +427,33 @@ export class BrowserProfileImportService {
 		rawRequest: BrowserImportRequest,
 		onProgress: (progress: BrowserImportProgress) => void,
 	): Promise<BrowserImportResult> {
-		if (this.active) throw new Error("Another browser import is already running.");
-		this.active = true;
-		const staging = path.join(this.options.stateDir, "browser-import-staging", randomUUID());
+		if (this.disposed) throw new Error("Browser profile import is unavailable.");
+		if (this.activeImport) throw new Error("Another browser import is already running.");
+		const controller = new AbortController();
+		const pending = this.runImport(rawRequest, onProgress, controller.signal);
+		this.activeController = controller;
+		this.activeImport = pending;
+		try {
+			return await pending;
+		} finally {
+			if (this.activeImport === pending) {
+				this.activeImport = null;
+				this.activeController = null;
+			}
+		}
+	}
+
+	private async runImport(
+		rawRequest: BrowserImportRequest,
+		onProgress: (progress: BrowserImportProgress) => void,
+		signal: AbortSignal,
+	): Promise<BrowserImportResult> {
+		const staging = path.join(this.stagingRoot(), randomUUID());
 		let sourceRoots: string[] = [];
 		try {
+			throwIfImportAborted(signal);
 			const sources = await this.discoverInternal();
+			throwIfImportAborted(signal);
 			sourceRoots = sources.map((source) => source.root);
 			const request = validateRequest(rawRequest, sources, this.options.profileStore.profiles);
 			const source = sources.find((candidate) => candidate.public.id === request.sourceId)!;
@@ -413,15 +464,16 @@ export class BrowserProfileImportService {
 			const decryptor = await ChromiumCookieDecryptor.create(source, this.context.platform);
 			const readData: ReadProfileData[] = [];
 			for (const [index, profile] of selected.entries()) {
+				throwIfImportAborted(signal);
 				readData.push(await readProfileData(source, profile, request, staging, budget, decryptor, this.now()));
+				throwIfImportAborted(signal);
 				onProgress({ requestId: request.requestId, phase: "reading", completed: index + 1, total: selected.length });
 			}
-			return await this.commitImport(source, request, readData, onProgress);
+			return await this.commitImport(source, request, readData, onProgress, signal);
 		} catch (error) {
 			throw redactSourcePaths(error, sourceRoots);
 		} finally {
 			await rm(staging, { recursive: true, force: true }).catch(() => undefined);
-			this.active = false;
 		}
 	}
 
@@ -430,6 +482,7 @@ export class BrowserProfileImportService {
 		request: BrowserImportRequest,
 		readData: ReadProfileData[],
 		onProgress: (progress: BrowserImportProgress) => void,
+		signal: AbortSignal,
 	): Promise<BrowserImportResult> {
 		const destination = request.destination;
 		const groups =
@@ -440,16 +493,20 @@ export class BrowserProfileImportService {
 		const results: BrowserImportResultEntry[] = [];
 		try {
 			for (const [index, group] of groups.entries()) {
+				throwIfImportAborted(signal);
 				const profile = await this.options.profileStore.createProfile(group.name);
 				created.push(profile);
+				throwIfImportAborted(signal);
 				const history = group.data.flatMap((data) => data.history);
 				const cookieSelection = dedupeCookies(group.data.flatMap((data) => data.cookies));
 				const historyOutcome = request.includeHistory
 					? await this.options.historyStore.mergeImportedEntries(profile.id, history)
 					: { imported: 0, truncated: 0 };
+				throwIfImportAborted(signal);
 				const cookieOutcome = request.includeCookies
-					? await setCookies(this.options.fromPartition(browserProfilePartition(profile.id)), cookieSelection.cookies)
+					? await setCookies(this.options.fromPartition(browserProfilePartition(profile.id)), cookieSelection.cookies, signal)
 					: { imported: 0, skipped: 0, warnings: [] };
+				throwIfImportAborted(signal);
 				const limitWarnings: BrowserImportWarning[] = [
 					...(cookieSelection.truncated > 0
 						? [{ code: "cookie-limit-truncated" as const, count: cookieSelection.truncated }]
@@ -560,6 +617,9 @@ function validateRequest(
 	}
 	const normalizedNames = names.map((name) => name.toLowerCase());
 	if (new Set(normalizedNames).size !== normalizedNames.length) throw new Error("Destination profile names must be unique.");
+	if (existingProfiles.length + names.length > BROWSER_PROFILE_MAX_COUNT) {
+		throw new Error("Not enough browser profile slots are available for this import.");
+	}
 	const existing = new Set(existingProfiles.map((profile) => profile.name.toLowerCase()));
 	if (normalizedNames.some((name) => existing.has(name))) throw new Error("A destination browser profile already exists.");
 	return request;
@@ -697,6 +757,7 @@ function readFirefoxCookies(file: string, now: Date): { cookies: ImportedCookie[
 		if (!hasTable(database, "moz_cookies")) return null;
 		const columns = tableColumns(database, "moz_cookies");
 		const hasOriginAttributes = columns.has("originAttributes");
+		const hasSameSite = columns.has("sameSite");
 		const isolationWhere = hasOriginAttributes ? "WHERE COALESCE(originAttributes, '') = ''" : "";
 		const total = countRows(database, "moz_cookies");
 		const eligible = countRows(database, "moz_cookies", isolationWhere);
@@ -704,7 +765,7 @@ function readFirefoxCookies(file: string, now: Date): { cookies: ImportedCookie[
 		const truncated = Math.max(0, eligible - BROWSER_IMPORT_MAX_COOKIES);
 		const orderBy = cookieOrder(columns, ["lastAccessed", "creationTime"]);
 		const rows = database.prepare(`
-			SELECT host, name, value, path, expiry, isSecure, isHttpOnly, sameSite
+			SELECT host, name, value, path, expiry, isSecure, isHttpOnly, ${hasSameSite ? "sameSite" : "-1 AS sameSite"}
 			FROM moz_cookies
 			${isolationWhere}
 			ORDER BY ${orderBy}
@@ -722,6 +783,7 @@ function readFirefoxCookies(file: string, now: Date): { cookies: ImportedCookie[
 		})), now);
 		if (isolatedSkipped > 0) normalized.warnings.push({ code: "isolated-cookies-skipped", count: isolatedSkipped });
 		if (truncated > 0) normalized.warnings.push({ code: "cookie-limit-truncated", count: truncated });
+		if (!hasSameSite && rows.length > 0) normalized.warnings.push({ code: "cookie-attributes-defaulted", count: rows.length });
 		normalized.skipped += isolatedSkipped + truncated;
 		return normalized;
 	});
@@ -963,8 +1025,10 @@ function booleanValue(value: unknown): boolean {
 function dedupeCookies(cookies: ImportedCookie[]): { cookies: ImportedCookie[]; truncated: number } {
 	const byKey = new Map<string, ImportedCookie>();
 	for (const cookie of cookies) {
-		const existing = byKey.get(cookie.dedupeKey);
-		if (!existing || (cookie.expirationDate ?? 0) >= (existing.expirationDate ?? 0)) byKey.set(cookie.dedupeKey, cookie);
+		// profileIds order is user-selected order. For an identity collision,
+		// retain the first selected profile's cookie rather than silently mixing
+		// account state based on expiration timestamps.
+		if (!byKey.has(cookie.dedupeKey)) byKey.set(cookie.dedupeKey, cookie);
 	}
 	const unique = [...byKey.values()].sort(
 		(a, b) => (b.expirationDate ?? 0) - (a.expirationDate ?? 0) || a.dedupeKey.localeCompare(b.dedupeKey),
@@ -978,13 +1042,16 @@ function dedupeCookies(cookies: ImportedCookie[]): { cookies: ImportedCookie[]; 
 async function setCookies(
 	session: ImportSession,
 	cookies: ImportedCookie[],
+	signal: AbortSignal,
 ): Promise<{ imported: number; skipped: number; warnings: BrowserImportWarning[] }> {
 	let imported = 0;
 	let skipped = 0;
 	for (const cookie of cookies) {
+		throwIfImportAborted(signal);
 		const { dedupeKey: _dedupeKey, ...details } = cookie;
 		try {
 			await session.cookies.set(details);
+			throwIfImportAborted(signal);
 			imported += 1;
 		} catch {
 			skipped += 1;

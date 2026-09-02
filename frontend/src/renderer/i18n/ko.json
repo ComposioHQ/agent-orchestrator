@@ -1381,6 +1381,7 @@
 	"settings.browserImport.warning.encrypted-cookies-skipped": "암호화된 쿠키 {{count}}개를 복호화할 수 없어 건너뛰었습니다.",
 	"settings.browserImport.warning.expired-cookies-skipped": "만료된 쿠키 {{count}}개를 건너뛰었습니다.",
 	"settings.browserImport.warning.invalid-cookies-skipped": "잘못된 쿠키 {{count}}개를 건너뛰었습니다.",
+	"settings.browserImport.warning.cookie-attributes-defaulted": "이 브라우저에서 사용할 수 없는 속성에 대해 쿠키 {{count}}개에 안전한 기본값을 사용했습니다.",
 	"settings.browserImport.warning.cookie-write-failed": "새 프로필에 쿠키 {{count}}개를 기록하지 못했습니다.",
 	"settings.help": "Help",
 	"settings.navSectionsAria": "Settings sections",

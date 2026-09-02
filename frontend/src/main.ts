@@ -212,6 +212,7 @@ let daemonStatus: DaemonStatus = { state: "stopped" };
 let daemonOutput = "";
 let browserViewHost: BrowserViewHost | null = null;
 let browserProfileIpc: BrowserProfileIpc | null = null;
+let browserProfileImporter: BrowserProfileImportService | null = null;
 let windowComposition: WindowComposition | null = null;
 const browserCleanupPromises = new Set<Promise<void>>();
 let browserQuitCleanupPromise: Promise<void> | null = null;
@@ -426,9 +427,14 @@ async function disposeBrowserViewHost(): Promise<void> {
 	const profileIpc = browserProfileIpc;
 	browserProfileIpc = null;
 	profileIpc?.dispose();
-	if (!host) return;
+	const profileImporter = browserProfileImporter;
+	browserProfileImporter = null;
+	if (!host && !profileImporter) return;
 	const cleanup = Promise.resolve()
-		.then(() => host.dispose())
+		.then(async () => {
+			await profileImporter?.dispose();
+			await host?.dispose();
+		})
 		.catch((error) => {
 			console.error("browser host cleanup failed:", error);
 		});
@@ -476,12 +482,13 @@ async function createWindowInternal(): Promise<void> {
 	}
 	const browserProfileStore = await createBrowserProfileStore({ stateDir: browserProfileStateDir() });
 	const browserHistoryStore = new BrowserHistoryStore({ stateDir: browserProfileStateDir() });
-	const browserProfileImporter = new BrowserProfileImportService({
+	const profileImporter = new BrowserProfileImportService({
 		stateDir: browserProfileStateDir(),
 		profileStore: browserProfileStore,
 		historyStore: browserHistoryStore,
 		fromPartition: (partition) => session.fromPartition(partition),
 	});
+	await profileImporter.initialize();
 	const windowOptions: Electron.BaseWindowConstructorOptions = {
 		width: 1320,
 		height: 860,
@@ -598,12 +605,13 @@ async function createWindowInternal(): Promise<void> {
 		browserHistoryStore,
 		clearBrowserProfileData: clearElectronBrowserProfileData,
 	});
+	browserProfileImporter = profileImporter;
 	browserProfileIpc = registerBrowserProfileIpc({
 		ipcMain,
 		shellWebContents,
 		mainWindow,
 		store: browserProfileStore,
-		importer: browserProfileImporter,
+		importer: profileImporter,
 		host: browserViewHost,
 		buildMenu: (items: BrowserProfileMenuItem[]) => {
 			const menu = Menu.buildFromTemplate(items as Electron.MenuItemConstructorOptions[]);

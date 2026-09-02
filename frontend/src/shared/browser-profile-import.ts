@@ -53,6 +53,7 @@ export type BrowserImportWarningCode =
 	| "encrypted-cookies-skipped"
 	| "expired-cookies-skipped"
 	| "invalid-cookies-skipped"
+	| "cookie-attributes-defaulted"
 	| "cookie-write-failed";
 
 export type BrowserImportWarning = {

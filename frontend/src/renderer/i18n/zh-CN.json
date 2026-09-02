@@ -1393,6 +1393,7 @@
 	"settings.browserImport.warning.encrypted-cookies-skipped": "{{count}} 个加密 Cookie 无法解密，已跳过。",
 	"settings.browserImport.warning.expired-cookies-skipped": "已跳过 {{count}} 个过期 Cookie。",
 	"settings.browserImport.warning.invalid-cookies-skipped": "已跳过 {{count}} 个无效 Cookie。",
+	"settings.browserImport.warning.cookie-attributes-defaulted": "{{count}} 个 Cookie 对此浏览器版本不支持的属性使用了安全默认值。",
 	"settings.browserImport.warning.cookie-write-failed": "AO 无法将 {{count}} 个 Cookie 写入新配置文件。",
 	"settings.help": "帮助",
 	"settings.navSectionsAria": "设置分区",

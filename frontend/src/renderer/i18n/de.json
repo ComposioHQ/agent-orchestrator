@@ -1381,6 +1381,7 @@
 	"settings.browserImport.warning.encrypted-cookies-skipped": "{{count}} verschlüsselte Cookies konnten nicht entschlüsselt werden und wurden übersprungen.",
 	"settings.browserImport.warning.expired-cookies-skipped": "{{count}} abgelaufene Cookies wurden übersprungen.",
 	"settings.browserImport.warning.invalid-cookies-skipped": "{{count}} ungültige Cookies wurden übersprungen.",
+	"settings.browserImport.warning.cookie-attributes-defaulted": "Für {{count}} Cookies wurden sichere Standardwerte für nicht verfügbare Attribute verwendet.",
 	"settings.browserImport.warning.cookie-write-failed": "AO konnte {{count}} Cookies nicht in das neue Profil schreiben.",
 	"settings.help": "Help",
 	"settings.navSectionsAria": "Settings sections",

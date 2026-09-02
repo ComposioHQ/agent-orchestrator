@@ -726,6 +726,7 @@
 	"settings.browserImport.warning.encrypted-cookies-skipped": "{{count}} encrypted cookies could not be decrypted and were skipped.",
 	"settings.browserImport.warning.expired-cookies-skipped": "{{count}} expired cookies were skipped.",
 	"settings.browserImport.warning.invalid-cookies-skipped": "{{count}} invalid cookies were skipped.",
+	"settings.browserImport.warning.cookie-attributes-defaulted": "{{count}} cookies used safe defaults for attributes unavailable in this browser version.",
 	"settings.browserImport.warning.cookie-write-failed": "AO could not write {{count}} cookies to the new profile.",
 	"settings.help": "Help",
 	"settings.navSectionsAria": "Settings sections",

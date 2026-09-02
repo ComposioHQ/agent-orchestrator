@@ -1396,6 +1396,7 @@
 	"settings.browserImport.warning.encrypted-cookies-skipped": "No se pudieron descifrar {{count}} cookies cifradas y se omitieron.",
 	"settings.browserImport.warning.expired-cookies-skipped": "Se omitieron {{count}} cookies caducadas.",
 	"settings.browserImport.warning.invalid-cookies-skipped": "Se omitieron {{count}} cookies no válidas.",
+	"settings.browserImport.warning.cookie-attributes-defaulted": "{{count}} cookies usaron valores predeterminados seguros para atributos no disponibles.",
 	"settings.browserImport.warning.cookie-write-failed": "AO no pudo guardar {{count}} cookies en el perfil nuevo.",
 	"settings.help": "Help",
 	"settings.navSectionsAria": "Settings sections",

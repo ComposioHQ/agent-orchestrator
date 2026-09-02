@@ -145,10 +145,11 @@ export function BrowserImportDialog({
 			});
 			setResult(imported);
 			setView("result");
-			onImported();
 		} catch (reason) {
 			setError(reason instanceof Error ? reason.message : t("settings.browserImport.failed"));
 			setView("form");
+		} finally {
+			onImported();
 		}
 	};
 
@@ -527,6 +528,7 @@ function warningKey(code: BrowserImportWarning["code"]): MessageKey {
 		case "encrypted-cookies-skipped": return "settings.browserImport.warning.encrypted-cookies-skipped";
 		case "expired-cookies-skipped": return "settings.browserImport.warning.expired-cookies-skipped";
 		case "invalid-cookies-skipped": return "settings.browserImport.warning.invalid-cookies-skipped";
+		case "cookie-attributes-defaulted": return "settings.browserImport.warning.cookie-attributes-defaulted";
 		case "cookie-write-failed": return "settings.browserImport.warning.cookie-write-failed";
 	}
 }

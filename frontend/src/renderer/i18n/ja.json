@@ -1381,6 +1381,7 @@
 	"settings.browserImport.warning.encrypted-cookies-skipped": "{{count}} 件の暗号化Cookieを復号できなかったためスキップしました。",
 	"settings.browserImport.warning.expired-cookies-skipped": "{{count}} 件の期限切れCookieをスキップしました。",
 	"settings.browserImport.warning.invalid-cookies-skipped": "{{count}} 件の無効なCookieをスキップしました。",
+	"settings.browserImport.warning.cookie-attributes-defaulted": "このブラウザで利用できない属性について、{{count}} 件のCookieに安全な既定値を使用しました。",
 	"settings.browserImport.warning.cookie-write-failed": "{{count}} 件のCookieを新しいプロファイルに書き込めませんでした。",
 	"settings.help": "Help",
 	"settings.navSectionsAria": "Settings sections",

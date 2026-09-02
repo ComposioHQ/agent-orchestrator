@@ -107,13 +107,15 @@ describe("BrowserImportDialog", () => {
 			onImportProgress: vi.fn(() => () => undefined),
 		};
 		aoBridge.browserProfiles = bridge;
+		const onImported = vi.fn();
 
-		render(<BrowserImportDialog onImported={() => undefined} onOpenChange={() => undefined} open />);
+		render(<BrowserImportDialog onImported={onImported} onOpenChange={() => undefined} open />);
 		const sourcePicker = await screen.findByRole("combobox", { name: "From" });
 		await userEvent.click(sourcePicker);
 		await userEvent.click(screen.getByRole("option", { name: /Firefox/ }));
 		await userEvent.click(screen.getByRole("button", { name: "Start import" }));
 		expect(await screen.findByRole("alert")).toHaveTextContent("Firefox cookie data is unavailable.");
+		expect(onImported).toHaveBeenCalledOnce();
 
 		const retrySourcePicker = screen.getByRole("combobox", { name: "From" });
 		await userEvent.click(retrySourcePicker);
