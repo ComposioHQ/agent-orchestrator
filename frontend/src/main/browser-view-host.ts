@@ -21,10 +21,19 @@ import type {
 	BrowserAnnotationSnapshot,
 	BrowserAnnotationSubmitPayload,
 } from "../shared/browser-annotations";
+import {
+	browserProfilePartition,
+	isValidBrowserProfileSessionId,
+	normalizeBrowserProfileId,
+	type BrowserProfileId,
+	type BrowserProfileViewState,
+} from "../shared/browser-profiles";
 import { attachAppShortcuts } from "./app-shortcuts";
-import type { KeybindingOverrides } from "../shared/shortcuts";
+import type { AppShortcutId, KeybindingOverrides, ShortcutChord } from "../shared/shortcuts";
 import type { AgentBrowserRuntime } from "./agent-browser-runtime";
 import type { AgentBrowserTarget, AgentBrowserTargetProvider } from "./agent-browser-cdp-bridge";
+import type { BrowserProfileStore } from "./browser-profile-store";
+import type { BrowserHistoryStore } from "./browser-history-store";
 import { matchInstruction } from "./browser-act-matcher";
 
 function isValidAnnotationContext(value: unknown): value is BrowserAnnotationContext {
@@ -91,6 +100,7 @@ export type BrowserTabsState = {
 	change?: {
 		kind: "opened" | "popup" | "selected" | "closed";
 		tabId: string;
+		tab?: BrowserTabState;
 	};
 };
 
@@ -130,6 +140,11 @@ type BrowserNavigateInput = {
 	url: string;
 };
 
+type BrowserHistorySuggestInput = {
+	viewId: string;
+	query: string;
+};
+
 type BrowserTabInput = {
 	viewId: string;
 	tabId: string;
@@ -139,6 +154,60 @@ type BrowserOpenTabInput = {
 	viewId: string;
 	url?: string;
 };
+
+type BrowserShortcutInput = {
+	key: string;
+	control: boolean;
+	meta: boolean;
+	shift: boolean;
+	alt: boolean;
+	type: string;
+	isAutoRepeat?: boolean;
+};
+
+export type BrowserShortcutAction =
+	| "new-tab"
+	| "reopen-tab"
+	| "close-tab"
+	| "focus-location"
+	| "reload";
+
+export function browserShortcutAction(input: BrowserShortcutInput, isMac: boolean): BrowserShortcutAction | null {
+	const primaryModifier = isMac ? input.meta && !input.control : input.control && !input.meta;
+	if (primaryModifier && !input.alt) {
+		if (input.shift) return input.key.toLowerCase() === "t" ? "reopen-tab" : null;
+		switch (input.key.toLowerCase()) {
+			case "t":
+				return "new-tab";
+			case "w":
+				return "close-tab";
+			case "l":
+				return "focus-location";
+			case "r":
+				return "reload";
+		}
+	}
+	return null;
+}
+
+export function shouldHandleAppShortcutInBrowserContext(
+	id: AppShortcutId,
+	chord: ShortcutChord,
+	isMac: boolean,
+): boolean {
+	if (id === "new-shell-terminal" || id === "close-shell-terminal") return false;
+	return browserShortcutAction(
+		{
+			key: chord.key,
+			control: chord.ctrl,
+			meta: chord.meta,
+			shift: chord.shift,
+			alt: chord.alt,
+			type: "keyDown",
+		},
+		isMac,
+	) === null;
+}
 
 type BrowserWebContents = Pick<
 	WebContents,
@@ -171,6 +240,8 @@ type BrowserWebContents = Pick<
 	close?: () => void;
 	session?: Pick<Session, "setPermissionCheckHandler" | "setPermissionRequestHandler" | "webRequest">;
 };
+
+type BrowserElectronSession = NonNullable<BrowserWebContents["session"]>;
 
 const browserScrollbarCSS = (zoomFactor: number): string => {
 	const effectiveZoom = Number.isFinite(zoomFactor) && zoomFactor > 0 ? zoomFactor : 1;
@@ -239,6 +310,9 @@ export type BrowserViewHostOptions = {
 	isKeybindingRecording?: () => boolean;
 	agentBrowserRuntime?: AgentBrowserRuntime;
 	isCloseShellTerminalShortcutEnabled?: () => boolean;
+	browserProfileStore?: BrowserProfileStore;
+	browserHistoryStore?: BrowserHistoryStore;
+	clearBrowserProfileData?: (partition: string) => Promise<void>;
 };
 
 export type BrowserViewHost = {
@@ -252,6 +326,15 @@ export type BrowserViewHost = {
 	toggleDevToolsForLastFocused: () => Promise<BrowserDevToolsState | null>;
 	// Drop the remembered panel; call when the shell gains focus for a real reason so a stale panel stops absorbing menu actions.
 	forgetLastFocusedPanel: () => void;
+	isRendererOwned: (event: IpcMainInvokeEvent, viewId: string) => boolean;
+	getProfileState: (viewId: string) => BrowserProfileViewState | null;
+	refreshProfileState: (profileId: BrowserProfileId) => void;
+	getProfileSwitchInfo: (viewId: string) => { hasNavigated: boolean; agentActive: boolean } | null;
+	switchProfile: (viewId: string, profileId: BrowserProfileId | null) => Promise<BrowserProfileViewState>;
+	isProfileLive: (profileId: BrowserProfileId) => boolean;
+	clearProfileData: (profileId: BrowserProfileId) => Promise<void>;
+	// Whether browser-owned UI was the most recently used application surface.
+	isLastUsedBrowser: () => boolean;
 	// Same "identical bounds are a no-op, so nudge and restore" trick
 	// window-composition.ts uses for the shell's own stale-surface bug, applied
 	// to the live page's own view. Call right after raising the transparent
@@ -284,6 +367,7 @@ type BrowserEntry = {
 type BrowserSessionEntry = {
 	sessionId: string;
 	viewId: string;
+	profileId: BrowserProfileId | null;
 	profilePartition: string;
 	tabs: Map<string, BrowserEntry>;
 	activeTabId: string;
@@ -294,14 +378,15 @@ type BrowserSessionEntry = {
 	visible: boolean;
 	networkTabId?: string;
 	agentBrowserCommands: number;
+	browserOperations: number;
+	profileSwitching: boolean;
+	profileSwitchTargetId: BrowserProfileId | null;
 	nativeActiveTabId?: string;
 	nativeOperationQueue: Promise<void>;
 	devtoolsPlacement: BrowserDevToolsPlacement;
 	// Bounded browser diagnostics exposed only through an explicit errors query.
 	signals: {
 		entries: BrowserSignalEntry[];
-		webRequestRegistered: boolean;
-		webRequest?: Session["webRequest"];
 	};
 	devtools?: {
 		contents: BrowserWebContents;
@@ -459,6 +544,10 @@ export function scaleBoundsForZoom(rect: BrowserRect, zoomFactor: number): Brows
 
 export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserViewHost {
 	const entries = new Map<string, BrowserSessionEntry>();
+	const signalWatchers = new Map<
+		BrowserElectronSession,
+		{ viewIds: Set<string>; webRequest: BrowserElectronSession["webRequest"] }
+	>();
 	const shellWebContents = options.shellWebContents ?? options.mainWindow.webContents;
 	if (!shellWebContents) throw new Error("Browser view host requires shell WebContents");
 	const viewIdsBySessionId = new Map<string, string>();
@@ -468,8 +557,12 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 	let disposePromise: Promise<void> | null = null;
 	// viewId of the panel that most recently held focus; cleared when it is hidden or destroyed.
 	let lastFocusedViewId: string | null = null;
+	// Separate from native focus: the address bar and tab strip live in the shell
+	// renderer, but browser shortcuts must continue to target their panel.
+	let lastUsedViewId: string | null = null;
 	const forgetIfFocused = (viewId: string): void => {
 		if (lastFocusedViewId === viewId) lastFocusedViewId = null;
+		if (lastUsedViewId === viewId) lastUsedViewId = null;
 	};
 	const setAgentBrowserActivity = (
 		session: BrowserSessionEntry,
@@ -502,6 +595,20 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		shellWebContents.send("browser:devtoolsState", state);
 		return state;
 	};
+	const profileStateForSession = (session: BrowserSessionEntry): BrowserProfileViewState => {
+		const profile = session.profileId ? options.browserProfileStore?.getProfile(session.profileId) : undefined;
+		return {
+			viewId: session.viewId,
+			profileId: profile ? session.profileId : null,
+			...(profile ? { profileName: profile.name } : {}),
+			temporary: !profile,
+		};
+	};
+	const pushProfileState = (session: BrowserSessionEntry): BrowserProfileViewState => {
+		const state = profileStateForSession(session);
+		shellWebContents.send("browser:profileState", state);
+		return state;
+	};
 
 	const destroyDevTools = (session: BrowserSessionEntry): void => {
 		const devtools = session.devtools;
@@ -515,7 +622,16 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		pushDevToolsState(session);
 	};
 
-	const createTab = (session: BrowserSessionEntry, activate: boolean, syncNativeOnActivate = false): BrowserEntry => {
+	const createTab = (
+		session: BrowserSessionEntry,
+		activate: boolean,
+		syncNativeOnActivate = false,
+		preferredTabId?: string,
+	): BrowserEntry => {
+		const tabId = preferredTabId ?? `t${session.nextTabNumber++}`;
+		if (session.tabs.has(tabId)) {
+			throw browserError("INVALID_ARGUMENT", `Browser tab ${tabId} already exists`);
+		}
 		const view = new options.WebContentsView({
 			webPreferences: {
 				contextIsolation: true,
@@ -547,7 +663,6 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		view.webContents.on("dom-ready", applyScrollbarStyle);
 		view.webContents.on("zoom-changed", applyScrollbarStyle);
 
-		const tabId = `t${session.nextTabNumber++}`;
 		const state: BrowserNavState = emptyNavState(session.viewId);
 		const entry: BrowserEntry = {
 			sessionId: session.sessionId,
@@ -560,6 +675,8 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		};
 		session.tabs.set(tabId, entry);
 		tabsByWebContentsId.set(view.webContents.id, entry);
+		const isCurrentEntry = () =>
+			entries.get(session.viewId) === session && session.tabs.get(entry.tabId) === entry;
 		// Native Chromium DevTools can be closed from its own window controls. Keep
 		// the renderer's toggle state in sync with that user action. Programmatic
 		// close/reopen cycles used for retargeting or placement changes are marked
@@ -579,16 +696,19 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		// agent-browser's own debugger attachment for this tab.
 		view.webContents.on("console-message", (_event, level, message, line, sourceId) => {
 			if (level < 3) return;
-			const location = sourceId ? `${sourceId}${typeof line === "number" ? `:${line}` : ""}` : "";
+			const location = sourceId
+				? `${sanitizeBrowserURL(sourceId)}${typeof line === "number" ? `:${line}` : ""}`
+				: "";
 			recordBrowserSignal(session, {
 				kind: "console-error",
-				message: location ? `${message} (${location})` : message,
+				message: location ? `${sanitizeURLsInText(message)} (${location})` : sanitizeURLsInText(message),
 			});
 		});
 		hardenWebContents(
 			view.webContents,
 			options,
 			entry,
+			isCurrentEntry,
 			(url) => {
 				// Deliberately not the setWindowOpenHandler createWindow path: Electron's
 				// openGuestWindow requires the returned webContents to be one IT created
@@ -607,14 +727,24 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 			view.webContents,
 			options,
 			entry,
-			() => entries.get(session.viewId)?.activeTabId === entry.tabId,
+			() => isCurrentEntry() && session.activeTabId === entry.tabId,
 			() => {
+				if (!isCurrentEntry()) return;
 				if (session.devtools && isBlankBrowserEntry(entry)) destroyDevTools(session);
 				applySessionBounds(session, entry);
 			},
-			() => pushTabsState(options, session),
+			() => {
+				if (isCurrentEntry()) pushTabsState(options, session);
+			},
+			(url, title, incrementVisit) => {
+				const profileId = session.profileId;
+				if (!isCurrentEntry() || !profileId || !options.browserHistoryStore) return;
+				void options.browserHistoryStore.record(profileId, url, title, incrementVisit).catch(() => undefined);
+			},
 		);
-		wireFaviconEvents(view.webContents, entry, () => pushTabsState(options, session));
+		wireFaviconEvents(view.webContents, entry, () => {
+			if (isCurrentEntry()) pushTabsState(options, session);
+		});
 		wireAutomationEvents(view.webContents, entry);
 		// The preview is a separate WebContentsView, so renderer-window keydown
 		// listeners never see keys typed here. Forward application shortcuts to the
@@ -626,17 +756,20 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 			true,
 			options.getKeybindingOverrides,
 			options.isKeybindingRecording,
-			(id) => id !== "close-shell-terminal" || options.isCloseShellTerminalShortcutEnabled?.() !== false,
+			(id, chord) => shouldHandleAppShortcutInBrowserContext(id, chord, Boolean(options.isMac)),
 			(id) => {
-				if (id !== "toggle-browser-devtools") return;
+				if (id !== "toggle-browser-devtools" || !isCurrentEntry() || session.profileSwitching) return;
 				lastFocusedViewId = session.viewId;
-				void devtoolsAction(session, "toggle").catch(() => undefined);
+				void withBrowserOperation(session, () => devtoolsAction(session, "toggle")).catch(() => undefined);
 			},
 		);
 		view.webContents.on("focus", () => {
+			if (!isCurrentEntry()) return;
 			lastFocusedViewId = session.viewId;
+			lastUsedViewId = session.viewId;
 			shellWebContents.send("browser:pageFocus", session.viewId);
 		});
+		attachBrowserShortcuts(view.webContents, () => session, true);
 		// A newly-created WebContentsView reports about:blank before its renderer
 		// has actually been initialized. CDP commands can hang until that initial
 		// document has completed, so make readiness explicit for every tab.
@@ -656,13 +789,17 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		const viewId = existingViewId ?? `${rendererId ?? 0}:${sessionId}`;
 		let session = entries.get(viewId);
 		if (!session) {
+			const boundProfileId = options.browserProfileStore?.getSessionProfileId(sessionId);
+			const boundProfile = boundProfileId ? options.browserProfileStore?.getProfile(boundProfileId) : undefined;
+			const profileId = boundProfile ? boundProfile.id : null;
 			session = {
 				sessionId,
 				viewId,
+				profileId,
 				// A non-persist: Electron partition is memory-only. Every tab in
 				// this worker shares it, while a fresh worker runtime receives a
 				// different partition even if a session ID is ever reused.
-				profilePartition: `ao-browser-${randomUUID()}`,
+				profilePartition: profileId ? browserProfilePartition(profileId) : `ao-browser-${randomUUID()}`,
 				tabs: new Map(),
 				activeTabId: "",
 				nextTabNumber: 1,
@@ -671,17 +808,33 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 				zoomFactor: 1,
 				visible: false,
 				agentBrowserCommands: 0,
+				browserOperations: 0,
+				profileSwitching: false,
+				profileSwitchTargetId: null,
 				nativeOperationQueue: Promise.resolve(),
 				devtoolsPlacement: DEFAULT_NATIVE_DEVTOOLS_PLACEMENT,
-				signals: { entries: [], webRequestRegistered: false },
+				signals: { entries: [] },
 			};
 			entries.set(viewId, session);
 			viewIdsBySessionId.set(sessionId, viewId);
-			createTab(session, true);
+			try {
+				createTab(session, true);
+			} catch (error) {
+				for (const entry of session.tabs.values()) {
+					tabsByWebContentsId.delete(entry.view.webContents.id);
+					disposeNetworkCapture(entry, "session-startup-failed");
+					if (!options.mainWindow.isDestroyed?.()) destroyTabView(entry);
+				}
+				session.tabs.clear();
+				entries.delete(viewId);
+				viewIdsBySessionId.delete(sessionId);
+				throw error;
+			}
 			// A fresh native session starts on the provider's first target. Recording
 			// that invariant avoids an unnecessary tab command before the first action;
 			// later human selections and popups explicitly invalidate it.
 			session.nativeActiveTabId = session.activeTabId;
+			pushProfileState(session);
 			registerBrowserSignalWatcher(session);
 		}
 		if (rendererId !== undefined) {
@@ -690,6 +843,25 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 			rendererOwnersByViewId.set(viewId, owners);
 		}
 		return session;
+	};
+
+	const ensureSessionReady = async (
+		sessionId: string,
+		rendererId?: number,
+		isUnavailable?: () => boolean,
+	): Promise<BrowserSessionEntry> => {
+		const store = options.browserProfileStore;
+		if (store) {
+			for (;;) {
+				const boundProfileId = store.getSessionProfileId(sessionId);
+				if (!boundProfileId || !store.isProfileOperationInProgress(boundProfileId)) break;
+				await store.waitForProfileOperation(boundProfileId);
+			}
+		}
+		if (isUnavailable?.()) {
+			throw browserError("BROWSER_TARGET_UNAVAILABLE", "Browser renderer is no longer available");
+		}
+		return ensureSession(sessionId, rendererId);
 	};
 
 	const queueNativeOperation = <T>(session: BrowserSessionEntry, operation: () => Promise<T>): Promise<T> => {
@@ -703,35 +875,72 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		return result;
 	};
 
-	// Failed XHR/fetch calls are session-partition-scoped (Electron's webRequest
-	// lives on the Session object, shared by every tab in this browser session),
-	// so this registers once per session rather than once per tab. resourceType
-	// "xhr" is Electron's classification for both real XHR and fetch() — there
-	// is no separate "fetch" resourceType in this Electron version.
+	const withBrowserOperation = async <T>(session: BrowserSessionEntry, operation: () => Promise<T>): Promise<T> => {
+		session.browserOperations += 1;
+		try {
+			return await operation();
+		} finally {
+			session.browserOperations = Math.max(0, session.browserOperations - 1);
+		}
+	};
+
+	// Electron reuses one Session for every worker attached to the same named
+	// profile. Register one watcher on that shared object, then route each event
+	// back to the owning AO worker by webContentsId. Never broadcast an event to
+	// every worker sharing the profile.
 	const registerBrowserSignalWatcher = (session: BrowserSessionEntry): void => {
-		if (session.signals.webRequestRegistered) return;
 		const firstTab = session.tabs.values().next().value;
 		const electronSession = firstTab?.view.webContents.session;
 		// Optional in BrowserWebContents (real Electron always provides it; test
 		// doubles that don't care about network-failure signals can omit it).
 		if (!electronSession?.webRequest) return;
-		session.signals.webRequestRegistered = true;
-		session.signals.webRequest = electronSession.webRequest;
+		const existing = signalWatchers.get(electronSession);
+		if (existing) {
+			existing.viewIds.add(session.viewId);
+			return;
+		}
+		const watcher = { viewIds: new Set([session.viewId]), webRequest: electronSession.webRequest };
+		signalWatchers.set(electronSession, watcher);
+		const ownerFor = (webContentsId: number | undefined): BrowserSessionEntry | undefined => {
+			if (typeof webContentsId !== "number") return undefined;
+			const tab = tabsByWebContentsId.get(webContentsId);
+			if (!tab || tab.view.webContents.session !== electronSession) return undefined;
+			const owner = entries.get(tab.state.viewId);
+			if (!owner || !watcher.viewIds.has(owner.viewId) || owner.tabs.get(tab.tabId) !== tab) return undefined;
+			return owner;
+		};
 		const filter = { urls: ["*://*/*"] };
 		electronSession.webRequest.onCompleted(filter, (details) => {
 			if (details.resourceType !== "xhr" || details.statusCode < 400) return;
-			recordBrowserSignal(session, {
+			const owner = ownerFor(details.webContentsId);
+			if (!owner) return;
+			recordBrowserSignal(owner, {
 				kind: "network-failure",
-				message: `${details.method} ${details.url} → ${details.statusCode}`,
+				message: `${details.method} ${sanitizeBrowserURL(details.url)} → ${details.statusCode}`,
 			});
 		});
 		electronSession.webRequest.onErrorOccurred(filter, (details) => {
 			if (details.resourceType !== "xhr") return;
-			recordBrowserSignal(session, {
+			const owner = ownerFor(details.webContentsId);
+			if (!owner) return;
+			recordBrowserSignal(owner, {
 				kind: "network-failure",
-				message: `${details.method} ${details.url} failed: ${details.error}`,
+				message: `${details.method} ${sanitizeBrowserURL(details.url)} failed: ${details.error}`,
 			});
 		});
+	};
+
+	const unregisterBrowserSignalWatcher = (session: BrowserSessionEntry): void => {
+		const firstTab = session.tabs.values().next().value;
+		const electronSession = firstTab?.view.webContents.session;
+		if (!electronSession) return;
+		const watcher = signalWatchers.get(electronSession);
+		if (!watcher) return;
+		watcher.viewIds.delete(session.viewId);
+		if (watcher.viewIds.size > 0) return;
+		watcher.webRequest.onCompleted(null);
+		watcher.webRequest.onErrorOccurred(null);
+		signalWatchers.delete(electronSession);
 	};
 
 	const recordBrowserSignal = (
@@ -823,19 +1032,21 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		// agent was on before the link, not the one it's actually looking at now.
 		syncNativeOnActivate = false,
 	): Promise<BrowserEntry> => {
-		let normalizedURL: string | undefined;
-		if (url) {
-			const normalized = normalizeBrowserURL(url);
-			if (!isAllowedBrowserURL(normalized.href, options.rendererOrigin)) {
-				throw browserError("NAVIGATION_FAILED", "Unsupported browser URL");
+		assertProfileStable(session);
+		return withBrowserOperation(session, async () => {
+			let normalizedURL: string | undefined;
+			if (url) {
+				const normalized = normalizeBrowserURL(url);
+				if (!isAllowedBrowserURL(normalized.href, options.rendererOrigin)) {
+					throw browserError("NAVIGATION_FAILED", "Unsupported browser URL");
+				}
+				normalizedURL = normalized.href;
 			}
-			normalizedURL = normalized.href;
-		}
-		const entry = createTab(session, activate, syncNativeOnActivate);
-		await entry.ready;
-		if (normalizedURL) {
-			const navigation = navigateEntry(entry, normalizedURL);
-			pushTabsState(options, session, { kind: reason, tabId: entry.tabId });
+			const entry = createTab(session, activate, syncNativeOnActivate);
+			await entry.ready;
+			if (normalizedURL) {
+				const navigation = navigateEntry(entry, normalizedURL);
+				pushTabsState(options, session, { kind: reason, tabId: entry.tabId });
 			// A failed load still yields a real, usable tab, exactly like
 			// navigating an *existing* tab to a dead URL — navigateEntry sets
 			// `.error` on the nav state (surfaced separately via
@@ -848,11 +1059,12 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 			// rollback treating the failed load as "nothing happened," which
 			// resurrected the entry and restored it, forever, on every retry,
 			// while the tab it claimed didn't exist sat open with an error page.
-			await navigation;
-		} else {
-			pushTabsState(options, session, { kind: reason, tabId: entry.tabId });
-		}
-		return entry;
+				await navigation;
+			} else {
+				pushTabsState(options, session, { kind: reason, tabId: entry.tabId });
+			}
+			return entry;
+		});
 	};
 
 	function activateTab(session: BrowserSessionEntry, tabId: string, notify = true): BrowserEntry {
@@ -887,11 +1099,13 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 	// switching), b00aa0414 (cancel stale overlay captures), and 4a98e4a92
 	// (release tab menu mirror on selection).
 	function closeTab(session: BrowserSessionEntry, tabId = session.activeTabId): BrowserTabsState {
+		assertProfileStable(session);
 		if (session.tabs.size === 1) {
 			throw browserError("CANNOT_CLOSE_LAST_TAB", "The only browser tab cannot be closed");
 		}
 		const tab = session.tabs.get(tabId);
 		if (!tab) throw browserError("TAB_NOT_FOUND", `Browser tab ${tabId} does not exist`);
+		const closedTab = tabResult(tab, false);
 		const wasActive = tabId === session.activeTabId;
 		disposeNetworkCapture(tab, "tab-closed");
 		if (session.networkTabId === tabId) session.networkTabId = undefined;
@@ -902,9 +1116,105 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 			const nextTabId = [...session.tabs.keys()].at(-1)!;
 			activateTab(session, nextTabId, false);
 		}
-		const state = listTabs(session, { kind: "closed", tabId });
+		const state = listTabs(session, { kind: "closed", tabId, tab: closedTab });
 		shellContents(options).send("browser:tabsState", state);
 		return state;
+	}
+
+	const openUserTab = async (session: BrowserSessionEntry, url?: string): Promise<BrowserTabsState> => {
+		if (!options.agentBrowserRuntime) {
+			await openTab(session, url, true);
+			return listTabs(session);
+		}
+		return queueNativeOperation(session, async () => {
+			await options.agentBrowserRuntime!.runAction(
+				session.sessionId,
+				"tab-new",
+				{ url },
+				agentBrowserTargets(session),
+			);
+			session.nativeActiveTabId = session.activeTabId;
+			return listTabs(session);
+		});
+	};
+
+	const closeUserTab = async (session: BrowserSessionEntry, tabId: string): Promise<BrowserTabsState> => {
+		if (session.tabs.size === 1) return listTabs(session);
+		if (!session.tabs.has(tabId)) return listTabs(session);
+		if (!options.agentBrowserRuntime) return closeTab(session, tabId);
+		return queueNativeOperation(session, async () => {
+			await ensureNativeActiveTab(session);
+			try {
+				await options.agentBrowserRuntime!.runAction(
+					session.sessionId,
+					"tab-close",
+					{ tabId },
+					agentBrowserTargets(session),
+				);
+			} catch (error) {
+				if (!isAgentBrowserCommandFailure(error)) throw error;
+				if (!session.tabs.has(tabId)) return listTabs(session);
+				return closeTab(session, tabId);
+			}
+			session.nativeActiveTabId = undefined;
+			await ensureNativeActiveTab(session);
+			return listTabs(session);
+		});
+	};
+
+	const focusLocation = (session: BrowserSessionEntry): void => {
+		lastUsedViewId = session.viewId;
+		shellWebContents.focus();
+		shellWebContents.send("browser:focusLocation", session.viewId);
+	};
+	const reopenClosedTab = (session: BrowserSessionEntry): void => {
+		shellWebContents.send("browser:reopenClosedTab", session.viewId);
+	};
+	function attachBrowserShortcuts(
+		contents: Pick<WebContents, "on">,
+		getSession: () => BrowserSessionEntry | undefined,
+		isNativePage: boolean,
+	): void {
+		contents.on("before-input-event", (event, input) => {
+			if (input.type !== "keyDown" || input.isAutoRepeat || options.isKeybindingRecording?.()) return;
+			const action = browserShortcutAction(input, Boolean(options.isMac));
+			if (!action) return;
+			const session = getSession();
+			if (!session) return;
+			event.preventDefault();
+			lastUsedViewId = session.viewId;
+			if (action === "focus-location") {
+				focusLocation(session);
+				return;
+			}
+			if (action === "reload") {
+				activeEntry(session).view.webContents.reload();
+				return;
+			}
+			if (action === "new-tab") {
+				void openUserTab(session).then(() => focusLocation(session)).catch(() => undefined);
+				return;
+			}
+			if (action === "reopen-tab") {
+				void queueNativeOperation(session, async () => reopenClosedTab(session)).catch(() => undefined);
+				return;
+			}
+			const closingTabId = session.activeTabId;
+			void closeUserTab(session, closingTabId)
+				.then(() => {
+					if (isNativePage && session.tabs.has(session.activeTabId)) {
+						activeEntry(session).view.webContents.focus();
+					}
+				})
+				.catch(() => undefined);
+		});
+	}
+
+	if (typeof shellWebContents.on === "function") {
+		attachBrowserShortcuts(shellWebContents, () => {
+			if (lastUsedViewId === null) return undefined;
+			return entries.get(lastUsedViewId);
+		}, false);
 	}
 
 	function agentBrowserTargets(session: BrowserSessionEntry): AgentBrowserTargetProvider {
@@ -1015,6 +1325,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		operation: InternalBrowserDevToolsOperation,
 		placement?: BrowserDevToolsPlacement,
 	): Promise<BrowserDevToolsState> => {
+		assertProfileStable(session);
 		switch (operation) {
 			case "open":
 				return openDevTools(session);
@@ -1089,16 +1400,21 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 	const isRendererOwned = (event: IpcMainInvokeEvent | IpcMainEvent, viewId: string): boolean =>
 		rendererOwnersByViewId.get(viewId)?.has(event.sender.id) ?? false;
 
+	function assertProfileStable(session: BrowserSessionEntry): void {
+		if (session.profileSwitching) {
+			throw browserError("BROWSER_PROFILE_SWITCHING", "Browser profile switching is in progress");
+		}
+	}
+
 	const setBounds = ({ viewId, rect, visible }: BrowserBoundsInput, zoomFactor = 1): void => {
 		const session = entries.get(viewId);
 		if (!session) return;
 		const effectiveZoomFactor = Number.isFinite(zoomFactor) && zoomFactor > 0 ? zoomFactor : 1;
 		session.zoomFactor = effectiveZoomFactor;
-		const entry = activeEntry(session);
 		if (!visible) {
 			session.bounds = OFFSCREEN_BOUNDS;
 			session.visible = false;
-			applySessionBounds(session, entry);
+			if (!session.profileSwitching && session.tabs.size > 0) applySessionBounds(session, activeEntry(session));
 			forgetIfFocused(viewId);
 			return;
 		}
@@ -1111,7 +1427,10 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 			options.mainWindow.getContentBounds(),
 		);
 		session.visible = true;
-		applySessionBounds(session, entry);
+		// A profile replacement may temporarily have no active tab. Keep accepting
+		// renderer geometry during that interval; rebuilt tabs receive the latest
+		// bounds instead of a stale pre-switch viewport.
+		if (!session.profileSwitching && session.tabs.size > 0) applySessionBounds(session, activeEntry(session));
 		// The shell toolbar can receive focus immediately after the Browser panel
 		// becomes visible. Remember that active panel too, so the DevTools shortcut
 		// still targets the browser even when the native page itself is not focused.
@@ -1121,7 +1440,8 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 	const navigate = async ({ viewId, url }: BrowserNavigateInput): Promise<BrowserNavState> => {
 		const session = entries.get(viewId);
 		if (!session) throw browserError("BROWSER_TARGET_UNAVAILABLE", "Browser target is unavailable");
-		return navigateEntry(activeEntry(session), url);
+		assertProfileStable(session);
+		return withBrowserOperation(session, () => navigateEntry(activeEntry(session), url));
 	};
 
 	const navigateEntry = async (entry: BrowserEntry, url: string): Promise<BrowserNavState> => {
@@ -1154,17 +1474,20 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 	const clear = async (viewId: string): Promise<BrowserNavState> => {
 		const session = entries.get(viewId);
 		if (!session) throw browserError("BROWSER_TARGET_UNAVAILABLE", "Browser target is unavailable");
-		const entry = activeEntry(session);
-		cancelAnnotation(options, entry, "navigation");
-		if (session.devtools) destroyDevTools(session);
-		session.visible = false;
-		session.bounds = OFFSCREEN_BOUNDS;
-		applySessionBounds(session, entry);
-		forgetIfFocused(viewId);
-		entry.ready = entry.view.webContents.loadURL("about:blank");
-		await entry.ready;
-		entry.view.webContents.clearHistory();
-		return pushNavState(options, entry);
+		assertProfileStable(session);
+		return withBrowserOperation(session, async () => {
+			const entry = activeEntry(session);
+			cancelAnnotation(options, entry, "navigation");
+			if (session.devtools) destroyDevTools(session);
+			session.visible = false;
+			session.bounds = OFFSCREEN_BOUNDS;
+			applySessionBounds(session, entry);
+			forgetIfFocused(viewId);
+			entry.ready = entry.view.webContents.loadURL("about:blank");
+			await entry.ready;
+			entry.view.webContents.clearHistory();
+			return pushNavState(options, entry);
+		});
 	};
 
 	// Best-effort full-viewport capture for a browser-annotation submit. Bounded
@@ -1201,9 +1524,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		const session = entries.get(viewId);
 		if (!session) return;
 		session.signals.entries.length = 0;
-		session.signals.webRequest?.onCompleted(null);
-		session.signals.webRequest?.onErrorOccurred(null);
-		session.signals.webRequest = undefined;
+		unregisterBrowserSignalWatcher(session);
 		if (options.mainWindow.isDestroyed?.()) session.devtools = undefined;
 		else destroyDevTools(session);
 		void options.agentBrowserRuntime?.closeSession(session.sessionId);
@@ -1237,6 +1558,225 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		entry.view.webContents.close?.();
 	};
 
+	type SavedBrowserTab = { tabId: string; url?: string };
+
+	const disposeSessionTabs = (session: BrowserSessionEntry): void => {
+		for (const entry of session.tabs.values()) {
+			tabsByWebContentsId.delete(entry.view.webContents.id);
+			disposeNetworkCapture(entry, "profile-switch");
+			if (!options.mainWindow.isDestroyed?.()) destroyTabView(entry);
+		}
+		session.tabs.clear();
+		session.activeTabId = "";
+		session.networkTabId = undefined;
+		session.nativeActiveTabId = undefined;
+	};
+
+	const savedTabsForSession = (session: BrowserSessionEntry): SavedBrowserTab[] =>
+		[...session.tabs.values()].map((entry) => {
+			try {
+				const url = entry.view.webContents.getURL();
+				return { tabId: entry.tabId, ...(isAllowedBrowserURL(url, options.rendererOrigin) ? { url } : {}) };
+			} catch {
+				return { tabId: entry.tabId };
+			}
+		});
+
+	const rebuildSessionTabs = async (
+		session: BrowserSessionEntry,
+		savedTabs: SavedBrowserTab[],
+		activeTabId: string,
+		nextTabNumber: number,
+		assertCurrentSession: () => void,
+	): Promise<void> => {
+		assertCurrentSession();
+		session.activeTabId = "";
+		session.nextTabNumber = 1;
+		const tabs = savedTabs.length > 0 ? savedTabs : [{ tabId: "t1" }];
+		let highestTabNumber = 1;
+		for (const saved of tabs) {
+			assertCurrentSession();
+			const match = /^t(\d+)$/.exec(saved.tabId);
+			if (match) highestTabNumber = Math.max(highestTabNumber, Number(match[1]));
+			createTab(session, false, false, saved.tabId);
+		}
+		session.nextTabNumber = Math.max(nextTabNumber, highestTabNumber + 1);
+		for (const saved of tabs) {
+			if (!saved.url) continue;
+			const entry = session.tabs.get(saved.tabId);
+			if (!entry) continue;
+			await entry.ready;
+			assertCurrentSession();
+			try {
+				await entry.view.webContents.loadURL(saved.url);
+			} catch (error) {
+				entry.state = {
+					...readNavState(entry),
+					error: error instanceof Error ? error.message : "Unable to reload page after profile switch",
+				};
+			}
+			assertCurrentSession();
+		}
+		assertCurrentSession();
+		const nextActiveTabId = session.tabs.has(activeTabId) ? activeTabId : tabs[0]!.tabId;
+		activateTab(session, nextActiveTabId, false);
+		// A newly-created agent-browser runtime starts on the provider's first
+		// target, regardless of which human tab AO restored as active. Preserve
+		// that distinction so the next agent command selects the right target.
+		session.nativeActiveTabId = tabs[0]!.tabId;
+	};
+
+	const switchProfile = async (viewId: string, requestedProfileId: BrowserProfileId | null): Promise<BrowserProfileViewState> => {
+		const session = entries.get(viewId);
+		if (!session) throw browserError("BROWSER_TARGET_UNAVAILABLE", "Browser target is unavailable");
+		const store = options.browserProfileStore;
+		if (!store) throw browserError("BROWSER_PROFILE_UNAVAILABLE", "Browser profiles are unavailable");
+		if (!isValidBrowserProfileSessionId(session.sessionId)) {
+			throw browserError("INVALID_ARGUMENT", "Worker session ID is invalid for a durable browser profile binding");
+		}
+		const normalizedRequestedProfileId =
+			requestedProfileId === null ? null : normalizeBrowserProfileId(requestedProfileId);
+		if (requestedProfileId !== null && !normalizedRequestedProfileId) {
+			throw browserError("INVALID_ARGUMENT", "Profile ID is invalid");
+		}
+		if (normalizedRequestedProfileId !== null && !store.getProfile(normalizedRequestedProfileId)) {
+			throw browserError("BROWSER_PROFILE_NOT_FOUND", "Browser profile was not found");
+		}
+		if (normalizedRequestedProfileId === session.profileId) return pushProfileState(session);
+		if (session.agentBrowserCommands > 0 || session.browserOperations > 0 || session.profileSwitching) {
+			throw browserError("BROWSER_PROFILE_ACTIVE", "Wait for browser activity to finish before switching profiles");
+		}
+		if (
+			normalizedRequestedProfileId !== null &&
+			store.isProfileOperationInProgress(normalizedRequestedProfileId)
+		) {
+			throw browserError("BROWSER_PROFILE_ACTIVE", "Wait for browser profile data operations to finish before switching");
+		}
+
+		session.profileSwitching = true;
+		session.profileSwitchTargetId = normalizedRequestedProfileId;
+		const previousProfileId = session.profileId;
+		const previousPartition = session.profilePartition;
+		let previousActiveTabId = session.activeTabId;
+		let previousNextTabNumber = session.nextTabNumber;
+		let savedTabs: SavedBrowserTab[] = [];
+		let bindingChanged = false;
+		let didTearDown = false;
+		const assertCurrentSession = (): void => {
+			if (entries.get(viewId) !== session) {
+				throw browserError("BROWSER_TARGET_UNAVAILABLE", "Browser target is no longer available");
+			}
+		};
+		try {
+			// A renderer tab-selection operation does not increment the agent activity
+			// counter. Let already-queued native work finish before tearing down CDP.
+			await session.nativeOperationQueue;
+			assertCurrentSession();
+			if (session.agentBrowserCommands > 0 || session.browserOperations > 0) {
+				throw browserError("BROWSER_PROFILE_ACTIVE", "Wait for browser activity to finish before switching profiles");
+			}
+			previousActiveTabId = session.activeTabId;
+			previousNextTabNumber = session.nextTabNumber;
+			savedTabs = savedTabsForSession(session);
+			destroyDevTools(session);
+			for (const entry of session.tabs.values()) cancelAnnotation(options, entry, "navigation");
+			await options.agentBrowserRuntime?.closeSession(session.sessionId);
+			assertCurrentSession();
+			await store.bindSession(session.sessionId, normalizedRequestedProfileId);
+			bindingChanged = true;
+			assertCurrentSession();
+
+			unregisterBrowserSignalWatcher(session);
+			disposeSessionTabs(session);
+			didTearDown = true;
+			session.profileId = normalizedRequestedProfileId;
+			session.profilePartition = normalizedRequestedProfileId
+				? browserProfilePartition(normalizedRequestedProfileId)
+				: `ao-browser-${randomUUID()}`;
+			await rebuildSessionTabs(session, savedTabs, previousActiveTabId, previousNextTabNumber, assertCurrentSession);
+			registerBrowserSignalWatcher(session);
+			pushTabsState(options, session);
+			pushProfileState(session);
+			pushDevToolsState(session);
+			pushNavState(options, activeEntry(session));
+			return profileStateForSession(session);
+		} catch (error) {
+			if (bindingChanged) {
+				try {
+					await store.bindSession(session.sessionId, previousProfileId);
+				} catch (rollbackError) {
+					console.error("browser profile binding rollback failed:", rollbackError);
+				}
+			}
+			const sessionIsCurrent = entries.get(viewId) === session;
+			if (sessionIsCurrent && didTearDown && session.tabs.size > 0) {
+				unregisterBrowserSignalWatcher(session);
+				disposeSessionTabs(session);
+			}
+			session.profileId = previousProfileId;
+			session.profilePartition = previousPartition;
+			if (sessionIsCurrent && didTearDown) {
+				try {
+					await rebuildSessionTabs(
+						session,
+						savedTabs,
+						previousActiveTabId,
+						previousNextTabNumber,
+						assertCurrentSession,
+					);
+					registerBrowserSignalWatcher(session);
+					pushTabsState(options, session);
+					pushProfileState(session);
+					pushDevToolsState(session);
+					pushNavState(options, activeEntry(session));
+				} catch (restoreError) {
+					console.error("browser profile view rollback failed:", restoreError);
+				}
+			}
+			throw error;
+		} finally {
+			session.profileSwitching = false;
+			session.profileSwitchTargetId = null;
+		}
+	};
+
+	const getProfileState = (viewId: string): BrowserProfileViewState | null => {
+		const session = entries.get(viewId);
+		return session ? profileStateForSession(session) : null;
+	};
+
+	const refreshProfileState = (profileId: BrowserProfileId): void => {
+		for (const session of entries.values()) {
+			if (session.profileId === profileId) pushProfileState(session);
+		}
+	};
+
+	const getProfileSwitchInfo = (viewId: string): { hasNavigated: boolean; agentActive: boolean } | null => {
+		const session = entries.get(viewId);
+		if (!session) return null;
+		return {
+			hasNavigated: [...session.tabs.values()].some((entry) => !isBlankBrowserEntry(entry)),
+			agentActive: session.agentBrowserCommands > 0 || session.browserOperations > 0 || session.profileSwitching,
+		};
+	};
+
+	const isProfileLive = (profileId: BrowserProfileId): boolean =>
+		[...entries.values()].some(
+			(session) => session.profileId === profileId || (session.profileSwitching && session.profileSwitchTargetId === profileId),
+		);
+
+	const clearProfileData = async (profileId: BrowserProfileId): Promise<void> => {
+		const store = options.browserProfileStore;
+		if (!store || !options.clearBrowserProfileData) {
+			throw browserError("BROWSER_PROFILE_UNAVAILABLE", "Browser profile storage is unavailable");
+		}
+		const partition = store.partitionForProfile(profileId);
+		await Promise.all([
+			options.clearBrowserProfileData(partition),
+			options.browserHistoryStore?.clear(profileId) ?? Promise.resolve(),
+		]);
+	};
+
 	const invokeNav = (
 		viewId: string,
 		action: (contents: BrowserWebContents) => void,
@@ -1245,6 +1785,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 	): BrowserNavState => {
 		const session = entries.get(viewId);
 		if (!session) return emptyNavState(viewId);
+		assertProfileStable(session);
 		const entry = activeEntry(session);
 		if (cancelForNavigation) {
 			cancelAnnotation(options, entry, "navigation");
@@ -1260,6 +1801,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		if (!isRendererOwned(event, input.viewId)) return;
 		const session = entries.get(input.viewId);
 		if (!session) return;
+		assertProfileStable(session);
 		const entry = activeEntry(session);
 		entry.annotationEnabled = input.enabled;
 		if (!input.enabled) entry.annotationDraft = null;
@@ -1291,20 +1833,27 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		) {
 			return;
 		}
-		entry.annotationEnabled = false;
-		entry.annotationDraft = null;
-		// Captured now, before returning: the preload only tears down the
-		// highlight overlay after this handler resolves, so the frame we grab
-		// here still has the selection ring(s) on it and not the prompt box
-		// (the preload hides that synchronously before invoking).
-		const snapshot = await captureAnnotationSnapshot(entry);
-		const forwarded: BrowserAnnotationSubmitPayload = {
-			viewId,
-			instruction: payload.instruction,
-			selection: payload.selection,
-			...(snapshot ? { snapshot } : {}),
-		};
-		shellWebContents.send("browser:annotation:submitted", forwarded);
+		const session = entries.get(viewId);
+		if (!session || session.profileSwitching || session.tabs.get(entry.tabId) !== entry) return;
+		await withBrowserOperation(session, async () => {
+			entry.annotationEnabled = false;
+			entry.annotationDraft = null;
+			// Captured now, before returning: the preload only tears down the
+			// highlight overlay after this handler resolves, so the frame we grab
+			// here still has the selection ring(s) on it and not the prompt box
+			// (the preload hides that synchronously before invoking).
+			const snapshot = await captureAnnotationSnapshot(entry);
+			if (entries.get(viewId) !== session || session.tabs.get(entry.tabId) !== entry || session.profileSwitching) {
+				return;
+			}
+			const forwarded: BrowserAnnotationSubmitPayload = {
+				viewId,
+				instruction: payload.instruction,
+				selection: payload.selection,
+				...(snapshot ? { snapshot } : {}),
+			};
+			shellWebContents.send("browser:annotation:submitted", forwarded);
+		});
 	};
 
 	const forwardAnnotationCancel = (
@@ -1335,9 +1884,10 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		ipcDisposers.push(() => options.ipcMain.off(channel, fn));
 	};
 
-	handle("browser:ensure", (event, sessionId: string) => {
-		const session = ensureSession(sessionId, event.sender.id);
+	handle("browser:ensure", async (event, sessionId: string) => {
+		const session = await ensureSessionReady(sessionId, event.sender.id, () => event.sender.isDestroyed?.() ?? false);
 		pushDevToolsState(session);
+		pushProfileState(session);
 		return pushNavState(options, activeEntry(session));
 	});
 	on("browser:setBounds", (event, input: BrowserBoundsInput) => {
@@ -1346,6 +1896,20 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 	handle("browser:navigate", (event, input: BrowserNavigateInput) =>
 		isRendererOwned(event, input.viewId) ? navigate(input) : emptyNavState(input.viewId),
 	);
+	handle("browser:history:suggest", (event, input: BrowserHistorySuggestInput) => {
+		if (
+			!input ||
+			typeof input.viewId !== "string" ||
+			typeof input.query !== "string" ||
+			input.query.length > 512 ||
+			!isRendererOwned(event, input.viewId)
+		) {
+			return [];
+		}
+		const profileId = entries.get(input.viewId)?.profileId;
+		if (!profileId || !options.browserHistoryStore) return [];
+		return options.browserHistoryStore.suggest(profileId, input.query);
+	});
 	handle("browser:clear", (event, viewId: string) =>
 		isRendererOwned(event, viewId) ? clear(viewId) : emptyNavState(viewId),
 	);
@@ -1370,6 +1934,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 	handle("browser:selectTab", (event, input: BrowserTabInput) => {
 		const session = entries.get(input.viewId);
 		if (!session || !isRendererOwned(event, input.viewId)) return emptyTabsState(input.viewId);
+		assertProfileStable(session);
 		return queueNativeOperation(session, async () => {
 			activateTab(session, input.tabId);
 			await ensureNativeActiveTab(session);
@@ -1379,6 +1944,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 	handle("browser:closeTab", (event, input: BrowserTabInput) => {
 		const session = entries.get(input.viewId);
 		if (!session || !isRendererOwned(event, input.viewId)) return emptyTabsState(input.viewId);
+		assertProfileStable(session);
 		if (session.tabs.size === 1) {
 			throw browserError("CANNOT_CLOSE_LAST_TAB", "The only browser tab cannot be closed");
 		}
@@ -1422,20 +1988,28 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 			return listTabs(session);
 		});
 	});
+	on("browser:panelUsed", (event, viewId: string) => {
+		if (isRendererOwned(event, viewId) && entries.has(viewId)) lastUsedViewId = viewId;
+	});
+	on("browser:panelBlur", (event, viewId: string) => {
+		if (isRendererOwned(event, viewId) && lastUsedViewId === viewId) lastUsedViewId = null;
+	});
 	handle("browser:devtools", (event, input: BrowserDevToolsInput) => {
 		if (!input || typeof input.viewId !== "string" || !isRendererOwned(event, input.viewId)) {
 			return emptyDevToolsState(input?.viewId ?? "");
 		}
 		const session = entries.get(input.viewId);
 		if (!session) return emptyDevToolsState(input.viewId);
+		assertProfileStable(session);
 		if (!["open", "close", "setPlacement"].includes(input.operation)) {
 			throw browserError("INVALID_ARGUMENT", "Unsupported browser DevTools operation");
 		}
-		return devtoolsAction(session, input.operation, input.placement);
+		return withBrowserOperation(session, () => devtoolsAction(session, input.operation, input.placement));
 	});
 	handle("browser:openTab", async (event, input: BrowserOpenTabInput) => {
 		const session = entries.get(input.viewId);
 		if (!session || !isRendererOwned(event, input.viewId)) return emptyTabsState(input.viewId);
+		assertProfileStable(session);
 		let url = input.url;
 		if (url) {
 			const normalized = normalizeBrowserURL(url);
@@ -1444,22 +2018,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 			}
 			url = normalized.href;
 		}
-		if (!options.agentBrowserRuntime) {
-			await openTab(session, url, true);
-			return listTabs(session);
-		}
-		return queueNativeOperation(session, async () => {
-			// Let agent-browser create UI tabs too so its stable tab registry and
-			// AO's WebContentsView IDs stay aligned for later select/close commands.
-			await options.agentBrowserRuntime!.runAction(
-				session.sessionId,
-				"tab-new",
-				{ url },
-				agentBrowserTargets(session),
-			);
-			session.nativeActiveTabId = session.activeTabId;
-			return listTabs(session);
-		});
+		return openUserTab(session, url);
 	});
 	handle("browser:annotation:setMode", (event, input: BrowserAnnotationModeInput) => setAnnotationMode(event, input));
 	on("browser:destroy", (event, viewId: string) => {
@@ -1483,7 +2042,10 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 				if (viewId) destroy(viewId);
 				return { destroyed: Boolean(viewId) };
 			}
-			const session = ensureSession(sessionId);
+			const session = await ensureSessionReady(sessionId);
+			if (session.profileSwitching) {
+				throw browserError("BROWSER_PROFILE_SWITCHING", "Browser profile switching is in progress");
+			}
 			const commandId = randomUUID();
 			setAgentBrowserActivity(session, action, true, commandId, "started");
 			try {
@@ -1516,7 +2078,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 				case "open": {
 					const url = stringArg(args, "url", "URL_REQUIRED", "url is required");
 					await runNative(action, { url: normalizeAgentBrowserURL(url) });
-					return pushNavState(options, activeEntry(session));
+					return agentNavState(pushNavState(options, activeEntry(session)));
 				}
 				case "snapshot": {
 					const result = await runNative(action, { interactive: Boolean(args.interactive) });
@@ -1623,24 +2185,24 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 						targetRef: stringArg(args, "targetRef", "REFERENCE_REQUIRED", "target ref is required"),
 					});
 				case "unhighlight":
-					return unhighlightEntry(entry);
+					return agentURLResult(await unhighlightEntry(entry));
 				case "tabs":
-					return listTabs(session);
+					return agentTabsResult(session);
 				case "tab-new": {
 					const url =
 						typeof args.url === "string" && args.url.trim() ? normalizeAgentBrowserURL(args.url) : undefined;
 					await runNative(action, { url });
-					return tabResult(activeEntry(session), true);
+					return agentTabResult(activeEntry(session), true);
 				}
 				case "tab-select": {
 					await runNative(action, { tabId: stringArg(args, "tabId", "TAB_ID_REQUIRED", "tabId is required") });
-					return tabResult(activeEntry(session), true);
+					return agentTabResult(activeEntry(session), true);
 				}
 				case "tab-close": {
 					const tabId =
 						typeof args.tabId === "string" && args.tabId.trim() ? args.tabId.trim() : session.activeTabId;
 					await runNative(action, { tabId });
-					return { closedTabId: tabId, ...listTabs(session) };
+					return { closedTabId: tabId, ...agentTabsResult(session) };
 				}
 				case "scroll":
 					return runNative(action, {
@@ -1658,7 +2220,18 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 						property,
 						ref: typeof args.ref === "string" && args.ref.trim() ? args.ref : undefined,
 					});
-					return { ...result, value: result.value ?? result[property] };
+					const value = result.value ?? result[property];
+					const safeValue =
+						property === "url"
+							? sanitizeBrowserURL(String(value ?? ""))
+							: property === "title"
+								? sanitizeBrowserTitle(String(value ?? ""))
+								: value;
+					return {
+						...result,
+						...(property === "url" || property === "title" ? { [property]: safeValue } : {}),
+						value: safeValue,
+					};
 				}
 				case "wait":
 					return runNative(action, args);
@@ -1711,10 +2284,11 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 			if (disposePromise) return disposePromise;
 			disposePromise = (async () => {
 				ipcDisposers.splice(0).forEach((dispose) => dispose());
-				await options.agentBrowserRuntime?.dispose();
 				for (const viewId of [...entries.keys()]) {
 					destroy(viewId);
 				}
+				if (options.browserHistoryStore) await options.browserHistoryStore.drain();
+				await options.agentBrowserRuntime?.dispose();
 			})();
 			return disposePromise;
 		},
@@ -1737,11 +2311,20 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 			if (lastFocusedViewId === null) return null;
 			const session = entries.get(lastFocusedViewId);
 			if (!session) return null;
-			return devtoolsAction(session, "toggle");
+			return withBrowserOperation(session, () => devtoolsAction(session, "toggle"));
 		},
 		forgetLastFocusedPanel: () => {
 			lastFocusedViewId = null;
+			lastUsedViewId = null;
 		},
+		isRendererOwned,
+		getProfileState,
+		refreshProfileState,
+		getProfileSwitchInfo,
+		switchProfile,
+		isProfileLive,
+		clearProfileData,
+		isLastUsedBrowser: () => lastUsedViewId !== null && entries.has(lastUsedViewId),
 		// Reported live (macOS, maximized/popped-out panel): opening an overlay
 		// (e.g. a toolbar dropdown) over the browser panel blanks the live page
 		// to black instead of showing it behind the dropdown, and a plain bounds
@@ -1890,6 +2473,44 @@ function tabResult(entry: BrowserEntry, active: boolean): BrowserTabState & { un
 	};
 }
 
+// Renderer IPC deliberately keeps the real URL for the address bar and tab
+// navigation. Agent/daemon responses use this separate projection because they
+// are retained in tool output and transcripts.
+function agentTabResult(entry: BrowserEntry, active: boolean): BrowserTabState & { untrustedExternalContent: true } {
+	const tab = tabResult(entry, active);
+	return {
+		...tab,
+		url: sanitizeBrowserURL(tab.url),
+		title: sanitizeBrowserTitle(tab.title),
+	};
+}
+
+function agentTabsResult(session: BrowserSessionEntry): BrowserTabsState & { untrustedExternalContent: true } {
+	return {
+		viewId: session.viewId,
+		activeTabId: session.activeTabId,
+		tabs: [...session.tabs.values()].map((entry) => agentTabResult(entry, entry.tabId === session.activeTabId)),
+		untrustedExternalContent: true,
+	};
+}
+
+function agentNavState(state: BrowserNavState): BrowserNavState {
+	return {
+		...state,
+		url: sanitizeBrowserURL(state.url),
+		title: sanitizeBrowserTitle(state.title),
+		...(state.error ? { error: sanitizeURLsInText(state.error) } : {}),
+	};
+}
+
+function agentURLResult(result: unknown): unknown {
+	if (!result || typeof result !== "object" || !("url" in result)) return result;
+	return {
+		...result,
+		url: sanitizeBrowserURL(String(result.url ?? "")),
+	};
+}
+
 function listTabs(
 	session: BrowserSessionEntry,
 	change?: BrowserTabsState["change"],
@@ -1923,10 +2544,11 @@ function hardenWebContents(
 	contents: BrowserWebContents,
 	options: BrowserViewHostOptions,
 	entry: BrowserEntry,
+	isCurrent: () => boolean,
 	openPopup: (url: string) => void,
 ): void {
 	contents.setWindowOpenHandler(({ url }) => {
-		if (!isAllowedBrowserURL(url, options.rendererOrigin)) {
+		if (!isCurrent() || !isAllowedBrowserURL(url, options.rendererOrigin)) {
 			return { action: "deny" };
 		}
 		// Always deny — never return createWindow. See the call site's comment for
@@ -1938,6 +2560,7 @@ function hardenWebContents(
 	const blockUnsafeNavigation = (event: Electron.Event, url: string) => {
 		if (!isAllowedBrowserURL(url, options.rendererOrigin)) {
 			event.preventDefault();
+			if (!isCurrent()) return;
 			entry.state = { ...entry.state, error: "Unsupported browser URL" };
 			shellContents(options).send("browser:navState", entry.state);
 			return;
@@ -1957,6 +2580,7 @@ function wireNavEvents(
 	isActive: () => boolean,
 	syncActiveBounds: () => void,
 	syncTabs: () => void,
+	recordHistory: (url: string, title: string, incrementVisit: boolean) => void,
 ): void {
 	const update = () => {
 		syncTabs();
@@ -1968,9 +2592,13 @@ function wireNavEvents(
 		}
 		clearStaleFavicon(entry, url);
 		if (isActive()) syncActiveBounds();
+		recordHistory(url, contents.getTitle(), true);
 		update();
 	});
-	contents.on("did-navigate-in-page", update);
+	contents.on("did-navigate-in-page", (_event, url) => {
+		recordHistory(url, contents.getTitle(), true);
+		update();
+	});
 	contents.on("page-title-updated", update);
 	contents.on("did-start-loading", () => {
 		update();
@@ -1983,10 +2611,15 @@ function wireNavEvents(
 			});
 			contents.focus();
 		}
+		recordHistory(contents.getURL(), contents.getTitle(), false);
 		update();
 	});
 	contents.on("did-fail-load", (_event, errorCode, errorDescription, _validatedURL, isMainFrame) => {
-		if (!isMainFrame || errorCode === -3) return;
+		if (errorCode === -3) return;
+		// A page can contain third-party images, frames, or scripts that fail
+		// independently. Only a main-frame failure means the browser page itself
+		// should be replaced with AO's error state.
+		if (isMainFrame === false) return;
 		cancelAnnotation(options, entry, "navigation");
 		if (isActive()) entry.view.setVisible?.(false);
 		entry.state = { ...readNavState(entry), error: String(errorDescription || "Unable to load page") };
@@ -2283,14 +2916,14 @@ function handleNetworkDebuggerEvent(entry: BrowserEntry, method: string, params:
 		if (previous && Object.keys(redirect).length > 0) {
 			applyNetworkResponse(previous, redirect);
 			finishNetworkRequest(previous, timestamp);
-			previous.redirectedTo = sanitizeNetworkURL(url);
+			previous.redirectedTo = sanitizeBrowserURL(url);
 		}
 		const wallTime = finiteNumber(params.wallTime);
 		const item: InternalBrowserNetworkRequest = {
 			id: `n${capture.nextSequence++}`,
 			protocolRequestId: requestID,
 			method: typeof request.method === "string" ? request.method : "GET",
-			url: sanitizeNetworkURL(url),
+			url: sanitizeBrowserURL(url),
 			resourceType: typeof params.type === "string" ? params.type.toLowerCase() : undefined,
 			startedAt: wallTime ? new Date(wallTime * 1_000).toISOString() : new Date().toISOString(),
 			startedMonotonic: timestamp,
@@ -2382,13 +3015,17 @@ function selectedNetworkHeaders(value: unknown, kind: "request" | "response"): R
 		const name = rawName.toLowerCase();
 		if (!allowed.has(name)) continue;
 		let headerValue = typeof rawValue === "string" ? rawValue : String(rawValue);
-		if (name === "referer" || name === "location") headerValue = sanitizeNetworkURL(headerValue);
+		if (name === "referer" || name === "location") headerValue = sanitizeBrowserURL(headerValue);
 		selected[name] = headerValue.slice(0, 1_000);
 	}
 	return Object.keys(selected).length > 0 ? selected : undefined;
 }
 
-function sanitizeNetworkURL(raw: string): string {
+// Safe-to-retain URL form: keep the location useful while removing values that
+// commonly carry credentials or one-time handoff material.
+export function sanitizeBrowserURL(raw: string): string {
+	if (!raw) return "";
+	if (raw === "about:blank") return raw;
 	try {
 		const url = new URL(raw);
 		if (!["http:", "https:", "file:"].includes(url.protocol)) {
@@ -2403,8 +3040,21 @@ function sanitizeNetworkURL(raw: string): string {
 		return url.href;
 	} catch {
 		const withoutFragment = raw.split("#", 1)[0] ?? "";
-		return (withoutFragment.split("?", 1)[0] ?? "").slice(0, 2_000);
+		const withoutQuery = withoutFragment.split("?", 1)[0] ?? "";
+		return withoutQuery.replace(/^([a-z][a-z\d+.-]*:\/\/)[^/@\s]+@/i, "$1").slice(0, 2_000);
 	}
+}
+
+export function sanitizeBrowserTitle(raw: string): string {
+	const title = raw.trim();
+	if (/^(?:[a-z][a-z\d+.-]*:\/\/|(?:about|mailto|data|javascript|blob):)/i.test(title)) {
+		return sanitizeBrowserURL(title);
+	}
+	return sanitizeURLsInText(raw);
+}
+
+function sanitizeURLsInText(raw: string): string {
+	return raw.replace(/\b(?:https?|file):\/\/[^\s<>"']+/gi, (match) => sanitizeBrowserURL(match));
 }
 
 function objectValue(value: unknown): Record<string, unknown> {
@@ -2509,7 +3159,7 @@ function normalizeNativeMessages(
 		if (typeof item === "string") {
 			return {
 				level: action === "errors" ? "error" : "log",
-				message: markUntrusted(externalText(item)),
+				message: markUntrusted(externalText(sanitizeURLsInText(item))),
 				timestamp: new Date().toISOString(),
 			};
 		}
@@ -2530,7 +3180,7 @@ function normalizeNativeMessages(
 					: JSON.stringify(record);
 		return {
 			level,
-			message: markUntrusted(externalText(message)),
+			message: markUntrusted(externalText(sanitizeURLsInText(message))),
 			timestamp: typeof record.timestamp === "string" ? record.timestamp : new Date().toISOString(),
 		};
 	});

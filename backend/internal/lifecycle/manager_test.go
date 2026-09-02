@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/go-chi/chi/v5/middleware"
+
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/observe/ownership"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
@@ -3785,6 +3787,44 @@ func TestMarkSpawnedPersistsChatControllerFacts(t *testing.T) {
 	}
 }
 
+// Model is the same allowlist omission as the chat resume handle above, one
+// field over: it is declared on SessionMetadata, has its own sessions.model
+// column, and is read back by the API — but mergeMetadata never copied it, so
+// every `ao spawn --model X` persisted an empty model and the session reported
+// no model at all.
+func TestMarkSpawnedPersistsResolvedModel(t *testing.T) {
+	ctx := context.Background()
+	st := newFakeStore()
+	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer"}
+	m := New(st, nil)
+
+	if err := m.MarkSpawned(ctx, "mer-1", domain.SessionMetadata{
+		WorkspacePath: "/ws",
+		Model:         "sonnet",
+	}); err != nil {
+		t.Fatalf("MarkSpawned: %v", err)
+	}
+
+	got, _, err := st.GetSession(ctx, "mer-1")
+	if err != nil {
+		t.Fatalf("GetSession: %v", err)
+	}
+	if got.Metadata.Model != "sonnet" {
+		t.Fatalf("model = %q, want %q; a spawn's resolved model must survive the merge",
+			got.Metadata.Model, "sonnet")
+	}
+
+	// Merged rather than assigned: a relaunch that resolves no explicit model
+	// must leave the recorded one alone instead of blanking it.
+	if err := m.MarkSpawned(ctx, "mer-1", domain.SessionMetadata{WorkspacePath: "/ws"}); err != nil {
+		t.Fatalf("second MarkSpawned: %v", err)
+	}
+	got, _, _ = st.GetSession(ctx, "mer-1")
+	if got.Metadata.Model != "sonnet" {
+		t.Fatalf("model = %q after a relaunch that resolved none, want it preserved", got.Metadata.Model)
+	}
+}
+
 func TestMarkChatSpawnedKeepsPreviousOwnerWhenAtomicBoundaryCommitFails(t *testing.T) {
 	ctx := context.Background()
 	st := newFakeStore()
@@ -3894,5 +3934,52 @@ func TestActivitySignalRejectsStaleChatControllerGenerationAcrossHandoff(t *test
 	}
 	if got := st.sessions["mer-1"].Activity.State; got != domain.ActivityIdle {
 		t.Fatalf("old Chat controller changed TUI activity to %q", got)
+	}
+}
+
+// TestEmitTelemetryStampsRequestID covers the shared lifecycle emit path: an
+// HTTP-driven activity signal must tag its events with the request id so the
+// lifecycle rows join to the request, while reaper/poller ticks (a plain
+// background context) must keep an empty request id.
+func TestEmitTelemetryStampsRequestID(t *testing.T) {
+	cases := []struct {
+		name string
+		ctx  context.Context
+		want string
+	}{
+		{
+			name: "request scoped",
+			ctx:  context.WithValue(context.Background(), middleware.RequestIDKey, "req-1"),
+			want: "req-1",
+		},
+		{name: "background context", ctx: context.Background(), want: ""},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			st := newFakeStore()
+			sink := &telemetrySink{}
+			m := New(st, nil, WithTelemetry(sink))
+			now := time.Unix(100, 0).UTC()
+			m.clock = func() time.Time { return now }
+			st.sessions["mer-1"] = domain.SessionRecord{
+				ID:        "mer-1",
+				ProjectID: "mer",
+				Activity:  domain.Activity{State: domain.ActivityIdle, LastActivityAt: now.Add(-time.Minute)},
+			}
+
+			signal := ports.ActivitySignal{Valid: true, State: domain.ActivityWaitingInput, Timestamp: now}
+			if err := m.ApplyActivitySignal(tc.ctx, "mer-1", signal); err != nil {
+				t.Fatal(err)
+			}
+			if len(sink.events) == 0 {
+				t.Fatal("no telemetry events emitted")
+			}
+			for _, ev := range sink.events {
+				if ev.RequestID != tc.want {
+					t.Fatalf("%s RequestID = %q, want %q", ev.Name, ev.RequestID, tc.want)
+				}
+			}
+		})
 	}
 }

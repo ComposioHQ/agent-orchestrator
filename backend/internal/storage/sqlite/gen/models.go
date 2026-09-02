@@ -12,10 +12,17 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
 
-type AgentInventoryCache struct {
-	ID            int64
-	InventoryJson string
-	ObservedAt    time.Time
+type AgentInstallJob struct {
+	Target              string
+	Status              string
+	Method              string
+	Command             string
+	ExpectedDestination string
+	Output              string
+	Error               string
+	StartedAt           time.Time
+	FinishedAt          sql.NullTime
+	UpdatedAt           time.Time
 }
 
 type AgentModelCatalog struct {
@@ -495,6 +502,7 @@ type Session struct {
 	AgentSessionIDLaunchID    string
 	Model                     string
 	LatestUserPromptAt        sql.NullTime
+	ReviewerAgentConfig       string
 }
 
 type SessionCleanupFact struct {

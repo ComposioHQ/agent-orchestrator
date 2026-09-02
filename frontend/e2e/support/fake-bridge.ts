@@ -146,6 +146,7 @@ export async function installFakeBridge(page: Page, opts: FakeBridgeOptions = {}
 					setBounds: () => undefined,
 					setOverlayOpen: () => undefined,
 					navigate: async ({ viewId }: { viewId: string }) => navState(viewId),
+					historySuggestions: async () => [],
 					clear: async (viewId: string) => navState(viewId),
 					goBack: async (viewId: string) => navState(viewId),
 					goForward: async (viewId: string) => navState(viewId),
@@ -171,6 +172,12 @@ export async function installFakeBridge(page: Page, opts: FakeBridgeOptions = {}
 						activeTabId: "t1",
 						tabs: [{ id: "t1", url: "", title: "", active: true }],
 					}),
+					getProfile: async (viewId: string) => ({ viewId, profileId: null, temporary: true }),
+					showProfileMenu: async () => undefined,
+					notifyPanelUsed: () => undefined,
+					notifyPanelBlur: () => undefined,
+					onFocusLocation: unsubscribe,
+					onReopenClosedTab: unsubscribe,
 					devtools: async (input: { viewId: string }) => ({ viewId: input.viewId, open: false, activeTabId: "" }),
 					destroy: () => undefined,
 					// Annotation contract (mirrors src/preload.ts): useBrowserView subscribes
@@ -183,7 +190,25 @@ export async function installFakeBridge(page: Page, opts: FakeBridgeOptions = {}
 					onTabsState: unsubscribe,
 					onAgentActivity: unsubscribe,
 					onDevToolsState: unsubscribe,
+					onProfileState: unsubscribe,
+					onProfileManage: unsubscribe,
 					onPageFocus: unsubscribe,
+				},
+				browserProfiles: {
+					list: async () => ({ profiles: [] }),
+					create: async (name: string) => {
+						const now = new Date().toISOString();
+						return { id: `fake-${name}`, name, createdAt: now, updatedAt: now };
+					},
+					rename: async ({ id, name }: { id: string; name: string }) => {
+						const now = new Date().toISOString();
+						return { id, name, createdAt: now, updatedAt: now };
+					},
+					clear: async () => undefined,
+					delete: async () => undefined,
+					discoverImportSources: async () => ({ sources: [] }),
+					import: async () => ({ sourceName: "", entries: [] }),
+					onImportProgress: () => () => undefined,
 				},
 				notifications: {
 					show: async () => undefined,
@@ -636,6 +661,7 @@ export async function installFakeAgent(page: Page, opts: FakeAgentOptions = {}):
 					setOverlayOpen: () => undefined,
 					navigate: async ({ viewId, url }: { viewId: string; url: string }) =>
 						state.browserError ? navState(viewId, "", state.browserError) : navState(viewId, url),
+					historySuggestions: async () => [],
 					clear: async (viewId: string) => navState(viewId),
 					goBack: async (viewId: string) => navState(viewId),
 					goForward: async (viewId: string) => navState(viewId),
@@ -661,6 +687,12 @@ export async function installFakeAgent(page: Page, opts: FakeAgentOptions = {}):
 						activeTabId: "t1",
 						tabs: [{ id: "t1", url: "", title: "", active: true }],
 					}),
+					getProfile: async (viewId: string) => ({ viewId, profileId: null, temporary: true }),
+					showProfileMenu: async () => undefined,
+					notifyPanelUsed: () => undefined,
+					notifyPanelBlur: () => undefined,
+					onFocusLocation: unsubscribe,
+					onReopenClosedTab: unsubscribe,
 					devtools: async (input: { viewId: string }) => ({ viewId: input.viewId, open: false, activeTabId: "" }),
 					destroy: () => undefined,
 					// Annotation contract (mirrors src/preload.ts): useBrowserView subscribes
@@ -673,7 +705,25 @@ export async function installFakeAgent(page: Page, opts: FakeAgentOptions = {}):
 					onTabsState: unsubscribe,
 					onAgentActivity: unsubscribe,
 					onDevToolsState: unsubscribe,
+					onProfileState: unsubscribe,
+					onProfileManage: unsubscribe,
 					onPageFocus: unsubscribe,
+				},
+				browserProfiles: {
+					list: async () => ({ profiles: [] }),
+					create: async (name: string) => {
+						const now = new Date().toISOString();
+						return { id: `fake-${name}`, name, createdAt: now, updatedAt: now };
+					},
+					rename: async ({ id, name }: { id: string; name: string }) => {
+						const now = new Date().toISOString();
+						return { id, name, createdAt: now, updatedAt: now };
+					},
+					clear: async () => undefined,
+					delete: async () => undefined,
+					discoverImportSources: async () => ({ sources: [] }),
+					import: async () => ({ sourceName: "", entries: [] }),
+					onImportProgress: () => () => undefined,
 				},
 				notifications: {
 					show: async () => undefined,

@@ -88,11 +88,24 @@ func TestLANManagerBlocksLoopbackOnlyControlRoutes(t *testing.T) {
 		}
 	}
 
+	// Agent install mutations are loopback-only, while the adjacent GET
+	// catalog/status routes remain available to authenticated mobile clients.
+	req, _ := http.NewRequest(http.MethodPost, fmt.Sprintf("http://127.0.0.1:%d/api/v1/agents/cursor/install", port), nil)
+	req.Host = "127.0.0.1"
+	req.Header.Set("Authorization", "Bearer secret12")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("agent install request failed: %v", err)
+	}
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("agent install: got %d want 404", resp.StatusCode)
+	}
+
 	// A normal app route must still be reachable through the LAN listener
 	// (not swallowed by the control-route filter). Auth-gating, not the
 	// control filter, decides its fate.
-	req, _ := http.NewRequest(http.MethodGet, fmt.Sprintf("http://127.0.0.1:%d/api/v1/sessions", port), nil)
-	resp, err := http.DefaultClient.Do(req)
+	req, _ = http.NewRequest(http.MethodGet, fmt.Sprintf("http://127.0.0.1:%d/api/v1/sessions", port), nil)
+	resp, err = http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("sessions: request failed: %v", err)
 	}
@@ -118,4 +131,40 @@ func TestLANManagerStartStopIdempotent(t *testing.T) {
 		t.Fatal("still running after stop")
 	}
 	_ = m.Stop(ctx) // second stop is a no-op
+}
+
+// End-to-end through the real LAN stack (lanControlBlock + authMiddleware +
+// router): the identity probe answers without a credential, and nothing else
+// does. The middleware unit tests cover the exemption in isolation; this covers
+// the composition, which is where a wiring mistake would actually live.
+func TestLANManagerServesIdentityProbeWithoutAPassword(t *testing.T) {
+	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, "ok")
+	})
+	st := &authState{}
+	st.setHash(mobilebridge.HashPassword("secret12"))
+	m := NewLANManager(inner, st, 0, slog.Default(), nil)
+	port, err := m.Start(0)
+	if err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	defer m.Stop(context.Background())
+
+	get := func(path string) int {
+		t.Helper()
+		req, _ := http.NewRequest(http.MethodGet, fmt.Sprintf("http://127.0.0.1:%d%s", port, path), nil)
+		resp, err := http.DefaultClient.Do(req) // deliberately no Authorization
+		if err != nil {
+			t.Fatalf("GET %s: %v", path, err)
+		}
+		defer func() { _ = resp.Body.Close() }()
+		return resp.StatusCode
+	}
+
+	if code := get("/api/v1/identity"); code != http.StatusOK {
+		t.Errorf("unauthenticated GET /api/v1/identity got %d, want 200", code)
+	}
+	if code := get("/api/v1/sessions"); code != http.StatusUnauthorized {
+		t.Errorf("unauthenticated GET /api/v1/sessions got %d, want 401", code)
+	}
 }

@@ -6,7 +6,7 @@ import { Switch as SwitchPrimitive } from "radix-ui";
 import { cn } from "@/lib/utils";
 
 type SwitchProps = React.ComponentProps<typeof SwitchPrimitive.Root> & {
-	size?: "default" | "sm";
+	size?: "default" | "sm" | "compact";
 };
 
 function Switch({ className, size = "default", ...props }: SwitchProps) {
@@ -15,7 +15,7 @@ function Switch({ className, size = "default", ...props }: SwitchProps) {
 			data-slot="switch"
 			className={cn(
 				"peer relative inline-flex shrink-0 cursor-pointer items-center rounded-full border-transparent transition-[transform,background-color,border-color,box-shadow] duration-fast ease-out active:scale-[0.96] outline-none after:absolute after:-inset-x-3 after:-inset-y-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 disabled:cursor-not-allowed disabled:opacity-50 data-[state=checked]:border-primary data-[state=checked]:bg-primary data-[state=unchecked]:bg-input/90",
-				size === "sm" ? "h-4 w-8 border" : "h-5 w-11 border-2",
+				size === "compact" ? "h-4 w-7 border" : size === "sm" ? "h-4 w-8 border" : "h-5 w-11 border-2",
 				className,
 			)}
 			{...props}
@@ -24,7 +24,9 @@ function Switch({ className, size = "default", ...props }: SwitchProps) {
 				data-slot="switch-thumb"
 				className={cn(
 					"pointer-events-none block rounded-full bg-background shadow-sm ring-0 transition-transform duration-fast ease-out data-[state=unchecked]:translate-x-0 dark:data-[state=checked]:bg-primary-foreground dark:data-[state=unchecked]:bg-foreground",
-					size === "sm"
+					size === "compact"
+						? "size-3 data-[state=unchecked]:translate-x-0.5 data-[state=checked]:translate-x-3"
+						: size === "sm"
 						? "size-3 data-[state=checked]:translate-x-4"
 						: "h-4 w-6 data-[state=checked]:translate-x-[calc(100%-8px)]",
 				)}

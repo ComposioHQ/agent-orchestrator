@@ -72,7 +72,11 @@ export function SessionChatSurface({
 	tabStripAction,
 	handoffDialogOpen = false,
 	workspaceTabs,
+	workspaceTabActions,
+	workspaceActiveTabKey,
 	workspaceFileActive,
+	auxiliaryTabOrder,
+	onAuxiliaryTabOrderChange,
 	controllerTransitioning,
 	newWorkDisabled,
 	onConversationWorkChange,
@@ -102,8 +106,14 @@ export function SessionChatSurface({
 	sessionTabAction?: ReactNode;
 	tabStripAction?: ReactNode;
 	handoffDialogOpen?: boolean;
-	workspaceTabs?: ReactNode;
+	workspaceTabs?: Array<{ key: string; content: ReactNode; onSelect: () => void }>;
+	workspaceTabActions?: ReactNode;
+	workspaceActiveTabKey?: string;
+	/** A file overlay hides the chat surface, so it must not acknowledge switch UI. */
 	workspaceFileActive?: boolean;
+	/** Session-owned order shared with the terminal UI surface. */
+	auxiliaryTabOrder?: string[];
+	onAuxiliaryTabOrderChange?: (keys: string[]) => void;
 	/** The target controller is being installed by an interface handoff. */
 	controllerTransitioning?: boolean;
 	/** An interface handoff fences new agent work while current-turn decisions remain available. */
@@ -156,7 +166,7 @@ export function SessionChatSurface({
 		(option) => option.category === "mode" || option.id === "mode",
 	);
 	const hasProviderModel = providerOptions.some(
-		(option) => option.category === "model" || option.id === "model" || option.id === "agent",
+		(option) => option.category === "model" || option.id === "model",
 	);
 	// Only asked for once the conversation is actually readable: the catalog comes
 	// from the live controller, so there is nothing to fetch before then.
@@ -330,7 +340,10 @@ export function SessionChatSurface({
 				sessionTabAction={sessionTabAction}
 				tabStripAction={tabStripAction}
 				workspaceTabs={workspaceTabs}
-				workspaceFileActive={workspaceFileActive}
+				workspaceTabActions={workspaceTabActions}
+				workspaceActiveTabKey={workspaceActiveTabKey}
+				auxiliaryTabOrder={auxiliaryTabOrder}
+				onAuxiliaryTabOrderChange={onAuxiliaryTabOrderChange}
 				controllerTransitioning={controllerTransitioning}
 				hasOlder={hasOlder}
 				loadingOlder={isLoadingOlder}
@@ -390,6 +403,7 @@ export function SessionChatSurface({
 				}
 				onEditQueuedTurn={commands.editQueuedTurn}
 				onCancelQueuedTurn={commands.cancelQueuedTurn}
+				onReorderQueuedTurns={commands.reorderQueuedTurns}
 				promoteQueuedTurnPendingTurnId={commands.promoteQueuedTurnPendingTurnId}
 				cancelQueuedTurnPendingTurnId={commands.cancelQueuedTurnPendingTurnId}
 				editQueuedTurnPendingTurnId={commands.editQueuedTurnPendingTurnId}

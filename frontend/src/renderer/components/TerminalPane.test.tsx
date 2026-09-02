@@ -14,6 +14,7 @@ import {
 	TerminalPane,
 	providerScrollsByKeyboard,
 } from "./TerminalPane";
+import { TooltipProvider } from "./ui/tooltip";
 
 const {
 	attachMock,
@@ -37,7 +38,7 @@ const {
 		terminalState: { value: "idle" },
 		replaySettled: { value: true },
 		hasAttached: { value: false },
-		terminalSessionOptions: [] as Array<{ coverInitialReplay?: boolean }>,
+		terminalSessionOptions: [] as Array<{ coverInitialReplay?: boolean; shellTerminalHandleId?: string }>,
 		xtermMounts: { value: 0 },
 		xtermUnmounts: { value: 0 },
 	}),
@@ -90,7 +91,7 @@ vi.mock("./XtermTerminal", () => ({
 vi.mock("../hooks/useTerminalSession", () => ({
 	useTerminalSession: (
 		_session: WorkspaceSession | undefined,
-		options: { coverInitialReplay?: boolean },
+		options: { coverInitialReplay?: boolean; shellTerminalHandleId?: string },
 	) => {
 		terminalSessionOptions.push(options);
 		return {
@@ -147,7 +148,9 @@ function renderPane(session?: WorkspaceSession) {
 	window.ao = {} as typeof window.ao;
 	const result = render(
 		<QueryClientProvider client={queryClient}>
-			<TerminalPane daemonReady fontSize={12} session={session} theme="dark" />
+			<TooltipProvider>
+				<TerminalPane daemonReady fontSize={12} session={session} theme="dark" />
+			</TooltipProvider>
 		</QueryClientProvider>,
 	);
 	return {
@@ -191,19 +194,21 @@ function renderCachedPane({
 
 	const tree = (nextSession?: WorkspaceSession, nextTarget?: TerminalTarget, showPane = true) => (
 		<QueryClientProvider client={queryClient}>
-			<TerminalCacheProvider daemonReady theme="dark">
-				{showPane ? (
-					<TerminalPane
-						daemonReady
-						fontSize={12}
-						session={nextSession}
-						terminalTarget={nextTarget}
-						theme="dark"
-					/>
-				) : (
-					<div data-testid="away" />
-				)}
-			</TerminalCacheProvider>
+			<TooltipProvider>
+				<TerminalCacheProvider daemonReady theme="dark">
+					{showPane ? (
+						<TerminalPane
+							daemonReady
+							fontSize={12}
+							session={nextSession}
+							terminalTarget={nextTarget}
+							theme="dark"
+						/>
+					) : (
+						<div data-testid="away" />
+					)}
+				</TerminalCacheProvider>
+			</TooltipProvider>
 		</QueryClientProvider>
 	);
 	const result = render(tree(session, terminalTarget));
@@ -272,6 +277,38 @@ describe("TerminalPane empty states", () => {
 			view.restore();
 		}
 	});
+
+	it("selects a temporary shell without attaching xterm to its temporary handle", () => {
+		const shell = {
+			handleId: "pending-shell:test",
+			sessionId: worker.id,
+			workingDir: "",
+			title: "Terminal 1",
+			createdAt: "2026-08-31T00:00:00Z",
+			optimistic: true,
+		} satisfies ShellTerminal;
+		const view = renderCachedPane({
+			session: worker,
+			sessions: [worker],
+			// The authoritative shell can replace the optimistic cache row before
+			// the selected target changes. A pending handle itself is the contract.
+			shellTerminals: [],
+			terminalTarget: {
+				generation: shell.createdAt,
+				kind: "shell",
+				handleId: shell.handleId,
+				sessionId: worker.id,
+				title: shell.title,
+			},
+		});
+		try {
+			expect(screen.getByTestId("optimistic-terminal")).toBeInTheDocument();
+			expect(screen.queryByTestId("xterm")).not.toBeInTheDocument();
+			expect(terminalSessionOptions.at(-1)?.shellTerminalHandleId).toBeUndefined();
+		} finally {
+			view.restore();
+		}
+	});
 });
 
 // Initial-replay cover (issue #3160): xterm stays mounted and ingesting behind
@@ -323,12 +360,14 @@ describe("TerminalPane replay cover", () => {
 			replaySettled.value = true;
 			view.rerender(
 				<QueryClientProvider client={view.queryClient}>
-					<TerminalPane
-						daemonReady
-						fontSize={12}
-						session={{ ...worker, terminalHandleId: "term-1" }}
-						theme="dark"
-					/>
+					<TooltipProvider>
+						<TerminalPane
+							daemonReady
+							fontSize={12}
+							session={{ ...worker, terminalHandleId: "term-1" }}
+							theme="dark"
+						/>
+					</TooltipProvider>
 				</QueryClientProvider>,
 			);
 			expect(screen.getByTestId("terminal-replay-cover")).toBeInTheDocument();
@@ -428,6 +467,23 @@ describe("TerminalCacheProvider", () => {
 			view.show(sessions[0]);
 			await waitFor(() => expect(activeXterm()).toBe(oldest));
 			expect(xtermMounts.value).toBe(7);
+		} finally {
+			view.restore();
+		}
+	});
+
+	it("reveals a cached terminal immediately while its activation preparation is still pending", async () => {
+		prepareForActivationMock.mockImplementation(() => new Promise<void>(() => undefined));
+		const view = renderCachedPane({ session: sessionA, sessions: [sessionA, sessionB] });
+		try {
+			const terminalA = await waitFor(() => activeXterm());
+			view.show(sessionB);
+			await waitFor(() => expect(activeXterm()).not.toBe(terminalA));
+
+			view.show(sessionA);
+			const host = document.querySelector<HTMLElement>(`[data-terminal-cache-key^="session:${sessionA.id}:worker|"]`);
+			expect(host).toHaveAttribute("data-terminal-activation-phase", "visible");
+			expect(host?.style.visibility).not.toBe("hidden");
 		} finally {
 			view.restore();
 		}

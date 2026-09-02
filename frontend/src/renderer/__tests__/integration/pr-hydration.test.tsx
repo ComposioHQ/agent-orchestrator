@@ -1,7 +1,12 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen } from "@testing-library/react";
+import { render as rtlRender, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ReactNode } from "react";
+import { TooltipProvider } from "../../components/ui/tooltip";
+
+function render(ui: ReactNode) {
+	return rtlRender(<TooltipProvider>{ui}</TooltipProvider>);
+}
 
 // Drives the real useWorkspaceQuery + SessionsBoard end to end for a normal
 // project, mocking only the HTTP client and the router. Proves PR facts carried

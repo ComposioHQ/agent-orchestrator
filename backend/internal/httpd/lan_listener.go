@@ -68,12 +68,19 @@ var lanControlBlockedPrefixes = []string{
 // no 403/401 that would confirm the path exists.
 func lanControlBlock(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if isLANControlBlockedPath(r.URL.Path) {
+		if isLANControlBlockedPath(r.URL.Path) || isLANControlBlockedRequest(r.Method, r.URL.Path) {
 			notFoundJSON(w, r)
 			return
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+func isLANControlBlockedRequest(method, path string) bool {
+	trimmed := strings.TrimSuffix(path, "/")
+	return method == http.MethodPost &&
+		strings.HasPrefix(trimmed, "/api/v1/agents/") &&
+		strings.HasSuffix(trimmed, "/install")
 }
 
 // isLANControlBlockedPath reports whether path matches a blocked prefix on an
