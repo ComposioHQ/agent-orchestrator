@@ -122,21 +122,39 @@ describe("HarnessSettingsSection", () => {
 		}));
 	});
 
-	it("allows an installed harness to be reinstalled with its recommended method", async () => {
+	it("automatically uses the installer available on the user's machine", async () => {
+		const npmOnlyPlans = {
+			agents: plans.agents.map((plan) => plan.agentId === "codex" ? {
+				...plan,
+				method: "npm",
+				methods: plan.methods.map((method) => ({
+					...method,
+					available: method.id === "npm",
+					recommended: method.id === "npm",
+				})),
+			} : plan),
+		};
+		vi.mocked(apiClient.GET).mockImplementation(async (path) => {
+			if (path === "/api/v1/agents/readiness") return { data: catalog } as never;
+			if (path === "/api/v1/agents/installers") return { data: npmOnlyPlans } as never;
+			if (path === "/api/v1/agents/install-jobs") return { data: { jobs: [] } } as never;
+			return { data: undefined } as never;
+		});
 		const user = userEvent.setup();
 		renderSection();
-		const row = (await screen.findByText("Claude Code")).closest('[data-agent="claude-code"]') as HTMLElement;
-		const reinstall = await within(row).findByRole("button", { name: "Reinstall" });
+		const row = (await screen.findByText("Codex")).closest('[data-agent="codex"]') as HTMLElement;
 
-		await user.click(reinstall);
+		await waitFor(() => expect(row).toHaveTextContent("Available via npm"));
+		expect(within(row).queryByRole("combobox", { name: "Installation method" })).not.toBeInTheDocument();
+		await user.click(within(row).getByRole("button", { name: "Install" }));
 
 		await waitFor(() => expect(apiClient.POST).toHaveBeenCalledWith("/api/v1/agents/{agent}/install", {
-			params: { path: { agent: "claude-code" } },
-			body: { method: "homebrew", operation: "reinstall" },
+			params: { path: { agent: "codex" } },
+			body: { method: "npm", operation: "install" },
 		}));
 	});
 
-	it("shows vendor instructions when an installed harness has no headless reinstall method", async () => {
+	it("shows no reinstall or instructions actions for installed harnesses", async () => {
 		vi.mocked(apiClient.GET).mockImplementation(async (path) => {
 			if (path === "/api/v1/agents/readiness") return { data: catalogWithInstalled("claude-code", "cursor") } as never;
 			if (path === "/api/v1/agents/installers") return { data: plans } as never;
@@ -144,10 +162,14 @@ describe("HarnessSettingsSection", () => {
 			return { data: undefined } as never;
 		});
 		renderSection();
-		const row = (await screen.findByText("Cursor")).closest('[data-agent="cursor"]') as HTMLElement;
+		const claudeRow = (await screen.findByText("Claude Code")).closest('[data-agent="claude-code"]') as HTMLElement;
+		const cursorRow = (await screen.findByText("Cursor")).closest('[data-agent="cursor"]') as HTMLElement;
 
-		expect(await within(row).findByRole("button", { name: "Instructions" })).toBeEnabled();
-		expect(within(row).queryByRole("button", { name: "Reinstall" })).not.toBeInTheDocument();
+		for (const row of [claudeRow, cursorRow]) {
+			expect(row).toHaveTextContent("Installed");
+			expect(within(row).queryByRole("button", { name: "Reinstall" })).not.toBeInTheDocument();
+			expect(within(row).queryByRole("button", { name: "Instructions" })).not.toBeInTheDocument();
+		}
 	});
 
 	it("starts an official vendor installer with one click and no instructions dialog", async () => {
@@ -172,10 +194,10 @@ describe("HarnessSettingsSection", () => {
 		expect(row).toHaveTextContent("Installing…");
 	});
 
-	it("keeps unsupported native Windows harnesses on vendor instructions", async () => {
+	it("does not show instructions for harnesses without an automatic installer", async () => {
 		renderSection();
 		const row = (await screen.findByText("Goose")).closest('[data-agent="goose"]') as HTMLElement;
-		expect(await within(row).findByRole("button", { name: "Instructions" })).toBeEnabled();
+		expect(within(row).queryByRole("button", { name: "Instructions" })).not.toBeInTheDocument();
 		expect(within(row).queryByRole("button", { name: "Install" })).not.toBeInTheDocument();
 	});
 
