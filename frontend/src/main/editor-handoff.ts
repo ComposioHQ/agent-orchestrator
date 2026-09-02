@@ -36,14 +36,14 @@ const PROGRAM_FILES_X86 = "%ProgramFiles(x86)%";
 const LOCAL_APPDATA_PROGRAMS = "%LOCALAPPDATA%\\Programs";
 
 const EDITOR_CANDIDATES: EditorCandidate[] = [
-	{ id: "cursor", name: "Cursor", commands: ["cursor"], macApps: ["Cursor"], winInstallDirs: [[LOCAL_APPDATA_PROGRAMS, "Cursor", "bin"], [PROGRAM_FILES, "Cursor", "bin"]] },
+	{ id: "cursor", name: "Cursor", commands: ["cursor"], macApps: ["Cursor"], winInstallDirs: [[LOCAL_APPDATA_PROGRAMS, "Cursor", "resources", "app", "bin"], [PROGRAM_FILES, "Cursor", "bin"]] },
 	{ id: "vscode", name: "VS Code", commands: ["code"], macApps: ["Visual Studio Code"], winInstallDirs: [[LOCAL_APPDATA_PROGRAMS, "Microsoft VS Code", "bin"], [PROGRAM_FILES, "Microsoft VS Code", "bin"]] },
-	{ id: "windsurf", name: "Windsurf", commands: ["windsurf"], macApps: ["Windsurf"], winInstallDirs: [[LOCAL_APPDATA_PROGRAMS, "Windsurf", "bin"], [PROGRAM_FILES, "Windsurf", "bin"]] },
+	{ id: "windsurf", name: "Windsurf", commands: ["windsurf"], macApps: ["Windsurf"], winInstallDirs: [[LOCAL_APPDATA_PROGRAMS, "Windsurf", "resources", "app", "bin"], [PROGRAM_FILES, "Windsurf", "bin"]] },
 	{ id: "zed", name: "Zed", commands: ["zed"], macApps: ["Zed"], winInstallDirs: [[LOCAL_APPDATA_PROGRAMS, "Zed", "bin"]] },
-	{ id: "trae", name: "Trae", commands: ["trae"], macApps: ["Trae"], winInstallDirs: [[LOCAL_APPDATA_PROGRAMS, "Trae", "bin"], [PROGRAM_FILES, "Trae", "bin"]] },
+	{ id: "trae", name: "Trae", commands: ["trae"], macApps: ["Trae"], winInstallDirs: [[LOCAL_APPDATA_PROGRAMS, "Trae", "resources", "app", "bin"], [PROGRAM_FILES, "Trae", "bin"]] },
 	{ id: "kiro", name: "Kiro", commands: ["kiro"], macApps: ["Kiro"], winInstallDirs: [[LOCAL_APPDATA_PROGRAMS, "Kiro", "bin"]] },
-	{ id: "positron", name: "Positron", commands: ["positron"], macApps: ["Positron"], winInstallDirs: [[LOCAL_APPDATA_PROGRAMS, "Positron", "bin"]] },
-	{ id: "vscodium", name: "VSCodium", commands: ["codium"], macApps: ["VSCodium"], winInstallDirs: [[LOCAL_APPDATA_PROGRAMS, "VSCodium", "bin"], [PROGRAM_FILES, "VSCodium", "bin"]] },
+	{ id: "positron", name: "Positron", commands: ["positron"], macApps: ["Positron"], winInstallDirs: [[LOCAL_APPDATA_PROGRAMS, "Positron", "resources", "app", "bin"]] },
+	{ id: "vscodium", name: "VSCodium", commands: ["codium"], macApps: ["VSCodium"], winInstallDirs: [[LOCAL_APPDATA_PROGRAMS, "VSCodium", "resources", "app", "bin"], [PROGRAM_FILES, "VSCodium", "bin"]] },
 	{ id: "vscode-insiders", name: "VS Code Insiders", commands: ["code-insiders"], macApps: ["Visual Studio Code - Insiders"], winInstallDirs: [[LOCAL_APPDATA_PROGRAMS, "Microsoft VS Code Insiders", "bin"], [PROGRAM_FILES, "Microsoft VS Code Insiders", "bin"]] },
 	{ id: "sublime", name: "Sublime Text", commands: ["subl"], macApps: ["Sublime Text"], winInstallDirs: [[PROGRAM_FILES, "Sublime Text"], [PROGRAM_FILES, "Sublime Text 3"], [LOCAL_APPDATA_PROGRAMS, "Sublime Text"]] },
 	{ id: "intellij", name: "IntelliJ IDEA", commands: ["idea"], macApps: ["IntelliJ IDEA", "IntelliJ IDEA CE"], winInstallDirs: [[PROGRAM_FILES, "JetBrains", "IntelliJ IDEA", "bin"], [LOCAL_APPDATA_PROGRAMS, "JetBrains", "IntelliJ IDEA", "bin"]] },
@@ -106,7 +106,16 @@ function defaultIsDirectory(candidatePath: string): boolean {
 function executableNames(command: string, platform: Platform, env: NodeJS.ProcessEnv): string[] {
 	if (platform !== "win32" || path.extname(command)) return [command];
 	const extensions = (env.PATHEXT || ".COM;.EXE;.BAT;.CMD").split(";").filter(Boolean);
-	return [command, ...extensions.map((extension) => command + extension.toLowerCase()), ...extensions.map((extension) => command + extension.toUpperCase())];
+	const extended = [
+		...extensions.map((extension) => command + extension.toLowerCase()),
+		...extensions.map((extension) => command + extension.toUpperCase()),
+	];
+	// On win32, probe Windows-native launchers (.exe/.cmd/.bat/etc.) before the
+	// bare, extension-less name. Editors like VS Code and Cursor ship a `.cmd`
+	// batch shim and a bare `#!/usr/bin/env sh` script side by side; returning
+	// the bare script makes spawn fail because Windows cannot execute an `sh`
+	// script directly. Preferring the extension shims keeps the real launcher.
+	return [...extended, command];
 }
 
 function commandSearchDirs(platform: Platform, env: NodeJS.ProcessEnv): string[] {

@@ -102,7 +102,9 @@ describe("editor handoff", () => {
 });
 
 describe("editor handoff (win32 fallback discovery)", () => {
-	const cursorBin = path.join("C:", "Users", "tester", "AppData", "Local", "Programs", "Cursor", "bin", "cursor.exe");
+	// Cursor's Windows per-user install keeps its .cmd shim under
+	// resources\app\bin (the VS Code fork layout), not a top-level bin dir.
+	const cursorBin = path.join("C:", "Users", "tester", "AppData", "Local", "Programs", "Cursor", "resources", "app", "bin", "cursor.cmd");
 	const vscodeSystemBin = path.join("C:", "Program Files", "Microsoft VS Code", "bin", "code.cmd");
 	const vscodeAgentExec = path.join("C:", "Program Files", "Microsoft VS Code", "bin", "code.exe");
 
@@ -111,6 +113,18 @@ describe("editor handoff (win32 fallback discovery)", () => {
 		const state = await handoff.getState("ao-1");
 		const cursor = state.targets.find(({ id }) => id === "cursor");
 		expect(cursor).toBeDefined();
+	});
+
+	it("prefers a Windows-native .cmd shim over a bare extension-less sh script on PATH", async () => {
+		// VS Code/Cursor ship a bare `code` sh script and a `code.cmd` batch
+		// side by side; spawn must use the .cmd so cmd.exe can run it.
+		const dir = path.join("C:", "bin");
+		const shScript = path.join(dir, "code");
+		const cmdShim = path.join(dir, "code.cmd");
+		const input = winDeps({ isExecutable: installedExecutables(shScript, cmdShim) });
+		const handoff = createEditorHandoff(input);
+		await handoff.open({ sessionId: "ao-1", targetId: "vscode" });
+		expect(input.launch).toHaveBeenCalledWith(cmdShim, ["/worktrees/ao-1"], "/worktrees/ao-1");
 	});
 
 	it("finds an editor installed only in a system Program Files dir", async () => {
