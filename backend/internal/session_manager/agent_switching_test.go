@@ -22,6 +22,20 @@ func buildTargetContinuationMessage(sw domain.AgentSwitch, snapshot deterministi
 	return buildTargetContinuationMessageWithLimit(sw, snapshot, transcript, handoffContinuationMaxBytes)
 }
 
+type switchReadinessProvider struct {
+	snapshot domain.AgentReadinessSnapshot
+	err      error
+	calls    int
+}
+
+func (p *switchReadinessProvider) EnsureAgentReadiness(context.Context, string, domain.AgentReadinessPurpose) (domain.AgentReadinessSnapshot, error) {
+	p.calls++
+	return p.snapshot, p.err
+}
+func (*switchReadinessProvider) InvalidateAgentInstallation(string)   {}
+func (*switchReadinessProvider) InvalidateAgentAuthentication(string) {}
+func (*switchReadinessProvider) RecheckAgent(string)                  {}
+
 type switchTestStore struct {
 	*fakeStore
 	mu                            sync.Mutex
@@ -2575,6 +2589,48 @@ func TestSwitchAgentRejectsDefinitelyUnauthenticatedTargetBeforeStoppingSource(t
 	}
 	if got := store.sessions["proj-1"].Harness; got != domain.HarnessClaudeCode {
 		t.Fatalf("session harness = %q, want source harness", got)
+	}
+}
+
+func TestSwitchAgentUsesCoordinatorUnauthorizedPolicyBeforeStoppingSource(t *testing.T) {
+	runtime := &fakeRestartRuntime{fakeRuntime: &fakeRuntime{}}
+	manager, store, _ := newSwitchTestManager(t, runtime)
+	readiness := &switchReadinessProvider{snapshot: domain.AgentReadinessSnapshot{
+		Installation:   domain.AgentInstallationObservation{State: domain.AgentInstallationInstalled},
+		Authentication: domain.AgentAuthenticationObservation{State: domain.AgentAuthenticationUnauthorized},
+	}}
+	manager.SetAgentReadiness(readiness)
+
+	sw, err := switchAgentSynchronously(context.Background(), manager, "proj-1", SwitchAgentConfig{TargetHarness: domain.HarnessCodex, IdempotencyKey: "coordinator-unauthenticated"})
+	if !errors.Is(err, ErrTargetAgentUnauthorized) {
+		t.Fatalf("switch error = %v, want ErrTargetAgentUnauthorized", err)
+	}
+	if sw.State != domain.AgentSwitchFailed || readiness.calls != 1 {
+		t.Fatalf("switch=%+v readiness calls=%d", sw, readiness.calls)
+	}
+	if runtime.restarted != 0 || runtime.destroyed != 0 {
+		t.Fatalf("source runtime changed: restarts=%d destroys=%d", runtime.restarted, runtime.destroyed)
+	}
+	if got := store.sessions["proj-1"].Harness; got != domain.HarnessClaudeCode {
+		t.Fatalf("session harness = %q, want source harness", got)
+	}
+}
+
+func TestSwitchAgentTreatsCoordinatorUnknownAsAdvisory(t *testing.T) {
+	runtime := &fakeRestartRuntime{fakeRuntime: &fakeRuntime{}}
+	manager, _, _ := newSwitchTestManager(t, runtime)
+	readiness := &switchReadinessProvider{snapshot: domain.AgentReadinessSnapshot{
+		Installation:   domain.AgentInstallationObservation{State: domain.AgentInstallationUnknown},
+		Authentication: domain.AgentAuthenticationObservation{State: domain.AgentAuthenticationUnknown},
+	}}
+	manager.SetAgentReadiness(readiness)
+
+	sw, err := switchAgentSynchronously(context.Background(), manager, "proj-1", SwitchAgentConfig{TargetHarness: domain.HarnessCodex, IdempotencyKey: "coordinator-unknown"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sw.State != domain.AgentSwitchCompleted || readiness.calls != 1 {
+		t.Fatalf("switch=%+v readiness calls=%d", sw, readiness.calls)
 	}
 }
 

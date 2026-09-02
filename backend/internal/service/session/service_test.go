@@ -29,6 +29,36 @@ func (f *fakeTelemetrySink) Emit(_ context.Context, ev ports.TelemetryEvent) {
 }
 func (f *fakeTelemetrySink) Close(context.Context) error { return nil }
 
+type fakeAgentReadiness struct {
+	snapshot                domain.AgentReadinessSnapshot
+	err                     error
+	calls                   int
+	agentID                 string
+	purpose                 domain.AgentReadinessPurpose
+	installationInvalidated []string
+	authInvalidated         []string
+	rechecks                []string
+}
+
+func (f *fakeAgentReadiness) EnsureAgentReadiness(_ context.Context, agentID string, purpose domain.AgentReadinessPurpose) (domain.AgentReadinessSnapshot, error) {
+	f.calls++
+	f.agentID = agentID
+	f.purpose = purpose
+	return f.snapshot, f.err
+}
+
+func (f *fakeAgentReadiness) InvalidateAgentInstallation(agentID string) {
+	f.installationInvalidated = append(f.installationInvalidated, agentID)
+}
+
+func (f *fakeAgentReadiness) InvalidateAgentAuthentication(agentID string) {
+	f.authInvalidated = append(f.authInvalidated, agentID)
+}
+
+func (f *fakeAgentReadiness) RecheckAgent(agentID string) {
+	f.rechecks = append(f.rechecks, agentID)
+}
+
 type fakeStore struct {
 	sessions            map[domain.SessionID]domain.SessionRecord
 	getSessionErr       error
@@ -261,12 +291,13 @@ func (f *fakeStore) SetSessionAutoInjectCI(_ context.Context, id domain.SessionI
 	return true, nil
 }
 
-func (f *fakeStore) SetSessionReviewerHarness(_ context.Context, id domain.SessionID, harness domain.ReviewerHarness, updatedAt time.Time) (bool, error) {
+func (f *fakeStore) SetSessionReviewerConfig(_ context.Context, id domain.SessionID, harness domain.ReviewerHarness, config domain.AgentConfig, updatedAt time.Time) (bool, error) {
 	r, ok := f.sessions[id]
 	if !ok {
 		return false, nil
 	}
 	r.ReviewerHarness = harness
+	r.ReviewerConfig = config
 	r.UpdatedAt = updatedAt
 	f.sessions[id] = r
 	return true, nil
@@ -573,7 +604,7 @@ func TestSessionSetReviewerHarnessPersistsPerSession(t *testing.T) {
 	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", Kind: domain.KindWorker}
 	st.sessions["mer-2"] = domain.SessionRecord{ID: "mer-2", ProjectID: "mer", Kind: domain.KindWorker}
 
-	sess, err := (&Service{store: st}).SetReviewerHarness(context.Background(), "mer-1", domain.ReviewerOpenCode)
+	sess, err := (&Service{store: st}).SetReviewerHarness(context.Background(), "mer-1", domain.ReviewerOpenCode, domain.AgentConfig{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -588,8 +619,24 @@ func TestSessionSetReviewerHarnessPersistsPerSession(t *testing.T) {
 func TestSessionSetReviewerHarnessRejectsUnknownHarness(t *testing.T) {
 	st := newFakeStore()
 	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1"}
-	if _, err := (&Service{store: st}).SetReviewerHarness(context.Background(), "mer-1", "unknown"); err == nil {
+	if _, err := (&Service{store: st}).SetReviewerHarness(context.Background(), "mer-1", "unknown", domain.AgentConfig{}); err == nil {
 		t.Fatal("expected invalid harness error")
+	}
+}
+
+func TestSessionSetReviewerHarnessAllowsConfigWithoutHarness(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1"}
+
+	sess, err := (&Service{store: st}).SetReviewerHarness(context.Background(), "mer-1", "", domain.AgentConfig{Model: "gpt-5"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sess.ReviewerHarness != "" || sess.ReviewerConfig.Model != "gpt-5" {
+		t.Fatalf("session reviewer override = (%q, %+v), want default harness with model override", sess.ReviewerHarness, sess.ReviewerConfig)
+	}
+	if stored := st.sessions["mer-1"]; stored.ReviewerHarness != "" || stored.ReviewerConfig.Model != "gpt-5" {
+		t.Fatalf("stored reviewer override = (%q, %+v), want default harness with model override", stored.ReviewerHarness, stored.ReviewerConfig)
 	}
 }
 
@@ -2434,6 +2481,82 @@ func TestSpawnUnknownProjectReturns404(t *testing.T) {
 	}
 	if fc.spawned {
 		t.Fatal("manager.Spawn must NOT be invoked for an unknown project")
+	}
+}
+
+func TestSpawnBlocksDefinitelyMissingHarnessBeforeManager(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer"}
+	fc := &fakeCommander{}
+	readiness := &fakeAgentReadiness{snapshot: domain.AgentReadinessSnapshot{
+		ID: "codex", Installation: domain.AgentInstallationObservation{State: domain.AgentInstallationNotInstalled},
+		Authentication: domain.AgentAuthenticationObservation{State: domain.AgentAuthenticationUnknown},
+	}}
+	svc := NewWithDeps(Deps{Manager: fc, Store: st, AgentReadiness: readiness})
+
+	_, _, _, err := svc.Spawn(context.Background(), ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Harness: "codex"})
+	var apiError *apierr.Error
+	if !errors.As(err, &apiError) || apiError.Code != "AGENT_BINARY_NOT_FOUND" {
+		t.Fatalf("Spawn error = %v, want AGENT_BINARY_NOT_FOUND", err)
+	}
+	if fc.spawnCalls != 0 {
+		t.Fatal("manager.Spawn ran before a definitely-missing harness was blocked")
+	}
+	if readiness.calls != 1 || readiness.purpose != domain.AgentReadinessPurposeLaunch {
+		t.Fatalf("readiness call = count %d purpose %q", readiness.calls, readiness.purpose)
+	}
+}
+
+func TestSpawnTreatsUnauthorizedReadinessAsAdvisory(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer"}
+	fc := &fakeCommander{}
+	readiness := &fakeAgentReadiness{snapshot: domain.AgentReadinessSnapshot{
+		ID: "codex", Installation: domain.AgentInstallationObservation{State: domain.AgentInstallationInstalled},
+		Authentication: domain.AgentAuthenticationObservation{State: domain.AgentAuthenticationUnauthorized},
+	}}
+	svc := NewWithDeps(Deps{Manager: fc, Store: st, AgentReadiness: readiness})
+
+	if _, _, _, err := svc.Spawn(context.Background(), ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Harness: "codex"}); err != nil {
+		t.Fatalf("Spawn: %v", err)
+	}
+	if fc.spawnCalls != 1 {
+		t.Fatalf("manager.Spawn calls = %d, want unauthorized readiness to remain advisory", fc.spawnCalls)
+	}
+}
+
+func TestSpawnInvalidatesReadinessAfterTypedLaunchFailure(t *testing.T) {
+	tests := []struct {
+		name             string
+		err              error
+		wantInstallation bool
+		wantAuth         bool
+	}{
+		{name: "binary missing", err: ports.ErrAgentBinaryNotFound, wantInstallation: true},
+		{name: "auth required", err: ports.ErrChatAuthRequired, wantAuth: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			st := newFakeStore()
+			st.projects["mer"] = domain.ProjectRecord{ID: "mer"}
+			fc := &fakeCommander{spawnErr: tt.err}
+			readiness := &fakeAgentReadiness{snapshot: domain.AgentReadinessSnapshot{
+				ID: "codex", Installation: domain.AgentInstallationObservation{State: domain.AgentInstallationInstalled},
+				Authentication: domain.AgentAuthenticationObservation{State: domain.AgentAuthenticationAuthorized},
+			}}
+			svc := NewWithDeps(Deps{Manager: fc, Store: st, AgentReadiness: readiness})
+
+			_, _, _, _ = svc.Spawn(context.Background(), ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Harness: "codex"})
+			if got := len(readiness.installationInvalidated) == 1; got != tt.wantInstallation {
+				t.Fatalf("installation invalidated = %v, want %v", got, tt.wantInstallation)
+			}
+			if got := len(readiness.authInvalidated) == 1; got != tt.wantAuth {
+				t.Fatalf("auth invalidated = %v, want %v", got, tt.wantAuth)
+			}
+			if len(readiness.rechecks) != 1 || readiness.rechecks[0] != "codex" {
+				t.Fatalf("rechecks = %#v, want codex", readiness.rechecks)
+			}
+		})
 	}
 }
 
