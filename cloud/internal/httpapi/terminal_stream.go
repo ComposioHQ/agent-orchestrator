@@ -76,6 +76,32 @@ func (t *terminalStreams) lookupWorker(terminalID string) *workerTerminalStream 
 	return t.workers[terminalID]
 }
 
+// pushInput delivers a keystroke straight into the worker's stream when this
+// replica owns it, bypassing the durable queue entirely. It returns true only
+// when the frame was accepted in-memory; a missing stream or a full send
+// buffer returns false so the caller falls back to the durable queue path.
+// Losing an in-flight keystroke if the worker dies before the PTY write is the
+// SSH contract this fast path adopts — identical to the notify-driven push.
+func (t *terminalStreams) pushInput(terminalID string, data []byte) bool {
+	t.mu.Lock()
+	stream := t.workers[terminalID]
+	t.mu.Unlock()
+	if stream == nil {
+		return false
+	}
+	frame := append([]byte(nil), data...)
+	select {
+	case stream.send <- frame:
+		return true
+	case <-stream.done:
+		return false
+	default:
+		// Buffer full: fall back to the durable queue rather than block the
+		// client's read loop.
+		return false
+	}
+}
+
 // subscribeOutput returns a channel that receives (at least) one signal per
 // output notification for the terminal, and a cancel func.
 func (t *terminalStreams) subscribeOutput(terminalID string) (chan struct{}, func()) {
