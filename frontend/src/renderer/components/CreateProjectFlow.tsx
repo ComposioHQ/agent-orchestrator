@@ -18,11 +18,13 @@ import {
 	XCircle,
 } from "lucide-react";
 import { lazy, Suspense, useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
+import type { components } from "../../api/schema";
 import type { ImportFolderScan } from "../../preload";
 import { useCloudCp } from "../hooks/useCloudCp";
 import { useCloudGate } from "../hooks/useCloudGate";
 import { useCloudOrg } from "../hooks/useCloudOrg";
 import { cloudProjectsQueryKey } from "../hooks/useWorkspaceQuery";
+import { apiClient, apiErrorMessage } from "../lib/api-client";
 import { aoBridge } from "../lib/bridge";
 import { useCloudSession } from "../lib/cloud-session";
 import { cn } from "../lib/utils";
@@ -40,6 +42,9 @@ export type CloneProjectInput = Pick<CloneRepositorySelection, "remoteUrl" | "de
 
 const CloneRepositoryDialog = lazy(() => import("./CloneRepositoryDialog"));
 const LAST_CLONE_DESTINATION_KEY = "ao.clone.lastDestinationParent";
+type ImportValidationResult = components["schemas"]["ImportValidationResult"];
+type RepoGitStatus = components["schemas"]["RepoGitStatus"];
+type GitPreparationEvent = components["schemas"]["GitPreparationEvent"];
 
 type CreateProjectFlowMode = ProjectKind | "choose";
 
@@ -93,9 +98,15 @@ export function CreateProjectFlow({
 	const [selectedKind, setSelectedKind] = useState<ProjectKind>(mode === "workspace" ? "workspace" : "single_repo");
 	const [selectedPath, setSelectedPath] = useState<string | null>(null);
 	const [validationScan, setValidationScan] = useState<ImportFolderScan | null>(null);
+	const [workspaceValidation, setWorkspaceValidation] = useState<ImportValidationResult | null>(null);
+	const [workspacePrepOpen, setWorkspacePrepOpen] = useState(false);
+	const [workspacePrepEvents, setWorkspacePrepEvents] = useState<GitPreparationEvent[]>([]);
+	const [workspacePrepError, setWorkspacePrepError] = useState<string | null>(null);
+	const [workspaceRemoteUrls, setWorkspaceRemoteUrls] = useState<Record<string, string>>({});
 	const [isChoosingPath, setIsChoosingPath] = useState(false);
 	const [isCreating, setIsCreating] = useState(false);
 	const [isInitializing, setIsInitializing] = useState(false);
+	const [isPreparingGit, setIsPreparingGit] = useState(false);
 	const [repositorySetup, setRepositorySetup] = useState<"NOT_A_GIT_REPO" | "PROJECT_UNBORN" | null>(null);
 	const [repositorySetupWarning, setRepositorySetupWarning] = useState<string | null>(null);
 	// A path that arrived via droppedPath, staged until the user confirms
@@ -113,13 +124,17 @@ export function CreateProjectFlow({
 	const [offering, setOffering] = useState<ProjectOffering>("local");
 
 	const hasModePicker = mode === "choose";
-	const isBusy = isChoosingPath || isCreating || isInitializing;
+	const isBusy = isChoosingPath || isCreating || isInitializing || isPreparingGit;
 
 	const selectSource = (source: ProjectSource) => {
 		const presetPath = pendingDropPath;
 		setPendingDropPath(null);
 		setError(null);
 		setValidationScan(null);
+		setWorkspaceValidation(null);
+		setWorkspacePrepOpen(false);
+		setWorkspacePrepEvents([]);
+		setWorkspacePrepError(null);
 		if (source === "clone") {
 			setModePickerOpen(false);
 			setCloneDialogOpen(true);
@@ -134,6 +149,10 @@ export function CreateProjectFlow({
 	const chooseDirectory = async (kind: ProjectKind, presetPath?: string) => {
 		setError(null);
 		setValidationScan(null);
+		setWorkspaceValidation(null);
+		setWorkspacePrepOpen(false);
+		setWorkspacePrepEvents([]);
+		setWorkspacePrepError(null);
 		setRepositorySetup(null);
 		setRepositorySetupWarning(null);
 		setSelectedKind(kind);
@@ -157,14 +176,20 @@ export function CreateProjectFlow({
 				setRepositorySetupWarning(preflight.setupWarning);
 			}
 			if (path && kind === "workspace") {
-				try {
-					const warning = await aoBridge.app.checkAncestorRepo(path);
-					if (warning) {
-						setRepositorySetupWarning(warning);
-						setRepositorySetup("NOT_A_GIT_REPO");
-					}
-				} catch {
-					// Ancestor check failed — proceed without warning
+				const validation = await validateImportFolder(path, "workspace");
+				setWorkspaceValidation(validation);
+				if (!validation.isValid || validation.nextStep === "error") {
+					setError(importValidationMessage(validation));
+					setModePickerOpen(false);
+					setFolderPickerOpen(true);
+					return;
+				}
+				if (validation.nextStep === "prepare_git") {
+					setWorkspaceRemoteUrls(defaultRemoteUrls(validation.childRepos ?? []));
+					setModePickerOpen(false);
+					setFolderPickerOpen(false);
+					setWorkspacePrepOpen(true);
+					return;
 				}
 			}
 			if (path) {
@@ -270,6 +295,49 @@ export function CreateProjectFlow({
 		} finally {
 			setIsCreating(false);
 			setIsInitializing(false);
+		}
+	};
+
+	const prepareWorkspaceGit = async () => {
+		if (!workspaceValidation) return;
+		setWorkspacePrepError(null);
+		setWorkspacePrepEvents([]);
+		setIsPreparingGit(true);
+		try {
+			const repositories = (workspaceValidation.childRepos ?? [])
+				.filter((repo) => repo.requiredActions.length > 0)
+				.map((repo) => ({
+					repoPath: repo.repoPath,
+					approvedActions: repo.requiredActions,
+					remoteUrl: workspaceRemoteUrls[repo.repoPath]?.trim() ?? "",
+				}));
+			const { data, error: apiError } = await apiClient.POST("/api/v1/imports/prepare-git", {
+				body: {
+					importKind: "workspace",
+					path: workspaceValidation.root.repoPath,
+					repositories,
+				},
+			});
+			if (apiError || !data) throw new Error(apiErrorMessage(apiError, t("createProject.couldNotAdd")));
+			setWorkspacePrepEvents(data.events);
+			setWorkspaceValidation(data.validation);
+			const failed = data.events.find((event) => event.state === "error");
+			if (failed) {
+				setWorkspacePrepError(workspacePreparationFailureMessage(failed));
+				return;
+			}
+			if (!data.validation.isValid || data.validation.nextStep === "error") {
+				setWorkspacePrepError(importValidationMessage(data.validation));
+				return;
+			}
+			if (data.validation.nextStep === "continue") {
+				setWorkspacePrepOpen(false);
+				setSelectedPath(data.validation.root.repoPath);
+			}
+		} catch (err) {
+			setWorkspacePrepError(err instanceof Error ? err.message : t("createProject.couldNotAdd"));
+		} finally {
+			setIsPreparingGit(false);
 		}
 	};
 
@@ -396,6 +464,32 @@ export function CreateProjectFlow({
 					/>
 				</>
 			)}
+			<WorkspaceGitPreparationDialog
+				disabled={isBusy}
+				error={workspacePrepError}
+				events={workspacePrepEvents}
+				onBack={() => {
+					setWorkspacePrepOpen(false);
+					setWorkspacePrepError(null);
+					setWorkspacePrepEvents([]);
+					setFolderPickerOpen(true);
+				}}
+				onChangeRemote={(repoPath, remoteUrl) =>
+					setWorkspaceRemoteUrls((current) => ({ ...current, [repoPath]: remoteUrl }))
+				}
+				onContinue={() => void prepareWorkspaceGit()}
+				onOpenChange={(open) => {
+					if (isBusy) return;
+					setWorkspacePrepOpen(open);
+					if (!open) {
+						setWorkspacePrepError(null);
+						setWorkspacePrepEvents([]);
+					}
+				}}
+				open={workspacePrepOpen}
+				remoteUrls={workspaceRemoteUrls}
+				validation={workspaceValidation}
+			/>
 			<CreateProjectAgentSheet
 				action={cloneSelection ? "clone" : "create"}
 				error={error}
@@ -471,6 +565,245 @@ async function projectRepositoryPreflight(path: string): Promise<ProjectReposito
 	} catch {
 		return { blockingError: null, scan: null, setupCode: null, setupWarning: null };
 	}
+}
+
+async function validateImportFolder(path: string, importKind: "project" | "workspace"): Promise<ImportValidationResult> {
+	const { data, error } = await apiClient.POST("/api/v1/imports/validate", { body: { importKind, path } });
+	if (error || !data) throw new Error(apiErrorMessage(error, "Could not validate this folder."));
+	return data;
+}
+
+function defaultRemoteUrls(repos: RepoGitStatus[]): Record<string, string> {
+	return Object.fromEntries(repos.filter((repo) => repo.requiredActions.includes("set_remote")).map((repo) => [repo.repoPath, ""]));
+}
+
+function importValidationMessage(result: ImportValidationResult): string {
+	if (result.blockingErrors.length === 0) return "This folder cannot be imported yet.";
+	return result.blockingErrors.map(importBlockingErrorLabel).join(" ");
+}
+
+function importBlockingErrorLabel(code: string): string {
+	switch (code) {
+		case "INVALID_PATH":
+			return "Choose a folder AO can read.";
+		case "PATH_NOT_DIRECTORY":
+			return "Choose a folder, not a file.";
+		case "BARE_REPOSITORY":
+			return "Choose a normal working checkout instead of a bare Git repository.";
+		case "UNSUPPORTED_GIT_METADATA":
+			return "Repair the Git metadata or choose a different folder.";
+		case "CHILD_REPO_SCAN_FAILED":
+			return "AO could not inspect the repositories in this workspace.";
+		default:
+			return "Choose a different folder or repair the repository before continuing.";
+	}
+}
+
+function workspacePreparationFailureMessage(event: GitPreparationEvent): string {
+	return `${displayImportPath(event.repoPath)} failed while running ${gitActionLabel(event.action)}. Choose Back to edit the affected repository or try again.`;
+}
+
+function gitActionLabel(action: string): string {
+	switch (action) {
+		case "git_init":
+			return "Git initialization";
+		case "git_commit":
+			return "initial commit";
+		case "set_remote":
+			return "remote setup";
+		default:
+			return "Git setup";
+	}
+}
+
+function workspaceRepoGroups(repos: RepoGitStatus[]) {
+	return [
+		{ id: "ready", title: "Ready", repos: repos.filter((repo) => repo.requiredActions.length === 0 && repo.blockingErrors.length === 0) },
+		{ id: "init", title: "Needs Git initialization", repos: repos.filter((repo) => repo.requiredActions.includes("git_init")) },
+		{ id: "commit", title: "Needs commit", repos: repos.filter((repo) => !repo.requiredActions.includes("git_init") && repo.requiredActions.includes("git_commit")) },
+		{ id: "remote", title: "Needs remote", repos: repos.filter((repo) => repo.requiredActions.length === 1 && repo.requiredActions.includes("set_remote")) },
+		{ id: "blocked", title: "Blocked", repos: repos.filter((repo) => repo.blockingErrors.length > 0) },
+	].filter((group) => group.repos.length > 0);
+}
+
+function WorkspaceGitPreparationDialog({
+	disabled,
+	error,
+	events,
+	onBack,
+	onChangeRemote,
+	onContinue,
+	onOpenChange,
+	open,
+	remoteUrls,
+	validation,
+}: {
+	disabled: boolean;
+	error: string | null;
+	events: GitPreparationEvent[];
+	onBack: () => void;
+	onChangeRemote: (repoPath: string, remoteUrl: string) => void;
+	onContinue: () => void;
+	onOpenChange: (open: boolean) => void;
+	open: boolean;
+	remoteUrls: Record<string, string>;
+	validation: ImportValidationResult | null;
+}) {
+	const { t } = useTranslation();
+	if (!validation) return null;
+	const childRepos = validation.childRepos ?? [];
+	const reposNeedingPreparation = childRepos.filter((repo) => repo.requiredActions.length > 0);
+	const remoteMissing = reposNeedingPreparation.some(
+		(repo) => repo.requiredActions.includes("set_remote") && (remoteUrls[repo.repoPath]?.trim() ?? "") === "",
+	);
+	const eventKey = (event: GitPreparationEvent, index: number) => `${event.repoPath}:${event.action}:${event.state}:${index}`;
+	return (
+		<Dialog.Root open={open} onOpenChange={onOpenChange}>
+			<Dialog.Portal>
+				<Dialog.Overlay className="dialog-overlay data-[state=open]:animate-overlay-in" />
+				<Dialog.Content className="fixed left-1/2 top-1/2 z-overlay flex max-h-[min(720px,calc(100svh-24px))] w-[min(760px,calc(100vw-24px))] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-welcome-panel border border-[var(--color-border-import-modal)] bg-[var(--color-bg-import-modal)] p-0 text-[var(--color-text-import-title)] shadow-[var(--shadow-import-modal)] data-[state=open]:animate-modal-in">
+					<div className="flex shrink-0 items-start gap-3 border-b border-[var(--color-border-import-modal)] p-(--size-import-dialog-padding)">
+						<Button type="button" variant="outline" size="icon" aria-label={t("createProject.backToType")} disabled={disabled} onClick={onBack}>
+							<ChevronRight className="size-4 rotate-180" aria-hidden="true" />
+						</Button>
+						<div className="min-w-0 flex-1">
+							<Dialog.Title className="text-[18px] font-semibold text-[var(--color-text-import-title)]">
+								{t("createProject.workspacePrepTitle")}
+							</Dialog.Title>
+							<Dialog.Description className="mt-1 text-[13px] leading-5 text-[var(--color-text-import-muted)]">
+								{t("createProject.workspacePrepDescription")}
+							</Dialog.Description>
+						</div>
+					</div>
+					<div className="min-h-0 space-y-4 overflow-y-auto p-(--size-import-dialog-padding)">
+						<WorkspaceRootStatus root={validation.root} />
+						{error ? (
+							<div className="rounded-lg border border-destructive/40 bg-destructive/10 px-4 py-3 text-[12px] leading-5 text-destructive" role="alert">
+								{error}
+							</div>
+						) : null}
+						{workspaceRepoGroups(childRepos).map((group) => (
+							<section key={group.id} className="space-y-2">
+								<h3 className="text-[12px] font-semibold uppercase text-[var(--color-text-import-muted)]">
+									{group.title}
+								</h3>
+								<div className="space-y-2">
+									{group.repos.map((repo) => (
+										<WorkspaceRepoPreparationRow
+											key={repo.repoPath}
+											events={events.filter((event) => event.repoPath === repo.repoPath)}
+											onChangeRemote={onChangeRemote}
+											remoteUrl={remoteUrls[repo.repoPath] ?? ""}
+											repo={repo}
+										/>
+									))}
+								</div>
+							</section>
+						))}
+						{events.length > 0 ? (
+							<section className="space-y-2">
+								<h3 className="text-[12px] font-semibold uppercase text-[var(--color-text-import-muted)]">
+									{t("createProject.workspacePrepProgress")}
+								</h3>
+								<div className="space-y-1 rounded-lg border border-[var(--color-border-import-modal)] bg-[var(--color-bg-import-card)] p-3">
+									{events.map((event, index) => (
+										<div key={eventKey(event, index)} className="flex items-center justify-between gap-3 text-[12px]">
+											<span className="min-w-0 truncate">
+												{displayImportPath(event.repoPath)} · {gitActionLabel(event.action)}
+											</span>
+											<span className={event.state === "error" ? "text-destructive" : "text-[var(--color-text-import-muted)]"}>
+												{event.state}
+											</span>
+										</div>
+									))}
+								</div>
+							</section>
+						) : null}
+					</div>
+					<div className="flex shrink-0 items-center justify-between gap-3 border-t border-[var(--color-border-import-modal)] p-(--size-import-dialog-padding)">
+						<Button type="button" variant="footer" disabled={disabled} onClick={onBack}>
+							{t("createProject.cloneBack")}
+						</Button>
+						<Button type="button" variant="footer-primary" disabled={disabled || remoteMissing} onClick={onContinue}>
+							{t("createProject.cloneContinue")}
+						</Button>
+					</div>
+				</Dialog.Content>
+			</Dialog.Portal>
+		</Dialog.Root>
+	);
+}
+
+function WorkspaceRootStatus({ root }: { root: RepoGitStatus }) {
+	const { t } = useTranslation();
+	return (
+		<div className="flex items-center gap-3 rounded-lg border border-[var(--color-border-import-modal)] bg-[var(--color-bg-import-card)] p-4">
+			<Folder className="size-5 shrink-0 text-[var(--color-text-import-muted)]" aria-hidden="true" />
+			<div className="min-w-0 flex-1">
+				<div className="truncate font-mono text-[14px] font-semibold">{displayImportPath(root.repoPath)}</div>
+				<div className="mt-0.5 text-[12px] text-[var(--color-text-import-muted)]">{t("createProject.workspaceRoot")}</div>
+			</div>
+			<span className="text-[12px] text-[var(--color-text-import-muted)]">{root.isRepo ? "Git repository" : "Folder"}</span>
+		</div>
+	);
+}
+
+function WorkspaceRepoPreparationRow({
+	events,
+	onChangeRemote,
+	remoteUrl,
+	repo,
+}: {
+	events: GitPreparationEvent[];
+	onChangeRemote: (repoPath: string, remoteUrl: string) => void;
+	remoteUrl: string;
+	repo: RepoGitStatus;
+}) {
+	const { t } = useTranslation();
+	const lastError = [...events].reverse().find((event) => event.state === "error");
+	return (
+		<div className="rounded-lg border border-[var(--color-border-import-modal)] bg-[var(--color-bg-import-card)] p-4">
+			<div className="flex items-start justify-between gap-3">
+				<div className="min-w-0">
+					<div className="truncate font-mono text-[13px] font-semibold">{displayImportPath(repo.repoPath)}</div>
+					<div className="mt-1 flex flex-wrap gap-1.5">
+						{repo.requiredActions.length === 0 ? <ImportStatusPill label="Ready" tone="ok" /> : null}
+						{repo.requiredActions.map((action) => (
+							<ImportStatusPill key={action} label={gitActionLabel(action)} tone="pending" />
+						))}
+						{repo.blockingErrors.map((code) => (
+							<ImportStatusPill key={code} label={importBlockingErrorLabel(code)} tone="error" />
+						))}
+					</div>
+				</div>
+				{lastError ? <XCircle className="size-5 shrink-0 text-destructive" aria-hidden="true" /> : <CheckCircle2 className="size-5 shrink-0 text-[var(--color-text-import-muted)]" aria-hidden="true" />}
+			</div>
+			{repo.requiredActions.includes("set_remote") ? (
+				<div className="mt-3 space-y-1.5">
+					<Label htmlFor={`remote-${repo.repoPath}`} className="text-[12px] font-semibold">
+						{t("createProject.cloneRepositoryUrl")}
+					</Label>
+					<Input
+						id={`remote-${repo.repoPath}`}
+						value={remoteUrl}
+						placeholder={t("createProject.cloneRepositoryUrlPlaceholder")}
+						onChange={(event) => onChangeRemote(repo.repoPath, event.target.value)}
+					/>
+				</div>
+			) : null}
+			{lastError ? <p className="mt-2 text-[12px] text-destructive">{workspacePreparationFailureMessage(lastError)}</p> : null}
+		</div>
+	);
+}
+
+function ImportStatusPill({ label, tone }: { label: string; tone: "ok" | "pending" | "error" }) {
+	const className =
+		tone === "error"
+			? "border-destructive/40 bg-destructive/10 text-destructive"
+			: tone === "ok"
+				? "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+				: "border-[var(--color-border-import-modal)] bg-[var(--color-bg-import-chip)] text-[var(--color-text-import-muted)]";
+	return <span className={cn("rounded-full border px-2 py-0.5 text-[11px] font-medium", className)}>{label}</span>;
 }
 
 function shouldScanCreateFailure(message: string): boolean {

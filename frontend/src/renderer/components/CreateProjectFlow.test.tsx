@@ -1,7 +1,7 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import userEvent from "@testing-library/user-event";
-import { useState, type ReactNode } from "react";
+import { useState, type ComponentProps, type ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { CreateProjectFlow, type CloneProjectInput, type CreateProjectInput } from "./CreateProjectFlow";
 
@@ -9,6 +9,13 @@ const bridgeMocks = vi.hoisted(() => ({
 	checkAncestorRepo: vi.fn(),
 	chooseDirectory: vi.fn(),
 	scanImportFolder: vi.fn(),
+}));
+
+const apiMocks = vi.hoisted(() => ({
+	POST: vi.fn(),
+	apiErrorMessage: vi.fn((error: unknown, fallback = "Request failed") =>
+		typeof error === "object" && error !== null && "message" in error ? String((error as { message?: unknown }).message) : fallback,
+	),
 }));
 
 vi.mock("../lib/bridge", () => ({
@@ -19,6 +26,13 @@ vi.mock("../lib/bridge", () => ({
 			scanImportFolder: bridgeMocks.scanImportFolder,
 		},
 	},
+}));
+
+vi.mock("../lib/api-client", () => ({
+	apiClient: {
+		POST: apiMocks.POST,
+	},
+	apiErrorMessage: apiMocks.apiErrorMessage,
 }));
 
 // Cloud stand-ins: the flow only consumes the gate flag, the session status,
@@ -113,15 +127,67 @@ const noop = {
 	onInitializeProject: async (_path: string) => undefined,
 };
 
+function renderChooseFlow(props: Partial<ComponentProps<typeof CreateProjectFlow>> = {}) {
+	return render(
+		<CreateProjectFlow mode="choose" {...noop} {...props}>
+			{({ choosePath, disabled, label }) => (
+				<button type="button" disabled={disabled} onClick={choosePath}>
+					{label}
+				</button>
+			)}
+		</CreateProjectFlow>,
+	);
+}
+
 beforeEach(() => {
 	bridgeMocks.checkAncestorRepo.mockReset().mockResolvedValue(undefined);
 	bridgeMocks.chooseDirectory.mockReset();
 	bridgeMocks.scanImportFolder.mockReset().mockImplementation(async ({ path }: { path: string }) => okScan(path));
+	apiMocks.POST.mockReset();
+	apiMocks.apiErrorMessage.mockClear();
 	cloudMocks.cloudEnabled = false;
 	cloudMocks.sessionStatus = "unauthenticated";
 	cloudMocks.createProject.mockReset();
 	cloudMocks.signIn.mockReset();
 });
+
+function workspaceValidation(path: string, childRepos: Array<Partial<{
+	repoPath: string;
+	isRepo: boolean;
+	hasCommit: boolean;
+	hasOrigin: boolean;
+	isEmptyFolder: boolean;
+	needsGitInit: boolean;
+	requiredActions: string[];
+	blockingErrors: string[];
+}>>) {
+	return {
+		importKind: "workspace",
+		isValid: true,
+		blockingErrors: [],
+		root: {
+			repoPath: path,
+			isRepo: false,
+			hasCommit: false,
+			hasOrigin: false,
+			isEmptyFolder: false,
+			needsGitInit: true,
+			requiredActions: ["git_init", "git_commit", "set_remote"],
+			blockingErrors: [],
+		},
+		childRepos: childRepos.map((repo, index) => ({
+			repoPath: repo.repoPath ?? `${path}/repo-${index + 1}`,
+			isRepo: repo.isRepo ?? true,
+			hasCommit: repo.hasCommit ?? true,
+			hasOrigin: repo.hasOrigin ?? true,
+			isEmptyFolder: repo.isEmptyFolder ?? false,
+			needsGitInit: repo.needsGitInit ?? false,
+			requiredActions: repo.requiredActions ?? [],
+			blockingErrors: repo.blockingErrors ?? [],
+		})),
+		nextStep: childRepos.some((repo) => (repo.requiredActions?.length ?? 0) > 0) ? "prepare_git" : "continue",
+	};
+}
 
 describe("CreateProjectFlow droppedPath", () => {
 	it("does not open on mount", () => {
@@ -213,6 +279,160 @@ describe("CreateProjectFlow droppedPath", () => {
 		expect(bridgeMocks.chooseDirectory).not.toHaveBeenCalled();
 	});
 });
+
+describe("CreateProjectFlow workspace import validation", () => {
+	it("continues to agent selection when workspace children are ready", async () => {
+		const user = userEvent.setup();
+		bridgeMocks.chooseDirectory.mockResolvedValue("/workspace");
+		apiMocks.POST.mockResolvedValueOnce({ data: workspaceValidation("/workspace", [{ repoPath: "/workspace/api" }]) });
+
+		renderChooseFlow();
+		await user.click(screen.getByRole("button", { name: "New project" }));
+		await user.click(await screen.findByRole("button", { name: "Add a workspace folder" }));
+
+		await waitFor(() =>
+			expect(apiMocks.POST).toHaveBeenCalledWith("/api/v1/imports/validate", {
+				body: { importKind: "workspace", path: "/workspace" },
+			}),
+		);
+		const sheet = await screen.findByTestId("agent-sheet");
+		expect(sheet).toHaveAttribute("data-kind", "workspace");
+		expect(sheet).toHaveAttribute("data-path", "/workspace");
+	});
+
+	it("shows validation failure before agent selection", async () => {
+		const user = userEvent.setup();
+		bridgeMocks.chooseDirectory.mockResolvedValue("/bad-workspace");
+		apiMocks.POST.mockResolvedValueOnce({
+			data: {
+				...workspaceValidation("/bad-workspace", []),
+				isValid: false,
+				blockingErrors: ["INVALID_PATH"],
+				nextStep: "error",
+			},
+		});
+
+		renderChooseFlow();
+		await user.click(screen.getByRole("button", { name: "New project" }));
+		await user.click(await screen.findByRole("button", { name: "Add a workspace folder" }));
+
+		expect(await screen.findByText("Choose a folder AO can read.")).toBeInTheDocument();
+		expect(screen.queryByTestId("agent-sheet")).not.toBeInTheDocument();
+	});
+
+	it("shows only each workspace child's missing preparation steps", async () => {
+		const user = userEvent.setup();
+		bridgeMocks.chooseDirectory.mockResolvedValue("/workspace");
+		apiMocks.POST.mockResolvedValueOnce({
+			data: workspaceValidation("/workspace", [
+				{ repoPath: "/workspace/ready" },
+				{ repoPath: "/workspace/unborn", hasCommit: false, hasOrigin: false, requiredActions: ["git_commit", "set_remote"] },
+				{ repoPath: "/workspace/plain", isRepo: false, needsGitInit: true, requiredActions: ["git_init", "git_commit", "set_remote"] },
+			]),
+		});
+
+		renderChooseFlow();
+		await user.click(screen.getByRole("button", { name: "New project" }));
+		await user.click(await screen.findByRole("button", { name: "Add a workspace folder" }));
+
+		expect(await screen.findByText("Prepare workspace repositories")).toBeInTheDocument();
+		expect(screen.getByText("Workspace root")).toBeInTheDocument();
+		expect(screen.getByText("/workspace/ready")).toBeInTheDocument();
+		expect(screen.getByText("/workspace/unborn")).toBeInTheDocument();
+		expect(screen.getByText("/workspace/plain")).toBeInTheDocument();
+		expect(screen.getAllByText("Git initialization")).toHaveLength(1);
+		expect(screen.getAllByText("initial commit")).toHaveLength(2);
+		expect(screen.getAllByText("remote setup")).toHaveLength(2);
+	});
+
+	it("prepares workspace repositories and then opens agent selection", async () => {
+		const user = userEvent.setup();
+		bridgeMocks.chooseDirectory.mockResolvedValue("/workspace");
+		apiMocks.POST
+			.mockResolvedValueOnce({
+				data: workspaceValidation("/workspace", [
+					{ repoPath: "/workspace/no-remote", hasOrigin: false, requiredActions: ["set_remote"] },
+					{ repoPath: "/workspace/plain", isRepo: false, needsGitInit: true, requiredActions: ["git_init", "git_commit", "set_remote"] },
+				]),
+			})
+			.mockResolvedValueOnce({
+				data: {
+					events: [
+						{ repoPath: "/workspace/no-remote", action: "set_remote", state: "pending" },
+						{ repoPath: "/workspace/no-remote", action: "set_remote", state: "running" },
+						{ repoPath: "/workspace/no-remote", action: "set_remote", state: "success" },
+						{ repoPath: "/workspace/plain", action: "git_init", state: "pending" },
+						{ repoPath: "/workspace/plain", action: "git_init", state: "running" },
+						{ repoPath: "/workspace/plain", action: "git_init", state: "success" },
+					],
+					validation: workspaceValidation("/workspace", [{ repoPath: "/workspace/no-remote" }, { repoPath: "/workspace/plain" }]),
+				},
+			});
+
+		renderChooseFlow();
+		await user.click(screen.getByRole("button", { name: "New project" }));
+		await user.click(await screen.findByRole("button", { name: "Add a workspace folder" }));
+		const remoteInputs = await screen.findAllByLabelText("Repository URL");
+		await user.type(remoteInputs[0], "https://example.invalid/plain.git");
+		await user.type(remoteInputs[1], "https://example.invalid/no-remote.git");
+		await user.click(screen.getByRole("button", { name: "Continue" }));
+
+		await waitFor(() =>
+			expect(apiMocks.POST).toHaveBeenLastCalledWith("/api/v1/imports/prepare-git", {
+				body: {
+					importKind: "workspace",
+					path: "/workspace",
+					repositories: [
+						{
+							repoPath: "/workspace/no-remote",
+							approvedActions: ["set_remote"],
+							remoteUrl: "https://example.invalid/no-remote.git",
+						},
+						{
+							repoPath: "/workspace/plain",
+							approvedActions: ["git_init", "git_commit", "set_remote"],
+							remoteUrl: "https://example.invalid/plain.git",
+						},
+					],
+				},
+			}),
+		);
+		expect(await screen.findByTestId("agent-sheet")).toHaveAttribute("data-kind", "workspace");
+	});
+
+	it("keeps partial preparation failures in the workspace preparation dialog", async () => {
+		const user = userEvent.setup();
+		bridgeMocks.chooseDirectory.mockResolvedValue("/workspace");
+		apiMocks.POST
+			.mockResolvedValueOnce({
+				data: workspaceValidation("/workspace", [
+					{ repoPath: "/workspace/api", hasOrigin: false, requiredActions: ["set_remote"] },
+				]),
+			})
+			.mockResolvedValueOnce({
+				data: {
+					events: [
+						{ repoPath: "/workspace/api", action: "set_remote", state: "pending" },
+						{ repoPath: "/workspace/api", action: "set_remote", state: "running" },
+						{ repoPath: "/workspace/api", action: "set_remote", state: "error" },
+					],
+					validation: workspaceValidation("/workspace", [
+						{ repoPath: "/workspace/api", hasOrigin: false, requiredActions: ["set_remote"] },
+					]),
+				},
+			});
+
+		renderChooseFlow();
+		await user.click(screen.getByRole("button", { name: "New project" }));
+		await user.click(await screen.findByRole("button", { name: "Add a workspace folder" }));
+		await user.type(await screen.findByLabelText("Repository URL"), "https://example.invalid/api.git");
+		await user.click(screen.getByRole("button", { name: "Continue" }));
+
+		expect((await screen.findAllByText(/api failed while running remote setup/i)).length).toBeGreaterThan(0);
+		expect(screen.queryByTestId("agent-sheet")).not.toBeInTheDocument();
+			expect(screen.getByRole("button", { name: "Back to code source" })).toBeInTheDocument();
+		});
+	});
 
 describe("CreateProjectFlow cloud offering", () => {
 	it("hides the Local | Cloud choice when the cloud gate is off", () => {

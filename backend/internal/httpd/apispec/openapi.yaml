@@ -7343,6 +7343,8 @@ components:
           type: string
         message:
           type: string
+        repoPath:
+          type: string
         state:
           enum:
           - pending
@@ -7352,6 +7354,7 @@ components:
           type: string
       required:
       - action
+      - repoPath
       - state
       type: object
     GitPreparationInput:
@@ -7363,6 +7366,7 @@ components:
         importKind:
           enum:
           - project
+          - workspace
           minLength: 1
           type: string
         initialCommitMessage:
@@ -7372,10 +7376,13 @@ components:
           type: string
         remoteUrl:
           type: string
+        repositories:
+          items:
+            $ref: '#/components/schemas/GitRepositoryPreparationInput'
+          type: array
       required:
       - importKind
       - path
-      - approvedActions
       type: object
     GitPreparationResult:
       properties:
@@ -7388,6 +7395,23 @@ components:
       required:
       - events
       - validation
+      type: object
+    GitRepositoryPreparationInput:
+      properties:
+        approvedActions:
+          items:
+            type: string
+          type: array
+        initialCommitMessage:
+          type: string
+        remoteUrl:
+          type: string
+        repoPath:
+          minLength: 1
+          type: string
+      required:
+      - repoPath
+      - approvedActions
       type: object
     IdentityResponse:
       properties:
@@ -7438,6 +7462,7 @@ components:
         importKind:
           enum:
           - project
+          - workspace
           minLength: 1
           type: string
         path:
