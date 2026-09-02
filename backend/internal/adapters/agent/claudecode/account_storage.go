@@ -53,3 +53,17 @@ func mergeClaudeCredentialFields(account map[string]json.RawMessage, live []byte
 	}
 	return json.Marshal(merged)
 }
+
+func claudeSharedCredentialProjection(live []byte) ([]byte, error) {
+	var current map[string]json.RawMessage
+	if err := json.Unmarshal(live, &current); err != nil {
+		return nil, err
+	}
+	shared := make(map[string]json.RawMessage, len(claudeSharedCredentialFields))
+	for key := range claudeSharedCredentialFields {
+		if value, ok := current[key]; ok {
+			shared[key] = value
+		}
+	}
+	return json.Marshal(shared)
+}

@@ -27,6 +27,22 @@ func newMacOSClaudeKeychain() *macOSClaudeKeychain {
 	return &macOSClaudeKeychain{run: runClaudeSecurity}
 }
 
+func NewKeychain() Keychain { return newMacOSClaudeKeychain() }
+
+func (*macOSClaudeKeychain) Supported() bool { return true }
+
+func (s *macOSClaudeKeychain) Get(ctx context.Context, service, account string) ([]byte, bool, error) {
+	return s.get(ctx, service, account)
+}
+
+func (s *macOSClaudeKeychain) Set(ctx context.Context, service, account string, value []byte) error {
+	return s.set(ctx, service, account, value)
+}
+
+func (s *macOSClaudeKeychain) Delete(ctx context.Context, service, account string) error {
+	return s.delete(ctx, service, account)
+}
+
 func runClaudeSecurity(ctx context.Context, args []string, input []byte) ([]byte, int, error) {
 	callCtx, cancel := context.WithTimeout(ctx, claudeSecurityTimeout)
 	defer cancel()

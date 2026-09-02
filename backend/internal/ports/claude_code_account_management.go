@@ -11,6 +11,7 @@ import (
 var (
 	ErrClaudeCodeAccountSwitchInProgress          = errors.New("Claude Code account switch already in progress")
 	ErrClaudeCodeAccountAlreadyActive             = errors.New("Claude Code account is already active")
+	ErrClaudeCodeAccountNotFound                  = errors.New("Claude Code account not found")
 	ErrClaudeCodeActiveAccountUnavailable         = errors.New("active Claude Code account is unavailable")
 	ErrClaudeCodeAccountSwitchNotFound            = errors.New("Claude Code account switch not found")
 	ErrClaudeCodeAccountRevisionConflict          = errors.New("Claude Code account revision conflict")

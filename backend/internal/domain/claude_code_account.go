@@ -53,6 +53,7 @@ type ClaudeCodeAccountSnapshot struct {
 	Reason         string                         `json:"reason"`
 	Active         bool                           `json:"active"`
 	Authentication AgentAuthenticationObservation `json:"authentication"`
+	Identity       ClaudeCodeAccountIdentity      `json:"identity"`
 	AccountEmail   *string                        `json:"accountEmail,omitempty"`
 	CreatedAt      time.Time                      `json:"createdAt"`
 	UpdatedAt      time.Time                      `json:"updatedAt"`

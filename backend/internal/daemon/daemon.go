@@ -19,6 +19,7 @@ import (
 
 	"github.com/google/uuid"
 
+	claudeagent "github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/claudecode"
 	codexagent "github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/codex"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/modelcatalog"
 	chatdriveracp "github.com/aoagents/agent-orchestrator/backend/internal/adapters/chatdriver/acp"
@@ -475,6 +476,15 @@ func Run() error {
 		return fmt.Errorf("resolve device-global Codex home: %w", err)
 	}
 	codexOperationGate := codexops.NewGate()
+	claudeHome, err := os.UserHomeDir()
+	if err != nil {
+		stop()
+		lcStack.Stop()
+		if cdcErr := cdcPipe.Stop(); cdcErr != nil {
+			log.Error("cdc pipeline shutdown", "err", cdcErr)
+		}
+		return fmt.Errorf("resolve device-global Claude Code home: %w", err)
+	}
 	agentDeps := agentsvc.Deps{
 		Cache: store, Discoverer: modelDiscoverer, Projects: store, Sessions: store, Context: ctx, Logger: log,
 		CodexAccountRoot:       filepath.Join(cfg.StateDir, "harnesses", "codex", "accounts"),
@@ -484,7 +494,23 @@ func Run() error {
 		CodexAccounts: codexappserver.NewAccountFactoryWithResolver(func(resolveCtx context.Context) (string, error) {
 			return codexagent.New().ResolveBinary(resolveCtx)
 		}, log),
-		CodexOperationGate: codexOperationGate,
+		CodexOperationGate:          codexOperationGate,
+		ClaudeCodeAccountRoot:       filepath.Join(cfg.StateDir, "harnesses", "claude-code", "accounts"),
+		ClaudeCodePendingRoot:       filepath.Join(cfg.StateDir, "harnesses", "claude-code", "pending-accounts"),
+		ClaudeCodeSwitchStagingRoot: filepath.Join(cfg.StateDir, "harnesses", "claude-code", "switch-staging"),
+		ClaudeCodeHome:              claudeHome,
+		ClaudeCodeKeychain:          claudeagent.NewKeychain(),
+		ClaudeCodeAccountState:      store,
+		ClaudeCodeResolveExecutable: func(resolveCtx context.Context) (string, error) {
+			return claudeagent.New().ResolveBinary(resolveCtx)
+		},
+		ClaudeCodeEnvironment: map[string]string{
+			"ANTHROPIC_API_KEY":                       os.Getenv("ANTHROPIC_API_KEY"),
+			"ANTHROPIC_AUTH_TOKEN":                    os.Getenv("ANTHROPIC_AUTH_TOKEN"),
+			"CLAUDE_CODE_OAUTH_TOKEN":                 os.Getenv("CLAUDE_CODE_OAUTH_TOKEN"),
+			"CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR": os.Getenv("CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR"),
+			"CLAUDE_CODE_API_KEY_FILE_DESCRIPTOR":     os.Getenv("CLAUDE_CODE_API_KEY_FILE_DESCRIPTOR"),
+		},
 	}
 	agentSvc = agentsvc.NewWithDeps(agentDeps)
 	agentSvc.WarmModelCatalogs(ctx)
@@ -568,6 +594,7 @@ func Run() error {
 	shellTermSvc := startShellTerminals(ctx, cfg, runtimeAdapter, store, projectSvc, sessionSvc, log)
 	agentAuthSvc := agentauth.NewWithAgentResolver(hostCommands, agentSvc, shellTermSvc)
 	agentSvc.SetCodexAccountLoginTerminalOpener(shellTermSvc)
+	agentSvc.SetClaudeCodeAccountLoginTerminalOpener(shellTermSvc)
 	// Late-bound so Kill/Cleanup close a session's scoped shells before its
 	// worktree is torn down (shellTermSvc cannot exist before sessMgr does; see
 	// SetShellTerminalCloser).
@@ -653,6 +680,7 @@ func Run() error {
 		return fmt.Errorf("reconcile sessions on boot: %w", reconcileErr)
 	}
 	agentSvc.WarmCodexAccounts()
+	agentSvc.WarmClaudeCodeAccounts()
 	autoReview := autoreview.New(store, reviewSvc, autoreview.Config{Logger: log})
 	lcStack.autoReviewDone = autoReview.Start(ctx)
 	// Push-device registry: persisted phones that receive OS push notifications.

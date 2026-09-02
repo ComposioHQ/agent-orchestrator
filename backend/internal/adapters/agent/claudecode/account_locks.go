@@ -5,11 +5,43 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sync"
 	"time"
 )
 
 const claudeLockTouchInterval = 3 * time.Second
+
+const claudeCredentialLockStale = 60 * time.Second
+
+type claudeLockAcquirer func(context.Context, string, time.Duration, time.Duration) (func(), error)
+
+func AcquireCredentialLocks(ctx context.Context, claudeDir string) (func(), error) {
+	return acquireClaudeCredentialLocksWith(ctx, claudeDir, acquireClaudeProperLock)
+}
+
+func acquireClaudeCredentialLocksWith(ctx context.Context, claudeDir string, acquire claudeLockAcquirer) (func(), error) {
+	paths := []string{filepath.Join(claudeDir, ".oauth_refresh.lock"), claudeDir + ".lock"}
+	releases := make([]func(), 0, len(paths))
+	for _, path := range paths {
+		release, err := acquire(ctx, path, claudeCredentialLockStale, claudeLockWait)
+		if err != nil {
+			for i := len(releases) - 1; i >= 0; i-- {
+				releases[i]()
+			}
+			return nil, err
+		}
+		releases = append(releases, release)
+	}
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			for i := len(releases) - 1; i >= 0; i-- {
+				releases[i]()
+			}
+		})
+	}, nil
+}
 
 func acquireClaudeProperLock(ctx context.Context, path string, staleAfter, timeout time.Duration) (func(), error) {
 	deadline := time.Now().Add(timeout)

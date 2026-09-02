@@ -24,6 +24,45 @@ func TestClaudeKeychainServiceNameHashesTheRawNFCPath(t *testing.T) {
 	}
 }
 
+func TestClaudeKeychainAccountFallsBackWithoutEnvironmentUser(t *testing.T) {
+	got := claudeKeychainAccount("", func() (string, error) { return "login-user", nil })
+	if got != "login-user" {
+		t.Fatalf("fallback account = %q, want login-user", got)
+	}
+	got = claudeKeychainAccount("", func() (string, error) { return "", os.ErrNotExist })
+	if got != "claude-code-user" {
+		t.Fatalf("terminal fallback account = %q, want claude-code-user", got)
+	}
+	got = claudeKeychainAccount("environment-user", func() (string, error) {
+		t.Fatal("lookup called despite USER")
+		return "", nil
+	})
+	if got != "environment-user" {
+		t.Fatalf("environment account = %q", got)
+	}
+}
+
+func TestClaudeCredentialLocksUseNativeOrder(t *testing.T) {
+	root := t.TempDir()
+	claudeDir := filepath.Join(root, ".claude")
+	if err := os.Mkdir(claudeDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	var acquired []string
+	release, err := acquireClaudeCredentialLocksWith(context.Background(), claudeDir, func(_ context.Context, path string, _, _ time.Duration) (func(), error) {
+		acquired = append(acquired, path)
+		return func() {}, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	release()
+	want := []string{filepath.Join(claudeDir, ".oauth_refresh.lock"), claudeDir + ".lock"}
+	if !reflect.DeepEqual(acquired, want) {
+		t.Fatalf("lock order = %v, want %v", acquired, want)
+	}
+}
+
 func TestClaudeProperLockReclaimsOnlyStaleDirectories(t *testing.T) {
 	path := filepath.Join(t.TempDir(), ".oauth_refresh.lock")
 	if err := os.Mkdir(path, 0o700); err != nil {
