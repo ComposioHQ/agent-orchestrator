@@ -845,6 +845,7 @@ const sessionSelect = `
 			SELECT 1 FROM ao_worker_connections worker
 			WHERE worker.session_id = session.id AND worker.disconnected_at IS NULL
 		),
+		COALESCE(sandbox.provider, ''),
 		COALESCE(sandbox.observed_state, ''),
 		COALESCE(sandbox.last_error, ''),
 		session.created_at, session.updated_at
@@ -905,6 +906,7 @@ func scanSession(row scanner, session *domain.Session) error {
 		&activity,
 		&session.IsTerminated,
 		&session.RuntimeConnected,
+		&session.RuntimeProvider,
 		&session.RuntimeState,
 		&session.RuntimeError,
 		&session.CreatedAt,

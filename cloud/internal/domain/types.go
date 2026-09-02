@@ -70,6 +70,7 @@ type Session struct {
 	ActivityState    contract.ActivityState
 	IsTerminated     bool
 	RuntimeConnected bool
+	RuntimeProvider  string
 	RuntimeState     string
 	RuntimeError     string
 	CreatedAt        time.Time

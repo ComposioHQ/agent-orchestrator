@@ -61,6 +61,7 @@ type sessionResponse struct {
 	ActivityState    string    `json:"activityState"`
 	Status           string    `json:"status"`
 	RuntimeConnected bool      `json:"runtimeConnected"`
+	RuntimeProvider  string    `json:"runtimeProvider,omitempty"`
 	RuntimeState     string    `json:"runtimeState,omitempty"`
 	RuntimeError     string    `json:"runtimeError,omitempty"`
 	IsTerminated     bool      `json:"isTerminated"`
@@ -522,6 +523,7 @@ func toSessionResponse(session domain.Session, prs []contract.PRFacts) sessionRe
 		ActivityState:    string(session.ActivityState),
 		Status:           string(session.Status(time.Now().UTC(), prs)),
 		RuntimeConnected: session.RuntimeConnected,
+		RuntimeProvider:  session.RuntimeProvider,
 		RuntimeState:     session.RuntimeState,
 		RuntimeError:     session.RuntimeError,
 		IsTerminated:     session.IsTerminated,
