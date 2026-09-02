@@ -12,6 +12,7 @@ import {
 } from "@aoagents/product-ui";
 
 import type { ReviewerHarnessId } from "../lib/reviewer-harnesses";
+import type { HostId, Ref } from "../lib/hosts";
 
 export { toKanbanColumn, toSessionActivity, toSessionStatus };
 export type { KanbanColumn, SessionActivity, SessionActivityState, SessionStatus };
@@ -61,6 +62,7 @@ export type AgentSwitchSummary = {
 };
 
 export type WorkspaceSession = {
+	host: HostId;
 	id: string;
 	terminalHandleId?: string;
 	workspaceId: string;
@@ -225,9 +227,9 @@ export function isOrchestratorSession(session: WorkspaceSession): boolean {
  */
 export function findProjectOrchestrator(
 	workspaces: WorkspaceSummary[],
-	projectId: string,
+	project: Ref,
 ): WorkspaceSession | undefined {
-	const workspace = workspaces.find((w) => w.id === projectId);
+	const workspace = workspaces.find((w) => w.host === project.host && w.id === project.id);
 	return newestActiveOrchestrator(workspace?.sessions ?? []);
 }
 
@@ -301,6 +303,7 @@ export { attentionZone, attentionZoneLabel, attentionZoneOrder } from "../lib/se
 export type { AttentionZone } from "../lib/session-presentation";
 
 export type WorkspaceSummary = {
+	host: HostId;
 	id: string;
 	name: string;
 	/**

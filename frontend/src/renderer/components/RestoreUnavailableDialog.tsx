@@ -24,7 +24,7 @@ type RestoreUnavailableDialogProps = {
 
 export function RestoreUnavailableDialog({ open, session, onOpenChange, onRecreated }: RestoreUnavailableDialogProps) {
 	const { t } = useTranslation();
-	const workspaceQuery = useWorkspaceScope(session.workspaceId);
+	const workspaceQuery = useWorkspaceScope(session.host, session.workspaceId);
 	const [busy, setBusy] = useState(false);
 	const [error, setError] = useState<string | undefined>();
 	const orchestrator = isOrchestratorSession(session);
@@ -36,13 +36,13 @@ export function RestoreUnavailableDialog({ open, session, onOpenChange, onRecrea
 		if (checkingProject) return;
 		if (!hasOrchestratorAgent) {
 			onOpenChange(false);
-			useUiStore.getState().openProjectSettings(session.workspaceId);
+			useUiStore.getState().openProjectSettings({ host: session.host, id: session.workspaceId });
 			return;
 		}
 		setBusy(true);
 		setError(undefined);
 		try {
-			const id = await spawnOrchestrator(session.workspaceId, "restore_dialog", true);
+			const id = await spawnOrchestrator({ host: session.host, id: session.workspaceId }, "restore_dialog", true);
 			onOpenChange(false);
 			onRecreated(id);
 		} catch (err) {

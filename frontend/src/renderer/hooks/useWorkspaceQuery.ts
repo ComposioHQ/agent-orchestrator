@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import type { TraySessionEntry } from "../../shared/tray";
 import { useMemo } from "react";
+import { LOCAL_HOST, type HostId, type Ref } from "../lib/hosts";
 import type { components } from "../../api/schema";
 import { apiClient, hasTrustedApiBaseUrl } from "../lib/api-client";
 import type { CloudCpProject, CloudCpSession } from "../lib/cloud-cp";
@@ -90,6 +91,7 @@ async function fetchWorkspaces(): Promise<WorkspaceSummary[]> {
 	return (projectsData?.projects ?? []).map((project) => {
 		const kind = toProjectKind(project.kind);
 		return {
+			host: LOCAL_HOST,
 			id: project.id,
 			name: project.name,
 			kind,
@@ -107,6 +109,7 @@ async function fetchWorkspaces(): Promise<WorkspaceSummary[]> {
 						reportUnknownSessionField("activity", session.activity?.state);
 					}
 					return {
+						host: LOCAL_HOST,
 						id: session.id,
 						terminalHandleId: session.terminalHandleId,
 						workspaceId: project.id,
@@ -180,6 +183,7 @@ function toCloudWorkspaceSession(
 	orgId: string,
 ): WorkspaceSession {
 	return {
+		host: LOCAL_HOST,
 		id: session.id,
 		// The terminal pane only mounts for a session that has a terminal handle.
 		// A cloud session's PTY is addressed by the session id over its ticketed
@@ -209,6 +213,7 @@ function toCloudWorkspace(
 	orgId: string,
 ): WorkspaceSummary {
 	return {
+		host: LOCAL_HOST,
 		id: project.id,
 		name: project.displayName,
 		kind: "cloud",
@@ -291,11 +296,15 @@ export function useWorkspaceQuery(options: WorkspaceSubscriptionOptions = {}) {
  * tree. TanStack Query applies structural sharing to the selected value, so an
  * activity update elsewhere no longer redraws the open session workspace.
  */
-export function useWorkspaceSession(sessionId: string) {
+export function useWorkspaceSession(session: Ref) {
 	const selectLocalSession = useMemo(
 		() => (workspaces: WorkspaceSummary[]) =>
-			workspaces.flatMap((workspace) => workspace.sessions).find((session) => session.id === sessionId),
-		[sessionId],
+			// Session ids are unique per host, not across them: matching on id
+			// alone would resolve another host's same-id session here.
+			workspaces
+				.flatMap((workspace) => workspace.sessions)
+				.find((candidate) => candidate.host === session.host && candidate.id === session.id),
+		[session.host, session.id],
 	);
 	const local = useQuery({ ...workspaceQueryOptions, select: selectLocalSession });
 	const cloud = useCloudProjectsQuery();
@@ -303,11 +312,13 @@ export function useWorkspaceSession(sessionId: string) {
 	const { org, ready } = useCloudOrg();
 	const cloudSession = useMemo(() => {
 		if (!ready || !org?.id || !cloud.data || !cloudSessions.data) return undefined;
-		const session = cloudSessions.data.find((candidate) => candidate.id === sessionId);
-		if (!session) return undefined;
-		const project = cloud.data.find((candidate) => candidate.id === session.projectId);
-		return project ? toCloudWorkspaceSession(session, project, org.id) : undefined;
-	}, [cloud.data, cloudSessions.data, org?.id, ready, sessionId]);
+		// Cloud sessions always carry LOCAL_HOST (see toCloudWorkspaceSession), so
+		// a bare-id match is safe here regardless of the requested session's host.
+		const found = cloudSessions.data.find((candidate) => candidate.id === session.id);
+		if (!found) return undefined;
+		const project = cloud.data.find((candidate) => candidate.id === found.projectId);
+		return project ? toCloudWorkspaceSession(found, project, org.id) : undefined;
+	}, [cloud.data, cloudSessions.data, org?.id, ready, session.id]);
 	return { ...local, data: local.data ?? cloudSession };
 }
 
@@ -319,14 +330,21 @@ export type WorkspaceScope = {
 
 function selectWorkspaceScope(
 	workspaces: WorkspaceSummary[],
+	host: HostId,
 	projectId: string | undefined,
 	sessionId: string | undefined,
 ): WorkspaceScope {
+	// Session and project ids are unique per host, not across them: matching on
+	// id alone would resolve another host's same-id record for this scope.
 	const session = sessionId
-		? workspaces.flatMap((workspace) => workspace.sessions).find((candidate) => candidate.id === sessionId)
+		? workspaces
+				.flatMap((workspace) => workspace.sessions)
+				.find((candidate) => candidate.host === host && candidate.id === sessionId)
 		: undefined;
 	const resolvedProjectId = session?.workspaceId ?? projectId;
-	const workspace = resolvedProjectId ? workspaces.find((candidate) => candidate.id === resolvedProjectId) : undefined;
+	const workspace = resolvedProjectId
+		? workspaces.find((candidate) => candidate.host === host && candidate.id === resolvedProjectId)
+		: undefined;
 	// Do not carry the project's complete sessions array into shell chrome. With
 	// React Query's structural sharing, this small metadata projection retains
 	// its identity when another session in the same project streams an update.
@@ -345,10 +363,10 @@ function selectWorkspaceScope(
  * Subscribe shell chrome to just the routed project and session. This avoids
  * redrawing the topbar for streamed activity from every other project.
  */
-export function useWorkspaceScope(projectId?: string, sessionId?: string) {
+export function useWorkspaceScope(host: HostId, projectId?: string, sessionId?: string) {
 	const selectLocalScope = useMemo(
-		() => (workspaces: WorkspaceSummary[]) => selectWorkspaceScope(workspaces, projectId, sessionId),
-		[projectId, sessionId],
+		() => (workspaces: WorkspaceSummary[]) => selectWorkspaceScope(workspaces, host, projectId, sessionId),
+		[host, projectId, sessionId],
 	);
 	const local = useQuery({ ...workspaceQueryOptions, select: selectLocalScope });
 	const cloud = useCloudProjectsQuery();
@@ -357,8 +375,8 @@ export function useWorkspaceScope(projectId?: string, sessionId?: string) {
 	const cloudScope = useMemo(() => {
 		if (!ready || !org?.id || !cloud.data) return undefined;
 		const workspaces = cloud.data.map((project) => toCloudWorkspace(project, cloudSessions.data ?? [], org.id));
-		return selectWorkspaceScope(workspaces, projectId, sessionId);
-	}, [cloud.data, cloudSessions.data, org?.id, projectId, ready, sessionId]);
+		return selectWorkspaceScope(workspaces, host, projectId, sessionId);
+	}, [cloud.data, cloudSessions.data, host, org?.id, projectId, ready, sessionId]);
 	// Match useWorkspaceQuery's local-first semantics: do not reveal cloud
 	// records before the local workspace query has resolved successfully.
 	return { ...local, data: local.data ?? (local.isSuccess ? cloudScope : undefined) };

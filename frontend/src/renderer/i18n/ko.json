@@ -637,6 +637,7 @@
 	"settings.close": "설정 닫기",
 	"settings.connectMobile": "모바일 연결",
 	"settings.developerMode": "개발자 모드",
+	"settings.remoteHosts": "원격 호스트 (실험적)",
 	"settings.general": "일반",
 	"settings.appearance": "모양",
 	"settings.sessions": "세션",

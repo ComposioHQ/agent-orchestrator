@@ -2,6 +2,7 @@ import { renderHook, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ReactNode } from "react";
+import { LOCAL_HOST } from "../lib/hosts";
 
 const { captureRendererEventMock, cloudState, getMock, hasTrustedApiBaseUrlMock, listProjectsMock } = vi.hoisted(
 	() => ({
@@ -404,6 +405,7 @@ describe("useWorkspaceQuery", () => {
 
 		expect(result.current.data?.[0]).toMatchObject({ id: "proj-1", name: "my-app", path: "/p" });
 		expect(result.current.data?.[1]).toEqual({
+			host: LOCAL_HOST,
 			id: "cp-1",
 			name: "cloud-app",
 			kind: "cloud",

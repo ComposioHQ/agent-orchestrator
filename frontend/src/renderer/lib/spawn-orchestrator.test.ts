@@ -23,6 +23,14 @@ vi.mock("./api-client", () => ({
 	},
 }));
 
+// clientFor(LOCAL_HOST) is the client apiClient already was.
+vi.mock("./host-clients", async () => {
+	// The same fake apiClient the api-client mock installs: clientFor(LOCAL_HOST)
+	// is the client apiClient already was.
+	const { apiClient } = await import("./api-client");
+	return { clientFor: () => apiClient };
+});
+
 vi.mock("./telemetry", () => ({
 	captureRendererEvent: vi.fn().mockResolvedValue(undefined),
 }));
@@ -40,7 +48,7 @@ describe("spawnOrchestrator", () => {
 			error: undefined,
 			response: { status: 201 },
 		});
-		const id = await spawnOrchestrator("proj", "restore_dialog", true);
+		const id = await spawnOrchestrator({ host: "local", id: "proj" }, "restore_dialog", true);
 		expect(id).toBe("proj-9");
 		expect(apiClient.POST).toHaveBeenCalledWith("/api/v1/orchestrators", {
 			body: { projectId: "proj", clean: true },
@@ -53,7 +61,7 @@ describe("spawnOrchestrator", () => {
 			error: undefined,
 			response: { status: 201 },
 		});
-		await spawnOrchestrator("proj", "board");
+		await spawnOrchestrator({ host: "local", id: "proj" }, "board");
 		expect(apiClient.POST).toHaveBeenCalledWith("/api/v1/orchestrators", {
 			body: { projectId: "proj", clean: false },
 		});
@@ -65,7 +73,7 @@ describe("spawnOrchestrator", () => {
 			error: undefined,
 			response: { status: 201 },
 		});
-		await spawnOrchestrator("proj", "board", false, "tui");
+		await spawnOrchestrator({ host: "local", id: "proj" }, "board", false, "tui");
 		expect(apiClient.POST).toHaveBeenCalledWith("/api/v1/orchestrators", {
 			body: { projectId: "proj", clean: false, mode: "tui" },
 		});
@@ -77,7 +85,7 @@ describe("spawnOrchestrator", () => {
 			error: undefined,
 			response: { status: 201 },
 		});
-		await spawnOrchestrator("proj", "sidebar");
+		await spawnOrchestrator({ host: "local", id: "proj" }, "sidebar");
 		expect(captureMock).toHaveBeenCalledWith("ao.renderer.orchestrator_spawn_requested", {
 			project_id: "proj",
 			source: "sidebar",
@@ -94,7 +102,7 @@ describe("spawnOrchestrator", () => {
 			error: { message: "boom" },
 			response: { status: 500 },
 		});
-		await expect(spawnOrchestrator("proj", "topbar")).rejects.toThrow("boom");
+		await expect(spawnOrchestrator({ host: "local", id: "proj" }, "topbar")).rejects.toThrow("boom");
 		expect(captureMock).toHaveBeenCalledWith("ao.renderer.orchestrator_spawn_failed", {
 			project_id: "proj",
 			source: "topbar",
@@ -113,7 +121,7 @@ describe("spawnOrchestrator", () => {
 			response: { status: 400 },
 		});
 
-		const error = await spawnOrchestrator("proj", "board").catch((caught: unknown) => caught);
+		const error = await spawnOrchestrator({ host: "local", id: "proj" }, "board").catch((caught: unknown) => caught);
 		expect(error).toBeInstanceOf(OrchestratorSpawnError);
 		expect(error).toMatchObject({
 			code: "CHAT_DRIVER_UNAVAILABLE",

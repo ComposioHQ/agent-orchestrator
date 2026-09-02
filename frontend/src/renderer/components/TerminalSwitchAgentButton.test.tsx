@@ -31,7 +31,18 @@ vi.mock("../lib/api-client", () => ({
 	},
 }));
 
+// clientFor(LOCAL_HOST) is the client apiClient already was, so the local
+// host resolves to the same fake the api-client mock installs.
+vi.mock("../lib/host-clients", () => ({
+	baseUrlFor: () => "http://127.0.0.1:3001",
+	connectedHosts: () => [],
+	subscribeConnectedHosts: () => () => undefined,
+	isHostReady: () => true,
+	clientFor: () => ({ GET: getMock, POST: postMock }),
+}));
+
 const worker: WorkspaceSession = {
+	host: "local",
 	activity: { state: "active", lastActivityAt: "2026-06-10T00:00:00Z" },
 	branch: "ao/sess-1",
 	id: "sess-1",
@@ -275,6 +286,7 @@ describe("TerminalSwitchAgentButton", () => {
 			activeAgentSwitch: activeSwitch,
 			activity: { state: "exited", lastActivityAt: "2026-06-10T00:00:02Z" },
 			status: "exited",
+			host: "local",
 		} satisfies WorkspaceSession;
 		renderControl(exitedSession, switchPresentation(activeSwitch, exitedSession));
 
@@ -292,6 +304,7 @@ describe("TerminalSwitchAgentButton", () => {
 			activeAgentSwitch: recoverySwitch,
 			activity: { state: "exited", lastActivityAt: "2026-06-10T00:00:02Z" },
 			status: "exited",
+			host: "local",
 		} satisfies WorkspaceSession;
 		renderControl(exitedSession, switchPresentation(recoverySwitch, exitedSession));
 

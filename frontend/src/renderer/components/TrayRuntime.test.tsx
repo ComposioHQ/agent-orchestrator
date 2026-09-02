@@ -44,6 +44,7 @@ import { TrayRuntime } from "./TrayRuntime";
 
 function worker(overrides: Partial<WorkspaceSession> & { id: string }): WorkspaceSession {
 	return {
+		host: "local",
 		workspaceId: "proj-1",
 		workspaceName: "note-tauri",
 		title: overrides.id,
@@ -60,6 +61,7 @@ function worker(overrides: Partial<WorkspaceSession> & { id: string }): Workspac
 function workspaces(): WorkspaceSummary[] {
 	return [
 		{
+			host: "local",
 			id: "proj-1",
 			name: "note-tauri",
 			path: "/repos/note",
@@ -97,7 +99,7 @@ describe("TrayRuntime", () => {
 		h.workspaces = workspaces();
 		render(<TrayRuntime />);
 		act(() => h.listener?.({ projectId: "proj-1", sessionId: "s-need" }));
-		expect(h.navigateToSession).toHaveBeenCalledWith("proj-1", "s-need");
+		expect(h.navigateToSession).toHaveBeenCalledWith({ host: "local", id: "s-need" });
 	});
 
 	it("excludes an already-merged session even though it shares the merge zone", () => {

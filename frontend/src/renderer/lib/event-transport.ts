@@ -2,6 +2,7 @@ import type { QueryClient } from "@tanstack/react-query";
 import { aoBridge } from "./bridge";
 import { getApiBaseUrl, hasTrustedApiBaseUrl, subscribeApiBaseUrl } from "./api-client";
 import { setEventsConnectionState } from "./events-connection";
+import { LOCAL_HOST } from "./hosts";
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { sessionScmSummaryQueryKey } from "../hooks/useSessionScmSummary";
 import { conversationQueryKey, conversationQueryRoot } from "../hooks/useConversation";
@@ -122,7 +123,9 @@ export function createEventTransport(queryClient: QueryClient): EventTransport {
 						workspaceInvalidationPending = false;
 					}
 					for (const sessionId of pendingConversationSessions) {
-						void queryClient.invalidateQueries({ queryKey: conversationQueryKey(sessionId) });
+						void queryClient.invalidateQueries({
+							queryKey: conversationQueryKey({ host: LOCAL_HOST, id: sessionId }),
+						});
 					}
 					pendingConversationSessions.clear();
 					for (const sessionId of pendingInterfaceTransitionSessions) {

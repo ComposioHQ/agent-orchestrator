@@ -271,7 +271,7 @@ describe("global board first launch", () => {
 describe("project board with no sessions", () => {
 	it("shows the task invitation instead of empty columns", async () => {
 		respondWith([project], []);
-		renderBoard(<SessionsBoard projectId="proj-1" />);
+		renderBoard(<SessionsBoard project={{ host: "local", id: "proj-1" }} />);
 
 		expect(await screen.findByText("No worker sessions yet")).toBeInTheDocument();
 		// Board header + empty state each offer the pair; the orchestrator is primary in both.
@@ -284,7 +284,7 @@ describe("project board with no sessions", () => {
 	it("surfaces the daemon error when spawning the orchestrator fails", async () => {
 		respondWith([project], []);
 		spawnOrchestratorMock.mockRejectedValue(new Error("branch is already checked out in another worktree"));
-		renderBoard(<SessionsBoard projectId="proj-1" />);
+		renderBoard(<SessionsBoard project={{ host: "local", id: "proj-1" }} />);
 
 		await screen.findByText("No worker sessions yet");
 		const [spawnButton] = screen.getAllByRole("button", { name: "Spawn Orchestrator" });
@@ -299,27 +299,27 @@ describe("project board with no sessions", () => {
 			code: "CHAT_DRIVER_UNAVAILABLE",
 		});
 		spawnOrchestratorMock.mockRejectedValueOnce(preflightError).mockResolvedValueOnce("proj-1-orchestrator");
-		renderBoard(<SessionsBoard projectId="proj-1" />);
+		renderBoard(<SessionsBoard project={{ host: "local", id: "proj-1" }} />);
 
 		await screen.findByText("No worker sessions yet");
 		const [spawnButton] = screen.getAllByRole("button", { name: "Spawn Orchestrator" });
 		await userEvent.click(spawnButton);
 		await userEvent.click(await screen.findByRole("button", { name: "Create as Terminal UI" }));
 
-		expect(spawnOrchestratorMock).toHaveBeenNthCalledWith(1, "proj-1", "board", false, undefined);
-		expect(spawnOrchestratorMock).toHaveBeenNthCalledWith(2, "proj-1", "board", false, "tui");
+		expect(spawnOrchestratorMock).toHaveBeenNthCalledWith(1, { host: "local", id: "proj-1" }, "board", false, undefined);
+		expect(spawnOrchestratorMock).toHaveBeenNthCalledWith(2, { host: "local", id: "proj-1" }, "board", false, "tui");
 	});
 
 	it("opens project settings instead of spawning when no orchestrator agent is configured", async () => {
 		const unconfiguredProject = { ...project, orchestratorAgent: undefined };
 		respondWith([unconfiguredProject], []);
-		renderBoard(<SessionsBoard projectId="proj-1" />);
+		renderBoard(<SessionsBoard project={{ host: "local", id: "proj-1" }} />);
 
 		await screen.findByText("No worker sessions yet");
 		const [spawnButton] = screen.getAllByRole("button", { name: "Spawn Orchestrator" });
 		await userEvent.click(spawnButton);
 
-		expect(useUiStore.getState().settingsModal).toEqual({ scope: "project", projectId: "proj-1" });
+		expect(useUiStore.getState().settingsModal).toEqual({ scope: "project", project: { host: "local", id: "proj-1" } });
 		expect(navigateMock).not.toHaveBeenCalled();
 		expect(spawnOrchestratorMock).not.toHaveBeenCalled();
 	});
@@ -329,10 +329,10 @@ describe("project board with no sessions", () => {
 		useUiStore
 			.getState()
 			.setOrchestratorStartupError(
-				"proj-1",
+				{ host: "local", id: "proj-1" },
 				"Project added, but orchestrator did not start: branch is already checked out in another worktree",
 			);
-		renderBoard(<SessionsBoard projectId="proj-1" />);
+		renderBoard(<SessionsBoard project={{ host: "local", id: "proj-1" }} />);
 
 		expect(await screen.findByText(/Project added, but orchestrator did not start/)).toBeInTheDocument();
 		expect(screen.getByText(/branch is already checked out/)).toBeInTheDocument();
@@ -343,11 +343,11 @@ describe("project board with no sessions", () => {
 		useUiStore
 			.getState()
 			.setOrchestratorStartupError(
-				"proj-1",
+				{ host: "local", id: "proj-1" },
 				"Project added, but orchestrator did not start: branch is already checked out in another worktree",
 			);
 		spawnOrchestratorMock.mockResolvedValue("proj-1-orchestrator");
-		renderBoard(<SessionsBoard projectId="proj-1" />);
+		renderBoard(<SessionsBoard project={{ host: "local", id: "proj-1" }} />);
 
 		await screen.findByText(/Project added, but orchestrator did not start/);
 		const [spawnButton] = screen.getAllByRole("button", { name: "Spawn Orchestrator" });
@@ -365,16 +365,16 @@ describe("project board with no sessions", () => {
 		useUiStore
 			.getState()
 			.setOrchestratorStartupError(
-				"proj-1",
+				{ host: "local", id: "proj-1" },
 				"Project added, but orchestrator did not start: branch is already checked out in another worktree",
 			);
-		const { rerender } = renderBoard(<SessionsBoard projectId="proj-1" />);
+		const { rerender } = renderBoard(<SessionsBoard project={{ host: "local", id: "proj-1" }} />);
 
 		await screen.findByText(/Project added, but orchestrator did not start/);
 		rerender(
 			<QueryClientProvider client={lastQueryClient!}>
 				<ShellProvider value={lastShell!}>
-					<SessionsBoard projectId="proj-2" />
+					<SessionsBoard project={{ host: "local", id: "proj-2" }} />
 				</ShellProvider>
 			</QueryClientProvider>,
 		);
@@ -389,10 +389,10 @@ describe("project board with no sessions", () => {
 		useUiStore
 			.getState()
 			.setOrchestratorStartupError(
-				"proj-1",
+				{ host: "local", id: "proj-1" },
 				"Project added, but orchestrator did not start: branch is already checked out in another worktree",
 			);
-		renderBoard(<SessionsBoard projectId="proj-1" />);
+		renderBoard(<SessionsBoard project={{ host: "local", id: "proj-1" }} />);
 
 		await screen.findByText("No worker sessions yet");
 		await waitFor(() => expect(useUiStore.getState().orchestratorStartupErrors["proj-1"]).toBeUndefined());
@@ -403,7 +403,7 @@ describe("project board with no sessions", () => {
 		const otherProject: Project = { id: "proj-2", name: "other-app", path: "/repo/other-app" };
 		respondWith([project, otherProject], []);
 		spawnOrchestratorMock.mockRejectedValue(new Error("branch is already checked out in another worktree"));
-		const { rerender } = renderBoard(<SessionsBoard projectId="proj-1" />);
+		const { rerender } = renderBoard(<SessionsBoard project={{ host: "local", id: "proj-1" }} />);
 
 		await screen.findByText("No worker sessions yet");
 		const [spawnButton] = screen.getAllByRole("button", { name: "Spawn Orchestrator" });
@@ -413,7 +413,7 @@ describe("project board with no sessions", () => {
 		rerender(
 			<QueryClientProvider client={lastQueryClient!}>
 				<ShellProvider value={lastShell!}>
-					<SessionsBoard projectId="proj-2" />
+					<SessionsBoard project={{ host: "local", id: "proj-2" }} />
 				</ShellProvider>
 			</QueryClientProvider>,
 		);
@@ -423,7 +423,7 @@ describe("project board with no sessions", () => {
 
 	it("keeps the columns once the project has a session", async () => {
 		respondWith([project], [workerSession]);
-		renderBoard(<SessionsBoard projectId="proj-1" />);
+		renderBoard(<SessionsBoard project={{ host: "local", id: "proj-1" }} />);
 
 		expect(await screen.findByText("fix the bug")).toBeInTheDocument();
 		expect(screen.queryByText("No worker sessions yet")).not.toBeInTheDocument();

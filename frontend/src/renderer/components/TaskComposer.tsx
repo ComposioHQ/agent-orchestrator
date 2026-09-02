@@ -1,4 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { LOCAL_HOST, refKey, type Ref } from "../lib/hosts";
 import {
 	TaskComposerView,
 	type TaskComposerAgentControl,
@@ -10,7 +11,8 @@ import { useTranslation } from "react-i18next";
 import { Loader2 } from "lucide-react";
 import { RequiredAgentField } from "./CreateProjectAgentSheet";
 import type { components } from "../../api/schema";
-import { apiClient, apiErrorCode, apiErrorMessage } from "../lib/api-client";
+import { apiErrorCode, apiErrorMessage } from "../lib/api-client";
+import { clientFor } from "../lib/host-clients";
 import { captureRendererEvent } from "../lib/telemetry";
 import {
 	cacheAgentReadiness,
@@ -36,7 +38,7 @@ type Project = components["schemas"]["Project"];
 type DelegateAgent = components["schemas"]["DelegateTaskRequest"]["agent"];
 
 type CreateTaskInput = {
-	projectId: string;
+	project: Ref;
 	brief: string;
 	agent?: DelegateAgent;
 	model?: string;
@@ -73,7 +75,7 @@ function hasErrorDetail(details: components["schemas"]["APIError"]["details"] | 
 }
 
 export type TaskComposerProps = {
-	projectId?: string;
+	project?: Ref;
 	onCreated: (sessionId: string) => void;
 	onDirtyChange?: (dirty: boolean) => void;
 	onSubmittingChange?: (submitting: boolean) => void;
@@ -81,13 +83,14 @@ export type TaskComposerProps = {
 };
 
 export function TaskComposer({
-	projectId,
+	project,
 	onCreated,
 	onDirtyChange,
 	onSubmittingChange,
 	autoFocusTitle,
 }: TaskComposerProps) {
 	const { t } = useTranslation();
+	const projectHost = project?.host ?? LOCAL_HOST;
 	const taskPlaceholder = useMemo(() => {
 		const placeholders = t("newTask.taskPlaceholders" as never, { returnObjects: true }) as string[];
 		return Array.isArray(placeholders)
@@ -119,19 +122,19 @@ export function TaskComposer({
 	const { org: cloudOrg } = useCloudOrg();
 	const cloudProjects = useCloudProjectsQuery();
 	const isCloudProject =
-		Boolean(projectId) && (cloudProjects.data ?? []).some((project) => project.id === projectId);
+		project !== undefined && (cloudProjects.data ?? []).some((cloudProject) => cloudProject.id === project.id);
 	// A cloud project is unknown to the local daemon, so the local model catalog
 	// must be queried agent-level (no project scope); otherwise the request 404s
 	// and the model dropdown spins forever. Local projects keep their scope.
-	const modelsProjectId = isCloudProject ? "" : (projectId ?? "");
+	const modelsProject = isCloudProject ? { host: LOCAL_HOST, id: "" } : (project ?? { host: LOCAL_HOST, id: "" });
 
 	const createCloudTask = useCallback(
 		async (input: CreateTaskInput): Promise<string> => {
-			void captureRendererEvent("ao.renderer.task_create_requested", { project_id: input.projectId });
+			void captureRendererEvent("ao.renderer.task_create_requested", { project_id: input.project.id });
 			if (!cloudOrg?.id) throw new Error(t("newTask.unableToStart"));
 			try {
 				const { session } = await cloudClient.createSession(cloudOrg.id, {
-					projectId: input.projectId,
+					projectId: input.project.id,
 					kind: "worker",
 					harness: input.agent ?? "claude-code",
 					displayName: input.brief.trim().slice(0, 80) || (input.agent ?? "claude-code"),
@@ -140,10 +143,10 @@ export function TaskComposer({
 				// The control plane provisions the sandbox asynchronously; surface the
 				// new session on the board immediately.
 				void queryClient.invalidateQueries({ queryKey: cloudSessionsQueryKey });
-				void captureRendererEvent("ao.renderer.task_create_succeeded", { project_id: input.projectId });
+				void captureRendererEvent("ao.renderer.task_create_succeeded", { project_id: input.project.id });
 				return session.id;
 			} catch (err) {
-				void captureRendererEvent("ao.renderer.task_create_failed", { project_id: input.projectId });
+				void captureRendererEvent("ao.renderer.task_create_failed", { project_id: input.project.id });
 				throw err instanceof Error ? err : new Error(t("newTask.unableToStart"));
 			}
 		},
@@ -152,11 +155,11 @@ export function TaskComposer({
 
 	const createLocalTask = useCallback(
 		async (input: CreateTaskInput): Promise<string> => {
-			void captureRendererEvent("ao.renderer.task_create_requested", { project_id: input.projectId });
+			void captureRendererEvent("ao.renderer.task_create_requested", { project_id: input.project.id });
 			try {
-				const { data, error } = await apiClient.POST("/api/v1/orchestrators/delegate", {
+				const { data, error } = await clientFor(input.project.host).POST("/api/v1/orchestrators/delegate", {
 					body: {
-						projectId: input.projectId,
+						projectId: input.project.id,
 						brief: input.brief,
 						agent: input.agent,
 						model: input.model,
@@ -173,10 +176,10 @@ export function TaskComposer({
 					);
 				}
 				if (!data?.workerId) throw new Error(t("newTask.noSession"));
-				void captureRendererEvent("ao.renderer.task_create_succeeded", { project_id: input.projectId });
+				void captureRendererEvent("ao.renderer.task_create_succeeded", { project_id: input.project.id });
 				return data.workerId;
 			} catch (err) {
-				void captureRendererEvent("ao.renderer.task_create_failed", { project_id: input.projectId });
+				void captureRendererEvent("ao.renderer.task_create_failed", { project_id: input.project.id });
 				if (
 					err instanceof TaskCreateError &&
 					err.code &&
@@ -203,20 +206,20 @@ export function TaskComposer({
 	);
 
 	const projectQuery = useQuery({
+		queryKey: ["project", project ? refKey(project) : ""],
 		// A cloud project lives in the control plane, not the local daemon, so this
 		// local lookup would 404 (PROJECT_NOT_FOUND); skip it for cloud projects.
-		queryKey: ["project", projectId],
-		enabled: Boolean(projectId) && !isCloudProject,
+		enabled: Boolean(project) && !isCloudProject,
 		queryFn: async () => {
-			const { data, error: apiError } = await apiClient.GET("/api/v1/projects/{id}", {
-				params: { path: { id: projectId ?? "" } },
+			const { data, error: apiError } = await clientFor(projectHost).GET("/api/v1/projects/{id}", {
+				params: { path: { id: project?.id ?? "" } },
 			});
 			if (apiError) throw new Error(apiErrorMessage(apiError));
 			if (data?.status !== "ok") throw new Error(t("newTask.configUnavailable"));
 			return data.project as Project;
 		},
 	});
-	const agentsQuery = useAgentReadinessQuery();
+	const agentsQuery = useAgentReadinessQuery(true, projectHost);
 	const { settings } = useSettings();
 	// The composer preselects the agent and model a spawn would actually use
 	// instead of parking the controls on a "default" label the user has to
@@ -240,15 +243,15 @@ export function TaskComposer({
 	const agentCatalog = agentsQuery.data;
 
 	// Shares the picker's query key, so this is the same fetch, not a second one.
-	const modelCatalogQuery = useQuery(agentModelsQueryOptions(selectedAgent, modelsProjectId));
+	const modelCatalogQuery = useQuery(agentModelsQueryOptions(selectedAgent, modelsProject));
 	const revalidationQuery = useQuery({
 		queryKey: [
 			"agent-model-revalidation",
 			selectedAgent,
-			modelsProjectId,
+			refKey(modelsProject),
 			modelCatalogQuery.data?.validatedAt ?? "",
 		],
-		queryFn: () => revalidateAgentModels(selectedAgent, modelsProjectId),
+		queryFn: () => revalidateAgentModels(selectedAgent, modelsProject),
 		enabled: selectedAgent !== "" && modelCatalogQuery.data?.refreshRecommended === true,
 		staleTime: Number.POSITIVE_INFINITY,
 		retry: false,
@@ -256,11 +259,11 @@ export function TaskComposer({
 	useEffect(() => {
 		if (revalidationQuery.data) {
 			queryClient.setQueryData(
-				agentModelsQueryKey(selectedAgent, modelsProjectId),
+				agentModelsQueryKey(selectedAgent, modelsProject),
 				revalidationQuery.data,
 			);
 		}
-	}, [modelsProjectId, queryClient, revalidationQuery.data, selectedAgent]);
+	}, [modelsProject, queryClient, revalidationQuery.data, selectedAgent]);
 	const modelWarning =
 		(revalidationQuery.isError
 			? revalidationQuery.error instanceof Error
@@ -323,7 +326,7 @@ export function TaskComposer({
 		interfaceMode?: "tui",
 		approvalMode?: "bypass-permissions",
 	) => {
-		if (!projectId || isSubmitting) return;
+		if (!project || isSubmitting) return;
 
 		const cleanModel = model.trim();
 		const cleanMode = mode.trim();
@@ -338,7 +341,7 @@ export function TaskComposer({
 		try {
 			const attachmentPayloads = await toSettledPayload();
 			const sessionId = await createTask({
-				projectId,
+				project,
 				brief,
 				// The visible selection is authoritative: it is either the user's pick
 				// or the resolved default, so spawning names it explicitly.
@@ -373,7 +376,7 @@ export function TaskComposer({
 	return (
 		<TaskComposerView
 			autoFocusPrompt={autoFocusTitle}
-			canSubmit={Boolean(projectId)}
+			canSubmit={Boolean(project)}
 			onPromptChange={handlePromptChange}
 			labels={{
 				addFile: t("newTask.addFile"),
@@ -404,7 +407,7 @@ export function TaskComposer({
 			model={{
 				agentId: selectedAgent,
 				agentLabel: selectedAgentLabel,
-				projectId: projectId ?? "",
+				project: project ?? { host: LOCAL_HOST, id: "" },
 				disabled: isSubmitting,
 				value: model,
 				mode,

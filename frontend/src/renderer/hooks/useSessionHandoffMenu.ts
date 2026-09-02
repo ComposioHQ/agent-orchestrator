@@ -19,9 +19,8 @@ export function useSessionHandoffMenu(
 	session: WorkspaceSession | undefined,
 	options: UseSessionHandoffMenuOptions = {},
 ) {
-	const sessionId = session?.id ?? "";
-	const agentSwitches = useAgentSwitches(sessionId).data ?? [];
-	const switchMutation = useSwitchAgentState(sessionId);
+	const agentSwitches = useAgentSwitches(session).data ?? [];
+	const switchMutation = useSwitchAgentState(session);
 	const selectedAgentSwitch = selectDurableAgentSwitch(session?.activeAgentSwitch, agentSwitches);
 	const activeHistorySwitch = findActiveAgentSwitch(agentSwitches);
 	const admissionAgentSwitch: AgentSwitchSummary | undefined =

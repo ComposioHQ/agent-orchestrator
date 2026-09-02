@@ -5,6 +5,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { agentReadiness } from "../test/agent-readiness-fixtures";
 import { TooltipProvider } from "./ui/tooltip";
+import { refKey, type Ref } from "../lib/hosts";
 
 function render(ui: ReactElement) {
 	return rtlRender(<TooltipProvider>{ui}</TooltipProvider>);
@@ -69,6 +70,16 @@ vi.mock("../lib/api-client", () => ({
 	},
 }));
 
+// clientFor(LOCAL_HOST) is the client apiClient already was, so the local
+// host resolves to the same fake the api-client mock installs.
+vi.mock("../lib/host-clients", () => ({
+	baseUrlFor: () => "http://127.0.0.1:3001",
+	connectedHosts: () => [],
+	subscribeConnectedHosts: () => () => undefined,
+	isHostReady: () => true,
+	clientFor: () => ({ GET: getMock, POST: postMock, PUT: putMock }),
+}));
+
 import { ProjectSettingsForm, type ProjectSettingsSaveState, type ProjectSettingsSection } from "./ProjectSettingsForm";
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import type { WorkspaceSummary } from "../types/workspace";
@@ -79,10 +90,10 @@ async function beginEdit(label: string) {
 }
 
 function TestProjectSettings({
-	projectId,
+	projectRef,
 	section,
 }: {
-	projectId: string;
+	projectRef: Ref;
 	section?: ProjectSettingsSection;
 }) {
 	const [saveState, setSaveState] = useState<ProjectSettingsSaveState>({
@@ -95,7 +106,7 @@ function TestProjectSettings({
 	});
 	return (
 		<>
-			<ProjectSettingsForm projectId={projectId} section={section} onSaveState={setSaveState} />
+			<ProjectSettingsForm projectRef={projectRef} section={section} onSaveState={setSaveState} />
 			{saveState.validationError && <span>{saveState.validationError}</span>}
 			{saveState.mutationError && <span>{saveState.mutationError}</span>}
 			{saveState.saved && <span>{"Saved"}</span>}
@@ -116,7 +127,7 @@ function renderSettings(projectId = "proj-1", workspaces?: WorkspaceSummary[], s
 	}
 	render(
 		<QueryClientProvider client={queryClient}>
-			<TestProjectSettings projectId={projectId} section={section} />
+			<TestProjectSettings projectRef={{ host: "local", id: projectId }} section={section} />
 		</QueryClientProvider>,
 	);
 	return queryClient;
@@ -135,8 +146,8 @@ function submitSettings() {
 async function expectReplacementNavigation(sessionId = "proj-1-orch-2") {
 	await waitFor(() =>
 		expect(navigateMock).toHaveBeenCalledWith({
-			to: "/projects/$projectId/sessions/$sessionId",
-			params: { projectId: "proj-1", sessionId },
+			to: "/host/$hostId/session/$sessionId",
+			params: { hostId: "local", sessionId },
 		}),
 	);
 	expect(closeSettingsMock).toHaveBeenCalledTimes(1);
@@ -1547,12 +1558,13 @@ describe("ProjectSettingsForm", () => {
 
 		renderSettings("proj-1", [
 			{
+				host: "local",
 				id: "proj-1",
 				name: "Project One",
 				path: "/repo/project-one",
 				orchestratorAgent: "goose",
 				sessions: [
-					{
+					{ host: "local",
 						id: "proj-1-orchestrator",
 						workspaceId: "proj-1",
 						workspaceName: "Project One",
@@ -1642,10 +1654,10 @@ describe("ProjectSettingsForm", () => {
 		expect(await screen.findByText("Saved")).toBeInTheDocument();
 		expect(await screen.findByText("Orchestrator restart failed: missing goose binary")).toBeInTheDocument();
 		expect(screen.queryByText("Save failed")).not.toBeInTheDocument();
-		expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["project", "proj-1"] });
+		expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["project", refKey({ host: "local", id: "proj-1" })] });
 		expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: workspaceQueryKey });
 		expect(closeSettingsMock).toHaveBeenCalledTimes(1);
-		expect(setOrchestratorReplacementErrorMock).toHaveBeenCalledWith("proj-1", {
+		expect(setOrchestratorReplacementErrorMock).toHaveBeenCalledWith({ host: "local", id: "proj-1" }, {
 			message: "missing goose binary",
 			code: "ORCHESTRATOR_SPAWN_FAILED",
 			requestId: "request-42",
