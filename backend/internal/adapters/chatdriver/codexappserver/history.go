@@ -102,20 +102,40 @@ type providerTurn struct {
 	Status string `json:"status"`
 }
 
+// Newer app-server builds page native history instead of hydrating it through
+// thread/read. These shapes intentionally live beside the compatibility logic
+// rather than in codexproto: that package is generated from the oldest Codex
+// version AO still supports, where this method does not exist.
+type threadTurnsListParams struct {
+	ThreadID      string                   `json:"threadId"`
+	Cursor        *string                  `json:"cursor,omitempty"`
+	Limit         uint32                   `json:"limit"`
+	SortDirection string                   `json:"sortDirection"`
+	ItemsView     codexproto.TurnItemsView `json:"itemsView"`
+}
+
+type threadTurnsListResponse struct {
+	Data       []codexproto.Turn `json:"data"`
+	NextCursor *string           `json:"nextCursor,omitempty"`
+}
+
+const (
+	methodThreadTurnsList = "thread/turns/list"
+	historyTurnPageSize   = 100
+)
+
+var errThreadHistoryUnmaterialized = errors.New("codex thread history is not materialized")
+
 // ReadHistory returns a settled, provider-neutral replay of the native Codex
 // thread. It is how a TUI -> Chat handoff makes the work already visible in the
 // terminal visible in AO's structured timeline as well; resuming the thread alone
 // preserves model context but does not make app-server re-emit old notifications.
 func (c *conversation) ReadHistory(ctx context.Context) ([]ports.ChatEvent, error) {
-	var resp codexproto.ThreadReadResponse
-	includeTurns := true
-	if err := c.conn.request(ctx, codexproto.MethodThreadRead, codexproto.ThreadReadParams{
-		ThreadID:     c.threadID,
-		IncludeTurns: &includeTurns,
-	}, &resp); err != nil {
-		return nil, asRefusal(fmt.Errorf("thread/read history: %w", err))
+	turns, err := c.readHistoryTurns(ctx)
+	if err != nil {
+		return nil, err
 	}
-	return c.historyEvents(resp.Thread, false)
+	return c.historyEvents(codexproto.Thread{ID: c.threadID, Turns: turns}, false)
 }
 
 // RecoverLive establishes an ordered boundary on the initialized connection
@@ -139,11 +159,18 @@ func (c *conversation) RecoverLive(ctx context.Context) (ports.ChatLiveRecoveryS
 			"%w: live provider recovery was already started or finalized",
 			ports.ErrChatRecoveryInconclusive)
 	}
+	turns, paginated, turnsErr := c.readPaginatedTurns(ctx)
 	var resp codexproto.ThreadReadResponse
-	includeTurns := true
+	params := codexproto.ThreadReadParams{ThreadID: c.threadID}
+	if !paginated {
+		// Codex 0.146 has no paginated history method. Its thread/read response is
+		// the final ordered boundary and must include the turns in the same RPC.
+		includeTurns := true
+		params.IncludeTurns = &includeTurns
+	}
 	boundary, established, requestErr := c.conn.requestThreadReadAfterInboundCapture(
 		ctx,
-		codexproto.ThreadReadParams{ThreadID: c.threadID, IncludeTurns: &includeTurns},
+		params,
 		&resp,
 	)
 	snapshot := ports.ChatLiveRecoverySnapshot{}
@@ -160,14 +187,31 @@ func (c *conversation) RecoverLive(ctx context.Context) (ports.ChatLiveRecoveryS
 			"%w: read surviving provider state: %w",
 			ports.ErrChatRecoveryInconclusive, requestErr)
 	}
+	historyUnmaterialized := errors.Is(turnsErr, errThreadHistoryUnmaterialized)
+	if turnsErr != nil && !historyUnmaterialized {
+		return snapshot, fmt.Errorf(
+			"%w: read surviving provider history: %w",
+			ports.ErrChatRecoveryInconclusive, turnsErr)
+	}
 	if resp.Thread.ID != c.threadID {
 		return snapshot, fmt.Errorf(
 			"%w: thread/read returned %q for %q",
 			ports.ErrChatRecoveryInconclusive, resp.Thread.ID, c.threadID)
 	}
+	if paginated {
+		// The metadata read is deliberately after every page. It is the ordered
+		// provider boundary for notifications that raced with pagination; inject
+		// the complete page result only after that boundary is established.
+		resp.Thread.Turns = turns
+	}
 	activity, err := liveRecoveryActivity(resp.Thread.Status)
 	if err != nil {
 		return snapshot, err
+	}
+	if historyUnmaterialized && activity != domain.ActivityIdle {
+		return snapshot, fmt.Errorf(
+			"%w: unmaterialized provider history reported activity %s",
+			ports.ErrChatRecoveryInconclusive, activity)
 	}
 	history, err := c.historyEvents(resp.Thread, true)
 	if err != nil {
@@ -187,6 +231,121 @@ func (c *conversation) RecoverLive(ctx context.Context) (ports.ChatLiveRecoveryS
 	snapshot.HistoryEvents = history
 	snapshot.ActivityState = activity
 	return snapshot, nil
+}
+
+// readHistoryTurns prefers the current paginated protocol and falls back only
+// when the provider explicitly reports that the method does not exist. Any
+// other paging failure is inconclusive; silently accepting a prefix would erase
+// older prompts or tool work from AO's authoritative replay.
+func (c *conversation) readHistoryTurns(ctx context.Context) ([]codexproto.Turn, error) {
+	turns, paginated, err := c.readPaginatedTurns(ctx)
+	if errors.Is(err, errThreadHistoryUnmaterialized) {
+		// Codex creates a thread identity before the first user message, but has no
+		// rollout to page until that message materializes it. The provider's exact
+		// refusal therefore proves this thread has no native history to import.
+		return nil, nil
+	}
+	if err != nil {
+		return nil, asRefusal(err)
+	}
+	if paginated {
+		return turns, nil
+	}
+
+	var resp codexproto.ThreadReadResponse
+	includeTurns := true
+	if err := c.conn.request(ctx, codexproto.MethodThreadRead, codexproto.ThreadReadParams{
+		ThreadID:     c.threadID,
+		IncludeTurns: &includeTurns,
+	}, &resp); err != nil {
+		return nil, asRefusal(fmt.Errorf("thread/read history: %w", err))
+	}
+	if resp.Thread.ID != "" && resp.Thread.ID != c.threadID {
+		return nil, fmt.Errorf("thread/read returned %q for %q", resp.Thread.ID, c.threadID)
+	}
+	return resp.Thread.Turns, nil
+}
+
+// readPaginatedTurns returns (nil, false, nil) only for the exact -32601 method
+// absence reported by older app-server builds on the first page. A supported
+// provider must return every page oldest-first with full item hydration.
+func (c *conversation) readPaginatedTurns(
+	ctx context.Context,
+) ([]codexproto.Turn, bool, error) {
+	var (
+		cursor      *string
+		turns       []codexproto.Turn
+		seenCursors = make(map[string]struct{})
+		seenTurns   = make(map[string]struct{})
+	)
+	for page := 0; ; page++ {
+		var resp threadTurnsListResponse
+		err := c.conn.request(ctx, methodThreadTurnsList, threadTurnsListParams{
+			ThreadID:      c.threadID,
+			Cursor:        cursor,
+			Limit:         historyTurnPageSize,
+			SortDirection: "asc",
+			ItemsView:     codexproto.TurnItemsViewFull,
+		}, &resp)
+		if err != nil {
+			var rpcErr *rpcError
+			if page == 0 && errors.As(err, &rpcErr) && rpcErr.Code == -32601 {
+				return nil, false, nil
+			}
+			if page == 0 && isUnmaterializedHistoryRefusal(err) {
+				return nil, true, errThreadHistoryUnmaterialized
+			}
+			return nil, true, fmt.Errorf("thread/turns/list page %d: %w", page+1, err)
+		}
+
+		for _, turn := range resp.Data {
+			if strings.TrimSpace(turn.ID) == "" {
+				return nil, true, errors.New("thread/turns/list returned a turn with no id")
+			}
+			if turn.ItemsView == nil || *turn.ItemsView != codexproto.TurnItemsViewFull {
+				return nil, true, fmt.Errorf(
+					"thread/turns/list returned turn %s with items view %q, want full",
+					turn.ID, derefTurnItemsView(turn.ItemsView))
+			}
+			if _, duplicate := seenTurns[turn.ID]; duplicate {
+				return nil, true, fmt.Errorf(
+					"thread/turns/list returned duplicate turn %s", turn.ID)
+			}
+			seenTurns[turn.ID] = struct{}{}
+			turns = append(turns, turn)
+		}
+
+		if resp.NextCursor == nil {
+			return turns, true, nil
+		}
+		next := strings.TrimSpace(*resp.NextCursor)
+		if next == "" {
+			return nil, true, errors.New("thread/turns/list returned a blank next cursor")
+		}
+		if _, duplicate := seenCursors[next]; duplicate {
+			return nil, true, fmt.Errorf(
+				"thread/turns/list repeated cursor %q", next)
+		}
+		seenCursors[next] = struct{}{}
+		cursor = &next
+	}
+}
+
+func isUnmaterializedHistoryRefusal(err error) bool {
+	var rpcErr *rpcError
+	if !errors.As(err, &rpcErr) || rpcErr.Code != -32600 {
+		return false
+	}
+	message := strings.ToLower(rpcErr.Message)
+	return strings.Contains(message, "not materialized") &&
+		strings.Contains(message, "before first user message")
+}
+
+func derefTurnItemsView(view *codexproto.TurnItemsView) codexproto.TurnItemsView {
+	if view == nil {
+		return ""
+	}
+	return *view
 }
 
 func liveRecoveryActivity(status codexproto.ThreadStatus) (domain.ActivityState, error) {
@@ -438,18 +597,15 @@ func (c *conversation) Rollback(ctx context.Context, providerTurnID string) erro
 // a turn from before a resume may be absent here. thread/rollback counts in the
 // provider's terms, so counting in AO's would discard the wrong number of turns.
 func (c *conversation) readTurns(ctx context.Context) ([]providerTurn, error) {
-	var resp struct {
-		Thread struct {
-			Turns []providerTurn `json:"turns"`
-		} `json:"thread"`
+	nativeTurns, err := c.readHistoryTurns(ctx)
+	if err != nil {
+		return nil, err
 	}
-	if err := c.conn.request(ctx, "thread/read", map[string]any{
-		"threadId":     c.threadID,
-		"includeTurns": true,
-	}, &resp); err != nil {
-		return nil, asRefusal(fmt.Errorf("thread/read: %w", err))
+	turns := make([]providerTurn, 0, len(nativeTurns))
+	for _, turn := range nativeTurns {
+		turns = append(turns, providerTurn{ID: turn.ID, Status: string(turn.Status)})
 	}
-	return resp.Thread.Turns, nil
+	return turns, nil
 }
 
 // Fork branches this conversation into a second provider conversation, so an

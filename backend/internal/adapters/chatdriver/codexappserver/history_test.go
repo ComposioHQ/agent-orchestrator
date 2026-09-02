@@ -89,6 +89,173 @@ func openLiveRecoveryConversation(
 	return conv, srv
 }
 
+func TestRecoverLiveUsesPaginatedHistoryAndAMetadataOnlyBoundary(t *testing.T) {
+	conv, srv := openLiveRecoveryConversation(t,
+		`{"thread":{"id":"thread-1","status":{"type":"idle"},"turns":[]}}`)
+	srv.reply(methodThreadTurnsList, `{"data":[`+
+		`{"id":"turn-1","status":"completed","items":[],"itemsView":"full"}`+
+		`]}`)
+
+	snapshot, err := conv.RecoverLive(context.Background())
+	if err != nil {
+		t.Fatalf("RecoverLive: %v", err)
+	}
+	if len(snapshot.HistoryEvents) != 2 ||
+		snapshot.HistoryEvents[0].Kind != ports.ChatEventTurnStarted ||
+		snapshot.HistoryEvents[1].Kind != ports.ChatEventTurnCompleted {
+		t.Fatalf("history events = %#v, want paginated completed turn", snapshot.HistoryEvents)
+	}
+
+	list := srv.awaitFrame(func(f frame) bool { return f.Method == methodThreadTurnsList })
+	var listParams struct {
+		ThreadID      string `json:"threadId"`
+		Limit         uint32 `json:"limit"`
+		SortDirection string `json:"sortDirection"`
+		ItemsView     string `json:"itemsView"`
+	}
+	if err := json.Unmarshal(list.Params, &listParams); err != nil {
+		t.Fatalf("thread/turns/list params: %v", err)
+	}
+	if listParams.ThreadID != "thread-1" ||
+		listParams.Limit != historyTurnPageSize ||
+		listParams.SortDirection != "asc" ||
+		listParams.ItemsView != "full" {
+		t.Errorf("thread/turns/list params = %+v, want full oldest-first history", listParams)
+	}
+
+	read := srv.awaitFrame(func(f frame) bool { return f.Method == "thread/read" })
+	var readParams map[string]json.RawMessage
+	if err := json.Unmarshal(read.Params, &readParams); err != nil {
+		t.Fatalf("thread/read params: %v", err)
+	}
+	if _, included := readParams["includeTurns"]; included {
+		t.Error("modern recovery boundary requested deprecated thread/read turn hydration")
+	}
+}
+
+func TestRecoverLiveAcceptsAnIdleThreadBeforeItsFirstUserMessage(t *testing.T) {
+	conv, srv := openLiveRecoveryConversation(t,
+		`{"thread":{"id":"thread-1","status":{"type":"idle"},"turns":[]}}`)
+	srv.replyError(methodThreadTurnsList, -32600,
+		"thread thread-1 is not materialized yet; thread/turns/list is unavailable before first user message")
+
+	snapshot, err := conv.RecoverLive(context.Background())
+	if err != nil {
+		t.Fatalf("RecoverLive: %v", err)
+	}
+	if snapshot.ActivityState != domain.ActivityIdle || len(snapshot.HistoryEvents) != 0 {
+		t.Fatalf("snapshot = %#v, want idle empty unmaterialized thread", snapshot)
+	}
+	read := srv.awaitFrame(func(f frame) bool { return f.Method == "thread/read" })
+	var readParams map[string]json.RawMessage
+	if err := json.Unmarshal(read.Params, &readParams); err != nil {
+		t.Fatalf("thread/read params: %v", err)
+	}
+	if _, included := readParams["includeTurns"]; included {
+		t.Error("unmaterialized recovery fell back to the broken includeTurns path")
+	}
+}
+
+func TestRecoverLiveRejectsUnmaterializedHistoryForAnActiveThread(t *testing.T) {
+	conv, srv := openLiveRecoveryConversation(t,
+		`{"thread":{"id":"thread-1","status":{"type":"active","activeFlags":[]},"turns":[]}}`)
+	srv.replyError(methodThreadTurnsList, -32600,
+		"thread thread-1 is not materialized yet; thread/turns/list is unavailable before first user message")
+
+	_, err := conv.RecoverLive(context.Background())
+	if !errors.Is(err, ports.ErrChatRecoveryInconclusive) ||
+		!strings.Contains(err.Error(), "unmaterialized") {
+		t.Fatalf("RecoverLive error = %v, want active/unmaterialized contradiction", err)
+	}
+}
+
+func TestReadHistoryTreatsTheExactUnmaterializedRefusalAsEmpty(t *testing.T) {
+	conv, srv := openConversation(t)
+	srv.replyError(methodThreadTurnsList, -32600,
+		"thread thread-1 is not materialized yet; thread/turns/list is unavailable before first user message")
+
+	events, err := conv.ReadHistory(context.Background())
+	if err != nil {
+		t.Fatalf("ReadHistory: %v", err)
+	}
+	if len(events) != 0 {
+		t.Fatalf("events = %#v, want no history before first user message", events)
+	}
+	if srv.sentMethod("thread/read") {
+		t.Fatal("unmaterialized history used deprecated includeTurns fallback")
+	}
+}
+
+func TestReadHistoryFollowsEveryOpaqueTurnCursor(t *testing.T) {
+	conv, srv := openConversation(t)
+	srv.replySequence(methodThreadTurnsList,
+		`{"data":[{"id":"turn-a","status":"completed","items":[],"itemsView":"full"}],"nextCursor":"cursor-a"}`,
+		`{"data":[{"id":"turn-b","status":"completed","items":[],"itemsView":"full"}]}`,
+	)
+
+	events, err := conv.ReadHistory(context.Background())
+	if err != nil {
+		t.Fatalf("ReadHistory: %v", err)
+	}
+	if len(events) != 4 ||
+		events[0].ProviderTurnID != "turn-a" ||
+		events[2].ProviderTurnID != "turn-b" {
+		t.Fatalf("events = %#v, want both ordered pages", events)
+	}
+	if srv.sentMethod("thread/read") {
+		t.Fatal("paginated history unexpectedly fell back to thread/read")
+	}
+
+	srv.mu.Lock()
+	var pages []frame
+	for _, seen := range srv.seen {
+		if seen.Method == methodThreadTurnsList {
+			pages = append(pages, seen)
+		}
+	}
+	srv.mu.Unlock()
+	if len(pages) != 2 {
+		t.Fatalf("thread/turns/list requests = %d, want two", len(pages))
+	}
+	var second struct {
+		Cursor string `json:"cursor"`
+	}
+	if err := json.Unmarshal(pages[1].Params, &second); err != nil {
+		t.Fatalf("second page params: %v", err)
+	}
+	if second.Cursor != "cursor-a" {
+		t.Errorf("second page cursor = %q, want cursor-a", second.Cursor)
+	}
+}
+
+func TestReadHistoryRejectsTruncatedPaginatedItems(t *testing.T) {
+	conv, srv := openConversation(t)
+	srv.reply(methodThreadTurnsList, `{"data":[`+
+		`{"id":"turn-a","status":"completed","items":[],"itemsView":"summary"}`+
+		`]}`)
+
+	_, err := conv.ReadHistory(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "want full") {
+		t.Fatalf("ReadHistory error = %v, want truncated-items rejection", err)
+	}
+	if srv.sentMethod("thread/read") {
+		t.Fatal("supported but truncated pagination silently fell back to legacy history")
+	}
+}
+
+func TestReadHistoryRejectsAPaginationCursorLoop(t *testing.T) {
+	conv, srv := openConversation(t)
+	srv.replySequence(methodThreadTurnsList,
+		`{"data":[{"id":"turn-a","status":"completed","items":[],"itemsView":"full"}],"nextCursor":"again"}`,
+		`{"data":[{"id":"turn-b","status":"completed","items":[],"itemsView":"full"}],"nextCursor":"again"}`,
+	)
+
+	_, err := conv.ReadHistory(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "repeated cursor") {
+		t.Fatalf("ReadHistory error = %v, want cursor-loop rejection", err)
+	}
+}
+
 func TestRecoverLiveReturnsIdleAfterDetachedTurnCompletion(t *testing.T) {
 	conv, srv := openLiveRecoveryConversation(t,
 		`{"thread":{"id":"thread-1","status":{"type":"idle"},"turns":[`+
@@ -515,6 +682,33 @@ func TestRollbackCountsTurnsFromTheNamedOneToTheEnd(t *testing.T) {
 	}
 	if params.NumTurns != 2 {
 		t.Errorf("numTurns = %d, want 2 (the named turn and the one after it)", params.NumTurns)
+	}
+}
+
+func TestRollbackCountsCurrentPaginatedTurnsWithoutLegacyHydration(t *testing.T) {
+	conv, srv := openConversation(t)
+	srv.reply(methodThreadTurnsList, `{"data":[`+
+		`{"id":"turn-a","status":"completed","items":[],"itemsView":"full"},`+
+		`{"id":"turn-b","status":"completed","items":[],"itemsView":"full"},`+
+		`{"id":"turn-c","status":"completed","items":[],"itemsView":"full"}`+
+		`]}`)
+	srv.reply("thread/rollback", `{"thread":{"id":"thread-1","turns":[]}}`)
+
+	if err := conv.Rollback(context.Background(), "turn-b"); err != nil {
+		t.Fatalf("Rollback: %v", err)
+	}
+	if srv.sentMethod("thread/read") {
+		t.Fatal("paginated rollback unexpectedly used deprecated thread/read hydration")
+	}
+	rollback := srv.awaitFrame(func(f frame) bool { return f.Method == "thread/rollback" })
+	var params struct {
+		NumTurns int `json:"numTurns"`
+	}
+	if err := json.Unmarshal(rollback.Params, &params); err != nil {
+		t.Fatalf("params: %v", err)
+	}
+	if params.NumTurns != 2 {
+		t.Errorf("numTurns = %d, want 2", params.NumTurns)
 	}
 }
 
