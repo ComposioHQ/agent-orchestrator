@@ -37,9 +37,11 @@ import {
 	X,
 } from "lucide-react";
 import type { components } from "../../api/schema";
-import { apiClient, apiErrorMessage } from "../lib/api-client";
+import { apiErrorMessage } from "../lib/api-client";
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { captureRendererEvent } from "../lib/telemetry";
+import { refKey, type Ref } from "../lib/hosts";
+import { clientFor } from "../lib/host-clients";
 import { formatTimeCompact } from "../lib/format-time";
 import { AgentAvatar } from "./AgentAvatar";
 import { ProductExternalLink } from "./ProductExternalLink";
@@ -173,7 +175,7 @@ export function SessionInspector({
 	const requestedView = viewProp ?? internalView;
 	// Badge the Browser tab when a preview target arrived without us opening it.
 	const browserUnseen = useUiStore((state) =>
-		session ? Boolean(state.inspectorSessions[session.id]?.browserUnseen) : false,
+		session ? Boolean(state.inspectorSessions[refKey(session)]?.browserUnseen) : false,
 	);
 	const filesChangedCount = useSessionWorkspaceFilesChangedCount(session?.id);
 	const setView = useCallback((next: InspectorView) => {
@@ -272,9 +274,9 @@ const SummaryView = memo(function SummaryView({
 	session: WorkspaceSession;
 }) {
 	const { t } = useTranslation();
-	const query = useSessionScmSummary(session.id);
+	const query = useSessionScmSummary(session);
 	const developerMode = useUiStore((state) => state.developerMode);
-	const usageQuery = useSessionUsage(session.id, developerMode);
+	const usageQuery = useSessionUsage(session, developerMode);
 	const showUsage =
 		developerMode &&
 		!usageQuery.isLoading &&
@@ -303,7 +305,7 @@ const SummaryView = memo(function SummaryView({
 								key={pr.url || pr.htmlUrl || pr.number}
 								onOpenReviews={onOpenReviews}
 								pr={pr}
-								sessionId={session.id}
+								session={session}
 							/>
 						))
 					) : (
@@ -542,7 +544,7 @@ function AutoInjectCIPolicyControl({ session }: { session: WorkspaceSession }) {
 	const save = useMutation({
 		mutationFn: async (autoInjectCI: boolean) => {
 			if (usePreviewData) return;
-			const { error, response } = await apiClient.PATCH("/api/v1/sessions/{sessionId}/auto-inject-ci", {
+			const { error, response } = await clientFor(session.host).PATCH("/api/v1/sessions/{sessionId}/auto-inject-ci", {
 				params: { path: { sessionId: session.id } },
 				body: { autoInjectCI },
 			});
@@ -644,7 +646,7 @@ function AutoInjectReviewPolicyControl({ session }: { session: WorkspaceSession 
 	}, [session.id, session.autoInjectReview]);
 	const save = useMutation({
 		mutationFn: async (autoInjectReview: boolean) => {
-			const { error } = await apiClient.PATCH("/api/v1/sessions/{sessionId}/auto-inject-review", {
+			const { error } = await clientFor(session.host).PATCH("/api/v1/sessions/{sessionId}/auto-inject-review", {
 				params: { path: { sessionId: session.id } },
 				body: { autoInjectReview },
 			});
@@ -1011,7 +1013,7 @@ function ResumeAgentControl({ session }: { session: WorkspaceSession }) {
 	const resume = useMutation({
 		mutationFn: async () => {
 			if (usePreviewData) return;
-			const { data, error, response } = await apiClient.POST("/api/v1/sessions/{sessionId}/resume-agent", {
+			const { data, error, response } = await clientFor(session.host).POST("/api/v1/sessions/{sessionId}/resume-agent", {
 				params: { path: { sessionId: session.id } },
 			});
 			if (error) throw new Error(apiErrorMessage(error, `Failed to resume agent (${response.status})`));
@@ -1067,7 +1069,7 @@ function SessionControls({ session }: { session: WorkspaceSession }) {
 	const policy = useMutation({
 		mutationFn: async (terminateOnPrMerge: boolean) => {
 			if (usePreviewData) return;
-			const { error, response } = await apiClient.PATCH("/api/v1/sessions/{sessionId}/merge-policy", {
+			const { error, response } = await clientFor(session.host).PATCH("/api/v1/sessions/{sessionId}/merge-policy", {
 				params: { path: { sessionId: session.id } },
 				body: { terminateOnPrMerge },
 			});
@@ -1093,17 +1095,20 @@ function SessionControls({ session }: { session: WorkspaceSession }) {
 
 	const confirmTermination = () => {
 		const workspaces = queryClient.getQueryData<WorkspaceSummary[]>(workspaceQueryKey) ?? [];
-		const orchestrator = findProjectOrchestrator(workspaces, session.workspaceId);
+		const orchestrator = findProjectOrchestrator(workspaces, { host: session.host, id: session.workspaceId });
 		setConfirmOpen(false);
 		terminate.mutate(session);
 		if (orchestrator) {
 			void navigate({
-				to: "/projects/$projectId/sessions/$sessionId",
-				params: { projectId: session.workspaceId, sessionId: orchestrator.id },
+				to: "/host/$hostId/session/$sessionId",
+				params: { hostId: orchestrator.host, sessionId: orchestrator.id },
 			});
 			return;
 		}
-		void navigate({ to: "/projects/$projectId", params: { projectId: session.workspaceId } });
+		void navigate({
+			to: "/host/$hostId/project/$projectId",
+			params: { hostId: session.host, projectId: session.workspaceId },
+		});
 	};
 
 	if (session.isTerminated === true) return null;
@@ -1127,7 +1132,7 @@ function SessionControls({ session }: { session: WorkspaceSession }) {
 										<button
 											aria-label={t("inspector.terminate")}
 											className="inline-flex size-control-md items-center justify-center rounded-sm text-passive transition-colors hover:bg-error/10 hover:text-error focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
-											onClick={() => clearTerminateSessionState(queryClient, session.id)}
+											onClick={() => clearTerminateSessionState(queryClient, session)}
 											type="button"
 										>
 											<Trash2 className="size-icon-sm" aria-hidden="true" />
@@ -1179,12 +1184,12 @@ function PRSummaryCard({
 	canOpenReviews,
 	onOpenReviews,
 	pr,
-	sessionId,
+	session,
 }: {
 	canOpenReviews: boolean;
 	onOpenReviews: () => void;
 	pr: SessionPRSummary;
-	sessionId: string;
+	session: Ref;
 }) {
 	const { t } = useTranslation();
 	const queryClient = useQueryClient();
@@ -1198,7 +1203,7 @@ function PRSummaryCard({
 	const mergePr = useMutation({
 		mutationFn: async () => {
 			if (usePreviewData) return;
-			const { error } = await apiClient.POST("/api/v1/prs/{id}/merge", {
+			const { error } = await clientFor(session.host).POST("/api/v1/prs/{id}/merge", {
 				params: { path: { id: String(pr.number) } },
 				body: { prUrl: pr.url, expectedHeadSha: pr.headSha },
 			});
@@ -1206,7 +1211,7 @@ function PRSummaryCard({
 		},
 		onSuccess: async () => {
 			await Promise.all([
-				queryClient.invalidateQueries({ queryKey: sessionScmSummaryQueryKey(sessionId) }),
+				queryClient.invalidateQueries({ queryKey: sessionScmSummaryQueryKey(session) }),
 				queryClient.invalidateQueries({ queryKey: workspaceQueryKey }),
 			]);
 		},
@@ -1480,14 +1485,14 @@ function ReviewsSection({
 			return session.autoReviewEnabled === true ? 10_000 : false;
 		},
 	});
-	const agentsQuery = useAgentReadinessQuery();
+	const agentsQuery = useAgentReadinessQuery(true, session.host);
 	useEnsureAgentReadiness();
 	const projectConfigQuery = useQuery({
-		queryKey: ["project-config", session.workspaceId],
+		queryKey: ["project-config", refKey({ host: session.host, id: session.workspaceId })],
 		enabled: hasPr,
 		queryFn: async () => {
 			if (usePreviewData) return mockProjectConfig();
-			const { data, error } = await apiClient.GET("/api/v1/projects/{id}", {
+			const { data, error } = await clientFor(session.host).GET("/api/v1/projects/{id}", {
 				params: { path: { id: session.workspaceId } },
 			});
 			if (error) return undefined;
@@ -1522,7 +1527,7 @@ function ReviewsSection({
 					? session.reviewerConfig
 					: undefined;
 			const nextReviewerConfig = buildReviewerAgentConfig(existingReviewerConfig, model, mode);
-			const { data, error } = await apiClient.POST("/api/v1/sessions/{sessionId}/reviews/switch", {
+			const { data, error } = await clientFor(session.host).POST("/api/v1/sessions/{sessionId}/reviews/switch", {
 				params: { path: { sessionId: session.id } },
 				body: {
 					harness: harness || undefined,
@@ -1542,7 +1547,7 @@ function ReviewsSection({
 			// Intent, not effect: emitted before the PUT, so a failed save still
 			// counts as the user reaching for the switch.
 			void captureRendererEvent("ao.renderer.review_auto_review_toggled", { enabled });
-			const { error } = await apiClient.PUT("/api/v1/sessions/{sessionId}/auto-review", {
+			const { error } = await clientFor(session.host).PUT("/api/v1/sessions/{sessionId}/auto-review", {
 				params: { path: { sessionId: session.id } },
 				body: { enabled },
 			});
@@ -1559,7 +1564,7 @@ function ReviewsSection({
 			const reviewerConfig = reviewerModel || reviewerMode
 				? { ...(reviewerModel ? { model: reviewerModel } : {}), ...(reviewerMode ? { mode: reviewerMode } : {}) }
 				: undefined;
-			const { data, error, response } = await apiClient.POST("/api/v1/sessions/{sessionId}/reviews/trigger", {
+			const { data, error, response } = await clientFor(session.host).POST("/api/v1/sessions/{sessionId}/reviews/trigger", {
 				params: { path: { sessionId: session.id } },
 				...(reviewerOverride || reviewerConfig ? { body: { ...(reviewerOverride ? { harness: reviewerOverride } : {}), ...(reviewerConfig ? { agentConfig: reviewerConfig } : {}) } } : {}),
 			});
@@ -1585,7 +1590,7 @@ function ReviewsSection({
 	});
 	const cancelReview = useMutation({
 		mutationFn: async () => {
-			const { error } = await apiClient.POST("/api/v1/sessions/{sessionId}/reviews/cancel", {
+			const { error } = await clientFor(session.host).POST("/api/v1/sessions/{sessionId}/reviews/cancel", {
 				params: { path: { sessionId: session.id } },
 			});
 			if (error) throw new Error(apiErrorMessage(error, t("inspector.unableCancelReview")));
@@ -1598,7 +1603,7 @@ function ReviewsSection({
 	});
 	const killReview = useMutation({
 		mutationFn: async () => {
-			const { data, error } = await apiClient.POST("/api/v1/sessions/{sessionId}/reviews/kill", {
+			const { data, error } = await clientFor(session.host).POST("/api/v1/sessions/{sessionId}/reviews/kill", {
 				params: { path: { sessionId: session.id } },
 			});
 			if (error) throw new Error(apiErrorMessage(error, t("inspector.unableKillReviewSession")));
@@ -1612,7 +1617,7 @@ function ReviewsSection({
 	});
 	const reviewStates = reviewsQuery.data?.reviews ?? [];
 	const autoReviewEnabled = session.autoReviewEnabled === true;
-	const scmSummary = useSessionScmSummary(session.id);
+	const scmSummary = useSessionScmSummary(session);
 	const prSummaries = sessionPRDisplaySummaries(session, scmSummary.data);
 	const githubReviews = prSummaries.filter(
 		(pr) =>
@@ -1718,30 +1723,30 @@ function MergedReviewsSection({
 	const rows = [...byNumber.entries()].sort(([a], [b]) => b - a);
 	const labels = reviewLabels(t);
 	const requestRereview = async (review: InspectorGithubReview) => {
-		const { error } = await apiClient.POST("/api/v1/sessions/{sessionId}/reviews/rerequest", {
+		const { error } = await clientFor(session.host).POST("/api/v1/sessions/{sessionId}/reviews/rerequest", {
 			params: { path: { sessionId: session.id } },
 			body: { pullRequestUrl: review.pullRequestUrl, reviewerId: review.reviewerId },
 		});
 		if (error) throw new Error(apiErrorMessage(error, "Unable to request re-review"));
 	};
 	const resolveInlineComment = async (comment: InspectorInlineComment) => {
-		const { error } = await apiClient.POST("/api/v1/sessions/{sessionId}/reviews/comments/resolve", {
+		const { error } = await clientFor(session.host).POST("/api/v1/sessions/{sessionId}/reviews/comments/resolve", {
 			params: { path: { sessionId: session.id } },
 			body: { pullRequestUrl: comment.pullRequestUrl, commentUrl: comment.url ?? "" },
 		});
 		if (error) throw new Error(apiErrorMessage(error, "Unable to resolve review comment"));
-		void queryClient.invalidateQueries({ queryKey: sessionScmSummaryQueryKey(session.id) });
+		void queryClient.invalidateQueries({ queryKey: sessionScmSummaryQueryKey(session) });
 		void queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
 	};
 	const sendInlineCommentToWorker = async (comment: InspectorInlineComment & { reviewerId?: string }) => {
-		const { error } = await apiClient.POST("/api/v1/sessions/{sessionId}/send", {
+		const { error } = await clientFor(session.host).POST("/api/v1/sessions/{sessionId}/send", {
 			params: { path: { sessionId: session.id } },
 			body: { message: formatInlineReviewCommentMessage(comment) },
 		});
 		if (error) throw new Error(apiErrorMessage(error, "Unable to send review comment to worker agent"));
 	};
 	const sendReviewSummaryToWorker = async (summary: InspectorReviewSummaryAction) => {
-		const { error } = await apiClient.POST("/api/v1/sessions/{sessionId}/send", {
+		const { error } = await clientFor(session.host).POST("/api/v1/sessions/{sessionId}/send", {
 			params: { path: { sessionId: session.id } },
 			body: { message: formatReviewSummaryMessage(summary) },
 		});
@@ -2269,7 +2274,7 @@ function ReviewPanel({
 							onConfigChange={(harness, config) => onReviewerOverrideChange(harness as ReviewerHarness | "", config)}
 							model={reviewerModel}
 							mode={reviewerMode}
-							projectId={session.workspaceId}
+							project={{ host: session.host, id: session.workspaceId }}
 							triggerClassName="review-run-agent-select ml-auto h-control-md w-auto min-w-0 max-w-[11rem] shrink-0 justify-end px-2 text-right text-xs"
 							value={reviewerOverride}
 							showDefaultOption

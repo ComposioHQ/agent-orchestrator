@@ -16,6 +16,19 @@ vi.mock("../lib/api-client", () => ({
 	hasTrustedApiBaseUrl: () => true,
 }));
 
+// clientFor(LOCAL_HOST) is the client apiClient already was, so the local
+// host resolves to the same fake the api-client mock installs.
+vi.mock("../lib/host-clients", () => ({
+	baseUrlFor: () => "http://127.0.0.1:3001",
+	connectedHosts: (() => {
+		const hosts: string[] = [];
+		return () => hosts;
+	})(),
+	subscribeConnectedHosts: () => () => undefined,
+	isHostReady: () => true,
+	clientFor: () => ({ GET: getMock, POST: postMock, PUT: putMock, DELETE: deleteMock }),
+}));
+
 import { useSessionInterfaceTransition } from "./useSessionInterfaceTransition";
 
 function wrapper({ children }: { children: ReactNode }) {
@@ -59,7 +72,7 @@ describe("session-scoped interface transition mutations", () => {
 			<QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
 		);
 		const { result, rerender } = renderHook(
-			({ sessionId }) => useSessionInterfaceTransition(sessionId),
+			({ sessionId }) => useSessionInterfaceTransition({ host: "local", id: sessionId }),
 			{ initialProps: { sessionId: "session-a" }, wrapper: HookWrapper },
 		);
 
@@ -85,10 +98,10 @@ describe("session-scoped interface transition mutations", () => {
 			},
 		);
 		expect(invalidate).toHaveBeenCalledWith({
-			queryKey: ["session-interface-transition", "session-a"],
+			queryKey: ["session-interface-transition", "local:session-a"],
 		});
 		expect(invalidate).not.toHaveBeenCalledWith({
-			queryKey: ["session-interface-transition", "session-b"],
+			queryKey: ["session-interface-transition", "local:session-b"],
 		});
 	});
 
@@ -108,7 +121,7 @@ describe("session-scoped interface transition mutations", () => {
 		const HookWrapper = ({ children }: { children: ReactNode }) => (
 			<QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
 		);
-		const { result } = renderHook(() => useSessionInterfaceTransition("session-a"), {
+		const { result } = renderHook(() => useSessionInterfaceTransition({ host: "local", id: "session-a" }), {
 			wrapper: HookWrapper,
 		});
 
@@ -118,7 +131,7 @@ describe("session-scoped interface transition mutations", () => {
 		});
 		await waitFor(() => {
 			expect(invalidate).toHaveBeenCalledWith({
-				queryKey: ["session-interface-transition", "session-a"],
+				queryKey: ["session-interface-transition", "local:session-a"],
 			});
 		});
 		expect(result.current.starting).toBe(true);
@@ -166,7 +179,7 @@ describe("session-scoped interface transition mutations", () => {
 				<QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
 			);
 			const { result } = renderHook(
-				() => useSessionInterfaceTransition("session-a"),
+				() => useSessionInterfaceTransition({ host: "local", id: "session-a" }),
 				{ wrapper: HookWrapper },
 			);
 
@@ -213,7 +226,7 @@ describe("session-scoped interface transition mutations", () => {
 			<QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
 		);
 		const { result, rerender } = renderHook(
-			({ sessionId }) => useSessionInterfaceTransition(sessionId),
+			({ sessionId }) => useSessionInterfaceTransition({ host: "local", id: sessionId }),
 			{ initialProps: { sessionId: "session-a" }, wrapper: HookWrapper },
 		);
 
@@ -258,7 +271,7 @@ describe("session-scoped interface transition mutations", () => {
 			<QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
 		);
 		const { result, rerender } = renderHook(
-			({ sessionId }) => useSessionInterfaceTransition(sessionId),
+			({ sessionId }) => useSessionInterfaceTransition({ host: "local", id: sessionId }),
 			{ initialProps: { sessionId: "session-a" }, wrapper: HookWrapper },
 		);
 
@@ -281,10 +294,10 @@ describe("session-scoped interface transition mutations", () => {
 			{ params: { path: { sessionId: "session-a" } } },
 		);
 		expect(invalidate).toHaveBeenCalledWith({
-			queryKey: ["session-interface-transition", "session-a"],
+			queryKey: ["session-interface-transition", "local:session-a"],
 		});
 		expect(invalidate).not.toHaveBeenCalledWith({
-			queryKey: ["session-interface-transition", "session-b"],
+			queryKey: ["session-interface-transition", "local:session-b"],
 		});
 	});
 
@@ -333,7 +346,7 @@ describe("session-scoped interface transition mutations", () => {
 			<QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
 		);
 		const { result, rerender } = renderHook(
-			({ sessionId }) => useSessionInterfaceTransition(sessionId),
+			({ sessionId }) => useSessionInterfaceTransition({ host: "local", id: sessionId }),
 			{ initialProps: { sessionId: "session-a" }, wrapper: HookWrapper },
 		);
 		await waitFor(() => expect(result.current.transition?.id).toBe("transition-a"));
@@ -367,16 +380,16 @@ describe("session-scoped interface transition mutations", () => {
 		expect(
 			queryClient.getQueryData<{ transition?: typeof acknowledgedA }>([
 				"session-interface-transition",
-				"session-a",
+				"local:session-a",
 			])?.transition?.noticeAcknowledgedAt,
 		).toBe("2026-08-13T08:00:00Z");
 		expect(result.current.transition?.id).toBe("transition-b");
 		expect(result.current.transition?.noticeAcknowledgedAt).toBeUndefined();
 		expect(invalidate).toHaveBeenCalledWith({
-			queryKey: ["session-interface-transition", "session-a"],
+			queryKey: ["session-interface-transition", "local:session-a"],
 		});
 		expect(invalidate).not.toHaveBeenCalledWith({
-			queryKey: ["session-interface-transition", "session-b"],
+			queryKey: ["session-interface-transition", "local:session-b"],
 		});
 	});
 
@@ -401,7 +414,7 @@ describe("session-scoped interface transition mutations", () => {
 				<QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
 			);
 			const { result, rerender } = renderHook(
-				({ sessionId }) => useSessionInterfaceTransition(sessionId),
+				({ sessionId }) => useSessionInterfaceTransition({ host: "local", id: sessionId }),
 				{ initialProps: { sessionId: "session-a" }, wrapper: HookWrapper },
 			);
 
@@ -483,7 +496,7 @@ describe("interface switch readiness", () => {
 			<QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
 		);
 		const { result, rerender } = renderHook(
-			({ sessionId }) => useSessionInterfaceTransition(sessionId),
+			({ sessionId }) => useSessionInterfaceTransition({ host: "local", id: sessionId }),
 			{ initialProps: { sessionId: "session-a" }, wrapper: HookWrapper },
 		);
 
@@ -544,7 +557,7 @@ describe("interface switch readiness", () => {
 			<QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
 		);
 		const { result, rerender } = renderHook(
-			({ sessionId }) => useSessionInterfaceTransition(sessionId),
+			({ sessionId }) => useSessionInterfaceTransition({ host: "local", id: sessionId }),
 			{ initialProps: { sessionId: "session-a" }, wrapper: HookWrapper },
 		);
 
@@ -587,7 +600,7 @@ describe("interface switch readiness", () => {
 					error: undefined,
 				});
 
-			const { result } = renderHook(() => useSessionInterfaceTransition("session-1"), {
+			const { result } = renderHook(() => useSessionInterfaceTransition({ host: "local", id: "session-1" }), {
 				wrapper,
 			});
 
@@ -610,7 +623,7 @@ describe("interface switch readiness", () => {
 			error: undefined,
 		});
 
-		const { result } = renderHook(() => useSessionInterfaceTransition("session-1"), {
+		const { result } = renderHook(() => useSessionInterfaceTransition({ host: "local", id: "session-1" }), {
 			wrapper,
 		});
 
@@ -645,7 +658,7 @@ describe("interface switch readiness", () => {
 			error: undefined,
 		});
 
-		const { result } = renderHook(() => useSessionInterfaceTransition("session-1"), {
+		const { result } = renderHook(() => useSessionInterfaceTransition({ host: "local", id: "session-1" }), {
 			wrapper,
 		});
 		await waitFor(() => expect(result.current.transition?.id).toBe("transition-1"));

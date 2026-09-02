@@ -5,6 +5,7 @@ import { useEffect, useRef } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { shellTerminalsQueryKey, type ShellTerminal } from "../hooks/useShellTerminals";
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
+import { refKey } from "../lib/hosts";
 import type { AttachableTerminal } from "../hooks/useTerminalSession";
 import type { TerminalTarget } from "../types/terminal";
 import type { WorkspaceSession } from "../types/workspace";
@@ -54,6 +55,25 @@ vi.mock("../lib/api-client", () => ({
 		POST: (...args: unknown[]) => postMock(...args),
 	},
 	apiErrorMessage: (_error: unknown, fallback: string) => fallback,
+}));
+
+// clientFor(LOCAL_HOST) is the client apiClient already was, so the local
+// host resolves to the same fake the api-client mock installs.
+vi.mock("../lib/host-clients", () => ({
+	baseUrlFor: () => "http://127.0.0.1:3001",
+	connectedHosts: (() => {
+		const hosts: string[] = [];
+		return () => hosts;
+	})(),
+	subscribeConnectedHosts: () => () => undefined,
+	isHostReady: () => true,
+	clientFor: () => ({
+		GET: (
+			path: string,
+			options: { params?: { path?: { sessionId?: string } } },
+		) => getMock(path, options),
+		POST: (...args: unknown[]) => postMock(...args),
+	}),
 }));
 
 vi.mock("./XtermTerminal", () => ({
@@ -115,6 +135,7 @@ const worker = {
 	status: "working",
 	updatedAt: "2026-06-10T00:00:00Z",
 	prs: [],
+	host: "local",
 } satisfies WorkspaceSession;
 
 const orchestrator = {
@@ -122,6 +143,7 @@ const orchestrator = {
 	id: "sess-orch",
 	title: "orchestrate",
 	kind: "orchestrator",
+	host: "local",
 } satisfies WorkspaceSession;
 
 beforeEach(() => {
@@ -651,6 +673,7 @@ describe("terminal restore", () => {
 			...worker,
 			status: "terminated",
 			terminalHandleId: "term-1",
+			host: "local",
 		} satisfies WorkspaceSession;
 		const view = renderCachedPane({ session: terminated, sessions: [terminated] });
 		try {
@@ -711,7 +734,7 @@ describe("terminal link preview", () => {
 		const view = renderPane(worker);
 		try {
 			act(() => terminalLinkHandler?.("https://example.com/pull/42"));
-			expect(useUiStore.getState().inspectorSessions[worker.id]).toMatchObject({
+			expect(useUiStore.getState().inspectorSessions[refKey(worker)]).toMatchObject({
 				isOpen: true,
 				view: "browser",
 			});

@@ -7,7 +7,9 @@ import {
 } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import type { components } from "../../api/schema";
-import { apiClient, apiErrorMessage, hasTrustedApiBaseUrl } from "../lib/api-client";
+import { apiErrorMessage } from "../lib/api-client";
+import { clientFor, isHostReady } from "../lib/host-clients";
+import { refKey, type Ref } from "../lib/hosts";
 import { conversationQueryKey } from "./useConversation";
 import { workspaceQueryKey } from "./useWorkspaceQuery";
 
@@ -23,11 +25,11 @@ type StartInterfaceTransitionInput = {
 };
 
 type StartInterfaceTransitionMutationInput = StartInterfaceTransitionInput & {
-	targetSessionId: string;
+	targetSession: Ref;
 };
 
 type InterfaceTransitionMutationTarget = {
-	targetSessionId: string;
+	targetSession: Ref;
 };
 
 type AcknowledgeInterfaceTransitionNoticeMutationInput =
@@ -62,11 +64,12 @@ function useInterfaceTransitionMutations<TInput>(mutationKey: readonly unknown[]
 
 function summarizeInterfaceTransitionMutations<
 	TInput extends InterfaceTransitionMutationTarget,
->(mutations: InterfaceTransitionMutationState<TInput>[], sessionId: string | undefined) {
+>(mutations: InterfaceTransitionMutationState<TInput>[], session: Ref | undefined) {
+	const sessionKey = session ? refKey(session) : undefined;
 	let latest: InterfaceTransitionMutationState<TInput> | undefined;
 	let pending: InterfaceTransitionMutationState<TInput> | undefined;
 	for (const mutation of mutations) {
-		if (mutation.input?.targetSessionId !== sessionId) continue;
+		if (!mutation.input || refKey(mutation.input.targetSession) !== sessionKey) continue;
 		if (!latest || mutation.submittedAt >= latest.submittedAt) latest = mutation;
 		if (
 			mutation.status === "pending" &&
@@ -87,13 +90,14 @@ function summarizeInterfaceTransitionMutations<
 function clearInterfaceTransitionMutationState(
 	queryClient: QueryClient,
 	mutationKey: readonly unknown[],
-	sessionId: string | undefined,
+	session: Ref | undefined,
 ) {
-	if (!sessionId) return;
+	if (!session) return;
+	const sessionKey = refKey(session);
 	const mutationCache = queryClient.getMutationCache();
 	for (const mutation of mutationCache.findAll({ mutationKey })) {
 		const input = mutation.state.variables as InterfaceTransitionMutationTarget | undefined;
-		if (input?.targetSessionId === sessionId && mutation.state.status !== "pending") {
+		if (input && refKey(input.targetSession) === sessionKey && mutation.state.status !== "pending") {
 			mutationCache.remove(mutation);
 		}
 	}
@@ -135,8 +139,8 @@ export function interfaceTransitionHasUnacknowledgedNotice(
 	);
 }
 
-export function sessionInterfaceTransitionQueryKey(sessionId: string) {
-	return ["session-interface-transition", sessionId] as const;
+export function sessionInterfaceTransitionQueryKey(session: Ref) {
+	return ["session-interface-transition", refKey(session)] as const;
 }
 
 /**
@@ -145,7 +149,8 @@ export function sessionInterfaceTransitionQueryKey(sessionId: string) {
  * traffic and the existing session CDC stream still refreshes the committed
  * mode in the workspace model.
  */
-export function useSessionInterfaceTransition(sessionId: string | undefined) {
+export function useSessionInterfaceTransition(session: Ref | undefined) {
+	const sessionId = session?.id;
 	const queryClient = useQueryClient();
 	const settledRef = useRef<string>("");
 	const refreshAttemptRef = useRef(0);
@@ -154,10 +159,10 @@ export function useSessionInterfaceTransition(sessionId: string | undefined) {
 		key: string;
 	}>();
 	const query = useQuery({
-		queryKey: sessionInterfaceTransitionQueryKey(sessionId ?? ""),
-		enabled: Boolean(sessionId && hasTrustedApiBaseUrl()),
+		queryKey: session ? sessionInterfaceTransitionQueryKey(session) : ["session-interface-transition"],
+		enabled: Boolean(session && isHostReady(session.host)),
 		queryFn: async () => {
-			const { data, error } = await apiClient.GET(
+			const { data, error } = await clientFor(session!.host).GET(
 				"/api/v1/sessions/{sessionId}/interface-transition",
 				{ params: { path: { sessionId: sessionId as string } } },
 			);
@@ -181,14 +186,11 @@ export function useSessionInterfaceTransition(sessionId: string | undefined) {
 
 	const start = useMutation({
 		mutationKey: startInterfaceTransitionMutationKey,
-		mutationFn: async ({
-			targetSessionId,
-			...input
-		}: StartInterfaceTransitionMutationInput) => {
-			const { data, error } = await apiClient.POST(
+		mutationFn: async ({ targetSession, ...input }: StartInterfaceTransitionMutationInput) => {
+			const { data, error } = await clientFor(targetSession.host).POST(
 				"/api/v1/sessions/{sessionId}/interface-transition",
 				{
-					params: { path: { sessionId: targetSessionId } },
+					params: { path: { sessionId: targetSession.id } },
 					body: input,
 				},
 			);
@@ -201,7 +203,7 @@ export function useSessionInterfaceTransition(sessionId: string | undefined) {
 			// may turn an accepted handoff back into an available Chat composer.
 			if (response?.transition) {
 				queryClient.setQueryData<SessionInterfaceTransitionStatus>(
-					sessionInterfaceTransitionQueryKey(variables.targetSessionId),
+					sessionInterfaceTransitionQueryKey(variables.targetSession),
 					{
 						supported: true,
 						targetMode: response.transition.targetMode,
@@ -211,7 +213,7 @@ export function useSessionInterfaceTransition(sessionId: string | undefined) {
 			}
 			return queryClient
 				.invalidateQueries({
-					queryKey: sessionInterfaceTransitionQueryKey(variables.targetSessionId),
+					queryKey: sessionInterfaceTransitionQueryKey(variables.targetSession),
 				})
 				.catch(() => undefined);
 		},
@@ -219,16 +221,16 @@ export function useSessionInterfaceTransition(sessionId: string | undefined) {
 
 	const cancel = useMutation({
 		mutationKey: cancelInterfaceTransitionMutationKey,
-		mutationFn: async ({ targetSessionId }: InterfaceTransitionMutationTarget) => {
-			const { error } = await apiClient.DELETE(
+		mutationFn: async ({ targetSession }: InterfaceTransitionMutationTarget) => {
+			const { error } = await clientFor(targetSession.host).DELETE(
 				"/api/v1/sessions/{sessionId}/interface-transition",
-				{ params: { path: { sessionId: targetSessionId } } },
+				{ params: { path: { sessionId: targetSession.id } } },
 			);
 			if (error) throw error;
 		},
 		onSuccess: (_data, variables) => {
 			void queryClient.invalidateQueries({
-				queryKey: sessionInterfaceTransitionQueryKey(variables.targetSessionId),
+				queryKey: sessionInterfaceTransitionQueryKey(variables.targetSession),
 			});
 		},
 	});
@@ -236,14 +238,14 @@ export function useSessionInterfaceTransition(sessionId: string | undefined) {
 	const acknowledgeNotice = useMutation({
 		mutationKey: acknowledgeInterfaceTransitionNoticeMutationKey,
 		mutationFn: async ({
-			targetSessionId,
+			targetSession,
 			transitionId,
 		}: AcknowledgeInterfaceTransitionNoticeMutationInput) => {
-			const { data, error } = await apiClient.PUT(
+			const { data, error } = await clientFor(targetSession.host).PUT(
 				"/api/v1/sessions/{sessionId}/interface-transition/{transitionId}/notice-acknowledgement",
 				{
 					params: {
-						path: { sessionId: targetSessionId, transitionId },
+						path: { sessionId: targetSession.id, transitionId },
 					},
 				},
 			);
@@ -252,7 +254,7 @@ export function useSessionInterfaceTransition(sessionId: string | undefined) {
 		},
 		onSuccess: (response, variables) => {
 			queryClient.setQueryData<SessionInterfaceTransitionStatus>(
-				sessionInterfaceTransitionQueryKey(variables.targetSessionId),
+				sessionInterfaceTransitionQueryKey(variables.targetSession),
 				(current) =>
 					current?.transition?.id === response.transition.id
 						? { ...current, transition: response.transition }
@@ -261,34 +263,35 @@ export function useSessionInterfaceTransition(sessionId: string | undefined) {
 		},
 		onSettled: (_data, _error, variables) => {
 			void queryClient.invalidateQueries({
-				queryKey: sessionInterfaceTransitionQueryKey(variables.targetSessionId),
+				queryKey: sessionInterfaceTransitionQueryKey(variables.targetSession),
 			});
 		},
 	});
+
 	const startState = summarizeInterfaceTransitionMutations(
 		useInterfaceTransitionMutations<StartInterfaceTransitionMutationInput>(
 			startInterfaceTransitionMutationKey,
 		),
-		sessionId,
+		session,
 	);
 	const cancelState = summarizeInterfaceTransitionMutations(
 		useInterfaceTransitionMutations<InterfaceTransitionMutationTarget>(
 			cancelInterfaceTransitionMutationKey,
 		),
-		sessionId,
+		session,
 	);
 	const acknowledgeNoticeState = summarizeInterfaceTransitionMutations(
 		useInterfaceTransitionMutations<AcknowledgeInterfaceTransitionNoticeMutationInput>(
 			acknowledgeInterfaceTransitionNoticeMutationKey,
 		),
-		sessionId,
+		session,
 	);
 
 	const transition = query.data?.transition;
 	const transitionActive = interfaceTransitionIsActive(transition);
 	const transitionID = transition?.id;
 	const transitionKey =
-		sessionId && transitionID ? JSON.stringify([sessionId, transitionID]) : "";
+		session && transitionID ? JSON.stringify([refKey(session), transitionID]) : "";
 	// A completed handoff is not visually settled until the queries invalidated by
 	// it have returned. In particular, switching TUI -> Chat necessarily has a
 	// small interval after mode=chat commits and before the Chat controller is in
@@ -309,7 +312,7 @@ export function useSessionInterfaceTransition(sessionId: string | undefined) {
 		setRefreshingTransition({ attempt, key: transitionKey });
 		void Promise.all([
 			queryClient.invalidateQueries({ queryKey: workspaceQueryKey }),
-			queryClient.invalidateQueries({ queryKey: conversationQueryKey(sessionId) }),
+			queryClient.invalidateQueries({ queryKey: conversationQueryKey(session) }),
 		]).finally(() => {
 			setRefreshingTransition((refreshing) =>
 				refreshing?.key === transitionKey && refreshing.attempt === attempt
@@ -317,7 +320,7 @@ export function useSessionInterfaceTransition(sessionId: string | undefined) {
 					: refreshing,
 			);
 		});
-	}, [queryClient, sessionId, transitionActive, transitionKey]);
+	}, [queryClient, session, sessionId, transitionActive, transitionKey]);
 	return {
 		status: query.data,
 		transition,
@@ -325,8 +328,8 @@ export function useSessionInterfaceTransition(sessionId: string | undefined) {
 		isLoading: query.isLoading,
 		statusError: query.error ? apiErrorMessage(query.error) : undefined,
 		start: (input: StartInterfaceTransitionInput) => {
-			if (!sessionId) return Promise.reject(new Error("No session is selected."));
-			return start.mutateAsync({ ...input, targetSessionId: sessionId });
+			if (!session) return Promise.reject(new Error("No session is selected."));
+			return start.mutateAsync({ ...input, targetSession: session });
 		},
 		starting: startState.isPending,
 		startError: startState.error,
@@ -334,18 +337,18 @@ export function useSessionInterfaceTransition(sessionId: string | undefined) {
 			clearInterfaceTransitionMutationState(
 				queryClient,
 				startInterfaceTransitionMutationKey,
-				sessionId,
+				session,
 			);
 		},
 		cancel: () => {
-			if (!sessionId) return Promise.reject(new Error("No session is selected."));
-			return cancel.mutateAsync({ targetSessionId: sessionId });
+			if (!session) return Promise.reject(new Error("No session is selected."));
+			return cancel.mutateAsync({ targetSession: session });
 		},
 		cancelling: cancelState.isPending,
 		cancelError: cancelState.error,
 		acknowledgeNotice: (transitionId: string) => {
-			if (!sessionId) return Promise.reject(new Error("No session is selected."));
-			return acknowledgeNotice.mutateAsync({ targetSessionId: sessionId, transitionId });
+			if (!session) return Promise.reject(new Error("No session is selected."));
+			return acknowledgeNotice.mutateAsync({ targetSession: session, transitionId });
 		},
 		acknowledgingNotice: acknowledgeNoticeState.isPending,
 		acknowledgeNoticeError: acknowledgeNoticeState.error,

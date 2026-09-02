@@ -5,6 +5,7 @@ import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { useUiStore } from "../stores/ui-store";
 import { NewTaskDialog } from "./NewTaskDialog";
 
+import type { Ref } from "../lib/hosts";
 // App-level New Task surface. Lives in the shell (always mounted, on every
 // route and platform, unlike ShellTopbar which unmounts on Linux boards) so a
 // ⌘N / Ctrl+Shift+N shortcut or the sidebar "New session" item can open a
@@ -16,7 +17,7 @@ export function GlobalNewTaskDialog() {
 	const queryClient = useQueryClient();
 	const newTaskRequest = useUiStore((state) => state.newTaskRequest);
 	const [open, setOpen] = useState(false);
-	const [projectId, setProjectId] = useState<string | undefined>(undefined);
+	const [project, setProject] = useState<Ref | undefined>(undefined);
 	const lastNonce = useRef(0);
 
 	useEffect(() => {
@@ -26,23 +27,23 @@ export function GlobalNewTaskDialog() {
 		// particular, do not retarget a populated form to another project, and do
 		// not replay the ignored request when the user later closes the dialog.
 		if (open) return;
-		setProjectId(newTaskRequest.projectId);
+		setProject(newTaskRequest.project);
 		setOpen(true);
 	}, [newTaskRequest, open]);
 
 	const handleCreated = async (sessionId: string) => {
-		if (!projectId) return;
+		if (!project) return;
 		await queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
 		void navigate({
-			to: "/projects/$projectId/sessions/$sessionId",
-			params: { projectId, sessionId },
+			to: "/host/$hostId/session/$sessionId",
+			params: { hostId: project.host, sessionId },
 		});
 	};
 
 	return (
 		<NewTaskDialog
 			open={open}
-			projectId={projectId}
+			project={project}
 			onCreated={(sessionId) => void handleCreated(sessionId)}
 			onOpenChange={setOpen}
 		/>

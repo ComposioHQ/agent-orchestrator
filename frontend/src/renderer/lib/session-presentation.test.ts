@@ -13,6 +13,7 @@ import type { WorkspaceSession } from "../types/workspace";
 
 function sessionWith(overrides: Partial<WorkspaceSession>): WorkspaceSession {
 	return {
+		host: "local",
 		id: "sess-1",
 		workspaceId: "ws-1",
 		workspaceName: "my-app",

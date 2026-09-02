@@ -17,6 +17,7 @@ import { startUpdateTelemetry } from "./lib/update-telemetry";
 import { appI18n } from "./i18n";
 import { useLocaleStore } from "./stores/locale-store";
 import { useSoundNotificationsStore } from "./stores/sound-notifications-store";
+import { initHosts } from "./lib/active-host";
 
 const router = createAppRouter(queryClient);
 
@@ -91,6 +92,11 @@ async function renderApp(): Promise<void> {
 			</I18nextProvider>
 		</React.StrictMode>,
 	);
+	// Saved hosts are additive. A bad credential file or sleeping machine must
+	// never block local first paint; the reactive host registry adds each proxy
+	// to the workspace fan-out as it connects. Inert while the Remote hosts
+	// flag is off.
+	void initHosts();
 }
 
 void renderApp();

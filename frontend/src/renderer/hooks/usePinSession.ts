@@ -1,7 +1,8 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import type { WorkspaceSession } from "../types/workspace";
 import { workspaceQueryKey } from "./useWorkspaceQuery";
-import { apiClient, apiErrorMessage } from "../lib/api-client";
+import { apiErrorMessage } from "../lib/api-client";
+import { clientFor } from "../lib/host-clients";
+import type { Ref } from "../lib/hosts";
 
 export const pinSessionMutationKey = ["pin-session"] as const;
 export const unpinSessionMutationKey = ["unpin-session"] as const;
@@ -10,8 +11,8 @@ export function usePinSession() {
 	const queryClient = useQueryClient();
 	return useMutation({
 		mutationKey: pinSessionMutationKey,
-		mutationFn: async (session: WorkspaceSession) => {
-			const { error, response } = await apiClient.POST("/api/v1/sessions/{sessionId}/pin", {
+		mutationFn: async (session: Ref) => {
+			const { error, response } = await clientFor(session.host).POST("/api/v1/sessions/{sessionId}/pin", {
 				params: { path: { sessionId: session.id } },
 			});
 			if (error) {
@@ -32,8 +33,8 @@ export function useUnpinSession() {
 	const queryClient = useQueryClient();
 	return useMutation({
 		mutationKey: unpinSessionMutationKey,
-		mutationFn: async (session: WorkspaceSession) => {
-			const { error, response } = await apiClient.DELETE("/api/v1/sessions/{sessionId}/pin", {
+		mutationFn: async (session: Ref) => {
+			const { error, response } = await clientFor(session.host).DELETE("/api/v1/sessions/{sessionId}/pin", {
 				params: { path: { sessionId: session.id } },
 			});
 			if (error) {

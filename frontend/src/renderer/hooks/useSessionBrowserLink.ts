@@ -1,6 +1,7 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useCallback } from "react";
-import { apiClient } from "../lib/api-client";
+import { clientFor } from "../lib/host-clients";
+import { refKey } from "../lib/hosts";
 import { useUiStore } from "../stores/ui-store";
 import { sessionIsActive, type WorkspaceSession } from "../types/workspace";
 import { workspaceQueryKey } from "./useWorkspaceQuery";
@@ -23,11 +24,12 @@ export function useSessionBrowserLink(session?: WorkspaceSession): (uri: string)
 			}
 
 			const sessionId = session.id;
-			setInspectorView(sessionId, "browser");
-			setInspectorOpen(sessionId, true);
+			const sessionKey = refKey(session);
+			setInspectorView(sessionKey, "browser");
+			setInspectorOpen(sessionKey, true);
 			void (async () => {
 				try {
-					const { error } = await apiClient.POST("/api/v1/sessions/{sessionId}/preview", {
+					const { error } = await clientFor(session.host).POST("/api/v1/sessions/{sessionId}/preview", {
 						params: { path: { sessionId } },
 						body: { url: uri },
 					});
@@ -41,6 +43,6 @@ export function useSessionBrowserLink(session?: WorkspaceSession): (uri: string)
 				}
 			})();
 		},
-		[active, queryClient, session?.id, session?.kind, setInspectorOpen, setInspectorView],
+		[active, queryClient, session, setInspectorOpen, setInspectorView],
 	);
 }

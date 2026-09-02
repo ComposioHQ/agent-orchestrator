@@ -2,6 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { renderHook, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { refKey } from "../lib/hosts";
 import type { WorkspaceSession } from "../types/workspace";
 
 const { postMock } = vi.hoisted(() => ({ postMock: vi.fn() }));
@@ -9,6 +10,19 @@ const { postMock } = vi.hoisted(() => ({ postMock: vi.fn() }));
 vi.mock("../lib/api-client", () => ({
 	apiClient: { POST: postMock },
 	apiErrorMessage: () => "request failed",
+}));
+
+// clientFor(LOCAL_HOST) is the client apiClient already was, so the local
+// host resolves to the same fake the api-client mock installs.
+vi.mock("../lib/host-clients", () => ({
+	baseUrlFor: () => "http://127.0.0.1:3001",
+	connectedHosts: (() => {
+		const hosts: string[] = [];
+		return () => hosts;
+	})(),
+	subscribeConnectedHosts: () => () => undefined,
+	isHostReady: () => true,
+	clientFor: () => ({ POST: postMock }),
 }));
 
 import { useSwitchAgent } from "./useSwitchAgent";
@@ -26,6 +40,7 @@ const session = {
 	updatedAt: "2026-06-10T00:00:00Z",
 	workspaceId: "proj-1",
 	workspaceName: "my-app",
+	host: "local",
 } satisfies WorkspaceSession;
 
 function wrapper(queryClient: QueryClient) {
@@ -74,9 +89,9 @@ describe("useSwitchAgent", () => {
 			},
 		);
 		await waitFor(() => {
-			expect(invalidate).toHaveBeenCalledWith({ queryKey: ["conversation", "sess-1"] });
-			expect(invalidate).toHaveBeenCalledWith({ queryKey: ["conversation-models", "sess-1"] });
-			expect(invalidate).toHaveBeenCalledWith({ queryKey: ["conversation-config-options", "sess-1"] });
+			expect(invalidate).toHaveBeenCalledWith({ queryKey: ["conversation", refKey({ host: "local", id: "sess-1" })] });
+			expect(invalidate).toHaveBeenCalledWith({ queryKey: ["conversation-models", refKey({ host: "local", id: "sess-1" })] });
+			expect(invalidate).toHaveBeenCalledWith({ queryKey: ["conversation-config-options", refKey({ host: "local", id: "sess-1" })] });
 		});
 	});
 });

@@ -14,6 +14,10 @@ vi.mock("../lib/api-client", () => ({
 			: fallback,
 }));
 
+vi.mock("../lib/host-clients", () => ({
+	clientFor: () => ({ POST: postMock }),
+}));
+
 const writeTextMock = vi.hoisted(() => vi.fn());
 
 const SAMPLE_LINES: DiffSelectionLine[] = [

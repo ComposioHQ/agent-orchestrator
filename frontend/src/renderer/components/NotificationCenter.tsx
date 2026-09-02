@@ -41,6 +41,7 @@ import { TopbarButton } from "./TopbarButton";
 import { Popover, PopoverContent, PopoverTrigger } from "./ui/popover";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 
+import { LOCAL_HOST, refKey, type Ref } from "../lib/hosts";
 type NotificationCenterProps = {
 	style?: React.CSSProperties;
 };
@@ -52,7 +53,7 @@ function useNotificationTargetNavigation() {
 			const sessionId = notification.target.sessionId || notification.sessionId;
 			if (!sessionId) return;
 			void captureRendererEvent("ao.renderer.notification_opened", { target: "session" });
-			navigateToSession(notification.projectId, sessionId);
+			navigateToSession({ host: LOCAL_HOST, id: sessionId });
 		},
 		[navigateToSession],
 	);
@@ -147,9 +148,10 @@ export function NotificationRuntime() {
 	const { openPrimary } = useNotificationTargetNavigation();
 	const unreadQuery = useNotificationsQuery("unread");
 	const unreadCount = getCachedUnreadCount(unreadQuery.data);
-	const params = useParams({ strict: false }) as { sessionId?: string };
-	const routeSessionIdRef = useRef(params.sessionId);
-	routeSessionIdRef.current = params.sessionId;
+	const params = useParams({ strict: false }) as { hostId?: string; sessionId?: string };
+	const routeSession = params.sessionId ? { host: params.hostId ?? LOCAL_HOST, id: params.sessionId } : undefined;
+	const routeSessionRef = useRef<Ref | undefined>(routeSession);
+	routeSessionRef.current = routeSession;
 
 	// Being on the session route is not the same as watching the agent: its pane
 	// renders one terminal at a time, so a shell or reviewer tab hides the agent
@@ -157,9 +159,11 @@ export function NotificationRuntime() {
 	// is the one on screen. Read the store imperatively — this feeds a getter for
 	// the long-lived SSE connection, which needs the current value, not a render.
 	const getVisibleAgentSessionId = useCallback(() => {
-		const sessionId = routeSessionIdRef.current;
-		if (!sessionId) return undefined;
-		return useUiStore.getState().visibleTerminalKindBySession[sessionId] === "worker" ? sessionId : undefined;
+		const session = routeSessionRef.current;
+		// Notifications are the local daemon's; a remote host's visible terminal
+		// says nothing about them.
+		if (!session || session.host !== LOCAL_HOST) return undefined;
+		return useUiStore.getState().visibleTerminalKindBySession[refKey(session)] === "worker" ? session.id : undefined;
 	}, []);
 
 	useEffect(
@@ -287,7 +291,7 @@ export function NotificationCenter({ style }: NotificationCenterProps) {
 		setRestoringSessionId(sessionId);
 		setActionError(null);
 		try {
-			const result = await restoreSession(sessionId);
+			const result = await restoreSession({ host: LOCAL_HOST, id: sessionId });
 			if (result.status === "success") {
 				openSession(notification);
 				setPanelOpen(false);

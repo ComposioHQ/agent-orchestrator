@@ -1,6 +1,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { useCanGoBack, useNavigate, useParams, useRouter, useRouterState } from "@tanstack/react-router";
+import { LOCAL_HOST, type Ref } from "../lib/hosts";
 import {
 	DndContext,
 	DragOverlay,
@@ -350,31 +351,25 @@ function useSelection() {
 	const navigate = useNavigate();
 	const openGlobalSettings = useUiStore((state) => state.openGlobalSettings);
 	const openProjectSettings = useUiStore((state) => state.openProjectSettings);
-	const params = useParams({ strict: false }) as {
-		projectId?: string;
-		sessionId?: string;
-	};
-	const pathname = useRouterState({
-		select: (state) => state.location.pathname,
-	});
+	const params = useParams({ strict: false }) as { hostId?: string; projectId?: string; sessionId?: string };
+	const pathname = useRouterState({ select: (state) => state.location.pathname });
 	const goHome = useCallback(() => void navigate({ to: "/" }), [navigate]);
 	const goGlobalSettings = useCallback(() => openGlobalSettings(), [openGlobalSettings]);
 	const goConnectMobile = useCallback(() => openGlobalSettings("mobile"), [openGlobalSettings]);
-	const goSettings = useCallback((projectId: string) => openProjectSettings(projectId), [openProjectSettings]);
+	const goSettings = useCallback((project: Ref) => openProjectSettings(project), [openProjectSettings]);
 	const goProject = useCallback(
-		(projectId: string) => void navigate({ to: "/projects/$projectId", params: { projectId } }),
+		(project: Ref) =>
+			void navigate({ to: "/host/$hostId/project/$projectId", params: { hostId: project.host, projectId: project.id } }),
 		[navigate],
 	);
 	const goSession = useCallback(
-		(projectId: string, sessionId: string) =>
-			void navigate({
-				to: "/projects/$projectId/sessions/$sessionId",
-				params: { projectId, sessionId },
-			}),
+		(session: Ref) =>
+			void navigate({ to: "/host/$hostId/session/$sessionId", params: { hostId: session.host, sessionId: session.id } }),
 		[navigate],
 	);
 	return useMemo(() => ({
 		isHome: pathname === "/",
+		activeHostId: params.hostId ?? LOCAL_HOST,
 		activeProjectId: params.projectId,
 		activeSessionId: params.sessionId,
 		goHome,
@@ -385,7 +380,7 @@ function useSelection() {
 		goSettings,
 		goProject,
 		goSession,
-	}), [goConnectMobile, goGlobalSettings, goHome, goProject, goSession, goSettings, params.projectId, params.sessionId, pathname]);
+	}), [goConnectMobile, goGlobalSettings, goHome, goProject, goSession, goSettings, openGlobalSettings, params.hostId, params.projectId, params.sessionId, pathname]);
 }
 
 // Colour tracks the session's board section, preserving SCM state while the
@@ -1136,7 +1131,7 @@ const ProjectItemContent = memo(function ProjectItemContent({
 		if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
 	}, []);
 	const openSession = useCallback((sessionId: string) => {
-		selection.goSession(workspace.id, sessionId);
+		selection.goSession({ host: workspace.host, id: sessionId });
 	}, [selection, workspace.id]);
 	// The project's live orchestrator (if any) backs the hover Orchestrator
 	// button: navigate to it when present, otherwise spawn one first.
@@ -1154,7 +1149,7 @@ const ProjectItemContent = memo(function ProjectItemContent({
 		if (isProjectRestarting) return;
 		if (!expanded) toggleDisclosure();
 		if (orchestrator) {
-			selection.goSession(workspace.id, orchestrator.id);
+			selection.goSession({ host: orchestrator.host, id: orchestrator.id });
 			return;
 		}
 		// A cloud project has no local orchestrator-agent config, so the settings
@@ -1165,7 +1160,7 @@ const ProjectItemContent = memo(function ProjectItemContent({
 			try {
 				const sessionId = await spawnCloudOrchestrator(queryClient, workspace.id);
 				await queryClient.invalidateQueries({ queryKey: cloudSessionsQueryKey });
-				selection.goSession(workspace.id, sessionId);
+				selection.goSession({ host: workspace.host, id: sessionId });
 			} catch (err) {
 				console.error("Failed to spawn cloud orchestrator:", err);
 			} finally {
@@ -1174,14 +1169,14 @@ const ProjectItemContent = memo(function ProjectItemContent({
 			return;
 		}
 		if (!hasConfiguredOrchestratorAgent(workspace)) {
-			selection.goSettings(workspace.id);
+			selection.goSettings({ host: workspace.host, id: workspace.id });
 			return;
 		}
 		setIsSpawning(true);
 		try {
 			const sessionId = await spawnOrchestrator(workspace.id, "sidebar");
 			await queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
-			selection.goSession(workspace.id, sessionId);
+			selection.goSession({ host: workspace.host, id: sessionId });
 		} catch (err) {
 			console.error("Failed to spawn orchestrator:", err);
 		} finally {
@@ -1197,11 +1192,11 @@ const ProjectItemContent = memo(function ProjectItemContent({
 		if (consumeDragClick(workspace.id)) return;
 		if (!expanded) {
 			toggleDisclosure();
-			selection.goProject(workspace.id);
+			selection.goProject({ host: workspace.host, id: workspace.id });
 		} else if (dashboardActive) {
 			toggleDisclosure();
 		} else {
-			selection.goProject(workspace.id);
+			selection.goProject({ host: workspace.host, id: workspace.id });
 		}
 	};
 
@@ -1436,12 +1431,12 @@ const ProjectItemContent = memo(function ProjectItemContent({
 										</TooltipContent>
 									</Tooltip>
 									<DropdownMenuContent side="right" align="start" className="min-w-44">
-										<DropdownMenuItem disabled={isProjectRestarting} onSelect={() => requestNewTask(workspace.id)}>
+										<DropdownMenuItem disabled={isProjectRestarting} onSelect={() => requestNewTask({ host: workspace.host, id: workspace.id })}>
 											<Plus aria-hidden="true" />
 											{t("shell.newSession")}
 										</DropdownMenuItem>
 										<DropdownMenuSeparator />
-										<DropdownMenuItem onSelect={() => selection.goSettings(workspace.id)}>
+										<DropdownMenuItem onSelect={() => selection.goSettings({ host: workspace.host, id: workspace.id })}>
 											<Settings aria-hidden="true" />
 											{t("shell.projectSettings")}
 										</DropdownMenuItem>
@@ -1561,12 +1556,12 @@ const ProjectItemContent = memo(function ProjectItemContent({
 				</motion.li>
 			</ContextMenuTrigger>
 			<ContextMenuContent className="min-w-44">
-				<ContextMenuItem disabled={isProjectRestarting} onSelect={() => requestNewTask(workspace.id)}>
+				<ContextMenuItem disabled={isProjectRestarting} onSelect={() => requestNewTask({ host: workspace.host, id: workspace.id })}>
 					<Plus aria-hidden="true" />
 					{t("shell.newSession")}
 				</ContextMenuItem>
 				<ContextMenuSeparator />
-				<ContextMenuItem onSelect={() => selection.goSettings(workspace.id)}>
+				<ContextMenuItem onSelect={() => selection.goSettings({ host: workspace.host, id: workspace.id })}>
 					<Settings aria-hidden="true" />
 					{t("shell.projectSettings")}
 				</ContextMenuItem>
@@ -1641,9 +1636,9 @@ const PinnedSessionRow = memo(function PinnedSessionRow({
 }: {
 	session: WorkspaceSession;
 	active: boolean;
-	onOpenSession: (projectId: string, sessionId: string) => void;
+	onOpenSession: (session: Ref) => void;
 }) {
-	const onOpen = useCallback(() => onOpenSession(session.workspaceId, session.id), [onOpenSession, session.id, session.workspaceId]);
+	const onOpen = useCallback(() => onOpenSession({ host: session.host, id: session.id }), [onOpenSession, session.host, session.id]);
 	return <SessionRow session={session} active={active} indented={false} onOpen={onOpen} />;
 });
 
@@ -1754,7 +1749,7 @@ function SessionRow({
 		const name = draft.trim();
 		if (!name || name === session.title) return;
 		try {
-			await renameSession(session.id, name);
+			await renameSession(session, name);
 			await queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
 		} catch (err) {
 			console.error("Failed to rename session:", err);

@@ -28,6 +28,11 @@ vi.mock("../lib/api-client", () => ({
 			: fallback,
 }));
 
+// clientFor(LOCAL_HOST) is the client apiClient already was.
+vi.mock("../lib/host-clients", () => ({
+	clientFor: () => ({ POST: postMock }),
+}));
+
 const hookState = vi.hoisted(() => ({
 	navigate: vi.fn(),
 	goBack: vi.fn(),
@@ -95,6 +100,7 @@ vi.mock("../hooks/useBrowserView", () => ({
 }));
 
 const session: WorkspaceSession = {
+	host: "local",
 	id: "sess-1",
 	workspaceId: "ws-1",
 	workspaceName: "my-app",
@@ -149,7 +155,7 @@ function PersistentBrowserPanelView({
 		previewRevision: currentSession.previewRevision,
 	});
 	const annotationQueue = useBrowserAnnotationQueue({
-		sessionId: currentSession.id,
+		session: currentSession,
 		navUrl: browserView.navState.url,
 	});
 	if (!visible) return null;
@@ -1345,7 +1351,7 @@ describe("BrowserPanel", () => {
 		try {
 			const { result } = renderHook(() =>
 				useBrowserAnnotationQueue({
-					sessionId: "sess-1",
+					session: { host: "local", id: "sess-1" },
 					navUrl: "http://localhost:5173/",
 				}),
 			);
