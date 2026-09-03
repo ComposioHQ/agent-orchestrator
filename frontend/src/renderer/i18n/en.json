@@ -16,6 +16,7 @@
 	"home.jumpBack": "Jump back right in",
 	"home.recentProjects": "Recent projects",
 	"home.currentProjects": "Current projects",
+	"home.never": "Never",
 	"home.starUs": "Star Us",
 	"browser.agentAction": "Agent {{verb}}",
 	"browser.agentUsing": "Agent using browser",

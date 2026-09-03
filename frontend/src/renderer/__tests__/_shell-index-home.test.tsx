@@ -85,4 +85,19 @@ describe("shell index route", () => {
 			params: { projectId: "proj-1" },
 		});
 	});
+
+	it("shows only the first three projects", () => {
+		routeMocks.workspaces = [
+			{ id: "proj-1", name: "Project One", kind: "single_repo", path: "/repo/project-one", sessions: [] },
+			{ id: "proj-2", name: "Project Two", kind: "single_repo", path: "/repo/project-two", sessions: [] },
+			{ id: "proj-3", name: "Project Three", kind: "single_repo", path: "/repo/project-three", sessions: [] },
+			{ id: "proj-4", name: "Project Four", kind: "single_repo", path: "/repo/project-four", sessions: [] },
+		];
+
+		render(<HomePage />);
+
+		expect(screen.getByRole("button", { name: /Project One/ })).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: /Project Three/ })).toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: /Project Four/ })).not.toBeInTheDocument();
+	});
 });
