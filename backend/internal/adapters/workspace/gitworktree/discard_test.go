@@ -320,3 +320,82 @@ func TestDestroyFallsBackToGitWhenTheMoveIsImpossible(t *testing.T) {
 		t.Fatal("worktree still registered after fallback destroy")
 	}
 }
+
+// Work that appears between the dirty probe and the delete must not be taken.
+// The probe therefore runs against the directory after it has been moved aside:
+// once the worktree path no longer resolves, nothing can add to what is about
+// to be unlinked, so the state git reports is the state that gets deleted.
+// Probing the live path first and deleting afterwards leaves exactly that gap.
+func TestDirtyProbeRunsAgainstTheIsolatedDirectory(t *testing.T) {
+	git := requireGit(t)
+	tmp := t.TempDir()
+	repo := setupOriginClone(t, git, tmp)
+	ws, err := New(Options{Binary: git, ManagedRoot: filepath.Join(tmp, "managed"), RepoResolver: StaticRepoResolver{"proj": repo}})
+	if err != nil {
+		t.Fatalf("new: %v", err)
+	}
+	ctx := context.Background()
+	info, err := ws.Create(ctx, ports.WorkspaceConfig{ProjectID: "proj", SessionID: "sess", Branch: "feature/one"})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	inner := ws.run
+	var statusPaths []string
+	ws.run = func(ctx context.Context, binary string, args ...string) ([]byte, error) {
+		if joined := strings.Join(args, " "); strings.Contains(joined, "status --porcelain") {
+			for i, a := range args {
+				if a == "-C" && i+1 < len(args) {
+					statusPaths = append(statusPaths, args[i+1])
+				}
+			}
+		}
+		return inner(ctx, binary, args...)
+	}
+
+	if err := ws.Destroy(ctx, info); err != nil {
+		t.Fatalf("destroy: %v", err)
+	}
+	if len(statusPaths) == 0 {
+		t.Fatal("no dirty probe ran; teardown must not delete a worktree it never checked")
+	}
+	for _, probed := range statusPaths {
+		if probed == info.Path {
+			t.Fatalf("dirty probe ran against the live worktree %q; anything written after it would be deleted unchecked", probed)
+		}
+		if !strings.HasPrefix(probed, ws.discardedRoot()) {
+			t.Fatalf("dirty probe ran against %q, want a path under the discard root %q", probed, ws.discardedRoot())
+		}
+	}
+	ws.waitForDiscards()
+}
+
+// A failed prune must leave both halves intact. Deleting the directory anyway
+// reports failure while destroying the worktree and stranding its registration,
+// and that dangling entry blocks the path from being reused.
+func TestForceDestroyKeepsTheWorktreeWhenPruneFails(t *testing.T) {
+	root := t.TempDir()
+	repo := t.TempDir()
+	ws, err := New(Options{ManagedRoot: root, RepoResolver: StaticRepoResolver{"proj": repo}})
+	if err != nil {
+		t.Fatalf("new: %v", err)
+	}
+	path := filepath.Join(ws.managedRoot, "proj", "sess")
+	if err := mkdirFile(path, "keep.txt"); err != nil {
+		t.Fatalf("seed path: %v", err)
+	}
+	ws.run = func(_ context.Context, _ string, args ...string) ([]byte, error) {
+		if strings.Contains(strings.Join(args, " "), "worktree prune") {
+			return nil, errors.New("prune exploded")
+		}
+		return nil, nil
+	}
+
+	err = ws.ForceDestroy(context.Background(), ports.WorkspaceInfo{Path: path, ProjectID: "proj", SessionID: "sess", Branch: "feature/one"})
+	if err == nil || !strings.Contains(err.Error(), "prune") {
+		t.Fatalf("force destroy error = %v, want the prune failure", err)
+	}
+	ws.waitForDiscards()
+	if _, statErr := os.Stat(filepath.Join(path, "keep.txt")); statErr != nil {
+		t.Fatalf("worktree must survive a failed prune so the caller can retry: %v", statErr)
+	}
+}

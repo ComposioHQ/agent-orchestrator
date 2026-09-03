@@ -127,7 +127,9 @@ func (w *Workspace) worktreeRegistration(ctx context.Context, repo, path string)
 }
 
 // worktreeDirty is isDirty with the same "could not ask" distinction as
-// worktreeRegistration: an unreadable status is not a clean status.
+// worktreeRegistration: an unreadable status is not a clean status. It takes a
+// path rather than the worktree's registered location because the fast path
+// asks about the directory after it has been moved aside.
 func (w *Workspace) worktreeDirty(ctx context.Context, path string) (dirty, conclusive bool) {
 	dirty, err := w.isDirty(ctx, path)
 	if err != nil {
@@ -149,18 +151,29 @@ func (w *Workspace) discardWorktree(ctx context.Context, repo, path string) (boo
 	if !conclusive || locked {
 		return false, nil
 	}
-	if registered {
-		dirty, conclusive := w.worktreeDirty(ctx, path)
-		if !conclusive {
-			return false, nil
-		}
-		if dirty {
-			return true, fmt.Errorf("gitworktree: refusing to remove %q: %w (worktree has uncommitted changes)", path, ports.ErrWorkspaceDirty)
-		}
-	}
 	discarded, moved := w.discard(path)
 	if !moved {
 		return false, nil
+	}
+	// Dirtiness is judged AFTER the move, deliberately. Checking first and
+	// deleting afterwards leaves a window: teardown stops the agent and gates
+	// the session's shells before it gets here, but a stray watcher or
+	// background child can still land a file in the worktree between the two,
+	// and the delete would then take work the check said was not there. Once
+	// the directory has been renamed, the worktree path no longer resolves for
+	// anyone, so what git reports here is exactly what gets unlinked. The
+	// worktree stays registered until the prune below, which is what keeps
+	// `git status` answerable at the new location.
+	if registered {
+		dirty, conclusive := w.worktreeDirty(ctx, discarded)
+		if !conclusive {
+			w.undiscard(discarded, path)
+			return false, nil
+		}
+		if dirty {
+			w.undiscard(discarded, path)
+			return true, fmt.Errorf("gitworktree: refusing to remove %q: %w (worktree has uncommitted changes)", path, ports.ErrWorkspaceDirty)
+		}
 	}
 	if _, err := w.run(ctx, w.binary, worktreePruneArgs(repo)...); err != nil {
 		w.undiscard(discarded, path)

@@ -466,10 +466,16 @@ func (w *Workspace) ForceDestroy(ctx context.Context, info ports.WorkspaceInfo) 
 	// background. This runs on daemon shutdown and orchestrator replacement,
 	// which stalled on the same unlink that used to stall a kill.
 	if discarded, moved := w.discard(path); moved {
-		defer w.removeInBackground(discarded)
+		// A failed prune must leave both halves intact. Deleting anyway would
+		// report failure while destroying the directory and stranding its
+		// registration, and that dangling entry blocks the path from being
+		// used again; restoring lets the caller retry against the state it
+		// started from.
 		if _, err := w.run(ctx, w.binary, worktreePruneArgs(repo)...); err != nil {
+			w.undiscard(discarded, path)
 			return fmt.Errorf("gitworktree: worktree prune: %w", err)
 		}
+		w.removeInBackground(discarded)
 		return nil
 	}
 	// --force bypasses git's dirty check; errors here are advisory (the path may
@@ -1249,8 +1255,12 @@ func (w *Workspace) forceDestroyPath(ctx context.Context, repo, path string) err
 	// rename the directory out of the way, drop the registration, unlink in the
 	// background.
 	if discarded, ok := w.discard(path); ok {
-		defer w.removeInBackground(discarded)
-		return w.pruneWorktrees(ctx, repo)
+		if err := w.pruneWorktrees(ctx, repo); err != nil {
+			w.undiscard(discarded, path)
+			return err
+		}
+		w.removeInBackground(discarded)
+		return nil
 	}
 	_, _ = w.run(ctx, w.binary, worktreeForceRemoveArgs(repo, path)...)
 	if err := w.pruneWorktrees(ctx, repo); err != nil {
