@@ -37,6 +37,7 @@ function readinessCatalog(installed: string[], authentication: Partial<Record<st
 			{ id: "devin", label: "Devin" },
 			{ id: "cursor", label: "Cursor" },
 			{ id: "goose", label: "Goose" },
+			{ id: "qwen", label: "Qwen" },
 		].map((agent) => ({
 			...agent,
 			installation: { state: installed.includes(agent.id) ? "installed" : "not_installed", freshness: "fresh", reason: "", reasonCode: "", attemptedAt: null, checkedAt: null },
@@ -58,6 +59,7 @@ const authPlans = {
 		{ agentId: "claude-code", action: "login", available: true, documentationUrl: "https://example.test/claude" },
 		{ agentId: "codex", action: "login", available: true, documentationUrl: "https://example.test/codex" },
 		{ agentId: "aider", action: "setup", available: true, documentationUrl: "https://example.test/aider" },
+		{ agentId: "qwen", action: "setup", available: true, documentationUrl: "https://example.test/qwen" },
 	],
 };
 
@@ -228,6 +230,36 @@ describe("HarnessSettingsSection", () => {
 
 		expect(within(codexRow).getByRole("button", { name: "Login opened" })).toBeDisabled();
 		expect(useUiStore.getState().activeShellTerminalHandleId).toBeNull();
+	});
+
+	it("labels Qwen provider configuration as setup", async () => {
+		const unauthorized = readinessCatalog(["qwen"], { qwen: "unauthorized" });
+		vi.mocked(apiClient.GET).mockImplementation(async (path) => {
+			if (path === "/api/v1/agents/readiness") return { data: unauthorized } as never;
+			if (path === "/api/v1/agents/installers") return { data: plans } as never;
+			if (path === "/api/v1/agents/install-jobs") return { data: { jobs: [] } } as never;
+			if (path === "/api/v1/agents/auth-plans") return { data: authPlans } as never;
+			return { data: undefined } as never;
+		});
+		vi.mocked(apiClient.POST).mockImplementation(async (path) => {
+			if (path === "/api/v1/agents/readiness/ensure") return { data: unauthorized } as never;
+			if (path === "/api/v1/agents/{agent}/auth") {
+				return { data: { agentId: "qwen", action: "setup", terminalInput: "i\x7f/auth\r", terminal: { handleId: "shellterm-qwen-setup", workingDir: "/tmp/ao", title: "Set up Qwen", createdAt: new Date().toISOString() } } } as never;
+			}
+			return { data: undefined } as never;
+		});
+		const user = userEvent.setup();
+		renderSection();
+		const qwenRow = (await screen.findByText("Qwen")).closest('[data-agent="qwen"]') as HTMLElement;
+
+		await user.click(await within(qwenRow).findByRole("button", { name: "Set up" }));
+		await act(async () => terminalMock.onStateChange?.("attached"));
+
+		expect(within(qwenRow).queryByRole("button", { name: "Open login" })).not.toBeInTheDocument();
+		await user.click(within(qwenRow).getByRole("button", { name: "Open setup" }));
+		expect(terminalMock.inputRequest).toEqual({ id: 1, data: "i\x7f/auth\r" });
+		await act(async () => terminalMock.onInputRequestResult?.(1, true));
+		expect(within(qwenRow).getByRole("button", { name: "Setup opened" })).toBeDisabled();
 	});
 
 	it("verifies login and closes the inline terminal when the command exits", async () => {

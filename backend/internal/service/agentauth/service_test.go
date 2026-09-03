@@ -74,7 +74,7 @@ func TestStartOpensResolvedPlanAndReturnsSafeTerminal(t *testing.T) {
 		t.Fatalf("OpenCommandTerminal calls = %d, want 1", opener.calls)
 	}
 	wantInput := shellterm.OpenCommandTerminalInput{
-		Argv:  []string{"/test/bin/pi", "--verbose"},
+		Argv:  []string{"/test/bin/pi"},
 		Title: "Log in to Pi",
 	}
 	if !reflect.DeepEqual(opener.input, wantInput) {

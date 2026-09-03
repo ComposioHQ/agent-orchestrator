@@ -36,6 +36,7 @@ const AUTH_TERMINAL_LIFETIME_MS = 15 * 60_000;
 
 type AuthTerminalWorkflow = {
 	agentId: AgentId;
+	action: string;
 	terminal: components["schemas"]["ShellTerminalResponse"];
 	guidance: string;
 	terminalInput?: string;
@@ -228,6 +229,7 @@ export function HarnessSettingsSection({ titleHidden = false }: { titleHidden?: 
 			const result = await startAgentAuth.mutateAsync(agentId);
 			const workflow: AuthTerminalWorkflow = {
 				agentId,
+				action: result.action,
 				terminal: result.terminal,
 				guidance: result.guidance ?? "",
 				terminalInput: result.terminalInput,
@@ -547,7 +549,7 @@ function HarnessAuthTerminalPanel({ workflow, onClose, onRetry, onTerminalState 
 				? t("settings.harness.authClosing")
 				: workflow.reason ?? t("settings.harness.loginUnknown");
 	const retryable = workflow.phase === "unauthorized" || workflow.phase === "unverified" || workflow.phase === "timed_out" || workflow.phase === "cleanup_failed";
-	const openLogin = () => {
+	const openAuthAction = () => {
 		if (!workflow.terminalInput || terminalState !== "attached" || commandPending || commandSent) return;
 		inputRequestIdRef.current += 1;
 		activeInputRequestIdRef.current = inputRequestIdRef.current;
@@ -570,9 +572,11 @@ function HarnessAuthTerminalPanel({ workflow, onClose, onRetry, onTerminalState 
 				</div>
 				<div className="flex shrink-0 items-center gap-2">
 					{workflow.terminalInput && workflow.phase === "running" ? (
-						<Button type="button" size="sm" variant="outline" disabled={terminalState !== "attached" || commandPending || commandSent} onClick={openLogin}>
+						<Button type="button" size="sm" variant="outline" disabled={terminalState !== "attached" || commandPending || commandSent} onClick={openAuthAction}>
 							{commandSent ? <Check aria-hidden="true" /> : <LogIn aria-hidden="true" />}
-							{commandSent ? t("settings.harness.loginOpened") : t("settings.harness.openLogin")}
+							{workflow.action === "setup"
+								? commandSent ? t("settings.harness.setupOpened") : t("settings.harness.openSetup")
+								: commandSent ? t("settings.harness.loginOpened") : t("settings.harness.openLogin")}
 						</Button>
 					) : null}
 					<button type="button" aria-label={t("settings.close")} className="grid size-7 place-items-center rounded text-settings-muted hover:bg-interactive-hover" disabled={workflow.phase === "closing" || workflow.phase === "verifying"} onClick={onClose}>
@@ -594,7 +598,9 @@ function HarnessAuthTerminalPanel({ workflow, onClose, onRetry, onTerminalState 
 			{retryable ? (
 				<div className="flex items-center justify-end border-t border-(--color-border-settings-input) bg-surface/90 px-3 py-2">
 					<Button type="button" size="sm" variant="outline" onClick={workflow.phase === "cleanup_failed" ? onClose : onRetry}>
-						{workflow.phase === "cleanup_failed" ? t("settings.harness.retry") : t("settings.harness.login")}
+						{workflow.phase === "cleanup_failed"
+							? t("settings.harness.retry")
+							: workflow.action === "setup" ? t("settings.harness.setup") : t("settings.harness.login")}
 					</Button>
 				</div>
 			) : null}
