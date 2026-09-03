@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
@@ -34,8 +35,19 @@ func TestDestroyDiscardsWorktreeWithoutUnlinkingInline(t *testing.T) {
 	}
 	writeIgnoredTree(t, info.Path)
 
+	inner := ws.run
+	var calls []string
+	ws.run = func(ctx context.Context, binary string, args ...string) ([]byte, error) {
+		calls = append(calls, strings.Join(args, " "))
+		return inner(ctx, binary, args...)
+	}
 	if err := ws.Destroy(ctx, info); err != nil {
 		t.Fatalf("destroy: %v", err)
+	}
+	for _, call := range calls {
+		if strings.Contains(call, "worktree remove") {
+			t.Fatalf("Destroy shelled out to %q instead of discarding the directory", call)
+		}
 	}
 	if _, err := os.Stat(info.Path); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("worktree path after destroy = %v, want not exist", err)
@@ -112,8 +124,22 @@ func TestForceDestroyDiscardsWorktree(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(info.Path, "in-progress.txt"), []byte("agent work"), 0o600); err != nil {
 		t.Fatalf("seed dirty file: %v", err)
 	}
+	// Recording the git calls is what proves the fast path ran: a ForceDestroy
+	// that fell through to `git worktree remove --force` would still leave the
+	// path gone and pass every assertion below.
+	inner := ws.run
+	var calls []string
+	ws.run = func(ctx context.Context, binary string, args ...string) ([]byte, error) {
+		calls = append(calls, strings.Join(args, " "))
+		return inner(ctx, binary, args...)
+	}
 	if err := ws.ForceDestroy(ctx, info); err != nil {
 		t.Fatalf("force destroy: %v", err)
+	}
+	for _, call := range calls {
+		if strings.Contains(call, "worktree remove") {
+			t.Fatalf("ForceDestroy shelled out to %q instead of discarding the directory", call)
+		}
 	}
 	if _, err := os.Stat(info.Path); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("worktree path after force destroy = %v, want not exist", err)
@@ -162,4 +188,46 @@ func writeIgnoredTree(t *testing.T, worktree string) {
 			t.Fatalf("write dep %s: %v", name, err)
 		}
 	}
+}
+
+// Once the registration is pruned, restoring the directory would be a worse
+// outcome than losing it: the next teardown would see an unregistered stray and
+// delete it with no dirty check at all. The move only happens after a
+// conclusive clean status, so letting it go costs nothing that is not already
+// committed on the session branch.
+func TestDiscardKeepsGoingWhenThePostPruneProbeFails(t *testing.T) {
+	root := t.TempDir()
+	repo := t.TempDir()
+	ws, err := New(Options{ManagedRoot: root, RepoResolver: StaticRepoResolver{"proj": repo}})
+	if err != nil {
+		t.Fatalf("new: %v", err)
+	}
+	path := filepath.Join(ws.managedRoot, "proj", "sess")
+	if err := mkdirFile(path, "committed.txt"); err != nil {
+		t.Fatalf("seed path: %v", err)
+	}
+	listCalls := 0
+	ws.run = func(_ context.Context, _ string, args ...string) ([]byte, error) {
+		joined := strings.Join(args, " ")
+		switch {
+		case strings.Contains(joined, "worktree list --porcelain"):
+			listCalls++
+			if listCalls > 1 {
+				return nil, errors.New("git blew up after the prune")
+			}
+			return []byte("worktree " + path + "\nbranch refs/heads/feature/one\n"), nil
+		case strings.Contains(joined, "status --porcelain"):
+			return nil, nil
+		default:
+			return nil, nil
+		}
+	}
+
+	if err := ws.Destroy(context.Background(), ports.WorkspaceInfo{Path: path, ProjectID: "proj", SessionID: "sess", Branch: "feature/one"}); err != nil {
+		t.Fatalf("destroy: %v", err)
+	}
+	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("de-registered directory was restored to %q (err = %v); a later teardown would delete it unchecked", path, err)
+	}
+	ws.waitForDiscards()
 }

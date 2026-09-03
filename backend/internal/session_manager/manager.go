@@ -1525,11 +1525,13 @@ func (m *Manager) RollbackSpawn(ctx context.Context, id domain.SessionID) (delet
 	return m.rollbackSpawn(ctx, id)
 }
 
-// killTeardownBudget bounds the detached teardown Kill runs below. Generous on
-// purpose: every step is expected to finish in well under a second, and the
-// only thing this ceiling protects against is a git or runtime call that never
-// returns at all.
-const killTeardownBudget = 5 * time.Minute
+// killTeardownBudget bounds the detached teardown Kill runs below. Sized just
+// past the REST layer's default 60s request cap: long enough that a teardown
+// which was going to finish still finishes coherently after the caller has
+// given up, short enough that a genuinely wedged git or runtime call does not
+// hold this session's agent-operation lock (and the connection chi only
+// cancels, never aborts) for minutes on end.
+const killTeardownBudget = 90 * time.Second
 
 // Kill tears down the runtime and workspace, then records terminal intent with
 // the LCM. A workspace teardown refused by the worktree-remove safety

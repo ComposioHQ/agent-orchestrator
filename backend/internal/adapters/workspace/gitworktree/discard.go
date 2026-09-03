@@ -166,10 +166,16 @@ func (w *Workspace) discardWorktree(ctx context.Context, repo, path string) (boo
 		w.undiscard(discarded, path)
 		return false, nil //nolint:nilerr // the git-driven path re-runs prune and reports the failure
 	}
+	// Past this point the registration is gone, so restoring the directory is
+	// no longer a safe undo: it would put a de-registered worktree back on disk,
+	// and the next teardown would treat it as an unregistered stray and delete
+	// it without a dirty check. Nothing is at risk in letting it go instead,
+	// because the move only happened after a conclusive clean status: every
+	// change in there is already committed on the session branch.
 	stillRegistered, _, conclusive := w.worktreeRegistration(ctx, repo, path)
 	if !conclusive {
-		w.undiscard(discarded, path)
-		return false, nil
+		w.removeInBackground(discarded)
+		return true, nil
 	}
 	if stillRegistered {
 		w.undiscard(discarded, path)

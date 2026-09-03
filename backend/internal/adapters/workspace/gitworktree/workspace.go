@@ -455,6 +455,17 @@ func (w *Workspace) ForceDestroy(ctx context.Context, info ports.WorkspaceInfo) 
 	if err != nil {
 		return err
 	}
+	// Force teardown has no refusal to honour, so the move is unconditional:
+	// rename the directory out of the way, drop the registration, unlink in the
+	// background. This runs on daemon shutdown and orchestrator replacement,
+	// which stalled on the same unlink that used to stall a kill.
+	if discarded, moved := w.discard(path); moved {
+		defer w.removeInBackground(discarded)
+		if _, err := w.run(ctx, w.binary, worktreePruneArgs(repo)...); err != nil {
+			return fmt.Errorf("gitworktree: worktree prune: %w", err)
+		}
+		return nil
+	}
 	// --force bypasses git's dirty check; errors here are advisory (the path may
 	// already be gone). We proceed to prune regardless.
 	_, _ = w.run(ctx, w.binary, worktreeForceRemoveArgs(repo, path)...)
