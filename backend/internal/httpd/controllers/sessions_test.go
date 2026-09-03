@@ -325,6 +325,14 @@ func (f *fakeSessionService) Restore(_ context.Context, id domain.SessionID) (se
 	return sessionsvc.RestoreOutcome{Session: s, Mode: sessionsvc.RestoreModeView("native")}, nil
 }
 
+func (f *fakeSessionService) ExitAgent(_ context.Context, id domain.SessionID) (sessionsvc.ExitAgentOutcome, error) {
+	s := f.sessions[id]
+	s.Activity.State = domain.ActivityExited
+	s.Status = domain.StatusExited
+	f.sessions[id] = s
+	return sessionsvc.ExitAgentOutcome{Session: s}, nil
+}
+
 func (f *fakeSessionService) ResumeAgent(_ context.Context, id domain.SessionID) (sessionsvc.ResumeAgentOutcome, error) {
 	s := f.sessions[id]
 	s.Activity.State = domain.ActivityIdle
@@ -1053,6 +1061,21 @@ func TestSessionsAPI_ListSpawnGetAndActions(t *testing.T) {
 	mustJSON(t, body, &restored)
 	if restored.SessionID != "ao-2" || restored.RestoreMode != "native" {
 		t.Fatalf("restore response = %#v", restored)
+	}
+
+	body, status, _ = doRequest(t, srv, "POST", "/api/v1/sessions/ao-2/exit-agent", "")
+	if status != http.StatusOK {
+		t.Fatalf("exit agent = %d, want 200; body=%s", status, body)
+	}
+	var exited struct {
+		SessionID string `json:"sessionId"`
+		Session   struct {
+			Activity domain.Activity `json:"activity"`
+		} `json:"session"`
+	}
+	mustJSON(t, body, &exited)
+	if exited.SessionID != "ao-2" || exited.Session.Activity.State != domain.ActivityExited {
+		t.Fatalf("exit response = %#v", exited)
 	}
 
 	body, status, _ = doRequest(t, srv, "POST", "/api/v1/sessions/ao-2/resume-agent", "")

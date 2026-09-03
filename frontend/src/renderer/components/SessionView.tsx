@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { PanelRight, Plus } from "lucide-react";
+import { LoaderCircle, PanelRight, Plus } from "lucide-react";
 import { motion, useReducedMotion } from "motion/react";
 import {
 	useCallback,
@@ -41,7 +41,12 @@ import { SwitchAgentDialog } from "./SwitchAgentDialog";
 import { SessionTopbarHost } from "./SessionTopbarPortal";
 import { TerminalSwitchAgentButton } from "./TerminalSwitchAgentButton";
 import { TopbarButton } from "./TopbarButton";
+import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
+import { Button } from "./ui/button";
 import { useBrowserView } from "../hooks/useBrowserView";
+import { useCodexAccountActions } from "../hooks/useCodexAccountActions";
+import { useCodexAccountsQuery } from "../hooks/useCodexAccountsQuery";
+import { codexSwitchDisplay } from "../hooks/codex-accounts-state";
 import { useFileAnnotation } from "../hooks/useFileAnnotation";
 import { useResizable } from "../hooks/useResizable";
 import {
@@ -57,6 +62,7 @@ import {
 } from "../hooks/useSessionInterfaceTransition";
 import { toCloudWorkspaceSession, useCloudSessionQuery, useWorkspaceQuery } from "../hooks/useWorkspaceQuery";
 import { useCloudGate } from "../hooks/useCloudGate";
+import { useAgentSwitchRouteVisibility } from "../hooks/useAgentSwitchVisibility";
 import { useSessionHandoffMenu } from "../hooks/useSessionHandoffMenu";
 import { clearSwitchAgentState } from "../hooks/useSwitchAgent";
 import { useWindowFullScreen } from "../hooks/useWindowFullScreen";
@@ -549,6 +555,24 @@ export function SessionView({ sessionId, cloudOrgId, projectId }: SessionViewPro
 					cloudOrgId,
 				)
 			: undefined);
+	const routeVisibilityOperation =
+		session?.activeAgentSwitch &&
+		session.activeAgentSwitch.state !== "completed" &&
+		session.activeAgentSwitch.state !== "failed"
+			? "active"
+			: "history";
+	useAgentSwitchRouteVisibility(`session/${sessionId}`, routeVisibilityOperation);
+	const codexAccounts = useCodexAccountsQuery(session?.provider === "codex");
+	const codexAccountActions = useCodexAccountActions(queryClient);
+	const codexAccountSwitch = codexAccounts.data?.currentSwitch;
+	const codexAccountSwitchPresentation = codexAccountSwitch ? codexSwitchDisplay(codexAccountSwitch) : null;
+	const codexAccountSwitchBlocksSession = Boolean(
+		session?.provider === "codex" &&
+			codexAccountSwitch &&
+			!["completed", "failed"].includes(codexAccountSwitch.phase) &&
+			(codexAccountSwitch.sessions.length === 0 ||
+				codexAccountSwitch.sessions.some((entry) => entry.sessionId === session.id)),
+	);
 	const interfaceContext = session
 		? (session.cloud ?? null)
 		: cloudOrgId
@@ -1541,6 +1565,37 @@ export function SessionView({ sessionId, cloudOrgId, projectId }: SessionViewPro
 
 	return (
 		<div className="relative flex h-full min-h-0 flex-col bg-background text-foreground" data-testid="session-detail">
+			{codexAccountSwitchBlocksSession ? (
+				<div
+					className="absolute inset-0 z-50 grid place-items-center bg-background/80 p-6 backdrop-blur-sm"
+					data-testid="codex-account-switch-blocker"
+				>
+					<div className="flex max-w-sm flex-col items-center gap-3 rounded-xl border border-border bg-card px-6 py-5 text-center shadow-lg">
+						<div aria-live="assertive" className="flex flex-col items-center gap-3" role="status">
+							{codexAccountSwitchPresentation?.busy ? <LoaderCircle className="size-5 animate-spin text-passive" aria-label={t(codexAccountSwitchPresentation.key)} /> : null}
+							<p className="text-sm font-medium">
+								{codexAccountSwitchPresentation?.canRecover
+									? t(codexAccountSwitchPresentation.key)
+									: t("settings.codexAccounts.switchingSessions")}
+							</p>
+							{codexAccountSwitchPresentation && !codexAccountSwitchPresentation.canRecover ? <p className="text-xs text-passive">{t(codexAccountSwitchPresentation.key)}</p> : null}
+						</div>
+						{codexAccountSwitchPresentation?.canRecover && codexAccountSwitch ? (
+							<Button
+								type="button"
+								size="sm"
+								variant="outline"
+								disabled={codexAccountActions.recoverPending}
+								onClick={() => void codexAccountActions.recoverSwitch(codexAccountSwitch.id)}
+							>
+								{codexAccountActions.recoverPending ? <LoaderCircle className="animate-spin" aria-label={t("settings.codexAccounts.recovering")} /> : null}
+								{t("settings.codexAccounts.retryRecovery")}
+							</Button>
+						) : null}
+						{codexAccountActions.error ? <p className="text-xs text-error" role="alert">{codexAccountActions.error}</p> : null}
+					</div>
+				</div>
+			) : null}
 			<div
 				className="session-split relative flex min-h-0 flex-1 overflow-hidden"
 				data-testid="panel-group"
@@ -1618,6 +1673,7 @@ export function SessionView({ sessionId, cloudOrgId, projectId }: SessionViewPro
 									handoffDialogOpen={handoffDialogOpen}
 									workspaceTabs={centerFileTabs}
 									workspaceActiveTabKey={activeWorkspaceTabKey}
+									workspaceFileActive={Boolean(fileTabs.activePath)}
 									auxiliaryTabOrder={resolvedAuxiliaryTabOrder}
 									onAuxiliaryTabOrderChange={setAuxiliaryTabOrder}
 									controllerTransitioning={chatControllerTransitioning}
@@ -1654,6 +1710,7 @@ export function SessionView({ sessionId, cloudOrgId, projectId }: SessionViewPro
 									handoffDialogOpen={handoffDialogOpen}
 									workspaceTabs={centerFileTabs}
 									workspaceActiveTabKey={activeWorkspaceTabKey}
+									workspaceFileActive={Boolean(fileTabs.activePath)}
 									auxiliaryTabOrder={resolvedAuxiliaryTabOrder}
 									onAuxiliaryTabOrderChange={setAuxiliaryTabOrder}
 								/>

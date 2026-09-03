@@ -228,6 +228,36 @@ function activeXterm(): HTMLElement {
 }
 
 describe("TerminalPane empty states", () => {
+	it("reports terminal attachment state changes to an optional observer", async () => {
+		const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+		const previousAO = window.ao;
+		window.ao = {} as typeof window.ao;
+		const onTerminalStateChange = vi.fn();
+		const target = {
+			kind: "shell" as const,
+			handleId: "shellterm-login-1",
+			generation: "2026-08-29T12:00:00Z",
+			title: "Codex login",
+		};
+		const view = render(
+			<QueryClientProvider client={queryClient}>
+				<TerminalPane daemonReady fontSize={12} onTerminalStateChange={onTerminalStateChange} terminalTarget={target} theme="dark" />
+			</QueryClientProvider>,
+		);
+		try {
+			await waitFor(() => expect(onTerminalStateChange).toHaveBeenLastCalledWith("idle"));
+			terminalState.value = "exited";
+			view.rerender(
+				<QueryClientProvider client={queryClient}>
+					<TerminalPane daemonReady fontSize={12} onTerminalStateChange={onTerminalStateChange} terminalTarget={target} theme="dark" />
+				</QueryClientProvider>,
+			);
+			await waitFor(() => expect(onTerminalStateChange).toHaveBeenLastCalledWith("exited"));
+		} finally {
+			window.ao = previousAO;
+		}
+	});
+
 	it("uses the full top, right, and bottom extent for the terminal grid", () => {
 		const view = renderPane({ ...worker, terminalHandleId: "term-1" });
 		try {
@@ -503,6 +533,26 @@ describe("TerminalCacheProvider", () => {
 			expect(activeXterm()).not.toBe(oldGeneration);
 			expect(xtermMounts.value).toBe(2);
 			await waitFor(() => expect(xtermUnmounts.value).toBe(1));
+			expect(attachMock).toHaveBeenCalledTimes(2);
+		} finally {
+			view.restore();
+		}
+	});
+
+	it("disposes an exited PTY attachment when the controller generation changes on the same handle", async () => {
+		const first = { ...sessionA, terminalGeneration: "launch-1" };
+		const replacement = { ...first, terminalGeneration: "launch-2" };
+		const view = renderCachedPane({ session: first, sessions: [first] });
+		try {
+			const oldGeneration = await waitFor(() => activeXterm());
+			act(() => {
+				view.queryClient.setQueryData(workspaceQueryKey, workspaceWithSessions([replacement]));
+			});
+			view.show(replacement);
+
+			await waitFor(() => expect(oldGeneration.isConnected).toBe(false));
+			expect(activeXterm()).not.toBe(oldGeneration);
+			expect(xtermMounts.value).toBe(2);
 			expect(attachMock).toHaveBeenCalledTimes(2);
 		} finally {
 			view.restore();

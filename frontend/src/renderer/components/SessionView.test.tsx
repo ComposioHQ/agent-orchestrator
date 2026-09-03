@@ -37,6 +37,8 @@ const cloudSessionQueryState = vi.hoisted(() => ({
 	isLoading: false,
 }));
 const cloudGateState = vi.hoisted(() => ({ cloudEnabled: true }));
+const codexAccountsQueryState = vi.hoisted(() => ({ data: undefined as unknown }));
+const recoverCodexAccountSwitchMock = vi.hoisted(() => vi.fn());
 
 async function chooseSessionAction(name: string) {
 	const user = userEvent.setup();
@@ -104,6 +106,18 @@ vi.mock("../hooks/useSessionInterfaceTransition", () => ({
 		acknowledgeNotice: interfaceTransitionMock.acknowledgeNotice,
 		acknowledgingNotice: false,
 		acknowledgeNoticeError: undefined,
+	}),
+}));
+
+vi.mock("../hooks/useCodexAccountsQuery", () => ({
+	useCodexAccountsQuery: () => ({ data: codexAccountsQueryState.data, isLoading: false }),
+}));
+
+vi.mock("../hooks/useCodexAccountActions", () => ({
+	useCodexAccountActions: () => ({
+		error: null,
+		recoverPending: false,
+		recoverSwitch: recoverCodexAccountSwitchMock,
 	}),
 }));
 
@@ -611,6 +625,7 @@ describe("SessionView", () => {
 			delete session.previewRevision;
 			delete session.isTerminated;
 			session.status = "working";
+			session.provider = "claude-code";
 			delete session.mode;
 			delete session.cloud;
 			session.prs = [];
@@ -655,6 +670,8 @@ describe("SessionView", () => {
 		chatSurfaceWorkState.controllerBusy = false;
 		chatSurfaceWorkState.hasRunningTurn = false;
 		chatSurfaceWorkState.queuedTurnCount = 0;
+		codexAccountsQueryState.data = undefined;
+		recoverCodexAccountSwitchMock.mockReset();
 		reviewGetMock.mockReset();
 		reviewGetMock.mockImplementation(async (path: string) => {
 			if (path === "/api/v1/sessions/{sessionId}/workspace/files") {
@@ -684,6 +701,38 @@ describe("SessionView", () => {
 		const switchButtons = screen.getAllByRole("button", { name: "Switch to chat UI" });
 		expect(switchButtons).not.toHaveLength(0);
 		expect(switchButtons.some((button) => (button as HTMLButtonElement).disabled)).toBe(true);
+	});
+
+	it("offers recovery directly from a Codex session blocked by a failed account switch", async () => {
+		const session = workerSession("sess-1");
+		session.provider = "codex";
+		codexAccountsQueryState.data = {
+			currentSwitch: {
+				id: "switch-1",
+				sourceAccountId: "account-a",
+				targetAccountId: "account-b",
+				phase: "recovery_required",
+				canRecover: true,
+				sessions: [{
+					sessionId: "sess-1",
+					interfaceMode: "tui",
+					wasRunning: true,
+					stopState: "stopped",
+					restartState: "failed",
+				}],
+				createdAt: "2026-09-02T00:00:00Z",
+				updatedAt: "2026-09-02T00:01:00Z",
+			},
+		};
+		recoverCodexAccountSwitchMock.mockResolvedValue(undefined);
+
+		render(<SessionView sessionId="sess-1" />);
+
+		const retry = screen.getByRole("button", { name: "Retry recovery" });
+		expect(retry).toBeEnabled();
+		await userEvent.click(retry);
+		expect(recoverCodexAccountSwitchMock).toHaveBeenCalledWith("switch-1");
+	});
 	});
 
 	// Regression: shell terminals are an app-wide list, so without a per-session

@@ -78,6 +78,12 @@ export const aoBridge: AoBridge =
 		},
 		telemetry: {
 			getBootstrap: async () => null,
+			getPolicy: async () => ({ eventsEnabled: false, consentGeneration: "preview", updatedAt: new Date(0).toISOString(), acknowledged: false, state: "applied", environmentVeto: true, durabilitySupported: false, reason: "environment_veto" }),
+			setEventsEnabled: async () => ({ eventsEnabled: false, consentGeneration: "preview", updatedAt: new Date(0).toISOString(), acknowledged: false, state: "applied", environmentVeto: true, durabilitySupported: false, reason: "environment_veto" }),
+			onPolicy: () => () => false,
+			onClearQueues: () => () => false,
+			capture: async () => false,
+			signalAgentSwitchVisibility: () => false,
 		},
 		browser: {
 			nativeCompositionEnabled: false,
