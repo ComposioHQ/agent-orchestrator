@@ -772,6 +772,8 @@
 	"settings.updates": "Updates",
 	"settings.updates.automatic": "Automatische Updates",
 	"settings.updates.available": "Update verfügbar{{version}}.",
+	"settings.updates.automaticHelp": "Lädt Updates im Hintergrund herunter. Sie werden beim Beenden der App installiert.",
+	"settings.updates.channelHelp": "Stable ist veröffentlicht und getestet. Nightly ist der neueste tägliche Build.",
 	"settings.updates.channel": "Update-Kanal",
 	"settings.updates.channel.feature": "Feature-Releases",
 	"settings.updates.channel.nightly": "Nightly (Vorabversion)",

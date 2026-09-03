@@ -275,7 +275,10 @@ export function UpdatesSection({ titleHidden }: { titleHidden?: boolean } = {}) 
 					</div>
 				)}
 
-				<SettingsRow label={t("settings.updates.automatic")}>
+				<SettingsRow
+					label={t("settings.updates.automatic")}
+					description={t("settings.updates.automaticHelp")}
+				>
 					<Switch
 						aria-label={t("settings.updates.automatic")}
 						checked={form.enabled}
@@ -284,7 +287,10 @@ export function UpdatesSection({ titleHidden }: { titleHidden?: boolean } = {}) 
 					/>
 				</SettingsRow>
 
-				<SettingsRow label={t("settings.updates.channel")}>
+				<SettingsRow
+					label={t("settings.updates.channel")}
+					description={t("settings.updates.channelHelp")}
+				>
 					<SettingsOptionMenu
 						aria-label={t("settings.updates.channel")}
 						value={primaryValue}
@@ -420,8 +426,18 @@ function UpdateActions({
 		}
 	};
 
+	// Tint the block only when there is something to act on. A settings page that
+	// is always accented teaches the user to ignore the accent.
+	const actionable =
+		status.state === "available" || status.state === "downloaded" || status.state === "downloading";
+
 	return (
-		<div className="settings-row-bar update-status-row h-auto flex-col items-stretch gap-4 py-4">
+		<div
+			className={cn(
+				"settings-row-bar update-status-row h-auto flex-col items-stretch gap-4 py-4",
+				actionable && "border border-primary/25 bg-primary/[0.06]",
+			)}
+		>
 			<div className="flex min-w-0 flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
 				{/* Identity. The nightly stamp lives on its own monospace line: as one
 				    heading it wrapped mid-token and swallowed the row. */}

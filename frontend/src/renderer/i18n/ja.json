@@ -772,6 +772,8 @@
 	"settings.updates": "アップデート",
 	"settings.updates.automatic": "自動アップデート",
 	"settings.updates.available": "アップデートがあります{{version}}。",
+	"settings.updates.automaticHelp": "バックグラウンドで更新をダウンロードし、アプリの終了時にインストールします。",
+	"settings.updates.channelHelp": "Stable はリリース済みでテスト済みです。Nightly は最新の日次ビルドです。",
 	"settings.updates.channel": "アップデートチャネル",
 	"settings.updates.channel.feature": "機能リリース",
 	"settings.updates.channel.nightly": "Nightly（プレリリース）",

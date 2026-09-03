@@ -756,6 +756,8 @@
 	"settings.updates": "更新",
 	"settings.updates.automatic": "自动更新",
 	"settings.updates.available": "有可用更新{{version}}。",
+	"settings.updates.automaticHelp": "在后台下载更新，退出应用时安装。",
+	"settings.updates.channelHelp": "稳定版经过发布和测试，每日构建是最新的日常版本。",
 	"settings.updates.channel": "更新通道",
 	"settings.updates.channel.feature": "功能预览版",
 	"settings.updates.channel.nightly": "每日构建（预发布）",

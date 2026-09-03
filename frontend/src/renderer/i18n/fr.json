@@ -781,6 +781,8 @@
 	"settings.updates": "Mises à jour",
 	"settings.updates.automatic": "Mises à jour automatiques",
 	"settings.updates.available": "Mise à jour disponible{{version}}.",
+	"settings.updates.automaticHelp": "Télécharge les mises à jour en arrière-plan. Elles s'installent à la fermeture de l'application.",
+	"settings.updates.channelHelp": "Stable est publiée et testée. Nightly est la compilation quotidienne la plus récente.",
 	"settings.updates.channel": "Canal de mises à jour",
 	"settings.updates.channel.feature": "Versions de fonctionnalités",
 	"settings.updates.channel.nightly": "Nightly (préversion)",

@@ -772,6 +772,8 @@
 	"settings.updates": "업데이트",
 	"settings.updates.automatic": "자동 업데이트",
 	"settings.updates.available": "업데이트가 있습니다{{version}}.",
+	"settings.updates.automaticHelp": "백그라운드에서 업데이트를 내려받고, 앱을 종료할 때 설치합니다.",
+	"settings.updates.channelHelp": "Stable은 출시되어 검증된 버전이고, Nightly는 최신 일일 빌드입니다.",
 	"settings.updates.channel": "업데이트 채널",
 	"settings.updates.channel.feature": "기능 릴리스",
 	"settings.updates.channel.nightly": "Nightly (사전 릴리스)",
