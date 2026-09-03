@@ -71,7 +71,7 @@ var Derivers = map[string]DeriveFunc{
 
 // AgentSessionID extracts a native resumable-session identifier from an
 // adapter's hook payload. Most adapters obtain this metadata through other
-// mechanisms; Cline exposes its task id in every lifecycle hook payload.
+// mechanisms; Cline exposes its root session id in lifecycle hook payloads.
 func AgentSessionID(agent string, payload []byte) (string, bool) {
 	if agent != "cline" {
 		return "", false

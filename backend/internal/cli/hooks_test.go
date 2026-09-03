@@ -646,7 +646,7 @@ func TestHooks_ClineTaskStartCarriesAgentSessionID(t *testing.T) {
 	writeRunFileFor(t, cfg, srv)
 
 	_, _, err := executeCLI(t, Deps{
-		In:           strings.NewReader(`{"taskId":"cline-task-123","hookName":"TaskStart","taskStart":{"task":"fix restore"}}`),
+		In:           strings.NewReader(`{"taskId":"conv_123","sessionContext":{"rootSessionId":"cline-session-123"},"hookName":"agent_start","taskStart":{"task":"fix restore"}}`),
 		ProcessAlive: func(int) bool { return true },
 	}, "hooks", "cline", "session-start")
 	if err != nil {
@@ -656,7 +656,7 @@ func TestHooks_ClineTaskStartCarriesAgentSessionID(t *testing.T) {
 	if err := json.Unmarshal([]byte(capture.body), &req); err != nil {
 		t.Fatalf("decode body: %v\nbody=%s", err, capture.body)
 	}
-	want := setActivityAPIRequest{State: "active", Event: "session-start", AgentSessionID: "cline-task-123"}
+	want := setActivityAPIRequest{State: "active", Event: "session-start", AgentSessionID: "cline-session-123"}
 	if req != want {
 		t.Errorf("body = %+v, want %+v", req, want)
 	}
