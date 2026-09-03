@@ -357,7 +357,7 @@ describe("GlobalSettingsForm", () => {
 		const requestId = updCheck.mock.calls.at(-1)?.[0]?.requestId;
 		expect(requestId).toMatch(/^channel-update-/);
 		act(() => emit({ state: "available", version: "1.5.0-nightly.202608271200", requestId }));
-		expect(await screen.findByText("Update and restart to switch to Nightly (Pre-release)."))
+		expect(await screen.findByText("Update and restart to switch to Nightly."))
 			.toBeInTheDocument();
 	});
 
@@ -385,7 +385,9 @@ describe("GlobalSettingsForm", () => {
 	it("shows the installed Nightly channel separately from the selected update feed", async () => {
 		getVersion.mockResolvedValue("1.4.0-nightly.202608271030");
 		renderForm();
-		await waitFor(() => expect(screen.getByTestId("installed-update-channel")).toHaveTextContent("Nightly (Pre-release)"));
+		// The badge labels which channel is installed, so it uses the short name;
+		// "(Pre-release)" belongs in the picker where the choice is made.
+		await waitFor(() => expect(screen.getByTestId("installed-update-channel")).toHaveTextContent("Nightly"));
 	});
 
 	it("shows an explicit idle update state and triggers a manual check", async () => {

@@ -308,12 +308,16 @@ export function UpdatesSection({ titleHidden }: { titleHidden?: boolean } = {}) 
 				)}
 
 				{primaryValue === "nightly" && (
-					<div className="nightly-warning -mt-1 px-(--size-settings-row-padding) pb-(--size-settings-row-padding)">
-						{/* Contained, like the other notices. As a bare coloured
-						    paragraph it was indistinguishable from an error message,
-						    because --color-warning and --destructive are both red-orange. */}
-						<UpdateNotice tone="warning" text={t("settings.updates.nightlyWarning")} />
-					</div>
+					// Helper copy for the row above, not an alert. This is a standing
+					// property of the channel the user chose, not something wrong right
+					// now, and --color-warning is a red-orange one step from
+					// --destructive: rendered in it, a permanent note read as a permanent
+					// failure. Red is kept for states that are actually broken and
+					// actionable — failing checks, a stale network stack, update errors.
+					<p className="nightly-warning -mt-1 flex items-start gap-2 px-(--size-settings-row-padding) pb-(--size-settings-row-padding) text-xs leading-4 text-settings-muted">
+						<Info className="mt-px size-icon-sm shrink-0" aria-hidden="true" />
+						<span className="min-w-0">{t("settings.updates.nightlyWarning")}</span>
+					</p>
 				)}
 
 				{save.isError && (
@@ -407,10 +411,15 @@ function UpdateActions({
 	// Use the live updater state, not displayState: the manual-check minimum
 	// spinner time forces displayState back to "checking" even after a channel
 	// switch finds an update, which would hide this guidance until the timer fires.
+	// Not shown for "downloaded": the status line already says "Downloaded.
+	// Restart to finish updating." and names the build under it, so adding
+	// "Restart to switch to Nightly." put two restart sentences side by side.
 	const channelSwitchMessage = channelSwitchInFlight &&
-		(status.state === "available" || status.state === "downloading" || status.state === "downloaded")
-		? t(status.state === "downloaded" ? "settings.updates.channelSwitchRestart" : "settings.updates.channelSwitchUpdate", {
-			channel: channelSwitch.channel === "nightly" ? t("settings.updates.channel.nightly") : t("settings.updates.channel.stable"),
+		(status.state === "available" || status.state === "downloading")
+		? t("settings.updates.channelSwitchUpdate", {
+			// Short form: "Restart to switch to Nightly (Pre-release)." reads as a
+			// parenthetical stuck mid-sentence. The suffix belongs in the picker.
+			channel: channelSwitch.channel === "nightly" ? t("settings.updates.channel.nightlyShort") : t("settings.updates.channel.stable"),
 		})
 		: null;
 
@@ -426,18 +435,13 @@ function UpdateActions({
 		}
 	};
 
-	// Tint the block only when there is something to act on. A settings page that
-	// is always accented teaches the user to ignore the accent.
-	const actionable =
-		status.state === "available" || status.state === "downloaded" || status.state === "downloading";
-
+	// Deliberately no border or accent fill on this block. --primary is
+	// oklch(0.92 0.004 286.32) in dark and near-black in light: both are
+	// effectively neutral, so tinting drew a grey frame that carried no meaning
+	// and competed with the row backgrounds around it. The primary button and
+	// the status line already carry the emphasis.
 	return (
-		<div
-			className={cn(
-				"settings-row-bar update-status-row h-auto flex-col items-stretch gap-4 py-4",
-				actionable && "border border-primary/25 bg-primary/[0.06]",
-			)}
-		>
+		<div className="settings-row-bar update-status-row h-auto flex-col items-stretch gap-4 py-4">
 			<div className="flex min-w-0 flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
 				{/* Identity. The nightly stamp lives on its own monospace line: as one
 				    heading it wrapped mid-token and swallowed the row. */}
@@ -454,7 +458,7 @@ function UpdateActions({
 							{version.data ? `v${installed?.base ?? version.data}` : "…"}
 						</span>
 						<Badge data-testid="installed-update-channel" variant="neutral">
-							{installedChannel === "nightly" ? t("settings.updates.channel.nightly") : t("settings.updates.channel.stable")}
+							{installedChannel === "nightly" ? t("settings.updates.channel.nightlyShort") : t("settings.updates.channel.stable")}
 						</Badge>
 					</div>
 					{installed && (
