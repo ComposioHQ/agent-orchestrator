@@ -88,6 +88,47 @@ describe("keepFocusOnOpenedSurface", () => {
 		await vi.waitFor(() => expect(document.activeElement).toBe(trigger));
 	});
 
+	it("abandons the hand-back once focus finds a home outside the dialog", async () => {
+		const { menu, trigger } = await openMenu();
+		const field = openDialogField();
+		closeMenu(menu);
+
+		// The dialog hands focus straight to another element instead of dropping
+		// it, so there is nothing to hand back.
+		const elsewhere = document.createElement("input");
+		document.body.append(elsewhere);
+		field.dispatchEvent(new FocusEvent("focusout", { bubbles: true, relatedTarget: elsewhere }));
+		elsewhere.focus();
+		field.remove();
+
+		// Much later, an unrelated element loses focus to nowhere. The stale menu
+		// trigger must not steal the caret off the back of it.
+		const unrelated = document.createElement("button");
+		document.body.append(unrelated);
+		unrelated.focus();
+		unrelated.dispatchEvent(new FocusEvent("focusout", { bubbles: true, relatedTarget: null }));
+		unrelated.remove();
+
+		await new Promise((resolve) => setTimeout(resolve, 60));
+		expect(document.activeElement).not.toBe(trigger);
+	});
+
+	it("keeps waiting while the surface that borrowed the caret is still open", async () => {
+		const { menu, trigger } = await openMenu();
+		const field = openDialogField();
+		closeMenu(menu);
+
+		// A blur elsewhere on the page drops focus while the dialog is still there.
+		field.dispatchEvent(new FocusEvent("focusout", { bubbles: true, relatedTarget: null }));
+		(document.activeElement as HTMLElement | null)?.blur();
+		await new Promise((resolve) => setTimeout(resolve, 60));
+		expect(document.activeElement).not.toBe(trigger);
+
+		// Closing it for real still hands the caret back.
+		closeDialogField(field);
+		await vi.waitFor(() => expect(document.activeElement).toBe(trigger));
+	});
+
 	it("leaves focus alone if something else claimed it before the hand-back", async () => {
 		const { menu, trigger } = await openMenu();
 		const field = openDialogField();

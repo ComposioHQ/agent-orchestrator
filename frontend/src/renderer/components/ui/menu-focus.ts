@@ -23,11 +23,12 @@ import { useCallback } from "react";
  * go of it.
  */
 
-// Only one menu is open at a time, so a single slot each is enough.
+// Only one menu is open at a time, so a single slot each is enough. `pending`
+// also holds the surface that borrowed the caret, so the hand-back can tell
+// "the dialog closed and dropped focus" from "focus moved on deliberately".
 let menuReturnTarget: HTMLElement | null = null;
 let capturedForMenu: HTMLElement | null = null;
-let pendingReturnTarget: HTMLElement | null = null;
-let watchingForRelease = false;
+let pending: { borrower: Element; target: HTMLElement } | null = null;
 
 /**
  * Remember, while the menu is open, where focus should end up once it is done
@@ -65,23 +66,40 @@ export function keepFocusOnOpenedSurface(event: Event) {
 	const menu = event.currentTarget ?? event.target;
 	if (menu instanceof Node && menu.contains(active)) return;
 	event.preventDefault();
-	returnFocusWhenSurfaceCloses();
+	returnFocusWhenSurfaceCloses(active);
 }
 
-function returnFocusWhenSurfaceCloses() {
-	pendingReturnTarget = menuReturnTarget;
-	if (!pendingReturnTarget || watchingForRelease) return;
-	watchingForRelease = true;
+function returnFocusWhenSurfaceCloses(borrower: Element) {
+	if (!menuReturnTarget) return;
+	// The overlay, not the focused field: the user tabbing between the dialog's
+	// own controls is not the caret finding a home somewhere else.
+	pending = {
+		borrower: borrower.closest("[role='dialog'], [role='alertdialog']") ?? borrower,
+		target: menuReturnTarget,
+	};
+	// Re-adding an identical listener is a no-op, so this stays a single listener
+	// that is removed again as soon as nothing is pending.
 	document.addEventListener("focusout", handleFocusRelease, true);
 }
 
+function clearPending() {
+	pending = null;
+	document.removeEventListener("focusout", handleFocusRelease, true);
+}
+
 function handleFocusRelease(event: FocusEvent) {
-	// Focus moving to another element is the user's business. Only a null
-	// relatedTarget means it fell through to nowhere, which is what happens when
-	// the dialog that borrowed the caret unmounts.
-	if (event.relatedTarget !== null) return;
-	const target = pendingReturnTarget;
-	if (!target) return;
+	const current = pending;
+	if (!current) {
+		clearPending();
+		return;
+	}
+	if (event.relatedTarget !== null) {
+		// Focus moved to a real element. Inside the surface that borrowed it, the
+		// user is still working there; anywhere else, the caret has a home and
+		// there is nothing left to hand back.
+		if (!current.borrower.contains(event.relatedTarget as Node)) clearPending();
+		return;
+	}
 	// Two frames, not one tick: the surface the dialog was covering gets first
 	// claim on the caret through its own effects. A worker terminal, for one,
 	// re-enables input as the dialog closes and focuses itself, and it is a
@@ -89,9 +107,15 @@ function handleFocusRelease(event: FocusEvent) {
 	// fallback for focus that would otherwise be stranded on `document.body`.
 	requestAnimationFrame(() =>
 		requestAnimationFrame(() => {
-			if (pendingReturnTarget !== target || document.activeElement !== document.body) return;
-			pendingReturnTarget = null;
-			if (target.isConnected) target.focus();
+			if (pending !== current) return;
+			// Focus can also be dropped while the surface is still open, by a blur
+			// somewhere else on the page. Nothing to hand back yet, so keep waiting.
+			if (current.borrower.isConnected) return;
+			// Decided either way: never leave the target armed for an unrelated
+			// focus loss later on.
+			clearPending();
+			if (document.activeElement !== document.body) return;
+			if (current.target.isConnected) current.target.focus();
 		}),
 	);
 }
