@@ -90,7 +90,7 @@ func (s *Service) WithClassification(agents AgentRegistry, dataDir string, logge
 	}
 	workDir := filepath.Join(dataDir, "classifier")
 	// The directory must exist before a CLI is asked to run there.
-	if err := os.MkdirAll(workDir, 0o755); err != nil {
+	if err := os.MkdirAll(workDir, 0o750); err != nil {
 		logger.Warn("session import: no classifier working directory; keeping local classification only", "error", err)
 		return s
 	}
@@ -117,7 +117,7 @@ func (s *Service) Discover(ctx context.Context, opts sessionimport.DiscoverOptio
 	// Settle what the local heuristic could not, before scoping: a conversation
 	// judged trivial should not reach any surface, project-scoped or not.
 	if !opts.IncludeTrivial {
-		found = s.classifier.resolve(ctx, found)
+		found = s.classifier.resolve(found)
 	}
 	if projectID == "" {
 		return found, nil
@@ -244,7 +244,7 @@ func (s *Service) resolveProject(ctx context.Context, cwd string) (domain.Projec
 
 	created, err := s.projects.Add(ctx, projectsvc.AddInput{Path: gitRoot(cwd)})
 	if err != nil {
-		return "", fmt.Errorf("%w: %v", ErrImportProjectUnresolved, err)
+		return "", fmt.Errorf("%w: %w", ErrImportProjectUnresolved, err)
 	}
 	return created.ID, nil
 }

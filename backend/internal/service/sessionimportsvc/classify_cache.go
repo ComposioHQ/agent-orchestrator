@@ -90,7 +90,7 @@ func (c *verdictCache) flush() {
 	if err != nil {
 		return
 	}
-	if err := os.MkdirAll(filepath.Dir(c.path), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(c.path), 0o750); err != nil {
 		return
 	}
 	// Write through a temporary file so a crash mid-write cannot leave a

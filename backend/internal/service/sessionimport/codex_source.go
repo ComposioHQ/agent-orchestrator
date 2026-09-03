@@ -90,7 +90,7 @@ func (s *CodexSource) Discover(ctx context.Context, opts DiscoverOptions) ([]Imp
 	// conversation that did real work in any segment is judged on that.
 	signalsByRoot := map[string]*Signals{}
 	for _, root := range roots {
-		if err := s.scanRoot(ctx, home, root, titles, opts, grouped, signalsByRoot); err != nil {
+		if err := s.scanRoot(ctx, root, titles, opts, grouped, signalsByRoot); err != nil {
 			return nil, err
 		}
 	}
@@ -121,7 +121,7 @@ func (s *CodexSource) Discover(ctx context.Context, opts DiscoverOptions) ([]Imp
 	return capRecent(found, opts.MaxPerProvider), nil
 }
 
-func (s *CodexSource) scanRoot(ctx context.Context, home, root string, titles map[string]codexTitle, opts DiscoverOptions, grouped map[string]*ImportableSession, signalsByRoot map[string]*Signals) error {
+func (s *CodexSource) scanRoot(ctx context.Context, root string, titles map[string]codexTitle, opts DiscoverOptions, grouped map[string]*ImportableSession, signalsByRoot map[string]*Signals) error {
 	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			if errors.Is(walkErr, os.ErrNotExist) {
@@ -222,8 +222,9 @@ func (s *CodexSource) readSegment(ctx context.Context, path string, opts Discove
 		return codexSegment{}, false, err
 	}
 
-	head, size, err := headBytes(path, opts.MaxScanBytes)
-	if err != nil {
+	// A segment that vanished or is unreadable mid-scan is skipped, not fatal.
+	head, size, ok := readHead(path, opts.MaxScanBytes)
+	if !ok {
 		return codexSegment{}, false, nil
 	}
 

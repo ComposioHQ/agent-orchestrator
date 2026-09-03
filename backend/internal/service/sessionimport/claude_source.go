@@ -112,9 +112,10 @@ func (s *ClaudeSource) readSession(ctx context.Context, configDir, path, fileNam
 
 	nativeID := strings.TrimSuffix(fileName, ".jsonl")
 
-	head, size, err := headBytes(path, opts.MaxScanBytes)
-	if err != nil {
-		// Skip a transcript that vanished or is unreadable mid-scan.
+	// Skip a transcript that vanished or is unreadable mid-scan rather than
+	// failing the whole pass for one bad file.
+	head, size, ok := readHead(path, opts.MaxScanBytes)
+	if !ok {
 		return ImportableSession{}, false, nil
 	}
 
@@ -376,12 +377,12 @@ func countClaudeToolUses(content json.RawMessage) int {
 }
 
 // capRecent sorts newest-first and keeps at most max entries. max <= 0 keeps all.
-func capRecent(sessions []ImportableSession, max int) []ImportableSession {
-	if max <= 0 || len(sessions) <= max {
+func capRecent(sessions []ImportableSession, limit int) []ImportableSession {
+	if limit <= 0 || len(sessions) <= limit {
 		return sessions
 	}
 	sort.SliceStable(sessions, func(i, j int) bool {
 		return sessions[i].LastActivity.After(sessions[j].LastActivity)
 	})
-	return sessions[:max]
+	return sessions[:limit]
 }

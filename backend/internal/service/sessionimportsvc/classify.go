@@ -80,7 +80,7 @@ const backgroundClassifyTimeout = 3 * time.Minute
 // support, a timeout, or an unparseable reply all leave the conversation
 // ambiguous and therefore still visible. Classification refines the list; it is
 // never the reason something disappears.
-func (c *classifier) resolve(ctx context.Context, sessions []sessionimport.ImportableSession) []sessionimport.ImportableSession {
+func (c *classifier) resolve(sessions []sessionimport.ImportableSession) []sessionimport.ImportableSession {
 	if c == nil || c.agents == nil || len(sessions) == 0 {
 		return sessions
 	}
@@ -204,13 +204,13 @@ func classifyPrompt(batch []sessionimport.ImportableSession) string {
 	b.WriteString("Conversations:\n")
 
 	for _, s := range batch {
-		b.WriteString(fmt.Sprintf("- id=%s | folder=%s | messages=%d | title=%q | first prompt=%q\n",
+		fmt.Fprintf(&b, "- id=%s | folder=%s | messages=%d | title=%q | first prompt=%q\n",
 			s.NativeSessionID,
 			filepath.Base(strings.TrimSpace(s.CWD)),
 			s.MessageCount,
 			excerpt(s.Title),
 			excerpt(s.FirstPrompt),
-		))
+		)
 	}
 	return b.String()
 }

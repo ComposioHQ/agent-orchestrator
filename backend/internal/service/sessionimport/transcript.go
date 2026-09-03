@@ -3,6 +3,7 @@ package sessionimport
 import (
 	"bufio"
 	"bytes"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -25,14 +26,14 @@ func homeConfigDir(envKey, defaultDir string) (string, error) {
 	return filepath.Join(home, defaultDir), nil
 }
 
-// headBytes returns up to max bytes from the start of the file plus the file
-// size. It never loads more than max bytes into memory.
-func headBytes(path string, max int64) (data []byte, size int64, err error) {
+// headBytes returns up to limit bytes from the start of the file plus the file
+// size. It never loads more than limit bytes into memory.
+func headBytes(path string, limit int64) (data []byte, size int64, err error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, 0, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	info, err := f.Stat()
 	if err != nil {
@@ -41,34 +42,46 @@ func headBytes(path string, max int64) (data []byte, size int64, err error) {
 	size = info.Size()
 
 	n := size
-	if n > max {
-		n = max
+	if n > limit {
+		n = limit
 	}
 	buf := make([]byte, n)
 	read, err := io.ReadFull(f, buf)
-	if err != nil && err != io.ErrUnexpectedEOF && err != io.EOF {
+	// A file shorter than the requested window is normal, not a failure.
+	if err != nil && !errors.Is(err, io.ErrUnexpectedEOF) && !errors.Is(err, io.EOF) {
 		return nil, size, err
 	}
 	return buf[:read], size, nil
 }
 
-// tailBytes returns up to max bytes from the end of the file.
-func tailBytes(path string, size, max int64) ([]byte, error) {
-	if size <= max {
-		data, _, err := headBytes(path, max)
+// readHead is headBytes for callers that treat any read failure as "skip this
+// transcript". A file that vanished or turned unreadable mid-scan must not
+// abort a whole discovery pass.
+func readHead(path string, limit int64) (data []byte, size int64, ok bool) {
+	data, size, err := headBytes(path, limit)
+	if err != nil {
+		return nil, 0, false
+	}
+	return data, size, true
+}
+
+// tailBytes returns up to limit bytes from the end of the file.
+func tailBytes(path string, size, limit int64) ([]byte, error) {
+	if size <= limit {
+		data, _, err := headBytes(path, limit)
 		return data, err
 	}
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
-	if _, err := f.Seek(size-max, io.SeekStart); err != nil {
+	defer func() { _ = f.Close() }()
+	if _, err := f.Seek(size-limit, io.SeekStart); err != nil {
 		return nil, err
 	}
-	buf := make([]byte, max)
+	buf := make([]byte, limit)
 	read, err := io.ReadFull(f, buf)
-	if err != nil && err != io.ErrUnexpectedEOF && err != io.EOF {
+	if err != nil && !errors.Is(err, io.ErrUnexpectedEOF) && !errors.Is(err, io.EOF) {
 		return nil, err
 	}
 	return buf[:read], nil
@@ -101,7 +114,7 @@ func scanLines(path string, fn func(line []byte) bool) error {
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 0, 64*1024), maxScanLineBytes)
