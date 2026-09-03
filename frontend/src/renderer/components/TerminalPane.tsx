@@ -153,11 +153,9 @@ function cacheDescriptor(
 	const handleId = session?.terminalHandleId;
 	if (!session?.id || !handleId) return null;
 	const ownerKey = `session:${session.id}:worker`;
-	const generation = session.terminalGeneration ?? "";
+	const generation = terminalGeneration ?? session.terminalGeneration;
 	return {
-	const generation = terminalGeneration ?? session.terminalGeneration ?? "initial";
-	return {
-		cacheKey: `${ownerKey}|handle:${handleId}|generation:${generation}`,
+		cacheKey: `${ownerKey}|handle:${handleId}|generation:${generation ?? "initial"}`,
 		generation,
 		handleId,
 		kind: "worker",
