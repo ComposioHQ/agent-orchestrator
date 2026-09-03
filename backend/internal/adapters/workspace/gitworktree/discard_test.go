@@ -231,3 +231,37 @@ func TestDiscardKeepsGoingWhenThePostPruneProbeFails(t *testing.T) {
 	}
 	ws.waitForDiscards()
 }
+
+// A project directory the user deleted turns every `git -C <repo> ...` in
+// teardown into an opaque exit 128, which surfaced as a permanent
+// "Internal server error" on delete and left the session in the sidebar
+// forever. Teardown reports it as a typed refusal instead, so the caller can
+// preserve the directory and still terminate the session.
+func TestDestroyReportsAMissingProjectRepoAsUnavailable(t *testing.T) {
+	git := requireGit(t)
+	tmp := t.TempDir()
+	repo := setupOriginClone(t, git, tmp)
+	ws, err := New(Options{Binary: git, ManagedRoot: filepath.Join(tmp, "managed"), RepoResolver: StaticRepoResolver{"proj": repo}})
+	if err != nil {
+		t.Fatalf("new: %v", err)
+	}
+	ctx := context.Background()
+	info, err := ws.Create(ctx, ports.WorkspaceConfig{ProjectID: "proj", SessionID: "sess", Branch: "feature/one"})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if err := os.RemoveAll(repo); err != nil {
+		t.Fatalf("remove project repo: %v", err)
+	}
+
+	err = ws.Destroy(ctx, info)
+	if !errors.Is(err, ports.ErrWorkspaceRepoUnavailable) {
+		t.Fatalf("destroy error = %v, want ports.ErrWorkspaceRepoUnavailable", err)
+	}
+	if _, statErr := os.Stat(info.Path); statErr != nil {
+		t.Fatalf("worktree must be left alone when git cannot be asked about it: %v", statErr)
+	}
+	if err := ws.ForceDestroy(ctx, info); !errors.Is(err, ports.ErrWorkspaceRepoUnavailable) {
+		t.Fatalf("force destroy error = %v, want ports.ErrWorkspaceRepoUnavailable", err)
+	}
+}

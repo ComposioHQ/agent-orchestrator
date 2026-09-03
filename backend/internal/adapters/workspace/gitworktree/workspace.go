@@ -394,6 +394,9 @@ func (w *Workspace) Destroy(ctx context.Context, info ports.WorkspaceInfo) error
 	if err != nil {
 		return err
 	}
+	if err := w.requireReachableRepo(repo); err != nil {
+		return err
+	}
 	// Move the directory aside rather than waiting out `git worktree remove`'s
 	// walk of an ignored-file mountain; falls through to the git-driven path
 	// below whenever the move is not clearly safe.
@@ -453,6 +456,9 @@ func (w *Workspace) ForceDestroy(ctx context.Context, info ports.WorkspaceInfo) 
 	}
 	path, err := w.validateManagedPath(info.Path)
 	if err != nil {
+		return err
+	}
+	if err := w.requireReachableRepo(repo); err != nil {
 		return err
 	}
 	// Force teardown has no refusal to honour, so the move is unconditional:
@@ -1236,6 +1242,9 @@ func (w *Workspace) createWorkspaceProjectRepo(ctx context.Context, repo workspa
 }
 
 func (w *Workspace) forceDestroyPath(ctx context.Context, repo, path string) error {
+	if err := w.requireReachableRepo(repo); err != nil {
+		return err
+	}
 	// Force teardown has no refusal to honour, so the move is unconditional:
 	// rename the directory out of the way, drop the registration, unlink in the
 	// background.
@@ -1458,6 +1467,18 @@ func (w *Workspace) repoPathForInfo(info ports.WorkspaceInfo) (string, error) {
 		return "", errors.New("gitworktree: project id is required")
 	}
 	return w.repoPath(info.ProjectID)
+}
+
+// requireReachableRepo reports the project repo as unavailable when it is no
+// longer on disk. Teardown is the only caller: every git command it runs is
+// `git -C <repo> ...`, so a deleted project directory turns each one into an
+// opaque exit 128, and the session it belongs to can never be deleted. Create
+// and Restore deliberately do not use this: there, a missing repo must fail.
+func (w *Workspace) requireReachableRepo(repo string) error {
+	if info, err := os.Stat(repo); err == nil && info.IsDir() {
+		return nil
+	}
+	return fmt.Errorf("gitworktree: repository %q is no longer on disk: %w", repo, ports.ErrWorkspaceRepoUnavailable)
 }
 
 func (w *Workspace) repoPathForConfig(cfg ports.WorkspaceConfig) (string, error) {
