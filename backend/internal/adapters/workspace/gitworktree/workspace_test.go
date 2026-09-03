@@ -3,13 +3,16 @@ package gitworktree
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
@@ -1119,4 +1122,71 @@ func TestGitWorktreeExitStatusOneHelper(t *testing.T) {
 		return
 	}
 	os.Exit(1)
+}
+
+// TestCreateSerializesWorktreeAddPerRepo reproduces the #4350 shape: concurrent
+// spawns each run `git worktree add -b` on the same repo, which collide on
+// .git/config.lock in real git. The per-repo lock must serialize the add
+// invocations; the fake runner below fails the whole test if two worktree adds
+// overlap.
+func TestCreateSerializesWorktreeAddPerRepo(t *testing.T) {
+	dir := t.TempDir()
+	managed := filepath.Join(dir, "wt")
+	if err := os.MkdirAll(managed, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	repo := filepath.Join(dir, "repo")
+
+	var mu sync.Mutex
+	inFlight := 0
+	maxInFlight := 0
+	ws := &Workspace{
+		binary:      "git",
+		managedRoot: managed,
+		repos:       StaticRepoResolver{"p-1": repo},
+		run: func(_ context.Context, _ string, args ...string) ([]byte, error) {
+			joined := strings.Join(args, " ")
+			if !strings.Contains(joined, "worktree add") {
+				return []byte("abc123\n"), nil
+			}
+			mu.Lock()
+			inFlight++
+			if inFlight > maxInFlight {
+				maxInFlight = inFlight
+			}
+			mu.Unlock()
+			time.Sleep(20 * time.Millisecond) // widen the race window
+			mu.Lock()
+			inFlight--
+			mu.Unlock()
+			return []byte("abc123\n"), nil
+		},
+	}
+
+	const spawns = 15
+	var wg sync.WaitGroup
+	errs := make(chan error, spawns)
+	for i := 0; i < spawns; i++ {
+		wg.Add(1)
+		go func(n int) {
+			defer wg.Done()
+			_, err := ws.Create(context.Background(), ports.WorkspaceConfig{
+				ProjectID:  "p-1",
+				SessionID:  domain.SessionID(fmt.Sprintf("p-1-%d", n)),
+				Branch:     fmt.Sprintf("ao/p-1-%d/root", n),
+				BaseBranch: "main",
+			})
+			errs <- err
+		}(i)
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatalf("concurrent Create: %v", err)
+		}
+	}
+	if maxInFlight != 1 {
+		t.Fatalf("worktree adds overlapped: max in-flight = %d, want 1 (per-repo lock must serialize)", maxInFlight)
+	}
 }

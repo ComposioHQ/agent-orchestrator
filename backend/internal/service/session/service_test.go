@@ -3013,6 +3013,7 @@ func TestToAPIErrorMapsWorkspaceBranchSentinels(t *testing.T) {
 		{"default branch unresolved", fmt.Errorf("spawn mer-1: %w: configure defaultBranch", ports.ErrWorkspaceDefaultBranchUnresolved), apierr.KindInvalid, "DEFAULT_BRANCH_UNRESOLVED"},
 		{"not fetched", fmt.Errorf("spawn mer-1: workspace: %w: \"x\" has no local head", ports.ErrWorkspaceBranchNotFetched), apierr.KindInvalid, "BRANCH_NOT_FETCHED"},
 		{"invalid branch", fmt.Errorf("spawn mer-1: workspace: %w: \"bad!!\" (exit 1)", ports.ErrWorkspaceBranchInvalid), apierr.KindInvalid, "INVALID_BRANCH"},
+		{"workspace create failed", fmt.Errorf("spawn mer-1: %w: gitworktree: worktree add branch %q from %q: exit status 255: could not lock config file .git/config: File exists", ports.ErrWorkspaceCreateFailed, "ao/mer-1/root", "refs/remotes/origin/main"), apierr.KindConflict, "WORKSPACE_CREATE_FAILED"},
 		{"agent binary not found", fmt.Errorf("spawn mer-1: %w", ports.ErrAgentBinaryNotFound), apierr.KindInvalid, "AGENT_BINARY_NOT_FOUND"},
 		{"runtime prerequisite missing", fmt.Errorf("spawn: %w: tmux required on macOS/Linux but not in PATH", ports.ErrRuntimePrerequisite), apierr.KindInvalid, "RUNTIME_PREREQUISITE_MISSING"},
 		{"runtime workspace cwd mismatch", fmt.Errorf("spawn mer-1: runtime: %w: session mer-1 started in \"/deleted/shipit\", want \"/tmp/ws\"", ports.ErrRuntimeWorkspaceCwdMismatch), apierr.KindConflict, "WORKSPACE_CWD_MISMATCH"},
