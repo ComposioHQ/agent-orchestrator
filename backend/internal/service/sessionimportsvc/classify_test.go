@@ -96,13 +96,21 @@ func TestClassifySettlesAmbiguousConversations(t *testing.T) {
 	}
 	c := newClassifier(t, fakeRegistry{agents: map[domain.AgentHarness]*fakeAgent{domain.HarnessClaudeCode: agent}})
 
-	got := c.resolve(context.Background(), []sessionimport.ImportableSession{
+	batch := []sessionimport.ImportableSession{
 		ambiguous("keep", "Rework the cache", "how should we key the cache"),
 		ambiguous("junk", "hey", "hey"),
-	})
+	}
 
+	// The first listing is served immediately, without waiting on a model, so
+	// both conversations are still shown.
+	if got := c.resolve(context.Background(), batch); len(got) != 2 {
+		t.Fatalf("a listing must not wait on classification, got %+v", got)
+	}
+	c.waitForBackground()
+
+	got := c.resolve(context.Background(), batch)
 	if len(got) != 1 || got[0].NativeSessionID != "keep" {
-		t.Fatalf("want only the meaningful conversation, got %+v", got)
+		t.Fatalf("want only the meaningful conversation once judged, got %+v", got)
 	}
 	if len(agent.prompts) != 1 {
 		t.Fatalf("want one batched call for both conversations, got %d", len(agent.prompts))
@@ -130,7 +138,11 @@ func TestClassifyKeepsAmbiguousOnEveryFailure(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			c := newClassifier(t, fakeRegistry{agents: map[domain.AgentHarness]*fakeAgent{domain.HarnessClaudeCode: tc.agent}})
-			got := c.resolve(context.Background(), []sessionimport.ImportableSession{ambiguous("x", "Something", "something real")})
+			batch := []sessionimport.ImportableSession{ambiguous("x", "Something", "something real")}
+			c.resolve(context.Background(), batch)
+			c.waitForBackground()
+
+			got := c.resolve(context.Background(), batch)
 			if len(got) != 1 {
 				t.Fatalf("an unusable answer must not discard the conversation, got %+v", got)
 			}
@@ -149,8 +161,11 @@ func TestClassifyAttemptsWhenAuthIsUnknown(t *testing.T) {
 	}
 	c := newClassifier(t, fakeRegistry{agents: map[domain.AgentHarness]*fakeAgent{domain.HarnessClaudeCode: agent}})
 
-	got := c.resolve(context.Background(), []sessionimport.ImportableSession{ambiguous("x", "hey", "hey")})
-	if len(got) != 0 {
+	batch := []sessionimport.ImportableSession{ambiguous("x", "hey", "hey")}
+	c.resolve(context.Background(), batch)
+	c.waitForBackground()
+
+	if got := c.resolve(context.Background(), batch); len(got) != 0 {
 		t.Fatalf("an unknown probe should not block classification, got %+v", got)
 	}
 }
@@ -163,6 +178,7 @@ func TestClassifyLeavesSettledConversationsAlone(t *testing.T) {
 	settled.Meaning = sessionimport.MeaningMeaningful
 
 	got := c.resolve(context.Background(), []sessionimport.ImportableSession{settled})
+	c.waitForBackground()
 	if len(got) != 1 {
 		t.Fatal("a locally settled conversation must survive")
 	}
@@ -179,6 +195,7 @@ func TestClassifyCachesVerdicts(t *testing.T) {
 
 	for i := 0; i < 3; i++ {
 		got := c.resolve(context.Background(), []sessionimport.ImportableSession{ambiguous("x", "Real", "a real question about sharding")})
+		c.waitForBackground()
 		if len(got) != 1 {
 			t.Fatalf("run %d: conversation lost", i)
 		}
@@ -191,6 +208,7 @@ func TestClassifyCachesVerdicts(t *testing.T) {
 	moved := ambiguous("x", "Real", "a real question about sharding")
 	moved.LastActivity = moved.LastActivity.Add(time.Hour)
 	c.resolve(context.Background(), []sessionimport.ImportableSession{moved})
+	c.waitForBackground()
 	if len(agent.prompts) != 2 {
 		t.Fatalf("a continued conversation should be re-judged, got %d calls", len(agent.prompts))
 	}
@@ -212,6 +230,7 @@ func TestClassifyBatchesPerProvider(t *testing.T) {
 		ambiguous("c2", "Two", "second question"),
 		codexSession,
 	})
+	c.waitForBackground()
 	if len(got) != 3 {
 		t.Fatalf("want all three kept, got %d", len(got))
 	}

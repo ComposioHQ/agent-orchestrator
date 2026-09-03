@@ -247,8 +247,10 @@ func normalizeTitle(s string) string {
 		s = strings.TrimSpace(s[:idx])
 	}
 	s = strings.Join(strings.Fields(s), " ")
-	if len(s) > maxTitleLen {
-		s = strings.TrimSpace(s[:maxTitleLen]) + "…"
+	// Truncating by bytes can split a multi-byte rune and leave broken text in
+	// the sidebar, so the cut is made on runes.
+	if runes := []rune(s); len(runes) > maxTitleLen {
+		s = strings.TrimSpace(string(runes[:maxTitleLen])) + "…"
 	}
 	return s
 }

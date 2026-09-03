@@ -104,6 +104,17 @@ func (s *CodexSource) Discover(ctx context.Context, opts DiscoverOptions) ([]Imp
 			session.Meaning = Classify(*merged)
 			session.FirstPrompt = merged.FirstPrompt
 		}
+		// Drop junk before the per-provider cap, so a run of trivial
+		// conversations cannot crowd out real ones sitting just outside it.
+		if !opts.IncludeTrivial && !session.Meaning.Imported() {
+			continue
+		}
+		// The session index can know about activity the rollout segments do not
+		// carry, so it is allowed to advance the displayed recency — but only
+		// now that every segment has been compared and a representative chosen.
+		if t, ok := titles[rootID]; ok && t.updatedAt.After(session.LastActivity) {
+			session.LastActivity = t.updatedAt
+		}
 		found = append(found, *session)
 	}
 
@@ -169,14 +180,15 @@ func mergeCodexSegment(grouped map[string]*ImportableSession, seg codexSegment, 
 			MessageCount:    seg.messageCount,
 			SizeBytes:       seg.sizeBytes,
 		}
-		if t, found := titles[seg.rootID]; found && t.updatedAt.After(session.LastActivity) {
-			session.LastActivity = t.updatedAt
-		}
 		grouped[seg.rootID] = session
 		return
 	}
 
 	// Newer segment: adopt its transcript, cwd, branch as the representative.
+	// The comparison is between segments only. Seeding LastActivity from the
+	// session index would make it later than every segment's own timestamp, so
+	// no segment would ever be adopted and the conversation would keep the
+	// oldest segment's transcript, cwd and branch.
 	if seg.lastActivity.After(existing.LastActivity) {
 		existing.LastActivity = seg.lastActivity
 		existing.TranscriptPath = seg.transcriptPath

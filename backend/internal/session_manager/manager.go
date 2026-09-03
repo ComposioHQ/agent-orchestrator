@@ -891,8 +891,11 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	// in the user's own clone, and git permits one checkout per branch. Falling
 	// back to a fresh session branch keeps the import working; it only costs the
 	// pull-request association, which is better than refusing to import at all.
-	if err != nil && cfg.ResumeNativeSession != nil && cfg.Branch != "" &&
-		errors.Is(err, ports.ErrWorkspaceBranchCheckedOutElsewhere) {
+	// Any failure to create the workspace on the conversation's own branch is
+	// retried once on a fresh one. The branch is only ever an optimization for
+	// pull-request discovery, so no reason for it to be unusable — checked out
+	// elsewhere, unfetched, malformed — is worth failing an import over.
+	if err != nil && cfg.ResumeNativeSession != nil && strings.TrimSpace(cfg.Branch) != "" {
 		fallback := DefaultSpawnBranch(id, cfg.Kind, sessionPrefix(project), projectKind, m.dataDir)
 		m.logger.Info("import: conversation branch is checked out elsewhere; using a fresh session branch",
 			"sessionID", id, "conversationBranch", branch, "branch", fallback)

@@ -177,10 +177,10 @@ func (s *Service) Import(ctx context.Context, provider domain.AgentHarness, nati
 		// The branch the conversation ran on, so AO's existing SCM observer
 		// discovers its pull request and the reducer places the session in
 		// review / ready to merge / merged on its own. No display state is
-		// invented or persisted: only the repository fact is recorded. If the
-		// branch is already checked out elsewhere the manager falls back to a
-		// fresh session branch and the import still succeeds.
-		Branch: target.Branch,
+		// invented or persisted: only the repository fact is recorded. Empty
+		// when the recorded branch is not one a session may own, in which case
+		// the session gets AO's usual fresh branch.
+		Branch: adoptableBranch(target.Branch),
 		ResumeNativeSession: &ports.ResumeNativeSession{
 			Provider:        provider,
 			NativeSessionID: nativeID,
@@ -329,4 +329,58 @@ func importDisplayName(title string) string {
 	}
 	runes := []rune(title)
 	return strings.TrimSpace(string(runes[:maxImportDisplayName-1])) + "…"
+}
+
+// defaultBranchNames are branches a session must never be checked out on. AO's
+// model is one session per branch, and putting a worktree directly on the trunk
+// would let session commits land there. A conversation recorded on the trunk
+// therefore keeps AO's own fresh branch and simply forgoes pull-request
+// association, which costs nothing: the trunk does not have a PR.
+var defaultBranchNames = map[string]struct{}{
+	"main": {}, "master": {}, "trunk": {}, "develop": {}, "development": {}, "default": {},
+}
+
+// adoptableBranch returns the branch an imported session may be created on, or
+// "" to let AO mint its usual session branch.
+//
+// Claude records gitBranch "HEAD" for a detached checkout, and git rejects that
+// as a branch name, so passing it through would fail the whole import. Anything
+// that is not plainly a usable working branch is dropped rather than risked:
+// losing the pull-request link degrades gracefully, a failed import does not.
+func adoptableBranch(branch string) string {
+	branch = strings.TrimSpace(branch)
+	if branch == "" || branch == "HEAD" {
+		return ""
+	}
+	if _, isDefault := defaultBranchNames[strings.ToLower(branch)]; isDefault {
+		return ""
+	}
+	if !validBranchName(branch) {
+		return ""
+	}
+	return branch
+}
+
+// validBranchName applies the parts of git's check-ref-format that matter here.
+// It is deliberately conservative: a name this rejects only costs the PR link.
+func validBranchName(branch string) bool {
+	if strings.HasPrefix(branch, "-") || strings.HasPrefix(branch, "/") || strings.HasSuffix(branch, "/") {
+		return false
+	}
+	if strings.HasSuffix(branch, ".") || strings.HasSuffix(branch, ".lock") {
+		return false
+	}
+	if strings.Contains(branch, "..") || strings.Contains(branch, "@{") || strings.Contains(branch, "//") {
+		return false
+	}
+	for _, r := range branch {
+		if r <= 0x20 || r == 0x7f {
+			return false
+		}
+		switch r {
+		case '~', '^', ':', '?', '*', '[', '\\':
+			return false
+		}
+	}
+	return true
 }

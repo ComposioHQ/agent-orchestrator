@@ -347,3 +347,54 @@ func TestDiscoverScopedToProject(t *testing.T) {
 		t.Fatalf("the most specific project should win, got %+v", nested)
 	}
 }
+
+func TestAdoptableBranch(t *testing.T) {
+	cases := []struct {
+		branch string
+		want   string
+		why    string
+	}{
+		{"feat/payments", "feat/payments", "a normal working branch is adopted"},
+		{"  feat/payments  ", "feat/payments", "surrounding space is trimmed"},
+		{"HEAD", "", "Claude records HEAD for a detached checkout and git rejects it as a branch name"},
+		{"main", "", "a session must never be created directly on the trunk"},
+		{"Master", "", "trunk names are matched regardless of case"},
+		{"develop", "", "long-lived integration branches are trunks too"},
+		{"", "", "nothing recorded means nothing to adopt"},
+		{"-dashed", "", "git rejects a leading dash"},
+		{"has space", "", "git rejects whitespace"},
+		{"a..b", "", "git rejects a double dot"},
+		{"ends/", "", "git rejects a trailing slash"},
+		{"we.lock", "", "git rejects a .lock suffix"},
+		{"tilde~1", "", "git rejects a tilde"},
+		{"colon:name", "", "git rejects a colon"},
+	}
+	for _, tc := range cases {
+		if got := adoptableBranch(tc.branch); got != tc.want {
+			t.Errorf("adoptableBranch(%q) = %q, want %q — %s", tc.branch, got, tc.want, tc.why)
+		}
+	}
+}
+
+// A detached-HEAD conversation must still import. Passing "HEAD" through would
+// fail git's branch validation and take the whole import down with it.
+func TestImportOfDetachedHeadConversationDropsTheBranch(t *testing.T) {
+	target := sessionimport.ImportableSession{
+		Provider:        domain.HarnessClaudeCode,
+		NativeSessionID: "detached-1",
+		CWD:             "/Users/dev/code",
+		Branch:          "HEAD",
+		Title:           "Work from a detached checkout",
+	}
+	src := &fakeSource{provider: domain.HarnessClaudeCode, sessions: []sessionimport.ImportableSession{target}}
+	sessions := &fakeSessions{}
+	projects := &fakeProjects{list: []projectsvc.Summary{{ID: "proj-existing", Path: "/Users/dev/code"}}}
+	svc := New(sessions, &fakeStore{}, projects, src)
+
+	if _, _, err := svc.Import(context.Background(), domain.HarnessClaudeCode, "detached-1"); err != nil {
+		t.Fatalf("a detached-HEAD conversation must still import: %v", err)
+	}
+	if sessions.spawned.Branch != "" {
+		t.Errorf("HEAD must not be requested as a branch, got %q", sessions.spawned.Branch)
+	}
+}

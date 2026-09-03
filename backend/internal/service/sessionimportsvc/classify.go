@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
@@ -42,10 +44,37 @@ type classifier struct {
 	cache   *verdictCache
 	workDir string
 	logger  *slog.Logger
+
+	// mu guards inFlight, which stops a second listing from launching a second
+	// call for a provider that is already being asked.
+	mu       sync.Mutex
+	inFlight map[domain.AgentHarness]bool
+	// wg tracks background batches so shutdown and tests can wait them out.
+	wg sync.WaitGroup
 }
 
-// resolve settles ambiguous conversations in place and returns the list with
-// any newly-judged trivial ones removed.
+// waitForBackground blocks until every background batch has finished. It exists
+// so a test can observe a settled state, and so a caller can drain in-flight
+// work rather than abandoning it.
+func (c *classifier) waitForBackground() {
+	if c == nil {
+		return
+	}
+	c.wg.Wait()
+}
+
+// backgroundClassifyTimeout bounds one batch end to end, so a wedged CLI cannot
+// leave work running for the life of the daemon.
+const backgroundClassifyTimeout = 3 * time.Minute
+
+// resolve applies whatever is already known about ambiguous conversations and
+// returns the list with any judged trivial removed.
+//
+// It never waits on a model. Asking the user's CLI takes seconds to a minute,
+// and a discovery request must not hang behind that, so anything not already
+// cached is judged in the background and lands on the next listing. The cost of
+// that is one refresh before a newly-seen ambiguous conversation settles, which
+// is a far better trade than a spinner holding a request open for minutes.
 //
 // Every failure path is a no-op: an unauthorized agent, a CLI without one-shot
 // support, a timeout, or an unparseable reply all leave the conversation
@@ -56,7 +85,7 @@ func (c *classifier) resolve(ctx context.Context, sessions []sessionimport.Impor
 		return sessions
 	}
 
-	pending := map[domain.AgentHarness][]int{}
+	pending := map[domain.AgentHarness][]sessionimport.ImportableSession{}
 	for i := range sessions {
 		if sessions[i].Meaning != sessionimport.MeaningAmbiguous {
 			continue
@@ -65,30 +94,9 @@ func (c *classifier) resolve(ctx context.Context, sessions []sessionimport.Impor
 			sessions[i].Meaning = verdict
 			continue
 		}
-		pending[sessions[i].Provider] = append(pending[sessions[i].Provider], i)
+		pending[sessions[i].Provider] = append(pending[sessions[i].Provider], sessions[i])
 	}
-
-	for _, provider := range sortedProviders(pending) {
-		indexes := pending[provider]
-		if len(indexes) > maxClassifyBatch {
-			indexes = indexes[:maxClassifyBatch]
-		}
-		verdicts, err := c.ask(ctx, provider, sessions, indexes)
-		if err != nil {
-			c.logger.Debug("session import: classification unavailable; keeping ambiguous conversations",
-				"provider", provider, "count", len(indexes), "error", err)
-			continue
-		}
-		for _, idx := range indexes {
-			verdict, ok := verdicts[sessions[idx].NativeSessionID]
-			if !ok {
-				continue
-			}
-			sessions[idx].Meaning = verdict
-			c.cache.put(sessions[idx], verdict)
-		}
-	}
-	c.cache.flush()
+	c.startBackground(pending)
 
 	kept := sessions[:0]
 	for _, session := range sessions {
@@ -99,13 +107,64 @@ func (c *classifier) resolve(ctx context.Context, sessions []sessionimport.Impor
 	return kept
 }
 
+// startBackground judges the conversations no cached verdict covers, off the
+// request path. Work already in flight for a provider is not started again, so
+// repeatedly opening the list cannot multiply calls against the user's quota.
+func (c *classifier) startBackground(pending map[domain.AgentHarness][]sessionimport.ImportableSession) {
+	for _, provider := range sortedProviders(pending) {
+		batch := pending[provider]
+		if len(batch) > maxClassifyBatch {
+			batch = batch[:maxClassifyBatch]
+		}
+
+		c.mu.Lock()
+		if c.inFlight == nil {
+			c.inFlight = map[domain.AgentHarness]bool{}
+		}
+		if c.inFlight[provider] {
+			c.mu.Unlock()
+			continue
+		}
+		c.inFlight[provider] = true
+		c.mu.Unlock()
+
+		c.wg.Add(1)
+		go func(provider domain.AgentHarness, batch []sessionimport.ImportableSession) {
+			defer c.wg.Done()
+			defer func() {
+				c.mu.Lock()
+				c.inFlight[provider] = false
+				c.mu.Unlock()
+			}()
+
+			// Detached from the request that triggered it: the answer is worth
+			// keeping even though the caller has already been served. The
+			// adapter applies its own timeout, and this bounds the whole batch.
+			ctx, cancel := context.WithTimeout(context.Background(), backgroundClassifyTimeout)
+			defer cancel()
+
+			verdicts, err := c.ask(ctx, provider, batch)
+			if err != nil {
+				c.logger.Debug("session import: classification unavailable; conversations stay ambiguous",
+					"provider", provider, "count", len(batch), "error", err)
+				return
+			}
+			for _, session := range batch {
+				if verdict, ok := verdicts[session.NativeSessionID]; ok {
+					c.cache.put(session, verdict)
+				}
+			}
+			c.cache.flush()
+		}(provider, batch)
+	}
+}
+
 // ask puts one batched question to a provider's CLI and returns the verdicts by
 // native session id.
 func (c *classifier) ask(
 	ctx context.Context,
 	provider domain.AgentHarness,
-	sessions []sessionimport.ImportableSession,
-	indexes []int,
+	batch []sessionimport.ImportableSession,
 ) (map[string]sessionimport.Meaning, error) {
 	agent, ok := c.agents.Agent(provider)
 	if !ok {
@@ -124,7 +183,7 @@ func (c *classifier) ask(
 		}
 	}
 
-	out, err := runner.RunOneShot(ctx, c.workDir, classifyPrompt(sessions, indexes))
+	out, err := runner.RunOneShot(ctx, c.workDir, classifyPrompt(batch))
 	if err != nil {
 		return nil, err
 	}
@@ -133,7 +192,7 @@ func (c *classifier) ask(
 
 // classifyPrompt builds the batched question. It sends a title and a short
 // excerpt per conversation, never a transcript.
-func classifyPrompt(sessions []sessionimport.ImportableSession, indexes []int) string {
+func classifyPrompt(batch []sessionimport.ImportableSession) string {
 	var b strings.Builder
 	b.WriteString("You are judging whether coding-assistant conversations are worth keeping.\n")
 	b.WriteString("Reply with ONLY a JSON array and no prose:\n")
@@ -144,8 +203,7 @@ func classifyPrompt(sessions []sessionimport.ImportableSession, indexes []int) s
 	b.WriteString("When genuinely unsure, answer \"meaningful\": discarding real work is the worse mistake.\n\n")
 	b.WriteString("Conversations:\n")
 
-	for _, idx := range indexes {
-		s := sessions[idx]
+	for _, s := range batch {
 		b.WriteString(fmt.Sprintf("- id=%s | folder=%s | messages=%d | title=%q | first prompt=%q\n",
 			s.NativeSessionID,
 			filepath.Base(strings.TrimSpace(s.CWD)),
@@ -205,7 +263,7 @@ func parseVerdicts(out string) (map[string]sessionimport.Meaning, error) {
 
 // sortedProviders keeps batching deterministic, which matters for tests and for
 // reading logs.
-func sortedProviders(pending map[domain.AgentHarness][]int) []domain.AgentHarness {
+func sortedProviders(pending map[domain.AgentHarness][]sessionimport.ImportableSession) []domain.AgentHarness {
 	providers := make([]domain.AgentHarness, 0, len(pending))
 	for provider := range pending {
 		providers = append(providers, provider)

@@ -93,16 +93,6 @@ func completeLines(data []byte) [][]byte {
 	return lines
 }
 
-// lastCompleteLine returns the last whole line in data, or nil if data holds no
-// newline (meaning every byte could be a fragment).
-func lastCompleteLine(data []byte) []byte {
-	lines := completeLines(data)
-	if len(lines) == 0 {
-		return nil
-	}
-	return lines[len(lines)-1]
-}
-
 // scanLines invokes fn for each newline-delimited line of the file, streaming so
 // even a large transcript is read with bounded memory. Blank lines are skipped.
 // fn returning false stops the scan early.
