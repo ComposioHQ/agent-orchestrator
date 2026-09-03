@@ -515,7 +515,7 @@ describe("GlobalSettingsForm", () => {
 		expect(updDownload).toHaveBeenCalled();
 	});
 
-	it("offers Restart & install once downloaded and installs it", async () => {
+	it("offers Restart & install once downloaded and asks before quitting", async () => {
 		let emit: (s: { state: string; version?: string; requestId?: string }) => void = () => undefined;
 		updOnStatus.mockImplementation((cb: (s: unknown) => void) => {
 			emit = cb as typeof emit;
@@ -526,7 +526,12 @@ describe("GlobalSettingsForm", () => {
 		act(() => emit({ state: "downloaded", version: "1.2.3" }));
 		const installBtn = await screen.findByRole("button", { name: /Restart & install/ });
 		await userEvent.click(installBtn);
-		expect(updInstall).toHaveBeenCalled();
+
+		// Installing quits the app, which costs a turn on any chat session running
+		// a daemon-owned driver, so the click opens the confirmation instead of
+		// tearing the app down on one click.
+		expect(updInstall).not.toHaveBeenCalled();
+		expect(useUiStore.getState().updateInstallPromptOpen).toBe(true);
 	});
 
 	it("shows a non-error restart nudge when automatic checks keep failing on the network", async () => {

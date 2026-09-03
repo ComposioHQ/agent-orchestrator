@@ -386,6 +386,7 @@ function UpdateActions({
 	const { t, i18n } = useTranslation();
 	const locale = i18n.resolvedLanguage ?? i18n.language;
 	const version = useQuery({ queryKey: ["app-version"], queryFn: () => aoBridge.app.getVersion() });
+	const openUpdateInstallPrompt = useUiStore((state) => state.openUpdateInstallPrompt);
 	const installedChannel = installedUpdateChannel(version.data);
 	const installed = parseNightlyVersion(version.data);
 
@@ -493,7 +494,10 @@ function UpdateActions({
 						</Button>
 					)}
 					{status.state === "downloaded" && (
-						<Button type="button" variant="primary" size="sm" onClick={() => void aoBridge.updates.install()}>
+						// Opens the restart confirmation rather than installing outright:
+						// installing quits the app, which costs a turn on any chat session
+						// running a daemon-owned driver.
+						<Button type="button" variant="primary" size="sm" onClick={openUpdateInstallPrompt}>
 							<RefreshCw className="size-icon-sm" aria-hidden="true" />
 							{t("settings.updates.restartInstall")}
 						</Button>

@@ -37,6 +37,14 @@ export interface UpdateStatus {
 	stagedAt?: number;
 	escalated?: boolean;
 	/**
+	 * What changed in the offered build, as plain text.
+	 *
+	 * electron-updater carries the GitHub release body here. It is sanitized and
+	 * length-capped in the main process before it crosses the wire: the feed is
+	 * remote content, and the renderer must never be handed markup to inject.
+	 */
+	releaseNotes?: string;
+	/**
 	 * Set on EVERY status while a build sits downloaded and waiting to install,
 	 * whatever `state` currently says. A routine check drives state through
 	 * checking → available → not-available while the staged build is untouched,

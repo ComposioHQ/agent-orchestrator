@@ -437,6 +437,7 @@ export function Sidebar({
 	const updateStatus = useUpdateStatus();
 	const availableUpdateVersion = updateStatus.state === "available" ? updateStatus.version : undefined;
 	const updateDismissal = useSidebarUpdateDismissal(availableUpdateVersion);
+	const openUpdateInstallPrompt = useUiStore((state) => state.openUpdateInstallPrompt);
 	// Daemon status for the smoke suite's sr-only mirror in the footer. Null when
 	// rendered outside the shell (unit tests) — the mirror simply doesn't render.
 	const daemonStatus = useShellMaybe()?.daemonStatus ?? null;
@@ -879,6 +880,7 @@ export function Sidebar({
 					<UpdateStatusRow
 						availableDismissed={updateDismissal.dismissed}
 						onDismissAvailable={updateDismissal.dismiss}
+						onRequestInstall={openUpdateInstallPrompt}
 						status={updateStatus}
 						tabIndex={isCollapsed ? -1 : 0}
 					/>
@@ -917,6 +919,7 @@ export function Sidebar({
 				>
 					<UpdateStatusRail
 						availableDismissed={updateDismissal.dismissed}
+						onRequestInstall={openUpdateInstallPrompt}
 						status={updateStatus}
 						tabIndex={isCollapsed ? 0 : -1}
 					/>
@@ -2190,11 +2193,14 @@ function updateVersionLabel(
 function UpdateStatusRow({
 	availableDismissed,
 	onDismissAvailable,
+	onRequestInstall,
 	status,
 	tabIndex,
 }: {
 	availableDismissed: boolean;
 	onDismissAvailable: () => void;
+	/** Opens the restart confirmation; installing outright would quit the app. */
+	onRequestInstall: () => void;
 	status: UpdateStatus;
 	tabIndex: number;
 }) {
@@ -2294,7 +2300,7 @@ function UpdateStatusRow({
 					"border-working/35 bg-working/12 text-working hover:bg-working/18 [&_svg]:text-working",
 			)}
 			data-testid="sidebar-update-ready"
-			onClick={() => void aoBridge.updates.install()}
+			onClick={onRequestInstall}
 			tabIndex={tabIndex}
 			type="button"
 		>
@@ -2311,10 +2317,13 @@ function UpdateStatusRow({
 // and a staged one installs; an in-flight download is informational.
 function UpdateStatusRail({
 	availableDismissed,
+	onRequestInstall,
 	status,
 	tabIndex,
 }: {
 	availableDismissed: boolean;
+	/** Opens the restart confirmation; installing outright would quit the app. */
+	onRequestInstall: () => void;
 	status: UpdateStatus;
 	tabIndex: number;
 }) {
@@ -2403,7 +2412,7 @@ function UpdateStatusRail({
 							? "bg-working/12 text-working hover:bg-working/18"
 							: "text-passive hover:bg-interactive-hover hover:text-foreground",
 					)}
-					onClick={() => void aoBridge.updates.install()}
+					onClick={onRequestInstall}
 					tabIndex={tabIndex}
 					type="button"
 				>

@@ -17,6 +17,7 @@ import { reconcileFeaturePin } from "./feature-builds";
 import { evaluateEscalation } from "./escalation-evaluator";
 import {
   isNetErrorMessage,
+  normalizeReleaseNotes,
   updateFailureOutcome,
   type UpdateOutcome,
   type UpdatePhase,
@@ -88,6 +89,10 @@ let eventsWired = false;
 // re-evaluated every 30 minutes while the update sits uninstalled. stateDir is
 // captured from whichever entry point wired the events (both receive it).
 let stagedVersion: string | undefined;
+// Release notes for the build currently on offer or staged, already
+// sanitized. Held here because only the updater events carry it, and the
+// renderer needs it on every subsequent status too, not just the one event.
+let offeredReleaseNotes: string | undefined;
 // Which feed channel the staged build came from. A build staged from one
 // channel is already armed with the OS installer, so switching channels has
 // to notice that it no longer belongs (see stagedBuildIsStale).
@@ -174,9 +179,18 @@ function broadcast(
     lastCheckedAtMs === undefined || status.checkedAt !== undefined
       ? status
       : { ...status, checkedAt: lastCheckedAtMs };
+  const describesAnOffer =
+    status.state === "available" ||
+    status.state === "downloading" ||
+    status.state === "downloaded";
   const stamped: UpdateStatus = {
     ...statusWithCheckTime,
     ...stagedStamp(),
+    // Only on statuses that actually describe a build on offer: "not-available"
+    // carrying notes for a build the user already has would read as news.
+    ...(describesAnOffer && offeredReleaseNotes !== undefined && status.releaseNotes === undefined
+      ? { releaseNotes: offeredReleaseNotes }
+      : {}),
     ...(consecutiveAutomaticNetFailures >= STALE_CHECK_NUDGE_THRESHOLD
       ? { staleCheckNudge: true }
       : {}),
@@ -446,6 +460,7 @@ function stagedBuildIsStale(
  * the replacement download is forced rather than left to the user's preference.
  */
 function discardStagedBuild(): void {
+  offeredReleaseNotes = undefined;
   stagedVersion = undefined;
   stagedChannel = undefined;
   stagedAtMs = undefined;
@@ -746,6 +761,7 @@ function wireUpdaterEvents(): void {
       return;
     }
     pendingUpdateVersion = info?.version;
+    offeredReleaseNotes = normalizeReleaseNotes(info?.releaseNotes);
     broadcastCompletedCheck({ state: "available", version: info?.version });
   });
   autoUpdater.on("update-not-available", () => {
@@ -788,6 +804,7 @@ function wireUpdaterEvents(): void {
     const restaged = stagedAtMs !== undefined && info?.version === stagedVersion;
     stagedVersion = info?.version;
     stagedChannel = autoUpdater.channel ?? undefined;
+    offeredReleaseNotes = normalizeReleaseNotes(info?.releaseNotes) ?? offeredReleaseNotes;
     if (!restaged) {
       stagedAtMs = Date.now();
       stagedEscalated = false;
@@ -871,6 +888,10 @@ export function getUpdateStatus(): UpdateStatus {
   return {
     ...lastStatus,
     ...stagedStamp(),
+    ...(offeredReleaseNotes !== undefined && lastStatus.releaseNotes === undefined &&
+      (lastStatus.state === "available" || lastStatus.state === "downloading" || lastStatus.state === "downloaded")
+      ? { releaseNotes: offeredReleaseNotes }
+      : {}),
     ...(consecutiveAutomaticNetFailures >= STALE_CHECK_NUDGE_THRESHOLD
       ? { staleCheckNudge: true }
       : {}),
