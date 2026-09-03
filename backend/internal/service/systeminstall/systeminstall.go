@@ -413,6 +413,11 @@ func (s *Service) AgentPlans(ctx context.Context) ([]AgentPlan, error) {
 
 func recommendedPlanIndex(plans []Plan) int {
 	for index, plan := range plans {
+		if plan.Method == "official-installer" && !plan.Unsupported {
+			return index
+		}
+	}
+	for index, plan := range plans {
 		if !plan.Unsupported {
 			return index
 		}

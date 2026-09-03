@@ -213,7 +213,7 @@ func TestOfficialInstallersRejectUnsupportedOperatingSystems(t *testing.T) {
 	}
 }
 
-func TestPackageManagerMethodsStayPreferredBeforeOfficialInstaller(t *testing.T) {
+func TestOfficialInstallerIsPreferredOverPackageManagers(t *testing.T) {
 	s := newTestService("darwin", "brew", "npm", "sh")
 	s.installCapabilities = installCapabilitiesStub{
 		prefix: "/Users/test/.npm", homebrewPrefix: "/opt/homebrew", writable: true,
@@ -226,12 +226,15 @@ func TestPackageManagerMethodsStayPreferredBeforeOfficialInstaller(t *testing.T)
 		if plan.AgentID != string(TargetCodex) {
 			continue
 		}
+		if plan.Method != "official-installer" {
+			t.Fatalf("recommended method = %q, want official-installer", plan.Method)
+		}
 		if len(plan.Methods) != 3 {
 			t.Fatalf("methods = %+v", plan.Methods)
 		}
 		want := []string{"homebrew", "npm", "official-installer"}
 		for i, method := range plan.Methods {
-			if method.ID != want[i] || method.Recommended != (i == 0) {
+			if method.ID != want[i] || method.Recommended != (i == 2) {
 				t.Fatalf("method[%d] = %+v", i, method)
 			}
 		}
@@ -487,7 +490,7 @@ func TestKimchiUsesOnlyDocumentedInstallMethods(t *testing.T) {
 		if agent.DocumentationURL != "https://docs.kimchi.dev/docs/coding-getting-started" {
 			t.Fatalf("documentation URL = %q", agent.DocumentationURL)
 		}
-		if agent.Method != "homebrew" || agent.Command != "brew install getkimchi/tap/kimchi" {
+		if agent.Method != "official-installer" || agent.Command != "/usr/bin/sh <downloaded from https://github.com/getkimchi/kimchi/releases/latest/download/install.sh>" {
 			t.Fatalf("recommended Kimchi plan = %+v", agent)
 		}
 		for _, method := range agent.Methods {
