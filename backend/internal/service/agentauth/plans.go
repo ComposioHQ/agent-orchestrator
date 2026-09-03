@@ -4,6 +4,11 @@ import "strings"
 
 // plans is the code-reviewed authentication allowlist in stable Harness
 // settings order. Commands must be added here, never supplied by clients.
+// qwenAuthInput works with Qwen's default editor and its optional Vim mode.
+// In NORMAL, i enters INSERT and Backspace is harmless on the empty prompt; in
+// INSERT/default mode, Backspace removes the literal i before /auth is entered.
+const qwenAuthInput = "i\x7f/auth\r"
+
 var plans = []Plan{
 	plan("claude-code", ActionLogin, "Log in to Claude Code", []string{"claude", "auth", "login"}, "Native browser/device flow", "https://code.claude.com/docs/en/installation"),
 	plan("codex", ActionLogin, "Log in to Codex", []string{"codex", "login"}, "Native browser/device-code flow", "https://github.com/openai/codex"),
@@ -20,7 +25,7 @@ var plans = []Plan{
 	plan("crush", ActionLogin, "Log in to Crush", []string{"crush", "login"}, "Native Charm Hyper login flow; GitHub Copilot remains available as a platform option", "https://github.com/charmbracelet/crush"),
 	plan("cline", ActionLogin, "Log in to Cline", []string{"cline", "auth"}, "Native authentication flow", "https://github.com/cline/cline"),
 	plan("goose", ActionSetup, "Set up Goose", []string{"goose", "configure"}, "Native provider configuration; AO forwards terminal input without persisting or logging the raw input, while Goose controls credential storage", "https://block.github.io/goose/index.html"),
-	terminalInputPlan("qwen", ActionSetup, "Set up Qwen", []string{"qwen"}, "\x1bi/auth\r", "Select Open login after Qwen finishes starting", "https://qwenlm.github.io/qwen-code-docs/en/users/configuration/auth/"),
+	terminalInputPlan("qwen", ActionSetup, "Set up Qwen", []string{"qwen"}, qwenAuthInput, "Select Open login after Qwen finishes starting", "https://qwenlm.github.io/qwen-code-docs/en/users/configuration/auth/"),
 	plan("continue", ActionLogin, "Log in to Continue", []string{"cn", "login"}, "Native browser flow", "https://docs.continue.dev/cli/quickstart"),
 	plan("devin", ActionLogin, "Log in to Devin", []string{"devin", "auth", "login"}, "Native browser flow; manual-token flow remains available from the CLI", "https://docs.devin.ai/get-started/devin-intro"),
 	plan("kiro", ActionLogin, "Log in to Kiro", []string{"kiro-cli", "login"}, "Native browser flow; device flow remains a CLI option", "https://kiro.dev/docs/getting-started/installation/"),
