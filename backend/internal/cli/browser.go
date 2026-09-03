@@ -134,7 +134,7 @@ const maxBrowserWaitMillis = 55_000
 
 func newBrowserCommand(ctx *commandContext) *cobra.Command {
 	var jsonOutput bool
-	var targetTab, expectedURL string
+	var targetTab, targetFrame, expectedURL string
 	var snapshotGeneration int
 	var locatorRole, locatorName, locatorLabel, locatorPlaceholder, locatorText, locatorTestID, locatorCSS string
 	var locatorExact, allowStaleRemap, actionWaitLoad, confirmExternal bool
@@ -143,12 +143,13 @@ func newBrowserCommand(ctx *commandContext) *cobra.Command {
 		Use:   "browser",
 		Short: "Inspect and control this AO session's shared desktop browser",
 		Long: "Inspect and control the target-isolated browser owned by the current AO session.\n\n" +
-			"The desktop app must be open. Commands operate the same live page the user sees,\n" +
-			"including while the Browser panel is hidden.",
+			"Commands use the same live page the user sees when the desktop is open and a\n" +
+			"private hidden Electron runtime when it is not.",
 		Args: noArgs,
 	}
 	cmd.PersistentFlags().BoolVar(&jsonOutput, "json", false, "print the structured response as JSON")
 	cmd.PersistentFlags().StringVar(&targetTab, "tab", "", "target tab ID from the latest observation")
+	cmd.PersistentFlags().StringVar(&targetFrame, "frame", "", "target frame ID from browser frames")
 	cmd.PersistentFlags().StringVar(&expectedURL, "expected-url", "", "exact URL from the latest observation")
 	cmd.PersistentFlags().IntVar(&snapshotGeneration, "generation", -1, "snapshot generation from the latest observation")
 	cmd.PersistentFlags().StringVar(&locatorRole, "role", "", "target an element by semantic role")
@@ -238,7 +239,7 @@ func newBrowserCommand(ctx *commandContext) *cobra.Command {
 
 	cmd.AddCommand(&cobra.Command{
 		Use:   "status",
-		Short: "Show whether the desktop browser runtime is connected",
+		Short: "Show browser runtime and target readiness",
 		Args:  noArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			status, err := ctx.browserStatus(cmd.Context())
@@ -274,7 +275,7 @@ func newBrowserCommand(ctx *commandContext) *cobra.Command {
 		Short: "Print a compact accessibility snapshot with actionable element refs",
 		Args:  noArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return ctx.runBrowserAction(cmd, "snapshot", map[string]any{"interactive": interactiveOnly, "tabId": targetTab}, jsonOutput)
+			return ctx.runBrowserAction(cmd, "snapshot", map[string]any{"interactive": interactiveOnly, "tabId": targetTab, "frameId": targetFrame}, jsonOutput)
 		},
 	}
 	snapshot.Flags().BoolVar(&interactiveOnly, "interactive", false, "include only actionable elements")
@@ -337,6 +338,46 @@ func newBrowserCommand(ctx *commandContext) *cobra.Command {
 			return runMutation(cmd, "click", actionArgs)
 		},
 	})
+	for _, pointer := range []struct{ action, use, short string }{
+		{action: "double-click", use: "double-click [ref]", short: "Double-click an element"},
+		{action: "right-click", use: "right-click [ref]", short: "Open an element's context menu"},
+	} {
+		pointer := pointer
+		cmd.AddCommand(&cobra.Command{
+			Use: pointer.use, Short: pointer.short, Args: atMostOneArg,
+			RunE: func(cmd *cobra.Command, args []string) error {
+				ref := ""
+				if len(args) == 1 {
+					ref = args[0]
+				}
+				actionArgs, err := targetArgs(ref)
+				if err != nil {
+					return err
+				}
+				return runMutation(cmd, pointer.action, actionArgs)
+			},
+		})
+	}
+	cmd.AddCommand(&cobra.Command{
+		Use: "upload <ref> <workspace-path>...", Short: "Set workspace files on a file input", Args: usageArgs(cobra.MinimumNArgs(2)),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runMutation(cmd, "upload", map[string]any{"ref": args[0], "files": args[1:]})
+		},
+	})
+	cmd.AddCommand(&cobra.Command{
+		Use: "drag <source-ref> <target-ref>", Short: "Drag one referenced element onto another", Args: exactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runMutation(cmd, "drag", map[string]any{"sourceRef": args[0], "targetRef": args[1]})
+		},
+	})
+
+	for _, navigation := range []string{"back", "forward", "reload"} {
+		navigation := navigation
+		cmd.AddCommand(&cobra.Command{
+			Use: navigation, Short: navigation + " the active browser tab", Args: noArgs,
+			RunE: func(cmd *cobra.Command, _ []string) error { return runMutation(cmd, navigation, nil) },
+		})
+	}
 
 	cmd.AddCommand(&cobra.Command{
 		Use:   "fill [ref] <text>",
@@ -676,12 +717,17 @@ func newBrowserCommand(ctx *commandContext) *cobra.Command {
 	verifyCmd.Flags().StringVar(&verifyScreenshotOut, "screenshot-out", "", "save visual verification evidence to this path")
 	cmd.AddCommand(verifyCmd)
 
-	cmd.AddCommand(&cobra.Command{
+	var screenshotMode, screenshotRef string
+	screenshotCmd := &cobra.Command{
 		Use:   "screenshot [path]",
-		Short: "Capture the current page to a PNG file",
+		Short: "Capture the viewport, full page, or an element to a PNG file",
 		Args:  atMostOneArg,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			resp, err := ctx.browserAction(cmd.Context(), "screenshot", nil)
+			actionArgs := map[string]any{"mode": screenshotMode}
+			if screenshotRef != "" {
+				actionArgs["ref"] = screenshotRef
+			}
+			resp, err := ctx.browserAction(cmd.Context(), "screenshot", actionArgs)
 			if err != nil {
 				return err
 			}
@@ -694,7 +740,73 @@ func newBrowserCommand(ctx *commandContext) *cobra.Command {
 			}
 			return writeBrowserScreenshot(cmd, resp.Result, path)
 		},
+	}
+	screenshotCmd.Flags().StringVar(&screenshotMode, "mode", "viewport", "capture mode: viewport, full-page, or element")
+	screenshotCmd.Flags().StringVar(&screenshotRef, "ref", "", "element reference (required with --mode element)")
+	cmd.AddCommand(screenshotCmd)
+
+	cmd.AddCommand(&cobra.Command{
+		Use: "frames", Short: "List page frames and their frame IDs", Args: noArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return ctx.runBrowserAction(cmd, "frames", nil, jsonOutput)
+		},
 	})
+
+	dialogCmd := &cobra.Command{Use: "dialog", Short: "Inspect or handle a JavaScript dialog", Args: noArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return ctx.runBrowserAction(cmd, "dialog", nil, jsonOutput)
+		},
+	}
+	var dialogPrompt string
+	for _, decision := range []string{"accept", "dismiss"} {
+		decision := decision
+		sub := &cobra.Command{Use: decision, Short: decision + " the open JavaScript dialog", Args: noArgs,
+			RunE: func(cmd *cobra.Command, _ []string) error {
+				args := map[string]any{}
+				if decision == "accept" && dialogPrompt != "" {
+					args["promptText"] = dialogPrompt
+				}
+				return runMutation(cmd, "dialog-"+decision, args)
+			},
+		}
+		if decision == "accept" {
+			sub.Flags().StringVar(&dialogPrompt, "prompt", "", "text for a prompt dialog")
+		}
+		dialogCmd.AddCommand(sub)
+	}
+	cmd.AddCommand(dialogCmd)
+
+	downloadsCmd := &cobra.Command{Use: "downloads", Short: "List session-owned browser downloads", Args: noArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return ctx.runBrowserAction(cmd, "downloads", nil, jsonOutput)
+		},
+	}
+	downloadsCmd.AddCommand(&cobra.Command{Use: "clear", Short: "Clear retained download records", Args: noArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return ctx.runBrowserAction(cmd, "downloads-clear", nil, jsonOutput)
+		},
+	})
+	cmd.AddCommand(downloadsCmd)
+
+	var viewportWidth, viewportHeight int
+	var viewportScale float64
+	var viewportMobile bool
+	viewportCmd := &cobra.Command{Use: "viewport", Short: "Set the emulated browser viewport", Args: noArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if viewportWidth == 0 && viewportHeight == 0 {
+				return ctx.runBrowserAction(cmd, "viewport", nil, jsonOutput)
+			}
+			if viewportWidth == 0 || viewportHeight == 0 {
+				return usageError{errors.New("provide both --width and --height")}
+			}
+			return runMutation(cmd, "viewport-set", map[string]any{"width": viewportWidth, "height": viewportHeight, "deviceScaleFactor": viewportScale, "mobile": viewportMobile})
+		},
+	}
+	viewportCmd.Flags().IntVar(&viewportWidth, "width", 0, "viewport width in CSS pixels")
+	viewportCmd.Flags().IntVar(&viewportHeight, "height", 0, "viewport height in CSS pixels")
+	viewportCmd.Flags().Float64Var(&viewportScale, "scale", 1, "device scale factor")
+	viewportCmd.Flags().BoolVar(&viewportMobile, "mobile", false, "enable mobile viewport emulation")
+	cmd.AddCommand(viewportCmd)
 
 	var networkDuration int
 	networkCmd := &cobra.Command{
@@ -741,14 +853,23 @@ func newBrowserCommand(ctx *commandContext) *cobra.Command {
 	cmd.AddCommand(networkCmd)
 
 	for _, action := range []string{"console", "errors"} {
-		cmd.AddCommand(&cobra.Command{
+		action := action
+		var since int
+		logCmd := &cobra.Command{
 			Use:   action,
 			Short: "Print captured browser " + action,
 			Args:  noArgs,
 			RunE: func(cmd *cobra.Command, _ []string) error {
-				return ctx.runBrowserAction(cmd, action, nil, jsonOutput)
+				return ctx.runBrowserAction(cmd, action, map[string]any{"since": since}, jsonOutput)
+			},
+		}
+		logCmd.Flags().IntVar(&since, "since", 0, "return entries at or after this cursor")
+		logCmd.AddCommand(&cobra.Command{Use: "clear", Short: "Clear retained browser " + action, Args: noArgs,
+			RunE: func(cmd *cobra.Command, _ []string) error {
+				return ctx.runBrowserAction(cmd, action+"-clear", nil, jsonOutput)
 			},
 		})
+		cmd.AddCommand(logCmd)
 	}
 	return cmd
 }

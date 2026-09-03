@@ -1,7 +1,7 @@
 import net from "node:net";
 import { StringDecoder } from "node:string_decoder";
 
-const PROTOCOL_VERSION = 3;
+const PROTOCOL_VERSION = 4;
 const BACKOFF_INIT_MS = 200;
 const BACKOFF_MAX_MS = 2_000;
 const MAX_COMMAND_BYTES = 1 << 20;
@@ -33,6 +33,9 @@ export interface BrowserRuntimeLinkHandle {
 type BrowserRuntimeLinkOptions = {
 	execute: (command: BrowserRuntimeCommand, signal: AbortSignal) => Promise<unknown>;
 	token?: string;
+	provider?: "electron" | "headless-electron";
+	reconnect?: boolean;
+	onDisconnect?: () => void;
 	log?: (message: string) => void;
 };
 
@@ -178,7 +181,7 @@ export function connectBrowserRuntime(
 	};
 
 	const scheduleReconnect = () => {
-		if (disposed) return;
+		if (disposed || options.reconnect === false) return;
 		clearRetry();
 		const delay = backoff;
 		backoff = Math.min(backoff * 2, BACKOFF_MAX_MS);
@@ -200,7 +203,7 @@ export function connectBrowserRuntime(
 			}
 			connected = true;
 			backoff = BACKOFF_INIT_MS;
-			void send({ type: "hello", version: PROTOCOL_VERSION, token: options.token }, next, epoch).catch((error) => {
+			void send({ type: "hello", version: PROTOCOL_VERSION, token: options.token, provider: options.provider ?? "electron" }, next, epoch).catch((error) => {
 				log(`browser-runtime-link: hello failed: ${String(error)}`);
 				next.destroy();
 			});
@@ -214,7 +217,10 @@ export function connectBrowserRuntime(
 			socket = null;
 			connectionEpoch += 1;
 			cancelConnectionCommands();
-			if (!disposed) scheduleReconnect();
+			if (!disposed) {
+				options.onDisconnect?.();
+				scheduleReconnect();
+			}
 		});
 	}
 

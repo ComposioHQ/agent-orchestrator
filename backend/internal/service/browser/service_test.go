@@ -3,6 +3,8 @@ package browser
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/browserruntime"
@@ -171,6 +173,27 @@ func TestAuthorityPersistsStableSecret(t *testing.T) {
 	}
 	if first.Token("s1") == "" || first.Token("s1") != second.Token("s1") || first.Token("s1") == first.Token("s2") {
 		t.Fatal("authority tokens are not stable and session-scoped")
+	}
+}
+
+func TestValidateUploadPathsStaysInsideWorkspace(t *testing.T) {
+	workspace := t.TempDir()
+	inside := filepath.Join(workspace, "fixture.txt")
+	if err := os.WriteFile(inside, []byte("fixture"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	paths, err := validateUploadPaths(workspace, []string{"fixture.txt"})
+	if err != nil || len(paths) != 1 || paths[0] != inside {
+		t.Fatalf("paths=%v err=%v", paths, err)
+	}
+
+	outsideDir := t.TempDir()
+	outside := filepath.Join(outsideDir, "outside.txt")
+	if err := os.WriteFile(outside, []byte("outside"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := validateUploadPaths(workspace, []string{outside}); apiErrorCode(err) != "BROWSER_UPLOAD_FORBIDDEN" {
+		t.Fatalf("outside upload error=%v", err)
 	}
 }
 

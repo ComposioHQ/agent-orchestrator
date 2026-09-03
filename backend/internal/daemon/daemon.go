@@ -119,6 +119,7 @@ func Run() error {
 	// graceful shutdown inside Server.Run and stops the background goroutines.
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+	managedBrowser := browserruntime.NewManaged(ctx, browserBroker)
 
 	cdcPipe, err := startCDC(ctx, store, log)
 	if err != nil {
@@ -174,7 +175,7 @@ func Run() error {
 	// selected runtime, routed git/scratch workspaces, the per-session agent
 	// resolver (AO_AGENT validated here for compatibility), and the agent
 	// messenger, then mount it on the API.
-	sessionSvc, reviewSvc, sessMgr, err := startSession(cfg, runtimeAdapter, store, lcStack.LCM, messenger, telemetrySink, agents, managedPreview, browserBroker, browserAuthority, log)
+	sessionSvc, reviewSvc, sessMgr, err := startSession(cfg, runtimeAdapter, store, lcStack.LCM, messenger, telemetrySink, agents, managedPreview, managedBrowser, browserAuthority, log)
 	if err != nil {
 		stop()
 		lcStack.Stop()
@@ -214,7 +215,7 @@ func Run() error {
 		DefaultPort: mobilebridge.DefaultPort,
 	}
 	mc := &controllers.MobileController{Bridge: bs}
-	browserService := browsersvc.New(sessionSvc, browserBroker, browserAuthority)
+	browserService := browsersvc.New(sessionSvc, managedBrowser, browserAuthority)
 
 	// Standalone shell terminals: user-opened shells with no agent session
 	// behind them. They reuse the same runtime adapter (and therefore the same

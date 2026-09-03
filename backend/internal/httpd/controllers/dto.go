@@ -298,7 +298,7 @@ type BrowserStatusResponse struct {
 	Connected         bool                          `json:"connected"`
 	ConnectedAt       time.Time                     `json:"connectedAt,omitempty"`
 	Transport         string                        `json:"transport"`
-	State             browserruntime.ReadinessState `json:"state" enum:"desktop_closed,target_starting,page_loading,ready,recovering,unavailable"`
+	State             browserruntime.ReadinessState `json:"state" enum:"desktop_closed,runtime_connecting,target_starting,page_loading,ready,recovering,unavailable"`
 	Provider          string                        `json:"provider"`
 	Target            *browserruntime.Target        `json:"target,omitempty"`
 	RecommendedAction string                        `json:"recommendedAction,omitempty"`

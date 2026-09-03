@@ -24,13 +24,15 @@ import (
 
 const (
 	// ProtocolVersion identifies the daemon-to-Electron browser bridge contract.
-	ProtocolVersion = 3
-	// RuntimeTokenEnv is deliberately removed from worker and preview-process
-	// environments. Only the daemon and desktop supervisor need it.
+	ProtocolVersion = 4
+	// RuntimeTokenEnv is deliberately removed from agent-worker and preview
+	// environments. Only the daemon and its Electron browser providers need it.
 	RuntimeTokenEnv = "AO_BROWSER_RUNTIME_TOKEN" //nolint:gosec // Environment variable name, not a credential.
 	// RuntimeAddressEnv carries the exact listener address into running.json so
 	// Electron never has to duplicate the backend's platform-specific naming.
 	RuntimeAddressEnv    = "AO_BROWSER_RUNTIME_ADDRESS"
+	WorkerExecutableEnv  = "AO_BROWSER_RUNTIME_WORKER_EXECUTABLE"
+	WorkerAppPathEnv     = "AO_BROWSER_RUNTIME_WORKER_APP_PATH"
 	helloTimeout         = 5 * time.Second
 	maxRuntimeFrameBytes = 8 << 20
 )
@@ -84,6 +86,7 @@ type wireMessage struct {
 	Type      string                 `json:"type"`
 	Version   int                    `json:"version,omitempty"`
 	Token     string                 `json:"token,omitempty"`
+	Provider  string                 `json:"provider,omitempty"`
 	RequestID string                 `json:"requestId,omitempty"`
 	SessionID domain.SessionID       `json:"sessionId,omitempty"`
 	Action    string                 `json:"action,omitempty"`
@@ -107,6 +110,7 @@ type Broker struct {
 	mu          sync.Mutex
 	conn        net.Conn
 	connectedAt time.Time
+	provider    string
 	pending     map[string]chan pendingResult
 	writeGate   chan struct{}
 	token       string
@@ -149,8 +153,15 @@ func (b *Broker) Status() Status {
 	return Status{
 		Connected: b.conn != nil, ConnectedAt: b.connectedAt,
 		Transport: "electron-webcontents-debugger", State: state,
-		Provider: "electron", RecommendedAction: recommendedAction,
+		Provider: runtimeProvider(b.provider), RecommendedAction: recommendedAction,
 	}
+}
+
+func runtimeProvider(provider string) string {
+	if provider == "headless-electron" {
+		return provider
+	}
+	return "electron"
 }
 
 // Execute sends one browser command to the connected Electron runtime.
@@ -245,16 +256,31 @@ func (b *Broker) serveConn(ctx context.Context, conn net.Conn) {
 	_ = conn.SetReadDeadline(time.Time{})
 
 	b.mu.Lock()
+	provider := hello.Provider
+	if provider == "" {
+		provider = "electron"
+	}
+	if provider != "electron" && provider != "headless-electron" {
+		b.mu.Unlock()
+		_ = conn.Close()
+		return
+	}
+	if b.conn != nil && b.provider == "electron" && provider == "headless-electron" {
+		b.mu.Unlock()
+		_ = conn.Close()
+		return
+	}
 	old := b.conn
 	b.conn = conn
 	b.connectedAt = time.Now().UTC()
+	b.provider = provider
 	pending := b.takePendingLocked()
 	b.mu.Unlock()
 	if old != nil && old != conn {
 		_ = old.Close()
 	}
 	failPending(pending, ErrOutcomeUnknown)
-	b.log.Info("browser runtime connected")
+	b.log.Info("browser runtime connected", "provider", provider)
 
 	go func() {
 		<-ctx.Done()
@@ -361,6 +387,7 @@ func (b *Broker) disconnect(conn net.Conn, cause error) {
 	}
 	b.conn = nil
 	b.connectedAt = time.Time{}
+	b.provider = ""
 	pending := b.takePendingLocked()
 	b.mu.Unlock()
 	_ = conn.Close()

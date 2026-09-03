@@ -207,6 +207,46 @@ func TestBrokerRejectsInvalidRuntimeToken(t *testing.T) {
 	waitConnected(t, broker)
 }
 
+func TestBrokerPrefersDesktopOverHeadlessProvider(t *testing.T) {
+	broker := New(nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	go func() { _ = broker.Serve(ctx, ln) }()
+
+	headless, err := net.Dial("tcp", ln.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = headless.Close() }()
+	_ = json.NewEncoder(headless).Encode(wireMessage{Type: "hello", Version: ProtocolVersion, Provider: "headless-electron"})
+	waitProvider(t, broker, "headless-electron")
+
+	desktop, err := net.Dial("tcp", ln.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = desktop.Close() }()
+	_ = json.NewEncoder(desktop).Encode(wireMessage{Type: "hello", Version: ProtocolVersion, Provider: "electron"})
+	waitProvider(t, broker, "electron")
+
+	rejected, err := net.Dial("tcp", ln.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = json.NewEncoder(rejected).Encode(wireMessage{Type: "hello", Version: ProtocolVersion, Provider: "headless-electron"})
+	_ = rejected.SetReadDeadline(time.Now().Add(time.Second))
+	if _, err := rejected.Read(make([]byte, 1)); err == nil {
+		t.Fatal("headless provider replaced an active desktop provider")
+	}
+	if got := broker.Status().Provider; got != "electron" {
+		t.Fatalf("provider = %q, want electron", got)
+	}
+}
+
 func TestBrokerCancellationSendsCancelFrame(t *testing.T) {
 	broker := New(nil)
 	ctx, stop := context.WithCancel(context.Background())
@@ -276,4 +316,17 @@ func waitConnected(t *testing.T, broker *Broker) {
 		}
 		time.Sleep(time.Millisecond)
 	}
+}
+
+func waitProvider(t *testing.T, broker *Broker, provider string) {
+	t.Helper()
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		status := broker.Status()
+		if status.Connected && status.Provider == provider {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatalf("broker provider did not become %q", provider)
 }

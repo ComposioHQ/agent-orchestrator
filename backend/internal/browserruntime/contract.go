@@ -5,12 +5,13 @@ package browserruntime
 type ReadinessState string
 
 const (
-	ReadinessDesktopClosed  ReadinessState = "desktop_closed"
-	ReadinessTargetStarting ReadinessState = "target_starting"
-	ReadinessPageLoading    ReadinessState = "page_loading"
-	ReadinessReady          ReadinessState = "ready"
-	ReadinessRecovering     ReadinessState = "recovering"
-	ReadinessUnavailable    ReadinessState = "unavailable"
+	ReadinessDesktopClosed     ReadinessState = "desktop_closed"
+	ReadinessRuntimeConnecting ReadinessState = "runtime_connecting"
+	ReadinessTargetStarting    ReadinessState = "target_starting"
+	ReadinessPageLoading       ReadinessState = "page_loading"
+	ReadinessReady             ReadinessState = "ready"
+	ReadinessRecovering        ReadinessState = "recovering"
+	ReadinessUnavailable       ReadinessState = "unavailable"
 )
 
 // Target describes the exact logical tab observed by the runtime.

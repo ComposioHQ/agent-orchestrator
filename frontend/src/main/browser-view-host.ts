@@ -2,6 +2,8 @@ import type {
 	IpcMain,
 	IpcMainEvent,
 	IpcMainInvokeEvent,
+	DownloadItem,
+	NativeImage,
 	Rectangle,
 	Session,
 	View,
@@ -9,6 +11,9 @@ import type {
 	WebFrameMain,
 } from "electron";
 import { randomUUID } from "node:crypto";
+import { mkdirSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import type {
 	BrowserAnnotationCancelPayload,
 	BrowserAnnotationModeInput,
@@ -95,7 +100,8 @@ type BrowserWebContents = Pick<
 	| "stop"
 > & {
 	close?: () => void;
-	session?: Pick<Session, "setPermissionCheckHandler" | "setPermissionRequestHandler">;
+	session?: Pick<Session, "setPermissionCheckHandler" | "setPermissionRequestHandler"> &
+		Partial<Pick<Session, "on">>;
 };
 
 type BrowserViewLike = View & {
@@ -159,6 +165,7 @@ type BrowserEntry = {
 	refs: Map<string, BrowserElementRef>;
 	consoleMessages: BrowserLogEntry[];
 	errors: BrowserLogEntry[];
+	dialog?: { type: string; message: string; defaultPrompt?: string };
 	networkCapture?: BrowserNetworkCapture;
 };
 
@@ -197,6 +204,7 @@ type BrowserSessionEntry = {
 	parked: boolean;
 	networkTabId?: string;
 	agentBrowserCommands: number;
+	downloads: Array<{ id: string; filename: string; path: string; url: string; state: string }>;
 };
 
 type BrowserLogEntry = {
@@ -416,6 +424,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 			consoleMessages: [],
 			errors: [],
 		};
+		if (session.tabs.size === 0) configureSessionDownloads(view.webContents.session, session);
 		session.tabs.set(tabId, entry);
 		tabsByWebContentsId.set(view.webContents.id, entry);
 		hardenWebContents(view.webContents, options, entry, () => {
@@ -469,6 +478,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 				visible: false,
 				parked: false,
 				agentBrowserCommands: 0,
+				downloads: [],
 			};
 			entries.set(viewId, session);
 			viewIdsBySessionId.set(sessionId, viewId);
@@ -844,7 +854,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 					return state;
 				}
 				case "snapshot":
-					return snapshotEntry(entry, Boolean(args.interactive));
+					return snapshotEntry(entry, Boolean(args.interactive), typeof args.frameId === "string" ? args.frameId : undefined);
 				case "observe":
 					return observeEntry(entry, {
 						interactiveOnly: Boolean(args.interactiveOnly),
@@ -852,7 +862,21 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 						includeProblems: Boolean(args.includeProblems),
 					});
 				case "click":
-					return runMutation(entry, args, signal, (target) => clickEntry(entry, target));
+					return runMutation(entry, args, signal, (target) => clickEntry(entry, target, "left", 1));
+				case "double-click":
+					return runMutation(entry, args, signal, (target) => clickEntry(entry, target, "left", 2));
+				case "right-click":
+					return runMutation(entry, args, signal, (target) => clickEntry(entry, target, "right", 1));
+				case "upload":
+					return runMutation(entry, args, signal, (target) => uploadEntry(entry, target, args));
+				case "drag":
+					return runMutation(entry, args, signal, () => dragEntry(entry, args));
+				case "back":
+					return runMutation(entry, args, signal, () => invokeNav(entry.state.viewId, (contents) => contents.goBack(), true));
+				case "forward":
+					return runMutation(entry, args, signal, () => invokeNav(entry.state.viewId, (contents) => contents.goForward(), true));
+				case "reload":
+					return runMutation(entry, args, signal, () => invokeNav(entry.state.viewId, (contents) => contents.reload(), true));
 				case "fill":
 					return runMutation(entry, args, signal, (target) =>
 						fillEntry(entry, target, stringArg(args, "text", "INVALID_ARGUMENT", "text is required", true)),
@@ -916,7 +940,18 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 				case "wait":
 					return waitForEntry(entry, args, signal);
 				case "screenshot":
-					return screenshotEntry(entry);
+					return screenshotEntry(entry, args);
+				case "frames":
+					return framesEntry(entry);
+				case "dialog":
+					return { open: Boolean(entry.dialog), dialog: entry.dialog, untrustedExternalContent: true };
+				case "dialog-accept":
+				case "dialog-dismiss":
+					return runMutation(entry, args, signal, () => handleDialogEntry(entry, action === "dialog-accept", args));
+				case "viewport":
+					return viewportEntry(entry);
+				case "viewport-set":
+					return runMutation(entry, args, signal, () => setViewportEntry(entry, args));
 				case "network-start":
 					return startNetworkCapture(
 						session,
@@ -932,9 +967,20 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 				case "network-clear":
 					return clearNetworkCapture(networkEntryFor(session));
 				case "console":
-					return { messages: markLogMessages(entry.consoleMessages), untrustedExternalContent: true };
+					return logResult(entry.consoleMessages, args.since);
 				case "errors":
-					return { messages: markLogMessages(entry.errors), untrustedExternalContent: true };
+					return logResult(entry.errors, args.since);
+				case "console-clear":
+					entry.consoleMessages.length = 0;
+					return { cleared: true, cursor: 0 };
+				case "errors-clear":
+					entry.errors.length = 0;
+					return { cleared: true, cursor: 0 };
+				case "downloads":
+					return { downloads: session.downloads, untrustedExternalContent: true };
+				case "downloads-clear":
+					session.downloads.length = 0;
+					return { cleared: true };
 				default:
 					throw browserError("INVALID_ARGUMENT", `Unsupported browser action: ${action}`);
 				}
@@ -1287,6 +1333,19 @@ function wireAutomationEvents(contents: BrowserWebContents, entry: BrowserEntry)
 	if (!targetDebugger) return;
 	targetDebugger.on("message", (_event, method, params) => {
 		handleNetworkDebuggerEvent(entry, method, params as Record<string, unknown>);
+		if (method === "Page.javascriptDialogOpening") {
+			const dialog = params as { type?: string; message?: string; defaultPrompt?: string };
+			entry.dialog = {
+				type: dialog.type ?? "alert",
+				message: externalText(dialog.message ?? ""),
+				...(dialog.defaultPrompt ? { defaultPrompt: externalText(dialog.defaultPrompt) } : {}),
+			};
+			return;
+		}
+		if (method === "Page.javascriptDialogClosed") {
+			entry.dialog = undefined;
+			return;
+		}
 		if (method === "DOM.documentUpdated") {
 			invalidateRefs(entry);
 			return;
@@ -1314,6 +1373,31 @@ function pushBrowserLog(target: BrowserLogEntry[], entry: BrowserLogEntry): void
 	if (target.length > 200) target.splice(0, target.length - 200);
 }
 
+function configureSessionDownloads(
+	browserSession: BrowserWebContents["session"],
+	session: BrowserSessionEntry,
+): void {
+	if (!browserSession?.on) return;
+	browserSession.on("will-download", (_event, item: DownloadItem) => {
+		const id = randomUUID();
+		const directory = path.join(
+			process.env.AO_DATA_DIR ?? path.join(os.homedir(), ".ao"),
+			"browser-downloads",
+			session.sessionId.replace(/[^a-zA-Z0-9_.-]/g, "_"),
+		);
+		mkdirSync(directory, { recursive: true });
+		const filename = path.basename(item.getFilename()).replace(/[^a-zA-Z0-9_.() -]/g, "_") || "download";
+		const targetPath = path.join(directory, `${id.slice(0, 8)}-${filename}`);
+		const record = { id, filename, path: targetPath, url: item.getURL(), state: "progressing" };
+		session.downloads.push(record);
+		if (session.downloads.length > 100) session.downloads.splice(0, session.downloads.length - 100);
+		item.setSavePath(targetPath);
+		item.once("done", (_doneEvent, state) => {
+			record.state = state;
+		});
+	});
+}
+
 function invalidateRefs(entry: BrowserEntry): void {
 	entry.refGeneration += 1;
 }
@@ -1333,6 +1417,7 @@ async function ensureDebugger(entry: BrowserEntry): Promise<void> {
 	}
 	await debug.sendCommand("Runtime.enable");
 	await debug.sendCommand("DOM.enable");
+	await debug.sendCommand("Page.enable");
 }
 
 function networkEntryFor(session: BrowserSessionEntry): BrowserEntry {
@@ -1645,10 +1730,10 @@ async function observeEntry(entry: BrowserEntry, options: ObserveEntryOptions): 
 	};
 }
 
-async function snapshotEntry(entry: BrowserEntry, interactiveOnly: boolean): Promise<Record<string, unknown>> {
+async function snapshotEntry(entry: BrowserEntry, interactiveOnly: boolean, frameId?: string): Promise<Record<string, unknown>> {
 	await ensureDebugger(entry);
 	await entry.view.webContents.debugger.sendCommand("Accessibility.enable");
-	const response = (await entry.view.webContents.debugger.sendCommand("Accessibility.getFullAXTree")) as {
+	const response = (await entry.view.webContents.debugger.sendCommand("Accessibility.getFullAXTree", frameId ? { frameId } : undefined)) as {
 		nodes?: AXNode[];
 	};
 	const nodes = response.nodes ?? [];
@@ -1882,24 +1967,59 @@ async function readMutationCount(entry: BrowserEntry): Promise<number> {
 	}
 }
 
-async function clickEntry(entry: BrowserEntry, target?: ResolvedBrowserTarget): Promise<unknown> {
+async function clickEntry(
+	entry: BrowserEntry,
+	target: ResolvedBrowserTarget | undefined,
+	button: "left" | "right",
+	clickCount: number,
+): Promise<unknown> {
 	if (!target) throw browserError("REFERENCE_REQUIRED", "ref or semantic target is required");
 	const point = await pointerPoint(entry, target.objectId, target.label);
 	await entry.view.webContents.debugger.sendCommand("Input.dispatchMouseEvent", {
 		type: "mousePressed",
 		x: point.x,
 		y: point.y,
-		button: "left",
-		clickCount: 1,
+		button,
+		clickCount,
 	});
 	await entry.view.webContents.debugger.sendCommand("Input.dispatchMouseEvent", {
 		type: "mouseReleased",
 		x: point.x,
 		y: point.y,
-		button: "left",
-		clickCount: 1,
+		button,
+		clickCount,
 	});
-	return { target: target.label, x: point.x, y: point.y, url: entry.view.webContents.getURL() };
+	return { target: target.label, x: point.x, y: point.y, button, clickCount, url: entry.view.webContents.getURL() };
+}
+
+async function uploadEntry(
+	entry: BrowserEntry,
+	target: ResolvedBrowserTarget | undefined,
+	args: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
+	if (!target) throw browserError("REFERENCE_REQUIRED", "ref or semantic target is required");
+	const files = Array.isArray(args.files) && args.files.every((file) => typeof file === "string")
+		? args.files as string[]
+		: [];
+	if (files.length === 0) throw browserError("INVALID_ARGUMENT", "files are required");
+	await ensureDebugger(entry);
+	await entry.view.webContents.debugger.sendCommand("DOM.setFileInputFiles", { files, objectId: target.objectId });
+	return { target: target.label, fileCount: files.length, url: entry.view.webContents.getURL() };
+}
+
+async function dragEntry(entry: BrowserEntry, args: Record<string, unknown>): Promise<Record<string, unknown>> {
+	const sourceRef = stringArg(args, "sourceRef", "INVALID_ARGUMENT", "sourceRef is required");
+	const targetRef = stringArg(args, "targetRef", "INVALID_ARGUMENT", "targetRef is required");
+	const source = await resolveTarget(entry, { ref: sourceRef, allowStaleRemap: args.allowStaleRemap });
+	const target = await resolveTarget(entry, { ref: targetRef, allowStaleRemap: args.allowStaleRemap });
+	if (!source || !target) throw browserError("REFERENCE_REQUIRED", "sourceRef and targetRef are required");
+	const from = await pointerPoint(entry, source.objectId, source.label);
+	const to = await pointerPoint(entry, target.objectId, target.label);
+	const debuggerAPI = entry.view.webContents.debugger;
+	await debuggerAPI.sendCommand("Input.dispatchMouseEvent", { type: "mousePressed", x: from.x, y: from.y, button: "left", clickCount: 1 });
+	await debuggerAPI.sendCommand("Input.dispatchMouseEvent", { type: "mouseMoved", x: to.x, y: to.y, button: "left", buttons: 1 });
+	await debuggerAPI.sendCommand("Input.dispatchMouseEvent", { type: "mouseReleased", x: to.x, y: to.y, button: "left", clickCount: 1 });
+	return { source: source.label, target: target.label, from, to, url: entry.view.webContents.getURL() };
 }
 
 async function fillEntry(entry: BrowserEntry, target: ResolvedBrowserTarget | undefined, text: string): Promise<unknown> {
@@ -2323,8 +2443,53 @@ async function waitForEntry(entry: BrowserEntry, args: Record<string, unknown>, 
 	}
 }
 
-async function screenshotEntry(entry: BrowserEntry): Promise<Record<string, unknown>> {
-	const image = await entry.view.webContents.capturePage();
+async function screenshotEntry(entry: BrowserEntry, args: Record<string, unknown> = {}): Promise<Record<string, unknown>> {
+	await ensureDebugger(entry);
+	let image: NativeImage;
+	const mode = typeof args.mode === "string" ? args.mode : "viewport";
+	if (mode === "full-page") {
+		const metrics = (await entry.view.webContents.debugger.sendCommand("Page.getLayoutMetrics")) as {
+			cssContentSize?: { width?: number; height?: number };
+			contentSize?: { width?: number; height?: number };
+		};
+		const response = (await entry.view.webContents.debugger.sendCommand("Page.captureScreenshot", {
+			format: "png",
+			captureBeyondViewport: true,
+			fromSurface: true,
+		})) as { data?: string };
+		if (!response.data) throw browserError("BROWSER_COMMAND_FAILED", "Browser screenshot is empty");
+		const contentSize = metrics.cssContentSize ?? metrics.contentSize ?? {};
+		return {
+			mimeType: "image/png",
+			data: response.data,
+			width: Math.round(contentSize.width ?? 0),
+			height: Math.round(contentSize.height ?? 0),
+			url: entry.view.webContents.getURL(),
+			mode,
+			untrustedExternalContent: true,
+		};
+	}
+	if (mode === "element") {
+		const target = await resolveTarget(entry, args);
+		if (!target) throw browserError("REFERENCE_REQUIRED", "ref or semantic target is required");
+		const box = (await entry.view.webContents.debugger.sendCommand("DOM.getBoxModel", { objectId: target.objectId })) as {
+			model?: { border?: number[]; content?: number[] };
+		};
+		const quad = box.model?.border ?? box.model?.content;
+		if (!quad || quad.length < 8) throw browserError("ELEMENT_NOT_VISIBLE", "Element has no visible box");
+		const xs = [quad[0], quad[2], quad[4], quad[6]];
+		const ys = [quad[1], quad[3], quad[5], quad[7]];
+		const rect = {
+			x: Math.floor(Math.min(...xs)), y: Math.floor(Math.min(...ys)),
+			width: Math.max(1, Math.ceil(Math.max(...xs) - Math.min(...xs))),
+			height: Math.max(1, Math.ceil(Math.max(...ys) - Math.min(...ys))),
+		};
+		image = await entry.view.webContents.capturePage(rect);
+	} else if (mode === "viewport") {
+		image = await entry.view.webContents.capturePage();
+	} else {
+		throw browserError("INVALID_ARGUMENT", "screenshot mode must be viewport, full-page, or element");
+	}
 	if (image.isEmpty()) throw browserError("BROWSER_COMMAND_FAILED", "Browser screenshot is empty");
 	const size = image.getSize();
 	return {
@@ -2333,8 +2498,57 @@ async function screenshotEntry(entry: BrowserEntry): Promise<Record<string, unkn
 		width: size.width,
 		height: size.height,
 		url: entry.view.webContents.getURL(),
+		mode,
 		untrustedExternalContent: true,
 	};
+}
+
+async function framesEntry(entry: BrowserEntry): Promise<Record<string, unknown>> {
+	await ensureDebugger(entry);
+	const response = (await entry.view.webContents.debugger.sendCommand("Page.getFrameTree")) as {
+		frameTree?: { frame: { id: string; parentId?: string; url?: string; name?: string }; childFrames?: unknown[] };
+	};
+	const frames: Array<Record<string, unknown>> = [];
+	const visit = (tree: typeof response.frameTree, depth: number) => {
+		if (!tree) return;
+		frames.push({ frameId: tree.frame.id, parentFrameId: tree.frame.parentId, url: tree.frame.url ?? "", name: tree.frame.name ?? "", depth });
+		for (const child of tree.childFrames ?? []) visit(child as typeof response.frameTree, depth + 1);
+	};
+	visit(response.frameTree, 0);
+	return { frames, untrustedExternalContent: true };
+}
+
+async function handleDialogEntry(entry: BrowserEntry, accept: boolean, args: Record<string, unknown>): Promise<Record<string, unknown>> {
+	await ensureDebugger(entry);
+	if (!entry.dialog) throw browserError("DIALOG_NOT_OPEN", "No JavaScript dialog is open");
+	const handled = entry.dialog;
+	await entry.view.webContents.debugger.sendCommand("Page.handleJavaScriptDialog", {
+		accept,
+		...(accept && typeof args.promptText === "string" ? { promptText: args.promptText } : {}),
+	});
+	entry.dialog = undefined;
+	return { handled: true, accepted: accept, type: handled.type };
+}
+
+async function viewportEntry(entry: BrowserEntry): Promise<Record<string, unknown>> {
+	await ensureDebugger(entry);
+	const response = (await entry.view.webContents.debugger.sendCommand("Page.getLayoutMetrics")) as {
+		cssVisualViewport?: { clientWidth?: number; clientHeight?: number; scale?: number };
+	};
+	return { width: response.cssVisualViewport?.clientWidth ?? 0, height: response.cssVisualViewport?.clientHeight ?? 0, scale: response.cssVisualViewport?.scale ?? 1 };
+}
+
+async function setViewportEntry(entry: BrowserEntry, args: Record<string, unknown>): Promise<Record<string, unknown>> {
+	await ensureDebugger(entry);
+	const width = numberArg(args.width, 320, 3840);
+	const height = numberArg(args.height, 240, 2160);
+	if (!width || !height) throw browserError("INVALID_ARGUMENT", "viewport width and height are required");
+	const deviceScaleFactor = typeof args.deviceScaleFactor === "number" ? Math.max(0.5, Math.min(4, args.deviceScaleFactor)) : 1;
+	await entry.view.webContents.debugger.sendCommand("Emulation.setDeviceMetricsOverride", {
+		width, height, deviceScaleFactor, mobile: args.mobile === true,
+	});
+	invalidateRefs(entry);
+	return { width, height, deviceScaleFactor, mobile: args.mobile === true };
 }
 
 function stringArg(
@@ -2444,6 +2658,15 @@ function markUntrusted(value: string): string {
 
 function markLogMessages(messages: BrowserLogEntry[]): BrowserLogEntry[] {
 	return messages.map((message) => ({ ...message, message: markUntrusted(externalText(message.message)) }));
+}
+
+function logResult(messages: BrowserLogEntry[], since: unknown): Record<string, unknown> {
+	const cursor = typeof since === "number" && Number.isInteger(since) ? Math.max(0, since) : 0;
+	return {
+		messages: markLogMessages(messages.slice(cursor)),
+		cursor: messages.length,
+		untrustedExternalContent: true,
+	};
 }
 
 function delay(ms: number, signal?: AbortSignal): Promise<void> {

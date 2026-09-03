@@ -189,7 +189,7 @@ func (c *BrowserController) action(w http.ResponseWriter, r *http.Request) {
 
 func writeBrowserError(w http.ResponseWriter, r *http.Request, err error) {
 	if errors.Is(err, browserruntime.ErrUnavailable) {
-		envelope.WriteAPIError(w, r, http.StatusServiceUnavailable, "unavailable", "BROWSER_RUNTIME_UNAVAILABLE", "Desktop browser runtime is not connected", nil)
+		envelope.WriteAPIError(w, r, http.StatusServiceUnavailable, "unavailable", "BROWSER_RUNTIME_UNAVAILABLE", "Browser runtime is not available", nil)
 		return
 	}
 	if errors.Is(err, browserruntime.ErrOutcomeUnknown) {

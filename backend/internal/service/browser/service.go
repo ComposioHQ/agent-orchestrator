@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"net"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -24,17 +26,25 @@ var actions = map[string]struct{}{
 	"uncheck": {}, "get": {}, "wait": {}, "screenshot": {}, "network-start": {},
 	"network-status": {}, "network-list": {}, "network-stop": {}, "network-clear": {},
 	"console": {}, "errors": {},
+	"back": {}, "forward": {}, "reload": {}, "double-click": {}, "right-click": {},
+	"frames": {}, "dialog": {}, "dialog-accept": {}, "dialog-dismiss": {}, "viewport": {}, "viewport-set": {},
+	"console-clear": {}, "errors-clear": {},
+	"upload": {}, "drag": {}, "downloads": {}, "downloads-clear": {},
 }
 
 var mutationActions = map[string]struct{}{
 	"click": {}, "fill": {}, "type": {}, "press": {}, "scroll": {},
 	"select": {}, "check": {}, "uncheck": {},
+	"back": {}, "forward": {}, "reload": {}, "double-click": {}, "right-click": {},
+	"dialog-accept": {}, "dialog-dismiss": {}, "viewport-set": {},
+	"upload": {}, "drag": {},
 }
 
 var retryableActions = map[string]struct{}{
 	"snapshot": {}, "hover": {}, "highlight": {}, "unhighlight": {}, "tabs": {},
 	"get": {}, "wait": {}, "screenshot": {}, "network-status": {}, "network-list": {},
 	"console": {}, "errors": {},
+	"frames": {}, "dialog": {},
 }
 
 type sessionReader interface {
@@ -44,6 +54,10 @@ type sessionReader interface {
 type runtime interface {
 	Status() browserruntime.Status
 	Execute(ctx context.Context, sessionID domain.SessionID, action string, args map[string]interface{}) (browserruntime.Result, error)
+}
+
+type runtimeStarter interface {
+	Ensure(context.Context) error
 }
 
 // Service validates worker ownership and lifecycle state before dispatching to
@@ -66,7 +80,19 @@ func (s *Service) Status(ctx context.Context, sessionID domain.SessionID, capabi
 	}
 	status := s.runtime.Status()
 	if !status.Connected {
-		return status, nil
+		if starter, ok := s.runtime.(runtimeStarter); ok {
+			if err := starter.Ensure(ctx); err == nil {
+				status = s.runtime.Status()
+			} else {
+				if !errors.Is(err, browserruntime.ErrUnavailable) {
+					return browserruntime.Status{}, err
+				}
+				status = s.runtime.Status()
+			}
+		}
+		if !status.Connected {
+			return status, nil
+		}
 	}
 	result, err := s.runtime.Execute(ctx, sessionID, "__status", nil)
 	if errors.Is(err, browserruntime.ErrUnavailable) {
@@ -154,6 +180,17 @@ func (s *Service) Execute(
 			nil,
 		)
 	}
+	if action == "upload" {
+		session, err := s.sessions.Get(ctx, sessionID)
+		if err != nil {
+			return browserruntime.Result{}, action, err
+		}
+		paths, err := validateUploadPaths(session.Metadata.WorkspacePath, args["files"])
+		if err != nil {
+			return browserruntime.Result{}, action, err
+		}
+		args["files"] = paths
+	}
 	if _, mutates := mutationActions[action]; mutates && !hasBrowserPreconditions(args) {
 		return browserruntime.Result{}, action, apierr.Invalid(
 			"BROWSER_PRECONDITION_REQUIRED",
@@ -190,6 +227,54 @@ func (s *Service) Execute(
 		}
 	}
 	return result, action, err
+}
+
+func validateUploadPaths(workspace string, value interface{}) ([]string, error) {
+	if strings.TrimSpace(workspace) == "" {
+		return nil, apierr.Invalid("BROWSER_UPLOAD_FORBIDDEN", "Session workspace is unavailable", nil)
+	}
+	workspace, err := filepath.EvalSymlinks(workspace)
+	if err != nil {
+		return nil, apierr.Invalid("BROWSER_UPLOAD_FORBIDDEN", "Session workspace is unavailable", nil)
+	}
+	var items []interface{}
+	switch typed := value.(type) {
+	case []interface{}:
+		items = typed
+	case []string:
+		items = make([]interface{}, len(typed))
+		for i := range typed {
+			items[i] = typed[i]
+		}
+	}
+	if len(items) == 0 || len(items) > 20 {
+		return nil, apierr.Invalid("BROWSER_UPLOAD_INVALID", "files must contain 1 to 20 workspace paths", nil)
+	}
+	paths := make([]string, 0, len(items))
+	for _, item := range items {
+		raw, ok := item.(string)
+		if !ok || strings.TrimSpace(raw) == "" {
+			return nil, apierr.Invalid("BROWSER_UPLOAD_INVALID", "each upload path must be a string", nil)
+		}
+		candidate := raw
+		if !filepath.IsAbs(candidate) {
+			candidate = filepath.Join(workspace, candidate)
+		}
+		candidate, err = filepath.EvalSymlinks(candidate)
+		if err != nil {
+			return nil, apierr.Invalid("BROWSER_UPLOAD_INVALID", "Upload file does not exist", nil)
+		}
+		rel, err := filepath.Rel(workspace, candidate)
+		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			return nil, apierr.Forbidden("BROWSER_UPLOAD_FORBIDDEN", "Uploads must stay inside the session workspace")
+		}
+		info, err := os.Stat(candidate)
+		if err != nil || !info.Mode().IsRegular() {
+			return nil, apierr.Invalid("BROWSER_UPLOAD_INVALID", "Upload path must be a regular file", nil)
+		}
+		paths = append(paths, candidate)
+	}
+	return paths, nil
 }
 
 func hasBrowserPreconditions(args map[string]interface{}) bool {

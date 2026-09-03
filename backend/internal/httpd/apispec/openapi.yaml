@@ -3328,6 +3328,7 @@ components:
         state:
           enum:
           - desktop_closed
+          - runtime_connecting
           - target_starting
           - page_loading
           - ready

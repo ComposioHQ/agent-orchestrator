@@ -1131,7 +1131,7 @@ export interface components {
             recommendedAction?: string;
             sessionId: string;
             /** @enum {string} */
-            state: "desktop_closed" | "target_starting" | "page_loading" | "ready" | "recovering" | "unavailable";
+            state: "desktop_closed" | "runtime_connecting" | "target_starting" | "page_loading" | "ready" | "recovering" | "unavailable";
             target?: components["schemas"]["BrowserTarget"];
             transport: string;
         };

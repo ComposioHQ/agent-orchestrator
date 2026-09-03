@@ -91,6 +91,7 @@ process.stderr.on("error", ignoreStdStreamError);
 
 // Must run before app ready so the About panel and default-menu role labels use it.
 app.setName("Agent Orchestrator");
+const isBrowserRuntimeWorker = process.argv.includes("--ao-browser-runtime-worker");
 
 // Windows shows native toasts only when the app declares an AppUserModelID that
 // matches its installer shortcut (the NSIS maker's appId). Without it,
@@ -112,7 +113,9 @@ if (process.platform === "win32") {
 // the daemon data dir into ~/.ao/dev.
 app.setPath(
 	"userData",
-	app.isPackaged ? path.join(os.homedir(), ".ao", "electron") : path.join(os.homedir(), ".ao", "dev", "electron"),
+	isBrowserRuntimeWorker
+		? path.join(os.homedir(), ".ao", app.isPackaged ? "browser-runtime-worker" : path.join("dev", "browser-runtime-worker"))
+		: app.isPackaged ? path.join(os.homedir(), ".ao", "electron") : path.join(os.homedir(), ".ao", "dev", "electron"),
 );
 
 let mainWindow: BrowserWindow | null = null;
@@ -399,6 +402,30 @@ function createWindow(): void {
 	});
 }
 
+function createBrowserRuntimeWorker(): void {
+	mainWindow = new BrowserWindow({
+		show: false,
+		width: 1280,
+		height: 800,
+		webPreferences: {
+			contextIsolation: true,
+			nodeIntegration: false,
+			sandbox: true,
+		},
+	});
+	if (process.platform === "darwin") app.dock.hide();
+	browserViewHost = createBrowserViewHost({
+		mainWindow,
+		ipcMain,
+		shell,
+		WebContentsView,
+		annotatePreloadPath: annotatePreloadPath(),
+		rendererOrigin: RENDERER_ORIGIN,
+		isMac: process.platform === "darwin",
+	});
+	establishBrowserRuntimeLink();
+}
+
 // How long the supervisor waits for the daemon to confirm its bound port (via
 // the listen log line or running.json). A daemon that cannot confirm startup in
 // this window is reported with its captured output instead of being treated as
@@ -510,7 +537,7 @@ function ensureShellEnv(): Promise<void> {
 // (including supervisor restarts) reports the same run. An explicit
 // AO_APP_RUN_ID in the environment wins, which lets a test or a wrapper pin it.
 const appRunId = process.env.AO_APP_RUN_ID ?? `apprun-${randomUUID()}`;
-const browserRuntimeToken = randomBytes(32).toString("base64url");
+const browserRuntimeToken = process.env.AO_BROWSER_RUNTIME_TOKEN ?? randomBytes(32).toString("base64url");
 
 function daemonEnv(): NodeJS.ProcessEnv {
 	// AO_OWNER is the daemon's durable spawn-mode record: the daemon writes it
@@ -530,6 +557,8 @@ function daemonEnv(): NodeJS.ProcessEnv {
 		AO_OWNER,
 		AO_APP_RUN_ID: appRunId,
 		AO_BROWSER_RUNTIME_TOKEN: browserRuntimeToken,
+		AO_BROWSER_RUNTIME_WORKER_EXECUTABLE: process.execPath,
+		...(app.isPackaged ? {} : { AO_BROWSER_RUNTIME_WORKER_APP_PATH: app.getAppPath() }),
 	};
 	// In dev mode, inject isolation defaults so the dev daemon never collides with
 	// the installed app. User-set env vars take priority (checked first).
@@ -645,7 +674,7 @@ function establishBrowserRuntimeLink(): void {
 	} catch {
 		// Daemon readiness will retry this after running.json becomes readable.
 	}
-	const address = runInfo?.browserRuntimeAddress;
+	const address = runInfo?.browserRuntimeAddress ?? process.env.AO_BROWSER_RUNTIME_ADDRESS;
 	if (!address) {
 		console.warn("AO: browser runtime link skipped; daemon did not publish an address");
 		return;
@@ -654,6 +683,9 @@ function establishBrowserRuntimeLink(): void {
 	token = runInfo?.browserRuntimeToken ?? token;
 	browserRuntimeLink = connectBrowserRuntime(address, {
 		token,
+		provider: isBrowserRuntimeWorker ? "headless-electron" : "electron",
+		reconnect: !isBrowserRuntimeWorker,
+		onDisconnect: isBrowserRuntimeWorker ? () => app.quit() : undefined,
 		execute: (command, signal) => {
 			const host = browserViewHost;
 			if (!host) {
@@ -1622,6 +1654,10 @@ async function writeAppStateOnLaunch(): Promise<void> {
 }
 
 app.whenReady().then(async () => {
+	if (isBrowserRuntimeWorker) {
+		createBrowserRuntimeWorker();
+		return;
+	}
 	// Capture install provenance BEFORE relocation. moveToApplicationsFolder()
 	// relaunches from /Applications WITHOUT forwarding our --installed-via arg, and
 	// code past a successful move never runs in this instance, so a post-move-only
