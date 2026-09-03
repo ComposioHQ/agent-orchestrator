@@ -706,11 +706,13 @@ export function CenterPane({
 					<TerminalPane
 						daemonReady={daemonReady}
 						fontSize={fontSize}
-						focusRequested={
-							target.kind === "shell" ||
-							(target.kind === "worker" &&
-								(Boolean(presentation?.allowSourceInput) || Boolean(displayedSuccessNotice)))
-						}
+						// A terminal you can type into should already hold the caret when you
+						// open or switch to the session, the same way the chat composer does.
+						// Worker input is off during an interface transition or a locked agent
+						// switch; every other target is interactive as soon as it is on screen.
+						// Without this a worker terminal was only focused mid agent-switch, so
+						// switching sessions left keystrokes going nowhere until you clicked it.
+						focusRequested={target.kind !== "worker" || !workerInputDisabled}
 						isFullscreen={isFullscreen}
 						inputDisabled={workerInputDisabled}
 						onChangeFontSize={updateFontSize}
