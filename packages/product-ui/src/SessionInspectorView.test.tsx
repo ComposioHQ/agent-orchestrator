@@ -198,18 +198,18 @@ describe("portable inspector presentations", () => {
         }}
       />,
     );
-    expect(
-      screen.getByRole("link", { name: "Portable inspector" }),
-    ).toHaveAttribute("href", "https://example.com/pull/12");
-    expect(
-      screen.getByRole("link", { name: "Open PR #12" }),
-    ).toBeInTheDocument();
+    const title = screen.getByText("Portable inspector");
+    const number = screen.getByText("PR #12");
+    expect(title.closest("a")).toBeNull();
+    expect(number.closest("a")).toBeNull();
+    expect(screen.getByRole("link", { name: "Open PR #12" })).toHaveAttribute(
+      "href",
+      "https://example.com/pull/12",
+    );
     expect(screen.getByText("Ready to merge")).toHaveClass("text-success");
     expect(screen.getByRole("button", { name: "Merge" })).toBeInTheDocument();
     // #4268: PR details are copyable content, not app chrome — see plan.
-    expect(
-      screen.getByRole("link", { name: "Portable inspector" }).closest("article"),
-    ).toHaveClass("select-text");
+    expect(title.closest("article")).toHaveClass("select-text");
   });
 
   it("renders timeline events with current-state marker treatment", () => {

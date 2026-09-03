@@ -37,7 +37,7 @@ test("body stays unselectable — the fix does not flip the global default", asy
 });
 
 test("a board session card stays unselectable on a drag-select", async ({ page }) => {
-	await page.goto("/#/");
+	await page.goto("/#/projects/ao-demo");
 	const target = page.locator(card("demo-ready"));
 	await expect(target).toBeVisible();
 
@@ -50,30 +50,31 @@ test("a board session card stays unselectable on a drag-select", async ({ page }
 });
 
 test("a board session card's click-to-open still works", async ({ page }) => {
-	await page.goto("/#/");
+	await page.goto("/#/projects/ao-demo");
 	const target = page.locator(card("demo-ready"));
 	await expect(target).toBeVisible();
 	await target.click();
 	await expect(page).toHaveURL(/sessions\/demo-ready/);
 });
 
-test("inspector content (PR card) is selectable and copyable", async ({ page }) => {
+test("the inspector PR title is selectable and copyable", async ({ page }) => {
 	await page.goto("/#/projects/ao-demo/sessions/demo-ready");
 	const inspector = page.locator("#inspector");
 	await expect(inspector).toBeVisible();
 
-	// Drag-select the state badge, not the PR title link: browsers treat a drag
-	// starting on an `<a>` as a native link-drag gesture rather than a text
-	// selection, which would falsely fail this even when `select-text` is set.
-	const prBadge = inspector.getByText("open", { exact: true });
-	await expect(prBadge).toBeVisible();
+	const prCard = inspector.getByRole("article").filter({ hasText: "Merge README screenshot asset update" });
+	const prNumber = prCard.getByText("PR #323", { exact: true });
+	const prTitle = prCard.getByText("Merge README screenshot asset update", { exact: true });
+	await expect(prTitle).toBeVisible();
+	await expect(prNumber).not.toHaveAttribute("href");
+	await expect(prTitle).not.toHaveAttribute("href");
 	expect(
-		await prBadge.evaluate((element) => getComputedStyle(element).userSelect),
+		await prTitle.evaluate((element) => getComputedStyle(element).userSelect),
 	).toBe("text");
 
-	await dragSelect(page, prBadge);
+	await dragSelect(page, prTitle);
 	const selection = await selectedText(page);
-	expect(selection.trim().length).toBeGreaterThan(0);
+	expect(selection.trim()).toContain("README screenshot asset update");
 
 	await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
 	await page.keyboard.press(process.platform === "darwin" ? "Meta+C" : "Control+C");

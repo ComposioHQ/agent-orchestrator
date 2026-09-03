@@ -288,21 +288,20 @@ export function InspectorPullRequestCardView({
 	return (
 		<article className="min-w-0 w-full select-text rounded-lg border border-(--color-border-settings-input) bg-(--color-bg-settings-input) px-3 py-2.5">
 			{pr.title ? (
-				<ExternalLink
-					className="inline text-sm font-semibold leading-snug tracking-tight text-settings-label underline-offset-2 hover:underline focus-visible:rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
-					href={pr.href}
-				>
+				<p className="m-0 text-sm font-semibold leading-snug tracking-tight text-settings-label">
 					{pr.title}
-				</ExternalLink>
+				</p>
 			) : null}
 			<div className={cn("flex min-w-0 items-center gap-2", pr.title && "mt-1.5")}>
-				<ExternalLink
-					ariaLabel={openLabel}
-					className="inline-flex min-w-0 items-center gap-1 font-mono text-xs font-medium text-settings-label decoration-muted-foreground underline-offset-2 hover:text-settings-label hover:underline focus-visible:rounded-sm focus-visible:text-settings-label focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
-					href={pr.href}
-				>
+				<span className="inline-flex min-w-0 items-center gap-1 font-mono text-xs font-medium text-settings-label">
 					{pullRequestIcon ?? <GitPullRequestIcon className="size-icon-sm shrink-0" />}
 					<span>PR #{pr.number}</span>
+				</span>
+				<ExternalLink
+					ariaLabel={openLabel}
+					className="inline-flex shrink-0 items-center text-settings-label hover:text-settings-label focus-visible:rounded-sm focus-visible:text-settings-label focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
+					href={pr.href}
+				>
 					{externalIcon ?? <ArrowUpRightIcon className="size-icon-2xs shrink-0" />}
 				</ExternalLink>
 				<span
