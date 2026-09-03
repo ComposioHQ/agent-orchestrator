@@ -64,11 +64,11 @@ export function ImportSessionsHint() {
 
 	return (
 		<div
-			className="sidebar-expanded-chrome mx-2 mb-2 flex items-center gap-1 rounded-lg border border-border bg-surface-raised/50 pl-2.5 pr-1 group-data-[collapsible=icon]:hidden"
+			className="sidebar-expanded-chrome mx-2 mb-2 flex items-center gap-1 overflow-hidden rounded-lg border border-border bg-surface-raised/50 pr-1 group-data-[collapsible=icon]:hidden"
 			data-testid="import-sessions-hint"
 		>
 			<button
-				className="flex min-w-0 flex-1 items-center gap-2 py-2 text-caption font-medium text-foreground transition-colors hover:text-accent"
+				className="flex min-w-0 flex-1 items-center gap-2 rounded-md px-2.5 py-2 text-caption font-medium text-foreground transition-colors hover:bg-interactive-hover"
 				onClick={open}
 				type="button"
 			>
