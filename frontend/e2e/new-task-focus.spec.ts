@@ -276,3 +276,25 @@ test("renderer: a chat session hands focus back to the menu trigger when its dia
 	await expect(dialog).toBeHidden();
 	await expect.poll(async () => (await activeElementInfo(page)).label).toBe("Session actions");
 });
+
+
+test("renderer: a context-menu dialog returns focus to where the menu opened from @T0", async ({
+	page,
+}) => {
+	// A context menu has no trigger to point back at, so the defined fallback is
+	// the element that held focus when the menu opened, which is what Radix itself
+	// restores to. Right-clicking the project row's action button focuses it, so
+	// that button is the expected landing spot, and never `document.body`.
+	await setup(page);
+	await page.goto(`/#/projects/${projectId}/sessions/${sessionA}`);
+	await expect(page.getByRole("combobox", { name: "Message the agent" })).toBeVisible();
+
+	const openedFrom = `Project actions for ${projectId}`;
+	await page.getByRole("button", { name: new RegExp(openedFrom) }).first().click({ button: "right", force: true });
+	await page.getByRole("menuitem", { name: /New session/ }).click();
+	await expect(page.getByRole("dialog")).toBeVisible();
+	await page.keyboard.press("Escape");
+	await expect(page.getByRole("dialog")).toBeHidden();
+
+	await expect.poll(async () => (await activeElementInfo(page)).label).toBe(openedFrom);
+});

@@ -41,20 +41,30 @@ export function useMenuReturnTarget<T extends HTMLElement>() {
 	return useCallback((menu: T | null) => {
 		// The node attaches when the menu opens and detaches when it closes. Radix
 		// recomposes its own refs on every render, so this fires repeatedly for the
-		// same element; only the first call is the moment the menu opened, and a
-		// later one would read the surface the selected item just opened instead.
+		// same element; only the first call is the moment the menu opened.
 		if (!menu || capturedForMenu === menu) return;
 		capturedForMenu = menu;
-		// Read once the commit has settled: the trigger's `aria-controls` link only
-		// exists while the menu is open, and Radix has not moved focus yet because
-		// it does that from a passive effect.
-		queueMicrotask(() => {
-			const trigger = menu.id
-				? menu.ownerDocument.querySelector<HTMLElement>(`[aria-controls="${CSS.escape(menu.id)}"]`)
+
+		// Synchronously, because a context menu takes the caret for itself during
+		// the same commit: read it now and the element the user was actually on is
+		// still focused, read it a tick later and the menu itself is. Never accept
+		// something inside the menu, which would leave a target that is detached by
+		// the time there is anything to hand back.
+		const active = document.activeElement;
+		menuReturnTarget =
+			active instanceof HTMLElement && active !== document.body && !menu.contains(active)
+				? active
 				: null;
-			const active = document.activeElement;
-			menuReturnTarget =
-				trigger ?? (active instanceof HTMLElement && active !== document.body ? active : null);
+
+		// A dropdown has somewhere better to go: its trigger, which is only
+		// discoverable through the `aria-controls` link while the menu is open, and
+		// only once the commit that opened it has landed.
+		queueMicrotask(() => {
+			if (capturedForMenu !== menu || !menu.id) return;
+			const trigger = menu.ownerDocument.querySelector<HTMLElement>(
+				`[aria-controls="${CSS.escape(menu.id)}"]`,
+			);
+			if (trigger) menuReturnTarget = trigger;
 		});
 	}, []);
 }

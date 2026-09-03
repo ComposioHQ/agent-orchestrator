@@ -20,6 +20,31 @@ function OpenMenu() {
 	);
 }
 
+// A context menu has no `aria-controls` trigger and grabs the caret for itself
+// while it opens, which is the case the return target has to survive.
+function ContextMenuLike() {
+	const contentRef = useMenuReturnTarget<HTMLDivElement>();
+	return (
+		<div role="menu" ref={contentRef} tabIndex={-1}>
+			<button type="button">New session</button>
+		</div>
+	);
+}
+
+async function openContextMenu() {
+	const openedFrom = document.createElement("button");
+	document.body.append(openedFrom);
+	openedFrom.focus();
+
+	const { getByRole } = render(<ContextMenuLike />);
+	const menu = getByRole("menu");
+	// Radix moves focus into the content as it opens, before any microtask the
+	// capture might have deferred to.
+	menu.focus();
+	await Promise.resolve();
+	return { menu, openedFrom };
+}
+
 async function openMenu() {
 	const { getByRole } = render(<OpenMenu />);
 	// The return target is captured a microtask after the content attaches.
@@ -127,6 +152,17 @@ describe("keepFocusOnOpenedSurface", () => {
 		// Closing it for real still hands the caret back.
 		closeDialogField(field);
 		await vi.waitFor(() => expect(document.activeElement).toBe(trigger));
+	});
+
+	it("returns a context menu to where it was opened from, not to the menu itself", async () => {
+		const { menu, openedFrom } = await openContextMenu();
+		const field = openDialogField();
+		closeMenu(menu);
+
+		closeDialogField(field);
+
+		await vi.waitFor(() => expect(document.activeElement).toBe(openedFrom));
+		openedFrom.remove();
 	});
 
 	it("leaves focus alone if something else claimed it before the hand-back", async () => {
