@@ -41,6 +41,7 @@ type Manifest struct {
 	Tasks           []Task `json:"tasks"`
 }
 
+// Validate rejects incomplete manifests before AO starts a provider process.
 func (m Manifest) Validate() error {
 	if m.Version != 1 {
 		return fmt.Errorf("unsupported native Qwen manifest version %d", m.Version)
@@ -62,6 +63,7 @@ func (m Manifest) Validate() error {
 	return nil
 }
 
+// Validate rejects unsupported or internally inconsistent Qwen review options.
 func (o Options) Validate() error {
 	switch o.Effort {
 	case "", "low", "medium", "high":
