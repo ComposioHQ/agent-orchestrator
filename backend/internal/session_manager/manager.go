@@ -1534,6 +1534,11 @@ func (m *Manager) RollbackSpawn(ctx context.Context, id domain.SessionID) (delet
 // failed partway, handle lost after a crash) is still terminated after the
 // available destroy steps are skipped so it can be cleaned up from the
 // dashboard.
+//
+// Kill is idempotent for already-dead runtimes. A missing tmux session, an
+// inconclusive or unavailable runtime probe, or a failed agent-native
+// terminate still marks the session terminated so closing a zombie tab after
+// a daemon restart never 500s.
 func (m *Manager) Kill(ctx context.Context, id domain.SessionID) (bool, error) {
 	if err := m.beginAgentOperation(ctx, id, agentOperationKill); err != nil {
 		if errors.Is(err, errAgentOperationInProgress) {
@@ -1568,9 +1573,7 @@ func (m *Manager) Kill(ctx context.Context, id domain.SessionID) (bool, error) {
 		workspaceProjectRows = rows
 		workspaceProject = true
 	}
-	if err := m.terminateNativeSession(ctx, rec); err != nil {
-		return false, fmt.Errorf("kill %s: native session: %w", id, err)
-	}
+	m.terminateNativeSessionBestEffort(ctx, rec, "kill")
 	// Attachments are deliberately ignored by git, so stash cannot preserve
 	// legacy worktree-only files. Import them before any controller or worktree
 	// teardown; a failed import leaves the live session intact.
@@ -1584,10 +1587,8 @@ func (m *Manager) Kill(ctx context.Context, id domain.SessionID) (bool, error) {
 	// read does not show work that is no longer running.
 	if domain.NormalizeSessionMode(rec.Mode) == domain.SessionModeChat {
 		m.stopChatBestEffort(ctx, id)
-	} else if handle.ID != "" {
-		if err := m.runtime.Destroy(ctx, handle); err != nil {
-			return false, fmt.Errorf("kill %s: runtime: %w", id, err)
-		}
+	} else if err := m.destroyRuntimeIfPresent(ctx, id, handle, "kill"); err != nil {
+		return false, err
 	}
 	if err := m.terminateReviewer(ctx, id, "cancelled by worker session termination"); err != nil {
 		return false, fmt.Errorf("kill %s: reviewer: %w", id, err)
@@ -1697,13 +1698,9 @@ func (m *Manager) RetireForReplacement(ctx context.Context, id domain.SessionID)
 			return fmt.Errorf("retire replacement %s: clear restore markers: %w", id, err)
 		}
 		handle := runtimeHandle(rec.Metadata)
-		if err := m.terminateNativeSession(ctx, rec); err != nil {
-			return fmt.Errorf("retire replacement %s: native session: %w", id, err)
-		}
-		if handle.ID != "" {
-			if err := m.runtime.Destroy(ctx, handle); err != nil {
-				return fmt.Errorf("retire replacement %s: runtime: %w", id, err)
-			}
+		m.terminateNativeSessionBestEffort(ctx, rec, "retire replacement")
+		if err := m.destroyRuntimeIfPresent(ctx, id, handle, "retire replacement"); err != nil {
+			return err
 		}
 		if err := m.lcm.MarkTerminated(ctx, id); err != nil {
 			return fmt.Errorf("retire replacement %s: mark terminated: %w", id, err)
@@ -1723,9 +1720,7 @@ func (m *Manager) RetireForReplacement(ctx context.Context, id domain.SessionID)
 	if release != nil {
 		defer release()
 	}
-	if err := m.terminateNativeSession(ctx, rec); err != nil {
-		return fmt.Errorf("retire replacement %s: native session: %w", id, err)
-	}
+	m.terminateNativeSessionBestEffort(ctx, rec, "retire replacement")
 	if err := m.importAttachments(ctx, rec); err != nil {
 		return fmt.Errorf("retire replacement %s: preserve attachments: %w", id, err)
 	}
@@ -1746,10 +1741,8 @@ func (m *Manager) RetireForReplacement(ctx context.Context, id domain.SessionID)
 		m.logger.Warn("retire replacement: stale workspace; skipping preserve", "sessionID", id, "path", ws.Path, "error", err)
 	}
 	handle := runtimeHandle(rec.Metadata)
-	if handle.ID != "" {
-		if err := m.runtime.Destroy(ctx, handle); err != nil {
-			return fmt.Errorf("retire replacement %s: runtime: %w", id, err)
-		}
+	if err := m.destroyRuntimeIfPresent(ctx, id, handle, "retire replacement"); err != nil {
+		return err
 	}
 	if err := m.workspace.ForceDestroy(ctx, ws); err != nil {
 		if staleWorkspace {
@@ -1774,6 +1767,34 @@ func (m *Manager) stopPreviewBestEffort(ctx context.Context, id domain.SessionID
 	if err := m.preview.StopSession(ctx, id); err != nil {
 		m.logger.Warn("session preview cleanup failed", "sessionID", id, "error", err)
 	}
+}
+
+// runtimeAlreadyGone reports Destroy/IsAlive errors that mean there is nothing
+// left to attach to: the tmux server/session is gone, or a liveness probe could
+// not inspect a possibly-legacy socket. User kill, orchestrator replacement,
+// and user-initiated resume must still succeed. Boot reconcile keeps treating
+// ErrRuntimeProbeInconclusive as "do not recreate".
+func runtimeAlreadyGone(err error) bool {
+	return errors.Is(err, ports.ErrRuntimeUnavailable) || errors.Is(err, ports.ErrRuntimeProbeInconclusive)
+}
+
+func (m *Manager) terminateNativeSessionBestEffort(ctx context.Context, rec domain.SessionRecord, op string) {
+	if err := m.terminateNativeSession(ctx, rec); err != nil {
+		m.logger.Warn(op+": native session terminate failed; continuing teardown", "sessionID", rec.ID, "error", err)
+	}
+}
+
+func (m *Manager) destroyRuntimeIfPresent(ctx context.Context, id domain.SessionID, handle ports.RuntimeHandle, op string) error {
+	if handle.ID == "" {
+		return nil
+	}
+	if err := m.runtime.Destroy(ctx, handle); err != nil {
+		if !runtimeAlreadyGone(err) {
+			return fmt.Errorf("%s %s: runtime: %w", op, id, err)
+		}
+		m.logger.Warn(op+": runtime already gone", "sessionID", id, "error", err)
+	}
+	return nil
 }
 
 func (m *Manager) terminateNativeSession(ctx context.Context, rec domain.SessionRecord) error {
@@ -1824,10 +1845,8 @@ func (m *Manager) retireWorkspaceProjectForReplacement(ctx context.Context, rec 
 		}
 	}
 	handle := runtimeHandle(rec.Metadata)
-	if handle.ID != "" {
-		if err := m.runtime.Destroy(ctx, handle); err != nil {
-			return fmt.Errorf("retire replacement %s: runtime: %w", rec.ID, err)
-		}
+	if err := m.destroyRuntimeIfPresent(ctx, rec.ID, handle, "retire replacement"); err != nil {
+		return err
 	}
 	for i := len(rows) - 1; i >= 0; i-- {
 		if err := m.workspace.ForceDestroy(ctx, workspaceInfoFromRepoInfo(rows[i])); err != nil {
@@ -2133,12 +2152,14 @@ func (m *Manager) relaunchSessionWithPolicy(ctx context.Context, operation strin
 func (m *Manager) restartRuntime(ctx context.Context, handle ports.RuntimeHandle, cfg ports.RuntimeConfig) (ports.RuntimeHandle, error) {
 	alive, err := m.runtime.IsAlive(ctx, handle)
 	if err != nil {
-		if !errors.Is(err, ports.ErrRuntimeUnavailable) {
+		if !runtimeAlreadyGone(err) {
 			return ports.RuntimeHandle{}, fmt.Errorf("probe existing runtime: %w", err)
 		}
-		// The runtime infrastructure itself is gone (e.g. the tmux server was
-		// killed). Restore/restart is exactly the recovery path for that
-		// outage, so proceed as "no existing runtime" and create a fresh one.
+		// The runtime is gone or an inconclusive legacy-socket probe cannot
+		// prove it is still there. User-initiated resume/replace is the
+		// recovery path for that outage (daemon restart, stale tmux socket),
+		// so proceed as "no existing runtime" and create a fresh one. Boot
+		// reconcile still refuses to recreate on ProbeInconclusive.
 		alive = false
 	}
 	if alive {

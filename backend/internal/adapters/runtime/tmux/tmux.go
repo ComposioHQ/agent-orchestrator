@@ -491,6 +491,15 @@ func (r *Runtime) Destroy(ctx context.Context, handle ports.RuntimeHandle) error
 	r.reapSessions(ctx, sessionIDs, r.reapGrace)
 
 	if err != nil {
+		// socketForSession returns ErrRuntimeProbeInconclusive when the private
+		// socket lacks the session and the legacy default socket cannot be
+		// inspected (no system tmux, protocol mismatch, transient connect).
+		// Destroy is teardown, not a liveness probe: there is nothing left we
+		// can kill, so treat that the same as an already-gone session.
+		if errors.Is(err, ports.ErrRuntimeProbeInconclusive) || errors.Is(err, ports.ErrRuntimeUnavailable) {
+			r.forgetSessionSocket(id)
+			return nil
+		}
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) && killSessionMissingOutput(string(out)) {
 			r.forgetSessionSocket(id)
@@ -887,9 +896,16 @@ func (r *Runtime) socketForSession(ctx context.Context, id string) (string, erro
 	if ctx.Err() != nil {
 		return "", ctx.Err()
 	}
-	if sessionMissingOutput(string(legacyOut)) || serverNotRunningOutput(string(legacyOut)) {
-		// Both known sockets definitively lack the session. Return the private
-		// target so IsAlive's ordinary exact-session handling reports false.
+	if sessionMissingOutput(string(legacyOut)) ||
+		serverNotRunningOutput(string(legacyOut)) ||
+		migrationSocketAbsentOutput(string(legacyOut)) {
+		// Both known sockets definitively lack the session: the private server
+		// is gone or has no such session, and the legacy default socket is
+		// missing or also has no server. Return the private target so IsAlive
+		// reports Unavailable (no server) or false (missing session) instead of
+		// ProbeInconclusive. "error connecting ... no such file" on default is
+		// not a transient refusal; the socket file is absent, so the session
+		// cannot be alive there.
 		return r.socketName, nil
 	}
 	return "", fmt.Errorf(
