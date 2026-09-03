@@ -14,6 +14,7 @@ export type ShellContextValue = {
 		orchestratorAgent: string;
 		trackerIntake?: components["schemas"]["TrackerIntakeConfig"];
 		asWorkspace?: boolean;
+		name?: string;
 	}) => Promise<void>;
 	cloneProject: (input: {
 		remoteUrl: string;

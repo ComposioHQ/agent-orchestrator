@@ -239,6 +239,7 @@
 	"createProject.loadingAgents": "Loading agents...",
 	"createProject.newProject": "New project",
 	"createProject.noRepos": "No repositories detected in this folder.",
+	"createProject.notGitRepoNotice": "This folder is not a Git repository yet. AO will initialize one automatically when you continue.",
 	"createProject.opening": "Opening...",
 	"createProject.openLocal": "Import an existing project",
 	"createProject.openLocalDesc": "Use a project that is already on this computer",
