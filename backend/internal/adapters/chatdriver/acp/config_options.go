@@ -333,39 +333,80 @@ func parameterizedModelAlias(value string) (string, bool) {
 		return "", false
 	}
 	alias := value[:open]
-	reasoning := ""
+	effort := ""
 	fast := false
+	fastSet := false
+	thinking := false
+	thinkingSet := false
 	parameterized := false
 	params := strings.Split(value[open+1:len(value)-1], ",")
 	for _, param := range params {
 		key, raw, found := strings.Cut(strings.TrimSpace(param), "=")
-		if !found {
-			continue
+		key = strings.TrimSpace(key)
+		raw = strings.TrimSpace(raw)
+		if !found || key == "" || raw == "" {
+			return "", false
 		}
-		switch strings.TrimSpace(key) {
-		case "reasoning":
-			reasoning = strings.TrimSpace(raw)
-			if reasoning == "" {
+		switch key {
+		case "reasoning", "effort", "reasoning_effort":
+			if effort != "" && effort != raw {
 				return "", false
 			}
+			effort = raw
 			parameterized = true
 		case "fast":
-			switch strings.TrimSpace(raw) {
+			parsed := false
+			switch raw {
 			case "true":
-				fast = true
+				parsed = true
 			case "false":
-				fast = false
 			default:
 				return "", false
 			}
+			if fastSet && fast != parsed {
+				return "", false
+			}
+			fast = parsed
+			fastSet = true
 			parameterized = true
+		case "thinking":
+			parsed := false
+			switch raw {
+			case "true":
+				parsed = true
+			case "false":
+			default:
+				return "", false
+			}
+			if thinkingSet && thinking != parsed {
+				return "", false
+			}
+			thinking = parsed
+			thinkingSet = true
+			parameterized = true
+		case "context":
+			// Cursor does not include the context window in its CLI alias. If
+			// multiple advertised values differ only by context, the caller's
+			// ambiguity check still rejects the alias.
+			parameterized = true
+		default:
+			// Never derive an alias while silently discarding a provider-owned
+			// semantic parameter. New Cursor parameters must be mapped here
+			// deliberately before their opaque values can be selected by alias.
+			return "", false
 		}
 	}
 	if !parameterized {
 		return "", false
 	}
-	if reasoning != "" {
-		alias += "-" + reasoning
+	// Cursor's thinking variants currently pair thinking=true with an effort
+	// suffix (for example claude-opus-5-high). Without one, no safe CLI alias
+	// can be derived for the thinking semantic.
+	if thinking && effort == "" {
+		return "", false
+	}
+	if effort != "" {
+		alias += "-" + effort
 	}
 	if fast {
 		alias += "-fast"

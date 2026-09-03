@@ -1562,6 +1562,21 @@ func TestResolveLegacyModelChoiceDerivesParameterizedCursorAliases(t *testing.T)
 			requested: "gpt-5.5-high-fast",
 			choice:    "gpt-5.5[context=272k,reasoning=high,fast=true]",
 		},
+		{
+			name:      "effort",
+			requested: "gemini-3.6-flash-high",
+			choice:    "gemini-3.6-flash[effort=high]",
+		},
+		{
+			name:      "reasoning effort",
+			requested: "gpt-5.5-low",
+			choice:    "gpt-5.5[reasoning_effort=low,fast=false]",
+		},
+		{
+			name:      "thinking with effort",
+			requested: "claude-opus-5-high",
+			choice:    "claude-opus-5[thinking=true,context=300k,effort=high,fast=false]",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -1569,6 +1584,43 @@ func TestResolveLegacyModelChoiceDerivesParameterizedCursorAliases(t *testing.T)
 			got, ok := resolveLegacyModelChoice(choices, tt.requested)
 			if !ok || got != tt.choice {
 				t.Fatalf("resolveLegacyModelChoice(%q) = %q, %v; want %q, true", tt.requested, got, ok, tt.choice)
+			}
+		})
+	}
+}
+
+func TestResolveLegacyModelChoiceRejectsDroppedParameterizedSemantics(t *testing.T) {
+	tests := []struct {
+		name      string
+		requested string
+		choice    string
+	}{
+		{
+			name:      "thinking variant is not plain base",
+			requested: "claude-opus-5",
+			choice:    "claude-opus-5[thinking=true,context=300k,effort=high,fast=false]",
+		},
+		{
+			name:      "thinking without effort has no known alias",
+			requested: "claude-opus-5",
+			choice:    "claude-opus-5[thinking=true,context=300k,fast=false]",
+		},
+		{
+			name:      "unknown semantic parameter",
+			requested: "future-model",
+			choice:    "future-model[quality=high,fast=false]",
+		},
+		{
+			name:      "conflicting effort parameters",
+			requested: "gpt-5.5-high",
+			choice:    "gpt-5.5[reasoning=high,reasoning_effort=medium]",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			choices := []ports.ChatConfigOptionChoice{{Value: tt.choice}}
+			if got, ok := resolveLegacyModelChoice(choices, tt.requested); ok {
+				t.Fatalf("resolveLegacyModelChoice(%q) = %q, true; want rejection", tt.requested, got)
 			}
 		})
 	}
