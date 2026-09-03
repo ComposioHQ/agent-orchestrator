@@ -141,19 +141,31 @@ beforeEach(() => {
 	prepareForActivationMock.mockReset();
 	prepareForActivationMock.mockResolvedValue(undefined);
 	sendUserInputMock.mockReset();
+	sendUserInputMock.mockReturnValue(true);
 	xtermMounts.value = 0;
 	xtermUnmounts.value = 0;
 	useUiStore.setState({ inspectorSessions: {} });
 });
 
-function renderPane(session?: WorkspaceSession, inputRequest?: { id: number; data: string }) {
+function renderPane(
+	session?: WorkspaceSession,
+	inputRequest?: { id: number; data: string },
+	onInputRequestResult?: (id: number, accepted: boolean) => void,
+) {
 	const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 	const previousAO = window.ao;
 	window.ao = {} as typeof window.ao;
 	const result = render(
 		<QueryClientProvider client={queryClient}>
 			<TooltipProvider>
-				<TerminalPane daemonReady fontSize={12} inputRequest={inputRequest} session={session} theme="dark" />
+				<TerminalPane
+					daemonReady
+					fontSize={12}
+					inputRequest={inputRequest}
+					onInputRequestResult={onInputRequestResult}
+					session={session}
+					theme="dark"
+				/>
 			</TooltipProvider>
 		</QueryClientProvider>,
 	);
@@ -244,9 +256,31 @@ describe("TerminalPane empty states", () => {
 
 	it("forwards an explicit input request after the terminal is attached", async () => {
 		terminalState.value = "attached";
-		const view = renderPane({ ...worker, terminalHandleId: "term-1" }, { id: 1, data: "/login\r" });
+		const onInputRequestResult = vi.fn();
+		const view = renderPane(
+			{ ...worker, terminalHandleId: "term-1" },
+			{ id: 1, data: "/login\r" },
+			onInputRequestResult,
+		);
 		try {
 			await waitFor(() => expect(sendUserInputMock).toHaveBeenCalledWith("/login\r"));
+			expect(onInputRequestResult).toHaveBeenCalledWith(1, true);
+		} finally {
+			view.restore();
+		}
+	});
+
+	it("reports rejected input requests without consuming them", async () => {
+		terminalState.value = "attached";
+		sendUserInputMock.mockReturnValue(false);
+		const onInputRequestResult = vi.fn();
+		const view = renderPane(
+			{ ...worker, terminalHandleId: "term-1" },
+			{ id: 1, data: "/login\r" },
+			onInputRequestResult,
+		);
+		try {
+			await waitFor(() => expect(onInputRequestResult).toHaveBeenCalledWith(1, false));
 		} finally {
 			view.restore();
 		}

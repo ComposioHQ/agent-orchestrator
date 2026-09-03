@@ -38,7 +38,7 @@ type AuthTerminalWorkflow = {
 	agentId: AgentId;
 	terminal: components["schemas"]["ShellTerminalResponse"];
 	guidance: string;
-	terminalCommand?: string;
+	terminalInput?: string;
 	phase: "running" | "verifying" | "unauthorized" | "unverified" | "closing" | "cleanup_failed" | "timed_out";
 	reason?: string;
 	startedAt: number;
@@ -230,7 +230,7 @@ export function HarnessSettingsSection({ titleHidden = false }: { titleHidden?: 
 				agentId,
 				terminal: result.terminal,
 				guidance: result.guidance ?? "",
-				terminalCommand: result.terminalCommand,
+				terminalInput: result.terminalInput,
 				phase: "running",
 				startedAt: Date.now(),
 			};
@@ -525,8 +525,10 @@ function HarnessAuthTerminalPanel({ workflow, onClose, onRetry, onTerminalState 
 	const shell = useShellMaybe();
 	const panelRef = useRef<HTMLDivElement>(null);
 	const inputRequestIdRef = useRef(0);
+	const activeInputRequestIdRef = useRef<number | null>(null);
 	const [terminalState, setTerminalState] = useState<TerminalSessionState>("connecting");
 	const [inputRequest, setInputRequest] = useState<{ id: number; data: string }>();
+	const [commandPending, setCommandPending] = useState(false);
 	const [commandSent, setCommandSent] = useState(false);
 	const handlerRef = useRef(onTerminalState);
 	handlerRef.current = onTerminalState;
@@ -546,11 +548,19 @@ function HarnessAuthTerminalPanel({ workflow, onClose, onRetry, onTerminalState 
 				: workflow.reason ?? t("settings.harness.loginUnknown");
 	const retryable = workflow.phase === "unauthorized" || workflow.phase === "unverified" || workflow.phase === "timed_out" || workflow.phase === "cleanup_failed";
 	const openLogin = () => {
-		if (!workflow.terminalCommand || terminalState !== "attached" || commandSent) return;
+		if (!workflow.terminalInput || terminalState !== "attached" || commandPending || commandSent) return;
 		inputRequestIdRef.current += 1;
-		setInputRequest({ id: inputRequestIdRef.current, data: `${workflow.terminalCommand}\r` });
-		setCommandSent(true);
+		activeInputRequestIdRef.current = inputRequestIdRef.current;
+		setCommandPending(true);
+		setInputRequest({ id: inputRequestIdRef.current, data: workflow.terminalInput });
 	};
+	const handleInputRequestResult = useCallback((id: number, accepted: boolean) => {
+		if (activeInputRequestIdRef.current !== id) return;
+		activeInputRequestIdRef.current = null;
+		setInputRequest(undefined);
+		setCommandPending(false);
+		if (accepted) setCommandSent(true);
+	}, []);
 	return (
 		<div ref={panelRef} className="mt-1 scroll-my-3 overflow-hidden rounded-md border border-(--color-border-settings-input) bg-terminal" data-testid="harness-auth-terminal">
 			<div className="flex min-h-10 items-center justify-between gap-3 border-b border-(--color-border-settings-input) bg-surface/90 px-3 py-2">
@@ -559,8 +569,8 @@ function HarnessAuthTerminalPanel({ workflow, onClose, onRetry, onTerminalState 
 					<p className="truncate text-[11px] text-settings-muted" aria-live="polite" role="status">{status}</p>
 				</div>
 				<div className="flex shrink-0 items-center gap-2">
-					{workflow.terminalCommand && workflow.phase === "running" ? (
-						<Button type="button" size="sm" variant="outline" disabled={terminalState !== "attached" || commandSent} onClick={openLogin}>
+					{workflow.terminalInput && workflow.phase === "running" ? (
+						<Button type="button" size="sm" variant="outline" disabled={terminalState !== "attached" || commandPending || commandSent} onClick={openLogin}>
 							{commandSent ? <Check aria-hidden="true" /> : <LogIn aria-hidden="true" />}
 							{commandSent ? t("settings.harness.loginOpened") : t("settings.harness.openLogin")}
 						</Button>
@@ -575,6 +585,7 @@ function HarnessAuthTerminalPanel({ workflow, onClose, onRetry, onTerminalState 
 					daemonReady={shell ? shell.daemonStatus.state === "ready" : true}
 					fontSize={12}
 					inputRequest={inputRequest}
+					onInputRequestResult={handleInputRequestResult}
 					onTerminalStateChange={handleTerminalState}
 					terminalTarget={{ kind: "shell", handleId: workflow.terminal.handleId, generation: workflow.terminal.createdAt, title: workflow.terminal.title }}
 					theme={theme}

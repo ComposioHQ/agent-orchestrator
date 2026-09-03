@@ -9,11 +9,17 @@ import { HarnessSettingsSection } from "./HarnessSettingsSection";
 
 const terminalMock = vi.hoisted(() => ({
 	onStateChange: null as ((state: "connecting" | "attached" | "exited" | "error") => void) | null,
+	onInputRequestResult: null as ((id: number, accepted: boolean) => void) | null,
 	inputRequest: undefined as { id: number; data: string } | undefined,
 }));
 
 vi.mock("../TerminalPane", () => ({
-	TerminalPane: (props: { onTerminalStateChange?: typeof terminalMock.onStateChange; inputRequest?: typeof terminalMock.inputRequest }) => {
+	TerminalPane: (props: {
+		onInputRequestResult?: typeof terminalMock.onInputRequestResult;
+		onTerminalStateChange?: typeof terminalMock.onStateChange;
+		inputRequest?: typeof terminalMock.inputRequest;
+	}) => {
+		terminalMock.onInputRequestResult = props.onInputRequestResult ?? null;
 		terminalMock.onStateChange = props.onTerminalStateChange ?? null;
 		terminalMock.inputRequest = props.inputRequest;
 		return <div data-testid="inline-harness-auth-terminal" />;
@@ -103,6 +109,7 @@ describe("HarnessSettingsSection", () => {
 		await appI18n.changeLanguage("en");
 		window.ao!.clipboard.writeText = vi.fn().mockResolvedValue(undefined);
 		terminalMock.onStateChange = null;
+		terminalMock.onInputRequestResult = null;
 		terminalMock.inputRequest = undefined;
 		vi.spyOn(apiClient, "GET").mockImplementation(async (path) => {
 			if (path === "/api/v1/agents/readiness") return { data: catalog } as never;
@@ -192,7 +199,7 @@ describe("HarnessSettingsSection", () => {
 		vi.mocked(apiClient.POST).mockImplementation(async (path) => {
 			if (path === "/api/v1/agents/readiness/ensure") return { data: unauthorized } as never;
 			if (path === "/api/v1/agents/{agent}/auth") {
-				return { data: { agentId: "codex", action: "login", terminalCommand: "/login", terminal: { handleId: "shellterm-login", workingDir: "/tmp/ao", title: "Log in to Codex", createdAt: new Date().toISOString() } } } as never;
+				return { data: { agentId: "codex", action: "login", terminalInput: "/login\r", terminal: { handleId: "shellterm-login", workingDir: "/tmp/ao", title: "Log in to Codex", createdAt: new Date().toISOString() } } } as never;
 			}
 			return { data: undefined } as never;
 		});
@@ -211,6 +218,14 @@ describe("HarnessSettingsSection", () => {
 		await user.click(openLogin);
 
 		expect(terminalMock.inputRequest).toEqual({ id: 1, data: "/login\r" });
+		await act(async () => terminalMock.onInputRequestResult?.(1, false));
+		expect(terminalMock.inputRequest).toBeUndefined();
+		expect(within(codexRow).getByRole("button", { name: "Open login" })).toBeEnabled();
+
+		await user.click(within(codexRow).getByRole("button", { name: "Open login" }));
+		expect(terminalMock.inputRequest).toEqual({ id: 2, data: "/login\r" });
+		await act(async () => terminalMock.onInputRequestResult?.(2, true));
+
 		expect(within(codexRow).getByRole("button", { name: "Login opened" })).toBeDisabled();
 		expect(useUiStore.getState().activeShellTerminalHandleId).toBeNull();
 	});

@@ -9939,7 +9939,7 @@ components:
           type: string
         terminal:
           $ref: '#/components/schemas/ShellTerminalResponse'
-        terminalCommand:
+        terminalInput:
           type: string
       required:
       - agentId

@@ -51,7 +51,7 @@ type Plan struct {
 	Reason           string `json:"reason,omitempty"`
 	command          []string
 	title            string
-	terminalCommand  string
+	terminalInput    string
 }
 
 // TerminalOpener opens the daemon-trusted terminal used for a native
@@ -63,11 +63,11 @@ type TerminalOpener interface {
 // StartResult is the display-safe result of starting a native authentication
 // flow. Command arguments remain private to the resolved plan.
 type StartResult struct {
-	AgentID         string                  `json:"agentId"`
-	Action          Action                  `json:"action"`
-	Guidance        string                  `json:"guidance,omitempty"`
-	TerminalCommand string                  `json:"terminalCommand,omitempty"`
-	Terminal        shellterm.ShellTerminal `json:"terminal"`
+	AgentID       string                  `json:"agentId"`
+	Action        Action                  `json:"action"`
+	Guidance      string                  `json:"guidance,omitempty"`
+	TerminalInput string                  `json:"terminalInput,omitempty"`
+	Terminal      shellterm.ShellTerminal `json:"terminal"`
 }
 
 // Service resolves the fixed authentication registry through AO's registered
@@ -134,11 +134,11 @@ func (s *Service) Start(ctx context.Context, agentID string) (StartResult, error
 		return StartResult{}, err
 	}
 	return StartResult{
-		AgentID:         plan.AgentID,
-		Action:          plan.Action,
-		Guidance:        plan.Guidance,
-		TerminalCommand: plan.terminalCommand,
-		Terminal:        terminal,
+		AgentID:       plan.AgentID,
+		Action:        plan.Action,
+		Guidance:      plan.Guidance,
+		TerminalInput: plan.terminalInput,
+		Terminal:      terminal,
 	}, nil
 }
 

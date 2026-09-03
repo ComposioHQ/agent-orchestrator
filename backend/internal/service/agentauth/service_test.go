@@ -80,7 +80,7 @@ func TestStartOpensResolvedPlanAndReturnsSafeTerminal(t *testing.T) {
 	if !reflect.DeepEqual(opener.input, wantInput) {
 		t.Fatalf("OpenCommandTerminal input = %#v, want %#v", opener.input, wantInput)
 	}
-	if got.AgentID != "pi" || got.Action != ActionLogin || got.Guidance != "Select Open login after Pi finishes starting" || got.TerminalCommand != "/login" || got.Terminal != terminal {
+	if got.AgentID != "pi" || got.Action != ActionLogin || got.Guidance != "Select Open login after Pi finishes starting" || got.TerminalInput != "/login\r" || got.Terminal != terminal {
 		t.Fatalf("Start(pi) = %#v, want display-safe Pi result with terminal %#v", got, terminal)
 	}
 	data, err := json.Marshal(got)
