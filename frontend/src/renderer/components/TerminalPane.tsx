@@ -56,6 +56,8 @@ type TerminalPaneProps = {
 	inputDisabled?: boolean;
 	/** Focus the terminal when an in-flight controller asks for human input. */
 	focusRequested?: boolean;
+	/** Observe attachment state without taking ownership of the terminal lifecycle. */
+	onTerminalStateChange?: (state: TerminalSessionState) => void;
 	/** Provider-owned shared transport lease factory. */
 	createMux?: () => TerminalMux;
 };
@@ -119,6 +121,7 @@ function terminalPropsMatch(left: TerminalPaneProps, right: TerminalPaneProps): 
 		left.onToggleFullscreen === right.onToggleFullscreen &&
 		left.inputDisabled === right.inputDisabled &&
 		left.focusRequested === right.focusRequested &&
+		left.onTerminalStateChange === right.onTerminalStateChange &&
 		left.createMux === right.createMux &&
 		terminalTargetMatches(left.terminalTarget, right.terminalTarget)
 	);
@@ -147,8 +150,10 @@ function cacheDescriptor(
 	const handleId = session?.terminalHandleId;
 	if (!session?.id || !handleId) return null;
 	const ownerKey = `session:${session.id}:worker`;
+	const generation = session.terminalGeneration ?? "";
 	return {
-		cacheKey: `${ownerKey}|handle:${handleId}`,
+		cacheKey: `${ownerKey}|handle:${handleId}|generation:${generation}`,
+		generation,
 		handleId,
 		kind: "worker",
 		ownerKey,
@@ -482,7 +487,8 @@ export function TerminalCacheProvider({
 			if (
 				entry.kind === "worker" &&
 				session &&
-				session.terminalHandleId !== entry.handleId
+				(session.terminalHandleId !== entry.handleId ||
+					(session.terminalGeneration ?? "") !== (entry.generation ?? ""))
 			) {
 				removeEntry(entry.cacheKey);
 				continue;
@@ -600,6 +606,7 @@ export function TerminalPane({
 	onToggleFullscreen,
 	inputDisabled,
 	focusRequested,
+	onTerminalStateChange,
 }: TerminalPaneProps) {
 	const { t } = useTranslation();
 	const terminalTarget =
@@ -613,7 +620,7 @@ export function TerminalPane({
 	const terminalKey =
 		terminalTarget?.kind === "reviewer" || terminalTarget?.kind === "shell"
 			? terminalTarget.handleId
-			: (session?.terminalHandleId ?? "empty");
+			: `${session?.terminalHandleId ?? "empty"}:${session?.terminalGeneration ?? ""}`;
 
 	if (!window.ao) {
 		// A standalone shell has no agent and no branch, so it previews as a plain
@@ -690,6 +697,7 @@ export function TerminalPane({
 		onToggleFullscreen,
 		inputDisabled,
 		focusRequested,
+		onTerminalStateChange,
 	};
 	const descriptor = cacheDescriptor(session, terminalTarget);
 	if (cache && descriptor) {
@@ -708,6 +716,7 @@ export function TerminalPane({
 			onChangeFontSize={onChangeFontSize}
 			onToggleFullscreen={onToggleFullscreen}
 			focusRequested={focusRequested}
+			onTerminalStateChange={onTerminalStateChange}
 			terminalTarget={terminalTarget}
 		/>
 	);
@@ -867,6 +876,7 @@ function AttachedTerminal({
 	onToggleFullscreen,
 	inputDisabled,
 	focusRequested,
+	onTerminalStateChange,
 	createMux,
 	isVisible = true,
 	onFatal,
@@ -904,6 +914,9 @@ function AttachedTerminal({
 		isVisible,
 		shellTerminalHandleId,
 	});
+	useEffect(() => {
+		onTerminalStateChange?.(state);
+	}, [onTerminalStateChange, state]);
 	// xterm's write callback means the replay has been parsed, not that the
 	// browser has painted its final viewport. Keep the first-load cover mounted
 	// through the same render/paint preparation used when activating a retained
@@ -947,9 +960,10 @@ function AttachedTerminal({
 	useEffect(() => {
 		if (initFailed) {
 			onFatal?.("renderer initialization failed");
+			onTerminalStateChange?.("error");
 			return;
 		}
-	}, [initFailed, onFatal]);
+	}, [initFailed, onFatal, onTerminalStateChange]);
 	const handleLinkOpen = useSessionBrowserLink(session);
 	const restoreSession = useCallback(async () => {
 		if (!session?.id || !canRestoreSession || isRestoring) return;

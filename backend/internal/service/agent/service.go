@@ -50,25 +50,42 @@ type modelCatalogCall struct {
 // Service owns normalized harness readiness and the unchanged model catalog.
 // Consumers share coordinator checks instead of probing adapters directly.
 type Service struct {
-	agents      []agentregistry.HarnessAgent
-	readiness   *readinessCoordinator
-	cache       ports.AgentModelCatalogCache
-	discoverer  ports.AgentModelDiscoverer
-	projects    ProjectLookup
-	sessions    SessionUsageLookup
-	resolverMu  map[string]*sync.Mutex
-	modelCallMu sync.Mutex
-	modelCalls  map[string]*modelCatalogCall
+	agents        []agentregistry.HarnessAgent
+	readiness     *readinessCoordinator
+	cache         ports.AgentModelCatalogCache
+	discoverer    ports.AgentModelDiscoverer
+	projects      ProjectLookup
+	sessions      SessionUsageLookup
+	resolverMu    map[string]*sync.Mutex
+	modelCallMu   sync.Mutex
+	modelCalls    map[string]*modelCatalogCall
+	codexAccounts *codexAccountManager
+	codexSwitches CodexAccountSwitchCoordinator
+}
+
+// CodexAccountSwitchCoordinator owns global switch execution and recovery.
+type CodexAccountSwitchCoordinator interface {
+	CodexAccountSwitchInProgress() bool
+	StartCodexAccountSwitch(context.Context, ports.CodexAccountSwitchConfig) (domain.CodexAccountSwitch, error)
+	RecoverCodexAccountSwitch(context.Context, string) (domain.CodexAccountSwitch, error)
+	GetActiveCodexAccountSwitch(context.Context) (domain.CodexAccountSwitch, bool, error)
 }
 
 // Deps contains optional durable dependencies for the agent catalog service.
 type Deps struct {
-	Cache      ports.AgentModelCatalogCache
-	Discoverer ports.AgentModelDiscoverer
-	Projects   ProjectLookup
-	Sessions   SessionUsageLookup
-	Context    context.Context
-	Logger     *slog.Logger
+	Cache                  ports.AgentModelCatalogCache
+	Discoverer             ports.AgentModelDiscoverer
+	Projects               ProjectLookup
+	Sessions               SessionUsageLookup
+	Context                context.Context
+	Logger                 *slog.Logger
+	CodexAccountRoot       string
+	CodexPendingRoot       string
+	CodexSwitchStagingRoot string
+	CodexGlobalHome        string
+	CodexAccounts          ports.CodexAccountClientFactory
+	CodexAccountState      CodexAccountStateStore
+	CodexOperationGate     ports.CodexOperationGate
 }
 
 // ProjectLookup resolves the registered working directory used for model
@@ -93,8 +110,12 @@ func New() *Service {
 func NewWithDeps(deps Deps) *Service {
 	agents := agentregistry.Harnessed()
 	svc := newService(agents, deps.Cache, deps.Projects, deps.Discoverer)
+	if deps.CodexAccountRoot != "" && deps.CodexGlobalHome != "" {
+		svc.codexAccounts = newCodexAccountManager(deps.Context, deps.CodexAccountRoot, deps.CodexPendingRoot, deps.CodexSwitchStagingRoot, deps.CodexGlobalHome, deps.CodexAccounts, deps.CodexAccountState, deps.Logger, deps.CodexOperationGate)
+	}
 	svc.readiness = newReadinessCoordinator(readinessCoordinatorConfig{
 		Agents: agents, Factory: agentregistry.Harnessed, Context: deps.Context, Logger: deps.Logger,
+		AuthenticationCheck: svc.structuredCodexAuthentication,
 	})
 	svc.sessions = deps.Sessions
 	return svc
