@@ -226,6 +226,11 @@ export function HarnessSettingsSection({ titleHidden = false }: { titleHidden?: 
 		authStartPendingRef.current = true;
 		updateAuthState(agentId, { pending: true, error: null });
 		try {
+			const plan = agentAuthPlans.get(agentId);
+			if (plan?.launchMode === "documentation") {
+				await aoBridge.app.openExternal(plan.documentationUrl);
+				return;
+			}
 			const result = await startAgentAuth.mutateAsync(agentId);
 			const workflow: AuthTerminalWorkflow = {
 				agentId,
@@ -397,11 +402,21 @@ export function HarnessSettingsSection({ titleHidden = false }: { titleHidden?: 
 					const pending = pendingAgentIds.has(agentId);
 					const readinessAgent = readinessAgents.get(agentId);
 					const authPlan = agentAuthPlans.get(agentId);
+					const isSetupAction = authPlan?.action === "setup";
 					const authState = authStates[agentId];
 					const authStatus = readinessAgent?.authentication.state;
 					const rowHasError = failed || Boolean(authState?.error);
 					const rowAuthWorkflow = authWorkflow?.agentId === agentId ? authWorkflow : null;
 					const hasDiagnostics = Boolean(job && (job.error || job.output || job.method || job.expectedDestination));
+					const authSummary = authState?.error
+						? authState.error
+						: authStatus === "authorized"
+							? (isSetupAction ? t("settings.harness.configured") : t("settings.harness.loggedIn"))
+							: authPlan && !authPlan.available
+								? (authPlan.reason ?? t("settings.harness.authFailed"))
+								: authStatus === "unauthorized"
+									? (isSetupAction ? t("settings.harness.notConfigured") : t("settings.harness.notLoggedIn"))
+									: isSetupAction ? t("settings.harness.configurationUnknown") : t("settings.harness.loginUnknown");
 					const methodLabel = selectedMethod?.label ?? plan?.method;
 					const methodSelect = availableMethods.length > 1 ? (
 						<select aria-label={t("settings.harness.installMethod")} className="h-8 rounded-md border border-(--color-border-settings-input) bg-(--color-bg-settings-input) px-2 text-xs text-settings-label" value={selectedMethodId} onChange={(event) => setSelectedMethods((current) => ({ ...current, [agentId]: event.target.value }))}>
@@ -415,7 +430,7 @@ export function HarnessSettingsSection({ titleHidden = false }: { titleHidden?: 
 							{authStatus === "authorized" ? (
 								<span className="inline-flex items-center gap-1 text-xs font-medium text-success">
 									<Check className="size-4" aria-hidden="true" />
-									{t("settings.harness.loggedIn")}
+									{isSetupAction ? t("settings.harness.configured") : t("settings.harness.loggedIn")}
 								</span>
 							) : (
 								<Button disabled={!authPlan.available || authState?.pending || Boolean(authWorkflow)} size="sm" onClick={() => void startAuth(agentId)}>
@@ -430,7 +445,9 @@ export function HarnessSettingsSection({ titleHidden = false }: { titleHidden?: 
 							{authPlan.available && (authStatus === "unknown" || authStatus === "unauthorized") ? (
 								<Button disabled={authState?.checking} size="sm" variant="outline" onClick={() => void checkAuth(agentId)}>
 									{authState?.checking ? <LoaderCircle className="animate-spin" aria-hidden="true" /> : <RefreshCw aria-hidden="true" />}
-									{authState?.checking ? t("settings.harness.checkingLogin") : t("settings.harness.checkLogin")}
+									{authState?.checking
+										? t("settings.harness.checkingLogin")
+										: isSetupAction ? t("settings.harness.checkConfiguration") : t("settings.harness.checkLogin")}
 								</Button>
 							) : null}
 						</>
@@ -444,15 +461,7 @@ export function HarnessSettingsSection({ titleHidden = false }: { titleHidden?: 
 								<p className="truncate text-sm font-medium text-settings-label" id={`harness-agent-${agentId}`}>{agentLabel(agentId)}</p>
 								<p className={cn("truncate text-xs text-settings-muted", rowHasError && "text-error")} title={authState?.error ?? actionError ?? job?.error ?? authPlan?.reason ?? plan?.reason}>
 									{isInstalled
-										? (authState?.error
-											? authState.error
-											: authStatus === "authorized"
-												? t("settings.harness.loggedIn")
-												: authPlan && !authPlan.available
-													? (authPlan.reason ?? t("settings.harness.authFailed"))
-													: authStatus === "unauthorized"
-														? t("settings.harness.notLoggedIn")
-														: t("settings.harness.loginUnknown"))
+										? authSummary
 										: actionError ?? (job?.status === "interrupted" ? t("settings.harness.interrupted") : failed ? (job?.error ?? t("settings.harness.installFailed")) : plan?.available ? t("settings.harness.availableWith", { method: methodLabel }) : (plan?.reason ?? t("settings.harness.manualRequired")))}
 								</p>
 							</div>

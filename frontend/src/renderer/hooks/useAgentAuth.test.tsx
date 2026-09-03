@@ -15,7 +15,7 @@ describe("agent authentication hooks", () => {
 
 	it("loads display-safe authentication plans", async () => {
 		vi.spyOn(apiClient, "GET").mockResolvedValue({
-			data: { plans: [{ agentId: "codex", action: "login", available: true, documentationUrl: "https://example.test" }] },
+			data: { plans: [{ agentId: "codex", action: "login", launchMode: "terminal", available: true, documentationUrl: "https://example.test" }] },
 		} as never);
 		const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 

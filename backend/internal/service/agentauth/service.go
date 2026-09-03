@@ -39,16 +39,28 @@ const (
 	ActionInstructions Action = "instructions"
 )
 
+// LaunchMode describes how the user enters an agent-owned authentication or
+// provider setup flow.
+type LaunchMode string
+
+const (
+	// LaunchTerminal opens a daemon-owned terminal running a reviewed command.
+	LaunchTerminal LaunchMode = "terminal"
+	// LaunchDocumentation opens the agent's official setup documentation.
+	LaunchDocumentation LaunchMode = "documentation"
+)
+
 // Plan is the display-safe authentication plan for one harness. Trusted
 // command and terminal details remain private to this package.
 type Plan struct {
-	AgentID          string `json:"agentId"`
-	Action           Action `json:"action"`
-	Available        bool   `json:"available"`
-	DisplayCommand   string `json:"displayCommand,omitempty"`
-	Guidance         string `json:"guidance,omitempty"`
-	DocumentationURL string `json:"documentationUrl"`
-	Reason           string `json:"reason,omitempty"`
+	AgentID          string     `json:"agentId"`
+	Action           Action     `json:"action"`
+	LaunchMode       LaunchMode `json:"launchMode" enum:"terminal,documentation"`
+	Available        bool       `json:"available"`
+	DisplayCommand   string     `json:"displayCommand,omitempty"`
+	Guidance         string     `json:"guidance,omitempty"`
+	DocumentationURL string     `json:"documentationUrl"`
+	Reason           string     `json:"reason,omitempty"`
 	command          []string
 	title            string
 	terminalInput    string
@@ -122,6 +134,9 @@ func (s *Service) Start(ctx context.Context, agentID string) (StartResult, error
 	}
 	if plan.Action == ActionInstructions {
 		return StartResult{}, apierr.Invalid("AGENT_AUTH_INSTRUCTIONS_ONLY", "This authentication target provides instructions only.", nil)
+	}
+	if plan.LaunchMode == LaunchDocumentation {
+		return StartResult{}, apierr.Invalid("AGENT_AUTH_DOCUMENTATION_ONLY", "This setup target opens the agent's documentation instead of a terminal.", nil)
 	}
 	if s.terminals == nil {
 		return StartResult{}, apierr.Internal("AGENT_AUTH_TERMINAL_UNAVAILABLE", "Authentication terminal service is unavailable.")

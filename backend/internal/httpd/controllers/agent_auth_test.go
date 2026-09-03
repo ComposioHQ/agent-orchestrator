@@ -45,6 +45,7 @@ func TestAgentAuthListReturnsDisplaySafePlans(t *testing.T) {
 	svc := &fakeAgentAuthService{plans: []agentauth.Plan{{
 		AgentID:          "codex",
 		Action:           agentauth.ActionLogin,
+		LaunchMode:       agentauth.LaunchTerminal,
 		Available:        true,
 		DisplayCommand:   "codex login",
 		Guidance:         "Native browser flow",
@@ -56,7 +57,7 @@ func TestAgentAuthListReturnsDisplaySafePlans(t *testing.T) {
 	if status != http.StatusOK {
 		t.Fatalf("GET auth-plans = %d, body=%s", status, body)
 	}
-	for _, want := range []string{`"agentId":"codex"`, `"action":"login"`, `"displayCommand":"codex login"`} {
+	for _, want := range []string{`"agentId":"codex"`, `"action":"login"`, `"launchMode":"terminal"`, `"displayCommand":"codex login"`} {
 		if !strings.Contains(string(body), want) {
 			t.Fatalf("body missing %s: %s", want, body)
 		}
@@ -117,6 +118,7 @@ func TestAgentAuthErrorsPreserveEnvelope(t *testing.T) {
 		{name: "unknown", code: "AGENT_AUTH_TARGET_UNKNOWN"},
 		{name: "unavailable", code: "AGENT_AUTH_UNAVAILABLE"},
 		{name: "instructions", code: "AGENT_AUTH_INSTRUCTIONS_ONLY"},
+		{name: "documentation", code: "AGENT_AUTH_DOCUMENTATION_ONLY"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			svc := &fakeAgentAuthService{startErr: apierr.Invalid(tc.code, tc.name, nil)}

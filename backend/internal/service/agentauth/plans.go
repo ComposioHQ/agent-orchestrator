@@ -14,7 +14,7 @@ var plans = []Plan{
 	plan("codex", ActionLogin, "Log in to Codex", []string{"codex", "login"}, "Native browser/device-code flow", "https://github.com/openai/codex"),
 	plan("cursor", ActionLogin, "Log in to Cursor", []string{"cursor-agent", "login"}, "Native browser flow", "https://docs.cursor.com/en/cli/installation"),
 	plan("opencode", ActionLogin, "Log in to OpenCode", []string{"opencode", "auth", "login"}, "Native provider chooser", "https://github.com/anomalyco/opencode"),
-	plan("aider", ActionSetup, "Set up Aider", []string{"aider"}, "Configure the provider in the native prompt; AO forwards terminal input without persisting or logging the raw input, while Aider controls credential storage", "https://aider.chat/docs/install.html"),
+	documentationPlan("aider", ActionSetup, "Set up Aider", "Configure provider credentials using Aider's documented environment or configuration-file options", "https://aider.chat/docs/config/api-keys.html"),
 	plan("copilot", ActionLogin, "Log in to GitHub Copilot", []string{"copilot", "login"}, "Native GitHub device/browser flow", "https://docs.github.com/en/copilot/how-tos/copilot-cli/set-up-copilot-cli/install-copilot-cli"),
 	plan("grok", ActionLogin, "Log in to Grok", []string{"grok", "login"}, "Native login; device-auth remains available inside the CLI", "https://docs.x.ai/build/overview"),
 	plan("kimi", ActionLogin, "Log in to Kimi", []string{"kimi", "login"}, "Native browser flow", "https://moonshotai.github.io/kimi-code/en/"),
@@ -45,6 +45,12 @@ func terminalInputPlan(agentID string, action Action, title string, command []st
 	return p
 }
 
+func documentationPlan(agentID string, action Action, title, guidance, docs string) Plan {
+	p := plan(agentID, action, title, nil, guidance, docs)
+	p.LaunchMode = LaunchDocumentation
+	return p
+}
+
 var planByAgentID = func() map[string]Plan {
 	out := make(map[string]Plan, len(plans))
 	for _, plan := range plans {
@@ -57,6 +63,7 @@ func plan(agentID string, action Action, title string, command []string, guidanc
 	return Plan{
 		AgentID:          agentID,
 		Action:           action,
+		LaunchMode:       LaunchTerminal,
 		DisplayCommand:   strings.Join(command, " "),
 		Guidance:         guidance,
 		DocumentationURL: docs,

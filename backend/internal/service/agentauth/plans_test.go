@@ -23,7 +23,7 @@ func TestPlansMatchAuthenticationMatrix(t *testing.T) {
 		{"codex", "Log in to Codex", "codex", "Native browser/device-code flow", "https://github.com/openai/codex", "", ActionLogin, []string{"codex", "login"}},
 		{"cursor", "Log in to Cursor", "cursor-agent", "Native browser flow", "https://docs.cursor.com/en/cli/installation", "", ActionLogin, []string{"cursor-agent", "login"}},
 		{"opencode", "Log in to OpenCode", "opencode", "Native provider chooser", "https://github.com/anomalyco/opencode", "", ActionLogin, []string{"opencode", "auth", "login"}},
-		{"aider", "Set up Aider", "aider", "Configure the provider in the native prompt; AO forwards terminal input without persisting or logging the raw input, while Aider controls credential storage", "https://aider.chat/docs/install.html", "", ActionSetup, []string{"aider"}},
+		{"aider", "Set up Aider", "", "Configure provider credentials using Aider's documented environment or configuration-file options", "https://aider.chat/docs/config/api-keys.html", "", ActionSetup, nil},
 		{"copilot", "Log in to GitHub Copilot", "copilot", "Native GitHub device/browser flow", "https://docs.github.com/en/copilot/how-tos/copilot-cli/set-up-copilot-cli/install-copilot-cli", "", ActionLogin, []string{"copilot", "login"}},
 		{"grok", "Log in to Grok", "grok", "Native login; device-auth remains available inside the CLI", "https://docs.x.ai/build/overview", "", ActionLogin, []string{"grok", "login"}},
 		{"kimi", "Log in to Kimi", "kimi", "Native browser flow", "https://moonshotai.github.io/kimi-code/en/", "", ActionLogin, []string{"kimi", "login"}},
@@ -56,11 +56,15 @@ func TestPlansMatchAuthenticationMatrix(t *testing.T) {
 	seen := make(map[string]bool, len(plans))
 	for i, want := range cases {
 		got := plans[i]
+		wantLaunchMode := LaunchTerminal
+		if want.id == "aider" {
+			wantLaunchMode = LaunchDocumentation
+		}
 		if seen[got.AgentID] {
 			t.Fatalf("Plans() returned duplicate id %q", got.AgentID)
 		}
 		seen[got.AgentID] = true
-		if got.AgentID != want.id || got.Action != want.action || !got.Available || got.Guidance != want.guidance || got.DocumentationURL != want.docs {
+		if got.AgentID != want.id || got.Action != want.action || got.LaunchMode != wantLaunchMode || !got.Available || got.Guidance != want.guidance || got.DocumentationURL != want.docs {
 			t.Fatalf("plan %d = %#v, want id=%q action=%q available=true guidance=%q docs=%q", i, got, want.id, want.action, want.guidance, want.docs)
 		}
 		wantCommand := append([]string(nil), want.argv...)

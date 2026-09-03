@@ -56,10 +56,10 @@ const catalog = readinessCatalog(["claude-code"], { "claude-code": "authorized" 
 
 const authPlans = {
 	plans: [
-		{ agentId: "claude-code", action: "login", available: true, documentationUrl: "https://example.test/claude" },
-		{ agentId: "codex", action: "login", available: true, documentationUrl: "https://example.test/codex" },
-		{ agentId: "aider", action: "setup", available: true, documentationUrl: "https://example.test/aider" },
-		{ agentId: "qwen", action: "setup", available: true, documentationUrl: "https://example.test/qwen" },
+		{ agentId: "claude-code", action: "login", launchMode: "terminal", available: true, documentationUrl: "https://example.test/claude" },
+		{ agentId: "codex", action: "login", launchMode: "terminal", available: true, documentationUrl: "https://example.test/codex" },
+		{ agentId: "aider", action: "setup", launchMode: "documentation", available: true, documentationUrl: "https://example.test/aider" },
+		{ agentId: "qwen", action: "setup", launchMode: "terminal", available: true, documentationUrl: "https://example.test/qwen" },
 	],
 };
 
@@ -148,11 +148,11 @@ describe("HarnessSettingsSection", () => {
 			{ "claude-code": "authorized", codex: "unauthorized", devin: "authorized" },
 		);
 		const rowPlans = { plans: [
-			{ agentId: "claude-code", action: "login", available: true, documentationUrl: "https://example.test/claude" },
-			{ agentId: "codex", action: "login", available: true, documentationUrl: "https://example.test/codex" },
-			{ agentId: "aider", action: "setup", available: true, documentationUrl: "https://example.test/aider" },
-			{ agentId: "devin", action: "login", available: true, documentationUrl: "https://example.test/devin" },
-			{ agentId: "goose", action: "setup", available: false, reason: "goose is not on PATH", documentationUrl: "https://example.test/goose" },
+			{ agentId: "claude-code", action: "login", launchMode: "terminal", available: true, documentationUrl: "https://example.test/claude" },
+			{ agentId: "codex", action: "login", launchMode: "terminal", available: true, documentationUrl: "https://example.test/codex" },
+			{ agentId: "aider", action: "setup", launchMode: "documentation", available: true, documentationUrl: "https://example.test/aider" },
+			{ agentId: "devin", action: "login", launchMode: "terminal", available: true, documentationUrl: "https://example.test/devin" },
+			{ agentId: "goose", action: "setup", launchMode: "terminal", available: false, reason: "goose is not on PATH", documentationUrl: "https://example.test/goose" },
 		] };
 		vi.mocked(apiClient.GET).mockImplementation(async (path) => {
 			if (path === "/api/v1/agents/readiness") return { data: rowCatalog } as never;
@@ -179,14 +179,43 @@ describe("HarnessSettingsSection", () => {
 		expect(within(codexRow).getByRole("button", { name: "Login" })).toBeInTheDocument();
 		expect(within(codexRow).getByRole("button", { name: "Check login" })).toBeInTheDocument();
 		expect(within(aiderRow).getByRole("button", { name: "Set up" })).toBeInTheDocument();
-		expect(within(aiderRow).getByRole("button", { name: "Check login" })).toBeInTheDocument();
-		expect(aiderRow).toHaveTextContent("Login status unknown");
+		expect(within(aiderRow).getByRole("button", { name: "Check configuration" })).toBeInTheDocument();
+		expect(aiderRow).toHaveTextContent("Configuration status unknown");
 		expect(within(devinRow).getAllByText("Logged in")).toHaveLength(2);
 		expect(within(devinRow).queryByRole("button", { name: "Instructions" })).not.toBeInTheDocument();
 		expect(within(devinRow).queryByRole("button", { name: "Login" })).not.toBeInTheDocument();
 		expect(within(devinRow).queryByRole("button", { name: "Check login" })).not.toBeInTheDocument();
 		expect(within(gooseRow).getByRole("button", { name: "Set up" })).toBeDisabled();
 		expect(gooseRow).toHaveTextContent("goose is not on PATH");
+	});
+
+	it("opens Aider's official setup documentation without starting a terminal", async () => {
+		const aiderCatalog = readinessCatalog(["aider"], { aider: "unauthorized" });
+		let authStarted = false;
+		vi.mocked(apiClient.GET).mockImplementation(async (path) => {
+			if (path === "/api/v1/agents/readiness") return { data: aiderCatalog } as never;
+			if (path === "/api/v1/agents/installers") return { data: plans } as never;
+			if (path === "/api/v1/agents/install-jobs") return { data: { jobs: [] } } as never;
+			if (path === "/api/v1/agents/auth-plans") return { data: authPlans } as never;
+			return { data: undefined } as never;
+		});
+		vi.mocked(apiClient.POST).mockImplementation(async (path) => {
+			if (path === "/api/v1/agents/readiness/ensure") return { data: aiderCatalog } as never;
+			if (path === "/api/v1/agents/{agent}/auth") authStarted = true;
+			return { data: undefined } as never;
+		});
+		const openExternal = vi.spyOn(window.ao!.app, "openExternal").mockResolvedValue(undefined);
+		const user = userEvent.setup();
+		renderSection();
+		const aiderRow = (await screen.findByText("Aider")).closest('[data-agent="aider"]') as HTMLElement;
+		await waitFor(() => expect(aiderRow).toHaveTextContent("Not configured"));
+
+		await user.click(await within(aiderRow).findByRole("button", { name: "Set up" }));
+
+		expect(openExternal).toHaveBeenCalledWith("https://example.test/aider");
+		expect(authStarted).toBe(false);
+		expect(within(aiderRow).queryByTestId("harness-auth-terminal")).not.toBeInTheDocument();
+		expect(within(aiderRow).getByRole("button", { name: "Check configuration" })).toBeInTheDocument();
 	});
 
 	it("sends an interactive login command only after the user selects Open login", async () => {
@@ -420,7 +449,7 @@ describe("HarnessSettingsSection", () => {
 			if (path === "/api/v1/agents/auth-plans") {
 				authPlanRequests += 1;
 				return { data: { plans: [{
-					agentId: "codex", action: "login", available: authPlanRequests > 1,
+					agentId: "codex", action: "login", launchMode: "terminal", available: authPlanRequests > 1,
 					reason: authPlanRequests > 1 ? undefined : "codex was not found on PATH.",
 					documentationUrl: "https://example.test/codex",
 				}] } } as never;

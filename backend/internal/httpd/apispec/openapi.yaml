@@ -6107,11 +6107,17 @@ components:
           type: string
         guidance:
           type: string
+        launchMode:
+          enum:
+          - terminal
+          - documentation
+          type: string
         reason:
           type: string
       required:
       - agentId
       - action
+      - launchMode
       - available
       - documentationUrl
       type: object

@@ -2081,6 +2081,8 @@ export interface components {
             displayCommand?: string;
             documentationUrl: string;
             guidance?: string;
+            /** @enum {string} */
+            launchMode: "terminal" | "documentation";
             reason?: string;
         };
         AgentAuthenticationObservation: {
