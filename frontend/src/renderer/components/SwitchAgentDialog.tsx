@@ -1,6 +1,6 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { LoaderCircle, Repeat2, TriangleAlert, X } from "lucide-react";
-import { type FormEvent, useEffect, useState } from "react";
+import { type FormEvent, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
 	agentSwitchesQueryKey,
@@ -55,6 +55,36 @@ export function canSwitchAgentHarness(value: string): value is SwitchAgentHarnes
 function isFromDismissedMenuTrigger(target: EventTarget | null): boolean {
 	if (!(target instanceof Element)) return false;
 	return Boolean(target.closest('[role="menuitem"], [role="menu"], [data-session-actions-trigger]'));
+}
+
+// The exemption only covers the opening interaction (the closing dropdown's
+// teardown in the ticks right after mount). After it settles, the menu and
+// trigger are ordinary outside elements again: suppressing outside events
+// from them for the dialog's whole lifetime would swallow later actions-menu
+// interactions and leave keyboard focus stranded outside the non-modal
+// dialog. Two animation frames are enough for the dropdown's same-tick
+// dismissal to have run; anything after that is a genuine outside event.
+function useSuppressOpeningRace(open: boolean) {
+	const suppressRef = useRef(false);
+	useEffect(() => {
+		if (!open) {
+			suppressRef.current = false;
+			return;
+		}
+		suppressRef.current = true;
+		let frames = 0;
+		let rafId = 0;
+		const tick = () => {
+			if (++frames >= 2) {
+				suppressRef.current = false;
+				return;
+			}
+			rafId = requestAnimationFrame(tick);
+		};
+		rafId = requestAnimationFrame(tick);
+		return () => cancelAnimationFrame(rafId);
+	}, [open]);
+	return suppressRef;
 }
 
 function SwitchTargetPicker({
@@ -173,6 +203,7 @@ export function SwitchAgentDialog({ agentSwitch, container, open, session, onOpe
 	);
 	const [refreshingRecovery, setRefreshingRecovery] = useState(false);
 	const operationPending = admissionPending || recoverAgentSwitch.isPending;
+	const suppressOpeningRace = useSuppressOpeningRace(open);
 	useEffect(() => {
 		setTargetHarness(session.provider === "claude-code" ? "codex" : "claude-code");
 		setModel("");
@@ -241,10 +272,10 @@ export function SwitchAgentDialog({ agentSwitch, container, open, session, onOpe
 					/>
 				}
 				onFocusOutside={(event) => {
-					if (isFromDismissedMenuTrigger(event.target)) event.preventDefault();
+					if (suppressOpeningRace.current && isFromDismissedMenuTrigger(event.target)) event.preventDefault();
 				}}
 				onPointerDownOutside={(event) => {
-					if (isFromDismissedMenuTrigger(event.target)) event.preventDefault();
+					if (suppressOpeningRace.current && isFromDismissedMenuTrigger(event.target)) event.preventDefault();
 				}}
 				showCloseButton={false}
 				className="absolute left-1/2 top-1/2 z-overlay w-[min(var(--size-dialog-md),calc(100%-var(--space-8)))] max-w-none -translate-x-1/2 -translate-y-1/2 gap-0 overflow-hidden rounded-xl border border-border-strong bg-surface/95 p-0 text-foreground shadow-xl shadow-black/20 data-[state=open]:animate-modal-in data-[state=closed]:animate-modal-out motion-reduce:animate-none"

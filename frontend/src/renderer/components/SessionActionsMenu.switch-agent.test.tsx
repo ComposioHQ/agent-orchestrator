@@ -144,4 +144,45 @@ describe("SessionActionsMenu > Switch agent", () => {
 
 		await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
 	});
+
+	// The opening-race exemption is scoped to the opening interaction only.
+	// Once the dismissed menu's teardown has settled, the session actions
+	// trigger is a genuine outside element again: clicking it (to reopen the
+	// menu) must dismiss the dialog instead of being swallowed.
+	it("dismisses the dialog when the actions-menu trigger is clicked again later", async () => {
+		renderHarness();
+
+		await userEvent.click(await screen.findByRole("button", { name: "Session actions" }));
+		await userEvent.click(await screen.findByRole("menuitem", { name: "Switch agent" }));
+		await screen.findByRole("dialog", { name: "Switch agent" });
+
+		// Let the opening-race window close before the later interaction.
+		await new Promise((resolve) => setTimeout(resolve, 150));
+
+		await userEvent.click(screen.getByRole("button", { name: "Session actions" }));
+
+		await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+	});
+
+	// Keyboard focus: once the opening interaction has settled, moving focus
+	// to an element outside the non-modal dialog is a genuine outside focus
+	// interaction and must dismiss the dialog rather than be suppressed.
+	it("dismisses the dialog when focus moves outside it later", async () => {
+		renderHarness();
+
+		await userEvent.click(await screen.findByRole("button", { name: "Session actions" }));
+		await userEvent.click(await screen.findByRole("menuitem", { name: "Switch agent" }));
+		await screen.findByRole("dialog", { name: "Switch agent" });
+
+		await new Promise((resolve) => setTimeout(resolve, 150));
+
+		// Radix returns focus to the trigger when the menu closes, so blur first
+		// to make the refocus an actual focus change (a fresh focusin outside
+		// the dialog's layer).
+		const trigger = screen.getByRole("button", { name: "Session actions" });
+		trigger.blur();
+		trigger.focus();
+
+		await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+	});
 });
