@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -265,13 +266,13 @@ func (t *claudeCodeCredentialSwitch) Rollback(ctx context.Context) error {
 		}
 		t.releaseLocks = release
 	}
+	defer t.ReleaseNativeLocks()
 	if err := t.manager.keychain.Set(ctx, claudecode.ClaudeCanonicalCredentialService, t.manager.keychainAccount, t.rollback.Credential); err != nil {
 		return errors.New("rollback credential could not be restored for Claude Code")
 	}
 	if err := claudecode.WriteOAuthAccount(ctx, t.manager.configPath, t.rollback.OAuthAccount); err != nil {
 		return err
 	}
-	t.ReleaseNativeLocks()
 	if err := t.manager.verifyAuth(ctx, nil); err != nil {
 		return errors.New("rollback could not be verified for Claude Code")
 	}
@@ -281,6 +282,23 @@ func (t *claudeCodeCredentialSwitch) Rollback(ctx context.Context) error {
 	}
 	t.mutated = false
 	return nil
+}
+
+func normalizedClaudeCodeAccountCredential(data []byte) ([]byte, error) {
+	fields, err := claudecode.AccountCredentialFields(data)
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(fields)
+}
+
+func (m *claudeCodeAccountManager) readNormalizedVaultCredential(ctx context.Context, accountID string) ([]byte, bool, error) {
+	credential, found, err := m.keychain.Get(ctx, claudecode.ClaudeAccountVaultService, accountID)
+	if err != nil || !found {
+		return nil, found, err
+	}
+	normalized, err := normalizedClaudeCodeAccountCredential(credential)
+	return normalized, true, err
 }
 
 func (t *claudeCodeCredentialSwitch) Cleanup(ctx context.Context) error {
@@ -318,44 +336,134 @@ func (s *Service) RecoverClaudeCodeCredentialSwitch(ctx context.Context, sw doma
 	if m == nil {
 		return "", nil, ports.ErrClaudeCodeAccountManagementUnsupported
 	}
-	identity, _, identityErr := readClaudeCodeOAuthIdentity(m.configPath)
-	if identityErr == nil && identity.AccountUUID == sw.TargetAccountID {
+
+	releaseLocks, err := claudecode.AcquireCredentialLocks(ctx, m.claudeDir)
+	if err != nil {
+		return "", nil, err
+	}
+	txn := &claudeCodeCredentialSwitch{manager: m, switchRecord: sw, releaseLocks: releaseLocks}
+	defer txn.ReleaseNativeLocks()
+
+	canonical, found, err := m.keychain.Get(ctx, claudecode.ClaudeCanonicalCredentialService, m.keychainAccount)
+	if err != nil || !found {
+		return "", nil, errors.New("canonical Claude Code credential is unavailable")
+	}
+	canonicalAccount, err := normalizedClaudeCodeAccountCredential(canonical)
+	if err != nil {
+		return "", nil, errors.New("canonical Claude Code credential is invalid")
+	}
+	targetCredential, targetFound, err := m.readNormalizedVaultCredential(ctx, sw.TargetAccountID)
+	if err != nil || !targetFound {
+		return "", nil, errors.New("target credential is unavailable for Claude Code")
+	}
+	sourceCredential, sourceFound, err := m.readNormalizedVaultCredential(ctx, sw.SourceAccountID)
+	if err != nil {
+		return "", nil, errors.New("source credential is unavailable for Claude Code")
+	}
+
+	data, rollbackFound, rollbackErr := m.keychain.Get(ctx, claudecode.ClaudeSwitchRollbackVaultService, sw.ID)
+	if rollbackErr != nil {
+		return "", nil, errors.New("rollback snapshot is unavailable for Claude Code")
+	}
+	var snapshot claudeCodeRollbackSnapshot
+	var rollbackSourceCredential []byte
+	if rollbackFound {
+		if json.Unmarshal(data, &snapshot) != nil || len(snapshot.Credential) == 0 || len(snapshot.OAuthAccount) == 0 {
+			return "", nil, errors.New("rollback snapshot is invalid for Claude Code")
+		}
+		rollbackSourceCredential, err = normalizedClaudeCodeAccountCredential(snapshot.Credential)
+		if err != nil {
+			return "", nil, errors.New("rollback snapshot is invalid for Claude Code")
+		}
+		txn.rollback = snapshot
+	}
+
+	matchesTarget := bytes.Equal(canonicalAccount, targetCredential)
+	matchesSource := sourceFound && bytes.Equal(canonicalAccount, sourceCredential)
+	if rollbackFound && bytes.Equal(canonicalAccount, rollbackSourceCredential) {
+		matchesSource = true
+	}
+
+	switch {
+	case matchesTarget && !matchesSource:
+		target, ok := m.catalog.record(sw.TargetAccountID)
+		if !ok {
+			return "", nil, ports.ErrClaudeCodeAccountNotFound
+		}
+		if err := claudecode.WriteOAuthAccount(ctx, m.configPath, claudeCodeIdentityMap(target.Snapshot.Identity)); err != nil {
+			return "", nil, err
+		}
 		if err := m.verifyAuth(ctx, nil); err != nil {
 			return "", nil, err
+		}
+		verifiedCredential, verifiedFound, readErr := m.keychain.Get(ctx, claudecode.ClaudeCanonicalCredentialService, m.keychainAccount)
+		if readErr != nil || !verifiedFound {
+			return "", nil, errors.New("canonical Claude Code credential is unavailable after recovery")
+		}
+		verifiedAccount, normalizeErr := normalizedClaudeCodeAccountCredential(verifiedCredential)
+		if normalizeErr != nil || !bytes.Equal(verifiedAccount, targetCredential) {
+			return "", nil, errors.New("canonical Claude Code credential changed during recovery")
+		}
+		identity, _, identityErr := readClaudeCodeOAuthIdentity(m.configPath)
+		if identityErr != nil || identity.AccountUUID != sw.TargetAccountID {
+			return "", nil, errors.New("global identity does not match the Claude Code switch target")
 		}
 		m.mu.Lock()
 		active := m.active
 		m.mu.Unlock()
-		if active.AccountID == sw.SourceAccountID && active.Revision == sw.ExpectedAccountRevision {
+		switch {
+		case active.AccountID == sw.SourceAccountID && active.Revision == sw.ExpectedAccountRevision:
 			if err := m.setActivePointer(ctx, sw.TargetAccountID); err != nil {
 				return "", nil, err
 			}
+		case active.AccountID == sw.TargetAccountID && active.Revision == sw.ExpectedAccountRevision+1:
+			// The credential and pointer committed before the daemon stopped.
+		default:
+			return "", nil, ports.ErrClaudeCodeAccountRevisionConflict
 		}
 		committedAt := m.now()
-		_ = m.cleanupClaudeCodeSwitchArtifacts(ctx, sw.ID)
-		return ports.ClaudeCodeCredentialRecoveryCompleted, &committedAt, nil
-	}
-	if identityErr == nil && identity.AccountUUID == sw.SourceAccountID {
-		if err := m.verifyAuth(ctx, nil); err != nil {
+		if sw.CredentialsCommittedAt != nil {
+			committedAt = *sw.CredentialsCommittedAt
+		}
+		if err := txn.Cleanup(ctx); err != nil {
 			return "", nil, err
 		}
-		_ = m.cleanupClaudeCodeSwitchArtifacts(ctx, sw.ID)
+		return ports.ClaudeCodeCredentialRecoveryCompleted, &committedAt, nil
+
+	case matchesSource && !matchesTarget:
+		if rollbackFound {
+			if err := txn.Rollback(ctx); err != nil {
+				return "", nil, err
+			}
+		} else {
+			source, ok := m.catalog.record(sw.SourceAccountID)
+			if !ok {
+				return "", nil, ports.ErrClaudeCodeActiveAccountUnavailable
+			}
+			if err := claudecode.WriteOAuthAccount(ctx, m.configPath, claudeCodeIdentityMap(source.Snapshot.Identity)); err != nil {
+				return "", nil, err
+			}
+			if err := m.verifyAuth(ctx, nil); err != nil {
+				return "", nil, err
+			}
+		}
+		if err := txn.Cleanup(ctx); err != nil {
+			return "", nil, err
+		}
+		return ports.ClaudeCodeCredentialRecoveryFailed, nil, nil
+
+	default:
+		if !rollbackFound {
+			return "", nil, errors.New("canonical Claude Code credential does not match the switch source or target")
+		}
+		if err := txn.Rollback(ctx); err != nil {
+			return "", nil, err
+		}
+		if err := txn.Cleanup(ctx); err != nil {
+			return "", nil, err
+		}
 		return ports.ClaudeCodeCredentialRecoveryFailed, nil, nil
 	}
-	data, found, err := m.keychain.Get(ctx, claudecode.ClaudeSwitchRollbackVaultService, sw.ID)
-	if err != nil || !found {
-		return "", nil, errors.New("rollback snapshot is unavailable for Claude Code")
-	}
-	var snapshot claudeCodeRollbackSnapshot
-	if json.Unmarshal(data, &snapshot) != nil || len(snapshot.Credential) == 0 || len(snapshot.OAuthAccount) == 0 {
-		return "", nil, errors.New("rollback snapshot is invalid for Claude Code")
-	}
-	txn := &claudeCodeCredentialSwitch{manager: m, switchRecord: sw, rollback: snapshot}
-	if err := txn.Rollback(ctx); err != nil {
-		return "", nil, err
-	}
-	_ = txn.Cleanup(ctx)
-	return ports.ClaudeCodeCredentialRecoveryFailed, nil, nil
 }
 
 func (m *claudeCodeAccountManager) cleanupClaudeCodeSwitchArtifacts(ctx context.Context, switchID string) error {

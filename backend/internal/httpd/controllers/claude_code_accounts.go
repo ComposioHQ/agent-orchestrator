@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/go-chi/chi/v5"
 
@@ -36,6 +37,8 @@ type ClaudeCodeAccountService interface {
 
 // ClaudeCodeAccountsController exposes Claude Code account-management routes.
 type ClaudeCodeAccountsController struct{ Svc ClaudeCodeAccountService }
+
+const maxClaudeCodeAccountSwitchBodyBytes = 4 << 10
 
 // Register installs Claude Code account-management request routes.
 func (c *ClaudeCodeAccountsController) Register(r chi.Router) {
@@ -204,18 +207,20 @@ func (c *ClaudeCodeAccountsController) startSwitch(w http.ResponseWriter, r *htt
 		apispec.NotImplemented(w, r, "POST", "/api/v1/agents/claude-code/account-switches")
 		return
 	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxClaudeCodeAccountSwitchBodyBytes)
 	var request StartClaudeCodeAccountSwitchRequest
 	if err := decodeJSONStrict(r, &request); err != nil {
 		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_JSON", "Invalid JSON body", nil)
 		return
 	}
-	if strings.TrimSpace(request.TargetAccountID) == "" || request.ExpectedAccountRevision < 1 || strings.TrimSpace(request.IdempotencyKey) == "" {
+	idempotencyKey := strings.TrimSpace(request.IdempotencyKey)
+	if strings.TrimSpace(request.TargetAccountID) == "" || request.ExpectedAccountRevision < 1 || idempotencyKey == "" || utf8.RuneCountInString(idempotencyKey) > 200 {
 		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_ACCOUNT_SWITCH", "Target account, expected revision, and idempotency key are required", nil)
 		return
 	}
 	result, err := c.Svc.StartClaudeCodeAccountSwitch(r.Context(), ports.ClaudeCodeAccountSwitchConfig{
 		TargetAccountID: strings.TrimSpace(request.TargetAccountID), ExpectedAccountRevision: request.ExpectedAccountRevision,
-		IdempotencyKey: strings.TrimSpace(request.IdempotencyKey),
+		IdempotencyKey: idempotencyKey,
 	})
 	if err != nil {
 		writeClaudeCodeAccountError(w, r, err)
@@ -250,6 +255,10 @@ func writeClaudeCodeAccountError(w http.ResponseWriter, r *http.Request, err err
 		envelope.WriteAPIError(w, r, http.StatusConflict, "conflict", "CLAUDE_CODE_ACCOUNT_REVISION_CONFLICT", "The active Claude Code account changed", nil)
 	case errors.Is(err, ports.ErrClaudeCodeAccountSwitchInProgress):
 		envelope.WriteAPIError(w, r, http.StatusConflict, "conflict", "CLAUDE_CODE_ACCOUNT_SWITCH_IN_PROGRESS", "A Claude Code account switch is already in progress", nil)
+	case errors.Is(err, ports.ErrClaudeCodeAccountLoginInProgress):
+		envelope.WriteAPIError(w, r, http.StatusConflict, "conflict", "CLAUDE_CODE_ACCOUNT_LOGIN_IN_PROGRESS", "A Claude Code account login is already in progress", nil)
+	case errors.Is(err, ports.ErrClaudeCodeActiveAccountUnavailable):
+		envelope.WriteAPIError(w, r, http.StatusConflict, "conflict", "CLAUDE_CODE_ACTIVE_ACCOUNT_UNAVAILABLE", "No active Claude Code account is available to switch", nil)
 	case errors.Is(err, ports.ErrClaudeCodeAccountSwitchIdempotencyConflict):
 		envelope.WriteAPIError(w, r, http.StatusConflict, "conflict", "CLAUDE_CODE_ACCOUNT_SWITCH_IDEMPOTENCY_CONFLICT", "The idempotency key belongs to another Claude Code account switch", nil)
 	case errors.Is(err, ports.ErrClaudeCodeAccountManagementUnsupported):

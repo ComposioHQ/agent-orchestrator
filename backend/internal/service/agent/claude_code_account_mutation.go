@@ -90,17 +90,17 @@ func (m *claudeCodeAccountManager) logout(ctx context.Context, accountID string)
 
 func (m *claudeCodeAccountManager) deleteAccount(ctx context.Context, accountID string) error {
 	accountID = strings.TrimSpace(accountID)
+	release, err := m.acquireMutation(ctx)
+	if err != nil {
+		return err
+	}
+	defer release()
 	m.mu.Lock()
 	activeID := m.active.AccountID
 	m.mu.Unlock()
 	if activeID == accountID {
 		return ports.ErrClaudeCodeAccountAlreadyActive
 	}
-	release, err := m.acquireMutation(ctx)
-	if err != nil {
-		return err
-	}
-	defer release()
 	if err := m.catalog.delete(ctx, accountID, m.now()); err != nil {
 		return err
 	}

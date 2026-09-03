@@ -38,6 +38,14 @@ OAuth material remains in macOS Keychain:
 No secret bytes or Keychain identities cross the domain, SQLite, API, logging,
 telemetry, or renderer boundaries.
 
+Version one mirrors Claude's native default Keychain access policy and does not
+inject a `security add-generic-password -T` trusted-application list. Restricting
+the item to specific binaries requires live compatibility coverage for the
+Claude CLI, Claude Desktop, and their updater-managed executable paths; adding
+an incomplete allowlist could lock supported Claude clients out of the account.
+AO still sends credential bytes only through `security -i` stdin so secrets do
+not appear in process arguments.
+
 ## Adding and reauthenticating accounts
 
 AO opens a trusted shell terminal running `claude auth login` with an isolated

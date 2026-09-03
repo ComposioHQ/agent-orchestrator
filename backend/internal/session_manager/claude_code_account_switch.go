@@ -15,6 +15,8 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
+const claudeCodeAccountSwitchWorkerTimeout = 2 * time.Minute
+
 func claudeCodeAccountSwitchFingerprint(target string, revision int64) string {
 	sum := sha256.Sum256([]byte(fmt.Sprintf("v1\x00%s\x00%d", target, revision)))
 	return "v1:" + hex.EncodeToString(sum[:])
@@ -160,7 +162,9 @@ func (m *Manager) StartClaudeCodeAccountSwitch(ctx context.Context, cfg ports.Cl
 	m.agentSwitchWorkers.Add(1)
 	go func() {
 		defer m.agentSwitchWorkers.Done()
-		m.runClaudeCodeAccountSwitch(m.backgroundContext, credentials, store, created)
+		workerCtx, cancel := context.WithTimeout(m.backgroundContext, claudeCodeAccountSwitchWorkerTimeout)
+		defer cancel()
+		m.runClaudeCodeAccountSwitch(workerCtx, credentials, store, created)
 	}()
 	return created, nil
 }
@@ -311,7 +315,9 @@ func (m *Manager) RecoverClaudeCodeAccountSwitch(ctx context.Context, id string)
 	m.agentSwitchWorkers.Add(1)
 	go func() {
 		defer m.agentSwitchWorkers.Done()
-		m.recoverClaudeCodeAccountSwitch(m.backgroundContext, credentials, store, sw)
+		workerCtx, cancel := context.WithTimeout(m.backgroundContext, claudeCodeAccountSwitchWorkerTimeout)
+		defer cancel()
+		m.recoverClaudeCodeAccountSwitch(workerCtx, credentials, store, sw)
 	}()
 	return sw, nil
 }
@@ -368,7 +374,9 @@ func (m *Manager) ReconcileClaudeCodeAccountSwitches(ctx context.Context) error 
 	m.agentSwitchWorkers.Add(1)
 	go func() {
 		defer m.agentSwitchWorkers.Done()
-		m.recoverClaudeCodeAccountSwitch(m.backgroundContext, credentials, store, sw)
+		workerCtx, cancel := context.WithTimeout(m.backgroundContext, claudeCodeAccountSwitchWorkerTimeout)
+		defer cancel()
+		m.recoverClaudeCodeAccountSwitch(workerCtx, credentials, store, sw)
 	}()
 	return nil
 }

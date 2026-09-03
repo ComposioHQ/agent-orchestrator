@@ -57,7 +57,7 @@ func (*fakeClaudeCodeAccounts) CancelClaudeCodeAccountLogin(context.Context, str
 }
 func (f *fakeClaudeCodeAccounts) StartClaudeCodeAccountSwitch(_ context.Context, cfg ports.ClaudeCodeAccountSwitchConfig) (domain.ClaudeCodeAccountSwitch, error) {
 	f.switchConfig = cfg
-	return f.switchResult, nil
+	return f.switchResult, f.err
 }
 func (f *fakeClaudeCodeAccounts) RecoverClaudeCodeAccountSwitch(context.Context, string) (domain.ClaudeCodeAccountSwitch, error) {
 	return f.switchResult, nil
@@ -88,6 +88,51 @@ func TestClaudeCodeAccountSwitchRouteIsStrictAndAccepted(t *testing.T) {
 	router.ServeHTTP(response, req)
 	if response.Code != http.StatusBadRequest || strings.Contains(response.Body.String(), "secret") {
 		t.Fatalf("strict response status=%d body=%s", response.Code, response.Body.String())
+	}
+}
+
+func TestClaudeCodeAccountSwitchRouteBoundsInput(t *testing.T) {
+	router := chi.NewRouter()
+	router.Route("/api/v1", (&ClaudeCodeAccountsController{Svc: &fakeClaudeCodeAccounts{}}).Register)
+
+	tests := []struct {
+		name string
+		body string
+	}{
+		{name: "oversized body", body: `{"targetAccountId":"account-b","expectedAccountRevision":7,"idempotencyKey":"` + strings.Repeat("x", maxClaudeCodeAccountSwitchBodyBytes) + `"}`},
+		{name: "oversized idempotency key", body: `{"targetAccountId":"account-b","expectedAccountRevision":7,"idempotencyKey":"` + strings.Repeat("x", 201) + `"}`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			response := httptest.NewRecorder()
+			router.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/v1/agents/claude-code/account-switches", strings.NewReader(tt.body)))
+			if response.Code != http.StatusBadRequest {
+				t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+			}
+		})
+	}
+}
+
+func TestClaudeCodeAccountSwitchConflictsAreSafe(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		code string
+	}{
+		{name: "login in progress", err: ports.ErrClaudeCodeAccountLoginInProgress, code: "CLAUDE_CODE_ACCOUNT_LOGIN_IN_PROGRESS"},
+		{name: "active account unavailable", err: ports.ErrClaudeCodeActiveAccountUnavailable, code: "CLAUDE_CODE_ACTIVE_ACCOUNT_UNAVAILABLE"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fake := &fakeClaudeCodeAccounts{err: tt.err}
+			router := chi.NewRouter()
+			router.Route("/api/v1", (&ClaudeCodeAccountsController{Svc: fake}).Register)
+			response := httptest.NewRecorder()
+			router.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/v1/agents/claude-code/account-switches", strings.NewReader(`{"targetAccountId":"account-b","expectedAccountRevision":7,"idempotencyKey":"request-1"}`)))
+			if response.Code != http.StatusConflict || !strings.Contains(response.Body.String(), tt.code) {
+				t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+			}
+		})
 	}
 }
 

@@ -35,6 +35,7 @@ export function useClaudeCodeAccountActions(queryClient: QueryClient) {
 		setError(null);
 		setLoginPending(true);
 		try {
+			await queryClient.cancelQueries({ queryKey: claudeCodeAccountsQueryKey });
 			const started = accountId
 				? await openClaudeCodeAccountReauthenticationTerminal(accountId)
 				: await openClaudeCodeAccountLoginTerminal();
@@ -118,13 +119,14 @@ export function useClaudeCodeAccountActions(queryClient: QueryClient) {
 	const switchAccount = useCallback(async (account: ClaudeCodeAccount, revision: number, idempotencyKey: string) => {
 		setError(null);
 		try {
+			await queryClient.cancelQueries({ queryKey: claudeCodeAccountsQueryKey });
 			const nextSwitch = await startClaudeCodeAccountSwitch(account.id, revision, idempotencyKey);
 			writeCurrent((snapshot) => ({ ...snapshot, currentSwitch: nextSwitch }));
 		} catch (cause) {
 			setError(t("settings.claudeCodeAccounts.switchFailed"));
 			throw cause;
 		}
-	}, [t, writeCurrent]);
+	}, [queryClient, t, writeCurrent]);
 
 	const recoverSwitch = useCallback(async (switchId: string) => {
 		setError(null);

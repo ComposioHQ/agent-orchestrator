@@ -60,6 +60,7 @@ it("shows the email, plan, remaining limits, and promotion without global activi
 	postMock.mockImplementation((path: string) => path.endsWith("/ensure") ? Promise.resolve({ data: response }) : Promise.resolve({ data: {} }));
 	const { container } = renderSection(response);
 	await screen.findAllByText("active@example.com");
+	expect(screen.getByText("Claude Code accounts")).toBeInTheDocument();
 
 	fireEvent.click(container.querySelector(`[data-account-id="${activeAccount.id}"] button`) as HTMLButtonElement);
 	expect(screen.getByRole("button", { name: "Log out" })).toBeInTheDocument();
@@ -122,8 +123,10 @@ it("adds account B without making it active", async () => {
 		if (path.includes("/login-operations/") && path.endsWith("/verify")) return Promise.resolve({ data: { ...pendingLogin.operation, status: "completed", reasonCode: "login_completed", account: addedAccount } });
 		return Promise.resolve({ data: {} });
 	});
-	renderSection();
+	const { queryClient } = renderSection();
+	const cancelQueries = vi.spyOn(queryClient, "cancelQueries");
 	await userEvent.click(await screen.findByRole("button", { name: "Add account" }));
+	expect(cancelQueries).toHaveBeenCalledWith({ queryKey: ["claude-code-accounts"] });
 	expect(await screen.findByTestId("claude-code-account-login-terminal")).toBeInTheDocument();
 	act(() => terminalStateCallback.value?.("exited"));
 
@@ -169,10 +172,12 @@ it("keeps a stale-revision switch error visible in the confirmation dialog", asy
 		if (path.endsWith("/account-switches")) return Promise.resolve({ error: new Error("Claude Code account state changed; refresh and try again") });
 		return Promise.resolve({ data: {} });
 	});
-	renderSection();
+	const { queryClient } = renderSection();
+	const cancelQueries = vi.spyOn(queryClient, "cancelQueries");
 	await userEvent.click(await screen.findByRole("button", { name: "Switch account" }));
 	await userEvent.click(await screen.findByRole("menuitem", { name: /other@example.com/ }));
 	const dialog = await screen.findByRole("dialog");
 	await userEvent.click(within(dialog).getByRole("button", { name: "Switch account" }));
+	expect(cancelQueries).toHaveBeenCalledWith({ queryKey: ["claude-code-accounts"] });
 	await waitFor(() => expect(within(dialog).getByRole("alert")).toHaveTextContent("Couldn’t switch accounts. Try again."));
 });

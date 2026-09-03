@@ -36,3 +36,13 @@ it("presents hot-switch recovery as actionable and not busy", () => {
 	const display = claudeCodeSwitchDisplay({ phase: "recovery_required", canRecover: true } as never);
 	expect(display).toMatchObject({ busy: false, canRecover: true, tone: "warning" });
 });
+
+it("presents an orphaned in-progress switch as recoverable", () => {
+	const display = claudeCodeSwitchDisplay({ phase: "verifying_target", canRecover: true } as never);
+	expect(display).toMatchObject({
+		key: "settings.claudeCodeAccounts.switch.recovery_required",
+		busy: false,
+		canRecover: true,
+		tone: "warning",
+	});
+});

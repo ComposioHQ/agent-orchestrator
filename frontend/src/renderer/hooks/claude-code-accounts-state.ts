@@ -72,10 +72,11 @@ export type ClaudeCodeSwitchDisplay = {
 export function claudeCodeSwitchDisplay(switchState: ClaudeCodeAccountSwitch): ClaudeCodeSwitchDisplay {
 	const phase = switchState.phase;
 	const terminal = phase === "completed" || phase === "failed" || phase === "rollback_required" || phase === "recovery_required";
+	const canRecover = switchState.canRecover && phase !== "completed" && phase !== "failed";
 	return {
-		key: `settings.claudeCodeAccounts.switch.${phase}`,
-		tone: phase === "failed" ? "error" : phase === "rollback_required" || phase === "recovery_required" ? "warning" : "muted",
-		busy: !terminal,
-		canRecover: switchState.canRecover && phase === "recovery_required",
+		key: canRecover ? "settings.claudeCodeAccounts.switch.recovery_required" : `settings.claudeCodeAccounts.switch.${phase}`,
+		tone: phase === "failed" ? "error" : canRecover || phase === "rollback_required" || phase === "recovery_required" ? "warning" : "muted",
+		busy: !terminal && !canRecover,
+		canRecover,
 	};
 }

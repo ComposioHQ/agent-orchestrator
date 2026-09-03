@@ -204,11 +204,8 @@ func (m *claudeCodeAccountManager) verifyLogin(ctx context.Context, operationID 
 		active := m.active
 		m.mu.Unlock()
 		if active.AccountID == targetAccountID {
-			if err := m.replaceActiveCredential(ctx, accountCredential, identity); err != nil {
+			if err := m.replaceActiveCredentialAndAdvance(ctx, accountCredential, identity); err != nil {
 				return m.finishLogin(operationID, domain.ClaudeCodeAccountLoginFailed, "credential_activation_failed", "The active Claude Code credential could not be replaced safely.", nil), nil
-			}
-			if err := m.advanceActivePointer(ctx, targetAccountID); err != nil {
-				return domain.ClaudeCodeAccountLoginOperation{}, err
 			}
 		}
 	}
@@ -220,7 +217,7 @@ func (m *claudeCodeAccountManager) verifyLogin(ctx context.Context, operationID 
 	return m.finishLogin(operationID, domain.ClaudeCodeAccountLoginCompleted, "login_completed", "Claude Code account saved.", &snapshot), nil
 }
 
-func (m *claudeCodeAccountManager) replaceActiveCredential(ctx context.Context, accountCredential []byte, identity domain.ClaudeCodeAccountIdentity) error {
+func (m *claudeCodeAccountManager) replaceActiveCredentialAndAdvance(ctx context.Context, accountCredential []byte, identity domain.ClaudeCodeAccountIdentity) error {
 	releaseLocks, err := claudecode.AcquireCredentialLocks(ctx, m.claudeDir)
 	if err != nil {
 		return err
@@ -229,6 +226,10 @@ func (m *claudeCodeAccountManager) replaceActiveCredential(ctx context.Context, 
 	live, found, err := m.keychain.Get(ctx, claudecode.ClaudeCanonicalCredentialService, m.keychainAccount)
 	if err != nil || !found {
 		return errors.New("canonical Claude Code credential is unavailable")
+	}
+	_, previousIdentity, err := readClaudeCodeOAuthIdentity(m.configPath)
+	if err != nil {
+		return err
 	}
 	fields, err := claudecode.AccountCredentialFields(accountCredential)
 	if err != nil {
@@ -241,12 +242,20 @@ func (m *claudeCodeAccountManager) replaceActiveCredential(ctx context.Context, 
 	if err := m.keychain.Set(ctx, claudecode.ClaudeCanonicalCredentialService, m.keychainAccount, merged); err != nil {
 		return err
 	}
-	identityMap := map[string]any{
-		"accountUuid": identity.AccountUUID, "emailAddress": identity.EmailAddress, "displayName": identity.DisplayName,
-		"organizationUuid": identity.OrganizationUUID, "organizationName": identity.OrganizationName,
-		"billingType": identity.BillingType, "seatTier": identity.SeatTier,
+	rollback := func() error {
+		rollbackCtx := context.WithoutCancel(ctx)
+		return errors.Join(
+			m.keychain.Set(rollbackCtx, claudecode.ClaudeCanonicalCredentialService, m.keychainAccount, live),
+			claudecode.WriteOAuthAccount(rollbackCtx, m.configPath, previousIdentity),
+		)
 	}
-	return claudecode.WriteOAuthAccount(ctx, m.configPath, identityMap)
+	if err := claudecode.WriteOAuthAccount(ctx, m.configPath, claudeCodeIdentityMap(identity)); err != nil {
+		return errors.Join(err, rollback())
+	}
+	if err := m.advanceActivePointer(ctx, identity.AccountUUID); err != nil {
+		return errors.Join(err, rollback())
+	}
+	return nil
 }
 
 func (m *claudeCodeAccountManager) finishLogin(operationID string, status domain.ClaudeCodeAccountLoginStatus, code, reason string, account *domain.ClaudeCodeAccountSnapshot) domain.ClaudeCodeAccountLoginOperation {

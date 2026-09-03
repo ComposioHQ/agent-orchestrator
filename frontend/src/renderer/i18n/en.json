@@ -1713,6 +1713,7 @@
 	"inspector.usage.processedTokensUnavailable": "Processed tokens unavailable",
 	"settings.project.reviewer": "Reviewer",
 	"settings.models.customAgentModelAria": "Custom {{label}} model",
+	"settings.claudeCodeAccounts.title": "Claude Code accounts",
 	"settings.claudeCodeAccounts.add": "Add account",
 	"settings.claudeCodeAccounts.checking": "Checking",
 	"settings.claudeCodeAccounts.count_one": "{{count}} account",

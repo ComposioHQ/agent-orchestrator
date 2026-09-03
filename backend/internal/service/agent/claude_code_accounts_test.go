@@ -63,6 +63,7 @@ type fakeClaudeCodeStateStore struct {
 	mu     sync.Mutex
 	active domain.ClaudeCodeActiveAccount
 	found  bool
+	setErr error
 }
 
 type fakeClaudeCodeUsageReader struct {
@@ -87,6 +88,9 @@ func (s *fakeClaudeCodeStateStore) GetClaudeCodeActiveAccount(context.Context) (
 func (s *fakeClaudeCodeStateStore) SetClaudeCodeActiveAccount(_ context.Context, id string, expected int64, at time.Time) (domain.ClaudeCodeActiveAccount, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.setErr != nil {
+		return domain.ClaudeCodeActiveAccount{}, s.setErr
+	}
 	if (!s.found && expected != 0) || (s.found && s.active.Revision != expected) {
 		return domain.ClaudeCodeActiveAccount{}, ports.ErrClaudeCodeAccountRevisionConflict
 	}
@@ -515,6 +519,40 @@ func TestClaudeCodeDeleteInactiveAccountRemovesCredentialAndProfile(t *testing.T
 	}
 }
 
+func TestClaudeCodeDeleteRechecksActiveAccountAfterWaitingForMutation(t *testing.T) {
+	m, keychain, _, home := newTestClaudeCodeManager(t)
+	keychain.items[claudecode.ClaudeCanonicalCredentialService+"\x00test-user"] = claudeCredentialJSON("secret-a")
+	if err := os.WriteFile(filepath.Join(home, ".claude.json"), claudeIdentityJSON(testClaudeAccountA, "a@example.com"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.bootstrapInner(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.catalog.upsert(context.Background(), domain.ClaudeCodeAccountIdentity{
+		AccountUUID: testClaudeAccountB, EmailAddress: "b@example.com", DisplayName: "Account B",
+	}, claudeCredentialJSON("secret-b"), m.now()); err != nil {
+		t.Fatal(err)
+	}
+
+	release, err := m.acquireMutation(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- m.deleteAccount(context.Background(), testClaudeAccountB) }()
+	m.mu.Lock()
+	m.active = domain.ClaudeCodeActiveAccount{AccountID: testClaudeAccountB, Revision: 2}
+	m.mu.Unlock()
+	release()
+
+	if err := <-done; !errors.Is(err, ports.ErrClaudeCodeAccountAlreadyActive) {
+		t.Fatalf("delete error = %v", err)
+	}
+	if _, ok := m.catalog.record(testClaudeAccountB); !ok {
+		t.Fatal("delete removed the account that became active while waiting")
+	}
+}
+
 func TestClaudeCodeActiveReauthenticationUpdatesCanonicalAndAdvancesRevision(t *testing.T) {
 	m, keychain, state, home := newTestClaudeCodeManager(t)
 	keychain.items[claudecode.ClaudeCanonicalCredentialService+"\x00test-user"] = claudeCredentialJSON("secret-a")
@@ -546,6 +584,43 @@ func TestClaudeCodeActiveReauthenticationUpdatesCanonicalAndAdvancesRevision(t *
 	canonical, _, _ := keychain.Get(context.Background(), claudecode.ClaudeCanonicalCredentialService, "test-user")
 	if !containsAny(string(canonical), "renewed-a", `"shared":"keep"`) || containsAny(string(canonical), "secret-a") {
 		t.Fatal("reauth did not replace account-owned fields while retaining shared fields")
+	}
+}
+
+func TestClaudeCodeActiveReauthenticationRollsBackCanonicalWhenPointerAdvanceFails(t *testing.T) {
+	m, keychain, state, home := newTestClaudeCodeManager(t)
+	originalCredential := claudeCredentialJSON("secret-a")
+	keychain.items[claudecode.ClaudeCanonicalCredentialService+"\x00test-user"] = originalCredential
+	if err := os.WriteFile(filepath.Join(home, ".claude.json"), claudeIdentityJSON(testClaudeAccountA, "a@example.com"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.bootstrapInner(); err != nil {
+		t.Fatal(err)
+	}
+	state.setErr = errors.New("injected pointer failure")
+	terminal := &fakeClaudeCodeTerminal{result: shellterm.ShellTerminal{HandleID: "terminal-reauth-failure", Title: "Sign in", CreatedAt: time.Now().UTC()}}
+	terminal.onOpen = func(in shellterm.OpenCommandTerminalInput) error {
+		if err := os.WriteFile(filepath.Join(in.Env["CLAUDE_CONFIG_DIR"], ".claude.json"), claudeIdentityJSON(testClaudeAccountA, "a@example.com"), 0o600); err != nil {
+			return err
+		}
+		return keychain.Set(context.Background(), claudecode.IsolatedCredentialService(in.Env["CLAUDE_SECURESTORAGE_CONFIG_DIR"]), "test-user", claudeCredentialJSON("renewed-a"))
+	}
+	m.terminal = terminal
+	started, err := m.openLoginTerminal(context.Background(), testClaudeAccountA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := m.verifyLogin(context.Background(), started.Operation.OperationID)
+	if err != nil || result.Status != domain.ClaudeCodeAccountLoginFailed || result.ReasonCode != "credential_activation_failed" {
+		t.Fatalf("reauth result=%+v err=%v", result, err)
+	}
+	canonical, found, err := keychain.Get(context.Background(), claudecode.ClaudeCanonicalCredentialService, "test-user")
+	if err != nil || !found || !reflect.DeepEqual(canonical, originalCredential) {
+		t.Fatalf("canonical credential was not rolled back: found=%v err=%v value=%s", found, err, canonical)
+	}
+	identity, _, err := readClaudeCodeOAuthIdentity(filepath.Join(home, ".claude.json"))
+	if err != nil || identity.AccountUUID != testClaudeAccountA || state.active.Revision != 1 {
+		t.Fatalf("reauth rollback identity=%+v pointer=%+v err=%v", identity, state.active, err)
 	}
 }
 
@@ -600,8 +675,21 @@ func TestClaudeCodeCredentialSwitchPreservesSharedFieldsAndRollsBack(t *testing.
 	if !containsAny(string(canonicalB), "secret-b", `"shared":"keep"`, "device-secret-b", `"owner":"secret-b"`) || containsAny(string(canonicalB), "secret-a", "device-secret-a", `"owner":"secret-a"`) {
 		t.Fatalf("activated credential crossed account fields: %s", canonicalB)
 	}
+	rollbackObservedNativeLocks := false
+	m.run = func(_ context.Context, _ string, args []string, _ map[string]string) ([]byte, error) {
+		if reflect.DeepEqual(args, []string{"auth", "status", "--json"}) {
+			_, refreshErr := os.Stat(filepath.Join(m.claudeDir, ".oauth_refresh.lock"))
+			_, configErr := os.Stat(m.claudeDir + ".lock")
+			rollbackObservedNativeLocks = refreshErr == nil && configErr == nil
+			return []byte(`{"loggedIn":true,"authMethod":"claude.ai","apiProvider":"firstParty"}`), nil
+		}
+		return nil, errors.New("unexpected Claude command")
+	}
 	if err := txn.Rollback(context.Background()); err != nil {
 		t.Fatal(err)
+	}
+	if !rollbackObservedNativeLocks {
+		t.Fatal("rollback released Claude native locks before authentication verification")
 	}
 	canonicalA, _, _ := keychain.Get(context.Background(), claudecode.ClaudeCanonicalCredentialService, "test-user")
 	if !reflect.DeepEqual(canonicalA, claudeCredentialJSON("secret-a")) {
@@ -611,6 +699,127 @@ func TestClaudeCodeCredentialSwitchPreservesSharedFieldsAndRollsBack(t *testing.
 	if err != nil || identityA.AccountUUID != testClaudeAccountA {
 		t.Fatalf("rollback identity = %+v err=%v", identityA, err)
 	}
+}
+
+func TestClaudeCodeRecoveryUsesCredentialWhenConfigAlreadyNamesTarget(t *testing.T) {
+	m, keychain, _, home := newTestClaudeCodeManager(t)
+	originalCredential := claudeCredentialJSON("secret-a")
+	keychain.items[claudecode.ClaudeCanonicalCredentialService+"\x00test-user"] = originalCredential
+	if err := os.WriteFile(filepath.Join(home, ".claude.json"), claudeIdentityJSON(testClaudeAccountA, "a@example.com"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.bootstrapInner(); err != nil {
+		t.Fatal(err)
+	}
+	identityB, _, err := readClaudeCodeOAuthIdentityFromBytes(claudeIdentityJSON(testClaudeAccountB, "b@example.com"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.catalog.upsert(context.Background(), identityB, claudeCredentialJSON("secret-b"), m.now()); err != nil {
+		t.Fatal(err)
+	}
+	sw := domain.ClaudeCodeAccountSwitch{ID: "recover-config-ahead", SourceAccountID: testClaudeAccountA, TargetAccountID: testClaudeAccountB, ExpectedAccountRevision: 1}
+	txn, err := (&Service{claudeCodeAccounts: m}).BeginClaudeCodeCredentialSwitch(context.Background(), sw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := txn.CheckpointSource(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	txn.ReleaseNativeLocks()
+	if err := claudecode.WriteOAuthAccount(context.Background(), m.configPath, claudeCodeIdentityMap(identityB)); err != nil {
+		t.Fatal(err)
+	}
+
+	outcome, _, err := (&Service{claudeCodeAccounts: m}).RecoverClaudeCodeCredentialSwitch(context.Background(), sw)
+	if err != nil || outcome != ports.ClaudeCodeCredentialRecoveryFailed {
+		t.Fatalf("recovery outcome=%q err=%v", outcome, err)
+	}
+	canonical, _, _ := keychain.Get(context.Background(), claudecode.ClaudeCanonicalCredentialService, "test-user")
+	identity, _, identityErr := readClaudeCodeOAuthIdentity(m.configPath)
+	if !reflect.DeepEqual(canonical, originalCredential) || identityErr != nil || identity.AccountUUID != testClaudeAccountA {
+		t.Fatalf("recovery followed config instead of credential: canonical=%s identity=%+v err=%v", canonical, identity, identityErr)
+	}
+}
+
+func TestClaudeCodeRecoveryUsesCredentialWhenConfigStillNamesSource(t *testing.T) {
+	m, keychain, state, home := newTestClaudeCodeManager(t)
+	keychain.items[claudecode.ClaudeCanonicalCredentialService+"\x00test-user"] = claudeCredentialJSON("secret-a")
+	if err := os.WriteFile(filepath.Join(home, ".claude.json"), claudeIdentityJSON(testClaudeAccountA, "a@example.com"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.bootstrapInner(); err != nil {
+		t.Fatal(err)
+	}
+	identityB, _, err := readClaudeCodeOAuthIdentityFromBytes(claudeIdentityJSON(testClaudeAccountB, "b@example.com"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.catalog.upsert(context.Background(), identityB, claudeCredentialJSON("secret-b"), m.now()); err != nil {
+		t.Fatal(err)
+	}
+	sw := domain.ClaudeCodeAccountSwitch{ID: "recover-credential-ahead", SourceAccountID: testClaudeAccountA, TargetAccountID: testClaudeAccountB, ExpectedAccountRevision: 1}
+	txn, err := (&Service{claudeCodeAccounts: m}).BeginClaudeCodeCredentialSwitch(context.Background(), sw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := txn.CheckpointSource(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := txn.ActivateTarget(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	txn.ReleaseNativeLocks()
+
+	outcome, _, err := (&Service{claudeCodeAccounts: m}).RecoverClaudeCodeCredentialSwitch(context.Background(), sw)
+	if err != nil || outcome != ports.ClaudeCodeCredentialRecoveryCompleted {
+		t.Fatalf("recovery outcome=%q err=%v", outcome, err)
+	}
+	identity, _, identityErr := readClaudeCodeOAuthIdentity(m.configPath)
+	if identityErr != nil || identity.AccountUUID != testClaudeAccountB || state.active.AccountID != testClaudeAccountB || state.active.Revision != 2 {
+		t.Fatalf("recovery did not finish target: identity=%+v pointer=%+v err=%v", identity, state.active, identityErr)
+	}
+}
+
+func TestClaudeCodeRecoveryReleasesNativeLocksOnFailure(t *testing.T) {
+	m, keychain, state, home := newTestClaudeCodeManager(t)
+	keychain.items[claudecode.ClaudeCanonicalCredentialService+"\x00test-user"] = claudeCredentialJSON("secret-a")
+	if err := os.WriteFile(filepath.Join(home, ".claude.json"), claudeIdentityJSON(testClaudeAccountA, "a@example.com"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.bootstrapInner(); err != nil {
+		t.Fatal(err)
+	}
+	identityB, _, err := readClaudeCodeOAuthIdentityFromBytes(claudeIdentityJSON(testClaudeAccountB, "b@example.com"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.catalog.upsert(context.Background(), identityB, claudeCredentialJSON("secret-b"), m.now()); err != nil {
+		t.Fatal(err)
+	}
+	sw := domain.ClaudeCodeAccountSwitch{ID: "recover-lock-release", SourceAccountID: testClaudeAccountA, TargetAccountID: testClaudeAccountB, ExpectedAccountRevision: 1}
+	txn, err := (&Service{claudeCodeAccounts: m}).BeginClaudeCodeCredentialSwitch(context.Background(), sw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := txn.CheckpointSource(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := txn.ActivateTarget(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	txn.ReleaseNativeLocks()
+	state.setErr = errors.New("injected pointer failure")
+	if _, _, err := (&Service{claudeCodeAccounts: m}).RecoverClaudeCodeCredentialSwitch(context.Background(), sw); err == nil {
+		t.Fatal("recovery unexpectedly succeeded")
+	}
+	lockCtx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	release, err := claudecode.AcquireCredentialLocks(lockCtx, m.claudeDir)
+	if err != nil {
+		t.Fatalf("recovery leaked Claude native locks: %v", err)
+	}
+	release()
 }
 
 func TestClaudeCodeCredentialSwitchRoundTripPreservesSharedFieldsWithoutCrossingAccountFields(t *testing.T) {
