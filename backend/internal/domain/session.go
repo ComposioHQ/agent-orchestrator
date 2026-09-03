@@ -165,8 +165,12 @@ func (r SessionRecord) ControllerOwner() SessionControllerOwner {
 // persisted.
 type Session struct {
 	SessionRecord
-	Status    SessionStatus `json:"status" enum:"working,pr_open,draft,ci_failed,review_pending,changes_requested,approved,mergeable,merged,needs_input,exited,idle,terminated,no_signal"`
-	SCMStatus SessionStatus `json:"scmStatus,omitempty" enum:"pr_open,draft,ci_failed,review_pending,changes_requested,approved,mergeable,merged"`
+	// ControllerRecovering is the current daemon epoch's ephemeral attachment
+	// state. It is deliberately separate from durable Activity: planned daemon
+	// restart is not evidence that the provider workload exited or became idle.
+	ControllerRecovering bool          `json:"controllerRecovering,omitempty"`
+	Status               SessionStatus `json:"status" enum:"working,pr_open,draft,ci_failed,review_pending,changes_requested,approved,mergeable,merged,needs_input,exited,idle,terminated,no_signal"`
+	SCMStatus            SessionStatus `json:"scmStatus,omitempty" enum:"pr_open,draft,ci_failed,review_pending,changes_requested,approved,mergeable,merged"`
 	// KanbanColumn is where the session sits in its delivery lifecycle and
 	// which loop is turning it: an AO-driven one (validating) or the
 	// review-feedback loop whose next turn is a person's (needs_review). It is

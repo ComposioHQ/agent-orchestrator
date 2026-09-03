@@ -400,10 +400,10 @@ function SessionStatusDot({ session }: { session: WorkspaceSession }) {
 			aria-hidden="true"
 			className={cn(
 				"size-2 shrink-0 rounded-full",
-				dot.className,
-				dot.breathe && "animate-status-pulse",
+				session.controllerRecovering ? "bg-status-needs-you" : dot.className,
+				(session.controllerRecovering || dot.breathe) && "animate-status-pulse",
 			)}
-			data-session-status={session.status}
+			data-session-status={session.controllerRecovering ? "recovering" : session.status}
 		/>
 	);
 }

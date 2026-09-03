@@ -86,6 +86,10 @@ type interfaceTransitionCommander interface {
 	AcknowledgeInterfaceTransitionNotice(context.Context, domain.SessionID, string) (domain.SessionInterfaceTransition, error)
 }
 
+type controllerRecoveryReader interface {
+	SessionControllerRecovering(domain.SessionID) bool
+}
+
 // RollbackOutcome reports what happened in a rollback: either the seed row was
 // deleted, or the partially-spawned session was killed (runtime+workspace torn
 // down, row marked terminated).
@@ -953,14 +957,19 @@ func (s *Service) toSessionWithFacts(rec domain.SessionRecord, prs []domain.PRFa
 	// period and have the card contradict its own status.
 	now := s.now()
 	presentation := deriveKanbanPresentation(rec, prs, runs, now, s.harnessSignals(rec.Harness))
+	recovering := false
+	if reader, ok := s.manager.(controllerRecoveryReader); ok {
+		recovering = reader.SessionControllerRecovering(rec.ID)
+	}
 	return domain.Session{
-		SessionRecord:    rec,
-		Status:           deriveStatus(rec, prs, now, s.harnessSignals(rec.Harness)),
-		SCMStatus:        deriveSCMStatus(prs),
-		KanbanColumn:     presentation.Column,
-		DisplayStatus:    presentation.DisplayStatus,
-		TerminalHandleID: rec.Metadata.RuntimeHandleID,
-		PRs:              prs,
+		SessionRecord:        rec,
+		ControllerRecovering: recovering,
+		Status:               deriveStatus(rec, prs, now, s.harnessSignals(rec.Harness)),
+		SCMStatus:            deriveSCMStatus(prs),
+		KanbanColumn:         presentation.Column,
+		DisplayStatus:        presentation.DisplayStatus,
+		TerminalHandleID:     rec.Metadata.RuntimeHandleID,
+		PRs:                  prs,
 	}, nil
 }
 

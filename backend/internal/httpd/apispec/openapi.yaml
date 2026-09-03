@@ -6684,6 +6684,8 @@ components:
           type: boolean
         branch:
           type: string
+        controllerRecovering:
+          type: boolean
         createdAt:
           format: date-time
           type: string

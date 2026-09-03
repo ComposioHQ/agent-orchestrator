@@ -3,6 +3,7 @@
 	"activity.blocked": "判断待ち",
 	"activity.exited": "終了済み",
 	"activity.idle": "アイドル",
+	"activity.recovering": "復旧中",
 	"activity.unknown": "不明",
 	"activity.waiting_input": "入力が必要",
 	"cloudCredential.agentLabel": "コーディングエージェント",

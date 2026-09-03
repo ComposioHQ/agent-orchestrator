@@ -2492,6 +2492,23 @@ func (m *Manager) ReconcileStartupSafety(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("reconcile: interface transitions: %w", err)
 	}
+	// Reserve every live session before the listener becomes ready. Runtime and
+	// provider work stays in ReconcileBackground, but API reads can now project
+	// the honest recovering state and input is fenced even for sessions queued
+	// behind the bounded worker pool.
+	recs, err := m.store.ListAllSessions(ctx)
+	if err != nil {
+		return fmt.Errorf("reconcile: list startup sessions: %w", err)
+	}
+	ids := make([]domain.SessionID, 0, len(recs))
+	for _, rec := range recs {
+		if !rec.IsTerminated {
+			ids = append(ids, rec.ID)
+		}
+	}
+	if _, err := m.beginAgentOperations(ctx, ids, agentOperationReconcile); err != nil {
+		return fmt.Errorf("reconcile: fence startup sessions: %w", err)
+	}
 	return nil
 }
 
@@ -2539,7 +2556,7 @@ func (m *Manager) reconcileLivePass(ctx context.Context, recs []domain.SessionRe
 	// Reserve every candidate before starting the bounded worker pool. Otherwise
 	// sessions queued behind slow probes remain open to input and the periodic
 	// reaper until a worker dequeues them.
-	acquired, err := m.beginAgentOperations(ctx, ids, agentOperationReconcile)
+	acquired, err := m.beginOrReuseReconcileOperations(ctx, ids)
 	if err != nil {
 		m.logger.Warn("reconcile: could not fence live sessions", "error", err)
 		return
@@ -2585,6 +2602,38 @@ func (m *Manager) reconcileLivePass(ctx context.Context, recs []domain.SessionRe
 	}
 	close(jobs)
 	wg.Wait()
+}
+
+// beginOrReuseReconcileOperations consumes reservations installed by
+// ReconcileStartupSafety and also supports focused callers that invoke the
+// background pass directly. No other operation kind is reused: a retained
+// switch/restore/kill still owns the session and reconciliation skips it.
+func (m *Manager) beginOrReuseReconcileOperations(ctx context.Context, ids []domain.SessionID) ([]domain.SessionID, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	reused := make([]domain.SessionID, 0, len(ids))
+	missing := make([]domain.SessionID, 0, len(ids))
+	m.agentOpMu.Lock()
+	for _, id := range ids {
+		id = domain.SessionID(strings.TrimSpace(string(id)))
+		if id == "" {
+			continue
+		}
+		if current, ok := m.agentOperations[id]; ok {
+			if current == agentOperationReconcile {
+				reused = append(reused, id)
+			}
+			continue
+		}
+		missing = append(missing, id)
+	}
+	m.agentOpMu.Unlock()
+	acquired, err := m.beginAgentOperations(ctx, missing, agentOperationReconcile)
+	if err != nil {
+		return nil, err
+	}
+	return append(reused, acquired...), nil
 }
 
 // RestoreAll relaunches every terminated session that was saved by the last

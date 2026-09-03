@@ -545,6 +545,29 @@ describe("SessionsBoard", () => {
 		expect(within(card).queryByText("Exited")).not.toBeInTheDocument();
 	});
 
+	it("shows controller recovery instead of a stale durable exit", () => {
+		workspaceQueryMock.mockReturnValue({
+			data: [
+				workspaceWithSessions([
+					boardSession({
+						id: "s-recovering",
+						title: "recovering-card-task",
+						status: "exited",
+						controllerRecovering: true,
+						activity: { state: "exited", lastActivityAt: "2026-01-01T00:00:00Z" },
+					}),
+				]),
+			],
+			isError: false,
+			isSuccess: true,
+		});
+
+		renderBoard("p1");
+		const card = screen.getByText("recovering-card-task").closest('[data-testid="board-session-card"]') as HTMLElement;
+		expect(within(card).getByText("Recovering")).toBeInTheDocument();
+		expect(within(card).queryByText("Exited")).not.toBeInTheDocument();
+	});
+
 	it("shows switch progress instead of the exited source on a card", () => {
 		const worker = boardSession({
 			id: "s-switching",

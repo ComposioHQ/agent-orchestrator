@@ -110,6 +110,8 @@ export type WorkspaceSession = {
 	displayStatus?: string;
 	/** Durable runtime fact from the daemon; independent of the derived SCM-aware status. */
 	isTerminated?: boolean;
+	/** Volatile controller attachment state for the current daemon epoch. */
+	controllerRecovering?: boolean;
 	/** User preference to tear down this session when its PR set completes through a merge. */
 	terminateOnPrMerge?: boolean;
 	/** Whether SCM review feedback is automatically injected into the worker. */
@@ -249,25 +251,6 @@ function sessionNewer(a: WorkspaceSession, b: WorkspaceSession): boolean {
 	return a.id > b.id;
 }
 
-function sessionRecentlyUpdatedNewer(a: WorkspaceSession, b: WorkspaceSession): boolean {
-	const aUpdated = timestamp(a.updatedAt);
-	const bUpdated = timestamp(b.updatedAt);
-	if (aUpdated !== bUpdated) return aUpdated > bUpdated;
-	const aLastActive = sessionLastActiveTimestamp(a);
-	const bLastActive = sessionLastActiveTimestamp(b);
-	if (aLastActive !== bLastActive) return aLastActive > bLastActive;
-	return a.id > b.id;
-}
-
-function sessionLastActiveTimestamp(session: WorkspaceSession): number {
-	return (
-		validTimestamp(session.activity?.lastActivityAt) ??
-		validTimestamp(session.updatedAt) ??
-		validTimestamp(session.createdAt) ??
-		0
-	);
-}
-
 function timestamp(value?: string): number {
 	return validTimestamp(value) ?? 0;
 }
@@ -282,11 +265,13 @@ export function workerSessions(sessions: WorkspaceSession[]): WorkspaceSession[]
 	return sessions.filter((s) => !isOrchestratorSession(s));
 }
 
-/** Worker sessions ordered by session update time, newest first. */
+/** Worker sessions ordered by immutable creation identity, newest first. */
 export function sortedWorkerSessions(sessions: WorkspaceSession[]): WorkspaceSession[] {
-	return workerSessions(sessions).sort((a, b) =>
-		sessionRecentlyUpdatedNewer(b, a) ? 1 : sessionRecentlyUpdatedNewer(a, b) ? -1 : 0,
-	);
+	return workerSessions(sessions).sort((a, b) => {
+		const created = timestamp(b.createdAt) - timestamp(a.createdAt);
+		if (created !== 0) return created;
+		return b.id.localeCompare(a.id);
+	});
 }
 
 export function sessionIsActive(session: WorkspaceSession): boolean {

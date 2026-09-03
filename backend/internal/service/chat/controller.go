@@ -2018,12 +2018,15 @@ func (c *Controller) Rollback(ctx context.Context, turnID string) (int, error) {
 	return discarded, nil
 }
 
-// Close detaches this daemon's controller. Persistent provider hosts keep the
-// native connection and any in-flight turn alive; non-persistent drivers retain
-// their historical process-close behavior. The persistent host replays detached
-// output and unresolved provider requests to the replacement controller.
+// Close detaches this daemon's controller during planned shutdown. That is not
+// evidence that the workload exited, even when a non-persistent driver must end
+// its local process. Persistent hosts additionally keep native work alive and
+// replay detached output to the replacement controller.
 func (c *Controller) Close(ctx context.Context) error {
 	c.once.Do(func() {
+		c.mu.Lock()
+		c.suppressStoppedActivity = true
+		c.mu.Unlock()
 		if preserver, ok := c.conv.(ports.ChatProviderPreserver); ok && preserver.PreservesProviderOnClose() {
 			c.mu.Lock()
 			c.preserveProviderOnStop = true

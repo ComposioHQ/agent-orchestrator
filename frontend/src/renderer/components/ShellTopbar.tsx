@@ -540,6 +540,17 @@ function SessionStatusPill({ session }: { session: WorkspaceSession }) {
 			/>
 		);
 	}
+	if (session.controllerRecovering) {
+		return (
+			<StatusPill
+				label={t("activity.recovering")}
+				tone="var(--color-status-needs-you)"
+				breathe
+				leading="none"
+				className="px-2 py-1 text-micro"
+			/>
+		);
+	}
 	const { label, tone, breathe } = getAgentActivityView(session.activity, t);
 	return (
 		<StatusPill label={label} tone={tone} breathe={breathe} leading="none" className="px-2 py-1 text-micro" />

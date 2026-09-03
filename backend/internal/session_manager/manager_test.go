@@ -7667,8 +7667,20 @@ func TestReconcile_LivePassUsesConfiguredConcurrency(t *testing.T) {
 		LookPath:         func(string) (string, error) { return "/bin/true", nil },
 		ReconcileWorkers: 2,
 	})
+	if err := m.ReconcileStartupSafety(context.Background()); err != nil {
+		t.Fatalf("ReconcileStartupSafety: %v", err)
+	}
+	for _, id := range ids {
+		if !m.SessionControllerRecovering(id) {
+			t.Fatalf("session %s was not projected as recovering before background work", id)
+		}
+		if release, ok := m.AcquireSessionInput(id); ok {
+			release()
+			t.Fatalf("session %s admitted input before background recovery", id)
+		}
+	}
 	done := make(chan error, 1)
-	go func() { done <- m.Reconcile(context.Background()) }()
+	go func() { done <- m.ReconcileBackground(context.Background()) }()
 
 	seen := map[domain.SessionID]bool{}
 	for len(seen) < 2 {
@@ -7693,6 +7705,75 @@ func TestReconcile_LivePassUsesConfiguredConcurrency(t *testing.T) {
 	for _, id := range ids {
 		if m.SessionMutationInProgress(id) {
 			t.Fatalf("session %s reconcile fence leaked after completion", id)
+		}
+		if m.SessionControllerRecovering(id) {
+			t.Fatalf("session %s remained projected as recovering after readiness", id)
+		}
+	}
+}
+
+func TestReconcileBackgroundQueuesChatRecoveryWithStableNativeIdentity(t *testing.T) {
+	entered := make(chan ChatStart, 2)
+	permits := make(chan struct{}, 2)
+	launcher := &recordingLauncher{
+		beforeStart: func(cfg ChatStart) {
+			entered <- cfg
+			<-permits
+		},
+	}
+	m, st, _ := newChatManager(launcher)
+	m.reconcileWorkers = 1
+	ids := []domain.SessionID{"chat-1", "chat-2"}
+	for _, id := range ids {
+		st.sessions[id] = domain.SessionRecord{
+			ID: id, ProjectID: chatTestProject, Harness: domain.HarnessCodex,
+			Mode: domain.SessionModeChat, Activity: domain.Activity{State: domain.ActivityIdle},
+			Metadata: domain.SessionMetadata{
+				Branch: "ao/" + string(id), WorkspacePath: "/wt/" + string(id),
+				ProviderConversationID: "thread-1", ControllerGeneration: "old-" + string(id),
+			},
+		}
+	}
+
+	if err := m.ReconcileStartupSafety(context.Background()); err != nil {
+		t.Fatalf("ReconcileStartupSafety: %v", err)
+	}
+	for _, id := range ids {
+		if !m.SessionControllerRecovering(id) {
+			t.Fatalf("queued Chat session %s was not marked recovering", id)
+		}
+		if release, ok := m.AcquireSessionInput(id); ok {
+			release()
+			t.Fatalf("queued Chat session %s admitted input", id)
+		}
+	}
+
+	done := make(chan error, 1)
+	go func() { done <- m.ReconcileBackground(context.Background()) }()
+	started := make(map[domain.SessionID]bool, len(ids))
+	for index := range ids {
+		var start ChatStart
+		select {
+		case start = <-entered:
+		case <-time.After(time.Second):
+			t.Fatalf("Chat recovery %d never reached the provider", index)
+		}
+		if start.ProviderConversationID != "thread-1" || (start.SessionID != "chat-1" && start.SessionID != "chat-2") || started[start.SessionID] {
+			t.Fatalf("Chat recovery changed identity: session=%s provider=%q", start.SessionID, start.ProviderConversationID)
+		}
+		started[start.SessionID] = true
+		permits <- struct{}{}
+	}
+	if err := <-done; err != nil {
+		t.Fatalf("ReconcileBackground: %v", err)
+	}
+	for _, id := range ids {
+		rec := st.sessions[id]
+		if rec.ID != id || rec.Metadata.ProviderConversationID != "thread-1" {
+			t.Fatalf("recovered Chat identity changed for %s: %+v", id, rec)
+		}
+		if m.SessionControllerRecovering(id) {
+			t.Fatalf("Chat session %s remained recovering after controller readiness", id)
 		}
 	}
 }
@@ -7723,6 +7804,9 @@ func TestReconcileStartupSafetyDefersRuntimeReconciliation(t *testing.T) {
 	case id := <-rt.entered:
 		t.Fatalf("startup safety unexpectedly probed runtime %s", id)
 	default:
+	}
+	if !m.SessionControllerRecovering("s1") {
+		t.Fatal("startup safety did not expose the pending controller recovery")
 	}
 
 	done := make(chan error, 1)

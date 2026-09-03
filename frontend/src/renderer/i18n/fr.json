@@ -3,6 +3,7 @@
 	"activity.blocked": "En attente de décision",
 	"activity.exited": "Terminé",
 	"activity.idle": "Inactif",
+	"activity.recovering": "Récupération",
 	"activity.unknown": "Inconnu",
 	"activity.waiting_input": "Saisie requise",
 	"cloudCredential.agentLabel": "Agent de code",
