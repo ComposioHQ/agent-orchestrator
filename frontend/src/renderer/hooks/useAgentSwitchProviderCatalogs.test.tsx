@@ -84,7 +84,7 @@ function catalogHarness(agentSwitching: boolean, observedSettledSwitchId?: strin
 	const catalogsEnabled = useAgentSwitchProviderCatalogs({
 		sessionId: "sess-1",
 		agentSwitching,
-		observedSettledSwitchId,
+		settledSwitchId: observedSettledSwitchId,
 	});
 	const config = useConversationConfigOptions("sess-1", catalogsEnabled);
 	const models = useConversationModels("sess-1", catalogsEnabled);
@@ -237,6 +237,28 @@ describe("useAgentSwitchProviderCatalogs", () => {
 		await waitFor(() => {
 			expect(result.current.catalogsEnabled).toBe(true);
 			expect(result.current.options[0]?.currentValue).toBe("opus-recovered");
+		});
+	});
+
+	it("reconciles stale catalogs when the first observed switch state is already completed", async () => {
+		const queryClient = new QueryClient({
+			defaultOptions: { mutations: { retry: false }, queries: { retry: false } },
+		});
+		queryClient.setQueryData(conversationConfigOptionsQueryKey("sess-1"), CLAUDE_OPTIONS);
+		serveCatalog(() => PROVIDER_CATALOGS.codex);
+
+		const { result } = renderHook(
+			() => catalogHarness(false, "switch-terminal-first"),
+			{ wrapper: wrapper(queryClient) },
+		);
+
+		// Consumers stay gated until the terminal controller epoch has removed the
+		// outgoing cache and fetched the live Codex catalog. renderHook flushes the
+		// reconciliation effect, so the stale Claude value must already be gone.
+		expect(result.current.options[0]?.currentValue).not.toBe(CLAUDE_OPTIONS[0].currentValue);
+		await waitFor(() => {
+			expect(result.current.catalogsEnabled).toBe(true);
+			expect(result.current.options[0]?.currentValue).toBe(CODEX_OPTIONS[0].currentValue);
 		});
 	});
 

@@ -12,6 +12,7 @@ import { useEffect, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import {
 	findActiveAgentSwitch,
+	isTerminalAgentSwitch,
 	selectDurableAgentSwitch,
 	useAgentSwitches,
 } from "../../hooks/useAgentSwitches";
@@ -217,10 +218,25 @@ export function SessionChatSurface({
 		isAgentSwitchObserved(agentSwitch.id)
 			? agentSwitch.id
 			: undefined;
+	const latestTerminalSwitch = agentSwitches.find(isTerminalAgentSwitch);
+	const controllerOwnedTerminalSwitch =
+		targetChatControllerReady &&
+		latestTerminalSwitch &&
+		((latestTerminalSwitch.state === "completed" &&
+			latestTerminalSwitch.targetHarness === session.provider) ||
+			(latestTerminalSwitch.state === "failed" &&
+				latestTerminalSwitch.fromHarness === session.provider))
+			? latestTerminalSwitch
+			: undefined;
+	// Catalog ownership follows the live controller epoch, not whether this mount
+	// happened to observe the switch in progress. A sub-second switch can arrive
+	// first as terminal history and still needs its outgoing cache reconciled.
+	const providerCatalogSettledSwitchId =
+		observedSettledSwitchId ?? controllerOwnedTerminalSwitch?.id;
 	const catalogsEnabled = useAgentSwitchProviderCatalogs({
 		sessionId: session.id,
 		agentSwitching,
-		observedSettledSwitchId,
+		settledSwitchId: providerCatalogSettledSwitchId,
 	});
 	const configOptions = useConversationConfigOptions(
 		session.id,

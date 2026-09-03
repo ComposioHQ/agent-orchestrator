@@ -1,5 +1,5 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
 	clearConversationProviderCatalogs,
 	conversationQueryKey,
@@ -19,16 +19,20 @@ import {
 export function useAgentSwitchProviderCatalogs({
 	sessionId,
 	agentSwitching,
-	observedSettledSwitchId,
+	settledSwitchId,
 }: {
 	sessionId: string;
 	agentSwitching: boolean;
-	observedSettledSwitchId?: string;
+	settledSwitchId?: string;
 }): boolean {
 	const queryClient = useQueryClient();
 	const refreshedSwitchIdsRef = useRef(new Set<string>());
 	const clearedWhileSwitchingRef = useRef(false);
 	const mountedSessionIdRef = useRef(sessionId);
+	const [reconciledSettlement, setReconciledSettlement] = useState<{
+		sessionId: string;
+		switchId: string;
+	}>();
 
 	if (mountedSessionIdRef.current !== sessionId) {
 		mountedSessionIdRef.current = sessionId;
@@ -47,12 +51,28 @@ export function useAgentSwitchProviderCatalogs({
 	}, [agentSwitching, queryClient, sessionId]);
 
 	useEffect(() => {
-		if (!observedSettledSwitchId) return;
-		if (refreshedSwitchIdsRef.current.has(observedSettledSwitchId)) return;
-		refreshedSwitchIdsRef.current.add(observedSettledSwitchId);
+		if (!settledSwitchId) return;
+		if (refreshedSwitchIdsRef.current.has(settledSwitchId)) {
+			setReconciledSettlement((current) =>
+				current?.sessionId === sessionId && current.switchId === settledSwitchId
+					? current
+					: { sessionId, switchId: settledSwitchId },
+			);
+			return;
+		}
+		// The renderer may first learn about a fast switch after it has already
+		// completed. Clear before invalidating so outgoing controls cannot remain
+		// visible while active observers refetch from the live controller.
+		clearConversationProviderCatalogs(queryClient, sessionId);
+		refreshedSwitchIdsRef.current.add(settledSwitchId);
 		invalidateConversationProviderCatalogs(queryClient, sessionId);
 		void queryClient.invalidateQueries({ queryKey: conversationQueryKey(sessionId) });
-	}, [observedSettledSwitchId, queryClient, sessionId]);
+		setReconciledSettlement({ sessionId, switchId: settledSwitchId });
+	}, [queryClient, sessionId, settledSwitchId]);
 
-	return !agentSwitching;
+	const settlementReconciled =
+		!settledSwitchId ||
+		(reconciledSettlement?.sessionId === sessionId &&
+			reconciledSettlement.switchId === settledSwitchId);
+	return !agentSwitching && settlementReconciled;
 }
