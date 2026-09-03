@@ -82,13 +82,18 @@ function handleFocusRelease(event: FocusEvent) {
 	if (event.relatedTarget !== null) return;
 	const target = pendingReturnTarget;
 	if (!target) return;
-	setTimeout(() => {
-		// Anything that claimed focus in the meantime outranks this hand-back: a
-		// route change, another menu, the user clicking elsewhere.
-		if (pendingReturnTarget !== target || document.activeElement !== document.body) return;
-		pendingReturnTarget = null;
-		if (target.isConnected) target.focus();
-	}, 0);
+	// Two frames, not one tick: the surface the dialog was covering gets first
+	// claim on the caret through its own effects. A worker terminal, for one,
+	// re-enables input as the dialog closes and focuses itself, and it is a
+	// better landing spot than the menu trigger. This hand-back is only the
+	// fallback for focus that would otherwise be stranded on `document.body`.
+	requestAnimationFrame(() =>
+		requestAnimationFrame(() => {
+			if (pendingReturnTarget !== target || document.activeElement !== document.body) return;
+			pendingReturnTarget = null;
+			if (target.isConnected) target.focus();
+		}),
+	);
 }
 
 /** Runs the caller's own handler first, then the hand-off guard. */

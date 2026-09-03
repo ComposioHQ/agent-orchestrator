@@ -106,6 +106,7 @@ function activeElementInfo(page: Page) {
 		return {
 			label: active?.getAttribute("aria-label") ?? active?.tagName ?? "none",
 			inDialog: Boolean(active?.closest("[role='dialog']")),
+			inTerminal: Boolean(active?.closest(".xterm")),
 		};
 	});
 }
@@ -240,8 +241,34 @@ test("renderer: a dialog opened from a session menu keeps focus inside itself @T
 	await expect(dialog).toBeVisible();
 });
 
-test("renderer: closing that dialog hands focus back to the session menu trigger @T0", async ({ page }) => {
+test("renderer: closing that dialog never strands focus on the page body @T0", async ({ page }) => {
 	await setupSwitchAgentSession(page);
+	const dialog = await openSwitchAgentDialog(page);
+	await expect.poll(async () => (await activeElementInfo(page)).inDialog).toBe(true);
+
+	await page.keyboard.press("Escape");
+	await expect(dialog).toBeHidden();
+	// Closing re-enables worker input, so the terminal underneath claims the
+	// caret through its own effect and the menu hand-back stands down. Either
+	// landing spot is fine; `document.body` is not, because Tab would then
+	// restart from the top of the page.
+	await expect
+		.poll(async () => {
+			const { label, inTerminal } = await activeElementInfo(page);
+			return inTerminal || label === "Session actions";
+		})
+		.toBe(true);
+});
+
+test("renderer: a chat session hands focus back to the menu trigger when its dialog closes @T0", async ({
+	page,
+}) => {
+	// No terminal underneath to claim the caret, and the chat composer only
+	// autofocuses when the session changes, so this is the case the hand-back
+	// exists for: without it focus is left on `document.body`.
+	await setup(page);
+	await page.goto(`/#/projects/${projectId}/sessions/${sessionA}`);
+	await expect(page.getByRole("combobox", { name: "Message the agent" })).toBeVisible();
 	const dialog = await openSwitchAgentDialog(page);
 	await expect.poll(async () => (await activeElementInfo(page)).inDialog).toBe(true);
 
