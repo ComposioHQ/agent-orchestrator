@@ -26,7 +26,7 @@ vi.mock("./TerminalPane", () => ({ TerminalPane: () => <div>terminal body</div> 
 describe("ShellTerminalsView", () => {
 	beforeEach(() => {
 		terminalMocks.data = [];
-		useUiStore.setState({ activeShellTerminalHandleId: null, agentAuthTerminalRequest: null });
+		useUiStore.setState({ activeShellTerminalHandleId: null });
 	});
 
 	it("points the empty state at the visible plus tab-strip control", () => {
@@ -37,25 +37,4 @@ describe("ShellTerminalsView", () => {
 		expect(screen.queryByText(/terminal button/i)).not.toBeInTheDocument();
 	});
 
-	it("keeps manual authentication guidance visible above its active terminal", () => {
-		terminalMocks.data = [{
-			handleId: "shellterm-qwen",
-			workingDir: "/tmp/ao",
-			title: "Set up Qwen",
-			createdAt: "2026-08-31T00:00:00Z",
-		}];
-		useUiStore.setState({
-			activeShellTerminalHandleId: "shellterm-qwen",
-			agentAuthTerminalRequest: {
-				agentId: "qwen",
-				handleId: "shellterm-qwen",
-				nonce: 1,
-				guidance: "Run /auth to configure a provider",
-			} as never,
-		});
-
-		render(<ShellTerminalsView />);
-
-		expect(screen.getByRole("status")).toHaveTextContent("Run /auth to configure a provider");
-	});
 });

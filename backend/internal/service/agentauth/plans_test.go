@@ -28,7 +28,7 @@ func TestPlansMatchAuthenticationMatrix(t *testing.T) {
 		{"copilot", "Log in to GitHub Copilot", "copilot", "Native GitHub device/browser flow", "https://docs.github.com/en/copilot/how-tos/copilot-cli/set-up-copilot-cli/install-copilot-cli", "", ActionLogin, []string{"copilot", "login"}},
 		{"grok", "Log in to Grok", "grok", "Native login; device-auth remains available inside the CLI", "https://docs.x.ai/build/overview", "", ActionLogin, []string{"grok", "login"}},
 		{"kimi", "Log in to Kimi", "kimi", "Native browser flow", "https://moonshotai.github.io/kimi-code/en/", "", ActionLogin, []string{"kimi", "login"}},
-		{"pi", "Log in to Pi", "pi", "Authentication opens automatically in this terminal", "https://github.com/earendil-works/pi", "/login", ActionLogin, []string{"pi", "--verbose"}},
+		{"pi", "Log in to Pi", "pi", "Type /login after Pi finishes starting", "https://github.com/earendil-works/pi", "", ActionLogin, []string{"pi", "--verbose"}},
 		{"amp", "Log in to Amp", "amp", "Native browser flow", "https://ampcode.com/manual", "", ActionLogin, []string{"amp", "login"}},
 		{"auggie", "Log in to Auggie", "auggie", "Native browser flow", "https://docs.augmentcode.com/cli/overview", "", ActionLogin, []string{"auggie", "login"}},
 		{"droid", "Log in to Droid", "droid", "Authentication opens automatically in this terminal", "https://docs.factory.ai/droid-cli/cli-reference", "", ActionLogin, []string{"droid", "/login"}},
@@ -52,7 +52,6 @@ func TestPlansMatchAuthenticationMatrix(t *testing.T) {
 	svc := New(foundExecutables(cases), nil)
 	plans := svc.Plans(context.Background())
 	readyStatesByAgent := map[string][]shellterm.InitialInputReadyState{
-		"pi":          {{Text: "pi v"}},
 		"droid":       {{Text: "Trust this folder?"}},
 		"qwen":        {{Text: "Type your message or @path/to/file"}, {Text: "-- INSERT --"}, {Text: "-- NORMAL --", RawPrefix: "i"}},
 		"prime-agent": {{Text: "for shortcuts"}},

@@ -100,7 +100,6 @@ describe("HarnessSettingsSection", () => {
 	beforeEach(async () => {
 		await appI18n.changeLanguage("en");
 		window.ao!.clipboard.writeText = vi.fn().mockResolvedValue(undefined);
-		useUiStore.setState({ agentAuthTerminalRequest: null, agentAuthCheckRequest: null });
 		terminalMock.onStateChange = null;
 		vi.spyOn(apiClient, "GET").mockImplementation(async (path) => {
 			if (path === "/api/v1/agents/readiness") return { data: catalog } as never;
@@ -202,7 +201,6 @@ describe("HarnessSettingsSection", () => {
 
 		expect(await within(codexRow).findByTestId("inline-harness-auth-terminal")).toBeInTheDocument();
 		expect(useUiStore.getState().activeShellTerminalHandleId).toBeNull();
-		expect(useUiStore.getState().agentAuthTerminalRequest).toBeNull();
 	});
 
 	it("verifies login and closes the inline terminal when the command exits", async () => {
@@ -242,6 +240,80 @@ describe("HarnessSettingsSection", () => {
 		}));
 		await waitFor(() => expect(within(codexRow).queryByTestId("inline-harness-auth-terminal")).not.toBeInTheDocument());
 		expect(within(codexRow).getAllByText("Logged in")).toHaveLength(2);
+	});
+
+	it("does not verify or discard the workflow when the terminal attachment errors", async () => {
+		const unauthorized = readinessCatalog(["codex"], { codex: "unauthorized" });
+		vi.mocked(apiClient.GET).mockImplementation(async (path) => {
+			if (path === "/api/v1/agents/readiness") return { data: unauthorized } as never;
+			if (path === "/api/v1/agents/installers") return { data: plans } as never;
+			if (path === "/api/v1/agents/install-jobs") return { data: { jobs: [] } } as never;
+			if (path === "/api/v1/agents/auth-plans") return { data: authPlans } as never;
+			return { data: undefined } as never;
+		});
+		vi.mocked(apiClient.POST).mockImplementation(async (path) => {
+			if (path === "/api/v1/agents/readiness/ensure") return { data: unauthorized } as never;
+			if (path === "/api/v1/agents/{agent}/auth") {
+				return { data: { agentId: "codex", action: "login", terminal: { handleId: "shellterm-login", workingDir: "/tmp/ao", title: "Log in to Codex", createdAt: new Date().toISOString() } } } as never;
+			}
+			return { data: undefined } as never;
+		});
+		const user = userEvent.setup();
+		renderSection();
+		const codexRow = (await screen.findByText("Codex")).closest('[data-agent="codex"]') as HTMLElement;
+		await user.click(await within(codexRow).findByRole("button", { name: "Login" }));
+		await within(codexRow).findByTestId("harness-auth-terminal");
+
+		await act(async () => terminalMock.onStateChange?.("error"));
+
+		expect(within(codexRow).getByTestId("harness-auth-terminal")).toBeInTheDocument();
+		expect(apiClient.POST).not.toHaveBeenCalledWith("/api/v1/agents/{agent}/probe", expect.anything());
+		expect(apiClient.DELETE).not.toHaveBeenCalled();
+	});
+
+	it("keeps failed timeout cleanup retryable until terminal deletion succeeds", async () => {
+		const unauthorized = readinessCatalog(["codex"], { codex: "unauthorized" });
+		let timeoutCallback: (() => Promise<void>) | undefined;
+		const realSetTimeout = window.setTimeout.bind(window);
+		vi.spyOn(window, "setTimeout").mockImplementation(((handler: TimerHandler, timeout?: number, ...args: unknown[]) => {
+			if (typeof handler === "function" && (timeout ?? 0) > 899_000) {
+				timeoutCallback = handler as () => Promise<void>;
+				return 999;
+			}
+			return realSetTimeout(handler, timeout, ...args);
+		}) as typeof window.setTimeout);
+		vi.mocked(apiClient.GET).mockImplementation(async (path) => {
+			if (path === "/api/v1/agents/readiness") return { data: unauthorized } as never;
+			if (path === "/api/v1/agents/installers") return { data: plans } as never;
+			if (path === "/api/v1/agents/install-jobs") return { data: { jobs: [] } } as never;
+			if (path === "/api/v1/agents/auth-plans") return { data: authPlans } as never;
+			return { data: undefined } as never;
+		});
+		vi.mocked(apiClient.POST).mockImplementation(async (path) => {
+			if (path === "/api/v1/agents/readiness/ensure") return { data: unauthorized } as never;
+			if (path === "/api/v1/agents/{agent}/auth") {
+				return { data: { agentId: "codex", action: "login", terminal: { handleId: "shellterm-login", workingDir: "/tmp/ao", title: "Log in to Codex", createdAt: new Date().toISOString() } } } as never;
+			}
+			if (path === "/api/v1/agents/{agent}/probe") {
+				return { data: { agent: { id: "codex", label: "Codex", authStatus: "unauthorized" }, supported: true, installed: true } } as never;
+			}
+			return { data: undefined } as never;
+		});
+		vi.mocked(apiClient.DELETE).mockResolvedValueOnce({ error: { code: "DELETE_FAILED" } } as never).mockResolvedValue({ data: undefined } as never);
+		const user = userEvent.setup();
+		renderSection();
+		const codexRow = (await screen.findByText("Codex")).closest('[data-agent="codex"]') as HTMLElement;
+		await user.click(await within(codexRow).findByRole("button", { name: "Login" }));
+		const panel = await within(codexRow).findByTestId("harness-auth-terminal");
+		expect(timeoutCallback).toBeDefined();
+
+		await act(async () => { await timeoutCallback?.(); });
+
+		expect(panel).toBeInTheDocument();
+		const retry = await within(panel).findByRole("button", { name: "Retry" });
+		await user.click(retry);
+		await waitFor(() => expect(apiClient.DELETE).toHaveBeenCalledTimes(2));
+		await waitFor(() => expect(within(codexRow).queryByTestId("harness-auth-terminal")).not.toBeInTheDocument());
 	});
 
 	it("retries after the daemon has already pruned the previous authentication terminal", async () => {

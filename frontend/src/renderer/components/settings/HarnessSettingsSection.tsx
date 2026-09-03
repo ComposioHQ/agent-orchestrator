@@ -18,7 +18,7 @@ import { apiClient, apiErrorCode, apiErrorMessage } from "../../lib/api-client";
 import { aoBridge } from "../../lib/bridge";
 import { useShellMaybe } from "../../lib/shell-context";
 import { cn } from "../../lib/utils";
-import { useResolvedTheme, useUiStore } from "../../stores/ui-store";
+import { useResolvedTheme } from "../../stores/ui-store";
 import { AgentAvatar } from "../AgentAvatar";
 import { TerminalPane } from "../TerminalPane";
 import { Button } from "../ui/button";
@@ -38,7 +38,7 @@ type AuthTerminalWorkflow = {
 	agentId: AgentId;
 	terminal: components["schemas"]["ShellTerminalResponse"];
 	guidance: string;
-	phase: "running" | "verifying" | "unauthorized" | "unverified" | "closing" | "timed_out";
+	phase: "running" | "verifying" | "unauthorized" | "unverified" | "closing" | "cleanup_failed" | "timed_out";
 	reason?: string;
 	startedAt: number;
 };
@@ -90,8 +90,6 @@ export function HarnessSettingsSection({ titleHidden = false }: { titleHidden?: 
 	const jobs = useQuery({ queryKey: installJobsQueryKey, queryFn: fetchInstallJobs, retry: false });
 	const authPlans = useAgentAuthPlans();
 	const startAgentAuth = useStartAgentAuth();
-	const agentAuthCheckRequest = useUiStore((state) => state.agentAuthCheckRequest);
-	const completeAgentAuthCheck = useUiStore((state) => state.completeAgentAuthCheck);
 	const [search, setSearch] = useState("");
 	const [authStates, setAuthStates] = useState<AgentAuthStates>({});
 	const [refreshError, setRefreshError] = useState<string | null>(null);
@@ -269,7 +267,14 @@ export function HarnessSettingsSection({ titleHidden = false }: { titleHidden?: 
 		const result = await checkAuth(workflow.agentId);
 		if (authWorkflowRef.current?.terminal.handleId !== workflow.terminal.handleId) return;
 		if (result?.agent.authStatus === "authorized") {
-			await closeAuthTerminal(workflow.terminal.handleId).catch(() => undefined);
+			try {
+				await closeAuthTerminal(workflow.terminal.handleId);
+			} catch (error) {
+				setAuthWorkflow((current) => current?.terminal.handleId === workflow.terminal.handleId
+					? { ...current, phase: "cleanup_failed", reason: error instanceof Error ? error.message : t("settings.harness.authFailed") }
+					: current);
+				return;
+			}
 			authWorkflowRef.current = null;
 			setAuthWorkflow(null);
 			void queryClient.invalidateQueries({ queryKey: shellTerminalsQueryKey });
@@ -286,8 +291,8 @@ export function HarnessSettingsSection({ titleHidden = false }: { titleHidden?: 
 			: current);
 	}, [checkAuth, queryClient, t]);
 
-	const closeAuth = useCallback(async (workflow: AuthTerminalWorkflow) => {
-		if (authWorkflowRef.current?.terminal.handleId !== workflow.terminal.handleId) return;
+	const closeAuth = useCallback(async (workflow: AuthTerminalWorkflow): Promise<boolean> => {
+		if (authWorkflowRef.current?.terminal.handleId !== workflow.terminal.handleId) return false;
 		setAuthWorkflow((current) => current?.terminal.handleId === workflow.terminal.handleId
 			? { ...current, phase: "closing", reason: undefined }
 			: current);
@@ -297,10 +302,12 @@ export function HarnessSettingsSection({ titleHidden = false }: { titleHidden?: 
 			setAuthWorkflow(null);
 			void queryClient.invalidateQueries({ queryKey: shellTerminalsQueryKey });
 			await checkAuth(workflow.agentId);
+			return true;
 		} catch (error) {
 			setAuthWorkflow((current) => current?.terminal.handleId === workflow.terminal.handleId
-				? { ...current, phase: workflow.phase, reason: error instanceof Error ? error.message : t("settings.harness.authFailed") }
+				? { ...current, phase: "cleanup_failed", reason: error instanceof Error ? error.message : t("settings.harness.authFailed") }
 				: current);
+			return false;
 		}
 	}, [checkAuth, queryClient, t]);
 
@@ -308,14 +315,22 @@ export function HarnessSettingsSection({ titleHidden = false }: { titleHidden?: 
 		if (!authWorkflow || authWorkflow.phase !== "running") return;
 		const handleId = authWorkflow.terminal.handleId;
 		const remaining = Math.max(0, AUTH_TERMINAL_LIFETIME_MS - (Date.now() - authWorkflow.startedAt));
-		const timeout = window.setTimeout(() => {
+		const timeout = window.setTimeout(async () => {
 			if (authWorkflowRef.current?.terminal.handleId !== handleId) return;
-			void closeAuthTerminal(handleId).finally(() => {
+			setAuthWorkflow((current) => current?.terminal.handleId === handleId
+				? { ...current, phase: "closing", reason: undefined }
+				: current);
+			try {
+				await closeAuthTerminal(handleId);
 				setAuthWorkflow((current) => current?.terminal.handleId === handleId
 					? { ...current, phase: "timed_out", reason: t("settings.harness.authTimedOut") }
 					: current);
 				void queryClient.invalidateQueries({ queryKey: shellTerminalsQueryKey });
-			});
+			} catch (error) {
+				setAuthWorkflow((current) => current?.terminal.handleId === handleId
+					? { ...current, phase: "cleanup_failed", reason: error instanceof Error ? error.message : t("settings.harness.authFailed") }
+					: current);
+			}
 		}, remaining);
 		return () => window.clearTimeout(timeout);
 	}, [authWorkflow, queryClient, t]);
@@ -324,14 +339,6 @@ export function HarnessSettingsSection({ titleHidden = false }: { titleHidden?: 
 		const workflow = authWorkflowRef.current;
 		if (workflow) void closeAuthTerminal(workflow.terminal.handleId).catch(() => undefined);
 	}, []);
-
-	useEffect(() => {
-		if (!agentAuthCheckRequest || !agents.data) return;
-		const request = agentAuthCheckRequest;
-		void checkAuth(request.agentId as AgentId)
-			.then((result) => completeAgentAuthCheck(request, result?.agent?.authStatus === "authorized"))
-			.catch(() => completeAgentAuthCheck(request, false));
-	}, [agentAuthCheckRequest, agents.data, checkAuth, completeAgentAuthCheck]);
 
 	const refresh = async () => {
 		setRefreshError(null);
@@ -487,9 +494,9 @@ export function HarnessSettingsSection({ titleHidden = false }: { titleHidden?: 
 									<HarnessAuthTerminalPanel
 										workflow={rowAuthWorkflow}
 										onClose={() => void closeAuth(rowAuthWorkflow)}
-										onRetry={() => void closeAuth(rowAuthWorkflow).then(() => startAuth(agentId))}
+										onRetry={() => void closeAuth(rowAuthWorkflow).then((closed) => closed && startAuth(agentId))}
 										onTerminalState={(state) => {
-											if ((state === "exited" || state === "error") && authWorkflowRef.current?.phase === "running") {
+											if (state === "exited" && authWorkflowRef.current?.phase === "running") {
 												void finishAuth(rowAuthWorkflow);
 											}
 										}}
@@ -528,7 +535,7 @@ function HarnessAuthTerminalPanel({ workflow, onClose, onRetry, onTerminalState 
 			: workflow.phase === "closing"
 				? t("settings.harness.authClosing")
 				: workflow.reason ?? t("settings.harness.loginUnknown");
-	const retryable = workflow.phase === "unauthorized" || workflow.phase === "unverified" || workflow.phase === "timed_out";
+	const retryable = workflow.phase === "unauthorized" || workflow.phase === "unverified" || workflow.phase === "timed_out" || workflow.phase === "cleanup_failed";
 	return (
 		<div ref={panelRef} className="mt-1 scroll-my-3 overflow-hidden rounded-md border border-(--color-border-settings-input) bg-terminal" data-testid="harness-auth-terminal">
 			<div className="flex min-h-10 items-center justify-between gap-3 border-b border-(--color-border-settings-input) bg-surface/90 px-3 py-2">
@@ -551,7 +558,9 @@ function HarnessAuthTerminalPanel({ workflow, onClose, onRetry, onTerminalState 
 			</div>
 			{retryable ? (
 				<div className="flex items-center justify-end border-t border-(--color-border-settings-input) bg-surface/90 px-3 py-2">
-					<Button type="button" size="sm" variant="outline" onClick={onRetry}>{t("settings.harness.login")}</Button>
+					<Button type="button" size="sm" variant="outline" onClick={workflow.phase === "cleanup_failed" ? onClose : onRetry}>
+						{workflow.phase === "cleanup_failed" ? t("settings.harness.retry") : t("settings.harness.login")}
+					</Button>
 				</div>
 			) : null}
 		</div>

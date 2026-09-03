@@ -17,7 +17,7 @@ var plans = []Plan{
 	plan("copilot", ActionLogin, "Log in to GitHub Copilot", []string{"copilot", "login"}, "Native GitHub device/browser flow", "https://docs.github.com/en/copilot/how-tos/copilot-cli/set-up-copilot-cli/install-copilot-cli"),
 	plan("grok", ActionLogin, "Log in to Grok", []string{"grok", "login"}, "Native login; device-auth remains available inside the CLI", "https://docs.x.ai/build/overview"),
 	plan("kimi", ActionLogin, "Log in to Kimi", []string{"kimi", "login"}, "Native browser flow", "https://moonshotai.github.io/kimi-code/en/"),
-	interactivePlan("pi", ActionLogin, "Log in to Pi", []string{"pi", "--verbose"}, "/login", ready("pi v"), "Authentication opens automatically in this terminal", "https://github.com/earendil-works/pi"),
+	plan("pi", ActionLogin, "Log in to Pi", []string{"pi", "--verbose"}, "Type /login after Pi finishes starting", "https://github.com/earendil-works/pi"),
 	plan("amp", ActionLogin, "Log in to Amp", []string{"amp", "login"}, "Native browser flow", "https://ampcode.com/manual"),
 	plan("auggie", ActionLogin, "Log in to Auggie", []string{"auggie", "login"}, "Native browser flow", "https://docs.augmentcode.com/cli/overview"),
 	interactivePlan("droid", ActionLogin, "Log in to Droid", []string{"droid", "/login"}, "", ready("Trust this folder?"), "Authentication opens automatically in this terminal", "https://docs.factory.ai/droid-cli/cli-reference"),

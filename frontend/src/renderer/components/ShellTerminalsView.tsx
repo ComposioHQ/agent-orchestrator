@@ -35,17 +35,12 @@ export function ShellTerminalsView() {
 	const renameShellTerminal = useRenameShellTerminal();
 	const requestNewShellTerminal = useUiStore((state) => state.requestNewShellTerminal);
 	const activeHandleId = useUiStore((state) => state.activeShellTerminalHandleId);
-	const agentAuthTerminalRequest = useUiStore((state) => state.agentAuthTerminalRequest);
 	const setActiveShellTerminal = useUiStore((state) => state.setActiveShellTerminal);
 
 	// Keep the selection pointed at a shell that still exists: closing the active
 	// tab (or a daemon-side exit pruning it) would otherwise leave the pane bound
 	// to a dead handle.
 	const active = shellTerminals.find((s) => s.handleId === activeHandleId);
-	const authGuidance =
-		agentAuthTerminalRequest && agentAuthTerminalRequest.handleId === active?.handleId
-			? agentAuthTerminalRequest.guidance.trim()
-			: "";
 	const tabsOverflow = useOverflowScroll<HTMLDivElement>(shellTerminals.map((t) => t.handleId).join("|"));
 	const selectAdjacentTab = useCallback(
 		(direction: -1 | 1) => {
@@ -168,11 +163,6 @@ export function ShellTerminalsView() {
 					<TooltipContent side="bottom">{t("terminal.newWithShortcut", { shortcut: newTerminalShortcutLabel })}</TooltipContent>
 				</Tooltip>
 			</div>
-			{authGuidance ? (
-				<div className="shrink-0 border-b border-border bg-muted/40 px-5 py-2 font-mono text-xs text-foreground" role="status">
-					{authGuidance}
-				</div>
-			) : null}
 			<div className="min-h-0 flex-1">
 				{active ? (
 					<TerminalPane

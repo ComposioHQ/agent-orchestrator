@@ -59,6 +59,12 @@ type mutableInstallAgent struct {
 	installed atomic.Bool
 }
 
+type mutableAuthAgent struct {
+	fakeAgent
+	status    *ports.AgentAuthStatus
+	authCalls atomic.Int32
+}
+
 type blockingResolverAgent struct {
 	fakeAgent
 	started chan struct{}
@@ -182,6 +188,11 @@ func (f *mutableInstallAgent) ResolveBinary(context.Context) (string, error) {
 		return "", ports.ErrAgentBinaryNotFound
 	}
 	return "agent", nil
+}
+
+func (f *mutableAuthAgent) AuthStatus(context.Context) (ports.AgentAuthStatus, error) {
+	f.authCalls.Add(1)
+	return *f.status, nil
 }
 
 func (f *blockingResolverAgent) ResolveBinary(ctx context.Context) (string, error) {
@@ -647,6 +658,36 @@ func TestProbeBypassesRefreshRateLimitForOneAgent(t *testing.T) {
 	}
 	if len(listed.Installed) != 1 || listed.Installed[0].ID != "codex" {
 		t.Fatalf("installed after Probe = %#v, want codex", listed.Installed)
+	}
+}
+
+func TestProbeRechecksCachedUnauthorizedAuthentication(t *testing.T) {
+	status := ports.AgentAuthStatusUnauthorized
+	agent := &mutableAuthAgent{status: &status}
+	svc := NewWithAgents([]agentregistry.HarnessAgent{{
+		Harness:  domain.AgentHarness("codex"),
+		Manifest: adapters.Manifest{ID: "codex", Name: "Codex"},
+		Agent:    agent,
+	}})
+
+	initial, err := svc.EnsureAgentReadiness(context.Background(), "codex", domain.AgentReadinessPurposeLaunch)
+	if err != nil {
+		t.Fatalf("EnsureAgentReadiness: %v", err)
+	}
+	if initial.Authentication.State != domain.AgentAuthenticationUnauthorized {
+		t.Fatalf("initial authentication = %q, want unauthorized", initial.Authentication.State)
+	}
+
+	status = ports.AgentAuthStatusAuthorized
+	got, err := svc.Probe(context.Background(), "codex")
+	if err != nil {
+		t.Fatalf("Probe: %v", err)
+	}
+	if got.Agent.AuthStatus != ports.AgentAuthStatusAuthorized {
+		t.Fatalf("Probe authStatus = %q, want authorized", got.Agent.AuthStatus)
+	}
+	if calls := agent.authCalls.Load(); calls != 2 {
+		t.Fatalf("authentication checks = %d, want fresh check after cached unauthorized", calls)
 	}
 }
 
