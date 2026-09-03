@@ -973,6 +973,21 @@ describe("automation reports", () => {
 });
 
 describe("ChatWorkspace message actions", () => {
+	it("hides message editing while the conversation controller is stopped", () => {
+		render(
+			<ChatWorkspace
+				snapshot={{
+					...idleSnapshot(),
+					controller: { state: "stopped" },
+					capabilities: [],
+				}}
+				onEditMessage={vi.fn(async () => undefined)}
+			/>,
+		);
+
+		expect(screen.queryByRole("button", { name: "Edit user message" })).not.toBeInTheDocument();
+	});
+
 	it("copies a human message as the exact text the user sent", async () => {
 		const user = userEvent.setup();
 		render(<ChatWorkspace snapshot={chatFixture} />);

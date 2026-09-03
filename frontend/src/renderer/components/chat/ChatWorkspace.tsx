@@ -558,7 +558,9 @@ export function ChatWorkspace({
 	// Editing the first provider prompt starts a fresh conversation and therefore
 	// does not require provider-side history forking. Later prompts remain gated on
 	// the provider's anchored-fork capability.
-	const editHumanMessage = onEditMessage;
+	const controllerCanEdit =
+		snapshot.controller.state === "ready" || snapshot.controller.state === "busy";
+	const editHumanMessage = controllerCanEdit ? onEditMessage : undefined;
 	const pendingApproval = useMemo(
 		() =>
 			snapshot.items.reduce<ConversationActivity | undefined>((latest, item) => {
