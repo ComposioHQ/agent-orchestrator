@@ -532,6 +532,7 @@ describe("TerminalPane replay cover", () => {
 		});
 		try {
 			expect(screen.getByText("Resuming the Coder workspace…")).toBeInTheDocument();
+			expect(screen.getByTestId("terminal-startup-elapsed")).toBeInTheDocument();
 			expect(screen.getByTestId("terminal-status-banner")).toHaveClass("top-2");
 		} finally {
 			view.restore();

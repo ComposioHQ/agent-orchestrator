@@ -1037,6 +1037,9 @@ function AttachedTerminal({
 	const centerCloudStartupBanner = Boolean(
 		banner && attachSession?.cloud && !hasAttached && state === "reattaching",
 	);
+	const showCloudStartupStatus = Boolean(
+		banner && attachSession?.cloud && state === "reattaching",
+	);
 	const showEmptyState = !handleId;
 	// Cover xterm while the attachment buffers the initial replay, so the pane
 	// appears already drawn at the tail instead of visibly scrolling down to it.
@@ -1119,7 +1122,7 @@ function AttachedTerminal({
 								centerCloudStartupBanner ? "w-fit max-w-lg px-4 py-2 text-center" : "px-3 py-1.5",
 							)}
 						>
-							{centerCloudStartupBanner ? (
+							{showCloudStartupStatus ? (
 								<CloudStartupStatus
 									message={banner}
 									startedAt={attachSession?.cloud?.runtimeStartupStartedAt}
