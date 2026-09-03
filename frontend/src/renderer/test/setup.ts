@@ -165,6 +165,12 @@ if (typeof window !== "undefined") {
 		},
 		telemetry: {
 			getBootstrap: async () => null,
+			getPolicy: async () => ({ eventsEnabled: false, consentGeneration: "test", updatedAt: new Date(0).toISOString(), acknowledged: false, state: "applied", environmentVeto: true, durabilitySupported: false }),
+			setEventsEnabled: async () => ({ eventsEnabled: false, consentGeneration: "test", updatedAt: new Date(0).toISOString(), acknowledged: false, state: "applied", environmentVeto: true, durabilitySupported: false }),
+			onPolicy: () => () => false,
+			onClearQueues: () => () => false,
+			capture: async () => false,
+			signalAgentSwitchVisibility: () => false,
 		},
 		browser: {
 			nativeCompositionEnabled: true,
@@ -314,6 +320,13 @@ if (typeof window !== "undefined") {
 			getSession: async () => null,
 			signIn: async () => undefined,
 			signOut: async () => undefined,
+			localAuthAvailable: async () => false,
+			localRegister: async () => {
+				throw new Error("not available in tests");
+			},
+			localLogin: async () => {
+				throw new Error("not available in tests");
+			},
 			onSessionChanged: () => () => undefined,
 		},
 		cloudCp: {

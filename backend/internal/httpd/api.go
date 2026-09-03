@@ -23,6 +23,7 @@ import (
 // APIDeps bundles every service the API layer's controllers depend on.
 type APIDeps struct {
 	Agents             controllers.AgentCatalog
+	CodexAccounts      controllers.CodexAccountService
 	Projects           projectsvc.Manager
 	Sessions           controllers.SessionService
 	DesktopWorkspaces  controllers.DesktopWorkspaceService
@@ -56,9 +57,10 @@ type APIDeps struct {
 	HostID string
 	// Endpoints reports how this daemon can currently be reached, for the
 	// phone's endpoint-refresh route.
-	Endpoints controllers.EndpointSource
-	Installer controllers.Installer
-	AgentAuth controllers.AgentAuthService
+	Endpoints         controllers.EndpointSource
+	Installer         controllers.Installer
+	AgentAuth         controllers.AgentAuthService
+	AgentSwitchPolicy AgentSwitchPolicyControl
 
 	// Presence tracks which mobile devices are currently running the app.
 	// Nil disables presence tracking (the roster then reports every device offline).
@@ -102,6 +104,7 @@ type API struct {
 	cfg           config.Config
 	deps          APIDeps
 	agents        *controllers.AgentsController
+	codexAccounts *controllers.CodexAccountsController
 	projects      *controllers.ProjectsController
 	sessions      *controllers.SessionsController
 	desktop       *controllers.DesktopWorkspaceController
@@ -134,6 +137,7 @@ func NewAPI(cfg config.Config, deps APIDeps) *API {
 		agents: &controllers.AgentsController{
 			Catalog: deps.Agents,
 		},
+		codexAccounts: &controllers.CodexAccountsController{Svc: deps.CodexAccounts},
 		projects: &controllers.ProjectsController{
 			Mgr: deps.Projects,
 		},
@@ -181,6 +185,7 @@ func (a *API) Register(root chi.Router) {
 			r.Use(middleware.Timeout(timeout))
 			r.Use(presenceMiddleware(a.deps.Presence))
 			a.agents.Register(r)
+			a.codexAccounts.Register(r)
 			a.projects.Register(r)
 			a.sessions.Register(r)
 			a.desktop.Register(r)
@@ -204,6 +209,7 @@ func (a *API) Register(root chi.Router) {
 		})
 		// Long-lived streams intentionally bypass the REST timeout middleware.
 		a.notifications.RegisterStream(r)
+		a.codexAccounts.RegisterStreams(r)
 		a.sessions.RegisterStreams(r)
 		a.events.Register(r)
 	})

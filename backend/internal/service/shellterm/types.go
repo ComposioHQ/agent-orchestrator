@@ -59,6 +59,7 @@ type InitialInputReadyState struct {
 type OpenCommandTerminalInput struct {
 	Argv                    []string
 	Env                     map[string]string
+	WorkingDir              string
 	Title                   string
 	InitialInput            string
 	InitialInputReadyStates []InitialInputReadyState

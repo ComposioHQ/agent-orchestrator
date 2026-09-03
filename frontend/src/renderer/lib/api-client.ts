@@ -1,5 +1,5 @@
 import createClient from "openapi-fetch";
-import type { paths } from "../../api/schema";
+import type { components, paths } from "../../api/schema";
 import type { DaemonStatus } from "../../shared/daemon-status";
 import { daemonFailureMessage } from "./daemon-failure";
 import { captureRendererEvent } from "./telemetry";
@@ -69,6 +69,18 @@ const ROUTE_TEMPLATES = [
 	"/api/v1/agents/readiness/ensure",
 	"/api/v1/agents/{agent}/auth",
 	"/api/v1/agents/{agent}/install",
+	"/api/v1/agents/codex/accounts",
+	"/api/v1/agents/codex/accounts/{accountId}",
+	"/api/v1/agents/codex/accounts/ensure",
+	"/api/v1/agents/codex/accounts/{accountId}/login-terminal",
+	"/api/v1/agents/codex/accounts/{accountId}/logout",
+	"/api/v1/agents/codex/accounts/{accountId}/reset-credit/consume",
+	"/api/v1/agents/codex/accounts/events",
+	"/api/v1/agents/codex/accounts/login-terminal",
+	"/api/v1/agents/codex/accounts/login-operations/{operationId}/verify",
+	"/api/v1/agents/codex/accounts/login-operations/{operationId}/cancel",
+	"/api/v1/agents/codex/account-switches",
+	"/api/v1/agents/codex/account-switches/{switchId}/recover",
 	"/api/v1/agents/{agent}/models",
 	"/api/v1/agents/{agent}/models/refresh",
 	"/api/v1/agents/{agent}/probe",
@@ -95,6 +107,7 @@ const ROUTE_TEMPLATES = [
 	"/api/v1/sessions/{sessionId}/agent-switches",
 	"/api/v1/sessions/{sessionId}/agent-switches/{switchId}/handoff",
 	"/api/v1/sessions/{sessionId}/agent-switches/{switchId}/recover",
+	"/api/v1/sessions/{sessionId}/exit-agent",
 	"/api/v1/sessions/{sessionId}/interface-transition",
 	"/api/v1/sessions/{sessionId}/kill",
 	"/api/v1/sessions/{sessionId}/pr",
@@ -183,6 +196,7 @@ export function normalizeApiOperation(method: string, pathname: string): string 
 }
 
 type ApiErrorCategory = "daemon_unavailable" | "network_error" | "http_4xx" | "http_5xx";
+type ReportingOwner = NonNullable<components["schemas"]["APIError"]["reporting_owner"]>;
 
 // One event per (operation, category, status) per window: a daemon outage
 // makes every polling query fail at once and on every retry — the failure
@@ -196,8 +210,13 @@ function reportApiError(
 	status?: number,
 	code?: string,
 	requestId?: string,
+	reportingOwner?: ReportingOwner,
 ): void {
-	const key = `${operation}|${category}|${status ?? ""}`;
+	// Treat an omitted owner as HTTP-owned for dedupe purposes. Saga-owned
+	// responses need their own bucket so suppressing one cannot hide a later
+	// generic HTTP failure from Sentry.
+	const ownerBucket = reportingOwner === "agent_switch_saga" ? "agent_switch_saga" : "http";
+	const key = `${operation}|${category}|${status ?? ""}|${ownerBucket}`;
 	const now = Date.now();
 	const last = lastApiErrorAt.get(key);
 	if (last !== undefined && now - last < API_ERROR_DEDUPE_MS) return;
@@ -211,14 +230,17 @@ function reportApiError(
 	// is what drives the fine-grained severity/owner classification; `requestId`
 	// (when present) is tagged so a client event pivots to the daemon's own
 	// capture of the same request, which carries the matching request_id.
-	captureApiErrorToSentry(operation, category, status, code, requestId);
+	if (reportingOwner !== "agent_switch_saga") {
+		captureApiErrorToSentry(operation, category, status, code, requestId);
+	}
 }
 
 async function runtimeFetch(input: Request): Promise<Response> {
 	const operation = normalizeApiOperation(input.method, new URL(input.url).pathname);
+	const visibilityOwned = operation === "GET /api/v1/projects" || operation === "GET /api/v1/sessions" || operation === "GET /api/v1/sessions/:id/agent-switches";
 	const baseUrl = runtimeApiBaseUrl;
 	if (baseUrl === null) {
-		reportApiError(operation, "daemon_unavailable", 503);
+		if (!visibilityOwned) reportApiError(operation, "daemon_unavailable", 503);
 		return new Response(JSON.stringify({ message: daemonFailureMessage(daemonStatus), code: daemonStatus.code }), {
 			status: 503,
 			headers: { "Content-Type": "application/json" },
@@ -263,7 +285,7 @@ async function runtimeFetch(input: Request): Promise<Response> {
 	} catch (error) {
 		// Caller-initiated aborts (unmounted components cancelling queries) are not failures.
 		if (!(error instanceof DOMException && error.name === "AbortError")) {
-			reportApiError(operation, "network_error");
+			if (!visibilityOwned) reportApiError(operation, "network_error");
 		}
 		throw error;
 	}
@@ -272,14 +294,25 @@ async function runtimeFetch(input: Request): Promise<Response> {
 		// caller still gets an unconsumed body) to drive classification.
 		let code: string | undefined;
 		let requestId: string | undefined;
+		let reportingOwner: ReportingOwner | undefined;
 		try {
-			const body = (await response.clone().json()) as { code?: unknown; requestId?: unknown };
+			const body = (await response.clone().json()) as Partial<components["schemas"]["APIError"]>;
 			if (typeof body?.code === "string" && body.code !== "") code = body.code;
 			if (typeof body?.requestId === "string" && body.requestId !== "") requestId = body.requestId;
+			if (body?.reporting_owner === "http" || body?.reporting_owner === "agent_switch_saga") {
+				reportingOwner = body.reporting_owner;
+			}
 		} catch {
 			// Non-JSON or empty body: fall back to status-only classification.
 		}
-		reportApiError(operation, response.status >= 500 ? "http_5xx" : "http_4xx", response.status, code, requestId);
+		if (!visibilityOwned) reportApiError(
+			operation,
+			response.status >= 500 ? "http_5xx" : "http_4xx",
+			response.status,
+			code,
+			requestId,
+			reportingOwner,
+		);
 	}
 	return response;
 }

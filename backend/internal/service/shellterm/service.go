@@ -263,21 +263,28 @@ func (s *Service) OpenCommandTerminal(ctx context.Context, in OpenCommandTermina
 	if err != nil {
 		return ShellTerminal{}, fmt.Errorf("open command terminal: handle id: %w", err)
 	}
-	authWorkspaceRoot := filepath.Join(s.dataDir, authWorkspaceDirectoryName)
-	if err := os.MkdirAll(authWorkspaceRoot, 0o700); err != nil {
-		return ShellTerminal{}, fmt.Errorf("open command terminal: create auth workspace: %w", err)
-	}
-	authWorkspace := filepath.Join(authWorkspaceRoot, handleID)
-	if err := os.Mkdir(authWorkspace, 0o700); err != nil {
-		return ShellTerminal{}, fmt.Errorf("open command terminal: create private auth workspace: %w", err)
+
+	workingDir := in.WorkingDir
+	cleanupWorkingDirOnError := false
+	if workingDir == "" {
+		authWorkspaceRoot := filepath.Join(s.dataDir, authWorkspaceDirectoryName)
+		if err := os.MkdirAll(authWorkspaceRoot, 0o700); err != nil {
+			return ShellTerminal{}, fmt.Errorf("open command terminal: create auth workspace: %w", err)
+		}
+		workingDir = filepath.Join(authWorkspaceRoot, handleID)
+		if err := os.Mkdir(workingDir, 0o700); err != nil {
+			return ShellTerminal{}, fmt.Errorf("open command terminal: create private auth workspace: %w", err)
+		}
+		cleanupWorkingDirOnError = true
 	}
 	terminal, err := s.openTerminal(ctx, openTerminalConfig{
 		handleID:                 handleID,
 		argv:                     in.Argv,
 		env:                      in.Env,
-		workingDir:               authWorkspace,
+		workingDir:               workingDir,
 		title:                    in.Title,
-		cleanupWorkingDirOnError: true,
+		exitOnCommandCompletion:  true,
+		cleanupWorkingDirOnError: cleanupWorkingDirOnError,
 	})
 	if err != nil {
 		return ShellTerminal{}, err
@@ -341,6 +348,7 @@ type openTerminalConfig struct {
 	sessionID                domain.SessionID
 	workingDir               string
 	title                    string
+	exitOnCommandCompletion  bool
 	cleanupWorkingDirOnError bool
 }
 
@@ -360,10 +368,11 @@ func (s *Service) openTerminal(ctx context.Context, cfg openTerminalConfig) (She
 	// is not a session row and no sessions record is ever created. The
 	// shellterm- prefix keeps the two namespaces disjoint.
 	handle, err := s.runtime.Create(ctx, ports.RuntimeConfig{
-		SessionID:     domain.SessionID(handleID),
-		WorkspacePath: cfg.workingDir,
-		Argv:          cfg.argv,
-		Env:           cfg.env,
+		SessionID:               domain.SessionID(handleID),
+		WorkspacePath:           cfg.workingDir,
+		Argv:                    cfg.argv,
+		Env:                     cfg.env,
+		ExitOnCommandCompletion: cfg.exitOnCommandCompletion,
 	})
 	if err != nil {
 		if cfg.cleanupWorkingDirOnError {
@@ -373,7 +382,10 @@ func (s *Service) openTerminal(ctx context.Context, cfg openTerminalConfig) (She
 	}
 
 	rec := ShellTerminalRecord{
-		HandleID:   handle.ID,
+		HandleID: handle.ID,
+		// The resolved project, not the requested one: a session-scoped open
+		// that named no project still belongs to the session's project, and
+		// persisting "" there would leave the row unattributable on the board.
 		ProjectID:  cfg.projectID,
 		SessionID:  cfg.sessionID,
 		WorkingDir: cfg.workingDir,
@@ -391,7 +403,6 @@ func (s *Service) openTerminal(ctx context.Context, cfg openTerminalConfig) (She
 		}
 		return ShellTerminal{}, fmt.Errorf("open shell terminal %s: persist: %w", handle.ID, err)
 	}
-
 	s.log.Info("shell terminal opened", "handleId", handle.ID, "workingDir", cfg.workingDir)
 	return shellTerminalFromRecord(rec), nil
 }

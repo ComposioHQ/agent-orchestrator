@@ -212,7 +212,9 @@ export async function closeShellTerminal(handleId: string): Promise<void> {
 	const { error } = await apiClient.DELETE("/api/v1/shell-terminals/{handleId}", {
 		params: { path: { handleId } },
 	});
-	if (error) throw error;
+	// The desired postcondition is already true when the daemon no longer owns
+	// the record. Treat this as confirmed cleanup, not a failed cancellation.
+	if (error && apiErrorCode(error) !== "SHELL_TERMINAL_NOT_FOUND") throw error;
 }
 
 export function useCloseShellTerminal() {

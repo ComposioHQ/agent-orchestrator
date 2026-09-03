@@ -59,6 +59,11 @@ const {
 	},
 }));
 
+const visibilityMocks = vi.hoisted(() => ({
+	presentation: vi.fn(),
+	route: vi.fn(),
+}));
+
 vi.mock("../../lib/api-client", () => ({
 	apiClient: { GET: getMock, POST: postMock },
 	apiErrorMessage: (_error: unknown, fallback: string) => fallback,
@@ -77,6 +82,11 @@ vi.mock("../../hooks/useConversation", () => ({
 	useConversationSkills: () => ({ skills: [] }),
 	useStageAttachments: () => undefined,
 	useWorkspaceFilePaths: () => ({ paths: [], truncated: false }),
+}));
+
+vi.mock("../../hooks/useAgentSwitchVisibility", () => ({
+	useAgentSwitchPresentationVisibility: visibilityMocks.presentation,
+	useAgentSwitchRouteVisibility: visibilityMocks.route,
 }));
 
 vi.mock("./ChatWorkspace", async () => {
@@ -161,6 +171,8 @@ beforeEach(() => {
 	conversationCommandState.pendingAcceptedTurnId = undefined;
 	conversationCommandState.acknowledgeAcceptedTurn.mockReset();
 	agentSwitchState.data = [];
+	visibilityMocks.presentation.mockReset();
+	visibilityMocks.route.mockReset();
 	useUiStore.setState({ inspectorSessions: {} });
 });
 
@@ -404,6 +416,32 @@ describe("SessionChatSurface link routing", () => {
 
 		expect(screen.getByTestId("chat-agent-input")).toHaveAttribute("data-disabled", "false");
 		expect(screen.getByTestId("chat-new-work")).toHaveAttribute("data-disabled", "true");
+	});
+
+	it.each([
+		["workspace file", { workspaceFileActive: true }, undefined],
+		["conversation error", {}, "Could not load conversation"],
+	] as const)("does not acknowledge a switch presentation hidden by a %s", (_name, props, error) => {
+		agentSwitchState.data = [{
+			agentHandoffStatus: "not_attempted",
+			fromHarness: "claude-code",
+			id: "switch-hidden",
+			state: "starting_target",
+			targetHarness: "codex",
+			updatedAt: "2026-08-28T00:00:00Z",
+		}];
+		conversationState.error = error;
+		const queryClient = new QueryClient({
+			defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+		});
+
+		render(
+			<Wrapper client={queryClient}>
+				<SessionChatSurface session={session} {...props} />
+			</Wrapper>,
+		);
+
+		expect(visibilityMocks.presentation).toHaveBeenLastCalledWith(expect.objectContaining({ visible: false }));
 	});
 
 	it.each([

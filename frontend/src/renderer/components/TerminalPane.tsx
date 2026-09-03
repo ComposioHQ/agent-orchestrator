@@ -156,8 +156,10 @@ function cacheDescriptor(
 	const handleId = session?.terminalHandleId;
 	if (!session?.id || !handleId) return null;
 	const ownerKey = `session:${session.id}:worker`;
+	const generation = session.terminalGeneration ?? "";
 	return {
-		cacheKey: `${ownerKey}|handle:${handleId}`,
+		cacheKey: `${ownerKey}|handle:${handleId}|generation:${generation}`,
+		generation,
 		handleId,
 		kind: "worker",
 		ownerKey,
@@ -491,7 +493,8 @@ export function TerminalCacheProvider({
 			if (
 				entry.kind === "worker" &&
 				session &&
-				session.terminalHandleId !== entry.handleId
+				(session.terminalHandleId !== entry.handleId ||
+					(session.terminalGeneration ?? "") !== (entry.generation ?? ""))
 			) {
 				removeEntry(entry.cacheKey);
 				continue;
@@ -625,7 +628,7 @@ export function TerminalPane({
 	const terminalKey =
 		terminalTarget?.kind === "reviewer" || terminalTarget?.kind === "shell"
 			? terminalTarget.handleId
-			: (session?.terminalHandleId ?? "empty");
+			: `${session?.terminalHandleId ?? "empty"}:${session?.terminalGeneration ?? ""}`;
 
 	if (!window.ao) {
 		// A standalone shell has no agent and no branch, so it previews as a plain
