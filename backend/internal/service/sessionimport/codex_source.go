@@ -384,7 +384,7 @@ func firstCodexUserText(payload json.RawMessage) string {
 		return ""
 	}
 	for _, c := range item.Content {
-		if c.Type == "input_text" && strings.TrimSpace(c.Text) != "" {
+		if c.Type == "input_text" && !isSyntheticPrompt(c.Text) {
 			return c.Text
 		}
 	}
@@ -449,7 +449,7 @@ func scanCodexSignals(path string) (Signals, int) {
 			return true
 		}
 		text := firstCodexUserText(env.Payload)
-		if strings.TrimSpace(text) == "" {
+		if isSyntheticPrompt(text) {
 			return true
 		}
 		signals.UserMessages++

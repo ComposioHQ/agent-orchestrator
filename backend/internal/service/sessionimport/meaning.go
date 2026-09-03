@@ -51,10 +51,19 @@ func Classify(s Signals) Meaning {
 	if !s.Scanned {
 		return MeaningMeaningful
 	}
-	// Nothing was ever asked, or nothing ever came back: an empty or aborted
-	// attempt, which is the single most common kind of junk session.
-	if s.UserMessages == 0 || s.AssistantMessages == 0 {
+	// Nothing was ever typed: there is no conversation here at all.
+	if s.UserMessages == 0 {
 		return MeaningTrivial
+	}
+	// A prompt that never got a reply is an abandoned attempt — but only junk if
+	// the prompt was junk. Real transcripts include detailed requests, some with
+	// attachments, that the agent never answered; those are unfinished work and
+	// are exactly what someone would want to pick back up.
+	if s.AssistantMessages == 0 {
+		if isThrowawayPrompt(s.FirstPrompt) || !isSubstantialPrompt(s.FirstPrompt) {
+			return MeaningTrivial
+		}
+		return MeaningMeaningful
 	}
 	// A session that only ever failed to authenticate produced no work. Gated on
 	// being short and tool-free so a genuine debugging session about auth, which

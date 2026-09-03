@@ -204,17 +204,47 @@ func TestDiscoverRealHome(t *testing.T) {
 		t.Skip("set AO_IMPORT_SCAN_REAL=1 to scan the real home directory")
 	}
 	svc := NewService(nil, NewClaudeSource(), NewCodexSource())
-	got, err := svc.Discover(context.Background(), DiscoverOptions{
-		Since:          time.Now().AddDate(0, 0, -60),
-		MaxPerProvider: 25,
-	})
+	opts := DiscoverOptions{Since: time.Now().AddDate(0, 0, -60)}
+
+	// Everything on disk, so the run shows what is withheld as well as kept.
+	all, err := svc.Discover(context.Background(), withTrivial(opts))
 	if err != nil {
 		t.Logf("discover returned partial error: %v", err)
 	}
-	t.Logf("discovered %d importable sessions (last 60 days, 25/provider):", len(got))
-	for i, s := range got {
-		t.Logf("%2d. [%-11s] %-52s  msgs=%-4d  %s\n      cwd=%s\n      title=%s",
-			i+1, s.Provider, s.NativeSessionID, s.MessageCount,
-			s.LastActivity.Format("2006-01-02 15:04"), s.CWD, s.Title)
+	kept, err := svc.Discover(context.Background(), opts)
+	if err != nil {
+		t.Logf("discover returned partial error: %v", err)
 	}
+
+	counts := map[Meaning]int{}
+	for _, s := range all {
+		counts[s.Meaning]++
+	}
+	t.Logf("scanned %d conversations in the last 60 days: %d meaningful, %d ambiguous, %d trivial (withheld)",
+		len(all), counts[MeaningMeaningful], counts[MeaningAmbiguous], counts[MeaningTrivial])
+	t.Logf("%d would be listed", len(kept))
+
+	for i, s := range kept {
+		if i >= 25 {
+			t.Logf("... and %d more", len(kept)-25)
+			break
+		}
+		t.Logf("%2d. [%-11s] %-10s msgs=%-4d %s\n      cwd=%s branch=%s\n      title=%s",
+			i+1, s.Provider, s.Meaning, s.MessageCount,
+			s.LastActivity.Format("2006-01-02 15:04"), s.CWD, s.Branch, s.Title)
+	}
+
+	shown := 0
+	for _, s := range all {
+		if s.Meaning != MeaningTrivial || shown >= 15 {
+			continue
+		}
+		shown++
+		t.Logf("withheld: [%s] msgs=%-3d title=%q", s.Provider, s.MessageCount, s.Title)
+	}
+}
+
+func withTrivial(opts DiscoverOptions) DiscoverOptions {
+	opts.IncludeTrivial = true
+	return opts
 }
