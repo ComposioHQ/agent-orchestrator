@@ -716,6 +716,20 @@ describe("HarnessSettingsSection", () => {
 		expect(window.ao!.clipboard.writeText).toHaveBeenCalledWith(expect.stringContaining("permission denied"));
 	});
 
+	it("hides diagnostics after installation succeeds", async () => {
+		vi.mocked(apiClient.GET).mockImplementation(async (path) => {
+			if (path === "/api/v1/agents/readiness") return { data: catalogWithInstalled("claude-code", "codex") } as never;
+			if (path === "/api/v1/agents/installers") return { data: plans } as never;
+			if (path === "/api/v1/agents/install-jobs") return { data: { jobs: [{ target: "codex", status: "succeeded", method: "npm", output: "installed successfully" }] } } as never;
+			if (path === "/api/v1/agents/auth-plans") return { data: authPlans } as never;
+			return { data: undefined } as never;
+		});
+		renderSection();
+		const row = (await screen.findByText("Codex")).closest('[data-agent="codex"]') as HTMLElement;
+		await waitFor(() => expect(screen.getByText("2 of 27 installed")).toBeInTheDocument());
+		expect(within(row).queryByRole("button", { name: "Show diagnostics" })).not.toBeInTheDocument();
+	});
+
 	it("surfaces install job polling failures", async () => {
 		vi.mocked(apiClient.GET).mockImplementation(async (path) => {
 			if (path === "/api/v1/agents/readiness") return { data: catalog } as never;
