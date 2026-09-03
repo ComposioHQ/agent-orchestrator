@@ -229,6 +229,7 @@ func startSession(ctx context.Context, cfg config.Config, runtime runtimeselect.
 		// session spawned for a registered project materialises its worktree off
 		// that repo. Unregistered projects fail loudly.
 		RepoResolver: projectRepoResolver{store: store},
+		Logger:       log,
 	})
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("session workspace: %w", err)

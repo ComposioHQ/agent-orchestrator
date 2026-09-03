@@ -341,6 +341,10 @@ var schemaNames = map[string]string{ //nolint:gosec // Public OpenAPI type names
 	"ControllersAgentInstallerCatalogResponse":    "AgentInstallerCatalogResponse",
 	"ControllersStartAgentInstallRequest":         "StartAgentInstallRequest",
 	"ControllersAgentInstallJobsResponse":         "AgentInstallJobsResponse",
+	"AgentauthAction":                             "AgentAuthAction",
+	"AgentauthPlan":                               "AgentAuthPlan",
+	"ControllersListAgentAuthPlansResponse":       "ListAgentAuthPlansResponse",
+	"ControllersStartAgentAuthResponse":           "StartAgentAuthResponse",
 	"PortsAgentModelCatalog":                      "AgentModelsResponse",
 	"PortsAgentModelInfo":                         "AgentModelInfo",
 	"ControllersListNotificationsQuery":           "ListNotificationsQuery",
@@ -1049,6 +1053,26 @@ func shellTerminalOperations() []operation {
 
 func agentOperations() []operation {
 	return []operation{
+		{
+			method: http.MethodGet, path: "/api/v1/agents/auth-plans", id: "listAgentAuthPlans", tag: "agents",
+			summary: "Return display-safe native authentication plans for supported agents",
+			resps: []respUnit{
+				{http.StatusOK, controllers.ListAgentAuthPlansResponse{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPost, path: "/api/v1/agents/{agent}/auth", id: "startAgentAuth", tag: "agents",
+			summary:    "Open the fixed native authentication flow for one agent",
+			pathParams: []any{controllers.AgentIDParam{}},
+			resps: []respUnit{
+				{http.StatusCreated, controllers.StartAgentAuthResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
 		{
 			method: http.MethodGet, path: "/api/v1/agents", id: "listAgents", tag: "agents",
 			summary: "Return cached supported and locally installed agent adapters",

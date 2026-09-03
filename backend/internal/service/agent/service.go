@@ -449,3 +449,21 @@ func (s *Service) agent(agentID string) (agentregistry.HarnessAgent, bool) {
 	}
 	return agentregistry.HarnessAgent{}, false
 }
+
+// ResolveAgentBinary resolves one harness through its shipped adapter. This is
+// the shared boundary for features that must launch the same executable normal
+// session startup recognizes, including managed locations outside PATH.
+func (s *Service) ResolveAgentBinary(ctx context.Context, agentID string) (string, error) {
+	item, ok := s.agent(agentID)
+	if !ok {
+		return "", apierr.Invalid("AGENT_UNKNOWN", fmt.Sprintf("unknown agent %q", agentID), nil)
+	}
+	resolver, ok := item.Agent.(ports.AgentBinaryResolver)
+	if !ok {
+		return "", fmt.Errorf("agent %s: %w", agentID, ports.ErrAgentBinaryNotFound)
+	}
+	lock := s.resolverMu[agentID]
+	lock.Lock()
+	defer lock.Unlock()
+	return resolver.ResolveBinary(ctx)
+}

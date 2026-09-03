@@ -170,6 +170,7 @@ export const workspaceQueryOptions = {
 	queryKey: workspaceQueryKey,
 	queryFn: fetchWorkspaces,
 	retry: 1,
+	staleTime: 10_000,
 	refetchInterval: 15_000,
 };
 

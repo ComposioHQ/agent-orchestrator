@@ -1584,6 +1584,25 @@ func (m *Manager) RollbackSpawn(ctx context.Context, id domain.SessionID) (delet
 	return m.rollbackSpawn(ctx, id)
 }
 
+// workspacePreserved reports a teardown refusal that must not fail the kill.
+// Both cases leave the directory on disk and neither is the user's problem to
+// resolve before the session can go away: uncommitted work is deliberately
+// never force-removed, and a project whose repository has been deleted can
+// never have its worktree reclaimed by git at all. Erroring instead strands
+// the session in the sidebar forever, which is the one outcome a delete must
+// not produce.
+func workspacePreserved(err error) bool {
+	return errors.Is(err, ports.ErrWorkspaceDirty) || errors.Is(err, ports.ErrWorkspaceRepoUnavailable)
+}
+
+// killTeardownBudget bounds the detached teardown Kill runs below. Sized just
+// past the REST layer's default 60s request cap: long enough that a teardown
+// which was going to finish still finishes coherently after the caller has
+// given up, short enough that a genuinely wedged git or runtime call does not
+// hold this session's agent-operation lock (and the connection chi only
+// cancels, never aborts) for minutes on end.
+const killTeardownBudget = 90 * time.Second
+
 // Kill tears down the runtime and workspace, then records terminal intent with
 // the LCM. A workspace teardown refused by the worktree-remove safety
 // (uncommitted work) is never forced: Kill succeeds with freed=false,
@@ -1595,6 +1614,18 @@ func (m *Manager) RollbackSpawn(ctx context.Context, id domain.SessionID) (delet
 // available destroy steps are skipped so it can be cleaned up from the
 // dashboard.
 func (m *Manager) Kill(ctx context.Context, id domain.SessionID) (bool, error) {
+	// Teardown deliberately stops riding the caller's context. Kill runs a
+	// sequence (stop the agent, tear the controller down, drop the worktree,
+	// mark the row terminated) where being cancelled partway leaves a session
+	// that is dead in every way except the one the UI reads: the row still says
+	// alive while its agent is gone. That is exactly what a caller-side timeout
+	// (the REST layer caps a request at cfg.RequestTimeout) or a closed browser
+	// tab used to produce. Values still flow through, so request-scoped logging
+	// keeps working; only the cancellation is dropped, under its own ceiling so
+	// a wedged git or runtime call cannot pin the goroutine forever.
+	ctx, cancelTeardown := context.WithTimeout(context.WithoutCancel(ctx), killTeardownBudget)
+	defer cancelTeardown()
+
 	if err := m.beginAgentOperation(ctx, id, agentOperationKill); err != nil {
 		if errors.Is(err, errAgentOperationInProgress) {
 			err = ErrSwitchInProgress
@@ -1686,7 +1717,7 @@ func (m *Manager) Kill(ctx context.Context, id domain.SessionID) (bool, error) {
 	if workspaceProject {
 		cleaned, err := m.destroyWorkspaceProjectRows(ctx, workspaceProjectRows)
 		if err != nil {
-			if errors.Is(err, ports.ErrWorkspaceDirty) {
+			if workspacePreserved(err) {
 				if err := m.lcm.MarkTerminated(ctx, id); err != nil {
 					return false, fmt.Errorf("kill %s: %w", id, err)
 				}
@@ -1701,7 +1732,7 @@ func (m *Manager) Kill(ctx context.Context, id domain.SessionID) (bool, error) {
 		}
 	} else if ws.Path != "" {
 		if err := m.workspace.Destroy(ctx, ws); err != nil {
-			if errors.Is(err, ports.ErrWorkspaceDirty) {
+			if workspacePreserved(err) {
 				if err := m.store.DeleteSessionWorktrees(ctx, id); err != nil {
 					m.logger.Warn("kill: delete restore marker failed", "sessionID", id, "error", err)
 				}
@@ -3638,7 +3669,7 @@ func (m *Manager) cleanupOne(ctx context.Context, rec domain.SessionRecord, ws p
 		return "workspace teardown failed"
 	} else if ok {
 		if _, err := m.destroyWorkspaceProjectRows(ctx, rows); err != nil {
-			if !errors.Is(err, ports.ErrWorkspaceDirty) {
+			if !workspacePreserved(err) {
 				m.logger.Warn("cleanup: workspace teardown failed", "sessionID", rec.ID, "path", ws.Path, "error", err)
 			}
 			return cleanupSkipReason(err)
@@ -3647,7 +3678,7 @@ func (m *Manager) cleanupOne(ctx context.Context, rec domain.SessionRecord, ws p
 		return ""
 	}
 	if err := m.workspace.Destroy(ctx, ws); err != nil {
-		if !errors.Is(err, ports.ErrWorkspaceDirty) {
+		if !workspacePreserved(err) {
 			// The public reason stays a fixed string (the raw error carries
 			// internal filesystem paths); the full cause lands here.
 			m.logger.Warn("cleanup: workspace teardown failed", "sessionID", rec.ID, "path", ws.Path, "error", err)
@@ -3665,6 +3696,9 @@ func (m *Manager) cleanupOne(ctx context.Context, rec domain.SessionRecord, ws p
 func cleanupSkipReason(err error) string {
 	if errors.Is(err, ports.ErrWorkspaceDirty) {
 		return "workspace has uncommitted changes"
+	}
+	if errors.Is(err, ports.ErrWorkspaceRepoUnavailable) {
+		return "project repository is missing; remove worktree manually"
 	}
 	if errors.Is(err, ErrProjectNotResolvable) {
 		return "project is archived or unregistered — remove worktree manually"

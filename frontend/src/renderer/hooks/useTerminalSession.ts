@@ -47,7 +47,9 @@ export type AttachableTerminal = {
 	prepareForActivation: () => Promise<void>;
 	/** Tell Cursor Agent the live light/dark scheme (private 997 notification). */
 	notifyCursorColorScheme: () => void;
-	onUserInput: (listener: (data: string, source: TerminalUserInputSource) => void) => { dispose: () => void };
+	/** Send an explicit UI action through the same guarded path as user input. */
+	sendUserInput: (data: string, source?: TerminalUserInputSource) => boolean;
+	onUserInput: (listener: (data: string, source: TerminalUserInputSource) => boolean | void) => { dispose: () => void };
 	onResize: (listener: (size: { cols: number; rows: number }) => void) => { dispose: () => void };
 };
 
@@ -661,24 +663,24 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 		};
 		const input = terminal.onUserInput((data, source) => {
 			if (!isCurrentAttachment(generation, handle, mux)) {
-				return;
+				return false;
 			}
 			// Protocol replies must bypass visibility and ownership gates so hidden panes stay connected.
 			if (source === "protocol") {
 				if (!r.inputReady) {
 					r.queuedProtocolInputs.push(data);
-					return;
+					return true;
 				}
 				mux.sendInput(handle, data);
-				return;
+				return true;
 			}
 			if (!r.inputReady) {
-				return;
+				return false;
 			}
 			// Agent color-scheme bytes are not human input — forwarding them must not
 			// flush the replay gate or reveal the tail (that was the theme-toggle jank).
 			if (optionsRef.current.inputDisabled || optionsRef.current.isVisible === false) {
-				return;
+				return false;
 			}
 			// Input is accepted from `opened`, which lands before the replay — so a
 			// user can type while the gate still holds the burst, and their echo
@@ -688,6 +690,7 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 			if (r.replayBuffering) flushReplay();
 			else revealReplayTail();
 			mux.sendInput(handle, data);
+			return true;
 		});
 		// xterm only fires onResize when the grid actually changed; the debounce
 		// additionally collapses a drag/fullscreen/layout burst into one PTY
