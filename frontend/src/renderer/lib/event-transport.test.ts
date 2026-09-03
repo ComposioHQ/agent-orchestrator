@@ -132,6 +132,7 @@ describe("createEventTransport", () => {
 		createEventTransport(fakeQueryClient()).connect();
 		const first = cdcSources()[0];
 		const firstAccount = accountSources()[0];
+		const firstClaudeAccount = claudeAccountSources()[0];
 		const onStatusHandler = onStatusMock.mock.calls[0][0] as () => void;
 
 		getApiBaseUrlMock.mockReturnValue("http://127.0.0.1:3099");
@@ -139,9 +140,14 @@ describe("createEventTransport", () => {
 
 		expect(first.closed).toBe(true);
 		expect(firstAccount.closed).toBe(true);
+		expect(firstClaudeAccount.closed).toBe(true);
 		expect(cdcSources()).toHaveLength(2);
 		expect(accountSources()).toHaveLength(2);
+		expect(claudeAccountSources()).toHaveLength(2);
 		expect(cdcSources()[1].url).toBe("http://127.0.0.1:3099/api/v1/events");
+		expect(claudeAccountSources()[1].url).toBe(
+			"http://127.0.0.1:3099/api/v1/agents/claude-code/accounts/events",
+		);
 	});
 
 	it("does not make a new daemon port serve the dead port's backoff delay", () => {
@@ -159,12 +165,14 @@ describe("createEventTransport", () => {
 		}
 		const beforeCdcMove = cdcSources().length;
 		const beforeAccountMove = accountSources().length;
+		const beforeClaudeAccountMove = claudeAccountSources().length;
 
 		// The daemon comes back on a different port: a fresh target.
 		getApiBaseUrlMock.mockReturnValue("http://127.0.0.1:3099");
 		onStatusHandler();
 		expect(cdcSources()).toHaveLength(beforeCdcMove + 1);
 		expect(accountSources()).toHaveLength(beforeAccountMove + 1);
+		expect(claudeAccountSources()).toHaveLength(beforeClaudeAccountMove + 1);
 
 		const moved = cdcSources().at(-1)!;
 		moved.readyState = 2;
