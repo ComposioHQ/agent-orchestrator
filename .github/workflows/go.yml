@@ -46,7 +46,10 @@ jobs:
         run: go vet ./...
 
       - name: Test
-        run: go test -race ./...
+        # The SQLite migration package already runs close to Go's default
+        # 10-minute per-package limit under the race detector. Keep deadlock
+        # protection while leaving enough headroom for migration coverage.
+        run: go test -race -timeout=15m ./...
 
   lint:
     runs-on: ubuntu-latest
