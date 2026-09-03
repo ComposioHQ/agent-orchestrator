@@ -56,6 +56,7 @@ import {
 	useSessionInterfaceTransition,
 } from "../hooks/useSessionInterfaceTransition";
 import { toCloudWorkspaceSession, useCloudSessionQuery, useWorkspaceQuery } from "../hooks/useWorkspaceQuery";
+import { useCloudGate } from "../hooks/useCloudGate";
 import { useSessionHandoffMenu } from "../hooks/useSessionHandoffMenu";
 import { clearSwitchAgentState } from "../hooks/useSwitchAgent";
 import { useWindowFullScreen } from "../hooks/useWindowFullScreen";
@@ -380,6 +381,7 @@ function SessionInspectorRail({
 export function SessionView({ sessionId, cloudOrgId, projectId }: SessionViewProps) {
 	const { t } = useTranslation();
 	const queryClient = useQueryClient();
+	const { cloudEnabled } = useCloudGate();
 	const workspaceQuery = useWorkspaceQuery();
 	const workspaces = workspaceQuery.data ?? [];
 	const routedWorkspace = projectId ? workspaces.find((workspace) => workspace.id === projectId) : undefined;
@@ -1022,7 +1024,7 @@ export function SessionView({ sessionId, cloudOrgId, projectId }: SessionViewPro
 	const interfaceSwitchUnsupported = interfaceSwitch.status?.reasonCode === "CHAT_UNSUPPORTED";
 	const isCloudSession = Boolean(interfaceContext);
 	const showInterfaceSwitchAction = Boolean(
-		sessionId && !interfaceSwitchUnsupported,
+		cloudEnabled && sessionId && !interfaceSwitchUnsupported,
 	);
 	const newTerminalError = openShellTerminal.error ? apiErrorMessage(openShellTerminal.error) : undefined;
 	// Shell terminals are implemented by the loopback daemon only. A Cloud
@@ -1205,7 +1207,7 @@ export function SessionView({ sessionId, cloudOrgId, projectId }: SessionViewPro
 	// context, however, so mount the control from that context rather than from
 	// the eventually-populated row. Otherwise the very list-cache race this
 	// surface is intended to handle makes the switch disappear entirely.
-	const cloudInterfaceSwitchAction = interfaceContext ? interfaceSwitchInlineStatus : null;
+	const cloudInterfaceSwitchAction = cloudEnabled && interfaceContext ? interfaceSwitchInlineStatus : null;
 	const sessionTabActions = (
 		<SessionActionsMenu inlineStatus={isCloudSession ? undefined : interfaceSwitchInlineStatus}>
 			{interfaceSwitchMenuItem}
@@ -1662,7 +1664,7 @@ export function SessionView({ sessionId, cloudOrgId, projectId }: SessionViewPro
 									<SessionFileWorkspace annotation={fileAnnotation} path={fileTabs.activePath} sessionId={sessionId} />
 								</div>
 							) : null}
-							{interfaceTransitionHasUnacknowledgedNotice(interfaceSwitch.transition) ? (
+							{cloudEnabled && interfaceTransitionHasUnacknowledgedNotice(interfaceSwitch.transition) ? (
 								<SessionInterfaceTransitionNotice
 									transition={interfaceSwitch.transition}
 									dismissing={interfaceSwitch.acknowledgingNotice}

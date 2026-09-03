@@ -36,6 +36,7 @@ const cloudSessionQueryState = vi.hoisted(() => ({
 	data: undefined as WorkspaceSession | undefined,
 	isLoading: false,
 }));
+const cloudGateState = vi.hoisted(() => ({ cloudEnabled: true }));
 
 async function chooseSessionAction(name: string) {
 	const user = userEvent.setup();
@@ -56,6 +57,9 @@ vi.mock("../lib/platform", () => ({
 }));
 vi.mock("../hooks/useWindowFullScreen", () => ({
 	useWindowFullScreen: () => nativeFullScreenMock(),
+}));
+vi.mock("../hooks/useCloudGate", () => ({
+	useCloudGate: () => ({ cloudEnabled: cloudGateState.cloudEnabled, localEnabled: true, client: "" }),
 }));
 vi.mock("../hooks/useSessionInterfaceTransition", () => ({
 	interfaceTransitionIsActive: (transition?: { phase?: string }) =>
@@ -597,6 +601,7 @@ function render(ui: ReactNode) {
 
 describe("SessionView", () => {
 	beforeEach(() => {
+		cloudGateState.cloudEnabled = true;
 		inspectorVisibilityRenders.length = 0;
 		nativeFullScreenMock.mockReturnValue(false);
 		window.localStorage.clear();
@@ -1057,6 +1062,19 @@ describe("SessionView", () => {
 		render(<SessionView sessionId="sess-1" />);
 
 		expect(screen.getByRole("button", { name: "Switch to chat UI" })).toBeInTheDocument();
+	});
+
+	it("hides interface switching when the Cloud offering is disabled", () => {
+		cloudGateState.cloudEnabled = false;
+		interfaceTransitionState.status = { supported: true, targetMode: "chat" };
+		const session = workerSession("sess-1");
+		session.mode = "tui";
+		session.status = "idle";
+		session.activity = { state: "idle", lastActivityAt: "2026-08-06T00:00:00Z" };
+
+		render(<SessionView sessionId="sess-1" />);
+
+		expect(screen.queryByRole("button", { name: "Switch to chat UI" })).not.toBeInTheDocument();
 	});
 
 	it.each([
