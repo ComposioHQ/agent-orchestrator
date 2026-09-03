@@ -32,6 +32,11 @@ function persistDismissed() {
 // It is one plain label and a dismiss control. An explanatory sentence here
 // would be read once and then be clutter forever.
 //
+// The row itself is the hover surface, so the highlight covers the whole
+// control rather than only the half the label happens to occupy. The dismiss
+// button sits inside that surface and brightens on its own hover, which is how
+// the rest of the sidebar distinguishes a secondary action.
+//
 // It deliberately does not scan for conversations to decide whether to appear.
 // Discovery reads transcripts off disk, and paying that on every launch — for
 // every user, forever — to decide whether to show one row is the wrong trade.
@@ -64,11 +69,11 @@ export function ImportSessionsHint() {
 
 	return (
 		<div
-			className="sidebar-expanded-chrome mx-2 mb-2 flex items-center gap-1 overflow-hidden rounded-lg border border-border bg-surface-raised/50 pr-1 group-data-[collapsible=icon]:hidden"
+			className="sidebar-expanded-chrome mx-2 mb-2 flex items-center overflow-hidden rounded-lg border border-border bg-surface-raised/50 transition-colors hover:bg-interactive-hover group-data-[collapsible=icon]:hidden"
 			data-testid="import-sessions-hint"
 		>
 			<button
-				className="flex min-w-0 flex-1 items-center gap-2 rounded-md px-2.5 py-2 text-caption font-medium text-foreground transition-colors hover:bg-interactive-hover"
+				className="flex h-9 min-w-0 flex-1 items-center gap-2 px-2.5 text-caption font-medium text-foreground"
 				onClick={open}
 				type="button"
 			>
@@ -77,7 +82,7 @@ export function ImportSessionsHint() {
 			</button>
 			<button
 				aria-label={t("importSession.hintDismiss")}
-				className="shrink-0 rounded p-1 text-muted-foreground transition-colors hover:text-foreground"
+				className="flex size-9 shrink-0 items-center justify-center text-muted-foreground transition-colors hover:text-foreground"
 				onClick={dismiss}
 				type="button"
 			>
