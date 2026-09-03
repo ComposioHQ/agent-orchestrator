@@ -1885,6 +1885,122 @@ describe("startAutoUpdates", () => {
       staged: { version: "2.1.0", stagedAt, escalated: false },
     });
   });
+
+  // Regression: staging is not reversible. A completed download hands the build
+  // to Squirrel and the resulting ShipIt waits for the app to exit, so clearing
+  // autoInstallOnAppQuit afterwards does not disarm it. Switching nightly ->
+  // stable used to install the NIGHTLY on the next quit while Settings said
+  // "Restart to switch to Stable". The only way out is to stage the right build
+  // over it, so the replacement download is forced.
+  it("forces the replacement download when a channel switch strands a staged build", async () => {
+    const { module, autoUpdater, updaterEvents } = await importAutoUpdater({
+      enabled: false,
+      channel: "nightly",
+      nightlyAck: true,
+      feature: null,
+    });
+
+    await module.checkForUpdatesNow(stateDir);
+    updaterEvents.get("update-downloaded")?.({ version: "2.1.0-nightly.1" });
+    expect(module.getUpdateStatus().state).toBe("downloaded");
+
+    const autoDownloadAtCheck: boolean[] = [];
+    autoUpdater.checkForUpdates.mockImplementation(() => {
+      autoDownloadAtCheck.push(autoUpdater.autoDownload);
+      return Promise.resolve({
+        isUpdateAvailable: true,
+        updateInfo: { version: "2.0.0" },
+      });
+    });
+
+    await module.checkForUpdatesNow(stateDir, {
+      settings: { enabled: false, channel: "latest", nightlyAck: false, feature: null },
+      requestId: "channel-update-1",
+    });
+
+    // Downloaded even though automatic updates are off.
+    expect(autoDownloadAtCheck).toEqual([true]);
+    // And the stranded build stops being advertised as ready to install.
+    expect(module.getUpdateStatus().state).not.toBe("downloaded");
+    expect(module.getUpdateStatus().staged).toBeUndefined();
+  });
+
+  it("leaves auto-download off for a manual check on the staged build's own channel", async () => {
+    const { module, autoUpdater, updaterEvents } = await importAutoUpdater({
+      enabled: false,
+      channel: "nightly",
+      nightlyAck: true,
+      feature: null,
+    });
+
+    await module.checkForUpdatesNow(stateDir);
+    updaterEvents.get("update-downloaded")?.({ version: "2.1.0-nightly.1" });
+
+    const autoDownloadAtCheck: boolean[] = [];
+    autoUpdater.checkForUpdates.mockImplementation(() => {
+      autoDownloadAtCheck.push(autoUpdater.autoDownload);
+      return Promise.resolve({ isUpdateAvailable: false, updateInfo: { version: "2.1.0-nightly.1" } });
+    });
+
+    await module.checkForUpdatesNow(stateDir, {
+      settings: { enabled: false, channel: "nightly", nightlyAck: true, feature: null },
+      requestId: "manual-update-1",
+    });
+
+    expect(autoDownloadAtCheck).toEqual([false]);
+    // Nothing was stranded, so the staged build survives the re-check.
+    expect(module.getUpdateStatus().state).toBe("downloaded");
+  });
+
+  it("supersedes a pinned PR build when returning to the home channel", async () => {
+    const { module, autoUpdater, updaterEvents } = await importAutoUpdater({
+      enabled: false,
+      channel: "latest",
+      nightlyAck: false,
+      feature: { pr: 4729 },
+    });
+
+    await module.checkForUpdatesNow(stateDir);
+    expect(autoUpdater.channel).toBe("pr4729");
+    updaterEvents.get("update-downloaded")?.({ version: "2.0.0-pr4729.1" });
+
+    const autoDownloadAtCheck: boolean[] = [];
+    autoUpdater.checkForUpdates.mockImplementation(() => {
+      autoDownloadAtCheck.push(autoUpdater.autoDownload);
+      return Promise.resolve({ isUpdateAvailable: true, updateInfo: { version: "2.0.0" } });
+    });
+
+    await module.returnToHome(stateDir, "feature-update-1");
+
+    expect(autoUpdater.channel).toBe("latest");
+    expect(autoDownloadAtCheck).toEqual([true]);
+    expect(module.getUpdateStatus().staged).toBeUndefined();
+  });
+
+  it("keeps the escalation timer off once a stranded build is discarded", async () => {
+    vi.useFakeTimers();
+    const setIntervalSpy = vi.spyOn(globalThis, "setInterval");
+    const { module, updaterEvents } = await importAutoUpdater({
+      enabled: false,
+      channel: "nightly",
+      nightlyAck: true,
+      feature: null,
+    });
+
+    await module.checkForUpdatesNow(stateDir);
+    updaterEvents.get("update-downloaded")?.({ version: "2.1.0-nightly.1" });
+    const armed = setIntervalSpy.mock.results.length;
+    expect(armed).toBeGreaterThan(0);
+
+    await module.checkForUpdatesNow(stateDir, {
+      settings: { enabled: false, channel: "latest", nightlyAck: false, feature: null },
+    });
+
+    // The discarded build must not keep an escalation loop alive nudging the
+    // user to restart into a channel they left.
+    expect(module.getUpdateStatus().staged).toBeUndefined();
+    expect(module.getUpdateStatus().stagedAt).toBeUndefined();
+  });
 });
 
 describe("returnToHome", () => {

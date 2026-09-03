@@ -88,6 +88,10 @@ let eventsWired = false;
 // re-evaluated every 30 minutes while the update sits uninstalled. stateDir is
 // captured from whichever entry point wired the events (both receive it).
 let stagedVersion: string | undefined;
+// Which feed channel the staged build came from. A build staged from one
+// channel is already armed with the OS installer, so switching channels has
+// to notice that it no longer belongs (see stagedBuildIsStale).
+let stagedChannel: string | undefined;
 let stagedAtMs: number | undefined;
 let stagedEscalated = false;
 let stagedRequestId: string | undefined;
@@ -400,6 +404,54 @@ function stagedStamp(): Pick<UpdateStatus, "staged"> {
       escalated: stagedEscalated,
     },
   };
+}
+
+/** The feed channel a settings object resolves to. Mirrors configureFeed. */
+function effectiveChannel(
+  settings: Pick<UpdateSettings, "channel" | "feature">,
+): string {
+  return settings.feature ? `pr${settings.feature.pr}` : settings.channel;
+}
+
+/**
+ * True when the staged build belongs to a channel the user is no longer on.
+ *
+ * This matters because staging is not reversible. On macOS a completed download
+ * hands the build to Squirrel (MacUpdater calls nativeUpdater.checkForUpdates()
+ * when autoInstallOnAppQuit is set), and the resulting ShipIt process sits
+ * waiting for the app to exit. Clearing autoInstallOnAppQuit afterwards does not
+ * disarm it: quitting still installs that build. Switching from nightly to
+ * stable therefore used to install the NIGHTLY on the next quit, while Settings
+ * said "Restart to switch to Stable".
+ *
+ * The only reliable way out is to stage the correct build over it, because each
+ * completed download issues a fresh install request that supersedes the last.
+ * So a stale staged build forces a download on the next check regardless of the
+ * automatic-download preference.
+ */
+function stagedBuildIsStale(
+  settings: Pick<UpdateSettings, "channel" | "feature">,
+): boolean {
+  return (
+    stagedAtMs !== undefined &&
+    stagedChannel !== undefined &&
+    stagedChannel !== effectiveChannel(settings)
+  );
+}
+
+/**
+ * Drop our tracking of a staged build that no longer belongs to the selected
+ * channel, so the sidebar stops offering to restart into it. The build itself
+ * stays armed until the replacement finishes downloading; that window is why
+ * the replacement download is forced rather than left to the user's preference.
+ */
+function discardStagedBuild(): void {
+  stagedVersion = undefined;
+  stagedChannel = undefined;
+  stagedAtMs = undefined;
+  stagedEscalated = false;
+  stagedRequestId = undefined;
+  stopEscalationTimer();
 }
 
 /** A build is downloaded and waiting to install, and we know which one. */
@@ -735,6 +787,7 @@ function wireUpdaterEvents(): void {
     // could never fire, because the clock is only ever minutes old.
     const restaged = stagedAtMs !== undefined && info?.version === stagedVersion;
     stagedVersion = info?.version;
+    stagedChannel = autoUpdater.channel ?? undefined;
     if (!restaged) {
       stagedAtMs = Date.now();
       stagedEscalated = false;
@@ -861,7 +914,13 @@ async function runAutomaticUpdateCheck(
       // user went without quitting — 175 MB of copying and a ShipIt spawn every
       // 15 minutes on nightly. Anything genuinely newer than the staged build is
       // still fetched, below.
-      autoUpdater.autoDownload = settings.enabled && !hasStagedBuild();
+      // A staged build from a channel the user has left is already armed with
+      // the OS installer; the replacement must be fetched even when automatic
+      // downloading is off, or quitting installs the build they moved away from.
+      const staleStaged = stagedBuildIsStale(settings);
+      if (staleStaged) discardStagedBuild();
+      autoUpdater.autoDownload =
+        staleStaged || (settings.enabled && !hasStagedBuild());
       applyInstallOnQuitPolicy();
       // Only nightly resolves a direct feed. Skipping the await entirely on the
       // other channels keeps this check's event ordering exactly as it was.
@@ -1026,7 +1085,11 @@ export async function checkForUpdatesNow(
         );
         reconcileAutomaticUpdateSchedule(stateDir, settings);
         configureFeed(settings);
-        autoUpdater.autoDownload = false;
+        // Same reason as the automatic path: a channel switch leaves the old
+        // channel's build armed, and only staging the new one over it helps.
+        const staleStaged = stagedBuildIsStale(settings);
+        if (staleStaged) discardStagedBuild();
+        autoUpdater.autoDownload = staleStaged;
         applyInstallOnQuitPolicy();
         broadcastUpdaterStatus({ state: "checking" });
         const restoreFeed = await configureDirectNightlyFeed(settings);
@@ -1095,7 +1158,11 @@ export async function returnToHome(
         const settings = await reconcileAndPersist(stateDir, cleared);
         reconcileAutomaticUpdateSchedule(stateDir, settings);
         configureFeed(settings);
-        autoUpdater.autoDownload = false;
+        // Leaving a pinned PR build is the same class of switch: its build is
+        // armed and has to be superseded, not merely forgotten.
+        const staleStaged = stagedBuildIsStale(settings);
+        if (staleStaged) discardStagedBuild();
+        autoUpdater.autoDownload = staleStaged;
         applyInstallOnQuitPolicy();
         broadcastUpdaterStatus({ state: "checking" });
         settleCheckStatus(await autoUpdater.checkForUpdates());
