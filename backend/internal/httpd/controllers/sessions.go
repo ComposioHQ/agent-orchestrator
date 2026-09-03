@@ -1205,7 +1205,7 @@ func (c *SessionsController) exitAgent(w http.ResponseWriter, r *http.Request) {
 	envelope.WriteJSON(w, http.StatusOK, ExitAgentResponse{
 		OK:        true,
 		SessionID: sessionID(r),
-		Session:   sessionView(out.Session),
+		Session:   sessionView(r, out.Session),
 	})
 }
 
