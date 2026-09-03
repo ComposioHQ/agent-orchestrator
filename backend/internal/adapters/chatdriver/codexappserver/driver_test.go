@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strconv"
 	"strings"
@@ -40,11 +41,12 @@ type scriptedServer struct {
 	t        *testing.T
 	toClient io.WriteCloser
 
-	mu        sync.Mutex
-	responses map[string]string
-	failures  map[string]string
-	seen      []frame
-	seenCh    chan frame
+	mu                sync.Mutex
+	responses         map[string]string
+	responseSequences map[string][]string
+	failures          map[string]string
+	seen              []frame
+	seenCh            chan frame
 }
 
 // replyError scripts a JSON-RPC error for a method, which is how a test exercises a
@@ -59,6 +61,12 @@ func (s *scriptedServer) respondTo(method, resultJSON string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.responses[method] = resultJSON
+}
+
+func (s *scriptedServer) respondSequence(method string, results ...string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.responseSequences[method] = append([]string(nil), results...)
 }
 
 func (s *scriptedServer) push(raw string) {
@@ -130,8 +138,9 @@ func newTestDriver(t *testing.T) (*Driver, *scriptedServer) {
 			"turn/interrupt": `{}`,
 			"thread/resume":  `{"thread":{"id":"thread-1"}}`,
 		},
-		failures: map[string]string{},
-		seenCh:   make(chan frame, 64),
+		responseSequences: map[string][]string{},
+		failures:          map[string]string{},
+		seenCh:            make(chan frame, 64),
 	}
 
 	go func() {
@@ -152,6 +161,10 @@ func newTestDriver(t *testing.T) (*Driver, *scriptedServer) {
 			srv.mu.Lock()
 			srv.seen = append(srv.seen, f)
 			reply, known := srv.responses[f.Method]
+			if sequence := srv.responseSequences[f.Method]; len(sequence) > 0 {
+				reply, known = sequence[0], true
+				srv.responseSequences[f.Method] = sequence[1:]
+			}
 			failure, refused := srv.failures[f.Method]
 			srv.mu.Unlock()
 
@@ -720,13 +733,15 @@ func TestResumeRequiresStoredThreadID(t *testing.T) {
 	}
 }
 
-func TestProbeReportsAuthRequired(t *testing.T) {
-	d := &Driver{
-		plugin: fakePlugin{bin: "codex", authStatus: ports.AgentAuthStatusUnauthorized},
-		log:    slog.New(slog.DiscardHandler),
+func TestProbeIgnoresAmbientAuthStatus(t *testing.T) {
+	d, _ := newTestDriver(t)
+	d.plugin = fakePlugin{bin: "codex", authStatus: ports.AgentAuthStatusUnauthorized}
+	caps, err := d.Probe(context.Background())
+	if err != nil {
+		t.Fatalf("Probe: %v", err)
 	}
-	if _, err := d.Probe(context.Background()); !errors.Is(err, ports.ErrChatAuthRequired) {
-		t.Fatalf("err = %v, want ErrChatAuthRequired", err)
+	if missing := ports.MissingProductionCapabilities(caps); len(missing) != 0 {
+		t.Fatalf("codex is missing production capabilities: %v", missing)
 	}
 }
 
@@ -1099,6 +1114,53 @@ func TestListModelsKeepsCatalogAndUsesThreadEffort(t *testing.T) {
 	}
 	if models[0].DefaultEffort != "xhigh" {
 		t.Errorf("default effort = %q, want the thread's xhigh", models[0].DefaultEffort)
+	}
+}
+
+func TestDiscoverModelsReadsCatalogWithoutOpeningThread(t *testing.T) {
+	d, srv := newTestDriver(t)
+	srv.reply("model/list", `{"data":[{"id":"gpt-visible","displayName":"GPT Visible","isDefault":true,"hidden":false},{"id":"gpt-hidden","displayName":"GPT Hidden","hidden":true}]}`)
+
+	models, err := d.DiscoverModels(context.Background(), "/tmp/ws", map[string]string{"CODEX_HOME": "/tmp/codex-home"})
+	if err != nil {
+		t.Fatalf("DiscoverModels: %v", err)
+	}
+	if len(models) != 1 || models[0].ID != "gpt-visible" || models[0].DisplayName != "GPT Visible" || !models[0].Default {
+		t.Fatalf("models = %#v", models)
+	}
+	if srv.sentMethod("thread/start") {
+		t.Fatal("model discovery opened a provider thread")
+	}
+}
+
+func TestDiscoverModelsDrainsEveryModelListPage(t *testing.T) {
+	d, srv := newTestDriver(t)
+	srv.respondSequence("model/list",
+		`{"data":[{"id":"gpt-first","displayName":"First"}],"nextCursor":"page-2"}`,
+		`{"data":[{"id":"gpt-second","displayName":"Second"}]}`,
+	)
+
+	models, err := d.DiscoverModels(context.Background(), "/tmp/ws", nil)
+	if err != nil {
+		t.Fatalf("DiscoverModels: %v", err)
+	}
+	if len(models) != 2 {
+		t.Fatalf("models = %#v, want two pages", models)
+	}
+	if got := []string{models[0].ID, models[1].ID}; !reflect.DeepEqual(got, []string{"gpt-first", "gpt-second"}) {
+		t.Fatalf("model ids = %v, want both pages", got)
+	}
+	second := srv.awaitFrame(func(f frame) bool {
+		if f.Method != "model/list" {
+			return false
+		}
+		var params struct {
+			Cursor string `json:"cursor"`
+		}
+		return json.Unmarshal(f.Params, &params) == nil && params.Cursor == "page-2"
+	})
+	if second.Method != "model/list" {
+		t.Fatalf("second page request = %#v", second)
 	}
 }
 

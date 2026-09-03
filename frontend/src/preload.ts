@@ -22,9 +22,18 @@ import type {
 	OpenSessionTargetResult,
 } from "./shared/editor-handoff";
 import type { TelemetryBootstrap } from "./shared/telemetry";
+import {
+	TELEMETRY_CLEAR_RENDERER_QUEUES_CHANNEL,
+	TELEMETRY_POLICY_CHANGED_CHANNEL,
+	TELEMETRY_RENDERER_QUEUES_CLEARED_CHANNEL,
+	type RendererTelemetryCaptureInput,
+	type RendererTelemetryQueuePurgeRequest,
+	type TelemetryPolicyView,
+} from "./shared/telemetry-policy";
 import type { MigrationState } from "./main/app-state";
 import type { UpdateSettings, UpdateStatus } from "./main/update-settings";
 import type { CloudAccount } from "./shared/cloud-account";
+import type { LocalLoginInput, LocalRegisterInput } from "./main/cloud-auth-local";
 import type {
 	CloudCpProxyRequestInit,
 	CloudCpProxyResponse,
@@ -34,6 +43,10 @@ import type { UpdateOutcome } from "./shared/update-telemetry";
 import type { UiSettings } from "./main/ui-settings";
 import type { UpdateCheckOptions } from "./main/auto-updater";
 import type { FeatureBuild } from "./main/feature-builds";
+import {
+	AGENT_SWITCH_VISIBILITY_IPC_CHANNEL,
+	type AgentSwitchVisibilitySignalBody,
+} from "./shared/agent-switch-observability";
 import type {
 	BrowserAnnotationCancelPayload,
 	BrowserAnnotationModeInput,
@@ -117,6 +130,30 @@ ipcRenderer.on("app:openFolderPath", (_event, path: string) => {
 		bufferedOpenFolderPath = path;
 	}
 });
+
+let currentTelemetryPolicy: TelemetryPolicyView | null = null;
+const telemetryPolicyListeners = new Set<(view: TelemetryPolicyView) => void>();
+const rendererQueuePurgeListeners = new Set<() => void | Promise<void>>();
+ipcRenderer.on(TELEMETRY_POLICY_CHANGED_CHANNEL, (_event, view: TelemetryPolicyView) => {
+	currentTelemetryPolicy = view;
+	for (const listener of telemetryPolicyListeners) listener(view);
+});
+ipcRenderer.on(TELEMETRY_CLEAR_RENDERER_QUEUES_CHANNEL, (_event, request: unknown) => {
+	if (!isRendererQueuePurgeRequest(request)) return;
+	void Promise.allSettled([...rendererQueuePurgeListeners].map((listener) => Promise.resolve().then(listener)))
+		.then((results) => {
+			ipcRenderer.send(TELEMETRY_RENDERER_QUEUES_CLEARED_CHANNEL, {
+				requestId: request.requestId,
+				ok: results.length > 0 && results.every((result) => result.status === "fulfilled"),
+			});
+		});
+});
+
+function isRendererQueuePurgeRequest(value: unknown): value is RendererTelemetryQueuePurgeRequest {
+	if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+	const request = value as Record<string, unknown>;
+	return Object.keys(request).length === 1 && typeof request.requestId === "string" && request.requestId.length <= 64;
+}
 
 const api = {
 	app: {
@@ -289,7 +326,29 @@ const api = {
 			ipcRenderer.invoke("editorHandoff:open", input) as Promise<OpenSessionTargetResult>,
 	},
 	telemetry: {
-		getBootstrap: () => ipcRenderer.invoke("telemetry:getBootstrap") as Promise<TelemetryBootstrap | null>,
+		getBootstrap: async () => {
+			const bootstrap = await ipcRenderer.invoke("telemetry:getBootstrap") as TelemetryBootstrap | null;
+			if (bootstrap && currentTelemetryPolicy) currentTelemetryPolicy = { ...currentTelemetryPolicy, eventsEnabled: bootstrap.eventsEnabled, consentGeneration: bootstrap.consentGeneration };
+			return bootstrap;
+		},
+		getPolicy: async () => {
+			const view = await ipcRenderer.invoke("telemetry:getPolicy") as TelemetryPolicyView;
+			currentTelemetryPolicy = view;
+			for (const listener of telemetryPolicyListeners) listener(view);
+			return view;
+		},
+		setEventsEnabled: (eventsEnabled: boolean) => ipcRenderer.invoke("telemetry:setEventsEnabled", { eventsEnabled, expectedGeneration: currentTelemetryPolicy?.consentGeneration ?? "" }) as Promise<TelemetryPolicyView>,
+		onPolicy: (listener: (view: TelemetryPolicyView) => void) => { telemetryPolicyListeners.add(listener); if (currentTelemetryPolicy) listener(currentTelemetryPolicy); return () => telemetryPolicyListeners.delete(listener); },
+		onClearQueues: (listener: () => void | Promise<void>) => { rendererQueuePurgeListeners.add(listener); return () => rendererQueuePurgeListeners.delete(listener); },
+		capture: (input: RendererTelemetryCaptureInput) => {
+			if (!currentTelemetryPolicy) return Promise.resolve(false);
+			return ipcRenderer.invoke("telemetry:capture", { ...input, consentGeneration: currentTelemetryPolicy.consentGeneration }) as Promise<boolean>;
+		},
+		signalAgentSwitchVisibility: (signal: AgentSwitchVisibilitySignalBody) => {
+			if (!currentTelemetryPolicy) return false;
+			ipcRenderer.send(AGENT_SWITCH_VISIBILITY_IPC_CHANNEL, { consentGeneration: currentTelemetryPolicy.consentGeneration, signal });
+			return true;
+		},
 	},
 	browser: {
 		nativeCompositionEnabled: true,
@@ -496,6 +555,15 @@ const api = {
 		getSession: () => ipcRenderer.invoke("cloud:getSession") as Promise<CloudAccount | null>,
 		signIn: () => ipcRenderer.invoke("cloud:signIn") as Promise<void>,
 		signOut: () => ipcRenderer.invoke("cloud:signOut") as Promise<void>,
+		// Dev-only local (email/password) sign-in against a loopback Docker CP.
+		// Whether the surface is offered is decided in main (unpackaged/dev +
+		// loopback); the renderer only mirrors it for UI visibility.
+		localAuthAvailable: (cpUrl: string) =>
+			ipcRenderer.invoke("cloud:localAuthAvailable", cpUrl) as Promise<boolean>,
+		localRegister: (input: LocalRegisterInput) =>
+			ipcRenderer.invoke("cloud:localRegister", input) as Promise<CloudAccount>,
+		localLogin: (input: LocalLoginInput) =>
+			ipcRenderer.invoke("cloud:localLogin", input) as Promise<CloudAccount>,
 		onSessionChanged: (listener: (account: CloudAccount | null) => void) => {
 			const wrapped = (_event: Electron.IpcRendererEvent, account: CloudAccount | null) => listener(account);
 			ipcRenderer.on("cloud:sessionChanged", wrapped);

@@ -4801,6 +4801,14 @@ html[data-native-browser-composition="true"] .browser-popout-backdrop {
 /* Connect Mobile: the pairing QR and the wait before it. The placeholder is a
    real QR carrying decoy data, so it can dissolve into the finished code
    instead of being swapped for it. See PairingQr.tsx. */
+/* The library's SVG includes a generous quiet zone. Enlarge the artwork
+   inside the fixed card so the preview and the finished code share the same
+   visible bounds while the card still supplies the clipping edge. */
+.ao-qr-visual > svg {
+	transform: scale(0.885);
+	transform-origin: center;
+}
+
 /* A triangular ramp occupying half the cycle. With four layers offset by a
    quarter cycle, two are always mid-ramp in opposite directions, so the
    composite dissolves continuously instead of swapping one code for the next. */
@@ -4840,13 +4848,11 @@ html[data-native-browser-composition="true"] .browser-popout-backdrop {
 @keyframes ao-qr-resolve-in {
 	from {
 		opacity: 0;
-		filter: blur(3px);
-		transform: scale(0.985);
+		filter: blur(4px);
 	}
 	to {
 		opacity: 1;
 		filter: blur(0);
-		transform: none;
 	}
 }
 
@@ -4868,7 +4874,7 @@ html[data-native-browser-composition="true"] .browser-popout-backdrop {
 
 /* The real code has arrived: stop cycling and clear away together. */
 .ao-qr-decoy--settling {
-	animation: ao-qr-decoy-settle 900ms ease-out forwards;
+	animation: ao-qr-decoy-settle 260ms ease-out forwards;
 }
 
 .ao-qr-resolved {
