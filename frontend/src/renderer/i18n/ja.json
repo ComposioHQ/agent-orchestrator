@@ -1545,7 +1545,7 @@
 	"importSession.title": "セッションをインポート",
 	"importSession.description": "このマシンにある Claude Code や Codex の会話を、再開できるセッションとして AO に取り込みます。",
 	"importSession.descriptionProject": "このプロジェクトのフォルダにある Claude Code や Codex の会話を、再開できるセッションとして AO に取り込みます。",
-	"importSession.openFromWelcome": "他のエージェントからセッションをインポート",
+	"importSession.openFromWelcome": "セッションをインポート",
 	"importSession.close": "インポートダイアログを閉じる",
 	"importSession.loading": "会話を検索しています…",
 	"importSession.errorTitle": "会話を読み込めませんでした",
@@ -1561,8 +1561,16 @@
 	"importSession.yesterday": "昨日",
 	"importSession.daysAgo_one": "{{count}} 日前",
 	"importSession.daysAgo_other": "{{count}} 日前",
-	"importSession.hintBody": "既存の Claude Code や Codex の会話を AO に取り込みましょう。",
-	"importSession.hintAction": "確認する",
 	"importSession.hintDismiss": "インポートの提案を閉じる",
-	"importSession.hintTitle": "他のエージェントから移行しますか？"
+	"importSession.hintTitle": "セッションをインポート",
+	"importSession.importAll": "すべてインポート",
+	"importSession.importingProgress": "{{total}} 件中 {{done}} 件をインポート中…",
+	"importSession.stop": "停止",
+	"importSession.done": "完了",
+	"importSession.available_one": "インポート可能 {{count}} 件",
+	"importSession.available_other": "インポート可能 {{count}} 件",
+	"importSession.importedCount_one": "{{count}} 件のセッションをインポートしました",
+	"importSession.importedCount_other": "{{count}} 件のセッションをインポートしました",
+	"importSession.failedCount_one": "{{count}} 件失敗",
+	"importSession.failedCount_other": "{{count}} 件失敗"
 }

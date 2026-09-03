@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useCallback, useRef, useState } from "react";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
 import { workspaceQueryKey } from "./useWorkspaceQuery";
 
@@ -64,4 +65,74 @@ export function useImportSession() {
 			void queryClient.invalidateQueries({ queryKey: importableSessionsQueryKey });
 		},
 	});
+}
+
+
+// ImportAllProgress is the running state of a bulk import.
+export interface ImportAllProgress {
+	done: number;
+	total: number;
+	imported: number;
+	failed: number;
+}
+
+async function importOne(input: ImportSessionInput): Promise<void> {
+	const { error } = await apiClient.POST("/api/v1/sessions/import", { body: input });
+	if (error) throw new Error(apiErrorMessage(error, "Import failed"));
+}
+
+// useImportAllSessions imports every listed conversation in one action, so a
+// user arriving with a hundred threads does not have to click a hundred times.
+//
+// It runs one at a time rather than in parallel: each import creates a git
+// worktree and starts an agent, and firing those off together would hammer the
+// machine for no gain. A conversation that fails is counted and stepped over,
+// because one bad transcript must not strand the rest of the run.
+//
+// Nothing is queued server-side. The list is already on the client, and
+// importing is idempotent, so a stopped or interrupted run simply resumes where
+// it left off the next time.
+export function useImportAllSessions() {
+	const queryClient = useQueryClient();
+	const [progress, setProgress] = useState<ImportAllProgress | null>(null);
+	const cancelled = useRef(false);
+
+	const stop = useCallback(() => {
+		cancelled.current = true;
+	}, []);
+
+	const importAll = useCallback(
+		async (sessions: ImportableSession[]) => {
+			const pending = sessions.filter((session) => !session.alreadyImported);
+			if (pending.length === 0) return;
+
+			cancelled.current = false;
+			let imported = 0;
+			let failed = 0;
+			setProgress({ done: 0, total: pending.length, imported: 0, failed: 0 });
+
+			for (const [index, session] of pending.entries()) {
+				if (cancelled.current) break;
+				try {
+					await importOne({ provider: session.provider, nativeSessionId: session.nativeSessionId });
+					imported += 1;
+				} catch {
+					// Counted, not surfaced one by one: a run of a hundred cannot
+					// stop to explain each failure. The summary reports the total.
+					failed += 1;
+				}
+				setProgress({ done: index + 1, total: pending.length, imported, failed });
+			}
+
+			// One refresh at the end. Invalidating per conversation would refetch
+			// the whole workspace on every step of a long run.
+			void queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
+			void queryClient.invalidateQueries({ queryKey: importableSessionsQueryKey });
+		},
+		[queryClient],
+	);
+
+	const clear = useCallback(() => setProgress(null), []);
+
+	return { importAll, stop, clear, progress, running: progress !== null && progress.done < progress.total };
 }

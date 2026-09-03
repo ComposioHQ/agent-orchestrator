@@ -1545,7 +1545,7 @@
 	"importSession.title": "세션 가져오기",
 	"importSession.description": "이 컴퓨터에 있는 Claude Code 또는 Codex 대화를 이어서 진행할 수 있는 세션으로 AO에 가져옵니다.",
 	"importSession.descriptionProject": "이 프로젝트 폴더에 있는 Claude Code 또는 Codex 대화를 이어서 진행할 수 있는 세션으로 AO에 가져옵니다.",
-	"importSession.openFromWelcome": "다른 에이전트에서 세션 가져오기",
+	"importSession.openFromWelcome": "세션 가져오기",
 	"importSession.close": "가져오기 대화 상자 닫기",
 	"importSession.loading": "대화를 검색하는 중…",
 	"importSession.errorTitle": "대화를 불러오지 못했습니다",
@@ -1561,8 +1561,16 @@
 	"importSession.yesterday": "어제",
 	"importSession.daysAgo_one": "{{count}}일 전",
 	"importSession.daysAgo_other": "{{count}}일 전",
-	"importSession.hintBody": "기존 Claude Code 및 Codex 대화를 AO로 가져오세요.",
-	"importSession.hintAction": "살펴보기",
 	"importSession.hintDismiss": "가져오기 제안 닫기",
-	"importSession.hintTitle": "다른 에이전트에서 오셨나요?"
+	"importSession.hintTitle": "세션 가져오기",
+	"importSession.importAll": "모두 가져오기",
+	"importSession.importingProgress": "{{total}}개 중 {{done}}개 가져오는 중…",
+	"importSession.stop": "중지",
+	"importSession.done": "완료",
+	"importSession.available_one": "가져올 항목 {{count}}개",
+	"importSession.available_other": "가져올 항목 {{count}}개",
+	"importSession.importedCount_one": "세션 {{count}}개를 가져왔습니다",
+	"importSession.importedCount_other": "세션 {{count}}개를 가져왔습니다",
+	"importSession.failedCount_one": "{{count}}개 실패",
+	"importSession.failedCount_other": "{{count}}개 실패"
 }

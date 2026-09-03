@@ -25,9 +25,12 @@ function persistDismissed() {
 	}
 }
 
-// ImportSessionsHint tells someone arriving from Claude Code or Codex that the
-// conversations already on their machine can be brought into AO. Without it the
-// feature is invisible to anyone past the first-run welcome screen.
+// ImportSessionsHint is the sidebar entry for bringing conversations that are
+// already on this machine into AO. Without it the feature is invisible to
+// anyone past the first-run welcome screen.
+//
+// It is one plain label and a dismiss control. An explanatory sentence here
+// would be read once and then be clutter forever.
 //
 // It deliberately does not scan for conversations to decide whether to appear.
 // Discovery reads transcripts off disk, and paying that on every launch — for
@@ -61,31 +64,25 @@ export function ImportSessionsHint() {
 
 	return (
 		<div
-			className="sidebar-expanded-chrome mx-2 mb-2 rounded-lg border border-border bg-surface-raised/50 px-2.5 py-2 group-data-[collapsible=icon]:hidden"
+			className="sidebar-expanded-chrome mx-2 mb-2 flex items-center gap-1 rounded-lg border border-border bg-surface-raised/50 pl-2.5 pr-1 group-data-[collapsible=icon]:hidden"
 			data-testid="import-sessions-hint"
 		>
-			<div className="flex items-start gap-2">
-				<Download aria-hidden="true" className="mt-0.5 size-icon-sm shrink-0 text-muted-foreground" />
-				<div className="min-w-0 flex-1">
-					<p className="text-caption font-medium leading-4 text-foreground">{t("importSession.hintTitle")}</p>
-					<p className="mt-0.5 text-micro leading-4 text-muted-foreground">{t("importSession.hintBody")}</p>
-					<button
-						className="mt-1.5 text-micro font-medium text-accent hover:underline"
-						onClick={open}
-						type="button"
-					>
-						{t("importSession.hintAction")}
-					</button>
-				</div>
-				<button
-					aria-label={t("importSession.hintDismiss")}
-					className="shrink-0 rounded p-0.5 text-muted-foreground transition-colors hover:text-foreground"
-					onClick={dismiss}
-					type="button"
-				>
-					<X aria-hidden="true" className="size-icon-sm" />
-				</button>
-			</div>
+			<button
+				className="flex min-w-0 flex-1 items-center gap-2 py-2 text-caption font-medium text-foreground transition-colors hover:text-accent"
+				onClick={open}
+				type="button"
+			>
+				<Download aria-hidden="true" className="size-icon-sm shrink-0 text-muted-foreground" />
+				<span className="truncate">{t("importSession.hintTitle")}</span>
+			</button>
+			<button
+				aria-label={t("importSession.hintDismiss")}
+				className="shrink-0 rounded p-1 text-muted-foreground transition-colors hover:text-foreground"
+				onClick={dismiss}
+				type="button"
+			>
+				<X aria-hidden="true" className="size-icon-sm" />
+			</button>
 		</div>
 	);
 }

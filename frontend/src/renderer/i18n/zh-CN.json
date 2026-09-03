@@ -1527,7 +1527,7 @@
 	"importSession.title": "导入会话",
 	"importSession.description": "将本机上已有的 Claude Code 或 Codex 对话导入 AO，作为可继续的会话。",
 	"importSession.descriptionProject": "将此项目文件夹中的 Claude Code 或 Codex 对话导入 AO，作为可继续的会话。",
-	"importSession.openFromWelcome": "从其他代理导入会话",
+	"importSession.openFromWelcome": "导入会话",
 	"importSession.close": "关闭导入对话框",
 	"importSession.loading": "正在查找对话…",
 	"importSession.errorTitle": "无法加载对话",
@@ -1543,8 +1543,16 @@
 	"importSession.yesterday": "昨天",
 	"importSession.daysAgo_one": "{{count}} 天前",
 	"importSession.daysAgo_other": "{{count}} 天前",
-	"importSession.hintBody": "把你已有的 Claude Code 和 Codex 对话导入 AO。",
-	"importSession.hintAction": "去看看",
 	"importSession.hintDismiss": "忽略导入建议",
-	"importSession.hintTitle": "从其他代理迁移过来？"
+	"importSession.hintTitle": "导入会话",
+	"importSession.importAll": "全部导入",
+	"importSession.importingProgress": "正在导入第 {{done}} / {{total}} 个…",
+	"importSession.stop": "停止",
+	"importSession.done": "完成",
+	"importSession.available_one": "{{count}} 个待导入",
+	"importSession.available_other": "{{count}} 个待导入",
+	"importSession.importedCount_one": "已导入 {{count}} 个会话",
+	"importSession.importedCount_other": "已导入 {{count}} 个会话",
+	"importSession.failedCount_one": "{{count}} 个失败",
+	"importSession.failedCount_other": "{{count}} 个失败"
 }

@@ -2,7 +2,9 @@ import { Check, Download, LoaderCircle, TriangleAlert } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import {
 	type ImportableSession,
+	type ImportAllProgress,
 	useImportableSessions,
+	useImportAllSessions,
 	useImportSession,
 } from "../hooks/useImportableSessions";
 import { agentLabel } from "../lib/agent-options";
@@ -30,6 +32,7 @@ export function ImportSessionList({ projectId, active = true, onImported }: Impo
 	const { t } = useTranslation();
 	const query = useImportableSessions(IMPORT_WINDOW_DAYS, active, projectId);
 	const importMutation = useImportSession();
+	const bulk = useImportAllSessions();
 
 	const sessions = query.data ?? [];
 	const pendingId = importMutation.isPending ? importMutation.variables?.nativeSessionId : undefined;
@@ -87,9 +90,19 @@ export function ImportSessionList({ projectId, active = true, onImported }: Impo
 	// folder is the identity a user recognizes, and there is no project to set
 	// up first. Importing registers the folder itself.
 	const folders = groupByFolder(sessions);
+	const remaining = sessions.filter((session) => !session.alreadyImported).length;
 
 	return (
 		<>
+			<ImportAllBar
+				remaining={remaining}
+				progress={bulk.progress}
+				running={bulk.running}
+				disabled={importMutation.isPending}
+				onImportAll={() => void bulk.importAll(sessions)}
+				onStop={bulk.stop}
+				onDismiss={bulk.clear}
+			/>
 			<div className="flex flex-col gap-4">
 				{folders.map((folder) => (
 					<section key={folder.path} aria-label={folder.path}>
@@ -107,7 +120,7 @@ export function ImportSessionList({ projectId, active = true, onImported }: Impo
 									key={`${session.provider}:${session.nativeSessionId}`}
 									session={session}
 									pending={pendingId === session.nativeSessionId}
-									disabled={importMutation.isPending}
+									disabled={importMutation.isPending || bulk.running}
 									onImport={() => handleImport(session)}
 								/>
 							))}
@@ -198,6 +211,77 @@ function relativeDay(iso: string): { key: RecencyKey; count: number } | null {
 	if (days <= 0) return { key: "importSession.today", count: 0 };
 	if (days === 1) return { key: "importSession.yesterday", count: 1 };
 	return { key: "importSession.daysAgo", count: days };
+}
+
+// ImportAllBar is the one-click path: someone arriving with a hundred threads
+// should not have to press Import a hundred times. It doubles as the run's
+// progress and its result, so the outcome is reported where the action was.
+function ImportAllBar({
+	remaining,
+	progress,
+	running,
+	disabled,
+	onImportAll,
+	onStop,
+	onDismiss,
+}: {
+	remaining: number;
+	progress: ImportAllProgress | null;
+	running: boolean;
+	disabled: boolean;
+	onImportAll: () => void;
+	onStop: () => void;
+	onDismiss: () => void;
+}) {
+	const { t } = useTranslation();
+
+	if (progress && !running) {
+		return (
+			<div className="mb-3 flex items-center justify-between gap-3 rounded-lg border border-border bg-surface-raised/40 px-3 py-2">
+				<p className="text-caption text-foreground">
+					{t("importSession.importedCount", { count: progress.imported })}
+					{progress.failed > 0 ? ` · ${t("importSession.failedCount", { count: progress.failed })}` : ""}
+				</p>
+				<Button onClick={onDismiss} type="button" variant="ghost">
+					{t("importSession.done")}
+				</Button>
+			</div>
+		);
+	}
+
+	if (running && progress) {
+		return (
+			<div className="mb-3 flex items-center justify-between gap-3 rounded-lg border border-border bg-surface-raised/40 px-3 py-2">
+				<span className="flex items-center gap-2 text-caption text-muted-foreground">
+					<LoaderCircle className="size-icon-sm animate-spin" aria-hidden="true" />
+					{t("importSession.importingProgress", { done: progress.done, total: progress.total })}
+				</span>
+				<Button onClick={onStop} type="button" variant="outline">
+					{t("importSession.stop")}
+				</Button>
+			</div>
+		);
+	}
+
+	if (remaining === 0) return null;
+
+	return (
+		<div className="mb-3 flex items-center justify-between gap-3">
+			<p className="text-caption text-muted-foreground">
+				{t("importSession.available", { count: remaining })}
+			</p>
+			<Button
+				data-testid="import-all"
+				disabled={disabled}
+				onClick={onImportAll}
+				type="button"
+				variant="outline"
+			>
+				<Download className="size-icon-sm" aria-hidden="true" />
+				{t("importSession.importAll")}
+			</Button>
+		</div>
+	);
 }
 
 type ImportFolder = {

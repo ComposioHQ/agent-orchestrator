@@ -71,7 +71,7 @@ describe("ImportSessionsHint", () => {
 		const user = userEvent.setup();
 		render(<ImportSessionsHint />);
 
-		await user.click(screen.getByRole("button", { name: "importSession.hintAction" }));
+		await user.click(screen.getByRole("button", { name: "importSession.hintTitle" }));
 		expect(h.setImportSessionOpen).toHaveBeenCalledWith(true);
 		// Acting on the nudge answers it, so it should not return next launch.
 		expect(window.localStorage.getItem(STORAGE_KEY)).toBe("1");
