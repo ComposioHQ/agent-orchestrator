@@ -188,6 +188,7 @@ export function HomePage() {
 					</div>
 
 					<div className="-mt-3 space-y-1 px-3">
+						<h2 className="text-[17px] font-medium tracking-[-0.01em] text-foreground/80">{t("home.recentProjects")}</h2>
 						{recentProjects.map((project) => (
 							<ProjectRow
 								key={project.id}
