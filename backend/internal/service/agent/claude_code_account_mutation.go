@@ -99,7 +99,7 @@ func (m *claudeCodeAccountManager) deleteAccount(ctx context.Context, accountID 
 		return err
 	}
 	defer release()
-	if err := m.catalog.deleteSignedOut(ctx, accountID, m.now()); err != nil {
+	if err := m.catalog.delete(ctx, accountID, m.now()); err != nil {
 		return err
 	}
 	m.publish()

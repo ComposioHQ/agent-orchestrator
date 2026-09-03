@@ -23,7 +23,7 @@ vi.mock("../TerminalPane", () => ({
 	},
 }));
 
-const capability = (state: "supported" | "unsupported" = "supported", reason = "Available.") => ({ state, reasonCode: state, reason });
+const capability = (state: "supported" | "unsupported" = "supported", reason = "Available.", reasonCode = state === "supported" ? "supported" : "unsupported_platform") => ({ state, reasonCode, reason });
 const authentication = { state: "authorized", freshness: "fresh", checkedAt: "2026-09-02T10:00:00Z", attemptedAt: "2026-09-02T10:00:00Z", reasonCode: "authorized", reason: "Signed in." };
 const identity = (id: string, email: string) => ({ accountUuid: id, emailAddress: email, displayName: email.split("@")[0], organizationName: "Example Org", billingType: "subscription", seatTier: "pro" });
 const activeAccount = { id: "11111111-1111-4111-8111-111111111111", label: "active@example.com", status: "valid", reasonCode: "account_valid", reason: "Ready.", active: true, authentication, identity: identity("11111111-1111-4111-8111-111111111111", "active@example.com"), accountEmail: "active@example.com", createdAt: "2026-09-02T09:00:00Z", updatedAt: "2026-09-02T09:00:00Z" };
@@ -61,11 +61,23 @@ it("shows active and signed-out actions without Codex capacity or reset controls
 	await screen.findAllByText("active@example.com");
 
 	fireEvent.click(container.querySelector(`[data-account-id="${activeAccount.id}"] button`) as HTMLButtonElement);
-	expect(screen.getByRole("button", { name: "Log out locally" })).toBeInTheDocument();
+	expect(screen.getByRole("button", { name: "Log out" })).toBeInTheDocument();
 	fireEvent.click(container.querySelector(`[data-account-id="${signedOutAccount.id}"] button`) as HTMLButtonElement);
 	expect(screen.getByRole("button", { name: "Sign in again" })).toBeInTheDocument();
 	expect(screen.getByRole("button", { name: "Delete account" })).toBeInTheDocument();
 	expect(screen.queryByText(/capacity|usage limit|reset/i)).not.toBeInTheDocument();
+});
+
+it("allows an inactive signed-in account to be deleted directly", async () => {
+	renderSection();
+	await screen.findAllByText("other@example.com");
+	await userEvent.click(document.querySelector(`[data-account-id="${inactiveAccount.id}"] button`) as HTMLButtonElement);
+	await userEvent.click(screen.getByRole("button", { name: "Delete account" }));
+	const dialog = await screen.findByRole("dialog");
+	expect(within(dialog).getByText("This account will be removed from AO.")).toBeInTheDocument();
+	await userEvent.click(within(dialog).getByRole("button", { name: "Delete account" }));
+	await waitFor(() => expect(deleteMock).toHaveBeenCalled());
+	expect(await screen.findByText("Account deleted.")).toHaveAttribute("aria-live", "polite");
 });
 
 it("adds account B without making it active", async () => {
@@ -86,6 +98,7 @@ it("adds account B without making it active", async () => {
 	const addedRow = document.querySelector(`[data-account-id="${addedAccount.id}"]`);
 	expect(activeRow).toHaveTextContent("In use");
 	expect(addedRow).not.toHaveTextContent("In use");
+	expect(screen.getByText("Account added.")).toHaveAttribute("aria-live", "polite");
 });
 
 it("surfaces unsupported macOS capabilities and disables account mutations", async () => {
@@ -104,7 +117,7 @@ it("shows switch progress, recovery, and the live propagation notice", async () 
 	const response = { ...accountResponse, currentSwitch };
 	postMock.mockImplementation((path: string) => path.endsWith("/ensure") ? Promise.resolve({ data: response }) : Promise.resolve({ data: currentSwitch }));
 	const { queryClient } = renderSection(response);
-	expect(await screen.findByText("The account switch needs recovery before Claude Code can launch.")).toHaveAttribute("aria-live", "polite");
+	expect(await screen.findByText("The account switch needs your attention.")).toHaveAttribute("aria-live", "polite");
 	expect(screen.getByRole("button", { name: "Recover switch" })).toBeInTheDocument();
 
 	act(() => queryClient.setQueryData(["claude-code-accounts"], {
@@ -113,7 +126,7 @@ it("shows switch progress, recovery, and the live propagation notice", async () 
 		activeAccountId: inactiveAccount.id,
 		accounts: [{ ...inactiveAccount, active: true }, { ...activeAccount, active: false }],
 	}));
-	expect(await screen.findByText("Claude Code account changed. Running Claude Code processes may continue using the previous account for about 30 seconds.")).toHaveAttribute("aria-live", "polite");
+	expect(await screen.findByText("Switched to other@example.com. It may take a moment to refresh.")).toHaveAttribute("aria-live", "polite");
 });
 
 it("keeps a stale-revision switch error visible in the confirmation dialog", async () => {
@@ -127,5 +140,5 @@ it("keeps a stale-revision switch error visible in the confirmation dialog", asy
 	await userEvent.click(await screen.findByRole("menuitem", { name: /other@example.com/ }));
 	const dialog = await screen.findByRole("dialog");
 	await userEvent.click(within(dialog).getByRole("button", { name: "Switch account" }));
-	await waitFor(() => expect(within(dialog).getByRole("alert")).toHaveTextContent("Claude Code account state changed"));
+	await waitFor(() => expect(within(dialog).getByRole("alert")).toHaveTextContent("Couldn’t switch accounts. Try again."));
 });

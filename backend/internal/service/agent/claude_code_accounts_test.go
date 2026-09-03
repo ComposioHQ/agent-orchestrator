@@ -328,6 +328,36 @@ func TestClaudeCodeActiveLogoutPreservesSharedCredentialAndDeletesLocally(t *tes
 	}
 }
 
+func TestClaudeCodeDeleteInactiveAccountRemovesCredentialAndProfile(t *testing.T) {
+	m, keychain, _, home := newTestClaudeCodeManager(t)
+	keychain.items[claudecode.ClaudeCanonicalCredentialService+"\x00test-user"] = claudeCredentialJSON("secret-a")
+	if err := os.WriteFile(filepath.Join(home, ".claude.json"), claudeIdentityJSON(testClaudeAccountA, "a@example.com"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.bootstrapInner(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.catalog.upsert(context.Background(), domain.ClaudeCodeAccountIdentity{
+		AccountUUID: testClaudeAccountB, EmailAddress: "b@example.com", DisplayName: "Account B",
+	}, claudeCredentialJSON("secret-b"), m.now()); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := m.deleteAccount(context.Background(), testClaudeAccountB); err != nil {
+		t.Fatal(err)
+	}
+	if _, found, err := keychain.Get(context.Background(), claudecode.ClaudeAccountVaultService, testClaudeAccountB); err != nil || found {
+		t.Fatalf("deleted account credential: found=%v err=%v", found, err)
+	}
+	if _, err := os.Stat(filepath.Join(m.accountRoot, testClaudeAccountB)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("deleted account profile still exists: %v", err)
+	}
+	view := m.cached()
+	if len(view.Accounts) != 1 || view.Accounts[0].ID != testClaudeAccountA {
+		t.Fatalf("accounts after delete = %+v", view.Accounts)
+	}
+}
+
 func TestClaudeCodeActiveReauthenticationUpdatesCanonicalAndAdvancesRevision(t *testing.T) {
 	m, keychain, state, home := newTestClaudeCodeManager(t)
 	keychain.items[claudecode.ClaudeCanonicalCredentialService+"\x00test-user"] = claudeCredentialJSON("secret-a")

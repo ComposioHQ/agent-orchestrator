@@ -202,7 +202,7 @@ export interface paths {
         get?: never;
         put?: never;
         post?: never;
-        /** Delete one inactive signed-out Claude Code account */
+        /** Delete one inactive Claude Code account */
         delete: operations["deleteClaudeCodeAccount"];
         options?: never;
         head?: never;

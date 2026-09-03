@@ -44,6 +44,15 @@ const reasonKeys = {
 	login_expired: "settings.claudeCodeAccounts.reason.loginExpired",
 	identity_mismatch: "settings.claudeCodeAccounts.reason.identityMismatch",
 	account_already_exists: "settings.claudeCodeAccounts.reason.accountAlreadyExists",
+	identity_invalid: "settings.claudeCodeAccounts.reason.loginIdentityInvalid",
+	credential_unavailable: "settings.claudeCodeAccounts.reason.loginCredentialUnavailable",
+	unsupported_credential: "settings.claudeCodeAccounts.reason.loginUnsupportedCredential",
+	credential_invalid: "settings.claudeCodeAccounts.reason.loginCredentialUnavailable",
+	credential_save_failed: "settings.claudeCodeAccounts.reason.loginCredentialUnavailable",
+	credential_activation_failed: "settings.claudeCodeAccounts.reason.loginCredentialActivationFailed",
+	capability_unknown: "settings.claudeCodeAccounts.reason.capabilityUnknown",
+	global_account_unverified: "settings.claudeCodeAccounts.reason.globalAccountUnverified",
+	global_account_identity_unverified: "settings.claudeCodeAccounts.reason.globalAccountIdentityUnverified",
 } as const;
 
 export type ClaudeCodeAccountMessageKey = (typeof reasonKeys)[keyof typeof reasonKeys]

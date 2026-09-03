@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef } from "react";
 import { X } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import type { ClaudeCodeActiveLogin } from "../../hooks/useClaudeCodeAccountsQuery";
+import { claudeCodeAccountReasonKey } from "../../hooks/claude-code-accounts-state";
 import type { TerminalSessionState } from "../../hooks/useTerminalSession";
 import { useShellMaybe } from "../../lib/shell-context";
 import { useResolvedTheme } from "../../stores/ui-store";
@@ -35,7 +36,7 @@ export function ClaudeCodeAccountLoginTerminalPanel({ activeLogin, pending, onCh
 		? t("settings.claudeCodeAccounts.loginRunning")
 		: activeLogin.status === "verifying"
 			? t("settings.claudeCodeAccounts.loginVerifying")
-			: activeLogin.reason;
+			: t(claudeCodeAccountReasonKey(activeLogin.reasonCode));
 	const retryable = activeLogin.status === "unauthorized" || activeLogin.status === "expired" || activeLogin.status === "failed";
 	const checkable = activeLogin.status === "unverified";
 	return <div ref={panelRef} className="scroll-my-3 overflow-hidden rounded-md border border-border bg-terminal" data-testid="claude-code-account-login-terminal">

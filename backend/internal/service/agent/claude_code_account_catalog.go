@@ -246,22 +246,19 @@ func (c *claudeCodeAccountCatalog) markSignedOut(ctx context.Context, id string,
 	return c.refresh(ctx, now)
 }
 
-func (c *claudeCodeAccountCatalog) deleteSignedOut(ctx context.Context, id string, now time.Time) error {
-	record, ok := c.record(id)
-	if !ok {
+func (c *claudeCodeAccountCatalog) delete(ctx context.Context, id string, now time.Time) error {
+	if _, ok := c.record(id); !ok {
 		return ports.ErrClaudeCodeAccountNotFound
-	}
-	if record.Snapshot.Status != domain.ClaudeCodeAccountStatusSignedOut {
-		return errors.New("only a signed-out Claude Code account can be deleted")
 	}
 	dir := filepath.Join(c.root, id)
 	if validateCodexDirectory(dir, true) != nil {
 		return errors.New("account directory is unsafe for Claude Code")
 	}
-	if err := os.Remove(filepath.Join(dir, claudeCodeAccountDescriptorFilename)); err != nil {
+	if err := c.keychain.Delete(ctx, claudecode.ClaudeAccountVaultService, id); err != nil {
 		return err
 	}
-	if err := os.Remove(dir); err != nil {
+	if err := os.RemoveAll(dir); err != nil {
+		_ = c.refresh(context.WithoutCancel(ctx), now)
 		return err
 	}
 	return c.refresh(ctx, now)

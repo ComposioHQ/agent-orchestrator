@@ -1218,7 +1218,7 @@ func agentOperations() []operation {
 		},
 		{
 			method: http.MethodDelete, path: "/api/v1/agents/claude-code/accounts/{accountId}", id: "deleteClaudeCodeAccount", tag: "agents",
-			summary: "Delete one inactive signed-out Claude Code account", pathParams: []any{controllers.ClaudeCodeAccountIDParam{}},
+			summary: "Delete one inactive Claude Code account", pathParams: []any{controllers.ClaudeCodeAccountIDParam{}},
 			resps: []respUnit{{http.StatusOK, controllers.ClaudeCodeAccountsResponse{}}, {http.StatusBadRequest, envelope.APIError{}}, {http.StatusNotFound, envelope.APIError{}}, {http.StatusConflict, envelope.APIError{}}, {http.StatusServiceUnavailable, envelope.APIError{}}, {http.StatusNotImplemented, envelope.APIError{}}},
 		},
 		{

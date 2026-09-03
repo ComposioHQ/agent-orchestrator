@@ -17,10 +17,6 @@ import {
 } from "./useClaudeCodeAccountsQuery";
 import { claudeCodeAccountsQueryKey, writeClaudeCodeAccounts } from "./claude-code-accounts-state";
 
-function errorMessage(cause: unknown, fallback: string): string {
-	return cause instanceof Error && cause.message ? cause.message : fallback;
-}
-
 export function useClaudeCodeAccountActions(queryClient: QueryClient) {
 	const { t } = useTranslation();
 	const [error, setError] = useState<string | null>(null);
@@ -56,7 +52,7 @@ export function useClaudeCodeAccountActions(queryClient: QueryClient) {
 			}));
 			void queryClient.invalidateQueries({ queryKey: shellTerminalsQueryKey });
 		} catch (cause) {
-			setError(errorMessage(cause, t("settings.claudeCodeAccounts.loginFailed")));
+			setError(t("settings.claudeCodeAccounts.loginFailed"));
 			throw cause;
 		} finally {
 			setLoginPending(false);
@@ -91,7 +87,7 @@ export function useClaudeCodeAccountActions(queryClient: QueryClient) {
 			if (operation.status === "completed") void queryClient.invalidateQueries({ queryKey: shellTerminalsQueryKey });
 			return operation;
 		} catch (cause) {
-			setError(errorMessage(cause, t("settings.claudeCodeAccounts.loginVerificationFailed")));
+			setError(t("settings.claudeCodeAccounts.loginVerificationFailed"));
 			throw cause;
 		} finally {
 			verifyingRef.current = null;
@@ -107,7 +103,7 @@ export function useClaudeCodeAccountActions(queryClient: QueryClient) {
 			writeCurrent((snapshot) => ({ ...snapshot, activeLogin: operation.status === "cancelled" ? undefined : { ...login, ...operation } }));
 			void queryClient.invalidateQueries({ queryKey: shellTerminalsQueryKey });
 		} catch (cause) {
-			setError(errorMessage(cause, t("settings.claudeCodeAccounts.loginCloseFailed")));
+			setError(t("settings.claudeCodeAccounts.loginCloseFailed"));
 			throw cause;
 		} finally {
 			setLoginOperationPending(false);
@@ -125,7 +121,7 @@ export function useClaudeCodeAccountActions(queryClient: QueryClient) {
 			const nextSwitch = await startClaudeCodeAccountSwitch(account.id, revision, idempotencyKey);
 			writeCurrent((snapshot) => ({ ...snapshot, currentSwitch: nextSwitch }));
 		} catch (cause) {
-			setError(errorMessage(cause, t("settings.claudeCodeAccounts.switchFailed")));
+			setError(t("settings.claudeCodeAccounts.switchFailed"));
 			throw cause;
 		}
 	}, [t, writeCurrent]);
@@ -137,7 +133,7 @@ export function useClaudeCodeAccountActions(queryClient: QueryClient) {
 			const nextSwitch = await recoverClaudeCodeAccountSwitch(switchId);
 			writeCurrent((snapshot) => ({ ...snapshot, currentSwitch: nextSwitch }));
 		} catch (cause) {
-			setError(errorMessage(cause, t("settings.claudeCodeAccounts.switchRecoveryFailed")));
+			setError(t("settings.claudeCodeAccounts.switchRecoveryFailed"));
 			throw cause;
 		} finally {
 			setRecoverPending(false);
@@ -147,13 +143,13 @@ export function useClaudeCodeAccountActions(queryClient: QueryClient) {
 	const logoutAccount = useCallback(async (account: ClaudeCodeAccount) => {
 		setError(null);
 		try { writeClaudeCodeAccounts(queryClient, await logoutClaudeCodeAccount(account.id)); }
-		catch (cause) { setError(errorMessage(cause, t("settings.claudeCodeAccounts.logoutFailed"))); throw cause; }
+		catch (cause) { setError(t("settings.claudeCodeAccounts.logoutFailed")); throw cause; }
 	}, [queryClient, t]);
 
 	const deleteAccount = useCallback(async (account: ClaudeCodeAccount) => {
 		setError(null);
 		try { writeClaudeCodeAccounts(queryClient, await deleteClaudeCodeAccount(account.id)); }
-		catch (cause) { setError(errorMessage(cause, t("settings.claudeCodeAccounts.deleteFailed"))); throw cause; }
+		catch (cause) { setError(t("settings.claudeCodeAccounts.deleteFailed")); throw cause; }
 	}, [queryClient, t]);
 
 	return {

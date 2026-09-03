@@ -158,7 +158,7 @@ func (s *Service) LogoutClaudeCodeAccount(ctx context.Context, accountID string)
 	return s.claudeCodeAccounts.cached(), nil
 }
 
-// DeleteClaudeCodeAccount removes an inactive signed-out account descriptor.
+// DeleteClaudeCodeAccount removes an inactive account credential and descriptor.
 func (s *Service) DeleteClaudeCodeAccount(ctx context.Context, accountID string) (ClaudeCodeAccounts, error) {
 	if err := s.WaitClaudeCodeAccountBootstrap(ctx); err != nil {
 		return ClaudeCodeAccounts{}, err
