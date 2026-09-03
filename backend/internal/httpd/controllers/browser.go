@@ -19,6 +19,7 @@ const browserCapabilityHeader = "X-AO-Browser-Capability"
 // BrowserService authorizes and executes session-scoped browser operations.
 type BrowserService interface {
 	Status(ctx context.Context, sessionID domain.SessionID, capability string) (browserruntime.Status, error)
+	Observe(ctx context.Context, sessionID domain.SessionID, capability string, options browserruntime.ObserveOptions) (browserruntime.Result, browserruntime.Observation, error)
 	Execute(ctx context.Context, sessionID domain.SessionID, capability, action string, args map[string]interface{}) (browserruntime.Result, string, error)
 }
 
@@ -30,6 +31,7 @@ type BrowserController struct {
 // Register adds browser status and command routes to the API router.
 func (c *BrowserController) Register(r chi.Router) {
 	r.Get("/browser/status", c.status)
+	r.Post("/browser/observe", c.observe)
 	r.Post("/browser/commands", c.execute)
 }
 
@@ -49,10 +51,35 @@ func (c *BrowserController) status(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	envelope.WriteJSON(w, http.StatusOK, BrowserStatusResponse{
-		SessionID:   sessionID,
-		Connected:   status.Connected,
-		ConnectedAt: status.ConnectedAt,
-		Transport:   "electron-webcontents-debugger",
+		SessionID: sessionID, Connected: status.Connected, ConnectedAt: status.ConnectedAt,
+		Transport: status.Transport, State: status.State, Provider: status.Provider,
+		Target: status.Target, RecommendedAction: status.RecommendedAction,
+	})
+}
+
+func (c *BrowserController) observe(w http.ResponseWriter, r *http.Request) {
+	if c.Svc == nil {
+		apispec.NotImplemented(w, r, http.MethodPost, "/api/v1/browser/observe")
+		return
+	}
+	var in BrowserObserveRequest
+	if err := decodeJSON(r, &in); err != nil {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_JSON", "Invalid JSON body", nil)
+		return
+	}
+	if in.SessionID == "" {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "SESSION_ID_REQUIRED", "sessionId is required", nil)
+		return
+	}
+	result, observation, err := c.Svc.Observe(r.Context(), in.SessionID, r.Header.Get(browserCapabilityHeader), browserruntime.ObserveOptions{
+		InteractiveOnly: in.InteractiveOnly, IncludeScreenshot: in.IncludeScreenshot, IncludeProblems: in.IncludeProblems,
+	})
+	if err != nil {
+		writeBrowserError(w, r, err)
+		return
+	}
+	envelope.WriteJSON(w, http.StatusOK, BrowserObserveResponse{
+		RequestID: result.RequestID, SessionID: in.SessionID, Observation: observation,
 	})
 }
 

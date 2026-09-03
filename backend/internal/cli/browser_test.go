@@ -24,7 +24,18 @@ func browserCLIServer(t *testing.T, capture *browserRequestCapture) *httptest.Se
 		capture.capability = r.Header.Get(browserCapabilityHeader)
 		w.Header().Set("Content-Type", "application/json")
 		if r.Method == http.MethodGet && r.URL.Path == "/api/v1/browser/status" {
-			_, _ = io.WriteString(w, `{"sessionId":"ao-1","connected":true,"transport":"electron-webcontents-debugger"}`)
+			_, _ = io.WriteString(w, `{"sessionId":"ao-1","connected":true,"transport":"electron-webcontents-debugger","state":"ready","provider":"electron","target":{"tabId":"t1","url":"http://localhost:3000","title":"App","loading":false,"snapshotGeneration":2}}`)
+			return
+		}
+		if r.Method == http.MethodPost && r.URL.Path == "/api/v1/browser/observe" {
+			var input browserObserveRequestDTO
+			if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+				t.Fatalf("decode observe: %v", err)
+			}
+			capture.body = browserCommandRequestDTO{SessionID: input.SessionID, Action: "observe", Args: map[string]any{
+				"interactiveOnly": input.InteractiveOnly, "includeScreenshot": input.IncludeScreenshot, "includeProblems": input.IncludeProblems,
+			}}
+			_, _ = io.WriteString(w, `{"requestId":"r-observe","sessionId":"ao-1","observation":{"state":"ready","provider":"electron","target":{"tabId":"t1","url":"http://localhost:3000","title":"App","loading":false,"snapshotGeneration":3},"snapshot":{"url":"http://localhost:3000","title":"App","generation":3,"text":"button Save [ref=e1]","totalNodes":1,"truncated":false},"screenshot":{"mimeType":"image/png","data":"cG5n","width":10,"height":20,"url":"http://localhost:3000","untrustedExternalContent":true},"problems":{"console":[],"errors":[]}}}`)
 			return
 		}
 		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/browser/commands" {
@@ -70,7 +81,7 @@ func TestBrowserStatusAndSnapshot(t *testing.T) {
 	deps := Deps{ProcessAlive: func(int) bool { return true }}
 
 	out, errOut, err := executeCLI(t, deps, "browser", "status")
-	if err != nil || !strings.Contains(out, "Browser runtime: connected") {
+	if err != nil || !strings.Contains(out, "Browser: ready") || !strings.Contains(out, "Target: t1") {
 		t.Fatalf("status err=%v stderr=%s stdout=%s", err, errOut, out)
 	}
 	if capture.path != "/api/v1/browser/status?sessionId=ao-1" {
@@ -85,6 +96,29 @@ func TestBrowserStatusAndSnapshot(t *testing.T) {
 	}
 	if capture.body.SessionID != "ao-1" || capture.body.Action != "snapshot" || capture.body.Args["interactive"] != true {
 		t.Fatalf("command = %#v", capture.body)
+	}
+}
+
+func TestBrowserObserveRequestsCompositeEvidenceAndWritesImage(t *testing.T) {
+	setBrowserIdentity(t)
+	cfg := setConfigEnv(t)
+	capture := &browserRequestCapture{}
+	srv := browserCLIServer(t, capture)
+	writeRunFileFor(t, cfg, srv)
+	target := filepath.Join(t.TempDir(), "observation.png")
+
+	out, errOut, err := executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }},
+		"browser", "observe", "--interactive", "--problems", "--screenshot-out", target)
+	if err != nil {
+		t.Fatalf("observe err=%v stderr=%s", err, errOut)
+	}
+	if capture.path != "/api/v1/browser/observe" || capture.body.Action != "observe" ||
+		capture.body.Args["interactiveOnly"] != true || capture.body.Args["includeScreenshot"] != true || capture.body.Args["includeProblems"] != true {
+		t.Fatalf("observe request = path %q body %#v", capture.path, capture.body)
+	}
+	data, readErr := os.ReadFile(target)
+	if readErr != nil || string(data) != "png" || !strings.Contains(out, "button Save [ref=e1]") || !strings.Contains(out, "Problems: 0 console, 0 page errors") {
+		t.Fatalf("observe data=%q readErr=%v out=%q", data, readErr, out)
 	}
 }
 

@@ -85,6 +85,7 @@ var legacyActorlessUserCLICommands = map[string]struct{}{
 	"ao browser network status": {},
 	"ao browser network stop":   {},
 	"ao browser open":           {},
+	"ao browser observe":        {},
 	"ao browser press":          {},
 	"ao browser screenshot":     {},
 	"ao browser scroll":         {},

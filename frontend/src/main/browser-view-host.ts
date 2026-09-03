@@ -811,6 +811,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 			}
 			const session = ensureSession(sessionId);
 			const entry = activeEntry(session);
+			if (action === "__status") return browserTargetStatus(entry);
 			const commandId = randomUUID();
 			setAgentBrowserActivity(session, action, true, commandId, "started");
 			try {
@@ -823,6 +824,12 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 				}
 				case "snapshot":
 					return snapshotEntry(entry, Boolean(args.interactive));
+				case "observe":
+					return observeEntry(entry, {
+						interactiveOnly: Boolean(args.interactiveOnly),
+						includeScreenshot: Boolean(args.includeScreenshot),
+						includeProblems: Boolean(args.includeProblems),
+					});
 				case "click":
 					return clickEntry(entry, stringArg(args, "ref", "REFERENCE_REQUIRED", "ref is required"));
 				case "fill":
@@ -1536,7 +1543,48 @@ function finiteNumber(value: unknown): number | undefined {
 	return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
-async function snapshotEntry(entry: BrowserEntry, interactiveOnly: boolean): Promise<unknown> {
+function browserTargetStatus(entry: BrowserEntry): Record<string, unknown> {
+	const loading = entry.view.webContents.isLoading();
+	return {
+		state: loading ? "page_loading" : "ready",
+		provider: "electron",
+		target: {
+			tabId: entry.tabId,
+			url: entry.view.webContents.getURL(),
+			title: entry.view.webContents.getTitle(),
+			loading,
+			snapshotGeneration: entry.refGeneration,
+		},
+		...(loading ? { recommendedAction: "Wait for the page to finish loading, then observe again." } : {}),
+	};
+}
+
+type ObserveEntryOptions = {
+	interactiveOnly: boolean;
+	includeScreenshot: boolean;
+	includeProblems: boolean;
+};
+
+async function observeEntry(entry: BrowserEntry, options: ObserveEntryOptions): Promise<Record<string, unknown>> {
+	const snapshot = await snapshotEntry(entry, options.interactiveOnly);
+	const status = browserTargetStatus(entry);
+	const screenshot = options.includeScreenshot ? await screenshotEntry(entry) : undefined;
+	const problems = options.includeProblems
+		? {
+				console: markLogMessages(entry.consoleMessages),
+				errors: markLogMessages(entry.errors),
+			}
+		: undefined;
+	return {
+		...status,
+		snapshot,
+		...(screenshot ? { screenshot } : {}),
+		...(problems ? { problems } : {}),
+		untrustedExternalContent: true,
+	};
+}
+
+async function snapshotEntry(entry: BrowserEntry, interactiveOnly: boolean): Promise<Record<string, unknown>> {
 	await ensureDebugger(entry);
 	await entry.view.webContents.debugger.sendCommand("Accessibility.enable");
 	const response = (await entry.view.webContents.debugger.sendCommand("Accessibility.getFullAXTree")) as {
@@ -2037,7 +2085,7 @@ async function waitForEntry(entry: BrowserEntry, args: Record<string, unknown>, 
 	}
 }
 
-async function screenshotEntry(entry: BrowserEntry): Promise<unknown> {
+async function screenshotEntry(entry: BrowserEntry): Promise<Record<string, unknown>> {
 	const image = await entry.view.webContents.capturePage();
 	if (image.isEmpty()) throw browserError("BROWSER_COMMAND_FAILED", "Browser screenshot is empty");
 	const size = image.getSize();

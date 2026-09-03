@@ -5,6 +5,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/browserruntime"
 	"github.com/aoagents/agent-orchestrator/backend/internal/devimport"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/legacyimport"
@@ -293,10 +294,30 @@ type BrowserCapabilityHeader struct {
 // ready. A connected runtime can create the session target while its panel is
 // hidden; panel visibility is intentionally not part of this state.
 type BrowserStatusResponse struct {
-	SessionID   domain.SessionID `json:"sessionId"`
-	Connected   bool             `json:"connected"`
-	ConnectedAt time.Time        `json:"connectedAt,omitempty"`
-	Transport   string           `json:"transport"`
+	SessionID         domain.SessionID              `json:"sessionId"`
+	Connected         bool                          `json:"connected"`
+	ConnectedAt       time.Time                     `json:"connectedAt,omitempty"`
+	Transport         string                        `json:"transport"`
+	State             browserruntime.ReadinessState `json:"state" enum:"desktop_closed,target_starting,page_loading,ready,recovering,unavailable"`
+	Provider          string                        `json:"provider"`
+	Target            *browserruntime.Target        `json:"target,omitempty"`
+	RecommendedAction string                        `json:"recommendedAction,omitempty"`
+}
+
+// BrowserObserveRequest selects the evidence returned by one composite browser
+// observation. Observation never sends diagnostics or messages into the agent.
+type BrowserObserveRequest struct {
+	SessionID         domain.SessionID `json:"sessionId"`
+	InteractiveOnly   bool             `json:"interactiveOnly,omitempty"`
+	IncludeScreenshot bool             `json:"includeScreenshot,omitempty"`
+	IncludeProblems   bool             `json:"includeProblems,omitempty"`
+}
+
+// BrowserObserveResponse is a typed, tool-ready observation result.
+type BrowserObserveResponse struct {
+	RequestID   string                     `json:"requestId"`
+	SessionID   domain.SessionID           `json:"sessionId"`
+	Observation browserruntime.Observation `json:"observation"`
 }
 
 // BrowserCommandRequest is the stable daemon-facing command envelope. Action

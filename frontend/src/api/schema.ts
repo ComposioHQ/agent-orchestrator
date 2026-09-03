@@ -72,6 +72,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/browser/observe": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Observe the session browser with typed semantic and optional visual evidence */
+        post: operations["observeBrowser"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/browser/status": {
         parameters: {
             query?: never;
@@ -948,12 +965,80 @@ export interface components {
             result: unknown;
             sessionId: string;
         };
+        BrowserElement: {
+            name: string;
+            ref: string;
+            role: string;
+        };
+        BrowserImage: {
+            data: string;
+            height: number;
+            mimeType: string;
+            untrustedExternalContent: boolean;
+            url: string;
+            width: number;
+        };
+        BrowserLogEntry: {
+            level: string;
+            line?: number;
+            message: string;
+            source?: string;
+            timestamp: string;
+        };
+        BrowserObservation: {
+            problems?: components["schemas"]["BrowserProblems"];
+            provider: string;
+            recommendedAction?: string;
+            screenshot?: components["schemas"]["BrowserImage"];
+            snapshot: components["schemas"]["BrowserSnapshot"];
+            /** @enum {string} */
+            state: "page_loading" | "ready";
+            target: components["schemas"]["BrowserTarget"];
+            untrustedExternalContent: boolean;
+        };
+        BrowserObserveRequest: {
+            includeProblems?: boolean;
+            includeScreenshot?: boolean;
+            interactiveOnly?: boolean;
+            sessionId: string;
+        };
+        BrowserObserveResponse: {
+            observation: components["schemas"]["BrowserObservation"];
+            requestId: string;
+            sessionId: string;
+        };
+        BrowserProblems: {
+            console: components["schemas"]["BrowserLogEntry"][];
+            errors: components["schemas"]["BrowserLogEntry"][];
+        };
+        BrowserSnapshot: {
+            elements: components["schemas"]["BrowserElement"][];
+            generation: number;
+            text: string;
+            title: string;
+            totalNodes: number;
+            truncated: boolean;
+            untrustedExternalContent: boolean;
+            url: string;
+        };
         BrowserStatusResponse: {
             connected: boolean;
             /** Format: date-time */
             connectedAt?: string;
+            provider: string;
+            recommendedAction?: string;
             sessionId: string;
+            /** @enum {string} */
+            state: "desktop_closed" | "target_starting" | "page_loading" | "ready" | "recovering" | "unavailable";
+            target?: components["schemas"]["BrowserTarget"];
             transport: string;
+        };
+        BrowserTarget: {
+            loading: boolean;
+            snapshotGeneration: number;
+            tabId: string;
+            title: string;
+            url: string;
         };
         CancelReviewResponse: {
             reviewerHandleId: string;
@@ -1839,6 +1924,105 @@ export interface operations {
             };
             /** @description Unprocessable Entity */
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    observeBrowser: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Opaque browser capability injected into the owning AO worker. */
+                "X-AO-Browser-Capability"?: string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BrowserObserveRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BrowserObserveResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
                 headers: {
                     [name: string]: unknown;
                 };

@@ -22,7 +22,7 @@ decision. Once the relevant page is known:
 ```bash
 ao browser status
 ao browser open http://localhost:5173
-ao browser snapshot
+ao browser observe --screenshot
 ao browser click e1
 ao browser fill e2 "hello"
 ao browser press Enter
@@ -38,6 +38,7 @@ Element references such as `e1` are short-lived. After navigation or a substanti
 
 ```text
 ao browser status [--json]
+ao browser observe [--interactive] [--screenshot] [--screenshot-out <path>] [--problems] [--json]
 ao browser open <url> [--json]
 ao browser snapshot [--interactive] [--json]
 ao browser click <ref> [--json]
@@ -66,6 +67,15 @@ ao browser network clear [--json]
 ao browser console [--json]
 ao browser errors [--json]
 ```
+
+`observe` is the preferred starting point for agent-driven verification. It
+returns the explicit tab, URL, readiness state, snapshot generation, compact
+accessibility snapshot, and optionally a screenshot and captured diagnostics in
+one correlated result. Diagnostics remain excluded unless a caller explicitly
+supplies `--problems` while investigating a failure;
+AO never pushes browser errors or status messages into the agent session.
+Without `--json`, `--screenshot` saves to a timestamped PNG and
+`--screenshot-out` selects the path.
 
 `fill` replaces the current value, while `type` inserts text at the current
 cursor position. `press` accepts named keys and chords such as `Enter`,

@@ -24,7 +24,7 @@ import (
 
 const (
 	// ProtocolVersion identifies the daemon-to-Electron browser bridge contract.
-	ProtocolVersion = 2
+	ProtocolVersion = 3
 	// RuntimeTokenEnv is deliberately removed from worker and preview-process
 	// environments. Only the daemon and desktop supervisor need it.
 	RuntimeTokenEnv = "AO_BROWSER_RUNTIME_TOKEN" //nolint:gosec // Environment variable name, not a credential.
@@ -40,8 +40,13 @@ var ErrUnavailable = errors.New("browser runtime is unavailable")
 
 // Status describes whether Electron is connected to the browser command broker.
 type Status struct {
-	Connected   bool
-	ConnectedAt time.Time
+	Connected         bool
+	ConnectedAt       time.Time
+	Transport         string
+	State             ReadinessState
+	Provider          string
+	Target            *Target
+	RecommendedAction string
 }
 
 // Command is one session-scoped operation sent to the Electron browser runtime.
@@ -131,7 +136,17 @@ func NewToken() (string, error) {
 func (b *Broker) Status() Status {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	return Status{Connected: b.conn != nil, ConnectedAt: b.connectedAt}
+	state := ReadinessDesktopClosed
+	recommendedAction := "Open the AO desktop app to start its browser runtime."
+	if b.conn != nil {
+		state = ReadinessTargetStarting
+		recommendedAction = "Wait for AO to create the session browser target."
+	}
+	return Status{
+		Connected: b.conn != nil, ConnectedAt: b.connectedAt,
+		Transport: "electron-webcontents-debugger", State: state,
+		Provider: "electron", RecommendedAction: recommendedAction,
+	}
 }
 
 // Execute sends one browser command to the connected Electron runtime.

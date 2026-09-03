@@ -41,7 +41,7 @@ describe("browser runtime link", () => {
 		const handle = connectBrowserRuntime({ host: address.address, port: address.port }, { execute });
 		handles.push(handle);
 		await vi.waitFor(() => expect(handle.connected).toBe(true));
-		await vi.waitFor(() => expect(messages).toContainEqual({ type: "hello", version: 2 }));
+		await vi.waitFor(() => expect(messages).toContainEqual({ type: "hello", version: 3 }));
 
 		serverSocket!.write(
 			`${JSON.stringify({ type: "command", requestId: "r1", sessionId: "s1", action: "snapshot", args: {} })}\n`,

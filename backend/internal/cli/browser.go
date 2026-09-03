@@ -17,10 +17,85 @@ import (
 )
 
 type browserStatusDTO struct {
-	SessionID   string    `json:"sessionId"`
-	Connected   bool      `json:"connected"`
-	ConnectedAt time.Time `json:"connectedAt,omitempty"`
-	Transport   string    `json:"transport"`
+	SessionID         string            `json:"sessionId"`
+	Connected         bool              `json:"connected"`
+	ConnectedAt       time.Time         `json:"connectedAt,omitempty"`
+	Transport         string            `json:"transport"`
+	State             string            `json:"state"`
+	Provider          string            `json:"provider"`
+	Target            *browserTargetDTO `json:"target,omitempty"`
+	RecommendedAction string            `json:"recommendedAction,omitempty"`
+}
+
+type browserTargetDTO struct {
+	TabID              string `json:"tabId"`
+	URL                string `json:"url"`
+	Title              string `json:"title"`
+	Loading            bool   `json:"loading"`
+	SnapshotGeneration int    `json:"snapshotGeneration"`
+}
+
+type browserImageDTO struct {
+	MIMEType                 string `json:"mimeType"`
+	Data                     string `json:"data"`
+	Width                    int    `json:"width"`
+	Height                   int    `json:"height"`
+	URL                      string `json:"url"`
+	UntrustedExternalContent bool   `json:"untrustedExternalContent"`
+}
+
+type browserSnapshotDTO struct {
+	URL                      string              `json:"url"`
+	Title                    string              `json:"title"`
+	Generation               int                 `json:"generation"`
+	Text                     string              `json:"text"`
+	Elements                 []browserElementDTO `json:"elements"`
+	TotalNodes               int                 `json:"totalNodes"`
+	Truncated                bool                `json:"truncated"`
+	UntrustedExternalContent bool                `json:"untrustedExternalContent"`
+}
+
+type browserElementDTO struct {
+	Ref  string `json:"ref"`
+	Role string `json:"role"`
+	Name string `json:"name"`
+}
+
+type browserLogEntryDTO struct {
+	Level     string `json:"level"`
+	Message   string `json:"message"`
+	Source    string `json:"source,omitempty"`
+	Line      int    `json:"line,omitempty"`
+	Timestamp string `json:"timestamp"`
+}
+
+type browserProblemsDTO struct {
+	Console []browserLogEntryDTO `json:"console"`
+	Errors  []browserLogEntryDTO `json:"errors"`
+}
+
+type browserObservationDTO struct {
+	State                    string              `json:"state"`
+	Provider                 string              `json:"provider"`
+	Target                   browserTargetDTO    `json:"target"`
+	Snapshot                 browserSnapshotDTO  `json:"snapshot"`
+	Screenshot               *browserImageDTO    `json:"screenshot,omitempty"`
+	Problems                 *browserProblemsDTO `json:"problems,omitempty"`
+	RecommendedAction        string              `json:"recommendedAction,omitempty"`
+	UntrustedExternalContent bool                `json:"untrustedExternalContent"`
+}
+
+type browserObserveRequestDTO struct {
+	SessionID         string `json:"sessionId"`
+	InteractiveOnly   bool   `json:"interactiveOnly,omitempty"`
+	IncludeScreenshot bool   `json:"includeScreenshot,omitempty"`
+	IncludeProblems   bool   `json:"includeProblems,omitempty"`
+}
+
+type browserObserveResponseDTO struct {
+	RequestID   string                `json:"requestId"`
+	SessionID   string                `json:"sessionId"`
+	Observation browserObservationDTO `json:"observation"`
 }
 
 type browserCommandRequestDTO struct {
@@ -63,11 +138,13 @@ func newBrowserCommand(ctx *commandContext) *cobra.Command {
 			if jsonOutput {
 				return writeJSON(cmd.OutOrStdout(), status)
 			}
-			state := "disconnected"
-			if status.Connected {
-				state = "connected"
+			_, err = fmt.Fprintf(cmd.OutOrStdout(), "Browser: %s (%s)\n", status.State, status.Transport)
+			if err == nil && status.Target != nil {
+				_, err = fmt.Fprintf(cmd.OutOrStdout(), "Target: %s %s (generation %d)\n", status.Target.TabID, status.Target.URL, status.Target.SnapshotGeneration)
 			}
-			_, err = fmt.Fprintf(cmd.OutOrStdout(), "Browser runtime: %s (%s)\n", state, status.Transport)
+			if err == nil && status.RecommendedAction != "" {
+				_, err = fmt.Fprintln(cmd.OutOrStdout(), status.RecommendedAction)
+			}
 			return err
 		},
 	})
@@ -92,6 +169,47 @@ func newBrowserCommand(ctx *commandContext) *cobra.Command {
 	}
 	snapshot.Flags().BoolVar(&interactiveOnly, "interactive", false, "include only actionable elements")
 	cmd.AddCommand(snapshot)
+
+	var observeInteractive, observeScreenshot, observeProblems bool
+	var observeScreenshotOut string
+	observe := &cobra.Command{
+		Use:   "observe",
+		Short: "Observe the page with semantic and optional visual evidence",
+		Args:  noArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			includeScreenshot := observeScreenshot || observeScreenshotOut != ""
+			resp, err := ctx.browserObserve(cmd.Context(), browserObserveRequestDTO{
+				InteractiveOnly: observeInteractive, IncludeScreenshot: includeScreenshot, IncludeProblems: observeProblems,
+			})
+			if err != nil {
+				return err
+			}
+			if jsonOutput {
+				return writeJSON(cmd.OutOrStdout(), resp)
+			}
+			if _, err := fmt.Fprintln(cmd.OutOrStdout(), resp.Observation.Snapshot.Text); err != nil {
+				return err
+			}
+			if resp.Observation.Problems != nil {
+				if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Problems: %d console, %d page errors\n", len(resp.Observation.Problems.Console), len(resp.Observation.Problems.Errors)); err != nil {
+					return err
+				}
+			}
+			if resp.Observation.Screenshot != nil {
+				target := observeScreenshotOut
+				if target == "" {
+					target = "ao-browser-observe-" + ctx.deps.Now().Format("20060102-150405.000") + ".png"
+				}
+				return writeBrowserImage(cmd, *resp.Observation.Screenshot, target)
+			}
+			return nil
+		},
+	}
+	observe.Flags().BoolVar(&observeInteractive, "interactive", false, "include only actionable elements")
+	observe.Flags().BoolVar(&observeScreenshot, "screenshot", false, "include a screenshot and save it when not using --json")
+	observe.Flags().StringVar(&observeScreenshotOut, "screenshot-out", "", "save included screenshot to this path")
+	observe.Flags().BoolVar(&observeProblems, "problems", false, "include captured console messages and page errors")
+	cmd.AddCommand(observe)
 
 	cmd.AddCommand(&cobra.Command{
 		Use:   "click <ref>",
@@ -475,6 +593,20 @@ func (c *commandContext) browserAction(ctx context.Context, action string, args 
 	return out, err
 }
 
+func (c *commandContext) browserObserve(ctx context.Context, in browserObserveRequestDTO) (browserObserveResponseDTO, error) {
+	sessionID, capability, err := currentBrowserIdentity()
+	if err != nil {
+		return browserObserveResponseDTO{}, err
+	}
+	in.SessionID = sessionID
+	var out browserObserveResponseDTO
+	err = c.doJSONPathWithHeaders(
+		ctx, http.MethodPost, "/api/v1/browser/observe", in, &out,
+		map[string]string{browserCapabilityHeader: capability},
+	)
+	return out, err
+}
+
 func (c *commandContext) runBrowserAction(cmd *cobra.Command, action string, args map[string]any, jsonOutput bool) error {
 	resp, err := c.browserAction(cmd.Context(), action, args)
 	if err != nil {
@@ -648,6 +780,12 @@ func writeBrowserScreenshot(cmd *cobra.Command, result map[string]any, target st
 	}
 	_, err = fmt.Fprintf(cmd.OutOrStdout(), "Saved %s%s\n", abs, size)
 	return err
+}
+
+func writeBrowserImage(cmd *cobra.Command, image browserImageDTO, target string) error {
+	return writeBrowserScreenshot(cmd, map[string]any{
+		"data": image.Data, "width": image.Width, "height": image.Height,
+	}, target)
 }
 
 func numberString(v any) string {

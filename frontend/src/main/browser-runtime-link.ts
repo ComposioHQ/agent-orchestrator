@@ -1,7 +1,7 @@
 import net from "node:net";
 import { StringDecoder } from "node:string_decoder";
 
-const PROTOCOL_VERSION = 2;
+const PROTOCOL_VERSION = 3;
 const BACKOFF_INIT_MS = 200;
 const BACKOFF_MAX_MS = 2_000;
 const MAX_COMMAND_BYTES = 1 << 20;

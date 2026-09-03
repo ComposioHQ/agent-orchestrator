@@ -4,6 +4,9 @@ package browser
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
 	"strings"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/browserruntime"
@@ -47,7 +50,63 @@ func (s *Service) Status(ctx context.Context, sessionID domain.SessionID, capabi
 	if err := s.authorize(ctx, sessionID, capability); err != nil {
 		return browserruntime.Status{}, err
 	}
-	return s.runtime.Status(), nil
+	status := s.runtime.Status()
+	if !status.Connected {
+		return status, nil
+	}
+	result, err := s.runtime.Execute(ctx, sessionID, "__status", nil)
+	if errors.Is(err, browserruntime.ErrUnavailable) {
+		status.Connected = false
+		status.State = browserruntime.ReadinessRecovering
+		status.RecommendedAction = "Wait for the desktop browser runtime to reconnect."
+		return status, nil
+	}
+	if err != nil {
+		status.State = browserruntime.ReadinessUnavailable
+		status.RecommendedAction = "Retry browser status; if it persists, reopen the AO desktop app."
+		return status, nil
+	}
+	var live struct {
+		State             browserruntime.ReadinessState `json:"state"`
+		Provider          string                        `json:"provider"`
+		Target            *browserruntime.Target        `json:"target"`
+		RecommendedAction string                        `json:"recommendedAction"`
+	}
+	if err := decodeRuntimeValue(result.Value, &live); err != nil {
+		return browserruntime.Status{}, err
+	}
+	status.State = live.State
+	status.Provider = live.Provider
+	status.Target = live.Target
+	status.RecommendedAction = live.RecommendedAction
+	return status, nil
+}
+
+// Observe returns a typed, correlated accessibility observation with optional
+// visual and diagnostic evidence. It never sends any data into the agent
+// session; callers must request and consume the result explicitly.
+func (s *Service) Observe(
+	ctx context.Context,
+	sessionID domain.SessionID,
+	capability string,
+	options browserruntime.ObserveOptions,
+) (browserruntime.Result, browserruntime.Observation, error) {
+	if err := s.authorize(ctx, sessionID, capability); err != nil {
+		return browserruntime.Result{}, browserruntime.Observation{}, err
+	}
+	result, err := s.runtime.Execute(ctx, sessionID, "observe", map[string]interface{}{
+		"interactiveOnly":   options.InteractiveOnly,
+		"includeScreenshot": options.IncludeScreenshot,
+		"includeProblems":   options.IncludeProblems,
+	})
+	if err != nil {
+		return browserruntime.Result{}, browserruntime.Observation{}, err
+	}
+	var observation browserruntime.Observation
+	if err := decodeRuntimeValue(result.Value, &observation); err != nil {
+		return browserruntime.Result{}, browserruntime.Observation{}, err
+	}
+	return result, observation, nil
 }
 
 // Execute validates ownership and dispatches one supported action.
@@ -83,6 +142,17 @@ func (s *Service) authorize(ctx context.Context, sessionID domain.SessionID, cap
 	}
 	if s.authority == nil || !s.authority.Valid(sessionID, strings.TrimSpace(capability)) {
 		return apierr.Forbidden("BROWSER_CAPABILITY_INVALID", "Browser capability is invalid")
+	}
+	return nil
+}
+
+func decodeRuntimeValue(value interface{}, out interface{}) error {
+	data, err := json.Marshal(value)
+	if err != nil {
+		return fmt.Errorf("encode browser runtime result: %w", err)
+	}
+	if err := json.Unmarshal(data, out); err != nil {
+		return fmt.Errorf("decode browser runtime result: %w", err)
 	}
 	return nil
 }

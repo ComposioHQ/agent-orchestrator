@@ -49,6 +49,27 @@ func (f *fakeBrowserRuntime) Execute(
 	return browserruntime.Result{RequestID: "request-1", Value: map[string]interface{}{"text": "button Save [ref=e1]"}}, action, nil
 }
 
+func (f *fakeBrowserRuntime) Observe(
+	_ context.Context,
+	_ domain.SessionID,
+	_ string,
+	options browserruntime.ObserveOptions,
+) (browserruntime.Result, browserruntime.Observation, error) {
+	f.action = "observe"
+	f.args = map[string]interface{}{
+		"interactiveOnly": options.InteractiveOnly, "includeScreenshot": options.IncludeScreenshot, "includeProblems": options.IncludeProblems,
+	}
+	if f.err != nil {
+		return browserruntime.Result{}, browserruntime.Observation{}, f.err
+	}
+	return browserruntime.Result{RequestID: "request-observe"}, browserruntime.Observation{
+		State: browserruntime.ReadinessReady, Provider: "electron",
+		Target:                   browserruntime.Target{TabID: "t1", URL: "http://localhost:3000", SnapshotGeneration: 4},
+		Snapshot:                 browserruntime.Snapshot{Generation: 4, Text: "button Save [ref=e1]", Elements: []browserruntime.Element{}},
+		UntrustedExternalContent: true,
+	}, nil
+}
+
 func browserServer(t *testing.T, runtime *fakeBrowserRuntime) *httptest.Server {
 	t.Helper()
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
@@ -62,11 +83,15 @@ func browserServer(t *testing.T, runtime *fakeBrowserRuntime) *httptest.Server {
 
 func TestBrowserStatusAndSnapshot(t *testing.T) {
 	connectedAt := time.Now().UTC().Truncate(time.Second)
-	runtime := &fakeBrowserRuntime{status: browserruntime.Status{Connected: true, ConnectedAt: connectedAt}}
+	runtime := &fakeBrowserRuntime{status: browserruntime.Status{
+		Connected: true, ConnectedAt: connectedAt, Transport: "electron-webcontents-debugger",
+		State: browserruntime.ReadinessReady, Provider: "electron",
+		Target: &browserruntime.Target{TabID: "t1", URL: "http://localhost:3000", SnapshotGeneration: 3},
+	}}
 	srv := browserServer(t, runtime)
 
 	body, status, _ := doRequest(t, srv, http.MethodGet, "/api/v1/browser/status?sessionId=ao-1", "")
-	if status != http.StatusOK || !containsAll(body, `"connected":true`, `"transport":"electron-webcontents-debugger"`) {
+	if status != http.StatusOK || !containsAll(body, `"connected":true`, `"state":"ready"`, `"tabId":"t1"`, `"transport":"electron-webcontents-debugger"`) {
 		t.Fatalf("status = %d body=%s", status, body)
 	}
 	body, status, _ = doRequest(t, srv, http.MethodPost, "/api/v1/browser/commands", `{"sessionId":"ao-1","action":"snapshot","args":{"interactive":true}}`)
@@ -75,6 +100,32 @@ func TestBrowserStatusAndSnapshot(t *testing.T) {
 	}
 	if runtime.action != "snapshot" || runtime.args["interactive"] != true {
 		t.Fatalf("runtime command = %q %#v", runtime.action, runtime.args)
+	}
+}
+
+func TestBrowserObserveReturnsTypedEvidenceOnlyOnExplicitRequest(t *testing.T) {
+	runtime := &fakeBrowserRuntime{}
+	srv := browserServer(t, runtime)
+	body, status, _ := doRequest(t, srv, http.MethodPost, "/api/v1/browser/observe", `{"sessionId":"ao-1","interactiveOnly":true,"includeScreenshot":true,"includeProblems":true}`)
+	if status != http.StatusOK || !containsAll(body, `"requestId":"request-observe"`, `"state":"ready"`, `"snapshotGeneration":4`, `"button Save [ref=e1]"`) {
+		t.Fatalf("observe = %d body=%s", status, body)
+	}
+	if runtime.action != "observe" || runtime.args["interactiveOnly"] != true || runtime.args["includeScreenshot"] != true || runtime.args["includeProblems"] != true {
+		t.Fatalf("runtime observe = %q %#v", runtime.action, runtime.args)
+	}
+}
+
+func TestBrowserObserveValidationAndRuntimeErrors(t *testing.T) {
+	runtime := &fakeBrowserRuntime{}
+	srv := browserServer(t, runtime)
+	body, status, _ := doRequest(t, srv, http.MethodPost, "/api/v1/browser/observe", `{}`)
+	if status != http.StatusBadRequest || !containsAll(body, `"code":"SESSION_ID_REQUIRED"`) {
+		t.Fatalf("missing session = %d body=%s", status, body)
+	}
+	runtime.err = browserruntime.ErrUnavailable
+	body, status, _ = doRequest(t, srv, http.MethodPost, "/api/v1/browser/observe", `{"sessionId":"ao-1"}`)
+	if status != http.StatusServiceUnavailable || !containsAll(body, `"code":"BROWSER_RUNTIME_UNAVAILABLE"`) {
+		t.Fatalf("unavailable = %d body=%s", status, body)
 	}
 }
 

@@ -165,6 +165,81 @@ paths:
       summary: Execute a target-scoped command in a session's desktop browser
       tags:
       - browser
+  /api/v1/browser/observe:
+    post:
+      operationId: observeBrowser
+      parameters:
+      - description: Opaque browser capability injected into the owning AO worker.
+        in: header
+        name: X-AO-Browser-Capability
+        schema:
+          description: Opaque browser capability injected into the owning AO worker.
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BrowserObserveRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BrowserObserveResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Forbidden
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Service Unavailable
+      summary: Observe the session browser with typed semantic and optional visual
+        evidence
+      tags:
+      - browser
   /api/v1/browser/status:
     get:
       operationId: getBrowserStatus
@@ -2817,6 +2892,156 @@ components:
       - action
       - result
       type: object
+    BrowserElement:
+      properties:
+        name:
+          type: string
+        ref:
+          type: string
+        role:
+          type: string
+      required:
+      - ref
+      - role
+      - name
+      type: object
+    BrowserImage:
+      properties:
+        data:
+          type: string
+        height:
+          type: integer
+        mimeType:
+          type: string
+        untrustedExternalContent:
+          type: boolean
+        url:
+          type: string
+        width:
+          type: integer
+      required:
+      - mimeType
+      - data
+      - width
+      - height
+      - url
+      - untrustedExternalContent
+      type: object
+    BrowserLogEntry:
+      properties:
+        level:
+          type: string
+        line:
+          type: integer
+        message:
+          type: string
+        source:
+          type: string
+        timestamp:
+          type: string
+      required:
+      - level
+      - message
+      - timestamp
+      type: object
+    BrowserObservation:
+      properties:
+        problems:
+          $ref: '#/components/schemas/BrowserProblems'
+        provider:
+          type: string
+        recommendedAction:
+          type: string
+        screenshot:
+          $ref: '#/components/schemas/BrowserImage'
+        snapshot:
+          $ref: '#/components/schemas/BrowserSnapshot'
+        state:
+          enum:
+          - page_loading
+          - ready
+          type: string
+        target:
+          $ref: '#/components/schemas/BrowserTarget'
+        untrustedExternalContent:
+          type: boolean
+      required:
+      - state
+      - provider
+      - target
+      - snapshot
+      - untrustedExternalContent
+      type: object
+    BrowserObserveRequest:
+      properties:
+        includeProblems:
+          type: boolean
+        includeScreenshot:
+          type: boolean
+        interactiveOnly:
+          type: boolean
+        sessionId:
+          type: string
+      required:
+      - sessionId
+      type: object
+    BrowserObserveResponse:
+      properties:
+        observation:
+          $ref: '#/components/schemas/BrowserObservation'
+        requestId:
+          type: string
+        sessionId:
+          type: string
+      required:
+      - requestId
+      - sessionId
+      - observation
+      type: object
+    BrowserProblems:
+      properties:
+        console:
+          items:
+            $ref: '#/components/schemas/BrowserLogEntry'
+          type: array
+        errors:
+          items:
+            $ref: '#/components/schemas/BrowserLogEntry'
+          type: array
+      required:
+      - console
+      - errors
+      type: object
+    BrowserSnapshot:
+      properties:
+        elements:
+          items:
+            $ref: '#/components/schemas/BrowserElement'
+          type: array
+        generation:
+          type: integer
+        text:
+          type: string
+        title:
+          type: string
+        totalNodes:
+          type: integer
+        truncated:
+          type: boolean
+        untrustedExternalContent:
+          type: boolean
+        url:
+          type: string
+      required:
+      - url
+      - title
+      - generation
+      - text
+      - elements
+      - totalNodes
+      - truncated
+      - untrustedExternalContent
+      type: object
     BrowserStatusResponse:
       properties:
         connected:
@@ -2824,14 +3049,50 @@ components:
         connectedAt:
           format: date-time
           type: string
+        provider:
+          type: string
+        recommendedAction:
+          type: string
         sessionId:
           type: string
+        state:
+          enum:
+          - desktop_closed
+          - target_starting
+          - page_loading
+          - ready
+          - recovering
+          - unavailable
+          type: string
+        target:
+          $ref: '#/components/schemas/BrowserTarget'
         transport:
           type: string
       required:
       - sessionId
       - connected
       - transport
+      - state
+      - provider
+      type: object
+    BrowserTarget:
+      properties:
+        loading:
+          type: boolean
+        snapshotGeneration:
+          type: integer
+        tabId:
+          type: string
+        title:
+          type: string
+        url:
+          type: string
+      required:
+      - tabId
+      - url
+      - title
+      - loading
+      - snapshotGeneration
       type: object
     CancelReviewResponse:
       properties:

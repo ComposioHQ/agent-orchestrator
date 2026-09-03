@@ -775,6 +775,45 @@ describe("agent browser runtime", () => {
 		expect(errors.messages[0].message).toContain("boom");
 	});
 
+	it("returns one explicit observation with target, snapshot, image, and problems", async () => {
+		const { host, webContentsListeners } = setupHost();
+		const consoleListener = webContentsListeners.get("console-message");
+		consoleListener?.({} as never, { level: "error", message: "render failed" } as never);
+
+		const observation = (await host.execute("sess-1", "observe", {
+			interactiveOnly: true,
+			includeScreenshot: true,
+			includeProblems: true,
+		})) as {
+			state: string;
+			target: { tabId: string; snapshotGeneration: number };
+			snapshot: { generation: number; text: string };
+			screenshot: { mimeType: string; data: string };
+			problems: { errors: Array<{ message: string }> };
+		};
+
+		expect(observation.state).toBe("ready");
+		expect(observation.target).toMatchObject({ tabId: "t1", snapshotGeneration: 1 });
+		expect(observation.snapshot.generation).toBe(1);
+		expect(observation.snapshot.text).toContain("BEGIN UNTRUSTED EXTERNAL CONTENT");
+		expect(observation.screenshot).toMatchObject({
+			mimeType: "image/png",
+			data: Buffer.from("png-snapshot").toString("base64"),
+		});
+		expect(observation.problems.errors[0]?.message).toContain("render failed");
+	});
+
+	it("reads target status without emitting agent activity or session input", async () => {
+		const { host, sent } = setupHost();
+		const status = (await host.execute("sess-1", "__status")) as {
+			state: string;
+			target: { tabId: string };
+		};
+
+		expect(status).toMatchObject({ state: "ready", target: { tabId: "t1" } });
+		expect(sent.filter(({ channel }) => channel === "browser:agentActivity")).toEqual([]);
+	});
+
 	it("reports agent activity only while a browser command is executing", async () => {
 		const { debuggerSendCommand, host, sent } = setupHost();
 		let resolveSnapshot: (value: unknown) => void = () => undefined;

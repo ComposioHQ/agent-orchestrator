@@ -854,6 +854,13 @@ response bodies; it allowlists safe headers and redacts URL credentials,
 fragments, and query values. Closing the tab, ending the session, or shutting
 down Electron disables and discards the capture.
 
+The typed `POST /api/v1/browser/observe` operation is the canonical agent-facing
+read boundary. It correlates an explicit target, accessibility generation, and
+optional screenshot or diagnostics without writing to terminal input, session
+messages, or the agent conversation. Browser readiness is derived from the live
+provider (`desktop_closed`, `target_starting`, `page_loading`, `ready`,
+`recovering`, or `unavailable`) and is never persisted as session status.
+
 ---
 
 ## Load-Bearing Rules
