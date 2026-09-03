@@ -156,7 +156,7 @@ func normalizeNotification(n notification, now time.Time) []ports.ChatEvent {
 		if p.Turn.Error != nil && p.Turn.Error.Message != "" {
 			ev.Err = fmt.Errorf("%s", p.Turn.Error.Message)
 		}
-		return []ports.ChatEvent{ev}
+		return appendStructuredReauthEvent([]ports.ChatEvent{ev}, p.Turn.Error)
 
 	case codexproto.MethodItemAgentMessageDelta:
 		var p codexproto.AgentMessageDeltaNotification
@@ -646,10 +646,31 @@ func normalizeNotification(n notification, now time.Time) []ports.ChatEvent {
 		}}
 
 	case codexproto.MethodError:
-		return []ports.ChatEvent{{
-			Kind: ports.ChatEventError,
-			Err:  fmt.Errorf("provider error: %s", truncateForLog(n.Params)),
-		}}
+		var p codexproto.ErrorNotification
+		if err := json.Unmarshal(n.Params, &p); err != nil {
+			return []ports.ChatEvent{{
+				Kind: ports.ChatEventError,
+				Err:  fmt.Errorf("provider error: %s", truncateForLog(n.Params)),
+			}}
+		}
+		message := strings.TrimSpace(p.Error.Message)
+		if message == "" {
+			message = "Codex provider error"
+		}
+		ev := ports.ChatEvent{
+			Kind:                   ports.ChatEventError,
+			ProviderTurnID:         p.TurnID,
+			ProviderConversationID: p.ThreadID,
+			Err:                    fmt.Errorf("%s", message),
+		}
+		if p.WillRetry {
+			// Codex still owns recovery while it says it will retry, and explicitly
+			// defines this notification as non-terminal. Projecting it as an error would
+			// leave a permanent failed row even when the retry succeeds. The terminal
+			// completion remains the authoritative outcome.
+			return nil
+		}
+		return appendStructuredReauthEvent([]ports.ChatEvent{ev}, &p.Error)
 
 	default:
 		// Provider bookkeeping: hook/started, hook/completed,
@@ -1073,6 +1094,53 @@ func normalizeItem(params json.RawMessage, completed bool) []ports.ChatEvent {
 		ev.ActivityStatus = domain.ActivityStatusRunning
 	}
 	return []ports.ChatEvent{ev}
+}
+
+// appendStructuredReauthEvent reads the provider's machine-readable error kind.
+// The prose is retained only as the reason shown to the user: changing that prose
+// cannot change the classification decision.
+func appendStructuredReauthEvent(
+	events []ports.ChatEvent,
+	turnErr *codexproto.TurnError,
+) []ports.ChatEvent {
+	if turnErr == nil || !codexUnauthorized(turnErr.CodexErrorInfo) {
+		return events
+	}
+	reason := strings.TrimSpace(turnErr.Message)
+	if reason == "" {
+		reason = "unauthorized"
+	}
+	return appendReauthEvent(events, reason)
+}
+
+// codexUnauthorized recognizes the stable CodexErrorInfo discriminator. The
+// generated binding leaves this union as raw JSON because some variants are
+// objects, but Unauthorized itself is the JSON string "unauthorized".
+func codexUnauthorized(info *codexproto.CodexErrorInfo) bool {
+	if info == nil {
+		return false
+	}
+	var kind string
+	return json.Unmarshal(*info, &kind) == nil && kind == "unauthorized"
+}
+
+// appendReauthEvent preserves the failed event and adds current account state.
+// Authentication explains why the work failed; it does not erase that work from
+// the timeline.
+func appendReauthEvent(events []ports.ChatEvent, reason string) []ports.ChatEvent {
+	correlation := ports.ChatEvent{}
+	if len(events) > 0 {
+		correlation = events[len(events)-1]
+	}
+	return append(events, ports.ChatEvent{
+		Kind:                   ports.ChatEventAccountChanged,
+		ProviderTurnID:         correlation.ProviderTurnID,
+		ProviderConversationID: correlation.ProviderConversationID,
+		Account: &ports.ChatAccount{
+			ReauthRequired: true,
+			ReauthReason:   reason,
+		},
+	})
 }
 
 // activityFor maps a provider item type onto an activity kind and label.

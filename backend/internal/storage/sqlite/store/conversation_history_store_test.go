@@ -1210,6 +1210,56 @@ func TestCleanupOwnedControllerWorkIsGenerationFenced(t *testing.T) {
 	assertCleanupState(domain.TurnStateFailed, domain.ActivityStatusFailed)
 }
 
+func TestCleanupOwnedControllerWorkRetainingQueueIsGenerationFenced(t *testing.T) {
+	s, session, conversation := conversationFixture(t)
+	ctx := context.Background()
+	appendTurn := func(turnID, messageID, clientID string) {
+		t.Helper()
+		created, err := s.AppendUserMessage(ctx, conversation, session, "gen-1",
+			domain.ConversationMessage{
+				ID: messageID, Text: turnID, Origin: domain.MessageOriginHuman,
+				ClientMessageID: clientID,
+			}, turnID, histClock)
+		if err != nil || !created {
+			t.Fatalf("AppendUserMessage(%s): created=%v err=%v", turnID, created, err)
+		}
+	}
+	appendTurn("running-turn", "running-message", "running-client")
+	if err := s.BindTurnToProvider(ctx, "running-turn", "provider-running", histClock); err != nil {
+		t.Fatalf("BindTurnToProvider: %v", err)
+	}
+	appendTurn("queued-turn", "queued-message", "queued-client")
+
+	assertStates := func(wantRunning, wantQueued domain.TurnState) {
+		t.Helper()
+		snapshot, err := s.LoadConversationSnapshot(ctx, conversation)
+		if err != nil {
+			t.Fatalf("LoadConversationSnapshot: %v", err)
+		}
+		states := make(map[string]domain.TurnState, len(snapshot.Turns))
+		for _, turn := range snapshot.Turns {
+			states[turn.ID] = turn.State
+		}
+		if states["running-turn"] != wantRunning || states["queued-turn"] != wantQueued {
+			t.Fatalf("turn states = %#v, want running=%q queued=%q", states, wantRunning, wantQueued)
+		}
+	}
+
+	owned, err := s.CleanupOwnedControllerWorkRetainingQueue(
+		ctx, session, conversation, "stale-generation", histClock.Add(time.Minute))
+	if err != nil || owned {
+		t.Fatalf("stale retaining cleanup: owned=%v err=%v", owned, err)
+	}
+	assertStates(domain.TurnStateRunning, domain.TurnStateQueued)
+
+	owned, err = s.CleanupOwnedControllerWorkRetainingQueue(
+		ctx, session, conversation, "gen-1", histClock.Add(2*time.Minute))
+	if err != nil || !owned {
+		t.Fatalf("owned retaining cleanup: owned=%v err=%v", owned, err)
+	}
+	assertStates(domain.TurnStateFailed, domain.TurnStateQueued)
+}
+
 func TestCleanupOwnedControllerWorkOnlySettlesReboundSessionWork(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()

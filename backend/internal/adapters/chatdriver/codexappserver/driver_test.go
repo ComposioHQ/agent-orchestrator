@@ -617,6 +617,151 @@ func TestNotificationsBecomeNeutralEvents(t *testing.T) {
 	}
 }
 
+// Reauthentication is deliberately a manual recovery boundary. The structured
+// error kind, not the mutable provider prose, stops the stale app-server so Resume
+// agent can launch a process that re-reads Codex's credential file.
+func TestUnauthorizedTurnStopsTheStaleController(t *testing.T) {
+	d, srv := newTestDriver(t)
+	conv, err := d.Start(context.Background(), ports.ChatStartConfig{WorkspacePath: "/tmp/ws"})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer func() { _ = conv.Close() }()
+
+	const message = "Provider wording may change without breaking recovery."
+	srv.push(`{"method":"turn/completed","params":{"threadId":"thread-1","turn":{"id":"turn-1","status":"failed","items":[],"error":{"message":"` + message + `","codexErrorInfo":"unauthorized"}}}}`)
+
+	failed := nextEvent(t, conv.Events(), ports.ChatEventTurnCompleted)
+	if failed.TurnState != domain.TurnStateFailed || failed.Err == nil || failed.Err.Error() != message {
+		t.Fatalf("failed turn = %+v", failed)
+	}
+	reauth := nextEvent(t, conv.Events(), ports.ChatEventAccountChanged)
+	if reauth.Account == nil || !reauth.Account.ReauthRequired || reauth.Account.ReauthReason != message {
+		t.Fatalf("reauth event = %+v", reauth)
+	}
+	stopped := nextEvent(t, conv.Events(), ports.ChatEventControllerState)
+	if stopped.ControllerState != ports.ChatControllerStopped {
+		t.Fatalf("controller state = %q, want stopped", stopped.ControllerState)
+	}
+}
+
+// Persistent hosts normally survive controller Close so a replacement daemon can
+// reconnect to in-flight work. Authentication failure is different: this process
+// has proved its in-memory credentials stale and must be destroyed before Resume
+// launches a replacement that reloads the credential file.
+func TestUnauthorizedTurnTerminatesPersistentStaleProvider(t *testing.T) {
+	d, srv := newTestDriver(t)
+	terminated := make(chan struct{})
+	spawn := d.spawn
+	d.spawn = func(ctx context.Context, bin, workspace string, env []string) (*process, error) {
+		proc, err := spawn(ctx, bin, workspace, env)
+		if err != nil {
+			return nil, err
+		}
+		stop := proc.stop
+		proc.terminate = func() error {
+			close(terminated)
+			return stop()
+		}
+		return proc, nil
+	}
+
+	conv, err := d.Start(context.Background(), ports.ChatStartConfig{WorkspacePath: "/tmp/ws"})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer func() { _ = conv.Close() }()
+
+	srv.push(`{"method":"turn/completed","params":{"threadId":"thread-1","turn":{"id":"turn-1","status":"failed","items":[],"error":{"message":"Authentication rejected.","codexErrorInfo":"unauthorized"}}}}`)
+
+	select {
+	case <-terminated:
+	case <-time.After(3 * time.Second):
+		t.Fatal("authentication failure detached instead of terminating the persistent provider")
+	}
+}
+
+// Codex emits a non-retrying error notification before turn/completed. The
+// account warning is useful immediately, but stopping on it would make AO settle
+// through generic controller cleanup and discard the provider's authoritative
+// terminal error.
+func TestUnauthorizedErrorWaitsForTheMatchingTurnCompletion(t *testing.T) {
+	d, srv := newTestDriver(t)
+	conv, err := d.Start(context.Background(), ports.ChatStartConfig{WorkspacePath: "/tmp/ws"})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer func() { _ = conv.Close() }()
+
+	const message = "Authentication rejected."
+	srv.push(`{"method":"turn/started","params":{"threadId":"thread-1","turn":{"id":"turn-1","status":"inProgress","items":[]}}}`)
+	if started := nextEvent(t, conv.Events(), ports.ChatEventTurnStarted); started.ProviderTurnID != "turn-1" {
+		t.Fatalf("started turn = %+v", started)
+	}
+	srv.push(`{"method":"error","params":{"threadId":"thread-1","turnId":"turn-1","willRetry":false,"error":{"message":"` + message + `","codexErrorInfo":"unauthorized"}}}`)
+	if providerErr := nextEvent(t, conv.Events(), ports.ChatEventError); providerErr.Err == nil || providerErr.Err.Error() != message {
+		t.Fatalf("provider error = %+v", providerErr)
+	}
+	if reauth := nextEvent(t, conv.Events(), ports.ChatEventAccountChanged); reauth.Account == nil || !reauth.Account.ReauthRequired {
+		t.Fatalf("reauth event = %+v", reauth)
+	}
+
+	select {
+	case ev := <-conv.Events():
+		if ev.Kind == ports.ChatEventControllerState {
+			t.Fatalf("controller stopped before turn/completed: %+v", ev)
+		}
+		t.Fatalf("unexpected event before turn/completed: %+v", ev)
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	srv.push(`{"method":"turn/completed","params":{"threadId":"thread-1","turn":{"id":"turn-1","status":"failed","items":[],"error":{"message":"` + message + `","codexErrorInfo":"unauthorized"}}}}`)
+	completed := nextEvent(t, conv.Events(), ports.ChatEventTurnCompleted)
+	if completed.ProviderTurnID != "turn-1" || completed.TurnState != domain.TurnStateFailed ||
+		completed.Err == nil || completed.Err.Error() != message {
+		t.Fatalf("completed turn = %+v", completed)
+	}
+	if stopped := nextEvent(t, conv.Events(), ports.ChatEventControllerState); stopped.ControllerState != ports.ChatControllerStopped {
+		t.Fatalf("controller state = %+v", stopped)
+	}
+}
+
+// willRetry means the app-server keeps the turn alive and owns recovery. A
+// successful retry must not leave a failed event for a turn that completed.
+func TestRetryingErrorDoesNotBecomeATerminalEvent(t *testing.T) {
+	d, srv := newTestDriver(t)
+	conv, err := d.Start(context.Background(), ports.ChatStartConfig{WorkspacePath: "/tmp/ws"})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer func() { _ = conv.Close() }()
+
+	srv.push(`{"method":"turn/started","params":{"threadId":"thread-1","turn":{"id":"turn-1","status":"inProgress","items":[]}}}`)
+	srv.push(`{"method":"error","params":{"threadId":"thread-1","turnId":"turn-1","willRetry":true,"error":{"message":"Temporary stream failure.","codexErrorInfo":"other"}}}`)
+	srv.push(`{"method":"turn/completed","params":{"threadId":"thread-1","turn":{"id":"turn-1","status":"completed","items":[]}}}`)
+
+	deadline := time.After(3 * time.Second)
+	for {
+		select {
+		case ev, ok := <-conv.Events():
+			if !ok {
+				t.Fatal("event stream closed before successful completion")
+			}
+			if ev.Kind == ports.ChatEventError {
+				t.Fatalf("retrying error became a terminal event: %+v", ev)
+			}
+			if ev.Kind == ports.ChatEventTurnCompleted {
+				if ev.TurnState != domain.TurnStateCompleted {
+					t.Fatalf("turn state = %q", ev.TurnState)
+				}
+				return
+			}
+		case <-deadline:
+			t.Fatal("timed out waiting for successful retry completion")
+		}
+	}
+}
+
 // app-server multiplexes child-agent thread notifications over the root
 // connection. The adapter's fallback target must remain the root turn; otherwise
 // an interrupt without an explicit id can stop a child and leave the requested

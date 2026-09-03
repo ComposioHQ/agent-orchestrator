@@ -1139,6 +1139,33 @@ func (s *Store) SettleOrphanedTurns(ctx context.Context, session domain.SessionI
 	return nil
 }
 
+// SettleOrphanedRunningTurns closes only work that reached a dead provider.
+// Authentication recovery uses this variant so messages queued behind the
+// rejected turn remain available for the user's explicit controller resume.
+func (s *Store) SettleOrphanedRunningTurns(
+	ctx context.Context,
+	session domain.SessionID,
+	now time.Time,
+) error {
+	q, unlock := s.conversationWriter(ctx)
+	defer unlock()
+	if err := q.FailOrphanedRunningConversationActivities(ctx,
+		gen.FailOrphanedRunningConversationActivitiesParams{
+			UpdatedAt:          now,
+			HandledBySessionID: session,
+		}); err != nil {
+		return fmt.Errorf("settle orphaned running activities for %s: %w", session, err)
+	}
+	if err := q.SettleOrphanedRunningConversationTurns(ctx,
+		gen.SettleOrphanedRunningConversationTurnsParams{
+			CompletedAt:        sql.NullTime{Time: now, Valid: true},
+			HandledBySessionID: session,
+		}); err != nil {
+		return fmt.Errorf("settle orphaned running turns for %s: %w", session, err)
+	}
+	return nil
+}
+
 // CleanupOwnedControllerWork settles work only when the closing controller still
 // owns its session generation. Branch/interface handoffs start the replacement
 // before closing the source, so an unconditional stream-end cleanup would
@@ -1156,8 +1183,33 @@ func (s *Store) CleanupOwnedControllerWork(
 	conversationID, generation string,
 	now time.Time,
 ) (owned bool, err error) {
+	return s.cleanupOwnedControllerWork(
+		ctx, session, conversationID, generation, now, false)
+}
+
+// CleanupOwnedControllerWorkRetainingQueue is the authentication-recovery mode
+// of generation-owned cleanup. It settles only work that reached the rejected
+// provider and leaves undelivered queued turns for explicit Resume.
+func (s *Store) CleanupOwnedControllerWorkRetainingQueue(
+	ctx context.Context,
+	session domain.SessionID,
+	conversationID, generation string,
+	now time.Time,
+) (owned bool, err error) {
+	return s.cleanupOwnedControllerWork(
+		ctx, session, conversationID, generation, now, true)
+}
+
+func (s *Store) cleanupOwnedControllerWork(
+	ctx context.Context,
+	session domain.SessionID,
+	conversationID, generation string,
+	now time.Time,
+	retainQueued bool,
+) (owned bool, err error) {
 	if q, ok := ctx.Value(conversationProjectionTxKey{}).(*gen.Queries); ok && q != nil {
-		return cleanupOwnedControllerWork(ctx, q, session, conversationID, generation, now)
+		return cleanupOwnedControllerWork(
+			ctx, q, session, conversationID, generation, now, retainQueued)
 	}
 
 	s.writeMu.Lock()
@@ -1166,7 +1218,7 @@ func (s *Store) CleanupOwnedControllerWork(
 	err = s.inTx(ctx, "clean up owned Chat controller work", func(q *gen.Queries) error {
 		var cleanupErr error
 		owned, cleanupErr = cleanupOwnedControllerWork(
-			ctx, q, session, conversationID, generation, now)
+			ctx, q, session, conversationID, generation, now, retainQueued)
 		return cleanupErr
 	})
 	return owned, err
@@ -1178,6 +1230,7 @@ func cleanupOwnedControllerWork(
 	session domain.SessionID,
 	conversationID, generation string,
 	now time.Time,
+	retainQueued bool,
 ) (bool, error) {
 	owner, err := q.GetSession(ctx, session)
 	if err != nil {
@@ -1186,18 +1239,34 @@ func cleanupOwnedControllerWork(
 	if owner.ControllerGeneration != generation {
 		return false, nil
 	}
-	if err := q.FailOrphanedConversationActivities(ctx,
-		gen.FailOrphanedConversationActivitiesParams{
-			UpdatedAt: now, HandledBySessionID: session,
-		}); err != nil {
-		return false, fmt.Errorf("settle orphaned activities for %s: %w", session, err)
-	}
-	if err := q.SettleOrphanedConversationTurns(ctx,
-		gen.SettleOrphanedConversationTurnsParams{
-			CompletedAt:        sql.NullTime{Time: now, Valid: true},
-			HandledBySessionID: session,
-		}); err != nil {
-		return false, fmt.Errorf("settle orphaned turns for %s: %w", session, err)
+	if retainQueued {
+		if err := q.FailOrphanedRunningConversationActivities(ctx,
+			gen.FailOrphanedRunningConversationActivitiesParams{
+				UpdatedAt: now, HandledBySessionID: session,
+			}); err != nil {
+			return false, fmt.Errorf("settle orphaned running activities for %s: %w", session, err)
+		}
+		if err := q.SettleOrphanedRunningConversationTurns(ctx,
+			gen.SettleOrphanedRunningConversationTurnsParams{
+				CompletedAt:        sql.NullTime{Time: now, Valid: true},
+				HandledBySessionID: session,
+			}); err != nil {
+			return false, fmt.Errorf("settle orphaned running turns for %s: %w", session, err)
+		}
+	} else {
+		if err := q.FailOrphanedConversationActivities(ctx,
+			gen.FailOrphanedConversationActivitiesParams{
+				UpdatedAt: now, HandledBySessionID: session,
+			}); err != nil {
+			return false, fmt.Errorf("settle orphaned activities for %s: %w", session, err)
+		}
+		if err := q.SettleOrphanedConversationTurns(ctx,
+			gen.SettleOrphanedConversationTurnsParams{
+				CompletedAt:        sql.NullTime{Time: now, Valid: true},
+				HandledBySessionID: session,
+			}); err != nil {
+			return false, fmt.Errorf("settle orphaned turns for %s: %w", session, err)
+		}
 	}
 	if err := q.FailPendingConversationRequestsForSession(ctx,
 		gen.FailPendingConversationRequestsForSessionParams{
