@@ -427,6 +427,29 @@ func TestTriggerSpawnsNewReviewerAndRecordsRunAfterLaunch(t *testing.T) {
 	}
 }
 
+func TestTriggerPassesSameHarnessHistoryToReviewer(t *testing.T) {
+	previous := domain.ReviewRun{
+		ID: "qwen-failed", ReviewID: "rev-qwen", SessionID: "mer-1", Harness: domain.ReviewerQwen,
+		PRURL: "https://github.com/o/r/pull/1", TargetSHA: "sha1", Status: domain.ReviewRunFailed,
+	}
+	store := &fakeStore{
+		review: &domain.Review{ID: "rev-qwen", SessionID: "mer-1", Harness: domain.ReviewerQwen},
+		runs:   []domain.ReviewRun{previous},
+	}
+	worker := liveWorker()
+	worker.ReviewerHarness = domain.ReviewerQwen
+	worker.ReviewerConfig = domain.AgentConfig{Mode: "native-review", NativeReview: &domain.NativeReviewConfig{Resume: true}}
+	launcher := &fakeLauncher{handle: "review-mer-1"}
+	eng := newEngineForTest(store, fakeSessions{rec: worker, ok: true}, prAt("sha1"), fakeProjects{}, launcher)
+
+	if _, err := eng.Trigger(context.Background(), "mer-1", "", domain.AgentConfig{}); err != nil {
+		t.Fatalf("Trigger: %v", err)
+	}
+	if len(launcher.gotSpec.PreviousRuns) != 1 || launcher.gotSpec.PreviousRuns[0].ID != previous.ID {
+		t.Fatalf("previous runs = %+v, want the prior Qwen run", launcher.gotSpec.PreviousRuns)
+	}
+}
+
 func TestRestoreReviewerNoopsWithoutReviewHistory(t *testing.T) {
 	store := &fakeStore{}
 	launcher := &fakeLauncher{handle: "review-mer-1"}

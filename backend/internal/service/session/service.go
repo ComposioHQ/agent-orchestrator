@@ -823,7 +823,7 @@ func (s *Service) SetReviewerHarness(ctx context.Context, id domain.SessionID, h
 	if harness != "" && !harness.IsKnown() {
 		return domain.Session{}, apierr.Invalid("UNKNOWN_REVIEWER_HARNESS", "Unknown reviewer harness", nil)
 	}
-	if err := config.Validate(); err != nil {
+	if err := config.ValidateReviewer(harness); err != nil {
 		return domain.Session{}, apierr.Invalid("INVALID_REVIEWER_CONFIG", "Invalid reviewer config", map[string]any{"detail": err.Error()})
 	}
 	updated, err := s.store.SetSessionReviewerConfig(ctx, id, harness, config, time.Now().UTC())

@@ -6558,6 +6558,8 @@ components:
           type: string
         model:
           type: string
+        nativeReview:
+          $ref: '#/components/schemas/DomainNativeReviewConfig'
         permissions:
           type: string
       type: object
@@ -8668,6 +8670,23 @@ components:
       - state
       - lastActivityAt
       type: object
+    DomainNativeReviewConfig:
+      properties:
+        comment:
+          type: boolean
+        effort:
+          enum:
+          - low
+          - medium
+          - high
+          type: string
+        quiet:
+          type: boolean
+        resume:
+          type: boolean
+        timeoutMinutes:
+          type: integer
+      type: object
     DomainReviewerConfig:
       properties:
         agentConfig:
@@ -9474,6 +9493,7 @@ components:
           - needs_review
           - running
           - up_to_date
+          - commented
           - changes_requested
           - ineligible
           type: string
@@ -10981,8 +11001,19 @@ components:
         runId:
           description: Review run id being completed.
           type: string
+        status:
+          description: Terminal result status; defaults to complete. Native one-shot
+            reviewers may report failed.
+          enum:
+          - complete
+          - failed
+          type: string
         verdict:
-          description: 'Review verdict: approved or changes_requested.'
+          description: 'Review verdict: approved, comment, or changes_requested.'
+          enum:
+          - approved
+          - comment
+          - changes_requested
           type: string
       type: object
     SubmitReviewItem:
@@ -10996,12 +11027,23 @@ components:
         runId:
           description: Review run id being completed.
           type: string
+        status:
+          description: Terminal result status; defaults to complete. Native one-shot
+            reviewers may report failed.
+          enum:
+          - complete
+          - failed
+          type: string
         verdict:
-          description: 'Review verdict: approved or changes_requested.'
+          description: 'Review verdict: approved, comment, or changes_requested. Required
+            when status is complete.'
+          enum:
+          - approved
+          - comment
+          - changes_requested
           type: string
       required:
       - runId
-      - verdict
       type: object
     SwitchAgentRequest:
       properties:

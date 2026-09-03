@@ -2,13 +2,16 @@ package qwen
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
+	"github.com/aoagents/agent-orchestrator/backend/internal/nativeqwen"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
@@ -34,14 +37,15 @@ func invocation(t *testing.T) ports.ReviewInvocation {
 
 func TestReviewCommandIsExactPermanentTUIWithPostReadinessReference(t *testing.T) {
 	reviewer := New()
-	reviewer.resolveBinary = func(context.Context) (string, error) { return "/opt/qwen/bin/qwen", nil }
+	qwenBinary := filepath.Join(t.TempDir(), "qwen")
+	reviewer.resolveBinary = func(context.Context) (string, error) { return qwenBinary, nil }
 	inv := invocation(t)
 
 	spec, err := reviewer.ReviewCommand(context.Background(), inv)
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"/opt/qwen/bin/qwen", "--bare", "--approval-mode", "plan"}
+	want := []string{qwenBinary, "--bare", "--approval-mode", "plan"}
 	if !reflect.DeepEqual(spec.Argv, want) {
 		t.Fatalf("argv = %#v, want %#v", spec.Argv, want)
 	}
@@ -81,6 +85,7 @@ func TestReviewCommandIsExactPermanentTUIWithPostReadinessReference(t *testing.T
 func TestReviewCommandSeedsPrivateProfileFromHostSettings(t *testing.T) {
 	hostHome := t.TempDir()
 	t.Setenv("HOME", hostHome)
+	t.Setenv("USERPROFILE", hostHome)
 	settings := filepath.Join(hostHome, ".qwen", "settings.json")
 	if err := os.MkdirAll(filepath.Dir(settings), 0o700); err != nil {
 		t.Fatal(err)
@@ -89,7 +94,7 @@ func TestReviewCommandSeedsPrivateProfileFromHostSettings(t *testing.T) {
 		t.Fatal(err)
 	}
 	reviewer := New()
-	reviewer.resolveBinary = func(context.Context) (string, error) { return "/opt/qwen/bin/qwen", nil }
+	reviewer.resolveBinary = func(context.Context) (string, error) { return filepath.Join(t.TempDir(), "qwen"), nil }
 
 	spec, err := reviewer.ReviewCommand(context.Background(), invocation(t))
 	if err != nil {
@@ -108,7 +113,8 @@ func TestReviewCommandSeedsPrivateProfileFromHostSettings(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.Mode().Perm() != 0o600 {
+	// Windows does not preserve Unix permission bits for ordinary files.
+	if runtime.GOOS != "windows" && info.Mode().Perm() != 0o600 {
 		t.Fatalf("copied settings mode = %o, want 600", info.Mode().Perm())
 	}
 }
@@ -116,6 +122,7 @@ func TestReviewCommandSeedsPrivateProfileFromHostSettings(t *testing.T) {
 func TestReviewCommandExportsEnvValuesFromHostSettings(t *testing.T) {
 	hostHome := t.TempDir()
 	t.Setenv("HOME", hostHome)
+	t.Setenv("USERPROFILE", hostHome)
 	settings := filepath.Join(hostHome, ".qwen", "settings.json")
 	if err := os.MkdirAll(filepath.Dir(settings), 0o700); err != nil {
 		t.Fatal(err)
@@ -131,7 +138,7 @@ func TestReviewCommandExportsEnvValuesFromHostSettings(t *testing.T) {
 		t.Fatal(err)
 	}
 	reviewer := New()
-	reviewer.resolveBinary = func(context.Context) (string, error) { return "/opt/qwen/bin/qwen", nil }
+	reviewer.resolveBinary = func(context.Context) (string, error) { return filepath.Join(t.TempDir(), "qwen"), nil }
 
 	spec, err := reviewer.ReviewCommand(context.Background(), invocation(t))
 	if err != nil {
@@ -163,7 +170,7 @@ func TestReviewCommandRequiresAODataDir(t *testing.T) {
 	inv := invocation(t)
 	inv.DataDir = ""
 	reviewer := New()
-	reviewer.resolveBinary = func(context.Context) (string, error) { return "/opt/qwen/bin/qwen", nil }
+	reviewer.resolveBinary = func(context.Context) (string, error) { return filepath.Join(t.TempDir(), "qwen"), nil }
 	if _, err := reviewer.ReviewCommand(context.Background(), inv); err == nil || !strings.Contains(err.Error(), "AO data directory is required") {
 		t.Fatalf("ReviewCommand error = %v", err)
 	}
@@ -171,13 +178,112 @@ func TestReviewCommandRequiresAODataDir(t *testing.T) {
 
 func TestReviewCommandPreflightShapeNeedsNoRequestData(t *testing.T) {
 	reviewer := New()
-	reviewer.resolveBinary = func(context.Context) (string, error) { return "/opt/qwen/bin/qwen", nil }
+	qwenBinary := filepath.Join(t.TempDir(), "qwen")
+	reviewer.resolveBinary = func(context.Context) (string, error) { return qwenBinary, nil }
 	spec, err := reviewer.ReviewCommand(context.Background(), ports.ReviewInvocation{WorkspacePath: "/ws"})
 	if err != nil {
 		t.Fatalf("ReviewCommand: %v", err)
 	}
-	if !reflect.DeepEqual(spec.Argv, []string{"/opt/qwen/bin/qwen"}) {
+	if !reflect.DeepEqual(spec.Argv, []string{qwenBinary}) {
 		t.Fatalf("argv = %#v", spec.Argv)
+	}
+}
+
+func TestNativeReviewCommandUsesRepositoryAndAOOwnedManifest(t *testing.T) {
+	inv := invocation(t)
+	inv.Config = domain.AgentConfig{Mode: "native-review", NativeReview: &domain.NativeReviewConfig{
+		Effort: "high", Comment: true, Resume: true, Quiet: true, TimeoutMinutes: 7,
+	}}
+	qwenBinary := filepath.Join(t.TempDir(), "qwen")
+	aoBinary := filepath.Join(t.TempDir(), "ao")
+	reviewer := New()
+	reviewer.resolveBinary = func(context.Context) (string, error) { return qwenBinary, nil }
+	reviewer.resolveExecutable = func() (string, error) { return aoBinary, nil }
+
+	spec, err := reviewer.ReviewCommand(context.Background(), inv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if spec.WorkingDirectory != inv.WorkspacePath {
+		t.Fatalf("working directory = %q, want repository checkout %q", spec.WorkingDirectory, inv.WorkspacePath)
+	}
+	if len(spec.Argv) != 5 || spec.Argv[0] != aoBinary || spec.Argv[1] != "review" || spec.Argv[2] != "qwen-native-run" || spec.Argv[3] != "--manifest" {
+		t.Fatalf("argv = %#v", spec.Argv)
+	}
+	data, err := os.ReadFile(spec.Argv[4])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var manifest nativeqwen.Manifest
+	if err := json.Unmarshal(data, &manifest); err != nil {
+		t.Fatal(err)
+	}
+	if manifest.QwenBinary != qwenBinary || manifest.WorkspacePath != inv.WorkspacePath || len(manifest.Tasks) != 1 {
+		t.Fatalf("manifest = %+v", manifest)
+	}
+	if manifest.Tasks[0].Options.Resume {
+		t.Fatal("first review must not use --resume without an interrupted same-head predecessor")
+	}
+	if !manifest.Tasks[0].Options.Comment || manifest.Tasks[0].Options.Effort != "high" {
+		t.Fatalf("native options = %+v", manifest.Tasks[0].Options)
+	}
+	if !reviewer.SkipIdleReviewRestore(inv) {
+		t.Fatal("native one-shot reviewer should skip idle terminal restore")
+	}
+}
+
+func TestNativeReviewResumeIsFencedToSameTargetAndHead(t *testing.T) {
+	inv := invocation(t)
+	inv.Config = domain.AgentConfig{Mode: "native-review", NativeReview: &domain.NativeReviewConfig{Resume: true}}
+	inv.PreviousRuns = []domain.ReviewRun{
+		{PRURL: inv.PRURL, TargetSHA: "older", Status: domain.ReviewRunFailed},
+		{PRURL: inv.PRURL, TargetSHA: inv.TargetSHA, Status: domain.ReviewRunCancelled},
+	}
+	reviewer := New()
+	reviewer.resolveBinary = func(context.Context) (string, error) { return filepath.Join(t.TempDir(), "qwen"), nil }
+	reviewer.resolveExecutable = func() (string, error) { return filepath.Join(t.TempDir(), "ao"), nil }
+	spec, err := reviewer.ReviewCommand(context.Background(), inv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(spec.Argv[4])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var manifest nativeqwen.Manifest
+	if err := json.Unmarshal(data, &manifest); err != nil {
+		t.Fatal(err)
+	}
+	if !manifest.Tasks[0].Options.Resume {
+		t.Fatal("same-target interrupted review should use --resume")
+	}
+}
+
+func TestNativeReviewRestoreResumesOnlyRecordedRunningHead(t *testing.T) {
+	inv := invocation(t)
+	inv.RunID, inv.PRURL, inv.TargetSHA = "", "", ""
+	inv.Config = domain.AgentConfig{Mode: "native-review", NativeReview: &domain.NativeReviewConfig{Resume: true}}
+	inv.PreviousRuns = []domain.ReviewRun{
+		{ID: "run-old", PRURL: "pr-old", TargetSHA: "old", Status: domain.ReviewRunComplete},
+		{ID: "run-running", PRURL: "pr-current", TargetSHA: "sha-current", Status: domain.ReviewRunRunning},
+	}
+	reviewer := New()
+	reviewer.resolveBinary = func(context.Context) (string, error) { return filepath.Join(t.TempDir(), "qwen"), nil }
+	reviewer.resolveExecutable = func() (string, error) { return filepath.Join(t.TempDir(), "ao"), nil }
+	spec, ok, err := reviewer.ReviewRestoreCommand(context.Background(), inv)
+	if err != nil || !ok {
+		t.Fatalf("ReviewRestoreCommand ok=%v err=%v", ok, err)
+	}
+	data, err := os.ReadFile(spec.Argv[4])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var manifest nativeqwen.Manifest
+	if err := json.Unmarshal(data, &manifest); err != nil {
+		t.Fatal(err)
+	}
+	if len(manifest.Tasks) != 1 || manifest.Tasks[0].RunID != "run-running" || !manifest.Tasks[0].Options.Resume {
+		t.Fatalf("restore manifest = %+v", manifest)
 	}
 }
 

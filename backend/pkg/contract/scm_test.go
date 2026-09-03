@@ -130,11 +130,11 @@ func TestSharedSCMVocabulariesAndCloudReadRoutesMatch(t *testing.T) {
 		}},
 		{"AOReviewVerdict", "AO_REVIEW_VERDICTS", []string{
 			string(contract.AOReviewVerdictNone), string(contract.AOReviewVerdictApproved),
-			string(contract.AOReviewVerdictChangesRequested),
+			string(contract.AOReviewVerdictComment), string(contract.AOReviewVerdictChangesRequested),
 		}},
 		{"AOReviewState", "AO_REVIEW_STATES", []string{
 			string(contract.AOReviewNeedsReview), string(contract.AOReviewRunning),
-			string(contract.AOReviewUpToDate), string(contract.AOReviewChangesRequested),
+			string(contract.AOReviewUpToDate), string(contract.AOReviewCommented), string(contract.AOReviewChangesRequested),
 			string(contract.AOReviewIneligible),
 		}},
 	}

@@ -839,6 +839,7 @@
 	"settings.language.de": "Deutsch",
 	"settings.language.ptBR": "Português (Brasil)",
 	"settings.models.agentDefault": "에이전트 기본값",
+	"settings.models.qwenNativeReview": "네이티브 리뷰",
 	"settings.models.autoRouteLabel": "자동 (자동으로 라우팅)",
 	"settings.models.browse": "찾아보기",
 	"settings.models.custom": "모델 ID 입력…",

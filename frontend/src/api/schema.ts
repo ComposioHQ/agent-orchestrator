@@ -2276,6 +2276,7 @@ export interface components {
         AgentConfig: {
             mode?: string;
             model?: string;
+            nativeReview?: components["schemas"]["DomainNativeReviewConfig"];
             permissions?: string;
         };
         AgentInfo: {
@@ -3028,6 +3029,14 @@ export interface components {
             lastActivityAt: string;
             state: string;
         };
+        DomainNativeReviewConfig: {
+            comment?: boolean;
+            /** @enum {string} */
+            effort?: "low" | "medium" | "high";
+            quiet?: boolean;
+            resume?: boolean;
+            timeoutMinutes?: number;
+        };
         DomainReviewerConfig: {
             agentConfig?: components["schemas"]["AgentConfig"];
             harness: string;
@@ -3338,7 +3347,7 @@ export interface components {
             prUrl: string;
             previousRun?: components["schemas"]["ReviewRun"];
             /** @enum {string} */
-            status: "needs_review" | "running" | "up_to_date" | "changes_requested" | "ineligible";
+            status: "needs_review" | "running" | "up_to_date" | "commented" | "changes_requested" | "ineligible";
             targetSha: string;
             title: string;
         };
@@ -3919,8 +3928,16 @@ export interface components {
             reviews?: components["schemas"]["SubmitReviewItem"][];
             /** @description Review run id being completed. */
             runId?: string;
-            /** @description Review verdict: approved or changes_requested. */
-            verdict?: string;
+            /**
+             * @description Terminal result status; defaults to complete. Native one-shot reviewers may report failed.
+             * @enum {string}
+             */
+            status?: "complete" | "failed";
+            /**
+             * @description Review verdict: approved, comment, or changes_requested.
+             * @enum {string}
+             */
+            verdict?: "approved" | "comment" | "changes_requested";
         };
         SubmitReviewItem: {
             /** @description Review body recorded by AO. Required for changes_requested. */
@@ -3929,8 +3946,16 @@ export interface components {
             githubReviewId?: string;
             /** @description Review run id being completed. */
             runId: string;
-            /** @description Review verdict: approved or changes_requested. */
-            verdict: string;
+            /**
+             * @description Terminal result status; defaults to complete. Native one-shot reviewers may report failed.
+             * @enum {string}
+             */
+            status?: "complete" | "failed";
+            /**
+             * @description Review verdict: approved, comment, or changes_requested. Required when status is complete.
+             * @enum {string}
+             */
+            verdict?: "approved" | "comment" | "changes_requested";
         };
         SwitchAgentRequest: {
             /** @description Optional retry key. Reusing it with a different request is rejected. */

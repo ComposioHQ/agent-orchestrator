@@ -264,7 +264,7 @@ func (e *Engine) TriggerWithSource(ctx stdctx.Context, workerID domain.SessionID
 		harness = override
 		if override == resolvedHarness {
 			config = mergeReviewerAgentConfig(resolvedConfig, overrideConfig)
-			hasConfigOverride = config != resolvedConfig
+			hasConfigOverride = !config.Equal(resolvedConfig)
 		} else if !overrideConfig.IsZero() {
 			config = mergeReviewerAgentConfig(domain.AgentConfig{}, overrideConfig)
 		} else {
@@ -272,7 +272,10 @@ func (e *Engine) TriggerWithSource(ctx stdctx.Context, workerID domain.SessionID
 		}
 	} else if !overrideConfig.IsZero() {
 		config = mergeReviewerAgentConfig(config, overrideConfig)
-		hasConfigOverride = config != resolvedConfig
+		hasConfigOverride = !config.Equal(resolvedConfig)
+	}
+	if err := config.ValidateReviewer(harness); err != nil {
+		return TriggerResult{}, fmt.Errorf("%w: reviewer config: %w", ErrInvalid, err)
 	}
 	reviewRows, err := e.store.ListReviewsBySession(ctx, workerID)
 	if err != nil {
@@ -421,7 +424,7 @@ func (e *Engine) TriggerWithSource(ctx stdctx.Context, workerID domain.SessionID
 		if err := e.launcher.Preflight(ctx, harness, worker.Metadata.WorkspacePath); err != nil {
 			return TriggerResult{}, failRuns(0, fmt.Errorf("reviewer preflight: %w", err))
 		}
-		launch, err := e.launcher.Spawn(ctx, reviewLaunchSpec(worker, harness, config, launchRun, queue, 0, launchAgentSessionID))
+		launch, err := e.launcher.Spawn(ctx, reviewLaunchSpec(worker, harness, config, reviewRunsForHarness(runs, harness), launchRun, queue, 0, launchAgentSessionID))
 		if err != nil {
 			return TriggerResult{}, failRuns(0, fmt.Errorf("launch reviewer: %w", err))
 		}
@@ -430,7 +433,7 @@ func (e *Engine) TriggerWithSource(ctx stdctx.Context, workerID domain.SessionID
 			persistedAgentSessionID = launch.AgentSessionID
 		}
 	} else {
-		if err := e.launcher.Notify(ctx, handleID, reviewLaunchSpec(worker, harness, config, launchRun, queue, 0, reviewRow.AgentSessionID)); err != nil {
+		if err := e.launcher.Notify(ctx, handleID, reviewLaunchSpec(worker, harness, config, reviewRunsForHarness(runs, harness), launchRun, queue, 0, reviewRow.AgentSessionID)); err != nil {
 			return TriggerResult{}, failRuns(0, fmt.Errorf("notify reviewer: %w", err))
 		}
 	}
@@ -511,7 +514,7 @@ func (e *Engine) SwitchReviewer(
 	if harness != "" && !harness.IsKnown() {
 		return SessionReviews{}, fmt.Errorf("%w: unknown reviewer harness %q", ErrInvalid, harness)
 	}
-	if err := config.Validate(); err != nil {
+	if err := config.ValidateReviewer(harness); err != nil {
 		return SessionReviews{}, fmt.Errorf("%w: reviewer config: %w", ErrInvalid, err)
 	}
 	unlock := e.lockWorker(workerID)
@@ -546,7 +549,7 @@ func (e *Engine) SwitchReviewer(
 	if err := e.destroyOtherReviewerHandles(ctx, workerID, selected, reviewRows); err != nil {
 		return SessionReviews{}, err
 	}
-	if previousSelected == selected && previousConfig != selectedConfig {
+	if previousSelected == selected && !previousConfig.Equal(selectedConfig) {
 		if err := e.resetReviewerRuntimeLocked(ctx, workerID, selected); err != nil {
 			return SessionReviews{}, err
 		}
@@ -884,7 +887,7 @@ func autoReviewHeadBlocked(runs []domain.ReviewRun, prURL, targetSHA string, har
 		if run.PRURL != prURL || run.TargetSHA != targetSHA || (run.Harness != harness && run.Harness != "") {
 			continue
 		}
-		if run.Status == domain.ReviewRunRunning || run.Status == domain.ReviewRunCancelled || run.Verdict == domain.VerdictApproved || run.Verdict == domain.VerdictChangesRequested {
+		if run.Status == domain.ReviewRunRunning || run.Status == domain.ReviewRunCancelled || run.Verdict == domain.VerdictApproved || run.Verdict == domain.VerdictComment || run.Verdict == domain.VerdictChangesRequested {
 			return true
 		}
 		if run.Status == domain.ReviewRunFailed && run.TriggerSource == domain.ReviewTriggerAuto {
@@ -941,6 +944,7 @@ func reviewLaunchSpec(
 	worker domain.SessionRecord,
 	harness domain.ReviewerHarness,
 	config domain.AgentConfig,
+	previousRuns []domain.ReviewRun,
 	run domain.ReviewRun,
 	queue []ports.ReviewTask,
 	index int,
@@ -956,7 +960,7 @@ func reviewLaunchSpec(
 		AgentConfig:     config,
 		WorkspacePath:   worker.Metadata.WorkspacePath,
 		AgentSessionID:  agentSessionID,
-		PreviousRuns:    nil,
+		PreviousRuns:    previousRuns,
 		PRURL:           run.PRURL,
 		TargetSHA:       run.TargetSHA,
 		ReviewQueue:     queue,
@@ -1278,6 +1282,10 @@ func mergeReviewerAgentConfig(base, override domain.AgentConfig) domain.AgentCon
 	}
 	if override.Permissions != "" {
 		base.Permissions = override.Permissions
+	}
+	if override.NativeReview != nil {
+		value := *override.NativeReview
+		base.NativeReview = &value
 	}
 	return base
 }

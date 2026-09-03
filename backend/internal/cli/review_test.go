@@ -1,14 +1,19 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
+
+	"github.com/aoagents/agent-orchestrator/backend/internal/nativeqwen"
 )
 
 // reviewCapture records the method/path/body of the request the CLI made.
@@ -427,5 +432,156 @@ func TestReviewActionCommandNames(t *testing.T) {
 				t.Fatalf("request = %s %s", capture.method, capture.path)
 			}
 		})
+	}
+}
+
+func writeNativeManifest(t *testing.T, manifest nativeqwen.Manifest) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "native-review.json")
+	raw, err := json.Marshal(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func TestQwenNativeRunSeparatesProgressAndSubmitsStructuredResult(t *testing.T) {
+	cfg := setConfigEnv(t)
+	srv, capture := reviewServer(t, http.StatusOK, `{"review":{"verdict":"comment"}}`)
+	writeRunFileFor(t, cfg, srv)
+	manifestPath := writeNativeManifest(t, nativeqwen.Manifest{
+		Version: 1, QwenBinary: "/qwen", WorkerSessionID: "worker-1", WorkspacePath: t.TempDir(),
+		Tasks: []nativeqwen.Task{{RunID: "run-1", Target: "https://github.com/o/r/pull/1", TargetSHA: "abc", Options: nativeqwen.Options{Effort: "medium"}}},
+	})
+	deps := aliveDeps()
+	deps.In = strings.NewReader("")
+	deps.NativeQwenRun = func(_ context.Context, binary, dir string, task nativeqwen.Task, stderr io.Writer) ([]byte, int, error) {
+		if binary != "/qwen" || dir == "" || task.TargetSHA != "abc" {
+			t.Fatalf("run args: binary=%q dir=%q task=%+v", binary, dir, task)
+		}
+		_, _ = io.WriteString(stderr, "provider progress\n")
+		return []byte(`{"completed":true,"verdictLine":"COMMENT","durationMs":12}`), 0, nil
+	}
+	out, errOut, err := executeCLI(t, deps, "review", "qwen-native-run", "--manifest", manifestPath)
+	if err != nil {
+		t.Fatalf("qwen-native-run: %v\nstderr=%s", err, errOut)
+	}
+	if !strings.Contains(out, "recorded comment") || !strings.Contains(errOut, "provider progress") {
+		t.Fatalf("stdout=%q stderr=%q", out, errOut)
+	}
+	var req submitReviewRequest
+	if err := json.Unmarshal([]byte(capture.body), &req); err != nil {
+		t.Fatal(err)
+	}
+	if req.RunID != "run-1" || req.Status != "complete" || req.Verdict != "comment" {
+		t.Fatalf("submission = %+v", req)
+	}
+	if strings.Contains(req.Body, "provider progress") || !strings.Contains(req.Body, `"targetSha": "abc"`) || !strings.Contains(req.Body, `"providerResult"`) {
+		t.Fatalf("stored body = %q", req.Body)
+	}
+	if _, err := os.Stat(manifestPath); !os.IsNotExist(err) {
+		t.Fatalf("manifest was not removed: %v", err)
+	}
+}
+
+func TestQwenNativeRunReplaysRecordedResultWithoutRepeatingProviderSideEffects(t *testing.T) {
+	cfg := setConfigEnv(t)
+	var requests atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		if requests.Add(1) == 1 {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = io.WriteString(w, `{"message":"retry"}`)
+			return
+		}
+		_, _ = io.WriteString(w, `{"review":{"verdict":"comment"}}`)
+	}))
+	t.Cleanup(srv.Close)
+	writeRunFileFor(t, cfg, srv)
+	manifest := nativeqwen.Manifest{
+		Version: 1, QwenBinary: "/qwen", WorkerSessionID: "worker-1", WorkspacePath: t.TempDir(),
+		Tasks: []nativeqwen.Task{{RunID: "run-1", Target: "https://github.com/o/r/pull/1", TargetSHA: "abc"}},
+	}
+	manifestPath := writeNativeManifest(t, manifest)
+	rawManifest, err := json.Marshal(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	providerRuns := 0
+	deps := aliveDeps()
+	deps.In = strings.NewReader("")
+	deps.NativeQwenRun = func(context.Context, string, string, nativeqwen.Task, io.Writer) ([]byte, int, error) {
+		providerRuns++
+		return []byte(`{"completed":true,"event":"COMMENT","verdictLine":"Verdict: Comment","cappedBy":[],"remediation":[]}`), 0, nil
+	}
+	if _, _, err := executeCLI(t, deps, "review", "qwen-native-run", "--manifest", manifestPath); err == nil {
+		t.Fatal("first submission unexpectedly succeeded")
+	}
+	if providerRuns != 1 {
+		t.Fatalf("provider runs after failed submit = %d, want 1", providerRuns)
+	}
+	if err := os.WriteFile(manifestPath, rawManifest, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	deps.In = strings.NewReader("")
+	if _, _, err := executeCLI(t, deps, "review", "qwen-native-run", "--manifest", manifestPath); err != nil {
+		t.Fatalf("replay recorded result: %v", err)
+	}
+	if providerRuns != 1 {
+		t.Fatalf("provider was repeated after its result was durable: %d runs", providerRuns)
+	}
+	if requests.Load() != 2 {
+		t.Fatalf("AO submission attempts = %d, want 2", requests.Load())
+	}
+	if _, err := os.Stat(qwenNativeSubmissionPath(manifestPath, "run-1")); !os.IsNotExist(err) {
+		t.Fatalf("recorded result was not removed after successful submission: %v", err)
+	}
+}
+
+func TestQwenNativeRunRecordsExitOneAsFailedWithoutVerdict(t *testing.T) {
+	cfg := setConfigEnv(t)
+	srv, capture := reviewServer(t, http.StatusOK, `{"review":{"status":"failed"}}`)
+	writeRunFileFor(t, cfg, srv)
+	manifestPath := writeNativeManifest(t, nativeqwen.Manifest{
+		Version: 1, QwenBinary: "/qwen", WorkerSessionID: "worker-1", WorkspacePath: t.TempDir(),
+		Tasks: []nativeqwen.Task{{RunID: "run-1", Target: "pr-1", TargetSHA: "abc"}},
+	})
+	deps := aliveDeps()
+	deps.In = strings.NewReader("")
+	deps.NativeQwenRun = func(context.Context, string, string, nativeqwen.Task, io.Writer) ([]byte, int, error) {
+		return []byte(`{"completed":false,"timedOut":true}`), 1, nil
+	}
+	_, _, err := executeCLI(t, deps, "review", "qwen-native-run", "--manifest", manifestPath)
+	if err == nil {
+		t.Fatal("exit-one result unexpectedly succeeded")
+	}
+	var req submitReviewRequest
+	if err := json.Unmarshal([]byte(capture.body), &req); err != nil {
+		t.Fatal(err)
+	}
+	if req.Status != "failed" || req.Verdict != "" || !strings.Contains(req.Body, "did not produce a verdict") {
+		t.Fatalf("submission = %+v", req)
+	}
+}
+
+func TestQwenNativeRunEscapeCancelsWithoutSubmittingFailure(t *testing.T) {
+	setConfigEnv(t)
+	manifestPath := writeNativeManifest(t, nativeqwen.Manifest{
+		Version: 1, QwenBinary: "/qwen", WorkerSessionID: "worker-1", WorkspacePath: t.TempDir(),
+		Tasks: []nativeqwen.Task{{RunID: "run-1", Target: "pr-1", TargetSHA: "abc"}},
+	})
+	deps := aliveDeps()
+	deps.In = strings.NewReader("\x1b")
+	deps.NativeQwenRun = func(ctx context.Context, _ string, _ string, _ nativeqwen.Task, _ io.Writer) ([]byte, int, error) {
+		<-ctx.Done()
+		return nil, -1, ctx.Err()
+	}
+	_, _, err := executeCLI(t, deps, "review", "qwen-native-run", "--manifest", manifestPath)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("error = %v, want context cancellation", err)
 	}
 }

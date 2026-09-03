@@ -15,6 +15,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/daemon"
+	"github.com/aoagents/agent-orchestrator/backend/internal/nativeqwen"
 	aoprocess "github.com/aoagents/agent-orchestrator/backend/internal/process"
 	"github.com/aoagents/agent-orchestrator/backend/internal/processalive"
 	"github.com/aoagents/agent-orchestrator/backend/internal/telemetrymeta"
@@ -73,6 +74,7 @@ type Deps struct {
 	CommandOutputInDir    func(ctx context.Context, dir, name string, args ...string) ([]byte, error)
 	RunInteractiveCommand func(ctx context.Context, name string, args []string, stdin io.Reader, stdout, stderr io.Writer) error
 	ReadSecret            func(io.Reader) ([]byte, error)
+	NativeQwenRun         func(ctx context.Context, binary, dir string, task nativeqwen.Task, stderr io.Writer) ([]byte, int, error)
 	// DoctorGitHubRESTBase lets tests point the doctor GitHub token probe at
 	// httptest without mutating package-global state.
 	DoctorGitHubRESTBase string
@@ -98,6 +100,7 @@ func DefaultDeps() Deps {
 		CommandOutputInDir:    commandOutputInDir,
 		RunInteractiveCommand: runInteractiveCommand,
 		ReadSecret:            readSecret,
+		NativeQwenRun:         nativeqwen.Run,
 		DoctorGitHubRESTBase:  defaultDoctorGitHubRESTBase,
 		DoctorGitLabRESTBase:  defaultDoctorGitLabRESTBase,
 		Now:                   time.Now,
@@ -152,6 +155,9 @@ func (d Deps) withDefaults() Deps {
 	}
 	if d.ReadSecret == nil {
 		d.ReadSecret = def.ReadSecret
+	}
+	if d.NativeQwenRun == nil {
+		d.NativeQwenRun = def.NativeQwenRun
 	}
 	if d.DoctorGitHubRESTBase == "" {
 		d.DoctorGitHubRESTBase = def.DoctorGitHubRESTBase

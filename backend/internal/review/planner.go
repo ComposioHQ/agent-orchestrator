@@ -17,6 +17,8 @@ const (
 	ReviewStateRunning = contract.AOReviewRunning
 	// ReviewStateUpToDate means AO approved the PR's current head.
 	ReviewStateUpToDate = contract.AOReviewUpToDate
+	// ReviewStateCommented means a completed review made no approval decision.
+	ReviewStateCommented = contract.AOReviewCommented
 	// ReviewStateChangesRequested means AO requested changes on the PR's current head.
 	ReviewStateChangesRequested = contract.AOReviewChangesRequested
 	// ReviewStateIneligible means the PR is closed, merged, or missing required facts.
@@ -29,7 +31,7 @@ type PRReviewState struct {
 	PRNumber    int               `json:"prNumber"`
 	Title       string            `json:"title"`
 	TargetSHA   string            `json:"targetSha"`
-	Status      StateStatus       `json:"status" enum:"needs_review,running,up_to_date,changes_requested,ineligible"`
+	Status      StateStatus       `json:"status" enum:"needs_review,running,up_to_date,commented,changes_requested,ineligible"`
 	LatestRun   *domain.ReviewRun `json:"latestRun,omitempty"`
 	PreviousRun *domain.ReviewRun `json:"previousRun,omitempty"`
 }
@@ -66,6 +68,8 @@ func Plan(prs []domain.PullRequest, runs []domain.ReviewRun) []PRReviewState {
 				review.Status = ReviewStateRunning
 			case run.Verdict == domain.VerdictApproved:
 				review.Status = ReviewStateUpToDate
+			case run.Verdict == domain.VerdictComment:
+				review.Status = ReviewStateCommented
 			case run.Verdict == domain.VerdictChangesRequested:
 				review.Status = ReviewStateChangesRequested
 			case run.Status == domain.ReviewRunFailed || run.Status == domain.ReviewRunCancelled:
@@ -98,7 +102,7 @@ func latestCompletedRunForOtherSHA(runs []domain.ReviewRun, prURL, targetSHA str
 		if run.Status != domain.ReviewRunComplete && run.Status != domain.ReviewRunDelivered {
 			continue
 		}
-		if run.Verdict != domain.VerdictApproved && run.Verdict != domain.VerdictChangesRequested {
+		if run.Verdict != domain.VerdictApproved && run.Verdict != domain.VerdictComment && run.Verdict != domain.VerdictChangesRequested {
 			continue
 		}
 		if !found || run.CreatedAt.After(latest.CreatedAt) {

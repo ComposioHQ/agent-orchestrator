@@ -94,6 +94,7 @@ type ReviewVerdict = contract.AOReviewVerdict
 const (
 	VerdictNone             = contract.AOReviewVerdictNone
 	VerdictApproved         = contract.AOReviewVerdictApproved
+	VerdictComment          = contract.AOReviewVerdictComment
 	VerdictChangesRequested = contract.AOReviewVerdictChangesRequested
 )
 

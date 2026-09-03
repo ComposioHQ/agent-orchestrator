@@ -74,7 +74,8 @@ type KillReviewResponse struct {
 // SubmitReviewItem is one review result in a batched submit request.
 type SubmitReviewItem struct {
 	RunID          string `json:"runId" description:"Review run id being completed."`
-	Verdict        string `json:"verdict" description:"Review verdict: approved or changes_requested."`
+	Status         string `json:"status,omitempty" description:"Terminal result status; defaults to complete. Native one-shot reviewers may report failed." enum:"complete,failed"`
+	Verdict        string `json:"verdict,omitempty" description:"Review verdict: approved, comment, or changes_requested. Required when status is complete." enum:"approved,comment,changes_requested"`
 	Body           string `json:"body,omitempty" description:"Review body recorded by AO. Required for changes_requested."`
 	GithubReviewID string `json:"githubReviewId,omitempty" description:"Id of the GitHub PR review the reviewer posted, if any."`
 }
@@ -82,7 +83,8 @@ type SubmitReviewItem struct {
 // SubmitReviewInput is the body of POST /api/v1/sessions/{sessionId}/reviews/submit.
 type SubmitReviewInput struct {
 	RunID          string             `json:"runId,omitempty" description:"Review run id being completed."`
-	Verdict        string             `json:"verdict,omitempty" description:"Review verdict: approved or changes_requested."`
+	Status         string             `json:"status,omitempty" description:"Terminal result status; defaults to complete. Native one-shot reviewers may report failed." enum:"complete,failed"`
+	Verdict        string             `json:"verdict,omitempty" description:"Review verdict: approved, comment, or changes_requested." enum:"approved,comment,changes_requested"`
 	Body           string             `json:"body,omitempty" description:"Review body recorded by AO. Required for changes_requested."`
 	GithubReviewID string             `json:"githubReviewId,omitempty" description:"Id of the GitHub PR review the reviewer posted, if any."`
 	Reviews        []SubmitReviewItem `json:"reviews,omitempty" description:"Batched review results recorded by one reviewer CLI command."`
@@ -360,6 +362,7 @@ func (c *ReviewsController) submit(w http.ResponseWriter, r *http.Request) {
 		for _, item := range in.Reviews {
 			reviews = append(reviews, reviewsvc.SubmittedReview{
 				RunID:          item.RunID,
+				Status:         domain.ReviewRunStatus(item.Status),
 				Verdict:        domain.ReviewVerdict(item.Verdict),
 				Body:           item.Body,
 				GithubReviewID: item.GithubReviewID,
@@ -368,6 +371,7 @@ func (c *ReviewsController) submit(w http.ResponseWriter, r *http.Request) {
 	} else {
 		reviews = append(reviews, reviewsvc.SubmittedReview{
 			RunID:          in.RunID,
+			Status:         domain.ReviewRunStatus(in.Status),
 			Verdict:        domain.ReviewVerdict(in.Verdict),
 			Body:           in.Body,
 			GithubReviewID: in.GithubReviewID,

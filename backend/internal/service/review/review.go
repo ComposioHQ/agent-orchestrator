@@ -605,6 +605,7 @@ func (s *Service) ApplyReviewActivitySignal(ctx context.Context, reviewSessionID
 // SubmittedReview is one review result supplied by the reviewer CLI.
 type SubmittedReview struct {
 	RunID          string
+	Status         domain.ReviewRunStatus
 	Verdict        domain.ReviewVerdict
 	Body           string
 	GithubReviewID string
@@ -669,17 +670,33 @@ func (s *Service) SubmitMany(ctx context.Context, workerID domain.SessionID, rev
 
 func (s *Service) submitOne(ctx context.Context, workerID domain.SessionID, review SubmittedReview) (domain.ReviewRun, error) {
 	runID := review.RunID
+	status := review.Status
+	if status == "" {
+		status = domain.ReviewRunComplete
+	}
 	verdict := review.Verdict
 	body := review.Body
 	githubReviewID := review.GithubReviewID
 	if runID == "" {
 		return domain.ReviewRun{}, fmt.Errorf("%w: review run id is required", ErrInvalid)
 	}
-	if !verdict.Valid() {
-		return domain.ReviewRun{}, fmt.Errorf("%w: verdict must be %q or %q", ErrInvalid, domain.VerdictApproved, domain.VerdictChangesRequested)
-	}
-	if verdict == domain.VerdictChangesRequested && body == "" {
-		return domain.ReviewRun{}, fmt.Errorf("%w: a changes_requested review requires a body", ErrInvalid)
+	switch status {
+	case domain.ReviewRunComplete:
+		if !verdict.Valid() {
+			return domain.ReviewRun{}, fmt.Errorf("%w: verdict must be %q, %q, or %q", ErrInvalid, domain.VerdictApproved, domain.VerdictComment, domain.VerdictChangesRequested)
+		}
+		if verdict == domain.VerdictChangesRequested && body == "" {
+			return domain.ReviewRun{}, fmt.Errorf("%w: a changes_requested review requires a body", ErrInvalid)
+		}
+	case domain.ReviewRunFailed:
+		if verdict != domain.VerdictNone {
+			return domain.ReviewRun{}, fmt.Errorf("%w: a failed review cannot carry a verdict", ErrInvalid)
+		}
+		if strings.TrimSpace(body) == "" {
+			return domain.ReviewRun{}, fmt.Errorf("%w: a failed review requires diagnostic detail", ErrInvalid)
+		}
+	default:
+		return domain.ReviewRun{}, fmt.Errorf("%w: review status must be %q or %q", ErrInvalid, domain.ReviewRunComplete, domain.ReviewRunFailed)
 	}
 	run, ok, err := s.store.GetReviewRun(ctx, runID)
 	if err != nil {
@@ -701,14 +718,14 @@ func (s *Service) submitOne(ctx context.Context, workerID domain.SessionID, revi
 		if !found {
 			return domain.ReviewRun{}, fmt.Errorf("%w: worker session %q", ErrNotFound, workerID)
 		}
-		updated, err := s.store.UpdateReviewRunResult(ctx, run.ID, domain.ReviewRunComplete, verdict, body, githubReviewID, session.AutoInjectReview)
+		updated, err := s.store.UpdateReviewRunResult(ctx, run.ID, status, verdict, body, githubReviewID, session.AutoInjectReview)
 		if err != nil {
 			return domain.ReviewRun{}, err
 		}
 		if !updated {
 			return domain.ReviewRun{}, fmt.Errorf("%w: review run %q is not running", ErrInvalid, runID)
 		}
-		run.Status = domain.ReviewRunComplete
+		run.Status = status
 		run.Verdict = verdict
 		run.Body = body
 		run.GithubReviewID = githubReviewID
@@ -716,7 +733,11 @@ func (s *Service) submitOne(ctx context.Context, workerID domain.SessionID, revi
 		// Only on the real running -> complete transition. Re-submitting an
 		// already-complete run returns early below, so telemetry stays idempotent
 		// the same way the store does.
-		s.emit(ctx, "ao.review.submitted", workerID, map[string]any{
+		event := "ao.review.submitted"
+		if status == domain.ReviewRunFailed {
+			event = "ao.review.failed"
+		}
+		s.emit(ctx, event, workerID, map[string]any{
 			"harness":            string(run.Harness),
 			"verdict":            string(verdict),
 			"duration_ms":        s.clock().Sub(run.CreatedAt).Milliseconds(),
@@ -734,6 +755,9 @@ func (s *Service) submitOne(ctx context.Context, workerID domain.SessionID, revi
 			"auto_inject": session.AutoInjectReview,
 		})
 	case domain.ReviewRunComplete:
+		if status != domain.ReviewRunComplete {
+			return domain.ReviewRun{}, fmt.Errorf("%w: review run %q already recorded status %q", ErrInvalid, runID, run.Status)
+		}
 		if run.Verdict != verdict {
 			return domain.ReviewRun{}, fmt.Errorf("%w: review run %q already recorded verdict %q", ErrInvalid, runID, run.Verdict)
 		}
@@ -744,6 +768,11 @@ func (s *Service) submitOne(ctx context.Context, workerID domain.SessionID, revi
 			return domain.ReviewRun{}, fmt.Errorf("%w: review run %q already recorded GitHub review id %q", ErrInvalid, runID, run.GithubReviewID)
 		}
 	case domain.ReviewRunDelivered:
+		return run, nil
+	case domain.ReviewRunFailed:
+		if status != domain.ReviewRunFailed || run.Body != body {
+			return domain.ReviewRun{}, fmt.Errorf("%w: review run %q already recorded a different failed result", ErrInvalid, runID)
+		}
 		return run, nil
 	default:
 		return domain.ReviewRun{}, fmt.Errorf("%w: review run %q is not running", ErrInvalid, runID)
