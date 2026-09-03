@@ -58,7 +58,6 @@ func (s installCapabilitiesStub) Probe(ctx context.Context) (ports.InstallCapabi
 			Prefix: homebrewPrefix, PrefixWritable: s.writable,
 			Formulae: formulae, Casks: casks, Err: s.homebrewErr,
 		},
-		MacApplicationsWritable: true,
 	}, nil
 }
 
@@ -298,7 +297,7 @@ func TestHomebrewReinstallRepairsThroughInstallWhenPackageIsNotOwned(t *testing.
 }
 
 func TestKiroReinstallIsUnavailableWithoutVerifiedHeadlessRecipe(t *testing.T) {
-	s := newTestService("darwin", "bash", "kiro-cli")
+	s := newTestService("windows", "powershell.exe", "kiro-cli")
 	planner, err := s.newRequestPlanner(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -320,17 +319,13 @@ func TestKiroReinstallIsUnavailableWithoutVerifiedHeadlessRecipe(t *testing.T) {
 	}
 }
 
-func TestKiroFreshInstallRequiresWritableApplications(t *testing.T) {
-	s := newTestService("darwin", "bash")
-	planner, err := s.newRequestPlanner(context.Background())
-	if err != nil {
-		t.Fatal(err)
+func TestKiroMacOSInstallRequiresInteractiveVendorFlow(t *testing.T) {
+	plan := newTestService("darwin", "bash").planAgent(TargetKiro)
+	if !plan.Unsupported || plan.Method != "manual" || plan.Script != nil || len(plan.Command) != 0 {
+		t.Fatalf("Kiro macOS plan = %+v, want manual interactive installation", plan)
 	}
-	planner.capabilities.MacApplicationsWritable = false
-
-	_, err = planner.resolveAgentMethod(TargetKiro, "official-installer", AgentOperationInstall)
-	if !errors.Is(err, ErrInstallMethod) || !strings.Contains(err.Error(), "/Applications") {
-		t.Fatalf("fresh Kiro install error = %v", err)
+	if !strings.Contains(plan.Reason, "must be run interactively") || plan.DocsURL == "" {
+		t.Fatalf("Kiro macOS guidance = %+v, want interactive reason and documentation", plan)
 	}
 }
 
