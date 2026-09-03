@@ -75,7 +75,7 @@ type Options struct {
 
 	// UnregisterHost overrides durable reservation cleanup. It exists for
 	// manager-level fault-contract tests; nil uses the registry adapter.
-	UnregisterHost func(string) error
+	UnregisterHost func(context.Context, string) error
 }
 
 // Runtime is the conpty runtime adapter.
@@ -84,8 +84,8 @@ type Runtime struct {
 	killHost       func(string) error
 	pidIsAlive     func(int) bool
 	processFinder  func(int) (processKiller, error)
-	registerHost   func(ptyregistry.Entry) error
-	unregisterHost func(string) error
+	registerHost   func(context.Context, ptyregistry.Entry) error
+	unregisterHost func(context.Context, string) error
 	destroyWait    time.Duration
 	destroyPoll    time.Duration
 
@@ -160,7 +160,7 @@ func (r *Runtime) Create(ctx context.Context, cfg ports.RuntimeConfig) (ports.Ru
 	}
 	r.sessions[id] = reservation
 	r.mu.Unlock()
-	if err := r.registerHost(ptyregistry.Entry{
+	if err := r.registerHost(ctx, ptyregistry.Entry{
 		SessionID: id, PtyHostPID: 0, PipePath: unresolvedHostAddress,
 		LaunchID: reservation.launchID, RegisteredAt: time.Now().UTC().Format(time.RFC3339),
 	}); err != nil {
@@ -175,7 +175,7 @@ func (r *Runtime) Create(ctx context.Context, cfg ports.RuntimeConfig) (ports.Ru
 		cause := fmt.Errorf("conpty: spawn pty-host for %q: %w", id, err)
 		handle := ports.RuntimeHandle{ID: id}
 		if addr == "" && pid == 0 {
-			if unregisterErr := r.unregisterHost(id); unregisterErr != nil {
+			if unregisterErr := r.unregisterHost(ctx, id); unregisterErr != nil {
 				cause = errors.Join(cause, fmt.Errorf("remove unused pty-host reservation for %q: %w", id, unregisterErr))
 				// Keep the current-owner reservation in memory when durable
 				// cleanup fails. A later Destroy can safely retry unregistering
@@ -196,7 +196,7 @@ func (r *Runtime) Create(ctx context.Context, cfg ports.RuntimeConfig) (ports.Ru
 			r.mu.Lock()
 			r.sessions[id] = sess
 			r.mu.Unlock()
-			registryErr := r.registerHost(ptyregistry.Entry{
+			registryErr := r.registerHost(ctx, ptyregistry.Entry{
 				SessionID: id, PtyHostPID: pid, PipePath: unresolvedHostAddress,
 				LaunchID: sess.launchID, RegisteredAt: time.Now().UTC().Format(time.RFC3339),
 			})
@@ -232,7 +232,7 @@ func (r *Runtime) Create(ctx context.Context, cfg ports.RuntimeConfig) (ports.Ru
 	r.sessions[id] = sess
 	r.mu.Unlock()
 
-	if err := r.registerHost(ptyregistry.Entry{
+	if err := r.registerHost(ctx, ptyregistry.Entry{
 		SessionID:    id,
 		PtyHostPID:   pid,
 		PipePath:     addr, // ponytail: reuse PipePath field for loopback addr
@@ -298,7 +298,7 @@ func (r *Runtime) Destroy(ctx context.Context, handle ports.RuntimeHandle) error
 		return errors.Join(gracefulErr, forceErr, fmt.Errorf("conpty: pty-host pid %d is still alive after teardown", sess.pid))
 	}
 
-	if err := r.unregisterHost(handle.ID); err != nil {
+	if err := r.unregisterHost(ctx, handle.ID); err != nil {
 		return fmt.Errorf("conpty: unregister destroyed session %q: %w", handle.ID, err)
 	}
 

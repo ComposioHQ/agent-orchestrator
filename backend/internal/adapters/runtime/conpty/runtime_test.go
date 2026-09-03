@@ -90,6 +90,45 @@ func TestRegistryResolutionHonorsCallerCancellation(t *testing.T) {
 	}
 }
 
+func TestCreateAndDestroyPassCallerContextToRegistryMutations(t *testing.T) {
+	isolateRegistry(t)
+	type contextKey struct{}
+	ctx := context.WithValue(context.Background(), contextKey{}, "registry-mutation")
+	rt := New(Options{Spawner: func(context.Context, string, string, []string, map[string]string) (string, int, error) {
+		return "127.0.0.1:1", livePID(), nil
+	}})
+	rt.killHost = func(string) error { return nil }
+	rt.pidIsAlive = func(int) bool { return false }
+	registerCalls := 0
+	rt.registerHost = func(got context.Context, _ ptyregistry.Entry) error {
+		registerCalls++
+		if got.Value(contextKey{}) != "registry-mutation" {
+			t.Fatalf("Register context value = %v, want caller context", got.Value(contextKey{}))
+		}
+		return nil
+	}
+	rt.unregisterHost = func(got context.Context, _ string) error {
+		if got.Value(contextKey{}) != "registry-mutation" {
+			t.Fatalf("Unregister context value = %v, want caller context", got.Value(contextKey{}))
+		}
+		return nil
+	}
+
+	handle, err := rt.Create(ctx, ports.RuntimeConfig{
+		SessionID: "sess-registry-context", WorkspacePath: t.TempDir(), Argv: []string{"codex"},
+		Env: map[string]string{runtimeLaunchIDEnv: "registry-context-launch"},
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if registerCalls != 2 {
+		t.Fatalf("Register calls = %d, want reservation and ready updates", registerCalls)
+	}
+	if err := rt.Destroy(ctx, handle); err != nil {
+		t.Fatalf("Destroy: %v", err)
+	}
+}
+
 func TestProbeFencedRuntimeGenerationMismatchIsUnknown(t *testing.T) {
 	isolateRegistry(t)
 	rt := New(Options{})
@@ -211,7 +250,7 @@ func TestRuntimeRejectsStyledOutputFromARecoveredLegacyHost(t *testing.T) {
 		serverDone <- writeErr
 	}()
 
-	if err := ptyregistry.Register(ptyregistry.Entry{
+	if err := ptyregistry.Register(context.Background(), ptyregistry.Entry{
 		SessionID: "sess-legacy", PtyHostPID: livePID(), PipePath: listener.Addr().String(),
 		RegisteredAt: time.Now().UTC().Format(time.RFC3339),
 	}); err != nil {
@@ -890,7 +929,7 @@ func TestResolveViaRegistry(t *testing.T) {
 	defer h.cleanup(t)
 
 	// Manually register the host in the registry.
-	err := ptyregistry.Register(ptyregistry.Entry{
+	err := ptyregistry.Register(context.Background(), ptyregistry.Entry{
 		SessionID:    "sess-reg",
 		PtyHostPID:   h.pid,
 		PipePath:     h.addr, // addr stored in PipePath field

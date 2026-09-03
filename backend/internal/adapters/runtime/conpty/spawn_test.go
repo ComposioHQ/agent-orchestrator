@@ -150,7 +150,7 @@ func TestCreateReservationFailureDoesNotSpawnOrClaimRuntimeEffect(t *testing.T) 
 		return "127.0.0.1:1", livePID(), nil
 	}})
 	reservationErr := errors.New("reservation write denied")
-	runtime.registerHost = func(ptyregistry.Entry) error { return reservationErr }
+	runtime.registerHost = func(context.Context, ptyregistry.Entry) error { return reservationErr }
 
 	_, err := runtime.Create(context.Background(), ports.RuntimeConfig{
 		SessionID: "sess-reservation-failed", WorkspacePath: t.TempDir(), Argv: []string{"codex"},
@@ -173,7 +173,7 @@ func TestDefinitiveSpawnFailureRetainsCleanupAuthorityUntilUnregisterSucceeds(t 
 	}})
 	unregisterErr := errors.New("reservation cleanup denied")
 	unregisterCalls := 0
-	runtime.unregisterHost = func(string) error {
+	runtime.unregisterHost = func(context.Context, string) error {
 		unregisterCalls++
 		return unregisterErr
 	}
@@ -196,7 +196,7 @@ func TestDefinitiveSpawnFailureRetainsCleanupAuthorityUntilUnregisterSucceeds(t 
 		t.Fatalf("retained cleanup authority = %+v, want current-owner PID-zero reservation", retained)
 	}
 
-	runtime.unregisterHost = func(string) error {
+	runtime.unregisterHost = func(context.Context, string) error {
 		unregisterCalls++
 		return nil
 	}
@@ -230,10 +230,10 @@ func TestPostStartRegistryUpdateFailureLeavesDurableUnknownReservation(t *testin
 	}})
 	registerCalls := 0
 	updateErr := errors.New("registry update denied")
-	runtime.registerHost = func(entry ptyregistry.Entry) error {
+	runtime.registerHost = func(ctx context.Context, entry ptyregistry.Entry) error {
 		registerCalls++
 		if registerCalls == 1 {
-			return ptyregistry.Register(entry)
+			return ptyregistry.Register(ctx, entry)
 		}
 		return updateErr
 	}
@@ -261,7 +261,7 @@ func TestPendingPIDZeroReservationRemainsUnknownAcrossScanAndRestart(t *testing.
 		SessionID: "sess-pending", PtyHostPID: 0, PipePath: unresolvedHostAddress,
 		LaunchID: "launch-pending", RegisteredAt: time.Now().UTC().Format(time.RFC3339),
 	}
-	if err := ptyregistry.Register(entry); err != nil {
+	if err := ptyregistry.Register(context.Background(), entry); err != nil {
 		t.Fatal(err)
 	}
 	entries, complete, err := ptyregistry.Scan(context.Background())

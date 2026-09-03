@@ -219,7 +219,13 @@ VALUES ('copy-session','copy-project',1,'claude-code',?,?,?);
 INSERT INTO projects (id,path,registered_at) VALUES ('legacy-marker-project','/repos/legacy-marker',?);
 INSERT INTO sessions (id,project_id,num,harness,activity_last_at,created_at,updated_at)
 VALUES ('legacy-marker-session','legacy-marker-project',1,'claude-code',?,?,?);
-`, now, now, now, now, now, now, now, now, now, now, now, now); err != nil {
+INSERT INTO projects (id,path,registered_at) VALUES ('legacy-active-project','/repos/legacy-active',?);
+INSERT INTO sessions (id,project_id,num,harness,activity_last_at,created_at,updated_at)
+VALUES ('legacy-active-session','legacy-active-project',1,'claude-code',?,?,?);
+INSERT INTO projects (id,path,registered_at) VALUES ('legacy-multiple-project','/repos/legacy-multiple',?);
+INSERT INTO sessions (id,project_id,num,harness,activity_last_at,created_at,updated_at)
+VALUES ('legacy-multiple-session','legacy-multiple-project',1,'claude-code',?,?,?);
+`, now, now, now, now, now, now, now, now, now, now, now, now, now, now, now, now, now, now, now, now); err != nil {
 		t.Fatalf("seed parents: %v", err)
 	}
 	if _, err := db.Exec(`
@@ -256,6 +262,25 @@ INSERT INTO agent_switches (
 );`, "v1:"+strings.Repeat("d", 64), now, now); err != nil {
 		t.Fatalf("seed legacy retained marker: %v", err)
 	}
+	if _, err := db.Exec(`
+INSERT INTO agent_switches (
+ id,session_id,idempotency_key,request_fingerprint,from_harness,target_harness,state,
+ agent_handoff_status,source_generation_id,error_code,requested_at,updated_at
+) VALUES
+ ('legacy-active-marker','legacy-active-session','legacy-active-marker-key',?,'claude-code','codex','failed',
+  'not_attempted','source-generation','source_stop_unconfirmed',?,?),
+ ('legacy-active-current','legacy-active-session','legacy-active-current-key',?,'claude-code','codex','preparing_handoff',
+  'not_attempted','source-generation','',?,?),
+ ('legacy-multiple-older','legacy-multiple-session','legacy-multiple-older-key',?,'claude-code','codex','failed',
+  'not_attempted','source-generation','source_stop_unconfirmed',?,?),
+ ('legacy-multiple-newer','legacy-multiple-session','legacy-multiple-newer-key',?,'claude-code','codex','failed',
+  'not_attempted','source-generation','source_stop_unconfirmed',?,?);`,
+		"v1:"+strings.Repeat("e", 64), now, now,
+		"v1:"+strings.Repeat("f", 64), now.Add(time.Second), now.Add(time.Second),
+		"v1:"+strings.Repeat("1", 64), now, now,
+		"v1:"+strings.Repeat("2", 64), now.Add(time.Second), now.Add(time.Second)); err != nil {
+		t.Fatalf("seed conflicting legacy retained markers: %v", err)
+	}
 
 	upTo(t, db, 124)
 	var copyAfter, copyFailurePoint string
@@ -274,6 +299,31 @@ INSERT INTO agent_switches (
 	}
 	if legacyState != "stopping_source" || legacyCode != "source_stop_unconfirmed" || legacyFailurePoint != "" {
 		t.Fatalf("migrated marker = (%q,%q,%q), want (stopping_source,source_stop_unconfirmed,empty)", legacyState, legacyCode, legacyFailurePoint)
+	}
+	for _, tc := range []struct {
+		id, wantState, wantCode string
+	}{
+		{"legacy-active-marker", "failed", "failed_post_stop"},
+		{"legacy-active-current", "preparing_handoff", ""},
+		{"legacy-multiple-older", "failed", "failed_post_stop"},
+		{"legacy-multiple-newer", "stopping_source", "source_stop_unconfirmed"},
+	} {
+		var state, code string
+		if err := db.QueryRow(`SELECT state, error_code FROM agent_switches WHERE id = ?`, tc.id).Scan(&state, &code); err != nil {
+			t.Fatalf("read migrated %s: %v", tc.id, err)
+		}
+		if state != tc.wantState || code != tc.wantCode {
+			t.Fatalf("migrated %s = (%q,%q), want (%q,%q)", tc.id, state, code, tc.wantState, tc.wantCode)
+		}
+	}
+	for _, sessionID := range []string{"legacy-active-session", "legacy-multiple-session"} {
+		var active int
+		if err := db.QueryRow(`SELECT count(*) FROM agent_switches WHERE session_id = ? AND state NOT IN ('completed', 'failed')`, sessionID).Scan(&active); err != nil {
+			t.Fatalf("count active switches for %s: %v", sessionID, err)
+		}
+		if active != 1 {
+			t.Fatalf("active switches for %s = %d, want 1", sessionID, active)
+		}
 	}
 
 	type stateCase struct {

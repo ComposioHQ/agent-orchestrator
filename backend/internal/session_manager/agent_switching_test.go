@@ -2452,7 +2452,7 @@ func TestConPTYReservationCleanupFailureRetainsManagerRecoveryGate(t *testing.T)
 			Spawner: func(context.Context, string, string, []string, map[string]string) (string, int, error) {
 				return "", 0, spawnErr
 			},
-			UnregisterHost: func(string) error { return cleanupErr },
+			UnregisterHost: func(context.Context, string) error { return cleanupErr },
 		}),
 	}
 	manager, store, _ := newSwitchTestManager(t, runtime)

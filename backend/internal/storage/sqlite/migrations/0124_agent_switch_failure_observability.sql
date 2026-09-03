@@ -6,7 +6,39 @@ ALTER TABLE agent_switches
     ADD COLUMN failure_point TEXT NOT NULL DEFAULT '';
 
 -- 0094 allowed this retained marker in a failed row. It represents an
--- unresolved source-stop outcome, so migrate it to its nonterminal state.
+-- unresolved source-stop outcome, but a legacy terminal row did not occupy
+-- the one-active-switch gate. If a later active switch already owns that gate,
+-- or several historical markers exist, retain the newest recoverable marker
+-- only and make every older conflicting row terminal.
+UPDATE agent_switches
+SET error_code = 'failed_post_stop'
+WHERE state = 'failed'
+  AND error_code = 'source_stop_unconfirmed'
+  AND (
+      EXISTS (
+          SELECT 1
+          FROM agent_switches AS active
+          WHERE active.session_id = agent_switches.session_id
+            AND active.state NOT IN ('completed', 'failed')
+      )
+      OR EXISTS (
+          SELECT 1
+          FROM agent_switches AS newer
+          WHERE newer.session_id = agent_switches.session_id
+            AND newer.state = 'failed'
+            AND newer.error_code = 'source_stop_unconfirmed'
+            AND (
+                newer.requested_at > agent_switches.requested_at
+                OR (
+                    newer.requested_at = agent_switches.requested_at
+                    AND newer.id > agent_switches.id
+                )
+            )
+      )
+  );
+
+-- Each remaining marker is the only candidate for its session, so promoting
+-- it preserves the recovery gate without violating its unique index.
 UPDATE agent_switches
 SET state = 'stopping_source'
 WHERE state = 'failed'

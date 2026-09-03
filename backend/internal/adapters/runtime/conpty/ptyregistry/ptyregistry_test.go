@@ -20,7 +20,7 @@ func withFakePidAlive(t *testing.T, fn func(pid int) bool) {
 	t.Cleanup(func() { pidAlive = orig })
 }
 
-func withRegistryRewrite(t *testing.T, fn func([]Entry) error) {
+func withRegistryRewrite(t *testing.T, fn func(context.Context, []Entry) error) {
 	t.Helper()
 	orig := rewriteRegistry
 	rewriteRegistry = fn
@@ -55,7 +55,7 @@ func TestRegisterThenList(t *testing.T) {
 	withFakePidAlive(t, func(int) bool { return true })
 
 	e := Entry{SessionID: "s1", PtyHostPID: 1234, PipePath: `\\.\pipe\ao-s1`, RegisteredAt: nowRFC3339()}
-	if err := Register(e); err != nil {
+	if err := Register(context.Background(), e); err != nil {
 		t.Fatal(err)
 	}
 
@@ -74,10 +74,10 @@ func TestRegisterReplaceSameID(t *testing.T) {
 
 	e1 := Entry{SessionID: "s1", PtyHostPID: 111, PipePath: `\\.\pipe\ao-s1-a`, RegisteredAt: nowRFC3339()}
 	e2 := Entry{SessionID: "s1", PtyHostPID: 222, PipePath: `\\.\pipe\ao-s1-b`, RegisteredAt: nowRFC3339()}
-	if err := Register(e1); err != nil {
+	if err := Register(context.Background(), e1); err != nil {
 		t.Fatal(err)
 	}
-	if err := Register(e2); err != nil {
+	if err := Register(context.Background(), e2); err != nil {
 		t.Fatal(err)
 	}
 
@@ -104,7 +104,7 @@ func TestConcurrentRegistersPreserveEveryHost(t *testing.T) {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			errs <- Register(Entry{
+			errs <- Register(context.Background(), Entry{
 				SessionID:    "session-" + strconv.Itoa(i),
 				PtyHostPID:   1000 + i,
 				PipePath:     "127.0.0.1:" + strconv.Itoa(50000+i),
@@ -134,10 +134,10 @@ func TestUnregisterRemoves(t *testing.T) {
 	withFakePidAlive(t, func(int) bool { return true })
 
 	e := Entry{SessionID: "s1", PtyHostPID: 1234, PipePath: `\\.\pipe\ao-s1`, RegisteredAt: nowRFC3339()}
-	if err := Register(e); err != nil {
+	if err := Register(context.Background(), e); err != nil {
 		t.Fatal(err)
 	}
-	if err := Unregister("s1"); err != nil {
+	if err := Unregister(context.Background(), "s1"); err != nil {
 		t.Fatal(err)
 	}
 	got, err := List(context.Background())
@@ -153,8 +153,34 @@ func TestUnregisterNoOpWhenAbsent(t *testing.T) {
 	setupHome(t)
 	withFakePidAlive(t, func(int) bool { return true })
 
-	if err := Unregister("nonexistent"); err != nil {
+	if err := Unregister(context.Background(), "nonexistent"); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestRegisterAndUnregisterHonorCanceledContext(t *testing.T) {
+	regPath := setupHome(t)
+	withFakePidAlive(t, func(int) bool { return true })
+	entry := Entry{SessionID: "s1", PtyHostPID: 1234, PipePath: `\\.\pipe\ao-s1`, RegisteredAt: nowRFC3339()}
+
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := Register(cancelled, entry); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Register with cancelled context = %v, want context cancellation", err)
+	}
+	if _, err := os.Stat(regPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("cancelled Register created registry file: %v", err)
+	}
+
+	if err := Register(context.Background(), entry); err != nil {
+		t.Fatalf("seed registry: %v", err)
+	}
+	if err := Unregister(cancelled, entry.SessionID); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Unregister with cancelled context = %v, want context cancellation", err)
+	}
+	entries, err := List(context.Background())
+	if err != nil || len(entries) != 1 || entries[0].SessionID != entry.SessionID {
+		t.Fatalf("cancelled Unregister changed registry: entries=%v err=%v", entries, err)
 	}
 }
 
@@ -167,10 +193,10 @@ func TestListPrunesDeadPIDs(t *testing.T) {
 
 	e1 := Entry{SessionID: "s1", PtyHostPID: 1, PipePath: `\\.\pipe\ao-s1`, RegisteredAt: nowRFC3339()}
 	e2 := Entry{SessionID: "s2", PtyHostPID: 2, PipePath: `\\.\pipe\ao-s2`, RegisteredAt: nowRFC3339()}
-	if err := Register(e1); err != nil {
+	if err := Register(context.Background(), e1); err != nil {
 		t.Fatal(err)
 	}
-	if err := Register(e2); err != nil {
+	if err := Register(context.Background(), e2); err != nil {
 		t.Fatal(err)
 	}
 
@@ -201,11 +227,11 @@ func TestEmptyResultDeletesFile(t *testing.T) {
 	withFakePidAlive(t, func(int) bool { return true })
 
 	e := Entry{SessionID: "s1", PtyHostPID: 1, PipePath: `\\.\pipe\ao-s1`, RegisteredAt: nowRFC3339()}
-	if err := Register(e); err != nil {
+	if err := Register(context.Background(), e); err != nil {
 		t.Fatal(err)
 	}
 	// Unregister last entry -> file should be deleted.
-	if err := Unregister("s1"); err != nil {
+	if err := Unregister(context.Background(), "s1"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(regPath); !os.IsNotExist(err) {
@@ -218,10 +244,10 @@ func TestClearDeletesFile(t *testing.T) {
 	withFakePidAlive(t, func(int) bool { return true })
 
 	e := Entry{SessionID: "s1", PtyHostPID: 1, PipePath: `\\.\pipe\ao-s1`, RegisteredAt: nowRFC3339()}
-	if err := Register(e); err != nil {
+	if err := Register(context.Background(), e); err != nil {
 		t.Fatal(err)
 	}
-	if err := Clear(); err != nil {
+	if err := Clear(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(regPath); !os.IsNotExist(err) {
@@ -278,7 +304,7 @@ func TestRegistryPruneWritePermissionFailureIsUnknown(t *testing.T) {
 	path := setupHome(t)
 	withFakePidAlive(t, func(int) bool { return false })
 	permissionErr := errors.New("permission denied")
-	withRegistryRewrite(t, func([]Entry) error { return permissionErr })
+	withRegistryRewrite(t, func(context.Context, []Entry) error { return permissionErr })
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -306,7 +332,7 @@ func TestScanCancellationStopsBeforePruneWrite(t *testing.T) {
 		return false
 	})
 	rewriteCalled := false
-	withRegistryRewrite(t, func([]Entry) error {
+	withRegistryRewrite(t, func(context.Context, []Entry) error {
 		rewriteCalled = true
 		return nil
 	})
@@ -338,7 +364,7 @@ func TestAtomicWriteProducesValidJSON(t *testing.T) {
 	withFakePidAlive(t, func(int) bool { return true })
 
 	e := Entry{SessionID: "s1", PtyHostPID: 99, PipePath: `\\.\pipe\ao-s1`, RegisteredAt: nowRFC3339()}
-	if err := Register(e); err != nil {
+	if err := Register(context.Background(), e); err != nil {
 		t.Fatal(err)
 	}
 
@@ -366,7 +392,7 @@ func TestSetRunFilePathScopesRegistryToInstanceDir(t *testing.T) {
 	withRunFilePath(t, filepath.Join(instanceDir, "running.json"))
 
 	e := Entry{SessionID: "s1", PtyHostPID: 1234, PipePath: "127.0.0.1:50000", RegisteredAt: nowRFC3339()}
-	if err := Register(e); err != nil {
+	if err := Register(context.Background(), e); err != nil {
 		t.Fatal(err)
 	}
 
@@ -392,12 +418,12 @@ func TestTwoInstancesWithDifferentRunFilePathsDoNotShareRegistry(t *testing.T) {
 	instanceB := t.TempDir()
 
 	withRunFilePath(t, filepath.Join(instanceA, "running.json"))
-	if err := Register(Entry{SessionID: "demo-website-2", PtyHostPID: 100, PipePath: "127.0.0.1:50001", RegisteredAt: nowRFC3339()}); err != nil {
+	if err := Register(context.Background(), Entry{SessionID: "demo-website-2", PtyHostPID: 100, PipePath: "127.0.0.1:50001", RegisteredAt: nowRFC3339()}); err != nil {
 		t.Fatal(err)
 	}
 
 	withRunFilePath(t, filepath.Join(instanceB, "running.json"))
-	if err := Register(Entry{SessionID: "demo-website-2", PtyHostPID: 200, PipePath: "127.0.0.1:50002", RegisteredAt: nowRFC3339()}); err != nil {
+	if err := Register(context.Background(), Entry{SessionID: "demo-website-2", PtyHostPID: 200, PipePath: "127.0.0.1:50002", RegisteredAt: nowRFC3339()}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -425,7 +451,7 @@ func TestSetRunFilePathEmptyClearsOverride(t *testing.T) {
 	withRunFilePath(t, filepath.Join(t.TempDir(), "running.json"))
 	withRunFilePath(t, "")
 
-	if err := Register(Entry{SessionID: "s1", PtyHostPID: 1, PipePath: "127.0.0.1:50000", RegisteredAt: nowRFC3339()}); err != nil {
+	if err := Register(context.Background(), Entry{SessionID: "s1", PtyHostPID: 1, PipePath: "127.0.0.1:50000", RegisteredAt: nowRFC3339()}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(regPath); err != nil {
