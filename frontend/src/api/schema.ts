@@ -2685,6 +2685,7 @@ export interface components {
             autoInjectReview: boolean;
             autoReviewEnabled: boolean;
             branch?: string;
+            controllerRecovering?: boolean;
             /** Format: date-time */
             createdAt: string;
             displayName?: string;

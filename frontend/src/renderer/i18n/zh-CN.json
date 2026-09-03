@@ -3,6 +3,7 @@
 	"activity.blocked": "等待决策",
 	"activity.exited": "已退出",
 	"activity.idle": "空闲",
+	"activity.recovering": "恢复中",
 	"activity.unknown": "未知",
 	"activity.waiting_input": "需要输入",
 	"cloudCredential.agentLabel": "编码代理",

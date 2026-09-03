@@ -2667,6 +2667,21 @@ func TestControllerStreamClosureReportsSessionExited(t *testing.T) {
 	t.Fatalf("controller stream ended without an exited lifecycle signal: %+v", h.activity.snapshot())
 }
 
+func TestControllerPlannedClosePreservesDurableActivity(t *testing.T) {
+	h := newHarness(t)
+
+	if err := h.ctrl.Close(context.Background()); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	h.ctrl.Wait()
+
+	for _, signal := range h.activity.snapshot() {
+		if signal.State == domain.ActivityExited && signal.Event == "chat.controller.stopped" {
+			t.Fatalf("planned detach reported a durable agent exit: %+v", h.activity.snapshot())
+		}
+	}
+}
+
 func TestControllerReadyRunsBeforeStreamProjection(t *testing.T) {
 	st := openStore(t)
 	conv := newFakeConversation()

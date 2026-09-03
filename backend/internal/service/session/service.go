@@ -87,6 +87,10 @@ type interfaceTransitionCommander interface {
 	AcknowledgeInterfaceTransitionNotice(context.Context, domain.SessionID, string) (domain.SessionInterfaceTransition, error)
 }
 
+type controllerRecoveryReader interface {
+	SessionControllerRecovering(domain.SessionID) bool
+}
+
 // exitAgentCommander keeps the process-only lifecycle optional for focused
 // service fakes while production delegates to Session Manager.
 type exitAgentCommander interface {
@@ -990,14 +994,19 @@ func (s *Service) toSessionWithFacts(rec domain.SessionRecord, prs []domain.PRFa
 	// period and have the card contradict its own status.
 	now := s.now()
 	presentation := deriveKanbanPresentation(rec, prs, runs, now, s.harnessSignals(rec.Harness))
+	recovering := false
+	if reader, ok := s.manager.(controllerRecoveryReader); ok {
+		recovering = reader.SessionControllerRecovering(rec.ID)
+	}
 	return domain.Session{
-		SessionRecord:    rec,
-		Status:           deriveStatus(rec, prs, now, s.harnessSignals(rec.Harness)),
-		SCMStatus:        deriveSCMStatus(prs),
-		KanbanColumn:     presentation.Column,
-		DisplayStatus:    presentation.DisplayStatus,
-		TerminalHandleID: rec.Metadata.RuntimeHandleID,
-		PRs:              prs,
+		SessionRecord:        rec,
+		ControllerRecovering: recovering,
+		Status:               deriveStatus(rec, prs, now, s.harnessSignals(rec.Harness)),
+		SCMStatus:            deriveSCMStatus(prs),
+		KanbanColumn:         presentation.Column,
+		DisplayStatus:        presentation.DisplayStatus,
+		TerminalHandleID:     rec.Metadata.RuntimeHandleID,
+		PRs:                  prs,
 	}, nil
 }
 

@@ -2204,6 +2204,11 @@ type fakeCommander struct {
 	restoreErr      error
 	restoreResult   sessionmanager.RestoreResult
 	readyErr        error
+	recovering      map[domain.SessionID]bool
+}
+
+func (f *fakeCommander) SessionControllerRecovering(id domain.SessionID) bool {
+	return f.recovering[id]
 }
 
 func (f *fakeCommander) Spawn(_ context.Context, cfg ports.SpawnConfig) (domain.SessionRecord, int, int, error) {
@@ -2340,6 +2345,28 @@ func TestTeardownProjectKillsActiveSessionsThenCleansProject(t *testing.T) {
 	}
 	if len(fc.cleanupProjects) != 1 || fc.cleanupProjects[0] != "mer" {
 		t.Fatalf("cleanup projects = %#v, want [mer]", fc.cleanupProjects)
+	}
+}
+
+func TestListProjectsControllerRecoverySeparatelyFromDurableActivity(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["mer-1"] = domain.SessionRecord{
+		ID: "mer-1", ProjectID: "mer", Activity: domain.Activity{State: domain.ActivityExited},
+	}
+	svc := &Service{
+		manager: &fakeCommander{recovering: map[domain.SessionID]bool{"mer-1": true}},
+		store:   st,
+	}
+
+	sessions, err := svc.List(context.Background(), ListFilter{ProjectID: "mer"})
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(sessions) != 1 || !sessions[0].ControllerRecovering {
+		t.Fatalf("sessions = %+v, want an ephemeral recovery projection", sessions)
+	}
+	if sessions[0].Activity.State != domain.ActivityExited {
+		t.Fatalf("durable activity was rewritten during projection: %+v", sessions[0].Activity)
 	}
 }
 

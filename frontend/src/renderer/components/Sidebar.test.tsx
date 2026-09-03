@@ -718,7 +718,7 @@ describe("Sidebar", () => {
 		expect(navigateMock).not.toHaveBeenCalled();
 	});
 
-	it("lists worker sessions by updated time, newest first", () => {
+	it("keeps worker order stable when recovery changes operational timestamps", () => {
 		const oldest: WorkspaceSession = {
 			...session,
 			id: "proj-1-old",
@@ -762,12 +762,25 @@ describe("Sidebar", () => {
 
 		const sessionButtons = Array.from(document.querySelectorAll<HTMLButtonElement>('[data-session-row] button[aria-label^="Open "]'));
 		expect(sessionButtons.map((button) => button.getAttribute("aria-label"))).toEqual([
-			"Open invalid activity",
-			"Open no activity",
-			"Open old task",
-			"Open new task",
 			"Open created fallback",
+			"Open new task",
+			"Open old task",
+			"Open no activity",
+			"Open invalid activity",
 		]);
+	});
+
+	it("shows a recovering controller without exposing the durable exited status", () => {
+		const recovering = {
+			...session,
+			status: "exited" as const,
+			controllerRecovering: true,
+			activity: { state: "exited" as const, lastActivityAt: "2026-07-01T00:00:00Z" },
+		};
+		renderSidebar({ workspaces: [{ ...workspace, sessions: [recovering] }] });
+
+		const row = screen.getByLabelText(`Open ${recovering.title}`).closest("[data-session-row]");
+		expect(row?.querySelector("[data-session-status]")).toHaveAttribute("data-session-status", "recovering");
 	});
 
 	it("navigates to the project board when the project row button is clicked", async () => {
@@ -2100,8 +2113,8 @@ describe("Sidebar", () => {
 			workspaces: [{
 				...workspace,
 				sessions: [
-					{ ...session, id: "first", title: "First", updatedAt: "2026-06-30T01:00:00Z" },
-					{ ...session, id: "second", title: "Second", updatedAt: "2026-06-30T00:00:00Z" },
+					{ ...session, id: "first", title: "First", createdAt: "2026-06-30T01:00:00Z", updatedAt: "2026-06-30T01:00:00Z" },
+					{ ...session, id: "second", title: "Second", createdAt: "2026-06-30T00:00:00Z", updatedAt: "2026-06-30T00:00:00Z" },
 				],
 			}],
 		});
@@ -2135,8 +2148,8 @@ describe("Sidebar", () => {
 			workspaces: [{
 				...workspace,
 				sessions: [
-					{ ...session, id: "first", title: "First", updatedAt: "2026-06-30T01:00:00Z" },
-					{ ...session, id: "second", title: "Second", updatedAt: "2026-06-30T00:00:00Z" },
+					{ ...session, id: "first", title: "First", createdAt: "2026-06-30T01:00:00Z", updatedAt: "2026-06-30T01:00:00Z" },
+					{ ...session, id: "second", title: "Second", createdAt: "2026-06-30T00:00:00Z", updatedAt: "2026-06-30T00:00:00Z" },
 				],
 			}],
 		});

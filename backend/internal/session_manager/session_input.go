@@ -75,6 +75,17 @@ func (m *Manager) SessionMutationInProgress(id domain.SessionID) bool {
 	return m.agentOperationActiveLocked(id)
 }
 
+// SessionControllerRecovering reports the volatile controller-attachment phase
+// for this daemon epoch. Startup reconciliation owns the same operation gate
+// that rejects input, so the read model cannot claim recovery after input has
+// become admissible or before queued sessions are fenced.
+func (m *Manager) SessionControllerRecovering(id domain.SessionID) bool {
+	id = domain.SessionID(strings.TrimSpace(string(id)))
+	m.agentOpMu.Lock()
+	defer m.agentOpMu.Unlock()
+	return m.agentOperations[id] == agentOperationReconcile
+}
+
 func (m *Manager) agentOperationActiveLocked(id domain.SessionID) bool {
 	_, ok := m.agentOperations[id]
 	return ok

@@ -3,6 +3,7 @@
 	"activity.blocked": "Awaiting Decision",
 	"activity.exited": "Exited",
 	"activity.idle": "Idle",
+	"activity.recovering": "Recovering",
 	"activity.unknown": "Unknown",
 	"activity.waiting_input": "Input Needed",
 	"common.breadcrumb": "Breadcrumb",

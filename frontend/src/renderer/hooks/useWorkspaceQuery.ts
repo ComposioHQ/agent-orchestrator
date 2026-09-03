@@ -143,6 +143,7 @@ async function fetchWorkspaces(): Promise<WorkspaceSummary[]> {
 						kanbanColumn,
 						displayStatus: session.displayStatus || undefined,
 						isTerminated: session.isTerminated,
+						controllerRecovering: session.controllerRecovering ?? false,
 						terminateOnPrMerge: session.terminateOnPrMerge ?? false,
 						autoInjectReview: session.autoInjectReview ?? true,
 						autoInjectCI: session.autoInjectCI ?? true,
@@ -170,7 +171,15 @@ export const workspaceQueryOptions = {
 	queryKey: workspaceQueryKey,
 	queryFn: fetchWorkspaces,
 	retry: 1,
-	refetchInterval: 15_000,
+	// Recovery state is intentionally ephemeral, so it has no SQLite CDC row
+	// when the input/controller gate reopens. Poll briefly while any controller
+	// is recovering, then return to the ordinary low-frequency refresh cadence.
+	refetchInterval: (query: { state: { data?: WorkspaceSummary[] } }) =>
+		query.state.data?.some((workspace) =>
+			workspace.sessions.some((session) => session.controllerRecovering),
+		)
+			? 1_000
+			: 15_000,
 };
 
 // Cloud projects are a separate query so a control-plane failure can never

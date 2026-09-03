@@ -42,6 +42,14 @@ export function toBoardSessionPresentation(
 ): BoardSessionPresentation {
 	const switchPresentation = deriveSessionAgentSwitchPresentation(session);
 	const switchVisual = switchPresentation ? agentSwitchStatusVisual(switchPresentation) : undefined;
+	const recoveryPresentation = session.controllerRecovering
+		? {
+				className: "text-status-needs-you",
+				indicatorClassName: "bg-status-needs-you animate-status-pulse",
+				label: t?.("activity.recovering") ?? "Recovering",
+				tone: "var(--color-status-needs-you)",
+			}
+		: undefined;
 	return {
 		activity: session.activity,
 		branch: session.branch,
@@ -51,14 +59,15 @@ export function toBoardSessionPresentation(
 		provider: session.provider,
 		status: session.status,
 		statusPresentation:
-			t && switchPresentation && switchVisual
+			recoveryPresentation ??
+			(t && switchPresentation && switchVisual
 				? {
 						className: switchVisual.className,
 						indicatorClassName: `${switchVisual.indicatorClassName}${switchVisual.breathe ? " animate-status-pulse" : ""}`,
 						label: t(switchPresentation.compactLabelKey, switchPresentation.values),
 						tone: switchVisual.tone,
 					}
-				: undefined,
+				: undefined),
 		title: session.title,
 		trackerIssueId: canonicalTrackerIssueId(session.issueId),
 		updatedAt: session.updatedAt,

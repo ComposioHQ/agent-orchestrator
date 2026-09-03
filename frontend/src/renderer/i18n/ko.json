@@ -3,6 +3,7 @@
 	"activity.blocked": "결정 대기",
 	"activity.exited": "종료됨",
 	"activity.idle": "유휴",
+	"activity.recovering": "복구 중",
 	"activity.unknown": "알 수 없음",
 	"activity.waiting_input": "입력 필요",
 	"cloudCredential.agentLabel": "코딩 에이전트",
