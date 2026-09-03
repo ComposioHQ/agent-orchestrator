@@ -16,12 +16,12 @@ function wrapper({ children }: { children: ReactNode }) {
 	return <QueryClientProvider client={client}>{children}</QueryClientProvider>;
 }
 
-function session(id: string, alreadyImported = false): ImportableSession {
+function session(id: string, alreadyImported = false, cwd = "/repo"): ImportableSession {
 	return {
 		provider: "claude-code",
 		nativeSessionId: id,
 		title: id,
-		cwd: "/repo",
+		cwd,
 		lastActivity: new Date().toISOString(),
 		messageCount: 5,
 		sizeBytes: 100,
@@ -76,6 +76,36 @@ describe("useImportAllSessions", () => {
 			expect(result.current.progress?.failed).toBe(1);
 			expect(result.current.progress?.imported).toBe(2);
 		});
+	});
+
+	// Two imports racing inside one repository would contend for git's
+	// repository-wide lock, so a folder is imported in order even though
+	// separate folders proceed at the same time.
+	it("keeps one folder in order while running folders concurrently", async () => {
+		const started: string[] = [];
+		const finished: string[] = [];
+		h.post.mockImplementation(async (_path: string, init: { body: { nativeSessionId: string } }) => {
+			const { body } = init;
+			started.push(body.nativeSessionId);
+			await new Promise((r) => setTimeout(r, 5));
+			finished.push(body.nativeSessionId);
+			return { data: { session: { id: "s" } }, error: undefined };
+		});
+
+		const { result } = renderHook(() => useImportAllSessions(), { wrapper });
+		await act(async () => {
+			await result.current.importAll([
+				session("a1", false, "/repo-a"),
+				session("a2", false, "/repo-a"),
+				session("b1", false, "/repo-b"),
+			]);
+		});
+
+		// Within /repo-a, a1 must have finished before a2 started.
+		expect(finished.indexOf("a1")).toBeLessThan(started.indexOf("a2"));
+		// The other repository did not wait for /repo-a to finish.
+		expect(started.indexOf("b1")).toBeLessThan(finished.indexOf("a2"));
+		await waitFor(() => expect(result.current.progress?.imported).toBe(3));
 	});
 
 	it("does nothing when everything is already imported", async () => {

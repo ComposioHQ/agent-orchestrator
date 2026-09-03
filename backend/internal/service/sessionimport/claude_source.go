@@ -65,7 +65,11 @@ func (s *ClaudeSource) Discover(ctx context.Context, opts DiscoverOptions) ([]Im
 		return nil, fmt.Errorf("claude-code: read projects: %w", err)
 	}
 
-	var found []ImportableSession
+	// Collect the transcripts first, then read them across a pool. Listing
+	// directories is cheap; reading and parsing every transcript is what takes
+	// the time, and those files are independent of one another.
+	type transcript struct{ path, name string }
+	var pending []transcript
 	for _, project := range projects {
 		if err := ctx.Err(); err != nil {
 			return nil, err
@@ -83,14 +87,22 @@ func (s *ClaudeSource) Discover(ctx context.Context, opts DiscoverOptions) ([]Im
 			if entry.IsDir() || !isClaudeTranscript(entry.Name()) {
 				continue
 			}
-			session, ok, err := s.readSession(ctx, configDir, filepath.Join(dir, entry.Name()), entry.Name(), opts)
-			if err != nil {
-				return nil, err
-			}
-			if ok && (opts.IncludeTrivial || session.Meaning.Imported()) {
-				found = append(found, session)
-			}
+			pending = append(pending, transcript{path: filepath.Join(dir, entry.Name()), name: entry.Name()})
 		}
+	}
+
+	found, err := scanParallel(ctx, pending, func(ctx context.Context, t transcript) (ImportableSession, bool, error) {
+		session, ok, err := s.readSession(ctx, configDir, t.path, t.name, opts)
+		if err != nil || !ok {
+			return ImportableSession{}, false, err
+		}
+		if !opts.IncludeTrivial && !session.Meaning.Imported() {
+			return ImportableSession{}, false, nil
+		}
+		return session, true, nil
+	})
+	if err != nil {
+		return nil, err
 	}
 
 	return capRecent(found, opts.MaxPerProvider), nil
@@ -146,7 +158,7 @@ func (s *ClaudeSource) readSession(ctx context.Context, configDir, path, fileNam
 	// meaningful on size alone.
 	signals := Signals{FirstPrompt: meta.firstUserText}
 	count := 0
-	if size <= fullCountMaxBytes {
+	if !opts.MetadataOnly && size <= fullCountMaxBytes {
 		signals, count = scanClaudeSignals(path)
 		if signals.FirstPrompt == "" {
 			signals.FirstPrompt = meta.firstUserText

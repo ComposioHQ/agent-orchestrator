@@ -210,8 +210,45 @@ func TestLocateFindsATrivialConversation(t *testing.T) {
 	if err != nil || !ok {
 		t.Fatalf("locate: ok=%v err=%v", ok, err)
 	}
-	if found.Meaning != MeaningTrivial {
-		t.Errorf("want the trivial verdict preserved, got %q", found.Meaning)
+	// Locate resolves an identity, not a verdict. It deliberately skips the
+	// full transcript read that a verdict needs, because doing that work for
+	// every conversation on disk to answer one id took about twelve seconds a
+	// time. What it must return is what importing needs.
+	if found.NativeSessionID != "22222222-2222-4222-8222-222222222222" {
+		t.Errorf("wrong conversation: %q", found.NativeSessionID)
+	}
+	if found.CWD == "" || found.ConfigDir == "" {
+		t.Errorf("locate must resolve the working directory and config dir, got cwd=%q configDir=%q", found.CWD, found.ConfigDir)
+	}
+}
+
+// The fast path must not change which conversations exist or what they are,
+// only how much of each transcript is read to describe them.
+func TestMetadataOnlyKeepsIdentityAndDropsCounts(t *testing.T) {
+	root := t.TempDir()
+	claudeDir := filepath.Join(root, ".claude")
+	writeFile(t, filepath.Join(claudeDir, "projects", "-Users-dev-project", "33333333-3333-4333-8333-333333333333.jsonl"), claudeToolTranscript)
+
+	svc := NewService(nil, NewClaudeSourceAt(claudeDir))
+	full, err := svc.Discover(context.Background(), DiscoverOptions{})
+	if err != nil {
+		t.Fatalf("discover: %v", err)
+	}
+	fast, err := svc.Discover(context.Background(), DiscoverOptions{MetadataOnly: true, IncludeTrivial: true})
+	if err != nil {
+		t.Fatalf("discover metadata-only: %v", err)
+	}
+	if len(full) != 1 || len(fast) != 1 {
+		t.Fatalf("both passes should see the conversation, got full=%d fast=%d", len(full), len(fast))
+	}
+	if fast[0].NativeSessionID != full[0].NativeSessionID || fast[0].CWD != full[0].CWD {
+		t.Errorf("identity must survive the fast path: %+v vs %+v", fast[0], full[0])
+	}
+	if full[0].MessageCount == 0 {
+		t.Error("the full pass should count messages")
+	}
+	if fast[0].MessageCount != 0 {
+		t.Errorf("the fast path should not pay for counting, got %d", fast[0].MessageCount)
 	}
 }
 

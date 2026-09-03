@@ -81,13 +81,23 @@ async function importOne(input: ImportSessionInput): Promise<void> {
 	if (error) throw new Error(apiErrorMessage(error, "Import failed"));
 }
 
+// importLanes is how many folders are imported at once. Imports are dominated
+// by waiting — scanning, git, starting an agent — so running several at once is
+// most of the win, while a cap keeps a big history from opening hundreds of git
+// operations and agent processes simultaneously.
+const importLanes = 4;
+
 // useImportAllSessions imports every listed conversation in one action, so a
 // user arriving with a hundred threads does not have to click a hundred times.
 //
-// It runs one at a time rather than in parallel: each import creates a git
-// worktree and starts an agent, and firing those off together would hammer the
-// machine for no gain. A conversation that fails is counted and stepped over,
-// because one bad transcript must not strand the rest of the run.
+// Work is grouped by folder and the groups run concurrently, but a single
+// folder is imported one conversation at a time. Creating a git worktree takes
+// a repository-wide lock, so two imports racing inside the same repository
+// would contend for it and fail for no reason, while separate repositories are
+// genuinely independent.
+//
+// A conversation that fails is counted and stepped over, because one bad
+// transcript must not strand the rest of the run.
 //
 // Nothing is queued server-side. The list is already on the client, and
 // importing is idempotent, so a stopped or interrupted run simply resumes where
@@ -107,22 +117,46 @@ export function useImportAllSessions() {
 			if (pending.length === 0) return;
 
 			cancelled.current = false;
+			let done = 0;
 			let imported = 0;
 			let failed = 0;
 			setProgress({ done: 0, total: pending.length, imported: 0, failed: 0 });
 
-			for (const [index, session] of pending.entries()) {
-				if (cancelled.current) break;
-				try {
-					await importOne({ provider: session.provider, nativeSessionId: session.nativeSessionId });
-					imported += 1;
-				} catch {
-					// Counted, not surfaced one by one: a run of a hundred cannot
-					// stop to explain each failure. The summary reports the total.
-					failed += 1;
-				}
-				setProgress({ done: index + 1, total: pending.length, imported, failed });
+			// One lane per folder, so imports inside a repository stay ordered
+			// while different repositories proceed at the same time.
+			const byFolder = new Map<string, ImportableSession[]>();
+			for (const session of pending) {
+				const folder = session.cwd || "";
+				const bucket = byFolder.get(folder);
+				if (bucket) bucket.push(session);
+				else byFolder.set(folder, [session]);
 			}
+			const lanes = [...byFolder.values()];
+			let nextLane = 0;
+
+			const runLane = async () => {
+				for (;;) {
+					if (cancelled.current) return;
+					const lane = lanes[nextLane++];
+					if (!lane) return;
+					for (const session of lane) {
+						if (cancelled.current) return;
+						try {
+							await importOne({ provider: session.provider, nativeSessionId: session.nativeSessionId });
+							imported += 1;
+						} catch {
+							// Counted, not surfaced one by one: a run of a hundred
+							// cannot stop to explain each failure. The summary
+							// reports the total.
+							failed += 1;
+						}
+						done += 1;
+						setProgress({ done, total: pending.length, imported, failed });
+					}
+				}
+			};
+
+			await Promise.all(Array.from({ length: Math.min(importLanes, lanes.length) }, runLane));
 
 			// One refresh at the end. Invalidating per conversation would refetch
 			// the whole workspace on every step of a long run.

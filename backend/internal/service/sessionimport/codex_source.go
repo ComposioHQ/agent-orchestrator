@@ -122,6 +122,9 @@ func (s *CodexSource) Discover(ctx context.Context, opts DiscoverOptions) ([]Imp
 }
 
 func (s *CodexSource) scanRoot(ctx context.Context, root string, titles map[string]codexTitle, opts DiscoverOptions, grouped map[string]*ImportableSession, signalsByRoot map[string]*Signals) error {
+	// Walk first, read after. The walk only lists names, which is cheap; every
+	// rollout is then parsed across a pool, since segments are independent.
+	var paths []string
 	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			if errors.Is(walkErr, os.ErrNotExist) {
@@ -135,19 +138,7 @@ func (s *CodexSource) scanRoot(ctx context.Context, root string, titles map[stri
 		if entry.IsDir() || !isCodexRollout(entry.Name()) {
 			return nil
 		}
-		seg, ok, err := s.readSegment(ctx, path, opts)
-		if err != nil {
-			return err
-		}
-		if ok {
-			mergeCodexSegment(grouped, seg, titles)
-			if existing, found := signalsByRoot[seg.rootID]; found {
-				*existing = mergeSignals(*existing, seg.signals)
-			} else {
-				merged := seg.signals
-				signalsByRoot[seg.rootID] = &merged
-			}
-		}
+		paths = append(paths, path)
 		return nil
 	})
 	if errors.Is(err, os.ErrNotExist) {
@@ -155,6 +146,26 @@ func (s *CodexSource) scanRoot(ctx context.Context, root string, titles map[stri
 	}
 	if err != nil {
 		return fmt.Errorf("codex: scan %s: %w", root, err)
+	}
+
+	segments, err := scanParallel(ctx, paths, func(ctx context.Context, path string) (codexSegment, bool, error) {
+		return s.readSegment(ctx, path, opts)
+	})
+	if err != nil {
+		return fmt.Errorf("codex: scan %s: %w", root, err)
+	}
+
+	// Merging stays sequential and in walk order. It folds segments into shared
+	// maps and picks a representative by recency, so doing it concurrently would
+	// both race and make the winner depend on scheduling.
+	for _, seg := range segments {
+		mergeCodexSegment(grouped, seg, titles)
+		if existing, found := signalsByRoot[seg.rootID]; found {
+			*existing = mergeSignals(*existing, seg.signals)
+		} else {
+			merged := seg.signals
+			signalsByRoot[seg.rootID] = &merged
+		}
 	}
 	return nil
 }
@@ -267,7 +278,7 @@ func (s *CodexSource) readSegment(ctx context.Context, path string, opts Discove
 	// One full pass yields both the display count and the import signals.
 	signals := Signals{FirstPrompt: meta.firstUserText}
 	count := 0
-	if size <= fullCountMaxBytes {
+	if !opts.MetadataOnly && size <= fullCountMaxBytes {
 		signals, count = scanCodexSignals(path)
 		if signals.FirstPrompt == "" {
 			signals.FirstPrompt = meta.firstUserText

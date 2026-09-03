@@ -74,6 +74,12 @@ type DiscoverOptions struct {
 	// MaxScanBytes caps the bytes read from each transcript's head and tail when
 	// extracting metadata. 0 selects a sensible default.
 	MaxScanBytes int64
+	// MetadataOnly skips the full transcript read that produces message counts
+	// and the import verdict, keeping only what the head and tail already give:
+	// identity, working directory, branch, title, recency. Resolving one known
+	// id needs nothing more, and reading every transcript end to end to answer
+	// that is what made importing a long history take minutes.
+	MetadataOnly bool
 	// ExcludeRoots drops conversations whose working directory lies inside one
 	// of these paths. AO passes its own data directory: asking a user's agent to
 	// classify conversations records a transcript of that question, and it must
@@ -188,7 +194,11 @@ func (s *Service) Locate(ctx context.Context, provider domain.AgentHarness, nati
 	// zero MaxScanBytes would read nothing and leave cwd/title empty.
 	// IncludeTrivial: an id the caller names explicitly is always importable,
 	// even if the heuristic would have withheld it from the browse list.
-	opts := DiscoverOptions{IncludeTrivial: true}.normalized()
+	// MetadataOnly: resolving an id needs the conversation's identity and
+	// working directory, never its message count or verdict. Reading every
+	// transcript in full to answer that cost about twelve seconds per import
+	// on a real history, which a bulk import multiplied into half an hour.
+	opts := DiscoverOptions{IncludeTrivial: true, MetadataOnly: true}.normalized()
 	for _, src := range s.sources {
 		if src.Provider() != provider {
 			continue
