@@ -1417,6 +1417,7 @@
 	"files.feedbackError": "无法发送反馈",
 	"files.minimize": "最小化文件面板",
 	"files.maximize": "最大化文件面板",
+	"files.openInCenter": "在中央面板中打开：{{path}}",
 	"files.loading": "正在加载文件...",
 	"files.error.load": "无法加载文件。",
 	"files.collapseFile": "折叠 {{file}}",

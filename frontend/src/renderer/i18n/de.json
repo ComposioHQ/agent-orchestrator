@@ -1405,6 +1405,7 @@
 	"files.feedbackError": "Feedback konnte nicht gesendet werden",
 	"files.minimize": "Dateien minimieren",
 	"files.maximize": "Dateien maximieren",
+	"files.openInCenter": "Im Hauptbereich öffnen: {{path}}",
 	"files.loading": "Dateien werden geladen...",
 	"files.error.load": "Dateien konnten nicht geladen werden.",
 	"files.collapseFile": "{{file}} einklappen",

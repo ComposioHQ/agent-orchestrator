@@ -1565,6 +1565,7 @@
 	"files.feedbackError": "Unable to send feedback",
 	"files.minimize": "Minimize files",
 	"files.maximize": "Maximize files",
+	"files.openInCenter": "Open in center: {{path}}",
 	"files.loading": "Loading files...",
 	"files.error.load": "Unable to load files.",
 	"files.collapseFile": "Collapse {{file}}",

@@ -1424,6 +1424,7 @@
 	"files.feedbackError": "No se pudieron enviar los comentarios",
 	"files.minimize": "Minimizar archivos",
 	"files.maximize": "Maximizar archivos",
+	"files.openInCenter": "Abrir en el panel central: {{path}}",
 	"files.loading": "Cargando archivos...",
 	"files.error.load": "No se pudieron cargar los archivos.",
 	"files.collapseFile": "Contraer {{file}}",

@@ -410,6 +410,9 @@ export function SessionView({ sessionId }: SessionViewProps) {
 		phase: "docked",
 	});
 	const [filesPoppedOut, setFilesPoppedOut] = useState(false);
+	const [filePreviewRequestsBySession, setFilePreviewRequestsBySession] = useState<
+		Record<string, { path: string; key: number }>
+	>({});
 	const [fileTabsBySession, setFileTabsBySession] = useState<Record<string, SessionFileTabState>>({});
 	const fileTabs = fileTabsBySession[sessionId] ?? EMPTY_SESSION_FILE_TABS;
 	const [auxiliaryTabOrderBySession, setAuxiliaryTabOrderBySession] = useState<Record<string, string[]>>({});
@@ -1207,12 +1210,16 @@ export function SessionView({ sessionId }: SessionViewProps) {
 		);
 	}, [queryClient, sessionId, t]);
 
-	const openResolvedWorkspaceFile = useCallback(
+	const revealResolvedWorkspaceFile = useCallback(
 		async (rawPath: string) => {
 			const data = await fetchWorkspaceFiles();
-			openCenterFile(matchWorkspaceFilePath(rawPath, data.files ?? []));
+			const path = matchWorkspaceFilePath(rawPath, data.files ?? []);
+			setFilePreviewRequestsBySession((current) => ({
+				...current,
+				[sessionId]: { path, key: (current[sessionId]?.key ?? 0) + 1 },
+			}));
 		},
-		[fetchWorkspaceFiles, openCenterFile],
+		[fetchWorkspaceFiles, sessionId],
 	);
 
 	const handleOpenFiles = useCallback(() => {
@@ -1223,17 +1230,17 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	const handleOpenReviewFile = useCallback(
 		(target: { line?: number; path: string }) => {
 			prepareFilesInspector();
-			void openResolvedWorkspaceFile(target.path);
+			void revealResolvedWorkspaceFile(target.path);
 		},
-		[openResolvedWorkspaceFile, prepareFilesInspector],
+		[prepareFilesInspector, revealResolvedWorkspaceFile],
 	);
 
 	const handleOpenFile = useCallback(
 		(path: string) => {
 			prepareFilesInspector();
-			void openResolvedWorkspaceFile(path);
+			void revealResolvedWorkspaceFile(path);
 		},
-		[openResolvedWorkspaceFile, prepareFilesInspector],
+		[prepareFilesInspector, revealResolvedWorkspaceFile],
 	);
 
 	const handleToggleFilesPopOut = useCallback(
@@ -1665,9 +1672,9 @@ export function SessionView({ sessionId }: SessionViewProps) {
 							filesView={
 								session ? (
 									<SessionFileExplorer
-										activePath={fileTabs.activePath}
 										onOpenFile={openCenterFile}
 										onToggleMaximized={handleToggleFilesPopOut}
+										revealRequest={filePreviewRequestsBySession[sessionId] ?? null}
 										sessionId={session.id}
 									/>
 								) : null

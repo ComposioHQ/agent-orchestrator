@@ -1424,6 +1424,7 @@
 	"files.feedbackError": "Não foi possível enviar o feedback",
 	"files.minimize": "Minimizar arquivos",
 	"files.maximize": "Maximizar arquivos",
+	"files.openInCenter": "Abrir no painel central: {{path}}",
 	"files.loading": "Carregando arquivos...",
 	"files.error.load": "Não foi possível carregar os arquivos.",
 	"files.collapseFile": "Recolher {{file}}",

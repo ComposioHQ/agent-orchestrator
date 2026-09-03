@@ -1405,6 +1405,7 @@
 	"files.feedbackError": "フィードバックを送信できません",
 	"files.minimize": "ファイルを最小化",
 	"files.maximize": "ファイルを最大化",
+	"files.openInCenter": "中央パネルで開く: {{path}}",
 	"files.loading": "ファイルを読み込み中...",
 	"files.error.load": "ファイルを読み込めません。",
 	"files.collapseFile": "{{file}} を折りたたむ",

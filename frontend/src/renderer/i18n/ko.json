@@ -1405,6 +1405,7 @@
 	"files.feedbackError": "피드백을 보낼 수 없습니다",
 	"files.minimize": "파일 최소화",
 	"files.maximize": "파일 최대화",
+	"files.openInCenter": "가운데 패널에서 열기: {{path}}",
 	"files.loading": "파일 불러오는 중...",
 	"files.error.load": "파일을 불러올 수 없습니다.",
 	"files.collapseFile": "{{file}} 접기",
