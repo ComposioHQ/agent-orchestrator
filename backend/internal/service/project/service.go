@@ -38,6 +38,10 @@ type Manager interface {
 	// local repository as a project.
 	Clone(ctx context.Context, in CloneInput) (Project, error)
 
+	// PreflightClone resolves the configured destination and observes whether
+	// the derived target is currently available. Clone retains the final check.
+	PreflightClone(ctx context.Context, in ClonePreflightInput) (ClonePreflightResult, error)
+
 	// InitializeRepository prepares a selected folder for project registration.
 	InitializeRepository(ctx context.Context, in InitializeRepositoryInput) (InitializeRepositoryResult, error)
 
@@ -62,11 +66,12 @@ type SessionTeardowner interface {
 
 // Service implements project registration and lookup use-cases for controllers.
 type Service struct {
-	store          Store
-	sessions       SessionTeardowner
-	clock          func() time.Time
-	telemetry      ports.EventSink
-	defaultHarness domain.AgentHarness
+	store                  Store
+	sessions               SessionTeardowner
+	clock                  func() time.Time
+	telemetry              ports.EventSink
+	defaultHarness         domain.AgentHarness
+	cloneDestinationParent string
 	// addMu serialises the whole body of Add. Workspace registration performs
 	// filesystem mutations (git init, .gitignore writes, commits) that are not
 	// covered by the store's own writeMu, so path/id conflict checks plus the
@@ -87,6 +92,9 @@ type Deps struct {
 	Sessions       SessionTeardowner
 	Clock          func() time.Time
 	Telemetry      ports.EventSink
+	// CloneDestinationParent is the daemon-configured default parent for cloned
+	// repositories. It is created lazily by clone preflight or clone itself.
+	CloneDestinationParent string
 }
 
 // New returns a project service backed by the given durable store.
@@ -101,11 +109,12 @@ func NewWithDeps(d Deps) *Service {
 		defaultHarness = domain.AgentHarness(config.DefaultAgent)
 	}
 	s := &Service{
-		store:          d.Store,
-		sessions:       d.Sessions,
-		clock:          d.Clock,
-		telemetry:      d.Telemetry,
-		defaultHarness: defaultHarness,
+		store:                  d.Store,
+		sessions:               d.Sessions,
+		clock:                  d.Clock,
+		telemetry:              d.Telemetry,
+		defaultHarness:         defaultHarness,
+		cloneDestinationParent: strings.TrimSpace(d.CloneDestinationParent),
 	}
 	if s.clock == nil {
 		s.clock = time.Now
@@ -357,6 +366,17 @@ func classifyRepositorySetupTarget(ctx context.Context, path string) (repository
 }
 
 func validateRepositorySetupPathSafety(path string) error {
+	return validateRepositorySetupPathSafetyWithOptions(path, "")
+}
+
+// Clone targets may live beneath the daemon-configured ~/.ao/repos directory
+// by design. Keep the broader initialization guard unchanged and do not allow
+// arbitrary caller-selected AO state descendants such as ~/.ao/data.
+func validateCloneTargetPathSafety(path, configuredParent string) error {
+	return validateRepositorySetupPathSafetyWithOptions(path, configuredParent)
+}
+
+func validateRepositorySetupPathSafetyWithOptions(path, allowedAOParent string) error {
 	clean := comparablePath(path)
 	if isFilesystemRoot(clean) {
 		return unsafeRepositorySetupPathError(path, "filesystem root")
@@ -378,8 +398,17 @@ func validateRepositorySetupPathSafety(path string) error {
 	}
 
 	aoState := comparablePath(filepath.Join(home, ".ao"))
-	if samePath(clean, aoState) || isDescendantPath(clean, aoState) {
+	if samePath(clean, aoState) {
 		return unsafeRepositorySetupPathError(path, "AO state directory")
+	}
+	if isDescendantPath(clean, aoState) {
+		if strings.TrimSpace(allowedAOParent) == "" {
+			return unsafeRepositorySetupPathError(path, "AO state directory")
+		}
+		allowedParent := comparablePath(allowedAOParent)
+		if !samePath(clean, allowedParent) && !isDescendantPath(clean, allowedParent) {
+			return unsafeRepositorySetupPathError(path, "AO state directory")
+		}
 	}
 	return nil
 }

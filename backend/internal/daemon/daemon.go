@@ -510,7 +510,13 @@ func Run() error {
 	lcStack.LCM.SetSessionInputLease(sessMgr)
 	lcStack.LCM.SetSessionOperationGate(sessMgr)
 	termMgr.SetSessionInputLease(sessMgr)
-	projectSvc := projectsvc.NewWithDeps(projectsvc.Deps{Store: store, Sessions: sessionSvc, DefaultHarness: domain.AgentHarness(cfg.Agent), Telemetry: telemetrySink})
+	projectSvc := projectsvc.NewWithDeps(projectsvc.Deps{
+		Store:                  store,
+		Sessions:               sessionSvc,
+		DefaultHarness:         domain.AgentHarness(cfg.Agent),
+		Telemetry:              telemetrySink,
+		CloneDestinationParent: projectsvc.DefaultCloneDestinationParent(cfg.DataDir),
+	})
 	if err := seedScratchProjectOnBoot(ctx, cfg, projectSvc); err != nil {
 		stop()
 		lcStack.Stop()

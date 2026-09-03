@@ -146,6 +146,10 @@ func (f *fakeProjectManager) Clone(_ context.Context, in projectsvc.CloneInput) 
 	return projectsvc.Project{ID: "cloned", Repo: in.RemoteURL}, nil
 }
 
+func (f *fakeProjectManager) PreflightClone(_ context.Context, in projectsvc.ClonePreflightInput) (projectsvc.ClonePreflightResult, error) {
+	return projectsvc.ClonePreflightResult{DestinationParent: in.DestinationParent, Available: true}, nil
+}
+
 func (f *fakeProjectManager) InitializeRepository(_ context.Context, in projectsvc.InitializeRepositoryInput) (projectsvc.InitializeRepositoryResult, error) {
 	return projectsvc.InitializeRepositoryResult(in), nil
 }

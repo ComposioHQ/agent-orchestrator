@@ -1,8 +1,9 @@
 import * as Dialog from "@radix-ui/react-dialog";
 import { ChevronLeft, Folder, Link2, X } from "lucide-react";
-import { type FormEvent, useEffect, useState } from "react";
+import { type FormEvent, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { aoBridge } from "../lib/bridge";
+import { apiClient, apiErrorMessage } from "../lib/api-client";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
@@ -41,10 +42,76 @@ export default function CloneRepositoryDialog({
 	const [submitted, setSubmitted] = useState(false);
 	const [choosingDestination, setChoosingDestination] = useState(false);
 	const [destinationPickerError, setDestinationPickerError] = useState<string | null>(null);
+	const [preflight, setPreflight] = useState<{
+		available: boolean;
+		error: string | null;
+		key: string;
+		pending: boolean;
+		targetPath: string;
+	}>({ available: true, error: null, key: "", pending: false, targetPath: "" });
+	const onChangeRef = useRef(onChange);
+	onChangeRef.current = onChange;
 	const repositoryName = repositoryNameFromGitUrl(value.remoteUrl);
 	const repositoryAvatar = repositoryAvatarFromGitUrl(value.remoteUrl);
 	const urlError = submitted && !repositoryName ? t("createProject.cloneInvalidUrl") : null;
 	const destinationError = submitted && !value.destinationParent ? t("createProject.cloneDestinationRequired") : null;
+	const preflightKey = `${value.remoteUrl.trim()}\n${value.destinationParent}`;
+	const currentPreflight = preflight.key === preflightKey ? preflight : null;
+	const collisionError = currentPreflight && !currentPreflight.pending && !currentPreflight.available
+		? t("createProject.cloneDestinationExists", { path: currentPreflight.targetPath })
+		: null;
+	const preflightError = currentPreflight?.error ?? collisionError;
+	const preflightBlocksContinue = Boolean(
+		repositoryName && value.destinationParent &&
+		(!currentPreflight || currentPreflight.pending || preflightError),
+	);
+
+	useEffect(() => {
+		if (!open) return;
+		const remoteUrl = repositoryName ? value.remoteUrl.trim() : "";
+		if (value.destinationParent && !remoteUrl) {
+			setPreflight({ available: true, error: null, key: preflightKey, pending: false, targetPath: "" });
+			return;
+		}
+		const controller = new AbortController();
+		setPreflight({ available: true, error: null, key: preflightKey, pending: true, targetPath: "" });
+		void apiClient.POST("/api/v1/projects/clone/preflight", {
+			body: { remoteUrl, destinationParent: value.destinationParent },
+			signal: controller.signal,
+		}).then(({ data, error }) => {
+			if (controller.signal.aborted) return;
+			if (error || !data) {
+				setPreflight({
+					available: false,
+					error: apiErrorMessage(error),
+					key: preflightKey,
+					pending: false,
+					targetPath: "",
+				});
+				return;
+			}
+			setPreflight({
+				available: data.available,
+				error: null,
+				key: preflightKey,
+				pending: false,
+				targetPath: data.targetPath ?? "",
+			});
+			if (!value.destinationParent && data.destinationParent) {
+				onChangeRef.current({ remoteUrl: value.remoteUrl, destinationParent: data.destinationParent });
+			}
+		}).catch((error: unknown) => {
+			if (controller.signal.aborted) return;
+			setPreflight({
+				available: false,
+				error: apiErrorMessage(error),
+				key: preflightKey,
+				pending: false,
+				targetPath: "",
+			});
+		});
+		return () => controller.abort();
+	}, [open, preflightKey, repositoryName, value.destinationParent, value.remoteUrl]);
 
 	const chooseDestination = async () => {
 		setDestinationPickerError(null);
@@ -69,11 +136,11 @@ export default function CloneRepositoryDialog({
 	const submit = (event: FormEvent<HTMLFormElement>) => {
 		event.preventDefault();
 		setSubmitted(true);
-		if (!repositoryName || !value.destinationParent || disabled) return;
+		if (!repositoryName || !value.destinationParent || disabled || preflightBlocksContinue) return;
 		onContinue({
 			...value,
 			remoteUrl: value.remoteUrl.trim(),
-			targetPath: joinCloneDestination(value.destinationParent, repositoryName),
+			targetPath: currentPreflight?.targetPath || joinCloneDestination(value.destinationParent, repositoryName),
 		});
 	};
 
@@ -159,8 +226,8 @@ export default function CloneRepositoryDialog({
 									type="button"
 									id="cloneDestination"
 									aria-label={t("createProject.cloneChoose")}
-									aria-describedby={destinationError ? "cloneDestinationError" : undefined}
-									aria-invalid={destinationError ? true : undefined}
+									aria-describedby={destinationError || preflightError ? "cloneDestinationError" : undefined}
+									aria-invalid={destinationError || preflightError ? true : undefined}
 									className="flex h-control-form w-full items-center overflow-hidden rounded-md border border-transparent bg-[var(--color-bg-import-card)] text-left text-[13px] text-foreground outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-50"
 									disabled={disabled || choosingDestination}
 									onClick={() => void chooseDestination()}
@@ -173,9 +240,9 @@ export default function CloneRepositoryDialog({
 										{t("createProject.cloneChoose")}
 									</span>
 								</button>
-								{destinationError ? (
+								{destinationError || preflightError ? (
 									<p id="cloneDestinationError" className="text-pretty text-[12px] leading-5 text-destructive" role="alert">
-										{destinationError}
+										{destinationError ?? preflightError}
 									</p>
 								) : null}
 							</div>
@@ -184,7 +251,7 @@ export default function CloneRepositoryDialog({
 
 						<div className="flex shrink-0 justify-end gap-2 px-4 pb-4 pt-3">
 							<div className="flex items-center justify-end gap-3">
-								<Button type="submit" variant="primary" disabled={disabled || choosingDestination}>
+								<Button type="submit" variant="primary" disabled={disabled || choosingDestination || preflightBlocksContinue}>
 									{t("createProject.cloneContinue")}
 								</Button>
 							</div>

@@ -179,6 +179,7 @@
 	"createProject.cloneDestination": "クローン先",
 	"createProject.cloneDestinationPlaceholder": "親フォルダーを選択",
 	"createProject.cloneDestinationRequired": "保存先フォルダーを選択してください。",
+	"createProject.cloneDestinationExists": "{{path}} には既にフォルダーがあります。",
 	"createProject.cloneFailedTitle": "リポジトリをクローンできませんでした",
 	"createProject.cloneFromGit": "Git からクローン",
 	"createProject.cloneFromGitDesc": "HTTPS または SSH URL を使ってリモートリポジトリから開始します。",

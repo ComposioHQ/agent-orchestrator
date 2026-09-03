@@ -45,6 +45,7 @@ const {
 	dragStarts,
 	downloadUpdateMock,
 	getMock,
+	postMock,
 	historyBackMock,
 	historyForwardMock,
 	navigateMock,
@@ -67,6 +68,7 @@ const {
 		dragOvers: new Map<string, (event: DragOverTestEvent) => void>(),
 		dragStarts: new Map<string, (event: { active: { id: string } }) => void>(),
 		getMock: vi.fn(),
+		postMock: vi.fn(),
 		navigateMock: vi.fn(),
 		mockParams: { projectId: undefined as string | undefined, sessionId: undefined as string | undefined },
 		renameSessionMock: vi.fn().mockResolvedValue(undefined),
@@ -170,7 +172,7 @@ vi.mock("../lib/bridge", async (importOriginal) => {
 });
 
 vi.mock("../lib/api-client", () => ({
-	apiClient: { GET: getMock },
+	apiClient: { GET: getMock, POST: postMock },
 	apiErrorMessage: (error: unknown) => {
 		if (error instanceof Error) return error.message;
 		if (typeof error === "object" && error !== null && "message" in error && typeof error.message === "string") {
@@ -376,6 +378,18 @@ beforeEach(() => {
 			agents: [agentReadiness("claude-code", "Claude Code"), agentReadiness("codex", "Codex")],
 		},
 		error: undefined,
+	});
+	postMock.mockReset();
+	postMock.mockImplementation(async (_path: string, options: { body?: { destinationParent?: string } }) => {
+		const destinationParent = options.body?.destinationParent || "/repo";
+		return {
+			data: {
+				available: true,
+				destinationParent,
+				targetPath: `${destinationParent}/web-app`,
+			},
+			error: undefined,
+		};
 	});
 	window.ao!.app.scanImportFolder = vi.fn().mockImplementation(async ({ path }: { path: string }) => ({
 		path,

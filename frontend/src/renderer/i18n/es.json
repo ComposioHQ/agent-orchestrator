@@ -180,6 +180,7 @@
 	"createProject.cloneDestination": "Clonar en",
 	"createProject.cloneDestinationPlaceholder": "Elegir una carpeta principal",
 	"createProject.cloneDestinationRequired": "Elige una carpeta de destino.",
+	"createProject.cloneDestinationExists": "Ya existe una carpeta en {{path}}.",
 	"createProject.cloneFailedTitle": "No se pudo clonar el repositorio",
 	"createProject.cloneFromGit": "Clonar desde Git",
 	"createProject.cloneFromGitDesc": "Empieza desde un repositorio remoto mediante una URL HTTPS o SSH.",

@@ -180,6 +180,7 @@
 	"createProject.cloneDestination": "Cloner dans",
 	"createProject.cloneDestinationPlaceholder": "Choisir un dossier parent",
 	"createProject.cloneDestinationRequired": "Choisissez un dossier de destination.",
+	"createProject.cloneDestinationExists": "Un dossier existe déjà à l’emplacement {{path}}.",
 	"createProject.cloneFailedTitle": "Impossible de cloner le dépôt",
 	"createProject.cloneFromGit": "Cloner depuis Git",
 	"createProject.cloneFromGitDesc": "Commencez avec un dépôt distant à l'aide d'une URL HTTPS ou SSH.",

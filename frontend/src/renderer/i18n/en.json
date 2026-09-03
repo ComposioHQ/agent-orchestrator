@@ -179,6 +179,7 @@
 	"createProject.cloneDestination": "Clone into",
 	"createProject.cloneDestinationPlaceholder": "Choose a parent folder",
 	"createProject.cloneDestinationRequired": "Choose a destination folder.",
+	"createProject.cloneDestinationExists": "A folder already exists at {{path}}.",
 	"createProject.cloneFailedTitle": "Could not clone repository",
 	"createProject.cloneFromGit": "Clone from Git",
 	"createProject.cloneFromGitDesc": "Start from a remote repository using an HTTPS or SSH URL",
