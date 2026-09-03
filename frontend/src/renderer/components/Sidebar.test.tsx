@@ -1200,7 +1200,7 @@ describe("Sidebar", () => {
 		expect(screen.getByText("web")).toBeInTheDocument();
 		expect(screen.getByText("Repository name is reserved by AO.")).toBeInTheDocument();
 		expect(screen.getByText("api")).toBeInTheDocument();
-		expect(screen.getByText("main github.com/acme/api")).toBeInTheDocument();
+		expect(screen.getByText("main")).toBeInTheDocument();
 		expect(screen.getByText("Resolve 1 failed repository to continue")).toBeInTheDocument();
 		expect(window.ao!.app.checkAncestorRepo).toHaveBeenCalledWith("/Users/test/dev/acme");
 		expect(window.ao!.app.scanImportFolder).toHaveBeenCalledWith({
@@ -1249,7 +1249,7 @@ describe("Sidebar", () => {
 
 		expect(await screen.findByText(/Import failed · workspace not registered/i)).toBeInTheDocument();
 		expect(screen.getByText("api")).toBeInTheDocument();
-		expect(screen.getByText("main github.com/acme/api")).toBeInTheDocument();
+		expect(screen.getByText("main")).toBeInTheDocument();
 		expect(screen.getByText("docs")).toBeInTheDocument();
 		expect(screen.getByText("Needs git init")).toBeInTheDocument();
 		expect(screen.queryByText(/Origin remote is required/)).not.toBeInTheDocument();

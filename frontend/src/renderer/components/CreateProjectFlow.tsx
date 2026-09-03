@@ -23,6 +23,7 @@ import { cloudProjectsQueryKey } from "../hooks/useWorkspaceQuery";
 import { aoBridge } from "../lib/bridge";
 import { useCloudSession } from "../lib/cloud-session";
 import { cn } from "../lib/utils";
+import { useShellMaybe } from "../lib/shell-context";
 import type { ProjectKind } from "../types/workspace";
 import { CreateProjectAgentSheet, type CreateProjectAgentSelection } from "./CreateProjectAgentSheet";
 import CloneRepositoryDialog, {
@@ -102,6 +103,7 @@ export function CreateProjectFlow({
 	sourceSignal?: { source: ProjectSource; nonce: number } | null;
 }) {
 	const { t } = useTranslation();
+	const shell = useShellMaybe();
 	const resolvedIdleLabel = idleLabel ?? t("createProject.newProject");
 	const [error, setError] = useState<string | null>(null);
 	const [modePickerOpen, setModePickerOpen] = useState(false);
@@ -207,6 +209,15 @@ export function CreateProjectFlow({
 					kind === "workspace" ? t("createProject.chooseWorkspace") : t("createProject.chooseRepo"),
 				));
 			if (path && kind === "single_repo") {
+				const validation = shell?.validateImport
+					? await shell.validateImport({ path, importKind: "project" })
+					: null;
+				if (validation && !validation.isValid) {
+					setError(validation.blockingErrors.join("; ") || t("createProject.couldNotAdd"));
+					setValidationScan(null);
+					transitionToChild(() => setFolderPickerOpen(true));
+					return;
+				}
 				const preflight = await projectRepositoryPreflight(path);
 				if (preflight.blockingError) {
 					setError(preflight.blockingError);
@@ -230,6 +241,18 @@ export function CreateProjectFlow({
 			}
 			if (path && hasModePicker && !presetPath) {
 				try {
+					if (shell?.validateImport) {
+						const validation = await shell.validateImport({
+							path,
+							importKind: kind === "workspace" ? "workspace" : "project",
+						});
+						if (!validation.isValid) {
+							setError(validation.blockingErrors.join("; ") || t("createProject.couldNotAdd"));
+							setValidationScan(null);
+							transitionToChild(() => setFolderPickerOpen(true));
+							return;
+						}
+					}
 					const scan = await aoBridge.app.scanImportFolder({
 						path,
 						mode: kind === "workspace" ? "workspace" : "project",

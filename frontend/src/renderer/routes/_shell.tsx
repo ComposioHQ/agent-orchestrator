@@ -547,6 +547,16 @@ function ShellLayout() {
 		}
 	}, []);
 
+	const validateImport = useCallback(
+		async (input: { path: string; importKind: "project" | "workspace" }) => {
+			const { data, error } = await apiClient.POST("/api/v1/imports/validate", { body: input });
+			if (error) throw new Error(apiErrorMessage(error));
+			if (!data) throw new Error("Import validation returned no result");
+			return data;
+		},
+		[],
+	);
+
 	const removeProject = useCallback(
 		async (projectId: string) => {
 			const isLastWorkspace =
@@ -819,12 +829,14 @@ function ShellLayout() {
 			cloneProject,
 			createProject,
 			initializeProjectRepository,
+			validateImport,
 		}),
 		[
 			cloneProject,
 			createProject,
 			daemonStatus,
 			initializeProjectRepository,
+			validateImport,
 			workspaceStartupState,
 		],
 	);
