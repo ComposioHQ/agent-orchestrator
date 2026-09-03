@@ -59,17 +59,6 @@ func (c *snapshotCache) store(provider string, sessions []ImportableSession) {
 	c.entries[provider] = snapshotEntry{at: c.now(), sessions: sessions}
 }
 
-// invalidate drops a provider's scan. Importing does not change what is on
-// disk, but anything that might should clear this rather than wait it out.
-func (c *snapshotCache) invalidate(provider string) {
-	if c == nil {
-		return
-	}
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	delete(c.entries, provider)
-}
-
 // scanForLocate returns the provider's metadata scan, reusing a fresh one when
 // a burst of imports has already paid for it.
 func (s *Service) scanForLocate(ctx context.Context, src Source, opts DiscoverOptions) ([]ImportableSession, error) {
