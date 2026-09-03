@@ -212,6 +212,132 @@ func TestManager_CloneRegistersRepositoryAndPreservesOrigin(t *testing.T) {
 	}
 }
 
+func TestDefaultCloneDestinationParentIsSiblingOfConfiguredDataDir(t *testing.T) {
+	stateDir := t.TempDir()
+	dataDir := filepath.Join(stateDir, "custom-data")
+	if got, want := project.DefaultCloneDestinationParent(dataDir), filepath.Join(stateDir, "repos"); got != want {
+		t.Fatalf("DefaultCloneDestinationParent(%q) = %q, want %q", dataDir, got, want)
+	}
+}
+
+func TestManager_PreflightCloneCreatesDefaultAndReportsAvailability(t *testing.T) {
+	ctx := context.Background()
+	store, err := sqlitetest.Open(t.TempDir())
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	defaultParent := filepath.Join(t.TempDir(), "repos")
+	m := project.NewWithDeps(project.Deps{Store: store, CloneDestinationParent: defaultParent})
+
+	defaults, err := m.PreflightClone(ctx, project.ClonePreflightInput{})
+	if err != nil {
+		t.Fatalf("PreflightClone defaults: %v", err)
+	}
+	if defaults.DestinationParent != defaultParent || defaults.TargetPath != "" || !defaults.Available {
+		t.Fatalf("PreflightClone defaults = %#v", defaults)
+	}
+	if info, err := os.Stat(defaultParent); err != nil || !info.IsDir() {
+		t.Fatalf("default clone parent was not created as a directory: %v, %#v", err, info)
+	}
+
+	available, err := m.PreflightClone(ctx, project.ClonePreflightInput{
+		RemoteURL: "https://github.com/acme/fresh.git",
+	})
+	if err != nil {
+		t.Fatalf("PreflightClone available: %v", err)
+	}
+	if available.DestinationParent != defaultParent || available.TargetPath != filepath.Join(defaultParent, "fresh") || !available.Available {
+		t.Fatalf("PreflightClone available = %#v", available)
+	}
+}
+
+func TestManager_PreflightCloneAllowsOnlyConfiguredAOCloneDirectory(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	store, err := sqlitetest.Open(t.TempDir())
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	defaultParent := filepath.Join(home, ".ao", "repos")
+	m := project.NewWithDeps(project.Deps{Store: store, CloneDestinationParent: defaultParent})
+
+	result, err := m.PreflightClone(context.Background(), project.ClonePreflightInput{
+		RemoteURL: "https://github.com/acme/repository.git",
+	})
+	if err != nil {
+		t.Fatalf("PreflightClone configured AO directory: %v", err)
+	}
+	if result.TargetPath != filepath.Join(defaultParent, "repository") || !result.Available {
+		t.Fatalf("PreflightClone configured AO directory = %#v", result)
+	}
+
+	dataDir := filepath.Join(home, ".ao", "data")
+	if err := os.MkdirAll(dataDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	_, err = m.PreflightClone(context.Background(), project.ClonePreflightInput{
+		RemoteURL:         "https://github.com/acme/repository.git",
+		DestinationParent: dataDir,
+	})
+	wantCode(t, err, "PROJECT_SETUP_PATH_UNSAFE")
+}
+
+func TestManager_PreflightCloneReportsCollisionAndInaccessibleParent(t *testing.T) {
+	ctx := context.Background()
+	store, err := sqlitetest.Open(t.TempDir())
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	m := project.New(store)
+	parent := t.TempDir()
+	target := filepath.Join(parent, "repository")
+	if err := os.Mkdir(target, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	collision, err := m.PreflightClone(ctx, project.ClonePreflightInput{
+		RemoteURL:         "https://github.com/acme/repository.git",
+		DestinationParent: parent,
+	})
+	if err != nil {
+		t.Fatalf("PreflightClone collision: %v", err)
+	}
+	if collision.Available || collision.TargetPath != target {
+		t.Fatalf("PreflightClone collision = %#v", collision)
+	}
+
+	notDirectory := filepath.Join(t.TempDir(), "file")
+	if err := os.WriteFile(notDirectory, []byte("not a directory"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err = m.PreflightClone(ctx, project.ClonePreflightInput{
+		RemoteURL:         "https://github.com/acme/repository.git",
+		DestinationParent: notDirectory,
+	})
+	wantCode(t, err, "INVALID_PATH")
+}
+
+func TestManager_PreflightCloneHonorsCancellation(t *testing.T) {
+	store, err := sqlitetest.Open(t.TempDir())
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	m := project.New(store)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err = m.PreflightClone(ctx, project.ClonePreflightInput{
+		RemoteURL:         "https://github.com/acme/repository.git",
+		DestinationParent: t.TempDir(),
+	})
+	wantCode(t, err, "CLONE_PREFLIGHT_CANCELLED")
+}
+
 func TestManager_CloneRejectsUnsafeURLsAndExistingDestination(t *testing.T) {
 	ctx := context.Background()
 	m := newManager(t)

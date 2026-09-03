@@ -310,6 +310,37 @@ func TestProjectsAPI_Clone(t *testing.T) {
 	assertErrorCode(t, body, status, http.StatusBadRequest, "INVALID_JSON")
 }
 
+func TestProjectsAPI_ClonePreflight(t *testing.T) {
+	srv := newTestServer(t)
+	destinationParent := t.TempDir()
+	target := filepath.Join(destinationParent, "repository")
+
+	body, status, _ := doRequest(t, srv, "POST", "/api/v1/projects/clone/preflight", `{"remoteUrl":"https://github.com/acme/repository.git","destinationParent":`+quote(destinationParent)+`}`)
+	if status != http.StatusOK {
+		t.Fatalf("POST clone preflight = %d, want 200; body=%s", status, body)
+	}
+	var result projectsvc.ClonePreflightResult
+	mustJSON(t, body, &result)
+	if result.TargetPath != target || !result.Available {
+		t.Fatalf("clone preflight = %#v, want available target %q", result, target)
+	}
+
+	if err := os.Mkdir(target, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body, status, _ = doRequest(t, srv, "POST", "/api/v1/projects/clone/preflight", `{"remoteUrl":"https://github.com/acme/repository.git","destinationParent":`+quote(destinationParent)+`}`)
+	if status != http.StatusOK {
+		t.Fatalf("POST occupied clone preflight = %d, want 200; body=%s", status, body)
+	}
+	mustJSON(t, body, &result)
+	if result.Available || result.TargetPath != target {
+		t.Fatalf("occupied clone preflight = %#v", result)
+	}
+
+	body, status, _ = doRequest(t, srv, "POST", "/api/v1/projects/clone/preflight", `{`)
+	assertErrorCode(t, body, status, http.StatusBadRequest, "INVALID_JSON")
+}
+
 func TestProjectsAPI_InitializeRepository(t *testing.T) {
 	srv := newTestServer(t)
 

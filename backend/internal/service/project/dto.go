@@ -29,6 +29,21 @@ type CloneInput struct {
 	Config            *domain.ProjectConfig `json:"config,omitempty"`
 }
 
+// ClonePreflightInput checks the checkout target derived from RemoteURL. An
+// empty DestinationParent selects the daemon-configured clone directory.
+type ClonePreflightInput struct {
+	RemoteURL         string `json:"remoteUrl,omitempty"`
+	DestinationParent string `json:"destinationParent,omitempty"`
+}
+
+// ClonePreflightResult reports the resolved parent and target without creating
+// a checkout. Available is false only when the target already exists.
+type ClonePreflightResult struct {
+	DestinationParent string `json:"destinationParent"`
+	TargetPath        string `json:"targetPath,omitempty"`
+	Available         bool   `json:"available"`
+}
+
 // InitializeRepositoryInput is the body shape for POST /api/v1/projects/initialize.
 type InitializeRepositoryInput struct {
 	Path string `json:"path"`

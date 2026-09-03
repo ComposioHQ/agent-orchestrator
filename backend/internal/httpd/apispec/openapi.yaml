@@ -1622,6 +1622,37 @@ paths:
       summary: Clone and register a project from a git repository URL
       tags:
       - projects
+  /api/v1/projects/clone/preflight:
+    post:
+      operationId: preflightProjectClone
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ClonePreflightInput'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClonePreflightResult'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+      summary: Resolve and validate a repository clone destination
+      tags:
+      - projects
   /api/v1/projects/initialize:
     post:
       operationId: initializeProjectRepository
@@ -6536,6 +6567,25 @@ components:
       required:
       - sessionId
       - reason
+      type: object
+    ClonePreflightInput:
+      properties:
+        destinationParent:
+          type: string
+        remoteUrl:
+          type: string
+      type: object
+    ClonePreflightResult:
+      properties:
+        available:
+          type: boolean
+        destinationParent:
+          type: string
+        targetPath:
+          type: string
+      required:
+      - destinationParent
+      - available
       type: object
     CloneProjectInput:
       properties:

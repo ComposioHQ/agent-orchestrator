@@ -35,11 +35,8 @@ func (m *Service) Clone(ctx context.Context, in CloneInput) (Project, error) {
 	if err != nil {
 		return Project{}, err
 	}
-	parent, err := normalizePath(in.DestinationParent)
+	parent, err := m.resolveCloneDestinationParent(in.DestinationParent)
 	if err != nil {
-		return Project{}, err
-	}
-	if err := ensureDirectoryPath(parent); err != nil {
 		return Project{}, err
 	}
 	if in.Config != nil {
@@ -54,7 +51,7 @@ func (m *Service) Clone(ctx context.Context, in CloneInput) (Project, error) {
 	}
 
 	target := filepath.Join(parent, repositoryName)
-	if err := validateRepositorySetupPathSafety(target); err != nil {
+	if err := validateCloneTargetPathSafety(target, m.cloneDestinationParent); err != nil {
 		return Project{}, err
 	}
 	if _, err := os.Lstat(target); err == nil {
@@ -105,6 +102,79 @@ func (m *Service) Clone(ctx context.Context, in CloneInput) (Project, error) {
 	}
 	cleanupPath = ""
 	return project, nil
+}
+
+// DefaultCloneDestinationParent keeps cloned repositories beside AO's durable
+// data directory: the normal ~/.ao/data therefore resolves to ~/.ao/repos, and
+// an AO_DATA_DIR override carries its own sibling repos directory.
+func DefaultCloneDestinationParent(dataDir string) string {
+	dataDir = strings.TrimSpace(dataDir)
+	if dataDir == "" {
+		return ""
+	}
+	return filepath.Join(filepath.Dir(filepath.Clean(dataDir)), "repos")
+}
+
+// PreflightClone performs a fresh filesystem observation for the exact target
+// Clone will use. It is advisory only: Clone repeats the same Lstat immediately
+// before starting Git so a target created after this call is still rejected.
+func (m *Service) PreflightClone(ctx context.Context, in ClonePreflightInput) (ClonePreflightResult, error) {
+	if err := ctx.Err(); err != nil {
+		return ClonePreflightResult{}, clonePreflightCancelled()
+	}
+	parent, err := m.resolveCloneDestinationParent(in.DestinationParent)
+	if err != nil {
+		return ClonePreflightResult{}, err
+	}
+	result := ClonePreflightResult{DestinationParent: parent, Available: true}
+	if strings.TrimSpace(in.RemoteURL) == "" {
+		return result, nil
+	}
+	repositoryName, err := cloneRepositoryName(strings.TrimSpace(in.RemoteURL))
+	if err != nil {
+		return ClonePreflightResult{}, err
+	}
+	target := filepath.Join(parent, repositoryName)
+	if err := validateCloneTargetPathSafety(target, m.cloneDestinationParent); err != nil {
+		return ClonePreflightResult{}, err
+	}
+	if err := ctx.Err(); err != nil {
+		return ClonePreflightResult{}, clonePreflightCancelled()
+	}
+	result.TargetPath = target
+	if _, err := os.Lstat(target); err == nil {
+		result.Available = false
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return ClonePreflightResult{}, apierr.Invalid("CLONE_DESTINATION_UNAVAILABLE", "The clone destination could not be inspected.", map[string]any{"path": target})
+	}
+	if err := ctx.Err(); err != nil {
+		return ClonePreflightResult{}, clonePreflightCancelled()
+	}
+	return result, nil
+}
+
+func (m *Service) resolveCloneDestinationParent(raw string) (string, error) {
+	if strings.TrimSpace(raw) == "" {
+		raw = m.cloneDestinationParent
+		if strings.TrimSpace(raw) == "" {
+			return "", apierr.Invalid("CLONE_DESTINATION_REQUIRED", "Choose a destination folder.", nil)
+		}
+		if err := os.MkdirAll(raw, 0o750); err != nil {
+			return "", apierr.Invalid("CLONE_DESTINATION_UNAVAILABLE", "AO could not prepare the default clone destination.", map[string]any{"path": raw})
+		}
+	}
+	parent, err := normalizePath(raw)
+	if err != nil {
+		return "", err
+	}
+	if err := ensureDirectoryPath(parent); err != nil {
+		return "", err
+	}
+	return parent, nil
+}
+
+func clonePreflightCancelled() error {
+	return apierr.Invalid("CLONE_PREFLIGHT_CANCELLED", "Clone destination validation was cancelled.", nil)
 }
 
 func cloneRepositoryName(raw string) (string, error) {
