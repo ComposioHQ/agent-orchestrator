@@ -125,6 +125,7 @@ function createFakeTerminal(): FakeTerminal {
 		},
 		prepareForActivation: async () => undefined,
 		notifyCursorColorScheme: () => undefined,
+		sendUserInput: (data, source = "shortcut") => inputListeners.forEach((listener) => listener(data, source)),
 		onUserInput: (listener) => {
 			inputListeners.add(listener);
 			return { dispose: () => inputListeners.delete(listener) };

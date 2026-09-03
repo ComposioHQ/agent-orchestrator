@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, Copy, Download, LoaderCircle, RefreshCw, Search, TriangleAlert, X } from "lucide-react";
+import { Check, Copy, Download, LoaderCircle, LogIn, RefreshCw, Search, TriangleAlert, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { components } from "../../../api/schema";
@@ -38,6 +38,7 @@ type AuthTerminalWorkflow = {
 	agentId: AgentId;
 	terminal: components["schemas"]["ShellTerminalResponse"];
 	guidance: string;
+	terminalCommand?: string;
 	phase: "running" | "verifying" | "unauthorized" | "unverified" | "closing" | "cleanup_failed" | "timed_out";
 	reason?: string;
 	startedAt: number;
@@ -229,6 +230,7 @@ export function HarnessSettingsSection({ titleHidden = false }: { titleHidden?: 
 				agentId,
 				terminal: result.terminal,
 				guidance: result.guidance ?? "",
+				terminalCommand: result.terminalCommand,
 				phase: "running",
 				startedAt: Date.now(),
 			};
@@ -522,9 +524,16 @@ function HarnessAuthTerminalPanel({ workflow, onClose, onRetry, onTerminalState 
 	const theme = useResolvedTheme();
 	const shell = useShellMaybe();
 	const panelRef = useRef<HTMLDivElement>(null);
+	const inputRequestIdRef = useRef(0);
+	const [terminalState, setTerminalState] = useState<TerminalSessionState>("connecting");
+	const [inputRequest, setInputRequest] = useState<{ id: number; data: string }>();
+	const [commandSent, setCommandSent] = useState(false);
 	const handlerRef = useRef(onTerminalState);
 	handlerRef.current = onTerminalState;
-	const handleTerminalState = useCallback((state: TerminalSessionState) => handlerRef.current(state), []);
+	const handleTerminalState = useCallback((state: TerminalSessionState) => {
+		setTerminalState(state);
+		handlerRef.current(state);
+	}, []);
 	useEffect(() => {
 		panelRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
 	}, [workflow.terminal.handleId]);
@@ -536,6 +545,12 @@ function HarnessAuthTerminalPanel({ workflow, onClose, onRetry, onTerminalState 
 				? t("settings.harness.authClosing")
 				: workflow.reason ?? t("settings.harness.loginUnknown");
 	const retryable = workflow.phase === "unauthorized" || workflow.phase === "unverified" || workflow.phase === "timed_out" || workflow.phase === "cleanup_failed";
+	const openLogin = () => {
+		if (!workflow.terminalCommand || terminalState !== "attached" || commandSent) return;
+		inputRequestIdRef.current += 1;
+		setInputRequest({ id: inputRequestIdRef.current, data: `${workflow.terminalCommand}\r` });
+		setCommandSent(true);
+	};
 	return (
 		<div ref={panelRef} className="mt-1 scroll-my-3 overflow-hidden rounded-md border border-(--color-border-settings-input) bg-terminal" data-testid="harness-auth-terminal">
 			<div className="flex min-h-10 items-center justify-between gap-3 border-b border-(--color-border-settings-input) bg-surface/90 px-3 py-2">
@@ -543,14 +558,23 @@ function HarnessAuthTerminalPanel({ workflow, onClose, onRetry, onTerminalState 
 					<p className="truncate text-xs font-medium text-settings-label">{workflow.terminal.title}</p>
 					<p className="truncate text-[11px] text-settings-muted" aria-live="polite" role="status">{status}</p>
 				</div>
-				<button type="button" aria-label={t("settings.close")} className="grid size-7 shrink-0 place-items-center rounded text-settings-muted hover:bg-interactive-hover" disabled={workflow.phase === "closing" || workflow.phase === "verifying"} onClick={onClose}>
-					<X className="size-4" aria-hidden="true" />
-				</button>
+				<div className="flex shrink-0 items-center gap-2">
+					{workflow.terminalCommand && workflow.phase === "running" ? (
+						<Button type="button" size="sm" variant="outline" disabled={terminalState !== "attached" || commandSent} onClick={openLogin}>
+							{commandSent ? <Check aria-hidden="true" /> : <LogIn aria-hidden="true" />}
+							{commandSent ? t("settings.harness.loginOpened") : t("settings.harness.openLogin")}
+						</Button>
+					) : null}
+					<button type="button" aria-label={t("settings.close")} className="grid size-7 place-items-center rounded text-settings-muted hover:bg-interactive-hover" disabled={workflow.phase === "closing" || workflow.phase === "verifying"} onClick={onClose}>
+						<X className="size-4" aria-hidden="true" />
+					</button>
+				</div>
 			</div>
 			<div className="h-[300px] min-h-0">
 				<TerminalPane
 					daemonReady={shell ? shell.daemonStatus.state === "ready" : true}
 					fontSize={12}
+					inputRequest={inputRequest}
 					onTerminalStateChange={handleTerminalState}
 					terminalTarget={{ kind: "shell", handleId: workflow.terminal.handleId, generation: workflow.terminal.createdAt, title: workflow.terminal.title }}
 					theme={theme}

@@ -47,10 +47,11 @@ type ListAgentAuthPlansResponse struct {
 
 // StartAgentAuthResponse returns the native terminal opened for authentication.
 type StartAgentAuthResponse struct {
-	AgentID  string                `json:"agentId"`
-	Action   agentauth.Action      `json:"action"`
-	Guidance string                `json:"guidance,omitempty"`
-	Terminal ShellTerminalResponse `json:"terminal"`
+	AgentID         string                `json:"agentId"`
+	Action          agentauth.Action      `json:"action"`
+	Guidance        string                `json:"guidance,omitempty"`
+	TerminalCommand string                `json:"terminalCommand,omitempty"`
+	Terminal        ShellTerminalResponse `json:"terminal"`
 }
 
 // ListProjectsResponse is the body of GET /api/v1/projects.

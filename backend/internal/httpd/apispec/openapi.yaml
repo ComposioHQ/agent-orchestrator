@@ -9939,6 +9939,8 @@ components:
           type: string
         terminal:
           $ref: '#/components/schemas/ShellTerminalResponse'
+        terminalCommand:
+          type: string
       required:
       - agentId
       - action

@@ -47,9 +47,10 @@ func (c *AgentAuthController) start(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	envelope.WriteJSON(w, http.StatusCreated, StartAgentAuthResponse{
-		AgentID:  result.AgentID,
-		Action:   result.Action,
-		Guidance: result.Guidance,
-		Terminal: shellTerminalResponse(result.Terminal),
+		AgentID:         result.AgentID,
+		Action:          result.Action,
+		Guidance:        result.Guidance,
+		TerminalCommand: result.TerminalCommand,
+		Terminal:        shellTerminalResponse(result.Terminal),
 	})
 }

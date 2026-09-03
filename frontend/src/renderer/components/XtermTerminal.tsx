@@ -1199,6 +1199,7 @@ export function XtermTerminal(props: XtermTerminalProps) {
 					notifyCursorScheme(callbacksRef.current.theme, false, true);
 				}
 			},
+			sendUserInput: (data, source = "shortcut") => emitUserInput(data, source),
 			onUserInput: (listener) => {
 				userInputListeners.add(listener);
 				return { dispose: () => userInputListeners.delete(listener) };

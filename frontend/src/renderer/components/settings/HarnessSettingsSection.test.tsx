@@ -8,12 +8,14 @@ import { useUiStore } from "../../stores/ui-store";
 import { HarnessSettingsSection } from "./HarnessSettingsSection";
 
 const terminalMock = vi.hoisted(() => ({
-	onStateChange: null as ((state: "connecting" | "connected" | "exited" | "error") => void) | null,
+	onStateChange: null as ((state: "connecting" | "attached" | "exited" | "error") => void) | null,
+	inputRequest: undefined as { id: number; data: string } | undefined,
 }));
 
 vi.mock("../TerminalPane", () => ({
-	TerminalPane: (props: { onTerminalStateChange?: typeof terminalMock.onStateChange }) => {
+	TerminalPane: (props: { onTerminalStateChange?: typeof terminalMock.onStateChange; inputRequest?: typeof terminalMock.inputRequest }) => {
 		terminalMock.onStateChange = props.onTerminalStateChange ?? null;
+		terminalMock.inputRequest = props.inputRequest;
 		return <div data-testid="inline-harness-auth-terminal" />;
 	},
 }));
@@ -101,6 +103,7 @@ describe("HarnessSettingsSection", () => {
 		await appI18n.changeLanguage("en");
 		window.ao!.clipboard.writeText = vi.fn().mockResolvedValue(undefined);
 		terminalMock.onStateChange = null;
+		terminalMock.inputRequest = undefined;
 		vi.spyOn(apiClient, "GET").mockImplementation(async (path) => {
 			if (path === "/api/v1/agents/readiness") return { data: catalog } as never;
 			if (path === "/api/v1/agents/installers") return { data: plans } as never;
@@ -177,7 +180,7 @@ describe("HarnessSettingsSection", () => {
 		expect(gooseRow).toHaveTextContent("goose is not on PATH");
 	});
 
-	it("shows the returned authentication terminal inline when Login is clicked", async () => {
+	it("sends an interactive login command only after the user selects Open login", async () => {
 		const unauthorized = readinessCatalog(["codex"], { codex: "unauthorized" });
 		vi.mocked(apiClient.GET).mockImplementation(async (path) => {
 			if (path === "/api/v1/agents/readiness") return { data: unauthorized } as never;
@@ -189,7 +192,7 @@ describe("HarnessSettingsSection", () => {
 		vi.mocked(apiClient.POST).mockImplementation(async (path) => {
 			if (path === "/api/v1/agents/readiness/ensure") return { data: unauthorized } as never;
 			if (path === "/api/v1/agents/{agent}/auth") {
-				return { data: { agentId: "codex", action: "login", terminal: { handleId: "shellterm-login", workingDir: "/tmp/ao", title: "Log in to Codex", createdAt: new Date().toISOString() } } } as never;
+				return { data: { agentId: "codex", action: "login", terminalCommand: "/login", terminal: { handleId: "shellterm-login", workingDir: "/tmp/ao", title: "Log in to Codex", createdAt: new Date().toISOString() } } } as never;
 			}
 			return { data: undefined } as never;
 		});
@@ -200,6 +203,15 @@ describe("HarnessSettingsSection", () => {
 		await user.click(await within(codexRow).findByRole("button", { name: "Login" }));
 
 		expect(await within(codexRow).findByTestId("inline-harness-auth-terminal")).toBeInTheDocument();
+		const openLogin = within(codexRow).getByRole("button", { name: "Open login" });
+		expect(openLogin).toBeDisabled();
+		expect(terminalMock.inputRequest).toBeUndefined();
+
+		await act(async () => terminalMock.onStateChange?.("attached"));
+		await user.click(openLogin);
+
+		expect(terminalMock.inputRequest).toEqual({ id: 1, data: "/login\r" });
+		expect(within(codexRow).getByRole("button", { name: "Login opened" })).toBeDisabled();
 		expect(useUiStore.getState().activeShellTerminalHandleId).toBeNull();
 	});
 

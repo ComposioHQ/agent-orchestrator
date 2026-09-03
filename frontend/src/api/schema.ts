@@ -3506,6 +3506,7 @@ export interface components {
             agentId: string;
             guidance?: string;
             terminal: components["schemas"]["ShellTerminalResponse"];
+            terminalCommand?: string;
         };
         StartAgentInstallRequest: {
             /** @description Server-issued installation method id. Omit to use the recommended viable method. */

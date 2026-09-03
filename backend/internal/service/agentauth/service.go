@@ -6,7 +6,6 @@ package agentauth
 import (
 	"context"
 	"fmt"
-	"maps"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apierr"
 	"github.com/aoagents/agent-orchestrator/backend/internal/service/shellterm"
@@ -43,18 +42,16 @@ const (
 // Plan is the display-safe authentication plan for one harness. Trusted
 // command and terminal details remain private to this package.
 type Plan struct {
-	AgentID                 string `json:"agentId"`
-	Action                  Action `json:"action"`
-	Available               bool   `json:"available"`
-	DisplayCommand          string `json:"displayCommand,omitempty"`
-	Guidance                string `json:"guidance,omitempty"`
-	DocumentationURL        string `json:"documentationUrl"`
-	Reason                  string `json:"reason,omitempty"`
-	command                 []string
-	title                   string
-	initialInput            string
-	initialInputReadyStates []shellterm.InitialInputReadyState
-	env                     map[string]string
+	AgentID          string `json:"agentId"`
+	Action           Action `json:"action"`
+	Available        bool   `json:"available"`
+	DisplayCommand   string `json:"displayCommand,omitempty"`
+	Guidance         string `json:"guidance,omitempty"`
+	DocumentationURL string `json:"documentationUrl"`
+	Reason           string `json:"reason,omitempty"`
+	command          []string
+	title            string
+	terminalCommand  string
 }
 
 // TerminalOpener opens the daemon-trusted terminal used for a native
@@ -66,10 +63,11 @@ type TerminalOpener interface {
 // StartResult is the display-safe result of starting a native authentication
 // flow. Command arguments remain private to the resolved plan.
 type StartResult struct {
-	AgentID  string                  `json:"agentId"`
-	Action   Action                  `json:"action"`
-	Guidance string                  `json:"guidance,omitempty"`
-	Terminal shellterm.ShellTerminal `json:"terminal"`
+	AgentID         string                  `json:"agentId"`
+	Action          Action                  `json:"action"`
+	Guidance        string                  `json:"guidance,omitempty"`
+	TerminalCommand string                  `json:"terminalCommand,omitempty"`
+	Terminal        shellterm.ShellTerminal `json:"terminal"`
 }
 
 // Service resolves the fixed authentication registry through AO's registered
@@ -111,8 +109,8 @@ func (s *Service) Plan(ctx context.Context, agentID string) (Plan, error) {
 
 // Start opens the reviewed native authentication flow for agentID. Callers
 // choose only the registry key; command arguments come exclusively from the
-// resolved private plan fields. Reviewed slash commands may also be injected
-// after the terminal reports output so users do not have to type them.
+// resolved private plan fields. Interactive slash commands are returned as a
+// fixed, reviewed action that the user explicitly triggers after the TUI starts.
 func (s *Service) Start(ctx context.Context, agentID string) (StartResult, error) {
 	plan, ok := planByAgentID[agentID]
 	if !ok {
@@ -129,27 +127,23 @@ func (s *Service) Start(ctx context.Context, agentID string) (StartResult, error
 		return StartResult{}, apierr.Internal("AGENT_AUTH_TERMINAL_UNAVAILABLE", "Authentication terminal service is unavailable.")
 	}
 	terminal, err := s.terminals.OpenCommandTerminal(ctx, shellterm.OpenCommandTerminalInput{
-		Argv:                    plan.command,
-		Title:                   plan.title,
-		Env:                     plan.env,
-		InitialInput:            plan.initialInput,
-		InitialInputReadyStates: plan.initialInputReadyStates,
+		Argv:  plan.command,
+		Title: plan.title,
 	})
 	if err != nil {
 		return StartResult{}, err
 	}
 	return StartResult{
-		AgentID:  plan.AgentID,
-		Action:   plan.Action,
-		Guidance: plan.Guidance,
-		Terminal: terminal,
+		AgentID:         plan.AgentID,
+		Action:          plan.Action,
+		Guidance:        plan.Guidance,
+		TerminalCommand: plan.terminalCommand,
+		Terminal:        terminal,
 	}, nil
 }
 
 func (s *Service) resolve(ctx context.Context, plan Plan) Plan {
 	plan.command = append([]string(nil), plan.command...)
-	plan.env = maps.Clone(plan.env)
-	plan.initialInputReadyStates = append([]shellterm.InitialInputReadyState(nil), plan.initialInputReadyStates...)
 	if len(plan.command) == 0 {
 		plan.Available = true
 		return plan
