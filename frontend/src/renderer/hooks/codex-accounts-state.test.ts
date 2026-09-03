@@ -62,10 +62,36 @@ it("keeps account mutations fenced while recovery is required", () => {
 	expect(display.canRecover).toBe(true);
 });
 
+it("shows active rollback as progress and exposes interrupted rollback recovery", () => {
+	const active = codexSwitchDisplay({
+		id: "switch-1", sourceAccountId: "account-a", targetAccountId: "account-b",
+		phase: "rollback_required", failureCode: "activation_unconfirmed", canRecover: false,
+		sessions: [], createdAt: "2026-09-02T00:00:00Z", updatedAt: "2026-09-02T00:01:00Z",
+	} satisfies CodexAccountSwitch);
+	expect(active.key).toBe("settings.codexAccounts.switch.rollback_required");
+	expect(active.busy).toBe(true);
+	expect(active.mutationBlocked).toBe(true);
+	expect(active.canRecover).toBe(false);
+
+	const interrupted = codexSwitchDisplay({
+		id: "switch-1", sourceAccountId: "account-a", targetAccountId: "account-b",
+		phase: "rollback_required", failureCode: "activation_unconfirmed", canRecover: true,
+		sessions: [], createdAt: "2026-09-02T00:00:00Z", updatedAt: "2026-09-02T00:01:00Z",
+	} satisfies CodexAccountSwitch);
+	expect(interrupted.busy).toBe(false);
+	expect(interrupted.mutationBlocked).toBe(true);
+	expect(interrupted.canRecover).toBe(true);
+});
+
 it("maps every account reason to complete native locale copy with a safe unknown fallback", () => {
 	const locales: AppLocale[] = ["en", "de", "es", "fr", "ja", "ko", "pt-BR", "zh-CN"];
 	const switchKeys = ["requested", "stopping_sessions", "sessions_stopped", "checkpointing_source", "activating_target", "verifying_target", "restarting_sessions", "rollback_required", "recovery_required", "completed", "failed", "unknown"].map((phase) => `settings.codexAccounts.switch.${phase}`);
-	const keys = [...codexAccountReasonCodes.map(codexAccountReasonKey), ...switchKeys];
+	const keys = [
+		...codexAccountReasonCodes.map(codexAccountReasonKey),
+		...switchKeys,
+		"settings.codexAccounts.switch.restored",
+		"settings.codexAccounts.retryRecovery",
+	];
 	for (const locale of locales) {
 		const catalog = catalogFor(locale);
 		for (const key of keys) {

@@ -22,6 +22,29 @@ type bootstrapOrderingCredentials struct {
 	calls        []string
 }
 
+type rollbackTrackingCredentials struct {
+	bootstrapOrderingCredentials
+	restoreCalls int
+	verified     []string
+}
+
+func (*rollbackTrackingCredentials) CheckpointAndActivateCodexAccount(context.Context, string, string, int64) (domain.CodexActiveAccount, error) {
+	return domain.CodexActiveAccount{}, errors.New("injected activation failure")
+}
+
+func (c *rollbackTrackingCredentials) RestoreCodexAccountCredential(_ context.Context, sourceAccountID, _ string) error {
+	c.restoreCalls++
+	if sourceAccountID != "source" {
+		return fmt.Errorf("restore source = %q", sourceAccountID)
+	}
+	return nil
+}
+
+func (c *rollbackTrackingCredentials) VerifyCurrentCodexAccount(_ context.Context, accountID string) error {
+	c.verified = append(c.verified, accountID)
+	return nil
+}
+
 type blockingBootstrapAdmissionCredentials struct {
 	*bootstrapOrderingCredentials
 	entered chan struct{}
@@ -309,6 +332,31 @@ func TestRetainCodexAccountSwitchFence(t *testing.T) {
 		if retainCodexAccountSwitchFence(domain.CodexAccountSwitchPhase(phase)) {
 			t.Fatalf("phase %s must release the fence", phase)
 		}
+	}
+}
+
+func TestCodexAccountSwitchAutomaticallyRestoresSourceAfterActivationFailure(t *testing.T) {
+	credentials := &rollbackTrackingCredentials{}
+	store := &bootstrapOrderingStore{fakeStore: newFakeStore(), collectingCodexSwitchStore: &collectingCodexSwitchStore{}}
+	manager := New(Deps{Store: store, Runtime: &fakeRuntime{}})
+	sw := domain.CodexAccountSwitch{
+		ID: "switch-1", SourceAccountID: "source", TargetAccountID: "target",
+		ExpectedAccountRevision: 1, Phase: domain.CodexAccountSwitchActivatingAccount,
+	}
+
+	manager.dispatchCodexAccountSwitch(context.Background(), credentials, store, &sw, nil)
+
+	if sw.Phase != domain.CodexAccountSwitchFailed {
+		t.Fatalf("phase = %q, want failed after automatic rollback", sw.Phase)
+	}
+	if sw.FailureCode != "activation_unconfirmed" {
+		t.Fatalf("failure code = %q, want activation_unconfirmed", sw.FailureCode)
+	}
+	if credentials.restoreCalls != 1 {
+		t.Fatalf("restore calls = %d, want 1", credentials.restoreCalls)
+	}
+	if !slices.Equal(credentials.verified, []string{"source"}) {
+		t.Fatalf("verified accounts = %v, want source", credentials.verified)
 	}
 }
 

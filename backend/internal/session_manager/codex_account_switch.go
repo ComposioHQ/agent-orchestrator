@@ -545,8 +545,10 @@ func (m *Manager) dispatchCodexAccountSwitch(ctx context.Context, credentials po
 					return
 				}
 				if _, err := credentials.CheckpointAndActivateCodexAccount(ctx, sw.ID, sw.TargetAccountID, sw.ExpectedAccountRevision); err != nil {
-					_ = m.advanceCodexAccountSwitch(ctx, store, sw, domain.CodexAccountSwitchRollbackRequired, "activation_unconfirmed")
-					return
+					if m.advanceCodexAccountSwitch(ctx, store, sw, domain.CodexAccountSwitchRollbackRequired, "activation_unconfirmed") != nil {
+						return
+					}
+					continue
 				}
 			}
 			committedAt := m.clock()

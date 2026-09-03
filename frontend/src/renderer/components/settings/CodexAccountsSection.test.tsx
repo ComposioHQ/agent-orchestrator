@@ -141,7 +141,7 @@ it("shows recovery as an action instead of indefinite switch progress", async ()
 	postMock.mockResolvedValue({ data: recoveryResponse });
 
 	renderSection();
-	expect(await screen.findByRole("button", { name: "Retry failed sessions" })).toBeInTheDocument();
+	expect(await screen.findByRole("button", { name: "Retry recovery" })).toBeInTheDocument();
 	expect(screen.getByRole("button", { name: "Add account" })).toBeDisabled();
 	expect(screen.getByRole("button", { name: "Switch account" })).toBeDisabled();
 	expect(screen.getAllByText("AO could not confirm that every session restarted.").length).toBeGreaterThan(0);
@@ -181,7 +181,7 @@ it("keeps a visible live success outcome when an observed switch disappears on i
 	expect(outcome).toBeVisible();
 });
 
-it("keeps a translated live failure outcome when an observed switch disappears off target", async () => {
+it("reports when a failed switch safely restores the previous account", async () => {
 	const switchingResponse = {
 		...accountResponse,
 		currentSwitch: {
@@ -199,7 +199,7 @@ it("keeps a translated live failure outcome when an observed switch disappears o
 	getMock.mockResolvedValue({ data: switchingResponse });
 	postMock.mockResolvedValue({ data: switchingResponse });
 	const { queryClient } = renderSection();
-	await screen.findByLabelText("AO could not confirm the target account activation.");
+	await screen.findByLabelText("Activating the selected account…");
 
 	act(() => queryClient.setQueryData(["codex-accounts"], {
 		...accountResponse,
@@ -208,7 +208,7 @@ it("keeps a translated live failure outcome when an observed switch disappears o
 	}));
 
 	const outcome = await screen.findByRole("status");
-	expect(outcome).toHaveTextContent("The device Codex account could not be switched.");
+	expect(outcome).toHaveTextContent("Account switch failed. Your previous Codex account was restored.");
 	expect(outcome).toHaveAttribute("aria-live", "polite");
 	expect(outcome).toBeVisible();
 	expect(screen.queryByText("activation_unconfirmed")).not.toBeInTheDocument();

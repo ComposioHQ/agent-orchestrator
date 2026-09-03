@@ -1500,7 +1500,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 								onClick={() => void codexAccountActions.recoverSwitch(codexAccountSwitch.id)}
 							>
 								{codexAccountActions.recoverPending ? <LoaderCircle className="animate-spin" aria-label={t("settings.codexAccounts.recovering")} /> : null}
-								{t("settings.codexAccounts.retryRestart")}
+								{t("settings.codexAccounts.retryRecovery")}
 							</Button>
 						) : null}
 						{codexAccountActions.error ? <p className="text-xs text-error" role="alert">{codexAccountActions.error}</p> : null}

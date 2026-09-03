@@ -700,7 +700,7 @@ describe("SessionView", () => {
 
 		render(<SessionView sessionId="sess-1" />);
 
-		const retry = screen.getByRole("button", { name: "Retry failed sessions" });
+		const retry = screen.getByRole("button", { name: "Retry recovery" });
 		expect(retry).toBeEnabled();
 		await userEvent.click(retry);
 		expect(recoverCodexAccountSwitchMock).toHaveBeenCalledWith("switch-1");

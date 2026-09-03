@@ -112,7 +112,9 @@ export function codexSwitchDisplay(switchState: CodexAccountSwitch): CodexSwitch
 	const failureKey = switchState.failureCode ? codexAccountReasonKey(switchState.failureCode) : null;
 	const failureKnown = failureKey !== "settings.codexAccounts.reason.unknown";
 	const phase = switchState.phase;
-	const terminal = phase === "completed" || phase === "failed" || phase === "rollback_required" || phase === "recovery_required";
+	const canRecover = switchState.canRecover && (phase === "rollback_required" || phase === "recovery_required");
+	const terminal = phase === "completed" || phase === "failed" || phase === "recovery_required" || (phase === "rollback_required" && canRecover);
+	const busy = !terminal;
 	const phaseKeys: Record<CodexAccountSwitch["phase"], CodexAccountMessageKey> = {
 		requested: "settings.codexAccounts.switch.requested",
 		stopping_sessions: "settings.codexAccounts.switch.stopping_sessions",
@@ -127,10 +129,10 @@ export function codexSwitchDisplay(switchState: CodexAccountSwitch): CodexSwitch
 		failed: "settings.codexAccounts.switch.failed",
 	};
 	return {
-		key: failureKnown && failureKey ? failureKey : phaseKeys[phase] ?? "settings.codexAccounts.switch.unknown",
+		key: !busy && failureKnown && failureKey ? failureKey : phaseKeys[phase] ?? "settings.codexAccounts.switch.unknown",
 		tone: phase === "failed" ? "error" : failureKnown || phase === "rollback_required" || phase === "recovery_required" ? "warning" : "muted",
-		busy: !terminal,
+		busy,
 		mutationBlocked: phase !== "completed" && phase !== "failed",
-		canRecover: switchState.canRecover && phase === "recovery_required",
+		canRecover,
 	};
 }
