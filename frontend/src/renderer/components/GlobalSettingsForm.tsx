@@ -4,6 +4,7 @@ import type { GlobalSettingsSection as GlobalSettingsPage } from "../stores/ui-s
 import { GeneralSettingsSection } from "./settings/GeneralSettingsSection";
 import { HarnessSettingsSection } from "./settings/HarnessSettingsSection";
 import { CloudCredentialsSection } from "./settings/CloudCredentialsSection";
+import { CodexAccountsSection } from "./settings/CodexAccountsSection";
 import { ConnectMobileContent } from "./settings/ConnectMobileContent";
 import { KeyboardShortcutsContent } from "./settings/KeyboardShortcutsContent";
 import { MobileDevicesSection } from "./settings/MobileDevicesSection";
@@ -44,6 +45,8 @@ export function GlobalSettingsForm({
 			{(all || section === "general") && <GeneralSettingsSection titleHidden={titleHidden} />}
 
 			{(all || section === "harness") && <HarnessSettingsSection titleHidden={titleHidden} />}
+
+			{(all || section === "agents") && <CodexAccountsSection titleHidden={titleHidden} />}
 
 			{(all || section === "browserProfiles") && <BrowserProfilesSection titleHidden={titleHidden} />}
 			{(all || section === "cloud") && <CloudCredentialsSection titleHidden={titleHidden} />}

@@ -37,7 +37,7 @@
 - `backend/internal/domain/agent_switch_observability_test.go` — exhaustive taxonomy, applicability, dedupe, stack, and privacy tests.
 - `backend/internal/observe/sentryobs/agent_switch_event.go` — provider-owned canonical Sentry serialization and bounded envelope encoding.
 - `backend/internal/ports/agent_switch_observability.go` — observer, reporting-policy, delivery-gate, and outbox store contracts.
-- `backend/internal/storage/sqlite/migrations/0124_agent_switch_failure_observability.sql` — `failure_point`, policy, receipt, outbox, and delivery-state schema.
+- `backend/internal/storage/sqlite/migrations/0125_agent_switch_failure_observability.sql` — `failure_point`, policy, receipt, outbox, and delivery-state schema.
 - `backend/internal/storage/sqlite/queries/agent_switch_failure_observability.sql` — policy synchronization, enrollment, claim, attempt, acknowledgement, retry, quarantine, purge, receipt-resolution, and diagnostics queries.
 - `backend/internal/storage/sqlite/store/agent_switch_failure_store.go` — atomic CAS/enrollment savepoint and delivery persistence implementation.
 - `backend/internal/storage/sqlite/store/agent_switch_failure_store_test.go` — atomicity, races, retention, delete-order, consent, TTL, and delivery-state tests.
@@ -502,7 +502,7 @@ git commit -m "feat: define agent switch failure taxonomy"
 
 **Files:**
 
-- Create: `backend/internal/storage/sqlite/migrations/0124_agent_switch_failure_observability.sql`
+- Create: `backend/internal/storage/sqlite/migrations/0125_agent_switch_failure_observability.sql`
 - Create: `backend/internal/storage/sqlite/queries/agent_switch_failure_observability.sql`
 - Create: `backend/internal/storage/sqlite/store/agent_switch_failure_store.go`
 - Create: `backend/internal/storage/sqlite/store/agent_switch_failure_store_test.go`
@@ -651,7 +651,7 @@ Expected: PASS, including injected telemetry-local failure where the saga state 
 - [ ] **Step 5: Commit the durable foundation**
 
 ```bash
-git add backend/internal/storage/sqlite/migrations/0124_agent_switch_failure_observability.sql backend/internal/storage/sqlite/queries/agent_switch_failure_observability.sql backend/internal/storage/sqlite/queries/agent_switching.sql backend/internal/storage/sqlite/gen backend/internal/storage/sqlite/store/agent_switch_failure_store.go backend/internal/storage/sqlite/store/agent_switch_failure_store_test.go backend/internal/storage/sqlite/store/agent_switching_store.go backend/internal/storage/sqlite/migrate_agent_switching_schema_test.go backend/internal/storage/sqlite/migrate_burned_versions_test.go backend/internal/ports/agent_switching.go
+git add backend/internal/storage/sqlite/migrations/0125_agent_switch_failure_observability.sql backend/internal/storage/sqlite/queries/agent_switch_failure_observability.sql backend/internal/storage/sqlite/queries/agent_switching.sql backend/internal/storage/sqlite/gen backend/internal/storage/sqlite/store/agent_switch_failure_store.go backend/internal/storage/sqlite/store/agent_switch_failure_store_test.go backend/internal/storage/sqlite/store/agent_switching_store.go backend/internal/storage/sqlite/migrate_agent_switching_schema_test.go backend/internal/storage/sqlite/migrate_burned_versions_test.go backend/internal/ports/agent_switching.go
 git commit -m "feat: persist agent switch failure outbox"
 ```
 

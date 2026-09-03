@@ -96,6 +96,7 @@ describe("useWorkspaceQuery", () => {
 							id: "sess-1",
 							projectId: "proj-1",
 							terminalHandleId: "term-1",
+							terminalGeneration: "launch-2",
 							displayName: "fix-bug",
 							issueId: "github:acme/project-one#42",
 							harness: "claude-code",
@@ -160,6 +161,7 @@ describe("useWorkspaceQuery", () => {
 		expect(workspace.sessions[0]).toMatchObject({
 			id: "sess-1",
 			terminalHandleId: "term-1",
+			terminalGeneration: "launch-2",
 			title: "fix-bug",
 			issueId: "github:acme/project-one#42",
 			provider: "claude-code",

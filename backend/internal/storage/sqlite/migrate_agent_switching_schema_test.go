@@ -200,7 +200,7 @@ WHERE session_id = 'switch-session' AND event_type = 'session_updated';
 	}
 }
 
-func TestMigration0124AgentSwitchFailureConstraintCDCAndIndexes(t *testing.T) {
+func TestMigration0125AgentSwitchFailureConstraintCDCAndIndexes(t *testing.T) {
 	db, err := sql.Open("sqlite", "file:"+filepath.Join(t.TempDir(), "ao.db")+pragmas)
 	if err != nil {
 		t.Fatalf("open sqlite: %v", err)
@@ -241,7 +241,7 @@ INSERT INTO agent_switches (
  'delivery_unconfirmed',?,?, 'final.json',?
 );`, "v1:"+strings.Repeat("c", 64), strings.Repeat("a", 64),
 		now.Add(time.Second), now, now.Add(2*time.Second), strings.Repeat("b", 64)); err != nil {
-		t.Fatalf("seed pre-0124 switch: %v", err)
+		t.Fatalf("seed pre-0125 switch: %v", err)
 	}
 	const projection = `json_array(
  id,session_id,idempotency_key,request_fingerprint,from_harness,target_harness,
@@ -251,7 +251,7 @@ INSERT INTO agent_switches (
  error_code,requested_at,updated_at,final_handoff_path,final_handoff_hash)`
 	var copyBefore string
 	if err := db.QueryRow(`SELECT ` + projection + ` FROM agent_switches WHERE id='copy-switch'`).Scan(&copyBefore); err != nil {
-		t.Fatalf("read switch before 0124: %v", err)
+		t.Fatalf("read switch before 0125: %v", err)
 	}
 	if _, err := db.Exec(`INSERT INTO agent_switches (
  id,session_id,idempotency_key,request_fingerprint,from_harness,target_harness,state,
@@ -282,13 +282,13 @@ INSERT INTO agent_switches (
 		t.Fatalf("seed conflicting legacy retained markers: %v", err)
 	}
 
-	upTo(t, db, 124)
+	upTo(t, db, 125)
 	var copyAfter, copyFailurePoint string
 	if err := db.QueryRow(`SELECT `+projection+`,failure_point FROM agent_switches WHERE id='copy-switch'`).Scan(&copyAfter, &copyFailurePoint); err != nil {
-		t.Fatalf("read switch after 0124: %v", err)
+		t.Fatalf("read switch after 0125: %v", err)
 	}
 	if copyAfter != copyBefore {
-		t.Fatalf("0124 changed an existing switch column:\nbefore=%s\nafter=%s", copyBefore, copyAfter)
+		t.Fatalf("0125 changed an existing switch column:\nbefore=%s\nafter=%s", copyBefore, copyAfter)
 	}
 	if copyFailurePoint != "" {
 		t.Fatalf("migrated failure_point = %q, want empty", copyFailurePoint)
