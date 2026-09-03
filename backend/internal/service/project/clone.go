@@ -183,7 +183,9 @@ func cloneRepositoryName(raw string) (string, error) {
 	}
 
 	var remotePath string
-	if match := scpStyleGitURL.FindStringSubmatch(raw); len(match) == 2 {
+	if windowsPath, ok := windowsFileURLPath(raw); ok {
+		remotePath = windowsPath
+	} else if match := scpStyleGitURL.FindStringSubmatch(raw); len(match) == 2 {
 		remotePath = match[1]
 	} else {
 		parsed, err := url.Parse(raw)
@@ -202,6 +204,14 @@ func cloneRepositoryName(raw string) (string, error) {
 			return "", apierr.Invalid("GIT_URL_CONTAINS_CREDENTIALS", "Use your configured Git credentials or an SSH URL instead of putting credentials in the repository URL.", nil)
 		}
 		remotePath = parsed.Path
+		// Also accept the explicit opaque form file:C:%5Crepo. All other
+		// schemes continue to use the hierarchical path validated above.
+		if scheme == "file" && remotePath == "" && parsed.Opaque != "" {
+			remotePath, err = url.PathUnescape(parsed.Opaque)
+			if err != nil {
+				return "", invalidCloneURL()
+			}
+		}
 	}
 
 	remotePath = strings.TrimRight(remotePath, "/\\")
@@ -210,6 +220,22 @@ func cloneRepositoryName(raw string) (string, error) {
 		return "", invalidCloneURL()
 	}
 	return name, nil
+}
+
+func windowsFileURLPath(raw string) (string, bool) {
+	const prefix = "file://"
+	if !strings.HasPrefix(strings.ToLower(raw), prefix) {
+		return "", false
+	}
+
+	// url.URL.String encodes a Windows drive path as file://C:%5Crepo,
+	// which net/url otherwise rejects as an invalid host port. Recognize only
+	// decoded absolute volume paths before falling back to the generic parser.
+	decoded, err := url.PathUnescape(raw[len(prefix):])
+	if err != nil || filepath.VolumeName(decoded) == "" || !filepath.IsAbs(decoded) {
+		return "", false
+	}
+	return decoded, true
 }
 
 func invalidCloneURL() error {
