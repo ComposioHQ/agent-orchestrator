@@ -28,6 +28,7 @@ import { useVoiceInput } from "../voice/useVoiceInput";
 import { useTheme, useThemedStyles, useThemeState } from "../ThemeProvider";
 import { closeShellTerminal } from "../chat/api";
 import {
+	interfaceSwitchUnavailableMessage,
 	mobileInterfaceTransitionIsActive,
 	mobileInterfaceTransitionIsCancellable,
 	useInterfaceTransition,
@@ -1019,15 +1020,16 @@ export default function TerminalScreen() {
 		[interfaceSwitch],
 	);
 
-	const requestInterfaceSwitch = useCallback(() => {
+	const requestInterfaceSwitch = useCallback(async () => {
 		haptics.tap();
-		if (!interfaceSwitch.status?.supported) {
-			Alert.alert(
-				"Chat unavailable",
-				interfaceSwitch.status?.reason ||
-					interfaceSwitch.error ||
-					"This agent has not declared a compatible native conversation handoff.",
-			);
+		let status = interfaceSwitch.status;
+		if (!status?.supported) {
+			// A tap can land between two polls, or before the first answer: ask
+			// once more before telling the user it is unavailable.
+			status = (await interfaceSwitch.refresh()) ?? status;
+		}
+		if (!status?.supported) {
+			Alert.alert("Chat unavailable", interfaceSwitchUnavailableMessage(status, interfaceSwitch.error));
 			return;
 		}
 		if (!interfaceBusy) {
@@ -1068,7 +1070,7 @@ export default function TerminalScreen() {
 						hitSlop={10}
 						accessibilityLabel="Open Chat interface"
 						accessibilityState={{ busy: interfaceTransitionActive || interfaceSwitch.starting }}
-						onPress={requestInterfaceSwitch}
+						onPress={() => void requestInterfaceSwitch()}
 						style={({ pressed }) => [styles.headerBrowserBtn, pressed && { opacity: 0.6 }]}
 					>
 						<Feather

@@ -13,6 +13,7 @@ import {
 } from "./interfaceTransition";
 
 export {
+	interfaceSwitchUnavailableMessage,
 	mobileInterfaceTransitionIsActive,
 	mobileInterfaceTransitionIsCancellable,
 } from "./interfaceTransition";
@@ -33,8 +34,9 @@ export function useInterfaceTransition(
 	const onSettledRef = useRef(onSettled);
 	onSettledRef.current = onSettled;
 
-	const refresh = useCallback(async () => {
-		if (!cfg || !sessionId) return;
+	// Resolves with the fetched status so a tap can act on a fresh answer.
+	const refresh = useCallback(async (): Promise<SessionInterfaceTransitionStatus | undefined> => {
+		if (!cfg || !sessionId) return undefined;
 		try {
 			const next = await getSessionInterfaceTransition(cfg, sessionId);
 			setStatus(next);
@@ -44,8 +46,10 @@ export function useInterfaceTransition(
 				settledRef.current = transition.id;
 				await onSettledRef.current?.();
 			}
+			return next;
 		} catch (cause) {
 			setError(cause instanceof Error ? cause.message : String(cause));
+			return undefined;
 		} finally {
 			setLoading(false);
 		}
@@ -56,11 +60,11 @@ export function useInterfaceTransition(
 	}, [refresh]);
 
 	useEffect(() => {
-		const interval = interfaceTransitionPollInterval(status?.transition);
+		const interval = interfaceTransitionPollInterval(status);
 		if (!cfg || !sessionId || interval === undefined) return;
 		const timer = setInterval(() => void refresh(), interval);
 		return () => clearInterval(timer);
-	}, [cfg, refresh, sessionId, status?.transition?.phase]);
+	}, [cfg, refresh, sessionId, status?.transition?.phase, status?.reasonCode]);
 
 	const start = useCallback(
 		async (targetMode: "chat" | "tui", policy: "drain" | "interrupt") => {
