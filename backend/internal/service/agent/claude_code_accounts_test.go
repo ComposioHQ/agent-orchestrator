@@ -65,6 +65,20 @@ type fakeClaudeCodeStateStore struct {
 	found  bool
 }
 
+type fakeClaudeCodeUsageReader struct {
+	mu        sync.Mutex
+	observed  map[string]ports.ClaudeCodePlanUsageObservation
+	errors    map[string]error
+	planCalls map[string]int
+}
+
+func (f *fakeClaudeCodeUsageReader) ReadPlanUsage(_ context.Context, accountID string) (ports.ClaudeCodePlanUsageObservation, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.planCalls[accountID]++
+	return f.observed[accountID], f.errors[accountID]
+}
+
 func (s *fakeClaudeCodeStateStore) GetClaudeCodeActiveAccount(context.Context) (domain.ClaudeCodeActiveAccount, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -124,6 +138,7 @@ func newTestClaudeCodeManager(t *testing.T) (*claudeCodeAccountManager, *fakeCla
 		PendingRoot: filepath.Join(root, "pending"), SwitchStagingRoot: filepath.Join(root, "staging"),
 		Home: home, Keychain: keychain, KeychainAccount: "test-user", StateStore: state,
 		ResolveExecutable: func(context.Context) (string, error) { return "/fake/claude", nil },
+		LoginExecutable:   func() (string, error) { return "/fake/ao", nil },
 		Run: func(_ context.Context, _ string, args []string, _ map[string]string) ([]byte, error) {
 			if reflect.DeepEqual(args, []string{"--version"}) {
 				return []byte("2.1.220 (Claude Code)"), nil
@@ -135,6 +150,94 @@ func newTestClaudeCodeManager(t *testing.T) (*claudeCodeAccountManager, *fakeCla
 		},
 	})
 	return m, keychain, state, home
+}
+
+func TestClaudeCodeUsageRefreshReadsEverySavedAccountWithoutSwitching(t *testing.T) {
+	m, keychain, state, home := newTestClaudeCodeManager(t)
+	credentialA := claudeCredentialJSON("secret-a")
+	keychain.items[claudecode.ClaudeCanonicalCredentialService+"\x00test-user"] = credentialA
+	if err := os.WriteFile(filepath.Join(home, ".claude.json"), claudeIdentityJSON(testClaudeAccountA, "a@example.com"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.bootstrapInner(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.catalog.upsert(context.Background(), domain.ClaudeCodeAccountIdentity{AccountUUID: testClaudeAccountB, EmailAddress: "b@example.com", SeatTier: "max"}, claudeCredentialJSON("secret-b"), m.now()); err != nil {
+		t.Fatal(err)
+	}
+	now := m.now()
+	planA := "pro"
+	planB := "max"
+	reader := &fakeClaudeCodeUsageReader{
+		observed: map[string]ports.ClaudeCodePlanUsageObservation{
+			testClaudeAccountA: {
+				Plan: &planA, Promotion: &domain.ClaudeCodePlanPromotion{PercentIncrease: 50, EndsOn: "2026-09-13"},
+				Windows: []domain.ClaudeCodePlanUsageWindow{{ID: "five_hour", DisplayName: "5-hour limit", UsedPercent: 12}}, ObservedAt: now,
+			},
+			testClaudeAccountB: {
+				Plan: &planB, Windows: []domain.ClaudeCodePlanUsageWindow{{ID: "seven_day", DisplayName: "Weekly — all models", UsedPercent: 34}}, ObservedAt: now,
+			},
+		},
+		errors: map[string]error{}, planCalls: map[string]int{},
+	}
+	m.usageReader = reader
+	revisionBefore := state.active.Revision
+	canonicalBefore := append([]byte(nil), keychain.items[claudecode.ClaudeCanonicalCredentialService+"\x00test-user"]...)
+	m.refreshUsage(context.Background())
+
+	view := m.cached()
+	if state.active.Revision != revisionBefore || !reflect.DeepEqual(canonicalBefore, keychain.items[claudecode.ClaudeCanonicalCredentialService+"\x00test-user"]) {
+		t.Fatal("usage refresh changed the global Claude account")
+	}
+	if len(view.Accounts) != 2 || view.Accounts[0].PlanUsage.State != domain.ClaudeCodePlanUsageAvailable || view.Accounts[1].PlanUsage.State != domain.ClaudeCodePlanUsageAvailable {
+		t.Fatalf("per-account usage = %+v", view.Accounts)
+	}
+	if view.Accounts[0].PlanUsage.Plan == nil || *view.Accounts[0].PlanUsage.Plan != "pro" || view.Accounts[0].PlanUsage.Promotion == nil || view.Accounts[0].PlanUsage.Promotion.PercentIncrease != 50 {
+		t.Fatalf("active account plan = %+v", view.Accounts[0].PlanUsage)
+	}
+	if view.Accounts[1].PlanUsage.Plan == nil || *view.Accounts[1].PlanUsage.Plan != "max" || view.Accounts[1].PlanUsage.Promotion != nil {
+		t.Fatalf("inactive account plan = %+v", view.Accounts[1].PlanUsage)
+	}
+	m.refreshUsage(context.Background())
+	if reader.planCalls[testClaudeAccountA] != 1 || reader.planCalls[testClaudeAccountB] != 1 {
+		t.Fatalf("usage cache was bypassed: calls=%v", reader.planCalls)
+	}
+}
+
+func TestClaudeCodeUsageKeepsProAndBoostMetadataWhenLimitsAreUnavailable(t *testing.T) {
+	m, keychain, _, home := newTestClaudeCodeManager(t)
+	keychain.items[claudecode.ClaudeCanonicalCredentialService+"\x00test-user"] = claudeCredentialJSON("secret-a")
+	if err := os.WriteFile(filepath.Join(home, ".claude.json"), claudeIdentityJSON(testClaudeAccountA, "a@example.com"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.bootstrapInner(); err != nil {
+		t.Fatal(err)
+	}
+	plan := "pro"
+	m.usageReader = &fakeClaudeCodeUsageReader{
+		observed: map[string]ports.ClaudeCodePlanUsageObservation{
+			testClaudeAccountA: {Plan: &plan, Promotion: &domain.ClaudeCodePlanPromotion{PercentIncrease: 50, EndsOn: "2026-09-13"}},
+		},
+		errors: map[string]error{testClaudeAccountA: ports.ErrClaudeCodePlanUsageUnavailable}, planCalls: map[string]int{},
+	}
+	m.refreshUsage(context.Background())
+
+	usage := m.cached().Accounts[0].PlanUsage
+	if usage.Plan == nil || *usage.Plan != "pro" || usage.Promotion == nil || usage.Promotion.PercentIncrease != 50 {
+		t.Fatalf("plan metadata = %+v", usage)
+	}
+	if usage.State != domain.ClaudeCodePlanUsageUnknown || usage.Freshness != domain.AgentReadinessStale {
+		t.Fatalf("unavailable limit state = %+v", usage)
+	}
+}
+
+func TestClaudeCodePlanDoesNotTreatStripeBillingAsThePlanName(t *testing.T) {
+	if plan := claudeCodeAccountPlan(domain.ClaudeCodeAccountIdentity{BillingType: "stripe_subscription"}); plan != nil {
+		t.Fatalf("billing mechanism was exposed as plan: %q", *plan)
+	}
+	if plan := claudeCodeAccountPlan(domain.ClaudeCodeAccountIdentity{SeatTier: "claude_pro"}); plan == nil || *plan != "pro" {
+		t.Fatalf("native Claude plan = %v, want pro", plan)
+	}
 }
 
 func TestClaudeCodeBootstrapImportsCanonicalAccountWithoutPersistingSecrets(t *testing.T) {
@@ -207,7 +310,7 @@ func TestClaudeCodeAddAccountLeavesCanonicalAccountUnchanged(t *testing.T) {
 	if err != nil || !reflect.DeepEqual(gotConfig, canonicalConfig) {
 		t.Fatalf("Add changed canonical config: err=%v", err)
 	}
-	if len(terminal.opened) != 1 || !reflect.DeepEqual(terminal.opened[0].Argv, []string{"/fake/claude", "auth", "login"}) {
+	if len(terminal.opened) != 1 || !reflect.DeepEqual(terminal.opened[0].Argv, []string{"/fake/ao", "claude-code-login", "--claude-binary", "/fake/claude"}) {
 		t.Fatalf("login argv = %#v", terminal.opened)
 	}
 	for _, key := range claudeCodeAuthOverrideVariables {
@@ -260,6 +363,60 @@ func TestClaudeCodeReconcileSignedOutCanonicalClearsActivePointer(t *testing.T) 
 	}
 	if state.active.AccountID != "" || state.active.Revision != 2 {
 		t.Fatalf("signed-out pointer = %+v", state.active)
+	}
+	view := m.cached()
+	if len(view.Accounts) != 1 || view.Accounts[0].Status != domain.ClaudeCodeAccountStatusSignedOut || view.Accounts[0].Authentication.State != domain.AgentAuthenticationUnauthorized {
+		t.Fatalf("signed-out account = %+v", view.Accounts)
+	}
+	if _, found, err := keychain.Get(context.Background(), claudecode.ClaudeAccountVaultService, testClaudeAccountA); err != nil || found {
+		t.Fatalf("signed-out vault credential: found=%v err=%v", found, err)
+	}
+}
+
+func TestClaudeCodeReconcileSharedOnlyCanonicalMarksActiveAccountSignedOut(t *testing.T) {
+	m, keychain, state, home := newTestClaudeCodeManager(t)
+	keychain.items[claudecode.ClaudeCanonicalCredentialService+"\x00test-user"] = claudeCredentialJSON("secret-a")
+	if err := os.WriteFile(filepath.Join(home, ".claude.json"), claudeIdentityJSON(testClaudeAccountA, "a@example.com"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.bootstrapInner(); err != nil {
+		t.Fatal(err)
+	}
+	keychain.items[claudecode.ClaudeCanonicalCredentialService+"\x00test-user"] = []byte(`{"pluginSecrets":{"shared":"keep"}}`)
+	if err := m.reconcileGlobal(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	view := m.cached()
+	if state.active.AccountID != "" || len(view.Accounts) != 1 || view.Accounts[0].Status != domain.ClaudeCodeAccountStatusSignedOut {
+		t.Fatalf("shared-only logout state: active=%+v accounts=%+v", state.active, view.Accounts)
+	}
+	canonical, found, err := keychain.Get(context.Background(), claudecode.ClaudeCanonicalCredentialService, "test-user")
+	if err != nil || !found || string(canonical) != `{"pluginSecrets":{"shared":"keep"}}` {
+		t.Fatalf("shared canonical fields changed: found=%v err=%v", found, err)
+	}
+}
+
+func TestClaudeCodeReconcileLoggedOutStatusWithExitOneMarksActiveAccountSignedOut(t *testing.T) {
+	m, keychain, state, home := newTestClaudeCodeManager(t)
+	keychain.items[claudecode.ClaudeCanonicalCredentialService+"\x00test-user"] = claudeCredentialJSON("secret-a")
+	if err := os.WriteFile(filepath.Join(home, ".claude.json"), claudeIdentityJSON(testClaudeAccountA, "a@example.com"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.bootstrapInner(); err != nil {
+		t.Fatal(err)
+	}
+	m.run = func(_ context.Context, _ string, args []string, _ map[string]string) ([]byte, error) {
+		if reflect.DeepEqual(args, []string{"auth", "status", "--json"}) {
+			return []byte(`{"loggedIn":false,"authMethod":"none","apiProvider":"firstParty"}`), errors.New("exit status 1")
+		}
+		return nil, errors.New("unexpected command")
+	}
+	if err := m.reconcileGlobal(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	view := m.cached()
+	if state.active.AccountID != "" || len(view.Accounts) != 1 || view.Accounts[0].Status != domain.ClaudeCodeAccountStatusSignedOut || view.Accounts[0].Authentication.State != domain.AgentAuthenticationUnauthorized {
+		t.Fatalf("exit-one logout state: active=%+v accounts=%+v", state.active, view.Accounts)
 	}
 }
 

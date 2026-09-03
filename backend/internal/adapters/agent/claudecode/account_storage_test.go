@@ -126,6 +126,30 @@ func TestClaudeCredentialMergeKeepsOnlyLiveSharedFields(t *testing.T) {
 	}
 }
 
+func TestClaudeAccountCredentialPresenceDistinguishesSignedOutSharedState(t *testing.T) {
+	tests := []struct {
+		name    string
+		value   string
+		present bool
+		wantErr bool
+	}{
+		{name: "account credential", value: `{"claudeAiOauth":{"accessToken":"secret"},"pluginSecrets":{}}`, present: true},
+		{name: "shared fields only", value: `{"pluginSecrets":{"plugin":"shared"}}`},
+		{name: "null account credential", value: `{"claudeAiOauth":null,"mcpOAuth":{}}`},
+		{name: "empty account credential", value: `{"claudeAiOauth":{},"mcpOAuth":{}}`},
+		{name: "invalid object", value: `{"claudeAiOauth":"invalid"}`, wantErr: true},
+		{name: "invalid json", value: `{`, wantErr: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			present, err := HasAccountCredential([]byte(test.value))
+			if (err != nil) != test.wantErr || present != test.present {
+				t.Fatalf("presence = %v, err = %v; want presence %v, error %v", present, err, test.present, test.wantErr)
+			}
+		})
+	}
+}
+
 func TestWriteClaudeOAuthAccountPreservesUnrelatedConfig(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, ".claude.json")

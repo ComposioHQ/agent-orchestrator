@@ -56,6 +56,7 @@ func (s *Service) EnsureClaudeCodeAccounts(ctx context.Context) (ClaudeCodeAccou
 	if err := s.claudeCodeAccounts.reconcileGlobal(ctx); err != nil {
 		return ClaudeCodeAccounts{}, mapClaudeCodeAccountError(err)
 	}
+	s.claudeCodeAccounts.refreshUsage(ctx)
 	s.claudeCodeAccounts.publish()
 	return s.CachedClaudeCodeAccounts(ctx)
 }

@@ -101,6 +101,11 @@ func TestClaudeCodeAccountListContainsOnlySafeIdentityProjection(t *testing.T) {
 			ID: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", Label: email, Status: domain.ClaudeCodeAccountStatusValid,
 			Active: true, AccountEmail: &email, Identity: domain.ClaudeCodeAccountIdentity{
 				AccountUUID: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", EmailAddress: email, DisplayName: "Person",
+			}, PlanUsage: domain.ClaudeCodePlanUsageSnapshot{
+				State: domain.ClaudeCodePlanUsageAvailable, Freshness: domain.AgentReadinessFresh,
+				Promotion:  &domain.ClaudeCodePlanPromotion{PercentIncrease: 50, EndsOn: "2026-09-13"},
+				Windows:    []domain.ClaudeCodePlanUsageWindow{{ID: "five_hour", DisplayName: "5-hour limit", UsedPercent: 12}},
+				ReasonCode: domain.ClaudeCodePlanUsageReasonAvailable, Reason: "Plan usage is up to date.",
 			}, CreatedAt: now, UpdatedAt: now,
 		}},
 		Capabilities: domain.ClaudeCodeAccountCapabilities{
@@ -119,6 +124,11 @@ func TestClaudeCodeAccountListContainsOnlySafeIdentityProjection(t *testing.T) {
 	for _, forbidden := range []string{"claudeAiOauth", "refreshToken", "trustedDeviceToken", "Keychain", "credentialPath"} {
 		if strings.Contains(response.Body.String(), forbidden) {
 			t.Fatalf("response exposed forbidden field %q: %s", forbidden, response.Body.String())
+		}
+	}
+	for _, expected := range []string{`"planUsage"`, `"five_hour"`, `"usedPercent":12`, `"promotion"`, `"percentIncrease":50`, `"endsOn":"2026-09-13"`} {
+		if !strings.Contains(response.Body.String(), expected) {
+			t.Fatalf("response omitted %q: %s", expected, response.Body.String())
 		}
 	}
 }

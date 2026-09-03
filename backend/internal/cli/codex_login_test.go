@@ -79,7 +79,7 @@ func TestCodexLoginRunsSelectedNativeLoginMethod(t *testing.T) {
 
 func TestCodexLoginMenuListsEverySupportedMethod(t *testing.T) {
 	var stdout bytes.Buffer
-	if err := writeCodexLoginMenu(&stdout, codexLoginStyle{}); err != nil {
+	if err := writeCodexLoginMenu(&stdout, accountLoginStyle{}); err != nil {
 		t.Fatalf("writeCodexLoginMenu: %v", err)
 	}
 	for _, fragment := range []string{"Sign in to Codex", "ChatGPT in browser", "Device code", "OpenAI API key", "Access token", "Selection [1-4]"} {

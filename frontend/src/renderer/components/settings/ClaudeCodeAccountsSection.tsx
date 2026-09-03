@@ -9,6 +9,7 @@ import { ConfirmDialog } from "../ConfirmDialog";
 import { Button } from "../ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "../ui/dropdown-menu";
 import { AgentProviderGroup } from "./AgentProviderGroup";
+import { claudeCodeAccountDisplayLabel, claudeCodePlanName, claudeCodeRemainingPercent, formatClaudeCodePercentage } from "./claude-code-account-format";
 import { ClaudeCodeAccountLoginTerminalPanel } from "./ClaudeCodeAccountLoginTerminalPanel";
 import { ClaudeCodeAccountRow } from "./ClaudeCodeAccountRow";
 import { SettingsSection } from "./SettingsSection";
@@ -20,7 +21,7 @@ type PendingClaudeCodeAccountAction =
 	| null;
 
 export function ClaudeCodeAccountsSection({ titleHidden }: { titleHidden?: boolean }) {
-	const { t } = useTranslation();
+	const { t, i18n } = useTranslation();
 	const queryClient = useQueryClient();
 	const accountsQuery = useClaudeCodeAccountsQuery();
 	useEnsureClaudeCodeAccounts(true);
@@ -35,9 +36,8 @@ export function ClaudeCodeAccountsSection({ titleHidden }: { titleHidden?: boole
 	const activeLogin = data?.activeLogin ?? null;
 	const activeAccount = data?.accounts.find((account) => account.id === data.activeAccountId);
 	const currentSwitch = data?.currentSwitch;
-	const currentSwitchTargetLabel = currentSwitch
-		? data?.accounts.find((account) => account.id === currentSwitch.targetAccountId)?.label
-		: undefined;
+	const currentSwitchTarget = currentSwitch ? data?.accounts.find((account) => account.id === currentSwitch.targetAccountId) : undefined;
+	const currentSwitchTargetLabel = currentSwitchTarget ? claudeCodeAccountDisplayLabel(currentSwitchTarget) : undefined;
 	const switchPresentation = currentSwitch ? claudeCodeSwitchDisplay(currentSwitch) : null;
 	const switchStatus = switchPresentation ? t(switchPresentation.key) : null;
 	const accountsError = accountsQuery.error ? t("settings.claudeCodeAccounts.loadFailed") : null;
@@ -108,15 +108,20 @@ export function ClaudeCodeAccountsSection({ titleHidden }: { titleHidden?: boole
 
 	const dialog = useMemo(() => {
 		if (!pendingAction) return null;
+		const label = claudeCodeAccountDisplayLabel(pendingAction.account);
 		switch (pendingAction.kind) {
-			case "switch": return { title: t("settings.claudeCodeAccounts.switchTitle", { label: pendingAction.account.label }), description: t("settings.claudeCodeAccounts.switchDescription"), confirmLabel: t("settings.claudeCodeAccounts.switchConfirm"), destructive: false };
-			case "logout": return { title: t("settings.claudeCodeAccounts.logoutTitle", { label: pendingAction.account.label }), description: t("settings.claudeCodeAccounts.logoutDescription"), confirmLabel: t("settings.claudeCodeAccounts.logout"), destructive: false };
-			case "delete": return { title: t("settings.claudeCodeAccounts.deleteTitle", { label: pendingAction.account.label }), description: t("settings.claudeCodeAccounts.deleteDescription"), confirmLabel: t("settings.claudeCodeAccounts.delete"), destructive: true };
+			case "switch": return { title: t("settings.claudeCodeAccounts.switchTitle", { label }), description: t("settings.claudeCodeAccounts.switchDescription"), confirmLabel: t("settings.claudeCodeAccounts.switchConfirm"), destructive: false };
+			case "logout": return { title: t("settings.claudeCodeAccounts.logoutTitle", { label }), description: t("settings.claudeCodeAccounts.logoutDescription"), confirmLabel: t("settings.claudeCodeAccounts.logout"), destructive: false };
+			case "delete": return { title: t("settings.claudeCodeAccounts.deleteTitle", { label }), description: t("settings.claudeCodeAccounts.deleteDescription"), confirmLabel: t("settings.claudeCodeAccounts.delete"), destructive: true };
 		}
 	}, [pendingAction, t]);
 
+	const activeRemaining = activeAccount ? claudeCodeRemainingPercent(activeAccount) : null;
+	const activePlan = activeAccount ? claudeCodePlanName(activeAccount.planUsage.plan) : null;
 	const summary = accountsError ?? (data
-		? activeAccount?.label ?? data.unmanagedGlobalAccount?.label ?? t("settings.claudeCodeAccounts.count", { count: data.accounts.length })
+		? activeAccount
+			? [claudeCodeAccountDisplayLabel(activeAccount), activePlan, activeRemaining == null ? null : `${formatClaudeCodePercentage(activeRemaining, i18n.language)} ${t("settings.claudeCodeAccounts.remaining")}`].filter(Boolean).join(" · ")
+			: data.unmanagedGlobalAccount?.label ?? t("settings.claudeCodeAccounts.count", { count: data.accounts.length })
 		: t("settings.claudeCodeAccounts.loading"));
 	const switchOutcomeMessage = switchOutcome
 		? switchOutcome.succeeded
@@ -127,7 +132,7 @@ export function ClaudeCodeAccountsSection({ titleHidden }: { titleHidden?: boole
 	return <SettingsSection title={t("settings.codexAccounts.title")} sectionId="claude-code-accounts" titleHidden={titleHidden}>
 		<AgentProviderGroup provider="claude-code" name="Claude Code" summary={summary} expanded={providerExpanded || Boolean(activeLogin)} onExpandedChange={setProviderExpanded} collapseLocked={Boolean(activeLogin)} action={<div className="flex items-center gap-2">
 			{switchPresentation?.busy && switchStatus ? <LoaderCircle className="size-5 animate-spin text-muted-foreground" aria-label={switchStatus} /> : null}
-			{switchSourceAvailable && switchTargets.length > 0 ? <DropdownMenu><DropdownMenuTrigger asChild><Button type="button" size="sm" variant="outline" disabled={mutationDisabled || switchUnsupported} title={switchUnsupported ? t(claudeCodeAccountReasonKey(data?.capabilities.globalSwitch.reasonCode)) : undefined}><ArrowRightLeft aria-hidden="true" />{t("settings.claudeCodeAccounts.switchConfirm")}</Button></DropdownMenuTrigger><DropdownMenuContent align="end" className="min-w-64">{switchTargets.map((account) => { const authorized = account.authentication.state === "authorized" || account.authentication.state === "not_applicable"; const fallback = account.status === "signed_out" ? t("settings.claudeCodeAccounts.signedOut") : account.status === "broken" ? t("settings.claudeCodeAccounts.unavailable") : t("settings.claudeCodeAccounts.signedIn"); return <DropdownMenuItem key={account.id} disabled={account.status !== "valid" || !authorized} onSelect={() => openPending("switch", account)}><UserRound aria-hidden="true" /><div className="min-w-0"><p className="truncate text-foreground">{account.label}</p><p className="truncate text-micro text-muted-foreground">{account.identity.organizationName ?? account.identity.seatTier ?? fallback}</p></div></DropdownMenuItem>; })}</DropdownMenuContent></DropdownMenu> : null}
+			{switchSourceAvailable && switchTargets.length > 0 ? <DropdownMenu><DropdownMenuTrigger asChild><Button type="button" size="sm" variant="outline" disabled={mutationDisabled || switchUnsupported} title={switchUnsupported ? t(claudeCodeAccountReasonKey(data?.capabilities.globalSwitch.reasonCode)) : undefined}><ArrowRightLeft aria-hidden="true" />{t("settings.claudeCodeAccounts.switchConfirm")}</Button></DropdownMenuTrigger><DropdownMenuContent align="end" className="min-w-64">{switchTargets.map((account) => { const authorized = account.authentication.state === "authorized" || account.authentication.state === "not_applicable"; const fallback = account.status === "signed_out" ? t("settings.claudeCodeAccounts.signedOut") : account.status === "broken" ? t("settings.claudeCodeAccounts.unavailable") : t("settings.claudeCodeAccounts.signedIn"); const remaining = claudeCodeRemainingPercent(account); const details = [claudeCodePlanName(account.planUsage.plan), remaining == null ? null : `${formatClaudeCodePercentage(remaining, i18n.language)} ${t("settings.claudeCodeAccounts.remaining")}`].filter(Boolean).join(" · ") || fallback; return <DropdownMenuItem key={account.id} disabled={account.status !== "valid" || !authorized} onSelect={() => openPending("switch", account)}><UserRound aria-hidden="true" /><div className="min-w-0"><p className="truncate text-foreground">{claudeCodeAccountDisplayLabel(account)}</p><p className="truncate text-micro text-muted-foreground">{details}</p></div></DropdownMenuItem>; })}</DropdownMenuContent></DropdownMenu> : null}
 			<Button type="button" size="sm" title={data && data.capabilities.nativeLogin.state !== "supported" ? t(claudeCodeAccountReasonKey(data.capabilities.nativeLogin.reasonCode)) : undefined} onClick={() => void beginLogin()} disabled={mutationDisabled || data?.capabilities.nativeLogin.state !== "supported"}><Plus aria-hidden="true" />{t("settings.claudeCodeAccounts.add")}</Button>
 		</div>}>
 			{actions.error ? <p role="alert" className="border-b border-border px-4 py-3 text-xs text-error">{actions.error}</p> : null}

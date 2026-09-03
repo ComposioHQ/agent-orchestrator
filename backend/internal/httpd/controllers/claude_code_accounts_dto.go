@@ -55,7 +55,26 @@ func newClaudeCodeAccountResponse(input domain.ClaudeCodeAccountSnapshot) Claude
 			BillingType: identity.BillingType, SeatTier: identity.SeatTier,
 			AccountCreatedAt: identity.AccountCreatedAt, SubscriptionCreatedAt: identity.SubscriptionCreatedAt,
 		},
+		PlanUsage: newClaudeCodePlanUsageResponse(input.PlanUsage),
 	}
+}
+
+func newClaudeCodePlanUsageResponse(input domain.ClaudeCodePlanUsageSnapshot) ClaudeCodePlanUsageResponse {
+	windows := make([]ClaudeCodePlanUsageWindowResponse, len(input.Windows))
+	for index, window := range input.Windows {
+		windows[index] = ClaudeCodePlanUsageWindowResponse{
+			ID: window.ID, DisplayName: window.DisplayName, UsedPercent: window.UsedPercent, ResetsAt: window.ResetsAt,
+		}
+	}
+	response := ClaudeCodePlanUsageResponse{
+		State: string(input.State), Freshness: string(input.Freshness), Plan: input.Plan,
+		Windows: windows, ObservedAt: input.ObservedAt, CheckedAt: input.CheckedAt, AttemptedAt: input.AttemptedAt,
+		ReasonCode: input.ReasonCode, Reason: input.Reason,
+	}
+	if input.Promotion != nil {
+		response.Promotion = &ClaudeCodePlanPromotionResponse{PercentIncrease: input.Promotion.PercentIncrease, EndsOn: input.Promotion.EndsOn}
+	}
+	return response
 }
 
 func newClaudeCodeCapabilitiesResponse(input domain.ClaudeCodeAccountCapabilities) ClaudeCodeAccountCapabilitiesResponse {

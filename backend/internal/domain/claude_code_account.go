@@ -63,6 +63,7 @@ type ClaudeCodeAccountSnapshot struct {
 	Authentication AgentAuthenticationObservation `json:"authentication"`
 	Identity       ClaudeCodeAccountIdentity      `json:"identity"`
 	AccountEmail   *string                        `json:"accountEmail,omitempty"`
+	PlanUsage      ClaudeCodePlanUsageSnapshot    `json:"planUsage"`
 	CreatedAt      time.Time                      `json:"createdAt"`
 	UpdatedAt      time.Time                      `json:"updatedAt"`
 }

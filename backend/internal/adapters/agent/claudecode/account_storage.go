@@ -1,6 +1,7 @@
 package claudecode
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -26,13 +27,28 @@ func claudeAccountCredentialFields(data []byte) (map[string]json.RawMessage, err
 	if err := json.Unmarshal(data, &root); err != nil {
 		return nil, err
 	}
-	if len(root["claudeAiOauth"]) == 0 || string(root["claudeAiOauth"]) == "null" {
+	present, err := claudeAccountCredentialPresent(root["claudeAiOauth"])
+	if err != nil {
+		return nil, err
+	}
+	if !present {
 		return nil, errors.New("claude credential is missing claudeAiOauth")
 	}
 	for key := range claudeSharedCredentialFields {
 		delete(root, key)
 	}
 	return root, nil
+}
+
+func claudeAccountCredentialPresent(raw json.RawMessage) (bool, error) {
+	if len(raw) == 0 || bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+		return false, nil
+	}
+	var credential map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &credential); err != nil {
+		return false, err
+	}
+	return len(credential) > 0, nil
 }
 
 func mergeClaudeCredentialFields(account map[string]json.RawMessage, live []byte) ([]byte, error) {

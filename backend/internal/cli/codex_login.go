@@ -45,11 +45,11 @@ func (c *commandContext) runCodexLogin(ctx context.Context, in io.Reader, out, s
 	if err != nil {
 		return fmt.Errorf("codex CLI is not installed or is not available on PATH")
 	}
-	style := newCodexLoginStyle(out)
+	style := newAccountLoginStyle(out)
 	if err := writeCodexLoginMenu(out, style); err != nil {
 		return err
 	}
-	selection, err := readCodexLoginSelection(in)
+	selection, err := readAccountLoginSelection(in)
 	if err != nil && !errors.Is(err, io.EOF) {
 		return fmt.Errorf("read login method: %w", err)
 	}
@@ -97,42 +97,42 @@ func (c *commandContext) runCodexLogin(ctx context.Context, in io.Reader, out, s
 	return nil
 }
 
-type codexLoginStyle struct {
+type accountLoginStyle struct {
 	enabled bool
 }
 
-func newCodexLoginStyle(out io.Writer) codexLoginStyle {
+func newAccountLoginStyle(out io.Writer) accountLoginStyle {
 	if os.Getenv("NO_COLOR") != "" {
-		return codexLoginStyle{}
+		return accountLoginStyle{}
 	}
 	file, ok := out.(*os.File)
-	return codexLoginStyle{enabled: ok && term.IsTerminal(file.Fd())}
+	return accountLoginStyle{enabled: ok && term.IsTerminal(file.Fd())}
 }
 
-func (s codexLoginStyle) wrap(code, value string) string {
+func (s accountLoginStyle) wrap(code, value string) string {
 	if !s.enabled {
 		return value
 	}
 	return code + value + ansiReset
 }
 
-func (s codexLoginStyle) bold(value string) string {
+func (s accountLoginStyle) bold(value string) string {
 	return s.wrap(ansiBold, value)
 }
 
-func (s codexLoginStyle) dim(value string) string {
+func (s accountLoginStyle) dim(value string) string {
 	return s.wrap(ansiDim, value)
 }
 
-func (s codexLoginStyle) accent(value string) string {
+func (s accountLoginStyle) accent(value string) string {
 	return s.wrap(ansiCyanBold, value)
 }
 
-func (s codexLoginStyle) success(value string) string {
+func (s accountLoginStyle) success(value string) string {
 	return s.wrap(ansiGreenBold, value)
 }
 
-func writeCodexLoginMenu(out io.Writer, style codexLoginStyle) error {
+func writeCodexLoginMenu(out io.Writer, style accountLoginStyle) error {
 	lines := []string{
 		style.accent("Sign in to Codex"),
 		style.dim("Choose how you want to authenticate this account."),
@@ -161,7 +161,7 @@ func zeroBytes(value []byte) {
 	}
 }
 
-func readCodexLoginSelection(in io.Reader) (string, error) {
+func readAccountLoginSelection(in io.Reader) (string, error) {
 	var value strings.Builder
 	var one [1]byte
 	for {

@@ -61,7 +61,7 @@ func validClaudeCodeAccountID(value string) bool {
 }
 
 func claudeCodeAccountLabel(identity domain.ClaudeCodeAccountIdentity) string {
-	for _, value := range []string{identity.DisplayName, identity.EmailAddress} {
+	for _, value := range []string{identity.EmailAddress, identity.DisplayName} {
 		if value = strings.TrimSpace(value); value != "" {
 			return value
 		}

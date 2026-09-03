@@ -21,7 +21,24 @@ var (
 	ErrClaudeCodeGlobalAccountChanged             = errors.New("global Claude Code account changed")
 	ErrClaudeCodeAccountManagementUnsupported     = errors.New("account management unsupported for Claude Code")
 	ErrClaudeCodeKeychainUnavailable              = errors.New("keychain unavailable for Claude Code")
+	ErrClaudeCodePlanUsageUnavailable             = errors.New("plan usage unavailable for Claude Code")
+	ErrClaudeCodePlanUsageRateLimited             = errors.New("plan usage rate limited for Claude Code")
+	ErrClaudeCodePlanUsageInvalid                 = errors.New("plan usage response invalid for Claude Code")
 )
+
+// ClaudeCodePlanUsageObservation is the provider usage response before service caching.
+type ClaudeCodePlanUsageObservation struct {
+	Plan       *string
+	Promotion  *domain.ClaudeCodePlanPromotion
+	Windows    []domain.ClaudeCodePlanUsageWindow
+	ObservedAt time.Time
+}
+
+// ClaudeCodeUsageReader reads one account's remote subscription limits.
+// Implementations keep OAuth material below the service boundary.
+type ClaudeCodeUsageReader interface {
+	ReadPlanUsage(context.Context, string) (ClaudeCodePlanUsageObservation, error)
+}
 
 // ClaudeCodeAccountStateStore persists the revisioned active-account pointer.
 type ClaudeCodeAccountStateStore interface {

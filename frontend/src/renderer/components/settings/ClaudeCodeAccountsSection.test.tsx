@@ -26,7 +26,8 @@ vi.mock("../TerminalPane", () => ({
 const capability = (state: "supported" | "unsupported" = "supported", reason = "Available.", reasonCode = state === "supported" ? "supported" : "unsupported_platform") => ({ state, reasonCode, reason });
 const authentication = { state: "authorized", freshness: "fresh", checkedAt: "2026-09-02T10:00:00Z", attemptedAt: "2026-09-02T10:00:00Z", reasonCode: "authorized", reason: "Signed in." };
 const identity = (id: string, email: string) => ({ accountUuid: id, emailAddress: email, displayName: email.split("@")[0], organizationName: "Example Org", billingType: "subscription", seatTier: "pro" });
-const activeAccount = { id: "11111111-1111-4111-8111-111111111111", label: "active@example.com", status: "valid", reasonCode: "account_valid", reason: "Ready.", active: true, authentication, identity: identity("11111111-1111-4111-8111-111111111111", "active@example.com"), accountEmail: "active@example.com", createdAt: "2026-09-02T09:00:00Z", updatedAt: "2026-09-02T09:00:00Z" };
+const planUsage = { state: "available", freshness: "fresh", plan: "pro", promotion: { percentIncrease: 50, endsOn: "2026-09-13" }, windows: [{ id: "five_hour", displayName: "5-hour limit", usedPercent: 17, resetsAt: "2026-09-03T14:30:00Z" }, { id: "seven_day", displayName: "Weekly — all models", usedPercent: 42, resetsAt: "2026-09-08T04:00:00Z" }], observedAt: "2026-09-03T10:00:00Z", checkedAt: "2026-09-03T10:00:00Z", attemptedAt: "2026-09-03T10:00:00Z", reasonCode: "plan_usage_available", reason: "Plan usage is up to date." };
+const activeAccount = { id: "11111111-1111-4111-8111-111111111111", label: "AO", status: "valid", reasonCode: "account_valid", reason: "Ready.", active: true, authentication, identity: identity("11111111-1111-4111-8111-111111111111", "active@example.com"), accountEmail: "active@example.com", planUsage, createdAt: "2026-09-02T09:00:00Z", updatedAt: "2026-09-02T09:00:00Z" };
 const inactiveAccount = { ...activeAccount, id: "22222222-2222-4222-8222-222222222222", label: "other@example.com", active: false, identity: identity("22222222-2222-4222-8222-222222222222", "other@example.com"), accountEmail: "other@example.com", createdAt: "2026-09-02T09:05:00Z", updatedAt: "2026-09-02T09:05:00Z" };
 const signedOutAccount = { ...inactiveAccount, status: "signed_out", authentication: { ...authentication, state: "unauthorized", reasonCode: "unauthorized" } };
 const capabilities = { accountRead: capability(), nativeLogin: capability(), accountManagement: capability(), globalSwitch: capability(), hotReload: capability(), sessionExitResume: capability("unsupported", "Session exit and resume is not supported.") };
@@ -36,7 +37,7 @@ const pendingLogin = {
 	shellTerminal: { handleId: "shellterm-login-1", title: "Add Claude Code account", createdAt: "2026-09-02T10:00:00Z" },
 };
 
-function renderSection(response = accountResponse) {
+function renderSection(response: unknown = accountResponse) {
 	const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 	getMock.mockResolvedValue({ data: response });
 	return { queryClient, ...render(<QueryClientProvider client={queryClient}><ClaudeCodeAccountsSection /></QueryClientProvider>) };
@@ -54,7 +55,7 @@ beforeEach(() => {
 	});
 });
 
-it("shows active and signed-out actions without Codex capacity or reset controls", async () => {
+it("shows the email, plan, remaining limits, and promotion without global activity", async () => {
 	const response = { ...accountResponse, accounts: [activeAccount, signedOutAccount] };
 	postMock.mockImplementation((path: string) => path.endsWith("/ensure") ? Promise.resolve({ data: response }) : Promise.resolve({ data: {} }));
 	const { container } = renderSection(response);
@@ -62,10 +63,43 @@ it("shows active and signed-out actions without Codex capacity or reset controls
 
 	fireEvent.click(container.querySelector(`[data-account-id="${activeAccount.id}"] button`) as HTMLButtonElement);
 	expect(screen.getByRole("button", { name: "Log out" })).toBeInTheDocument();
+	expect(screen.getByText("Signed in")).toBeInTheDocument();
+	expect(screen.getAllByText("Claude · Pro · 58% remaining").length).toBeGreaterThan(0);
+	expect(screen.getByText("Your plan")).toBeInTheDocument();
+	expect(screen.getByText("Pro plan")).toBeInTheDocument();
+	expect(screen.getByText("50% higher through Sep 13")).toBeInTheDocument();
+	expect(screen.getByLabelText("Your weekly Claude Code limit is 50% higher through September 13.")).toBeInTheDocument();
+	expect(screen.getByText("83% remaining")).toBeInTheDocument();
+	expect(screen.getByText("Weekly — all models")).toBeInTheDocument();
+	expect(screen.getByRole("progressbar", { name: "5-hour limit, 83% remaining" })).toHaveAttribute("aria-valuenow", "83");
 	fireEvent.click(container.querySelector(`[data-account-id="${signedOutAccount.id}"] button`) as HTMLButtonElement);
 	expect(screen.getByRole("button", { name: "Sign in again" })).toBeInTheDocument();
 	expect(screen.getByRole("button", { name: "Delete account" })).toBeInTheDocument();
-	expect(screen.queryByText(/capacity|usage limit|reset/i)).not.toBeInTheDocument();
+	expect(screen.queryByText("Claude Code activity")).not.toBeInTheDocument();
+	expect(screen.queryByText("15,112")).not.toBeInTheDocument();
+	expect(screen.queryByRole("button", { name: /reset/i })).not.toBeInTheDocument();
+});
+
+it("shows when no plan boost is available", async () => {
+	const account = { ...activeAccount, planUsage: { ...planUsage, promotion: undefined } };
+	const response = { ...accountResponse, accounts: [account], activeAccountId: account.id };
+	postMock.mockImplementation((path: string) => path.endsWith("/ensure") ? Promise.resolve({ data: response }) : Promise.resolve({ data: {} }));
+	const { container } = renderSection(response);
+	await screen.findAllByText("active@example.com");
+	fireEvent.click(container.querySelector(`[data-account-id="${account.id}"] button`) as HTMLButtonElement);
+	expect(screen.getByText("No boosts available")).toBeInTheDocument();
+});
+
+it("keeps the plan section visible while plan metadata is unavailable", async () => {
+	const account = { ...activeAccount, planUsage: { ...planUsage, plan: undefined, promotion: undefined, windows: [] } };
+	const response = { ...accountResponse, accounts: [account], activeAccountId: account.id };
+	postMock.mockImplementation((path: string) => path.endsWith("/ensure") ? Promise.resolve({ data: response }) : Promise.resolve({ data: {} }));
+	const { container } = renderSection(response);
+	await screen.findAllByText("active@example.com");
+	fireEvent.click(container.querySelector(`[data-account-id="${account.id}"] button`) as HTMLButtonElement);
+	expect(screen.getByText("Your plan")).toBeInTheDocument();
+	expect(screen.getByText("Plan information unavailable")).toBeInTheDocument();
+	expect(screen.getByText("No boosts available")).toBeInTheDocument();
 });
 
 it("allows an inactive signed-in account to be deleted directly", async () => {
@@ -81,7 +115,7 @@ it("allows an inactive signed-in account to be deleted directly", async () => {
 });
 
 it("adds account B without making it active", async () => {
-	const addedAccount = { ...inactiveAccount, id: "33333333-3333-4333-8333-333333333333", label: "added@example.com", identity: identity("33333333-3333-4333-8333-333333333333", "added@example.com") };
+	const addedAccount = { ...inactiveAccount, id: "33333333-3333-4333-8333-333333333333", label: "added@example.com", identity: identity("33333333-3333-4333-8333-333333333333", "added@example.com"), accountEmail: "added@example.com" };
 	postMock.mockImplementation((path: string) => {
 		if (path.endsWith("/ensure")) return Promise.resolve({ data: accountResponse });
 		if (path.endsWith("/accounts/login-terminal")) return Promise.resolve({ data: pendingLogin });

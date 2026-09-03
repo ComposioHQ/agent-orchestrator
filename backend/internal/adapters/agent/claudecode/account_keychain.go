@@ -64,6 +64,17 @@ func AccountCredentialFields(data []byte) (map[string]json.RawMessage, error) {
 	return claudeAccountCredentialFields(data)
 }
 
+// HasAccountCredential reports whether a canonical Keychain object still
+// contains Claude's account-owned OAuth credential. Claude may retain shared
+// plugin or MCP fields in the Keychain item after signing out.
+func HasAccountCredential(data []byte) (bool, error) {
+	var root map[string]json.RawMessage
+	if err := json.Unmarshal(data, &root); err != nil {
+		return false, err
+	}
+	return claudeAccountCredentialPresent(root["claudeAiOauth"])
+}
+
 // MergeCredentialFields combines account-owned fields with allowlisted live machine-shared fields.
 func MergeCredentialFields(account map[string]json.RawMessage, live []byte) ([]byte, error) {
 	return mergeClaudeCredentialFields(account, live)

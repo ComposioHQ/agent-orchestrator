@@ -51,8 +51,13 @@ func (m *claudeCodeAccountManager) openLoginTerminal(ctx context.Context, target
 			return ClaudeCodeAccountLoginTerminalStart{}, apierr.Unavailable("CLAUDE_CODE_ACCOUNT_MANAGEMENT_UNAVAILABLE", "Claude Code login could not be prepared")
 		}
 	}
-	binary, err := m.resolveExecutable(ctx)
-	if err != nil || strings.TrimSpace(binary) == "" {
+	claudeBinary, err := m.resolveExecutable(ctx)
+	if err != nil || strings.TrimSpace(claudeBinary) == "" {
+		_ = os.RemoveAll(pendingDir)
+		return ClaudeCodeAccountLoginTerminalStart{}, apierr.Unavailable("CLAUDE_CODE_ACCOUNT_MANAGEMENT_UNAVAILABLE", "Claude Code login terminal is unavailable")
+	}
+	executable, err := m.loginExecutable()
+	if err != nil || strings.TrimSpace(executable) == "" {
 		_ = os.RemoveAll(pendingDir)
 		return ClaudeCodeAccountLoginTerminalStart{}, apierr.Unavailable("CLAUDE_CODE_ACCOUNT_MANAGEMENT_UNAVAILABLE", "Claude Code login terminal is unavailable")
 	}
@@ -70,7 +75,7 @@ func (m *claudeCodeAccountManager) openLoginTerminal(ctx context.Context, target
 	m.login = &claudeCodeLoginOperation{snapshot: snapshot, targetAccountID: targetAccountID, pendingDir: pendingDir, configDir: configDir, authDir: authDir}
 	m.mu.Unlock()
 	terminal, err := m.terminal.OpenCommandTerminal(ctx, shellterm.OpenCommandTerminalInput{
-		Argv: []string{binary, "auth", "login"}, Env: env, WorkingDir: configDir, Title: title,
+		Argv: []string{executable, "claude-code-login", "--claude-binary", claudeBinary}, Env: env, WorkingDir: configDir, Title: title,
 	})
 	if err != nil {
 		m.clearLogin(id)
@@ -156,7 +161,7 @@ func (m *claudeCodeAccountManager) verifyLogin(ctx context.Context, operationID 
 	}
 	fields, err := claudecode.AccountCredentialFields(credential)
 	if err != nil {
-		return m.finishLogin(operationID, domain.ClaudeCodeAccountLoginFailed, "unsupported_credential", "Only Claude subscription OAuth accounts are supported.", nil), nil
+		return m.finishLogin(operationID, domain.ClaudeCodeAccountLoginFailed, "unsupported_credential", "Only Claude OAuth accounts are supported.", nil), nil
 	}
 	accountCredential, err := json.Marshal(fields)
 	if err != nil {
@@ -193,6 +198,7 @@ func (m *claudeCodeAccountManager) verifyLogin(ctx context.Context, operationID 
 	if err != nil {
 		return m.finishLogin(operationID, domain.ClaudeCodeAccountLoginFailed, "credential_save_failed", "The verified Claude Code credential could not be saved.", nil), nil
 	}
+	m.resetPlanUsage(identity.AccountUUID)
 	if targetAccountID != "" {
 		m.mu.Lock()
 		active := m.active
@@ -207,6 +213,7 @@ func (m *claudeCodeAccountManager) verifyLogin(ctx context.Context, operationID 
 		}
 	}
 	snapshot := record.Snapshot
+	snapshot.PlanUsage = initialClaudeCodePlanUsage(snapshot)
 	m.mu.Lock()
 	snapshot.Active = snapshot.ID == m.active.AccountID
 	m.mu.Unlock()

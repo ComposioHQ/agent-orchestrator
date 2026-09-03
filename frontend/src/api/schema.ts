@@ -2719,6 +2719,7 @@ export interface components {
             id: string;
             identity: components["schemas"]["ClaudeCodeAccountIdentityResponse"];
             label: string;
+            planUsage: components["schemas"]["ClaudeCodePlanUsageResponse"];
             reason: string;
             reasonCode: string;
             /** @enum {string} */
@@ -2785,6 +2786,35 @@ export interface components {
             reasonCode: string;
             /** @enum {string} */
             state: "supported" | "unsupported" | "unknown";
+        };
+        ClaudeCodePlanPromotionResponse: {
+            endsOn: string;
+            percentIncrease: number;
+        };
+        ClaudeCodePlanUsageResponse: {
+            /** Format: date-time */
+            attemptedAt?: null | string;
+            /** Format: date-time */
+            checkedAt?: null | string;
+            /** @enum {string} */
+            freshness: "fresh" | "stale" | "checking";
+            /** Format: date-time */
+            observedAt?: null | string;
+            plan?: null | string;
+            promotion?: components["schemas"]["ClaudeCodePlanPromotionResponse"];
+            reason: string;
+            reasonCode: string;
+            /** @enum {string} */
+            state: "available" | "unknown" | "unsupported";
+            windows: components["schemas"]["ClaudeCodePlanUsageWindowResponse"][];
+        };
+        ClaudeCodePlanUsageWindowResponse: {
+            displayName: string;
+            id: string;
+            /** Format: date-time */
+            resetsAt?: null | string;
+            /** Format: double */
+            usedPercent: number;
         };
         ClaudeCodeUnmanagedGlobalAccountResponse: {
             accountEmail?: null | string;

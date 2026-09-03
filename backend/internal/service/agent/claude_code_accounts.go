@@ -26,6 +26,7 @@ import (
 const (
 	claudeCodeAccountLoginLifetime = 15 * time.Minute
 	claudeCodeAuthTimeout          = 15 * time.Second
+	claudeCodeUsageCacheLifetime   = 5 * time.Minute
 )
 
 var claudeCodeAuthOverrideVariables = []string{
@@ -35,6 +36,8 @@ var claudeCodeAuthOverrideVariables = []string{
 	"CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR",
 	"CLAUDE_CODE_API_KEY_FILE_DESCRIPTOR",
 }
+
+var errClaudeCodeAuthenticationSignedOut = errors.New("authentication is signed out for Claude Code")
 
 // ClaudeCodeAccounts is the service-level account-management snapshot.
 type ClaudeCodeAccounts struct {
@@ -86,9 +89,11 @@ type claudeCodeAccountManagerDeps struct {
 	Home              string
 	Keychain          claudecode.Keychain
 	KeychainAccount   string
+	UsageReader       ports.ClaudeCodeUsageReader
 	StateStore        ports.ClaudeCodeAccountStateStore
 	OperationGate     ports.ClaudeCodeOperationGate
 	ResolveExecutable func(context.Context) (string, error)
+	LoginExecutable   func() (string, error)
 	Run               claudeCodeCommandRunner
 	Environment       map[string]string
 }
@@ -114,9 +119,11 @@ type claudeCodeAccountManager struct {
 	configPath        string
 	keychain          claudecode.Keychain
 	keychainAccount   string
+	usageReader       ports.ClaudeCodeUsageReader
 	stateStore        ports.ClaudeCodeAccountStateStore
 	operationGate     ports.ClaudeCodeOperationGate
 	resolveExecutable func(context.Context) (string, error)
+	loginExecutable   func() (string, error)
 	run               claudeCodeCommandRunner
 	environment       map[string]string
 	catalog           *claudeCodeAccountCatalog
@@ -133,6 +140,7 @@ type claudeCodeAccountManager struct {
 	caps          domain.ClaudeCodeAccountCapabilities
 	unmanaged     *domain.ClaudeCodeUnmanagedGlobalAccount
 	login         *claudeCodeLoginOperation
+	planUsage     map[string]domain.ClaudeCodePlanUsageSnapshot
 	subscribers   map[chan ClaudeCodeAccounts]struct{}
 }
 
@@ -153,14 +161,23 @@ func newClaudeCodeAccountManager(deps claudeCodeAccountManagerDeps) *claudeCodeA
 	if run == nil {
 		run = runClaudeCodeCommand
 	}
+	loginExecutable := deps.LoginExecutable
+	if loginExecutable == nil {
+		loginExecutable = os.Executable
+	}
 	m := &claudeCodeAccountManager{
 		ctx: ctx, accountRoot: canonicalPath(deps.AccountRoot), pendingRoot: canonicalPath(deps.PendingRoot),
 		switchStagingRoot: canonicalPath(deps.SwitchStagingRoot), home: canonicalPath(deps.Home),
 		claudeDir: filepath.Join(canonicalPath(deps.Home), ".claude"), configPath: filepath.Join(canonicalPath(deps.Home), ".claude.json"),
 		keychain: keychain, keychainAccount: keychainAccount, stateStore: deps.StateStore,
-		operationGate: deps.OperationGate, resolveExecutable: deps.ResolveExecutable, run: run,
+		usageReader:   deps.UsageReader,
+		operationGate: deps.OperationGate, resolveExecutable: deps.ResolveExecutable, loginExecutable: loginExecutable, run: run,
 		environment: cloneStringMap(deps.Environment), now: func() time.Time { return time.Now().UTC() }, newID: uuid.NewString,
 		mutation: make(chan struct{}, 1), subscribers: map[chan ClaudeCodeAccounts]struct{}{}, bootstrapDone: make(chan struct{}),
+		planUsage: map[string]domain.ClaudeCodePlanUsageSnapshot{},
+	}
+	if m.usageReader == nil {
+		m.usageReader = claudecode.NewUsageReader(keychain, m.home)
 	}
 	m.mutation <- struct{}{}
 	m.catalog = newClaudeCodeAccountCatalog(m.accountRoot, keychain, keychainAccount)
@@ -364,16 +381,21 @@ func (m *claudeCodeAccountManager) reconcileGlobal(ctx context.Context) error {
 		return nil
 	}
 	if !found {
-		m.mu.Lock()
-		m.unmanaged = nil
-		activeID := m.active.AccountID
-		m.mu.Unlock()
-		if activeID != "" {
-			return m.setActivePointer(ctx, "")
-		}
+		return m.reconcileGlobalSignOut(ctx)
+	}
+	hasAccountCredential, credentialErr := claudecode.HasAccountCredential(credential)
+	if credentialErr != nil {
+		m.setUnmanaged("Device Claude Code account", nil, "global_account_unverified", "The device Claude Code credential is invalid.")
+		m.disableSwitching("global_account_unverified", "The device Claude Code credential is invalid.")
 		return nil
 	}
+	if !hasAccountCredential {
+		return m.reconcileGlobalSignOut(ctx)
+	}
 	if err := m.verifyAuth(ctx, nil); err != nil {
+		if errors.Is(err, errClaudeCodeAuthenticationSignedOut) {
+			return m.reconcileGlobalSignOut(ctx)
+		}
 		m.setUnmanaged("Device Claude Code account", nil, "global_account_unverified", "AO could not verify the device Claude Code account.")
 		m.disableSwitching("global_account_unverified", "AO could not verify the device Claude Code account.")
 		return nil
@@ -416,6 +438,36 @@ func (m *claudeCodeAccountManager) reconcileGlobal(ctx context.Context) error {
 	return nil
 }
 
+func (m *claudeCodeAccountManager) reconcileGlobalSignOut(ctx context.Context) error {
+	m.mu.Lock()
+	m.unmanaged = nil
+	activeID := m.active.AccountID
+	m.mu.Unlock()
+	if activeID == "" {
+		return nil
+	}
+	if _, ok := m.catalog.record(activeID); !ok {
+		return m.setActivePointer(ctx, "")
+	}
+	previous, previousFound, err := m.keychain.Get(ctx, claudecode.ClaudeAccountVaultService, activeID)
+	if err != nil {
+		return err
+	}
+	if err := m.catalog.markSignedOut(ctx, activeID, m.now()); err != nil {
+		return err
+	}
+	m.resetPlanUsage(activeID)
+	if err := m.setActivePointer(ctx, ""); err != nil {
+		if previousFound {
+			_ = m.keychain.Set(context.WithoutCancel(ctx), claudecode.ClaudeAccountVaultService, activeID, previous)
+		}
+		_ = m.catalog.refresh(context.WithoutCancel(ctx), m.now())
+		m.resetPlanUsage(activeID)
+		return err
+	}
+	return nil
+}
+
 func (m *claudeCodeAccountManager) setActivePointer(ctx context.Context, id string) error {
 	m.mu.Lock()
 	active := m.active
@@ -427,6 +479,7 @@ func (m *claudeCodeAccountManager) setActivePointer(ctx context.Context, id stri
 		m.mu.Lock()
 		m.active = domain.ClaudeCodeActiveAccount{AccountID: id, Revision: active.Revision + 1, ActivatedAt: m.now(), UpdatedAt: m.now()}
 		m.mu.Unlock()
+		m.invalidatePlanUsageAfterActiveChange(id)
 		return nil
 	}
 	next, err := m.stateStore.SetClaudeCodeActiveAccount(ctx, id, active.Revision, m.now())
@@ -436,6 +489,7 @@ func (m *claudeCodeAccountManager) setActivePointer(ctx context.Context, id stri
 	m.mu.Lock()
 	m.active = next
 	m.mu.Unlock()
+	m.invalidatePlanUsageAfterActiveChange(id)
 	return nil
 }
 
@@ -451,6 +505,7 @@ func (m *claudeCodeAccountManager) advanceActivePointer(ctx context.Context, id 
 		m.mu.Lock()
 		m.active = domain.ClaudeCodeActiveAccount{AccountID: id, Revision: active.Revision + 1, ActivatedAt: now, UpdatedAt: now}
 		m.mu.Unlock()
+		m.invalidatePlanUsageAfterActiveChange(id)
 		return nil
 	}
 	next, err := m.stateStore.SetClaudeCodeActiveAccount(ctx, id, active.Revision, m.now())
@@ -460,7 +515,20 @@ func (m *claudeCodeAccountManager) advanceActivePointer(ctx context.Context, id 
 	m.mu.Lock()
 	m.active = next
 	m.mu.Unlock()
+	m.invalidatePlanUsageAfterActiveChange(id)
 	return nil
+}
+
+func (m *claudeCodeAccountManager) invalidatePlanUsageAfterActiveChange(activeID string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for id, snapshot := range m.planUsage {
+		snapshot.Promotion = nil
+		if id == activeID {
+			snapshot.AttemptedAt = nil
+		}
+		m.planUsage[id] = snapshot
+	}
 }
 
 func (m *claudeCodeAccountManager) setUnmanaged(label string, email *string, code, reason string) {
@@ -489,6 +557,15 @@ func (m *claudeCodeAccountManager) acquireMutation(ctx context.Context) (func(),
 func (m *claudeCodeAccountManager) cached() ClaudeCodeAccounts {
 	m.mu.Lock()
 	active, caps, unmanaged := m.active, m.caps, m.unmanaged
+	usage := make(map[string]domain.ClaudeCodePlanUsageSnapshot, len(m.planUsage))
+	for id, snapshot := range m.planUsage {
+		snapshot.Windows = append([]domain.ClaudeCodePlanUsageWindow(nil), snapshot.Windows...)
+		if snapshot.Promotion != nil {
+			promotion := *snapshot.Promotion
+			snapshot.Promotion = &promotion
+		}
+		usage[id] = snapshot
+	}
 	var login *ClaudeCodeActiveLogin
 	if m.login != nil && !terminalClaudeCodeLoginStatus(m.login.snapshot.Status) && m.login.terminalHandle != "" {
 		login = &ClaudeCodeActiveLogin{
@@ -499,9 +576,20 @@ func (m *claudeCodeAccountManager) cached() ClaudeCodeAccounts {
 		}
 	}
 	m.mu.Unlock()
+	accounts := m.catalog.snapshots(active.AccountID)
+	for index := range accounts {
+		if snapshot, ok := usage[accounts[index].ID]; ok {
+			if !accounts[index].Active {
+				snapshot.Promotion = nil
+			}
+			accounts[index].PlanUsage = snapshot
+		} else {
+			accounts[index].PlanUsage = initialClaudeCodePlanUsage(accounts[index])
+		}
+	}
 	return ClaudeCodeAccounts{
 		ActiveAccountID: active.AccountID, AccountRevision: active.Revision,
-		Accounts: m.catalog.snapshots(active.AccountID), Capabilities: caps,
+		Accounts: accounts, Capabilities: caps,
 		UnmanagedGlobalAccount: unmanaged, ActiveLogin: login,
 	}
 }
@@ -553,15 +641,18 @@ func (m *claudeCodeAccountManager) verifyAuth(ctx context.Context, isolatedEnv m
 	}
 	checkCtx, cancel := context.WithTimeout(ctx, claudeCodeAuthTimeout)
 	defer cancel()
-	out, err := m.run(checkCtx, binary, []string{"auth", "status", "--json"}, env)
-	if err != nil {
-		return errors.New("authentication could not be verified for Claude Code")
-	}
+	out, runErr := m.run(checkCtx, binary, []string{"auth", "status", "--json"}, env)
 	var status struct {
 		LoggedIn bool `json:"loggedIn"`
 	}
-	if err := json.Unmarshal(out, &status); err != nil || !status.LoggedIn {
-		return errors.New("authentication is signed out for Claude Code")
+	if err := json.Unmarshal(out, &status); err != nil {
+		return errors.New("authentication could not be verified for Claude Code")
+	}
+	if !status.LoggedIn {
+		return errClaudeCodeAuthenticationSignedOut
+	}
+	if runErr != nil {
+		return errors.New("authentication could not be verified for Claude Code")
 	}
 	return nil
 }

@@ -7641,6 +7641,8 @@ components:
           $ref: '#/components/schemas/ClaudeCodeAccountIdentityResponse'
         label:
           type: string
+        planUsage:
+          $ref: '#/components/schemas/ClaudeCodePlanUsageResponse'
         reason:
           type: string
         reasonCode:
@@ -7663,6 +7665,7 @@ components:
       - active
       - authentication
       - identity
+      - planUsage
       - createdAt
       - updatedAt
       type: object
@@ -7837,6 +7840,88 @@ components:
       - state
       - reasonCode
       - reason
+      type: object
+    ClaudeCodePlanPromotionResponse:
+      properties:
+        endsOn:
+          type: string
+        percentIncrease:
+          minimum: 1
+          type: integer
+      required:
+      - percentIncrease
+      - endsOn
+      type: object
+    ClaudeCodePlanUsageResponse:
+      properties:
+        attemptedAt:
+          format: date-time
+          type:
+          - "null"
+          - string
+        checkedAt:
+          format: date-time
+          type:
+          - "null"
+          - string
+        freshness:
+          enum:
+          - fresh
+          - stale
+          - checking
+          type: string
+        observedAt:
+          format: date-time
+          type:
+          - "null"
+          - string
+        plan:
+          type:
+          - "null"
+          - string
+        promotion:
+          $ref: '#/components/schemas/ClaudeCodePlanPromotionResponse'
+        reason:
+          type: string
+        reasonCode:
+          type: string
+        state:
+          enum:
+          - available
+          - unknown
+          - unsupported
+          type: string
+        windows:
+          items:
+            $ref: '#/components/schemas/ClaudeCodePlanUsageWindowResponse'
+          type: array
+      required:
+      - state
+      - freshness
+      - windows
+      - reasonCode
+      - reason
+      type: object
+    ClaudeCodePlanUsageWindowResponse:
+      properties:
+        displayName:
+          type: string
+        id:
+          type: string
+        resetsAt:
+          format: date-time
+          type:
+          - "null"
+          - string
+        usedPercent:
+          format: double
+          maximum: 100
+          minimum: 0
+          type: number
+      required:
+      - id
+      - displayName
+      - usedPercent
       type: object
     ClaudeCodeUnmanagedGlobalAccountResponse:
       properties:

@@ -36,6 +36,7 @@ func (m *claudeCodeAccountManager) logout(ctx context.Context, accountID string)
 		if err := m.catalog.markSignedOut(ctx, accountID, m.now()); err != nil {
 			return err
 		}
+		m.resetPlanUsage(accountID)
 		m.publish()
 		return nil
 	}
@@ -78,6 +79,7 @@ func (m *claudeCodeAccountManager) logout(ctx context.Context, accountID string)
 		rollback()
 		return err
 	}
+	m.resetPlanUsage(accountID)
 	if err := m.setActivePointer(ctx, ""); err != nil {
 		rollback()
 		return err
@@ -102,6 +104,9 @@ func (m *claudeCodeAccountManager) deleteAccount(ctx context.Context, accountID 
 	if err := m.catalog.delete(ctx, accountID, m.now()); err != nil {
 		return err
 	}
+	m.mu.Lock()
+	delete(m.planUsage, accountID)
+	m.mu.Unlock()
 	m.publish()
 	return nil
 }

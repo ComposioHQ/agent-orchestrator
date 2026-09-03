@@ -103,6 +103,7 @@ type Deps struct {
 	ClaudeCodeHome              string
 	ClaudeCodeKeychain          claudecode.Keychain
 	ClaudeCodeKeychainAccount   string
+	ClaudeCodeUsageReader       ports.ClaudeCodeUsageReader
 	ClaudeCodeAccountState      ports.ClaudeCodeAccountStateStore
 	ClaudeCodeOperationGate     ports.ClaudeCodeOperationGate
 	ClaudeCodeResolveExecutable func(context.Context) (string, error)
@@ -139,7 +140,8 @@ func NewWithDeps(deps Deps) *Service {
 			Context: deps.Context, AccountRoot: deps.ClaudeCodeAccountRoot, PendingRoot: deps.ClaudeCodePendingRoot,
 			SwitchStagingRoot: deps.ClaudeCodeSwitchStagingRoot, Home: deps.ClaudeCodeHome,
 			Keychain: deps.ClaudeCodeKeychain, KeychainAccount: deps.ClaudeCodeKeychainAccount,
-			StateStore: deps.ClaudeCodeAccountState, OperationGate: deps.ClaudeCodeOperationGate,
+			UsageReader: deps.ClaudeCodeUsageReader,
+			StateStore:  deps.ClaudeCodeAccountState, OperationGate: deps.ClaudeCodeOperationGate,
 			ResolveExecutable: deps.ClaudeCodeResolveExecutable, Environment: deps.ClaudeCodeEnvironment,
 		})
 	}

@@ -1329,8 +1329,37 @@ type ClaudeCodeAccountResponse struct {
 	Authentication ClaudeCodeAuthenticationResponse  `json:"authentication"`
 	Identity       ClaudeCodeAccountIdentityResponse `json:"identity"`
 	AccountEmail   *string                           `json:"accountEmail,omitempty"`
+	PlanUsage      ClaudeCodePlanUsageResponse       `json:"planUsage"`
 	CreatedAt      time.Time                         `json:"createdAt"`
 	UpdatedAt      time.Time                         `json:"updatedAt"`
+}
+
+// ClaudeCodePlanUsageResponse is a cached display-safe plan limit snapshot.
+type ClaudeCodePlanUsageResponse struct {
+	State       string                              `json:"state" enum:"available,unknown,unsupported"`
+	Freshness   string                              `json:"freshness" enum:"fresh,stale,checking"`
+	Plan        *string                             `json:"plan,omitempty"`
+	Promotion   *ClaudeCodePlanPromotionResponse    `json:"promotion,omitempty"`
+	Windows     []ClaudeCodePlanUsageWindowResponse `json:"windows"`
+	ObservedAt  *time.Time                          `json:"observedAt,omitempty"`
+	CheckedAt   *time.Time                          `json:"checkedAt,omitempty"`
+	AttemptedAt *time.Time                          `json:"attemptedAt,omitempty"`
+	ReasonCode  string                              `json:"reasonCode"`
+	Reason      string                              `json:"reason"`
+}
+
+// ClaudeCodePlanPromotionResponse is a display-safe active subscription promotion.
+type ClaudeCodePlanPromotionResponse struct {
+	PercentIncrease int    `json:"percentIncrease" minimum:"1"`
+	EndsOn          string `json:"endsOn"`
+}
+
+// ClaudeCodePlanUsageWindowResponse is one provider-reported usage window.
+type ClaudeCodePlanUsageWindowResponse struct {
+	ID          string     `json:"id"`
+	DisplayName string     `json:"displayName"`
+	UsedPercent float64    `json:"usedPercent" minimum:"0" maximum:"100"`
+	ResetsAt    *time.Time `json:"resetsAt,omitempty"`
 }
 
 // ClaudeCodeAccountIdentityResponse is the allowlisted identity projection.
