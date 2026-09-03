@@ -142,14 +142,16 @@ describe("createEventTransport", () => {
 			source.onerror?.();
 			vi.advanceTimersByTime(computeSseRetryDelayMs(failure, () => 0.5));
 		}
-		const beforeMove = EventSourceStub.instances.length;
+		const beforeCdcMove = cdcSources().length;
+		const beforeAccountMove = accountSources().length;
 
 		// The daemon comes back on a different port: a fresh target.
 		getApiBaseUrlMock.mockReturnValue("http://127.0.0.1:3099");
 		onStatusHandler();
-		expect(EventSourceStub.instances).toHaveLength(beforeMove + 1);
+		expect(cdcSources()).toHaveLength(beforeCdcMove + 1);
+		expect(accountSources()).toHaveLength(beforeAccountMove + 1);
 
-		const moved = EventSourceStub.instances.at(-1)!;
+		const moved = cdcSources().at(-1)!;
 		moved.readyState = 2;
 		moved.onerror?.();
 		const firstRetryMs = computeSseRetryDelayMs(1, () => 0.5);
