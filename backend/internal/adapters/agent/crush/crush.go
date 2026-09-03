@@ -1,10 +1,10 @@
 // Package crush implements the Crush agent adapter: launching new sessions,
 // resuming sessions by native ID, and reading session info.
 //
-// Crush differs from other agents in that it doesn't yet expose AO-compatible
-// activity hooks. GetAgentHooks only injects AO's standing system prompt through
-// project-local context configuration; activity tracking still falls back to
-// basic session ID management.
+// Crush differs from hook-driven agents in that it doesn't yet expose
+// AO-compatible activity hooks. GetAgentHooks only injects AO's standing system
+// prompt through project-local context configuration; activity is reconciled
+// from conservative terminal UI markers.
 package crush
 
 import (
@@ -40,6 +40,8 @@ func New() *Plugin {
 
 var _ adapters.Adapter = (*Plugin)(nil)
 var _ ports.Agent = (*Plugin)(nil)
+var _ ports.ContinuousTerminalActivityDetector = (*Plugin)(nil)
+var _ ports.WaitingTerminalActivityDetector = (*Plugin)(nil)
 
 // Manifest returns the adapter's static self-description.
 func (p *Plugin) Manifest() adapters.Manifest {
@@ -52,6 +54,28 @@ func (p *Plugin) Manifest() adapters.Manifest {
 			adapters.CapabilityAgent,
 		},
 	}
+}
+
+// GetConfigSpec reports the per-project agent config keys Crush understands:
+// a model override. Unlike Claude/Codex (a bare --model flag) or Kiro (a
+// single model key), Crush's .crush.json requires both a provider id and a
+// model id per selection (see mergeCrushModel in hooks.go), so AO's plain
+// Model string must carry the provider too. This declares the expected
+// "<provider>/<model-id>" shape so it is discoverable/validated through the
+// config-spec surface, matching claude-code, codex, and kiro.
+func (p *Plugin) GetConfigSpec(ctx context.Context) (ports.ConfigSpec, error) {
+	if err := ctx.Err(); err != nil {
+		return ports.ConfigSpec{}, err
+	}
+	return ports.ConfigSpec{
+		Fields: []ports.ConfigField{
+			{
+				Key:         "model",
+				Type:        ports.ConfigFieldString,
+				Description: "Model override written into Crush's workspace-local config as the large-model selection. Must be \"<provider>/<model-id>\" (e.g. \"anthropic/claude-sonnet-4-5\"): Crush's config schema requires a provider id alongside the model id, which a bare model string doesn't carry.",
+			},
+		},
+	}, nil
 }
 
 // GetLaunchCommand builds the argv to start an interactive Crush session.

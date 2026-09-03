@@ -1,38 +1,41 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useInfiniteQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
-	clearUnreadNotifications,
-	fetchUnreadNotifications,
+	fetchNotificationsPage,
+	markAllCachedNotificationsRead,
 	markAllNotificationsRead,
-	markNotificationRead,
-	removeUnreadNotification,
+	notificationsQueryKey,
+	type NotificationListStatus,
 	unreadNotificationsQueryKey,
 } from "../lib/notifications";
 
-export function useNotificationsQuery() {
-	return useQuery({
-		queryKey: unreadNotificationsQueryKey,
-		queryFn: fetchUnreadNotifications,
+export function useNotificationsQuery(status: NotificationListStatus, enabled = true) {
+	return useInfiniteQuery({
+		queryKey: notificationsQueryKey(status),
+		queryFn: ({ pageParam }) => fetchNotificationsPage(status, pageParam),
+		initialPageParam: "",
+		getNextPageParam: (lastPage) => lastPage.nextCursor || undefined,
+		enabled,
 		retry: 1,
 	});
 }
 
-export function useMarkNotificationReadMutation() {
-	const queryClient = useQueryClient();
-	return useMutation({
-		mutationFn: markNotificationRead,
-		onSuccess: (notification) => {
-			removeUnreadNotification(queryClient, notification.id);
-		},
-	});
-}
-
+/**
+ * Opening the notification panel is the acknowledgement — there is no manual
+ * "mark all read" control any more, so this mutation is fired on open.
+ */
 export function useMarkAllNotificationsReadMutation() {
 	const queryClient = useQueryClient();
 	return useMutation({
 		mutationFn: markAllNotificationsRead,
-		onSuccess: () => {
-			clearUnreadNotifications(queryClient);
-			void queryClient.invalidateQueries({ queryKey: unreadNotificationsQueryKey });
+		onSuccess: (updatedCount, ids) => {
+			markAllCachedNotificationsRead(queryClient, ids, updatedCount);
+			// Do not invalidate recent/all here: a refetch would drop loaded pages
+			// and the cursor to unread rows the panel has not reached yet. The
+			// cache is already correct for the ids we sent; updatedCount keeps the
+			// unread badge in sync even when those ids only exist in the all list.
+			if (ids.length === 0) {
+				void queryClient.invalidateQueries({ queryKey: unreadNotificationsQueryKey });
+			}
 		},
 	});
 }

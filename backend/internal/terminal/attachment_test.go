@@ -43,6 +43,33 @@ func TestAttachmentStreamsOutputToSink(t *testing.T) {
 	eventually(t, time.Second, func() bool { return sink.string() == "hello" })
 }
 
+type exitedProcessStream struct{}
+
+func (exitedProcessStream) Read([]byte) (int, error)       { return 0, ports.ErrRuntimeProcessExited }
+func (exitedProcessStream) Write(p []byte) (int, error)    { return len(p), nil }
+func (exitedProcessStream) Close() error                   { return nil }
+func (exitedProcessStream) Resize(rows, cols uint16) error { return nil }
+
+func TestAttachmentReportsDefinitiveHostedProcessExitWithoutReattach(t *testing.T) {
+	exited := make(chan struct{})
+	attachCalls := 0
+	src := &fakeSource{alive: true, attachFn: func(context.Context, uint16, uint16) (ports.Stream, error) {
+		attachCalls++
+		return exitedProcessStream{}, nil
+	}}
+	a := newTestAttachment(src, nil, func() { close(exited) })
+
+	go a.run(context.Background())
+	select {
+	case <-exited:
+	case <-time.After(time.Second):
+		t.Fatal("definitive hosted process exit was not reported")
+	}
+	if attachCalls != 1 {
+		t.Fatalf("attach calls = %d, want 1", attachCalls)
+	}
+}
+
 func TestAttachmentWriteAndResizeReachPTY(t *testing.T) {
 	pty := newFakePTY()
 	sp := &fakeSpawner{ptys: []*fakePTY{pty}}
@@ -53,7 +80,7 @@ func TestAttachmentWriteAndResizeReachPTY(t *testing.T) {
 	defer cancel()
 	go a.run(ctx)
 
-	eventually(t, time.Second, func() bool { return a.write([]byte("ls\n")) == nil })
+	eventually(t, time.Second, func() bool { return a.writeLeased([]byte("ls\n"), nil) == nil })
 	eventually(t, time.Second, func() bool { return string(pty.writtenBytes()) == "ls\n" })
 
 	if err := a.resize(24, 80); err != nil {
@@ -110,12 +137,32 @@ func TestAttachmentBuffersInputUntilPTYReady(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("spawn was not reached")
 	}
-	if err := a.write([]byte("hello\n")); err != nil {
+	if err := a.writeLeased([]byte("hello\n"), nil); err != nil {
 		t.Fatalf("write before PTY ready: %v", err)
 	}
 	close(releaseSpawn)
 
 	eventually(t, time.Second, func() bool { return string(pty.writtenBytes()) == "hello\n" })
+}
+
+func TestAttachmentReleasesBufferedInputLeaseWhenClosedBeforePTYReady(t *testing.T) {
+	a := newTestAttachment(&fakeSource{alive: true}, nil, nil)
+	released := make(chan struct{})
+	if err := a.writeLeased([]byte("hello\n"), func() { close(released) }); err != nil {
+		t.Fatalf("write before PTY ready: %v", err)
+	}
+	select {
+	case <-released:
+		t.Fatal("buffered input lease released before write or discard")
+	default:
+	}
+
+	a.close()
+	select {
+	case <-released:
+	case <-time.After(time.Second):
+		t.Fatal("closing attachment did not release buffered input lease")
+	}
 }
 
 // A size requested before the PTY exists (the open frame's cols/rows, or a

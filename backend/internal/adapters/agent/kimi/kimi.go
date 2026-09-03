@@ -11,7 +11,7 @@
 //
 // Kimi exposes no system-prompt launch flag, so AO injects standing
 // instructions through Kimi's documented project instruction file
-// (.kimi-code/AGENTS.md) in the per-session worktree. AO also installs Kimi
+// (.kimi/AGENTS.md) in the per-session worktree. AO also installs Kimi
 // lifecycle hooks into Kimi's config so native session metadata and activity can
 // flow back through `ao hooks`.
 package kimi
@@ -77,6 +77,22 @@ func (p *Plugin) Manifest() adapters.Manifest {
 	}
 }
 
+// GetConfigSpec reports the per-project agent config keys Kimi understands.
+func (p *Plugin) GetConfigSpec(ctx context.Context) (ports.ConfigSpec, error) {
+	if err := ctx.Err(); err != nil {
+		return ports.ConfigSpec{}, err
+	}
+	return ports.ConfigSpec{
+		Fields: []ports.ConfigField{
+			{
+				Key:         "model",
+				Type:        ports.ConfigFieldString,
+				Description: "Model override passed to `kimi --model`.",
+			},
+		},
+	}, nil
+}
+
 // GetLaunchCommand builds the argv to start a new Kimi session:
 //
 //	kimi [--auto|-y]                            (interactive)
@@ -94,6 +110,7 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 
 	cmd = []string{binary}
 	appendApprovalFlags(&cmd, cfg.Permissions)
+	appendModelFlag(&cmd, cfg.Config)
 	return cmd, nil
 }
 
@@ -117,7 +134,7 @@ func (p *Plugin) PromptReadinessHints(ctx context.Context, _ ports.LaunchConfig)
 		InitialDelay: 750 * time.Millisecond,
 		Patterns:     []string{"│ >"},
 		PollInterval: 200 * time.Millisecond,
-		Timeout:      8 * time.Second,
+		Timeout:      90 * time.Second,
 		Lines:        80,
 	}, nil
 }
@@ -133,6 +150,9 @@ func (p *Plugin) PromptReadinessHints(ctx context.Context, _ ports.LaunchConfig)
 // approval settings of the original session -- so cfg.Permissions is
 // intentionally ignored here.
 func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig) (cmd []string, ok bool, err error) {
+	// Deliberately does not forward cfg.Config.Model: --model + --session
+	// composition is unverified against a real kimi install (see #2890 and
+	// appendModelFlag). Pinned by TestGetRestoreCommandDoesNotForwardModelOverride.
 	if err := ctx.Err(); err != nil {
 		return nil, false, err
 	}
@@ -170,6 +190,21 @@ func appendApprovalFlags(cmd *[]string, permissions ports.PermissionMode) {
 	}
 }
 
+// appendModelFlag appends `--model <model>` when a role-specific model
+// override is configured. A blank/whitespace-only value means no override was
+// configured, so the flag is omitted and Kimi's own default model applies.
+//
+// Restore-path note: this is intentionally NOT called from
+// GetRestoreCommand. Kimi's docs do not confirm --model composes with
+// --session the way it does on the launch path (see issue #2890); wiring it
+// blind risks silently breaking session resume. Left as a fast-follow pending
+// verification against a real kimi install.
+func appendModelFlag(cmd *[]string, cfg ports.AgentConfig) {
+	if model := strings.TrimSpace(cfg.Model); model != "" {
+		*cmd = append(*cmd, "--model", model)
+	}
+}
+
 func normalizePermissionMode(mode ports.PermissionMode) ports.PermissionMode {
 	switch mode {
 	case ports.PermissionModeDefault,
@@ -187,7 +222,7 @@ var kimiBinarySpec = binaryutil.BinarySpec{
 	Names:         []string{"kimi"},
 	WinNames:      []string{"kimi.cmd", "kimi.exe", "kimi"},
 	UnixPaths:     []string{"/usr/local/bin/kimi", "/opt/homebrew/bin/kimi"},
-	UnixHomePaths: binaryutil.NodeManagedUnixHomePaths("kimi", []string{".cargo", "bin", "kimi"}),
+	UnixHomePaths: binaryutil.NodeManagedUnixHomePaths("kimi", []string{".kimi-code", "bin", "kimi"}, []string{".cargo", "bin", "kimi"}),
 	NodeManaged:   true,
 	WinPaths: []binaryutil.WinPath{
 		{Base: binaryutil.WinAppData, Parts: []string{"npm", "kimi.cmd"}},

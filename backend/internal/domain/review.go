@@ -3,6 +3,8 @@ package domain
 import (
 	"errors"
 	"time"
+
+	"github.com/aoagents/agent-orchestrator/backend/pkg/contract"
 )
 
 // ErrDuplicateReviewRun is returned by InsertReviewRun when a run already exists
@@ -11,9 +13,9 @@ import (
 // instead of surfacing a raw storage error after a reviewer may have launched.
 var ErrDuplicateReviewRun = errors.New("domain: review run already exists for session and target sha")
 
-// Review is the per-worker code-review record: one row per worker session
-// (SessionID is unique). A repeat trigger reuses this row; the per-pass facts
-// live on ReviewRun.
+// Review is the per-worker, per-reviewer-harness code-review record. A repeat
+// trigger for the same harness reuses this row; the per-pass facts live on
+// ReviewRun.
 type Review struct {
 	ID        string          `json:"id"`
 	SessionID SessionID       `json:"sessionId"`
@@ -23,6 +25,7 @@ type Review struct {
 	// ReviewerHandleID is the runtime handle of the live reviewer pane, reused
 	// across passes and exposed so the UI can attach its terminal.
 	ReviewerHandleID string    `json:"reviewerHandleId"`
+	AgentSessionID   string    `json:"agentSessionId"`
 	CreatedAt        time.Time `json:"createdAt"`
 	UpdatedAt        time.Time `json:"updatedAt"`
 }
@@ -37,7 +40,10 @@ type ReviewRun struct {
 	// legacy/single-run delivery.
 	BatchID string          `json:"batchId"`
 	Harness ReviewerHarness `json:"harness"`
-	PRURL   string          `json:"prUrl"`
+	// TriggerSource records whether this pass was requested by a user or by the
+	// daemon auto-review coordinator.
+	TriggerSource ReviewTriggerSource `json:"triggerSource" enum:"manual,auto"`
+	PRURL         string              `json:"prUrl"`
 	// TargetSHA is the PR head commit this pass reviewed.
 	TargetSHA string          `json:"targetSha"`
 	Status    ReviewRunStatus `json:"status"`
@@ -53,33 +59,52 @@ type ReviewRun struct {
 	GithubReviewID string     `json:"githubReviewId"`
 	CreatedAt      time.Time  `json:"createdAt"`
 	DeliveredAt    *time.Time `json:"deliveredAt,omitempty"`
+	// AutoInjectReview snapshots the session policy when this result is first
+	// recorded. Later toggle changes must not rewrite or deliver this run.
+	AutoInjectReview bool `json:"autoInjectReview"`
 }
 
+// ReviewTriggerSource identifies who initiated a review pass.
+type ReviewTriggerSource string
+
+const (
+	// ReviewTriggerManual marks a user-initiated review pass.
+	ReviewTriggerManual ReviewTriggerSource = "manual"
+	// ReviewTriggerAuto marks a daemon-initiated review pass.
+	ReviewTriggerAuto ReviewTriggerSource = "auto"
+)
+
 // ReviewRunStatus is the lifecycle state of a single review pass.
-type ReviewRunStatus string
+type ReviewRunStatus = contract.AOReviewRunStatus
 
 // Review run statuses.
 const (
-	ReviewRunRunning   ReviewRunStatus = "running"
-	ReviewRunComplete  ReviewRunStatus = "complete"
-	ReviewRunDelivered ReviewRunStatus = "delivered"
-	ReviewRunFailed    ReviewRunStatus = "failed"
-	ReviewRunCancelled ReviewRunStatus = "cancelled"
+	ReviewRunRunning   = contract.AOReviewRunRunning
+	ReviewRunComplete  = contract.AOReviewRunComplete
+	ReviewRunDelivered = contract.AOReviewRunDelivered
+	ReviewRunFailed    = contract.AOReviewRunFailed
+	ReviewRunCancelled = contract.AOReviewRunCancelled
 )
 
 // ReviewVerdict is the outcome a reviewer reports. The empty verdict marks a
 // run that has not produced an outcome yet.
-type ReviewVerdict string
+type ReviewVerdict = contract.AOReviewVerdict
 
 // Review verdicts.
 const (
-	VerdictNone             ReviewVerdict = ""
-	VerdictApproved         ReviewVerdict = "approved"
-	VerdictChangesRequested ReviewVerdict = "changes_requested"
+	VerdictNone             = contract.AOReviewVerdictNone
+	VerdictApproved         = contract.AOReviewVerdictApproved
+	VerdictChangesRequested = contract.AOReviewVerdictChangesRequested
 )
 
-// Valid reports whether v is a verdict a reviewer may submit (the empty verdict
-// is a stored default, not a submittable one).
-func (v ReviewVerdict) Valid() bool {
-	return v == VerdictApproved || v == VerdictChangesRequested
+// CurrentHeadReviewRun is one AO review pass recorded against a PR's current
+// head commit, reduced to the fields a derived read model needs.
+type CurrentHeadReviewRun struct {
+	SessionID SessionID
+	Harness   ReviewerHarness
+	PRURL     string
+	Status    ReviewRunStatus
+	Verdict   ReviewVerdict
+	ID        string
+	CreatedAt time.Time
 }

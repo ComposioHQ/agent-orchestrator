@@ -19,6 +19,7 @@ import (
 // focused follow-up PRs alongside the code that reads them.
 type ProjectConfig struct {
 	// DefaultBranch is the base branch new session worktrees are created from.
+	// Empty and DefaultBranchAuto both mean infer each repository's Git default.
 	DefaultBranch string `json:"defaultBranch,omitempty"`
 	// SessionPrefix overrides the displayed session-id prefix.
 	SessionPrefix string `json:"sessionPrefix,omitempty"`
@@ -50,18 +51,41 @@ type ProjectConfig struct {
 	// triggered. It is configured independently of the Worker override; an empty
 	// list falls back to claude-code (see ResolveReviewerHarness).
 	Reviewers []ReviewerConfig `json:"reviewers,omitempty"`
-
 	// TrackerIntake controls issue-driven worker spawning. It is opt-in and
 	// read-only toward the tracker in v1: matching issues spawn sessions, but the
 	// tracker is not commented on or transitioned.
 	TrackerIntake TrackerIntakeConfig `json:"trackerIntake,omitempty"`
+
+	// ContainerReap controls whether AO reaps a worker session's ao.session-
+	// labeled Docker containers on terminal state / kill. Enabled by default;
+	// set Disabled to opt a project out entirely. Per-container sparing uses
+	// the ao.spare=true label instead (see dockerreap.SpareLabel) so the
+	// opt-out travels with the container at `docker run` time rather than
+	// drifting out of sync with a project-config list.
+	ContainerReap ContainerReapConfig `json:"containerReap,omitempty"`
+
+	// AutoReview controls whether new worker sessions spawned for this project
+	// have automatic PR review enabled by default. The default (false) leaves
+	// sessions with auto-review off; enabling it copies the setting into each
+	// new session at spawn time. Users can still override the per-session toggle
+	// after spawn.
+	AutoReview bool `json:"autoReview,omitempty"`
+}
+
+// ContainerReapConfig is the project-level opt-out for #2652's Docker
+// container reaping on session terminal state.
+type ContainerReapConfig struct {
+	// Disabled turns off container reaping for every session in this project.
+	// Per-container sparing (ao.spare=true) is unaffected either way.
+	Disabled bool `json:"disabled,omitempty"`
 }
 
 // ReviewerConfig names one reviewer agent by harness. The harness is drawn from
 // the reviewer vocabulary (ReviewerHarness), which is distinct from the worker
 // AgentHarness set.
 type ReviewerConfig struct {
-	Harness ReviewerHarness `json:"harness"`
+	Harness     ReviewerHarness `json:"harness"`
+	AgentConfig AgentConfig     `json:"agentConfig,omitempty"`
 }
 
 // FallbackReviewerHarness is the reviewer used when a project configures none
@@ -69,15 +93,24 @@ type ReviewerConfig struct {
 const FallbackReviewerHarness = ReviewerClaudeCode
 
 // ResolveReviewerHarness picks the reviewer harness for a worker. A configured
-// reviewer wins. Otherwise the worker's own harness is reused when it is itself
-// a supported reviewer (e.g. a codex worker is reviewed by codex); a worker
-// whose harness is not a reviewer (e.g. crush) falls back to claude-code.
+// reviewer wins. Otherwise only the original, unattended-safe reviewer set is
+// inherited from the worker. Every other reviewer requires explicit selection,
+// so adding an experimental adapter never silently changes an existing project.
 func (c ProjectConfig) ResolveReviewerHarness(worker AgentHarness) ReviewerHarness {
 	if len(c.Reviewers) > 0 {
 		return c.Reviewers[0].Harness
 	}
-	if rh := ReviewerHarness(worker); rh.IsKnown() {
-		return rh
+	switch worker {
+	case HarnessClaudeCode:
+		return ReviewerClaudeCode
+	case HarnessCodex:
+		return ReviewerCodex
+	case HarnessOpenCode:
+		return ReviewerOpenCode
+	case HarnessMuse:
+		return ReviewerMuse
+	case HarnessKimchi:
+		return ReviewerKimchi
 	}
 	return FallbackReviewerHarness
 }
@@ -88,15 +121,21 @@ type RoleOverride struct {
 	AgentConfig AgentConfig  `json:"agentConfig,omitempty"`
 }
 
-// DefaultBranchName is the base branch used when a project configures none.
-const DefaultBranchName = "main"
+const (
+	// DefaultBranchAuto tells callers to infer the Git default branch for each
+	// repository instead of naming one branch for the whole project.
+	DefaultBranchAuto = "auto"
+	// DefaultBranchName is the branch AO selects when it creates a repository.
+	// Automatic resolution never uses it as a guess for existing repositories.
+	DefaultBranchName = "main"
+)
 
 // DefaultProjectConfig returns the config a project has when it sets nothing:
-// branch "main". Every other field defaults to its zero value (no
-// env/symlinks/post-create, agent + role defaults).
+// automatic per-repository branch resolution. Every other field defaults to
+// its zero value (no env/symlinks/post-create, agent + role defaults).
 func DefaultProjectConfig() ProjectConfig {
 	return ProjectConfig{
-		DefaultBranch: DefaultBranchName,
+		DefaultBranch: DefaultBranchAuto,
 	}
 }
 
@@ -109,6 +148,17 @@ func (c ProjectConfig) WithDefaults() ProjectConfig {
 	}
 	c.TrackerIntake = c.TrackerIntake.WithDefaults()
 	return c
+}
+
+// WorktreeBaseBranch translates project configuration into the workspace
+// interface. An empty value tells the workspace adapter to resolve a remote
+// HEAD independently for the repository it is materializing.
+func (c ProjectConfig) WorktreeBaseBranch() string {
+	branch := c.WithDefaults().DefaultBranch
+	if branch == DefaultBranchAuto {
+		return ""
+	}
+	return branch
 }
 
 // IsZero reports whether the config carries no settings, so storage can persist
@@ -145,6 +195,9 @@ func (c ProjectConfig) Validate() error {
 	for i, rv := range c.Reviewers {
 		if !rv.Harness.IsKnown() {
 			return fmt.Errorf("reviewers[%d].harness: unknown harness %q", i, rv.Harness)
+		}
+		if err := rv.AgentConfig.Validate(); err != nil {
+			return fmt.Errorf("reviewers[%d].%w", i, err)
 		}
 	}
 	if err := c.TrackerIntake.Validate(); err != nil {

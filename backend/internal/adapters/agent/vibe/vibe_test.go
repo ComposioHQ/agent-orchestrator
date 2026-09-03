@@ -80,6 +80,30 @@ func TestVibeAPIKeyEnvVarsReadsConfig(t *testing.T) {
 	}
 }
 
+func TestVibeLocalAuthStatusIgnoresDaemonWorkingDirectoryProjectConfig(t *testing.T) {
+	clearVibeAuthEnv(t, vibeDefaultAPIKeyEnvVar, "VIBE_CODE_API_KEY", "PROJECT_VIBE_KEY")
+	project := t.TempDir()
+	projectConfig := filepath.Join(project, ".vibe", "config.toml")
+	if err := os.MkdirAll(filepath.Dir(projectConfig), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(projectConfig, []byte("api_key_env_var = \"PROJECT_VIBE_KEY\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	globalHome := filepath.Join(t.TempDir(), ".vibe")
+	t.Setenv("VIBE_HOME", globalHome)
+	t.Setenv("PROJECT_VIBE_KEY", "project-only-key")
+	t.Chdir(project)
+
+	status, ok, err := vibeLocalAuthStatus(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok || status != ports.AgentAuthStatusUnknown {
+		t.Fatalf("status = (%q, %v), want (%q, false)", status, ok, ports.AgentAuthStatusUnknown)
+	}
+}
+
 func TestVibeEnvFileAuthStatusAuthorized(t *testing.T) {
 	envPath := filepath.Join(t.TempDir(), ".env")
 	if err := os.WriteFile(envPath, []byte("MISTRAL_API_KEY=test-key\n"), 0o600); err != nil {
@@ -95,7 +119,7 @@ func TestVibeEnvFileAuthStatusAuthorized(t *testing.T) {
 	}
 }
 
-func TestVibeEnvFileAuthStatusUnauthorizedForEmptyValue(t *testing.T) {
+func TestVibeEnvFileAuthStatusUnknownForEmptyValue(t *testing.T) {
 	envPath := filepath.Join(t.TempDir(), ".env")
 	if err := os.WriteFile(envPath, []byte("MISTRAL_API_KEY=\n"), 0o600); err != nil {
 		t.Fatal(err)
@@ -105,27 +129,8 @@ func TestVibeEnvFileAuthStatusUnauthorizedForEmptyValue(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !ok || status != ports.AgentAuthStatusUnauthorized {
-		t.Fatalf("status = (%q, %v), want (%q, true)", status, ok, ports.AgentAuthStatusUnauthorized)
-	}
-}
-
-func TestVibeSessionLogAuthStatusAuthorizedWithAssistantMessage(t *testing.T) {
-	dir := t.TempDir()
-	sessionDir := filepath.Join(dir, "session_20260625_071829_d5e8a6eb")
-	if err := os.MkdirAll(sessionDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(sessionDir, "messages.jsonl"), []byte(`{"role":"assistant","content":"Hello"}`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-
-	status, ok, err := vibeSessionLogAuthStatus(context.Background(), dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !ok || status != ports.AgentAuthStatusAuthorized {
-		t.Fatalf("status = (%q, %v), want (%q, true)", status, ok, ports.AgentAuthStatusAuthorized)
+	if ok || status != ports.AgentAuthStatusUnknown {
+		t.Fatalf("status = (%q, %v), want (%q, false)", status, ok, ports.AgentAuthStatusUnknown)
 	}
 }
 

@@ -52,7 +52,8 @@ type clineHookSpec struct {
 //   - TaskStart/Resume -> session-start       (a task begins or resumes: active)
 //   - UserPromptSubmit -> user-prompt-submit  (user message submitted: active)
 //   - PreToolUse       -> permission-request  (about to act: approval point)
-//   - TaskComplete/Cancel -> stop             (task finished: idle)
+//   - TaskCancel       -> stop                (task cancelled/aborted: idle)
+//   - TaskComplete     -> stop                (task completed normally: idle)
 var clineManagedHooks = []clineHookSpec{
 	{Event: "TaskStart", Subcommand: "session-start"},
 	{Event: "TaskResume", Subcommand: "session-start"},

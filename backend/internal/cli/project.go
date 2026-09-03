@@ -76,6 +76,7 @@ type workspaceRepoDetails struct {
 // agentConfig mirrors the daemon's typed domain.AgentConfig for the CLI client.
 type agentConfig struct {
 	Model       string `json:"model,omitempty"`
+	Mode        string `json:"mode,omitempty"`
 	Permissions string `json:"permissions,omitempty"`
 }
 
@@ -91,6 +92,11 @@ type trackerIntakeConfig struct {
 	Provider string `json:"provider,omitempty"`
 	Repo     string `json:"repo,omitempty"`
 	Assignee string `json:"assignee,omitempty"`
+}
+
+// reviewerConfig mirrors domain.ReviewerConfig.
+type reviewerConfig struct {
+	Harness string `json:"harness"`
 }
 
 // projectConfig mirrors the daemon's typed domain.ProjectConfig for the CLI
@@ -109,6 +115,8 @@ type projectConfig struct {
 	Worker            roleOverride        `json:"worker,omitempty"`
 	Orchestrator      roleOverride        `json:"orchestrator,omitempty"`
 	TrackerIntake     trackerIntakeConfig `json:"trackerIntake,omitempty"`
+	AutoReview        bool                `json:"autoReview,omitempty"`
+	Reviewers         []reviewerConfig    `json:"reviewers,omitempty"`
 }
 
 // setConfigRequest mirrors the daemon's SetConfigInput body for
@@ -133,6 +141,7 @@ type projectSetConfigOptions struct {
 	trackerIntake     bool
 	trackerRepo       string
 	trackerAssignee   string
+	reviewers         []string
 	configJSON        string
 	clear             bool
 	json              bool
@@ -277,7 +286,7 @@ func newProjectSetConfigCommand(ctx *commandContext) *cobra.Command {
 		Use:   "set-config <id>",
 		Short: "Set the per-project config",
 		Long: "Replace a project's per-project config (branch, session prefix, env, " +
-			"symlinks, post-create, rules, agent model/permissions, role overrides, tracker intake). The config " +
+			"symlinks, post-create, rules, agent model/permissions, role overrides, tracker intake, reviewers). The config " +
 			"is resolved when a session spawns.\n\n" +
 			"Set fields via flags, pass the whole object with --config-json, or --clear " +
 			"to remove all config.",
@@ -309,7 +318,7 @@ func newProjectSetConfigCommand(ctx *commandContext) *cobra.Command {
 		},
 	}
 	f := cmd.Flags()
-	f.StringVar(&opts.defaultBranch, "default-branch", "", "Base branch new session worktrees are created from")
+	f.StringVar(&opts.defaultBranch, "default-branch", "", "Base branch for new worktrees; auto infers each repository's Git default")
 	f.StringVar(&opts.sessionPrefix, "session-prefix", "", "Displayed session-id prefix")
 	f.StringVar(&opts.model, "model", "", "Agent model override (e.g. claude-opus-4-5)")
 	f.StringVar(&opts.permission, "permission", "", "Permission mode: default, accept-edits, auto, bypass-permissions")
@@ -321,9 +330,10 @@ func newProjectSetConfigCommand(ctx *commandContext) *cobra.Command {
 	f.StringArrayVar(&opts.env, "env", nil, "Env var KEY=VALUE forwarded into sessions (repeatable)")
 	f.StringArrayVar(&opts.symlink, "symlink", nil, "Repo-relative path to symlink into workspaces (repeatable)")
 	f.StringArrayVar(&opts.postCreate, "post-create", nil, "Command to run after workspace creation (repeatable)")
-	f.BoolVar(&opts.trackerIntake, "tracker-intake", false, "Enable GitHub issue intake for matching issues")
-	f.StringVar(&opts.trackerRepo, "tracker-repo", "", "GitHub repo for issue intake (owner/repo; default: derive from git origin)")
-	f.StringVar(&opts.trackerAssignee, "tracker-assignee", "", "GitHub issue assignee required for intake eligibility")
+	f.BoolVar(&opts.trackerIntake, "tracker-intake", false, "Enable issue intake for matching issues (GitHub or GitLab; provider inferred from git origin)")
+	f.StringVar(&opts.trackerRepo, "tracker-repo", "", "Provider-native repo for issue intake (owner/repo or group/subgroup/repo; default: derive from git origin)")
+	f.StringVar(&opts.trackerAssignee, "tracker-assignee", "", "Issue assignee required for intake eligibility")
+	f.StringArrayVar(&opts.reviewers, "reviewer", nil, "Reviewer harness that reviews worker PRs (repeatable; e.g. claude-code)")
 	f.StringVar(&opts.configJSON, "config-json", "", "Full config as a JSON object (overrides field flags)")
 	f.BoolVar(&opts.clear, "clear", false, "Clear all config")
 	f.BoolVar(&opts.json, "json", false, "Output the updated project as JSON")
@@ -364,10 +374,10 @@ func buildProjectConfig(opts projectSetConfigOptions) (projectConfig, error) {
 		Orchestrator:      roleOverride{Agent: opts.orchestratorAgent},
 		TrackerIntake: trackerIntakeConfig{
 			Enabled:  opts.trackerIntake,
-			Provider: trackerProviderForFlags(opts),
 			Repo:     opts.trackerRepo,
 			Assignee: opts.trackerAssignee,
 		},
+		Reviewers: reviewersForFlags(opts.reviewers),
 	}
 	if reflect.DeepEqual(cfg, projectConfig{}) {
 		return projectConfig{}, usageError{errors.New("usage: provide at least one config flag, --config-json, or --clear")}
@@ -375,11 +385,24 @@ func buildProjectConfig(opts projectSetConfigOptions) (projectConfig, error) {
 	return cfg, nil
 }
 
-func trackerProviderForFlags(opts projectSetConfigOptions) string {
-	if opts.trackerIntake || opts.trackerRepo != "" || opts.trackerAssignee != "" {
-		return "github"
+// reviewersForFlags turns repeated --reviewer harness values into the config
+// shape. The daemon validates the harness vocabulary.
+func reviewersForFlags(harnesses []string) []reviewerConfig {
+	if len(harnesses) == 0 {
+		return nil
 	}
-	return ""
+	reviewers := make([]reviewerConfig, 0, len(harnesses))
+	for _, harness := range harnesses {
+		harness = strings.TrimSpace(harness)
+		if harness == "" {
+			continue
+		}
+		reviewers = append(reviewers, reviewerConfig{Harness: harness})
+	}
+	if len(reviewers) == 0 {
+		return nil
+	}
+	return reviewers
 }
 
 // parseEnvPairs turns repeated KEY=VALUE flags into a map.

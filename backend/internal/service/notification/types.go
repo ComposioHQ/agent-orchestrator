@@ -26,7 +26,32 @@ type Notification struct {
 	Target Target
 }
 
-// ListFilter controls unread notification listing.
+// ListStatus selects which stored notifications are returned.
+type ListStatus = domain.NotificationListStatus
+
+const (
+	// ListUnread returns only notifications that still need acknowledgement.
+	ListUnread = domain.NotificationListUnread
+	// ListAll returns both read and unread notifications.
+	ListAll = domain.NotificationListAll
+	// ListUnresolved returns notifications whose underlying issue is still open.
+	ListUnresolved = domain.NotificationListUnresolved
+)
+
+// ListFilter controls paginated notification history.
 type ListFilter struct {
-	Limit int
+	Status ListStatus
+	Limit  int
+	Cursor string
+}
+
+// ListPage is one newest-first page of notification history.
+type ListPage struct {
+	Notifications []Notification
+	NextCursor    string
+	// UnreadCount is the unseen badge count; UnresolvedCount is how many issues
+	// are still open. They are independent: a notification the user has already
+	// seen stays counted as unresolved until AO closes it.
+	UnreadCount     int
+	UnresolvedCount int
 }

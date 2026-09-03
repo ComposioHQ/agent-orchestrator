@@ -3,17 +3,38 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ReactNode } from "react";
 
-const { getMock, hasTrustedApiBaseUrlMock } = vi.hoisted(() => ({
-	getMock: vi.fn(),
-	hasTrustedApiBaseUrlMock: vi.fn(() => true),
-}));
+const { captureRendererEventMock, cloudState, getMock, hasTrustedApiBaseUrlMock, listProjectsMock, setQueryHealthyMock } = vi.hoisted(
+	() => ({
+		captureRendererEventMock: vi.fn().mockResolvedValue(undefined),
+		cloudState: { ready: false, org: undefined as { id: string } | undefined },
+		getMock: vi.fn(),
+		hasTrustedApiBaseUrlMock: vi.fn(() => true),
+		listProjectsMock: vi.fn(),
+		setQueryHealthyMock: vi.fn(),
+	}),
+);
 
 vi.mock("../lib/api-client", () => ({
 	apiClient: { GET: getMock },
 	hasTrustedApiBaseUrl: hasTrustedApiBaseUrlMock,
 }));
 
-import { useWorkspaceQuery } from "./useWorkspaceQuery";
+vi.mock("../lib/telemetry", () => ({ captureRendererEvent: captureRendererEventMock }));
+vi.mock("../lib/agent-switch-visibility", () => ({ agentSwitchVisibility: { setQueryHealthy: setQueryHealthyMock } }));
+
+vi.mock("./useCloudCp", () => ({
+	useCloudCp: () => ({
+		client: { listProjects: listProjectsMock },
+		ready: cloudState.ready,
+		baseUrl: "https://cp.example.com",
+	}),
+}));
+
+vi.mock("./useCloudOrg", () => ({
+	useCloudOrg: () => ({ org: cloudState.org, isLoading: false, error: undefined, ready: cloudState.ready }),
+}));
+
+import { useWorkspaceQuery, useWorkspaceTraySessions } from "./useWorkspaceQuery";
 
 function wrapper({ children }: { children: ReactNode }) {
 	// The hook pins its own retry policy; retryDelay 0 keeps the error tests fast.
@@ -33,18 +54,23 @@ function respondWith(payload: {
 }
 
 beforeEach(() => {
+	captureRendererEventMock.mockClear();
 	getMock.mockReset();
 	hasTrustedApiBaseUrlMock.mockReset().mockReturnValue(true);
+	cloudState.ready = false;
+	cloudState.org = undefined;
+	listProjectsMock.mockReset();
+	setQueryHealthyMock.mockReset();
 });
 
 describe("useWorkspaceQuery", () => {
-	it("returns an empty workspace list while the daemon base URL is untrusted", async () => {
+	it("rejects workspace reads while the daemon base URL is untrusted", async () => {
 		hasTrustedApiBaseUrlMock.mockReturnValue(false);
 
 		const { result } = renderHook(() => useWorkspaceQuery(), { wrapper });
 
-		await waitFor(() => expect(result.current.isSuccess).toBe(true));
-		expect(result.current.data).toEqual([]);
+		await waitFor(() => expect(result.current.isError).toBe(true));
+		expect(result.current.error).toEqual(new Error("AO daemon API is not ready"));
 		expect(getMock).not.toHaveBeenCalled();
 	});
 
@@ -70,13 +96,36 @@ describe("useWorkspaceQuery", () => {
 							id: "sess-1",
 							projectId: "proj-1",
 							terminalHandleId: "term-1",
+							terminalGeneration: "launch-2",
 							displayName: "fix-bug",
 							issueId: "github:acme/project-one#42",
 							harness: "claude-code",
+							reviewerHarness: "qwen",
 							branch: "qa/modal-worker",
 							status: "mergeable",
+							scmStatus: "review_pending",
+							kanbanColumn: "ready",
+							displayStatus: "Mergeable",
 							isTerminated: false,
+							autoInjectReview: false,
+							autoInjectCI: false,
 							activity: { state: "idle", lastActivityAt: "2026-06-10T15:30:00Z" },
+							activeAgentSwitch: {
+								agentHandoffStatus: "received",
+								errorCode: "delivery_unconfirmed",
+								fromHarness: "claude-code",
+								id: "switch-1",
+								privateFutureField: "must-not-leak",
+								requestedAt: "2026-06-10T15:31:00Z",
+								semanticHandoffIncluded: true,
+								sessionId: "sess-1",
+								sourceTranscriptStatus: "available",
+								state: "delivering_context",
+								targetHarness: "codex",
+								targetStartMode: "resumed",
+								updatedAt: "2026-06-10T15:32:00Z",
+							},
+							lastUserMessageAt: "2026-06-10T16:10:00Z",
 							updatedAt: "2026-06-10T16:15:04Z",
 						},
 						{
@@ -85,6 +134,7 @@ describe("useWorkspaceQuery", () => {
 							id: "sess-2",
 							projectId: "proj-1",
 							harness: "mystery-agent",
+							reviewerHarness: "mystery-reviewer",
 							status: "bogus",
 							isTerminated: false,
 							updatedAt: "2026-06-10T16:15:04Z",
@@ -111,19 +161,47 @@ describe("useWorkspaceQuery", () => {
 		expect(workspace.sessions[0]).toMatchObject({
 			id: "sess-1",
 			terminalHandleId: "term-1",
+			terminalGeneration: "launch-2",
 			title: "fix-bug",
 			issueId: "github:acme/project-one#42",
 			provider: "claude-code",
+			reviewerHarness: "qwen",
 			branch: "qa/modal-worker",
 			status: "mergeable",
+			scmStatus: "review_pending",
+			kanbanColumn: "ready",
+			displayStatus: "Mergeable",
 			activity: { state: "idle", lastActivityAt: "2026-06-10T15:30:00Z" },
+			lastUserMessageAt: "2026-06-10T16:10:00Z",
+			autoInjectReview: false,
+			autoInjectCI: false,
+		});
+		expect(workspace.sessions[0].activeAgentSwitch).toEqual({
+			agentHandoffStatus: "received",
+			errorCode: "delivery_unconfirmed",
+			fromHarness: "claude-code",
+			id: "switch-1",
+			state: "delivering_context",
+			targetHarness: "codex",
+			updatedAt: "2026-06-10T15:32:00Z",
 		});
 		expect(workspace.sessions[1]).toMatchObject({
 			id: "sess-2",
 			title: "sess-2",
 			provider: "codex",
+			reviewerHarness: undefined,
 			status: "unknown",
 			branch: undefined,
+			autoInjectReview: true,
+			autoInjectCI: true,
+		});
+		expect(captureRendererEventMock).toHaveBeenCalledWith("ao.renderer.session_state_unknown", {
+			field: "status",
+			reason: "unrecognized",
+		});
+		expect(captureRendererEventMock).toHaveBeenCalledWith("ao.renderer.session_state_unknown", {
+			field: "activity",
+			reason: "missing",
 		});
 	});
 
@@ -253,6 +331,7 @@ describe("useWorkspaceQuery", () => {
 		await waitFor(() => expect(result.current.isSuccess).toBe(true));
 
 		expect(result.current.data?.[0].sessions[0].status).toBe("merged");
+		expect(result.current.data?.[0].sessions[0].isTerminated).toBe(true);
 	});
 
 	it("falls back to terminated for terminated sessions without a known backend status", async () => {
@@ -278,6 +357,7 @@ describe("useWorkspaceQuery", () => {
 		await waitFor(() => expect(result.current.isSuccess).toBe(true));
 
 		expect(result.current.data?.[0].sessions[0].status).toBe("terminated");
+		expect(result.current.data?.[0].sessions[0].isTerminated).toBe(true);
 	});
 
 	it("surfaces a projects fetch error", async () => {
@@ -288,6 +368,7 @@ describe("useWorkspaceQuery", () => {
 
 		await waitFor(() => expect(result.current.isError).toBe(true), { timeout: 3_000 });
 		expect(result.current.error).toBe(failure);
+		expect(setQueryHealthyMock).toHaveBeenCalledWith("history", false, "workspaces");
 	});
 
 	it("surfaces a sessions fetch error even when projects load", async () => {
@@ -301,5 +382,94 @@ describe("useWorkspaceQuery", () => {
 
 		await waitFor(() => expect(result.current.isError).toBe(true), { timeout: 3_000 });
 		expect(result.current.error).toBe(failure);
+	});
+
+	it("merges control-plane projects after local ones with kind cloud", async () => {
+		cloudState.ready = true;
+		cloudState.org = { id: "org-1" };
+		listProjectsMock.mockResolvedValue({
+			items: [
+				{
+					id: "cp-1",
+					orgId: "org-1",
+					displayName: "cloud-app",
+					repositoryUrl: "https://github.com/acme/cloud-app",
+					defaultBranch: "main",
+					config: {},
+					createdAt: "2026-08-01T00:00:00Z",
+					updatedAt: "2026-08-01T00:00:00Z",
+				},
+			],
+			page: { hasMore: false },
+		});
+		respondWith({
+			projects: { data: { projects: [{ id: "proj-1", name: "my-app", path: "/p" }] }, error: undefined },
+		});
+
+		const { result } = renderHook(() => useWorkspaceQuery(), { wrapper });
+		await waitFor(() => expect(result.current.data).toHaveLength(2));
+
+		expect(result.current.data?.[0]).toMatchObject({ id: "proj-1", name: "my-app", path: "/p" });
+		expect(result.current.data?.[1]).toEqual({
+			id: "cp-1",
+			name: "cloud-app",
+			kind: "cloud",
+			path: "",
+			sessions: [],
+		});
+		expect(listProjectsMock).toHaveBeenCalledWith("org-1", { limit: 100 });
+	});
+
+	it("keeps local projects when the cloud fetch fails", async () => {
+		cloudState.ready = true;
+		cloudState.org = { id: "org-1" };
+		listProjectsMock.mockRejectedValue(new Error("control plane down"));
+		respondWith({
+			projects: { data: { projects: [{ id: "proj-1", name: "my-app", path: "/p" }] }, error: undefined },
+		});
+
+		const { result } = renderHook(() => useWorkspaceQuery(), { wrapper });
+		await waitFor(() => expect(result.current.isSuccess).toBe(true));
+		await waitFor(() => expect(listProjectsMock).toHaveBeenCalled());
+
+		expect(result.current.data).toHaveLength(1);
+		expect(result.current.data?.[0]).toMatchObject({ id: "proj-1" });
+		expect(result.current.isError).toBe(false);
+	});
+
+	it("does not call the control plane while cloud is not ready", async () => {
+		respondWith({
+			projects: { data: { projects: [{ id: "proj-1", name: "my-app", path: "/p" }] }, error: undefined },
+		});
+
+		const { result } = renderHook(() => useWorkspaceQuery(), { wrapper });
+		await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+		expect(listProjectsMock).not.toHaveBeenCalled();
+	});
+
+	it("selects only attention-worthy worker sessions for the always-mounted tray", async () => {
+		respondWith({
+			projects: { data: { projects: [{ id: "proj-1", name: "my-app", path: "/p" }] }, error: undefined },
+			sessions: {
+				data: {
+					sessions: [
+						{ id: "needs-input", projectId: "proj-1", displayName: "Needs input", harness: "codex", status: "needs_input", updatedAt: "2026-08-01T00:00:00Z" },
+						{ id: "mergeable", projectId: "proj-1", displayName: "Mergeable", harness: "codex", status: "mergeable", updatedAt: "2026-08-01T00:00:00Z" },
+						{ id: "working", projectId: "proj-1", displayName: "Working", harness: "codex", status: "working", updatedAt: "2026-08-01T00:00:00Z" },
+						{ id: "merged", projectId: "proj-1", displayName: "Merged", harness: "codex", status: "merged", updatedAt: "2026-08-01T00:00:00Z" },
+						{ id: "orchestrator", projectId: "proj-1", displayName: "Orchestrator", harness: "codex", kind: "orchestrator", status: "needs_input", updatedAt: "2026-08-01T00:00:00Z" },
+					],
+				},
+				error: undefined,
+			},
+		});
+
+		const { result } = renderHook(() => useWorkspaceTraySessions(), { wrapper });
+		await waitFor(() => expect(result.current.isSuccess).toBe(true));
+		expect(result.current.data).toEqual([
+			{ projectId: "proj-1", projectName: "my-app", sessionId: "needs-input", title: "Needs input", zone: "action" },
+			{ projectId: "proj-1", projectName: "my-app", sessionId: "mergeable", title: "Mergeable", zone: "merge" },
+		]);
 	});
 });

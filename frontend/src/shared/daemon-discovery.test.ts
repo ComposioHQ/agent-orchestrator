@@ -71,6 +71,28 @@ describe("parseRunFile", () => {
 		});
 	});
 
+	it("parses the backend-published browser runtime locator without a token", () => {
+		expect(
+			parseRunFile(
+				JSON.stringify({
+					pid: 4242,
+					port: 3037,
+					browserRuntimeAddress: String.raw`\\.\pipe\ao-browser-dev`,
+				}),
+			),
+		).toEqual(
+			expect.objectContaining({
+				browserRuntimeAddress: String.raw`\\.\pipe\ao-browser-dev`,
+			}),
+		);
+	});
+
+	it("parses the app run that owns the daemon browser credential", () => {
+		expect(parseRunFile(JSON.stringify({ pid: 4242, port: 3037, appRunId: "apprun-current" }))).toEqual(
+			expect.objectContaining({ appRunId: "apprun-current" }),
+		);
+	});
+
 	it("returns null for malformed JSON", () => {
 		expect(parseRunFile("{not json")).toBeNull();
 		expect(parseRunFile("")).toBeNull();
