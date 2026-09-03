@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ServerConfig } from "../config";
+import { ApiError } from "../api";
+import { shouldKeepPolling } from "../connectionError";
 import {
 	acknowledgeSessionInterfaceTransitionNotice,
 	cancelSessionInterfaceTransition,
@@ -30,6 +32,11 @@ export function useInterfaceTransition(
 	const [acknowledgingNotice, setAcknowledgingNotice] = useState(false);
 	const [acknowledgeNoticeError, setAcknowledgeNoticeError] = useState<string>();
 	const [error, setError] = useState<string>();
+	// A rejected recheck is not a failed one. The readiness poll runs at 1s, and
+	// the bridge locks a device out for a minute after five failed auths, so a
+	// rotated password would arm that lockout in five seconds and hold it there
+	// for as long as the screen stays open. Same rule as the board poll.
+	const [pollable, setPollable] = useState(true);
 	const settledRef = useRef("");
 	const onSettledRef = useRef(onSettled);
 	onSettledRef.current = onSettled;
@@ -41,6 +48,7 @@ export function useInterfaceTransition(
 			const next = await getSessionInterfaceTransition(cfg, sessionId);
 			setStatus(next);
 			setError(undefined);
+			setPollable(true);
 			const transition = next.transition;
 			if (transition && !mobileInterfaceTransitionIsActive(transition) && settledRef.current !== transition.id) {
 				settledRef.current = transition.id;
@@ -49,6 +57,7 @@ export function useInterfaceTransition(
 			return next;
 		} catch (cause) {
 			setError(cause instanceof Error ? cause.message : String(cause));
+			setPollable(shouldKeepPolling(cause instanceof ApiError ? cause.status : undefined));
 			return undefined;
 		} finally {
 			setLoading(false);
@@ -61,10 +70,10 @@ export function useInterfaceTransition(
 
 	useEffect(() => {
 		const interval = interfaceTransitionPollInterval(status);
-		if (!cfg || !sessionId || interval === undefined) return;
+		if (!cfg || !sessionId || interval === undefined || !pollable) return;
 		const timer = setInterval(() => void refresh(), interval);
 		return () => clearInterval(timer);
-	}, [cfg, refresh, sessionId, status?.transition?.phase, status?.reasonCode]);
+	}, [cfg, pollable, refresh, sessionId, status?.transition?.phase, status?.reasonCode]);
 
 	const start = useCallback(
 		async (targetMode: "chat" | "tui", policy: "drain" | "interrupt") => {
