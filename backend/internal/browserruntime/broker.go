@@ -38,6 +38,10 @@ const (
 // ErrUnavailable indicates that no Electron browser runtime can accept a command.
 var ErrUnavailable = errors.New("browser runtime is unavailable")
 
+// ErrOutcomeUnknown indicates that the transport was lost after a command may
+// have reached Electron. Callers must not retry non-idempotent actions.
+var ErrOutcomeUnknown = errors.New("browser command outcome is unknown")
+
 // Status describes whether Electron is connected to the browser command broker.
 type Status struct {
 	Connected         bool
@@ -176,7 +180,7 @@ func (b *Broker) Execute(ctx context.Context, sessionID domain.SessionID, action
 			return Result{}, ctx.Err()
 		}
 		b.disconnect(conn, fmt.Errorf("write browser command: %w", err))
-		return Result{}, ErrUnavailable
+		return Result{}, ErrOutcomeUnknown
 	}
 
 	select {
@@ -249,7 +253,7 @@ func (b *Broker) serveConn(ctx context.Context, conn net.Conn) {
 	if old != nil && old != conn {
 		_ = old.Close()
 	}
-	failPending(pending, ErrUnavailable)
+	failPending(pending, ErrOutcomeUnknown)
 	b.log.Info("browser runtime connected")
 
 	go func() {
@@ -360,7 +364,7 @@ func (b *Broker) disconnect(conn net.Conn, cause error) {
 	pending := b.takePendingLocked()
 	b.mu.Unlock()
 	_ = conn.Close()
-	failPending(pending, ErrUnavailable)
+	failPending(pending, ErrOutcomeUnknown)
 	if cause != nil && !errors.Is(cause, io.EOF) && !errors.Is(cause, net.ErrClosed) {
 		b.log.Warn("browser runtime disconnected", "err", cause)
 	} else {

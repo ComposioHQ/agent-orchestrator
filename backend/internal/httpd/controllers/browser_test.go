@@ -129,6 +129,35 @@ func TestBrowserObserveValidationAndRuntimeErrors(t *testing.T) {
 	}
 }
 
+func TestBrowserActionUsesTypedTargetAndPreconditions(t *testing.T) {
+	runtime := &fakeBrowserRuntime{}
+	srv := browserServer(t, runtime)
+	body, status, _ := doRequest(t, srv, http.MethodPost, "/api/v1/browser/actions", `{
+		"sessionId":"ao-1","action":"click",
+		"target":{"role":"button","name":"Save","exact":true},
+		"expectedState":{"tabId":"t2","expectedUrl":"http://localhost/settings","snapshotGeneration":14},
+		"waitAfter":{"stableMs":300,"timeoutMs":2000}
+	}`)
+	if status != http.StatusOK || !containsAll(body, `"requestId":"request-1"`, `"action":"click"`) {
+		t.Fatalf("action = %d body=%s", status, body)
+	}
+	if runtime.action != "click" {
+		t.Fatalf("runtime action = %q", runtime.action)
+	}
+	expected, _ := runtime.args["expectedState"].(map[string]interface{})
+	if expected["tabId"] != "t2" || expected["expectedUrl"] != "http://localhost/settings" || expected["snapshotGeneration"] != 14 {
+		t.Fatalf("expected state = %#v", expected)
+	}
+	if runtime.args["target"] == nil || runtime.args["waitAfter"] == nil {
+		t.Fatalf("runtime args = %#v", runtime.args)
+	}
+
+	body, status, _ = doRequest(t, srv, http.MethodPost, "/api/v1/browser/actions", `{"sessionId":"ao-1","action":"click","expectedState":{"tabId":"t1","expectedUrl":"http://localhost","snapshotGeneration":1}}`)
+	if status != http.StatusBadRequest || !containsAll(body, `"code":"BROWSER_TARGET_REQUIRED"`) {
+		t.Fatalf("missing action target = %d body=%s", status, body)
+	}
+}
+
 func TestBrowserCoreInteractionActionsReachRuntime(t *testing.T) {
 	runtime := &fakeBrowserRuntime{}
 	srv := browserServer(t, runtime)
@@ -141,12 +170,16 @@ func TestBrowserCoreInteractionActionsReachRuntime(t *testing.T) {
 
 	for _, action := range actions {
 		t.Run(action, func(t *testing.T) {
+			args := `{"probe":true}`
+			if action == "type" || action == "press" || action == "scroll" || action == "select" || action == "check" || action == "uncheck" {
+				args = `{"probe":true,"expectedState":{"tabId":"t1","expectedUrl":"http://localhost/page","snapshotGeneration":3}}`
+			}
 			body, status, _ := doRequest(
 				t,
 				srv,
 				http.MethodPost,
 				"/api/v1/browser/commands",
-				`{"sessionId":"ao-1","action":"`+action+`","args":{"probe":true}}`,
+				`{"sessionId":"ao-1","action":"`+action+`","args":`+args+`}`,
 			)
 			if status != http.StatusOK {
 				t.Fatalf("%s = %d body=%s", action, status, body)
@@ -172,7 +205,7 @@ func TestBrowserCommandValidationAndErrors(t *testing.T) {
 		t.Fatalf("unavailable = %d body=%s", status, body)
 	}
 	runtime.err = browserruntime.CommandError{Code: "STALE_REFERENCE", Message: "snapshot again"}
-	body, status, _ = doRequest(t, srv, http.MethodPost, "/api/v1/browser/commands", `{"sessionId":"ao-1","action":"click"}`)
+	body, status, _ = doRequest(t, srv, http.MethodPost, "/api/v1/browser/commands", `{"sessionId":"ao-1","action":"click","args":{"expectedState":{"tabId":"t1","expectedUrl":"http://localhost/page","snapshotGeneration":3}}}`)
 	if status != http.StatusConflict || !containsAll(body, `"code":"STALE_REFERENCE"`) {
 		t.Fatalf("stale = %d body=%s", status, body)
 	}

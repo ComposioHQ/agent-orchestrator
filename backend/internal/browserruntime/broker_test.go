@@ -124,6 +124,44 @@ func TestBrokerUnavailableWithoutElectron(t *testing.T) {
 	}
 }
 
+func TestBrokerMarksDispatchedCommandOutcomeUnknownOnDisconnect(t *testing.T) {
+	broker := New(nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	go func() { _ = broker.Serve(ctx, ln) }()
+	conn, err := net.Dial("tcp", ln.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	enc, dec := json.NewEncoder(conn), json.NewDecoder(conn)
+	_ = enc.Encode(wireMessage{Type: "hello", Version: ProtocolVersion})
+	waitConnected(t, broker)
+
+	errCh := make(chan error, 1)
+	go func() {
+		_, executeErr := broker.Execute(context.Background(), "session-1", "click", nil)
+		errCh <- executeErr
+	}()
+	var command wireMessage
+	if err := dec.Decode(&command); err != nil {
+		t.Fatal(err)
+	}
+	_ = conn.Close()
+
+	select {
+	case executeErr := <-errCh:
+		if !errors.Is(executeErr, ErrOutcomeUnknown) {
+			t.Fatalf("error = %v, want ErrOutcomeUnknown", executeErr)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for disconnect result")
+	}
+}
+
 func TestBrokerRejectsInvalidRuntimeToken(t *testing.T) {
 	broker := New(nil, "expected-token")
 	ctx, cancel := context.WithCancel(context.Background())

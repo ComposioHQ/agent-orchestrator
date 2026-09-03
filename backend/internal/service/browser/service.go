@@ -7,7 +7,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
+	"net/url"
 	"strings"
+	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/browserruntime"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
@@ -20,6 +23,17 @@ var actions = map[string]struct{}{
 	"tab-select": {}, "tab-close": {}, "scroll": {}, "select": {}, "check": {},
 	"uncheck": {}, "get": {}, "wait": {}, "screenshot": {}, "network-start": {},
 	"network-status": {}, "network-list": {}, "network-stop": {}, "network-clear": {},
+	"console": {}, "errors": {},
+}
+
+var mutationActions = map[string]struct{}{
+	"click": {}, "fill": {}, "type": {}, "press": {}, "scroll": {},
+	"select": {}, "check": {}, "uncheck": {},
+}
+
+var retryableActions = map[string]struct{}{
+	"snapshot": {}, "hover": {}, "highlight": {}, "unhighlight": {}, "tabs": {},
+	"get": {}, "wait": {}, "screenshot": {}, "network-status": {}, "network-list": {},
 	"console": {}, "errors": {},
 }
 
@@ -94,11 +108,23 @@ func (s *Service) Observe(
 	if err := s.authorize(ctx, sessionID, capability); err != nil {
 		return browserruntime.Result{}, browserruntime.Observation{}, err
 	}
-	result, err := s.runtime.Execute(ctx, sessionID, "observe", map[string]interface{}{
+	args := map[string]interface{}{
+		"tabId":             options.TabID,
 		"interactiveOnly":   options.InteractiveOnly,
 		"includeScreenshot": options.IncludeScreenshot,
 		"includeProblems":   options.IncludeProblems,
-	})
+	}
+	result, err := s.runtime.Execute(ctx, sessionID, "observe", args)
+	if errors.Is(err, browserruntime.ErrUnavailable) || errors.Is(err, browserruntime.ErrOutcomeUnknown) {
+		timer := time.NewTimer(100 * time.Millisecond)
+		defer timer.Stop()
+		select {
+		case <-ctx.Done():
+			return browserruntime.Result{}, browserruntime.Observation{}, ctx.Err()
+		case <-timer.C:
+		}
+		result, err = s.runtime.Execute(ctx, sessionID, "observe", args)
+	}
 	if err != nil {
 		return browserruntime.Result{}, browserruntime.Observation{}, err
 	}
@@ -128,8 +154,82 @@ func (s *Service) Execute(
 			nil,
 		)
 	}
+	if _, mutates := mutationActions[action]; mutates && !hasBrowserPreconditions(args) {
+		return browserruntime.Result{}, action, apierr.Invalid(
+			"BROWSER_PRECONDITION_REQUIRED",
+			"Mutating browser actions require expectedState.tabId, expectedState.expectedUrl, and expectedState.snapshotGeneration",
+			nil,
+		)
+	}
+	if _, mutates := mutationActions[action]; mutates && externalBrowserTarget(args) {
+		confirmed, _ := args["confirmed"].(bool)
+		if !confirmed {
+			return browserruntime.Result{}, action, apierr.Invalid(
+				"BROWSER_CONFIRMATION_REQUIRED",
+				"Mutating a non-local browser target requires explicit user confirmation",
+				nil,
+			)
+		}
+	}
 	result, err := s.runtime.Execute(ctx, sessionID, action, args)
+	if err != nil {
+		if _, retryable := retryableActions[action]; retryable && (errors.Is(err, browserruntime.ErrUnavailable) || errors.Is(err, browserruntime.ErrOutcomeUnknown)) {
+			timer := time.NewTimer(100 * time.Millisecond)
+			defer timer.Stop()
+			select {
+			case <-ctx.Done():
+				return browserruntime.Result{}, action, ctx.Err()
+			case <-timer.C:
+			}
+			result, err = s.runtime.Execute(ctx, sessionID, action, args)
+		}
+		if _, mutates := mutationActions[action]; mutates && errors.Is(err, browserruntime.ErrOutcomeUnknown) {
+			return browserruntime.Result{}, action, browserruntime.CommandError{
+				Code: "BROWSER_OUTCOME_UNKNOWN", Message: "The browser connection was lost after dispatch; observe before deciding whether to act again",
+			}
+		}
+	}
 	return result, action, err
+}
+
+func hasBrowserPreconditions(args map[string]interface{}) bool {
+	if args == nil {
+		return false
+	}
+	expected, ok := args["expectedState"].(map[string]interface{})
+	if !ok {
+		return false
+	}
+	tabID, tabOK := expected["tabId"].(string)
+	expectedURL, urlOK := expected["expectedUrl"].(string)
+	generationOK := false
+	switch generation := expected["snapshotGeneration"].(type) {
+	case int:
+		generationOK = generation >= 0
+	case float64:
+		generationOK = generation >= 0 && generation == float64(int(generation))
+	}
+	return tabOK && strings.TrimSpace(tabID) != "" && urlOK && expectedURL != "" && generationOK
+}
+
+func externalBrowserTarget(args map[string]interface{}) bool {
+	expected, _ := args["expectedState"].(map[string]interface{})
+	raw, _ := expected["expectedUrl"].(string)
+	target, err := url.Parse(raw)
+	if err != nil {
+		return true
+	}
+	if target.Scheme == "file" {
+		return false
+	}
+	host := strings.ToLower(target.Hostname())
+	if host == "localhost" || host == "0.0.0.0" || strings.HasSuffix(host, ".localhost") {
+		return false
+	}
+	if ip := net.ParseIP(host); ip != nil && (ip.IsLoopback() || ip.IsUnspecified()) {
+		return false
+	}
+	return true
 }
 
 func (s *Service) authorize(ctx context.Context, sessionID domain.SessionID, capability string) error {

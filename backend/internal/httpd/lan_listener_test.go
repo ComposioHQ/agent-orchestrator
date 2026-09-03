@@ -68,6 +68,8 @@ func TestLANManagerBlocksLoopbackOnlyControlRoutes(t *testing.T) {
 		"/api/v1/dev/import-projects",
 		"/api/v1/browser/status",
 		"/api/v1/browser/observe",
+		"/api/v1/browser/actions",
+		"/api/v1/browser/commands",
 		"/api/v1/sessions/ao-1/preview/server",
 	}
 	for _, path := range blocked {

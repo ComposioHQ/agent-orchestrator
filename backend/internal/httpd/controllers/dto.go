@@ -308,6 +308,7 @@ type BrowserStatusResponse struct {
 // observation. Observation never sends diagnostics or messages into the agent.
 type BrowserObserveRequest struct {
 	SessionID         domain.SessionID `json:"sessionId"`
+	TabID             string           `json:"tabId,omitempty"`
 	InteractiveOnly   bool             `json:"interactiveOnly,omitempty"`
 	IncludeScreenshot bool             `json:"includeScreenshot,omitempty"`
 	IncludeProblems   bool             `json:"includeProblems,omitempty"`
@@ -318,6 +319,47 @@ type BrowserObserveResponse struct {
 	RequestID   string                     `json:"requestId"`
 	SessionID   domain.SessionID           `json:"sessionId"`
 	Observation browserruntime.Observation `json:"observation"`
+}
+
+// BrowserActionRequest is the typed mutation boundary used by autonomous
+// callers. ExpectedState is required and pins the action to an observation.
+type BrowserActionRequest struct {
+	SessionID       domain.SessionID             `json:"sessionId"`
+	Action          string                       `json:"action" enum:"click,fill,type,press,scroll,select,check,uncheck"`
+	Ref             string                       `json:"ref,omitempty"`
+	Target          *browserruntime.Locator      `json:"target,omitempty"`
+	ExpectedState   browserruntime.ExpectedState `json:"expectedState"`
+	Text            string                       `json:"text,omitempty"`
+	Value           string                       `json:"value,omitempty"`
+	Key             string                       `json:"key,omitempty"`
+	Direction       string                       `json:"direction,omitempty" enum:"up,down,left,right"`
+	Amount          int                          `json:"amount,omitempty"`
+	AllowStaleRemap bool                         `json:"allowStaleRemap,omitempty"`
+	Confirmed       bool                         `json:"confirmed,omitempty" description:"Explicit user confirmation for a mutation on a non-local target."`
+	WaitAfter       *browserruntime.ActionWait   `json:"waitAfter,omitempty"`
+}
+
+// BrowserActionResult contains common action output and deterministic evidence.
+type BrowserActionResult struct {
+	Target    string                        `json:"target,omitempty"`
+	URL       string                        `json:"url,omitempty"`
+	Text      string                        `json:"text,omitempty"`
+	Value     interface{}                   `json:"value,omitempty"`
+	Key       string                        `json:"key,omitempty"`
+	Direction string                        `json:"direction,omitempty"`
+	Amount    int                           `json:"amount,omitempty"`
+	Checked   *bool                         `json:"checked,omitempty"`
+	X         float64                       `json:"x,omitempty"`
+	Y         float64                       `json:"y,omitempty"`
+	Evidence  browserruntime.ActionEvidence `json:"evidence"`
+}
+
+// BrowserActionResponse is the correlated typed mutation response.
+type BrowserActionResponse struct {
+	RequestID string              `json:"requestId"`
+	SessionID domain.SessionID    `json:"sessionId"`
+	Action    string              `json:"action"`
+	Result    BrowserActionResult `json:"result"`
 }
 
 // BrowserCommandRequest is the stable daemon-facing command envelope. Action

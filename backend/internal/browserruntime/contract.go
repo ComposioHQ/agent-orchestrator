@@ -34,9 +34,10 @@ type Image struct {
 
 // Element is one actionable node exposed by an accessibility snapshot.
 type Element struct {
-	Ref  string `json:"ref"`
-	Role string `json:"role"`
-	Name string `json:"name"`
+	Ref         string  `json:"ref"`
+	Role        string  `json:"role"`
+	Name        string  `json:"name"`
+	Fingerprint Locator `json:"fingerprint"`
 }
 
 // Snapshot is the compact accessibility observation for a target generation.
@@ -83,7 +84,69 @@ type Observation struct {
 
 // ObserveOptions controls the evidence included in one atomic observation.
 type ObserveOptions struct {
-	InteractiveOnly   bool `json:"interactiveOnly"`
-	IncludeScreenshot bool `json:"includeScreenshot"`
-	IncludeProblems   bool `json:"includeProblems"`
+	TabID             string `json:"tabId,omitempty"`
+	InteractiveOnly   bool   `json:"interactiveOnly"`
+	IncludeScreenshot bool   `json:"includeScreenshot"`
+	IncludeProblems   bool   `json:"includeProblems"`
+}
+
+// Locator identifies one page element semantically. The runtime rejects zero
+// or multiple matches instead of guessing which element the caller intended.
+type Locator struct {
+	Role        string `json:"role,omitempty"`
+	Name        string `json:"name,omitempty"`
+	Label       string `json:"label,omitempty"`
+	Placeholder string `json:"placeholder,omitempty"`
+	Text        string `json:"text,omitempty"`
+	TestID      string `json:"testId,omitempty"`
+	CSS         string `json:"css,omitempty"`
+	Exact       bool   `json:"exact,omitempty"`
+}
+
+// ExpectedState pins a mutation to the exact state previously observed. A tab
+// selection or navigation between observe and act therefore fails closed.
+type ExpectedState struct {
+	TabID              string `json:"tabId"`
+	ExpectedURL        string `json:"expectedUrl"`
+	SnapshotGeneration int    `json:"snapshotGeneration"`
+}
+
+// ActionWait is the bounded stabilization performed after a mutation.
+type ActionWait struct {
+	Load      bool `json:"load,omitempty"`
+	StableMS  int  `json:"stableMs,omitempty"`
+	TimeoutMS int  `json:"timeoutMs,omitempty"`
+}
+
+// ActionState is the compact state captured on either side of a mutation.
+type ActionState struct {
+	TabID              string `json:"tabId"`
+	URL                string `json:"url"`
+	SnapshotGeneration int    `json:"snapshotGeneration"`
+	Loading            bool   `json:"loading"`
+	ErrorCount         int    `json:"errorCount"`
+}
+
+// ActionEffects summarizes evidence without including console or page error
+// contents. Diagnostics remain explicit, opt-in observations.
+type ActionEffects struct {
+	Navigated       bool `json:"navigated"`
+	DocumentChanged bool `json:"documentChanged"`
+	NewErrorCount   int  `json:"newErrorCount"`
+}
+
+// ActionEvidence describes the observable effects of one mutation.
+type ActionEvidence struct {
+	Before            ActionState   `json:"before"`
+	After             ActionState   `json:"after"`
+	Effects           ActionEffects `json:"effects"`
+	Target            *ActionTarget `json:"target,omitempty"`
+	RecommendedAction string        `json:"recommendedAction"`
+}
+
+// ActionTarget records how the runtime resolved the requested element.
+type ActionTarget struct {
+	Label    string   `json:"label"`
+	Locator  *Locator `json:"locator,omitempty"`
+	Remapped bool     `json:"remapped"`
 }

@@ -861,6 +861,22 @@ messages, or the agent conversation. Browser readiness is derived from the live
 provider (`desktop_closed`, `target_starting`, `page_loading`, `ready`,
 `recovering`, or `unavailable`) and is never persisted as session status.
 
+Browser mutations are pinned to the tab ID, exact URL, and snapshot generation
+returned by observation. Semantic locators must have exactly one match; stale
+refs may be remapped once only under an explicit opt-in and a unique stored
+fingerprint. Mutation evidence contains target state and diagnostic counts, not
+console/error text. No browser failure, recovery event, or verification result
+is written into terminal input, annotation delivery, session messages, or the
+agent conversation.
+The code-first `POST /api/v1/browser/actions` operation is the typed mutation
+boundary. The older `/browser/commands` envelope remains for non-mutating and
+compatibility operations, but the service applies the same mandatory expected
+state validation to mutations arriving through it.
+The service treats localhost, loopback, and file preview targets as the routine
+automation tier. A mutation against any other URL requires an explicit
+confirmation bit at the API boundary; strict target state does not substitute
+for confirmation of an external side effect.
+
 ---
 
 ## Load-Bearing Rules

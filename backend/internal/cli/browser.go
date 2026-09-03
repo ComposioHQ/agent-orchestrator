@@ -56,9 +56,10 @@ type browserSnapshotDTO struct {
 }
 
 type browserElementDTO struct {
-	Ref  string `json:"ref"`
-	Role string `json:"role"`
-	Name string `json:"name"`
+	Ref         string         `json:"ref"`
+	Role        string         `json:"role"`
+	Name        string         `json:"name"`
+	Fingerprint map[string]any `json:"fingerprint"`
 }
 
 type browserLogEntryDTO struct {
@@ -87,6 +88,7 @@ type browserObservationDTO struct {
 
 type browserObserveRequestDTO struct {
 	SessionID         string `json:"sessionId"`
+	TabID             string `json:"tabId,omitempty"`
 	InteractiveOnly   bool   `json:"interactiveOnly,omitempty"`
 	IncludeScreenshot bool   `json:"includeScreenshot,omitempty"`
 	IncludeProblems   bool   `json:"includeProblems,omitempty"`
@@ -111,11 +113,32 @@ type browserCommandResponseDTO struct {
 	Result    map[string]any `json:"result"`
 }
 
+type browserActionRequestDTO struct {
+	SessionID       string         `json:"sessionId"`
+	Action          string         `json:"action"`
+	Ref             string         `json:"ref,omitempty"`
+	Target          map[string]any `json:"target,omitempty"`
+	ExpectedState   map[string]any `json:"expectedState"`
+	Text            string         `json:"text,omitempty"`
+	Value           string         `json:"value,omitempty"`
+	Key             string         `json:"key,omitempty"`
+	Direction       string         `json:"direction,omitempty"`
+	Amount          int            `json:"amount,omitempty"`
+	AllowStaleRemap bool           `json:"allowStaleRemap,omitempty"`
+	Confirmed       bool           `json:"confirmed,omitempty"`
+	WaitAfter       map[string]any `json:"waitAfter,omitempty"`
+}
+
 const browserCapabilityHeader = "X-AO-Browser-Capability"
 const maxBrowserWaitMillis = 55_000
 
 func newBrowserCommand(ctx *commandContext) *cobra.Command {
 	var jsonOutput bool
+	var targetTab, expectedURL string
+	var snapshotGeneration int
+	var locatorRole, locatorName, locatorLabel, locatorPlaceholder, locatorText, locatorTestID, locatorCSS string
+	var locatorExact, allowStaleRemap, actionWaitLoad, confirmExternal bool
+	var actionWaitStable, actionWaitTimeout int
 	cmd := &cobra.Command{
 		Use:   "browser",
 		Short: "Inspect and control this AO session's shared desktop browser",
@@ -125,6 +148,93 @@ func newBrowserCommand(ctx *commandContext) *cobra.Command {
 		Args: noArgs,
 	}
 	cmd.PersistentFlags().BoolVar(&jsonOutput, "json", false, "print the structured response as JSON")
+	cmd.PersistentFlags().StringVar(&targetTab, "tab", "", "target tab ID from the latest observation")
+	cmd.PersistentFlags().StringVar(&expectedURL, "expected-url", "", "exact URL from the latest observation")
+	cmd.PersistentFlags().IntVar(&snapshotGeneration, "generation", -1, "snapshot generation from the latest observation")
+	cmd.PersistentFlags().StringVar(&locatorRole, "role", "", "target an element by semantic role")
+	cmd.PersistentFlags().StringVar(&locatorName, "name", "", "target an element by accessible name")
+	cmd.PersistentFlags().StringVar(&locatorLabel, "label", "", "target a control by label")
+	cmd.PersistentFlags().StringVar(&locatorPlaceholder, "placeholder", "", "target a control by placeholder")
+	cmd.PersistentFlags().StringVar(&locatorText, "locator-text", "", "target an element containing text")
+	cmd.PersistentFlags().StringVar(&locatorTestID, "test-id", "", "target an element by data-testid")
+	cmd.PersistentFlags().StringVar(&locatorCSS, "css", "", "target an element by CSS selector")
+	cmd.PersistentFlags().BoolVar(&locatorExact, "exact", false, "require exact semantic text matches")
+	cmd.PersistentFlags().BoolVar(&allowStaleRemap, "allow-remap", false, "remap one stale ref only when its semantic fingerprint is unique")
+	cmd.PersistentFlags().BoolVar(&confirmExternal, "confirm-external", false, "confirm an action on a non-local page")
+	cmd.PersistentFlags().BoolVar(&actionWaitLoad, "wait-load", false, "wait for page loading to finish after an action")
+	cmd.PersistentFlags().IntVar(&actionWaitStable, "wait-stable", 0, "wait for this many milliseconds of DOM stability after an action")
+	cmd.PersistentFlags().IntVar(&actionWaitTimeout, "wait-timeout", 10_000, "post-action wait timeout in milliseconds")
+
+	mutationArgs := func(args map[string]any) (map[string]any, error) {
+		if targetTab == "" || expectedURL == "" || snapshotGeneration < 0 {
+			return nil, usageError{errors.New("mutating browser actions require --tab, --expected-url, and --generation from the latest observation")}
+		}
+		if actionWaitTimeout < 1 || actionWaitTimeout > maxBrowserWaitMillis {
+			return nil, usageError{fmt.Errorf("--wait-timeout must be between 1 and %d milliseconds", maxBrowserWaitMillis)}
+		}
+		if actionWaitStable < 0 || actionWaitStable > actionWaitTimeout {
+			return nil, usageError{errors.New("--wait-stable must be non-negative and no greater than --wait-timeout")}
+		}
+		if actionWaitLoad && actionWaitStable > 0 {
+			return nil, usageError{errors.New("choose only one of --wait-load or --wait-stable")}
+		}
+		if args == nil {
+			args = map[string]any{}
+		}
+		args["expectedState"] = map[string]any{
+			"tabId": targetTab, "expectedUrl": expectedURL, "snapshotGeneration": snapshotGeneration,
+		}
+		if allowStaleRemap {
+			args["allowStaleRemap"] = true
+		}
+		if confirmExternal {
+			args["confirmed"] = true
+		}
+		if actionWaitLoad || actionWaitStable > 0 {
+			args["waitAfter"] = map[string]any{
+				"load": actionWaitLoad, "stableMs": actionWaitStable, "timeoutMs": actionWaitTimeout,
+			}
+		}
+		return args, nil
+	}
+	targetArgs := func(ref string) (map[string]any, error) {
+		locator := map[string]any{}
+		for key, value := range map[string]string{
+			"role": locatorRole, "name": locatorName, "label": locatorLabel, "placeholder": locatorPlaceholder,
+			"text": locatorText, "testId": locatorTestID, "css": locatorCSS,
+		} {
+			if strings.TrimSpace(value) != "" {
+				locator[key] = value
+			}
+		}
+		if len(locator) > 0 {
+			if ref != "" {
+				return nil, usageError{errors.New("provide either a snapshot ref or semantic locator flags, not both")}
+			}
+			if locatorExact {
+				locator["exact"] = true
+			}
+			return map[string]any{"target": locator}, nil
+		}
+		if ref == "" {
+			return nil, usageError{errors.New("provide a snapshot ref or one of --role, --name, --label, --placeholder, --locator-text, --test-id, or --css")}
+		}
+		return map[string]any{"ref": ref}, nil
+	}
+	runMutation := func(command *cobra.Command, action string, args map[string]any) error {
+		withState, err := mutationArgs(args)
+		if err != nil {
+			return err
+		}
+		resp, err := ctx.browserMutationAction(command.Context(), action, withState)
+		if err != nil {
+			return err
+		}
+		if jsonOutput {
+			return writeJSON(command.OutOrStdout(), resp)
+		}
+		return writeBrowserResult(command, action, resp.Result)
+	}
 
 	cmd.AddCommand(&cobra.Command{
 		Use:   "status",
@@ -164,7 +274,7 @@ func newBrowserCommand(ctx *commandContext) *cobra.Command {
 		Short: "Print a compact accessibility snapshot with actionable element refs",
 		Args:  noArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return ctx.runBrowserAction(cmd, "snapshot", map[string]any{"interactive": interactiveOnly}, jsonOutput)
+			return ctx.runBrowserAction(cmd, "snapshot", map[string]any{"interactive": interactiveOnly, "tabId": targetTab}, jsonOutput)
 		},
 	}
 	snapshot.Flags().BoolVar(&interactiveOnly, "interactive", false, "include only actionable elements")
@@ -179,7 +289,7 @@ func newBrowserCommand(ctx *commandContext) *cobra.Command {
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			includeScreenshot := observeScreenshot || observeScreenshotOut != ""
 			resp, err := ctx.browserObserve(cmd.Context(), browserObserveRequestDTO{
-				InteractiveOnly: observeInteractive, IncludeScreenshot: includeScreenshot, IncludeProblems: observeProblems,
+				TabID: targetTab, InteractiveOnly: observeInteractive, IncludeScreenshot: includeScreenshot, IncludeProblems: observeProblems,
 			})
 			if err != nil {
 				return err
@@ -212,29 +322,55 @@ func newBrowserCommand(ctx *commandContext) *cobra.Command {
 	cmd.AddCommand(observe)
 
 	cmd.AddCommand(&cobra.Command{
-		Use:   "click <ref>",
+		Use:   "click [ref]",
 		Short: "Click an element reference from the latest snapshot",
-		Args:  exactArgs(1),
+		Args:  atMostOneArg,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return ctx.runBrowserAction(cmd, "click", map[string]any{"ref": args[0]}, jsonOutput)
+			ref := ""
+			if len(args) == 1 {
+				ref = args[0]
+			}
+			actionArgs, err := targetArgs(ref)
+			if err != nil {
+				return err
+			}
+			return runMutation(cmd, "click", actionArgs)
 		},
 	})
 
 	cmd.AddCommand(&cobra.Command{
-		Use:   "fill <ref> <text>",
+		Use:   "fill [ref] <text>",
 		Short: "Replace the value of a form control",
-		Args:  exactArgs(2),
+		Args:  rangeArgs(1, 2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return ctx.runBrowserAction(cmd, "fill", map[string]any{"ref": args[0], "text": args[1]}, jsonOutput)
+			ref, text := "", args[0]
+			if len(args) == 2 {
+				ref, text = args[0], args[1]
+			}
+			actionArgs, err := targetArgs(ref)
+			if err != nil {
+				return err
+			}
+			actionArgs["text"] = text
+			return runMutation(cmd, "fill", actionArgs)
 		},
 	})
 
 	cmd.AddCommand(&cobra.Command{
-		Use:   "type <ref> <text>",
+		Use:   "type [ref] <text>",
 		Short: "Type text at the current cursor position in a form control",
-		Args:  exactArgs(2),
+		Args:  rangeArgs(1, 2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return ctx.runBrowserAction(cmd, "type", map[string]any{"ref": args[0], "text": args[1]}, jsonOutput)
+			ref, text := "", args[0]
+			if len(args) == 2 {
+				ref, text = args[0], args[1]
+			}
+			actionArgs, err := targetArgs(ref)
+			if err != nil {
+				return err
+			}
+			actionArgs["text"] = text
+			return runMutation(cmd, "type", actionArgs)
 		},
 	})
 
@@ -243,16 +379,24 @@ func newBrowserCommand(ctx *commandContext) *cobra.Command {
 		Short: "Press a key or modifier chord such as Enter or Control+A",
 		Args:  exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return ctx.runBrowserAction(cmd, "press", map[string]any{"key": args[0]}, jsonOutput)
+			return runMutation(cmd, "press", map[string]any{"key": args[0]})
 		},
 	})
 
 	cmd.AddCommand(&cobra.Command{
-		Use:   "hover <ref>",
+		Use:   "hover [ref]",
 		Short: "Move the pointer over an element",
-		Args:  exactArgs(1),
+		Args:  atMostOneArg,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return ctx.runBrowserAction(cmd, "hover", map[string]any{"ref": args[0]}, jsonOutput)
+			ref := ""
+			if len(args) == 1 {
+				ref = args[0]
+			}
+			actionArgs, err := targetArgs(ref)
+			if err != nil {
+				return err
+			}
+			return ctx.runBrowserAction(cmd, "hover", actionArgs, jsonOutput)
 		},
 	})
 
@@ -328,23 +472,27 @@ func newBrowserCommand(ctx *commandContext) *cobra.Command {
 		Short: "Scroll the page in one direction",
 		Args:  exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return ctx.runBrowserAction(
-				cmd,
-				"scroll",
-				map[string]any{"direction": args[0], "amount": scrollAmount},
-				jsonOutput,
-			)
+			return runMutation(cmd, "scroll", map[string]any{"direction": args[0], "amount": scrollAmount})
 		},
 	}
 	scroll.Flags().IntVar(&scrollAmount, "amount", 600, "scroll distance in CSS pixels")
 	cmd.AddCommand(scroll)
 
 	cmd.AddCommand(&cobra.Command{
-		Use:   "select <ref> <value>",
+		Use:   "select [ref] <value>",
 		Short: "Select an option value",
-		Args:  exactArgs(2),
+		Args:  rangeArgs(1, 2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return ctx.runBrowserAction(cmd, "select", map[string]any{"ref": args[0], "value": args[1]}, jsonOutput)
+			ref, value := "", args[0]
+			if len(args) == 2 {
+				ref, value = args[0], args[1]
+			}
+			actionArgs, err := targetArgs(ref)
+			if err != nil {
+				return err
+			}
+			actionArgs["value"] = value
+			return runMutation(cmd, "select", actionArgs)
 		},
 	})
 
@@ -356,11 +504,19 @@ func newBrowserCommand(ctx *commandContext) *cobra.Command {
 			short = "Uncheck a checkbox or switch"
 		}
 		cmd.AddCommand(&cobra.Command{
-			Use:   action + " <ref>",
+			Use:   action + " [ref]",
 			Short: short,
-			Args:  exactArgs(1),
+			Args:  atMostOneArg,
 			RunE: func(cmd *cobra.Command, args []string) error {
-				return ctx.runBrowserAction(cmd, action, map[string]any{"ref": args[0]}, jsonOutput)
+				ref := ""
+				if len(args) == 1 {
+					ref = args[0]
+				}
+				actionArgs, err := targetArgs(ref)
+				if err != nil {
+					return err
+				}
+				return runMutation(cmd, action, actionArgs)
 			},
 		})
 	}
@@ -451,6 +607,74 @@ func newBrowserCommand(ctx *commandContext) *cobra.Command {
 	waitCmd.Flags().IntVar(&waitMS, "ms", 0, "wait for a fixed number of milliseconds")
 	waitCmd.Flags().IntVar(&timeoutMS, "timeout", 10_000, "condition timeout in milliseconds")
 	cmd.AddCommand(waitCmd)
+
+	var verifyText, verifySelector, verifyURL, verifyScreenshotOut string
+	var verifyLoad bool
+	var verifyStableMS, verifyTimeoutMS int
+	verifyCmd := &cobra.Command{
+		Use:   "verify",
+		Short: "Verify one postcondition, then capture semantic and visual evidence",
+		Args:  noArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if targetTab == "" {
+				return usageError{errors.New("browser verify requires --tab from the action evidence")}
+			}
+			selected := 0
+			for _, active := range []bool{verifyText != "", verifySelector != "", verifyURL != "", verifyLoad, verifyStableMS > 0} {
+				if active {
+					selected++
+				}
+			}
+			if selected != 1 {
+				return usageError{errors.New("choose exactly one of --text, --selector, --url, --load, or --dom-stable")}
+			}
+			if verifyTimeoutMS < 1 || verifyTimeoutMS > maxBrowserWaitMillis || verifyStableMS > verifyTimeoutMS {
+				return usageError{fmt.Errorf("--timeout must be between 1 and %d milliseconds and at least --dom-stable", maxBrowserWaitMillis)}
+			}
+			waitArgs := map[string]any{"timeoutMs": verifyTimeoutMS, "tabId": targetTab}
+			switch {
+			case verifyText != "":
+				waitArgs["text"] = verifyText
+			case verifySelector != "":
+				waitArgs["selector"] = verifySelector
+			case verifyURL != "":
+				waitArgs["url"] = verifyURL
+			case verifyLoad:
+				waitArgs["load"] = true
+			default:
+				waitArgs["stableMs"] = verifyStableMS
+			}
+			if _, err := ctx.browserAction(cmd.Context(), "wait", waitArgs); err != nil {
+				return err
+			}
+			resp, err := ctx.browserObserve(cmd.Context(), browserObserveRequestDTO{TabID: targetTab, IncludeScreenshot: true})
+			if err != nil {
+				return err
+			}
+			if jsonOutput {
+				return writeJSON(cmd.OutOrStdout(), resp)
+			}
+			if _, err := fmt.Fprintln(cmd.OutOrStdout(), resp.Observation.Snapshot.Text); err != nil {
+				return err
+			}
+			target := verifyScreenshotOut
+			if target == "" {
+				target = "ao-browser-verify-" + ctx.deps.Now().Format("20060102-150405.000") + ".png"
+			}
+			if resp.Observation.Screenshot == nil {
+				return errors.New("browser verification returned no screenshot")
+			}
+			return writeBrowserImage(cmd, *resp.Observation.Screenshot, target)
+		},
+	}
+	verifyCmd.Flags().StringVar(&verifyText, "text", "", "verify that visible page text contains this value")
+	verifyCmd.Flags().StringVar(&verifySelector, "selector", "", "verify that this CSS selector exists")
+	verifyCmd.Flags().StringVar(&verifyURL, "url", "", "verify that the current URL contains this value")
+	verifyCmd.Flags().BoolVar(&verifyLoad, "load", false, "verify that the page has finished loading")
+	verifyCmd.Flags().IntVar(&verifyStableMS, "dom-stable", 0, "verify this many milliseconds of DOM stability")
+	verifyCmd.Flags().IntVar(&verifyTimeoutMS, "timeout", 10_000, "verification timeout in milliseconds")
+	verifyCmd.Flags().StringVar(&verifyScreenshotOut, "screenshot-out", "", "save visual verification evidence to this path")
+	cmd.AddCommand(verifyCmd)
 
 	cmd.AddCommand(&cobra.Command{
 		Use:   "screenshot [path]",
@@ -588,6 +812,31 @@ func (c *commandContext) browserAction(ctx context.Context, action string, args 
 		"/api/v1/browser/commands",
 		browserCommandRequestDTO{SessionID: sessionID, Action: action, Args: args},
 		&out,
+		map[string]string{browserCapabilityHeader: capability},
+	)
+	return out, err
+}
+
+func (c *commandContext) browserMutationAction(ctx context.Context, action string, args map[string]any) (browserCommandResponseDTO, error) {
+	sessionID, capability, err := currentBrowserIdentity()
+	if err != nil {
+		return browserCommandResponseDTO{}, err
+	}
+	in := browserActionRequestDTO{SessionID: sessionID, Action: action}
+	in.Ref, _ = args["ref"].(string)
+	in.Target, _ = args["target"].(map[string]any)
+	in.ExpectedState, _ = args["expectedState"].(map[string]any)
+	in.Text, _ = args["text"].(string)
+	in.Value, _ = args["value"].(string)
+	in.Key, _ = args["key"].(string)
+	in.Direction, _ = args["direction"].(string)
+	in.Amount, _ = args["amount"].(int)
+	in.AllowStaleRemap, _ = args["allowStaleRemap"].(bool)
+	in.Confirmed, _ = args["confirmed"].(bool)
+	in.WaitAfter, _ = args["waitAfter"].(map[string]any)
+	var out browserCommandResponseDTO
+	err = c.doJSONPathWithHeaders(
+		ctx, http.MethodPost, "/api/v1/browser/actions", in, &out,
 		map[string]string{browserCapabilityHeader: capability},
 	)
 	return out, err

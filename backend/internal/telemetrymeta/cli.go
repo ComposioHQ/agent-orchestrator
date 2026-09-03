@@ -98,6 +98,7 @@ var legacyActorlessUserCLICommands = map[string]struct{}{
 	"ao browser status":         {},
 	"ao browser tabs":           {},
 	"ao browser type":           {},
+	"ao browser verify":         {},
 	"ao browser uncheck":        {},
 	"ao browser unhighlight":    {},
 	"ao browser wait":           {},

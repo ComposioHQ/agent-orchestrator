@@ -2,6 +2,7 @@ package controllers
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"strings"
@@ -32,6 +33,7 @@ type BrowserController struct {
 func (c *BrowserController) Register(r chi.Router) {
 	r.Get("/browser/status", c.status)
 	r.Post("/browser/observe", c.observe)
+	r.Post("/browser/actions", c.action)
 	r.Post("/browser/commands", c.execute)
 }
 
@@ -72,7 +74,7 @@ func (c *BrowserController) observe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	result, observation, err := c.Svc.Observe(r.Context(), in.SessionID, r.Header.Get(browserCapabilityHeader), browserruntime.ObserveOptions{
-		InteractiveOnly: in.InteractiveOnly, IncludeScreenshot: in.IncludeScreenshot, IncludeProblems: in.IncludeProblems,
+		TabID: in.TabID, InteractiveOnly: in.InteractiveOnly, IncludeScreenshot: in.IncludeScreenshot, IncludeProblems: in.IncludeProblems,
 	})
 	if err != nil {
 		writeBrowserError(w, r, err)
@@ -116,9 +118,82 @@ func (c *BrowserController) execute(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (c *BrowserController) action(w http.ResponseWriter, r *http.Request) {
+	if c.Svc == nil {
+		apispec.NotImplemented(w, r, http.MethodPost, "/api/v1/browser/actions")
+		return
+	}
+	var in BrowserActionRequest
+	if err := decodeJSON(r, &in); err != nil {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_JSON", "Invalid JSON body", nil)
+		return
+	}
+	if in.SessionID == "" {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "SESSION_ID_REQUIRED", "sessionId is required", nil)
+		return
+	}
+	if (in.Ref == "") == (in.Target == nil) && in.Action != "press" && in.Action != "scroll" {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "BROWSER_TARGET_REQUIRED", "Provide exactly one of ref or target", nil)
+		return
+	}
+	args := map[string]interface{}{
+		"expectedState": map[string]interface{}{
+			"tabId": in.ExpectedState.TabID, "expectedUrl": in.ExpectedState.ExpectedURL,
+			"snapshotGeneration": in.ExpectedState.SnapshotGeneration,
+		},
+	}
+	if in.Ref != "" {
+		args["ref"] = in.Ref
+	}
+	if in.Target != nil {
+		args["target"] = in.Target
+	}
+	switch in.Action {
+	case "fill", "type":
+		args["text"] = in.Text
+	case "press":
+		args["key"] = in.Key
+	case "scroll":
+		args["direction"], args["amount"] = in.Direction, in.Amount
+	case "select":
+		args["value"] = in.Value
+	}
+	if in.AllowStaleRemap {
+		args["allowStaleRemap"] = true
+	}
+	if in.Confirmed {
+		args["confirmed"] = true
+	}
+	if in.WaitAfter != nil {
+		args["waitAfter"] = in.WaitAfter
+	}
+	result, action, err := c.Svc.Execute(r.Context(), in.SessionID, r.Header.Get(browserCapabilityHeader), in.Action, args)
+	if err != nil {
+		writeBrowserError(w, r, err)
+		return
+	}
+	data, err := json.Marshal(result.Value)
+	if err != nil {
+		envelope.WriteError(w, r, err)
+		return
+	}
+	var typed BrowserActionResult
+	if err := json.Unmarshal(data, &typed); err != nil {
+		envelope.WriteError(w, r, err)
+		return
+	}
+	envelope.WriteJSON(w, http.StatusOK, BrowserActionResponse{
+		RequestID: result.RequestID, SessionID: in.SessionID, Action: action, Result: typed,
+	})
+}
+
 func writeBrowserError(w http.ResponseWriter, r *http.Request, err error) {
 	if errors.Is(err, browserruntime.ErrUnavailable) {
 		envelope.WriteAPIError(w, r, http.StatusServiceUnavailable, "unavailable", "BROWSER_RUNTIME_UNAVAILABLE", "Desktop browser runtime is not connected", nil)
+		return
+	}
+	if errors.Is(err, browserruntime.ErrOutcomeUnknown) {
+		envelope.WriteAPIError(w, r, http.StatusServiceUnavailable, "unavailable", "BROWSER_RUNTIME_RECOVERING", "Browser runtime disconnected during the command; retry the observation", nil)
 		return
 	}
 	var commandErr browserruntime.CommandError
@@ -129,7 +204,7 @@ func writeBrowserError(w http.ResponseWriter, r *http.Request, err error) {
 		case "INVALID_ARGUMENT", "URL_REQUIRED", "REFERENCE_REQUIRED", "TAB_ID_REQUIRED":
 			status = http.StatusBadRequest
 			typeName = "bad_request"
-		case "STALE_REFERENCE", "TAB_NOT_FOUND":
+		case "STALE_REFERENCE", "TAB_NOT_FOUND", "TARGET_CHANGED", "URL_CHANGED", "SNAPSHOT_CHANGED", "BROWSER_OUTCOME_UNKNOWN":
 			status = http.StatusConflict
 			typeName = "conflict"
 		case "BROWSER_TARGET_UNAVAILABLE":

@@ -82,6 +82,12 @@ surface (`npm run sqlc`, `npm run api`).
   identity, accessibility evidence, a model-consumable PNG, and explicitly
   requested diagnostics in one result. Observation and browser failures never
   inject messages into the agent session.
+- Deterministic browser actions pin mutations to an observed tab, URL, and
+  snapshot generation; support unique role/name, label, placeholder, text,
+  test-ID, and CSS locators; optionally remap a stale ref once by its semantic
+  fingerprint; and return before/after evidence with counts but no diagnostic
+  text. Bounded post-action waits and `ao browser verify` provide an explicit
+  postcondition plus fresh semantic and visual evidence.
 - Preview targets are explicit: `ao preview`, `ao preview <target>`, or
   `ao preview start` selects what the panel shows. The desktop poller no longer
   auto-discovers a static entry point merely because a fresh worker exists.

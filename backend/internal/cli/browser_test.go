@@ -33,9 +33,44 @@ func browserCLIServer(t *testing.T, capture *browserRequestCapture) *httptest.Se
 				t.Fatalf("decode observe: %v", err)
 			}
 			capture.body = browserCommandRequestDTO{SessionID: input.SessionID, Action: "observe", Args: map[string]any{
-				"interactiveOnly": input.InteractiveOnly, "includeScreenshot": input.IncludeScreenshot, "includeProblems": input.IncludeProblems,
+				"tabId": input.TabID, "interactiveOnly": input.InteractiveOnly, "includeScreenshot": input.IncludeScreenshot, "includeProblems": input.IncludeProblems,
 			}}
 			_, _ = io.WriteString(w, `{"requestId":"r-observe","sessionId":"ao-1","observation":{"state":"ready","provider":"electron","target":{"tabId":"t1","url":"http://localhost:3000","title":"App","loading":false,"snapshotGeneration":3},"snapshot":{"url":"http://localhost:3000","title":"App","generation":3,"text":"button Save [ref=e1]","totalNodes":1,"truncated":false},"screenshot":{"mimeType":"image/png","data":"cG5n","width":10,"height":20,"url":"http://localhost:3000","untrustedExternalContent":true},"problems":{"console":[],"errors":[]}}}`)
+			return
+		}
+		if r.Method == http.MethodPost && r.URL.Path == "/api/v1/browser/actions" {
+			var input browserActionRequestDTO
+			if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+				t.Fatalf("decode action: %v", err)
+			}
+			args := map[string]any{"expectedState": input.ExpectedState}
+			if input.Ref != "" {
+				args["ref"] = input.Ref
+			}
+			if input.Target != nil {
+				args["target"] = input.Target
+			}
+			switch input.Action {
+			case "fill", "type":
+				args["text"] = input.Text
+			case "press":
+				args["key"] = input.Key
+			case "scroll":
+				args["direction"], args["amount"] = input.Direction, float64(input.Amount)
+			case "select":
+				args["value"] = input.Value
+			}
+			if input.AllowStaleRemap {
+				args["allowStaleRemap"] = true
+			}
+			if input.Confirmed {
+				args["confirmed"] = true
+			}
+			if input.WaitAfter != nil {
+				args["waitAfter"] = input.WaitAfter
+			}
+			capture.body = browserCommandRequestDTO{SessionID: input.SessionID, Action: input.Action, Args: args}
+			_, _ = io.WriteString(w, `{"requestId":"r1","sessionId":"ao-1","action":"`+input.Action+`","result":{"ok":true}}`)
 			return
 		}
 		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/browser/commands" {
@@ -130,11 +165,15 @@ func TestBrowserClickAndWaitArguments(t *testing.T) {
 	writeRunFileFor(t, cfg, srv)
 	deps := Deps{ProcessAlive: func(int) bool { return true }}
 
-	if _, _, err := executeCLI(t, deps, "browser", "click", "e2"); err != nil {
+	if _, _, err := executeCLI(t, deps, "browser", "click", "e2", "--tab", "t1", "--expected-url", "http://localhost/page", "--generation", "7"); err != nil {
 		t.Fatal(err)
 	}
 	if capture.body.Action != "click" || capture.body.Args["ref"] != "e2" {
 		t.Fatalf("click = %#v", capture.body)
+	}
+	expected, _ := capture.body.Args["expectedState"].(map[string]any)
+	if expected["tabId"] != "t1" || expected["expectedUrl"] != "http://localhost/page" || expected["snapshotGeneration"] != float64(7) {
+		t.Fatalf("click expected state = %#v", expected)
 	}
 	if _, _, err := executeCLI(t, deps, "browser", "wait", "--text", "Ready", "--timeout", "2500"); err != nil {
 		t.Fatal(err)
@@ -206,7 +245,11 @@ func TestBrowserCoreInteractionArguments(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if _, _, err := executeCLI(t, deps, append([]string{"browser"}, tt.args...)...); err != nil {
+			commandArgs := append([]string{"browser"}, tt.args...)
+			if tt.action == "type" || tt.action == "press" || tt.action == "scroll" || tt.action == "select" || tt.action == "check" || tt.action == "uncheck" {
+				commandArgs = append(commandArgs, "--tab", "t1", "--expected-url", "http://localhost/page", "--generation", "4")
+			}
+			if _, _, err := executeCLI(t, deps, commandArgs...); err != nil {
 				t.Fatal(err)
 			}
 			if capture.body.Action != tt.action {
@@ -218,6 +261,69 @@ func TestBrowserCoreInteractionArguments(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestBrowserSemanticLocatorAndPostActionWait(t *testing.T) {
+	setBrowserIdentity(t)
+	cfg := setConfigEnv(t)
+	capture := &browserRequestCapture{}
+	srv := browserCLIServer(t, capture)
+	writeRunFileFor(t, cfg, srv)
+	deps := Deps{ProcessAlive: func(int) bool { return true }}
+
+	_, _, err := executeCLI(t, deps, "browser", "click",
+		"--role", "button", "--name", "Save", "--exact",
+		"--tab", "t2", "--expected-url", "http://localhost/settings", "--generation", "14",
+		"--wait-stable", "300", "--wait-timeout", "2000", "--confirm-external")
+	if err != nil {
+		t.Fatal(err)
+	}
+	target, _ := capture.body.Args["target"].(map[string]any)
+	waitAfter, _ := capture.body.Args["waitAfter"].(map[string]any)
+	if target["role"] != "button" || target["name"] != "Save" || target["exact"] != true {
+		t.Fatalf("semantic target = %#v", target)
+	}
+	if waitAfter["stableMs"] != float64(300) || waitAfter["timeoutMs"] != float64(2000) {
+		t.Fatalf("waitAfter = %#v", waitAfter)
+	}
+	if capture.body.Args["confirmed"] != true {
+		t.Fatalf("confirmed = %#v", capture.body.Args["confirmed"])
+	}
+}
+
+func TestBrowserMutationRequiresObservedTargetState(t *testing.T) {
+	setBrowserIdentity(t)
+	cfg := setConfigEnv(t)
+	capture := &browserRequestCapture{}
+	srv := browserCLIServer(t, capture)
+	writeRunFileFor(t, cfg, srv)
+
+	_, _, err := executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }}, "browser", "click", "e1")
+	if err == nil || !strings.Contains(err.Error(), "require --tab, --expected-url, and --generation") {
+		t.Fatalf("expected target-state usage error, got %v", err)
+	}
+}
+
+func TestBrowserVerifyChecksPostconditionAndCapturesVisualEvidence(t *testing.T) {
+	setBrowserIdentity(t)
+	cfg := setConfigEnv(t)
+	capture := &browserRequestCapture{}
+	srv := browserCLIServer(t, capture)
+	writeRunFileFor(t, cfg, srv)
+	target := filepath.Join(t.TempDir(), "verified.png")
+
+	out, errOut, err := executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }},
+		"browser", "verify", "--tab", "t1", "--text", "Saved", "--timeout", "2500", "--screenshot-out", target)
+	if err != nil {
+		t.Fatalf("verify err=%v stderr=%s", err, errOut)
+	}
+	if capture.path != "/api/v1/browser/observe" || capture.body.Action != "observe" || capture.body.Args["tabId"] != "t1" || capture.body.Args["includeScreenshot"] != true || capture.body.Args["includeProblems"] != false {
+		t.Fatalf("verify observation = path %q body %#v", capture.path, capture.body)
+	}
+	data, readErr := os.ReadFile(target)
+	if readErr != nil || string(data) != "png" || !strings.Contains(out, "button Save [ref=e1]") {
+		t.Fatalf("verify data=%q readErr=%v out=%q", data, readErr, out)
 	}
 }
 

@@ -554,6 +554,61 @@ describe("agent browser runtime", () => {
 		);
 	});
 
+	it("rejects changed action preconditions and returns transition evidence without log text", async () => {
+		const { debuggerSendCommand, host } = setupHost();
+		debuggerSendCommand.mockImplementation(async (method: string) => {
+			if (method === "Accessibility.getFullAXTree") {
+				return { nodes: [{ nodeId: "1", backendDOMNodeId: 42, role: { value: "button" }, name: { value: "Save" } }] };
+			}
+			if (method === "DOM.resolveNode") return { object: { objectId: "save-button" } };
+			if (method === "DOM.getBoxModel") return { model: { border: [10, 20, 30, 20, 30, 40, 10, 40] } };
+			if (method === "Page.getLayoutMetrics") return { cssVisualViewport: { pageX: 0, pageY: 0 } };
+			if (method === "Runtime.callFunctionOn") return { result: { value: true } };
+			return {};
+		});
+
+		const snapshot = (await host.execute("sess-1", "snapshot")) as { generation: number };
+		await expect(host.execute("sess-1", "click", {
+			ref: "e1",
+			expectedState: { tabId: "t1", expectedUrl: "http://changed.example", snapshotGeneration: snapshot.generation },
+		})).rejects.toMatchObject({ code: "URL_CHANGED" });
+
+		const result = (await host.execute("sess-1", "click", {
+			ref: "e1",
+			expectedState: { tabId: "t1", expectedUrl: "", snapshotGeneration: snapshot.generation },
+		})) as { evidence: { before: { tabId: string }; effects: { newErrorCount: number }; newErrors?: unknown } };
+		expect(result.evidence.before.tabId).toBe("t1");
+		expect(result.evidence.effects.newErrorCount).toBe(0);
+		expect(result.evidence).not.toHaveProperty("newErrors");
+	});
+
+	it("requires semantic locators to resolve to exactly one element", async () => {
+		const { debuggerSendCommand, host } = setupHost();
+		let ambiguous = false;
+		debuggerSendCommand.mockImplementation(async (method: string, params?: Record<string, unknown>) => {
+			if (method === "Runtime.evaluate") {
+				const expression = String(params?.expression ?? "");
+				if (expression.startsWith("document.querySelector")) return { result: { objectId: "save-button" } };
+				if (expression.startsWith("(() =>")) {
+					const match = { selector: "#save", role: "button", name: "Save" };
+					return { result: { value: { matches: ambiguous ? [match, { ...match, selector: "#save-copy" }] : [match] } } };
+				}
+			}
+			if (method === "DOM.getBoxModel") return { model: { border: [10, 20, 30, 20, 30, 40, 10, 40] } };
+			if (method === "Page.getLayoutMetrics") return { cssVisualViewport: { pageX: 0, pageY: 0 } };
+			if (method === "Runtime.callFunctionOn") return { result: { value: true } };
+			return {};
+		});
+
+		await expect(host.execute("sess-1", "click", { target: { role: "button", name: "Save", exact: true } })).resolves.toMatchObject({
+			evidence: { target: { locator: { role: "button", name: "Save", exact: true } } },
+		});
+		ambiguous = true;
+		await expect(host.execute("sess-1", "click", { target: { role: "button", name: "Save" } })).rejects.toMatchObject({
+			code: "LOCATOR_AMBIGUOUS",
+		});
+	});
+
 	it("fills the same session target mounted in the visible browser panel", async () => {
 		const { debuggerSendCommand, emit, host, invoke, view } = setupHost();
 		debuggerSendCommand.mockImplementation(async (method: string) => {
@@ -760,6 +815,38 @@ describe("agent browser runtime", () => {
 		});
 	});
 
+	it("remaps one stale ref only through its unique semantic fingerprint", async () => {
+		const { debuggerSendCommand, host, webContentsListeners } = setupHost();
+		debuggerSendCommand.mockImplementation(async (method: string, params?: Record<string, unknown>) => {
+			if (method === "Accessibility.getFullAXTree") {
+				return { nodes: [{ nodeId: "1", backendDOMNodeId: 42, role: { value: "button" }, name: { value: "Save" } }] };
+			}
+			if (method === "Runtime.evaluate") {
+				const expression = String(params?.expression ?? "");
+				if (expression.includes("const query =")) return { result: { value: { matches: [{ selector: "#save", role: "button", name: "Save" }] } } };
+				if (expression.startsWith("document.querySelector")) return { result: { objectId: "new-save-button" } };
+				return { result: { value: 0 } };
+			}
+			if (method === "DOM.getBoxModel") return { model: { border: [10, 20, 30, 20, 30, 40, 10, 40] } };
+			if (method === "Page.getLayoutMetrics") return { cssVisualViewport: { pageX: 0, pageY: 0 } };
+			if (method === "Runtime.callFunctionOn") return { result: { value: true } };
+			return {};
+		});
+		const snapshot = (await host.execute("sess-1", "snapshot")) as { generation: number; url: string };
+		webContentsListeners.get("did-start-loading")?.();
+
+		const result = (await host.execute("sess-1", "click", {
+			ref: "e1",
+			allowStaleRemap: true,
+			expectedState: { tabId: "t1", expectedUrl: snapshot.url, snapshotGeneration: snapshot.generation },
+		})) as { evidence: { target: { remapped: boolean } } };
+		expect(result.evidence.target.remapped).toBe(true);
+		expect(debuggerSendCommand).toHaveBeenCalledWith(
+			"Runtime.callFunctionOn",
+			expect.objectContaining({ objectId: "new-save-button" }),
+		);
+	});
+
 	it("captures a PNG and separates errors from other console messages", async () => {
 		const { host, webContentsListeners } = setupHost();
 		const screenshot = (await host.execute("sess-1", "screenshot")) as { data: string; width: number };
@@ -902,12 +989,25 @@ describe("agent browser runtime", () => {
 		const current = (await host.execute("sess-1", "get", { property: "url" })) as { value: string };
 		expect(current.value).toBe("http://localhost:3000/");
 		expect(views[1].setVisible).toHaveBeenLastCalledWith(false);
-		await expect(host.execute("sess-1", "click", { ref: "e1" })).rejects.toMatchObject({
-			code: "STALE_REFERENCE",
-		});
 		await host.execute("sess-1", "tab-close", { tabId: "t2" });
 		const replacement = (await host.execute("sess-1", "tab-new")) as { id: string };
 		expect(replacement.id).toBe("t3");
+	});
+
+	it("uses the explicitly observed tab instead of silently retargeting to the selected tab", async () => {
+		const { host } = setupTabHost();
+		await host.execute("sess-1", "open", { url: "http://localhost:3000" });
+		await host.execute("sess-1", "tab-new", { url: "http://localhost:4173" });
+		const snapshot = (await host.execute("sess-1", "snapshot", {
+			expectedState: { tabId: "t1" },
+		})) as { generation: number; url: string };
+
+		const result = (await host.execute("sess-1", "press", {
+			key: "Enter",
+			expectedState: { tabId: "t1", expectedUrl: snapshot.url, snapshotGeneration: snapshot.generation },
+		})) as { evidence: { before: { tabId: string; url: string } } };
+
+		expect(result.evidence.before).toMatchObject({ tabId: "t1", url: "http://localhost:3000/" });
 	});
 
 	it("shares one ephemeral profile across a worker's tabs and isolates other workers", async () => {

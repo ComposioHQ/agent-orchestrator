@@ -97,6 +97,74 @@ paths:
       summary: Refresh the cached local agent adapter catalog
       tags:
       - agents
+  /api/v1/browser/actions:
+    post:
+      operationId: executeBrowserAction
+      parameters:
+      - description: Opaque browser capability injected into the owning AO worker.
+        in: header
+        name: X-AO-Browser-Capability
+        schema:
+          description: Opaque browser capability injected into the owning AO worker.
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BrowserActionRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BrowserActionResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Forbidden
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Unprocessable Entity
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Service Unavailable
+      summary: Execute a deterministic browser mutation with typed target preconditions
+      tags:
+      - browser
   /api/v1/browser/commands:
     post:
       operationId: executeBrowserCommand
@@ -2864,6 +2932,171 @@ components:
       - id
       - label
       type: object
+    BrowserActionEffects:
+      properties:
+        documentChanged:
+          type: boolean
+        navigated:
+          type: boolean
+        newErrorCount:
+          type: integer
+      required:
+      - navigated
+      - documentChanged
+      - newErrorCount
+      type: object
+    BrowserActionEvidence:
+      properties:
+        after:
+          $ref: '#/components/schemas/BrowserActionState'
+        before:
+          $ref: '#/components/schemas/BrowserActionState'
+        effects:
+          $ref: '#/components/schemas/BrowserActionEffects'
+        recommendedAction:
+          type: string
+        target:
+          $ref: '#/components/schemas/BrowserActionTarget'
+      required:
+      - before
+      - after
+      - effects
+      - recommendedAction
+      type: object
+    BrowserActionRequest:
+      properties:
+        action:
+          enum:
+          - click
+          - fill
+          - type
+          - press
+          - scroll
+          - select
+          - check
+          - uncheck
+          type: string
+        allowStaleRemap:
+          type: boolean
+        amount:
+          type: integer
+        confirmed:
+          description: Explicit user confirmation for a mutation on a non-local target.
+          type: boolean
+        direction:
+          enum:
+          - up
+          - down
+          - left
+          - right
+          type: string
+        expectedState:
+          $ref: '#/components/schemas/BrowserExpectedState'
+        key:
+          type: string
+        ref:
+          type: string
+        sessionId:
+          type: string
+        target:
+          $ref: '#/components/schemas/BrowserLocator'
+        text:
+          type: string
+        value:
+          type: string
+        waitAfter:
+          $ref: '#/components/schemas/BrowserActionWait'
+      required:
+      - sessionId
+      - action
+      - expectedState
+      type: object
+    BrowserActionResponse:
+      properties:
+        action:
+          type: string
+        requestId:
+          type: string
+        result:
+          $ref: '#/components/schemas/BrowserActionResult'
+        sessionId:
+          type: string
+      required:
+      - requestId
+      - sessionId
+      - action
+      - result
+      type: object
+    BrowserActionResult:
+      properties:
+        amount:
+          type: integer
+        checked:
+          type:
+          - "null"
+          - boolean
+        direction:
+          type: string
+        evidence:
+          $ref: '#/components/schemas/BrowserActionEvidence'
+        key:
+          type: string
+        target:
+          type: string
+        text:
+          type: string
+        url:
+          type: string
+        value: {}
+        x:
+          format: double
+          type: number
+        "y":
+          format: double
+          type: number
+      required:
+      - evidence
+      type: object
+    BrowserActionState:
+      properties:
+        errorCount:
+          type: integer
+        loading:
+          type: boolean
+        snapshotGeneration:
+          type: integer
+        tabId:
+          type: string
+        url:
+          type: string
+      required:
+      - tabId
+      - url
+      - snapshotGeneration
+      - loading
+      - errorCount
+      type: object
+    BrowserActionTarget:
+      properties:
+        label:
+          type: string
+        locator:
+          $ref: '#/components/schemas/BrowserLocator'
+        remapped:
+          type: boolean
+      required:
+      - label
+      - remapped
+      type: object
+    BrowserActionWait:
+      properties:
+        load:
+          type: boolean
+        stableMs:
+          type: integer
+        timeoutMs:
+          type: integer
+      type: object
     BrowserCommandRequest:
       properties:
         action:
@@ -2894,6 +3127,8 @@ components:
       type: object
     BrowserElement:
       properties:
+        fingerprint:
+          $ref: '#/components/schemas/BrowserLocator'
         name:
           type: string
         ref:
@@ -2904,6 +3139,20 @@ components:
       - ref
       - role
       - name
+      - fingerprint
+      type: object
+    BrowserExpectedState:
+      properties:
+        expectedUrl:
+          type: string
+        snapshotGeneration:
+          type: integer
+        tabId:
+          type: string
+      required:
+      - tabId
+      - expectedUrl
+      - snapshotGeneration
       type: object
     BrowserImage:
       properties:
@@ -2926,6 +3175,25 @@ components:
       - height
       - url
       - untrustedExternalContent
+      type: object
+    BrowserLocator:
+      properties:
+        css:
+          type: string
+        exact:
+          type: boolean
+        label:
+          type: string
+        name:
+          type: string
+        placeholder:
+          type: string
+        role:
+          type: string
+        testId:
+          type: string
+        text:
+          type: string
       type: object
     BrowserLogEntry:
       properties:
@@ -2981,6 +3249,8 @@ components:
         interactiveOnly:
           type: boolean
         sessionId:
+          type: string
+        tabId:
           type: string
       required:
       - sessionId

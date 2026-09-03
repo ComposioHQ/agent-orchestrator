@@ -103,16 +103,40 @@ session-owned live Electron browser rather than only setting its preview URL.
 The target-isolated command set includes `status`, `open`, `snapshot`, `click`,
 `fill`, `type`, `press`, `hover`, `scroll`, `select`, `check`, `uncheck`, `get`,
 `highlight`, `unhighlight`, `tabs`, `tab new`, `tab select`, `tab close`,
-`wait`, `screenshot`, `network start/status/list/stop/clear`, `console`, and
+`wait`, `verify`, `screenshot`, `network start/status/list/stop/clear`, `console`, and
 `errors`. Logical tab IDs remain stable for the session, and allowed popups
 become AO browser tabs rather than separate OS-browser windows. The AO desktop
 app must be open because Electron owns the `WebContentsView`.
-References from a snapshot are invalidated after navigation or DOM replacement;
-they are also invalidated when changing tabs. Take another snapshot when a
-command reports `STALE_REFERENCE`.
+Mutating commands require `--tab`, `--expected-url`, and `--generation` from the
+latest observation. The runtime resolves that exact logical tab even when the
+user has selected another tab, then rejects URL or generation drift instead of
+acting on changed state. Element actions accept short snapshot refs or one
+unique semantic locator assembled from `--role`, `--name`, `--label`,
+`--placeholder`, `--locator-text`, `--test-id`, and `--css`; `--exact` disables
+substring matching. `--allow-remap` permits one stale-ref recovery only when the
+stored role/name fingerprint has exactly one match.
 Browser waits cover load completion, text or selector appearance and
 disappearance, URL matching, fixed delays, and a configurable DOM-stability
-window for HMR-driven verification.
+window for HMR-driven verification. Mutations can use bounded `--wait-load` or
+`--wait-stable` post-action waits. Each mutation returns before/after target
+state, navigation/document-change flags, and only a numeric new-error count;
+it never includes browser log contents. `ao browser verify` checks one explicit
+postcondition and then captures a fresh accessibility snapshot plus screenshot.
+Localhost, loopback, and file-backed preview mutations are automatic under
+these preconditions. Mutations on any other URL fail with
+`BROWSER_CONFIRMATION_REQUIRED` unless the user has explicitly authorized the
+operation and the caller supplies `--confirm-external`. Purchases, destructive
+production changes, external messages, credential submission, and irreversible
+workflows always belong to that confirmation-required tier.
+
+For example, after `observe --json` returns tab `t1`, URL
+`http://localhost:5173/settings`, generation `14`, and ref `e3`:
+
+```bash
+ao browser click e3 --tab t1 --expected-url http://localhost:5173/settings --generation 14 --wait-stable 300 --json
+ao browser click --role button --name Save --exact --tab t1 --expected-url http://localhost:5173/settings --generation 14 --wait-stable 300 --json
+ao browser verify --tab t1 --text Saved --screenshot-out verified.png
+```
 Browser tabs in the same worker share a memory-only Electron profile. Different
 workers receive distinct partitions, so cookies, authentication, local storage,
 and session storage do not leak between their browser runtimes.

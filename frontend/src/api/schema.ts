@@ -55,6 +55,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/browser/actions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Execute a deterministic browser mutation with typed target preconditions */
+        post: operations["executeBrowserAction"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/browser/commands": {
         parameters: {
             query?: never;
@@ -952,6 +969,74 @@ export interface components {
             id: string;
             label: string;
         };
+        BrowserActionEffects: {
+            documentChanged: boolean;
+            navigated: boolean;
+            newErrorCount: number;
+        };
+        BrowserActionEvidence: {
+            after: components["schemas"]["BrowserActionState"];
+            before: components["schemas"]["BrowserActionState"];
+            effects: components["schemas"]["BrowserActionEffects"];
+            recommendedAction: string;
+            target?: components["schemas"]["BrowserActionTarget"];
+        };
+        BrowserActionRequest: {
+            /** @enum {string} */
+            action: "click" | "fill" | "type" | "press" | "scroll" | "select" | "check" | "uncheck";
+            allowStaleRemap?: boolean;
+            amount?: number;
+            /** @description Explicit user confirmation for a mutation on a non-local target. */
+            confirmed?: boolean;
+            /** @enum {string} */
+            direction?: "up" | "down" | "left" | "right";
+            expectedState: components["schemas"]["BrowserExpectedState"];
+            key?: string;
+            ref?: string;
+            sessionId: string;
+            target?: components["schemas"]["BrowserLocator"];
+            text?: string;
+            value?: string;
+            waitAfter?: components["schemas"]["BrowserActionWait"];
+        };
+        BrowserActionResponse: {
+            action: string;
+            requestId: string;
+            result: components["schemas"]["BrowserActionResult"];
+            sessionId: string;
+        };
+        BrowserActionResult: {
+            amount?: number;
+            checked?: null | boolean;
+            direction?: string;
+            evidence: components["schemas"]["BrowserActionEvidence"];
+            key?: string;
+            target?: string;
+            text?: string;
+            url?: string;
+            value?: unknown;
+            /** Format: double */
+            x?: number;
+            /** Format: double */
+            y?: number;
+        };
+        BrowserActionState: {
+            errorCount: number;
+            loading: boolean;
+            snapshotGeneration: number;
+            tabId: string;
+            url: string;
+        };
+        BrowserActionTarget: {
+            label: string;
+            locator?: components["schemas"]["BrowserLocator"];
+            remapped: boolean;
+        };
+        BrowserActionWait: {
+            load?: boolean;
+            stableMs?: number;
+            timeoutMs?: number;
+        };
         BrowserCommandRequest: {
             action: string;
             args?: {
@@ -966,9 +1051,15 @@ export interface components {
             sessionId: string;
         };
         BrowserElement: {
+            fingerprint: components["schemas"]["BrowserLocator"];
             name: string;
             ref: string;
             role: string;
+        };
+        BrowserExpectedState: {
+            expectedUrl: string;
+            snapshotGeneration: number;
+            tabId: string;
         };
         BrowserImage: {
             data: string;
@@ -977,6 +1068,16 @@ export interface components {
             untrustedExternalContent: boolean;
             url: string;
             width: number;
+        };
+        BrowserLocator: {
+            css?: string;
+            exact?: boolean;
+            label?: string;
+            name?: string;
+            placeholder?: string;
+            role?: string;
+            testId?: string;
+            text?: string;
         };
         BrowserLogEntry: {
             level: string;
@@ -1001,6 +1102,7 @@ export interface components {
             includeScreenshot?: boolean;
             interactiveOnly?: boolean;
             sessionId: string;
+            tabId?: string;
         };
         BrowserObserveResponse: {
             observation: components["schemas"]["BrowserObservation"];
@@ -1852,6 +1954,96 @@ export interface operations {
             };
             /** @description Not Implemented */
             501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    executeBrowserAction: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Opaque browser capability injected into the owning AO worker. */
+                "X-AO-Browser-Capability"?: string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BrowserActionRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BrowserActionResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };

@@ -156,10 +156,33 @@ type BrowserEntry = {
 	state: BrowserNavState;
 	annotationEnabled: boolean;
 	refGeneration: number;
-	refs: Map<string, { backendNodeId: number; generation: number }>;
+	refs: Map<string, BrowserElementRef>;
 	consoleMessages: BrowserLogEntry[];
 	errors: BrowserLogEntry[];
 	networkCapture?: BrowserNetworkCapture;
+};
+
+type BrowserLocator = {
+	role?: string;
+	name?: string;
+	label?: string;
+	placeholder?: string;
+	text?: string;
+	testId?: string;
+	css?: string;
+	exact?: boolean;
+};
+
+type BrowserElementRef = {
+	backendNodeId: number;
+	generation: number;
+	fingerprint: BrowserLocator;
+};
+
+type BrowserExpectedState = {
+	tabId: string;
+	expectedUrl: string;
+	snapshotGeneration: number;
 };
 
 type BrowserSessionEntry = {
@@ -490,11 +513,9 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		if (!next) throw browserError("TAB_NOT_FOUND", `Browser tab ${tabId} does not exist`);
 		const previous = session.tabs.get(session.activeTabId);
 		if (previous && previous !== next) {
-			invalidateRefs(previous);
 			applyBrowserViewBounds(previous.view, OFFSCREEN_BOUNDS, false);
 		}
 		session.activeTabId = tabId;
-		invalidateRefs(next);
 		applySessionBounds(session, next);
 		pushNavState(options, next);
 		if (notify) pushTabsState(options, session, { kind: "selected", tabId });
@@ -810,7 +831,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 				return { destroyed: Boolean(viewId) };
 			}
 			const session = ensureSession(sessionId);
-			const entry = activeEntry(session);
+			const entry = commandEntry(session, args);
 			if (action === "__status") return browserTargetStatus(entry);
 			const commandId = randomUUID();
 			setAgentBrowserActivity(session, action, true, commandId, "started");
@@ -831,25 +852,23 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 						includeProblems: Boolean(args.includeProblems),
 					});
 				case "click":
-					return clickEntry(entry, stringArg(args, "ref", "REFERENCE_REQUIRED", "ref is required"));
+					return runMutation(entry, args, signal, (target) => clickEntry(entry, target));
 				case "fill":
-					return fillEntry(
-						entry,
-						stringArg(args, "ref", "REFERENCE_REQUIRED", "ref is required"),
-						stringArg(args, "text", "INVALID_ARGUMENT", "text is required", true),
+					return runMutation(entry, args, signal, (target) =>
+						fillEntry(entry, target, stringArg(args, "text", "INVALID_ARGUMENT", "text is required", true)),
 					);
 				case "type":
-					return typeEntry(
-						entry,
-						stringArg(args, "ref", "REFERENCE_REQUIRED", "ref is required"),
-						stringArg(args, "text", "INVALID_ARGUMENT", "text is required", true),
+					return runMutation(entry, args, signal, (target) =>
+						typeEntry(entry, target, stringArg(args, "text", "INVALID_ARGUMENT", "text is required", true)),
 					);
 				case "press":
-					return pressEntry(entry, stringArg(args, "key", "INVALID_ARGUMENT", "key is required"));
+					return runMutation(entry, args, signal, () =>
+						pressEntry(entry, stringArg(args, "key", "INVALID_ARGUMENT", "key is required")),
+					);
 				case "hover":
-					return hoverEntry(entry, stringArg(args, "ref", "REFERENCE_REQUIRED", "ref is required"));
+					return hoverEntry(entry, await resolveTarget(entry, args));
 				case "highlight":
-					return highlightEntry(entry, stringArg(args, "ref", "REFERENCE_REQUIRED", "ref is required"));
+					return highlightEntry(entry, await resolveTarget(entry, args));
 				case "unhighlight":
 					return unhighlightEntry(entry);
 				case "tabs":
@@ -873,29 +892,21 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 					return { closedTabId: tabId, ...closeTab(session, tabId) };
 				}
 				case "scroll":
-					return scrollEntry(
-						entry,
-						stringArg(args, "direction", "INVALID_ARGUMENT", "direction is required"),
-						numberArg(args.amount, 1, 5_000) || 600,
+					return runMutation(entry, args, signal, () =>
+						scrollEntry(
+							entry,
+							stringArg(args, "direction", "INVALID_ARGUMENT", "direction is required"),
+							numberArg(args.amount, 1, 5_000) || 600,
+						),
 					);
 				case "select":
-					return selectEntry(
-						entry,
-						stringArg(args, "ref", "REFERENCE_REQUIRED", "ref is required"),
-						stringArg(args, "value", "INVALID_ARGUMENT", "value is required", true),
+					return runMutation(entry, args, signal, (target) =>
+						selectEntry(entry, target, stringArg(args, "value", "INVALID_ARGUMENT", "value is required", true)),
 					);
 				case "check":
-					return checkEntry(
-						entry,
-						stringArg(args, "ref", "REFERENCE_REQUIRED", "ref is required"),
-						true,
-					);
+					return runMutation(entry, args, signal, (target) => checkEntry(entry, target, true));
 				case "uncheck":
-					return checkEntry(
-						entry,
-						stringArg(args, "ref", "REFERENCE_REQUIRED", "ref is required"),
-						false,
-					);
+					return runMutation(entry, args, signal, (target) => checkEntry(entry, target, false));
 				case "get":
 					return getEntry(
 						entry,
@@ -1031,6 +1042,57 @@ function activeEntry(session: BrowserSessionEntry): BrowserEntry {
 	const entry = session.tabs.get(session.activeTabId);
 	if (!entry) throw browserError("BROWSER_TARGET_UNAVAILABLE", "Active browser tab is unavailable");
 	return entry;
+}
+
+function commandEntry(session: BrowserSessionEntry, args: Record<string, unknown>): BrowserEntry {
+	const expected = objectValue(args.expectedState);
+	const explicitTab = typeof args.tabId === "string" ? args.tabId : "";
+	const tabId = typeof expected.tabId === "string" ? expected.tabId.trim() : explicitTab.trim();
+	if (!tabId) return activeEntry(session);
+	const entry = session.tabs.get(tabId);
+	if (!entry) throw browserError("TARGET_CHANGED", `Browser tab ${tabId} no longer exists`);
+	return entry;
+}
+
+function expectedStateArg(args: Record<string, unknown>): BrowserExpectedState | undefined {
+	const raw = objectValue(args.expectedState);
+	if (Object.keys(raw).length === 0) return undefined;
+	if (
+		typeof raw.tabId !== "string" ||
+		!raw.tabId.trim() ||
+		typeof raw.expectedUrl !== "string" ||
+		typeof raw.snapshotGeneration !== "number" ||
+		!Number.isInteger(raw.snapshotGeneration)
+	) {
+		throw browserError(
+			"INVALID_ARGUMENT",
+			"expectedState requires tabId, expectedUrl, and an integer snapshotGeneration",
+		);
+	}
+	return {
+		tabId: raw.tabId.trim(),
+		expectedUrl: raw.expectedUrl,
+		snapshotGeneration: raw.snapshotGeneration,
+	};
+}
+
+function assertExpectedState(entry: BrowserEntry, args: Record<string, unknown>): void {
+	const expected = expectedStateArg(args);
+	if (!expected) return;
+	if (entry.tabId !== expected.tabId) {
+		throw browserError("TARGET_CHANGED", `Expected browser tab ${expected.tabId}, found ${entry.tabId}`);
+	}
+	const currentURL = entry.view.webContents.getURL();
+	if (currentURL !== expected.expectedUrl) {
+		throw browserError("URL_CHANGED", "The browser URL changed after the last observation; observe again");
+	}
+	if (entry.refGeneration !== expected.snapshotGeneration) {
+		if (args.allowStaleRemap === true && typeof args.ref === "string" && args.ref.trim()) return;
+		throw browserError(
+			"SNAPSHOT_CHANGED",
+			"The page snapshot changed after the last observation; observe again",
+		);
+	}
 }
 
 function tabResult(entry: BrowserEntry, active: boolean): {
@@ -1254,7 +1316,6 @@ function pushBrowserLog(target: BrowserLogEntry[], entry: BrowserLogEntry): void
 
 function invalidateRefs(entry: BrowserEntry): void {
 	entry.refGeneration += 1;
-	entry.refs.clear();
 }
 
 async function ensureDebugger(entry: BrowserEntry): Promise<void> {
@@ -1596,7 +1657,7 @@ async function snapshotEntry(entry: BrowserEntry, interactiveOnly: boolean): Pro
 	const generation = entry.refGeneration;
 	const depths = new Map<string, number>();
 	const lines: string[] = [];
-	const elements: Array<{ ref: string; role: string; name: string }> = [];
+	const elements: Array<{ ref: string; role: string; name: string; fingerprint: BrowserLocator }> = [];
 	let refIndex = 0;
 	let truncated = false;
 	for (const node of nodes) {
@@ -1615,8 +1676,13 @@ async function snapshotEntry(entry: BrowserEntry, interactiveOnly: boolean): Pro
 		let ref = "";
 		if (interactive && node.backendDOMNodeId) {
 			ref = `e${++refIndex}`;
-			entry.refs.set(ref, { backendNodeId: node.backendDOMNodeId, generation });
-			elements.push({ ref, role, name });
+			const fingerprint: BrowserLocator = { role, ...(name ? { name, exact: true } : {}) };
+			entry.refs.set(ref, {
+				backendNodeId: node.backendDOMNodeId,
+				generation,
+				fingerprint,
+			});
+			elements.push({ ref, role, name, fingerprint });
 		}
 		const parentDepth = node.parentId ? (depths.get(node.parentId) ?? -1) : -1;
 		const depth = Math.max(0, parentDepth + 1);
@@ -1642,9 +1708,183 @@ async function snapshotEntry(entry: BrowserEntry, interactiveOnly: boolean): Pro
 	};
 }
 
-async function clickEntry(entry: BrowserEntry, refName: string): Promise<unknown> {
-	const objectId = await resolveRef(entry, refName);
-	const point = await pointerPoint(entry, objectId, refName);
+type ResolvedBrowserTarget = {
+	objectId: string;
+	label: string;
+	locator?: BrowserLocator;
+	remapped?: boolean;
+};
+
+function locatorArg(value: unknown): BrowserLocator | undefined {
+	const raw = objectValue(value);
+	const locator: BrowserLocator = {};
+	for (const key of ["role", "name", "label", "placeholder", "text", "testId", "css"] as const) {
+		if (typeof raw[key] === "string" && raw[key].trim()) locator[key] = raw[key].trim();
+	}
+	if (raw.exact === true) locator.exact = true;
+	return Object.keys(locator).some((key) => key !== "exact") ? locator : undefined;
+}
+
+async function resolveTarget(entry: BrowserEntry, args: Record<string, unknown>): Promise<ResolvedBrowserTarget> {
+	const locator = locatorArg(args.target);
+	if (locator) return resolveLocator(entry, locator);
+	const refName = stringArg(args, "ref", "REFERENCE_REQUIRED", "ref or semantic target is required");
+	try {
+		return { objectId: await resolveRef(entry, refName), label: refName };
+	} catch (error) {
+		const stale = entry.refs.get(refName);
+		if (
+			!(error instanceof Error) ||
+			(error as Error & { code?: string }).code !== "STALE_REFERENCE" ||
+			args.allowStaleRemap !== true ||
+			!stale?.fingerprint
+		) {
+			throw error;
+		}
+		const remapped = await resolveLocator(entry, stale.fingerprint);
+		return { ...remapped, label: refName, remapped: true };
+	}
+}
+
+async function resolveLocator(entry: BrowserEntry, locator: BrowserLocator): Promise<ResolvedBrowserTarget> {
+	await ensureDebugger(entry);
+	const encoded = JSON.stringify(locator);
+	const response = (await entry.view.webContents.debugger.sendCommand("Runtime.evaluate", {
+		expression: `(() => {
+			const query = ${encoded};
+			const normalized = value => String(value || '').replace(/\\s+/g, ' ').trim();
+			const same = (actual, wanted) => query.exact ? normalized(actual) === wanted : normalized(actual).toLowerCase().includes(wanted.toLowerCase());
+			const inferredRole = element => element.getAttribute('role') || ({BUTTON:'button',A:'link',SELECT:'combobox',TEXTAREA:'textbox'}[element.tagName] || (element.tagName === 'INPUT' ? ({checkbox:'checkbox',radio:'radio',submit:'button',button:'button'}[element.type] || 'textbox') : 'generic'));
+			const labelledBy = element => normalized((element.getAttribute('aria-labelledby') || '').split(/\\s+/).filter(Boolean).map(id => document.getElementById(id)?.textContent || '').join(' '));
+			const label = element => normalized(element.getAttribute('aria-label') || labelledBy(element) || (element.labels && Array.from(element.labels).map(item => item.textContent).join(' ')) || '');
+			const name = element => normalized(element.getAttribute('aria-label') || labelledBy(element) || element.getAttribute('alt') || element.innerText || element.textContent || element.getAttribute('title') || element.getAttribute('placeholder') || '');
+			const selector = element => {
+				if (element.id) return '#' + CSS.escape(element.id);
+				const testId = element.getAttribute('data-testid');
+				if (testId) return '[data-testid="' + CSS.escape(testId) + '"]';
+				const parts = [];
+				for (let node = element; node && node.nodeType === 1; node = node.parentElement) {
+					let part = node.tagName.toLowerCase();
+					const siblings = node.parentElement ? Array.from(node.parentElement.children).filter(item => item.tagName === node.tagName) : [];
+					if (siblings.length > 1) part += ':nth-of-type(' + (siblings.indexOf(node) + 1) + ')';
+					parts.unshift(part);
+					if (node === document.body) break;
+				}
+				return parts.join(' > ');
+			};
+			let elements;
+			try { elements = query.css ? Array.from(document.querySelectorAll(query.css)) : Array.from(document.querySelectorAll('body *')); }
+			catch { return {error: 'Invalid CSS selector'}; }
+			const matches = elements.filter(element =>
+				(!query.role || same(inferredRole(element), query.role)) &&
+				(!query.name || same(name(element), query.name)) &&
+				(!query.label || same(label(element), query.label)) &&
+				(!query.placeholder || same(element.getAttribute('placeholder'), query.placeholder)) &&
+				(!query.text || same(element.innerText || element.textContent, query.text)) &&
+				(!query.testId || same(element.getAttribute('data-testid'), query.testId))
+			).slice(0, 21).map(element => ({selector: selector(element), role: inferredRole(element), name: name(element).slice(0, 120)}));
+			return {matches};
+		})()`,
+		returnByValue: true,
+	})) as { result?: { value?: { error?: string; matches?: Array<{ selector: string; role: string; name: string }> } } };
+	const value = response.result?.value;
+	if (value?.error) throw browserError("INVALID_ARGUMENT", value.error);
+	const matches = value?.matches ?? [];
+	if (matches.length === 0) throw browserError("LOCATOR_NOT_FOUND", "No element matched the semantic locator");
+	if (matches.length !== 1) {
+		const candidates = matches.slice(0, 5).map((item) => `${item.role} ${JSON.stringify(item.name)}`).join(", ");
+		throw browserError(
+			"LOCATOR_AMBIGUOUS",
+			`Semantic locator matched ${matches.length}${matches.length > 20 ? "+" : ""} elements. Candidates: ${markUntrusted(candidates)}`,
+		);
+	}
+	const match = matches[0];
+	const resolved = (await entry.view.webContents.debugger.sendCommand("Runtime.evaluate", {
+		expression: `document.querySelector(${JSON.stringify(match.selector)})`,
+	})) as { result?: { objectId?: string } };
+	if (!resolved.result?.objectId) throw browserError("STALE_REFERENCE", "Matched element disappeared; observe again");
+	return { objectId: resolved.result.objectId, label: "semantic target", locator };
+}
+
+async function runMutation(
+	entry: BrowserEntry,
+	args: Record<string, unknown>,
+	signal: AbortSignal | undefined,
+	action: (target?: ResolvedBrowserTarget) => Promise<unknown>,
+): Promise<Record<string, unknown>> {
+	assertExpectedState(entry, args);
+	const mutationCountBefore = await readMutationCount(entry);
+	const before = {
+		tabId: entry.tabId,
+		url: entry.view.webContents.getURL(),
+		snapshotGeneration: entry.refGeneration,
+		loading: entry.view.webContents.isLoading(),
+		errorCount: entry.errors.length,
+	};
+	const hasTarget = typeof args.ref === "string" || locatorArg(args.target) !== undefined;
+	const target = hasTarget ? await resolveTarget(entry, args) : undefined;
+	const waitAfter = objectValue(args.waitAfter);
+	if (waitAfter.load === true && typeof waitAfter.stableMs === "number" && waitAfter.stableMs > 0) {
+		throw browserError("INVALID_ARGUMENT", "waitAfter must choose load or stableMs, not both");
+	}
+	const raw = await action(target);
+	if (waitAfter.load === true) await waitForEntry(entry, { load: true, timeoutMs: waitAfter.timeoutMs }, signal);
+	if (typeof waitAfter.stableMs === "number" && waitAfter.stableMs > 0) {
+		await waitForEntry(entry, { stableMs: waitAfter.stableMs, timeoutMs: waitAfter.timeoutMs }, signal);
+	}
+	const after = {
+		tabId: entry.tabId,
+		url: entry.view.webContents.getURL(),
+		snapshotGeneration: entry.refGeneration,
+		loading: entry.view.webContents.isLoading(),
+		errorCount: entry.errors.length,
+	};
+	const mutationCountAfter = await readMutationCount(entry);
+	return {
+		...(raw && typeof raw === "object" ? (raw as Record<string, unknown>) : { value: raw }),
+		evidence: {
+			before,
+			after,
+			effects: {
+				navigated: before.url !== after.url,
+				documentChanged:
+					before.snapshotGeneration !== after.snapshotGeneration || mutationCountBefore !== mutationCountAfter,
+				newErrorCount: Math.max(0, after.errorCount - before.errorCount),
+			},
+			...(target ? { target: { label: target.label, locator: target.locator, remapped: target.remapped === true } } : {}),
+			recommendedAction: "Observe the target again and verify the intended postcondition.",
+		},
+	};
+}
+
+async function readMutationCount(entry: BrowserEntry): Promise<number> {
+	await ensureDebugger(entry);
+	try {
+		const response = (await entry.view.webContents.debugger.sendCommand("Runtime.evaluate", {
+			expression: `(() => {
+				const key = "__ao_browser_action_evidence__";
+				let state = globalThis[key];
+				if (!state || state.document !== document) {
+					state = {document, count: 0};
+					state.observer = new MutationObserver(() => { state.count += 1; });
+					state.observer.observe(document, {subtree:true, childList:true, attributes:true, characterData:true});
+					globalThis[key] = state;
+				}
+				return state.count;
+			})()`,
+			returnByValue: true,
+		})) as { result?: { value?: unknown } };
+		return typeof response.result?.value === "number" ? response.result.value : 0;
+	} catch {
+		// Navigation can replace the execution context between the action and the
+		// evidence read. URL/generation evidence still records that transition.
+		return 0;
+	}
+}
+
+async function clickEntry(entry: BrowserEntry, target?: ResolvedBrowserTarget): Promise<unknown> {
+	if (!target) throw browserError("REFERENCE_REQUIRED", "ref or semantic target is required");
+	const point = await pointerPoint(entry, target.objectId, target.label);
 	await entry.view.webContents.debugger.sendCommand("Input.dispatchMouseEvent", {
 		type: "mousePressed",
 		x: point.x,
@@ -1659,13 +1899,13 @@ async function clickEntry(entry: BrowserEntry, refName: string): Promise<unknown
 		button: "left",
 		clickCount: 1,
 	});
-	return { ref: refName, x: point.x, y: point.y, url: entry.view.webContents.getURL() };
+	return { target: target.label, x: point.x, y: point.y, url: entry.view.webContents.getURL() };
 }
 
-async function fillEntry(entry: BrowserEntry, refName: string, text: string): Promise<unknown> {
-	const objectId = await resolveRef(entry, refName);
+async function fillEntry(entry: BrowserEntry, target: ResolvedBrowserTarget | undefined, text: string): Promise<unknown> {
+	if (!target) throw browserError("REFERENCE_REQUIRED", "ref or semantic target is required");
 	await entry.view.webContents.debugger.sendCommand("Runtime.callFunctionOn", {
-		objectId,
+		objectId: target.objectId,
 		functionDeclaration: `function(next){
 			this.scrollIntoView({block:'center',inline:'center'});
 			this.focus();
@@ -1678,18 +1918,18 @@ async function fillEntry(entry: BrowserEntry, refName: string, text: string): Pr
 		arguments: [{ value: text }],
 		awaitPromise: true,
 	});
-	return { ref: refName, value: text, url: entry.view.webContents.getURL() };
+	return { target: target.label, value: text, url: entry.view.webContents.getURL() };
 }
 
-async function typeEntry(entry: BrowserEntry, refName: string, text: string): Promise<unknown> {
-	const objectId = await resolveRef(entry, refName);
+async function typeEntry(entry: BrowserEntry, target: ResolvedBrowserTarget | undefined, text: string): Promise<unknown> {
+	if (!target) throw browserError("REFERENCE_REQUIRED", "ref or semantic target is required");
 	await entry.view.webContents.debugger.sendCommand("Runtime.callFunctionOn", {
-		objectId,
+		objectId: target.objectId,
 		functionDeclaration:
 			"function(){ this.scrollIntoView({block:'center',inline:'center'}); this.focus(); }",
 	});
 	await entry.view.webContents.debugger.sendCommand("Input.insertText", { text });
-	return { ref: refName, text, url: entry.view.webContents.getURL() };
+	return { target: target.label, text, url: entry.view.webContents.getURL() };
 }
 
 type BrowserKey = {
@@ -1796,22 +2036,20 @@ async function pressEntry(entry: BrowserEntry, input: string): Promise<unknown> 
 	return { key: input, url: entry.view.webContents.getURL() };
 }
 
-async function hoverEntry(entry: BrowserEntry, refName: string): Promise<unknown> {
-	const objectId = await resolveRef(entry, refName);
-	const point = await pointerPoint(entry, objectId, refName);
+async function hoverEntry(entry: BrowserEntry, target: ResolvedBrowserTarget): Promise<unknown> {
+	const point = await pointerPoint(entry, target.objectId, target.label);
 	await entry.view.webContents.debugger.sendCommand("Input.dispatchMouseEvent", {
 		type: "mouseMoved",
 		x: point.x,
 		y: point.y,
 	});
-	return { ref: refName, x: point.x, y: point.y, url: entry.view.webContents.getURL() };
+	return { target: target.label, x: point.x, y: point.y, url: entry.view.webContents.getURL() };
 }
 
-async function highlightEntry(entry: BrowserEntry, refName: string): Promise<unknown> {
-	const objectId = await resolveRef(entry, refName);
+async function highlightEntry(entry: BrowserEntry, target: ResolvedBrowserTarget): Promise<unknown> {
 	await entry.view.webContents.debugger.sendCommand("Overlay.enable");
 	await entry.view.webContents.debugger.sendCommand("Overlay.highlightNode", {
-		objectId,
+		objectId: target.objectId,
 		highlightConfig: {
 			showInfo: false,
 			showStyles: false,
@@ -1822,7 +2060,7 @@ async function highlightEntry(entry: BrowserEntry, refName: string): Promise<unk
 			marginColor: { r: 147, g: 197, b: 253, a: 0.08 },
 		},
 	});
-	return { ref: refName, url: entry.view.webContents.getURL() };
+	return { target: target.label, url: entry.view.webContents.getURL() };
 }
 
 async function unhighlightEntry(entry: BrowserEntry): Promise<unknown> {
@@ -1868,10 +2106,10 @@ async function scrollEntry(entry: BrowserEntry, rawDirection: string, amount: nu
 	return { direction, amount, url: entry.view.webContents.getURL() };
 }
 
-async function selectEntry(entry: BrowserEntry, refName: string, value: string): Promise<unknown> {
-	const objectId = await resolveRef(entry, refName);
+async function selectEntry(entry: BrowserEntry, target: ResolvedBrowserTarget | undefined, value: string): Promise<unknown> {
+	if (!target) throw browserError("REFERENCE_REQUIRED", "ref or semantic target is required");
 	const response = (await entry.view.webContents.debugger.sendCommand("Runtime.callFunctionOn", {
-		objectId,
+		objectId: target.objectId,
 		functionDeclaration: `function(next){
 			if (!(this instanceof HTMLSelectElement)) return {supported:false};
 			const values = Array.isArray(next) ? next : [next];
@@ -1886,18 +2124,18 @@ async function selectEntry(entry: BrowserEntry, refName: string, value: string):
 		returnByValue: true,
 	})) as { result?: { value?: { supported?: boolean; matched?: boolean; value?: string } } };
 	if (!response.result?.value?.supported) {
-		throw browserError("INVALID_ELEMENT_STATE", `Element ${refName} is not a select control`);
+		throw browserError("INVALID_ELEMENT_STATE", `Element ${target.label} is not a select control`);
 	}
 	if (!response.result.value.matched) {
 		throw browserError("INVALID_ARGUMENT", `Select option ${JSON.stringify(value)} does not exist`);
 	}
-	return { ref: refName, value: response.result.value.value, url: entry.view.webContents.getURL() };
+	return { target: target.label, value: response.result.value.value, url: entry.view.webContents.getURL() };
 }
 
-async function checkEntry(entry: BrowserEntry, refName: string, checked: boolean): Promise<unknown> {
-	const objectId = await resolveRef(entry, refName);
+async function checkEntry(entry: BrowserEntry, target: ResolvedBrowserTarget | undefined, checked: boolean): Promise<unknown> {
+	if (!target) throw browserError("REFERENCE_REQUIRED", "ref or semantic target is required");
 	const response = (await entry.view.webContents.debugger.sendCommand("Runtime.callFunctionOn", {
-		objectId,
+		objectId: target.objectId,
 		functionDeclaration: `function(next){
 			if (!('checked' in this)) return {supported:false};
 			if (Boolean(this.checked) !== Boolean(next)) this.click();
@@ -1907,12 +2145,12 @@ async function checkEntry(entry: BrowserEntry, refName: string, checked: boolean
 		returnByValue: true,
 	})) as { result?: { value?: { supported?: boolean; checked?: boolean } } };
 	if (!response.result?.value?.supported) {
-		throw browserError("INVALID_ELEMENT_STATE", `Element ${refName} is not checkable`);
+		throw browserError("INVALID_ELEMENT_STATE", `Element ${target.label} is not checkable`);
 	}
 	if (response.result.value.checked !== checked) {
-		throw browserError("ELEMENT_NOT_INTERACTABLE", `Element ${refName} did not change checked state`);
+		throw browserError("ELEMENT_NOT_INTERACTABLE", `Element ${target.label} did not change checked state`);
 	}
-	return { ref: refName, checked: response.result.value.checked, url: entry.view.webContents.getURL() };
+	return { target: target.label, checked: response.result.value.checked, url: entry.view.webContents.getURL() };
 }
 
 async function getEntry(entry: BrowserEntry, property: string, refName?: string): Promise<unknown> {
