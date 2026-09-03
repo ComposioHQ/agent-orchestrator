@@ -125,12 +125,15 @@ type ExistingNativeIDs func(ctx context.Context) (map[string]struct{}, error)
 type Service struct {
 	sources  []Source
 	existing ExistingNativeIDs
+	// snapshots reuses a metadata scan across a burst of id lookups, which is
+	// what importing a whole history is.
+	snapshots *snapshotCache
 }
 
 // NewService builds a discovery service over the given sources. existing may be
 // nil, in which case no session is flagged AlreadyImported.
 func NewService(existing ExistingNativeIDs, sources ...Source) *Service {
-	return &Service{sources: sources, existing: existing}
+	return &Service{sources: sources, existing: existing, snapshots: newSnapshotCache()}
 }
 
 // Sources returns the registered provider sources, in registration order.
@@ -203,7 +206,7 @@ func (s *Service) Locate(ctx context.Context, provider domain.AgentHarness, nati
 		if src.Provider() != provider {
 			continue
 		}
-		found, err := src.Discover(ctx, opts)
+		found, err := s.scanForLocate(ctx, src, opts)
 		if err != nil {
 			return ImportableSession{}, false, err
 		}
