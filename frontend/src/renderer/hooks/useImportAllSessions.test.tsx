@@ -108,6 +108,33 @@ describe("useImportAllSessions", () => {
 		await waitFor(() => expect(result.current.progress?.imported).toBe(3));
 	});
 
+	// Stopping must actually end the run. Deriving "running" from the counts
+	// left a stopped run permanently short of its total, so the spinner kept
+	// turning and the result never appeared.
+	it("stops on request and reports what it managed", async () => {
+		let started = 0;
+		h.post.mockImplementation(async () => {
+			started += 1;
+			await new Promise((r) => setTimeout(r, 5));
+			return { data: { session: { id: "s" } }, error: undefined };
+		});
+
+		const { result } = renderHook(() => useImportAllSessions(), { wrapper });
+		const batch = Array.from({ length: 30 }, (_, i) => session(`s${i}`, false, `/repo-${i}`));
+
+		await act(async () => {
+			const run = result.current.importAll(batch);
+			await new Promise((r) => setTimeout(r, 8));
+			result.current.stop();
+			await run;
+		});
+
+		expect(result.current.running).toBe(false);
+		expect(result.current.progress).not.toBeNull();
+		expect(result.current.progress!.done).toBeLessThan(30);
+		expect(started).toBeLessThan(30);
+	});
+
 	it("does nothing when everything is already imported", async () => {
 		const { result } = renderHook(() => useImportAllSessions(), { wrapper });
 		await act(async () => {

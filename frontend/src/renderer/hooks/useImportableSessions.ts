@@ -105,6 +105,10 @@ const importLanes = 4;
 export function useImportAllSessions() {
 	const queryClient = useQueryClient();
 	const [progress, setProgress] = useState<ImportAllProgress | null>(null);
+	// Running is explicit rather than derived from the counts. A stopped run
+	// leaves done short of total by definition, so deriving it left the spinner
+	// turning forever and the summary never showed.
+	const [running, setRunning] = useState(false);
 	const cancelled = useRef(false);
 
 	const stop = useCallback(() => {
@@ -117,6 +121,7 @@ export function useImportAllSessions() {
 			if (pending.length === 0) return;
 
 			cancelled.current = false;
+			setRunning(true);
 			let done = 0;
 			let imported = 0;
 			let failed = 0;
@@ -156,7 +161,13 @@ export function useImportAllSessions() {
 				}
 			};
 
-			await Promise.all(Array.from({ length: Math.min(importLanes, lanes.length) }, runLane));
+			try {
+				await Promise.all(Array.from({ length: Math.min(importLanes, lanes.length) }, runLane));
+			} finally {
+				// Whether the run finished or was stopped, it is no longer running.
+				// Stopping still leaves a result worth reporting.
+				setRunning(false);
+			}
 
 			// One refresh at the end. Invalidating per conversation would refetch
 			// the whole workspace on every step of a long run.
@@ -168,5 +179,5 @@ export function useImportAllSessions() {
 
 	const clear = useCallback(() => setProgress(null), []);
 
-	return { importAll, stop, clear, progress, running: progress !== null && progress.done < progress.total };
+	return { importAll, stop, clear, progress, running };
 }

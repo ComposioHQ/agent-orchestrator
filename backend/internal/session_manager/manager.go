@@ -1090,6 +1090,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 
 	metadata := domain.SessionMetadata{
 		Branch:                    ws.Branch,
+		SourceBranch:              importedSourceBranch(cfg),
 		WorkspacePath:             ws.Path,
 		WorkspaceRepoPath:         ws.RepoPath,
 		RuntimeHandleID:           handle.ID,
@@ -1317,6 +1318,18 @@ func resolveSpawnDiffBase(ctx context.Context, root, defaultBranch string) (stri
 		return sha, "HEAD"
 	}
 	return "", ""
+}
+
+// importedSourceBranch is the branch an imported conversation ran on, recorded
+// whether or not the session could be created on it. Git allows one checkout
+// per branch, so an import whose branch is already checked out lands on a fresh
+// one; without this the conversation's pull request would become unfindable.
+// Empty for an ordinary spawn.
+func importedSourceBranch(cfg ports.SpawnConfig) string {
+	if cfg.ResumeNativeSession == nil {
+		return ""
+	}
+	return strings.TrimSpace(cfg.ResumeNativeSession.SourceBranch)
 }
 
 func spawnDiffBaseRefCandidates(defaultBranch string) []string {

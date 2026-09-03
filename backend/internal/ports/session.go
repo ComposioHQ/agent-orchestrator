@@ -65,6 +65,11 @@ type ResumeNativeSession struct {
 	Provider        domain.AgentHarness
 	NativeSessionID string
 	ConfigDir       string
+	// SourceBranch is the branch the conversation ran on, recorded verbatim
+	// from its transcript. It is kept even when the session cannot be created
+	// on that branch, because it is the only link back to the conversation's
+	// pull request.
+	SourceBranch string
 }
 
 // SpawnAttachment is a single file attached to a spawn request. Data holds the

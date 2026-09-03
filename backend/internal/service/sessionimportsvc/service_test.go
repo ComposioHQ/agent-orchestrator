@@ -398,3 +398,57 @@ func TestImportOfDetachedHeadConversationDropsTheBranch(t *testing.T) {
 		t.Errorf("HEAD must not be requested as a branch, got %q", sessions.spawned.Branch)
 	}
 }
+
+// An imported conversation must keep the branch it ran on even when the session
+// cannot be created there, because that branch is the only link back to its
+// pull request. Without it every import lands awaiting a PR that is never found.
+func TestImportRecordsTheConversationBranchForPRDiscovery(t *testing.T) {
+	target := sessionimport.ImportableSession{
+		Provider:        domain.HarnessClaudeCode,
+		NativeSessionID: "nat-branch",
+		CWD:             "/Users/dev/code",
+		Branch:          "feat/payments",
+		Title:           "Payments work",
+	}
+	src := &fakeSource{provider: domain.HarnessClaudeCode, sessions: []sessionimport.ImportableSession{target}}
+	sessions := &fakeSessions{}
+	projects := &fakeProjects{list: []projectsvc.Summary{{ID: "proj", Path: "/Users/dev/code"}}}
+	svc := New(sessions, &fakeStore{}, projects, src)
+
+	if _, _, err := svc.Import(context.Background(), domain.HarnessClaudeCode, "nat-branch"); err != nil {
+		t.Fatalf("import: %v", err)
+	}
+	rns := sessions.spawned.ResumeNativeSession
+	if rns == nil {
+		t.Fatal("ResumeNativeSession must be set")
+	}
+	if rns.SourceBranch != "feat/payments" {
+		t.Errorf("the conversation's branch must be recorded, got %q", rns.SourceBranch)
+	}
+}
+
+// The trunk is refused as a session branch, but it is still worth recording as
+// where the conversation ran.
+func TestImportRecordsTrunkAsSourceEvenThoughItIsNotAdopted(t *testing.T) {
+	target := sessionimport.ImportableSession{
+		Provider:        domain.HarnessClaudeCode,
+		NativeSessionID: "nat-main",
+		CWD:             "/Users/dev/code",
+		Branch:          "main",
+		Title:           "Work on main",
+	}
+	src := &fakeSource{provider: domain.HarnessClaudeCode, sessions: []sessionimport.ImportableSession{target}}
+	sessions := &fakeSessions{}
+	projects := &fakeProjects{list: []projectsvc.Summary{{ID: "proj", Path: "/Users/dev/code"}}}
+	svc := New(sessions, &fakeStore{}, projects, src)
+
+	if _, _, err := svc.Import(context.Background(), domain.HarnessClaudeCode, "nat-main"); err != nil {
+		t.Fatalf("import: %v", err)
+	}
+	if sessions.spawned.Branch != "" {
+		t.Errorf("a session must never be created on the trunk, got %q", sessions.spawned.Branch)
+	}
+	if sessions.spawned.ResumeNativeSession.SourceBranch != "main" {
+		t.Errorf("the source branch should still be recorded, got %q", sessions.spawned.ResumeNativeSession.SourceBranch)
+	}
+}

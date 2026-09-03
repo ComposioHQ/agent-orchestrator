@@ -185,6 +185,9 @@ func (s *Service) Import(ctx context.Context, provider domain.AgentHarness, nati
 			Provider:        provider,
 			NativeSessionID: nativeID,
 			ConfigDir:       target.ConfigDir,
+			// The transcript's own branch, kept even when the session has to be
+			// created on a different one.
+			SourceBranch: strings.TrimSpace(target.Branch),
 		},
 	})
 	if err != nil {

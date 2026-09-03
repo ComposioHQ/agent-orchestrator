@@ -110,3 +110,42 @@ func TestOrdinarySpawnStillFailsOnBranchConflict(t *testing.T) {
 		t.Errorf("an ordinary spawn should not retry, got %v", ws.createBranches)
 	}
 }
+
+// The session branch and the conversation's branch are two different facts. A
+// conversation whose branch is taken still records where it came from, which is
+// what keeps its pull request findable.
+func TestImportSpawnRecordsSourceBranchEvenWhenItCannotUseIt(t *testing.T) {
+	m, _, ws := importManager(t)
+	ws.createErrForBranch = "feat/payments"
+
+	cfg := importSpawnConfig("feat/payments")
+	cfg.ResumeNativeSession.SourceBranch = "feat/payments"
+
+	rec, _, _, err := m.Spawn(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("Spawn: %v", err)
+	}
+	if rec.Metadata.Branch == "feat/payments" {
+		t.Fatal("the taken branch must not become the session branch")
+	}
+	if rec.Metadata.SourceBranch != "feat/payments" {
+		t.Errorf("the conversation's branch must survive the fallback, got %q", rec.Metadata.SourceBranch)
+	}
+}
+
+// An ordinary spawn has no source branch to record.
+func TestOrdinarySpawnRecordsNoSourceBranch(t *testing.T) {
+	m, _, _ := importManager(t)
+
+	rec, _, _, err := m.Spawn(context.Background(), ports.SpawnConfig{
+		ProjectID: "mer",
+		Kind:      domain.KindWorker,
+		Harness:   domain.HarnessCodex,
+	})
+	if err != nil {
+		t.Fatalf("Spawn: %v", err)
+	}
+	if rec.Metadata.SourceBranch != "" {
+		t.Errorf("only an import has a source branch, got %q", rec.Metadata.SourceBranch)
+	}
+}
