@@ -11,6 +11,20 @@ const bridgeMocks = vi.hoisted(() => ({
 	scanImportFolder: vi.fn(),
 }));
 
+const importMocks = vi.hoisted(() => ({
+	validateProjectImport: vi.fn(),
+	prepareProjectGit: vi.fn(),
+}));
+
+vi.mock("../lib/import-onboarding", async (importOriginal) => {
+	const actual = await importOriginal<typeof import("../lib/import-onboarding")>();
+	return {
+		...actual,
+		validateProjectImport: (...args: unknown[]) => importMocks.validateProjectImport(...args),
+		prepareProjectGit: (...args: unknown[]) => importMocks.prepareProjectGit(...args),
+	};
+});
+
 vi.mock("../lib/bridge", () => ({
 	aoBridge: {
 		app: {
@@ -113,10 +127,34 @@ const noop = {
 	onInitializeProject: async (_path: string) => undefined,
 };
 
+function readyValidation(path: string) {
+	return {
+		importKind: "project",
+		isValid: true,
+		blockingErrors: [],
+		nextStep: "continue" as const,
+		root: {
+			repoPath: path,
+			isRepo: true,
+			hasCommit: true,
+			hasOrigin: true,
+			isEmptyFolder: false,
+			needsGitInit: false,
+			requiredActions: [],
+			blockingErrors: [],
+		},
+	};
+}
+
 beforeEach(() => {
 	bridgeMocks.checkAncestorRepo.mockReset().mockResolvedValue(undefined);
 	bridgeMocks.chooseDirectory.mockReset();
 	bridgeMocks.scanImportFolder.mockReset().mockImplementation(async ({ path }: { path: string }) => okScan(path));
+	importMocks.validateProjectImport.mockReset().mockImplementation(async (path: string) => readyValidation(path));
+	importMocks.prepareProjectGit.mockReset().mockImplementation(async ({ path }: { path: string }) => ({
+		events: [],
+		validation: readyValidation(path),
+	}));
 	cloudMocks.cloudEnabled = false;
 	cloudMocks.sessionStatus = "unauthenticated";
 	cloudMocks.createProject.mockReset();
@@ -138,20 +176,16 @@ describe("CreateProjectFlow droppedPath", () => {
 		expect(bridgeMocks.chooseDirectory).not.toHaveBeenCalled();
 	});
 
-	it("uses the dropped path for preflight and opens the agent sheet, skipping the native dialog", async () => {
+	it("uses the dropped path for validation and opens the import dialog, skipping the native chooser", async () => {
 		const user = userEvent.setup();
 		const { rerender } = render(<CreateProjectFlow mode="choose" {...noop} droppedPath={null} />);
 		rerender(<CreateProjectFlow mode="choose" {...noop} droppedPath={{ nonce: 1, path: "/dropped/proj" }} />);
 
 		await user.click(await screen.findByRole("button", { name: "Import an existing project" }));
 
-		await waitFor(() =>
-			expect(bridgeMocks.scanImportFolder).toHaveBeenCalledWith({ mode: "project", path: "/dropped/proj" }),
-		);
+		await waitFor(() => expect(importMocks.validateProjectImport).toHaveBeenCalledWith("/dropped/proj"));
 		expect(bridgeMocks.chooseDirectory).not.toHaveBeenCalled();
-		const sheet = await screen.findByTestId("agent-sheet");
-		expect(sheet).toHaveAttribute("data-path", "/dropped/proj");
-		expect(sheet).toHaveAttribute("data-kind", "single_repo");
+		expect(await screen.findByRole("dialog", { name: "Import project" })).toBeInTheDocument();
 	});
 
 	it("does not let a stale dropped path leak into the next manual New Project click", async () => {
@@ -172,9 +206,7 @@ describe("CreateProjectFlow droppedPath", () => {
 		await user.click(await screen.findByRole("button", { name: "Import an existing project" }));
 
 		await waitFor(() => expect(bridgeMocks.chooseDirectory).toHaveBeenCalledTimes(1));
-		await waitFor(() =>
-			expect(bridgeMocks.scanImportFolder).toHaveBeenCalledWith({ mode: "project", path: "/manually/chosen" }),
-		);
+		await waitFor(() => expect(importMocks.validateProjectImport).toHaveBeenCalledWith("/manually/chosen"));
 	});
 
 	it("ignores a drop while the agent sheet is already open", async () => {
@@ -182,6 +214,7 @@ describe("CreateProjectFlow droppedPath", () => {
 		const { rerender } = render(<CreateProjectFlow mode="choose" {...noop} droppedPath={null} />);
 		rerender(<CreateProjectFlow mode="choose" {...noop} droppedPath={{ nonce: 1, path: "/dropped/first" }} />);
 		await user.click(await screen.findByRole("button", { name: "Import an existing project" }));
+		await user.click(await screen.findByRole("button", { name: "Continue" }));
 		const sheet = await screen.findByTestId("agent-sheet");
 		expect(sheet).toHaveAttribute("data-path", "/dropped/first");
 

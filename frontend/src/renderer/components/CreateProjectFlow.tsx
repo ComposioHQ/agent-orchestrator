@@ -4,7 +4,7 @@ import { useTranslation } from "react-i18next";
 import {
 	CheckCircle2,
 	CircleDashed,
-	ChevronRight,
+	ChevronLeft,
 	Cloud,
 	Folder,
 	FolderClosed,
@@ -22,11 +22,19 @@ import { useCloudGate } from "../hooks/useCloudGate";
 import { useCloudOrg } from "../hooks/useCloudOrg";
 import { cloudProjectsQueryKey } from "../hooks/useWorkspaceQuery";
 import { aoBridge } from "../lib/bridge";
+import {
+	formatImportBlockingErrors,
+	importValidationPath,
+	validateProjectImport,
+	type ImportValidationResult,
+} from "../lib/import-onboarding";
 import { useCloudSession } from "../lib/cloud-session";
 import { cn } from "../lib/utils";
 import type { ProjectKind } from "../types/workspace";
 import { CreateProjectAgentSheet, type CreateProjectAgentSelection } from "./CreateProjectAgentSheet";
 import CloneRepositoryDialog, { type CloneRepositoryDetails, type CloneRepositorySelection } from "./CloneRepositoryDialog";
+import { ImportGitPreparationDialog } from "./ImportGitPreparationDialog";
+import { ImportKindChoiceDialog, importKindChoiceChildCount } from "./ImportKindChoiceDialog";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
@@ -96,7 +104,11 @@ export function CreateProjectFlow({
 	const [selectedKind, setSelectedKind] = useState<ProjectKind>(mode === "workspace" ? "workspace" : "single_repo");
 	const [selectedPath, setSelectedPath] = useState<string | null>(null);
 	const [validationScan, setValidationScan] = useState<ImportFolderScan | null>(null);
+	const [importValidation, setImportValidation] = useState<ImportValidationResult | null>(null);
 	const [importProjectName, setImportProjectName] = useState("");
+	const [gitPrepOpen, setGitPrepOpen] = useState(false);
+	const [importKindChoiceOpen, setImportKindChoiceOpen] = useState(false);
+	const [retainedImportPath, setRetainedImportPath] = useState<string | null>(null);
 	const [isChoosingPath, setIsChoosingPath] = useState(false);
 	const [isCreating, setIsCreating] = useState(false);
 	const [isInitializing, setIsInitializing] = useState(false);
@@ -128,10 +140,12 @@ export function CreateProjectFlow({
 	};
 
 	const selectSource = (source: ProjectSource) => {
-		const presetPath = pendingDropPath;
+		const presetPath = pendingDropPath ?? retainedImportPath;
 		setPendingDropPath(null);
+		setRetainedImportPath(null);
 		setError(null);
 		setValidationScan(null);
+		setImportValidation(null);
 		if (source === "clone") {
 			transitionToChild(() => setCloneDialogOpen(true));
 			return;
@@ -142,11 +156,21 @@ export function CreateProjectFlow({
 		void chooseDirectory(source === "workspace" ? "workspace" : "single_repo", presetPath ?? undefined);
 	};
 
+	const proceedToAgentSheet = (path: string) => {
+		setFolderPickerOpen(false);
+		setGitPrepOpen(false);
+		setImportKindChoiceOpen(false);
+		setModePickerOpen(false);
+		setSelectedPath(path);
+	};
+
 	const chooseDirectory = async (kind: ProjectKind, presetPath?: string) => {
-		const replacingFolder = folderPickerOpen && validationScan !== null && !presetPath;
+		const replacingFolder =
+			folderPickerOpen && !presetPath && (validationScan !== null || importValidation !== null);
 		setError(null);
 		if (!replacingFolder) {
 			setValidationScan(null);
+			setImportValidation(null);
 			setImportProjectName("");
 			setRepositorySetup(null);
 			setRepositorySetupWarning(null);
@@ -160,6 +184,42 @@ export function CreateProjectFlow({
 					kind === "workspace" ? t("createProject.chooseWorkspace") : t("createProject.chooseRepo"),
 				));
 			if (!path) return;
+			if (path && hasModePicker) {
+				if (kind === "single_repo") {
+					try {
+						const validation = await validateProjectImport(path);
+						setImportValidation(validation);
+						setImportProjectName(defaultProjectNameFromPath(path));
+						setError(validation.nextStep === "error" ? formatImportBlockingErrors(validation, t) : null);
+					} catch (err) {
+						setImportValidation(null);
+						setError(err instanceof Error ? err.message : t("createProject.couldNotAdd"));
+					}
+				} else {
+					try {
+						const warning = await aoBridge.app.checkAncestorRepo(path);
+						if (warning) {
+							setRepositorySetupWarning(warning);
+							setRepositorySetup("NOT_A_GIT_REPO");
+						}
+					} catch {
+						// Ancestor check failed — proceed without warning
+					}
+					try {
+						const scan = await aoBridge.app.scanImportFolder({ path, mode: "workspace" });
+						setValidationScan(scan);
+						const blockingReason = scan.repos.find(
+							(repo) => repo.status === "error" && repo.reason !== "Repository must have at least one commit.",
+						)?.reason;
+						setError(blockingReason ?? null);
+					} catch (err) {
+						setValidationScan({ path, repos: [] });
+						setError(err instanceof Error ? err.message : t("createProject.couldNotAdd"));
+					}
+				}
+				transitionToChild(() => setFolderPickerOpen(true));
+				return;
+			}
 			if (path && kind === "single_repo") {
 				const preflight = await projectRepositoryPreflight(path);
 				if (preflight.blockingError) {
@@ -181,30 +241,6 @@ export function CreateProjectFlow({
 				} catch {
 					// Ancestor check failed — proceed without warning
 				}
-			}
-			if (path && hasModePicker && !presetPath) {
-				try {
-					const scan = await aoBridge.app.scanImportFolder({
-						path,
-						mode: kind === "workspace" ? "workspace" : "project",
-					});
-					setValidationScan(scan);
-					if (kind === "single_repo") {
-						setImportProjectName(defaultProjectNameFromPath(path));
-					}
-					const blockingReason = scan.repos.find(
-						(repo) => repo.status === "error" && repo.reason !== "Repository must have at least one commit.",
-					)?.reason;
-					setError(blockingReason ?? null);
-				} catch (err) {
-					setValidationScan({ path, repos: [] });
-					if (kind === "single_repo") {
-						setImportProjectName(defaultProjectNameFromPath(path));
-					}
-					setError(err instanceof Error ? err.message : t("createProject.couldNotAdd"));
-				}
-				transitionToChild(() => setFolderPickerOpen(true));
-				return;
 			}
 			if (path) {
 				setModePickerOpen(false);
@@ -279,7 +315,7 @@ export function CreateProjectFlow({
 				setCloneSelection(null);
 				return;
 			}
-			if (selectedKind === "single_repo" && repositorySetup) {
+			if (selectedKind === "single_repo" && repositorySetup && !importValidation) {
 				setIsCreating(false);
 				setIsInitializing(true);
 				await onInitializeProject(selectedPath);
@@ -295,23 +331,30 @@ export function CreateProjectFlow({
 				...selection,
 			});
 			setSelectedPath(null);
+			setImportValidation(null);
 		} catch (err) {
 			const code = err instanceof Error && "code" in err ? (err.code as string | undefined) : undefined;
 			const message = err instanceof Error ? err.message : t("createProject.couldNotAdd");
-			if (!cloneSelection && selectedKind === "single_repo" && isRepositorySetupRecoveryCode(code)) {
+			if (!cloneSelection && selectedKind === "single_repo" && isRepositorySetupRecoveryCode(code) && !importValidation) {
 				setRepositorySetup(code);
 			}
 			setError(message);
 			if (hasModePicker && !cloneSelection) {
-				if (shouldScanCreateFailure(message)) {
+				if (selectedKind === "single_repo" && importValidation && selectedPath) {
+					try {
+						setImportValidation(await validateProjectImport(selectedPath));
+					} catch {
+						// Keep the last known validation state for retry.
+					}
+				} else if (shouldScanCreateFailure(message)) {
 					try {
 						const scan = await aoBridge.app.scanImportFolder({
-							path: selectedPath,
+							path: selectedPath!,
 							mode: selectedKind === "workspace" ? "workspace" : "project",
 						});
 						setValidationScan(scan);
 					} catch {
-						setValidationScan({ path: selectedPath, repos: [] });
+						setValidationScan({ path: selectedPath!, repos: [] });
 					}
 				}
 				setSelectedPath(null);
@@ -343,7 +386,7 @@ export function CreateProjectFlow({
 					error,
 					label,
 				})}
-			<CreateProjectFlowBackdrop open={modePickerOpen || cloneDialogOpen || folderPickerOpen || selectedPath !== null || childTransitioning} />
+			<CreateProjectFlowBackdrop open={modePickerOpen || cloneDialogOpen || folderPickerOpen || gitPrepOpen || importKindChoiceOpen || selectedPath !== null || childTransitioning} />
 			{hasModePicker && embedded && !modePickerOpen && !cloneDialogOpen && selectedPath === null && (
 				<div className="flex w-full flex-col items-center gap-3">
 					{cloudEnabled && (
@@ -432,16 +475,30 @@ export function CreateProjectFlow({
 						open={folderPickerOpen}
 						projectName={importProjectName}
 						scan={validationScan}
+						validation={importValidation}
 						onContinue={() => {
+							if (selectedKind === "single_repo" && importValidation) {
+								if (importProjectName.trim() === "" || importValidation.nextStep === "error") return;
+								if (importValidation.nextStep === "choose_import_kind") {
+									setFolderPickerOpen(false);
+									setImportKindChoiceOpen(true);
+									return;
+								}
+								if (importValidation.nextStep === "prepare_git") {
+									setFolderPickerOpen(false);
+									setGitPrepOpen(true);
+									return;
+								}
+								proceedToAgentSheet(importValidationPath(importValidation));
+								return;
+							}
 							if (!validationScan || error) return;
-							if (selectedKind === "single_repo" && importProjectName.trim() === "") return;
-							setFolderPickerOpen(false);
-							setSelectedPath(validationScan.path);
-							setModePickerOpen(false);
+							proceedToAgentSheet(validationScan.path);
 						}}
 						onBack={() => {
 							setError(null);
 							setValidationScan(null);
+							setImportValidation(null);
 							setImportProjectName("");
 							setFolderPickerOpen(false);
 						}}
@@ -452,12 +509,62 @@ export function CreateProjectFlow({
 								if (!open) {
 									setError(null);
 									setValidationScan(null);
+									setImportValidation(null);
 									setImportProjectName("");
 								}
 							}
 						}}
 						onProjectNameChange={setImportProjectName}
 					/>
+					{importValidation && selectedKind === "single_repo" ? (
+						<ImportGitPreparationDialog
+							disabled={isBusy}
+							open={gitPrepOpen}
+							path={importValidationPath(importValidation)}
+							validation={importValidation}
+							onBack={() => {
+								setGitPrepOpen(false);
+								setFolderPickerOpen(true);
+							}}
+							onComplete={(nextValidation) => {
+								setImportValidation(nextValidation);
+								proceedToAgentSheet(importValidationPath(nextValidation));
+							}}
+							onOpenChange={(open) => {
+								if (!open) setGitPrepOpen(false);
+							}}
+						/>
+					) : null}
+					{importValidation && selectedKind === "single_repo" ? (
+						<ImportKindChoiceDialog
+							childCount={importKindChoiceChildCount(importValidation)}
+							disabled={isBusy}
+							open={importKindChoiceOpen}
+							onBack={() => {
+								setImportKindChoiceOpen(false);
+								setFolderPickerOpen(true);
+							}}
+							onContinueAsProject={() => {
+								setImportKindChoiceOpen(false);
+								if (importValidation.root.requiredActions.length > 0) {
+									setGitPrepOpen(true);
+									return;
+								}
+								proceedToAgentSheet(importValidationPath(importValidation));
+							}}
+							onOpenChange={(open) => {
+								if (!open) setImportKindChoiceOpen(false);
+							}}
+							onTryWorkspace={() => {
+								if (!importValidation) return;
+								setRetainedImportPath(importValidationPath(importValidation));
+								setImportKindChoiceOpen(false);
+								setImportValidation(null);
+								setImportProjectName("");
+								setModePickerOpen(true);
+							}}
+						/>
+					) : null}
 				</>
 			)}
 			<CreateProjectAgentSheet
@@ -486,7 +593,7 @@ export function CreateProjectFlow({
 				onSubmit={createProject}
 				open={selectedPath !== null}
 				path={selectedPath}
-				repositorySetupNeeded={repositorySetup !== null}
+				repositorySetupNeeded={repositorySetup !== null && importValidation === null}
 				repositorySetupWarning={repositorySetupWarning}
 			/>
 			{error && !hasModePicker && (
@@ -983,6 +1090,7 @@ function CreateProjectFolderDialog({
 	open,
 	projectName,
 	scan,
+	validation,
 }: {
 	disabled: boolean;
 	error: string | null;
@@ -995,9 +1103,11 @@ function CreateProjectFolderDialog({
 	open: boolean;
 	projectName: string;
 	scan: ImportFolderScan | null;
+	validation: ImportValidationResult | null;
 }) {
 	const { t } = useTranslation();
 	const isWorkspace = kind === "workspace";
+	const importPath = isWorkspace ? scan?.path : validation ? importValidationPath(validation) : scan?.path;
 	const failedRepos =
 		scan?.repos.filter(
 			(repo) =>
@@ -1010,17 +1120,26 @@ function CreateProjectFolderDialog({
 			if (repo.status === "error" || repo.needsGitInit) return false;
 			return repo.hasRemote;
 		}) ?? [];
-	const showProjectGitSetupNotice = Boolean(scan && !isWorkspace && projectNeedsGitSetup(scan));
-	const canContinue =
-		scan !== null &&
-		failedRepos.length === 0 &&
-		!error &&
-		(isWorkspace || projectName.trim().length > 0);
-	if (!scan) return null;
+	const showProjectGitSetupNotice = Boolean(!isWorkspace && validation?.nextStep === "prepare_git");
+	const showBlockingError = Boolean(!isWorkspace ? validation?.nextStep === "error" : error);
+	const canContinue = isWorkspace
+		? scan !== null && failedRepos.length === 0 && !error
+		: validation !== null &&
+			validation.nextStep !== "error" &&
+			projectName.trim().length > 0 &&
+			(validation.nextStep === "continue" ||
+				validation.nextStep === "prepare_git" ||
+				validation.nextStep === "choose_import_kind");
+	if (!importPath) return null;
 	return (
-		<Dialog.Root open={open} onOpenChange={onOpenChange}>
+		<Dialog.Root open={open} onOpenChange={(next) => !next && !disabled && onOpenChange(false)}>
 			<Dialog.Portal>
-				<Dialog.Content className="fixed left-1/2 top-1/2 z-overlay flex max-h-[min(640px,calc(100svh-24px))] w-[min(640px,calc(100vw-24px))] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-lg border border-border bg-popover p-0 text-popover-foreground shadow-xl data-[state=open]:animate-modal-in data-[state=closed]:animate-modal-out motion-reduce:animate-none">
+				<Dialog.Content
+					className={cn(
+						"fixed left-1/2 top-1/2 z-overlay flex max-h-[min(640px,calc(100svh-24px))] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-lg border border-border bg-popover p-0 text-popover-foreground shadow-xl data-[state=open]:animate-modal-in data-[state=closed]:animate-modal-out motion-reduce:animate-none",
+						isWorkspace ? "w-[min(640px,calc(100vw-24px))]" : "w-[min(560px,calc(100vw-24px))]",
+					)}
+				>
 					<div className="relative flex shrink-0 items-center gap-3 px-4 pt-3">
 						<Button
 							type="button"
@@ -1030,29 +1149,35 @@ function CreateProjectFolderDialog({
 							disabled={disabled}
 							onClick={onBack}
 						>
-							<ChevronRight className="size-4 rotate-180" aria-hidden="true" />
+							<ChevronLeft className="size-4" aria-hidden="true" />
 						</Button>
 						<div className="min-w-0 flex-1 pr-8">
-							<Dialog.Title className="text-[18px] font-semibold text-[var(--color-text-import-title)]">
+							<Dialog.Title className="text-balance text-[18px] font-semibold text-[var(--color-text-import-title)]">
 								{isWorkspace ? t("createProject.importWorkspace") : t("createProject.importProject")}
 							</Dialog.Title>
 							<Dialog.Description className="sr-only">
 								{isWorkspace ? t("createProject.importWorkspaceDesc") : t("createProject.importProjectDesc")}
 							</Dialog.Description>
 						</div>
-						<Dialog.Close asChild>
-							<button
-								type="button"
-								className="settings-close-button"
-								aria-label={t("createProject.closeImport")}
-								disabled={disabled}
-							>
-								<X className="size-4" aria-hidden="true" />
-							</button>
-						</Dialog.Close>
+						<button
+							type="button"
+							className="settings-close-button"
+							aria-label={t("createProject.closeImport")}
+							disabled={disabled}
+							onClick={() => onOpenChange(false)}
+						>
+							<X className="size-4" aria-hidden="true" />
+						</button>
 					</div>
-					<div className="min-h-0 overflow-y-auto px-4 pb-1 pt-3">
-						<div className="space-y-4">
+
+					<form
+						className="min-h-0 overflow-y-auto"
+						onSubmit={(event) => {
+							event.preventDefault();
+							if (canContinue) onContinue();
+						}}
+					>
+						<div className="space-y-4 px-4 pb-1 pt-4">
 							{!isWorkspace ? (
 								<div className="space-y-2">
 									<Label htmlFor="importProjectName" className="text-[13px] font-semibold text-[var(--color-text-import-title)]">
@@ -1064,6 +1189,7 @@ function CreateProjectFolderDialog({
 										</span>
 										<Input
 											id="importProjectName"
+											autoFocus
 											autoComplete="off"
 											className="bg-[var(--color-bg-import-card)] pl-10 text-[13px]"
 											disabled={disabled}
@@ -1090,7 +1216,7 @@ function CreateProjectFolderDialog({
 								>
 									<span className="flex min-w-0 flex-1 items-center gap-3 px-3">
 										<Folder className="size-4 shrink-0 text-[var(--color-text-import-muted)]" aria-hidden="true" />
-										<span className="truncate font-mono">{displayImportPath(scan.path)}</span>
+										<span className="truncate">{displayImportPath(importPath)}</span>
 									</span>
 									<span className="flex h-full shrink-0 items-center border-l border-border/60 px-4 text-foreground hover:bg-foreground/10">
 										{t("createProject.cloneChoose")}
@@ -1098,7 +1224,13 @@ function CreateProjectFolderDialog({
 								</button>
 							</div>
 
-							{error && (
+							{showBlockingError && error && !isWorkspace && (
+								<div className="rounded-lg border border-destructive/40 bg-destructive/10 px-4 py-3 text-pretty text-[12px] leading-5 text-destructive" role="alert">
+									{error}
+								</div>
+							)}
+
+							{isWorkspace && error ? (
 								<div className="rounded-lg border border-destructive/40 bg-destructive/10">
 									<div className="border-b border-destructive/30 px-3 py-2 font-mono text-[11px] font-semibold uppercase tracking-[0.12em] text-destructive">
 										<span className="mr-2 inline-block size-2 rounded-full bg-destructive" aria-hidden="true" />
@@ -1119,7 +1251,7 @@ function CreateProjectFolderDialog({
 										</div>
 									)}
 								</div>
-							)}
+							) : null}
 
 							{showProjectGitSetupNotice ? (
 								<p className="text-pretty text-[12px] leading-5 text-[var(--color-text-import-muted)]" role="status">
@@ -1128,7 +1260,7 @@ function CreateProjectFolderDialog({
 							) : null}
 
 							{isWorkspace
-								? scan.repos
+								? scan?.repos
 										.filter((repo) => (repo.status !== "error" && repo.hasRemote) || repo.needsGitInit)
 										.map((repo) => (
 											<div
@@ -1147,25 +1279,21 @@ function CreateProjectFolderDialog({
 										</div>
 									))}
 
-							{scan.repos.length === 0 && !showProjectGitSetupNotice ? (
+							{isWorkspace && scan && scan.repos.length === 0 && !showProjectGitSetupNotice ? (
 								<div className="rounded-md border border-[var(--color-border-import-modal)] bg-[var(--color-bg-import-card)] p-3 text-[12px] text-[var(--color-text-import-muted)]">
 									{t("createProject.noRepos")}
 								</div>
 							) : null}
 						</div>
-					</div>
-					<div className="flex shrink-0 justify-end gap-2 px-4 pb-4 pt-3">
-						<div className="flex flex-wrap items-center justify-end gap-3">
-							<Button type="button" variant="outline" disabled={disabled} onClick={() => onOpenChange(false)}>
-								{t("createProject.cancel")}
-							</Button>
-							{canContinue ? (
-								<Button type="button" variant="primary" disabled={disabled} onClick={onContinue}>
+
+						<div className="flex shrink-0 justify-end gap-2 px-4 pb-4 pt-3">
+							<div className="flex items-center justify-end gap-3">
+								<Button type="submit" variant="primary" disabled={disabled || !canContinue}>
 									{t("createProject.cloneContinue")}
 								</Button>
-							) : null}
+							</div>
 						</div>
-					</div>
+					</form>
 				</Dialog.Content>
 			</Dialog.Portal>
 		</Dialog.Root>
@@ -1203,10 +1331,6 @@ function ImportRepoRow({ failed = false, repo }: { failed?: boolean; repo: Impor
 function defaultProjectNameFromPath(value: string): string {
 	const segments = value.replace(/[\\/]+$/, "").split(/[\\/]/);
 	return segments.pop() ?? "";
-}
-
-function projectNeedsGitSetup(scan: ImportFolderScan): boolean {
-	return scan.repos.length === 0 || scan.repos.some((repo) => repo.needsGitInit);
 }
 
 function displayImportPath(value: string) {
