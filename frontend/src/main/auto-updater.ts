@@ -1,4 +1,4 @@
-import { autoUpdater } from "electron-updater";
+import { autoUpdater, CancellationToken, type ProgressInfo } from "electron-updater";
 import { app, BrowserWindow, dialog } from "electron";
 import { accessSync, constants as fsConstants, existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
@@ -95,6 +95,11 @@ let escalationTimer: ReturnType<typeof setInterval> | undefined;
 let escalationStateDir: string | undefined;
 const STABLE_AUTOMATIC_UPDATE_CHECK_INTERVAL_MS = 60 * 60 * 1000;
 const NIGHTLY_AUTOMATIC_UPDATE_CHECK_INTERVAL_MS = 15 * 60 * 1000;
+// Long enough to tolerate a temporarily slow release CDN, but bounded so a
+// connection that has stopped delivering bytes cannot own the updater queue
+// forever. Every real progress event restarts this window.
+export const DOWNLOAD_STALL_TIMEOUT_MS = 2 * 60 * 1000;
+const DOWNLOAD_STALL_MESSAGE = "Update download stalled. Check your connection and try again.";
 let automaticUpdateTimer: ReturnType<typeof setInterval> | undefined;
 let automaticUpdateTimerIntervalMs: number | undefined;
 type UpdaterOperation =
@@ -138,6 +143,41 @@ let pendingUpdateVersion: string | undefined;
 // check the selected channel at launch regardless of whether automatic
 // downloading is enabled.
 let lastCheckedAtMs: number | undefined;
+type DownloadCancellation = Pick<CancellationToken, "cancel">;
+type DownloadProgressSnapshot = {
+  observedAtMs: number;
+  percent?: number;
+  transferredBytes?: number;
+  totalBytes?: number;
+};
+type ActiveDownloadObservation = {
+  cancellationToken: DownloadCancellation;
+  lastProgressAtMs: number;
+  percent?: number;
+  transferredBytes?: number;
+  totalBytes?: number;
+  timer?: ReturnType<typeof setTimeout>;
+  reject: (error: DownloadStalledError) => void;
+};
+let activeDownloadObservation: ActiveDownloadObservation | undefined;
+let pendingDownloadProgress: DownloadProgressSnapshot | undefined;
+// A cancelled provider can emit progress/downloaded after the timeout callback
+// has won the race. Ignore those stale events until a new serialized download
+// explicitly takes ownership.
+let ignoreDownloadEventsUntilNextDownload = false;
+
+class DownloadStalledError extends Error {
+  readonly version = pendingUpdateVersion;
+
+  constructor(
+    readonly transferredBytes: number | undefined,
+    readonly totalBytes: number | undefined,
+    readonly stalledMs: number,
+  ) {
+    super(DOWNLOAD_STALL_MESSAGE);
+    this.name = "DownloadStalledError";
+  }
+}
 
 // emitUpdateOutcome pushes an update outcome to renderers on a channel separate
 // from "updates:status", so suppressing a status for UI reasons (as the
@@ -158,6 +198,114 @@ function emitUpdateFailure(err: unknown): void {
   emitUpdateOutcome(
     updateFailureOutcome(message, activeUpdaterPhase, activeUpdateTrigger(), pendingUpdateVersion),
   );
+}
+
+function stalledDownloadStatus(error: DownloadStalledError): UpdateStatus {
+  return {
+    state: "error",
+    ...(error.version ? { version: error.version } : {}),
+    message: DOWNLOAD_STALL_MESSAGE,
+  };
+}
+
+function armDownloadWatchdog(
+  observation: ActiveDownloadObservation,
+  observedAtMs = Date.now(),
+): void {
+  if (observation.timer !== undefined) clearTimeout(observation.timer);
+  observation.lastProgressAtMs = observedAtMs;
+  observation.timer = setTimeout(() => {
+    if (activeDownloadObservation !== observation) return;
+    const stalledMs = Math.max(0, Date.now() - observation.lastProgressAtMs);
+    const error = new DownloadStalledError(
+      observation.transferredBytes,
+      observation.totalBytes,
+      stalledMs,
+    );
+    ignoreDownloadEventsUntilNextDownload = true;
+    emitUpdateOutcome({
+      event: "ao.renderer.update_failed",
+      phase: "download",
+      trigger: activeUpdateTrigger(),
+      error_category: "network",
+      ...(error.version ? { to_version: error.version } : {}),
+      ...(error.transferredBytes === undefined ? {} : { transferred_bytes: error.transferredBytes }),
+      ...(error.totalBytes === undefined ? {} : { total_bytes: error.totalBytes }),
+      stalled_ms: error.stalledMs,
+    });
+    // electron-updater owns the socket and cache file. Cancelling its token is
+    // the only safe way to release both; starting a second provider download
+    // while this one is still alive would corrupt request ownership.
+    try {
+      observation.cancellationToken.cancel();
+    } finally {
+      observation.reject(error);
+    }
+  }, Math.max(0, DOWNLOAD_STALL_TIMEOUT_MS - (Date.now() - observedAtMs)));
+  observation.timer.unref?.();
+}
+
+async function observeDownload<T>(
+  start: () => Promise<T>,
+  cancellationToken: DownloadCancellation,
+): Promise<T> {
+  let rejectStalled!: (error: DownloadStalledError) => void;
+  const stalled = new Promise<T>((_resolve, reject) => {
+    rejectStalled = reject;
+  });
+  const observation: ActiveDownloadObservation = {
+    cancellationToken,
+    lastProgressAtMs: pendingDownloadProgress?.observedAtMs ?? Date.now(),
+    percent: pendingDownloadProgress?.percent,
+    transferredBytes: pendingDownloadProgress?.transferredBytes,
+    totalBytes: pendingDownloadProgress?.totalBytes,
+    reject: rejectStalled,
+  };
+  ignoreDownloadEventsUntilNextDownload = false;
+  activeDownloadObservation = observation;
+  armDownloadWatchdog(observation, observation.lastProgressAtMs);
+  try {
+    return await Promise.race([Promise.resolve().then(start), stalled]);
+  } finally {
+    if (activeDownloadObservation === observation) {
+      if (observation.timer !== undefined) clearTimeout(observation.timer);
+      activeDownloadObservation = undefined;
+      pendingDownloadProgress = undefined;
+    }
+  }
+}
+
+function recordDownloadProgress(progress: ProgressInfo | undefined): boolean {
+  if (ignoreDownloadEventsUntilNextDownload) return false;
+  pendingDownloadProgress = {
+    observedAtMs: Date.now(),
+    percent: progress?.percent,
+    transferredBytes: progress?.transferred,
+    totalBytes: progress?.total,
+  };
+  const observation = activeDownloadObservation;
+  if (observation !== undefined) {
+    const transferred = progress?.transferred;
+    const percent = progress?.percent;
+    const advanced =
+      (transferred !== undefined &&
+        (observation.transferredBytes === undefined || transferred > observation.transferredBytes)) ||
+      (percent !== undefined &&
+        (observation.percent === undefined || percent > observation.percent));
+    if (transferred !== undefined) {
+      observation.transferredBytes = Math.max(observation.transferredBytes ?? 0, transferred);
+    }
+    if (progress?.total !== undefined) observation.totalBytes = progress.total;
+    if (percent !== undefined) observation.percent = Math.max(observation.percent ?? 0, percent);
+    // Repeated events that report the same byte/percentage position do not
+    // prove the socket is moving and therefore cannot postpone the deadline.
+    if (advanced) armDownloadWatchdog(observation);
+  }
+  return true;
+}
+
+function isDownloadCancellation(error: unknown): boolean {
+  return error instanceof Error && error.name === "CancellationError";
 }
 
 // broadcast pushes the latest update status to every renderer window so the
@@ -464,7 +612,12 @@ async function runSerializedUpdaterOperation(
     activeUpdaterOperation = operation;
     activeUpdaterRequestId = requestId;
     activeUpdaterPhase = operation === "manual-download" ? "download" : "check";
-    pendingUpdateVersion = undefined;
+    // A manual download consumes the update found by the preceding check, so
+    // retain its version for progress, stall status, and telemetry.
+    if (operation !== "manual-download") pendingUpdateVersion = undefined;
+    if (operation === "manual-download" || operation === "automatic-check") {
+      pendingDownloadProgress = undefined;
+    }
     if (operation === "automatic-check") {
       automaticCheckNetFailureCounted = false;
       automaticCheckFailureCounted = false;
@@ -657,6 +810,7 @@ function wireUpdaterEvents(): void {
       broadcastUpdaterStatus(stagedDownloadedStatus());
   });
   autoUpdater.on("download-progress", (p) => {
+    if (!recordDownloadProgress(p)) return;
     // Any progress proves the network stack is healthy and the check
     // succeeded, so a later error is a download failure even when the
     // operation began life as a check.
@@ -671,6 +825,7 @@ function wireUpdaterEvents(): void {
     });
   });
   autoUpdater.on("update-downloaded", (info) => {
+    if (ignoreDownloadEventsUntilNextDownload) return;
     emitUpdateOutcome({
       event: "ao.renderer.update_downloaded",
       phase: "download",
@@ -697,6 +852,7 @@ function wireUpdaterEvents(): void {
     escalationTimer.unref?.();
   });
   autoUpdater.on("error", (err) => {
+    if (ignoreDownloadEventsUntilNextDownload && isDownloadCancellation(err)) return;
     // Never crash on update failure (offline, unsigned macOS, etc.).
     // A one-off automatic failure restores the previous status so the UI does
     // not flash an error the user never asked for. That suppression is a UI
@@ -797,9 +953,28 @@ async function runAutomaticUpdateCheck(
       try {
         const result = await autoUpdater.checkForUpdates();
         if (settings.enabled && result?.downloadPromise) {
-          await result.downloadPromise;
+          if (!result.cancellationToken) {
+            throw new Error("Updater download did not provide a cancellation token");
+          }
+          try {
+            await observeDownload(
+              () => result.downloadPromise as Promise<Array<string>>,
+              result.cancellationToken,
+            );
+          } catch (err) {
+            if (err instanceof DownloadStalledError) {
+              // A stall is user-actionable even on the automatic path. Do not
+              // restore the pre-check status and recreate the indefinite
+              // progress UI that the watchdog just terminated.
+              automaticCheckPreviousStatus = undefined;
+              broadcast(stalledDownloadStatus(err));
+              throw err;
+            }
+            throw err;
+          }
         }
       } catch (err) {
+        if (err instanceof DownloadStalledError) throw err;
         // electron-updater normally also emits "error" (handled in
         // wireUpdaterEvents); a reject-only failure must still restore the
         // pre-check status so the renderer is neither stuck on "checking" nor
@@ -1050,12 +1225,21 @@ export async function downloadUpdateNow(requestId?: string): Promise<void> {
     await runSerializedUpdaterOperation(
       "manual-download",
       async () => {
-        await autoUpdater.downloadUpdate();
+        const cancellationToken = new CancellationToken();
+        await observeDownload(
+          () => autoUpdater.downloadUpdate(cancellationToken),
+          cancellationToken,
+        );
       },
       requestId,
     );
   } catch (err) {
-    if (isManifest404Error(err)) {
+    if (err instanceof DownloadStalledError) {
+      broadcast({
+        ...stalledDownloadStatus(err),
+        requestId,
+      });
+    } else if (isManifest404Error(err)) {
       console.error("update download failed:", err);
       broadcast({
         state: "error",

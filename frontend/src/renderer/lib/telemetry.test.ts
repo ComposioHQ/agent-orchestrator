@@ -86,6 +86,9 @@ describe("telemetry sanitizers", () => {
 			error_category: "network",
 			phase: "download",
 			trigger: "automatic",
+			transferred_bytes: 3_798_105,
+			total_bytes: 168_658_927,
+			stalled_ms: 120_000,
 			// Must be dropped: raw updater text can carry feed URLs and local paths.
 			message: "EACCES /Users/someone/Library/Caches/ao-updater",
 			stack: "at Object.<anonymous>",
@@ -95,11 +98,20 @@ describe("telemetry sanitizers", () => {
 			error_category: "network",
 			phase: "download",
 			trigger: "automatic",
+			transferred_bytes: 3_798_105,
+			total_bytes: 168_658_927,
+			stalled_ms: 120_000,
 		});
 
 		// An unrecognized phase is not passed through as-is.
 		const bogus = await sanitizeRendererProperties("ao.renderer.update_failed", { phase: "sideload" });
 		expect(bogus.phase).toBeUndefined();
+		const invalidMetrics = await sanitizeRendererProperties("ao.renderer.update_failed", {
+			transferred_bytes: -1,
+			total_bytes: Number.NaN,
+			stalled_ms: "120000",
+		});
+		expect(invalidMetrics).toEqual({});
 	});
 
 	it("reports a support submission with only the destination and outcome", async () => {

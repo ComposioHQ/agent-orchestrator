@@ -41,6 +41,10 @@ export type UpdateOutcome = {
 	trigger: UpdateTrigger;
 	error_category?: UpdateFailureCategory;
 	to_version?: string;
+	/** Byte counts and inactivity duration are emitted only for a bounded download stall. */
+	transferred_bytes?: number;
+	total_bytes?: number;
+	stalled_ms?: number;
 };
 
 /**

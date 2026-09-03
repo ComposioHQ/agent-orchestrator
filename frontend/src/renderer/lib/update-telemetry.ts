@@ -22,6 +22,9 @@ export function startUpdateTelemetry(): () => void {
 			trigger: outcome.trigger,
 			error_category: outcome.error_category,
 			to_version: outcome.to_version,
+			transferred_bytes: outcome.transferred_bytes,
+			total_bytes: outcome.total_bytes,
+			stalled_ms: outcome.stalled_ms,
 		});
 	});
 	return () => off?.();
