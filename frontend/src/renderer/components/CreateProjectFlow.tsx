@@ -2,8 +2,6 @@ import * as Dialog from "@radix-ui/react-dialog";
 import { useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import {
-	CheckCircle2,
-	CircleDashed,
 	ChevronRight,
 	Cloud,
 	Folder,
@@ -27,7 +25,12 @@ import { useCloudSession } from "../lib/cloud-session";
 import { cn } from "../lib/utils";
 import type { ProjectKind } from "../types/workspace";
 import { CreateProjectAgentSheet, type CreateProjectAgentSelection } from "./CreateProjectAgentSheet";
-import CloneRepositoryDialog, { type CloneRepositoryDetails, type CloneRepositorySelection } from "./CloneRepositoryDialog";
+import CloneRepositoryDialog, {
+	repositoryAvatarFromGitUrl,
+	type CloneRepositoryDetails,
+	type CloneRepositorySelection,
+} from "./CloneRepositoryDialog";
+import CreateProjectProgressDialog from "./CreateProjectProgressDialog";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
@@ -44,6 +47,24 @@ type ProjectSource = "clone" | "local" | "workspace";
 
 /** Where the new project should live: on this machine or in AO Cloud. */
 type ProjectOffering = "local" | "cloud";
+type CreateProgressStage = "starting" | "connecting" | "creating" | "settingUp" | "finishing" | "complete";
+
+function createProgressMessage(stage: CreateProgressStage, workspace: boolean): string {
+	switch (stage) {
+		case "starting":
+			return "Preparing the project";
+		case "connecting":
+			return "Connecting to the repository";
+		case "creating":
+			return workspace ? "Creating the workspace" : "Creating the project";
+		case "settingUp":
+			return "Setting up the project";
+		case "finishing":
+			return "Finishing project setup";
+		default:
+			return "Project created";
+	}
+}
 
 // Shared create-project flow. Local projects/workspaces use the native folder
 // picker; remote projects progressively reveal a lazily loaded clone form.
@@ -100,6 +121,9 @@ export function CreateProjectFlow({
 	const [isChoosingPath, setIsChoosingPath] = useState(false);
 	const [isCreating, setIsCreating] = useState(false);
 	const [isInitializing, setIsInitializing] = useState(false);
+	const [createProgressOpen, setCreateProgressOpen] = useState(false);
+	const [createProgress, setCreateProgress] = useState(0);
+	const [createProgressStage, setCreateProgressStage] = useState<CreateProgressStage>("starting");
 	const [repositorySetup, setRepositorySetup] = useState<"NOT_A_GIT_REPO" | "PROJECT_UNBORN" | null>(null);
 	const [repositorySetupWarning, setRepositorySetupWarning] = useState<string | null>(null);
 	// A path that arrived via droppedPath, staged until the user confirms
@@ -118,6 +142,33 @@ export function CreateProjectFlow({
 
 	const hasModePicker = mode === "choose";
 	const isBusy = isChoosingPath || isCreating || isInitializing;
+
+	useEffect(() => {
+		if (!createProgressOpen) return;
+		const startedAt = Date.now();
+		const updateProgress = () => {
+			const elapsed = Date.now() - startedAt;
+			if (elapsed < 800) {
+				setCreateProgressStage("starting");
+				setCreateProgress(Math.min(12, 4 + elapsed / 100));
+			} else if (elapsed < 1800) {
+				setCreateProgressStage("connecting");
+				setCreateProgress(12 + ((elapsed - 800) / 1000) * 18);
+			} else if (elapsed < 5000) {
+				setCreateProgressStage("creating");
+				setCreateProgress(30 + ((elapsed - 1800) / 3200) * 38);
+			} else if (elapsed < 7600) {
+				setCreateProgressStage("settingUp");
+				setCreateProgress(68 + ((elapsed - 5000) / 2600) * 17);
+			} else {
+				setCreateProgressStage("finishing");
+				setCreateProgress(Math.min(90, 85 + (elapsed - 7600) / 1000));
+			}
+		};
+		updateProgress();
+		const timer = window.setInterval(updateProgress, 250);
+		return () => window.clearInterval(timer);
+	}, [createProgressOpen]);
 
 	const transitionToChild = (open: () => void) => {
 		setChildTransitioning(true);
@@ -257,6 +308,12 @@ export function CreateProjectFlow({
 		if (!selectedPath) return;
 		setError(null);
 		setIsCreating(true);
+		const showProgress = Boolean(cloneSelection) || selectedKind === "workspace";
+		if (showProgress) {
+			setCreateProgress(0);
+			setCreateProgressStage("starting");
+			setCreateProgressOpen(true);
+		}
 		try {
 			if (cloneSelection) {
 				await onCloneProject({
@@ -264,6 +321,11 @@ export function CreateProjectFlow({
 					destinationParent: cloneSelection.destinationParent,
 					...selection,
 				});
+				if (showProgress) {
+					setCreateProgress(100);
+					setCreateProgressStage("complete");
+					await new Promise((resolve) => window.setTimeout(resolve, 180));
+				}
 				setSelectedPath(null);
 				setCloneSelection(null);
 				return;
@@ -278,6 +340,11 @@ export function CreateProjectFlow({
 				setIsCreating(true);
 			}
 			await onCreateProject({ path: selectedPath, asWorkspace: selectedKind === "workspace", ...selection });
+			if (showProgress) {
+				setCreateProgress(100);
+				setCreateProgressStage("complete");
+				await new Promise((resolve) => window.setTimeout(resolve, 180));
+			}
 			setSelectedPath(null);
 		} catch (err) {
 			const code = err instanceof Error && "code" in err ? (err.code as string | undefined) : undefined;
@@ -304,6 +371,7 @@ export function CreateProjectFlow({
 				setFolderPickerOpen(true);
 			}
 		} finally {
+			setCreateProgressOpen(false);
 			setIsCreating(false);
 			setIsInitializing(false);
 		}
@@ -329,7 +397,7 @@ export function CreateProjectFlow({
 					error,
 					label,
 				})}
-			<CreateProjectFlowBackdrop open={modePickerOpen || cloneDialogOpen || folderPickerOpen || selectedPath !== null || childTransitioning} />
+			<CreateProjectFlowBackdrop open={modePickerOpen || cloneDialogOpen || folderPickerOpen || selectedPath !== null || createProgressOpen || childTransitioning} />
 			{hasModePicker && embedded && !modePickerOpen && !cloneDialogOpen && selectedPath === null && (
 				<div className="flex w-full flex-col items-center gap-3">
 					{cloudEnabled && (
@@ -465,10 +533,16 @@ export function CreateProjectFlow({
 						: undefined
 				}
 				onSubmit={createProject}
-				open={selectedPath !== null}
+				open={selectedPath !== null && !createProgressOpen}
 				path={selectedPath}
 				repositorySetupNeeded={repositorySetup !== null}
 				repositorySetupWarning={repositorySetupWarning}
+			/>
+			<CreateProjectProgressDialog
+				message={createProgressMessage(createProgressStage, selectedKind === "workspace")}
+				onCancel={() => setCreateProgressOpen(false)}
+				open={createProgressOpen}
+				progress={createProgress}
 			/>
 			{error && !hasModePicker && (
 				<span className="sr-only" role="status">
@@ -982,12 +1056,13 @@ function CreateProjectFolderDialog({
 				!repo.needsGitInit &&
 				repo.reason !== "Repository must have at least one commit.",
 		) ?? [];
+	const importableRepos = scan?.repos.filter((repo) => (repo.status !== "error" && repo.hasRemote) || repo.needsGitInit) ?? [];
 	const hasScan = scan !== null;
 	return (
 		<Dialog.Root open={open} onOpenChange={onOpenChange}>
 			<Dialog.Portal>
 				<Dialog.Content className="fixed left-1/2 top-1/2 z-overlay flex max-h-[min(640px,calc(100svh-24px))] w-[min(640px,calc(100vw-24px))] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-lg border border-border bg-popover p-0 text-popover-foreground shadow-xl data-[state=open]:animate-modal-in data-[state=closed]:animate-modal-out motion-reduce:animate-none">
-					<div className="relative shrink-0 px-4 pt-3">
+					<div className="relative flex shrink-0 items-center gap-3 px-4 pt-3">
 						<Button
 							type="button"
 							variant="outline"
@@ -1020,24 +1095,31 @@ function CreateProjectFolderDialog({
 					<div className="min-h-0 overflow-y-auto px-4 pb-1 pt-3">
 						{hasScan ? (
 							<div className="space-y-3">
-								<div className="flex items-center gap-3 rounded-md border border-[var(--color-border-import-modal)] bg-[var(--color-bg-import-card)] px-3 py-2.5">
-									<Folder className="size-4 shrink-0 text-[var(--color-text-import-muted)]" aria-hidden="true" />
-									<div className="min-w-0 flex-1">
-										<div className="truncate font-mono text-[13px] font-semibold text-[var(--color-text-import-title)]">
-											{displayImportPath(scan.path)}
-										</div>
-										<div className="mt-0.5 text-[11px] text-[var(--color-text-import-muted)]">
-											{isWorkspace ? t("createProject.workspaceRoot") : t("createProject.projectFolder")}
-										</div>
-									</div>
-									<Button type="button" variant="outline" disabled={disabled} onClick={onChooseFolder}>
-										{t("createProject.change")}
-									</Button>
+								<div className="space-y-2">
+									<Label htmlFor="importFolderPath" className="text-[13px] font-semibold text-[var(--color-text-import-title)]">
+										{isWorkspace ? t("createProject.workspaceRoot") : t("createProject.projectFolder")}
+									</Label>
+									<button
+										type="button"
+										id="importFolderPath"
+										aria-label={t("createProject.change")}
+										className="flex h-control-form w-full items-center overflow-hidden rounded-md border border-transparent bg-[var(--color-bg-import-card)] text-left text-[13px] text-foreground outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-50"
+										disabled={disabled}
+										onClick={onChooseFolder}
+									>
+										<span className="flex min-w-0 flex-1 items-center gap-3 px-3">
+											<Folder className="size-4 shrink-0 text-[var(--color-text-import-muted)]" aria-hidden="true" />
+											<span className="truncate">{displayImportPath(scan.path)}</span>
+										</span>
+										<span className="flex h-full shrink-0 items-center border-l border-border/60 px-4 text-foreground hover:bg-foreground/10">
+											{t("createProject.change")}
+										</span>
+									</button>
 								</div>
 
 								{error && (
 									<div className="rounded-lg border border-destructive/40 bg-destructive/10">
-										<div className="border-b border-destructive/30 px-3 py-2 font-mono text-[11px] font-semibold uppercase tracking-[0.12em] text-destructive">
+										<div className="border-b border-destructive/30 px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-destructive">
 											<span className="mr-2 inline-block size-2 rounded-full bg-destructive" aria-hidden="true" />
 											{isWorkspace ? t("createProject.importFailedWorkspace") : t("createProject.importFailedProject")}
 										</div>
@@ -1058,16 +1140,18 @@ function CreateProjectFolderDialog({
 									</div>
 								)}
 
-							{scan.repos
-								.filter((repo) => (repo.status !== "error" && repo.hasRemote) || repo.needsGitInit)
-								.map((repo) => (
-										<div
-											key={repo.path}
-											className="rounded-md border border-[var(--color-border-import-modal)] bg-[var(--color-bg-import-card)]"
-										>
-											<ImportRepoRow repo={repo} />
-										</div>
+							{importableRepos.length > 0 && (
+								<div
+									className="max-h-[288px] min-h-0 divide-y divide-border/50 overflow-y-auto overscroll-contain rounded-sm bg-[var(--color-bg-import-card)]"
+									tabIndex={0}
+									onWheel={(event) => event.stopPropagation()}
+									style={{ height: "auto", maxHeight: "min(288px, 40vh)", overflowY: "auto" }}
+								>
+									{importableRepos.map((repo) => (
+										<ImportRepoRow key={repo.path} repo={repo} />
 									))}
+								</div>
+							)}
 
 								{scan.repos.length === 0 && (
 									<div className="rounded-md border border-[var(--color-border-import-modal)] bg-[var(--color-bg-import-card)] p-3 text-[12px] text-[var(--color-text-import-muted)]">
@@ -1123,43 +1207,105 @@ function CreateProjectFolderDialog({
 
 function ImportRepoRow({ failed = false, repo }: { failed?: boolean; repo: ImportFolderScan["repos"][number] }) {
 	const { t } = useTranslation();
+	const repositoryAvatar = repo.hasRemote ? repositoryAvatarFromGitUrl(repo.remote) : null;
+	const repositoryUrl = !failed && !repo.needsGitInit ? repositoryWebUrl(repo.remote) : null;
 	return (
-		<div className="flex items-center gap-3 px-3 py-2.5">
-			{failed ? (
-				<XCircle className="size-4 shrink-0 text-destructive" aria-hidden="true" />
-			) : repo.needsGitInit ? (
-				<CircleDashed className="size-4 shrink-0 text-[var(--color-text-import-muted)]" aria-hidden="true" />
-			) : (
-				<CheckCircle2 className="size-4 shrink-0 text-success" aria-hidden="true" />
-			)}
-			<div className="min-w-0 flex-1">
-				<div className="truncate text-[14px] font-semibold text-[var(--color-text-import-title)]">{repo.name}</div>
-				<div className="mt-0.5 truncate font-mono text-[12px] text-[var(--color-text-import-muted)]">
-					{displayImportPath(repo.path)}
-				</div>
+		<div className={cn("flex shrink-0 items-center gap-2.5 py-1.5 pl-3", repo.needsGitInit ? "pr-1.5" : "pr-3")}>
+			<div className="flex size-4 shrink-0 items-center justify-center">
+				{repo.needsGitInit ? (
+					<Folder className="size-4 text-[var(--color-text-import-muted)]" aria-hidden="true" />
+				) : repositoryAvatar ? (
+					<ImportRepositoryAvatar owner={repositoryAvatar.owner} url={repositoryAvatar.url} />
+				) : (
+					<Folder className="size-5 text-[var(--color-text-import-muted)]" aria-hidden="true" />
+				)}
 			</div>
-			<div className="hidden max-w-[260px] shrink-0 truncate text-right font-mono text-[12px] text-[var(--color-text-import-muted)] sm:block">
-				{repo.needsGitInit
-					? "Needs git init"
-					: failed
-						? (repo.reason ?? t("createProject.repoCannotImport"))
-						: `${repo.branch} ${remoteDisplay(repo.remote)}`}
+			<div className="min-w-0 flex-1 truncate text-[13px] font-semibold text-[var(--color-text-import-title)]">{repo.name}</div>
+			<div className="group flex max-w-[220px] shrink-0 items-center gap-1 truncate text-right text-[11px] text-[var(--color-text-import-muted)]">
+				{repositoryUrl ? (
+					<button
+						type="button"
+						className="group flex min-w-0 items-center gap-1 truncate hover:text-foreground hover:underline"
+						onClick={() => void aoBridge.app.openExternal(repositoryUrl)}
+					>
+						<GitBranch className="size-3.5 shrink-0 group-hover:text-foreground" aria-hidden="true" />
+						<span className="truncate">{repo.branch}</span>
+					</button>
+				) : (
+					<>
+						{failed ? (
+							<XCircle className="size-3.5 shrink-0 text-destructive" aria-hidden="true" />
+						) : !repo.needsGitInit ? (
+							<GitBranch className="size-3.5 shrink-0" aria-hidden="true" />
+						) : null}
+						<span
+							className={cn(
+								"truncate",
+								repo.needsGitInit && "rounded-sm bg-orange-500/15 px-2 py-0.5 text-orange-300",
+							)}
+						>
+							{repo.needsGitInit ? "Needs git init" : failed ? (repo.reason ?? t("createProject.repoCannotImport")) : repo.branch}
+						</span>
+					</>
+				)}
 			</div>
 		</div>
 	);
+}
+
+function ImportRepositoryAvatar({ owner, url }: { owner: string; url: string }) {
+	const [state, setState] = useState<"loading" | "loaded" | "failed">("loading");
+
+	return (
+		<span className="relative block size-4" aria-hidden="true">
+			<img
+				alt=""
+				className={cn(
+					"absolute inset-0 size-4 rounded-full object-cover outline outline-1 -outline-offset-1 outline-black/10 dark:outline-white/10",
+					state === "loaded" ? "opacity-100" : "opacity-0",
+				)}
+				draggable={false}
+				loading="eager"
+				onError={() => setState("failed")}
+				onLoad={() => setState("loaded")}
+				referrerPolicy="no-referrer"
+				src={url}
+			/>
+			{state === "loading" ? <span className="absolute inset-0 size-4 animate-pulse rounded-full bg-muted-foreground/40" /> : null}
+			{state === "failed" ? (
+				<span className="absolute inset-0 size-4 rounded-full bg-muted text-center text-[7px] font-semibold leading-4 text-muted-foreground">
+					{ownerInitials(owner)}
+				</span>
+			) : null}
+		</span>
+	);
+}
+
+function ownerInitials(owner: string): string {
+	return owner
+		.split(/[-_\s/]+/)
+		.filter(Boolean)
+		.slice(0, 2)
+		.map((part) => part[0]?.toUpperCase() ?? "")
+		.join("") || "?";
 }
 
 function displayImportPath(value: string) {
 	return value.replace(/^\/Users\/[^/]+/, "~");
 }
 
-function remoteDisplay(remote: string) {
-	const ssh = remote.match(/^[^@]+@([^:]+):(.+)$/);
-	if (ssh?.[1] && ssh[2]) return `${ssh[1]}/${ssh[2].replace(/\.git$/, "")}`;
+function repositoryWebUrl(remote: string): string | null {
+	const value = remote.trim();
+	const scpMatch = value.match(/^[^/@:\s]+@([^/:\s]+):(.+)$/);
+	if (scpMatch?.[1] && scpMatch[2]) {
+		return `https://${scpMatch[1]}/${scpMatch[2].replace(/^\/+|\/+$/g, "").replace(/\.git$/, "")}`;
+	}
 	try {
-		const url = new URL(remote);
-		return `${url.host}${url.pathname.replace(/\.git$/, "")}`;
+		const parsed = new URL(value);
+		if (!["http:", "https:", "ssh:", "git:"].includes(parsed.protocol) || !parsed.hostname) return null;
+		const repositoryPath = parsed.pathname.replace(/^\/+|\/+$/g, "").replace(/\.git$/, "");
+		return repositoryPath ? `https://${parsed.hostname}/${repositoryPath}` : null;
 	} catch {
-		return remote.replace(/^https?:\/\//, "").replace(/\.git$/, "");
+		return null;
 	}
 }
