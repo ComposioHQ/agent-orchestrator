@@ -1,4 +1,8 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { MachOParseError } from "./makers/macho-archs";
 
 // postMake's dmg/zip branches only need to prove they call the right
 // maker-dmg functions with the right gates; the functions' own behavior
@@ -19,6 +23,67 @@ vi.mock("./makers/maker-dmg", async (importOriginal) => {
 });
 
 import config, { extraResourcesForPlatform, macSignOptionsForFile } from "./forge.config";
+
+// Minimal synthetic Mach-O headers (thin little-endian + fat big-endian), the
+// two on-disk layouts the signing selector must tell apart. Full parser
+// coverage lives in makers/macho-archs.test.ts; here the fixtures exist so the
+// per-file signing decision is exercised against real file bytes.
+const CPU_TYPE_X86_64 = 0x01000007;
+const CPU_TYPE_ARM64 = 0x0100000c;
+
+function thinMachO(cputype: number): Buffer {
+	const buffer = Buffer.alloc(16);
+	buffer.writeUInt32LE(0xfeedfacf, 0);
+	buffer.writeUInt32LE(cputype, 4);
+	return buffer;
+}
+
+function fatMachO(entries: number[]): Buffer {
+	const buffer = Buffer.alloc(8 + entries.length * 20);
+	buffer.writeUInt32BE(0xcafebabe, 0);
+	buffer.writeUInt32BE(entries.length, 4);
+	entries.forEach((cputype, index) => {
+		buffer.writeUInt32BE(cputype, 8 + index * 20);
+	});
+	return buffer;
+}
+
+function withHostArch<T>(arch: string, run: () => T): T {
+	const descriptor = Object.getOwnPropertyDescriptor(process, "arch");
+	Object.defineProperty(process, "arch", { get: () => arch, configurable: true });
+	try {
+		return run();
+	} finally {
+		if (descriptor) Object.defineProperty(process, "arch", descriptor);
+	}
+}
+
+let fixtureDir: string;
+
+// The nested Node must sit at the real bundle path shape: the endsWith gate
+// and the content selector are two halves of one decision.
+function acpNodeWith(contents: Buffer): string {
+	const binDir = join(
+		fixtureDir,
+		"Agent Orchestrator.app",
+		"Contents",
+		"Resources",
+		"acp-runtime",
+		"node",
+		"bin",
+	);
+	mkdirSync(binDir, { recursive: true });
+	writeFileSync(join(binDir, "node"), contents);
+	return join(binDir, "node");
+}
+
+beforeEach(() => {
+	fixtureDir = mkdtempSync(join(tmpdir(), "forge-signing-"));
+});
+
+afterEach(() => {
+	rmSync(fixtureDir, { recursive: true, force: true });
+});
 
 describe("native runtime resources", () => {
 	it.each(["darwin", "linux"] as const)("bundles tmux on %s", (platform) => {
@@ -56,32 +121,52 @@ afterEach(() => {
 });
 
 describe("macOS signing", () => {
+	const NODE_ENTITLEMENTS = [
+		"com.apple.security.cs.allow-jit",
+		"com.apple.security.cs.allow-unsigned-executable-memory",
+	];
+
 	it("allows the bundled Node runtime to execute V8 JIT code on Intel Macs", () => {
-		expect(
-			macSignOptionsForFile(
-				"/tmp/Agent Orchestrator.app/Contents/Resources/acp-runtime/node/bin/node",
-				"x64",
-			),
-		).toEqual({
-			entitlements: [
-				"com.apple.security.cs.allow-jit",
-				"com.apple.security.cs.allow-unsigned-executable-memory",
-			],
+		expect(macSignOptionsForFile(acpNodeWith(thinMachO(CPU_TYPE_X86_64)))).toEqual({
+			entitlements: NODE_ENTITLEMENTS,
+		});
+	});
+
+	it("keeps the override for a universal binary carrying an x86_64 slice", () => {
+		expect(macSignOptionsForFile(acpNodeWith(fatMachO([CPU_TYPE_X86_64, CPU_TYPE_ARM64])))).toEqual({
+			entitlements: NODE_ENTITLEMENTS,
 		});
 	});
 
 	it("keeps electron-osx-sign defaults for every other bundle file", () => {
-		expect(
-			macSignOptionsForFile(
-				"/tmp/Agent Orchestrator.app/Contents/MacOS/agent-orchestrator",
-			),
-		).toEqual({});
+		const foreign = join(fixtureDir, "elsewhere", "agent-orchestrator");
+		mkdirSync(join(fixtureDir, "elsewhere"), { recursive: true });
+		writeFileSync(foreign, thinMachO(CPU_TYPE_X86_64));
+		expect(macSignOptionsForFile(foreign)).toEqual({});
 	});
 
-	it("keeps the narrower default JIT entitlement on Apple silicon", () => {
-		expect(
-			macSignOptionsForFile("/tmp/Agent Orchestrator.app/Contents/Resources/acp-runtime/node/bin/node", "arm64"),
-		).toEqual({});
+	it("keeps the narrower default JIT entitlement when the binary has no x86_64 slice", () => {
+		expect(macSignOptionsForFile(acpNodeWith(thinMachO(CPU_TYPE_ARM64)))).toEqual({});
+		expect(macSignOptionsForFile(acpNodeWith(fatMachO([CPU_TYPE_ARM64])))).toEqual({});
+	});
+
+	it("fails the signing pass when the file cannot be parsed", () => {
+		expect(() => macSignOptionsForFile(acpNodeWith(Buffer.from("garbage header")))).toThrow(
+			MachOParseError,
+		);
+		expect(() =>
+			macSignOptionsForFile(acpNodeWith(Buffer.from([0xcf, 0xfa, 0xed, 0xfe]))),
+		).toThrow(MachOParseError);
+	});
+
+	it("never consults the host architecture", () => {
+		const acpNode = acpNodeWith(thinMachO(CPU_TYPE_ARM64));
+		const fromX64Host = withHostArch("x64", () => macSignOptionsForFile(acpNode));
+		const fromArm64Host = withHostArch("arm64", () => macSignOptionsForFile(acpNode));
+		const fromAbsurdHost = withHostArch("ppc64", () => macSignOptionsForFile(acpNode));
+		expect(fromX64Host).toEqual({});
+		expect(fromArm64Host).toEqual({});
+		expect(fromAbsurdHost).toEqual({});
 	});
 
 	it.each([

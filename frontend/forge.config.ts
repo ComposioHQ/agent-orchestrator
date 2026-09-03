@@ -5,6 +5,7 @@ import { rebuild } from "@electron/rebuild";
 import electronPackage from "electron/package.json";
 import MakerNSIS from "./makers/maker-nsis";
 import MakerDMG, { isSigningConfigured, sealDmg, verifyDmg, verifyMacArtifact } from "./makers/maker-dmg";
+import { machoHasX86_64Slice } from "./makers/macho-archs";
 import MakerAppImage from "./makers/maker-appimage";
 import { existsSync, readdirSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
@@ -73,19 +74,30 @@ export function extraResourcesForPlatform(platform: NodeJS.Platform): string[] {
 
 const ACP_RUNTIME_NODE_PATH = "/Contents/Resources/acp-runtime/node/bin/node";
 // V8 uses MAP_JIT on arm64 and mprotect on x64. electron-osx-sign's default
-// allows only the former, so its re-signing makes the bundled Node crash on Intel.
+// allows only the former, so its re-signing makes the bundled Node crash on
+// Intel (#3879). Which entitlements a file needs is a property of its bytes,
+// not of the signing machine: @electron/osx-sign hands optionsForFile only the
+// path, and one signing host may sign both the arm64 and the x64 artifact —
+// the canonical release signer does exactly that. So the selector below keys
+// off the Mach-O header of the file being signed (thin x64, or a universal
+// carrying an x64 slice), never off process.arch. The public CI build stays
+// unsigned, so this hook runs for locally signed builds and stands as the
+// reference implementation the canonical signer mirrors; see
+// frontend/docs/desktop-release.md.
 const ACP_RUNTIME_NODE_ENTITLEMENTS = [
 	"com.apple.security.cs.allow-jit",
 	"com.apple.security.cs.allow-unsigned-executable-memory",
 ];
 
-export function macSignOptionsForFile(
-	filePath: string,
-	arch: NodeJS.Architecture = process.arch,
-): { entitlements?: string[] } {
-	return arch === "x64" && filePath.endsWith(ACP_RUNTIME_NODE_PATH)
-		? { entitlements: ACP_RUNTIME_NODE_ENTITLEMENTS }
-		: {};
+export function macSignOptionsForFile(filePath: string): { entitlements?: string[] } {
+	// Cheap gate first: optionsForFile is invoked for every Mach-O in the
+	// bundle, and only the nested Node path can need an override.
+	if (!filePath.endsWith(ACP_RUNTIME_NODE_PATH)) return {};
+	// Fail closed: an unreadable or unparseable binary throws out of
+	// optionsForFile and aborts the signing pass. Never fall back to
+	// process.arch or to "no entitlements" — silently signing the Intel Node
+	// without allow-unsigned-executable-memory is exactly the #3879 crash.
+	return machoHasX86_64Slice(filePath) ? { entitlements: ACP_RUNTIME_NODE_ENTITLEMENTS } : {};
 }
 
 // parseReleaseRepo turns an "owner/repo" string (from AO_RELEASE_REPO) into the
