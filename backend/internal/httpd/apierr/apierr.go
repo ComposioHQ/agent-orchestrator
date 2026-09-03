@@ -94,8 +94,3 @@ func Unavailable(code, message string) *Error {
 func Internal(code, message string) *Error {
 	return New(KindInternal, code, message, nil)
 }
-
-// Unavailable is a 503-class transient error the caller should retry.
-func Unavailable(code, message string) *Error {
-	return New(KindUnavailable, code, message, nil)
-}

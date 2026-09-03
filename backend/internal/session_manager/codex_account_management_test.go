@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/codexops"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
@@ -21,10 +22,78 @@ type bootstrapOrderingCredentials struct {
 	calls        []string
 }
 
+type blockingBootstrapAdmissionCredentials struct {
+	*bootstrapOrderingCredentials
+	entered chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+func (c *blockingBootstrapAdmissionCredentials) WaitCodexAccountBootstrap(ctx context.Context) error {
+	c.once.Do(func() { close(c.entered) })
+	select {
+	case <-c.release:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
 func (c *bootstrapOrderingCredentials) record(call string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.calls = append(c.calls, call)
+}
+
+func TestCodexControllerAdmissionWaitsForBootstrapBeforeReadingGate(t *testing.T) {
+	gate := codexops.NewGate()
+	bootstrapLease, err := gate.AcquireExclusive(context.Background())
+	if err != nil {
+		t.Fatalf("acquire bootstrap lease: %v", err)
+	}
+	credentials := &blockingBootstrapAdmissionCredentials{
+		bootstrapOrderingCredentials: &bootstrapOrderingCredentials{},
+		entered:                      make(chan struct{}),
+		release:                      make(chan struct{}),
+	}
+	manager := New(Deps{CodexOperationGate: gate})
+	manager.SetAgentReadiness(credentials)
+
+	type admissionResult struct {
+		release func()
+		err     error
+	}
+	done := make(chan admissionResult, 1)
+	go func() {
+		release, acquireErr := manager.acquireCodexControllerAdmission(context.Background(), domain.HarnessCodex)
+		done <- admissionResult{release: release, err: acquireErr}
+	}()
+
+	select {
+	case <-credentials.entered:
+	case <-time.After(time.Second):
+		t.Fatal("Codex controller admission did not wait for account bootstrap")
+	}
+	select {
+	case result := <-done:
+		if result.release != nil {
+			result.release()
+		}
+		t.Fatalf("Codex controller admission completed during bootstrap: %v", result.err)
+	default:
+	}
+
+	bootstrapLease.Release()
+	close(credentials.release)
+	select {
+	case result := <-done:
+		if result.err != nil {
+			t.Fatalf("Codex controller admission after bootstrap: %v", result.err)
+		}
+		result.release()
+	case <-time.After(time.Second):
+		t.Fatal("Codex controller admission did not resume after bootstrap")
+	}
 }
 
 func (c *bootstrapOrderingCredentials) EnsureAgentReadiness(context.Context, string, domain.AgentReadinessPurpose) (domain.AgentReadinessSnapshot, error) {
