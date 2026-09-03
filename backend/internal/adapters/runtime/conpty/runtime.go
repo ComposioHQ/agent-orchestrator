@@ -557,15 +557,6 @@ func (r *Runtime) resolveHostProtocol(ctx context.Context, sess *hostSession) (i
 	return version, nil
 }
 
-// resolve preserves the lightweight lookup used by internal host tests and
-// compatibility callers. Production operations must use resolveWithEvidence
-// with their request context so cancellation and incomplete registry evidence
-// remain observable to the caller.
-func (r *Runtime) resolve(id string) *hostSession {
-	sess, _ := r.resolveWithEvidence(context.Background(), id)
-	return sess
-}
-
 // resolveWithEvidence looks up a session by id: first the in-memory map, then
 // the B2 registry (for daemon-restart recovery). It returns nil only when a
 // complete, uncancelled registry scan proves the session is absent.
