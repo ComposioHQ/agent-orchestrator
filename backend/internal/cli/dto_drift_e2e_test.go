@@ -93,11 +93,12 @@ func (f *fakeAgentCatalog) Probe(_ context.Context, agentID string) (agentsvc.Pr
 
 func (f *fakeAgentCatalog) Models(_ context.Context, agentID, _ string, _ bool) (ports.AgentModelCatalog, error) {
 	return ports.AgentModelCatalog{
-		AgentID:       agentID,
-		SelectionMode: ports.ModelSelectionText,
-		Models:        []ports.AgentModelInfo{},
-		AllowCustom:   true,
-		Source:        "test",
+		AgentID:          agentID,
+		SelectionMode:    ports.ModelSelectionText,
+		Models:           []ports.AgentModelInfo{},
+		CustomModelEntry: ports.CustomModelEntryDirect,
+		AllowCustom:      true,
+		Source:           "test",
 	}, nil
 }
 

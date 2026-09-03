@@ -1,14 +1,13 @@
 import * as Dialog from "@radix-ui/react-dialog";
-import { ProjectSourcePickerView, type ProjectSource } from "@aoagents/product-ui";
 import { useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import {
-	ArrowRight,
 	CheckCircle2,
+	CircleDashed,
 	ChevronRight,
 	Cloud,
 	Folder,
-	FolderOpen,
+	FolderClosed,
 	FolderPlus,
 	Folders,
 	GitBranch,
@@ -17,7 +16,7 @@ import {
 	X,
 	XCircle,
 } from "lucide-react";
-import { lazy, Suspense, useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
+import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import type { ImportFolderScan } from "../../preload";
 import { useCloudCp } from "../hooks/useCloudCp";
 import { useCloudGate } from "../hooks/useCloudGate";
@@ -28,7 +27,7 @@ import { useCloudSession } from "../lib/cloud-session";
 import { cn } from "../lib/utils";
 import type { ProjectKind } from "../types/workspace";
 import { CreateProjectAgentSheet, type CreateProjectAgentSelection } from "./CreateProjectAgentSheet";
-import type { CloneRepositoryDetails, CloneRepositorySelection } from "./CloneRepositoryDialog";
+import CloneRepositoryDialog, { type CloneRepositoryDetails, type CloneRepositorySelection } from "./CloneRepositoryDialog";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
@@ -38,10 +37,10 @@ export type CreateProjectInput = { path: string; asWorkspace?: boolean } & Creat
 export type CloneProjectInput = Pick<CloneRepositorySelection, "remoteUrl" | "destinationParent"> &
 	CreateProjectAgentSelection;
 
-const CloneRepositoryDialog = lazy(() => import("./CloneRepositoryDialog"));
 const LAST_CLONE_DESTINATION_KEY = "ao.clone.lastDestinationParent";
 
 type CreateProjectFlowMode = ProjectKind | "choose";
+type ProjectSource = "clone" | "local" | "workspace";
 
 /** Where the new project should live: on this machine or in AO Cloud. */
 type ProjectOffering = "local" | "cloud";
@@ -83,6 +82,7 @@ export function CreateProjectFlow({
 	const [error, setError] = useState<string | null>(null);
 	const [modePickerOpen, setModePickerOpen] = useState(false);
 	const [cloneDialogOpen, setCloneDialogOpen] = useState(false);
+	const [cloneDialogClosing, setCloneDialogClosing] = useState(false);
 	const [cloneDetails, setCloneDetails] = useState<CloneRepositoryDetails>(() => ({
 		remoteUrl: "",
 		destinationParent:
@@ -90,6 +90,7 @@ export function CreateProjectFlow({
 	}));
 	const [cloneSelection, setCloneSelection] = useState<CloneRepositorySelection | null>(null);
 	const [folderPickerOpen, setFolderPickerOpen] = useState(false);
+	const [childTransitioning, setChildTransitioning] = useState(false);
 	const [selectedKind, setSelectedKind] = useState<ProjectKind>(mode === "workspace" ? "workspace" : "single_repo");
 	const [selectedPath, setSelectedPath] = useState<string | null>(null);
 	const [validationScan, setValidationScan] = useState<ImportFolderScan | null>(null);
@@ -115,14 +116,21 @@ export function CreateProjectFlow({
 	const hasModePicker = mode === "choose";
 	const isBusy = isChoosingPath || isCreating || isInitializing;
 
+	const transitionToChild = (open: () => void) => {
+		setChildTransitioning(true);
+		window.setTimeout(() => {
+			open();
+			setChildTransitioning(false);
+		}, 80);
+	};
+
 	const selectSource = (source: ProjectSource) => {
 		const presetPath = pendingDropPath;
 		setPendingDropPath(null);
 		setError(null);
 		setValidationScan(null);
 		if (source === "clone") {
-			setModePickerOpen(false);
-			setCloneDialogOpen(true);
+			transitionToChild(() => setCloneDialogOpen(true));
 			return;
 		}
 		setCloneSelection(null);
@@ -149,8 +157,7 @@ export function CreateProjectFlow({
 				if (preflight.blockingError) {
 					setError(preflight.blockingError);
 					setValidationScan(preflight.scan);
-					setModePickerOpen(false);
-					setFolderPickerOpen(true);
+					transitionToChild(() => setFolderPickerOpen(true));
 					return;
 				}
 				setRepositorySetup(preflight.setupCode);
@@ -166,6 +173,24 @@ export function CreateProjectFlow({
 				} catch {
 					// Ancestor check failed — proceed without warning
 				}
+			}
+			if (path && hasModePicker && !presetPath) {
+				try {
+					const scan = await aoBridge.app.scanImportFolder({
+						path,
+						mode: kind === "workspace" ? "workspace" : "project",
+					});
+					setValidationScan(scan);
+					const blockingReason = scan.repos.find(
+						(repo) => repo.status === "error" && repo.reason !== "Repository must have at least one commit.",
+					)?.reason;
+					setError(blockingReason ?? null);
+				} catch (err) {
+					setValidationScan({ path, repos: [] });
+					setError(err instanceof Error ? err.message : t("createProject.couldNotAdd"));
+				}
+				transitionToChild(() => setFolderPickerOpen(true));
+				return;
 			}
 			if (path) {
 				setModePickerOpen(false);
@@ -273,15 +298,13 @@ export function CreateProjectFlow({
 		}
 	};
 
-	const label = isChoosingPath
-		? t("createProject.opening")
-		: isInitializing
-			? hasModePicker
-				? t("createProject.initializing")
-				: t("createProject.settingUp")
-			: isCreating
-				? t("createProject.creating")
-				: resolvedIdleLabel;
+	const label = isInitializing
+		? hasModePicker
+			? t("createProject.initializing")
+			: t("createProject.settingUp")
+		: isCreating
+			? t("createProject.creating")
+			: resolvedIdleLabel;
 
 	return (
 		<>
@@ -295,6 +318,7 @@ export function CreateProjectFlow({
 					error,
 					label,
 				})}
+			<CreateProjectFlowBackdrop open={modePickerOpen || cloneDialogOpen || folderPickerOpen || selectedPath !== null || childTransitioning} />
 			{hasModePicker && embedded && !modePickerOpen && !cloneDialogOpen && selectedPath === null && (
 				<div className="flex w-full flex-col items-center gap-3">
 					{cloudEnabled && (
@@ -319,6 +343,7 @@ export function CreateProjectFlow({
 			{hasModePicker && (
 				<>
 					<CreateProjectSourceDialog
+						childOpen={childTransitioning || cloneDialogOpen || folderPickerOpen}
 						cloudAvailable={cloudAvailable}
 						cloudEnabled={cloudEnabled}
 						disabled={isBusy}
@@ -340,34 +365,40 @@ export function CreateProjectFlow({
 						}}
 						onSelect={selectSource}
 					/>
-					{cloneDialogOpen ? (
-						<Suspense fallback={<CloneRepositoryDialogSkeleton />}>
-							<CloneRepositoryDialog
-								disabled={isBusy}
-								error={error}
-								onBack={() => {
-									setError(null);
-									setCloneDialogOpen(false);
-									if (!embedded) window.requestAnimationFrame(() => setModePickerOpen(true));
-								}}
-								onChange={(next) => {
-									setCloneDetails(next);
-									setError(null);
-								}}
-								onClose={() => {
-									setCloneDialogOpen(false);
-									setError(null);
-								}}
-								onContinue={(next) => {
-									setCloneSelection(next);
-									setSelectedKind("single_repo");
+					{cloneDialogOpen || cloneDialogClosing ? (
+						<CloneRepositoryDialog
+							disabled={isBusy}
+							error={error}
+							onBack={() => {
+								setError(null);
+								setCloneDialogOpen(false);
+								setModePickerOpen(true);
+							}}
+							onChange={(next) => {
+								setCloneDetails(next);
+								setError(null);
+							}}
+							onClose={() => {
+								setCloneDialogOpen(false);
+								setError(null);
+							}}
+							onContinue={(next) => {
+								setCloneSelection(next);
+								setSelectedKind("single_repo");
+								setModePickerOpen(false);
+								setCloneDialogOpen(false);
+								setCloneDialogClosing(true);
+								setChildTransitioning(true);
+								setCloneDialogOpen(false);
+								window.setTimeout(() => {
+									setCloneDialogClosing(false);
 									setSelectedPath(next.targetPath);
-									setCloneDialogOpen(false);
-								}}
-								open
-								value={cloneDetails}
-							/>
-						</Suspense>
+									setChildTransitioning(false);
+								}, 80);
+							}}
+							open={cloneDialogOpen}
+							value={cloneDetails}
+						/>
 					) : null}
 					<CreateProjectFolderDialog
 						disabled={isBusy}
@@ -375,13 +406,16 @@ export function CreateProjectFlow({
 						kind={selectedKind}
 						open={folderPickerOpen}
 						scan={validationScan}
+						onContinue={() => {
+							if (!validationScan || error) return;
+							setFolderPickerOpen(false);
+							setSelectedPath(validationScan.path);
+							setModePickerOpen(false);
+						}}
 						onBack={() => {
 							setError(null);
 							setValidationScan(null);
 							setFolderPickerOpen(false);
-							if (!embedded) {
-								window.requestAnimationFrame(() => setModePickerOpen(true));
-							}
 						}}
 						onChooseFolder={() => void chooseDirectory(selectedKind)}
 						onOpenChange={(open) => {
@@ -411,7 +445,7 @@ export function CreateProjectFlow({
 						}
 					}
 				}}
-				onBack={
+					onBack={
 					cloneSelection
 						? () => {
 								setSelectedPath(null);
@@ -480,7 +514,18 @@ function shouldScanCreateFailure(message: string): boolean {
 	return /workspace|repo|repository|git|path|folder|worktree|bare|branch|commit|remote/i.test(message);
 }
 
+function CreateProjectFlowBackdrop({ open }: { open: boolean }) {
+	return (
+		<Dialog.Root open={open}>
+			<Dialog.Portal>
+				<Dialog.Overlay className="dialog-overlay data-[state=open]:animate-overlay-in data-[state=closed]:animate-overlay-out" />
+			</Dialog.Portal>
+		</Dialog.Root>
+	);
+}
+
 function CreateProjectSourceDialog({
+	childOpen,
 	cloudAvailable,
 	cloudEnabled,
 	disabled,
@@ -492,6 +537,7 @@ function CreateProjectSourceDialog({
 	onSelect,
 	open,
 }: {
+	childOpen: boolean;
 	cloudAvailable: boolean;
 	cloudEnabled: boolean;
 	disabled: boolean;
@@ -506,8 +552,15 @@ function CreateProjectSourceDialog({
 	return (
 		<Dialog.Root open={open} onOpenChange={onOpenChange}>
 			<Dialog.Portal>
-				<Dialog.Overlay className="dialog-overlay data-[state=open]:animate-overlay-in" />
-				<Dialog.Content className="fixed left-1/2 top-1/2 z-overlay w-[min(var(--size-import-modal-max),calc(100vw-24px))] -translate-x-1/2 -translate-y-1/2 border-0 bg-transparent p-0 shadow-none outline-none data-[state=open]:animate-modal-in">
+				<Dialog.Content
+					hidden={childOpen}
+					className={cn(
+						"fixed left-1/2 top-1/2 z-overlay w-[min(560px,calc(100vw-24px))] -translate-x-1/2 -translate-y-1/2 border-0 bg-transparent p-0 shadow-none outline-none motion-reduce:animate-none",
+						childOpen
+							? "pointer-events-none opacity-0 animate-modal-out"
+							: "data-[state=open]:animate-modal-in data-[state=closed]:animate-modal-out",
+					)}
+				>
 					<div className="flex w-full flex-col items-center gap-3">
 						{cloudEnabled && (
 							<ProjectOfferingTabs disabled={disabled} offering={offering} onOfferingChange={onOfferingChange} />
@@ -815,64 +868,76 @@ function ImportSourcePicker({
 	onSelect: (source: ProjectSource) => void;
 }) {
 	const { t } = useTranslation();
+	const sources: Array<{ source: ProjectSource; icon: ReactNode; label: string; description: string }> = [
+		{
+			source: "clone",
+			icon: <GitFork className="size-5" aria-hidden="true" strokeWidth={1.8} />,
+			label: t("createProject.cloneFromGit"),
+			description: t("createProject.cloneFromGitDesc"),
+		},
+		{
+			source: "local",
+			icon: <FolderClosed className="size-5" aria-hidden="true" strokeWidth={1.8} />,
+			label: t("createProject.openLocal"),
+			description: t("createProject.openLocalDesc"),
+		},
+		{
+			source: "workspace",
+			icon: <Folders className="size-5" aria-hidden="true" strokeWidth={1.8} />,
+			label: t("createProject.addWorkspace"),
+			description: t("createProject.workspaceDesc"),
+		},
+	];
 	return (
-		<>
-			{dialog && (
-				<>
-					<Dialog.Title className="sr-only">{t("createProject.addCodeTitle")}</Dialog.Title>
-					<Dialog.Description className="sr-only">{t("createProject.addCodeDescription")}</Dialog.Description>
-				</>
+		<div className="relative w-full max-w-[520px] overflow-hidden rounded-lg border border-border bg-popover text-popover-foreground shadow-xl">
+			{dialog ? (
+				<Dialog.Title className="settings-dialog-title px-4 pt-3">{t("createProject.addCodeTitle")}</Dialog.Title>
+			) : (
+				<h2 className="settings-dialog-title px-4 pt-3">{t("createProject.addCodeTitle")}</h2>
 			)}
-			<ProjectSourcePickerView
-				dialog={dialog}
-				disabled={disabled}
-				onClose={onClose}
-				onSelect={onSelect}
-				closeIcon={<X className="size-5" aria-hidden="true" strokeWidth={1.67} />}
-				arrowIcon={<ArrowRight className="size-4" aria-hidden="true" />}
-				cloneIcon={<GitFork className="size-[14px] shrink-0" aria-hidden="true" />}
-				folderIcon={<FolderOpen className="size-[14px] shrink-0" aria-hidden="true" />}
-				workspaceIcon={<Folders className="size-5" aria-hidden="true" />}
-				labels={{
-					title: t("createProject.addCodeTitle"),
-					description: t("createProject.addCodeDescription"),
-					clone: t("createProject.cloneFromGit"),
-					cloneDescription: t("createProject.cloneFromGitDesc"),
-					cloneExample: "github.com/acme/web-app",
-					cloneBranchExample: "origin / main",
-					local: t("createProject.openLocal"),
-					localDescription: t("createProject.openLocalDesc"),
-					localExample: "~/Development/web-app",
-					localBranchExample: "main",
-					workspace: t("createProject.addWorkspace"),
-					workspaceDescription: t("createProject.workspaceDesc"),
-					close: t("createProject.closeDialog"),
-				}}
-			/>
-		</>
-	);
-}
-
-function CloneRepositoryDialogSkeleton() {
-	const { t } = useTranslation();
-	return (
-		<Dialog.Root open>
-			<Dialog.Portal>
-				<Dialog.Overlay className="dialog-overlay" />
-				<Dialog.Content className="fixed left-1/2 top-1/2 z-overlay w-[min(var(--size-import-folder-dialog),calc(100vw-24px))] -translate-x-1/2 -translate-y-1/2 overflow-hidden rounded-welcome-panel border border-[var(--color-border-import-modal)] bg-[var(--color-bg-import-modal)] p-0 shadow-[var(--shadow-import-modal)]">
-					<Dialog.Title className="sr-only">{t("createProject.cloneTitle")}</Dialog.Title>
-					<Dialog.Description className="sr-only">{t("createProject.cloneDescription")}</Dialog.Description>
-					<div className="border-b border-[var(--color-border-import-modal)] p-(--size-import-dialog-padding)">
-						<div className="h-5 w-40 rounded bg-[var(--color-bg-import-chip)]" />
-						<div className="mt-2 h-3 w-72 max-w-full rounded bg-[var(--color-bg-import-chip)]" />
-					</div>
-					<div className="space-y-5 p-(--size-import-dialog-padding)">
-						<div className="h-11 rounded-md bg-[var(--color-bg-import-card)]" />
-						<div className="h-11 rounded-md bg-[var(--color-bg-import-card)]" />
-					</div>
-				</Dialog.Content>
-			</Dialog.Portal>
-		</Dialog.Root>
+			{dialog ? (
+				<Dialog.Description className="px-4 pb-3 pt-1 text-[13px] leading-5 text-muted-foreground">
+					{t("createProject.addCodeDescription")}
+				</Dialog.Description>
+			) : (
+				<p className="px-4 pb-3 pt-1 text-[13px] leading-5 text-muted-foreground">
+					{t("createProject.addCodeDescription")}
+				</p>
+			)}
+			<div className="mx-4 mb-4 overflow-hidden rounded-md border border-border/50 bg-[var(--color-bg-import-modal)]">
+				<div className="flex flex-col divide-y divide-border/50">
+				{sources.map(({ source, icon, label, description }) => (
+					<button
+						key={source}
+						type="button"
+						className="group flex min-h-[76px] items-center gap-3 px-3.5 py-3 text-left hover:bg-accent/50 active:bg-accent disabled:pointer-events-none disabled:opacity-50"
+						aria-label={label}
+						disabled={disabled}
+						onClick={() => onSelect(source)}
+					>
+						<span className="grid w-9 shrink-0 place-items-center text-muted-foreground group-hover:text-foreground">
+							{icon}
+						</span>
+						<span className="min-w-0">
+							<span className="block text-[14px] font-medium text-foreground">{label}</span>
+							<span className="mt-0.5 block text-[12px] leading-5 text-muted-foreground">{description}</span>
+						</span>
+					</button>
+				))}
+				</div>
+			</div>
+			{dialog && onClose ? (
+				<button
+					type="button"
+					className="settings-close-button absolute right-3 top-3"
+					aria-label={t("createProject.closeDialog")}
+					disabled={disabled}
+					onClick={onClose}
+				>
+					<X className="size-4" aria-hidden="true" />
+				</button>
+			) : null}
+		</div>
 	);
 }
 
@@ -882,6 +947,7 @@ function CreateProjectFolderDialog({
 	kind,
 	onBack,
 	onChooseFolder,
+	onContinue,
 	onOpenChange,
 	open,
 	scan,
@@ -891,26 +957,26 @@ function CreateProjectFolderDialog({
 	kind: ProjectKind;
 	onBack: () => void;
 	onChooseFolder: () => void;
+	onContinue: () => void;
 	onOpenChange: (open: boolean) => void;
 	open: boolean;
 	scan: ImportFolderScan | null;
 }) {
 	const { t } = useTranslation();
 	const isWorkspace = kind === "workspace";
-	const failedRepos = scan?.repos.filter((repo) => (repo.status === "error" || !repo.hasRemote) && !repo.needsGitInit) ?? [];
+	const failedRepos =
+		scan?.repos.filter(
+			(repo) =>
+				(repo.status === "error" || !repo.hasRemote) &&
+				!repo.needsGitInit &&
+				repo.reason !== "Repository must have at least one commit.",
+		) ?? [];
 	const hasScan = scan !== null;
-	const footerMessage =
-		failedRepos.length > 0
-			? t("createProject.footerResolve", { count: failedRepos.length })
-			: hasScan
-				? t("createProject.footerReview")
-				: t("createProject.footerChoose");
 	return (
 		<Dialog.Root open={open} onOpenChange={onOpenChange}>
 			<Dialog.Portal>
-				<Dialog.Overlay className="dialog-overlay data-[state=open]:animate-overlay-in" />
-				<Dialog.Content className="fixed left-1/2 top-1/2 z-overlay flex max-h-[min(var(--size-import-folder-dialog),calc(100svh-24px))] w-[min(var(--size-import-folder-dialog),calc(100vw-24px))] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-welcome-panel border border-[var(--color-border-import-modal)] bg-[var(--color-bg-import-modal)] p-0 text-[var(--color-text-import-title)] shadow-[var(--shadow-import-modal)] data-[state=open]:animate-modal-in">
-					<div className="flex shrink-0 items-start gap-3 border-b border-[var(--color-border-import-modal)] p-(--size-import-dialog-padding) sm:gap-4">
+				<Dialog.Content className="fixed left-1/2 top-1/2 z-overlay flex max-h-[min(640px,calc(100svh-24px))] w-[min(640px,calc(100vw-24px))] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-lg border border-border bg-popover p-0 text-popover-foreground shadow-xl data-[state=open]:animate-modal-in data-[state=closed]:animate-modal-out motion-reduce:animate-none">
+					<div className="relative shrink-0 px-4 pt-3">
 						<Button
 							type="button"
 							variant="outline"
@@ -921,11 +987,11 @@ function CreateProjectFolderDialog({
 						>
 							<ChevronRight className="size-4 rotate-180" aria-hidden="true" />
 						</Button>
-						<div className="min-w-0 flex-1">
+						<div className="min-w-0 flex-1 pr-8">
 							<Dialog.Title className="text-[18px] font-semibold text-[var(--color-text-import-title)]">
 								{isWorkspace ? t("createProject.importWorkspace") : t("createProject.importProject")}
 							</Dialog.Title>
-							<Dialog.Description className="mt-1 max-w-[520px] text-[13px] font-medium leading-5 text-[var(--color-text-import-muted)]">
+							<Dialog.Description className="sr-only">
 								{isWorkspace ? t("createProject.importWorkspaceDesc") : t("createProject.importProjectDesc")}
 							</Dialog.Description>
 						</div>
@@ -940,37 +1006,43 @@ function CreateProjectFolderDialog({
 							</button>
 						</Dialog.Close>
 					</div>
-					<div className="min-h-0 overflow-y-auto p-(--size-import-dialog-padding)">
+					<div className="min-h-0 overflow-y-auto px-4 pb-1 pt-3">
 						{hasScan ? (
-							<div className="space-y-4">
-								<div className="flex items-center gap-3 rounded-lg border border-[var(--color-border-import-modal)] bg-[var(--color-bg-import-card)] p-4">
-									<Folder className="size-5 shrink-0 text-[var(--color-text-import-muted)]" aria-hidden="true" />
+							<div className="space-y-3">
+								<div className="flex items-center gap-3 rounded-md border border-[var(--color-border-import-modal)] bg-[var(--color-bg-import-card)] px-3 py-2.5">
+									<Folder className="size-4 shrink-0 text-[var(--color-text-import-muted)]" aria-hidden="true" />
 									<div className="min-w-0 flex-1">
-										<div className="truncate font-mono text-[14px] font-semibold text-[var(--color-text-import-title)]">
+										<div className="truncate font-mono text-[13px] font-semibold text-[var(--color-text-import-title)]">
 											{displayImportPath(scan.path)}
 										</div>
-										<div className="mt-0.5 text-[12px] text-[var(--color-text-import-muted)]">
+										<div className="mt-0.5 text-[11px] text-[var(--color-text-import-muted)]">
 											{isWorkspace ? t("createProject.workspaceRoot") : t("createProject.projectFolder")}
 										</div>
 									</div>
-									<Button type="button" variant="footer" disabled={disabled} onClick={onChooseFolder}>
+									<Button type="button" variant="outline" disabled={disabled} onClick={onChooseFolder}>
 										{t("createProject.change")}
 									</Button>
 								</div>
 
 								{error && (
 									<div className="rounded-lg border border-destructive/40 bg-destructive/10">
-										<div className="border-b border-destructive/30 px-4 py-3 font-mono text-[12px] font-semibold uppercase tracking-[0.12em] text-destructive">
+										<div className="border-b border-destructive/30 px-3 py-2 font-mono text-[11px] font-semibold uppercase tracking-[0.12em] text-destructive">
 											<span className="mr-2 inline-block size-2 rounded-full bg-destructive" aria-hidden="true" />
 											{isWorkspace ? t("createProject.importFailedWorkspace") : t("createProject.importFailedProject")}
 										</div>
-										<div className="px-4 py-3 text-[12px] leading-5 text-destructive">{error}</div>
+						<div className="px-3 py-2 text-[12px] leading-5 text-destructive">{error}</div>
+						<div className="border-t border-destructive/30 px-3 py-2 text-[12px] text-[var(--color-text-import-muted)]">
+							{t("createProject.footerReview")}
+						</div>
 										{failedRepos.length > 0 && (
 											<div className="border-t border-destructive/30">
-												{failedRepos.map((repo) => (
-													<ImportRepoRow key={repo.path} repo={repo} failed />
-												))}
-											</div>
+									{failedRepos.map((repo) => (
+										<ImportRepoRow key={repo.path} repo={repo} failed />
+									))}
+									<div className="border-t border-destructive/30 px-3 py-2 text-[12px] text-[var(--color-text-import-muted)]">
+										{t("createProject.footerResolve", { count: failedRepos.length })}
+									</div>
+								</div>
 										)}
 									</div>
 								)}
@@ -980,14 +1052,14 @@ function CreateProjectFolderDialog({
 								.map((repo) => (
 										<div
 											key={repo.path}
-											className="rounded-lg border border-[var(--color-border-import-modal)] bg-[var(--color-bg-import-card)]"
+											className="rounded-md border border-[var(--color-border-import-modal)] bg-[var(--color-bg-import-card)]"
 										>
 											<ImportRepoRow repo={repo} />
 										</div>
 									))}
 
 								{scan.repos.length === 0 && (
-									<div className="rounded-lg border border-[var(--color-border-import-modal)] bg-[var(--color-bg-import-card)] p-4 text-[12px] text-[var(--color-text-import-muted)]">
+									<div className="rounded-md border border-[var(--color-border-import-modal)] bg-[var(--color-bg-import-card)] p-3 text-[12px] text-[var(--color-text-import-muted)]">
 										{t("createProject.noRepos")}
 									</div>
 								)}
@@ -1020,12 +1092,16 @@ function CreateProjectFolderDialog({
 							</div>
 						)}
 					</div>
-					<div className="flex shrink-0 flex-col gap-3 border-t border-[var(--color-border-import-modal)] p-(--size-import-dialog-padding) sm:flex-row sm:items-center sm:justify-between">
-						<p className="text-[12px] font-medium text-[var(--color-text-import-muted)]">{footerMessage}</p>
+					<div className="flex shrink-0 justify-end gap-2 px-4 pb-4 pt-3">
 						<div className="flex flex-wrap items-center justify-end gap-3">
-							<Button type="button" variant="footer" disabled={disabled} onClick={() => onOpenChange(false)}>
+							<Button type="button" variant="outline" disabled={disabled} onClick={() => onOpenChange(false)}>
 								{t("createProject.cancel")}
 							</Button>
+							{hasScan && failedRepos.length === 0 && !error && (
+								<Button type="button" variant="primary" disabled={disabled} onClick={onContinue}>
+									{t("createProject.cloneContinue")}
+								</Button>
+							)}
 						</div>
 					</div>
 				</Dialog.Content>
@@ -1037,11 +1113,13 @@ function CreateProjectFolderDialog({
 function ImportRepoRow({ failed = false, repo }: { failed?: boolean; repo: ImportFolderScan["repos"][number] }) {
 	const { t } = useTranslation();
 	return (
-		<div className="flex items-center gap-3 p-4">
+		<div className="flex items-center gap-3 px-3 py-2.5">
 			{failed ? (
-				<XCircle className="size-5 shrink-0 text-destructive" aria-hidden="true" />
+				<XCircle className="size-4 shrink-0 text-destructive" aria-hidden="true" />
+			) : repo.needsGitInit ? (
+				<CircleDashed className="size-4 shrink-0 text-[var(--color-text-import-muted)]" aria-hidden="true" />
 			) : (
-				<CheckCircle2 className="size-5 shrink-0 text-success" aria-hidden="true" />
+				<CheckCircle2 className="size-4 shrink-0 text-success" aria-hidden="true" />
 			)}
 			<div className="min-w-0 flex-1">
 				<div className="truncate text-[14px] font-semibold text-[var(--color-text-import-title)]">{repo.name}</div>

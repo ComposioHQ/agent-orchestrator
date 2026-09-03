@@ -6,7 +6,7 @@ import {
 import { useTranslation } from "react-i18next";
 import * as Dialog from "@radix-ui/react-dialog";
 import { ChevronLeft, TriangleAlert, X, type LucideIcon } from "lucide-react";
-import { memo, useEffect, useMemo, useState, type ReactNode } from "react";
+import { memo, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { components } from "../../api/schema";
 import { useAgentReadinessQuery, useEnsureAgentReadiness } from "../hooks/useAgentReadinessQuery";
 import { AGENT_OPTIONS } from "../lib/agent-options";
@@ -114,8 +114,18 @@ export function CreateProjectAgentSheet({
 	repositorySetupWarning = null,
 }: CreateProjectAgentSheetProps) {
 	const { t } = useTranslation();
-	const agentsQuery = useAgentReadinessQuery(open);
-	useEnsureAgentReadiness({ enabled: open });
+	const [isExiting, setIsExiting] = useState(false);
+	const contentOpen = open || isExiting;
+	const displayedAction = useRef(action);
+	const displayedError = useRef(error);
+	const displayedOnBack = useRef(onBack);
+	if (open) {
+		displayedAction.current = action;
+		displayedError.current = error;
+		displayedOnBack.current = onBack;
+	}
+	const agentsQuery = useAgentReadinessQuery(contentOpen);
+	useEnsureAgentReadiness({ enabled: contentOpen });
 	const agents = agentsQuery.data;
 	const agentOptions = useMemo(() => agents?.agents ?? [], [agents]);
 	const authorizedAgents = useMemo(
@@ -138,7 +148,7 @@ export function CreateProjectAgentSheet({
 	const [orchestratorAgentTouched, setOrchestratorAgentTouched] = useState(false);
 	useEnsureAgentReadiness({
 		agentIds: [workerAgent, orchestratorAgent],
-		enabled: open && (workerAgent !== "" || orchestratorAgent !== ""),
+		enabled: contentOpen && (workerAgent !== "" || orchestratorAgent !== ""),
 	});
 	const isBusy = isCreating || isInitializing;
 	const [intake, setIntake] = useState<IntakeForm>(EMPTY_INTAKE);
@@ -153,7 +163,21 @@ export function CreateProjectAgentSheet({
 		!intakeIncomplete &&
 		!isBusy &&
 		!isLoadingAgents;
-	const sheetError = error ? projectSheetError(error, action) : null;
+	const sheetError = displayedError.current
+		? projectSheetError(displayedError.current, displayedAction.current)
+		: null;
+	const wasOpen = useRef(false);
+
+	useEffect(() => {
+		if (open && !wasOpen.current) {
+			setWorkerAgent("");
+			setOrchestratorAgent("");
+			setWorkerAgentTouched(false);
+			setOrchestratorAgentTouched(false);
+			setIntake(EMPTY_INTAKE);
+		}
+		wasOpen.current = open;
+	}, [open]);
 
 	useEffect(() => {
 		if (!open) return;
@@ -162,21 +186,22 @@ export function CreateProjectAgentSheet({
 		if (!orchestratorAgentTouched) setOrchestratorAgent(defaultAgent);
 	}, [authorizedAgents, open, orchestratorAgentTouched, workerAgentTouched]);
 
-	useEffect(() => {
-		if (!open) {
-			setWorkerAgent("");
-			setOrchestratorAgent("");
-			setWorkerAgentTouched(false);
-			setOrchestratorAgentTouched(false);
-			setIntake(EMPTY_INTAKE);
-		}
-	}, [open, path]);
-
 	return (
-		<Dialog.Root open={open} onOpenChange={(next) => !isBusy && onOpenChange(next)}>
+		<Dialog.Root
+			open={open}
+			onOpenChange={(next) => {
+				if (isBusy) return;
+				setIsExiting(!next);
+				onOpenChange(next);
+			}}
+		>
 			<Dialog.Portal>
-				<Dialog.Overlay className="dialog-overlay data-[state=open]:animate-overlay-in" />
-				<Dialog.Content className="fixed left-1/2 top-1/2 z-overlay w-[min(480px,calc(100vw-32px))] -translate-x-1/2 -translate-y-1/2 rounded-agents-sheet border border-[var(--color-border-agents-sheet)] bg-[var(--color-bg-agents-sheet)] p-0 text-[var(--color-text-agents-sheet-title)] shadow-[var(--shadow-import-modal)] data-[state=open]:animate-modal-in">
+				<Dialog.Content
+					className="fixed left-1/2 top-1/2 z-overlay w-dialog-lg -translate-x-1/2 -translate-y-1/2 overflow-hidden rounded-lg border border-border bg-popover p-0 text-popover-foreground shadow-xl data-[state=open]:animate-modal-in data-[state=closed]:animate-modal-out motion-reduce:animate-none"
+					onAnimationEnd={(event) => {
+						if (!open && event.target === event.currentTarget) setIsExiting(false);
+					}}
+				>
 					<ProjectSetupHeaderView
 						CloseButton={ProjectSheetCloseButton}
 						Description={Dialog.Description}
@@ -185,24 +210,25 @@ export function CreateProjectAgentSheet({
 						closeLabel={t("createProject.closeAgents")}
 						disabled={isBusy}
 						leadingAction={
-							onBack ? (
+							displayedOnBack.current ? (
 								<Button
 									type="button"
 									variant="outline"
 									size="icon"
 									aria-label={t("createProject.cloneBackToDetails")}
 									disabled={isBusy}
-									onClick={onBack}
+								onClick={displayedOnBack.current}
 								>
 									<ChevronLeft className="size-4" aria-hidden="true" />
 								</Button>
 							) : undefined
 						}
 						path={path ?? ""}
+						showPath={false}
 						title={
 							kind === "workspace"
-								? t("createProject.workspaceAgents")
-								: t("createProject.projectAgents")
+								? t("createProject.setupWorkspace")
+								: t("createProject.setupProject")
 						}
 					/>
 					<ProjectSetupFormView
@@ -243,7 +269,6 @@ export function CreateProjectAgentSheet({
 							),
 						}}
 						agents={{
-							cacheMessage: t("createProject.agentsCached"),
 							error: displayError,
 							loading: isLoadingAgents,
 							loadingMessage: t("createProject.loadingAgents"),
@@ -269,7 +294,6 @@ export function CreateProjectAgentSheet({
 								: null
 						}
 						canSubmit={canSubmit}
-						cancelLabel={t("createProject.cancel")}
 						intakeControl={
 							<IntakeFields
 								form={intake}
@@ -297,11 +321,12 @@ export function CreateProjectAgentSheet({
 										? t("createProject.cloning")
 										: t("createProject.creating")
 									: action === "clone"
-										? t("createProject.cloneAndStart")
+										? t("createProject.clone")
 										: kind === "workspace"
 											? t("createProject.createWorkspaceAndStart")
 											: t("createProject.createAndStart")
 						}
+						submitClassName="h-control-form rounded-md bg-primary px-3 text-sm text-primary-foreground hover:bg-primary/80"
 					/>
 				</Dialog.Content>
 			</Dialog.Portal>

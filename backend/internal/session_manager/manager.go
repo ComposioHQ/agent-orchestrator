@@ -1422,16 +1422,15 @@ func resolvedModelForMetadata(harness domain.AgentHarness, effective, adapter po
 	return ""
 }
 
-// validateSpawnModel rejects a model when the selected harness has a fixed
-// catalog that does not include it and the harness does not accept arbitrary
-// model ids. Harnesses with custom-model support (including full snapshot ids)
-// or no reliable catalog defer the check to the adapter at launch time.
+// validateSpawnModel rejects unknown choices only when AO owns a complete
+// static catalog. Dynamic catalogs and direct-entry agents defer authoritative
+// model validation to the selected agent at launch time.
 func validateSpawnModel(harness domain.AgentHarness, model string) error {
 	if strings.TrimSpace(model) == "" {
 		return nil
 	}
 	catalog := modelcatalog.Base(string(harness))
-	if catalog.AllowCustom {
+	if catalog.AllowCustom || len(catalog.Models) == 0 {
 		return nil
 	}
 	for _, item := range catalog.Models {

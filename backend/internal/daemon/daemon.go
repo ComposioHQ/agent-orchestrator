@@ -19,7 +19,10 @@ import (
 
 	"github.com/google/uuid"
 
+	codexagent "github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/codex"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/modelcatalog"
+	chatdriveracp "github.com/aoagents/agent-orchestrator/backend/internal/adapters/chatdriver/acp"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/chatdriver/codexappserver"
 	chatdriverregistry "github.com/aoagents/agent-orchestrator/backend/internal/adapters/chatdriver/registry"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/runtime/runtimeselect"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/systemexec"
@@ -417,7 +420,24 @@ func Run() error {
 		NewID:    uuid.NewString,
 	})
 
-	agentSvc := agentsvc.NewWithDeps(agentsvc.Deps{Cache: store, Discoverer: modelcatalog.Discoverer{}, Projects: store, Sessions: store, Context: ctx, Logger: log})
+	codexModelDriver := codexappserver.New(codexagent.New(), log)
+	modelDiscoverer := modelcatalog.Discoverer{
+		CodexModels: func(listCtx context.Context, request ports.AgentModelDiscoveryRequest) ([]ports.ChatModel, error) {
+			return codexModelDriver.DiscoverModels(listCtx, request.WorkingDir, request.Env)
+		},
+		ClineOptions: func(listCtx context.Context, request ports.AgentModelDiscoveryRequest) ([]ports.ChatConfigOption, error) {
+			return chatdriveracp.DiscoverConfigOptions(listCtx, chatdriveracp.Launch{
+				Command: request.Binary,
+				Args:    []string{"--acp"},
+				Env:     request.Env,
+			}, request.WorkingDir, log)
+		},
+	}
+	agentSvc := agentsvc.NewWithDeps(agentsvc.Deps{
+		Cache: store, Discoverer: modelDiscoverer, Projects: store,
+		Sessions: store, Context: ctx, Logger: log,
+	})
+	agentSvc.WarmModelCatalogs(ctx)
 
 	// Build the multi-tracker dispatching to both GitHub and GitLab once,
 	// shared between the session service and the intake observer below.

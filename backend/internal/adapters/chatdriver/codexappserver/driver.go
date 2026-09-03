@@ -204,6 +204,25 @@ func (d *Driver) Probe(ctx context.Context) (ports.ChatCapabilities, error) {
 	return capabilities(), nil
 }
 
+// DiscoverModels reads the account's current provider catalog without opening
+// a Codex thread. The caller supplies the same project directory and environment
+// overlay used for a normal launch so project-scoped Codex configuration applies.
+func (d *Driver) DiscoverModels(ctx context.Context, workdir string, env map[string]string) ([]ports.ChatModel, error) {
+	if !filepath.IsAbs(workdir) {
+		var err error
+		workdir, err = os.Getwd()
+		if err != nil || !filepath.IsAbs(workdir) {
+			workdir = os.TempDir()
+		}
+	}
+	conv, err := d.connect(ctx, workdir, env)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = conv.Close() }()
+	return listModels(ctx, conv.conn)
+}
+
 type codexVersion [3]int
 
 var codexVersionPattern = regexp.MustCompile(`\b(\d+)\.(\d+)\.(\d+)\b`)

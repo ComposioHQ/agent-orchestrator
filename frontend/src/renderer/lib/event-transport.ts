@@ -2,6 +2,7 @@ import type { QueryClient } from "@tanstack/react-query";
 import { aoBridge } from "./bridge";
 import { getApiBaseUrl, hasTrustedApiBaseUrl, subscribeApiBaseUrl } from "./api-client";
 import { setEventsConnectionState } from "./events-connection";
+import { computeSseRetryDelayMs } from "./sse-backoff";
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { sessionScmSummaryQueryKey } from "../hooks/useSessionScmSummary";
 import { conversationQueryKey, conversationQueryRoot } from "../hooks/useConversation";
@@ -14,9 +15,6 @@ export type EventTransport = {
 };
 
 const INVALIDATE_DEBOUNCE_MS = 150;
-// How long to wait before rebuilding an EventSource the browser gave up on
-// (readyState CLOSED — e.g. the daemon answered with a non-SSE response).
-const SSE_RETRY_MS = 5_000;
 // EventSource.CLOSED, referenced numerically so test stubs without the static
 // constants still work.
 const EVENTSOURCE_CLOSED = 2;
@@ -136,12 +134,18 @@ export function createEventTransport(queryClient: QueryClient): EventTransport {
 				}, INVALIDATE_DEBOUNCE_MS);
 			};
 
+			// Consecutive scheduled rebuilds since the stream last opened. Paces
+			// the retry so a daemon that keeps refusing the stream is not
+			// hammered on a flat cadence (#4323).
+			let retries = 0;
+
 			const scheduleRetry = () => {
 				if (retryTimer) return;
+				retries += 1;
 				retryTimer = setTimeout(() => {
 					retryTimer = undefined;
 					connectSource();
-				}, SSE_RETRY_MS);
+				}, computeSseRetryDelayMs(retries));
 			};
 
 			const connectSource = () => {
@@ -161,6 +165,10 @@ export function createEventTransport(queryClient: QueryClient): EventTransport {
 				// Keep a still-usable source on the same base URL; replace one the
 				// browser abandoned (CLOSED) or one bound to a stale port.
 				if (source && sourceBaseUrl === baseUrl && source.readyState !== EVENTSOURCE_CLOSED) return;
+				// A daemon that came back on a different port is a fresh target, not
+				// a continuation of the dead one: do not make it serve the delay the
+				// old port earned.
+				if (sourceBaseUrl && sourceBaseUrl !== baseUrl) retries = 0;
 				source?.close();
 				source = undefined;
 				sourceBaseUrl = baseUrl;
@@ -170,6 +178,7 @@ export function createEventTransport(queryClient: QueryClient): EventTransport {
 					source.onopen = () => {
 						if (source !== connectedSource) return;
 						healthAttempt += 1;
+						retries = 0;
 						setEventsConnectionState("connected");
 						agentSwitchVisibility.setTransportHealthy("active", true);
 						agentSwitchVisibility.setTransportHealthy("history", true);

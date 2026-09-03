@@ -5393,6 +5393,20 @@ func TestSpawn_HookPATHPinUnavailable(t *testing.T) {
 // TestSpawn_ProjectPATHIsPinBase asserts a project's PATH override survives the
 // pin as its base rather than being clobbered or clobbering: the daemon dir
 // still comes first.
+func TestValidateSpawnModelOnlyRejectsUnknownStaticChoices(t *testing.T) {
+	if err := validateSpawnModel(domain.HarnessAmp, "high"); err != nil {
+		t.Fatalf("known Amp mode: %v", err)
+	}
+	if err := validateSpawnModel(domain.HarnessAmp, "not-a-mode"); err == nil {
+		t.Fatal("unknown Amp mode: want validation error")
+	}
+	for _, harness := range []domain.AgentHarness{"opencode", "grok", "codex"} {
+		if err := validateSpawnModel(harness, "agent-owned-model"); err != nil {
+			t.Fatalf("%s dynamic model should be validated by the agent: %v", harness, err)
+		}
+	}
+}
+
 func TestSpawn_ProjectPATHIsPinBase(t *testing.T) {
 	daemonExe := filepath.Join(t.TempDir(), "ao")
 	m, st, rt, _ := pathPinManager(func() (string, error) { return daemonExe, nil })

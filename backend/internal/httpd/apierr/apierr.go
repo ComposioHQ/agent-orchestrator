@@ -22,6 +22,11 @@ const (
 	KindConflict
 	// KindForbidden is an authenticated ownership failure; it maps to 403.
 	KindForbidden
+	// KindUnavailable is a transient failure the caller should retry (e.g. the
+	// database is momentarily busy/locked, or a server-side deadline elapsed);
+	// it maps to 503. Distinct from KindInternal so retryable contention is not
+	// counted or alerted as a server fault.
+	KindUnavailable
 )
 
 // Error is the structured error every service returns. Code is a stable machine
@@ -70,4 +75,9 @@ func Forbidden(code, message string) *Error {
 // Internal is a 500-class error.
 func Internal(code, message string) *Error {
 	return New(KindInternal, code, message, nil)
+}
+
+// Unavailable is a 503-class transient error the caller should retry.
+func Unavailable(code, message string) *Error {
+	return New(KindUnavailable, code, message, nil)
 }

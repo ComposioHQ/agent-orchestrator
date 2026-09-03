@@ -21,6 +21,9 @@ var (
 	// revalidate in the background. Long, because rediscovery runs an agent CLI:
 	// this covers drift a fingerprint cannot see, not routine correctness.
 	modelCatalogTrustWindow = 6 * time.Hour
+	// Suppress repeated successful catalog refreshes across rapid daemon restarts.
+	// Failed validations are stale and remain eligible for the next startup.
+	modelCatalogStartupGuard = 10 * time.Minute
 )
 
 // catalogNeedsRevalidation reports whether a cached catalog is old enough to
@@ -113,6 +116,38 @@ func newService(agents []agentregistry.HarnessAgent, cache ports.AgentModelCatal
 	return &Service{agents: agents, readiness: newReadinessCoordinator(readinessCoordinatorConfig{Agents: agents}), cache: cache, discoverer: discoverer, projects: projects, resolverMu: resolverMu, modelCalls: map[string]*modelCatalogCall{}}
 }
 
+// WarmModelCatalogs starts a non-blocking, sequential refresh of the Claude
+// Code and Muse scopes that already have durable cache records. Unseen scopes
+// remain lazy and are discovered only when their picker is first opened.
+func (s *Service) WarmModelCatalogs(ctx context.Context) {
+	if s.cache == nil || s.discoverer == nil {
+		return
+	}
+	go s.warmModelCatalogs(ctx)
+}
+
+func (s *Service) warmModelCatalogs(ctx context.Context) {
+	for _, agentID := range []string{"claude-code", "muse"} {
+		records, err := s.cache.ListAgentModelCatalogsByAgent(ctx, agentID)
+		if err != nil {
+			continue
+		}
+		for _, record := range records {
+			if err := ctx.Err(); err != nil {
+				return
+			}
+			var cached ports.AgentModelCatalog
+			if err := json.Unmarshal([]byte(record.CatalogJSON), &cached); err != nil {
+				continue
+			}
+			if !cached.Stale && !cached.ValidatedAt.IsZero() && time.Since(cached.ValidatedAt) < modelCatalogStartupGuard {
+				continue
+			}
+			_, _ = s.RevalidateModels(ctx, agentID, record.ProjectID)
+		}
+	}
+}
+
 // Models returns one normalized model catalog. Cached values survive daemon
 // restarts; refresh forces a new documented CLI discovery attempt. Discovery
 // failures degrade to the last cached catalog or a custom model input.
@@ -187,6 +222,10 @@ func (s *Service) loadModels(ctx context.Context, agentID, projectID string, mod
 	if err != nil {
 		return ports.AgentModelCatalog{}, err
 	}
+	policy := s.discoverer.Manual(agentID)
+	if hasCached {
+		cached.Catalog = applyCustomModelEntryPolicy(cached.Catalog, policy)
+	}
 	var binary string
 	if resolver, ok := item.Agent.(ports.AgentBinaryResolver); ok {
 		lock := s.resolverMu[agentID]
@@ -214,15 +253,13 @@ func (s *Service) loadModels(ctx context.Context, agentID, projectID string, mod
 	}
 
 	discovered, discoverErr := s.discoverer.Discover(ctx, request)
+	discovered = applyCustomModelEntryPolicy(discovered, policy)
 	discovered.BinaryVersion = version
-	discovered.ValidatedAt = time.Now().UTC()
-	discovered.RefreshRecommended = false
 	if discoverErr != nil {
 		if hasCached && len(cached.Catalog.Models) > len(discovered.Models) {
 			cached.Catalog.Stale = true
 			cached.Catalog.Warning = discoverErr.Error()
-			cached.Catalog.ValidatedAt = time.Now().UTC()
-			cached.Catalog.RefreshRecommended = false
+			cached.Catalog.RefreshRecommended = true
 			if err := s.saveCatalog(ctx, projectID, cached.Catalog); err != nil {
 				cached.Catalog.Warning = appendCacheWarning(cached.Catalog.Warning)
 			}
@@ -231,6 +268,7 @@ func (s *Service) loadModels(ctx context.Context, agentID, projectID string, mod
 		if len(discovered.Models) > 0 {
 			discovered.Stale = true
 			discovered.Warning = discoverErr.Error()
+			discovered.RefreshRecommended = true
 			if err := s.saveCatalog(ctx, projectID, discovered); err != nil {
 				discovered.Warning = appendCacheWarning(discovered.Warning)
 			}
@@ -239,24 +277,79 @@ func (s *Service) loadModels(ctx context.Context, agentID, projectID string, mod
 		if hasCached {
 			cached.Catalog.Stale = true
 			cached.Catalog.Warning = discoverErr.Error()
-			cached.Catalog.ValidatedAt = time.Now().UTC()
-			cached.Catalog.RefreshRecommended = false
+			cached.Catalog.RefreshRecommended = true
 			if err := s.saveCatalog(ctx, projectID, cached.Catalog); err != nil {
 				cached.Catalog.Warning = appendCacheWarning(cached.Catalog.Warning)
 			}
 			return cached.Catalog, nil
 		}
-		fallback := s.discoverer.Manual(agentID)
+		if shared, ok := s.latestAgentCatalog(ctx, agentID, projectID); ok {
+			shared = applyCustomModelEntryPolicy(shared, policy)
+			shared.Stale = true
+			shared.Warning = discoverErr.Error()
+			shared.RefreshRecommended = true
+			return shared, nil
+		}
+		fallback := policy
 		fallback.BinaryVersion = version
-		fallback.ValidatedAt = time.Now().UTC()
 		fallback.Stale = true
 		fallback.Warning = discoverErr.Error()
+		fallback.RefreshRecommended = true
 		return fallback, nil
 	}
+	discovered.ValidatedAt = time.Now().UTC()
+	discovered.RefreshRecommended = false
 	if err := s.saveCatalog(ctx, projectID, discovered); err != nil {
 		discovered.Warning = appendCacheWarning(discovered.Warning)
 	}
 	return discovered, nil
+}
+
+// latestAgentCatalog returns a last-known-good catalog from another project as
+// a display-only fallback. Discovery remains project-scoped and this result is
+// deliberately not persisted under the requested project key.
+func (s *Service) latestAgentCatalog(ctx context.Context, agentID, projectID string) (ports.AgentModelCatalog, bool) {
+	if s.cache == nil {
+		return ports.AgentModelCatalog{}, false
+	}
+	records, err := s.cache.ListAgentModelCatalogsByAgent(ctx, agentID)
+	if err != nil {
+		return ports.AgentModelCatalog{}, false
+	}
+	var best ports.AgentModelCatalog
+	var bestAt time.Time
+	for _, record := range records {
+		if record.ProjectID == projectID {
+			continue
+		}
+		var candidate ports.AgentModelCatalog
+		if err := json.Unmarshal([]byte(record.CatalogJSON), &candidate); err != nil || len(candidate.Models) == 0 {
+			continue
+		}
+		at := record.FetchedAt
+		if at.IsZero() {
+			at = candidate.FetchedAt
+		}
+		if best.Models == nil || at.After(bestAt) {
+			best = candidate
+			bestAt = at
+		}
+	}
+	return best, best.Models != nil
+}
+
+func applyCustomModelEntryPolicy(catalog, policy ports.AgentModelCatalog) ports.AgentModelCatalog {
+	entryMode := policy.CustomModelEntry
+	if entryMode == "" {
+		if policy.AllowCustom {
+			entryMode = ports.CustomModelEntryDirect
+		} else {
+			entryMode = ports.CustomModelEntryNone
+		}
+	}
+	catalog.CustomModelEntry = entryMode
+	catalog.AllowCustom = entryMode == ports.CustomModelEntryDirect
+	return catalog
 }
 
 func appendCacheWarning(current string) string {
