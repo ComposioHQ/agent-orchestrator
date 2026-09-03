@@ -478,6 +478,18 @@ func TestProcessExitUnblocksPendingRequest(t *testing.T) {
 	}
 }
 
+func TestWaitAnswersHonorsContext(t *testing.T) {
+	var c conn
+	c.answers.Add(1)
+	defer c.answers.Done()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := c.waitAnswers(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("waitAnswers error = %v, want context.Canceled", err)
+	}
+}
+
 func rejectAllServerRequests(context.Context, serverRequest) (any, error) {
 	return nil, errors.New("no server requests expected in this test")
 }

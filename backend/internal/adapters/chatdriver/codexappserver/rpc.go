@@ -338,7 +338,19 @@ func (c *conn) waitInboundCaptured(ctx context.Context, through int64) error {
 	}
 }
 
-func (c *conn) waitAnswers() { c.answers.Wait() }
+func (c *conn) waitAnswers(ctx context.Context) error {
+	done := make(chan struct{})
+	go func() {
+		c.answers.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
 
 // readFrame reads one newline-delimited frame with no length cap, so a large
 // diff or command output cannot truncate the stream mid-JSON.

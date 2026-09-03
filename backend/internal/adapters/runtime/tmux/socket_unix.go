@@ -3,6 +3,7 @@
 package tmux
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -23,18 +24,24 @@ const socketAliasIdentityBytes = 16
 // cannot fit in sockaddr_un. Qualified handles continue to persist the raw,
 // canonical namespace path; this function only translates it at the tmux argv
 // boundary.
-func socketAddress(socketPath string) (string, error) {
+func socketAddress(ctx context.Context, socketPath string) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
 	if len([]byte(socketPath)) <= maxUnixSocketPathBytes {
 		return socketPath, nil
 	}
-	return privateSocketAddress(socketPath)
+	return privateSocketAddress(ctx, socketPath)
 }
 
 // privateSocketAddress is the exact long-path mapping shipped by the private
 // tmux runtime. A deterministic short directory symlink under /tmp points at
 // the real AO runtime directory; binding through that alias keeps the socket
 // inode beside running.json while satisfying AF_UNIX's textual address limit.
-func privateSocketAddress(socketPath string) (string, error) {
+func privateSocketAddress(ctx context.Context, socketPath string) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
 	targetDir, err := validatePrivateSocketDirectory(filepath.Dir(socketPath))
 	if err != nil {
 		return "", err
@@ -66,6 +73,9 @@ func privateSocketAddress(socketPath string) (string, error) {
 		if err := validateSocketAlias(aliasDir, targetDir); err != nil {
 			return "", err
 		}
+	}
+	if err := ctx.Err(); err != nil {
+		return "", err
 	}
 	return address, nil
 }

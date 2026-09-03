@@ -779,6 +779,15 @@ func (supervisedLaunchAgent) ExitDetectionMode() ports.AgentExitDetectionMode {
 	return ports.AgentExitDetectionSupervisor
 }
 
+type resumeBootstrapAgent struct{ supervisedLaunchAgent }
+
+func (resumeBootstrapAgent) DetectTerminalActivity(output string) (domain.ActivityState, bool) {
+	if output == "ready" {
+		return domain.ActivityIdle, true
+	}
+	return "", false
+}
+
 // fakeAgents resolves every harness to the same fakeAgent.
 type fakeAgents struct{}
 
@@ -1914,6 +1923,7 @@ func TestResumeAgent_RestartsRuntimeWithManagedGeneration(t *testing.T) {
 		if !reflect.DeepEqual(lcm.prepared, []string{"mer-1:launch-new"}) {
 			t.Fatalf("runtime restarted before lifecycle prepared generation: %v", lcm.prepared)
 		}
+		exactAlive = true
 	}
 
 	result, err := m.ResumeAgentWithMode(ctx, "mer-1")
@@ -1954,6 +1964,50 @@ func TestResumeAgent_RestartsRuntimeWithManagedGeneration(t *testing.T) {
 	}
 }
 
+func TestResumeAgent_KeepaliveWithoutManagedWorkloadDoesNotSucceed(t *testing.T) {
+	exactAlive := false
+	baseRuntime := &fakeRuntime{
+		aliveByHandle:                map[string]bool{"tmux-mer-1": true},
+		exactSupervisedAliveOverride: &exactAlive,
+	}
+	runtime := &fakeRestartRuntime{fakeRuntime: baseRuntime}
+	agent := supervisedLaunchAgent{launchArgvAgent{argv: []string{"codex", "resume", "agent-x"}}}
+	m, st, _ := newExitedResumeManager(t, runtime, agent)
+	m.switchTargetStartWait = time.Millisecond
+
+	if _, err := m.ResumeAgentWithMode(ctx, "mer-1"); err == nil {
+		t.Fatal("ResumeAgentWithMode succeeded with only the tmux keepalive pane")
+	}
+	if runtime.restarted != 1 {
+		t.Fatalf("restart calls = %d, want 1", runtime.restarted)
+	}
+	if got := st.sessions["mer-1"]; got.Activity.State != domain.ActivityExited || got.Metadata.RuntimeLaunchID != "launch-old" {
+		t.Fatalf("failed bootstrap changed durable session: %+v", got)
+	}
+	if len(baseRuntime.exactRefs) < 2 || baseRuntime.exactRefs[len(baseRuntime.exactRefs)-1].LaunchID != "launch-new" {
+		t.Fatalf("exact workload probes = %+v, want post-restart launch-new proof", baseRuntime.exactRefs)
+	}
+}
+
+func TestResumeAgent_TransientConflictingWorkloadDoesNotSucceed(t *testing.T) {
+	baseRuntime := &fakeRuntime{
+		aliveByHandle:      map[string]bool{"tmux-mer-1": true},
+		supervisedSequence: []bool{false, true, true, false},
+		outputs:            []string{"another process owns this conversation"},
+	}
+	runtime := &fakeRestartRuntime{fakeRuntime: baseRuntime}
+	agent := resumeBootstrapAgent{supervisedLaunchAgent{launchArgvAgent{argv: []string{"codex", "resume", "agent-x"}}}}
+	m, st, _ := newExitedResumeManager(t, runtime, agent)
+	m.switchTargetStartWait = 25 * time.Millisecond
+
+	if _, err := m.ResumeAgentWithMode(ctx, "mer-1"); err == nil {
+		t.Fatal("ResumeAgentWithMode succeeded after a conflicting child appeared only transiently")
+	}
+	if got := st.sessions["mer-1"]; got.Activity.State != domain.ActivityExited || got.Metadata.RuntimeLaunchID != "launch-old" {
+		t.Fatalf("failed bootstrap changed durable session: %+v", got)
+	}
+}
+
 func TestResumeAgent_ExitedRowDoesNotRespawnExactLiveWorkload(t *testing.T) {
 	exactAlive := true
 	baseRuntime := &fakeRuntime{
@@ -1979,10 +2033,9 @@ func TestResumeAgent_ExitedRowDoesNotRespawnExactLiveWorkload(t *testing.T) {
 }
 
 func TestResumeAgent_FallsBackToRuntimeRecreateWithoutRestartCapability(t *testing.T) {
-	exactAlive := false
 	runtime := &fakeRuntime{
-		aliveByHandle:                map[string]bool{"tmux-mer-1": true},
-		exactSupervisedAliveOverride: &exactAlive,
+		aliveByHandle:      map[string]bool{"tmux-mer-1": true},
+		supervisedSequence: []bool{false, true},
 	}
 	agent := supervisedLaunchAgent{launchArgvAgent{argv: []string{"codex", "resume", "agent-x"}}}
 	m, st, _ := newExitedResumeManager(t, runtime, agent)
@@ -2067,6 +2120,7 @@ func TestResumeAgent_RejectsConcurrentRequest(t *testing.T) {
 	if _, err := m.ResumeAgentWithMode(ctx, "mer-1"); !errors.Is(err, ErrResumeInProgress) {
 		t.Fatalf("concurrent resume error = %v, want ErrResumeInProgress", err)
 	}
+	exactAlive = true
 	close(runtime.release)
 	if err := <-firstDone; err != nil {
 		t.Fatalf("first resume: %v", err)

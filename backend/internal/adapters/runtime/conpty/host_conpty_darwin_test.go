@@ -111,7 +111,7 @@ func TestDarwinDefaultSpawnHostEndToEnd(t *testing.T) {
 	// stay alive after that request ends so daemon restarts cannot kill agents.
 	cancel()
 	t.Cleanup(func() {
-		_ = clientKill(addr)
+		_ = clientKill(context.Background(), addr)
 		if pidAlive(hostPID) {
 			if process, findErr := os.FindProcess(hostPID); findErr == nil {
 				_ = process.Kill()
@@ -119,7 +119,7 @@ func TestDarwinDefaultSpawnHostEndToEnd(t *testing.T) {
 		}
 	})
 
-	if err := clientSendInput(addr, "hello\n"); err != nil {
+	if err := clientSendInput(context.Background(), addr, "hello\n"); err != nil {
 		t.Fatalf("send input: %v", err)
 	}
 	deadline := time.Now().Add(2 * time.Second)
@@ -138,7 +138,7 @@ func TestDarwinDefaultSpawnHostEndToEnd(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 
-	if err := clientKill(addr); err != nil {
+	if err := clientKill(context.Background(), addr); err != nil {
 		t.Fatalf("kill host: %v", err)
 	}
 	deadline = time.Now().Add(3 * time.Second)

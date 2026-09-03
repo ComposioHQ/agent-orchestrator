@@ -636,7 +636,7 @@ func TestQualifiedHandleRoutesEveryOperationAfterRuntimeRestart(t *testing.T) {
 		t.Errorf("Destroy: %v", destroyErr)
 	}
 
-	attachArgv, attachErr := restarted.attachCommand(handle)
+	attachArgv, attachErr := restarted.attachCommand(context.Background(), handle)
 	if attachErr != nil {
 		t.Errorf("terminal attach command: %v", attachErr)
 	} else if len(attachArgv) < 3 || attachArgv[1] != "-L" || attachArgv[2] != "ao" {
@@ -994,12 +994,10 @@ func TestVerifyPaneWorkingDirectoryHonorsCancellation(t *testing.T) {
 	if err == nil {
 		t.Fatal("verifyPaneWorkingDirectory: got nil, want context cancellation error")
 	}
-	// The first attempt runs before the retry-delay select is reached, so one
-	// verification call happens even though ctx is already canceled; the
-	// second attempt's select must observe ctx.Done() rather than waiting out
-	// paneCwdVerifyRetryDelay.
-	if got := countCalls(fr, "display-message"); got != 1 {
-		t.Fatalf("pane cwd verification attempts = %d, want 1 (canceled before the first retry)", got)
+	// Cancellation is checked while the socket route is built, before any tmux
+	// subprocess can start.
+	if got := countCalls(fr, "display-message"); got != 0 {
+		t.Fatalf("pane cwd verification attempts = %d, want 0", got)
 	}
 }
 
@@ -1373,6 +1371,46 @@ func TestResolveRuntimeHandlePrefersLiveNewerOwnerOverDeadDBMatchingOwner(t *tes
 	}
 	if route.target.kind != socketTargetPath || route.target.value != historicalSocket {
 		t.Fatalf("resolved target = %+v, want live historical socket", route.target)
+	}
+}
+
+func TestResolveRuntimeHandleRejectsLiveControllerOutsideDurableLaunch(t *testing.T) {
+	const historicalSocket = "/tmp/ao-legacy-private.sock"
+	const runFile = "/tmp/ao/running.json"
+	r := New(Options{
+		Binary:           "bundled-tmux-test",
+		LegacyBinary:     "system-tmux-test",
+		SocketName:       "ao",
+		LegacySocketPath: historicalSocket,
+		RunFilePath:      runFile,
+		Timeout:          time.Second,
+	})
+	r.runner = &fakeRunnerSequence{results: []fakeRunnerResult{
+		{}, // named duplicate exists
+		{}, // historical private controller exists
+		{out: []byte("can't find session: sess-1"), err: &exec.ExitError{}},
+		{out: []byte(ownedPaneCommand(runFile, "sess-1", "launch-durable-duplicate") + "\n")},
+		{out: []byte(legacyPaneCommand("sess-1", "launch-original-private") + "\n")},
+		{out: []byte("100\n")},
+		{out: []byte("100 1 /bin/sh\n101 100 /opt/ao agent-process supervise --session sess-1 --launch launch-durable-duplicate -- codex resume native-1\n102 101 codex resume native-1\n")},
+		{out: []byte("200\n")},
+		{out: []byte("200 1 /bin/sh\n201 200 /opt/ao agent-process supervise --session sess-1 --launch launch-original-private -- codex resume native-1\n202 201 codex resume native-1\n")},
+	}}
+
+	resolved, found, err := r.ResolveRuntimeHandle(
+		context.Background(),
+		ports.RuntimeHandle{ID: "sess-1"},
+		ports.SupervisedProcessRef{SessionID: "sess-1", LaunchID: "launch-durable-duplicate"},
+	)
+	if found || resolved.ID != "" {
+		t.Fatalf("ResolveRuntimeHandle = (%q, %v, %v), want live-controller ambiguity", resolved.ID, found, err)
+	}
+	if !errors.Is(err, ports.ErrRuntimeProbeInconclusive) {
+		t.Fatalf("ResolveRuntimeHandle error = %v, want ErrRuntimeProbeInconclusive", err)
+	}
+	var ambiguity runtimeAmbiguity
+	if !errors.As(err, &ambiguity) || !ambiguity.RuntimeAmbiguity() {
+		t.Fatalf("ResolveRuntimeHandle error = %v, want typed runtime ambiguity", err)
 	}
 }
 
@@ -2628,8 +2666,8 @@ func TestSendMessageCancellationBeforeFirstChunkAborts(t *testing.T) {
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("SendMessage error = %v, want context.Canceled", err)
 	}
-	if len(fr.calls) != 1 {
-		t.Fatalf("calls = %d, want 1 (first chunk attempt only)", len(fr.calls))
+	if len(fr.calls) != 0 {
+		t.Fatalf("calls = %d, want 0", len(fr.calls))
 	}
 }
 
@@ -2725,7 +2763,7 @@ func TestGetStyledOutputPreservesCaptureMode(t *testing.T) {
 
 func TestAttachCommandReturnsExpectedArgv(t *testing.T) {
 	r := New(Options{Binary: "/usr/bin/tmux", Timeout: time.Second})
-	argv, err := r.attachCommand(ports.RuntimeHandle{ID: "sess-1"})
+	argv, err := r.attachCommand(context.Background(), ports.RuntimeHandle{ID: "sess-1"})
 	if err != nil {
 		t.Fatalf("AttachCommand: %v", err)
 	}
@@ -2737,7 +2775,7 @@ func TestAttachCommandReturnsExpectedArgv(t *testing.T) {
 
 func TestAttachCommandUsesAppOwnedSocket(t *testing.T) {
 	r := New(Options{Binary: "/opt/ao/resources/tmux/bin/tmux", SocketName: "ao", Timeout: time.Second})
-	argv, err := r.attachCommand(ports.RuntimeHandle{ID: "sess-1"})
+	argv, err := r.attachCommand(context.Background(), ports.RuntimeHandle{ID: "sess-1"})
 	if err != nil {
 		t.Fatalf("AttachCommand: %v", err)
 	}
@@ -2754,7 +2792,7 @@ func TestAttachCommandUsesSystemTmuxForLegacyDefaultSocket(t *testing.T) {
 		SocketName:   "ao",
 		Timeout:      time.Second,
 	})
-	argv, err := r.attachCommandForSocket("sess-1", r.legacyDefaultSocketTarget())
+	argv, err := r.attachCommandForSocket(context.Background(), "sess-1", r.legacyDefaultSocketTarget())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2771,7 +2809,7 @@ func TestAttachCommandUsesHistoricalPrivateSocket(t *testing.T) {
 		LegacySocketPath: "/Users/example/.ao/tmux-legacy.sock",
 		Timeout:          time.Second,
 	})
-	argv, err := r.attachCommandForSocket("sess-1", r.historicalPrivateSocketTarget())
+	argv, err := r.attachCommandForSocket(context.Background(), "sess-1", r.historicalPrivateSocketTarget())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2788,7 +2826,7 @@ func TestAttachCommandUsesHistoricalPrivateSocket(t *testing.T) {
 
 func TestAttachCommandRejectsInvalidHandle(t *testing.T) {
 	r := New(Options{})
-	_, err := r.attachCommand(ports.RuntimeHandle{ID: ""})
+	_, err := r.attachCommand(context.Background(), ports.RuntimeHandle{ID: ""})
 	if err == nil {
 		t.Fatal("AttachCommand empty handle: got nil, want error")
 	}

@@ -76,11 +76,40 @@ func TestRuntimeProvidesStyledRenderedTerminalOutput(t *testing.T) {
 	}
 }
 
+func TestInspectRuntimeIdentityAuthenticatesDirectHost(t *testing.T) {
+	isolateRegistry(t)
+	hosts := map[string]*inProcHost{}
+	runtime := New(Options{Spawner: fakeSpawnerFor(t, hosts, livePID())})
+	handle, err := runtime.Create(context.Background(), ports.RuntimeConfig{
+		SessionID:     "sess-identity",
+		WorkspacePath: "/tmp/w",
+		Argv:          []string{"sh"},
+		Env: map[string]string{
+			runtimeLaunchIDEnv: "launch-identity",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { hosts[handle.ID].cleanup(t) })
+
+	identity, err := runtime.InspectRuntimeIdentity(context.Background(), handle, "sess-identity")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if identity.LaunchID != "launch-identity" || !identity.OwnershipProven {
+		t.Fatalf("identity = %+v, want authenticated launch-identity", identity)
+	}
+	if _, err := runtime.InspectRuntimeIdentity(context.Background(), handle, "other-session"); !errors.Is(err, ports.ErrRuntimeProbeInconclusive) {
+		t.Fatalf("mismatched identity error = %v, want inconclusive", err)
+	}
+}
+
 func TestRuntimeRecoversShippedProtocolV2HostWithOSIdentityProof(t *testing.T) {
 	isolateRegistry(t)
 	host := startInProcLegacyHost(t, "sess-legacy", "legacy-launch", livePID())
 	t.Cleanup(func() { host.cleanup(t) })
-	if err := ptyregistry.Register(ptyregistry.Entry{
+	if err := ptyregistry.Register(context.Background(), ptyregistry.Entry{
 		SessionID: "sess-legacy", PtyHostPID: host.pid, PipePath: host.addr,
 		LaunchID:     "legacy-launch",
 		RegisteredAt: time.Now().UTC().Format(time.RFC3339),
@@ -140,7 +169,7 @@ func TestRuntimeRejectsProtocolV2HostWhenOSIdentityIsUnproven(t *testing.T) {
 	isolateRegistry(t)
 	host := startInProcLegacyHost(t, "sess-legacy", "legacy-launch", livePID())
 	t.Cleanup(func() { host.cleanup(t) })
-	if err := ptyregistry.Register(ptyregistry.Entry{
+	if err := ptyregistry.Register(context.Background(), ptyregistry.Entry{
 		SessionID: "sess-legacy", PtyHostPID: host.pid, PipePath: host.addr,
 		LaunchID: "legacy-launch", RegisteredAt: time.Now().UTC().Format(time.RFC3339),
 	}); err != nil {
@@ -329,7 +358,7 @@ func TestCreate_RegistersSession(t *testing.T) {
 	}
 
 	// Registry must have the entry.
-	entries, err := ptyregistry.List()
+	entries, err := ptyregistry.List(context.Background())
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
@@ -436,7 +465,7 @@ func TestCreate_DoesNotSpawnOverExistingRegisteredHost(t *testing.T) {
 	rt := New(Options{})
 	h := startInProcHostWithIdentity(t, "sess-existing", "launch-existing", "existing-token", livePID())
 	t.Cleanup(func() { h.cleanup(t) })
-	if err := ptyregistry.Register(ptyregistry.Entry{
+	if err := ptyregistry.Register(context.Background(), ptyregistry.Entry{
 		SessionID:    "sess-existing",
 		PtyHostPID:   h.pid,
 		PipePath:     h.addr,
@@ -475,7 +504,7 @@ func TestPIDProbeFailureFailsRecoveryClosedAndPreventsReplacement(t *testing.T) 
 		HostToken:    "token-pid-probe",
 		RegisteredAt: time.Now().UTC().Format(time.RFC3339Nano),
 	}
-	if err := ptyregistry.Register(entry); err != nil {
+	if err := ptyregistry.Register(context.Background(), entry); err != nil {
 		t.Fatal(err)
 	}
 	probeFailure := errors.New("injected Windows process-query failure")
@@ -519,7 +548,7 @@ func TestPIDProbeFailureFailsRecoveryClosedAndPreventsReplacement(t *testing.T) 
 		t.Fatal("Create spawned a replacement after an inconclusive PID probe")
 	}
 
-	entries, err := ptyregistry.List()
+	entries, err := ptyregistry.List(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -555,7 +584,7 @@ func TestResolveRuntimeHandleRejectsLaunchMismatch(t *testing.T) {
 	rt := New(Options{})
 	h := startInProcHostWithIdentity(t, "sess-owner", "launch-actual", "owner-token", livePID())
 	t.Cleanup(func() { h.cleanup(t) })
-	if err := ptyregistry.Register(ptyregistry.Entry{
+	if err := ptyregistry.Register(context.Background(), ptyregistry.Entry{
 		SessionID:    "sess-owner",
 		PtyHostPID:   h.pid,
 		PipePath:     h.addr,
@@ -848,6 +877,32 @@ func TestSendMessage_LargeMessageChunked(t *testing.T) {
 	}
 }
 
+func TestClientSendMessageConnCancelsBetweenChunks(t *testing.T) {
+	client, server := net.Pipe()
+	defer client.Close()
+	defer server.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	done := make(chan error, 1)
+	go func() {
+		done <- clientSendMessageConn(ctx, client, strings.Repeat("x", ptyInputChunkRunes+1))
+	}()
+	firstFrame := make([]byte, 5+ptyInputChunkRunes)
+	if _, err := io.ReadFull(server, firstFrame); err != nil {
+		t.Fatalf("read first chunk: %v", err)
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("clientSendMessageConn error = %v, want context.Canceled", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("clientSendMessageConn ignored cancellation during chunk delay")
+	}
+}
+
 // TestGetOutput_ReturnsRingTail verifies GetOutput returns the ring's tail.
 func TestGetOutput_ReturnsRingTail(t *testing.T) {
 	isolateRegistry(t)
@@ -1034,7 +1089,7 @@ func TestDestroy_KillsHostAndCleansUp(t *testing.T) {
 	}
 
 	// Registry entry must be gone.
-	entries, _ := ptyregistry.List()
+	entries, _ := ptyregistry.List(context.Background())
 	for _, e := range entries {
 		if e.SessionID == "sess-destroy" {
 			t.Fatal("expected registry entry removed after Destroy")
@@ -1084,7 +1139,7 @@ func TestDestroy_PIDWaitProbeFailurePreservesRecoveryOwner(t *testing.T) {
 		t.Fatalf("pid probe calls = %d, want connect plus first exit check", probeCalls)
 	}
 
-	entries, err := ptyregistry.List()
+	entries, err := ptyregistry.List(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1112,7 +1167,7 @@ func TestStaleRegistryPIDAndPortReuseCannotReachForeignHost(t *testing.T) {
 		livePID(),
 	)
 	t.Cleanup(func() { foreign.cleanup(t) })
-	if err := ptyregistry.Register(ptyregistry.Entry{
+	if err := ptyregistry.Register(context.Background(), ptyregistry.Entry{
 		SessionID:    "victim-session",
 		PtyHostPID:   foreign.pid,
 		PipePath:     foreign.addr,
@@ -1213,7 +1268,7 @@ func TestResolveViaRegistry(t *testing.T) {
 	defer h.cleanup(t)
 
 	// Manually register the host in the registry.
-	err := ptyregistry.Register(ptyregistry.Entry{
+	err := ptyregistry.Register(context.Background(), ptyregistry.Entry{
 		SessionID:    "sess-reg",
 		PtyHostPID:   h.pid,
 		PipePath:     h.addr, // addr stored in PipePath field
@@ -1449,7 +1504,7 @@ func TestIsAlive_RefusedWithLivePIDAndTimeoutAreInconclusive(t *testing.T) {
 
 // TestClientKill_Idempotent verifies clientKill on a dead address returns nil.
 func TestClientKill_Idempotent(t *testing.T) {
-	if err := clientKill("127.0.0.1:1"); err != nil {
+	if err := clientKill(context.Background(), "127.0.0.1:1"); err != nil {
 		t.Fatalf("clientKill on unreachable addr: %v", err)
 	}
 }

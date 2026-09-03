@@ -16,71 +16,31 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-func collectLegacyHostIdentity(ctx context.Context, sess *hostSession, status StatusPayload) (legacyHostIdentityEvidence, error) {
-	listenerPID, err := darwinTCPListenerPID(ctx, sess.addr)
-	if err != nil {
-		return legacyHostIdentityEvidence{}, err
-	}
-	host, err := darwinProcessIdentity(sess.pid)
-	if err != nil {
-		return legacyHostIdentityEvidence{}, fmt.Errorf("inspect recorded host pid %d: %w", sess.pid, err)
-	}
-	evidence := legacyHostIdentityEvidence{listenerPID: listenerPID, host: host}
-	if status.Alive {
-		child, childErr := darwinProcessIdentity(status.PID)
-		if childErr != nil {
-			return legacyHostIdentityEvidence{}, fmt.Errorf("inspect status child pid %d: %w", status.PID, childErr)
-		}
-		evidence.child = &child
-	}
-	return evidence, nil
+func legacyListenerPID(ctx context.Context, addr string, _ int) (int, error) {
+	return darwinTCPListenerPID(ctx, addr)
 }
 
-func revalidateLegacyHostIdentity(ctx context.Context, sess *hostSession, status StatusPayload, proof legacyHostIdentityFingerprint) error {
-	if proof.hostPID != sess.pid {
-		return fmt.Errorf("cached host pid %d does not match registry pid %d", proof.hostPID, sess.pid)
+func legacyProcessIdentityForPID(ctx context.Context, pid int) (legacyProcessIdentity, error) {
+	return darwinProcessIdentity(ctx, pid)
+}
+
+func legacyProcessIncarnationForPID(ctx context.Context, pid int) (legacyProcessIncarnation, error) {
+	if err := ctx.Err(); err != nil {
+		return legacyProcessIncarnation{}, err
 	}
-	host, err := unix.SysctlKinfoProc("kern.proc.pid", sess.pid)
+	info, err := unix.SysctlKinfoProc("kern.proc.pid", pid)
 	if err != nil {
-		return fmt.Errorf("revalidate recorded host pid %d: %w", sess.pid, err)
+		return legacyProcessIncarnation{}, err
 	}
-	hostStartedAt := time.Unix(
-		host.Proc.P_starttime.Sec,
-		int64(host.Proc.P_starttime.Usec)*int64(time.Microsecond),
-	)
-	if int(host.Proc.P_pid) != sess.pid || !hostStartedAt.Equal(proof.hostStartedAt) {
-		return fmt.Errorf("recorded host pid %d changed process incarnation", sess.pid)
-	}
-	// A stable host/child process incarnation does not by itself prove that the
-	// TCP connection still reached that host: its old port may have been rebound
-	// by another listener. Bind every operation to the current listener owner,
-	// including the live-child fast path.
-	listenerPID, err := darwinTCPListenerPID(ctx, sess.addr)
-	if err != nil {
-		return err
-	}
-	if listenerPID != sess.pid {
-		return fmt.Errorf("listener owner pid = %d, want recorded host pid %d", listenerPID, sess.pid)
-	}
-	if !status.Alive {
-		return nil
-	}
-	if status.PID != proof.childPID || proof.childPID <= 0 {
-		return fmt.Errorf("legacy status child pid changed from %d to %d", proof.childPID, status.PID)
-	}
-	child, err := unix.SysctlKinfoProc("kern.proc.pid", status.PID)
-	if err != nil {
-		return fmt.Errorf("revalidate status child pid %d: %w", status.PID, err)
-	}
-	childStartedAt := time.Unix(
-		child.Proc.P_starttime.Sec,
-		int64(child.Proc.P_starttime.Usec)*int64(time.Microsecond),
-	)
-	if int(child.Proc.P_pid) != status.PID || int(child.Eproc.Ppid) != sess.pid ||
-		!childStartedAt.Equal(proof.childStartedAt) {
-		return fmt.Errorf("status child pid %d changed process incarnation or parent", status.PID)
-	}
-	return nil
+	return legacyProcessIncarnation{
+		pid:         int(info.Proc.P_pid),
+		ppid:        int(info.Eproc.Ppid),
+		parentKnown: true,
+		startedAt: time.Unix(
+			info.Proc.P_starttime.Sec,
+			int64(info.Proc.P_starttime.Usec)*int64(time.Microsecond),
+		),
+	}, nil
 }
 
 func darwinTCPListenerPID(ctx context.Context, addr string) (int, error) {
@@ -125,28 +85,31 @@ func darwinTCPListenerPID(ctx context.Context, addr string) (int, error) {
 	return owner, nil
 }
 
-func darwinProcessIdentity(pid int) (legacyProcessIdentity, error) {
-	info, err := unix.SysctlKinfoProc("kern.proc.pid", pid)
+func darwinProcessIdentity(ctx context.Context, pid int) (legacyProcessIdentity, error) {
+	incarnation, err := legacyProcessIncarnationForPID(ctx, pid)
 	if err != nil {
 		return legacyProcessIdentity{}, err
 	}
-	if int(info.Proc.P_pid) != pid {
-		return legacyProcessIdentity{}, fmt.Errorf("kernel returned pid %d", info.Proc.P_pid)
+	if incarnation.pid != pid {
+		return legacyProcessIdentity{}, fmt.Errorf("kernel returned pid %d", incarnation.pid)
 	}
-	executable, argv, err := darwinProcessArgs(pid)
+	executable, argv, err := darwinProcessArgs(ctx, pid)
 	if err != nil {
 		return legacyProcessIdentity{}, err
 	}
 	return legacyProcessIdentity{
 		pid:        pid,
-		ppid:       int(info.Eproc.Ppid),
-		startedAt:  time.Unix(info.Proc.P_starttime.Sec, int64(info.Proc.P_starttime.Usec)*int64(time.Microsecond)),
+		ppid:       incarnation.ppid,
+		startedAt:  incarnation.startedAt,
 		executable: executable,
 		argv:       argv,
 	}, nil
 }
 
-func darwinProcessArgs(pid int) (string, []string, error) {
+func darwinProcessArgs(ctx context.Context, pid int) (string, []string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", nil, err
+	}
 	raw, err := unix.SysctlRaw("kern.procargs2", pid)
 	if err != nil {
 		return "", nil, err

@@ -1024,7 +1024,7 @@ func (r *Runtime) Attach(ctx context.Context, handle ports.RuntimeHandle, rows, 
 	if err != nil {
 		return nil, err
 	}
-	argv, err := r.attachCommandForRoute(route)
+	argv, err := r.attachCommandForRoute(ctx, route)
 	if err != nil {
 		return nil, fmt.Errorf("tmux runtime: attach session %s: %w", route.id, err)
 	}
@@ -1049,7 +1049,7 @@ func (r *Runtime) Attach(ctx context.Context, handle ports.RuntimeHandle, rows, 
 // difference for the still-correct box-drawing case. AO already treats the
 // PTY byte stream as UTF-8 end to end, so forcing the flag is always
 // correct here regardless of the daemon's own environment.
-func (r *Runtime) attachCommand(handle ports.RuntimeHandle) ([]string, error) {
+func (r *Runtime) attachCommand(ctx context.Context, handle ports.RuntimeHandle) ([]string, error) {
 	route, err := decodeRuntimeHandle(handle)
 	if err != nil {
 		return nil, err
@@ -1057,23 +1057,23 @@ func (r *Runtime) attachCommand(handle ports.RuntimeHandle) ([]string, error) {
 	if !route.qualified {
 		route.target = r.primarySocketTarget()
 	}
-	return r.attachCommandForSocket(route.id, route.target)
+	return r.attachCommandForSocket(ctx, route.id, route.target)
 }
 
-func (r *Runtime) attachCommandForSocket(id string, target socketTarget) ([]string, error) {
+func (r *Runtime) attachCommandForSocket(ctx context.Context, id string, target socketTarget) ([]string, error) {
 	// The embedded xterm renderer supports 24-bit SGR colors. Tell this tmux
 	// client explicitly so tmux forwards RGB instead of quantizing it to the
 	// xterm-256color palette. -T is available in AO's minimum tmux version (3.2).
-	binary, argv, err := r.commandForSocket(target, "-u", "-T", "RGB", "attach-session", "-t", id)
+	binary, argv, err := r.commandForSocket(ctx, target, "-u", "-T", "RGB", "attach-session", "-t", id)
 	if err != nil {
 		return nil, err
 	}
 	return append([]string{binary}, argv...), nil
 }
 
-func (r *Runtime) attachCommandForRoute(route runtimeRoute) ([]string, error) {
+func (r *Runtime) attachCommandForRoute(ctx context.Context, route runtimeRoute) ([]string, error) {
 	if !route.hasObjectFence() {
-		return r.attachCommandForSocket(route.actionSessionTarget(), route.target)
+		return r.attachCommandForSocket(ctx, route.actionSessionTarget(), route.target)
 	}
 	guarded, err := fencedCommandArgs(route, []string{
 		"attach-session", "-t", route.actionSessionTarget(),
@@ -1081,7 +1081,7 @@ func (r *Runtime) attachCommandForRoute(route runtimeRoute) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	binary, argv, err := r.commandForSocket(route.target, append([]string{"-u", "-T", "RGB"}, guarded...)...)
+	binary, argv, err := r.commandForSocket(ctx, route.target, append([]string{"-u", "-T", "RGB"}, guarded...)...)
 	if err != nil {
 		return nil, err
 	}
@@ -1117,7 +1117,7 @@ func (r *Runtime) run(ctx context.Context, args ...string) ([]byte, error) {
 }
 
 func (r *Runtime) runOnSocket(ctx context.Context, target socketTarget, args ...string) ([]byte, error) {
-	binary, argv, err := r.commandForSocket(target, args...)
+	binary, argv, err := r.commandForSocket(ctx, target, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -1257,19 +1257,22 @@ func tmuxFenceMismatchOutput(output string) bool {
 // commandForSocket is the single mapping from namespace provenance to tmux
 // argv. Attach and ordinary operations both use it so a new target kind cannot
 // accidentally route those two paths differently.
-func (r *Runtime) commandForSocket(target socketTarget, args ...string) (string, []string, error) {
+func (r *Runtime) commandForSocket(ctx context.Context, target socketTarget, args ...string) (string, []string, error) {
 	binary := r.binaryForSocket(target)
 	if strings.TrimSpace(binary) == "" {
 		return "", nil, fmt.Errorf("%w: tmux client is unavailable for %s", ports.ErrRuntimeProbeInconclusive, target)
 	}
-	prefix, err := target.argv()
+	prefix, err := target.argv(ctx)
 	if err != nil {
 		return "", nil, err
 	}
 	return binary, append(prefix, args...), nil
 }
 
-func (target socketTarget) argv() ([]string, error) {
+func (target socketTarget) argv(ctx context.Context) ([]string, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	switch target.kind {
 	case socketTargetDefault:
 		// Always pin the machine default. Plain tmux honors inherited TMUX and
@@ -1284,7 +1287,7 @@ func (target socketTarget) argv() ([]string, error) {
 		if strings.TrimSpace(target.value) == "" {
 			return nil, errors.New("tmux runtime: socket path target is empty")
 		}
-		address, err := socketAddress(target.value)
+		address, err := socketAddress(ctx, target.value)
 		if err != nil {
 			return nil, err
 		}
@@ -1443,6 +1446,7 @@ func (r *Runtime) recoveryTargets(route runtimeRoute) []socketTarget {
 type runtimeTargetCandidate struct {
 	target        socketTarget
 	identity      ports.RuntimeIdentity
+	adoptable     bool
 	tmuxServerPID int
 	tmuxSessionID string
 	tmuxPaneID    string
@@ -1818,12 +1822,18 @@ func (r *Runtime) resolveRuntimeHandle(
 			(allowProvenNewer || !hasExpectedOwner || evidence.launchID == owner.LaunchID)
 		weakExactCandidate := evidence.legacyNoRunFile && hasExpectedOwner &&
 			owner.LaunchID != "" && evidence.launchID == owner.LaunchID
-		if fullCandidate || weakExactCandidate {
+		// A pre-AO_RUN_FILE controller whose launch was overwritten in the DB is
+		// not safe to adopt, but it is still conflict evidence. Keep it in the
+		// candidate set so a later named/default duplicate cannot become the only
+		// visible owner merely because it matches the stale durable generation.
+		legacyController := evidence.legacyNoRunFile && evidence.launchID != ""
+		if fullCandidate || weakExactCandidate || legacyController {
 			candidates = append(candidates, runtimeTargetCandidate{
 				target:        target,
 				tmuxServerPID: evidence.tmuxServerPID,
 				tmuxSessionID: evidence.tmuxSessionID,
 				tmuxPaneID:    evidence.tmuxPaneID,
+				adoptable:     fullCandidate || weakExactCandidate,
 				identity: ports.RuntimeIdentity{
 					LaunchID:        evidence.launchID,
 					OwnershipProven: evidence.identity.OwnershipProven,
@@ -1865,7 +1875,7 @@ func (r *Runtime) resolveRuntimeHandle(
 			route:  resolvedRoute,
 		}, encodeErr == nil, encodeErr
 	}
-	if len(candidates) == 1 {
+	if len(candidates) == 1 && candidates[0].adoptable {
 		return qualify(candidates[0])
 	}
 
@@ -1903,17 +1913,27 @@ func (r *Runtime) resolveRuntimeHandle(
 		return matching
 	}
 	if len(live) == 1 {
-		return qualify(live[0])
+		if live[0].adoptable {
+			return qualify(live[0])
+		}
+		return runtimeResolution{}, false, fmt.Errorf(
+			"%w: live tmux controller on %s is not the durable AO owner",
+			ports.ErrRuntimeProbeInconclusive,
+			live[0].target,
+		)
 	}
 	if len(live) > 1 {
-		if matching := matchingLaunch(live); len(matching) == 1 {
-			return qualify(matching[0])
-		}
 		return runtimeResolution{}, false, ports.RuntimeHandleAmbiguityError{
 			Handle: handle, Candidates: len(live),
 		}
 	}
-	if matching := matchingLaunch(candidates); len(matching) == 1 {
+	adoptable := make([]runtimeTargetCandidate, 0, len(candidates))
+	for _, candidate := range candidates {
+		if candidate.adoptable {
+			adoptable = append(adoptable, candidate)
+		}
+	}
+	if matching := matchingLaunch(adoptable); len(matching) == 1 {
 		return qualify(matching[0])
 	}
 	return runtimeResolution{}, false, ports.RuntimeHandleAmbiguityError{

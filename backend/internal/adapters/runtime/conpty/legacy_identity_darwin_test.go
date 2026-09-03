@@ -28,11 +28,11 @@ func TestDarwinLegacyRevalidationBindsLiveStatusToCurrentListenerOwner(t *testin
 		_ = child.Wait()
 	})
 
-	hostIdentity, err := darwinProcessIdentity(os.Getpid())
+	hostIdentity, err := darwinProcessIdentity(context.Background(), os.Getpid())
 	if err != nil {
 		t.Fatal(err)
 	}
-	childIdentity, err := darwinProcessIdentity(child.Process.Pid)
+	childIdentity, err := darwinProcessIdentity(context.Background(), child.Process.Pid)
 	if err != nil {
 		t.Fatal(err)
 	}

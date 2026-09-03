@@ -2069,14 +2069,18 @@ func (m *Manager) ResumeAgentWithMode(ctx context.Context, id domain.SessionID) 
 			}
 		}
 	}
-	return m.relaunchSession(ctx, "resume agent", rec, project, ws, &handle)
+	return m.relaunchResumedSession(ctx, rec, project, ws, handle)
 }
 
 func (m *Manager) relaunchSession(ctx context.Context, operation string, rec domain.SessionRecord, project domain.ProjectRecord, ws ports.WorkspaceInfo, restartHandle *ports.RuntimeHandle) (RestoreResult, error) {
-	return m.relaunchSessionWithPolicy(ctx, operation, rec, project, ws, restartHandle, false, false)
+	return m.relaunchSessionWithPolicy(ctx, operation, rec, project, ws, restartHandle, false, false, false)
 }
 
-func (m *Manager) relaunchSessionWithPolicy(ctx context.Context, operation string, rec domain.SessionRecord, project domain.ProjectRecord, ws ports.WorkspaceInfo, restartHandle *ports.RuntimeHandle, forceFresh, requireNativeHistory bool) (RestoreResult, error) {
+func (m *Manager) relaunchResumedSession(ctx context.Context, rec domain.SessionRecord, project domain.ProjectRecord, ws ports.WorkspaceInfo, handle ports.RuntimeHandle) (RestoreResult, error) {
+	return m.relaunchSessionWithPolicy(ctx, "resume agent", rec, project, ws, &handle, false, false, true)
+}
+
+func (m *Manager) relaunchSessionWithPolicy(ctx context.Context, operation string, rec domain.SessionRecord, project domain.ProjectRecord, ws ports.WorkspaceInfo, restartHandle *ports.RuntimeHandle, forceFresh, requireNativeHistory, verifyBootstrap bool) (RestoreResult, error) {
 	// Relaunch dispatches from the currently committed persisted mode, never from
 	// a caller hint. The interface-transition coordinator changes that fact only
 	// after stopping the old controller, then reuses this ordinary restore path.
@@ -2167,6 +2171,23 @@ func (m *Manager) relaunchSessionWithPolicy(ctx context.Context, operation strin
 		m.cleanupSystemPromptDir(rec.ID)
 		return RestoreResult{}, fmt.Errorf("%s %s: runtime: %w", operation, rec.ID, err)
 	}
+	if verifyBootstrap {
+		ready, readyErr := m.waitForRelaunchBootstrap(
+			ctx,
+			agent,
+			handle,
+			rec.ID,
+			domain.AgentGenerationID(launchID),
+		)
+		if readyErr != nil {
+			m.cleanupSystemPromptDir(rec.ID)
+			return RestoreResult{}, fmt.Errorf("%s %s: verify restarted controller bootstrap: %w", operation, rec.ID, readyErr)
+		}
+		if !ready {
+			m.cleanupSystemPromptDir(rec.ID)
+			return RestoreResult{}, fmt.Errorf("%s %s: restarted controller did not become ready", operation, rec.ID)
+		}
+	}
 	metadata := domain.SessionMetadata{
 		Branch:                    ws.Branch,
 		WorkspacePath:             ws.Path,
@@ -2216,6 +2237,71 @@ func (m *Manager) relaunchSessionWithPolicy(ctx context.Context, operation strin
 		return RestoreResult{}, err
 	}
 	return RestoreResult{Session: updated, Mode: mode}, nil
+}
+
+// waitForRelaunchBootstrap requires more than a live tmux pane or even one
+// successful child-process sample. Interactive adapters with an authoritative
+// terminal detector must render a recognized provider state while the exact
+// supervised generation remains alive. This prevents a native-resume conflict
+// process from appearing briefly, exiting into the pane keepalive, and being
+// committed as a successful resume.
+func (m *Manager) waitForRelaunchBootstrap(
+	ctx context.Context,
+	agent ports.Agent,
+	handle ports.RuntimeHandle,
+	id domain.SessionID,
+	generation domain.AgentGenerationID,
+) (bool, error) {
+	detector, requireTerminalReady := agent.(ports.TerminalActivityDetector)
+	wait := m.switchTargetStartWait
+	if wait <= 0 {
+		wait = switchPollInterval
+	}
+	poll := switchPollInterval
+	if wait < poll {
+		poll = wait / 2
+		if poll <= 0 {
+			poll = wait
+		}
+	}
+	deadline := time.NewTimer(wait)
+	defer deadline.Stop()
+	ticker := time.NewTicker(poll)
+	defer ticker.Stop()
+
+	sawExactGeneration := false
+	var lastErr error
+	for {
+		alive, err := m.exactTargetGenerationAlive(ctx, handle, id, generation)
+		switch {
+		case err != nil:
+			lastErr = err
+		case !alive && sawExactGeneration:
+			return false, nil
+		case alive:
+			sawExactGeneration = true
+			if !requireTerminalReady {
+				return true, nil
+			}
+			output, outputErr := m.runtime.GetOutput(ctx, handle, messageDeliveryReadyLines)
+			if outputErr != nil {
+				lastErr = outputErr
+			} else if state, authoritative := detector.DetectTerminalActivity(output); authoritative && state.IsRecoverable() {
+				return true, nil
+			}
+		}
+
+		select {
+		case <-ctx.Done():
+			return false, ctx.Err()
+		case <-deadline.C:
+			if lastErr != nil {
+				return false, lastErr
+			}
+			return false, nil
+		case <-ticker.C:
+		}
+	}
 }
 
 func (m *Manager) restartRuntime(ctx context.Context, handle ports.RuntimeHandle, cfg ports.RuntimeConfig) (ports.RuntimeHandle, error) {

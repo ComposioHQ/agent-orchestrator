@@ -52,9 +52,12 @@ func armClientDeadline(ctx context.Context, conn net.Conn, timeout time.Duration
 
 // clientSendMessageConn chunks message by 512 runes and sends each as a
 // MsgTerminalInput frame with 15ms gaps, then pauses 300ms and sends "\r".
-func clientSendMessageConn(conn net.Conn, message string) error {
+func clientSendMessageConn(ctx context.Context, conn net.Conn, message string) error {
 	runes := []rune(message)
 	for i := 0; i < len(runes); i += ptyInputChunkRunes {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		end := i + ptyInputChunkRunes
 		if end > len(runes) {
 			end = len(runes)
@@ -69,7 +72,9 @@ func clientSendMessageConn(conn net.Conn, message string) error {
 		}
 		// Inter-chunk delay only between chunks, not after the last one.
 		if end < len(runes) {
-			time.Sleep(ptyInputChunkDelay)
+			if err := waitClientDelay(ctx, ptyInputChunkDelay); err != nil {
+				return err
+			}
 		}
 	}
 
@@ -78,7 +83,12 @@ func clientSendMessageConn(conn net.Conn, message string) error {
 	// settle, and the pause would only widen the guard-read→Enter window
 	// (mirrors the tmux runtime's enterDelay contract).
 	if len(runes) > 0 {
-		time.Sleep(ptyInputEnterDelay)
+		if err := waitClientDelay(ctx, ptyInputEnterDelay); err != nil {
+			return err
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 	frame, err := EncodeMessage(MsgTerminalInput, []byte("\r"))
 	if err != nil {
@@ -88,16 +98,32 @@ func clientSendMessageConn(conn net.Conn, message string) error {
 	return err
 }
 
-func clientSendInput(addr, input string) error {
-	conn, err := dialHost(addr, dialTimeout)
+func waitClientDelay(ctx context.Context, delay time.Duration) error {
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
+func clientSendInput(ctx context.Context, addr, input string) error {
+	conn, err := dialHostContext(ctx, addr, dialTimeout)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = conn.Close() }()
-	return clientSendInputConn(conn, input)
+	stopCancellation := armClientDeadline(ctx, conn, dialTimeout)
+	defer stopCancellation()
+	return clientSendInputConn(ctx, conn, input)
 }
 
-func clientSendInputConn(conn net.Conn, input string) error {
+func clientSendInputConn(ctx context.Context, conn net.Conn, input string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	frame, err := EncodeMessage(MsgTerminalInput, []byte(input))
 	if err != nil {
 		return err
@@ -334,8 +360,8 @@ func isConnRefused(err error) bool {
 // clientKill sends MsgKillReq. Connection refused is idempotent success because
 // the host is already absent; other transport failures are preserved so
 // Destroy can combine them with its final PID evidence.
-func clientKill(addr string) error {
-	conn, err := dialHost(addr, isAliveTimeout)
+func clientKill(ctx context.Context, addr string) error {
+	conn, err := dialHostContext(ctx, addr, isAliveTimeout)
 	if err != nil {
 		if isConnRefused(err) {
 			return nil
@@ -343,11 +369,15 @@ func clientKill(addr string) error {
 		return fmt.Errorf("dial pty-host for kill: %w", err)
 	}
 	defer func() { _ = conn.Close() }()
-	_ = conn.SetDeadline(time.Now().Add(isAliveTimeout))
-	return clientKillConn(conn)
+	stopCancellation := armClientDeadline(ctx, conn, isAliveTimeout)
+	defer stopCancellation()
+	return clientKillConn(ctx, conn)
 }
 
-func clientKillConn(conn net.Conn) error {
+func clientKillConn(ctx context.Context, conn net.Conn) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	killFrame, _ := EncodeMessage(MsgKillReq, nil) // nil payload, never overflows
 	if _, err := conn.Write(killFrame); err != nil {
 		return fmt.Errorf("write pty-host kill request: %w", err)

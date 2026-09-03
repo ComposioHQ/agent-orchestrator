@@ -185,14 +185,12 @@ func (r *hybridRuntime) ResolveExactRuntimeHandle(ctx context.Context, handle po
 }
 
 func (r *hybridRuntime) InspectRuntimeIdentity(ctx context.Context, handle ports.RuntimeHandle, expectedSessionID domain.SessionID) (ports.RuntimeIdentity, error) {
-	if strings.HasPrefix(handle.ID, directHandlePrefix) {
-		return ports.RuntimeIdentity{}, nil
-	}
-	inspector, ok := r.legacy.(ports.RuntimeIdentityInspector)
+	backend, raw := r.route(handle)
+	inspector, ok := backend.(ports.RuntimeIdentityInspector)
 	if !ok {
-		return ports.RuntimeIdentity{}, fmt.Errorf("%s legacy runtime does not support identity inspection", r.platform)
+		return ports.RuntimeIdentity{}, fmt.Errorf("%s runtime does not support identity inspection", r.platform)
 	}
-	return inspector.InspectRuntimeIdentity(ctx, handle, expectedSessionID)
+	return inspector.InspectRuntimeIdentity(ctx, raw, expectedSessionID)
 }
 
 // Restart preserves tmux's in-place restart behavior for every legacy handle.

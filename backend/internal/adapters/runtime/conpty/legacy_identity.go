@@ -40,6 +40,72 @@ type legacyHostIdentityFingerprint struct {
 	childStartedAt time.Time
 }
 
+type legacyProcessIncarnation struct {
+	pid         int
+	ppid        int
+	parentKnown bool
+	startedAt   time.Time
+}
+
+// collectLegacyHostIdentity owns the platform-independent proof sequence. The
+// build-tagged files provide only the OS primitives for listener ownership and
+// process inspection, keeping the security algorithm identical on every
+// supported desktop platform.
+func collectLegacyHostIdentity(ctx context.Context, sess *hostSession, status StatusPayload) (legacyHostIdentityEvidence, error) {
+	listenerPID, err := legacyListenerPID(ctx, sess.addr, sess.pid)
+	if err != nil {
+		return legacyHostIdentityEvidence{}, err
+	}
+	host, err := legacyProcessIdentityForPID(ctx, sess.pid)
+	if err != nil {
+		return legacyHostIdentityEvidence{}, fmt.Errorf("inspect recorded host pid %d: %w", sess.pid, err)
+	}
+	evidence := legacyHostIdentityEvidence{listenerPID: listenerPID, host: host}
+	if status.Alive {
+		child, childErr := legacyProcessIdentityForPID(ctx, status.PID)
+		if childErr != nil {
+			return legacyHostIdentityEvidence{}, fmt.Errorf("inspect status child pid %d: %w", status.PID, childErr)
+		}
+		evidence.child = &child
+	}
+	return evidence, nil
+}
+
+func revalidateLegacyHostIdentity(ctx context.Context, sess *hostSession, status StatusPayload, proof legacyHostIdentityFingerprint) error {
+	if proof.hostPID != sess.pid {
+		return fmt.Errorf("cached host pid %d does not match registry pid %d", proof.hostPID, sess.pid)
+	}
+	listenerPID, err := legacyListenerPID(ctx, sess.addr, sess.pid)
+	if err != nil {
+		return err
+	}
+	if listenerPID != sess.pid {
+		return fmt.Errorf("listener owner pid = %d, want recorded host pid %d", listenerPID, sess.pid)
+	}
+	host, err := legacyProcessIncarnationForPID(ctx, sess.pid)
+	if err != nil {
+		return fmt.Errorf("revalidate recorded host pid %d: %w", sess.pid, err)
+	}
+	if host.pid != sess.pid || !host.startedAt.Equal(proof.hostStartedAt) {
+		return fmt.Errorf("recorded host pid %d changed process incarnation", sess.pid)
+	}
+	if !status.Alive {
+		return nil
+	}
+	if status.PID != proof.childPID || proof.childPID <= 0 {
+		return fmt.Errorf("legacy status child pid changed from %d to %d", proof.childPID, status.PID)
+	}
+	child, err := legacyProcessIncarnationForPID(ctx, status.PID)
+	if err != nil {
+		return fmt.Errorf("revalidate status child pid %d: %w", status.PID, err)
+	}
+	if child.pid != status.PID || !child.startedAt.Equal(proof.childStartedAt) ||
+		(child.parentKnown && child.ppid != sess.pid) {
+		return fmt.Errorf("status child pid %d changed process incarnation or parent", status.PID)
+	}
+	return nil
+}
+
 func (r *Runtime) verifyLegacyHostIdentity(ctx context.Context, sess *hostSession, status StatusPayload) error {
 	if err := validateLegacyStatusEnvelope(status); err != nil {
 		return err

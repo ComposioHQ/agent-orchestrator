@@ -191,7 +191,10 @@ func TestHybridRuntimeReportsBothCreationFailures(t *testing.T) {
 
 func TestHybridRuntimeRoutesPersistedLegacyHandlesToTmux(t *testing.T) {
 	legacy := &restartableFakeBackend{}
-	direct := &fakeBackend{}
+	direct := &fakeBackend{identity: ports.RuntimeIdentity{
+		LaunchID:        "launch-native",
+		OwnershipProven: true,
+	}}
 	runtime := newHybridRuntime(legacy, direct, nil, "Linux")
 	ctx := context.Background()
 	handle := ports.RuntimeHandle{ID: "existing-session"}
@@ -252,7 +255,10 @@ func TestHybridRuntimeResolvesOnlyLegacyTmuxHandles(t *testing.T) {
 			OwnershipProven: true,
 		},
 	}}
-	direct := &fakeBackend{}
+	direct := &fakeBackend{identity: ports.RuntimeIdentity{
+		LaunchID:        "launch-native",
+		OwnershipProven: true,
+	}}
 	runtime := newHybridRuntime(legacy, direct, nil, "Linux")
 	ctx := context.Background()
 	owner := ports.SupervisedProcessRef{SessionID: "existing-session", LaunchID: "launch-1"}
@@ -292,11 +298,11 @@ func TestHybridRuntimeResolvesOnlyLegacyTmuxHandles(t *testing.T) {
 	}
 
 	identity, err = runtime.InspectRuntimeIdentity(ctx, directHandle, "native-session")
-	if err != nil || identity != (ports.RuntimeIdentity{}) {
-		t.Fatalf("direct identity = (%+v, %v), want zero identity", identity, err)
+	if err != nil || !identity.OwnershipProven || identity.LaunchID != "launch-native" {
+		t.Fatalf("direct identity = (%+v, %v), want proven native identity", identity, err)
 	}
-	if !reflect.DeepEqual(legacy.calls, []string{"resolve", "identity"}) {
-		t.Fatalf("ptyhost identity was forwarded to tmux: %v", legacy.calls)
+	if !reflect.DeepEqual(direct.calls, []string{"resolve", "identity"}) {
+		t.Fatalf("direct identity calls = %v, want resolve, identity", direct.calls)
 	}
 }
 

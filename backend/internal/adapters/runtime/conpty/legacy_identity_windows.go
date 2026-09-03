@@ -22,58 +22,26 @@ import (
 
 var getExtendedTCPTable = windows.NewLazySystemDLL("iphlpapi.dll").NewProc("GetExtendedTcpTable")
 
-func collectLegacyHostIdentity(ctx context.Context, sess *hostSession, status StatusPayload) (legacyHostIdentityEvidence, error) {
-	listenerPID, err := windowsTCP4ListenerPID(sess.addr)
-	if err != nil {
-		return legacyHostIdentityEvidence{}, err
-	}
-	host, err := windowsProcessIdentity(ctx, sess.pid)
-	if err != nil {
-		return legacyHostIdentityEvidence{}, fmt.Errorf("inspect recorded host pid %d: %w", sess.pid, err)
-	}
-	evidence := legacyHostIdentityEvidence{listenerPID: listenerPID, host: host}
-	if status.Alive {
-		child, childErr := windowsProcessIdentity(ctx, status.PID)
-		if childErr != nil {
-			return legacyHostIdentityEvidence{}, fmt.Errorf("inspect status child pid %d: %w", status.PID, childErr)
-		}
-		evidence.child = &child
-	}
-	return evidence, nil
+func legacyListenerPID(ctx context.Context, addr string, _ int) (int, error) {
+	return windowsTCP4ListenerPID(ctx, addr)
 }
 
-func revalidateLegacyHostIdentity(_ context.Context, sess *hostSession, status StatusPayload, proof legacyHostIdentityFingerprint) error {
-	listenerPID, err := windowsTCP4ListenerPID(sess.addr)
-	if err != nil {
-		return err
-	}
-	if listenerPID != sess.pid || proof.hostPID != sess.pid {
-		return fmt.Errorf("listener/host pid no longer matches recorded pid %d", sess.pid)
-	}
-	hostStartedAt, err := windowsProcessStartTime(sess.pid)
-	if err != nil {
-		return fmt.Errorf("revalidate recorded host pid %d: %w", sess.pid, err)
-	}
-	if !hostStartedAt.Equal(proof.hostStartedAt) {
-		return fmt.Errorf("recorded host pid %d changed process incarnation", sess.pid)
-	}
-	if !status.Alive {
-		return nil
-	}
-	if status.PID != proof.childPID || proof.childPID <= 0 {
-		return fmt.Errorf("legacy status child pid changed from %d to %d", proof.childPID, status.PID)
-	}
-	childStartedAt, err := windowsProcessStartTime(status.PID)
-	if err != nil {
-		return fmt.Errorf("revalidate status child pid %d: %w", status.PID, err)
-	}
-	if !childStartedAt.Equal(proof.childStartedAt) {
-		return fmt.Errorf("status child pid %d changed process incarnation", status.PID)
-	}
-	return nil
+func legacyProcessIdentityForPID(ctx context.Context, pid int) (legacyProcessIdentity, error) {
+	return windowsProcessIdentity(ctx, pid)
 }
 
-func windowsTCP4ListenerPID(addr string) (int, error) {
+func legacyProcessIncarnationForPID(ctx context.Context, pid int) (legacyProcessIncarnation, error) {
+	startedAt, err := windowsProcessStartTime(ctx, pid)
+	if err != nil {
+		return legacyProcessIncarnation{}, err
+	}
+	return legacyProcessIncarnation{pid: pid, startedAt: startedAt}, nil
+}
+
+func windowsTCP4ListenerPID(ctx context.Context, addr string) (int, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
 	host, portText, err := net.SplitHostPort(addr)
 	if err != nil || host != "127.0.0.1" {
 		return 0, fmt.Errorf("legacy pty-host address %q is not an exact IPv4 loopback endpoint", addr)
@@ -110,6 +78,9 @@ func windowsTCP4ListenerPID(addr string) (int, error) {
 	)
 	if result != 0 {
 		return 0, fmt.Errorf("read Windows TCP owner table: %w", syscall.Errno(result))
+	}
+	if err := ctx.Err(); err != nil {
+		return 0, err
 	}
 
 	const tcpOwnerPIDRowSize = 24
@@ -175,7 +146,7 @@ func windowsProcessIdentity(ctx context.Context, pid int) (legacyProcessIdentity
 	if process.PID != pid {
 		return legacyProcessIdentity{}, fmt.Errorf("PowerShell returned pid %d", process.PID)
 	}
-	startedAt, err := windowsProcessStartTime(pid)
+	startedAt, err := windowsProcessStartTime(ctx, pid)
 	if err != nil {
 		return legacyProcessIdentity{}, err
 	}
@@ -192,7 +163,10 @@ func windowsProcessIdentity(ctx context.Context, pid int) (legacyProcessIdentity
 	}, nil
 }
 
-func windowsProcessStartTime(pid int) (time.Time, error) {
+func windowsProcessStartTime(ctx context.Context, pid int) (time.Time, error) {
+	if err := ctx.Err(); err != nil {
+		return time.Time{}, err
+	}
 	handle, err := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION, false, uint32(pid))
 	if err != nil {
 		return time.Time{}, err
@@ -200,6 +174,9 @@ func windowsProcessStartTime(pid int) (time.Time, error) {
 	defer windows.CloseHandle(handle) //nolint:errcheck // read-only process probe
 	var creation, exit, kernel, user windows.Filetime
 	if err := windows.GetProcessTimes(handle, &creation, &exit, &kernel, &user); err != nil {
+		return time.Time{}, err
+	}
+	if err := ctx.Err(); err != nil {
 		return time.Time{}, err
 	}
 	return time.Unix(0, creation.Nanoseconds()), nil

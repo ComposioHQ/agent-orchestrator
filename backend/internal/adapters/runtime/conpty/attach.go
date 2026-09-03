@@ -21,7 +21,7 @@ var _ ports.Attacher = (*Runtime)(nil)
 // pty-host. rows/cols size the host's PTY from birth when known (a MsgResize is
 // sent right after connect). ctx cancellation closes the Stream.
 func (r *Runtime) Attach(ctx context.Context, handle ports.RuntimeHandle, rows, cols uint16) (ports.Stream, error) {
-	sess, err := r.resolve(handle.ID)
+	sess, err := r.resolve(ctx, handle.ID)
 	if err != nil {
 		return nil, err
 	}

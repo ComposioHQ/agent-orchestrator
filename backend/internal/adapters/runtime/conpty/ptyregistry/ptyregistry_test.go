@@ -1,6 +1,7 @@
 package ptyregistry
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"os"
@@ -48,11 +49,11 @@ func TestRegisterThenList(t *testing.T) {
 	withFakePidAlive(t, func(int) bool { return true })
 
 	e := Entry{SessionID: "s1", PtyHostPID: 1234, PipePath: `\\.\pipe\ao-s1`, RegisteredAt: nowRFC3339()}
-	if err := Register(e); err != nil {
+	if err := Register(context.Background(), e); err != nil {
 		t.Fatal(err)
 	}
 
-	got, err := List()
+	got, err := List(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -67,14 +68,14 @@ func TestRegisterReplaceSameID(t *testing.T) {
 
 	e1 := Entry{SessionID: "s1", PtyHostPID: 111, PipePath: `\\.\pipe\ao-s1-a`, RegisteredAt: nowRFC3339()}
 	e2 := Entry{SessionID: "s1", PtyHostPID: 222, PipePath: `\\.\pipe\ao-s1-b`, RegisteredAt: nowRFC3339()}
-	if err := Register(e1); err != nil {
+	if err := Register(context.Background(), e1); err != nil {
 		t.Fatal(err)
 	}
-	if err := Register(e2); err != nil {
+	if err := Register(context.Background(), e2); err != nil {
 		t.Fatal(err)
 	}
 
-	got, err := List()
+	got, err := List(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -90,13 +91,13 @@ func TestRegisterIfAbsentDoesNotReplaceOwner(t *testing.T) {
 	setupHome(t)
 	first := Entry{SessionID: "s1", PtyHostPID: 111, PipePath: "127.0.0.1:50001", RegisteredAt: nowRFC3339()}
 	second := Entry{SessionID: "s1", PtyHostPID: 222, PipePath: "127.0.0.1:50002", RegisteredAt: nowRFC3339()}
-	if err := RegisterIfAbsent(first); err != nil {
+	if err := RegisterIfAbsent(context.Background(), first); err != nil {
 		t.Fatal(err)
 	}
-	if err := RegisterIfAbsent(second); !errors.Is(err, ErrEntryExists) {
+	if err := RegisterIfAbsent(context.Background(), second); !errors.Is(err, ErrEntryExists) {
 		t.Fatalf("RegisterIfAbsent(second) = %v, want ErrEntryExists", err)
 	}
-	got, err := List()
+	got, err := List(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -116,7 +117,7 @@ func TestConcurrentRegistersPreserveEveryHost(t *testing.T) {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			errs <- Register(Entry{
+			errs <- Register(context.Background(), Entry{
 				SessionID:    "session-" + strconv.Itoa(i),
 				PtyHostPID:   1000 + i,
 				PipePath:     "127.0.0.1:" + strconv.Itoa(50000+i),
@@ -132,7 +133,7 @@ func TestConcurrentRegistersPreserveEveryHost(t *testing.T) {
 		}
 	}
 
-	entries, err := List()
+	entries, err := List(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -146,13 +147,13 @@ func TestUnregisterRemoves(t *testing.T) {
 	withFakePidAlive(t, func(int) bool { return true })
 
 	e := Entry{SessionID: "s1", PtyHostPID: 1234, PipePath: `\\.\pipe\ao-s1`, RegisteredAt: nowRFC3339()}
-	if err := Register(e); err != nil {
+	if err := Register(context.Background(), e); err != nil {
 		t.Fatal(err)
 	}
-	if err := Unregister("s1"); err != nil {
+	if err := Unregister(context.Background(), "s1"); err != nil {
 		t.Fatal(err)
 	}
-	got, err := List()
+	got, err := List(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -165,13 +166,13 @@ func TestUnregisterExactDoesNotDeleteReplacement(t *testing.T) {
 	setupHome(t)
 	first := Entry{SessionID: "s1", PtyHostPID: 111, PipePath: "127.0.0.1:50001", RegisteredAt: nowRFC3339()}
 	replacement := Entry{SessionID: "s1", PtyHostPID: 222, PipePath: "127.0.0.1:50002", RegisteredAt: nowRFC3339()}
-	if err := Register(replacement); err != nil {
+	if err := Register(context.Background(), replacement); err != nil {
 		t.Fatal(err)
 	}
-	if err := UnregisterExact(first); !errors.Is(err, ErrEntryChanged) {
+	if err := UnregisterExact(context.Background(), first); !errors.Is(err, ErrEntryChanged) {
 		t.Fatalf("UnregisterExact(stale) = %v, want ErrEntryChanged", err)
 	}
-	got, err := List()
+	got, err := List(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -184,7 +185,7 @@ func TestUnregisterNoOpWhenAbsent(t *testing.T) {
 	setupHome(t)
 	withFakePidAlive(t, func(int) bool { return true })
 
-	if err := Unregister("nonexistent"); err != nil {
+	if err := Unregister(context.Background(), "nonexistent"); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -198,14 +199,14 @@ func TestListDoesNotPruneByPIDLivenessAlone(t *testing.T) {
 
 	e1 := Entry{SessionID: "s1", PtyHostPID: 1, PipePath: `\\.\pipe\ao-s1`, RegisteredAt: nowRFC3339()}
 	e2 := Entry{SessionID: "s2", PtyHostPID: 2, PipePath: `\\.\pipe\ao-s2`, RegisteredAt: nowRFC3339()}
-	if err := Register(e1); err != nil {
+	if err := Register(context.Background(), e1); err != nil {
 		t.Fatal(err)
 	}
-	if err := Register(e2); err != nil {
+	if err := Register(context.Background(), e2); err != nil {
 		t.Fatal(err)
 	}
 
-	got, err := List()
+	got, err := List(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -233,11 +234,11 @@ func TestEmptyResultDeletesFile(t *testing.T) {
 	withFakePidAlive(t, func(int) bool { return true })
 
 	e := Entry{SessionID: "s1", PtyHostPID: 1, PipePath: `\\.\pipe\ao-s1`, RegisteredAt: nowRFC3339()}
-	if err := Register(e); err != nil {
+	if err := Register(context.Background(), e); err != nil {
 		t.Fatal(err)
 	}
 	// Unregister last entry -> file should be deleted.
-	if err := Unregister("s1"); err != nil {
+	if err := Unregister(context.Background(), "s1"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(regPath); !os.IsNotExist(err) {
@@ -250,10 +251,10 @@ func TestClearDeletesFile(t *testing.T) {
 	withFakePidAlive(t, func(int) bool { return true })
 
 	e := Entry{SessionID: "s1", PtyHostPID: 1, PipePath: `\\.\pipe\ao-s1`, RegisteredAt: nowRFC3339()}
-	if err := Register(e); err != nil {
+	if err := Register(context.Background(), e); err != nil {
 		t.Fatal(err)
 	}
-	if err := Clear(); err != nil {
+	if err := Clear(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(regPath); !os.IsNotExist(err) {
@@ -266,7 +267,7 @@ func TestMalformedJSONReturnsError(t *testing.T) {
 	withFakePidAlive(t, func(int) bool { return true })
 
 	// Write malformed JSON directly.
-	path, _ := registryFile()
+	path, _ := registryFile(context.Background())
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -274,7 +275,7 @@ func TestMalformedJSONReturnsError(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got, err := List()
+	got, err := List(context.Background())
 	if err == nil {
 		t.Fatalf("List() = (%v, nil), want malformed-registry error", got)
 	}
@@ -287,7 +288,7 @@ func TestRegisterDoesNotOverwriteMalformedRegistry(t *testing.T) {
 	setupHome(t)
 	withFakePidAlive(t, func(int) bool { return true })
 
-	path, _ := registryFile()
+	path, _ := registryFile(context.Background())
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -296,7 +297,7 @@ func TestRegisterDoesNotOverwriteMalformedRegistry(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err := Register(Entry{
+	err := Register(context.Background(), Entry{
 		SessionID: "new-session", PtyHostPID: 1234, PipePath: "127.0.0.1:50000",
 		RegisteredAt: nowRFC3339(),
 	})
@@ -316,7 +317,7 @@ func TestMalformedEntryReturnsError(t *testing.T) {
 	setupHome(t)
 	withFakePidAlive(t, func(int) bool { return true })
 
-	path, _ := registryFile()
+	path, _ := registryFile(context.Background())
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -324,7 +325,7 @@ func TestMalformedEntryReturnsError(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got, err := List()
+	got, err := List(context.Background())
 	if err == nil {
 		t.Fatalf("List() = (%v, nil), want invalid-entry error", got)
 	}
@@ -337,12 +338,12 @@ func TestUnreadableRegistryReturnsError(t *testing.T) {
 	setupHome(t)
 	withFakePidAlive(t, func(int) bool { return true })
 
-	path, _ := registryFile()
+	path, _ := registryFile(context.Background())
 	if err := os.MkdirAll(path, 0o700); err != nil {
 		t.Fatal(err)
 	}
 
-	got, err := List()
+	got, err := List(context.Background())
 	if err == nil {
 		t.Fatalf("List() = (%v, nil), want read error", got)
 	}
@@ -355,7 +356,7 @@ func TestMissingFileReturnsEmpty(t *testing.T) {
 	setupHome(t)
 	withFakePidAlive(t, func(int) bool { return true })
 
-	got, err := List()
+	got, err := List(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -369,7 +370,7 @@ func TestAtomicWriteProducesValidJSON(t *testing.T) {
 	withFakePidAlive(t, func(int) bool { return true })
 
 	e := Entry{SessionID: "s1", PtyHostPID: 99, PipePath: `\\.\pipe\ao-s1`, RegisteredAt: nowRFC3339()}
-	if err := Register(e); err != nil {
+	if err := Register(context.Background(), e); err != nil {
 		t.Fatal(err)
 	}
 
@@ -397,7 +398,7 @@ func TestSetRunFilePathScopesRegistryToInstanceDir(t *testing.T) {
 	withRunFilePath(t, filepath.Join(instanceDir, "running.json"))
 
 	e := Entry{SessionID: "s1", PtyHostPID: 1234, PipePath: "127.0.0.1:50000", RegisteredAt: nowRFC3339()}
-	if err := Register(e); err != nil {
+	if err := Register(context.Background(), e); err != nil {
 		t.Fatal(err)
 	}
 
@@ -423,19 +424,19 @@ func TestTwoInstancesWithDifferentRunFilePathsDoNotShareRegistry(t *testing.T) {
 	instanceB := t.TempDir()
 
 	withRunFilePath(t, filepath.Join(instanceA, "running.json"))
-	if err := Register(Entry{SessionID: "demo-website-2", PtyHostPID: 100, PipePath: "127.0.0.1:50001", RegisteredAt: nowRFC3339()}); err != nil {
+	if err := Register(context.Background(), Entry{SessionID: "demo-website-2", PtyHostPID: 100, PipePath: "127.0.0.1:50001", RegisteredAt: nowRFC3339()}); err != nil {
 		t.Fatal(err)
 	}
 
 	withRunFilePath(t, filepath.Join(instanceB, "running.json"))
-	if err := Register(Entry{SessionID: "demo-website-2", PtyHostPID: 200, PipePath: "127.0.0.1:50002", RegisteredAt: nowRFC3339()}); err != nil {
+	if err := Register(context.Background(), Entry{SessionID: "demo-website-2", PtyHostPID: 200, PipePath: "127.0.0.1:50002", RegisteredAt: nowRFC3339()}); err != nil {
 		t.Fatal(err)
 	}
 
 	// Instance A's own registration for the same session id must be
 	// untouched by instance B registering a session of the same name.
 	withRunFilePath(t, filepath.Join(instanceA, "running.json"))
-	got, err := List()
+	got, err := List(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -456,7 +457,7 @@ func TestSetRunFilePathEmptyClearsOverride(t *testing.T) {
 	withRunFilePath(t, filepath.Join(t.TempDir(), "running.json"))
 	withRunFilePath(t, "")
 
-	if err := Register(Entry{SessionID: "s1", PtyHostPID: 1, PipePath: "127.0.0.1:50000", RegisteredAt: nowRFC3339()}); err != nil {
+	if err := Register(context.Background(), Entry{SessionID: "s1", PtyHostPID: 1, PipePath: "127.0.0.1:50000", RegisteredAt: nowRFC3339()}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(regPath); err != nil {

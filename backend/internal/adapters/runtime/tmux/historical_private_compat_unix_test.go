@@ -31,7 +31,7 @@ func TestSocketTargetReproducesHistoricalLongPrivateAddress(t *testing.T) {
 		t.Fatalf("precondition: raw socket path is only %d bytes: %q", len([]byte(rawSocket)), rawSocket)
 	}
 
-	argv, err := (socketTarget{kind: socketTargetPath, value: rawSocket}).argv()
+	argv, err := (socketTarget{kind: socketTargetPath, value: rawSocket}).argv(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -61,7 +61,7 @@ func TestSocketTargetReproducesHistoricalLongPrivateAddress(t *testing.T) {
 	}
 
 	// Address selection is deterministic across daemon replacements.
-	second, err := (socketTarget{kind: socketTargetPath, value: rawSocket}).argv()
+	second, err := (socketTarget{kind: socketTargetPath, value: rawSocket}).argv(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -77,7 +77,7 @@ func TestSocketTargetRejectsPrecreatedForeignHistoricalAlias(t *testing.T) {
 		t.Fatal(err)
 	}
 	rawSocket := filepath.Join(targetDir, "tmux-0123456789abcdef0123456789abcdef.sock")
-	argv, err := (socketTarget{kind: socketTargetPath, value: rawSocket}).argv()
+	argv, err := (socketTarget{kind: socketTargetPath, value: rawSocket}).argv(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -90,7 +90,7 @@ func TestSocketTargetRejectsPrecreatedForeignHistoricalAlias(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.Remove(aliasDir) })
 
-	_, err = (socketTarget{kind: socketTargetPath, value: rawSocket}).argv()
+	_, err = (socketTarget{kind: socketTargetPath, value: rawSocket}).argv(context.Background())
 	if err == nil || !strings.Contains(err.Error(), "points to") {
 		t.Fatalf("foreign historical alias error = %v, want target mismatch", err)
 	}
@@ -212,7 +212,7 @@ func TestRuntimeIntegrationRecoversPrivateReleaseThroughHistoricalLongAlias(t *t
 	if len([]byte(rawSocket)) <= maxUnixSocketPathBytes {
 		t.Fatalf("precondition: historical raw socket is only %d bytes: %q", len([]byte(rawSocket)), rawSocket)
 	}
-	address, err := privateSocketAddress(rawSocket)
+	address, err := privateSocketAddress(context.Background(), rawSocket)
 	if err != nil {
 		t.Fatal(err)
 	}

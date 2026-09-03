@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/runtime/conpty/ptyregistry"
+	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
@@ -31,6 +32,7 @@ var _ ports.Runtime = (*Runtime)(nil)
 var _ ports.StyledTerminalOutputReader = (*Runtime)(nil)
 var _ ports.RuntimeHandleResolver = (*Runtime)(nil)
 var _ ports.ExactRuntimeHandleResolver = (*Runtime)(nil)
+var _ ports.RuntimeIdentityInspector = (*Runtime)(nil)
 
 // validSessionID matches agent-orchestrator's assertValidSessionId.
 var validSessionID = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
@@ -155,7 +157,7 @@ func (r *Runtime) Create(ctx context.Context, cfg ports.RuntimeConfig) (ports.Ru
 	// check is serialized within one daemon by the reservation above; the
 	// run-file supervisor remains responsible for enforcing one daemon per
 	// registry directory during process handoff.
-	entries, registryErr := ptyregistry.List()
+	entries, registryErr := ptyregistry.List(ctx)
 	if registryErr != nil {
 		r.deleteSession(id, nil)
 		return ports.RuntimeHandle{}, fmt.Errorf(
@@ -191,7 +193,7 @@ func (r *Runtime) Create(ctx context.Context, cfg ports.RuntimeConfig) (ports.Ru
 		}
 		// A dead recorded PID conclusively identifies the durable entry as
 		// stale. Remove only that session entry before allocating its successor.
-		if err := ptyregistry.UnregisterExact(entry); err != nil {
+		if err := ptyregistry.UnregisterExact(ctx, entry); err != nil {
 			r.deleteSession(id, nil)
 			return ports.RuntimeHandle{}, fmt.Errorf(
 				"conpty: remove exact dead pty-host registry entry for %q: %w",
@@ -235,7 +237,7 @@ func (r *Runtime) Create(ctx context.Context, cfg ports.RuntimeConfig) (ports.Ru
 	// write fails, stop the just-spawned host before returning so the caller can
 	// never receive a handle that disappears (or duplicates) after a restart.
 	entry := registryEntryForSession(sess)
-	if err := ptyregistry.RegisterIfAbsent(entry); err != nil {
+	if err := ptyregistry.RegisterIfAbsent(ctx, entry); err != nil {
 		registrationErr := fmt.Errorf(
 			"conpty: durably register pty-host for %q: %w",
 			id,
@@ -243,7 +245,7 @@ func (r *Runtime) Create(ctx context.Context, cfg ports.RuntimeConfig) (ports.Ru
 		)
 		stopped, rollbackErr := r.stopHost(context.Background(), sess)
 		if stopped {
-			if unregisterErr := ptyregistry.UnregisterExact(entry); unregisterErr != nil &&
+			if unregisterErr := ptyregistry.UnregisterExact(ctx, entry); unregisterErr != nil &&
 				!errors.Is(unregisterErr, ptyregistry.ErrEntryChanged) {
 				rollbackErr = errors.Join(
 					rollbackErr,
@@ -270,7 +272,7 @@ func (r *Runtime) Create(ctx context.Context, cfg ports.RuntimeConfig) (ports.Ru
 // never receive a false-success teardown while a provider may still be alive.
 // Unknown/already-gone sessions remain idempotent.
 func (r *Runtime) Destroy(ctx context.Context, handle ports.RuntimeHandle) error {
-	sess, err := r.resolve(handle.ID)
+	sess, err := r.resolve(ctx, handle.ID)
 	if err != nil {
 		return fmt.Errorf("conpty: resolve session %q for destroy: %w", handle.ID, err)
 	}
@@ -285,7 +287,7 @@ func (r *Runtime) Destroy(ctx context.Context, handle ports.RuntimeHandle) error
 		return fmt.Errorf("conpty: pty-host pid %d was not stopped", sess.pid)
 	}
 
-	if err := ptyregistry.UnregisterExact(registryEntryForSession(sess)); err != nil {
+	if err := ptyregistry.UnregisterExact(ctx, registryEntryForSession(sess)); err != nil {
 		if errors.Is(err, ptyregistry.ErrEntryChanged) {
 			// Drop only our stale in-memory route. The changed durable owner is
 			// preserved and will be resolved on the next operation.
@@ -312,7 +314,9 @@ func (r *Runtime) stopHost(ctx context.Context, sess *hostSession) (bool, error)
 	defer func() { _ = host.conn.Close() }()
 	// Keep authentication and the mutation on one TCP connection. A separate
 	// dial would reopen a port-reuse race between ownership proof and KILL.
-	if err := clientKillConn(host.conn); err != nil {
+	stopCancellation := armClientDeadline(ctx, host.conn, isAliveTimeout)
+	defer stopCancellation()
+	if err := clientKillConn(ctx, host.conn); err != nil {
 		return false, err
 	}
 	exited, waitErr := r.waitForPIDExit(ctx, sess.pid)
@@ -410,7 +414,7 @@ func (r *Runtime) probePIDLiveness(pid int) (bool, error) {
 // tmux returns a non-nil error for transient failures for the same
 // reason; conpty matches that contract here.
 func (r *Runtime) IsAlive(ctx context.Context, handle ports.RuntimeHandle) (bool, error) {
-	sess, err := r.resolve(handle.ID)
+	sess, err := r.resolve(ctx, handle.ID)
 	if err != nil {
 		return false, err
 	}
@@ -429,7 +433,7 @@ func (r *Runtime) IsAlive(ctx context.Context, handle ports.RuntimeHandle) (bool
 // agent process. When a generation ref is supplied, the launch id captured at
 // Create (and persisted in the recovery registry) must match exactly.
 func (r *Runtime) IsSupervisedProcessAlive(ctx context.Context, handle ports.RuntimeHandle, ref ports.SupervisedProcessRef) (bool, error) {
-	sess, err := r.resolve(handle.ID)
+	sess, err := r.resolve(ctx, handle.ID)
 	if err != nil {
 		return false, err
 	}
@@ -479,7 +483,7 @@ func (r *Runtime) ResolveRuntimeHandle(ctx context.Context, handle ports.Runtime
 	if err := ctx.Err(); err != nil {
 		return ports.RuntimeHandle{}, false, err
 	}
-	sess, err := r.resolve(handle.ID)
+	sess, err := r.resolve(ctx, handle.ID)
 	if err != nil {
 		return ports.RuntimeHandle{}, false, err
 	}
@@ -518,9 +522,49 @@ func (r *Runtime) ResolveExactRuntimeHandle(ctx context.Context, handle ports.Ru
 	return r.ResolveRuntimeHandle(ctx, handle, owner)
 }
 
+// InspectRuntimeIdentity rereads the detached host's authenticated registry and
+// live status instead of treating the hybrid router's versioned prefix as
+// ownership evidence.
+func (r *Runtime) InspectRuntimeIdentity(ctx context.Context, handle ports.RuntimeHandle, expectedSessionID domain.SessionID) (ports.RuntimeIdentity, error) {
+	if expectedSessionID == "" || string(expectedSessionID) != handle.ID {
+		return ports.RuntimeIdentity{}, fmt.Errorf(
+			"conpty: runtime handle %q does not match expected session %q: %w",
+			handle.ID,
+			expectedSessionID,
+			ports.ErrRuntimeProbeInconclusive,
+		)
+	}
+	sess, err := r.resolve(ctx, handle.ID)
+	if err != nil {
+		return ports.RuntimeIdentity{}, err
+	}
+	if sess == nil || strings.TrimSpace(sess.launchID) == "" {
+		return ports.RuntimeIdentity{}, fmt.Errorf(
+			"conpty: runtime handle %q has no durable launch identity: %w",
+			handle.ID,
+			ports.ErrRuntimeProbeInconclusive,
+		)
+	}
+	host, alive, err := r.connectVerifiedHost(ctx, sess, isAliveTimeout)
+	if host != nil {
+		_ = host.conn.Close()
+	}
+	if err != nil {
+		return ports.RuntimeIdentity{}, err
+	}
+	if !alive {
+		return ports.RuntimeIdentity{}, fmt.Errorf(
+			"conpty: runtime handle %q is no longer alive: %w",
+			handle.ID,
+			ports.ErrRuntimeUnavailable,
+		)
+	}
+	return ports.RuntimeIdentity{LaunchID: sess.launchID, OwnershipProven: true}, nil
+}
+
 // SendMessage chunks message and writes it to the pty-host followed by Enter.
 func (r *Runtime) SendMessage(ctx context.Context, handle ports.RuntimeHandle, message string) error {
-	sess, err := r.resolve(handle.ID)
+	sess, err := r.resolve(ctx, handle.ID)
 	if err != nil {
 		return err
 	}
@@ -535,12 +579,14 @@ func (r *Runtime) SendMessage(ctx context.Context, handle ports.RuntimeHandle, m
 		return fmt.Errorf("conpty: session %q not found", handle.ID)
 	}
 	defer func() { _ = host.conn.Close() }()
-	return clientSendMessageConn(host.conn, message)
+	stopCancellation := armClientDeadline(ctx, host.conn, dialTimeout)
+	defer stopCancellation()
+	return clientSendMessageConn(ctx, host.conn, message)
 }
 
 // Interrupt sends Ctrl-C to the PTY without tearing down the terminal host.
 func (r *Runtime) Interrupt(ctx context.Context, handle ports.RuntimeHandle) error {
-	sess, err := r.resolve(handle.ID)
+	sess, err := r.resolve(ctx, handle.ID)
 	if err != nil {
 		return err
 	}
@@ -553,7 +599,7 @@ func (r *Runtime) Interrupt(ctx context.Context, handle ports.RuntimeHandle) err
 // SendInput writes raw terminal input without appending Enter. It is intended
 // for TUI keybindings such as Escape rather than prompt text.
 func (r *Runtime) SendInput(ctx context.Context, handle ports.RuntimeHandle, input string) error {
-	sess, err := r.resolve(handle.ID)
+	sess, err := r.resolve(ctx, handle.ID)
 	if err != nil {
 		return err
 	}
@@ -572,7 +618,9 @@ func (r *Runtime) sendInputToExactHost(ctx context.Context, id string, sess *hos
 		return fmt.Errorf("conpty: session %q not found", id)
 	}
 	defer func() { _ = host.conn.Close() }()
-	return clientSendInputConn(host.conn, input)
+	stopCancellation := armClientDeadline(ctx, host.conn, dialTimeout)
+	defer stopCancellation()
+	return clientSendInputConn(ctx, host.conn, input)
 }
 
 // GetOutput returns the last lines lines from the pty-host ring buffer.
@@ -580,7 +628,7 @@ func (r *Runtime) GetOutput(ctx context.Context, handle ports.RuntimeHandle, lin
 	if lines <= 0 {
 		return "", fmt.Errorf("conpty: lines must be > 0")
 	}
-	sess, err := r.resolve(handle.ID)
+	sess, err := r.resolve(ctx, handle.ID)
 	if err != nil {
 		return "", err
 	}
@@ -609,7 +657,7 @@ func (r *Runtime) GetStyledOutput(ctx context.Context, handle ports.RuntimeHandl
 	if lines <= 0 {
 		return "", fmt.Errorf("conpty: lines must be > 0")
 	}
-	sess, err := r.resolve(handle.ID)
+	sess, err := r.resolve(ctx, handle.ID)
 	if err != nil {
 		return "", err
 	}
@@ -749,16 +797,19 @@ func registryEntryForSession(sess *hostSession) ptyregistry.Entry {
 
 // resolve looks up a session by id: first the in-memory map, then the B2
 // registry (for daemon-restart recovery). Returns nil if not found either way.
-func (r *Runtime) resolve(id string) (*hostSession, error) {
+func (r *Runtime) resolve(ctx context.Context, id string) (*hostSession, error) {
 	r.mu.Lock()
 	sess := r.sessions[id]
 	r.mu.Unlock()
 	if sess != nil {
 		return sess, nil
 	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 
 	// Registry fallback: scan for the entry by session id.
-	entries, err := ptyregistry.List()
+	entries, err := ptyregistry.List(ctx)
 	if err != nil {
 		return nil, fmt.Errorf(
 			"conpty: read pty-host registry for %q: %w",

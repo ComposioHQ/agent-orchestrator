@@ -27,6 +27,12 @@ const eventBuffer = 4096
 // deciding on the user's behalf.
 const approvalWait = 30 * time.Minute
 
+// Once the provider connection closes, every request handler receives a
+// canceled context. Bound the final producer drain so a future handler that
+// accidentally ignores cancellation cannot keep the public event stream open
+// forever.
+const serverRequestDrainWait = 5 * time.Second
+
 // errConversationClosed reports a decision arriving after the controller ended.
 var errConversationClosed = errors.New("conversation closed")
 
@@ -226,7 +232,11 @@ func (c *conversation) pump() {
 	// Provider requests publish from their own goroutines. Once the connection
 	// stops, wait for those producers and for the reconnect capture owner before
 	// the pump emits the terminal state and closes the sole public event stream.
-	c.conn.waitAnswers()
+	drainCtx, cancelDrain := context.WithTimeout(context.Background(), serverRequestDrainWait)
+	if err := c.conn.waitAnswers(drainCtx); err != nil {
+		c.log.Error("timed out draining app-server request handlers", "error", err)
+	}
+	cancelDrain()
 	<-c.recoveryDone
 
 	// The connection ended. Say so explicitly rather than letting the stream go
@@ -794,7 +804,9 @@ func (c *conversation) handleServerRequest(ctx context.Context, req serverReques
 	// provider-visible effects by wire sequence before registering or publishing
 	// this request, otherwise a later notification can overtake a slow approval
 	// handler around the reconnect boundary.
-	_ = c.conn.waitInboundCaptured(context.Background(), req.seq-1)
+	if err := c.conn.waitInboundCaptured(ctx, req.seq-1); err != nil {
+		return nil, err
+	}
 	switch req.Method {
 	case codexproto.MethodAccountChatgptAuthTokensRefresh:
 		return nil, c.reportAuthRefreshRequest(req.seq, req.Params)

@@ -17,79 +17,20 @@ import (
 	"time"
 )
 
-func collectLegacyHostIdentity(ctx context.Context, sess *hostSession, status StatusPayload) (legacyHostIdentityEvidence, error) {
-	listenerPID, err := linuxTCP4ListenerPID(sess.addr, sess.pid)
-	if err != nil {
-		return legacyHostIdentityEvidence{}, err
-	}
-	host, err := linuxLegacyProcessIdentity(ctx, sess.pid)
-	if err != nil {
-		return legacyHostIdentityEvidence{}, fmt.Errorf("inspect recorded host pid %d: %w", sess.pid, err)
-	}
-	evidence := legacyHostIdentityEvidence{listenerPID: listenerPID, host: host}
-	if status.Alive {
-		child, childErr := linuxLegacyProcessIdentity(ctx, status.PID)
-		if childErr != nil {
-			return legacyHostIdentityEvidence{}, fmt.Errorf("inspect status child pid %d: %w", status.PID, childErr)
-		}
-		evidence.child = &child
-	}
-	return evidence, nil
+func legacyListenerPID(ctx context.Context, addr string, expectedPID int) (int, error) {
+	return linuxTCP4ListenerPID(ctx, addr, expectedPID)
 }
 
-func revalidateLegacyHostIdentity(ctx context.Context, sess *hostSession, status StatusPayload, proof legacyHostIdentityFingerprint) error {
-	listenerPID, err := linuxTCP4ListenerPID(sess.addr, sess.pid)
-	if err != nil {
-		return err
-	}
-	if listenerPID != sess.pid || proof.hostPID != sess.pid {
-		return fmt.Errorf("listener/host pid no longer matches recorded pid %d", sess.pid)
-	}
-	host, err := linuxLegacyProcessIdentity(ctx, sess.pid)
-	if err != nil {
-		return fmt.Errorf("revalidate recorded host pid %d: %w", sess.pid, err)
-	}
-	if !host.startedAt.Equal(proof.hostStartedAt) {
-		return fmt.Errorf("recorded host pid %d changed process incarnation", sess.pid)
-	}
-	if !status.Alive {
-		return nil
-	}
-	if status.PID != proof.childPID || proof.childPID <= 0 {
-		return fmt.Errorf("legacy status child pid changed from %d to %d", proof.childPID, status.PID)
-	}
-	child, err := linuxLegacyProcessIdentity(ctx, status.PID)
-	if err != nil {
-		return fmt.Errorf("revalidate status child pid %d: %w", status.PID, err)
-	}
-	if child.ppid != sess.pid || !child.startedAt.Equal(proof.childStartedAt) {
-		return fmt.Errorf("status child pid %d changed process incarnation or parent", status.PID)
-	}
-	return nil
+func legacyProcessIdentityForPID(ctx context.Context, pid int) (legacyProcessIdentity, error) {
+	return linuxLegacyProcessIdentity(ctx, pid)
+}
+
+func legacyProcessIncarnationForPID(ctx context.Context, pid int) (legacyProcessIncarnation, error) {
+	return linuxProcessIncarnation(ctx, pid)
 }
 
 func linuxLegacyProcessIdentity(ctx context.Context, pid int) (legacyProcessIdentity, error) {
-	stat, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
-	if err != nil {
-		return legacyProcessIdentity{}, err
-	}
-	closeIndex := bytes.LastIndexByte(stat, ')')
-	if closeIndex < 0 || closeIndex+2 >= len(stat) {
-		return legacyProcessIdentity{}, errors.New("malformed /proc stat")
-	}
-	fields := strings.Fields(string(stat[closeIndex+2:]))
-	if len(fields) < 20 {
-		return legacyProcessIdentity{}, errors.New("truncated /proc stat")
-	}
-	ppid, err := strconv.Atoi(fields[1])
-	if err != nil {
-		return legacyProcessIdentity{}, fmt.Errorf("parse /proc parent pid: %w", err)
-	}
-	startTicks, err := strconv.ParseUint(fields[19], 10, 64)
-	if err != nil {
-		return legacyProcessIdentity{}, fmt.Errorf("parse /proc process start: %w", err)
-	}
-	startedAt, err := linuxProcessStartTime(ctx, startTicks)
+	incarnation, err := linuxProcessIncarnation(ctx, pid)
 	if err != nil {
 		return legacyProcessIdentity{}, err
 	}
@@ -102,6 +43,9 @@ func linuxLegacyProcessIdentity(ctx context.Context, pid int) (legacyProcessIden
 	if err != nil {
 		return legacyProcessIdentity{}, err
 	}
+	if err := ctx.Err(); err != nil {
+		return legacyProcessIdentity{}, err
+	}
 	parts := bytes.Split(bytes.TrimRight(commandLine, "\x00"), []byte{0})
 	argv := make([]string, 0, len(parts))
 	for _, part := range parts {
@@ -111,8 +55,41 @@ func linuxLegacyProcessIdentity(ctx context.Context, pid int) (legacyProcessIden
 		return legacyProcessIdentity{}, errors.New("empty /proc process command line")
 	}
 	return legacyProcessIdentity{
-		pid: pid, ppid: ppid, startedAt: startedAt,
+		pid: incarnation.pid, ppid: incarnation.ppid, startedAt: incarnation.startedAt,
 		executable: executable, argv: argv,
+	}, nil
+}
+
+func linuxProcessIncarnation(ctx context.Context, pid int) (legacyProcessIncarnation, error) {
+	if err := ctx.Err(); err != nil {
+		return legacyProcessIncarnation{}, err
+	}
+	stat, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
+	if err != nil {
+		return legacyProcessIncarnation{}, err
+	}
+	closeIndex := bytes.LastIndexByte(stat, ')')
+	if closeIndex < 0 || closeIndex+2 >= len(stat) {
+		return legacyProcessIncarnation{}, errors.New("malformed /proc stat")
+	}
+	fields := strings.Fields(string(stat[closeIndex+2:]))
+	if len(fields) < 20 {
+		return legacyProcessIncarnation{}, errors.New("truncated /proc stat")
+	}
+	ppid, err := strconv.Atoi(fields[1])
+	if err != nil {
+		return legacyProcessIncarnation{}, fmt.Errorf("parse /proc parent pid: %w", err)
+	}
+	startTicks, err := strconv.ParseUint(fields[19], 10, 64)
+	if err != nil {
+		return legacyProcessIncarnation{}, fmt.Errorf("parse /proc process start: %w", err)
+	}
+	startedAt, err := linuxProcessStartTime(ctx, startTicks)
+	if err != nil {
+		return legacyProcessIncarnation{}, err
+	}
+	return legacyProcessIncarnation{
+		pid: pid, ppid: ppid, parentKnown: true, startedAt: startedAt,
 	}, nil
 }
 
@@ -181,7 +158,10 @@ func linuxProcessStartTime(ctx context.Context, startTicks uint64) (time.Time, e
 	return time.Unix(bootSeconds+seconds, nanos), nil
 }
 
-func linuxTCP4ListenerPID(addr string, expectedPID int) (int, error) {
+func linuxTCP4ListenerPID(ctx context.Context, addr string, expectedPID int) (int, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
 	host, portText, err := net.SplitHostPort(addr)
 	if err != nil || host != "127.0.0.1" {
 		return 0, fmt.Errorf("legacy pty-host address %q is not an exact IPv4 loopback endpoint", addr)
@@ -193,6 +173,9 @@ func linuxTCP4ListenerPID(addr string, expectedPID int) (int, error) {
 	wantLocal := fmt.Sprintf("0100007F:%04X", port)
 	tcp, err := os.ReadFile("/proc/net/tcp")
 	if err != nil {
+		return 0, err
+	}
+	if err := ctx.Err(); err != nil {
 		return 0, err
 	}
 	inode := ""
