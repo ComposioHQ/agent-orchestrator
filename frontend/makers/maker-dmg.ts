@@ -240,9 +240,11 @@ const VERIFY_SCRIPT = "scripts/verify-mac-artifact.sh";
  * packager's own osxSign/osxNotarize) only proves the relevant commands exited
  * 0 on this machine, not that the published bytes are something Gatekeeper
  * accepts with a stapled ticket, or that a bundled nested executable (the
- * Intel ACP Node, #3879) actually runs. verify-mac-artifact.sh is the one
- * canonical check (#3288 workstreams 1 and 2) and exists specifically so
- * nobody hand-rolls a variant of it and draws a wrong conclusion.
+ * Intel ACP Node, #3879) actually runs. verify-mac-artifact.sh is the
+ * canonical local check (#3288 workstreams 1 and 2) and exists specifically so
+ * nobody hand-rolls a variant of it and draws a wrong conclusion; the
+ * pre-publication gate for canonical releases is the release conductor's own
+ * verifier (frontend/docs/desktop-release.md).
  *
  * Only meaningful on a signed artifact, so callers gate accordingly (sealDmg's
  * return value for the dmg container; isSigningConfigured for the zip, whose

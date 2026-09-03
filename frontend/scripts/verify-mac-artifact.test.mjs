@@ -10,9 +10,11 @@ import { fileURLToPath } from "node:url";
 // Honest scope: the three real checks (codesign, spctl, stapler) cannot be
 // exercised here. Mocking them convincingly would require real Apple signing
 // material, and a mock that always passes proves nothing about the gate. The
-// meaningful verification of the core logic is the release pipeline's
-// post-staple gate running this script against real published artifacts
-// (#3288 workstream 1).
+// meaningful verification of the core logic happens against real published
+// artifacts: the public mac-update-e2e workflow runs this script against the
+// published baseline and the installed app, developers run it as the local
+// diagnostic, and the release conductor's pre-publication gate applies the
+// same nested-Node rules (frontend/docs/desktop-release.md).
 //
 // What IS covered here, on any platform with no signing material at all:
 // the script parses, every usage/precondition path exits 2 with a clear

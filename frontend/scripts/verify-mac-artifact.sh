@@ -42,6 +42,13 @@
 #      entitlements they need. The x64 ACP Node can pass `codesign --verify`
 #      while crashing as soon as V8 compiles JavaScript (#3879). Zip/app checks
 #      therefore inspect its final entitlements and execute the shipped binary.
+#      The arch decision here is made from the binary itself (`lipo -archs`),
+#      the same content-based invariant the signing-side selector implements
+#      (frontend/makers/macho-archs.ts) — never from the host architecture.
+#      Scope: this script is the local diagnostic and the public
+#      mac-update-e2e baseline check; the pre-publication gate for canonical
+#      releases is the release conductor's own verifier
+#      (frontend/docs/desktop-release.md).
 #
 # Exit codes: 0 all checks passed, 1 a check failed, 2 usage error.
 
@@ -195,7 +202,7 @@ if [[ "$ARTIFACT" != *.dmg ]]; then
 			echo "    ok: ACP Node architecture ($acp_node_archs)"
 			case " $acp_node_archs " in
 			*" x86_64 "*)
-				run_check "ACP Node x64 executable-memory entitlement" \
+				run_check "ACP Node x64 executable-memory entitlement (archs:$acp_node_archs)" \
 					has_acp_node_entitlement "com.apple.security.cs.allow-unsigned-executable-memory"
 				;;
 			esac
