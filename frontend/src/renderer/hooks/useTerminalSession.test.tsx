@@ -107,6 +107,7 @@ function createFakeTerminal(): FakeTerminal {
 	const terminal: FakeTerminal = {
 		cols: 80,
 		rows: 24,
+		focus: () => undefined,
 		autoCompleteWrites: true,
 		lines: [],
 		pendingWriteCallbacks: [],
