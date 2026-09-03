@@ -13,6 +13,7 @@ package sentryobs
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"regexp"
@@ -99,11 +100,23 @@ func ShouldCaptureStatus(status int) bool {
 	return status >= http.StatusInternalServerError && status != http.StatusServiceUnavailable
 }
 
+// IsNoiseError reports whether err is request-cancellation noise rather than a
+// server fault worth an issue. context.Canceled means the client (usually the
+// renderer) went away mid-request; context.DeadlineExceeded means the request or
+// a downstream op ran past its deadline. Neither is an actionable server bug,
+// and together they otherwise dominate the issue feed with un-fixable churn, so
+// they are dropped before capture. Genuine slow-path/contention is still visible
+// as the aggregated ao.http.5xx rollup and (for retryable DB contention) the
+// typed 503 path.
+func IsNoiseError(err error) bool {
+	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
+}
+
 // CaptureHTTPError captures a server-fault error with the given tags and a
-// fingerprint identical to the PostHog grouping key. No-op when disabled or the
-// error is nil.
+// fingerprint identical to the PostHog grouping key. No-op when disabled, the
+// error is nil, or the error is request-cancellation noise (see IsNoiseError).
 func CaptureHTTPError(_ context.Context, err error, tags map[string]string, fingerprint string) {
-	if !enabled.Load() || err == nil {
+	if !enabled.Load() || err == nil || IsNoiseError(err) {
 		return
 	}
 	sentry.WithScope(func(scope *sentry.Scope) {
