@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import nodePath from "node:path";
@@ -50,6 +50,21 @@ function createAutoUpdaterMock(): AutoUpdaterMock {
     autoInstallOnAppQuit: false,
   };
 }
+
+// The module persists staged provenance beside the update settings, and that
+// write is fire-and-forget: on a shared state dir a write from one test could
+// land after the next test's cleanup. One fresh directory per test removes the
+// race outright rather than trying to time it.
+let stateDir = "";
+beforeEach(() => {
+  stateDir = mkdtempSync(nodePath.join(os.tmpdir(), "ao-updater-state-"));
+});
+afterEach(() => {
+  rmSync(stateDir, { recursive: true, force: true });
+});
+
+/** Alias kept for readability: a re-import is a simulated relaunch. */
+const importAutoUpdaterKeepingStagedFile = importAutoUpdater;
 
 async function importAutoUpdater(
   settings: UpdateSettings | UpdateSettingsReader = {
@@ -185,7 +200,7 @@ async function flushMicrotasks(turns = 16): Promise<void> {
 }
 
 describe("startAutoUpdates", () => {
-  const stateDir = "/tmp/ao-state";
+  // stateDir comes from the per-test beforeEach above.
 
   afterEach(() => {
     vi.useRealTimers();
@@ -1870,6 +1885,56 @@ describe("startAutoUpdates", () => {
   // Regression: the sidebar's restart row keyed off `state`, which a routine
   // check drives through checking/available/not-available while the staged
   // build is untouched. The row blinked out of existence every 15 minutes.
+  // Regression: stagedVersion/stagedChannel were module state, so a relaunch
+  // that did NOT install came back knowing nothing about the build still armed
+  // in the cache, and a channel switch after that restart could not be
+  // recognised as stranding anything.
+  it("remembers a staged build's provenance across a restart", async () => {
+    const first = await importAutoUpdater({
+      enabled: false,
+      channel: "nightly",
+      nightlyAck: true,
+      feature: null,
+    });
+    await first.module.checkForUpdatesNow(stateDir);
+    first.updaterEvents.get("update-downloaded")?.({ version: "2.1.0-nightly.1" });
+    // The persist is fire-and-forget real I/O; flushing microtasks cannot land it.
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    // A fresh process: module state is gone, only the file survives.
+    const second = await importAutoUpdaterKeepingStagedFile({
+      enabled: false,
+      channel: "nightly",
+      nightlyAck: true,
+      feature: null,
+    });
+    await second.module.startAutoUpdates(stateDir);
+    expect(second.module.getUpdateStatus().staged).toMatchObject({ version: "2.1.0-nightly.1" });
+
+    // And the switch that follows is now recognised as stranding it.
+    const autoDownloadAtCheck: boolean[] = [];
+    second.autoUpdater.checkForUpdates.mockImplementation(() => {
+      autoDownloadAtCheck.push(second.autoUpdater.autoDownload);
+      return Promise.resolve({ isUpdateAvailable: true, updateInfo: { version: "2.0.0" } });
+    });
+    await second.module.checkForUpdatesNow(stateDir, {
+      settings: { enabled: false, channel: "latest", nightlyAck: false, feature: null },
+    });
+    expect(autoDownloadAtCheck).toEqual([true]);
+  });
+
+  it("drops persisted provenance once that build is the running version", async () => {
+    const first = await importAutoUpdater();
+    await first.module.checkForUpdatesNow(stateDir);
+    // The harness reports app.getVersion() as 1.0.0.
+    first.updaterEvents.get("update-downloaded")?.({ version: "1.0.0" });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    const second = await importAutoUpdaterKeepingStagedFile();
+    await second.module.startAutoUpdates(stateDir);
+    expect(second.module.getUpdateStatus().staged).toBeUndefined();
+  });
+
   it("stamps the staged build onto every status, including transient ones", async () => {
     vi.useFakeTimers();
     const stagedAt = new Date("2026-07-17T12:00:00.000Z").getTime();
@@ -2004,7 +2069,7 @@ describe("startAutoUpdates", () => {
 });
 
 describe("returnToHome", () => {
-  const stateDir = "/tmp/ao-state";
+  // stateDir comes from the per-test beforeEach above.
 
   it("clears only the feature pin, preserves home channel/prefs, and checks", async () => {
     const { module, autoUpdater, updateUpdateSettings } =

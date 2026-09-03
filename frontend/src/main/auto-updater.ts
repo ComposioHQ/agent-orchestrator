@@ -1,7 +1,7 @@
 import { autoUpdater } from "electron-updater";
 import { app, BrowserWindow, dialog } from "electron";
-import { accessSync, constants as fsConstants, existsSync } from "node:fs";
-import { readFile } from "node:fs/promises";
+import { accessSync, constants as fsConstants, existsSync, readFileSync } from "node:fs";
+import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import semver from "semver";
 import {
@@ -420,6 +420,73 @@ function stagedStamp(): Pick<UpdateStatus, "staged"> {
   };
 }
 
+/**
+ * Staged-build provenance, persisted beside the update settings.
+ *
+ * stagedVersion/stagedChannel are module state, so a relaunch that did NOT
+ * install (a blocked location, a crash, a quit Squirrel could not finish) came
+ * back knowing nothing about the build still sitting armed in the cache. A
+ * channel switch after that restart could not be recognised as stranding
+ * anything, which is the case stagedBuildIsStale exists to catch.
+ */
+const STAGED_UPDATE_FILE_NAME = "staged-update.json";
+
+function stagedUpdateFile(stateDir: string): string {
+  return path.join(stateDir, STAGED_UPDATE_FILE_NAME);
+}
+
+/** Fire-and-forget: losing this file costs provenance, never correctness. */
+function persistStagedBuild(stateDir: string | undefined): void {
+  if (stateDir === undefined || stagedVersion === undefined || stagedAtMs === undefined) return;
+  const payload = `${JSON.stringify({
+    version: stagedVersion,
+    stagedAt: stagedAtMs,
+    channel: stagedChannel,
+  })}\n`;
+  // mkdir first: this can be the earliest write into the state dir on a fresh
+  // install, and writeUpdateSettings is not guaranteed to have run yet.
+  void mkdir(stateDir, { recursive: true, mode: 0o750 })
+    .then(() => writeFile(stagedUpdateFile(stateDir), payload, { mode: 0o600 }))
+    .catch(() => undefined);
+}
+
+function forgetPersistedStagedBuild(stateDir: string | undefined): void {
+  if (stateDir === undefined) return;
+  void unlink(stagedUpdateFile(stateDir)).catch(() => undefined);
+}
+
+/**
+ * Reload provenance for a build staged by an earlier run.
+ *
+ * Discards it when the running version already matches — that build installed,
+ * so nothing is pending — and when anything is unreadable, because inventing
+ * provenance is worse than having none.
+ */
+function restoreStagedBuild(stateDir: string): void {
+  // Synchronous on purpose. Awaiting a real filesystem read here would push the
+  // launch-time update check behind an I/O turn for a file that is a few dozen
+  // bytes and read exactly once per process.
+  let raw: { version?: unknown; stagedAt?: unknown; channel?: unknown };
+  try {
+    raw = JSON.parse(readFileSync(stagedUpdateFile(stateDir), "utf8")) as typeof raw;
+  } catch {
+    return;
+  }
+  if (
+    typeof raw.version !== "string" ||
+    typeof raw.stagedAt !== "number" ||
+    !Number.isFinite(raw.stagedAt) ||
+    raw.version === app.getVersion()
+  ) {
+    forgetPersistedStagedBuild(stateDir);
+    return;
+  }
+  stagedVersion = raw.version;
+  stagedAtMs = raw.stagedAt;
+  stagedChannel = typeof raw.channel === "string" ? raw.channel : undefined;
+  stagedEscalated = false;
+}
+
 /** The feed channel a settings object resolves to. Mirrors configureFeed. */
 function effectiveChannel(
   settings: Pick<UpdateSettings, "channel" | "feature">,
@@ -460,6 +527,7 @@ function stagedBuildIsStale(
  * the replacement download is forced rather than left to the user's preference.
  */
 function discardStagedBuild(): void {
+  forgetPersistedStagedBuild(escalationStateDir);
   offeredReleaseNotes = undefined;
   stagedVersion = undefined;
   stagedChannel = undefined;
@@ -810,6 +878,7 @@ function wireUpdaterEvents(): void {
       stagedEscalated = false;
     }
     stagedRequestId = activeUpdaterRequestId;
+    persistStagedBuild(escalationStateDir);
     automaticCheckPreviousStatus = undefined;
     // A completed automatic download advances the independent baseline; a
     // renderer-requested download additionally carries its request ownership.
@@ -1039,6 +1108,8 @@ async function requestAutomaticUpdateCheck(
 // downloaded automatically. Both preferences come from update-settings.
 // Caller guards on app.isPackaged.
 export async function startAutoUpdates(stateDir: string): Promise<void> {
+  escalationStateDir = stateDir;
+  restoreStagedBuild(stateDir);
   startRetirementPollTimer(stateDir);
   const intervalMs = await requestAutomaticUpdateCheck(stateDir);
   if (intervalMs !== undefined)
