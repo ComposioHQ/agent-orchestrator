@@ -265,3 +265,58 @@ func TestDestroyReportsAMissingProjectRepoAsUnavailable(t *testing.T) {
 		t.Fatalf("force destroy error = %v, want ports.ErrWorkspaceRepoUnavailable", err)
 	}
 }
+
+// The move is not always possible. On Windows a PTY or agent child can still
+// hold a handle on the worktree directory for a moment after the process is
+// gone, and a rename against an open handle fails outright, so the fast path
+// has to hand back to the git-driven teardown rather than give up. Simulated
+// here by blocking the discard root with a file, which is the one failure mode
+// that reproduces identically on every platform.
+func TestDestroyFallsBackToGitWhenTheMoveIsImpossible(t *testing.T) {
+	git := requireGit(t)
+	tmp := t.TempDir()
+	repo := setupOriginClone(t, git, tmp)
+	ws, err := New(Options{Binary: git, ManagedRoot: filepath.Join(tmp, "managed"), RepoResolver: StaticRepoResolver{"proj": repo}})
+	if err != nil {
+		t.Fatalf("new: %v", err)
+	}
+	ctx := context.Background()
+	info, err := ws.Create(ctx, ports.WorkspaceConfig{ProjectID: "proj", SessionID: "sess", Branch: "feature/one"})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	// A plain file where the discard root belongs: MkdirAll cannot create the
+	// directory, so no rename is even attempted.
+	if err := os.WriteFile(ws.discardedRoot(), []byte("not a directory"), 0o600); err != nil {
+		t.Fatalf("block discard root: %v", err)
+	}
+
+	inner := ws.run
+	var calls []string
+	ws.run = func(ctx context.Context, binary string, args ...string) ([]byte, error) {
+		calls = append(calls, strings.Join(args, " "))
+		return inner(ctx, binary, args...)
+	}
+	if err := ws.Destroy(ctx, info); err != nil {
+		t.Fatalf("destroy: %v", err)
+	}
+	if _, err := os.Stat(info.Path); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("worktree path after fallback destroy = %v, want not exist", err)
+	}
+	var sawRemove bool
+	for _, call := range calls {
+		if strings.Contains(call, "worktree remove") {
+			sawRemove = true
+		}
+	}
+	if !sawRemove {
+		t.Fatal("fallback did not reach `git worktree remove`; an impossible move must not silently skip teardown")
+	}
+	records, err := ws.listRecords(ctx, repo)
+	if err != nil {
+		t.Fatalf("list records: %v", err)
+	}
+	if _, ok := findWorktree(records, info.Path); ok {
+		t.Fatal("worktree still registered after fallback destroy")
+	}
+}
