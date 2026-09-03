@@ -175,6 +175,9 @@ vi.mock("../hooks/useAgentReadinessQuery", () => ({
 }));
 
 vi.mock("../components/NotificationCenter", () => ({ NotificationRuntime: () => null }));
+vi.mock("../components/DaemonStartupLoader", () => ({
+	DaemonStartupLoader: () => <div data-testid="daemon-startup-loader" />,
+}));
 vi.mock("../components/CommandPalette", () => ({ CommandPalette: () => null }));
 vi.mock("../components/OrchestratorReplacementDialog", () => ({ OrchestratorReplacementDialog: () => null }));
 vi.mock("../components/ShellTopbar", () => ({ ShellTopbar: () => null }));
@@ -369,8 +372,8 @@ describe("shell workspace startup", () => {
 		);
 
 		const view = await renderShell();
-		expect(shellMocks.state.shellValue?.workspaceStartupState).toBe("loading");
-		expect(screen.getByTestId("sidebar-provider")).toHaveAttribute("data-open", "false");
+		expect(screen.getByTestId("daemon-startup-loader")).toBeInTheDocument();
+		expect(screen.queryByTestId("sidebar-provider")).not.toBeInTheDocument();
 		expect(shellMocks.queryClient.fetchQuery).toHaveBeenCalledWith(expect.objectContaining({ staleTime: 0 }));
 
 		await act(async () => resolveFetch?.(workspaces));
@@ -397,7 +400,7 @@ describe("shell workspace startup", () => {
 		await waitFor(() =>
 			expect(shellMocks.queryClient.fetchQuery).toHaveBeenCalledWith(expect.objectContaining({ staleTime: 0 })),
 		);
-		expect(shellMocks.state.shellValue?.workspaceStartupState).toBe("loading");
+		expect(screen.getByTestId("daemon-startup-loader")).toBeInTheDocument();
 	});
 
 	it("forces a workspace fetch when a daemon returns ready on the same port", async () => {
@@ -405,7 +408,7 @@ describe("shell workspace startup", () => {
 		shellMocks.queryClient.fetchQuery.mockResolvedValue(workspaces);
 
 		const view = await renderShell();
-		expect(shellMocks.state.shellValue?.workspaceStartupState).toBe("loading");
+		expect(screen.getByTestId("daemon-startup-loader")).toBeInTheDocument();
 		expect(shellMocks.queryClient.fetchQuery).not.toHaveBeenCalled();
 
 		shellMocks.state.daemonStatus = { state: "ready", port: 4777 };

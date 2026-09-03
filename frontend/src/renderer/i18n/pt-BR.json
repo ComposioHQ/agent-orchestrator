@@ -5,6 +5,7 @@
 	"activity.idle": "Inativo",
 	"activity.unknown": "Desconhecido",
 	"activity.waiting_input": "Entrada necessária",
+	"home.never": "Nunca",
 	"cloudCredential.agentLabel": "Agente de código",
 	"cloudCredential.cancel": "Cancelar",
 	"cloudCredential.connect": "Conectar",

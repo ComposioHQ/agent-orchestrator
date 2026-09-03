@@ -5,6 +5,7 @@
 	"activity.idle": "유휴",
 	"activity.unknown": "알 수 없음",
 	"activity.waiting_input": "입력 필요",
+	"home.never": "없음",
 	"cloudCredential.agentLabel": "코딩 에이전트",
 	"cloudCredential.cancel": "취소",
 	"cloudCredential.connect": "연결",

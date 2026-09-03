@@ -5,6 +5,7 @@
 	"activity.idle": "空闲",
 	"activity.unknown": "未知",
 	"activity.waiting_input": "需要输入",
+	"home.never": "从未",
 	"cloudCredential.agentLabel": "编码代理",
 	"cloudCredential.cancel": "取消",
 	"cloudCredential.connect": "连接",

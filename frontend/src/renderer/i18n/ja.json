@@ -5,6 +5,7 @@
 	"activity.idle": "アイドル",
 	"activity.unknown": "不明",
 	"activity.waiting_input": "入力が必要",
+	"home.never": "なし",
 	"cloudCredential.agentLabel": "コーディングエージェント",
 	"cloudCredential.cancel": "キャンセル",
 	"cloudCredential.connect": "接続",
