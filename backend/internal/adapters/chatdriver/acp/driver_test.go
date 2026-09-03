@@ -29,6 +29,9 @@ type fakeAgent struct {
 	loadParams          acpsdk.LoadSessionRequest
 	resumeParams        acpsdk.ResumeSessionRequest
 	loadUpdates         []acpsdk.SessionUpdate
+	loadUpdateBatches   [][]acpsdk.SessionUpdate
+	blockLoadCall       int
+	loadStarted         chan struct{}
 	loadCalls           int
 	resumeCalls         int
 	promptParams        acpsdk.PromptRequest
@@ -259,8 +262,21 @@ func (a *fakeAgent) LoadSession(ctx context.Context, params acpsdk.LoadSessionRe
 	a.mu.Lock()
 	a.loadParams = params
 	a.loadCalls++
+	loadCall := a.loadCalls
 	updates := append([]acpsdk.SessionUpdate(nil), a.loadUpdates...)
+	if batch := a.loadCalls - 1; batch < len(a.loadUpdateBatches) {
+		updates = append([]acpsdk.SessionUpdate(nil), a.loadUpdateBatches[batch]...)
+	}
+	block := a.blockLoadCall == loadCall
+	started := a.loadStarted
 	a.mu.Unlock()
+	if block {
+		if started != nil {
+			close(started)
+		}
+		<-ctx.Done()
+		return acpsdk.LoadSessionResponse{}, ctx.Err()
+	}
 	for _, update := range updates {
 		if err := a.conn.SessionUpdate(ctx, acpsdk.SessionNotification{SessionId: params.SessionId, Update: update}); err != nil {
 			return acpsdk.LoadSessionResponse{}, err
@@ -746,9 +762,12 @@ func TestACPDriverReappliesLaunchContextWhenResuming(t *testing.T) {
 	if _, err := conv.(ports.ChatHistoryReader).ReadHistory(context.Background()); !errors.Is(err, ports.ErrChatHistoryUnavailable) {
 		t.Fatalf("ReadHistory error = %v, want ErrChatHistoryUnavailable after session/resume", err)
 	}
+	if _, ok := conv.(ports.ChatHistoryRefresher); ok {
+		t.Fatal("resume-only ACP conversation advertised refreshable history")
+	}
 }
 
-func TestACPDriverClosesReplayTurnsAsRecoveredWithoutBlockingResume(t *testing.T) {
+func TestACPDriverRefreshesHistoryWithAnotherSessionLoad(t *testing.T) {
 	userOneID := "11111111-1111-4111-8111-111111111111"
 	answerOneID := "22222222-2222-4222-8222-222222222222"
 	userTwoID := "33333333-3333-4333-8333-333333333333"
@@ -780,8 +799,10 @@ func TestACPDriverClosesReplayTurnsAsRecoveredWithoutBlockingResume(t *testing.T
 		capabilities: &acpsdk.AgentCapabilities{
 			LoadSession: true,
 		},
-		loadUpdates: []acpsdk.SessionUpdate{
-			userOne, replaySeed, answerOneA, answerOneB, userTwo, answerTwo, pendingTool,
+		loadUpdateBatches: [][]acpsdk.SessionUpdate{
+			{userOne, replaySeed, answerOneA, answerOneB},
+			{userOne, replaySeed, answerOneA, answerOneB, userTwo, answerTwo, pendingTool},
+			{userOne, replaySeed, answerOneA, answerOneB, userTwo, answerTwo, pendingTool},
 		},
 	}
 	driver := New(Config{
@@ -805,8 +826,9 @@ func TestACPDriverClosesReplayTurnsAsRecoveredWithoutBlockingResume(t *testing.T
 		t.Fatalf("Resume: %v", err)
 	}
 	defer conv.Close()
-	if _, ok := conv.(ports.ChatHistoryRefresher); ok {
-		t.Fatal("ACP session/load replay is a frozen snapshot, not refreshable history")
+	refresher, ok := conv.(ports.ChatHistoryRefresher)
+	if !ok {
+		t.Fatal("load-capable ACP conversation does not advertise refreshable history")
 	}
 
 	agent.mu.Lock()
@@ -822,9 +844,56 @@ func TestACPDriverClosesReplayTurnsAsRecoveredWithoutBlockingResume(t *testing.T
 		t.Fatalf("session/load metadata = %#v, want recomputed system prompt", loadMeta)
 	}
 
-	history, err := conv.(ports.ChatHistoryReader).ReadHistory(context.Background())
+	initial, err := conv.(ports.ChatHistoryReader).ReadHistory(context.Background())
 	if err != nil {
 		t.Fatalf("ReadHistory: %v", err)
+	}
+	initialTurns := 0
+	for _, event := range initial {
+		if event.Kind == ports.ChatEventTurnCompleted {
+			initialTurns++
+		}
+	}
+	if initialTurns != 1 {
+		t.Fatalf("initial completed turns = %d, want only the first replayed turn", initialTurns)
+	}
+	history, err := refresher.RefreshHistory(context.Background())
+	if err != nil {
+		t.Fatalf("RefreshHistory: %v", err)
+	}
+	agent.mu.Lock()
+	loadCalls = agent.loadCalls
+	agent.mu.Unlock()
+	if loadCalls != 2 {
+		t.Fatalf("session/load calls = %d, want a fresh provider observation", loadCalls)
+	}
+	if len(history) <= len(initial) {
+		t.Fatalf("refreshed history has %d events, want more than initial snapshot's %d", len(history), len(initial))
+	}
+	for i := range initial {
+		if initial[i].ProviderEventID != history[i].ProviderEventID {
+			t.Fatalf("event %d identity changed across replay: %q != %q",
+				i, initial[i].ProviderEventID, history[i].ProviderEventID)
+		}
+	}
+	identical, err := refresher.RefreshHistory(context.Background())
+	if err != nil {
+		t.Fatalf("RefreshHistory identical replay: %v", err)
+	}
+	agent.mu.Lock()
+	loadCalls = agent.loadCalls
+	agent.mu.Unlock()
+	if loadCalls != 3 {
+		t.Fatalf("session/load calls = %d after identical refresh, want another provider observation", loadCalls)
+	}
+	if len(identical) != len(history) {
+		t.Fatalf("identical replay has %d events, want %d", len(identical), len(history))
+	}
+	for i := range history {
+		if history[i].ProviderEventID != identical[i].ProviderEventID {
+			t.Fatalf("identical replay event %d changed identity: %q != %q",
+				i, history[i].ProviderEventID, identical[i].ProviderEventID)
+		}
 	}
 	var states []domain.TurnState
 	var recoveredActivity bool
@@ -866,6 +935,47 @@ func TestACPDriverClosesReplayTurnsAsRecoveredWithoutBlockingResume(t *testing.T
 	case event := <-conv.Events():
 		t.Fatalf("history leaked onto the live event stream: %#v", event)
 	case <-time.After(30 * time.Millisecond):
+	}
+}
+
+func TestACPDriverHistoryRefreshHonorsCancellation(t *testing.T) {
+	userID := "11111111-1111-4111-8111-111111111111"
+	user := acpsdk.UpdateUserMessageText("Inspect the repository")
+	user.UserMessageChunk.MessageId = &userID
+	refreshStarted := make(chan struct{})
+	agent := &fakeAgent{
+		capabilities:  &acpsdk.AgentCapabilities{LoadSession: true},
+		loadUpdates:   []acpsdk.SessionUpdate{user},
+		blockLoadCall: 2,
+		loadStarted:   refreshStarted,
+	}
+	driver := New(Config{
+		Harness:      domain.HarnessClaudeCode,
+		Capabilities: ports.ChatCapabilities{ports.ChatCapabilityStreaming: true},
+		Probe:        func(context.Context) error { return nil },
+		Launch:       func(context.Context, LaunchConfig) (Launch, error) { return Launch{Command: "fake"}, nil },
+	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	driver.spawn = fakeSpawn(agent)
+
+	conv, err := driver.Resume(context.Background(), ports.ChatResumeConfig{
+		ProviderConversationID: "provider-session-1",
+		WorkspacePath:          t.TempDir(),
+	})
+	if err != nil {
+		t.Fatalf("Resume: %v", err)
+	}
+	defer conv.Close()
+	refresher := conv.(ports.ChatHistoryRefresher)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		_, refreshErr := refresher.RefreshHistory(ctx)
+		done <- refreshErr
+	}()
+	<-refreshStarted
+	cancel()
+	if err := <-done; !errors.Is(err, context.Canceled) {
+		t.Fatalf("RefreshHistory error = %v, want context cancellation", err)
 	}
 }
 
@@ -1935,6 +2045,30 @@ func selectConfigOption(id, name, category, current string, values ...string) ac
 		Options:      acpsdk.SessionConfigSelectOptions{Ungrouped: &choices},
 		Type:         "select",
 	}}
+}
+
+func TestDiscoverConfigOptionsReadsSessionCatalogWithoutPrompt(t *testing.T) {
+	agent := &fakeAgent{newConfig: []acpsdk.SessionConfigOption{
+		selectConfigOption("model", "Model", "model", "sonnet", "sonnet", "opus"),
+	}}
+	driver := New(Config{
+		Harness: domain.HarnessCline,
+		Launch: func(context.Context, LaunchConfig) (Launch, error) {
+			return Launch{Command: "cline", Args: []string{"--acp"}}, nil
+		},
+	}, slog.New(slog.DiscardHandler))
+	driver.spawn = fakeSpawn(agent)
+
+	got, err := driver.discoverConfigOptions(context.Background(), t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].Category != "model" || got[0].Current.Select != "sonnet" || len(got[0].Choices) != 2 {
+		t.Fatalf("options = %#v", got)
+	}
+	if agent.promptParams.Prompt != nil {
+		t.Fatalf("discovery sent a prompt: %#v", agent.promptParams)
+	}
 }
 
 func booleanConfigOption(id, name string, current bool) acpsdk.SessionConfigOption {

@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { PanelRight, Plus } from "lucide-react";
+import { LoaderCircle, PanelRight, Plus } from "lucide-react";
 import { motion, useReducedMotion } from "motion/react";
 import {
 	useCallback,
@@ -25,7 +25,7 @@ import {
 import { NotificationCenter } from "./NotificationCenter";
 import { ResizeHandle } from "./ResizeHandle";
 import { SessionFileExplorer } from "./SessionFileExplorer";
-import { SessionFileTab, SessionFileTabActions } from "./SessionFileTabs";
+import { SessionFileTab } from "./SessionFileTabs";
 import { SessionFileWorkspace } from "./SessionFileWorkspace";
 import { SessionActionsMenu } from "./SessionActionsMenu";
 import { SessionInspector } from "./SessionInspector";
@@ -41,7 +41,11 @@ import { SessionTopbarHost } from "./SessionTopbarPortal";
 import { TerminalSwitchAgentButton } from "./TerminalSwitchAgentButton";
 import { TopbarButton } from "./TopbarButton";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
+import { Button } from "./ui/button";
 import { useBrowserView } from "../hooks/useBrowserView";
+import { useCodexAccountActions } from "../hooks/useCodexAccountActions";
+import { useCodexAccountsQuery } from "../hooks/useCodexAccountsQuery";
+import { codexSwitchDisplay } from "../hooks/codex-accounts-state";
 import { useFileAnnotation } from "../hooks/useFileAnnotation";
 import { useResizable } from "../hooks/useResizable";
 import {
@@ -55,6 +59,7 @@ import {
 	interfaceTransitionIsActive,
 	useSessionInterfaceTransition,
 } from "../hooks/useSessionInterfaceTransition";
+import { useAgentSwitchRouteVisibility } from "../hooks/useAgentSwitchVisibility";
 import { useWorkspaceSession } from "../hooks/useWorkspaceQuery";
 import { useSessionHandoffMenu } from "../hooks/useSessionHandoffMenu";
 import { clearSwitchAgentState } from "../hooks/useSwitchAgent";
@@ -65,7 +70,6 @@ import { matchWorkspaceFilePath } from "../lib/workspace-file-path";
 import { SHELL_PANEL_SPRING } from "../lib/motion-spring";
 import {
 	activateSessionFile,
-	closeAllSessionFiles,
 	closeSessionFile,
 	EMPTY_SESSION_FILE_TABS,
 	openSessionFile,
@@ -507,6 +511,24 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	useEffect(() => stopTerminalLiveResize, [stopTerminalLiveResize]);
 
 	const session = workspaceQuery.data;
+	const routeVisibilityOperation =
+		session?.activeAgentSwitch &&
+		session.activeAgentSwitch.state !== "completed" &&
+		session.activeAgentSwitch.state !== "failed"
+			? "active"
+			: "history";
+	useAgentSwitchRouteVisibility(`session/${sessionId}`, routeVisibilityOperation);
+	const codexAccounts = useCodexAccountsQuery(session?.provider === "codex");
+	const codexAccountActions = useCodexAccountActions(queryClient);
+	const codexAccountSwitch = codexAccounts.data?.currentSwitch;
+	const codexAccountSwitchPresentation = codexAccountSwitch ? codexSwitchDisplay(codexAccountSwitch) : null;
+	const codexAccountSwitchBlocksSession = Boolean(
+		session?.provider === "codex" &&
+			codexAccountSwitch &&
+			!["completed", "failed"].includes(codexAccountSwitch.phase) &&
+			(codexAccountSwitch.sessions.length === 0 ||
+				codexAccountSwitch.sessions.some((entry) => entry.sessionId === session.id)),
+	);
 	const interfaceSwitch = useSessionInterfaceTransition(session?.id);
 	const reviewerQuery = useQuery({
 		queryKey: ["session-reviews", sessionId],
@@ -744,20 +766,6 @@ export function SessionView({ sessionId }: SessionViewProps) {
 		}
 		removeAuxiliaryTab(`file:${path}`);
 	}, [activateAuxiliaryTab, adjacentAuxiliaryTab, fileTabs.activePath, removeAuxiliaryTab, sessionId]);
-	const closeAllCenterFiles = useCallback(() => {
-		setFileTabsBySession((current) => ({ ...current, [sessionId]: closeAllSessionFiles() }));
-		setAuxiliaryTabOrderBySession((current) => {
-			const currentOrder = current[sessionId];
-			if (!currentOrder?.some((key) => key.startsWith("file:"))) return current;
-			const nextOrder = currentOrder.filter((key) => !key.startsWith("file:"));
-			if (nextOrder.length === 0) {
-				const { [sessionId]: _removed, ...rest } = current;
-				return rest;
-			}
-			return { ...current, [sessionId]: nextOrder };
-		});
-	}, [sessionId]);
-
 	// The shell layout owns opening (it is mounted on every route, so the button
 	// and ⌘T / Ctrl+T work everywhere); this view only follows the result. When a new
 	// shell becomes active while a session is on screen, switch the pane to it —
@@ -1029,9 +1037,6 @@ export function SessionView({ sessionId }: SessionViewProps) {
 			})),
 		[activateCenterFile, closeCenterFile, fileAnnotation, fileTabs.activePath, fileTabs.openPaths],
 	);
-	const centerFileTabActions = fileTabs.openPaths.length > 0 ? (
-		<SessionFileTabActions onCloseAll={closeAllCenterFiles} />
-	) : undefined;
 	const activeWorkspaceTabKey = fileTabs.activePath ? `file:${fileTabs.activePath}` : undefined;
 	const previewUrl = session?.previewUrl?.trim() || undefined;
 	const previewRevision = session?.previewRevision;
@@ -1479,6 +1484,37 @@ export function SessionView({ sessionId }: SessionViewProps) {
 
 	return (
 		<div className="relative flex h-full min-h-0 flex-col bg-background text-foreground" data-testid="session-detail">
+			{codexAccountSwitchBlocksSession ? (
+				<div
+					className="absolute inset-0 z-50 grid place-items-center bg-background/80 p-6 backdrop-blur-sm"
+					data-testid="codex-account-switch-blocker"
+				>
+					<div className="flex max-w-sm flex-col items-center gap-3 rounded-xl border border-border bg-card px-6 py-5 text-center shadow-lg">
+						<div aria-live="assertive" className="flex flex-col items-center gap-3" role="status">
+							{codexAccountSwitchPresentation?.busy ? <LoaderCircle className="size-5 animate-spin text-passive" aria-label={t(codexAccountSwitchPresentation.key)} /> : null}
+							<p className="text-sm font-medium">
+								{codexAccountSwitchPresentation?.canRecover
+									? t(codexAccountSwitchPresentation.key)
+									: t("settings.codexAccounts.switchingSessions")}
+							</p>
+							{codexAccountSwitchPresentation && !codexAccountSwitchPresentation.canRecover ? <p className="text-xs text-passive">{t(codexAccountSwitchPresentation.key)}</p> : null}
+						</div>
+						{codexAccountSwitchPresentation?.canRecover && codexAccountSwitch ? (
+							<Button
+								type="button"
+								size="sm"
+								variant="outline"
+								disabled={codexAccountActions.recoverPending}
+								onClick={() => void codexAccountActions.recoverSwitch(codexAccountSwitch.id)}
+							>
+								{codexAccountActions.recoverPending ? <LoaderCircle className="animate-spin" aria-label={t("settings.codexAccounts.recovering")} /> : null}
+								{t("settings.codexAccounts.retryRecovery")}
+							</Button>
+						) : null}
+						{codexAccountActions.error ? <p className="text-xs text-error" role="alert">{codexAccountActions.error}</p> : null}
+					</div>
+				</div>
+			) : null}
 			<div
 				className="session-split relative flex min-h-0 flex-1 overflow-hidden"
 				data-testid="panel-group"
@@ -1546,8 +1582,8 @@ export function SessionView({ sessionId }: SessionViewProps) {
 									tabStripAction={newShellTerminalAction}
 									handoffDialogOpen={handoffDialogOpen}
 									workspaceTabs={centerFileTabs}
-									workspaceTabActions={centerFileTabActions}
 									workspaceActiveTabKey={activeWorkspaceTabKey}
+									workspaceFileActive={Boolean(fileTabs.activePath)}
 									auxiliaryTabOrder={resolvedAuxiliaryTabOrder}
 									onAuxiliaryTabOrderChange={setAuxiliaryTabOrder}
 									controllerTransitioning={chatControllerTransitioning}
@@ -1582,8 +1618,8 @@ export function SessionView({ sessionId }: SessionViewProps) {
 									tabStripAction={newShellTerminalAction}
 									handoffDialogOpen={handoffDialogOpen}
 									workspaceTabs={centerFileTabs}
-									workspaceTabActions={centerFileTabActions}
 									workspaceActiveTabKey={activeWorkspaceTabKey}
+									workspaceFileActive={Boolean(fileTabs.activePath)}
 									auxiliaryTabOrder={resolvedAuxiliaryTabOrder}
 									onAuxiliaryTabOrderChange={setAuxiliaryTabOrder}
 								/>

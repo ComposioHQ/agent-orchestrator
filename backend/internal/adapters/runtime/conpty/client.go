@@ -27,11 +27,6 @@ const (
 	isAliveTimeout   = 2 * time.Second
 )
 
-// dialHost opens a TCP connection to addr with a deadline. Callers close it.
-func dialHost(addr string, timeout time.Duration) (net.Conn, error) {
-	return net.DialTimeout("tcp", addr, timeout)
-}
-
 func dialHostContext(ctx context.Context, addr string, timeout time.Duration) (net.Conn, error) {
 	dialer := net.Dialer{Timeout: timeout}
 	return dialer.DialContext(ctx, "tcp", addr)

@@ -82,9 +82,10 @@ func NewWithDeps(cfg config.Config, log *slog.Logger, termMgr *terminal.Manager,
 	}
 	srv.http = &http.Server{
 		Handler: NewRouterWithControl(cfg, log, termMgr, deps, ControlDeps{
-			RequestShutdown: srv.requestShutdown,
-			IsReady:         srv.ready.Load,
-			StartupFailed:   srv.startupFailed.Load,
+			RequestShutdown:   srv.requestShutdown,
+			IsReady:           srv.ready.Load,
+			StartupFailed:     srv.startupFailed.Load,
+			AgentSwitchPolicy: deps.AgentSwitchPolicy,
 		}),
 		// ReadHeaderTimeout guards against slow-loris even on loopback;
 		// per-request body/handler timeouts are applied per-surface.

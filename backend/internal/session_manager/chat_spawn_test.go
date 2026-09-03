@@ -77,12 +77,14 @@ type recordingLauncher struct {
 	turns                []string
 	// relayed is what arrived through Manager.Send rather than as an initial
 	// prompt, kept separate so a test can tell the two apart.
-	relayed  []string
-	relayIDs []string
-	stopped  []domain.SessionID
-	armed    []domain.SessionID
-	prepared []domain.SessionID
-	aborted  []domain.SessionID
+	relayed       []string
+	relayIDs      []string
+	stopped       []domain.SessionID
+	armed         []domain.SessionID
+	armPolicy     []domain.SessionInterfaceTransitionPolicy
+	prepared      []domain.SessionID
+	preparePolicy []domain.SessionInterfaceTransitionPolicy
+	aborted       []domain.SessionID
 }
 
 type historicalChatRestoreStore struct {
@@ -228,13 +230,15 @@ func (l *recordingLauncher) HasLiveChatController(domain.SessionID) bool {
 	return l.live
 }
 
-func (l *recordingLauncher) ArmChatHandoff(_ context.Context, id domain.SessionID, _ domain.SessionInterfaceTransitionPolicy) error {
+func (l *recordingLauncher) ArmChatHandoff(_ context.Context, id domain.SessionID, policy domain.SessionInterfaceTransitionPolicy) error {
 	l.armed = append(l.armed, id)
+	l.armPolicy = append(l.armPolicy, policy)
 	return nil
 }
 
-func (l *recordingLauncher) PrepareChatHandoff(_ context.Context, id domain.SessionID, _ domain.SessionInterfaceTransitionPolicy) error {
+func (l *recordingLauncher) PrepareChatHandoff(_ context.Context, id domain.SessionID, policy domain.SessionInterfaceTransitionPolicy) error {
 	l.prepared = append(l.prepared, id)
+	l.preparePolicy = append(l.preparePolicy, policy)
 	return nil
 }
 

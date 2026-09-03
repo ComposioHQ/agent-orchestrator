@@ -36,6 +36,7 @@ import { captureOrchestratorReplacementFailure } from "../lib/orchestrator-repla
 import { applyDocumentTheme, applyDocumentThemeStyle } from "../lib/theme";
 import { aoBridge } from "../lib/bridge";
 import { handleModifierLinkClick } from "../lib/external-link-policy";
+import { recordProjectOpened } from "../lib/project-history";
 import { cn } from "../lib/utils";
 import { adaptiveSidebarShouldCompact } from "../lib/adaptive-sidebar";
 import {
@@ -58,7 +59,7 @@ export const Route = createFileRoute("/_shell")({
 	loader: async ({ context }) => {
 		await refreshDaemonStatus().catch(() => undefined);
 		if (!usesPreviewWorkspaceData && !hasTrustedApiBaseUrl()) return;
-		return context.queryClient.ensureQueryData(workspaceQueryOptions);
+		return context.queryClient.fetchQuery({ ...workspaceQueryOptions, staleTime: 0 });
 	},
 	component: ShellLayout,
 });
@@ -333,6 +334,10 @@ function ShellLayout() {
 	// The root route is the intentionally minimal home surface, regardless of
 	// whether projects have already been registered.
 	const isHomeRoute = Boolean(matchRoute({ to: "/" }));
+	useEffect(() => {
+		if (routeParams.projectId) recordProjectOpened(routeParams.projectId);
+	}, [routeParams.projectId]);
+	const isTerminalsRoute = Boolean(matchRoute({ to: "/terminals" }));
 	const isSettingsRoute =
 		Boolean(matchRoute({ to: "/settings", fuzzy: true })) ||
 		Boolean(matchRoute({ to: "/projects/$projectId/settings", fuzzy: true }));
@@ -353,7 +358,7 @@ function ShellLayout() {
 	const isStartupLoading =
 		!usesPreviewWorkspaceData &&
 		!daemonStatus.code &&
-		(daemonStatus.state !== "ready" || workspaceStartupState === "loading");
+		(daemonStatus.state !== "ready" || workspaceStartupState === "loading" || (!workspaceQuery.isSuccess && !workspaceQuery.isError));
 	const navigateSession = useCallback(
 		(direction: -1 | 1) => {
 			if (!scopedProjectId) return;
@@ -734,32 +739,45 @@ function ShellLayout() {
 	// New standalone terminal (⌘T / Ctrl+T), also detected in the main process so it
 	// fires from inside a terminal pane. It raises the same store signal as the
 	// tab-strip + button so the two cannot drift apart.
-	useEffect(() => aoBridge.app.onNewShellTerminalShortcut(() => requestNewShellTerminal()), [requestNewShellTerminal]);
+	useEffect(
+		() =>
+			aoBridge.app.onNewShellTerminalShortcut(() => {
+				// The project board is not a terminal surface — ⌘T here used to yank
+				// users into the standalone /terminals route (#4772). Sessions and the
+				// dedicated terminals view keep the shortcut; explicit UI can still
+				// open shells from the board.
+				if (routeParams.sessionId || isTerminalsRoute) {
+					requestNewShellTerminal();
+				}
+			}),
+		[isTerminalsRoute, requestNewShellTerminal, routeParams.sessionId],
+	);
 
 	// The shell layout is the single consumer of that signal, because it is the
 	// only component mounted on EVERY route. Owning it here is what lets the
-	// button and the keyboard shortcut work from the board, a project page, or a session alike
-	// — when the session view owned it, both silently did nothing outside a
-	// session, since nothing was listening.
+	// topbar + button and the keyboard shortcut work from a session or the
+	// standalone terminals view alike — when the session view owned it, both
+	// silently did nothing outside a session, since nothing was listening.
 	//
 	// Where the new shell becomes visible depends on where the user is: inside a
-	// session it joins that pane's tab strip, anywhere else it gets the
-	// standalone /terminals view. Either way the store records it as active, and
-	// whichever view is on screen selects it.
+	// session it joins that pane's tab strip; on /terminals it joins that strip;
+	// explicit board UI can still route here without the keyboard shortcut.
 	useEffect(() => {
 		if (handledShellNonceRef.current === newShellTerminalNonce) return;
 		handledShellNonceRef.current = newShellTerminalNonce;
-		openShellTerminal.mutate(
+		const shell = openShellTerminal.open(
 			{ projectId: scopedProjectId, sessionId: routeParams.sessionId },
 			{
-				onSuccess: (shell) => {
-					setActiveShellTerminal(shell.handleId);
-					if (!routeParams.sessionId) {
-						void navigate({ to: "/terminals" });
-					}
+				onSuccess: (openedShell) => {
+					setActiveShellTerminal(openedShell.handleId);
 				},
 			},
 		);
+		if (!shell) return;
+		setActiveShellTerminal(shell.handleId);
+		if (!routeParams.sessionId) {
+			void navigate({ to: "/terminals" });
+		}
 	}, [
 		newShellTerminalNonce,
 		openShellTerminal,
@@ -811,6 +829,12 @@ function ShellLayout() {
 			workspaceStartupState,
 		],
 	);
+
+	// Keep the shell chrome and its first route behind the same readiness gate.
+	// Rendering the sidebar with an empty query while the home outlet shows its
+	// loader creates a visible two-stage launch and can make the home page flash
+	// before the project list arrives.
+	if (isStartupLoading) return <DaemonStartupLoader />;
 
 	return (
 		<ShellProvider

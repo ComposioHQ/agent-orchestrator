@@ -47,6 +47,17 @@ type Entry struct {
 // pidalive_windows.go).
 var pidAlive = defaultPidAlive
 
+// rewriteRegistry is the prune-write seam. Tests replace it to prove a write
+// or permission failure cannot be reported as a complete empty scan.
+var rewriteRegistry = writeRaw
+
+// ErrRegistryMalformed indicates that the durable ConPTY registry cannot be parsed safely.
+var ErrRegistryMalformed = errors.New("conpty pty registry malformed")
+
+// UnresolvedPipePath marks a durable launch reservation or a child that
+// started without reporting a READY address. It is deliberately not dialable.
+const UnresolvedPipePath = "ao-conpty://startup-unresolved"
+
 // overrideDir, when set, is the directory the registry file lives in for
 // this daemon instance, taking precedence over the ~/.ao default. Set once by
 // SetRunFilePath at daemon startup, before any session activity begins, so
@@ -97,57 +108,68 @@ func registryFile(ctx context.Context) (string, error) {
 	return filepath.Join(home, ".ao", "windows-pty-hosts.json"), nil
 }
 
-// readRaw reads and validates the registry. A missing file conclusively means
-// there are no registered hosts. Every other read or decode failure is
-// preserved: treating an unreadable registry as empty can make recovery launch
-// a second workload while the original detached host is still alive.
-func readRaw(ctx context.Context) ([]Entry, error) {
+// readRaw reads and strictly parses the registry. A missing file is a complete
+// empty snapshot; read and parse failures are incomplete evidence and must
+// never be collapsed into absence.
+func readRaw(ctx context.Context) ([]Entry, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, false, err
+	}
 	path, err := registryFile(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("resolve pty-host registry: %w", err)
+		return nil, false, fmt.Errorf("resolve pty-host registry: %w", err)
 	}
 	data, err := os.ReadFile(path)
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return nil, false, ctxErr
+	}
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return nil, nil
+			return nil, true, nil
 		}
-		return nil, fmt.Errorf("read pty-host registry %q: %w", path, err)
-	}
-	if err := ctx.Err(); err != nil {
-		return nil, err
+		return nil, false, fmt.Errorf("read pty-host registry %q: %w", path, err)
 	}
 	var parsed []json.RawMessage
 	if err := json.Unmarshal(data, &parsed); err != nil {
-		return nil, fmt.Errorf("decode pty-host registry %q: %w", path, err)
+		return nil, false, fmt.Errorf("decode pty-host registry %q: %w: %w", path, ErrRegistryMalformed, err)
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, false, err
 	}
 	if parsed == nil && strings.TrimSpace(string(data)) != "[]" {
-		return nil, fmt.Errorf("decode pty-host registry %q: expected a JSON array", path)
+		return nil, false, fmt.Errorf("decode pty-host registry %q: %w: expected a JSON array", path, ErrRegistryMalformed)
 	}
 	out := make([]Entry, 0, len(parsed))
 	seen := make(map[string]struct{}, len(parsed))
 	for i, raw := range parsed {
+		if err := ctx.Err(); err != nil {
+			return out, false, err
+		}
 		var e Entry
 		if err := json.Unmarshal(raw, &e); err != nil {
-			return nil, fmt.Errorf("decode pty-host registry %q entry %d: %w", path, i, err)
+			return out, false, fmt.Errorf("decode pty-host registry %q entry %d: %w: %w", path, i, ErrRegistryMalformed, err)
 		}
 		if err := validateEntry(e); err != nil {
-			return nil, fmt.Errorf("decode pty-host registry %q entry %d: %w", path, i, err)
+			return out, false, fmt.Errorf("decode pty-host registry %q entry %d: %w: %w", path, i, ErrRegistryMalformed, err)
 		}
 		if _, duplicate := seen[e.SessionID]; duplicate {
-			return nil, fmt.Errorf("decode pty-host registry %q entry %d: duplicate session id %q", path, i, e.SessionID)
+			return out, false, fmt.Errorf("decode pty-host registry %q entry %d: %w: duplicate session id %q", path, i, ErrRegistryMalformed, e.SessionID)
 		}
 		seen[e.SessionID] = struct{}{}
 		out = append(out, e)
 	}
-	return out, nil
+	return out, true, nil
 }
 
 func validateEntry(entry Entry) error {
 	if strings.TrimSpace(entry.SessionID) == "" {
 		return errors.New("session id is required")
 	}
+	if entry.PtyHostPID == 0 && entry.PipePath == UnresolvedPipePath {
+		return nil
+	}
 	if entry.PtyHostPID <= 0 {
-		return errors.New("pty-host pid must be positive")
+		return errors.New("pty-host pid must be positive unless this is an unresolved launch reservation")
 	}
 	if strings.TrimSpace(entry.PipePath) == "" {
 		return errors.New("pty-host address is required")
@@ -160,6 +182,9 @@ func validateEntry(entry Entry) error {
 func writeRaw(ctx context.Context, entries []Entry) error {
 	path, err := registryFile(ctx)
 	if err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
 		return err
 	}
 
@@ -175,9 +200,15 @@ func writeRaw(ctx context.Context, entries []Entry) error {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 
 	data, err := json.MarshalIndent(entries, "", "  ")
 	if err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
 		return err
 	}
 
@@ -191,6 +222,10 @@ func writeRaw(ctx context.Context, entries []Entry) error {
 		// Best-effort cleanup of temp file on failure.
 		_ = os.Remove(tmpName)
 	}()
+	if err := ctx.Err(); err != nil {
+		_ = tmp.Close()
+		return err
+	}
 
 	if _, err := tmp.Write(data); err != nil {
 		_ = tmp.Close()
@@ -212,6 +247,9 @@ func writeRaw(ctx context.Context, entries []Entry) error {
 // Register adds or replaces the entry for entry.SessionID. registeredAt must
 // be set by the caller (e.g. time.Now().UTC().Format(time.RFC3339)).
 func Register(ctx context.Context, entry Entry) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	registryMu.Lock()
 	defer registryMu.Unlock()
 	if err := ctx.Err(); err != nil {
@@ -220,12 +258,15 @@ func Register(ctx context.Context, entry Entry) error {
 	if err := validateEntry(entry); err != nil {
 		return fmt.Errorf("register pty-host: %w", err)
 	}
-	all, err := readRaw(ctx)
-	if err != nil {
-		return err
+	all, complete, err := scanLocked(ctx)
+	if err != nil || !complete {
+		return errors.Join(err, errors.New("conpty pty registry scan incomplete"))
 	}
 	next := make([]Entry, 0)
 	for _, e := range all {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if e.SessionID != entry.SessionID {
 			next = append(next, e)
 		}
@@ -239,6 +280,9 @@ func Register(ctx context.Context, entry Entry) error {
 // owner can never be silently overwritten; fixtures and explicit migrations
 // may continue to use Register's replace semantics.
 func RegisterIfAbsent(ctx context.Context, entry Entry) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	registryMu.Lock()
 	defer registryMu.Unlock()
 	if err := ctx.Err(); err != nil {
@@ -247,9 +291,9 @@ func RegisterIfAbsent(ctx context.Context, entry Entry) error {
 	if err := validateEntry(entry); err != nil {
 		return fmt.Errorf("register pty-host: %w", err)
 	}
-	all, err := readRaw(ctx)
-	if err != nil {
-		return err
+	all, complete, err := scanLocked(ctx)
+	if err != nil || !complete {
+		return errors.Join(err, errors.New("conpty pty registry scan incomplete"))
 	}
 	for _, existing := range all {
 		if existing.SessionID == entry.SessionID {
@@ -261,17 +305,23 @@ func RegisterIfAbsent(ctx context.Context, entry Entry) error {
 
 // Unregister removes the entry for sessionID. No-op if absent.
 func Unregister(ctx context.Context, sessionID string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	registryMu.Lock()
 	defer registryMu.Unlock()
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	all, err := readRaw(ctx)
-	if err != nil {
-		return err
+	all, complete, err := scanLocked(ctx)
+	if err != nil || !complete {
+		return errors.Join(err, errors.New("conpty pty registry scan incomplete"))
 	}
 	next := make([]Entry, 0, len(all))
 	for _, e := range all {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if e.SessionID != sessionID {
 			next = append(next, e)
 		}
@@ -286,6 +336,9 @@ func Unregister(ctx context.Context, sessionID string) error {
 // the caller. It is idempotent when the session is absent and fails with
 // ErrEntryChanged when a later generation now owns the same session id.
 func UnregisterExact(ctx context.Context, entry Entry) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	registryMu.Lock()
 	defer registryMu.Unlock()
 	if err := ctx.Err(); err != nil {
@@ -294,9 +347,9 @@ func UnregisterExact(ctx context.Context, entry Entry) error {
 	if err := validateEntry(entry); err != nil {
 		return fmt.Errorf("unregister exact pty-host: %w", err)
 	}
-	all, err := readRaw(ctx)
-	if err != nil {
-		return err
+	all, complete, err := scanLocked(ctx)
+	if err != nil || !complete {
+		return errors.Join(err, errors.New("conpty pty registry scan incomplete"))
 	}
 	next := make([]Entry, 0, len(all))
 	found := false
@@ -316,21 +369,68 @@ func UnregisterExact(ctx context.Context, entry Entry) error {
 	return writeRaw(ctx, next)
 }
 
-// List returns every durable entry. PID liveness is deliberately not used to
-// prune here: a reused PID is not proof that the registered host is alive, and
-// registry cleanup is safe only after the runtime has authenticated the exact
-// host identity (or proved the recorded PID is gone).
-func List(ctx context.Context) ([]Entry, error) {
+// Scan returns the live registry entries and whether the scan is complete.
+// Dead entries are pruned only after a complete read and parse. Any read,
+// parse, or prune-write failure returns incomplete evidence.
+func Scan(ctx context.Context) (entries []Entry, complete bool, err error) {
+	if err := ctx.Err(); err != nil {
+		return nil, false, err
+	}
 	registryMu.Lock()
 	defer registryMu.Unlock()
 	if err := ctx.Err(); err != nil {
-		return nil, err
+		return nil, false, err
 	}
-	return readRaw(ctx)
+	return scanLocked(ctx)
+}
+
+func scanLocked(ctx context.Context) (entries []Entry, complete bool, err error) {
+	all, complete, err := readRaw(ctx)
+	if err != nil || !complete {
+		return all, false, err
+	}
+	live := make([]Entry, 0, len(all))
+	for _, e := range all {
+		if err := ctx.Err(); err != nil {
+			return live, false, err
+		}
+		if e.PtyHostPID == 0 && e.PipePath == UnresolvedPipePath {
+			// A prelaunch reservation has no PID to probe. Retain it until an
+			// exact owner replaces or explicitly unregisters the reservation.
+			live = append(live, e)
+		} else if pidAlive(e.PtyHostPID) {
+			live = append(live, e)
+		}
+		if err := ctx.Err(); err != nil {
+			return live, false, err
+		}
+	}
+	if len(live) != len(all) {
+		if err := ctx.Err(); err != nil {
+			return live, false, err
+		}
+		if err := rewriteRegistry(ctx, live); err != nil {
+			return live, false, err
+		}
+		if err := ctx.Err(); err != nil {
+			return live, false, err
+		}
+	}
+	return live, true, nil
+}
+
+// List preserves the ordinary registry consumer API while surfacing every
+// incomplete scan as an error.
+func List(ctx context.Context) ([]Entry, error) {
+	entries, _, err := Scan(ctx)
+	return entries, err
 }
 
 // Clear deletes the registry file. Best-effort; used by tests and recovery.
 func Clear(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	registryMu.Lock()
 	defer registryMu.Unlock()
 	if err := ctx.Err(); err != nil {

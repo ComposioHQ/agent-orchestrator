@@ -21,9 +21,9 @@ var _ ports.Attacher = (*Runtime)(nil)
 // pty-host. rows/cols size the host's PTY from birth when known (a MsgResize is
 // sent right after connect). ctx cancellation closes the Stream.
 func (r *Runtime) Attach(ctx context.Context, handle ports.RuntimeHandle, rows, cols uint16) (ports.Stream, error) {
-	sess, err := r.resolve(ctx, handle.ID)
+	sess, err := r.resolveWithEvidence(ctx, handle.ID)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("conpty: resolve session %q for attach: %w", handle.ID, err)
 	}
 	if sess == nil {
 		return nil, fmt.Errorf("conpty: session %q not found", handle.ID)
@@ -62,6 +62,14 @@ func (r *Runtime) Attach(ctx context.Context, handle ports.RuntimeHandle, rows, 
 			return nil, err
 		}
 	}
+	// A detached host deliberately survives its child for scrollback. Ask for
+	// the child status on every attach so a pane opened after process exit gets
+	// the same definitive exit signal as a pane that observed the live event.
+	statusFrame, _ := EncodeMessage(MsgStatusReq, nil)
+	if _, err := s.conn.Write(statusFrame); err != nil {
+		_ = s.Close()
+		return nil, err
+	}
 	return s, nil
 }
 
@@ -93,10 +101,17 @@ func (s *loopbackStream) pump() {
 			return
 		}
 	}
+	processExited := false
 	parser := NewMessageParser(func(msgType byte, payload []byte) {
-		if msgType == MsgTerminalData {
+		switch msgType {
+		case MsgTerminalData:
 			// Write blocks until Read drains, preserving back-pressure and order.
 			_, _ = s.pw.Write(payload)
+		case MsgStatusRes:
+			var status StatusPayload
+			if json.Unmarshal(payload, &status) == nil && !status.Alive {
+				processExited = true
+			}
 		}
 	})
 	if len(s.pending) > 0 {
@@ -107,6 +122,11 @@ func (s *loopbackStream) pump() {
 		n, err := s.conn.Read(buf)
 		if n > 0 {
 			parser.Feed(buf[:n])
+			if processExited {
+				_ = s.conn.Close()
+				_ = s.pw.CloseWithError(ports.ErrRuntimeProcessExited)
+				return
+			}
 		}
 		if err != nil {
 			_ = s.pw.CloseWithError(err)
