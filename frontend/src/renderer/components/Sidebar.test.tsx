@@ -131,6 +131,47 @@ function readyProjectValidation(
 	};
 }
 
+function chooseImportKindValidation(path: string) {
+	return {
+		importKind: "project",
+		isValid: true,
+		blockingErrors: [] as string[],
+		nextStep: "choose_import_kind" as const,
+		root: {
+			repoPath: path,
+			isRepo: false,
+			hasCommit: false,
+			hasOrigin: false,
+			isEmptyFolder: false,
+			needsGitInit: true,
+			requiredActions: ["git_init", "git_commit", "set_remote"],
+			blockingErrors: [] as string[],
+		},
+		childRepos: [
+			{
+				repoPath: `${path}/api`,
+				isRepo: true,
+				hasCommit: true,
+				hasOrigin: true,
+				isEmptyFolder: false,
+				needsGitInit: false,
+				requiredActions: [] as string[],
+				blockingErrors: [] as string[],
+			},
+			{
+				repoPath: `${path}/web`,
+				isRepo: true,
+				hasCommit: true,
+				hasOrigin: true,
+				isEmptyFolder: false,
+				needsGitInit: false,
+				requiredActions: [] as string[],
+				blockingErrors: [] as string[],
+			},
+		],
+	};
+}
+
 vi.mock("../lib/import-onboarding", async (importOriginal) => {
 	const actual = await importOriginal<typeof import("../lib/import-onboarding")>();
 	return {
@@ -402,7 +443,9 @@ beforeEach(() => {
 		},
 		error: undefined,
 	});
+	validateProjectImportMock.mockReset();
 	validateProjectImportMock.mockImplementation(async (path: string) => readyProjectValidation(path));
+	prepareProjectGitMock.mockReset();
 	prepareProjectGitMock.mockImplementation(async ({ path }: { path: string }) => ({
 		events: [],
 		validation: readyProjectValidation(path, "continue"),
@@ -1117,6 +1160,93 @@ describe("Sidebar", () => {
 		await user.click(await screen.findByRole("button", { name: "Continue" }));
 		expect(await screen.findByText("git init failed")).toBeInTheDocument();
 		expect(onCreateProject).not.toHaveBeenCalled();
+	});
+
+	it("blocks project import when validation returns blocking errors", async () => {
+		const onCreateProject = vi.fn().mockResolvedValue(undefined) as CreateProjectHandler;
+		const onInitializeProject = vi.fn().mockResolvedValue(undefined) as InitializeProjectHandler;
+		renderSidebar({ onCreateProject, onInitializeProject });
+		const user = userEvent.setup();
+		window.ao!.app.chooseDirectory = vi.fn().mockResolvedValue("/repo/bare");
+		validateProjectImportMock.mockResolvedValueOnce({
+			importKind: "project",
+			isValid: false,
+			blockingErrors: ["BARE_REPOSITORY"],
+			nextStep: "error",
+			root: {
+				repoPath: "/repo/bare",
+				isRepo: false,
+				hasCommit: false,
+				hasOrigin: false,
+				isEmptyFolder: false,
+				needsGitInit: false,
+				requiredActions: [],
+				blockingErrors: ["BARE_REPOSITORY"],
+			},
+		});
+		await user.click(screen.getByLabelText("New project"));
+		await user.click(screen.getByRole("button", { name: /^Import an existing project$/i }));
+		expect(await screen.findByText("bare repository")).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Continue" })).toBeDisabled();
+		expect(screen.queryByRole("dialog", { name: "Set up project" })).not.toBeInTheDocument();
+		expect(onCreateProject).not.toHaveBeenCalled();
+		expect(prepareProjectGitMock).not.toHaveBeenCalled();
+	});
+
+	it("offers workspace import when a non-git root has child repositories", async () => {
+		const path = "/repo/parent";
+		const onCreateProject = vi.fn().mockResolvedValue(undefined) as CreateProjectHandler;
+		const onInitializeProject = vi.fn().mockResolvedValue(undefined) as InitializeProjectHandler;
+		renderSidebar({ onCreateProject, onInitializeProject });
+		const user = userEvent.setup();
+		window.ao!.app.chooseDirectory = vi.fn().mockResolvedValue(path);
+		validateProjectImportMock.mockResolvedValueOnce(chooseImportKindValidation(path));
+		await user.click(screen.getByLabelText("New project"));
+		await user.click(screen.getByRole("button", { name: /^Import an existing project$/i }));
+		await user.click(await screen.findByRole("button", { name: "Continue" }));
+		expect(
+			await screen.findByRole("dialog", { name: "Import this folder as a project or workspace?" }),
+		).toBeInTheDocument();
+		expect(screen.getByText(/found 2 child repositories/i)).toBeInTheDocument();
+		await user.click(screen.getByRole("button", { name: /^Try importing as workspace/i }));
+		expect(await screen.findByRole("button", { name: /^Import an existing project$/i })).toBeInTheDocument();
+		expect(await screen.findByRole("button", { name: /^Import a workspace folder$/i })).toBeInTheDocument();
+		expect(
+			screen.queryByRole("dialog", { name: "Import this folder as a project or workspace?" }),
+		).not.toBeInTheDocument();
+		expect(onCreateProject).not.toHaveBeenCalled();
+	});
+
+	it("completes git preparation and opens the agent sheet", async () => {
+		const path = "/repo/new-project";
+		const onCreateProject = vi.fn().mockResolvedValue(undefined) as CreateProjectHandler;
+		const onInitializeProject = vi.fn().mockResolvedValue(undefined) as InitializeProjectHandler;
+		renderSidebar({ onCreateProject, onInitializeProject });
+		const user = userEvent.setup();
+		window.ao!.app.chooseDirectory = vi.fn().mockResolvedValue(path);
+		validateProjectImportMock.mockResolvedValueOnce(readyProjectValidation(path, "prepare_git"));
+		prepareProjectGitMock.mockResolvedValueOnce({
+			events: [
+				{ action: "git_init", repoPath: path, state: "success" },
+				{ action: "git_commit", repoPath: path, state: "success" },
+				{ action: "set_remote", repoPath: path, state: "success" },
+			],
+			validation: readyProjectValidation(path, "continue"),
+		});
+		await user.click(screen.getByLabelText("New project"));
+		await user.click(screen.getByRole("button", { name: /^Import an existing project$/i }));
+		await user.click(await screen.findByRole("button", { name: "Continue" }));
+		await user.type(screen.getByLabelText("Repository URL"), "https://github.com/org/repo.git");
+		await user.click(screen.getByRole("button", { name: "Continue" }));
+		expect(await screen.findByRole("dialog", { name: "Set up project" })).toBeInTheDocument();
+		expect(prepareProjectGitMock).toHaveBeenCalledWith(
+			expect.objectContaining({
+				path,
+				remoteUrl: "https://github.com/org/repo.git",
+				approvedActions: ["git_init", "git_commit", "set_remote"],
+			}),
+		);
+		expect(onInitializeProject).not.toHaveBeenCalled();
 	});
 
 	it("can create a workspace project from the project add flow", async () => {
