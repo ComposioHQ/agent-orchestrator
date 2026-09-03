@@ -152,6 +152,7 @@ export const aoBridge: AoBridge =
 			openTab: async ({ viewId }) => ({ viewId, activeTabId: "", tabs: [] }),
 			getProfile: async (viewId) => ({ viewId, profileId: null, temporary: true }),
 			showProfileMenu: async () => undefined,
+			selectProfile: async () => undefined,
 			notifyPanelUsed: () => undefined,
 			notifyPanelBlur: () => undefined,
 			onFocusLocation: () => () => undefined,
