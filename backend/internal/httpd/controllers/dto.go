@@ -11,6 +11,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/legacyimport"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	agentsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/agent"
+	"github.com/aoagents/agent-orchestrator/backend/internal/service/agentauth"
 	projectsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/project"
 	sessionsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/session"
 	"github.com/aoagents/agent-orchestrator/backend/internal/service/systemcheck"
@@ -37,6 +38,20 @@ type ProjectIDParam struct {
 // AgentIDParam is the {agent} path parameter for one-agent catalog probes.
 type AgentIDParam struct {
 	Agent string `path:"agent" description:"Agent adapter identifier."`
+}
+
+// ListAgentAuthPlansResponse is the display-safe authentication catalog.
+type ListAgentAuthPlansResponse struct {
+	Plans []agentauth.Plan `json:"plans"`
+}
+
+// StartAgentAuthResponse returns the native terminal opened for authentication.
+type StartAgentAuthResponse struct {
+	AgentID       string                `json:"agentId"`
+	Action        agentauth.Action      `json:"action"`
+	Guidance      string                `json:"guidance,omitempty"`
+	TerminalInput string                `json:"terminalInput,omitempty"`
+	Terminal      ShellTerminalResponse `json:"terminal"`
 }
 
 // CodexAccountIDParam documents a Codex account route identifier.
