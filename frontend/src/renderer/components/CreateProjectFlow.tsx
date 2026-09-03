@@ -1,6 +1,7 @@
 import * as Dialog from "@radix-ui/react-dialog";
 import { useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
+import type { components } from "../../api/schema";
 import {
 	ChevronRight,
 	Cloud,
@@ -208,27 +209,35 @@ export function CreateProjectFlow({
 				(await aoBridge.app.chooseDirectory(
 					kind === "workspace" ? t("createProject.chooseWorkspace") : t("createProject.chooseRepo"),
 				));
-			if (path && kind === "single_repo") {
-				const validation = shell?.validateImport
-					? await shell.validateImport({ path, importKind: "project" })
+			const importValidation: components["schemas"]["ImportValidationResult"] | null =
+				path && shell?.validateImport
+					? await shell.validateImport({ path, importKind: kind === "workspace" ? "workspace" : "project" })
 					: null;
-				if (validation && !validation.isValid) {
-					setError(validation.blockingErrors.join("; ") || t("createProject.couldNotAdd"));
-					setValidationScan(null);
-					transitionToChild(() => setFolderPickerOpen(true));
-					return;
+			if (importValidation && !importValidation.isValid) {
+				setError(importValidation.blockingErrors.join("; ") || t("createProject.couldNotAdd"));
+				setValidationScan(null);
+				transitionToChild(() => setFolderPickerOpen(true));
+				return;
+			}
+			if (path && kind === "single_repo") {
+				if (importValidation) {
+					const actions = importValidation.root.requiredActions;
+					setRepositorySetup(actions.includes("git_init") ? "NOT_A_GIT_REPO" : actions.includes("git_commit") ? "PROJECT_UNBORN" : null);
+					setRepositorySetupWarning(importValidation.warning ?? null);
+				} else {
+					const preflight = await projectRepositoryPreflight(path);
+					if (preflight.blockingError) {
+						setError(preflight.blockingError);
+						setValidationScan(preflight.scan);
+						transitionToChild(() => setFolderPickerOpen(true));
+						return;
+					}
+					setRepositorySetup(preflight.setupCode);
+					setRepositorySetupWarning(preflight.setupWarning);
 				}
-				const preflight = await projectRepositoryPreflight(path);
-				if (preflight.blockingError) {
-					setError(preflight.blockingError);
-					setValidationScan(preflight.scan);
-					transitionToChild(() => setFolderPickerOpen(true));
-					return;
-				}
-				setRepositorySetup(preflight.setupCode);
-				setRepositorySetupWarning(preflight.setupWarning);
 			}
 			if (path && kind === "workspace") {
+				if (importValidation?.warning) setRepositorySetupWarning(importValidation.warning);
 				try {
 					const warning = await aoBridge.app.checkAncestorRepo(path);
 					if (warning) {
@@ -241,18 +250,6 @@ export function CreateProjectFlow({
 			}
 			if (path && hasModePicker && !presetPath) {
 				try {
-					if (shell?.validateImport) {
-						const validation = await shell.validateImport({
-							path,
-							importKind: kind === "workspace" ? "workspace" : "project",
-						});
-						if (!validation.isValid) {
-							setError(validation.blockingErrors.join("; ") || t("createProject.couldNotAdd"));
-							setValidationScan(null);
-							transitionToChild(() => setFolderPickerOpen(true));
-							return;
-						}
-					}
 					const scan = await aoBridge.app.scanImportFolder({
 						path,
 						mode: kind === "workspace" ? "workspace" : "project",
