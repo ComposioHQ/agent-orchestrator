@@ -1,6 +1,6 @@
 // host_main.go is the RunHost entrypoint for the "ao pty-host" subcommand.
 // It is cross-platform: the loopback TCP bind and signal wiring work on all
-// OSes; only the ConPTY creation (newConPTY) is OS-gated via build tags.
+// OSes; native PTY creation is OS-gated via build tags.
 package conpty
 
 import (
@@ -16,7 +16,7 @@ import (
 // RunHost is the "ao pty-host" entrypoint. argv is everything after the
 // subcommand name: <sessionId> <cwd> <shellCmd> [shellArg...]
 //
-// It binds 127.0.0.1:0 (OS assigns the port), creates the ConPTY, prints
+// It binds 127.0.0.1:0 (OS assigns the port), creates the native PTY, prints
 // "READY:<pid> <port>\n" to stdout (the parent process reads this to learn the
 // port), installs SIGTERM/SIGINT handlers, then runs Serve. Returns a process
 // exit code.
@@ -34,6 +34,10 @@ func RunHost(args []string, stdout io.Writer) int {
 	cwd := args[1]
 	shellCmd := args[2]
 	shellArgs := args[3:]
+	if err := os.Chdir(cwd); err != nil {
+		fmt.Fprintf(os.Stderr, "pty-host [%s]: chdir %s: %v\n", sessionID, cwd, err)
+		return 1
+	}
 
 	// Bind before creating the PTY so we can report READY atomically.
 	ln, err := net.Listen("tcp", "127.0.0.1:0")

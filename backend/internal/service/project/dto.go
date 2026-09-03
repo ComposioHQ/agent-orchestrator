@@ -18,6 +18,17 @@ type AddInput struct {
 	AsWorkspace bool                  `json:"asWorkspace,omitempty"`
 }
 
+// CloneInput is the body shape for POST /api/v1/projects/clone. The daemon
+// derives the checkout directory name from RemoteURL and creates it directly
+// beneath DestinationParent before registering the resulting project.
+type CloneInput struct {
+	RemoteURL         string                `json:"remoteUrl" minLength:"1"`
+	DestinationParent string                `json:"destinationParent" minLength:"1"`
+	ProjectID         *string               `json:"projectId,omitempty"`
+	Name              *string               `json:"name,omitempty"`
+	Config            *domain.ProjectConfig `json:"config,omitempty"`
+}
+
 // InitializeRepositoryInput is the body shape for POST /api/v1/projects/initialize.
 type InitializeRepositoryInput struct {
 	Path string `json:"path"`
@@ -26,6 +37,13 @@ type InitializeRepositoryInput struct {
 // InitializeRepositoryResult reports the repository path initialized for onboarding.
 type InitializeRepositoryResult struct {
 	Path string `json:"path"`
+}
+
+// UpdateSettingsInput is the body shape for PUT /api/v1/projects/{id}. It
+// atomically replaces the user-facing display name and per-project config.
+type UpdateSettingsInput struct {
+	DisplayName string               `json:"displayName" minLength:"1" maxLength:"20"`
+	Config      domain.ProjectConfig `json:"config"`
 }
 
 // SetConfigInput is the body shape for PUT /api/v1/projects/{id}/config. Config

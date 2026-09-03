@@ -31,6 +31,9 @@ export type DaemonProbe = {
 	pid: number;
 	executablePath?: string;
 	workingDirectory?: string;
+	startupWorkingDirectory?: string;
+	/** Stable outer .AppImage path (AO_APPIMAGE), present only when the daemon's launcher runs under AppImage. */
+	appImagePath?: string;
 };
 
 /** A /healthz|/readyz probe of a loopback port; resolves null when nothing valid answers. */
@@ -63,6 +66,9 @@ export function parseDaemonProbe(endpoint: "healthz" | "readyz", body: unknown):
 		pid: candidate.pid,
 		executablePath: typeof candidate.executablePath === "string" ? candidate.executablePath : undefined,
 		workingDirectory: typeof candidate.workingDirectory === "string" ? candidate.workingDirectory : undefined,
+		startupWorkingDirectory:
+			typeof candidate.startupWorkingDirectory === "string" ? candidate.startupWorkingDirectory : undefined,
+		appImagePath: typeof candidate.appImagePath === "string" ? candidate.appImagePath : undefined,
 	};
 }
 

@@ -1,11 +1,15 @@
 package daemon
 
 import (
+	"context"
+	"errors"
+	"fmt"
 	"log/slog"
 	"time"
 
 	telemetryadapter "github.com/aoagents/agent-orchestrator/backend/internal/adapters/telemetry"
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
+	agentswitchobs "github.com/aoagents/agent-orchestrator/backend/internal/observe/agentswitch"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite"
 )
@@ -31,6 +35,27 @@ var aggregatedEventNames = []string{
 	"ao.cli.usage_errors",
 }
 
+func newAgentSwitchFailureDispatcher(
+	store ports.AgentSwitchFailureOutboxStore,
+	policy agentswitchobs.PolicyCoordinator,
+	observer ports.AgentSwitchFailureObserver,
+	log *slog.Logger,
+) (*agentswitchobs.Dispatcher, error) {
+	if observer == nil {
+		backlog, err := store.AgentSwitchFailureBacklog(context.Background(), time.Now().UTC())
+		if err != nil {
+			return nil, fmt.Errorf("inspect agent switch failure backlog: %w", err)
+		}
+		if policy.Authorization().Enabled || backlog.Pending != 0 || backlog.Leased != 0 {
+			return nil, errors.New("agent switch failure observer unavailable with enabled policy or pending payload")
+		}
+		return nil, nil
+	}
+	return agentswitchobs.NewDispatcher(agentswitchobs.DispatcherConfig{
+		Store: store, Observer: observer, Policy: policy, Logger: log,
+	})
+}
+
 func newTelemetrySink(cfg config.Config, store *sqlite.Store, log *slog.Logger) ports.EventSink {
 	if !cfg.Telemetry.Events {
 		return telemetryadapter.NoopSink{}
@@ -39,7 +64,8 @@ func newTelemetrySink(cfg config.Config, store *sqlite.Store, log *slog.Logger) 
 	if cfg.Telemetry.Remote != config.TelemetryRemotePostHog {
 		return local
 	}
-	remote, err := telemetryadapter.NewPostHogSink(cfg.DataDir, cfg.Telemetry.PostHogKey, cfg.Telemetry.PostHogHost, nil, log)
+	remote, err := telemetryadapter.NewPostHogSink(cfg.DataDir, cfg.Telemetry.PostHogKey, cfg.Telemetry.PostHogHost,
+		cfg.Telemetry.AppVersion, cfg.Agent, nil, log)
 	if err != nil {
 		log.Warn("telemetry remote sink disabled", "remote", cfg.Telemetry.Remote, "error", err)
 		return local
@@ -53,5 +79,9 @@ func newTelemetrySink(cfg config.Config, store *sqlite.Store, log *slog.Logger) 
 	// job for every event name that isn't aggregated.
 	rateLimited := telemetryadapter.NewRateLimitedSink(remote, aggregatedEventNames)
 	aggregated := telemetryadapter.NewAggregatingSink(rateLimited, aggregatedEventNames, time.Minute)
-	return telemetryadapter.NewFanoutSink(local, aggregated)
+	// The kill switch sits outermost on the remote chain so a silenced stream
+	// costs nothing downstream: no aggregation window, no rate-limit slot, no
+	// export. Local storage is unaffected, so silenced events stay debuggable.
+	denied := telemetryadapter.NewDenylistSink(aggregated, cfg.Telemetry.DisabledEvents)
+	return telemetryadapter.NewFanoutSink(local, denied)
 }

@@ -1,8 +1,17 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render as rtlRender, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ReactNode } from "react";
+import { TooltipProvider } from "../../components/ui/tooltip";
+
+function render(ui: ReactNode) {
+	const result = rtlRender(<TooltipProvider>{ui}</TooltipProvider>);
+	return {
+		...result,
+		rerender: (nextUi: ReactNode) => result.rerender(<TooltipProvider>{nextUi}</TooltipProvider>),
+	};
+}
 
 // Drives the real useWorkspaceQuery + SessionsBoard end to end for the two
 // first-run states, mocking only the HTTP client, the router, and the native
@@ -15,7 +24,11 @@ const { getMock, navigateMock, chooseDirectoryMock, spawnOrchestratorMock } = vi
 	spawnOrchestratorMock: vi.fn(),
 }));
 
-vi.mock("../../lib/spawn-orchestrator", () => ({ spawnOrchestrator: spawnOrchestratorMock }));
+vi.mock("../../lib/spawn-orchestrator", () => ({
+	isChatPreflightError: (error: unknown) =>
+		error instanceof Error && (error as Error & { code?: string }).code === "CHAT_DRIVER_UNAVAILABLE",
+	spawnOrchestrator: spawnOrchestratorMock,
+}));
 
 vi.mock("../../lib/api-client", () => ({
 	apiClient: { GET: getMock, POST: vi.fn() },
@@ -24,7 +37,17 @@ vi.mock("../../lib/api-client", () => ({
 }));
 
 vi.mock("../../lib/bridge", () => ({
-	aoBridge: { app: { chooseDirectory: chooseDirectoryMock } },
+	aoBridge: {
+		app: { chooseDirectory: chooseDirectoryMock },
+		// CreateProjectFlow reads the cloud session (Local | Cloud gating);
+		// signed-out keeps these tests on the local-only flow.
+		cloud: {
+			getSession: async () => null,
+			signIn: async () => undefined,
+			signOut: async () => undefined,
+			onSessionChanged: () => () => undefined,
+		},
+	},
 }));
 
 vi.mock("@tanstack/react-router", async (importOriginal) => {
@@ -36,18 +59,37 @@ import { SessionsBoard } from "../../components/SessionsBoard";
 import { ShellProvider, type ShellContextValue } from "../../lib/shell-context";
 import { useUiStore } from "../../stores/ui-store";
 
-type Project = { id: string; name: string; path: string };
+type Project = { id: string; name: string; path: string; orchestratorAgent?: string };
 type Session = Record<string, unknown>;
 
 function respondWith(projects: Project[], sessions: Session[]) {
 	getMock.mockImplementation(async (url: string) => {
 		if (url === "/api/v1/projects") return { data: { projects }, error: undefined };
 		if (url === "/api/v1/sessions") return { data: { sessions }, error: undefined };
+		if (url === "/api/v1/system/requirements") {
+			return {
+				data: {
+					ready: true,
+					requirements: [
+						{ id: "git", label: "git", satisfied: true, required: true, detail: "/usr/bin/git" },
+						{ id: "tmux", label: "tmux", satisfied: true, required: true, detail: "/usr/bin/tmux" },
+						{ id: "harness", label: "agent harness", satisfied: true, required: true, detail: "Claude Code" },
+						{ id: "gh", label: "gh", satisfied: true, required: false, detail: "/usr/bin/gh" },
+					],
+				},
+				error: undefined,
+			};
+		}
 		return { data: undefined, error: undefined };
 	});
 }
 
-const project: Project = { id: "proj-1", name: "my-app", path: "/repo/my-app" };
+const project: Project = {
+	id: "proj-1",
+	name: "my-app",
+	path: "/repo/my-app",
+	orchestratorAgent: "claude-code",
+};
 
 const workerSession: Session = {
 	id: "sess-1",
@@ -74,6 +116,7 @@ const orchestratorSession: Session = {
 };
 
 const createProjectMock = vi.fn().mockResolvedValue(undefined);
+const cloneProjectMock = vi.fn().mockResolvedValue(undefined);
 const initializeProjectRepositoryMock = vi.fn().mockResolvedValue(undefined);
 
 // Kept from the latest renderBoard call so tests can rerender with the same
@@ -85,6 +128,8 @@ function renderBoard(ui: ReactNode) {
 	lastQueryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 	lastShell = {
 		daemonStatus: { state: "ready" } as ShellContextValue["daemonStatus"],
+		workspaceStartupState: "ready",
+		cloneProject: cloneProjectMock,
 		createProject: createProjectMock,
 		initializeProjectRepository: initializeProjectRepositoryMock,
 	};
@@ -100,24 +145,61 @@ const columnCount = () => document.querySelectorAll("section").length;
 
 beforeEach(() => {
 	vi.clearAllMocks();
+	cloneProjectMock.mockResolvedValue(undefined);
 	createProjectMock.mockResolvedValue(undefined);
 	initializeProjectRepositoryMock.mockResolvedValue(undefined);
 	useUiStore.setState({
 		orchestratorReplacementErrors: {},
 		orchestratorStartupErrors: {},
 		restartingProjectIds: new Set(),
+		settingsModal: null,
 	});
 });
 
 describe("global board first launch", () => {
+	it("runs the lightweight requirements preflight while loading the board", async () => {
+		respondWith([], []);
+		renderBoard(<SessionsBoard />);
+
+		await waitFor(() => {
+			expect(getMock.mock.calls.some(([url]) => url === "/api/v1/projects")).toBe(true);
+			expect(getMock.mock.calls.some(([url]) => url === "/api/v1/sessions")).toBe(true);
+		});
+		expect(await screen.findByText("Add a project")).toBeInTheDocument();
+		expect(getMock.mock.calls.some(([url]) => url === "/api/v1/system/requirements")).toBe(true);
+	});
+
+	it("renders the board shell while the daemon is booting", async () => {
+		respondWith([], []);
+		lastQueryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+		lastShell = {
+			daemonStatus: { state: "starting" } as ShellContextValue["daemonStatus"],
+			workspaceStartupState: "loading",
+			cloneProject: cloneProjectMock,
+			createProject: createProjectMock,
+			initializeProjectRepository: initializeProjectRepositoryMock,
+		};
+		render(
+			<QueryClientProvider client={lastQueryClient}>
+				<ShellProvider value={lastShell}>
+					<SessionsBoard />
+				</ShellProvider>
+			</QueryClientProvider>,
+		);
+
+		expect(await screen.findByTestId("board")).toBeInTheDocument();
+		expect(screen.getByTestId("daemon-startup-loader")).toBeInTheDocument();
+	});
+
 	it("shows the import chooser instead of empty columns when no projects exist", async () => {
 		respondWith([], []);
 		renderBoard(<SessionsBoard />);
 
-		expect(await screen.findByText("Import to Agent Orchestrator")).toBeInTheDocument();
-		expect(screen.getByText("What are you importing?")).toBeInTheDocument();
-		expect(screen.getByRole("button", { name: "Workspace" })).toBeInTheDocument();
-		expect(screen.getByRole("button", { name: "Project" })).toBeInTheDocument();
+		expect(await screen.findByText("Add a project")).toBeInTheDocument();
+		expect(screen.getByText("Choose how you want to add code to Agent Orchestrator")).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Clone from Git" })).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Import a workspace folder" })).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Import an existing project" })).toBeInTheDocument();
 		expect(columnCount()).toBe(0);
 		// The welcome carries its own orientation — no dangling "Board" header.
 		expect(screen.queryByText("Board")).not.toBeInTheDocument();
@@ -128,7 +210,7 @@ describe("global board first launch", () => {
 		chooseDirectoryMock.mockResolvedValue(null);
 		renderBoard(<SessionsBoard />);
 
-		await userEvent.click(await screen.findByRole("button", { name: "Project" }));
+		await userEvent.click(await screen.findByRole("button", { name: "Import an existing project" }));
 		expect(chooseDirectoryMock).toHaveBeenCalledTimes(1);
 		expect(chooseDirectoryMock).toHaveBeenCalledWith("Choose a project repository");
 	});
@@ -138,7 +220,7 @@ describe("global board first launch", () => {
 		chooseDirectoryMock.mockResolvedValue(null);
 		renderBoard(<SessionsBoard />);
 
-		await userEvent.click(await screen.findByRole("button", { name: "Workspace" }));
+		await userEvent.click(await screen.findByRole("button", { name: "Import a workspace folder" }));
 		expect(chooseDirectoryMock).toHaveBeenCalledTimes(1);
 		expect(chooseDirectoryMock).toHaveBeenCalledWith("Choose a workspace folder");
 	});
@@ -148,7 +230,7 @@ describe("global board first launch", () => {
 		chooseDirectoryMock.mockRejectedValue(new Error("dialog unavailable"));
 		renderBoard(<SessionsBoard />);
 
-		await userEvent.click(await screen.findByRole("button", { name: "Project" }));
+		await userEvent.click(await screen.findByRole("button", { name: "Import an existing project" }));
 		const messages = await screen.findAllByText("dialog unavailable");
 		expect(messages.some((el) => !el.classList.contains("sr-only"))).toBe(true);
 	});
@@ -158,7 +240,30 @@ describe("global board first launch", () => {
 		renderBoard(<SessionsBoard />);
 
 		expect(await screen.findByText("fix the bug")).toBeInTheDocument();
-		expect(screen.queryByText("Import to Agent Orchestrator")).not.toBeInTheDocument();
+		expect(screen.queryByText("Add a project")).not.toBeInTheDocument();
+		expect(columnCount()).toBe(4);
+	});
+
+	it("keeps populated columns visible after the daemon reports a startup failure", async () => {
+		respondWith([project], [workerSession]);
+		lastQueryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+		lastShell = {
+			daemonStatus: { state: "stopped", code: "exited" } as ShellContextValue["daemonStatus"],
+			workspaceStartupState: "loading",
+			cloneProject: cloneProjectMock,
+			createProject: createProjectMock,
+			initializeProjectRepository: initializeProjectRepositoryMock,
+		};
+		render(
+			<QueryClientProvider client={lastQueryClient}>
+				<ShellProvider value={lastShell}>
+					<SessionsBoard />
+				</ShellProvider>
+			</QueryClientProvider>,
+		);
+
+		expect(await screen.findByText("fix the bug")).toBeInTheDocument();
+		expect(screen.queryByTestId("daemon-startup-loader")).not.toBeInTheDocument();
 		expect(columnCount()).toBe(4);
 	});
 });
@@ -172,7 +277,7 @@ describe("project board with no sessions", () => {
 		// Board header + empty state each offer the pair; the orchestrator is primary in both.
 		expect(screen.getAllByRole("button", { name: "Spawn Orchestrator" }).length).toBeGreaterThan(0);
 		expect(screen.getAllByRole("button", { name: "New task" }).length).toBeGreaterThan(0);
-		expect(screen.queryByText("Import to Agent Orchestrator")).not.toBeInTheDocument();
+		expect(screen.queryByText("Add a project")).not.toBeInTheDocument();
 		expect(columnCount()).toBe(0);
 	});
 
@@ -186,6 +291,37 @@ describe("project board with no sessions", () => {
 		await userEvent.click(spawnButton);
 
 		expect(await screen.findByText(/branch is already checked out/)).toBeInTheDocument();
+	});
+
+	it("offers an explicit Terminal UI fallback when Chat preflight fails", async () => {
+		respondWith([project], []);
+		const preflightError = Object.assign(new Error("Claude Code is unavailable"), {
+			code: "CHAT_DRIVER_UNAVAILABLE",
+		});
+		spawnOrchestratorMock.mockRejectedValueOnce(preflightError).mockResolvedValueOnce("proj-1-orchestrator");
+		renderBoard(<SessionsBoard projectId="proj-1" />);
+
+		await screen.findByText("No worker sessions yet");
+		const [spawnButton] = screen.getAllByRole("button", { name: "Spawn Orchestrator" });
+		await userEvent.click(spawnButton);
+		await userEvent.click(await screen.findByRole("button", { name: "Create as Terminal UI" }));
+
+		expect(spawnOrchestratorMock).toHaveBeenNthCalledWith(1, "proj-1", "board", false, undefined);
+		expect(spawnOrchestratorMock).toHaveBeenNthCalledWith(2, "proj-1", "board", false, "tui");
+	});
+
+	it("opens project settings instead of spawning when no orchestrator agent is configured", async () => {
+		const unconfiguredProject = { ...project, orchestratorAgent: undefined };
+		respondWith([unconfiguredProject], []);
+		renderBoard(<SessionsBoard projectId="proj-1" />);
+
+		await screen.findByText("No worker sessions yet");
+		const [spawnButton] = screen.getAllByRole("button", { name: "Spawn Orchestrator" });
+		await userEvent.click(spawnButton);
+
+		expect(useUiStore.getState().settingsModal).toEqual({ scope: "project", projectId: "proj-1" });
+		expect(navigateMock).not.toHaveBeenCalled();
+		expect(spawnOrchestratorMock).not.toHaveBeenCalled();
 	});
 
 	it("shows the project creation startup error after navigating to the project board", async () => {

@@ -25,15 +25,11 @@
 //
 // Resume: Auggie supports `--resume <sessionId>` (alias `-r`), usable with
 // `--print` for headless resume. AO only has a native session id to resume from
-// when one was captured into session metadata; Auggie exposes no hook/lifecycle
-// system, so that id is not captured automatically yet. GetRestoreCommand
-// therefore returns ok=false until a native session id is present, at which point
-// callers fall back to a fresh launch.
+// when one was captured into session metadata. AO's managed SessionStart hook
+// records Auggie's conversation_id as that native resume handle.
 //
-// Hooks/activity: Auggie has no hook or lifecycle event system (it reads
-// .claude/commands/ for slash commands, but that is not Claude Code hook
-// compatibility). Hook installation and SessionInfo are intentionally no-ops
-// (Tier C) until an Auggie-specific activity integration exists.
+// Hooks/activity: AO merges Auggie's native workspace hooks into
+// .augment/settings.local.json and reports session/tool/stop lifecycle events.
 package auggie
 
 import (
@@ -78,6 +74,22 @@ func (p *Plugin) Manifest() adapters.Manifest {
 	}
 }
 
+// GetConfigSpec reports the per-project agent config keys Auggie understands.
+func (p *Plugin) GetConfigSpec(ctx context.Context) (ports.ConfigSpec, error) {
+	if err := ctx.Err(); err != nil {
+		return ports.ConfigSpec{}, err
+	}
+	return ports.ConfigSpec{
+		Fields: []ports.ConfigField{
+			{
+				Key:         "model",
+				Type:        ports.ConfigFieldString,
+				Description: "Model override passed to `auggie --model`.",
+			},
+		},
+	}, nil
+}
+
 // GetLaunchCommand builds the argv to start a new headless Auggie session:
 //
 //	auggie --print [--rules <f>] [-- <prompt>]
@@ -99,6 +111,7 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 	if cfg.SystemPromptFile != "" {
 		cmd = append(cmd, "--rules", cfg.SystemPromptFile)
 	}
+	appendModelFlag(&cmd, cfg.Config)
 	if cfg.Prompt != "" {
 		cmd = append(cmd, "--", cfg.Prompt)
 	}
@@ -129,8 +142,28 @@ func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig)
 	if cfg.SystemPromptFile != "" {
 		cmd = append(cmd, "--rules", cfg.SystemPromptFile)
 	}
+	appendModelFlag(&cmd, cfg.Config)
 	cmd = append(cmd, "--resume", agentSessionID)
 	return cmd, true, nil
+}
+
+// SessionInfo surfaces the Auggie conversation id captured from native hook
+// payloads, along with any other standard hook-derived metadata.
+func (p *Plugin) SessionInfo(ctx context.Context, session ports.SessionRef) (ports.SessionInfo, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return ports.SessionInfo{}, false, err
+	}
+	info, ok := agentbase.StandardSessionInfo(session)
+	return info, ok, nil
+}
+
+// appendModelFlag treats the configured model as opaque: it trims and forwards
+// non-empty values for Auggie to validate. Invalid models intentionally surface
+// Auggie's error; AO does not silently retry with Auggie's default model.
+func appendModelFlag(cmd *[]string, cfg ports.AgentConfig) {
+	if model := strings.TrimSpace(cfg.Model); model != "" {
+		*cmd = append(*cmd, "--model", model)
+	}
 }
 
 // Auggie has no single blanket auto-approve/bypass flag; unattended tool/file
@@ -143,7 +176,8 @@ var auggieBinarySpec = binaryutil.BinarySpec{
 	Names:         []string{"auggie"},
 	WinNames:      []string{"auggie.cmd", "auggie.exe", "auggie"},
 	UnixPaths:     []string{"/usr/local/bin/auggie", "/opt/homebrew/bin/auggie"},
-	UnixHomePaths: [][]string{{".local", "bin", "auggie"}, {".npm", "bin", "auggie"}, {".npm-global", "bin", "auggie"}},
+	UnixHomePaths: binaryutil.NodeManagedUnixHomePaths("auggie"),
+	NodeManaged:   true,
 	WinPaths: []binaryutil.WinPath{
 		{Base: binaryutil.WinAppData, Parts: []string{"npm", "auggie.cmd"}},
 		{Base: binaryutil.WinAppData, Parts: []string{"npm", "auggie.exe"}},
@@ -151,8 +185,8 @@ var auggieBinarySpec = binaryutil.BinarySpec{
 }
 
 // ResolveAuggieBinary finds the `auggie` binary, searching PATH then common
-// install locations. It returns "auggie" as a last resort so callers get the
-// shell's normal command-not-found behavior if Auggie is absent.
+// install locations. It returns a wrapped ports.ErrAgentBinaryNotFound when
+// Auggie is absent.
 func ResolveAuggieBinary(ctx context.Context) (string, error) {
 	return binaryutil.ResolveBinary(ctx, auggieBinarySpec)
 }

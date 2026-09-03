@@ -5,8 +5,11 @@
 package config
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"net"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -36,6 +39,14 @@ const (
 	// DefaultTelemetryPostHogHost is the default PostHog ingestion host when
 	// remote telemetry is enabled and AO_TELEMETRY_POSTHOG_HOST is unset.
 	DefaultTelemetryPostHogHost = "https://us.i.posthog.com"
+	// ClientElevenX is the AO_CLIENT value entitled to the cloud offering. It is
+	// the single place the identity is spelled out; gating logic must compare
+	// against this constant, never a string literal.
+	ClientElevenX = "eleven_x"
+
+	// defaultCloudControlPlaneURL is the control plane a build talks to when no
+	// override is set. Staging while the offering is in its dogfooding phase.
+	defaultCloudControlPlaneURL = "https://staging-api.aoagents.dev"
 )
 
 // TelemetryRemote selects the remote telemetry exporter.
@@ -50,17 +61,52 @@ const (
 
 // TelemetryConfig controls local and remote telemetry behavior.
 type TelemetryConfig struct {
-	Events      bool
-	Metrics     bool
-	Remote      TelemetryRemote
-	PostHogKey  string
-	PostHogHost string
+	Events bool
+	// EventsExplicit distinguishes an operator/supervisor choice from the
+	// default. A missing policy file may use a boot-scoped headless token only
+	// when AO_TELEMETRY_EVENTS was explicitly set to on.
+	EventsExplicit bool
+	Metrics        bool
+	Remote         TelemetryRemote
+	PostHogKey     string
+	PostHogHost    string
+	// DisabledEvents names event streams that must never reach the remote
+	// (billed) sink. This is the kill switch: a stream that turns out to be
+	// noisy or expensive can be silenced by configuration, without waiting for
+	// users to install a new build. Local storage still records everything.
+	DisabledEvents []string
+	// AppVersion is the desktop app version the daemon was launched by, stamped
+	// on remote events so failures can be attributed to a release. The daemon
+	// binary has no reliable version of its own (see cli.Version, which release
+	// tooling does not currently override), so the supervisor passes it in.
+	AppVersion string
+	// SentryDSN, when set (AO_SENTRY_DSN), enables daemon-side Sentry capture of
+	// genuine server faults (5xx and panics) with their Go stack. Blank keeps
+	// Sentry a no-op. Kept separate from the PostHog key: the two are different
+	// processors with different projects.
+	SentryDSN string
+}
+
+// GitLabConfig carries the self-managed GitLab host allowlist and per-host
+// token overrides. It is loaded once at daemon boot from environment variables
+// (no hot-reload), matching the existing config pattern. gitlab.com is always
+// allowed (hardcoded in the provider) and does not need to appear here.
+type GitLabConfig struct {
+	// AllowedHosts is the list of self-managed GitLab hosts (each may include a
+	// port, e.g. "gitlab.internal:8443"). gitlab.com is always allowed and is not
+	// included here.
+	AllowedHosts []string
+	// HostTokens maps a self-managed host to a token override. Hosts in
+	// AllowedHosts without an explicit entry fall back to the default token
+	// (AO_GITLAB_TOKEN / GITLAB_TOKEN / glab).
+	HostTokens map[string]string
 }
 
 // DefaultAllowedOrigins are the browser origins the daemon's CORS boundary
-// trusts, beyond loopback-served content (which the middleware always trusts —
-// local pages can reach the no-auth daemon directly anyway). The daemon has no
-// auth, so every entry must be an origin web content cannot present:
+// trusts. General routes additionally admit loopback-served content, while
+// credential-management routes accept only this exact list (plus native
+// callers without an Origin header). The daemon has no auth, so every default
+// entry must be an origin ordinary web content cannot present:
 // app://renderer is the packaged Electron renderer, served from a custom
 // scheme only the desktop app registers — no website can bear it. The opaque
 // "null" origin (file:// pages, sandboxed iframes on any website) must never
@@ -86,14 +132,50 @@ type Config struct {
 	// DataDir is the directory holding durable SQLite state: DB and WAL files.
 	// It is created on first use by the storage layer.
 	DataDir string
+	// StateDir is the root for non-SQLite AO state. It defaults to ~/.ao. When
+	// AO_DATA_DIR is explicitly set, that override is also the state root so an
+	// isolated daemon never leaks account state into the default home.
+	StateDir string
 	// Agent is the compatibility agent adapter id selected by AO_AGENT;
 	// startSession fails fast if no adapter with this id is registered.
 	Agent string
+	// AppRunID identifies one desktop-app launch. The Electron supervisor mints
+	// it and passes it down (AO_APP_RUN_ID), holding it constant across daemon
+	// restarts it performs, so standalone shell terminals can survive a daemon
+	// restart while still being reaped when the APP itself goes away.
+	//
+	// Empty means no supervising app (a bare `ao daemon`): the daemon mints a
+	// fresh id per boot, which correctly makes any surviving shell terminals
+	// from an earlier run look like orphans and get cleaned up.
+	AppRunID string
 	// AllowedOrigins are the browser origins granted CORS read access (see
 	// DefaultAllowedOrigins). Overridden by AO_ALLOWED_ORIGINS.
 	AllowedOrigins []string
 	// Telemetry controls local/remote telemetry sinks.
 	Telemetry TelemetryConfig
+	// StartupWorkingDirectory is the daemon process cwd before startup
+	// normalizes it. The desktop uses this to identify dev daemons after the
+	// process cwd is moved to the stable data dir.
+	StartupWorkingDirectory string
+	// GitLab carries the self-managed GitLab host allowlist and per-host
+	// token overrides, loaded once at boot from environment variables.
+	GitLab GitLabConfig
+	// Client identifies which client this deployment serves (AO_CLIENT). Empty
+	// means no client identity, which keeps client-gated offerings off.
+	Client string
+	// CloudOffering reports whether the cloud offering flag is switched on
+	// (AO_CLOUD_OFFERING). The flag alone does not surface cloud in clients:
+	// the settings service also requires the entitled client (ClientElevenX)
+	// and a configured control plane.
+	CloudOffering bool
+	// LocalOffering reports whether the local offering is available
+	// (AO_LOCAL_OFFERING). It defaults to true; only an explicit false/0
+	// switches it off.
+	LocalOffering bool
+	// CloudControlPlaneURL is the cloud control plane base URL
+	// (AO_CLOUD_CONTROL_PLANE_URL). When set it must be an http(s) URL; empty
+	// means no control plane is configured, which keeps the cloud offering off.
+	CloudControlPlaneURL string
 }
 
 // Addr returns the host:port the HTTP server binds. It uses net.JoinHostPort so
@@ -114,12 +196,20 @@ func (c Config) Addr() string {
 //	AO_RUN_FILE          running.json path   (default ~/.ao/running.json)
 //	AO_DATA_DIR          durable state dir   (default ~/.ao/data)
 //	AO_AGENT             compatibility agent id (default claude-code)
+//	AO_APP_RUN_ID        desktop-app launch id, set by the Electron supervisor
+//	                     (default: a fresh id minted per daemon boot)
 //	AO_ALLOWED_ORIGINS   CORS origins, comma-separated (default DefaultAllowedOrigins)
 //	AO_TELEMETRY_EVENTS  local event capture off|on (default off)
 //	AO_TELEMETRY_METRICS local metric capture off|on (default off)
 //	AO_TELEMETRY_REMOTE  remote exporter off|posthog (default off)
 //	AO_TELEMETRY_POSTHOG_KEY   PostHog project key
 //	AO_TELEMETRY_POSTHOG_HOST  PostHog host (default DefaultTelemetryPostHogHost)
+//	AO_GITLAB_ALLOWED_HOSTS    comma-separated self-managed GitLab hosts (each may include :port)
+//	AO_GITLAB_HOST_TOKENS      host=token,host=token per-host token overrides
+//	AO_CLIENT                  client identity for offering gates (trimmed, default empty)
+//	AO_CLOUD_OFFERING          cloud offering flag off|on (default off)
+//	AO_LOCAL_OFFERING          local offering off|on (default on)
+//	AO_CLOUD_CONTROL_PLANE_URL cloud control plane base URL (trimmed, must be http(s))
 //
 // The bind host is not configurable: the daemon is loopback-only by design.
 func Load() (Config, error) {
@@ -134,6 +224,7 @@ func Load() (Config, error) {
 			Remote:      TelemetryRemoteOff,
 			PostHogHost: DefaultTelemetryPostHogHost,
 		},
+		LocalOffering: true,
 	}
 
 	if raw := os.Getenv("AO_PORT"); raw != "" {
@@ -167,6 +258,15 @@ func Load() (Config, error) {
 		cfg.Agent = raw
 	}
 
+	// A missing AO_APP_RUN_ID means nothing is supervising this daemon, so this
+	// boot IS the run: mint an id rather than leaving it empty, which would make
+	// every boot share one run id and defeat orphan detection entirely.
+	if raw := os.Getenv("AO_APP_RUN_ID"); raw != "" {
+		cfg.AppRunID = raw
+	} else {
+		cfg.AppRunID = newAppRunID()
+	}
+
 	if raw, ok := os.LookupEnv("AO_ALLOWED_ORIGINS"); ok && raw != "" {
 		// Explicit override replaces the defaults entirely so a deployment can
 		// also narrow the list. The "null" origin is rejected, never silently
@@ -186,12 +286,13 @@ func Load() (Config, error) {
 		cfg.AllowedOrigins = origins
 	}
 
-	if raw := os.Getenv("AO_TELEMETRY_EVENTS"); raw != "" {
+	if raw, present := os.LookupEnv("AO_TELEMETRY_EVENTS"); present && strings.TrimSpace(raw) != "" {
 		v, err := parseToggleEnv("AO_TELEMETRY_EVENTS", raw)
 		if err != nil {
 			return Config{}, err
 		}
 		cfg.Telemetry.Events = v
+		cfg.Telemetry.EventsExplicit = true
 	}
 	if raw := os.Getenv("AO_TELEMETRY_METRICS"); raw != "" {
 		v, err := parseToggleEnv("AO_TELEMETRY_METRICS", raw)
@@ -213,6 +314,65 @@ func Load() (Config, error) {
 	if raw := os.Getenv("AO_TELEMETRY_POSTHOG_HOST"); raw != "" {
 		cfg.Telemetry.PostHogHost = raw
 	}
+	if raw := os.Getenv("AO_TELEMETRY_DISABLED_EVENTS"); raw != "" {
+		cfg.Telemetry.DisabledEvents = parseTelemetryDisabledEvents(raw)
+	}
+	if raw := os.Getenv("AO_TELEMETRY_APP_VERSION"); raw != "" {
+		cfg.Telemetry.AppVersion = strings.TrimSpace(raw)
+	}
+	if raw := os.Getenv("AO_SENTRY_DSN"); raw != "" {
+		cfg.Telemetry.SentryDSN = strings.TrimSpace(raw)
+	}
+
+	if raw, ok := os.LookupEnv("AO_GITLAB_ALLOWED_HOSTS"); ok && raw != "" {
+		hosts := make([]string, 0, 4)
+		for _, h := range strings.Split(raw, ",") {
+			h = strings.TrimSpace(h)
+			if h == "" {
+				continue
+			}
+			hosts = append(hosts, h)
+		}
+		cfg.GitLab.AllowedHosts = hosts
+	}
+
+	if raw, ok := os.LookupEnv("AO_GITLAB_HOST_TOKENS"); ok && raw != "" {
+		tokens, err := parseHostTokenMap("AO_GITLAB_HOST_TOKENS", raw)
+		if err != nil {
+			return Config{}, err
+		}
+		cfg.GitLab.HostTokens = tokens
+	}
+
+	if raw := os.Getenv("AO_CLIENT"); raw != "" {
+		cfg.Client = strings.TrimSpace(raw)
+	}
+	if raw := os.Getenv("AO_CLOUD_OFFERING"); raw != "" {
+		v, err := parseToggleEnv("AO_CLOUD_OFFERING", raw)
+		if err != nil {
+			return Config{}, err
+		}
+		cfg.CloudOffering = v
+	}
+	if raw := os.Getenv("AO_LOCAL_OFFERING"); raw != "" {
+		v, err := parseToggleEnv("AO_LOCAL_OFFERING", raw)
+		if err != nil {
+			return Config{}, err
+		}
+		cfg.LocalOffering = v
+	}
+	// The control-plane URL is public client configuration (like the WorkOS
+	// client id), so it ships as a baked default and the env var is only a
+	// development override. Users never configure it; the Settings toggle is
+	// the sole cloud switch.
+	cfg.CloudControlPlaneURL = defaultCloudControlPlaneURL
+	if raw := os.Getenv("AO_CLOUD_CONTROL_PLANE_URL"); strings.TrimSpace(raw) != "" {
+		u, err := parseCloudControlPlaneURL(raw)
+		if err != nil {
+			return Config{}, err
+		}
+		cfg.CloudControlPlaneURL = u
+	}
 
 	runFile, err := resolveRunFilePath()
 	if err != nil {
@@ -225,6 +385,11 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 	cfg.DataDir = dataDir
+	if raw, ok := os.LookupEnv("AO_DATA_DIR"); ok && raw != "" {
+		cfg.StateDir = dataDir
+	} else {
+		cfg.StateDir = filepath.Dir(dataDir)
+	}
 
 	return cfg, nil
 }
@@ -251,6 +416,68 @@ func parseTelemetryRemote(raw string) (TelemetryRemote, error) {
 	}
 }
 
+// parseTelemetryDisabledEvents reads the comma-separated kill-switch list.
+// Unlike the other telemetry env vars this never fails: an unparseable or
+// misspelled entry must not stop the daemon from booting, because the whole
+// point of the switch is to be usable in a hurry during an incident. An entry
+// that matches no event name is simply inert.
+func parseTelemetryDisabledEvents(raw string) []string {
+	var names []string
+	for _, part := range strings.Split(raw, ",") {
+		if name := strings.TrimSpace(part); name != "" {
+			names = append(names, name)
+		}
+	}
+	return names
+}
+
+// parseHostTokenMap parses a host=token,host=token map. Whitespace around
+// entries, hosts, and tokens is trimmed. Empty entries and entries without an
+// equals sign are skipped. A token containing an equals sign is rejected as
+// ambiguous (a token value with embedded '=' would be indistinguishable from
+// a malformed entry).
+func parseHostTokenMap(name, raw string) (map[string]string, error) {
+	tokens := make(map[string]string, 4)
+	for _, entry := range strings.Split(raw, ",") {
+		entry = strings.TrimSpace(entry)
+		if entry == "" {
+			continue
+		}
+		eq := strings.IndexByte(entry, '=')
+		if eq < 0 {
+			continue // skip entries without an equals sign
+		}
+		host := strings.TrimSpace(entry[:eq])
+		token := strings.TrimSpace(entry[eq+1:])
+		if host == "" {
+			continue
+		}
+		// Reject tokens containing '=' — they would be ambiguous on re-parse
+		// and likely indicate a malformed entry (e.g. host=token=with=equals).
+		if strings.ContainsRune(token, '=') {
+			return nil, fmt.Errorf("invalid %s entry %q: token contains '='", name, entry)
+		}
+		tokens[host] = token
+	}
+	return tokens, nil
+}
+
+// parseCloudControlPlaneURL validates the cloud control plane base URL. Only
+// http(s) with a host is accepted: clients dial this value, so a stray scheme
+// or a bare host (which url.Parse reads as a path) must fail boot loudly
+// rather than surface later as an unreachable cloud.
+func parseCloudControlPlaneURL(raw string) (string, error) {
+	trimmed := strings.TrimSpace(raw)
+	u, err := url.Parse(trimmed)
+	if err != nil {
+		return "", fmt.Errorf("invalid AO_CLOUD_CONTROL_PLANE_URL %q: %w", raw, err)
+	}
+	if (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return "", fmt.Errorf("invalid AO_CLOUD_CONTROL_PLANE_URL %q: must be an http(s) URL", raw)
+	}
+	return trimmed, nil
+}
+
 // parsePositiveDuration rejects zero and negative durations: a zero
 // RequestTimeout would expire every request instantly, and a non-positive
 // ShutdownTimeout would defeat graceful shutdown.
@@ -265,12 +492,25 @@ func parsePositiveDuration(name, raw string) (time.Duration, error) {
 	return d, nil
 }
 
+// newAppRunID mints the fallback launch id used when no supervising app
+// supplied one. Randomness (not a timestamp or PID) is what guarantees two
+// boots never collide, which is what orphan detection relies on. A failure to
+// read entropy falls back to the boot time — worse, but still monotonic enough
+// to distinguish runs, and never worth refusing to start the daemon over.
+func newAppRunID() string {
+	buf := make([]byte, 8)
+	if _, err := rand.Read(buf); err != nil {
+		return "apprun-" + strconv.FormatInt(time.Now().UnixNano(), 36)
+	}
+	return "apprun-" + hex.EncodeToString(buf)
+}
+
 // resolveRunFilePath picks where running.json lives. An explicit AO_RUN_FILE
 // wins; otherwise it sits under the canonical AO home directory so the CLI and
 // Electron supervisor share one handshake location.
 func resolveRunFilePath() (string, error) {
 	if p, ok := os.LookupEnv("AO_RUN_FILE"); ok && p != "" {
-		return p, nil
+		return absOverride("AO_RUN_FILE", p)
 	}
 	stateDir, err := defaultStateDir()
 	if err != nil {
@@ -284,7 +524,7 @@ func resolveRunFilePath() (string, error) {
 // directory as the run-file.
 func resolveDataDir() (string, error) {
 	if p, ok := os.LookupEnv("AO_DATA_DIR"); ok && p != "" {
-		return p, nil
+		return absOverride("AO_DATA_DIR", p)
 	}
 	stateDir, err := defaultStateDir()
 	if err != nil {
@@ -299,4 +539,18 @@ func defaultStateDir() (string, error) {
 		return "", fmt.Errorf("resolve state dir: %w", err)
 	}
 	return filepath.Join(homeDir, ".ao"), nil
+}
+
+// absOverride resolves an explicit AO_DATA_DIR/AO_RUN_FILE override to an
+// absolute path against the process's launch cwd. The daemon chdir's into its
+// data dir at startup (see stabilizeWorkingDirectory), so a relative override
+// left as-is would be re-resolved against the new cwd and double-nest state
+// (e.g. AO_DATA_DIR=data -> <cwd>/data/data). Absolutizing here keeps the path
+// stable regardless of the later chdir.
+func absOverride(name, p string) (string, error) {
+	abs, err := filepath.Abs(p)
+	if err != nil {
+		return "", fmt.Errorf("resolve %s %q: %w", name, p, err)
+	}
+	return abs, nil
 }

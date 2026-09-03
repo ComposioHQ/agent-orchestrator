@@ -46,7 +46,18 @@ yarn-error.*
 # logs
 *.log
 
-# Firebase Android config — kept out of the public repo. The EAS build still
-# gets it via .easignore (which re-includes it); locally it must exist for
-# `expo run:android`.
+# Firebase Android config — kept out of the public repo (origin is PUBLIC).
+# Must exist locally for `expo run:android`.
+#
+# EAS Build gets it from the GOOGLE_SERVICES_JSON file environment variable, which
+# app.config.js copies to this directory before prebuild. Nothing needs committing:
+#
+#   eas env:set --name GOOGLE_SERVICES_JSON --type file \
+#     --value ./google-services.json --visibility secret \
+#     --environment preview --environment production
+#
+# Do NOT go back to committing it in a temp commit to force it past EAS's VCS
+# client. That dance also required deleting this line, and .gitignore is a
+# fingerprint input — so every build came out with a runtime version no normal
+# working tree could reproduce, and no OTA update would ever have matched it.
 google-services.json

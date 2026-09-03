@@ -1,10 +1,12 @@
 package cline
 
 import (
+	"bytes"
 	"context"
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -139,15 +141,73 @@ func TestPromptReadinessHints(t *testing.T) {
 	}
 }
 
-func TestGetConfigSpecHasNoCustomFieldsYet(t *testing.T) {
+func TestGetConfigSpecReportsModelField(t *testing.T) {
 	plugin := &Plugin{}
 
 	spec, err := plugin.GetConfigSpec(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(spec.Fields) != 0 {
-		t.Fatalf("unexpected config fields: %#v", spec.Fields)
+	want := []ports.ConfigField{
+		{
+			Key:         "model",
+			Type:        ports.ConfigFieldString,
+			Description: "Model override passed to `cline --model`.",
+		},
+	}
+	if !reflect.DeepEqual(spec.Fields, want) {
+		t.Fatalf("config fields\nwant: %#v\n got: %#v", want, spec.Fields)
+	}
+}
+
+func TestGetLaunchCommandAppendsConfiguredModel(t *testing.T) {
+	plugin := &Plugin{resolvedBinary: "cline"}
+
+	cmd, err := plugin.GetLaunchCommand(context.Background(), ports.LaunchConfig{
+		Config: ports.AgentConfig{Model: "  claude-sonnet-5  "},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !containsSubsequence(cmd, []string{"--model", "claude-sonnet-5"}) {
+		t.Fatalf("command %#v missing trimmed --model flag", cmd)
+	}
+	if containsSubsequence(cmd, []string{"--model", "  claude-sonnet-5  "}) {
+		t.Fatalf("command %#v used untrimmed model", cmd)
+	}
+}
+
+func TestGetLaunchCommandOmitsBlankConfiguredModel(t *testing.T) {
+	plugin := &Plugin{resolvedBinary: "cline"}
+
+	cmd, err := plugin.GetLaunchCommand(context.Background(), ports.LaunchConfig{
+		Config: ports.AgentConfig{Model: " \t "},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if contains(cmd, "--model") {
+		t.Fatalf("command %#v contains --model for blank model", cmd)
+	}
+}
+
+func TestGetRestoreCommandAppendsConfiguredModel(t *testing.T) {
+	plugin := &Plugin{resolvedBinary: "cline"}
+
+	cmd, ok, err := plugin.GetRestoreCommand(context.Background(), ports.RestoreConfig{
+		Config: ports.AgentConfig{Model: "  claude-sonnet-5  "},
+		Session: ports.SessionRef{
+			Metadata: map[string]string{ports.MetadataKeyAgentSessionID: "session-123"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("err = %v, want nil", err)
+	}
+	if !ok {
+		t.Fatal("ok = false, want true")
+	}
+	if !containsSubsequence(cmd, []string{"--model", "claude-sonnet-5"}) {
+		t.Fatalf("restore command %#v missing trimmed --model flag", cmd)
 	}
 }
 
@@ -205,7 +265,7 @@ func TestGetAgentHooksInstallsClineHooks(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if info.Mode().Perm()&0o100 == 0 {
+		if runtime.GOOS != "windows" && info.Mode().Perm()&0o100 == 0 {
 			t.Fatalf("%s is not executable: %v", spec.Event, info.Mode())
 		}
 	}
@@ -217,6 +277,31 @@ func TestGetAgentHooksInstallsClineHooks(t *testing.T) {
 	}
 	if strings.Contains(string(data), clineHookMarker) {
 		t.Fatalf("user PostToolUse hook was overwritten by AO: %s", data)
+	}
+}
+
+func TestGetAgentHooksPreservesNonExecutableUserHook(t *testing.T) {
+	plugin := &Plugin{resolvedBinary: "cline"}
+	workspace := t.TempDir()
+	hooksDir := filepath.Join(workspace, clineHooksDirName, clineHooksSubDir)
+	if err := os.MkdirAll(hooksDir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(hooksDir, "TaskStart")
+	want := []byte("user-owned hook without execute permission\n")
+	if err := os.WriteFile(path, want, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := plugin.GetAgentHooks(context.Background(), ports.WorkspaceHookConfig{WorkspacePath: workspace}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, want) {
+		t.Fatalf("non-executable user hook was overwritten: got %q, want %q", got, want)
 	}
 }
 

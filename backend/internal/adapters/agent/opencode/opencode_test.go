@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -46,7 +47,7 @@ func TestOpenCodeLocalAuthStatusAuthorizedWithAuthFile(t *testing.T) {
 	}
 }
 
-func TestOpenCodeLocalAuthStatusUnauthorizedWithEmptyAuthFile(t *testing.T) {
+func TestOpenCodeLocalAuthStatusUnknownWithEmptyAuthFile(t *testing.T) {
 	clearOpenCodeAuthEnv(t)
 	writeOpenCodeAuthFile(t, `{}`)
 
@@ -54,8 +55,8 @@ func TestOpenCodeLocalAuthStatusUnauthorizedWithEmptyAuthFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !ok || status != ports.AgentAuthStatusUnauthorized {
-		t.Fatalf("status = (%q, %v), want (%q, true)", status, ok, ports.AgentAuthStatusUnauthorized)
+	if !ok || status != ports.AgentAuthStatusUnknown {
+		t.Fatalf("status = (%q, %v), want (%q, true)", status, ok, ports.AgentAuthStatusUnknown)
 	}
 }
 
@@ -164,7 +165,7 @@ func TestOpenCodeLocalAuthStatusAuthorizedWithControlDBAccount(t *testing.T) {
 	}
 }
 
-func TestOpenCodeLocalAuthStatusUnauthorizedWithEmptyDBAccounts(t *testing.T) {
+func TestOpenCodeLocalAuthStatusUnknownWithEmptyDBAccounts(t *testing.T) {
 	clearOpenCodeAuthEnv(t)
 	dataDir := writeOpenCodeDB(t, func(db *sql.DB) {
 		if _, err := db.Exec(`
@@ -204,14 +205,57 @@ func TestOpenCodeLocalAuthStatusUnauthorizedWithEmptyDBAccounts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !ok || status != ports.AgentAuthStatusUnauthorized {
-		t.Fatalf("status = (%q, %v), want (%q, true)", status, ok, ports.AgentAuthStatusUnauthorized)
+	if !ok || status != ports.AgentAuthStatusUnknown {
+		t.Fatalf("status = (%q, %v), want (%q, true)", status, ok, ports.AgentAuthStatusUnknown)
+	}
+}
+
+func TestOpenCodeAuthStatusUnknownWithZeroCredentials(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell fixture")
+	}
+	clearOpenCodeAuthEnv(t)
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	binary := filepath.Join(t.TempDir(), "opencode")
+	if err := os.WriteFile(binary, []byte("#!/bin/sh\nprintf '0 credentials\\n'\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	status, err := (&Plugin{resolvedBinary: binary}).AuthStatus(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status != ports.AgentAuthStatusUnknown {
+		t.Fatalf("AuthStatus = %q, want %q", status, ports.AgentAuthStatusUnknown)
+	}
+}
+
+func TestOpenCodeAuthStatusUnknownWithNoCredentials(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("OPENCODE_DATA_DIR", filepath.Join(dir, "missing-data"))
+	for _, name := range opencodeAPIKeyEnvVars {
+		t.Setenv(name, "")
+	}
+	binary := filepath.Join(dir, "opencode")
+	if err := os.WriteFile(binary, []byte("#!/bin/sh\nprintf 'No credentials found\\n'\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	status, err := (&Plugin{resolvedBinary: binary}).AuthStatus(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status != ports.AgentAuthStatusUnknown {
+		t.Fatalf("AuthStatus = %q, want %q", status, ports.AgentAuthStatusUnknown)
 	}
 }
 
 func TestOpenCodeLocalAuthStatusUnknownWhenMissing(t *testing.T) {
 	clearOpenCodeAuthEnv(t)
-	t.Setenv("HOME", t.TempDir())
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 
 	status, ok, err := opencodeLocalAuthStatus(context.Background())
 	if err != nil {
@@ -226,6 +270,7 @@ func writeOpenCodeDB(t *testing.T, setup func(*sql.DB)) string {
 	t.Helper()
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	dataDir := filepath.Join(home, ".local", "share", "opencode")
 	writeOpenCodeDBAt(t, dataDir, setup)
 	return dataDir
@@ -248,6 +293,7 @@ func writeOpenCodeAuthFile(t *testing.T, content string) {
 	t.Helper()
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	authDir := filepath.Join(home, ".local", "share", "opencode")
 	if err := os.MkdirAll(authDir, 0o700); err != nil {
 		t.Fatal(err)
@@ -277,6 +323,74 @@ func TestResolveOpenCodeBinaryFallback(t *testing.T) {
 	if bin == "" {
 		t.Fatal("ResolveOpenCodeBinary returned empty path with no error")
 	}
+}
+
+func TestResolveOpenCodeBinaryFallbacks(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("unix fallback candidate shape")
+	}
+	oldUnixPaths := opencodeUnixPaths
+	opencodeUnixPaths = nil
+	t.Cleanup(func() { opencodeUnixPaths = oldUnixPaths })
+
+	tests := []struct {
+		name string
+		seed func(t *testing.T, home string) string
+	}{
+		{
+			name: "npm global",
+			seed: func(t *testing.T, home string) string {
+				return writeOpenCodeExecutable(t, filepath.Join(home, ".npm-global", "bin", "opencode"))
+			},
+		},
+		{
+			name: "nvm",
+			seed: func(t *testing.T, home string) string {
+				return writeOpenCodeExecutable(t, filepath.Join(home, ".nvm", "versions", "node", "v22.23.1", "bin", "opencode"))
+			},
+		},
+		{
+			name: "mise shim",
+			seed: func(t *testing.T, home string) string {
+				return writeOpenCodeExecutable(t, filepath.Join(home, ".local", "share", "mise", "shims", "opencode"))
+			},
+		},
+		{
+			name: "bun global",
+			seed: func(t *testing.T, home string) string {
+				return writeOpenCodeExecutable(t, filepath.Join(home, ".bun", "bin", "opencode"))
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			home := t.TempDir()
+			t.Setenv("HOME", home)
+			t.Setenv("PATH", t.TempDir())
+			t.Setenv("VOLTA_HOME", filepath.Join(home, ".volta"))
+			t.Setenv("FNM_DIR", "")
+			want := tt.seed(t, home)
+
+			got, err := ResolveOpenCodeBinary(context.Background())
+			if err != nil {
+				t.Fatalf("ResolveOpenCodeBinary: %v", err)
+			}
+			if got != want {
+				t.Fatalf("ResolveOpenCodeBinary = %q, want %q", got, want)
+			}
+		})
+	}
+}
+
+func writeOpenCodeExecutable(t *testing.T, path string) string {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return path
 }
 
 func TestResolveOpenCodeBinaryContextCanceled(t *testing.T) {
@@ -402,15 +516,26 @@ func TestGetPromptDeliveryStrategyIsInCommand(t *testing.T) {
 	}
 }
 
-func TestGetConfigSpecHasNoCustomFieldsYet(t *testing.T) {
+func TestGetConfigSpecReportsModel(t *testing.T) {
 	plugin := &Plugin{}
 
 	spec, err := plugin.GetConfigSpec(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(spec.Fields) != 0 {
+	if len(spec.Fields) != 1 || spec.Fields[0].Key != "model" {
 		t.Fatalf("unexpected config fields: %#v", spec.Fields)
+	}
+}
+
+func TestGetLaunchCommandForwardsModel(t *testing.T) {
+	plugin := &Plugin{resolvedBinary: "opencode"}
+	cmd, err := plugin.GetLaunchCommand(context.Background(), ports.LaunchConfig{Config: ports.AgentConfig{Model: "  anthropic/claude-sonnet  "}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"opencode", "--model", "anthropic/claude-sonnet"}; !reflect.DeepEqual(cmd, want) {
+		t.Fatalf("cmd = %#v, want %#v", cmd, want)
 	}
 }
 
@@ -465,6 +590,31 @@ func TestGetAgentHooksInstallsPlugin(t *testing.T) {
 		if !strings.Contains(body, marker) {
 			t.Fatalf("installed plugin missing opencode event %q:\n%s", marker, body)
 		}
+	}
+	// Tool execution is exposed as named plugin hooks. Permission approvals and
+	// explicit questions are emitted through opencode's generic event callback.
+	for _, hook := range []string{`"tool.execute.before":`, `"tool.execute.after":`} {
+		if !strings.Contains(body, hook) {
+			t.Fatalf("installed plugin missing opencode hook %q:\n%s", hook, body)
+		}
+	}
+	for _, eventCase := range []string{`case "permission.asked":`, `case "permission.replied":`, `case "question.asked":`, `case "question.replied":`, `case "question.rejected":`} {
+		if !strings.Contains(body, eventCase) {
+			t.Fatalf("installed plugin missing opencode event handler %q:\n%s", eventCase, body)
+		}
+	}
+	for _, unsupported := range []string{`"client.permissionRequest"`, `"permission.ask":`, `"tool.start"`, `"tool.end"`} {
+		if strings.Contains(body, unsupported) {
+			t.Fatalf("plugin subscribes to unsupported opencode event %q:\n%s", unsupported, body)
+		}
+	}
+	// The plugin must carry the runtime launch id in hook payloads so the CLI
+	// can fence signals even when child-process env inheritance is trimmed.
+	if !strings.Contains(body, "launch_id:") {
+		t.Fatalf("installed plugin missing launch_id in hook payload:\n%s", body)
+	}
+	if !strings.Contains(body, "AO_RUNTIME_LAUNCH_ID") {
+		t.Fatalf("installed plugin missing AO_RUNTIME_LAUNCH_ID reference:\n%s", body)
 	}
 	// Guard against regressing back to subscribing to the deprecated/unreliable
 	// session.idle event (the quoted event string is how a `case` would name it;

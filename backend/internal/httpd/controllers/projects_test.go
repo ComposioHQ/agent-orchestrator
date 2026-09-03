@@ -8,6 +8,7 @@ import (
 	"io"
 
 	"log/slog"
+	"net/url"
 
 	"net/http"
 
@@ -31,7 +32,7 @@ import (
 
 	projectsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/project"
 
-	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite"
+	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite/sqlitetest"
 )
 
 // emptyGetManager returns a GetResult that sets neither Project nor Degraded —
@@ -76,10 +77,11 @@ func TestProjectsAPI_GetEmptyResultIs500(t *testing.T) {
 func newTestServer(t *testing.T) *httptest.Server {
 
 	t.Helper()
+	t.Setenv("GIT_CEILING_DIRECTORIES", os.TempDir())
 
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 
-	store, err := sqlite.Open(t.TempDir())
+	store, err := sqlitetest.Open(t.TempDir())
 
 	if err != nil {
 
@@ -158,7 +160,7 @@ func TestProjectsAPI_ListAddGet(t *testing.T) {
 
 	mustJSON(t, body, &add)
 
-	if add.Project.ID != "ao" || add.Project.Name != "Agent Orchestrator" || add.Project.DefaultBranch != "main" {
+	if add.Project.ID != "ao" || add.Project.Name != "Agent Orchestrator" || add.Project.DefaultBranch != domain.DefaultBranchAuto {
 
 		t.Fatalf("created project = %#v", add.Project)
 
@@ -195,6 +197,40 @@ func TestProjectsAPI_ListAddGet(t *testing.T) {
 		t.Fatalf("project summary path = %#v, want path %q", list.Projects, repo)
 	}
 
+}
+
+func TestProjectsAPI_UpdateSettings(t *testing.T) {
+	srv := newTestServer(t)
+	repo := gitRepo(t, "legacy-project")
+
+	body, status, _ := doRequest(t, srv, "POST", "/api/v1/projects", `{"path":`+quote(repo)+`,"projectId":"legacy-project"}`)
+	if status != http.StatusCreated {
+		t.Fatalf("seed create = %d, want 201; body=%s", status, body)
+	}
+
+	body, status, _ = doRequest(t, srv, "PUT", "/api/v1/projects/legacy-project", `{"displayName":"Friendly project","config":{"defaultBranch":"develop"}}`)
+	if status != http.StatusOK {
+		t.Fatalf("PUT settings = %d, want 200; body=%s", status, body)
+	}
+	var updated struct {
+		Project projectBody `json:"project"`
+	}
+	mustJSON(t, body, &updated)
+	if updated.Project.ID != "legacy-project" || updated.Project.Name != "Friendly project" || updated.Project.DefaultBranch != "develop" {
+		t.Fatalf("update response = %#v", updated.Project)
+	}
+
+	body, status, _ = doRequest(t, srv, "PUT", "/api/v1/projects/legacy-project", `{"displayName":"  ","config":{}}`)
+	assertErrorCode(t, body, status, http.StatusBadRequest, "DISPLAY_NAME_REQUIRED")
+
+	body, status, _ = doRequest(t, srv, "PUT", "/api/v1/projects/legacy-project", `{"displayName":"`+strings.Repeat("x", 21)+`","config":{}}`)
+	assertErrorCode(t, body, status, http.StatusBadRequest, "DISPLAY_NAME_TOO_LONG")
+
+	body, status, _ = doRequest(t, srv, "PUT", "/api/v1/projects/missing", `{"displayName":"Missing","config":{}}`)
+	assertErrorCode(t, body, status, http.StatusNotFound, "PROJECT_NOT_FOUND")
+
+	body, status, _ = doRequest(t, srv, "PUT", "/api/v1/projects/legacy-project", `{`)
+	assertErrorCode(t, body, status, http.StatusBadRequest, "INVALID_JSON")
 }
 
 func TestProjectsAPI_AddValidationAndConflicts(t *testing.T) {
@@ -250,10 +286,40 @@ func TestProjectsAPI_AddValidationAndConflicts(t *testing.T) {
 
 }
 
+func TestProjectsAPI_Clone(t *testing.T) {
+	srv := newTestServer(t)
+	source := gitRepo(t, "clone-source")
+	remoteURL := (&url.URL{Scheme: "file", Path: source}).String()
+	destinationParent := t.TempDir()
+
+	body, status, _ := doRequest(t, srv, "POST", "/api/v1/projects/clone", `{"remoteUrl":`+quote(remoteURL)+`,"destinationParent":`+quote(destinationParent)+`}`)
+	if status != http.StatusCreated {
+		t.Fatalf("POST clone = %d, want 201; body=%s", status, body)
+	}
+	var cloned struct {
+		Project projectBody `json:"project"`
+	}
+	mustJSON(t, body, &cloned)
+	if cloned.Project.Path != filepath.Join(destinationParent, filepath.Base(source)) || cloned.Project.Repo != remoteURL {
+		t.Fatalf("cloned project = %#v", cloned.Project)
+	}
+
+	body, status, _ = doRequest(t, srv, "POST", "/api/v1/projects/clone", `{}`)
+	assertErrorCode(t, body, status, http.StatusBadRequest, "INVALID_GIT_URL")
+	body, status, _ = doRequest(t, srv, "POST", "/api/v1/projects/clone", `{`)
+	assertErrorCode(t, body, status, http.StatusBadRequest, "INVALID_JSON")
+}
+
 func TestProjectsAPI_InitializeRepository(t *testing.T) {
 	srv := newTestServer(t)
 
-	plain := t.TempDir()
+	base := t.TempDir()
+	t.Setenv("GIT_CEILING_DIRECTORIES", base)
+
+	plain := filepath.Join(base, "plain")
+	if err := os.Mkdir(plain, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	body, status, _ := doRequest(t, srv, "POST", "/api/v1/projects/initialize", `{"path":`+quote(plain)+`}`)
 	if status != http.StatusOK {
 		t.Fatalf("POST initialize plain = %d, want 200; body=%s", status, body)
@@ -262,7 +328,7 @@ func TestProjectsAPI_InitializeRepository(t *testing.T) {
 		t.Fatalf("plain folder was not committed: %v\\n%s", err, out)
 	}
 
-	unborn := filepath.Join(t.TempDir(), "unborn")
+	unborn := filepath.Join(base, "unborn")
 	if out, err := exec.Command("git", "init", "-b", "main", unborn).CombinedOutput(); err != nil {
 		t.Fatalf("git init unborn fixture: %v\\n%s", err, out)
 	}
@@ -356,19 +422,19 @@ func TestProjectsAPI_RejectsUnknownConfigKeys(t *testing.T) {
 		t.Fatalf("seed create = %d, want 201; body=%s", status, body)
 	}
 
-	// PUT a config body with an extraneous top-level key.
-	body, status, _ = doRequest(t, srv, "PUT", "/api/v1/projects/rej/config", `{"config":{"defaultBranch":"develop"},"surprise":"!"}`)
+	// PUT settings with an extraneous top-level key.
+	body, status, _ = doRequest(t, srv, "PUT", "/api/v1/projects/rej", `{"displayName":"Rejects unknown","config":{"defaultBranch":"develop"},"surprise":"!"}`)
 	assertErrorCode(t, body, status, http.StatusBadRequest, "INVALID_JSON")
 
 	// Prompt rules are now modeled and accepted in project config.
-	body, status, _ = doRequest(t, srv, "PUT", "/api/v1/projects/rej/config", `{"config":{"agentRules":"x"}}`)
+	body, status, _ = doRequest(t, srv, "PUT", "/api/v1/projects/rej", `{"displayName":"Rejects unknown","config":{"agentRules":"x"}}`)
 	if status != http.StatusOK {
-		t.Fatalf("agentRules config = %d, want 200; body=%s", status, body)
+		t.Fatalf("agentRules settings = %d, want 200; body=%s", status, body)
 	}
 
 	// A still-unknown nested config field is rejected, so misspellings cannot be
 	// silently persisted.
-	body, status, _ = doRequest(t, srv, "PUT", "/api/v1/projects/rej/config", `{"config":{"tracker":{"plugin":"github"}}}`)
+	body, status, _ = doRequest(t, srv, "PUT", "/api/v1/projects/rej", `{"displayName":"Rejects unknown","config":{"tracker":{"plugin":"github"}}}`)
 	assertErrorCode(t, body, status, http.StatusBadRequest, "INVALID_JSON")
 
 	// POST /projects gets the same gate, so add-time config rides the same rail.
@@ -389,7 +455,7 @@ func TestProjectsRoutes_LegacyUnregistered(t *testing.T) {
 		wantStatus int
 	}{
 
-		{method: "PUT", path: "/api/v1/projects/p1", wantStatus: 405, wantCode: "METHOD_NOT_ALLOWED", why: "R3 PUT not registered"},
+		{method: "PATCH", path: "/api/v1/projects/p1", wantStatus: 405, wantCode: "METHOD_NOT_ALLOWED", why: "standalone rename is not registered"},
 	}
 
 	for _, tc := range cases {

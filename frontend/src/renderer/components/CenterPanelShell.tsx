@@ -1,36 +1,51 @@
 import type { ReactNode } from "react";
 import { cn } from "../lib/utils";
-
-/** Visual variants for inset center panels (welcome board, settings, …). */
-export type CenterPanelVariant = "welcome" | "settings";
-
-const VARIANTS: Record<
-	CenterPanelVariant,
-	{
-		outer: string;
-		inner: string;
-	}
-> = {
-	welcome: {
-		outer: "pt-(--size-welcome-panel-inset) pr-(--size-welcome-panel-inset) pb-(--size-welcome-panel-inset) pl-0",
-		inner: "rounded-welcome-panel border border-[var(--color-border-welcome-panel)] bg-welcome-panel",
-	},
-	settings: {
-		outer: "pt-(--size-settings-page-inset) pr-(--size-settings-page-inset) pb-(--size-settings-page-inset) pl-0",
-		inner: "rounded-settings-panel border border-[var(--color-border-settings)] bg-settings-panel",
-	},
-};
+import { useWindowFullScreen } from "../hooks/useWindowFullScreen";
+import { isLinuxPlatform, isMacPlatform } from "../lib/platform";
+import { sidebarOccupiesLayout, useUiStore } from "../stores/ui-store";
 
 /**
  * Shared inset center panel: sidebar-colored outer frame with a bordered inner
- * surface. Used by the welcome board, settings page, and future full-width
- * center routes.
+ * surface. Used by the shell's app routes (kanban / session), the welcome board,
+ * and settings. Chrome lives in `styles.css` (`center-panel-shell` +
+ * `center-panel-surface`).
+ *
+ * `titlebarAlign` (default true) pulls Board/Terminal titles up level with the
+ * fixed TitlebarNav cluster on macOS and Linux. Windows keeps those controls in
+ * its custom titlebar, so it does not need this clearance.
  */
-export function CenterPanelShell({ variant, children }: { variant: CenterPanelVariant; children: ReactNode }) {
-	const styles = VARIANTS[variant];
+export function CenterPanelShell({
+	className,
+	children,
+	titlebarAlign = true,
+}: {
+	/** Extra classes on the outer frame. */
+	className?: string;
+	children: ReactNode;
+	/** When false, keep the default panel insets (Settings). */
+	titlebarAlign?: boolean;
+}) {
+	const isSidebarOpen = useUiStore(sidebarOccupiesLayout);
+	const isFullScreen = useWindowFullScreen();
+	const isMac = isMacPlatform();
+	const isLinux = isLinuxPlatform();
+	const align = titlebarAlign && isMac;
+	const titlebarClearance = align && !isSidebarOpen;
+	const linuxTitlebarClearance = titlebarAlign && isLinux && !isSidebarOpen;
+
 	return (
-		<div className={cn("flex h-full min-h-0 w-full bg-sidebar", styles.outer)}>
-			<div className={cn("flex min-h-0 flex-1 flex-col overflow-hidden", styles.inner)}>{children}</div>
+		<div
+			className={cn(
+				"center-panel-shell",
+				align && "center-panel-shell--mac",
+				titlebarClearance && "center-panel-shell--titlebar-clearance",
+				titlebarClearance && isFullScreen && "center-panel-shell--titlebar-clearance-fullscreen",
+				linuxTitlebarClearance && "center-panel-shell--titlebar-clearance-linux",
+				align && isFullScreen && "center-panel-shell--fullscreen",
+				className,
+			)}
+		>
+			<div className="center-panel-surface">{children}</div>
 		</div>
 	);
 }

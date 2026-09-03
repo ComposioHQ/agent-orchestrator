@@ -5,21 +5,29 @@ import {
 	getApiBaseUrl,
 	hasTrustedApiBaseUrl,
 	normalizeApiOperation,
+	setApiDaemonStatus,
 	setApiBaseUrl,
 	subscribeApiBaseUrl,
 } from "./api-client";
 import { captureRendererEvent } from "./telemetry";
+import { captureApiErrorToSentry } from "./sentry";
 
 vi.mock("./telemetry", () => ({
 	captureRendererEvent: vi.fn().mockResolvedValue(undefined),
 }));
 
+vi.mock("./sentry", () => ({
+	captureApiErrorToSentry: vi.fn(),
+}));
+
 const captureMock = vi.mocked(captureRendererEvent);
+const sentryCaptureMock = vi.mocked(captureApiErrorToSentry);
 
 describe("apiClient runtime base URL", () => {
 	afterEach(() => {
 		vi.restoreAllMocks();
 		setApiBaseUrl("http://127.0.0.1:3001");
+		setApiDaemonStatus({ state: "stopped" });
 	});
 
 	it("rewrites requests to the current runtime daemon port", async () => {
@@ -128,6 +136,28 @@ describe("apiClient runtime base URL", () => {
 		expect(hasTrustedApiBaseUrl()).toBe(false);
 		expect(fetchSpy).not.toHaveBeenCalled();
 	});
+
+	it("returns the current daemon startup failure when the base URL is untrusted", async () => {
+		setApiBaseUrl(null);
+		setApiDaemonStatus({
+			state: "error",
+			code: "exited",
+			message: "AO daemon exited with code 1",
+		});
+
+		const { error } = await apiClient.GET("/api/v1/projects");
+
+		expect(error).toEqual({ code: "exited", message: "AO daemon exited with code 1" });
+	});
+
+	it("leaves workspace and switch-history failures exclusively to visibility reporting", async () => {
+		vi.spyOn(globalThis, "fetch").mockImplementation(async () => new Response(JSON.stringify({ code: "unavailable", message: "nope", reporting_owner: "http" }), { status: 503, headers: { "Content-Type": "application/json" } }));
+		setApiBaseUrl("http://127.0.0.1:3001");
+		await apiClient.GET("/api/v1/projects");
+		await apiClient.GET("/api/v1/sessions");
+		await apiClient.GET("/api/v1/sessions/{sessionId}/agent-switches", { params: { path: { sessionId: "local-secret" } } });
+		expect(sentryCaptureMock).not.toHaveBeenCalled();
+	});
 });
 
 describe("subscribeApiBaseUrl", () => {
@@ -175,6 +205,18 @@ describe("normalizeApiOperation", () => {
 		expect(normalizeApiOperation("get", "/api/v1/projects/my project id")).toBe("GET /api/v1/projects/:id");
 		expect(normalizeApiOperation("POST", "/api/v1/sessions/ao-42/kill")).toBe("POST /api/v1/sessions/:id/kill");
 		expect(normalizeApiOperation("PUT", "/api/v1/projects/p1/config")).toBe("PUT /api/v1/projects/:id/config");
+		expect(normalizeApiOperation("GET", "/api/v1/agents/claude-code/models")).toBe(
+			"GET /api/v1/agents/:id/models",
+		);
+		expect(normalizeApiOperation("POST", "/api/v1/agents/codex/models/refresh")).toBe(
+			"POST /api/v1/agents/:id/models/refresh",
+		);
+		expect(normalizeApiOperation("POST", "/api/v1/agents/codex/accounts/login-operations/72d4db6e-da2c-414c-a6a9-fdbd09a006b6/verify")).toBe(
+			"POST /api/v1/agents/codex/accounts/login-operations/:id/verify",
+		);
+		expect(normalizeApiOperation("POST", "/api/v1/agents/codex/account-switches/switch-1/recover")).toBe(
+			"POST /api/v1/agents/codex/account-switches/:id/recover",
+		);
 	});
 
 	it("leaves collection and non-resource paths untouched", () => {
@@ -185,7 +227,13 @@ describe("normalizeApiOperation", () => {
 	it("keeps static child routes instead of treating them as ids", () => {
 		// These match an exact OpenAPI template, so the trailing segment must not
 		// be collapsed to :id (which would break aggregation and hide the route).
+		expect(normalizeApiOperation("GET", "/api/v1/agents/readiness")).toBe("GET /api/v1/agents/readiness");
+		expect(normalizeApiOperation("POST", "/api/v1/agents/readiness/ensure")).toBe(
+			"POST /api/v1/agents/readiness/ensure",
+		);
 		expect(normalizeApiOperation("POST", "/api/v1/notifications/read-all")).toBe("POST /api/v1/notifications/read-all");
+		expect(normalizeApiOperation("POST", "/api/v1/projects/clone")).toBe("POST /api/v1/projects/clone");
+		expect(normalizeApiOperation("POST", "/api/v1/projects/initialize")).toBe("POST /api/v1/projects/initialize");
 		expect(normalizeApiOperation("POST", "/api/v1/sessions/cleanup")).toBe("POST /api/v1/sessions/cleanup");
 	});
 
@@ -196,11 +244,16 @@ describe("normalizeApiOperation", () => {
 		expect(normalizeApiOperation("GET", "/api/v1/sessions/ao-42/workspace/file")).toBe(
 			"GET /api/v1/sessions/:id/workspace/file",
 		);
+		expect(normalizeApiOperation("POST", "/api/v1/sessions/ao-42/preview/server")).toBe(
+			"POST /api/v1/sessions/:id/preview/server",
+		);
 	});
 
 	it("normalizes ids for resources a collection heuristic would miss", () => {
 		expect(normalizeApiOperation("GET", "/api/v1/orchestrators/orch-abc")).toBe("GET /api/v1/orchestrators/:id");
 		expect(normalizeApiOperation("POST", "/api/v1/prs/pr-1/merge")).toBe("POST /api/v1/prs/:id/merge");
+		expect(normalizeApiOperation("POST", "/api/v1/agents/codex/accounts/ensure")).toBe("POST /api/v1/agents/codex/accounts/ensure");
+		expect(normalizeApiOperation("DELETE", "/api/v1/agents/codex/accounts/private-account-id")).toBe("DELETE /api/v1/agents/codex/accounts/:id");
 	});
 });
 
@@ -213,24 +266,107 @@ describe("api error telemetry", () => {
 		clock += 10 * 60_000;
 		vi.setSystemTime(clock);
 		captureMock.mockClear();
+		sentryCaptureMock.mockClear();
 	});
 	afterEach(() => {
 		vi.useRealTimers();
 		vi.restoreAllMocks();
 		setApiBaseUrl("http://127.0.0.1:3001");
+		setApiDaemonStatus({ state: "stopped" });
 	});
 
 	it("reports http_5xx with a normalized operation", async () => {
 		vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("oops", { status: 500 }));
 		setApiBaseUrl("http://127.0.0.1:3037");
 
-		await apiClient.GET("/api/v1/projects");
+		await apiClient.GET("/api/v1/agents");
 
 		expect(captureMock).toHaveBeenCalledWith("ao.renderer.api_error", {
-			operation: "GET /api/v1/projects",
+			operation: "GET /api/v1/agents",
 			error_category: "http_5xx",
 			status: 500,
 		});
+		expect(sentryCaptureMock).toHaveBeenCalledTimes(1);
+	});
+
+	it("does not send saga-owned API failures to generic Sentry capture", async () => {
+		vi.spyOn(globalThis, "fetch").mockResolvedValue(
+			new Response(
+				JSON.stringify({
+					error: "internal",
+					code: "AGENT_SWITCH_FAILED",
+					message: "Agent switch failed",
+					reporting_owner: "agent_switch_saga",
+				}),
+				{ status: 500, headers: { "Content-Type": "application/json" } },
+			),
+		);
+		setApiBaseUrl("http://127.0.0.1:3037");
+
+		const { error } = await apiClient.GET("/api/v1/agents");
+
+		expect(captureMock).toHaveBeenCalledTimes(1);
+		expect(sentryCaptureMock).not.toHaveBeenCalled();
+		expect(apiErrorMessage(error)).toBe("Agent switch failed (AGENT_SWITCH_FAILED)");
+	});
+
+	it("suppresses saga-owned 4xx responses without changing presentation", async () => {
+		vi.spyOn(globalThis, "fetch").mockResolvedValue(
+			new Response(
+				JSON.stringify({
+					error: "conflict",
+					code: "AGENT_SWITCH_DELIVERY_UNCONFIRMED",
+					message: "The target agent accepted an unconfirmed continuation",
+					reporting_owner: "agent_switch_saga",
+				}),
+				{ status: 409, headers: { "Content-Type": "application/json" } },
+			),
+		);
+		setApiBaseUrl("http://127.0.0.1:3037");
+
+		const { error } = await apiClient.GET("/api/v1/agents");
+
+		expect(sentryCaptureMock).not.toHaveBeenCalled();
+		expect(apiErrorMessage(error)).toBe(
+			"The target agent accepted an unconfirmed continuation (AGENT_SWITCH_DELIVERY_UNCONFIRMED)",
+		);
+	});
+
+	it("does not trust an unknown reporting owner", async () => {
+		vi.spyOn(globalThis, "fetch").mockResolvedValue(
+			new Response(
+				JSON.stringify({ code: "INTERNAL_ERROR", message: "Internal server error", reporting_owner: "renderer" }),
+				{ status: 500, headers: { "Content-Type": "application/json" } },
+			),
+		);
+		setApiBaseUrl("http://127.0.0.1:3037");
+
+		await apiClient.GET("/api/v1/agents");
+
+		expect(sentryCaptureMock).toHaveBeenCalledTimes(1);
+	});
+
+	it("does not let a saga-owned response dedupe a later HTTP-owned failure", async () => {
+		vi.spyOn(globalThis, "fetch")
+			.mockResolvedValueOnce(
+				new Response(JSON.stringify({ reporting_owner: "agent_switch_saga" }), {
+					status: 500,
+					headers: { "Content-Type": "application/json" },
+				}),
+			)
+			.mockResolvedValueOnce(
+				new Response(JSON.stringify({ reporting_owner: "http" }), {
+					status: 500,
+					headers: { "Content-Type": "application/json" },
+				}),
+			);
+		setApiBaseUrl("http://127.0.0.1:3037");
+
+		await apiClient.GET("/api/v1/agents");
+		await apiClient.GET("/api/v1/agents");
+
+		expect(captureMock).toHaveBeenCalledTimes(2);
+		expect(sentryCaptureMock).toHaveBeenCalledTimes(1);
 	});
 
 	it("reports http_4xx with ids stripped from the operation", async () => {
@@ -252,10 +388,10 @@ describe("api error telemetry", () => {
 		vi.spyOn(globalThis, "fetch").mockRejectedValue(new TypeError("Failed to fetch"));
 		setApiBaseUrl("http://127.0.0.1:3037");
 
-		await expect(apiClient.GET("/api/v1/projects")).rejects.toThrow("Failed to fetch");
+		await expect(apiClient.GET("/api/v1/agents")).rejects.toThrow("Failed to fetch");
 
 		expect(captureMock).toHaveBeenCalledWith("ao.renderer.api_error", {
-			operation: "GET /api/v1/projects",
+			operation: "GET /api/v1/agents",
 			error_category: "network_error",
 			status: undefined,
 		});
@@ -265,7 +401,7 @@ describe("api error telemetry", () => {
 		vi.spyOn(globalThis, "fetch").mockRejectedValue(new DOMException("Aborted", "AbortError"));
 		setApiBaseUrl("http://127.0.0.1:3037");
 
-		await expect(apiClient.GET("/api/v1/projects")).rejects.toThrow("Aborted");
+		await expect(apiClient.GET("/api/v1/agents")).rejects.toThrow("Aborted");
 
 		expect(captureMock).not.toHaveBeenCalled();
 	});
@@ -273,10 +409,10 @@ describe("api error telemetry", () => {
 	it("reports daemon_unavailable when the base URL is untrusted", async () => {
 		setApiBaseUrl(null);
 
-		await apiClient.GET("/api/v1/projects");
+		await apiClient.GET("/api/v1/agents");
 
 		expect(captureMock).toHaveBeenCalledWith("ao.renderer.api_error", {
-			operation: "GET /api/v1/projects",
+			operation: "GET /api/v1/agents",
 			error_category: "daemon_unavailable",
 			status: 503,
 		});
@@ -286,12 +422,12 @@ describe("api error telemetry", () => {
 		vi.spyOn(globalThis, "fetch").mockImplementation(async () => new Response("oops", { status: 502 }));
 		setApiBaseUrl("http://127.0.0.1:3037");
 
-		await apiClient.GET("/api/v1/projects");
-		await apiClient.GET("/api/v1/projects");
+		await apiClient.GET("/api/v1/agents");
+		await apiClient.GET("/api/v1/agents");
 		expect(captureMock).toHaveBeenCalledTimes(1);
 
 		vi.setSystemTime(clock + 31_000);
-		await apiClient.GET("/api/v1/projects");
+		await apiClient.GET("/api/v1/agents");
 		expect(captureMock).toHaveBeenCalledTimes(2);
 	});
 });
@@ -310,5 +446,13 @@ describe("apiErrorMessage", () => {
 				message: "tmux required (RUNTIME_PREREQUISITE_MISSING)",
 			}),
 		).toBe("tmux required (RUNTIME_PREREQUISITE_MISSING)");
+	});
+
+	it("reads the nested daemon error envelope", () => {
+		expect(
+			apiErrorMessage({
+				error: { code: "REVIEWER_NOT_FOUND", message: "reviewer has not reviewed this PR" },
+			}),
+		).toBe("reviewer has not reviewed this PR (REVIEWER_NOT_FOUND)");
 	});
 });

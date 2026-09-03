@@ -156,15 +156,73 @@ func TestGetPromptDeliveryStrategyIsAfterStart(t *testing.T) {
 	}
 }
 
-func TestGetConfigSpecHasNoCustomFieldsYet(t *testing.T) {
+func TestGetConfigSpecReportsModelField(t *testing.T) {
 	plugin := &Plugin{}
 
 	spec, err := plugin.GetConfigSpec(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(spec.Fields) != 0 {
-		t.Fatalf("unexpected config fields: %#v", spec.Fields)
+	want := []ports.ConfigField{
+		{
+			Key:         "model",
+			Type:        ports.ConfigFieldString,
+			Description: "Model override passed to `goose run --model`.",
+		},
+	}
+	if !reflect.DeepEqual(spec.Fields, want) {
+		t.Fatalf("config fields\nwant: %#v\n got: %#v", want, spec.Fields)
+	}
+}
+
+func TestGetLaunchCommandAppendsConfiguredModel(t *testing.T) {
+	plugin := &Plugin{resolvedBinary: "goose"}
+
+	cmd, err := plugin.GetLaunchCommand(context.Background(), ports.LaunchConfig{
+		Config: ports.AgentConfig{Model: "  claude-4-sonnet  "},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !containsSubsequence(cmd, []string{"--model", "claude-4-sonnet"}) {
+		t.Fatalf("command %#v missing trimmed --model flag", cmd)
+	}
+	if containsSubsequence(cmd, []string{"--model", "  claude-4-sonnet  "}) {
+		t.Fatalf("command %#v used untrimmed model", cmd)
+	}
+}
+
+func TestGetLaunchCommandOmitsBlankConfiguredModel(t *testing.T) {
+	plugin := &Plugin{resolvedBinary: "goose"}
+
+	cmd, err := plugin.GetLaunchCommand(context.Background(), ports.LaunchConfig{
+		Config: ports.AgentConfig{Model: " \t "},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if contains(cmd, "--model") {
+		t.Fatalf("command %#v contains --model for blank model", cmd)
+	}
+}
+
+func TestGetRestoreCommandAppendsConfiguredModel(t *testing.T) {
+	plugin := &Plugin{resolvedBinary: "goose"}
+
+	cmd, ok, err := plugin.GetRestoreCommand(context.Background(), ports.RestoreConfig{
+		Config: ports.AgentConfig{Model: "  claude-4-sonnet  "},
+		Session: ports.SessionRef{
+			Metadata: map[string]string{ports.MetadataKeyAgentSessionID: "20260720_1"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("err = %v, want nil", err)
+	}
+	if !ok {
+		t.Fatal("ok = false, want true")
+	}
+	if !containsSubsequence(cmd, []string{"--model", "claude-4-sonnet"}) {
+		t.Fatalf("restore command %#v missing trimmed --model flag", cmd)
 	}
 }
 
@@ -186,12 +244,13 @@ func TestAuthStatusAuthorizedFromGooseConfig(t *testing.T) {
 	clearGooseAuthEnv(t)
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	t.Setenv("XDG_CONFIG_HOME", "")
 	configPath := filepath.Join(home, ".config", "goose", "config.yaml")
 	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(configPath, []byte("providers:\n  openrouter:\n    configured: true\n    model: anthropic/claude-sonnet-4\n"), 0o600); err != nil {
+	if err := os.WriteFile(configPath, []byte("GOOSE_PROVIDER__API_KEY: test-key\nproviders:\n  openrouter:\n    model: anthropic/claude-sonnet-4\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	plugin := &Plugin{resolvedBinary: "goose"}
@@ -205,10 +264,11 @@ func TestAuthStatusAuthorizedFromGooseConfig(t *testing.T) {
 	}
 }
 
-func TestAuthStatusUnauthorizedFromEmptyGooseConfig(t *testing.T) {
+func TestAuthStatusUnknownFromEmptyGooseConfig(t *testing.T) {
 	clearGooseAuthEnv(t)
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	t.Setenv("XDG_CONFIG_HOME", "")
 	configPath := filepath.Join(home, ".config", "goose", "config.yaml")
 	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
@@ -223,8 +283,8 @@ func TestAuthStatusUnauthorizedFromEmptyGooseConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got != ports.AgentAuthStatusUnauthorized {
-		t.Fatalf("AuthStatus = %q, want %q", got, ports.AgentAuthStatusUnauthorized)
+	if got != ports.AgentAuthStatusUnknown {
+		t.Fatalf("AuthStatus = %q, want %q", got, ports.AgentAuthStatusUnknown)
 	}
 }
 
@@ -369,7 +429,7 @@ func TestGetRestoreCommandReadsAgentSessionID(t *testing.T) {
 		SystemPrompt:     "restore inline wins",
 		SystemPromptFile: filepath.Join(t.TempDir(), "missing.md"),
 		Session: ports.SessionRef{
-			Metadata: map[string]string{ports.MetadataKeyAgentSessionID: "thread-123"},
+			Metadata: map[string]string{ports.MetadataKeyAgentSessionID: "20260720_1"},
 		},
 	})
 	if err != nil {
@@ -380,10 +440,13 @@ func TestGetRestoreCommandReadsAgentSessionID(t *testing.T) {
 	}
 	want := []string{
 		"env", "GOOSE_MODE=auto",
-		"goose", "run", "--system", "restore inline wins", "--resume", "--session-id", "thread-123",
+		"goose", "run", "--system", "restore inline wins", "--resume", "--session-id", "20260720_1",
 	}
 	if !reflect.DeepEqual(cmd, want) {
 		t.Fatalf("restore cmd\nwant: %#v\n got: %#v", want, cmd)
+	}
+	if contains(cmd, "-t") || contains(cmd, "restore original task") {
+		t.Fatalf("restore command %#v unexpectedly replays the original task", cmd)
 	}
 }
 

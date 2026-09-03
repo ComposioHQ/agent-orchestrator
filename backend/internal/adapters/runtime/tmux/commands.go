@@ -16,6 +16,17 @@ func newSessionArgs(id, cwd, shellPath, launchCmd string) []string {
 	}
 }
 
+// respawnPaneArgs replaces the process in the session's only pane while keeping
+// the tmux session and terminal handle intact.
+func respawnPaneArgs(id, cwd, shellPath, launchCmd string) []string {
+	return []string{
+		"respawn-pane", "-k",
+		"-t", id + ":0.0",
+		"-c", cwd,
+		shellPath, "-c", launchCmd,
+	}
+}
+
 // setStatusOffArgs hides the tmux status bar for the given session.
 // set-option uses pane-targeting syntax which does not accept the `=` prefix,
 // so we pass the session name directly.
@@ -44,6 +55,19 @@ func setWindowSizeLargestArgs(id string) []string {
 	return []string{"set-option", "-t", id, "window-size", "largest"}
 }
 
+// panePIDArgs returns the pid of tmux's direct pane process. AO walks its
+// descendants to find the exact supervisor for the current launch.
+func panePIDArgs(id string) []string {
+	return []string{"display-message", "-p", "-t", id + ":0.0", "#{pane_pid}"}
+}
+
+// paneCurrentPathArgs prints tmux's cwd for the session's active pane. Create
+// uses this after new-session so a poisoned tmux server that ignores -c fails
+// loudly instead of silently starting the agent in the wrong directory.
+func paneCurrentPathArgs(id string) []string {
+	return []string{"display-message", "-p", "-t", id, "#{pane_current_path}"}
+}
+
 // killSessionArgs builds args for `tmux kill-session -t =<id>`. The `=` prefix
 // requests exact-name matching so a session "foo" does not accidentally match
 // "foobar" (tmux otherwise does unique-prefix matching).
@@ -59,10 +83,20 @@ func hasSessionArgs(id string) []string {
 
 // exactSessionTarget wraps id in tmux's exact-match prefix `=` so session-
 // selection commands (-t) target only the session with that precise name.
-// Only kill-session and has-session support this prefix; pane-targeting
-// commands (send-keys, capture-pane, set-option) use a plain session name.
+// Session-selection commands like kill-session, has-session, and list-panes
+// support this prefix; pane-targeting commands (send-keys, capture-pane,
+// set-option) use a plain session name.
 func exactSessionTarget(id string) string {
 	return "=" + id
+}
+
+// listPanePIDsArgs builds args for `tmux list-panes -s -t =<id> -F #{pane_pid}`.
+// -s lists every pane in the whole session (not just the active window); the
+// exact-match target `=` avoids prefix collisions (see killSessionArgs). Each
+// #{pane_pid} is the pane's session-leader pid, used to reap the pane's
+// descendants when the session is destroyed.
+func listPanePIDsArgs(id string) []string {
+	return []string{"list-panes", "-s", "-t", exactSessionTarget(id), "-F", "#{pane_pid}"}
 }
 
 // sendKeysLiteralArgs builds args for `tmux send-keys -t <id> -l <chunk>`.
@@ -88,4 +122,10 @@ func sendInterruptArgs(id string) []string {
 // -p prints to stdout; -S -<n> starts n lines back in history.
 func capturePaneArgs(id string, lines int) []string {
 	return []string{"capture-pane", "-t", id, "-p", "-S", fmt.Sprintf("-%d", lines)}
+}
+
+// capturePaneStyledArgs preserves SGR sequences so callers can distinguish a
+// dim TUI placeholder from normal human-authored composer text.
+func capturePaneStyledArgs(id string, lines int) []string {
+	return []string{"capture-pane", "-e", "-t", id, "-p", "-S", fmt.Sprintf("-%d", lines)}
 }
