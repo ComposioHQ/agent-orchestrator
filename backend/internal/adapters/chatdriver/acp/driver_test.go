@@ -2047,6 +2047,30 @@ func selectConfigOption(id, name, category, current string, values ...string) ac
 	}}
 }
 
+func TestDiscoverConfigOptionsReadsSessionCatalogWithoutPrompt(t *testing.T) {
+	agent := &fakeAgent{newConfig: []acpsdk.SessionConfigOption{
+		selectConfigOption("model", "Model", "model", "sonnet", "sonnet", "opus"),
+	}}
+	driver := New(Config{
+		Harness: domain.HarnessCline,
+		Launch: func(context.Context, LaunchConfig) (Launch, error) {
+			return Launch{Command: "cline", Args: []string{"--acp"}}, nil
+		},
+	}, slog.New(slog.DiscardHandler))
+	driver.spawn = fakeSpawn(agent)
+
+	got, err := driver.discoverConfigOptions(context.Background(), t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].Category != "model" || got[0].Current.Select != "sonnet" || len(got[0].Choices) != 2 {
+		t.Fatalf("options = %#v", got)
+	}
+	if agent.promptParams.Prompt != nil {
+		t.Fatalf("discovery sent a prompt: %#v", agent.promptParams)
+	}
+}
+
 func booleanConfigOption(id, name string, current bool) acpsdk.SessionConfigOption {
 	return acpsdk.SessionConfigOption{Boolean: &acpsdk.SessionConfigOptionBoolean{
 		Id: acpsdk.SessionConfigId(id), Name: name, CurrentValue: current, Type: "boolean",

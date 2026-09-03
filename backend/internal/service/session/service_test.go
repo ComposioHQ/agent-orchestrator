@@ -18,6 +18,7 @@ import (
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apierr"
+	"github.com/aoagents/agent-orchestrator/backend/internal/observe/ownership"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	sessionmanager "github.com/aoagents/agent-orchestrator/backend/internal/session_manager"
 )
@@ -2182,6 +2183,7 @@ func TestSessionRenameMissingSessionReturnsNotFound(t *testing.T) {
 type fakeCommander struct {
 	killed          []domain.SessionID
 	retired         []domain.SessionID
+	exited          []domain.SessionID
 	resumed         []domain.SessionID
 	ready           []domain.SessionID
 	sent            []domain.SessionID
@@ -2245,6 +2247,15 @@ func (f *fakeCommander) ResumeAgentWithMode(_ context.Context, id domain.Session
 		return sessionmanager.RestoreResult{}, f.restoreErr
 	}
 	return f.restoreResult, nil
+}
+func (f *fakeCommander) ExitAgent(_ context.Context, id domain.SessionID) (domain.SessionRecord, error) {
+	f.exited = append(f.exited, id)
+	if f.restoreErr != nil {
+		return domain.SessionRecord{}, f.restoreErr
+	}
+	rec := f.restoreResult.Session
+	rec.Activity.State = domain.ActivityExited
+	return rec, nil
 }
 func (f *fakeCommander) Kill(_ context.Context, id domain.SessionID) (bool, error) {
 	if f.killErr != nil {
@@ -3221,6 +3232,30 @@ func TestToAPIErrorSwitchDeliveryUnconfirmedMessage(t *testing.T) {
 	}
 }
 
+func TestToAPIErrorPreservesReportingOwnerAcrossMapping(t *testing.T) {
+	raw := ownership.Own(
+		fmt.Errorf("switch agent mer-1: %w", sessionmanager.ErrSwitchInProgress),
+		ownership.OwnerAgentSwitchSaga,
+	)
+
+	mapped := toAPIError(raw)
+
+	if got := ownership.OwnerOf(mapped); got != ownership.OwnerAgentSwitchSaga {
+		t.Fatalf("OwnerOf(mapped) = %q, want %q", got, ownership.OwnerAgentSwitchSaga)
+	}
+	var apiError *apierr.Error
+	if !errors.As(mapped, &apiError) || apiError.Code != "AGENT_SWITCH_IN_PROGRESS" {
+		t.Fatalf("mapped = %v, want AGENT_SWITCH_IN_PROGRESS", mapped)
+	}
+}
+
+func TestToAPIErrorDefaultsUnownedErrorsToHTTP(t *testing.T) {
+	mapped := toAPIError(errors.New("pre-admission storage unavailable"))
+	if got := ownership.OwnerOf(mapped); got != ownership.OwnerHTTP {
+		t.Fatalf("OwnerOf(mapped) = %q, want %q", got, ownership.OwnerHTTP)
+	}
+}
+
 func TestToAPIErrorPreservesMissingChatCapabilityRecoveryDetails(t *testing.T) {
 	mapped := toAPIError(fmt.Errorf("spawn: %w", &ports.ChatCapabilityError{
 		Harness:                domain.HarnessPi,
@@ -3308,6 +3343,30 @@ func TestResumeAgentMapsManagerModeToServiceView(t *testing.T) {
 	}
 	if got.Session.ID != "mer-1" || got.Mode != RestoreModeViewNative {
 		t.Fatalf("resume outcome = %+v", got)
+	}
+}
+
+func TestExitAgentPreservesSessionAndMapsExitedReadModel(t *testing.T) {
+	st := newFakeStore()
+	rec := domain.SessionRecord{
+		ID:        "mer-1",
+		ProjectID: "mer",
+		Kind:      domain.KindWorker,
+		Harness:   domain.HarnessCodex,
+		Activity:  domain.Activity{State: domain.ActivityIdle},
+	}
+	fc := &fakeCommander{restoreResult: sessionmanager.RestoreResult{Session: rec}}
+	svc := &Service{manager: fc, store: st}
+
+	got, err := svc.ExitAgent(context.Background(), "mer-1")
+	if err != nil {
+		t.Fatalf("ExitAgent: %v", err)
+	}
+	if got.Session.ID != "mer-1" || got.Session.IsTerminated || got.Session.Activity.State != domain.ActivityExited {
+		t.Fatalf("exit outcome = %+v", got)
+	}
+	if len(fc.exited) != 1 || fc.exited[0] != "mer-1" {
+		t.Fatalf("exit calls = %v", fc.exited)
 	}
 }
 
