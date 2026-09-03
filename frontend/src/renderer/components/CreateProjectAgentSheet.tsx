@@ -576,7 +576,7 @@ export function defaultAuthorizedAgent(authorizedAgents: AgentInfo[]): string {
 }
 
 type RoleUsageSession = {
-	createdAt: string;
+	createdAt?: string;
 	kind?: "worker" | "orchestrator";
 	provider: string;
 };
@@ -595,7 +595,7 @@ export function defaultAuthorizedAgentForRole(
 	for (const session of sessions) {
 		if (session.kind !== role || !eligible.has(session.provider)) continue;
 		const current = stats.get(session.provider) ?? { count: 0, latest: Number.NEGATIVE_INFINITY };
-		const createdAt = Date.parse(session.createdAt);
+		const createdAt = Date.parse(session.createdAt ?? "");
 		stats.set(session.provider, {
 			count: current.count + 1,
 			latest: Number.isNaN(createdAt) ? current.latest : Math.max(current.latest, createdAt),
