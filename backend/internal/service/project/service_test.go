@@ -12,6 +12,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/go-chi/chi/v5/middleware"
+
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/gitdefault"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apierr"
@@ -277,7 +279,7 @@ func TestManager_CloneCleansUpFailedAndEmptyCheckouts(t *testing.T) {
 }
 
 func TestManager_AddEmitsProjectAndFirstProjectTelemetry(t *testing.T) {
-	ctx := context.Background()
+	ctx := context.WithValue(context.Background(), middleware.RequestIDKey, "req-1")
 	store, err := sqlitetest.Open(t.TempDir())
 	if err != nil {
 		t.Fatalf("open store: %v", err)
@@ -294,6 +296,14 @@ func TestManager_AddEmitsProjectAndFirstProjectTelemetry(t *testing.T) {
 	}
 	if sink.events[0].Name != "ao.projects.created" || sink.events[1].Name != "ao.onboarding.first_project_added" {
 		t.Fatalf("event names = %#v", []string{sink.events[0].Name, sink.events[1].Name})
+	}
+	// The emit path detaches from the request context on purpose; the request id
+	// must still be carried so the rows join to the HTTP request that added the
+	// project.
+	for _, ev := range sink.events {
+		if ev.RequestID != "req-1" {
+			t.Fatalf("%s RequestID = %q, want req-1", ev.Name, ev.RequestID)
+		}
 	}
 }
 
@@ -1042,6 +1052,119 @@ func TestManager_AddValidationAndConflicts(t *testing.T) {
 
 	_, err = m.Add(ctx, project.AddInput{Path: repoB, ProjectID: ptr("shared")})
 	wantCode(t, err, "ID_ALREADY_REGISTERED")
+}
+
+func TestManager_AddAllocatesUniqueIDForCollidingDerivedIDs(t *testing.T) {
+	configureCommitter(t)
+	ctx := context.Background()
+	store, err := sqlitetest.Open(t.TempDir())
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	m := project.NewWithDeps(project.Deps{Store: store})
+
+	t.Run("double collision", func(t *testing.T) {
+		dir1 := gitRepoWithCommitNoOrigin(t, filepath.Join(t.TempDir(), "work", "app"))
+		dir2 := gitRepoWithCommitNoOrigin(t, filepath.Join(t.TempDir(), "clients", "app"))
+
+		p1, err := m.Add(ctx, project.AddInput{Path: dir1})
+		if err != nil {
+			t.Fatalf("first add: %v", err)
+		}
+		if p1.ID != "app" {
+			t.Fatalf("first project id = %q, want %q", p1.ID, "app")
+		}
+
+		p2, err := m.Add(ctx, project.AddInput{Path: dir2})
+		if err != nil {
+			t.Fatalf("second add: %v", err)
+		}
+		if p2.ID != "app1" {
+			t.Fatalf("second project id = %q, want %q", p2.ID, "app1")
+		}
+		if p2.Name != "app" {
+			t.Fatalf("second project name = %q, want %q", p2.Name, "app")
+		}
+	})
+
+	t.Run("triple collision", func(t *testing.T) {
+		dir1 := gitRepoWithCommitNoOrigin(t, filepath.Join(t.TempDir(), "work", "svc"))
+		dir2 := gitRepoWithCommitNoOrigin(t, filepath.Join(t.TempDir(), "clients", "svc"))
+		dir3 := gitRepoWithCommitNoOrigin(t, filepath.Join(t.TempDir(), "extra", "svc"))
+
+		p1, err := m.Add(ctx, project.AddInput{Path: dir1})
+		if err != nil {
+			t.Fatalf("first add: %v", err)
+		}
+		if p1.ID != "svc" {
+			t.Fatalf("first project id = %q, want %q", p1.ID, "svc")
+		}
+
+		p2, err := m.Add(ctx, project.AddInput{Path: dir2})
+		if err != nil {
+			t.Fatalf("second add: %v", err)
+		}
+		if p2.ID != "svc1" {
+			t.Fatalf("second project id = %q, want %q", p2.ID, "svc1")
+		}
+
+		p3, err := m.Add(ctx, project.AddInput{Path: dir3})
+		if err != nil {
+			t.Fatalf("third add: %v", err)
+		}
+		if p3.ID != "svc2" {
+			t.Fatalf("third project id = %q, want %q", p3.ID, "svc2")
+		}
+		if p3.Name != "svc" {
+			t.Fatalf("third project name = %q, want %q", p3.Name, "svc")
+		}
+	})
+
+	t.Run("archived suffix reuse", func(t *testing.T) {
+		dir1 := gitRepoWithCommitNoOrigin(t, filepath.Join(t.TempDir(), "work", "tool"))
+		dir2 := gitRepoWithCommitNoOrigin(t, filepath.Join(t.TempDir(), "clients", "tool"))
+
+		p1, err := m.Add(ctx, project.AddInput{Path: dir1})
+		if err != nil {
+			t.Fatalf("first add: %v", err)
+		}
+		if p1.ID != "tool" {
+			t.Fatalf("first project id = %q, want %q", p1.ID, "tool")
+		}
+
+		p2, err := m.Add(ctx, project.AddInput{Path: dir2})
+		if err != nil {
+			t.Fatalf("second add: %v", err)
+		}
+		if p2.ID != "tool1" {
+			t.Fatalf("second project id = %q, want %q", p2.ID, "tool1")
+		}
+
+		if ok, err := store.ArchiveProject(ctx, string(p2.ID), time.Now()); err != nil || !ok {
+			t.Fatalf("archive project: ok=%v err=%v", ok, err)
+		}
+
+		dir3 := gitRepoWithCommitNoOrigin(t, filepath.Join(t.TempDir(), "extra", "tool"))
+		p3, err := m.Add(ctx, project.AddInput{Path: dir3})
+		if err != nil {
+			t.Fatalf("third add after archive: %v", err)
+		}
+		if p3.ID != "tool2" {
+			t.Fatalf("third project id = %q, want %q (should skip archived tool1)", p3.ID, "tool2")
+		}
+	})
+
+	t.Run("explicit id collision still errors", func(t *testing.T) {
+		dir1 := gitRepoWithCommitNoOrigin(t, filepath.Join(t.TempDir(), "work", "foo"))
+		dir2 := gitRepoWithCommitNoOrigin(t, filepath.Join(t.TempDir(), "clients", "foo"))
+
+		if _, err := m.Add(ctx, project.AddInput{Path: dir1, ProjectID: ptr("mine")}); err != nil {
+			t.Fatalf("first add: %v", err)
+		}
+		_, err := m.Add(ctx, project.AddInput{Path: dir2, ProjectID: ptr("mine")})
+		wantCode(t, err, "ID_ALREADY_REGISTERED")
+	})
 }
 
 // gitRepoWithOrigin creates a real git repo with an `origin` remote pointing

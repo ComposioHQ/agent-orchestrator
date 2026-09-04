@@ -24,6 +24,13 @@ type PRFacts struct {
 	TargetBranch   string
 	HeadSHA        string
 	UpdatedAt      time.Time
+	// ExternalApproved and ExternalChangesRequested are the human review
+	// verdicts AO did not author. Review above aggregates AO's own provider
+	// reviews with everyone else's, so it cannot say whose turn the
+	// review-feedback loop is on.
+	ExternalApproved         bool
+	ExternalChangesRequested bool
+	ExternalComments         bool
 }
 
 // PullRequest is the app-level representation of one tracked pull request as
@@ -101,6 +108,7 @@ type PullRequestCheck struct {
 // PullRequestComment is one normalized review comment for a pull request.
 type PullRequestComment struct {
 	ThreadID         string
+	ReviewID         string
 	ID               string
 	Author           string
 	File             string

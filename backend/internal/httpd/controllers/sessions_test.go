@@ -30,37 +30,42 @@ import (
 	previewutil "github.com/aoagents/agent-orchestrator/backend/internal/preview"
 	"github.com/aoagents/agent-orchestrator/backend/internal/previewserver"
 	sessionsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/session"
+	"github.com/aoagents/agent-orchestrator/backend/pkg/contract"
 )
 
 type fakeSessionService struct {
-	sessions            map[domain.SessionID]domain.Session
-	sent                string
-	sentAttachment      *ports.SpawnAttachment
-	delegationInput     sessionsvc.DelegateTaskInput
-	delegationErr       error
-	cleanupProjects     []domain.ProjectID
-	cleanupResult       []domain.SessionID
-	cleanupSkipped      []sessionsvc.CleanupSkipped
-	workspaceFiles      sessionsvc.WorkspaceFiles
-	workspaceFile       sessionsvc.WorkspaceFileDetail
-	workspacePaths      []string
-	spawnErr            error
-	lastSpawn           ports.SpawnConfig
-	orchestratorMode    domain.SessionMode
-	claimErr            error
-	listPRErr           error
-	workspaceErr        error
-	staged              []ports.SpawnAttachment
-	stagedPaths         []string
-	stageErr            error
-	agentSwitches       map[domain.AgentSwitchID]domain.AgentSwitch
-	switchConfig        sessionsvc.SwitchAgentInput
-	switchErr           error
-	recoveredSwitch     domain.AgentSwitchID
-	handoff             json.RawMessage
-	handoffSource       domain.AgentGenerationID
-	autoInjectCISession domain.SessionID
-	autoInjectCIEnabled bool
+	sessions             map[domain.SessionID]domain.Session
+	sent                 string
+	sentAttachment       *ports.SpawnAttachment
+	delegationInput      sessionsvc.DelegateTaskInput
+	delegationErr        error
+	cleanupProjects      []domain.ProjectID
+	cleanupResult        []domain.SessionID
+	cleanupSkipped       []sessionsvc.CleanupSkipped
+	workspaceFiles       sessionsvc.WorkspaceFiles
+	workspaceFile        sessionsvc.WorkspaceFileDetail
+	workspaceFileSection sessionsvc.WorkspaceFileSection
+	workspaceBlob        sessionsvc.WorkspaceFileBlob
+	workspaceTree        sessionsvc.WorkspaceTree
+	workspaceTreePath    string
+	workspacePaths       []string
+	spawnErr             error
+	lastSpawn            ports.SpawnConfig
+	orchestratorMode     domain.SessionMode
+	claimErr             error
+	listPRErr            error
+	workspaceErr         error
+	staged               []ports.SpawnAttachment
+	stagedPaths          []string
+	stageErr             error
+	agentSwitches        map[domain.AgentSwitchID]domain.AgentSwitch
+	switchConfig         sessionsvc.SwitchAgentInput
+	switchErr            error
+	recoveredSwitch      domain.AgentSwitchID
+	handoff              json.RawMessage
+	handoffSource        domain.AgentGenerationID
+	autoInjectCISession  domain.SessionID
+	autoInjectCIEnabled  bool
 }
 
 type fakeInterfaceTransitionSessionService struct {
@@ -291,12 +296,13 @@ func (f *fakeSessionService) Unpin(_ context.Context, id domain.SessionID) (doma
 	return s, nil
 }
 
-func (f *fakeSessionService) SetReviewerHarness(_ context.Context, id domain.SessionID, harness domain.ReviewerHarness) (domain.Session, error) {
+func (f *fakeSessionService) SetReviewerHarness(_ context.Context, id domain.SessionID, harness domain.ReviewerHarness, config domain.AgentConfig) (domain.Session, error) {
 	s, ok := f.sessions[id]
 	if !ok {
 		return domain.Session{}, apierr.NotFound("SESSION_NOT_FOUND", "Unknown session")
 	}
 	s.ReviewerHarness = harness
+	s.ReviewerConfig = config
 	f.sessions[id] = s
 	return s, nil
 }
@@ -317,6 +323,14 @@ func (f *fakeSessionService) Restore(_ context.Context, id domain.SessionID) (se
 	s.Status = domain.StatusIdle
 	f.sessions[id] = s
 	return sessionsvc.RestoreOutcome{Session: s, Mode: sessionsvc.RestoreModeView("native")}, nil
+}
+
+func (f *fakeSessionService) ExitAgent(_ context.Context, id domain.SessionID) (sessionsvc.ExitAgentOutcome, error) {
+	s := f.sessions[id]
+	s.Activity.State = domain.ActivityExited
+	s.Status = domain.StatusExited
+	f.sessions[id] = s
+	return sessionsvc.ExitAgentOutcome{Session: s}, nil
 }
 
 func (f *fakeSessionService) ResumeAgent(_ context.Context, id domain.SessionID) (sessionsvc.ResumeAgentOutcome, error) {
@@ -558,7 +572,8 @@ func (f *fakeSessionService) WorkspaceWatchPaths(_ context.Context, id domain.Se
 	return []string{session.Metadata.WorkspacePath}, nil
 }
 
-func (f *fakeSessionService) GetWorkspaceFile(_ context.Context, id domain.SessionID, path string) (sessionsvc.WorkspaceFileDetail, error) {
+func (f *fakeSessionService) GetWorkspaceFile(_ context.Context, id domain.SessionID, path string, section sessionsvc.WorkspaceFileSection) (sessionsvc.WorkspaceFileDetail, error) {
+	f.workspaceFileSection = section
 	if f.workspaceErr != nil {
 		return sessionsvc.WorkspaceFileDetail{}, f.workspaceErr
 	}
@@ -569,6 +584,88 @@ func (f *fakeSessionService) GetWorkspaceFile(_ context.Context, id domain.Sessi
 		return f.workspaceFile, nil
 	}
 	return sessionsvc.WorkspaceFileDetail{SessionID: id, Path: path}, nil
+}
+
+func (f *fakeSessionService) GetWorkspaceFileBlob(_ context.Context, id domain.SessionID, path string, side sessionsvc.WorkspaceFileBlobSide) (sessionsvc.WorkspaceFileBlob, error) {
+	if f.workspaceErr != nil {
+		return sessionsvc.WorkspaceFileBlob{}, f.workspaceErr
+	}
+	if _, ok := f.sessions[id]; !ok {
+		return sessionsvc.WorkspaceFileBlob{}, apierr.NotFound("SESSION_NOT_FOUND", "Unknown session")
+	}
+	if f.workspaceBlob.MediaType != "" {
+		blob := f.workspaceBlob
+		blob.Side = side
+		return blob, nil
+	}
+	return sessionsvc.WorkspaceFileBlob{Path: path, Side: side, MediaType: "image/png"}, nil
+}
+
+func (f *fakeSessionService) ListWorkspaceTree(_ context.Context, id domain.SessionID, path string) (sessionsvc.WorkspaceTree, error) {
+	f.workspaceTreePath = path
+	if f.workspaceErr != nil {
+		return sessionsvc.WorkspaceTree{}, f.workspaceErr
+	}
+	if _, ok := f.sessions[id]; !ok {
+		return sessionsvc.WorkspaceTree{}, apierr.NotFound("SESSION_NOT_FOUND", "Unknown session")
+	}
+	if f.workspaceTree.SessionID != "" {
+		return f.workspaceTree, nil
+	}
+	return sessionsvc.WorkspaceTree{SessionID: id, Path: path}, nil
+}
+
+func TestSessionsAPI_ListWorkspaceTree(t *testing.T) {
+	t.Run("lists the requested directory", func(t *testing.T) {
+		svc := newFakeSessionService()
+		svc.workspaceTree = sessionsvc.WorkspaceTree{
+			SessionID: "ao-1",
+			Path:      "src",
+			Entries: []sessionsvc.WorkspaceTreeEntry{{
+				Name: "main.go", Path: "src/main.go", Type: sessionsvc.WorkspaceTreeFile,
+			}},
+		}
+		srv := newSessionTestServer(t, svc)
+		body, status, _ := doRequest(t, srv, http.MethodGet, "/api/v1/sessions/ao-1/workspace/tree?path=src", "")
+		if status != http.StatusOK {
+			t.Fatalf("status = %d, want 200; body=%s", status, body)
+		}
+		if svc.workspaceTreePath != "src" {
+			t.Fatalf("service path = %q, want src", svc.workspaceTreePath)
+		}
+		var got controllers.ListWorkspaceTreeResponse
+		mustJSON(t, body, &got)
+		if got.Path != "src" || len(got.Entries) != 1 || got.Entries[0].Path != "src/main.go" {
+			t.Fatalf("response = %+v", got)
+		}
+	})
+
+	t.Run("returns not found for an unknown session", func(t *testing.T) {
+		srv := newSessionTestServer(t, newFakeSessionService())
+		body, status, _ := doRequest(t, srv, http.MethodGet, "/api/v1/sessions/missing/workspace/tree", "")
+		if status != http.StatusNotFound {
+			t.Fatalf("status = %d, want 404; body=%s", status, body)
+		}
+	})
+
+	for _, tc := range []struct {
+		name string
+		err  error
+		want int
+	}{
+		{name: "invalid path", err: apierr.Invalid("INVALID_WORKSPACE_PATH", "invalid workspace path", nil), want: http.StatusBadRequest},
+		{name: "service failure", err: errors.New("tree unavailable"), want: http.StatusInternalServerError},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			svc := newFakeSessionService()
+			svc.workspaceErr = tc.err
+			srv := newSessionTestServer(t, svc)
+			body, status, _ := doRequest(t, srv, http.MethodGet, "/api/v1/sessions/ao-1/workspace/tree?path=src", "")
+			if status != tc.want {
+				t.Fatalf("status = %d, want %d; body=%s", status, tc.want, body)
+			}
+		})
+	}
 }
 
 func TestSessionsAPI_AgentSwitchLifecycle(t *testing.T) {
@@ -868,6 +965,8 @@ func TestSessionsAPI_ListSpawnGetAndActions(t *testing.T) {
 	s := svc.sessions["ao-1"]
 	s.Metadata = domain.SessionMetadata{Branch: "qa/modal-worker", WorkspacePath: "/tmp/private-worktree", RuntimeHandleID: "runtime-1", Prompt: "private prompt"}
 	s.SCMStatus = domain.StatusReviewPending
+	s.KanbanColumn = domain.KanbanNeedsReview
+	s.DisplayStatus = contract.DisplayNeedsHumanReview
 	svc.sessions["ao-1"] = s
 	srv := newSessionTestServer(t, svc)
 
@@ -881,6 +980,12 @@ func TestSessionsAPI_ListSpawnGetAndActions(t *testing.T) {
 	mustJSON(t, body, &list)
 	if len(list.Sessions) != 1 || list.Sessions[0].ID != "ao-1" || list.Sessions[0].Status != string(domain.StatusIdle) || list.Sessions[0].SCMStatus != string(domain.StatusReviewPending) || list.Sessions[0].TerminalHandleID != "ao-1/terminal_0" {
 		t.Fatalf("list = %#v", list)
+	}
+	if list.Sessions[0].KanbanColumn != string(domain.KanbanNeedsReview) {
+		t.Fatalf("kanbanColumn = %q, want the derived column on the wire", list.Sessions[0].KanbanColumn)
+	}
+	if list.Sessions[0].DisplayStatus != string(contract.DisplayNeedsHumanReview) {
+		t.Fatalf("displayStatus = %q, want the derived phrase on the wire", list.Sessions[0].DisplayStatus)
 	}
 	if list.Sessions[0].Branch != "qa/modal-worker" {
 		t.Fatalf("branch = %q, want qa/modal-worker", list.Sessions[0].Branch)
@@ -956,6 +1061,21 @@ func TestSessionsAPI_ListSpawnGetAndActions(t *testing.T) {
 	mustJSON(t, body, &restored)
 	if restored.SessionID != "ao-2" || restored.RestoreMode != "native" {
 		t.Fatalf("restore response = %#v", restored)
+	}
+
+	body, status, _ = doRequest(t, srv, "POST", "/api/v1/sessions/ao-2/exit-agent", "")
+	if status != http.StatusOK {
+		t.Fatalf("exit agent = %d, want 200; body=%s", status, body)
+	}
+	var exited struct {
+		SessionID string `json:"sessionId"`
+		Session   struct {
+			Activity domain.Activity `json:"activity"`
+		} `json:"session"`
+	}
+	mustJSON(t, body, &exited)
+	if exited.SessionID != "ao-2" || exited.Session.Activity.State != domain.ActivityExited {
+		t.Fatalf("exit response = %#v", exited)
 	}
 
 	body, status, _ = doRequest(t, srv, "POST", "/api/v1/sessions/ao-2/resume-agent", "")
@@ -1109,6 +1229,19 @@ func TestSessionsAPI_ListSpawnGetAndActions(t *testing.T) {
 	}
 }
 
+func TestSessionsAPI_SetReviewerAllowsConfigWithoutHarness(t *testing.T) {
+	svc := newFakeSessionService()
+	srv := newSessionTestServer(t, svc)
+
+	body, status, _ := doRequest(t, srv, "PUT", "/api/v1/sessions/ao-1/reviewer", `{"agentConfig":{"model":"gpt-5"}}`)
+	if status != http.StatusOK {
+		t.Fatalf("set reviewer with default harness override = %d, want 200; body=%s", status, body)
+	}
+	if got := svc.sessions["ao-1"]; got.ReviewerHarness != "" || got.ReviewerConfig.Model != "gpt-5" {
+		t.Fatalf("reviewer update persisted = (%q, %+v), want default harness with model override", got.ReviewerHarness, got.ReviewerConfig)
+	}
+}
+
 func TestSessionsAPI_SetAutoInjectCIValidatesBody(t *testing.T) {
 	for _, tt := range []struct {
 		name     string
@@ -1157,6 +1290,20 @@ func TestSessionsAPI_SpawnRejectsUnknownExplicitMode(t *testing.T) {
 	assertErrorCode(t, body, status, http.StatusBadRequest, "SESSION_MODE_INVALID")
 	if len(svc.sessions) != 1 {
 		t.Fatalf("invalid mode created a session: %#v", svc.sessions)
+	}
+}
+
+func TestSessionsAPI_SpawnsOMPChat(t *testing.T) {
+	svc := newFakeSessionService()
+	srv := newSessionTestServer(t, svc)
+
+	body, status, _ := doRequest(t, srv, http.MethodPost, "/api/v1/sessions",
+		`{"projectId":"ao","harness":"omp","mode":"chat","prompt":"fix"}`)
+	if status != http.StatusCreated {
+		t.Fatalf("spawn OMP Chat = %d, want 201; body=%s", status, body)
+	}
+	if svc.lastSpawn.Harness != domain.HarnessOMP || svc.lastSpawn.RequestedMode != domain.SessionModeChat {
+		t.Fatalf("spawn config = %#v, want OMP Chat", svc.lastSpawn)
 	}
 }
 
@@ -1308,6 +1455,26 @@ func TestSessionsAPI_SetPreviewEmptyURLAutodetectsIndex(t *testing.T) {
 	}
 	if strings.Contains(resp.Session.PreviewURL, workspace) {
 		t.Fatalf("preview leaked workspace path: %s", resp.Session.PreviewURL)
+	}
+}
+
+func TestSessionsAPI_SetPreviewEmptyURLDoesNotFallbackToMarkdown(t *testing.T) {
+	svc := newFakeSessionService()
+	workspace := t.TempDir()
+	// A Markdown-rich repo with no index.html: the old behavior fell back to
+	// mostRecentPreviewable and picked README.md. The fix restricts bare
+	// ao preview to real static entrypoints, so this should 404.
+	if err := os.WriteFile(filepath.Join(workspace, "README.md"), []byte("# project"), 0o644); err != nil {
+		t.Fatalf("write readme: %v", err)
+	}
+	s := svc.sessions["ao-1"]
+	s.Metadata = domain.SessionMetadata{WorkspacePath: workspace}
+	svc.sessions["ao-1"] = s
+	srv := newSessionTestServer(t, svc)
+
+	body, status, _ := doRequest(t, srv, "POST", "/api/v1/sessions/ao-1/preview", `{}`)
+	if status != http.StatusNotFound {
+		t.Fatalf("set preview with only .md = %d, want 404; body=%s", status, body)
 	}
 }
 
@@ -1829,6 +1996,25 @@ func TestSessionsAPI_SetPreviewRejectsAbsoluteFilesOutsideWorkspace(t *testing.T
 	}
 }
 
+func TestSessionsAPI_SetPreviewRejectsRelativeParentTraversal(t *testing.T) {
+	svc := newFakeSessionService()
+	s := svc.sessions["ao-1"]
+	s.Metadata.WorkspacePath = t.TempDir()
+	s.Metadata.PreviewURL = "http://localhost:4321/docs"
+	svc.sessions["ao-1"] = s
+	srv := newSessionTestServer(t, svc)
+
+	for _, target := range []string{"../README.md", "docs/../../README.md", `..\README.md`} {
+		body, status, _ := doRequest(t, srv, http.MethodPost, "/api/v1/sessions/ao-1/preview", `{"url":`+strconv.Quote(target)+`}`)
+		if status != http.StatusForbidden || !bytes.Contains(body, []byte(`"code":"PREVIEW_FILE_OUTSIDE_WORKSPACE"`)) {
+			t.Fatalf("set parent traversal preview %q = %d, body=%s; want 403 workspace error", target, status, body)
+		}
+	}
+	if got := svc.sessions["ao-1"].Metadata.PreviewURL; got != "http://localhost:4321/docs" {
+		t.Fatalf("persisted previewUrl = %q, want existing target preserved", got)
+	}
+}
+
 func TestSessionsAPI_SetPreviewRejectsWorkspaceSymlinkEscape(t *testing.T) {
 	svc := newFakeSessionService()
 	workspace := t.TempDir()
@@ -2160,10 +2346,65 @@ func TestSessionsAPI_GetWorkspaceFile(t *testing.T) {
 	}
 }
 
+// TestSessionsAPI_GetWorkspaceFileSection verifies the section query param
+// reaches the service unchanged, so a staged-section request and an
+// unstaged-section request for the same path resolve to different diffs
+// instead of colliding on one combined base..worktree diff.
+func TestSessionsAPI_GetWorkspaceFileSection(t *testing.T) {
+	svc := newFakeSessionService()
+	srv := newSessionTestServer(t, svc)
+
+	for _, section := range []sessionsvc.WorkspaceFileSection{sessionsvc.WorkspaceFileSectionStaged, sessionsvc.WorkspaceFileSectionUnstaged} {
+		body, status, _ := doRequest(t, srv, "GET",
+			"/api/v1/sessions/ao-1/workspace/file?path="+url.QueryEscape("README.md")+"&section="+string(section), "")
+		if status != http.StatusOK {
+			t.Fatalf("section=%s: GET workspace file = %d, want 200; body=%s", section, status, body)
+		}
+		if svc.workspaceFileSection != section {
+			t.Fatalf("section=%s: service received section %q", section, svc.workspaceFileSection)
+		}
+	}
+}
+
 func TestSessionsAPI_GetWorkspaceFileRequiresPath(t *testing.T) {
 	srv := newSessionTestServer(t, newFakeSessionService())
 
 	body, status, headers := doRequest(t, srv, "GET", "/api/v1/sessions/ao-1/workspace/file", "")
+	assertJSON(t, headers)
+	assertErrorCode(t, body, status, http.StatusBadRequest, "WORKSPACE_PATH_REQUIRED")
+}
+
+func TestSessionsAPI_GetWorkspaceFileBlob(t *testing.T) {
+	svc := newFakeSessionService()
+	svc.workspaceBlob = sessionsvc.WorkspaceFileBlob{
+		Path:      "docs/logo.png",
+		MediaType: "image/png",
+		Data:      []byte{0x89, 'P', 'N', 'G'},
+	}
+	srv := newSessionTestServer(t, svc)
+
+	body, status, headers := doRequest(t, srv, "GET", "/api/v1/sessions/ao-1/workspace/file/blob?side=before&path="+url.QueryEscape("docs/logo.png"), "")
+	if status != http.StatusOK {
+		t.Fatalf("GET workspace blob = %d, want 200; body=%s", status, body)
+	}
+	if contentType := headers.Get("Content-Type"); contentType != "image/png" {
+		t.Fatalf("Content-Type = %q, want image/png", contentType)
+	}
+	if cache := headers.Get("Cache-Control"); cache != "no-store" {
+		t.Fatalf("Cache-Control = %q, want no-store", cache)
+	}
+	if !bytes.Equal(body, []byte{0x89, 'P', 'N', 'G'}) {
+		t.Fatalf("body = %q, want raw png bytes", body)
+	}
+	if svc.workspaceBlob.Side != "" {
+		t.Fatalf("fake blob mutated: %#v", svc.workspaceBlob)
+	}
+}
+
+func TestSessionsAPI_GetWorkspaceFileBlobRequiresPath(t *testing.T) {
+	srv := newSessionTestServer(t, newFakeSessionService())
+
+	body, status, headers := doRequest(t, srv, "GET", "/api/v1/sessions/ao-1/workspace/file/blob?side=after", "")
 	assertJSON(t, headers)
 	assertErrorCode(t, body, status, http.StatusBadRequest, "WORKSPACE_PATH_REQUIRED")
 }
@@ -2335,7 +2576,7 @@ func TestSessionsAPI_DelegateTask(t *testing.T) {
 	svc := newFakeSessionService()
 	srv := newSessionTestServer(t, svc)
 
-	body, status, _ := doRequest(t, srv, "POST", "/api/v1/orchestrators/delegate", `{"projectId":"ao","brief":"Fix\u0000 it","agent":"cursor","model":" sonnet-custom ","mode":"chat","attachments":[{"mimeType":"image/png","data":"AQID"}]}`)
+	body, status, _ := doRequest(t, srv, "POST", "/api/v1/orchestrators/delegate", `{"projectId":"ao","brief":"Fix\u0000 it","agent":"cursor","model":" sonnet-custom ","mode":"chat","approvalMode":"bypass-permissions","attachments":[{"mimeType":"image/png","data":"AQID"}]}`)
 	if status != http.StatusAccepted {
 		t.Fatalf("delegate = %d, want 202; body=%s", status, body)
 	}
@@ -2348,7 +2589,7 @@ func TestSessionsAPI_DelegateTask(t *testing.T) {
 	if !got.OK || got.WorkerID != "ao-worker" || got.OrchestratorID != "ao-orch" {
 		t.Fatalf("response = %#v", got)
 	}
-	if svc.delegationInput.ProjectID != "ao" || svc.delegationInput.Brief != "Fix it" || svc.delegationInput.RequestedAgent != domain.HarnessCursor || svc.delegationInput.Model != "sonnet-custom" || svc.delegationInput.RequestedMode != domain.SessionModeChat {
+	if svc.delegationInput.ProjectID != "ao" || svc.delegationInput.Brief != "Fix it" || svc.delegationInput.RequestedAgent != domain.HarnessCursor || svc.delegationInput.Model != "sonnet-custom" || svc.delegationInput.RequestedMode != domain.SessionModeChat || svc.delegationInput.ApprovalMode != domain.PermissionModeBypassPermissions {
 		t.Fatalf("delegation input = %#v", svc.delegationInput)
 	}
 	if len(svc.delegationInput.Attachments) != 1 {
@@ -2356,6 +2597,20 @@ func TestSessionsAPI_DelegateTask(t *testing.T) {
 	}
 	if got := svc.delegationInput.Attachments[0]; got.Ext != ".png" || string(got.Data) != "\x01\x02\x03" {
 		t.Fatalf("attachment = %#v, want decoded png", got)
+	}
+}
+
+func TestSessionsAPI_DelegatesOMPChat(t *testing.T) {
+	svc := newFakeSessionService()
+	srv := newSessionTestServer(t, svc)
+
+	body, status, _ := doRequest(t, srv, http.MethodPost, "/api/v1/orchestrators/delegate",
+		`{"projectId":"ao","brief":"Fix it","agent":"omp","mode":"chat"}`)
+	if status != http.StatusAccepted {
+		t.Fatalf("delegate OMP Chat = %d, want 202; body=%s", status, body)
+	}
+	if svc.delegationInput.RequestedAgent != domain.HarnessOMP || svc.delegationInput.RequestedMode != domain.SessionModeChat {
+		t.Fatalf("delegation input = %#v, want OMP Chat", svc.delegationInput)
 	}
 }
 
@@ -2378,6 +2633,18 @@ func TestSessionsAPI_DelegateTaskValidationAndServiceError(t *testing.T) {
 	svc.delegationErr = nil
 	body, status, _ = doRequest(t, srv, "POST", "/api/v1/orchestrators/delegate", `{"projectId":"ao","brief":"Fix it","mode":"tuii"}`)
 	assertErrorCode(t, body, status, http.StatusBadRequest, "INVALID_SESSION_MODE")
+
+	body, status, _ = doRequest(t, srv, "POST", "/api/v1/orchestrators/delegate", `{"projectId":"ao","brief":"Fix it","approvalMode":"sometimes"}`)
+	assertErrorCode(t, body, status, http.StatusBadRequest, "INVALID_APPROVAL_MODE")
+	var approvalError struct {
+		Error   string `json:"error"`
+		Code    string `json:"code"`
+		Message string `json:"message"`
+	}
+	mustJSON(t, body, &approvalError)
+	if approvalError.Error != "bad_request" || approvalError.Code != "INVALID_APPROVAL_MODE" || approvalError.Message != "approvalMode is invalid" {
+		t.Fatalf("invalid approval envelope = %#v", approvalError)
+	}
 }
 
 func TestSessionsAPI_DelegateTaskRejectsInvalidAttachments(t *testing.T) {
@@ -2539,6 +2806,8 @@ type sessionBody struct {
 	Branch           string `json:"branch"`
 	Status           string `json:"status"`
 	SCMStatus        string `json:"scmStatus"`
+	KanbanColumn     string `json:"kanbanColumn"`
+	DisplayStatus    string `json:"displayStatus"`
 	TerminalHandleID string `json:"terminalHandleId"`
 }
 

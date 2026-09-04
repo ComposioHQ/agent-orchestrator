@@ -10,6 +10,7 @@ on:
   pull_request:
     paths:
       - "frontend/**"
+      - ".github/workflows/**"
       - "contracts/cloud/**"
       - "packages/cloud-client/**"
       - "packages/product-ui/**"
@@ -96,9 +97,14 @@ jobs:
     # This is fast renderer-regression coverage; it is NOT the canonical T0/P0
     # end-to-end gate. Real daemon/storage/API/preload/PTY/FS boundaries are
     # exercised by the packaged-app pod gate (#2697), not here.
-    # playwright.config starts `dev:web` itself (webServer); we only need the
-    # browser installed.
+    # playwright.config starts `dev:web` itself (webServer); the pinned container
+    # provides Chromium and its system dependencies without a live apt install.
     runs-on: ubuntu-latest
+    timeout-minutes: 20
+    container:
+      # Keep this aligned with Playwright in frontend/package-lock.json.
+      image: mcr.microsoft.com/playwright:v1.60.0-noble
+      options: --user 1001
     defaults:
       run:
         working-directory: frontend
@@ -118,9 +124,6 @@ jobs:
         # `satisfies AoBridge` guard in e2e/support/fake-bridge.ts (the
         # preload-drift tripwire) is only enforced by this step.
         run: npm run typecheck:e2e
-
-      - name: Install Playwright browser
-        run: npx playwright install --with-deps chromium
 
       - name: Run renderer smoke suite
         run: CI=true npm run test:e2e:renderer

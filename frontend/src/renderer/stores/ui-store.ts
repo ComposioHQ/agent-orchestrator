@@ -18,12 +18,23 @@ import {
 export type { Theme, ThemePreference, ThemeStyle } from "../lib/theme";
 export { readStoredThemePreference, readStoredThemeStyle, resolveTheme } from "../lib/theme";
 
+export type GlobalSettingsSection =
+	| "general"
+	| "harness"
+	| "agents"
+	| "cloud"
+	| "mobile"
+	| "shortcuts"
+	| "browserProfiles"
+	| "updates"
+	| "help";
+
 export type SettingsModal =
-	| { scope: "global" }
+	| { scope: "global"; section?: GlobalSettingsSection }
 	| {
 			scope: "project";
 			projectId: string;
-	  };
+	};
 
 /** Worker detail view toggles — Changes (Git rail) is the default. */
 export type WorkbenchTab = "changes" | "files" | "terminal";
@@ -36,14 +47,25 @@ export type InspectorSessionState = {
 	browserContentRevealed?: boolean;
 	/** Real browser activity occurred while Browser was not visible. */
 	browserUnseen?: boolean;
+	/** Files tab: show only files the agent has touched. Defaults to false (full tree). */
+	filesChangedOnly?: boolean;
+	/** The session-entry defaulting (Summary tab, baseline browser reveal) has already run once for this session's lifetime. */
+	initialized?: boolean;
+};
+
+export type GlobalToast = {
+	title: string;
+	body?: string;
+	nonce: number;
 };
 
 // Selection (which project/session is open) now lives in the URL — the router
 // is the single source of truth, read via route params. This store holds only
 // ephemeral UI: theme, sidebar collapse, command palette, per-session inspector
 // state, and the active workbench tab within a session.
-type UiState = {
+export type UiState = {
 	workbenchTab: WorkbenchTab;
+	/** The user's durable sidebar preference. */
 	isSidebarOpen: boolean;
 	inspectorSessions: Record<string, InspectorSessionState>;
 	isCommandPaletteOpen: boolean;
@@ -58,6 +80,7 @@ type UiState = {
 	restartingProjectIds: ReadonlySet<string>;
 	orchestratorReplacementErrors: Record<string, OrchestratorReplacementFailure>;
 	orchestratorStartupErrors: Record<string, string>;
+	globalToast: GlobalToast | null;
 	// Transient "open the New Task dialog for this project" signal. The nonce
 	// bumps on every request so a repeat press (even for the same project) still
 	// re-fires; the always-mounted GlobalNewTaskDialog consumes it. Selection
@@ -66,6 +89,12 @@ type UiState = {
 	// Bumps to ask the sidebar's create-project flow to open (the ⌘N fallback
 	// when no project is in scope).
 	createProjectNonce: number;
+	// Transient "a folder was dropped onto the app window — open the
+	// create-project flow for this path" signal, mirroring newTaskRequest: the
+	// nonce always bumps so dropping the same folder twice in a row still
+	// re-fires. Consumed by the same CreateProjectFlow instance that owns
+	// openSignal for ⌘N (Sidebar's CreateProjectButton).
+	folderDropRequest: { path: string; nonce: number } | null;
 	// Bumps to ask for a new standalone shell terminal. Like newTaskRequest this
 	// is a one-shot signal, not state: the tab-strip + button and Ctrl+Shift+` both
 	// raise it so they cannot drift apart, and a repeat press re-fires because
@@ -86,7 +115,11 @@ type UiState = {
 	setThemePreference: (theme: ThemePreference) => void;
 	setThemeStyle: (style: ThemeStyle) => void;
 	setDeveloperMode: (enabled: boolean) => void;
-	openGlobalSettings: () => void;
+	/** True while the restart-to-update confirmation is open. */
+	updateInstallPromptOpen: boolean;
+	openUpdateInstallPrompt: () => void;
+	closeUpdateInstallPrompt: () => void;
+	openGlobalSettings: (section?: GlobalSettingsSection) => void;
 	openProjectSettings: (projectId: string) => void;
 	closeSettings: () => void;
 	/** Refresh resolvedTheme from OS without writing light/dark to storage. */
@@ -95,14 +128,26 @@ type UiState = {
 	setInspectorOpen: (sessionId: string, isOpen: boolean) => void;
 	toggleInspector: (sessionId: string) => void;
 	setInspectorView: (sessionId: string, view: InspectorView) => void;
+	/**
+	 * Runs the "entering this session" defaults — Summary tab, baseline browser
+	 * reveal — exactly once per session's lifetime. Backed by persisted store
+	 * state (not a component-local ref) so it stays a no-op across unmount and
+	 * remount of the session view, not just across re-renders of one mounted
+	 * instance.
+	 */
+	initializeInspectorSession: (sessionId: string, hasBrowserContent: boolean, hasInspector: boolean) => void;
 	setBrowserContentRevealed: (sessionId: string, revealed: boolean) => void;
 	setBrowserUnseen: (sessionId: string, unseen: boolean) => void;
+	setFilesChangedOnly: (sessionId: string, changedOnly: boolean) => void;
 	setCommandPaletteOpen: (open: boolean) => void;
 	setProjectRestarting: (projectId: string, restarting: boolean) => void;
 	setOrchestratorReplacementError: (projectId: string, failure: OrchestratorReplacementFailure | null) => void;
 	setOrchestratorStartupError: (projectId: string, message: string | null) => void;
+	showGlobalToast: (title: string, body?: string) => void;
+	clearGlobalToast: () => void;
 	requestNewTask: (projectId: string) => void;
 	requestCreateProject: () => void;
+	requestCreateProjectFromPath: (path: string) => void;
 	requestNewShellTerminal: () => void;
 	setActiveShellTerminal: (handleId: string | null) => void;
 	setVisibleTerminalKind: (sessionId: string, kind: TerminalTarget["kind"]) => void;
@@ -134,6 +179,15 @@ function inspectorState(sessions: Record<string, InspectorSessionState>, session
 	return sessions[sessionId] ?? { isOpen: true, view: "summary" };
 }
 
+export function sidebarIsVisible(state: Pick<UiState, "isSidebarOpen">): boolean {
+	return state.isSidebarOpen;
+}
+
+/** The expanded sidebar occupies shell layout; a user close does not. */
+export function sidebarOccupiesLayout(state: Pick<UiState, "isSidebarOpen">): boolean {
+	return state.isSidebarOpen;
+}
+
 const initialThemePreference = readStoredThemePreference();
 const initialThemeStyle = readStoredThemeStyle();
 
@@ -150,8 +204,10 @@ export const useUiStore = create<UiState>((set, get) => ({
 	restartingProjectIds: new Set<string>(),
 	orchestratorReplacementErrors: {},
 	orchestratorStartupErrors: {},
+	globalToast: null,
 	newTaskRequest: null,
 	createProjectNonce: 0,
+	folderDropRequest: null,
 	newShellTerminalNonce: 0,
 	activeShellTerminalHandleId: null,
 	visibleTerminalKindBySession: {},
@@ -177,7 +233,10 @@ export const useUiStore = create<UiState>((set, get) => ({
 		getLocalStorage()?.setItem(developerModeStorageKey, String(developerMode));
 		set({ developerMode });
 	},
-	openGlobalSettings: () => set({ settingsModal: { scope: "global" } }),
+	updateInstallPromptOpen: false,
+	openUpdateInstallPrompt: () => set({ updateInstallPromptOpen: true }),
+	closeUpdateInstallPrompt: () => set({ updateInstallPromptOpen: false }),
+	openGlobalSettings: (section) => set({ settingsModal: { scope: "global", section } }),
 	openProjectSettings: (projectId) => set({ settingsModal: { scope: "project", projectId } }),
 	closeSettings: () => set({ settingsModal: null }),
 	syncSystemTheme: () => {
@@ -227,6 +286,26 @@ export const useUiStore = create<UiState>((set, get) => ({
 				},
 			};
 		}),
+	initializeInspectorSession: (sessionId, hasBrowserContent, hasInspector) =>
+		set((state) => {
+			// Sessions without an inspector (e.g. orchestrator sessions) must not
+			// gain a store entry at all — leave inspectorSessions[sessionId]
+			// undefined so callers that key off its presence stay correct.
+			if (!hasInspector) return state;
+			const current = inspectorState(state.inspectorSessions, sessionId);
+			if (current.initialized) return state;
+			return {
+				inspectorSessions: {
+					...state.inspectorSessions,
+					[sessionId]: {
+						...current,
+						initialized: true,
+						view: "summary",
+						browserContentRevealed: current.browserContentRevealed ?? hasBrowserContent,
+					},
+				},
+			};
+		}),
 	setBrowserContentRevealed: (sessionId, browserContentRevealed) =>
 		set((state) => {
 			const current = inspectorState(state.inspectorSessions, sessionId);
@@ -250,6 +329,17 @@ export const useUiStore = create<UiState>((set, get) => ({
 				inspectorSessions: {
 					...state.inspectorSessions,
 					[sessionId]: { ...current, browserUnseen },
+				},
+			};
+		}),
+	setFilesChangedOnly: (sessionId, filesChangedOnly) =>
+		set((state) => {
+			const current = inspectorState(state.inspectorSessions, sessionId);
+			if (Boolean(current.filesChangedOnly) === filesChangedOnly) return state;
+			return {
+				inspectorSessions: {
+					...state.inspectorSessions,
+					[sessionId]: { ...current, filesChangedOnly },
 				},
 			};
 		}),
@@ -284,9 +374,16 @@ export const useUiStore = create<UiState>((set, get) => ({
 			}
 			return { orchestratorStartupErrors };
 		}),
+	showGlobalToast: (title, body) =>
+		set((state) => ({
+			globalToast: { title, body, nonce: (state.globalToast?.nonce ?? 0) + 1 },
+		})),
+	clearGlobalToast: () => set({ globalToast: null }),
 	requestNewTask: (projectId) =>
 		set((state) => ({ newTaskRequest: { projectId, nonce: (state.newTaskRequest?.nonce ?? 0) + 1 } })),
 	requestCreateProject: () => set((state) => ({ createProjectNonce: state.createProjectNonce + 1 })),
+	requestCreateProjectFromPath: (path) =>
+		set((state) => ({ folderDropRequest: { path, nonce: (state.folderDropRequest?.nonce ?? 0) + 1 } })),
 	requestNewShellTerminal: () => set((state) => ({ newShellTerminalNonce: state.newShellTerminalNonce + 1 })),
 	setActiveShellTerminal: (activeShellTerminalHandleId) => set({ activeShellTerminalHandleId }),
 	setVisibleTerminalKind: (sessionId, kind) =>

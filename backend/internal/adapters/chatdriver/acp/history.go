@@ -4,13 +4,70 @@ import (
 	"context"
 	"crypto/sha256"
 	"fmt"
+	"strconv"
 	"strings"
+	"sync"
 
 	acpsdk "github.com/coder/acp-go-sdk"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
+
+const aoInternalReplayMetaKey = "ao.internalReplay"
+
+// refreshableConversation is returned only when the agent advertised
+// session/load. Calling session/load again on the already resumed ACP connection
+// asks the provider to replay its durable transcript again; it does not start a
+// new provider conversation or merely reread historyEvents.
+type refreshableConversation struct {
+	*conversation
+	loadMu      sync.Mutex
+	loadRequest acpsdk.LoadSessionRequest
+}
+
+var _ ports.ChatHistoryRefresher = (*refreshableConversation)(nil)
+
+func newRefreshableConversation(
+	conversation *conversation,
+	request acpsdk.LoadSessionRequest,
+) *refreshableConversation {
+	return &refreshableConversation{conversation: conversation, loadRequest: request}
+}
+
+func (c *refreshableConversation) loadHistory(ctx context.Context) (acpsdk.LoadSessionResponse, error) {
+	if err := ctx.Err(); err != nil {
+		return acpsdk.LoadSessionResponse{}, err
+	}
+	c.loadMu.Lock()
+	defer c.loadMu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return acpsdk.LoadSessionResponse{}, err
+	}
+
+	c.beginHistoryReplay(string(c.loadRequest.SessionId))
+	response, err := c.conn.LoadSession(ctx, c.loadRequest)
+	if err != nil {
+		c.abortHistoryReplay()
+		return acpsdk.LoadSessionResponse{}, err
+	}
+	c.finishHistoryReplay()
+	return response, nil
+}
+
+// RefreshHistory implements ports.ChatHistoryRefresher with a new ACP
+// session/load request. Replaying identical provider data is safe because the
+// capture regenerates the same stable ProviderEventID values, and the Chat
+// projector deduplicates those identities when importing a settled snapshot.
+func (c *refreshableConversation) RefreshHistory(ctx context.Context) ([]ports.ChatEvent, error) {
+	if _, err := c.loadHistory(ctx); err != nil {
+		if contextErr := ctx.Err(); contextErr != nil {
+			return nil, fmt.Errorf("refresh ACP session history: %w: %w", contextErr, err)
+		}
+		return nil, normalizeACPError("refresh ACP session history", err)
+	}
+	return c.ReadHistory(ctx)
+}
 
 // historyCapture receives the session/update replay produced by ACP session/load.
 // ACP deliberately replays a flat stream rather than provider turns, so user
@@ -64,27 +121,19 @@ func (c *conversation) abortHistoryReplay() {
 	c.mu.Unlock()
 }
 
-// finishHistoryReplay settles the last reconstructed turn, then exposes the
-// captured facts through ChatHistoryReader for the controller's transactional,
-// idempotent import path.
+// finishHistoryReplay closes the capture without inventing an outcome for its
+// final turn. ACP session/load guarantees only that all stored entries were
+// replayed; it does not report their terminal outcomes. Recovered is the shared
+// terminal state for that evidence gap; service reconciliation replaces it with
+// AO's known completed/interrupted/failed result when a durable turn matches.
 func (c *conversation) finishHistoryReplay() {
 	c.historyMu.Lock()
-	unsettled := c.history != nil && c.history.turnID != "" &&
-		c.history.turnUserID != "" && !c.history.turnHasProvider
-	if unsettled {
-		c.historyEvents = nil
-		c.historyErr = fmt.Errorf("%w: final replayed user turn has no provider output",
-			ports.ErrChatHistoryUnsettled)
-		c.historyLoaded = true
-		c.history = nil
-	}
+	hasTail := c.history != nil && c.history.turnID != ""
 	c.historyMu.Unlock()
-	if unsettled {
-		c.resetHistoryItems("")
-		return
-	}
 
-	c.finishHistoryTurn()
+	if hasTail {
+		c.finishHistoryTurn(domain.TurnStateRecovered)
+	}
 
 	c.historyMu.Lock()
 	if c.history != nil {
@@ -179,7 +228,7 @@ func (c *conversation) captureHistoryUserChunk(chunk *acpsdk.SessionUpdateUserMe
 	c.historyMu.Unlock()
 
 	if finishPrevious {
-		c.finishHistoryTurn()
+		c.finishHistoryTurn(domain.TurnStateRecovered)
 		startTurn = true
 	}
 	if startTurn {
@@ -201,7 +250,13 @@ func (c *conversation) startHistoryTurn(userID string) {
 		c.historyMu.Unlock()
 		return
 	}
-	turnID := "acp-history-turn:" + c.history.sessionID + ":" + userID
+	namespace := c.providerScopeID
+	var turnID string
+	if namespace == "" {
+		turnID = legacyHistoryTurnID(c.history.sessionID, userID)
+	} else {
+		turnID = historyTurnID(namespace, userID)
+	}
 	c.history.turnID = turnID
 	c.history.turnUserID = userID
 	c.history.turnHasProvider = false
@@ -209,6 +264,14 @@ func (c *conversation) startHistoryTurn(userID string) {
 
 	c.resetHistoryItems(turnID)
 	c.emit(ports.ChatEvent{Kind: ports.ChatEventTurnStarted, ProviderTurnID: turnID})
+}
+
+func historyTurnID(namespace, userID string) string {
+	return "acp-history-turn:" + lengthPrefixedTuple(namespace, userID)
+}
+
+func legacyHistoryTurnID(sessionID, userID string) string {
+	return "acp-history-turn:" + sessionID + ":" + userID
 }
 
 func (c *conversation) ensureHistoryTurn(seed string) {
@@ -244,13 +307,13 @@ func (c *conversation) flushHistoryUserMessage() {
 	c.emit(ports.ChatEvent{
 		Kind:            ports.ChatEventUserMessageCompleted,
 		ProviderTurnID:  turnID,
-		ProviderItemID:  messageID,
-		ClientMessageID: messageID,
+		ProviderItemID:  c.providerItemID(messageID),
+		ClientMessageID: c.providerItemID(messageID),
 		Text:            text,
 	})
 }
 
-func (c *conversation) finishHistoryTurn() {
+func (c *conversation) finishHistoryTurn(state domain.TurnState) {
 	c.flushHistoryUserMessage()
 
 	c.historyMu.Lock()
@@ -261,12 +324,14 @@ func (c *conversation) finishHistoryTurn() {
 	turnID := c.history.turnID
 	c.historyMu.Unlock()
 
-	c.settleOpenItems(turnID)
-	c.emit(ports.ChatEvent{
-		Kind:           ports.ChatEventTurnCompleted,
-		ProviderTurnID: turnID,
-		TurnState:      domain.TurnStateCompleted,
-	})
+	c.settleOpenItems(turnID, state)
+	if state != "" {
+		c.emit(ports.ChatEvent{
+			Kind:           ports.ChatEventTurnCompleted,
+			ProviderTurnID: turnID,
+			TurnState:      state,
+		})
+	}
 
 	c.historyMu.Lock()
 	if c.history != nil && c.history.turnID == turnID {
@@ -299,18 +364,45 @@ func (c *conversation) captureHistoryEvent(event ports.ChatEvent) bool {
 	if c.history == nil {
 		return false
 	}
+	if alias, ok := c.legacyProviderItemAlias(event.ProviderItemID); ok {
+		event.ProviderItemAliases = append(event.ProviderItemAliases, alias)
+	}
 	if event.ProviderEventID == "" {
-		base := strings.Join([]string{
-			c.history.sessionID,
-			string(event.Kind),
-			event.ProviderTurnID,
-			event.ProviderItemID,
-			event.ClientMessageID,
-			event.RequestID,
-		}, "\x00")
+		namespace := c.providerScopeID
+		if namespace == "" {
+			namespace = c.history.sessionID
+		}
+		var base string
+		if c.providerScopeID == "" {
+			// Deployed ACP histories used this delimiter encoding before durable
+			// provider scopes existed. Keep it only for migrated unscoped roots so
+			// their replay event identities remain stable across the upgrade. Every
+			// newly created root and provider boundary uses the injective form below.
+			base = strings.Join([]string{
+				namespace,
+				string(event.Kind),
+				event.ProviderTurnID,
+				event.ProviderItemID,
+				event.ClientMessageID,
+				event.RequestID,
+			}, "\x00")
+		} else {
+			base = lengthPrefixedTuple(
+				namespace,
+				string(event.Kind),
+				event.ProviderTurnID,
+				event.ProviderItemID,
+				event.ClientMessageID,
+				event.RequestID,
+			)
+		}
 		occurrence := c.history.occurrences[base]
 		c.history.occurrences[base] = occurrence + 1
-		digest := sha256.Sum256([]byte(fmt.Sprintf("%s\x00%d", base, occurrence)))
+		digestInput := lengthPrefixedTuple(base, strconv.Itoa(occurrence))
+		if c.providerScopeID == "" {
+			digestInput = fmt.Sprintf("%s\x00%d", base, occurrence)
+		}
+		digest := sha256.Sum256([]byte(digestInput))
 		event.ProviderEventID = fmt.Sprintf("acp-history:%x", digest)
 	}
 	c.history.events = append(c.history.events, event)
@@ -352,8 +444,24 @@ func historicalUserContent(content acpsdk.ContentBlock) string {
 	case content.ResourceLink != nil:
 		return fmt.Sprintf("[File: %s]", content.ResourceLink.Name)
 	case content.Resource != nil:
+		if isInternalReplayResource(content.Resource) {
+			return ""
+		}
 		return "[Embedded context]"
 	default:
 		return ""
 	}
+}
+
+func isInternalReplayResource(content *acpsdk.ContentBlockResource) bool {
+	resource := content.Resource
+	if text := resource.TextResourceContents; text != nil {
+		internal, _ := text.Meta[aoInternalReplayMetaKey].(bool)
+		return internal && text.Uri == ports.ChatInternalReplayResourceURI
+	}
+	if blob := resource.BlobResourceContents; blob != nil {
+		internal, _ := blob.Meta[aoInternalReplayMetaKey].(bool)
+		return internal && blob.Uri == ports.ChatInternalReplayResourceURI
+	}
+	return false
 }

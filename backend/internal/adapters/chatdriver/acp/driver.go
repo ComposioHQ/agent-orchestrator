@@ -33,13 +33,14 @@ type Launch struct {
 // construct its process. It intentionally contains no install mechanism: binary
 // ownership stays with the existing agent plugin.
 type LaunchConfig struct {
-	SessionID     domain.SessionID
-	DataDir       string
-	WorkspacePath string
-	Env           map[string]string
-	Model         string
-	Permissions   ports.PermissionMode
-	SystemPrompt  string
+	SessionID       domain.SessionID
+	DataDir         string
+	WorkspacePath   string
+	Env             map[string]string
+	Model           string
+	Permissions     ports.PermissionMode
+	SystemPrompt    string
+	ProviderScopeID string
 }
 
 // Config binds one harness to an ACP agent implementation.
@@ -48,6 +49,11 @@ type Config struct {
 	Capabilities ports.ChatCapabilities
 	Probe        func(context.Context) error
 	Launch       func(context.Context, LaunchConfig) (Launch, error)
+	// ValidateInitialize optionally admits only the tested ACP distribution and
+	// version after the protocol handshake identifies it. This is preferable to
+	// invoking an adapter-specific version flag, which many stdio agents do not
+	// implement and which can emit protocol bytes instead of a version string.
+	ValidateInitialize func(acpsdk.InitializeResponse) error
 	// SessionMeta carries adapter-defined ACP extensions whenever AO creates the
 	// provider-side session object: session/new, session/load, or
 	// session/resume. Standing context such as a system prompt is process input,
@@ -59,7 +65,29 @@ type Config struct {
 	SessionMode func(ports.PermissionMode) string
 	// SessionOptions maps AO's per-turn choices onto ACP config option ids.
 	SessionOptions func(ports.ChatTurnSettings) []SessionOption
+	// PermissionPolicy lets a provider binding resolve permission requests that
+	// have an exact AO policy mapping before the generic client parks them for a
+	// human. Returning handled=false preserves the ordinary approval flow.
+	PermissionPolicy PermissionPolicy
+	// ClientExtension handles provider-defined agent-to-client JSON-RPC methods.
+	ClientExtension ClientExtensionHandler
+	// ClientExtensionAliases maps explicitly supported legacy wire methods onto
+	// ACP-compliant underscore extension names handled by the pinned SDK.
+	ClientExtensionAliases map[string]string
+	// ValidateTurnSettings rejects provider settings that cannot be applied to a
+	// live process. The initial permission mode is the launch-time value.
+	ValidateTurnSettings TurnSettingsValidator
 }
+
+// TurnSettingsValidator validates live turn settings against launch-time state.
+type TurnSettingsValidator func(ports.PermissionMode, ports.ChatTurnSettings) error
+
+// PermissionPolicy maps the active AO permission mode and the provider's exact
+// offered choices to an automatic response when the mapping is unambiguous.
+type PermissionPolicy func(
+	ports.PermissionMode,
+	acpsdk.RequestPermissionRequest,
+) (acpsdk.PermissionOptionId, bool)
 
 // SessionOption is one ACP session configuration selection.
 type SessionOption struct {
@@ -84,6 +112,43 @@ func New(cfg Config, log *slog.Logger) *Driver {
 	return &Driver{cfg: cfg, log: log, spawn: spawnAgent}
 }
 
+// DiscoverConfigOptions opens a short-lived ACP session and returns the
+// provider-owned configuration catalog advertised by session/new. It sends no
+// prompt and closes the process immediately after the handshake.
+func DiscoverConfigOptions(
+	ctx context.Context,
+	launch Launch,
+	workingDir string,
+	log *slog.Logger,
+) ([]ports.ChatConfigOption, error) {
+	driver := New(Config{
+		Launch: func(context.Context, LaunchConfig) (Launch, error) { return launch, nil },
+	}, log)
+	return driver.discoverConfigOptions(ctx, workingDir)
+}
+
+func (d *Driver) discoverConfigOptions(ctx context.Context, workingDir string) ([]ports.ChatConfigOption, error) {
+	if !filepath.IsAbs(workingDir) {
+		return nil, fmt.Errorf("workspace path must be absolute, got %q", workingDir)
+	}
+	conv, _, err := d.connect(ctx, LaunchConfig{WorkspacePath: workingDir})
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = conv.Close() }()
+
+	openCtx, cancel := context.WithTimeout(ctx, handshakeTimeout)
+	defer cancel()
+	resp, err := conv.conn.NewSession(openCtx, acpsdk.NewSessionRequest{
+		Cwd:        workingDir,
+		McpServers: []acpsdk.McpServer{},
+	})
+	if err != nil {
+		return nil, normalizeACPError("ACP session/new", err)
+	}
+	return normalizeConfigOptions(resp.ConfigOptions), nil
+}
+
 // Harness identifies the AO harness this ACP transport adapts.
 func (d *Driver) Harness() domain.AgentHarness { return d.cfg.Harness }
 
@@ -103,9 +168,17 @@ func (d *Driver) Start(ctx context.Context, cfg ports.ChatStartConfig) (ports.Ch
 	if !filepath.IsAbs(cfg.WorkspacePath) {
 		return nil, fmt.Errorf("workspace path must be absolute, got %q", cfg.WorkspacePath)
 	}
+	if d.cfg.ValidateTurnSettings != nil {
+		if err := d.cfg.ValidateTurnSettings(cfg.Permissions, ports.ChatTurnSettings{
+			Model: cfg.Model, Approval: cfg.Permissions,
+		}); err != nil {
+			return nil, fmt.Errorf("validate ACP session settings: %w", err)
+		}
+	}
 	launchCfg := LaunchConfig{
 		SessionID: cfg.SessionID, DataDir: cfg.DataDir, WorkspacePath: cfg.WorkspacePath,
 		Env: cfg.Env, Model: cfg.Model, Permissions: cfg.Permissions, SystemPrompt: cfg.SystemPrompt,
+		ProviderScopeID: cfg.ProviderScopeID,
 	}
 	conv, init, err := d.connect(ctx, launchCfg)
 	if err != nil {
@@ -149,7 +222,9 @@ func (d *Driver) Start(ctx context.Context, cfg ports.ChatStartConfig) (ports.Ch
 	}
 	conv.start(
 		string(resp.SessionId), conversationCapabilities(d.cfg.Capabilities, init),
-		d.cfg.SessionMode, d.cfg.SessionOptions, resp.ConfigOptions,
+		d.cfg.SessionMode, d.cfg.SessionOptions, d.cfg.PermissionPolicy,
+		cfg.Permissions, d.cfg.ValidateTurnSettings, resp.ConfigOptions,
+		conv.legacyWire.modelState(), resp.Modes,
 	)
 	if err := conv.applyTurnSettings(ctx, ports.ChatTurnSettings{Model: cfg.Model, Approval: cfg.Permissions}); err != nil {
 		// Initial model and permission mode may have been applied via launch-time
@@ -175,15 +250,23 @@ func (d *Driver) Resume(ctx context.Context, cfg ports.ChatResumeConfig) (ports.
 	if !filepath.IsAbs(cfg.WorkspacePath) {
 		return nil, fmt.Errorf("workspace path must be absolute, got %q", cfg.WorkspacePath)
 	}
+	if d.cfg.ValidateTurnSettings != nil {
+		if err := d.cfg.ValidateTurnSettings(cfg.Permissions, ports.ChatTurnSettings{
+			Model: cfg.Model, Effort: cfg.Effort, Approval: cfg.Permissions,
+		}); err != nil {
+			return nil, fmt.Errorf("%w: validate ACP session settings: %w", ports.ErrChatResumeFailed, err)
+		}
+	}
 	launchCfg := LaunchConfig{
 		SessionID: cfg.SessionID, DataDir: cfg.DataDir, WorkspacePath: cfg.WorkspacePath,
-		Env: cfg.Env, Permissions: cfg.Permissions, SystemPrompt: cfg.SystemPrompt,
+		Env: cfg.Env, Model: cfg.Model, Permissions: cfg.Permissions, SystemPrompt: cfg.SystemPrompt,
+		ProviderScopeID: cfg.ProviderScopeID,
 	}
 	conv, init, err := d.connect(ctx, launchCfg)
 	if err != nil {
 		return nil, err
 	}
-	if !init.AgentCapabilities.LoadSession && init.AgentCapabilities.SessionCapabilities.Resume == nil {
+	if !supportsSessionRestore(init) {
 		_ = conv.Close()
 		return nil, fmt.Errorf("%w: ACP agent supports neither session/load nor session/resume", ports.ErrChatResumeFailed)
 	}
@@ -209,22 +292,23 @@ func (d *Driver) Resume(ctx context.Context, cfg ports.ChatResumeConfig) (ports.
 		meta = d.cfg.SessionMeta(launchCfg)
 	}
 	var configOptions []acpsdk.SessionConfigOption
+	var modes *acpsdk.SessionModeState
+	var historyConversation *refreshableConversation
 	if init.AgentCapabilities.LoadSession {
-		conv.beginHistoryReplay(cfg.ProviderConversationID)
-		resp, err := conv.conn.LoadSession(resumeCtx, acpsdk.LoadSessionRequest{
+		historyConversation = newRefreshableConversation(conv, acpsdk.LoadSessionRequest{
 			Meta:                  meta,
 			SessionId:             acpsdk.SessionId(cfg.ProviderConversationID),
 			Cwd:                   cfg.WorkspacePath,
 			AdditionalDirectories: additional,
 			McpServers:            mcpServers,
 		})
+		resp, err := historyConversation.loadHistory(resumeCtx)
 		if err != nil {
-			conv.abortHistoryReplay()
 			_ = conv.Close()
 			return nil, fmt.Errorf("%w: %w", ports.ErrChatResumeFailed, normalizeACPError("ACP session/load", err))
 		}
-		conv.finishHistoryReplay()
 		configOptions = resp.ConfigOptions
+		modes = resp.Modes
 	} else {
 		resp, err := conv.conn.ResumeSession(resumeCtx, acpsdk.ResumeSessionRequest{
 			Meta:                  meta,
@@ -238,16 +322,22 @@ func (d *Driver) Resume(ctx context.Context, cfg ports.ChatResumeConfig) (ports.
 			return nil, fmt.Errorf("%w: %w", ports.ErrChatResumeFailed, err)
 		}
 		configOptions = resp.ConfigOptions
+		modes = resp.Modes
 	}
 	conv.start(
 		cfg.ProviderConversationID, conversationCapabilities(d.cfg.Capabilities, init),
-		d.cfg.SessionMode, d.cfg.SessionOptions, configOptions,
+		d.cfg.SessionMode, d.cfg.SessionOptions, d.cfg.PermissionPolicy,
+		cfg.Permissions, d.cfg.ValidateTurnSettings, configOptions,
+		conv.legacyWire.modelState(), modes,
 	)
-	if err := conv.applyTurnSettings(ctx, ports.ChatTurnSettings{Approval: cfg.Permissions}); err != nil {
+	if err := conv.applyTurnSettings(ctx, ports.ChatTurnSettings{Model: cfg.Model, Effort: cfg.Effort, Approval: cfg.Permissions}); err != nil {
 		if !errors.Is(err, ErrACPSetterUnsupported) {
 			_ = conv.Close()
 			return nil, fmt.Errorf("%w: configure ACP session: %w", ports.ErrChatResumeFailed, err)
 		}
+	}
+	if historyConversation != nil {
+		return historyConversation, nil
 	}
 	return conv, nil
 }
@@ -267,7 +357,9 @@ func (d *Driver) connect(
 	if err != nil {
 		return nil, acpsdk.InitializeResponse{}, fmt.Errorf("%w: launch ACP agent: %w", ports.ErrChatDriverUnavailable, err)
 	}
-	conv := newConversation(proc, d.log)
+	conv := newConversation(
+		proc, d.log, cfg.ProviderScopeID, d.cfg.ClientExtension, d.cfg.ClientExtensionAliases,
+	)
 
 	initCtx, cancel := context.WithTimeout(ctx, handshakeTimeout)
 	defer cancel()
@@ -284,6 +376,15 @@ func (d *Driver) connect(
 			Meta: map[string]any{
 				"subagent-transcript": true,
 				"terminal_output":     true,
+				// claude-agent-acp publishes retryable API/transport failures only
+				// when the client opts into this namespaced metadata extension. It is
+				// observational: AO receives status, but grants no new capability.
+				"jetbrains": map[string]any{
+					"air": map[string]any{
+						"version":      1,
+						"capabilities": []string{"sessionFailure"},
+					},
+				},
 			},
 			Elicitation: &acpsdk.ElicitationCapabilities{
 				Form: &acpsdk.ElicitationFormCapabilities{},
@@ -298,6 +399,12 @@ func (d *Driver) connect(
 			return nil, acpsdk.InitializeResponse{}, normalizeACPError("ACP initialize", err)
 		}
 		return nil, acpsdk.InitializeResponse{}, fmt.Errorf("%w: ACP initialize: %w", ports.ErrChatDriverIncompatible, err)
+	}
+	if d.cfg.ValidateInitialize != nil {
+		if err := d.cfg.ValidateInitialize(init); err != nil {
+			_ = conv.Close()
+			return nil, acpsdk.InitializeResponse{}, fmt.Errorf("%w: %w", ports.ErrChatDriverIncompatible, err)
+		}
 	}
 	return conv, init, nil
 }
@@ -315,7 +422,7 @@ func conversationCapabilities(
 	init acpsdk.InitializeResponse,
 ) ports.ChatCapabilities {
 	caps := cloneCapabilities(configured)
-	if init.AgentCapabilities.SessionCapabilities.Resume == nil {
+	if !supportsSessionRestore(init) {
 		caps[ports.ChatCapabilityResume] = false
 	}
 	caps[ports.ChatCapabilityHistory] = init.AgentCapabilities.LoadSession
@@ -324,12 +431,20 @@ func conversationCapabilities(
 	}
 	caps[ports.ChatCapabilityImages] = init.AgentCapabilities.PromptCapabilities.Image
 	caps[ports.ChatCapabilityEmbeddedContext] = init.AgentCapabilities.PromptCapabilities.EmbeddedContext
+	// ResourceLink is a baseline ACP content block rather than an optional prompt
+	// capability. Every ACP conversation preserves it natively.
+	caps[ports.ChatCapabilityResourceLinks] = true
 	// These are facilities AO itself negotiated as the ACP client. An agent that
 	// never uses them simply produces no matching events.
 	caps[ports.ChatCapabilityElicitation] = true
 	caps[ports.ChatCapabilityNestedAgents] = true
 	caps[ports.ChatCapabilityTerminalOutput] = true
 	return caps
+}
+
+func supportsSessionRestore(init acpsdk.InitializeResponse) bool {
+	return init.AgentCapabilities.LoadSession ||
+		init.AgentCapabilities.SessionCapabilities.Resume != nil
 }
 
 func extensionSupported(meta map[string]any, name string) bool {

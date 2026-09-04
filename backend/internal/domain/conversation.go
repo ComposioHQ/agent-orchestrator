@@ -35,23 +35,36 @@ const (
 	ConversationScopeProject ConversationScope = "project"
 )
 
+// ConversationContextResetProviderItemID returns the durable identity of the
+// hidden activity that separates a fresh project orchestrator context from the
+// project conversation history that came before it.
+func ConversationContextResetProviderItemID(session SessionID) string {
+	return "ao-context-reset:" + string(session)
+}
+
 // TurnState is the lifecycle of one request and the agent work that follows it.
 type TurnState string
 
 // Turn states. Interrupted is distinct from failed: the provider reports it as
 // its own terminal status when a turn is cancelled, and AO must not relabel it.
+// Recovered means history proved the turn is no longer live but did not carry a
+// portable provider outcome; it is terminal without claiming success or failure.
 const (
 	TurnStateQueued      TurnState = "queued"
 	TurnStateRunning     TurnState = "running"
 	TurnStateCompleted   TurnState = "completed"
+	TurnStateRecovered   TurnState = "recovered"
 	TurnStateInterrupted TurnState = "interrupted"
 	TurnStateFailed      TurnState = "failed"
+	// TurnStateCancelled marks a queued turn the user withdrew from the dock
+	// before dispatch. Stop and handoff still settle the queue as interrupted.
+	TurnStateCancelled TurnState = "cancelled"
 )
 
 // Terminal reports whether no further work is expected on the turn.
 func (s TurnState) Terminal() bool {
 	switch s {
-	case TurnStateCompleted, TurnStateInterrupted, TurnStateFailed:
+	case TurnStateCompleted, TurnStateRecovered, TurnStateInterrupted, TurnStateFailed, TurnStateCancelled:
 		return true
 	default:
 		return false
@@ -123,6 +136,9 @@ type ActivityStatus string
 const (
 	ActivityStatusRunning   ActivityStatus = "running"
 	ActivityStatusCompleted ActivityStatus = "completed"
+	// ActivityStatusRecovered means replay proved the activity is historical,
+	// but the provider supplied no portable success/failure outcome.
+	ActivityStatusRecovered ActivityStatus = "recovered"
 	ActivityStatusFailed    ActivityStatus = "failed"
 	ActivityStatusCancelled ActivityStatus = "cancelled"
 	ActivityStatusPending   ActivityStatus = "pending"
@@ -187,6 +203,29 @@ type ConversationRecord struct {
 	UpdatedAt    time.Time `json:"updatedAt"`
 }
 
+// ConversationBranchStrategy records how a provider branch was materialized.
+// Native branches preserve provider-owned history; approximate branches seed a
+// fresh provider session with bounded AO-owned textual context.
+type ConversationBranchStrategy string
+
+const (
+	// ConversationBranchStrategyNative preserves the provider's exact history.
+	ConversationBranchStrategyNative ConversationBranchStrategy = "native"
+	// ConversationBranchStrategyApproximateContext starts a fresh provider
+	// session from bounded AO-owned context.
+	ConversationBranchStrategyApproximateContext ConversationBranchStrategy = "approximate_context"
+)
+
+// NormalizeConversationBranchStrategy keeps pre-strategy rows compatible. Only
+// the empty legacy value means native; unknown nonempty values are preserved so
+// a newer materialization strategy is never misreported as exact history.
+func NormalizeConversationBranchStrategy(strategy ConversationBranchStrategy) ConversationBranchStrategy {
+	if strategy == "" {
+		return ConversationBranchStrategyNative
+	}
+	return strategy
+}
+
 // ConversationBranch is one durable provider-thread lineage node.
 type ConversationBranch struct {
 	ID                     string    `json:"id"`
@@ -198,8 +237,19 @@ type ConversationBranch struct {
 	ReplacedTurnID         string    `json:"replacedTurnId,omitempty"`
 	ReplacementTurnID      string    `json:"replacementTurnId,omitempty"`
 	ForkAfterSequence      int64     `json:"-"`
-	Active                 bool      `json:"active"`
-	CreatedAt              time.Time `json:"createdAt"`
+	// Strategy distinguishes native anchored forks from approximate user-context
+	// branches.
+	Strategy             ConversationBranchStrategy `json:"strategy,omitempty"`
+	ReplayCutoffSequence int64                      `json:"-"`
+	ReplayTruncated      bool                       `json:"replayTruncated,omitempty"`
+	// ProviderBindingID identifies the durable adapter/configuration epoch that
+	// can reopen this branch. It is deliberately separate from ProviderScopeID:
+	// approximate siblings own different opaque-id namespaces while remaining
+	// reopenable by the same provider binding.
+	ProviderBindingID string    `json:"-"`
+	ProviderScopeID   string    `json:"-"`
+	Active            bool      `json:"active"`
+	CreatedAt         time.Time `json:"createdAt"`
 }
 
 // ConversationBranchPoint describes the sibling continuations available at one
@@ -222,6 +272,8 @@ type ConversationEditAnchor struct {
 	ReplacedTurnID              string
 	PreviousProviderTurnID      string
 	ForkAfterSequence           int64
+	ReplayFloorSequence         int64
+	HasPriorContext             bool
 	OriginalDeliveryContentJSON string
 	RetryActiveBranch           bool
 }
@@ -424,13 +476,22 @@ type ConversationSettings struct {
 type ConversationTurn struct {
 	ID             string `json:"id"`
 	ConversationID string `json:"conversationId"`
+	// BranchID is durable provider-lineage metadata used to keep opaque turn ids
+	// inside the provider ownership epoch that created them.
+	BranchID string `json:"-"`
 	// HandledBySessionID is the AO session whose controller ran the turn. For a
 	// project-scoped conversation this changes when the orchestrator is
 	// replaced; the conversation identity does not.
 	HandledBySessionID SessionID `json:"handledBySessionId"`
 	// ProviderTurnID correlates back to the provider's own turn. Opaque.
-	ProviderTurnID string    `json:"providerTurnId,omitempty"`
-	State          TurnState `json:"state"`
+	ProviderTurnID string `json:"providerTurnId,omitempty"`
+	// RetryOfTurnID is the failed source whose durable prompt created this turn.
+	// It remains present after rollback so the source cannot offer a dead action.
+	RetryOfTurnID string `json:"retryOfTurnId,omitempty"`
+	// HasRetryAttempt is a snapshot-only fact derived from every durable retry
+	// relation, including attempts outside the active provider branch.
+	HasRetryAttempt bool      `json:"hasRetryAttempt,omitempty"`
+	State           TurnState `json:"state"`
 	// ErrorMessage is set for failed turns. Interrupted turns are not errors.
 	ErrorMessage string     `json:"errorMessage,omitempty"`
 	RequestedAt  time.Time  `json:"requestedAt"`
@@ -508,6 +569,16 @@ type QueuedTurn struct {
 	// DeliveryContentJSON carries provider-neutral native prompt blocks through
 	// the durable queue. It is not rendered and never contains provider DTOs.
 	DeliveryContentJSON string
+}
+
+// RetryPrompt is the durable human-authored content of a failed turn that may
+// be dispatched again. Unlike QueuedTurn, its source was already sent and
+// settled; ActiveLineage says whether it still belongs to the visible branch.
+type RetryPrompt struct {
+	Text                string
+	Origin              MessageOrigin
+	DeliveryContentJSON string
+	ActiveLineage       bool
 }
 
 // ConversationMessage is one readable block of text.

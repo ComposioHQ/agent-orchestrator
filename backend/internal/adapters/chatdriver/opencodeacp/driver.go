@@ -3,6 +3,7 @@
 package opencodeacp
 
 import (
+	"context"
 	"log/slog"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/opencode"
@@ -23,7 +24,7 @@ func New(plugin nativeacp.Plugin, log *slog.Logger) ports.ChatDriver {
 	}, log)
 }
 
-func configure(cfg acpdriver.LaunchConfig) ([]string, map[string]string, error) {
+func configure(_ context.Context, cfg acpdriver.LaunchConfig) ([]string, map[string]string, error) {
 	if cfg.SystemPrompt == "" && ports.NormalizePermissionMode(cfg.Permissions) != ports.PermissionModeBypassPermissions {
 		return []string{"acp"}, nil, nil
 	}

@@ -27,16 +27,17 @@ import (
 var ctx = context.Background()
 
 type fakeStore struct {
-	sessions      map[domain.SessionID]domain.SessionRecord
-	pr            map[domain.SessionID]domain.PRFacts
-	projects      map[string]domain.ProjectRecord
-	workspaceRepo map[string][]domain.WorkspaceRepoRecord
-	num           int
-	deleteErr     error
-	upsertWTErr   error
-	listAllErr    error
-	getProjectErr error
-	getSessionErr error
+	sessions         map[domain.SessionID]domain.SessionRecord
+	pr               map[domain.SessionID]domain.PRFacts
+	projects         map[string]domain.ProjectRecord
+	workspaceRepo    map[string][]domain.WorkspaceRepoRecord
+	num              int
+	deleteErr        error
+	upsertWTErr      error
+	listAllErr       error
+	getProjectErr    error
+	getSessionErr    error
+	updateSessionErr error
 	// agentSwitchStore is wired only by agent-switch tests so fakeLCM can model
 	// Lifecycle Manager's atomic ownership-boundary commands.
 	agentSwitchStore any
@@ -73,8 +74,26 @@ func (f *fakeStore) CreateSession(_ context.Context, rec domain.SessionRecord) (
 	return rec, nil
 }
 func (f *fakeStore) UpdateSession(_ context.Context, rec domain.SessionRecord) error {
+	if f.updateSessionErr != nil {
+		return f.updateSessionErr
+	}
 	f.sessions[rec.ID] = rec
 	return nil
+}
+func (f *fakeStore) UpdateBrowserCapabilityVerifier(_ context.Context, id domain.SessionID, expected domain.SessionControllerOwner, verifier string, updatedAt time.Time) (bool, error) {
+	if f.updateSessionErr != nil {
+		return false, f.updateSessionErr
+	}
+	rec, ok := f.sessions[id]
+	if !ok || rec.ControllerOwner() != expected {
+		return false, nil
+	}
+	rec.Metadata.BrowserCapabilityVerifier = verifier
+	if rec.UpdatedAt.Before(updatedAt) {
+		rec.UpdatedAt = updatedAt
+	}
+	f.sessions[id] = rec
+	return true, nil
 }
 func (f *fakeStore) RecordSessionLatestUserPrompt(_ context.Context, id domain.SessionID, prompt string, updatedAt time.Time) (bool, error) {
 	rec, ok := f.sessions[id]
@@ -82,6 +101,7 @@ func (f *fakeStore) RecordSessionLatestUserPrompt(_ context.Context, id domain.S
 		return false, nil
 	}
 	rec.Metadata.LatestUserPrompt = prompt
+	rec.Metadata.LatestUserPromptAt = updatedAt
 	rec.UpdatedAt = updatedAt
 	f.sessions[id] = rec
 	return true, nil
@@ -164,10 +184,11 @@ func (f *fakeStore) DeleteSessionWorktrees(_ context.Context, id domain.SessionI
 }
 
 type fakeLCM struct {
-	store     *fakeStore
-	completed int
-	prepared  []string
-	cancelled []string
+	store          *fakeStore
+	completed      int
+	prepared       []string
+	cancelled      []string
+	chatBoundaries []domain.ConversationBranch
 	// terminated counts MarkTerminated calls per session id.
 	terminated map[domain.SessionID]int
 }
@@ -191,6 +212,54 @@ func (l *fakeLCM) MarkSpawned(_ context.Context, id domain.SessionID, metadata d
 	rec.Metadata = metadata
 	l.store.sessions[id] = rec
 	return nil
+}
+
+func (l *fakeLCM) MarkChatSpawned(
+	ctx context.Context,
+	id domain.SessionID,
+	metadata domain.SessionMetadata,
+	boundary domain.ConversationBranch,
+) error {
+	l.chatBoundaries = append(l.chatBoundaries, boundary)
+	return l.MarkSpawned(ctx, id, metadata)
+}
+
+func (l *fakeLCM) ApplyActivitySignal(_ context.Context, id domain.SessionID, signal ports.ActivitySignal) error {
+	rec, ok := l.store.sessions[id]
+	if !ok {
+		return ports.ErrSessionNotFound
+	}
+	if rec.IsTerminated || !signal.Valid {
+		return nil
+	}
+	if !signal.ExpectedUpdatedAt.IsZero() && !rec.UpdatedAt.Equal(signal.ExpectedUpdatedAt) {
+		return nil
+	}
+	if signal.LaunchID != "" && signal.LaunchID != rec.Metadata.RuntimeLaunchID {
+		return nil
+	}
+	if signal.ControllerGeneration != "" &&
+		(domain.NormalizeSessionMode(rec.Mode) != domain.SessionModeChat ||
+			signal.ControllerGeneration != rec.Metadata.ControllerGeneration) {
+		return nil
+	}
+	rec.Activity = domain.Activity{State: signal.State, LastActivityAt: time.Now()}
+	l.store.sessions[id] = rec
+	return nil
+}
+
+type contendedActivityLCM struct {
+	*fakeLCM
+	calls  int
+	before func(call int, id domain.SessionID, signal ports.ActivitySignal)
+}
+
+func (l *contendedActivityLCM) ApplyActivitySignal(ctx context.Context, id domain.SessionID, signal ports.ActivitySignal) error {
+	l.calls++
+	if l.before != nil {
+		l.before(l.calls, id, signal)
+	}
+	return l.fakeLCM.ApplyActivitySignal(ctx, id, signal)
 }
 
 func (l *fakeLCM) CommitControllerEpoch(
@@ -232,6 +301,15 @@ func (l *fakeLCM) ActivateAgentSwitchTarget(ctx context.Context, activation doma
 	}
 	return store.ActivateAgentSwitchTarget(ctx, activation)
 }
+func (l *fakeLCM) ActivateChatAgentSwitchTarget(ctx context.Context, activation domain.AgentSwitchChatTargetActivation) (bool, error) {
+	store, ok := l.store.agentSwitchStore.(interface {
+		ActivateChatAgentSwitchTarget(context.Context, domain.AgentSwitchChatTargetActivation) (bool, error)
+	})
+	if !ok {
+		return false, errors.New("fake lifecycle: Chat agent-switch target activation persistence unavailable")
+	}
+	return store.ActivateChatAgentSwitchTarget(ctx, activation)
+}
 func (l *fakeLCM) MarkTerminated(_ context.Context, id domain.SessionID) error {
 	if l.terminated == nil {
 		l.terminated = map[domain.SessionID]int{}
@@ -246,6 +324,7 @@ func (l *fakeLCM) MarkTerminated(_ context.Context, id domain.SessionID) error {
 
 type fakeRuntime struct {
 	createErr          error
+	createErrSequence  []error
 	createIDs          []string
 	destroyErr         error
 	destroyErrSequence []error
@@ -265,6 +344,8 @@ type fakeRuntime struct {
 	supervisedAliveOverride *bool
 	supervisedSequence      []bool
 	destroyedIDs            []string
+	fencedResult            ports.FencedProbeResult
+	fencedRefs              []ports.FencedRuntimeRef
 }
 
 func (r *fakeRuntime) Interrupt(_ context.Context, handle ports.RuntimeHandle) error {
@@ -367,8 +448,13 @@ func (r *blockingRestartRuntime) Destroy(ctx context.Context, handle ports.Runti
 }
 
 func (r *fakeRuntime) Create(_ context.Context, cfg ports.RuntimeConfig) (ports.RuntimeHandle, error) {
-	if r.createErr != nil {
-		return ports.RuntimeHandle{}, r.createErr
+	createErr := r.createErr
+	if len(r.createErrSequence) > 0 {
+		createErr = r.createErrSequence[0]
+		r.createErrSequence = r.createErrSequence[1:]
+	}
+	if createErr != nil {
+		return ports.RuntimeHandle{}, createErr
 	}
 	r.lastCfg = cfg
 	r.created++
@@ -425,6 +511,26 @@ func (r *fakeRuntime) IsExactSupervisedProcessAlive(ctx context.Context, handle 
 		return alive, nil
 	}
 	return r.IsSupervisedProcessAlive(ctx, handle, ref)
+}
+func (r *fakeRuntime) ProbeFencedRuntime(ctx context.Context, ref ports.FencedRuntimeRef) ports.FencedProbeResult {
+	r.fencedRefs = append(r.fencedRefs, ref)
+	if r.fencedResult.Liveness != "" {
+		return r.fencedResult
+	}
+	if r.aliveErr != nil || r.supervisedErr != nil {
+		return ports.FencedProbeResult{Liveness: ports.FencedUnknown, Reason: ports.FencedReasonProbeFailed}
+	}
+	alive, err := r.IsExactSupervisedProcessAlive(ctx, ref.Handle, ports.SupervisedProcessRef{
+		SessionID: ref.SessionID,
+		LaunchID:  ref.Generation,
+	})
+	if err != nil {
+		return ports.FencedProbeResult{Liveness: ports.FencedUnknown, Reason: ports.FencedReasonProbeFailed}
+	}
+	if alive {
+		return ports.FencedProbeResult{Liveness: ports.FencedAlive, Reason: ports.FencedReasonExactMatch}
+	}
+	return ports.FencedProbeResult{Liveness: ports.FencedDead, Reason: ports.FencedReasonExactAbsent}
 }
 func (r *fakeRuntime) GetOutput(_ context.Context, _ ports.RuntimeHandle, _ int) (string, error) {
 	r.outputCalls++
@@ -709,11 +815,14 @@ type fakeWorkspace struct {
 	createErr  error
 	destroyErr error
 	destroyed  int
-	fetchErr   error
-	fetches    []fetchDefaultBranchCall
-	resolves   []resolveDefaultBranchCall
-	resolved   map[string]ports.WorkspaceDefaultBranch
-	fetchFunc  func(context.Context, string, ports.WorkspaceDefaultBranch) error
+	// destroyCtxErr records ctx.Err() as seen by Destroy, so a test can prove
+	// teardown does not inherit a caller's cancellation.
+	destroyCtxErr error
+	fetchErr      error
+	fetches       []fetchDefaultBranchCall
+	resolves      []resolveDefaultBranchCall
+	resolved      map[string]ports.WorkspaceDefaultBranch
+	fetchFunc     func(context.Context, string, ports.WorkspaceDefaultBranch) error
 	// createRepoPath, when set, is returned as the RepoPath of a single-repo
 	// Create so tests can assert it survives the spawn->teardown metadata round
 	// trip (production Create resolves this path; the zero default keeps every
@@ -856,8 +965,9 @@ func (w *fakeWorkspace) CreateWorkspaceProject(_ context.Context, cfg ports.Work
 	}
 	return out, nil
 }
-func (w *fakeWorkspace) Destroy(_ context.Context, info ports.WorkspaceInfo) error {
+func (w *fakeWorkspace) Destroy(ctx context.Context, info ports.WorkspaceInfo) error {
 	w.lastDestroyInfo = info
+	w.destroyCtxErr = ctx.Err()
 	if info.RepoPath != "" {
 		entry := "Destroy:" + fakeWorkspaceRepoName(info)
 		w.calls = append(w.calls, entry)
@@ -969,12 +1079,12 @@ func (m *fakeMessenger) Send(_ context.Context, id domain.SessionID, msg string)
 
 func TestSend_WrapsCopilotOrchestratorMessageWithDelegationDirective(t *testing.T) {
 	st := newFakeStore()
-	st.sessions["mer-1"] = domain.SessionRecord{
+	st.sessions["mer-1"] = pastStartupGate(domain.SessionRecord{
 		ID:        "mer-1",
 		ProjectID: "mer",
 		Kind:      domain.KindOrchestrator,
 		Harness:   domain.HarnessCopilot,
-	}
+	})
 	msg := &fakeMessenger{}
 	m := New(Deps{Store: st, Messenger: msg})
 
@@ -1000,12 +1110,12 @@ func TestSend_WrapsCopilotOrchestratorMessageWithDelegationDirective(t *testing.
 
 func TestSend_DoesNotWrapCopilotWorkerMessage(t *testing.T) {
 	st := newFakeStore()
-	st.sessions["mer-2"] = domain.SessionRecord{
+	st.sessions["mer-2"] = pastStartupGate(domain.SessionRecord{
 		ID:        "mer-2",
 		ProjectID: "mer",
 		Kind:      domain.KindWorker,
 		Harness:   domain.HarnessCopilot,
-	}
+	})
 	msg := &fakeMessenger{}
 	m := New(Deps{Store: st, Messenger: msg})
 
@@ -1019,12 +1129,12 @@ func TestSend_DoesNotWrapCopilotWorkerMessage(t *testing.T) {
 
 func TestSend_DoesNotWrapNonCopilotOrchestratorMessage(t *testing.T) {
 	st := newFakeStore()
-	st.sessions["mer-1"] = domain.SessionRecord{
+	st.sessions["mer-1"] = pastStartupGate(domain.SessionRecord{
 		ID:        "mer-1",
 		ProjectID: "mer",
 		Kind:      domain.KindOrchestrator,
 		Harness:   domain.HarnessClaudeCode,
-	}
+	})
 	msg := &fakeMessenger{}
 	m := New(Deps{Store: st, Messenger: msg})
 
@@ -1039,13 +1149,13 @@ func TestSend_DoesNotWrapNonCopilotOrchestratorMessage(t *testing.T) {
 func TestSend_WritesAttachmentAndAppendsReference(t *testing.T) {
 	dir := t.TempDir()
 	st := newFakeStore()
-	st.sessions["mer-1"] = domain.SessionRecord{
+	st.sessions["mer-1"] = pastStartupGate(domain.SessionRecord{
 		ID:        "mer-1",
 		ProjectID: "mer",
 		Kind:      domain.KindWorker,
 		Harness:   domain.HarnessClaudeCode,
 		Metadata:  domain.SessionMetadata{WorkspacePath: dir},
-	}
+	})
 	msg := &fakeMessenger{}
 	ws := &fakeWorkspace{}
 	m := New(Deps{Store: st, Messenger: msg, Workspace: ws, DataDir: t.TempDir()})
@@ -1092,7 +1202,7 @@ func TestSend_WritesAttachmentAndAppendsReference(t *testing.T) {
 
 func TestSend_WithoutAttachmentSkipsWorkspaceWrite(t *testing.T) {
 	st := newFakeStore()
-	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", Kind: domain.KindWorker}
+	st.sessions["mer-1"] = pastStartupGate(domain.SessionRecord{ID: "mer-1", ProjectID: "mer", Kind: domain.KindWorker})
 	msg := &fakeMessenger{}
 	ws := &fakeWorkspace{}
 	m := New(Deps{Store: st, Messenger: msg, Workspace: ws})
@@ -1240,6 +1350,35 @@ func TestSpawn_ResolvesProjectConfig(t *testing.T) {
 	}
 	if got := ws.lastCfg.BaseBranch; got != "" {
 		t.Fatalf("automatic workspace base branch = %q, want empty for adapter inference", got)
+	}
+}
+
+type rejectingHarnessUseGate struct {
+	harness domain.AgentHarness
+}
+
+func (g *rejectingHarnessUseGate) TryBeginHarnessUse(harness domain.AgentHarness) (func(), bool) {
+	g.harness = harness
+	return nil, false
+}
+
+func TestSpawnGatesResolvedProjectDefaultHarness(t *testing.T) {
+	m, st, rt, _ := newManager()
+	project := st.projects["mer"]
+	project.Config.Worker.Harness = domain.HarnessDroid
+	st.projects["mer"] = project
+	gate := &rejectingHarnessUseGate{}
+	m.SetHarnessUseGate(gate)
+
+	_, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
+	if !errors.Is(err, ErrHarnessInstallActive) {
+		t.Fatalf("Spawn error = %v, want ErrHarnessInstallActive", err)
+	}
+	if gate.harness != domain.HarnessDroid {
+		t.Fatalf("gated harness = %q, want resolved Droid default", gate.harness)
+	}
+	if rt.created != 0 {
+		t.Fatal("runtime was created while Droid installer owned the gate")
 	}
 }
 
@@ -1532,6 +1671,9 @@ func TestRestore_RotatesSupervisedAgentGeneration(t *testing.T) {
 	st := newFakeStore()
 	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: testRoleAgents()}
 	seedTerminal(st, "mer-1", domain.SessionMetadata{WorkspacePath: "/ws/mer-1", Branch: "b", AgentSessionID: "agent-x", RuntimeLaunchID: "launch-old"})
+	rec := st.sessions["mer-1"]
+	rec.Harness = domain.HarnessCodex
+	st.sessions["mer-1"] = rec
 	rt := &fakeRuntime{}
 	agent := supervisedLaunchAgent{launchArgvAgent{argv: []string{"codex", "resume", "agent-x"}}}
 	m := New(Deps{
@@ -1549,12 +1691,49 @@ func TestRestore_RotatesSupervisedAgentGeneration(t *testing.T) {
 	if result.Session.Metadata.RuntimeLaunchID != "launch-new" {
 		t.Fatalf("restored launch id = %q, want launch-new", result.Session.Metadata.RuntimeLaunchID)
 	}
+	if result.Session.Metadata.AgentSessionIDLaunchID != "launch-new" {
+		t.Fatalf("restored native identity launch = %q, want launch-new", result.Session.Metadata.AgentSessionIDLaunchID)
+	}
 	if got := rt.lastCfg.Env[EnvRuntimeLaunchID]; got != "launch-new" {
 		t.Fatalf("restored launch env = %q, want launch-new", got)
 	}
 	wantArgv := []string{"/opt/ao", "agent-process", "supervise", "--session", "mer-1", "--launch", "launch-new", "--", "codex", "resume", "agent-x"}
 	if !reflect.DeepEqual(rt.lastCfg.Argv, wantArgv) {
 		t.Fatalf("restored runtime argv = %#v, want %#v", rt.lastCfg.Argv, wantArgv)
+	}
+}
+
+func TestExitAgentStopsOnlyControllerAndPreservesSessionIdentity(t *testing.T) {
+	m, st, runtime, _ := newManager()
+	st.sessions["mer-1"] = domain.SessionRecord{
+		ID:        "mer-1",
+		ProjectID: "mer",
+		Kind:      domain.KindWorker,
+		Harness:   domain.HarnessCodex,
+		Activity:  domain.Activity{State: domain.ActivityIdle},
+		Metadata: domain.SessionMetadata{
+			WorkspacePath:   "/ws/mer-1",
+			Branch:          "ao/mer-1",
+			RuntimeHandleID: "tmux-mer-1",
+			RuntimeLaunchID: "launch-current",
+			AgentSessionID:  "native-thread-1",
+		},
+	}
+	runtime.aliveByHandle = map[string]bool{"tmux-mer-1": true}
+
+	got, err := m.ExitAgent(ctx, "mer-1")
+	if err != nil {
+		t.Fatalf("ExitAgent: %v", err)
+	}
+	if runtime.destroyed != 1 || !reflect.DeepEqual(runtime.destroyedIDs, []string{"tmux-mer-1"}) {
+		t.Fatalf("runtime teardown = %d %v", runtime.destroyed, runtime.destroyedIDs)
+	}
+	if got.IsTerminated || got.Activity.State != domain.ActivityExited {
+		t.Fatalf("exited session = %+v", got)
+	}
+	if got.Metadata.WorkspacePath != "/ws/mer-1" || got.Metadata.RuntimeHandleID != "tmux-mer-1" ||
+		got.Metadata.RuntimeLaunchID != "launch-current" || got.Metadata.AgentSessionID != "native-thread-1" {
+		t.Fatalf("exit changed resumable identity: %+v", got.Metadata)
 	}
 }
 
@@ -1627,6 +1806,9 @@ func TestResumeAgent_RestartsRuntimeWithManagedGeneration(t *testing.T) {
 	}
 	if got.Metadata.RuntimeHandleID != "tmux-mer-1" || got.Metadata.RuntimeLaunchID != "launch-new" {
 		t.Fatalf("resumed metadata = %+v", got.Metadata)
+	}
+	if got.Metadata.AgentSessionIDLaunchID != "launch-new" {
+		t.Fatalf("native Codex resume identity launch = %q, want launch-new", got.Metadata.AgentSessionIDLaunchID)
 	}
 	if result.Mode != RestoreModeNative {
 		t.Fatalf("resume mode = %q, want native", result.Mode)
@@ -2181,6 +2363,19 @@ func TestSpawn_StampsUTCTimestamps(t *testing.T) {
 	}
 }
 
+func TestWrapSpawnStagePreservesInnerSentinel(t *testing.T) {
+	err := wrapSpawnStage("mer-1", ErrWorkspaceCreate, ports.ErrWorkspaceBranchNotFetched)
+	if !errors.Is(err, ErrWorkspaceCreate) {
+		t.Fatalf("err = %v, want ErrWorkspaceCreate", err)
+	}
+	if !errors.Is(err, ports.ErrWorkspaceBranchNotFetched) {
+		t.Fatalf("err = %v, want ErrWorkspaceBranchNotFetched", err)
+	}
+	if got, want := err.Error(), "spawn mer-1: workspace: workspace: branch is not fetched"; got != want {
+		t.Fatalf("err.Error() = %q, want %q", got, want)
+	}
+}
+
 func TestSpawn_RollsBackOnRuntimeFailure(t *testing.T) {
 	m, st, _, ws := newManager()
 	m.runtime = &fakeRuntime{createErr: errors.New("boom")}
@@ -2216,8 +2411,12 @@ func TestSpawn_RuntimeFailureCleansAgentWorkspaceAfterDestroy(t *testing.T) {
 		LookPath:  func(string) (string, error) { return "/bin/true", nil },
 	})
 
-	if _, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker}); err == nil || !strings.Contains(err.Error(), "runtime") {
+	_, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
+	if err == nil || !strings.Contains(err.Error(), "runtime") {
 		t.Fatalf("Spawn err = %v, want runtime failure", err)
+	}
+	if !errors.Is(err, ErrRuntimeCreate) {
+		t.Fatalf("Spawn err = %v, want ErrRuntimeCreate sentinel", err)
 	}
 	if ws.destroyed != 1 {
 		t.Fatalf("workspace destroy calls = %d, want 1", ws.destroyed)
@@ -2503,6 +2702,33 @@ func TestKill_TearsDownRuntimeAndWorkspace(t *testing.T) {
 	requireNoPromptDir(t, dataDir, "mer-1")
 }
 
+// A caller that gives up must not take the teardown down with it. The REST
+// layer caps a request at cfg.RequestTimeout, and a session whose worktree
+// carries a large ignored tree used to run past that: the request context was
+// cancelled mid-Kill, so the agent was already stopped while the row still read
+// as alive, and the caller got a 500 for a session that was half gone.
+func TestKill_CompletesTeardownAfterCallerContextIsCancelled(t *testing.T) {
+	m, st, rt, ws := newManager()
+	st.sessions["mer-1"] = mkLive("mer-1")
+
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	freed, err := m.Kill(cancelled, "mer-1")
+	if err != nil || !freed {
+		t.Fatalf("freed=%v err=%v, want a completed teardown", freed, err)
+	}
+	if ws.destroyCtxErr != nil {
+		t.Fatalf("workspace teardown saw ctx.Err() = %v, want a live context", ws.destroyCtxErr)
+	}
+	if rt.destroyed != 1 || ws.destroyed != 1 {
+		t.Fatalf("runtime=%d workspace=%d, want both torn down", rt.destroyed, ws.destroyed)
+	}
+	if !st.sessions["mer-1"].IsTerminated {
+		t.Fatal("session row must be marked terminated")
+	}
+}
+
 func TestKill_NativeTerminationFailurePreservesRuntimeAndWorkspace(t *testing.T) {
 	m, st, rt, ws := newManager()
 	agent := &nativeTerminatingAgent{wantID: "native-7", err: errors.New("prime stop failed")}
@@ -2786,6 +3012,27 @@ func TestKill_DirtyWorkspacePreservesAndTerminates(t *testing.T) {
 	}
 	if !st.sessions["mer-1"].IsTerminated {
 		t.Fatal("session should be terminated even when the workspace is preserved")
+	}
+}
+
+// A project directory the user deleted leaves git unable to reclaim the
+// session's worktree, and failing the kill for that stranded the session in
+// the sidebar permanently: every retry answered 500 and the row never left.
+// The session must still terminate, with the worktree preserved on disk.
+func TestKill_MissingProjectRepoPreservesWorkspaceAndTerminates(t *testing.T) {
+	m, st, _, ws := newManager()
+	ws.destroyErr = fmt.Errorf("gitworktree: repository %q is no longer on disk: %w", "/gone", ports.ErrWorkspaceRepoUnavailable)
+	st.sessions["mer-1"] = mkLive("mer-1")
+
+	freed, err := m.Kill(ctx, "mer-1")
+	if err != nil {
+		t.Fatalf("kill err = %v, want the session to terminate anyway", err)
+	}
+	if freed {
+		t.Fatal("freed = true, want false: the worktree was left on disk")
+	}
+	if !st.sessions["mer-1"].IsTerminated {
+		t.Fatal("session must be marked terminated so it leaves the sidebar")
 	}
 }
 
@@ -3998,12 +4245,15 @@ func TestSpawnOrchestrator_UsesCoordinatorPrompt(t *testing.T) {
 		"same live page the user sees",
 		"Browser network capture is optional and off by default",
 		"never enable it for routine browser actions",
+		"relative to the session workspace root",
+		"use `ao preview README.md`, not `../README.md`",
+		"existing confined loopback preview",
 	} {
 		if !strings.Contains(systemPrompt, want) {
 			t.Fatalf("system prompt missing %q:\n%s", want, systemPrompt)
 		}
 	}
-	if words := len(strings.Fields(m.aoSkillPointer())); words > 170 {
+	if words := len(strings.Fields(m.aoSkillPointer())); words > 220 {
 		t.Fatalf("always-on AO skill pointer grew to %d words; keep details in routed command guides:\n%s", words, m.aoSkillPointer())
 	}
 	if strings.Contains(agent.lastLaunch.Prompt, "You are the human-facing orchestrator") {
@@ -4153,7 +4403,9 @@ func TestSystemPrompt_AppendsConfidentialityGuard(t *testing.T) {
 			if !strings.Contains(sp, "AO desktop Browser panel") || !strings.Contains(sp, "agent.browsers.get(\"iab\")") {
 				t.Fatalf("%s: system prompt missing AO browser routing guidance:\n%s", tc.name, sp)
 			}
-			if !strings.Contains(sp, "open static HTML or Markdown directly") ||
+			if !strings.Contains(sp, "Static file targets passed to `ao preview`") ||
+				!strings.Contains(sp, "relative to the session workspace root") ||
+				!strings.Contains(sp, "use `ao preview README.md`, not `../README.md`") ||
 				!strings.Contains(sp, "Never create or modify `package.json`") ||
 				!strings.Contains(sp, "Do not create `.ao/launch.json` unless the user asks") {
 				t.Fatalf("%s: system prompt missing static-first preview safeguards:\n%s", tc.name, sp)
@@ -4678,6 +4930,99 @@ func TestRestore_PromptlessWorkerNotResumable(t *testing.T) {
 	}
 }
 
+// lostConversationAgent reserves a native id but reports that no conversation
+// was ever persisted behind it — a session torn down before its first turn, or
+// one whose switch away failed after the source had already stopped.
+type lostConversationAgent struct{ *recordingAgent }
+
+func (lostConversationAgent) NativeConversationExists(
+	context.Context, ports.SessionRef, string, map[string]string,
+) (bool, error) {
+	return false, nil
+}
+
+type lostDerivedConversationAgent struct {
+	fakeAgent
+	probedID string
+}
+
+func (*lostDerivedConversationAgent) GetRestoreCommand(
+	context.Context, ports.RestoreConfig,
+) ([]string, bool, error) {
+	return []string{"resume", "derived-but-empty"}, true, nil
+}
+
+func (*lostDerivedConversationAgent) NativeConversationID(
+	context.Context, ports.SessionRef, domain.SessionMode, string,
+) (string, bool, error) {
+	return "derived-but-empty", true, nil
+}
+
+func (a *lostDerivedConversationAgent) NativeConversationExists(
+	_ context.Context, _ ports.SessionRef, conversationID string, _ map[string]string,
+) (bool, error) {
+	a.probedID = conversationID
+	return false, nil
+}
+
+// A reserved-but-empty conversation id must not gate restore. Resuming it fails
+// with "No conversation found" on every attempt, while the session's workspace
+// still holds its branch and commits — so the session relaunches fresh into that
+// workspace instead of being stranded.
+func TestRestore_LostNativeConversationRelaunchesFresh(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["mer-1"] = domain.SessionRecord{
+		ID: "mer-1", ProjectID: "mer", Kind: domain.KindWorker, IsTerminated: true,
+		// An id was reserved, but no prompt was saved: without the probe this
+		// resumes into a conversation that does not exist.
+		Metadata: domain.SessionMetadata{WorkspacePath: "/ws/mer-1", Branch: "ao/mer-1/root", AgentSessionID: "reserved-but-empty"},
+		Activity: domain.Activity{State: domain.ActivityExited},
+	}
+	rec := &recordingAgent{}
+	agent := lostConversationAgent{recordingAgent: rec}
+	rt := &fakeRuntime{}
+	lookPath := func(string) (string, error) { return "/bin/true", nil }
+	m := New(Deps{Runtime: rt, Agents: singleAgent{agent: agent}, Workspace: &fakeWorkspace{}, Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, LookPath: lookPath})
+
+	res, err := m.RestoreWithMode(ctx, "mer-1")
+	if err != nil {
+		t.Fatalf("restore with a lost conversation: %v", err)
+	}
+	if res.Mode == RestoreModeNative {
+		t.Errorf("restore mode = %q, want a fresh relaunch rather than a doomed --resume", res.Mode)
+	}
+	if rt.created != 1 {
+		t.Errorf("runtime.Create = %d, want 1: the workspace holds real work", rt.created)
+	}
+}
+
+func TestRestore_LostDerivedNativeConversationRelaunchesFresh(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["mer-1"] = domain.SessionRecord{
+		ID: "mer-1", ProjectID: "mer", Kind: domain.KindWorker, IsTerminated: true,
+		Metadata: domain.SessionMetadata{WorkspacePath: "/ws/mer-1", Branch: "ao/mer-1/root"},
+		Activity: domain.Activity{State: domain.ActivityExited},
+	}
+	agent := &lostDerivedConversationAgent{}
+	rt := &fakeRuntime{}
+	lookPath := func(string) (string, error) { return "/bin/true", nil }
+	m := New(Deps{Runtime: rt, Agents: singleAgent{agent: agent}, Workspace: &fakeWorkspace{}, Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, LookPath: lookPath})
+
+	res, err := m.RestoreWithMode(ctx, "mer-1")
+	if err != nil {
+		t.Fatalf("restore with a lost derived conversation: %v", err)
+	}
+	if res.Mode == RestoreModeNative {
+		t.Errorf("restore mode = %q, want a fresh relaunch rather than a doomed --resume", res.Mode)
+	}
+	if agent.probedID != "derived-but-empty" {
+		t.Errorf("probed conversation id = %q, want derived-but-empty", agent.probedID)
+	}
+	if rt.created != 1 {
+		t.Errorf("runtime.Create = %d, want 1: the workspace holds real work", rt.created)
+	}
+}
+
 // TestRestore_WorkerPointsAtCurrentOrchestrator: a restored worker's
 // coordination hint must reference the orchestrator active at restore time,
 // not the one from its original spawn.
@@ -4985,7 +5330,7 @@ func TestSpawn_ValidatesBinaryAfterEnvPrefix(t *testing.T) {
 		t.Fatalf("Spawn: %v", err)
 	}
 	wantLookups := []string{"opencode"}
-	if runtime.GOOS != "windows" {
+	if runtime.GOOS == "darwin" {
 		wantLookups = []string{"tmux", "opencode"}
 	}
 	if !reflect.DeepEqual(lookedUp, wantLookups) {
@@ -5020,7 +5365,7 @@ func TestSpawn_RejectsMissingBinaryAfterEnvPrefix(t *testing.T) {
 		t.Fatalf("err = %v, want ports.ErrAgentBinaryNotFound", err)
 	}
 	wantLookups := []string{"opencode"}
-	if runtime.GOOS != "windows" {
+	if runtime.GOOS == "darwin" {
 		wantLookups = []string{"tmux", "opencode"}
 	}
 	if !reflect.DeepEqual(lookedUp, wantLookups) {
@@ -5067,9 +5412,10 @@ func TestSpawn_RejectsEnvPrefixWithoutBinary(t *testing.T) {
 }
 
 func TestSpawn_RejectsMissingTmuxBeforeSessionRow(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("Windows uses ConPTY, not tmux")
+	if runtime.GOOS == "windows" || runtime.GOOS == "linux" {
+		t.Skip("Windows and Linux use native PTY host, not tmux")
 	}
+	t.Setenv("AO_TMUX_BINARY", "")
 	st := newFakeStore()
 	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: testRoleAgents()}
 	rt := &fakeRuntime{}
@@ -5094,6 +5440,26 @@ func TestSpawn_RejectsMissingTmuxBeforeSessionRow(t *testing.T) {
 	}
 	if rt.created != 0 {
 		t.Fatal("runtime must not be created when tmux is missing")
+	}
+}
+
+func TestValidateRuntimePrerequisites_AllowsConfiguredBundledTmux(t *testing.T) {
+	if runtime.GOOS == "windows" || runtime.GOOS == "linux" {
+		t.Skip("Windows and Linux use native PTY host, not tmux")
+	}
+	bundled := filepath.Join(t.TempDir(), "resources", "tmux", "bin", "tmux")
+	t.Setenv("AO_TMUX_BINARY", bundled)
+	m := &Manager{
+		executable: func() (string, error) { return "", errors.New("unexpected executable lookup") },
+		lookPath: func(name string) (string, error) {
+			if name == bundled {
+				return bundled, nil
+			}
+			return "", fmt.Errorf("exec: %q: not found", name)
+		},
+	}
+	if err := m.validateRuntimePrerequisites(); err != nil {
+		t.Fatalf("validateRuntimePrerequisites() = %v, want configured bundled tmux accepted", err)
 	}
 }
 
@@ -5212,6 +5578,20 @@ func TestSpawn_HookPATHPinUnavailable(t *testing.T) {
 // TestSpawn_ProjectPATHIsPinBase asserts a project's PATH override survives the
 // pin as its base rather than being clobbered or clobbering: the daemon dir
 // still comes first.
+func TestValidateSpawnModelOnlyRejectsUnknownStaticChoices(t *testing.T) {
+	if err := validateSpawnModel(domain.HarnessAmp, "high"); err != nil {
+		t.Fatalf("known Amp mode: %v", err)
+	}
+	if err := validateSpawnModel(domain.HarnessAmp, "not-a-mode"); err == nil {
+		t.Fatal("unknown Amp mode: want validation error")
+	}
+	for _, harness := range []domain.AgentHarness{"opencode", "grok", "codex"} {
+		if err := validateSpawnModel(harness, "agent-owned-model"); err != nil {
+			t.Fatalf("%s dynamic model should be validated by the agent: %v", harness, err)
+		}
+	}
+}
+
 func TestSpawn_ProjectPATHIsPinBase(t *testing.T) {
 	daemonExe := filepath.Join(t.TempDir(), "ao")
 	m, st, rt, _ := pathPinManager(func() (string, error) { return daemonExe, nil })
@@ -5512,7 +5892,7 @@ func TestSaveAndTeardownOne_NativeTerminationFailurePreservesWorkspace(t *testin
 	}
 	st.sessions[rec.ID] = rec
 
-	err := m.saveAndTeardownOne(ctx, rec, true)
+	err := m.saveAndTeardownOne(ctx, rec)
 	if err == nil || !strings.Contains(err.Error(), "prime stop failed") {
 		t.Fatalf("err=%v, want native termination error", err)
 	}
@@ -5539,7 +5919,7 @@ func TestSaveAndTeardownOne_UnknownHarnessSkipsNativeTerminationAndTearsDown(t *
 	}
 	st.sessions[rec.ID] = rec
 
-	if err := m.saveAndTeardownOne(ctx, rec, true); err != nil {
+	if err := m.saveAndTeardownOne(ctx, rec); err != nil {
 		t.Fatalf("saveAndTeardownOne err = %v", err)
 	}
 	if rt.destroyed != 1 || !st.sessions[rec.ID].IsTerminated {
@@ -5563,7 +5943,7 @@ func TestSaveAndTeardownOne_WorkspaceProjectNativeTerminationFailurePreservesRep
 	ws.stashRef = "refs/ao/preserved/mer-1"
 	rec := seedNativeWorkspaceProject(st, "mer-1", domain.KindWorker)
 
-	err := m.saveAndTeardownOne(ctx, rec, true)
+	err := m.saveAndTeardownOne(ctx, rec)
 	if err == nil || !strings.Contains(err.Error(), "prime stop failed") {
 		t.Fatalf("err=%v, want native termination error", err)
 	}
@@ -5586,7 +5966,7 @@ func TestSaveAndTeardownOne_WorkspaceProjectTerminatesNativeSessionOnce(t *testi
 	m.agents = singleAgent{agent: agent}
 	rec := seedNativeWorkspaceProject(st, "mer-1", domain.KindWorker)
 
-	if err := m.saveAndTeardownOne(ctx, rec, true); err != nil {
+	if err := m.saveAndTeardownOne(ctx, rec); err != nil {
 		t.Fatalf("saveAndTeardownOne err = %v", err)
 	}
 	if agent.calls != 1 {
@@ -7241,7 +7621,7 @@ func TestReconcileLive_PreservesScopedShellTerminalsWithExistingWorktree(t *test
 	}
 }
 
-func TestReconcileLive_RelaunchFailureFallsBackToCapturedTeardown(t *testing.T) {
+func TestReconcileLive_RelaunchFailureLeavesSessionExitedAndRecoverable(t *testing.T) {
 	st := newFakeStore()
 	st.projects["p1"] = domain.ProjectRecord{ID: "p1", Config: testRoleAgents()}
 	rt := &fakeRuntime{aliveByHandle: map[string]bool{}}
@@ -7263,24 +7643,147 @@ func TestReconcileLive_RelaunchFailureFallsBackToCapturedTeardown(t *testing.T) 
 	}
 	st.sessions[rec.ID] = rec
 
-	if err := m.reconcileLive(context.Background(), rec); err != nil {
-		t.Fatalf("reconcileLive: %v", err)
+	if err := m.reconcileLive(context.Background(), rec); err == nil || !strings.Contains(err.Error(), "worktree cannot be reattached") {
+		t.Fatalf("reconcileLive error = %v, want relaunch failure", err)
 	}
-	if ws.stashCalls != 1 || lcm.terminated[rec.ID] != 1 {
-		t.Fatalf("fallback must capture and terminate: stash=%d terminated=%d", ws.stashCalls, lcm.terminated[rec.ID])
+	got := st.sessions[rec.ID]
+	if got.IsTerminated || got.Activity.State != domain.ActivityExited {
+		t.Fatalf("failed relaunch session = %+v, want live/exited", got)
 	}
-	rows := st.worktrees[rec.ID]
-	if len(rows) != 1 || rows[0].PreservedRef != ws.stashRef {
-		t.Fatalf("fallback restore marker = %+v, want preserve ref %q", rows, ws.stashRef)
+	if ws.stashCalls != 0 || lcm.terminated[rec.ID] != 0 {
+		t.Fatalf("failed relaunch changed durable lifecycle: stash=%d terminated=%d", ws.stashCalls, lcm.terminated[rec.ID])
 	}
-	foundForceDestroy := false
 	for _, call := range ws.calls {
 		if call == "ForceDestroy:s1" {
-			foundForceDestroy = true
+			t.Fatalf("failed relaunch destroyed recoverable worktree; calls=%v", ws.calls)
 		}
 	}
-	if !foundForceDestroy {
-		t.Fatalf("fallback must remove the captured worktree; calls=%v", ws.calls)
+	if rows := st.worktrees[rec.ID]; len(rows) != 0 {
+		t.Fatalf("failed relaunch wrote shutdown restore markers: %+v", rows)
+	}
+}
+
+func TestReconcileLive_RuntimeFailureAfterLaunchMetadataUpdateLeavesSessionResumable(t *testing.T) {
+	st := newFakeStore()
+	st.projects["p1"] = domain.ProjectRecord{ID: "p1", Config: testRoleAgents()}
+	rt := &fakeRuntime{
+		createErr:     errors.New("runtime create failed"),
+		aliveByHandle: map[string]bool{"old": false},
+	}
+	ws := &fakeWorkspace{}
+	lcm := &fakeLCM{store: st}
+	bootUpdatedAt := time.Date(2026, time.August, 27, 16, 54, 0, 0, time.UTC)
+	launchUpdatedAt := bootUpdatedAt.Add(time.Second)
+	m := New(Deps{
+		Runtime: rt, Agents: fakeAgents{}, Workspace: ws, Store: st,
+		Messenger: &fakeMessenger{}, Lifecycle: lcm,
+		BrowserCapabilities: fixedBrowserCapability("capability-1"),
+		Clock:               func() time.Time { return launchUpdatedAt },
+		LookPath:            func(string) (string, error) { return "/bin/true", nil },
+	})
+	rec := domain.SessionRecord{
+		ID: "s1", ProjectID: "p1", Harness: domain.HarnessCodex,
+		Activity:  domain.Activity{State: domain.ActivityActive, LastActivityAt: bootUpdatedAt},
+		UpdatedAt: bootUpdatedAt,
+		Metadata: domain.SessionMetadata{
+			Branch: "ao/s1/root", WorkspacePath: "/wt/s1", RuntimeHandleID: "old",
+			RuntimeLaunchID: "old-launch", AgentSessionID: "native-conversation-1",
+		},
+	}
+	st.sessions[rec.ID] = rec
+
+	err := m.reconcileLive(context.Background(), rec)
+	if err == nil || !strings.Contains(err.Error(), "runtime create failed") {
+		t.Fatalf("reconcileLive error = %v, want runtime create failure", err)
+	}
+	failed := st.sessions[rec.ID]
+	if failed.IsTerminated || failed.Activity.State != domain.ActivityExited {
+		t.Fatalf("failed relaunch session = %+v, want live/exited", failed)
+	}
+	if failed.Metadata.BrowserCapabilityVerifier != "verifier-1" {
+		t.Fatalf("browser capability verifier = %q, want launch metadata persisted", failed.Metadata.BrowserCapabilityVerifier)
+	}
+	if !failed.UpdatedAt.Equal(launchUpdatedAt) {
+		t.Fatalf("UpdatedAt = %v, want launch metadata timestamp %v", failed.UpdatedAt, launchUpdatedAt)
+	}
+	if failed.Metadata.AgentSessionID != "native-conversation-1" || failed.Metadata.WorkspacePath != "/wt/s1" {
+		t.Fatalf("native identity/worktree changed after failed relaunch: %+v", failed.Metadata)
+	}
+
+	// The failed startup attempt must land in the ordinary Resume Agent state,
+	// even though launch preparation advanced UpdatedAt before runtime.Create.
+	rt.createErr = nil
+	if _, err := m.ResumeAgentWithMode(context.Background(), rec.ID); err != nil {
+		t.Fatalf("ResumeAgentWithMode after dependency recovery: %v", err)
+	}
+	resumed := st.sessions[rec.ID]
+	if resumed.IsTerminated || resumed.Metadata.AgentSessionID != "native-conversation-1" {
+		t.Fatalf("resumed session lost durable identity: %+v", resumed)
+	}
+}
+
+func TestPreserveFailedReconcileRelaunchRetriesContendedCAS(t *testing.T) {
+	st := newFakeStore()
+	now := time.Date(2026, time.August, 27, 16, 54, 0, 0, time.UTC)
+	rec := domain.SessionRecord{
+		ID: "s1", Activity: domain.Activity{State: domain.ActivityActive}, UpdatedAt: now,
+		Metadata: domain.SessionMetadata{RuntimeHandleID: "old", RuntimeLaunchID: "old-launch"},
+	}
+	st.sessions[rec.ID] = rec
+	lcm := &contendedActivityLCM{fakeLCM: &fakeLCM{store: st}}
+	lcm.before = func(call int, id domain.SessionID, signal ports.ActivitySignal) {
+		if call != 1 {
+			return
+		}
+		current := st.sessions[id]
+		current.UpdatedAt = signal.ExpectedUpdatedAt.Add(time.Nanosecond)
+		st.sessions[id] = current
+	}
+	m := New(Deps{Store: st, Lifecycle: lcm})
+
+	committed, err := m.preserveFailedReconcileRelaunch(context.Background(), rec)
+	if err != nil {
+		t.Fatalf("preserveFailedReconcileRelaunch: %v", err)
+	}
+	if committed {
+		t.Fatal("failed controller was reported committed")
+	}
+	if lcm.calls != 2 {
+		t.Fatalf("ApplyActivitySignal calls = %d, want retry after one CAS loss", lcm.calls)
+	}
+	if got := st.sessions[rec.ID].Activity.State; got != domain.ActivityExited {
+		t.Fatalf("activity = %q, want exited after retry", got)
+	}
+}
+
+func TestPreserveFailedReconcileRelaunchBoundsPersistentCASContention(t *testing.T) {
+	st := newFakeStore()
+	now := time.Date(2026, time.August, 27, 16, 54, 0, 0, time.UTC)
+	rec := domain.SessionRecord{
+		ID: "s1", Activity: domain.Activity{State: domain.ActivityActive}, UpdatedAt: now,
+		Metadata: domain.SessionMetadata{RuntimeHandleID: "old", RuntimeLaunchID: "old-launch"},
+	}
+	st.sessions[rec.ID] = rec
+	lcm := &contendedActivityLCM{fakeLCM: &fakeLCM{store: st}}
+	lcm.before = func(_ int, id domain.SessionID, signal ports.ActivitySignal) {
+		current := st.sessions[id]
+		current.UpdatedAt = signal.ExpectedUpdatedAt.Add(time.Nanosecond)
+		st.sessions[id] = current
+	}
+	m := New(Deps{Store: st, Lifecycle: lcm})
+
+	committed, err := m.preserveFailedReconcileRelaunch(context.Background(), rec)
+	if err == nil || !strings.Contains(err.Error(), "session changed") {
+		t.Fatalf("preserveFailedReconcileRelaunch error = %v, want bounded contention error", err)
+	}
+	if committed {
+		t.Fatal("contended failed controller was reported committed")
+	}
+	if lcm.calls != 3 {
+		t.Fatalf("ApplyActivitySignal calls = %d, want bounded 3 attempts", lcm.calls)
+	}
+	if got := st.sessions[rec.ID].Activity.State; got != domain.ActivityActive {
+		t.Fatalf("activity = %q, want unchanged after persistent contention", got)
 	}
 }
 
@@ -7347,7 +7850,8 @@ func TestReconcileLive_AliveSessionAdoptedNoop(t *testing.T) {
 func TestReconcile_LivePassUsesConfiguredConcurrency(t *testing.T) {
 	st := newFakeStore()
 	st.projects["p1"] = domain.ProjectRecord{ID: "p1", Config: testRoleAgents()}
-	for _, id := range []domain.SessionID{"s1", "s2"} {
+	ids := []domain.SessionID{"s1", "s2", "s3"}
+	for _, id := range ids {
 		st.sessions[id] = domain.SessionRecord{
 			ID: id, ProjectID: "p1", Harness: domain.HarnessClaudeCode,
 			Metadata: domain.SessionMetadata{
@@ -7382,9 +7886,65 @@ func TestReconcile_LivePassUsesConfiguredConcurrency(t *testing.T) {
 			t.Fatalf("live probes did not overlap; entered = %v", seen)
 		}
 	}
+	// The third session is still queued behind the two blocked probes. It must
+	// already be fenced so neither input nor the periodic reaper can mutate it.
+	for _, id := range ids {
+		if !m.SessionMutationInProgress(id) {
+			t.Fatalf("session %s was not lifecycle-fenced during startup reconcile", id)
+		}
+	}
 	releaseAll()
 	if err := <-done; err != nil {
 		t.Fatalf("Reconcile: %v", err)
+	}
+	for _, id := range ids {
+		if m.SessionMutationInProgress(id) {
+			t.Fatalf("session %s reconcile fence leaked after completion", id)
+		}
+	}
+}
+
+func TestReconcileStartupSafetyDefersRuntimeReconciliation(t *testing.T) {
+	st := newFakeStore()
+	st.projects["p1"] = domain.ProjectRecord{ID: "p1", Config: testRoleAgents()}
+	st.sessions["s1"] = domain.SessionRecord{
+		ID: "s1", ProjectID: "p1", Harness: domain.HarnessClaudeCode,
+		Metadata: domain.SessionMetadata{Branch: "ao/s1/root", WorkspacePath: "/wt/s1", RuntimeHandleID: "s1"},
+	}
+	release := make(chan struct{})
+	rt := &blockingAliveRuntime{
+		fakeRuntime: &fakeRuntime{},
+		entered:     make(chan domain.SessionID, 1),
+		release:     release,
+	}
+	m := New(Deps{
+		Runtime: rt, Agents: fakeAgents{}, Workspace: &fakeWorkspace{}, Store: st,
+		Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st},
+		LookPath: func(string) (string, error) { return "/bin/true", nil },
+	})
+
+	if err := m.ReconcileStartupSafety(context.Background()); err != nil {
+		t.Fatalf("ReconcileStartupSafety: %v", err)
+	}
+	select {
+	case id := <-rt.entered:
+		t.Fatalf("startup safety unexpectedly probed runtime %s", id)
+	default:
+	}
+
+	done := make(chan error, 1)
+	go func() { done <- m.ReconcileBackground(context.Background()) }()
+	select {
+	case id := <-rt.entered:
+		if id != "s1" {
+			t.Fatalf("runtime probe = %s, want s1", id)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("background reconciliation did not probe the live runtime")
+	}
+	close(release)
+	if err := <-done; err != nil {
+		t.Fatalf("ReconcileBackground: %v", err)
 	}
 }
 
@@ -7420,6 +7980,90 @@ func TestReconcileLive_ProbeErrorIsNotDeath(t *testing.T) {
 	}
 	if rt.destroyed != 0 {
 		t.Fatalf("Destroy calls = %d, want 0 (probe error is not death)", rt.destroyed)
+	}
+}
+
+func TestReconcileLive_InconclusiveChatRecoveryDoesNotTeardown(t *testing.T) {
+	st := newFakeStore()
+	st.projects["p1"] = domain.ProjectRecord{ID: "p1", Config: testRoleAgents()}
+	ws := &fakeWorkspace{stashRef: "refs/ao/preserved/chat-live"}
+	lcm := &fakeLCM{store: st}
+	chat := &recordingLauncher{
+		startErr: fmt.Errorf("persistent host unavailable: %w", ports.ErrChatRecoveryInconclusive),
+	}
+	m := New(Deps{
+		Runtime: &fakeRuntime{}, Agents: fakeAgents{}, Workspace: ws, Store: st,
+		Messenger: &fakeMessenger{}, Lifecycle: lcm, Chat: chat,
+		LookPath: func(string) (string, error) { return "/bin/true", nil },
+	})
+	rec := domain.SessionRecord{
+		ID: "chat-live", ProjectID: "p1", Harness: domain.HarnessCodex,
+		Mode: domain.SessionModeChat,
+		Metadata: domain.SessionMetadata{
+			Branch: "ao/chat-live", WorkspacePath: "/wt/chat-live",
+			ProviderConversationID: "thread-live", ControllerGeneration: "generation-old",
+		},
+	}
+	st.sessions[rec.ID] = rec
+
+	err := m.reconcileLive(context.Background(), rec)
+	if !errors.Is(err, ports.ErrChatRecoveryInconclusive) {
+		t.Fatalf("reconcileLive error = %v, want ErrChatRecoveryInconclusive", err)
+	}
+	if ws.stashCalls != 0 || lcm.terminated[rec.ID] != 0 {
+		t.Fatalf("inconclusive live host must remain intact: stash=%d terminated=%d",
+			ws.stashCalls, lcm.terminated[rec.ID])
+	}
+	for _, call := range ws.calls {
+		if call == "ForceDestroy:chat-live" {
+			t.Fatalf("inconclusive live host lost its worktree: calls=%v", ws.calls)
+		}
+	}
+}
+
+func TestReconcileLive_InconclusiveRuntimeProbeDoesNotRelaunch(t *testing.T) {
+	st := newFakeStore()
+	st.projects["p1"] = domain.ProjectRecord{ID: "p1", Config: testRoleAgents()}
+	rt := &fakeRuntime{aliveErr: fmt.Errorf("legacy client mismatch: %w", ports.ErrRuntimeProbeInconclusive)}
+	ws := &fakeWorkspace{}
+	lcm := &fakeLCM{store: st}
+	m := New(Deps{
+		Runtime: rt, Agents: fakeAgents{}, Workspace: ws, Store: st,
+		Messenger: &fakeMessenger{}, Lifecycle: lcm,
+		LookPath: func(string) (string, error) { return "/bin/true", nil },
+	})
+	rec := domain.SessionRecord{
+		ID: "s-inconclusive", ProjectID: "p1", Harness: domain.HarnessClaudeCode,
+		Metadata: domain.SessionMetadata{
+			Branch: "ao/s-inconclusive/root", WorkspacePath: "/wt/s-inconclusive", RuntimeHandleID: "s-inconclusive",
+		},
+	}
+	st.sessions[rec.ID] = rec
+
+	err := m.reconcileLive(context.Background(), rec)
+	if !errors.Is(err, ports.ErrRuntimeProbeInconclusive) {
+		t.Fatalf("reconcileLive err = %v, want ErrRuntimeProbeInconclusive", err)
+	}
+	if rt.created != 0 || rt.destroyed != 0 {
+		t.Fatalf("inconclusive probe changed runtime: created=%d destroyed=%d", rt.created, rt.destroyed)
+	}
+	if ws.stashCalls != 0 || lcm.terminated[rec.ID] != 0 {
+		t.Fatalf("inconclusive probe changed lifecycle: stash=%d terminated=%d", ws.stashCalls, lcm.terminated[rec.ID])
+	}
+}
+
+func TestRestartRuntime_InconclusiveProbeDoesNotCreateReplacement(t *testing.T) {
+	rt := &fakeRuntime{aliveErr: fmt.Errorf("legacy client unavailable: %w", ports.ErrRuntimeProbeInconclusive)}
+	m := New(Deps{Runtime: rt})
+
+	_, err := m.restartRuntime(context.Background(), ports.RuntimeHandle{ID: "legacy-live"}, ports.RuntimeConfig{
+		SessionID: "legacy-live",
+	})
+	if !errors.Is(err, ports.ErrRuntimeProbeInconclusive) {
+		t.Fatalf("restartRuntime err = %v, want ErrRuntimeProbeInconclusive", err)
+	}
+	if rt.created != 0 || rt.destroyed != 0 {
+		t.Fatalf("inconclusive probe replaced runtime: created=%d destroyed=%d", rt.created, rt.destroyed)
 	}
 }
 
@@ -7605,6 +8249,10 @@ type signalingAgent struct{ fakeAgent }
 func (signalingAgent) EmitsSubmitActivity() bool  { return true }
 func (signalingAgent) EmitsBlockedActivity() bool { return true }
 
+type startupReadySignalingAgent struct{ fakeAgent }
+
+func (startupReadySignalingAgent) FirstSignalProvesInputReady() bool { return true }
+
 // submitOnlyAgent advertises a prompt-submit signal but NOT a blocked one — a
 // harness like goose/opencode/agy that submits yet installs no permission hook.
 // confirmActive must refuse to nudge it (it could Enter into a decision the
@@ -7638,12 +8286,21 @@ func newSendTestManager(t *testing.T, agent ports.Agent, messenger ports.AgentMe
 	return m
 }
 
+// pastStartupGate marks a TUI session as having received its first hook
+// callback so send-path tests exercise post-startup behavior.
+func pastStartupGate(rec domain.SessionRecord) domain.SessionRecord {
+	if rec.FirstSignalAt.IsZero() {
+		rec.FirstSignalAt = time.Now()
+	}
+	return rec
+}
+
 func TestSend_SkipsConfirmForHooklessHarness(t *testing.T) {
 	// A harness whose adapter does NOT implement the activity-signal interfaces (plain
 	// fakeAgent) must skip confirmActive entirely: one Send, no nudges, and the
 	// call returns immediately without polling.
 	st := newFakeStore()
-	st.sessions["s1"] = domain.SessionRecord{ID: "s1", Harness: "claude-code"}
+	st.sessions["s1"] = pastStartupGate(domain.SessionRecord{ID: "s1", Harness: "claude-code"})
 	msg := &fakeMessenger{}
 	m := newSendTestManager(t, fakeAgent{}, msg, st)
 
@@ -7662,7 +8319,7 @@ func TestSend_SkipsConfirmForHooklessHarness(t *testing.T) {
 
 func TestSend_RecordsDeliveredUserInput(t *testing.T) {
 	st := newFakeStore()
-	st.sessions["s1"] = domain.SessionRecord{ID: "s1", Harness: "claude-code"}
+	st.sessions["s1"] = pastStartupGate(domain.SessionRecord{ID: "s1", Harness: "claude-code"})
 	m := newSendTestManager(t, fakeAgent{}, &fakeMessenger{}, st)
 
 	if err := m.Send(context.Background(), "s1", "continue with the migration", nil); err != nil {
@@ -7671,6 +8328,9 @@ func TestSend_RecordsDeliveredUserInput(t *testing.T) {
 	if got := st.sessions["s1"].Metadata.LatestUserPrompt; got != "continue with the migration" {
 		t.Fatalf("LatestUserPrompt = %q, want delivered user input", got)
 	}
+	if got := st.sessions["s1"].Metadata.LatestUserPromptAt; got.IsZero() {
+		t.Fatal("LatestUserPromptAt is zero after delivered user input")
+	}
 }
 
 func TestSend_ConfirmsAndNudgesUntilActive(t *testing.T) {
@@ -7678,8 +8338,8 @@ func TestSend_ConfirmsAndNudgesUntilActive(t *testing.T) {
 	// flip the session active, after which confirmActive stops. Net: the
 	// initial message plus exactly one nudge.
 	st := newFakeStore()
-	st.sessions["s1"] = domain.SessionRecord{ID: "s1", Harness: "claude-code",
-		Activity: domain.Activity{State: domain.ActivityIdle}}
+	st.sessions["s1"] = pastStartupGate(domain.SessionRecord{ID: "s1", Harness: "claude-code",
+		Activity: domain.Activity{State: domain.ActivityIdle}})
 	// A messenger that flips the session active on the first Enter-only nudge,
 	// mimicking the agent accepting the prompt.
 	msg := &flipOnNudgeMessenger{sessionID: "s1", store: st}
@@ -7706,8 +8366,8 @@ func TestSend_ConfirmBudgetCapsRetries(t *testing.T) {
 	// A signaling harness that never goes active must still terminate: at most
 	// maxAttempts Sends (initial + maxAttempts-1 nudges), and Send never errors.
 	st := newFakeStore()
-	st.sessions["s1"] = domain.SessionRecord{ID: "s1", Harness: "claude-code",
-		Activity: domain.Activity{State: domain.ActivityIdle}}
+	st.sessions["s1"] = pastStartupGate(domain.SessionRecord{ID: "s1", Harness: "claude-code",
+		Activity: domain.Activity{State: domain.ActivityIdle}})
 	msg := &fakeMessenger{}
 	m := newSendTestManager(t, signalingAgent{}, msg, st)
 	var logBuf bytes.Buffer
@@ -7737,8 +8397,8 @@ func TestSend_BlockedSessionRejectsDelivery(t *testing.T) {
 	// Send surfaces ErrAwaitingDecision (the API's 409) and the messenger is
 	// never called, so nothing — message or nudge — reaches the pane.
 	st := newFakeStore()
-	st.sessions["s1"] = domain.SessionRecord{ID: "s1", Harness: "claude-code",
-		Activity: domain.Activity{State: domain.ActivityBlocked}}
+	st.sessions["s1"] = pastStartupGate(domain.SessionRecord{ID: "s1", Harness: "claude-code",
+		Activity: domain.Activity{State: domain.ActivityBlocked}})
 	msg := &fakeMessenger{}
 	m := newSendTestManager(t, signalingAgent{}, msg, st)
 
@@ -7767,13 +8427,50 @@ func TestSend_ExitedAgentRejectsDelivery(t *testing.T) {
 	}
 }
 
+func TestSend_TUIStartupPendingRejectsDelivery(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["s1"] = domain.SessionRecord{
+		ID: "s1", Harness: domain.HarnessCursor, Mode: domain.SessionModeTUI,
+		Activity: domain.Activity{State: domain.ActivityIdle},
+		Metadata: domain.SessionMetadata{RuntimeHandleID: "h1"},
+	}
+	msg := &fakeMessenger{}
+	m := newSendTestManager(t, startupReadySignalingAgent{}, msg, st)
+
+	err := m.Send(context.Background(), "s1", "follow-up after spawn", nil)
+	if !errors.Is(err, ErrStartupPending) {
+		t.Fatalf("Send error = %v, want ErrStartupPending", err)
+	}
+	if len(msg.msgs) != 0 {
+		t.Fatalf("Send calls = %d, want 0 before first hook signal", len(msg.msgs))
+	}
+}
+
+func TestSend_HooklessTUIStartupAllowsDelivery(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["s1"] = domain.SessionRecord{
+		ID: "s1", Harness: domain.HarnessAider, Mode: domain.SessionModeTUI,
+		Activity: domain.Activity{State: domain.ActivityIdle},
+		Metadata: domain.SessionMetadata{RuntimeHandleID: "h1"},
+	}
+	msg := &fakeMessenger{}
+	m := newSendTestManager(t, fakeAgent{}, msg, st)
+
+	if err := m.Send(context.Background(), "s1", "follow-up after spawn", nil); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	if len(msg.msgs) != 1 {
+		t.Fatalf("Send calls = %d, want 1 for hookless TUI harness", len(msg.msgs))
+	}
+}
+
 func TestSend_NoNudgeWhenBlockedAppearsMidWait(t *testing.T) {
 	// The permission dialog can appear between polls (e.g. the delivered prompt
 	// itself triggered a tool approval). The confirm loop must abort on the
 	// first blocked observation instead of nudging after the deadline.
 	st := newFakeStore()
-	st.sessions["s1"] = domain.SessionRecord{ID: "s1", Harness: "claude-code",
-		Activity: domain.Activity{State: domain.ActivityIdle}}
+	st.sessions["s1"] = pastStartupGate(domain.SessionRecord{ID: "s1", Harness: "claude-code",
+		Activity: domain.Activity{State: domain.ActivityIdle}})
 	msg := &blockOnSendMessenger{sessionID: "s1", store: st}
 	m := newSendTestManager(t, signalingAgent{}, msg, st)
 
@@ -7790,8 +8487,8 @@ func TestSend_StillNudgesWhenWaitingInput(t *testing.T) {
 	// PRIMARY nudge scenario: a long-idle worker with an unsubmitted pasted
 	// draft. The decision-safety guard must not disable it.
 	st := newFakeStore()
-	st.sessions["s1"] = domain.SessionRecord{ID: "s1", Harness: "claude-code",
-		Activity: domain.Activity{State: domain.ActivityWaitingInput}}
+	st.sessions["s1"] = pastStartupGate(domain.SessionRecord{ID: "s1", Harness: "claude-code",
+		Activity: domain.Activity{State: domain.ActivityWaitingInput}})
 	msg := &flipOnNudgeMessenger{sessionID: "s1", store: st}
 	m := newSendTestManager(t, signalingAgent{}, msg, st)
 
@@ -7830,8 +8527,8 @@ func TestSend_NoNudgeWhenBlockedAppearsBeforeNudge(t *testing.T) {
 	// before the Enter-only nudge. The just-in-time re-read in confirmActive
 	// must catch it — exactly one Send, no nudge.
 	st := newFakeStore()
-	st.sessions["s1"] = domain.SessionRecord{ID: "s1", Harness: "claude-code",
-		Activity: domain.Activity{State: domain.ActivityIdle}}
+	st.sessions["s1"] = pastStartupGate(domain.SessionRecord{ID: "s1", Harness: "claude-code",
+		Activity: domain.Activity{State: domain.ActivityIdle}})
 	// blockAfterFirstReadStore flips the session to blocked on read #4. The
 	// deterministic read sequence (attemptDeadline 0 makes waitForActive do
 	// exactly one poll): #1 Deliver's pre-paste read, #2 Send's harness lookup,
@@ -7863,8 +8560,8 @@ func TestSend_SkipsConfirmForSubmitOnlyHarness(t *testing.T) {
 	// NOT nudge-safe: confirmActive must be skipped entirely, so an Enter can
 	// never reach a permission dialog the harness could not have signalled.
 	st := newFakeStore()
-	st.sessions["s1"] = domain.SessionRecord{ID: "s1", Harness: "goose",
-		Activity: domain.Activity{State: domain.ActivityIdle}}
+	st.sessions["s1"] = pastStartupGate(domain.SessionRecord{ID: "s1", Harness: "goose",
+		Activity: domain.Activity{State: domain.ActivityIdle}})
 	msg := &fakeMessenger{}
 	m := newSendTestManager(t, submitOnlyAgent{}, msg, st)
 

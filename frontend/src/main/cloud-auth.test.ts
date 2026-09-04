@@ -36,6 +36,9 @@ vi.mock("@workos-inc/node", () => ({
 vi.mock("electron", () => ({
   app: {
     setAsDefaultProtocolClient: vi.fn(),
+    // These tests exercise the packaged deep-link (ao-app://) sign-in flow;
+    // unpackaged builds default to a loopback redirect instead.
+    isPackaged: true,
   },
   dialog: { showMessageBox: mocks.showMessageBox },
   ipcMain: { handle: mocks.ipcHandle },

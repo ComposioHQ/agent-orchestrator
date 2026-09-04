@@ -1,58 +1,86 @@
-import { useState } from "react";
+import { lazy, Suspense } from "react";
 import { useTranslation } from "react-i18next";
+import type { GlobalSettingsSection as GlobalSettingsPage } from "../stores/ui-store";
 import { GeneralSettingsSection } from "./settings/GeneralSettingsSection";
-import { ReportProblemDialog } from "./settings/ReportProblemDialog";
-import { SettingsLinkRow } from "./settings/SettingsRow";
+import { HarnessSettingsSection } from "./settings/HarnessSettingsSection";
+import { CloudCredentialsSection } from "./settings/CloudCredentialsSection";
+import { CodexAccountsSection } from "./settings/CodexAccountsSection";
+import { ConnectMobileContent } from "./settings/ConnectMobileContent";
+import { KeyboardShortcutsContent } from "./settings/KeyboardShortcutsContent";
+import { MobileDevicesSection } from "./settings/MobileDevicesSection";
+import { ReportProblemContent } from "./settings/ReportProblemContent";
 import { SettingsSection } from "./settings/SettingsSection";
-import { UpdatesSection } from "./settings/UpdatesSection";
+import { BrowserProfilesSection } from "./settings/BrowserProfilesSection";
 
-export type GlobalSettingsSection = "general" | "updates" | "help" | "all";
+const UpdatesSection = lazy(async () => {
+	const module = await import("./settings/UpdatesSection");
+	return { default: module.UpdatesSection };
+});
+
+export type GlobalSettingsSection = GlobalSettingsPage | "all";
+
+/** Full-width panel for page-level content (forms, editors) — matches the
+ *  grouped-row surface so pages read as one coherent family. */
+function SettingsContentPanel({ children }: { children: React.ReactNode }) {
+	return <div className="rounded-md bg-[var(--color-bg-settings-row)] px-4 py-4">{children}</div>;
+}
 
 export function GlobalSettingsForm({
 	section = "all",
-	onOpenKeyboardShortcuts,
-	onOpenConnectMobile,
 }: {
 	section?: GlobalSettingsSection;
-	onOpenKeyboardShortcuts?: () => void;
-	onOpenConnectMobile?: () => void;
 }) {
 	const { t } = useTranslation();
-	const [reportProblemOpen, setReportProblemOpen] = useState(false);
-	// One section per page means the dialog header already names it, so the
-	// page's leading heading would just repeat that title. Only "all" (no
-	// single-page header) shows every section's own heading.
-	const leadingTitleHidden = section !== "all";
+	const all = section === "all";
+	// One section per page means the dialog header already names it, so a
+	// leading in-page heading would just repeat that title.
+	const titleHidden = !all;
 
 	return (
-		<>
-			<div
-				aria-label={t("settings.title")}
-				className="flex w-full flex-col gap-(--size-settings-section-gap)"
-				data-testid="settings-page"
-			>
-				{(section === "all" || section === "general") && (
-					<>
-						<GeneralSettingsSection
-							onConnectMobile={() => onOpenConnectMobile?.()}
-							titleHidden={leadingTitleHidden}
-						/>
-						<SettingsSection title={t("settings.preferences")} grouped>
-							<SettingsLinkRow
-								label={t("settings.keyboardShortcuts")}
-								onClick={() => onOpenKeyboardShortcuts?.()}
-							/>
-						</SettingsSection>
-					</>
-				)}
-				{(section === "all" || section === "updates") && <UpdatesSection titleHidden={leadingTitleHidden} />}
-				{(section === "all" || section === "help") && (
-					<SettingsSection title={t("settings.getHelp")} titleHidden={leadingTitleHidden} grouped>
-						<SettingsLinkRow label={t("settings.reportProblem")} onClick={() => setReportProblemOpen(true)} />
-					</SettingsSection>
-				)}
-			</div>
-			<ReportProblemDialog open={reportProblemOpen} onOpenChange={setReportProblemOpen} />
-		</>
+		<div
+			aria-label={t("settings.title")}
+			className="flex w-full flex-col gap-(--size-settings-section-gap)"
+			data-testid="settings-page"
+		>
+			{(all || section === "general") && <GeneralSettingsSection titleHidden={titleHidden} />}
+
+			{(all || section === "harness") && <HarnessSettingsSection titleHidden={titleHidden} />}
+
+			{(all || section === "agents") && <CodexAccountsSection titleHidden={titleHidden} />}
+
+			{(all || section === "browserProfiles") && <BrowserProfilesSection titleHidden={titleHidden} />}
+			{(all || section === "cloud") && <CloudCredentialsSection titleHidden={titleHidden} />}
+
+			{(all || section === "mobile") && (
+				<SettingsSection title={t("settings.mobile")} titleHidden={titleHidden}>
+					<div className="rounded-md bg-[var(--color-bg-settings-row)] px-4 pb-4 pt-0">
+						<ConnectMobileContent active />
+						<MobileDevicesSection />
+					</div>
+				</SettingsSection>
+			)}
+
+			{(all || section === "shortcuts") && (
+				<SettingsSection title={t("settings.keyboardShortcuts")} titleHidden={titleHidden}>
+					<SettingsContentPanel>
+						<KeyboardShortcutsContent active />
+					</SettingsContentPanel>
+				</SettingsSection>
+			)}
+
+			{(all || section === "updates") && (
+				<Suspense fallback={null}>
+					<UpdatesSection titleHidden={titleHidden} />
+				</Suspense>
+			)}
+
+			{(all || section === "help") && (
+				<SettingsSection title={t("settings.reportProblem")} titleHidden={titleHidden}>
+					<SettingsContentPanel>
+						<ReportProblemContent active />
+					</SettingsContentPanel>
+				</SettingsSection>
+			)}
+		</div>
 	);
 }

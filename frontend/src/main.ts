@@ -11,6 +11,7 @@ import {
 	Notification as ElectronNotification,
 	protocol,
 	shell,
+	session,
 	WebContentsView,
 	webContents,
 	type WebContents,
@@ -28,18 +29,32 @@ import {
 	type UpdateCheckOptions,
 } from "./main/auto-updater";
 import { listFeatureBuilds, getActiveFeatureBuild } from "./main/feature-builds";
+import { initMainSentry, sanitizeRendererCapture } from "./main/sentry-main";
+import { TelemetryPolicyAuthority, resolveDesktopDataDir } from "./main/telemetry-policy-file";
+import { DaemonTelemetryPolicyClient } from "./main/daemon-telemetry-policy-client";
+import { DesktopTelemetryController } from "./main/desktop-telemetry-controller";
+import { AgentSwitchVisibilityController } from "./main/agent-switch-observability";
 import { readUpdateSettings, type UpdateSettings, type UpdateStatus } from "./main/update-settings";
 import { readKeybindingOverrides, writeKeybindingOverrides } from "./main/keybinding-settings";
+import { readEditorSettings, writeEditorPreference } from "./main/editor-settings";
+import { createEditorHandoff } from "./main/editor-handoff";
+import { launchCommand } from "./main/launch-command";
 import {
 	decideRelocation,
 	inspectInstalledBundle,
 	installedBundlePath,
 } from "./main/relocation";
-import { coerceUiSettings, readUiSettings, writeUiSettings, type UiSettings } from "./main/ui-settings";
+import {
+	coerceUiSettings,
+	DEFAULT_UI_SETTINGS,
+	readUiSettings,
+	writeUiSettings,
+	type UiSettings,
+} from "./main/ui-settings";
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomBytes, randomUUID } from "node:crypto";
-import { closeSync, existsSync, openSync, readFileSync } from "node:fs";
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { chmod, copyFile, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -71,7 +86,16 @@ import {
 	resolveDaemonFromRunFile,
 } from "./shared/daemon-attach";
 import { browserDaemonOwnershipDecision, shouldReplacePortHolder } from "./shared/daemon-takeover";
-import { buildDaemonEnv, resolveShellEnv, type ShellRunner } from "./shared/shell-env";
+import {
+	buildDaemonEnv,
+	devDaemonAllowedOrigins,
+	resolveShellEnv,
+	resolveShellEnvWithSpec,
+	resolveWindowsShellProbe,
+	type ShellRunner,
+} from "./shared/shell-env";
+import { DEFAULT_TERMINAL_SHELL, type TerminalShellPreference } from "./shared/ui-locale";
+import { bundledTmuxBinaryPath, stableBundledTmuxBinaryPath } from "./shared/bundled-tmux";
 import {
 	findCloudDeepLinkArg,
 	handleCloudDeepLink,
@@ -79,9 +103,32 @@ import {
 	registerCloudProtocol,
 	showCloudSignInFailure,
 } from "./main/cloud-auth";
+import { installCloudLocalAuthIPC } from "./main/cloud-auth-local";
+import { installCloudCpProxy } from "./main/cloud-cp-proxy";
 import { DEFAULT_POSTHOG_HOST, DEFAULT_POSTHOG_PROJECT_KEY } from "./shared/posthog-config";
-import { buildTelemetryBootstrap } from "./shared/telemetry";
-import { createBrowserViewHost, type BrowserViewHost } from "./main/browser-view-host";
+import { DEFAULT_SENTRY_DSN } from "./shared/sentry-config";
+import { buildTelemetryBootstrap, rendererTelemetryEnabled } from "./shared/telemetry";
+import {
+	TELEMETRY_CLEAR_RENDERER_QUEUES_CHANNEL,
+	TELEMETRY_POLICY_CHANGED_CHANNEL,
+	TELEMETRY_RENDERER_QUEUES_CLEARED_CHANNEL,
+	type RendererTelemetryCapture,
+	type TelemetryPolicyView,
+} from "./shared/telemetry-policy";
+import {
+	createBrowserViewHost,
+	shouldHandleAppShortcutInBrowserContext,
+	type BrowserViewHost,
+} from "./main/browser-view-host";
+import { createBrowserProfileStore } from "./main/browser-profile-store";
+import { BrowserHistoryStore } from "./main/browser-history-store";
+import { BrowserProfileImportService } from "./main/browser-profile-import";
+import {
+	registerBrowserProfileIpc,
+	type BrowserProfileIpc,
+	type BrowserProfileMenuItem,
+} from "./main/browser-profile-ipc";
+import type { BrowserProfileMenuInput } from "./shared/browser-profiles";
 import { createWindowComposition, type WindowComposition } from "./main/window-composition";
 import { AgentBrowserRuntime } from "./main/agent-browser-runtime";
 import { sameBrowserRuntimeIdentity, type BrowserRuntimeIdentity } from "./main/browser-runtime-identity";
@@ -90,9 +137,11 @@ import { connectBrowserRuntime, type BrowserRuntimeLinkHandle } from "./main/bro
 import { keepDaemonAlive, shouldLinkOnAttach } from "./main/daemon-owner";
 import { readMigrationState, updateMigration, writeAppStateMarker, type MigrationState } from "./main/app-state";
 import { isAllowedAppExternalURL, openAllowedAppExternalURL } from "./main/external-open";
-import { shouldSignalAttention, shouldToast } from "./main/notification-signals";
-import { buildWindowsAppMenuTemplate } from "./main/menu";
-import { ancestorRepositorySetupWarning, scanImportFolder } from "./main/import-folder-scan";
+import { dockBounceType, shouldReplaceBounce, shouldSignalAttention, shouldToast } from "./main/notification-signals";
+import { buildMacAppMenuTemplate, buildWindowsAppMenuTemplate } from "./main/menu";
+import { ancestorRepositorySetupWarning, resolveCheckedOutBranch, scanImportFolder } from "./main/import-folder-scan";
+import { parseOpenFolderPathArg } from "./main/open-folder-arg";
+import { AGENT_SWITCH_VISIBILITY_IPC_CHANNEL } from "./shared/agent-switch-observability";
 
 // Globals injected at compile time by @electron-forge/plugin-vite.
 declare const MAIN_WINDOW_VITE_DEV_SERVER_URL: string | undefined;
@@ -121,6 +170,18 @@ if (process.platform === "win32") {
 	app.setAppUserModelId("dev.agent-orchestrator.desktop");
 }
 
+// Escape hatch for hosts whose GPU driver stack crashes Chromium on startup
+// (Linux/Wayland in practice, #3961). Chromium still runs a GPU process; what
+// this drops is the vendor driver, falling the process back to Electron's
+// bundled SwiftShader. There is no window yet when the crashes happen, so an
+// in-app setting is unreachable and an env var is the only knob that works.
+// Truthy allowlist mirrors keepDaemonAlive() so "off"/"no" cannot accidentally
+// turn the GPU off. Must run before app ready — the call throws after that.
+const disableGpu = process.env.AO_DISABLE_GPU?.trim().toLowerCase();
+if (disableGpu === "1" || disableGpu === "true" || disableGpu === "yes" || disableGpu === "on") {
+	app.disableHardwareAcceleration();
+}
+
 // Pin ALL Electron-owned state (Chromium cache, cookies, local/session storage,
 // crash dumps) under the canonical AO home at ~/.ao instead of Electron's macOS
 // default ~/Library/Application Support/<name>. Keeps the app's entire footprint
@@ -131,10 +192,61 @@ if (process.platform === "win32") {
 // keeps this directory open, and two Chromium instances sharing one profile
 // corrupt its LevelDB stores. Mirrors how dev already isolates running.json and
 // the daemon data dir into ~/.ao/dev.
+// AO_DEV_ELECTRON_DIR overrides the dev profile location. The default dev path
+// is shared by every checkout, and Chromium puts a singleton lock in a profile,
+// so a second worktree's `npm run dev` loses requestSingleInstanceLock() and
+// exits immediately. That is a real constraint for a tool built around parallel
+// worktree sessions: two sessions could not both run the app. Packaged builds
+// are deliberately NOT overridable — their profile is part of the install.
 app.setPath(
 	"userData",
-	app.isPackaged ? path.join(os.homedir(), ".ao", "electron") : path.join(os.homedir(), ".ao", "dev", "electron"),
+	app.isPackaged
+		? path.join(os.homedir(), ".ao", "electron")
+		: (process.env.AO_DEV_ELECTRON_DIR ?? path.join(os.homedir(), ".ao", "dev", "electron")),
 );
+
+// Resolve once against the launch cwd, before the daemon can chdir. The exact
+// absolute value is shared by policy bootstrap and every daemon spawn.
+const desktopLaunchWorkingDirectory = process.cwd();
+const desktopDataDir = resolveDesktopDataDir(process.env, os.homedir(), desktopLaunchWorkingDirectory, app.isPackaged);
+let telemetryPolicyController: DesktopTelemetryController | null = null;
+let agentSwitchVisibilityController: AgentSwitchVisibilityController | null = null;
+const trustedShellWebContents = new Map<number, WebContents>();
+const pendingRendererQueuePurges = new Map<string, {
+	senderId: number;
+	contents: WebContents;
+	resolve: () => void;
+	reject: (error: Error) => void;
+	timeout: ReturnType<typeof setTimeout>;
+	onDestroyed: () => void;
+}>();
+
+function finishRendererQueuePurge(requestId: string, error?: Error): void {
+	const pending = pendingRendererQueuePurges.get(requestId);
+	if (!pending) return;
+	pendingRendererQueuePurges.delete(requestId);
+	clearTimeout(pending.timeout);
+	pending.contents.removeListener("destroyed", pending.onDestroyed);
+	if (error) pending.reject(error);
+	else pending.resolve();
+}
+
+function requestRendererQueuePurge(contents: WebContents): Promise<void> {
+	return new Promise((resolve, reject) => {
+		const requestId = randomUUID();
+		const onDestroyed = () => finishRendererQueuePurge(requestId, new Error("renderer destroyed before telemetry queue purge"));
+		const timeout = setTimeout(() => finishRendererQueuePurge(requestId, new Error("renderer telemetry queue purge timed out")), 5_000);
+		pendingRendererQueuePurges.set(requestId, { senderId: contents.id, contents, resolve, reject, timeout, onDestroyed });
+		contents.once("destroyed", onDestroyed);
+		try { contents.send(TELEMETRY_CLEAR_RENDERER_QUEUES_CHANNEL, { requestId }); }
+		catch (error) { finishRendererQueuePurge(requestId, error instanceof Error ? error : new Error("renderer telemetry queue purge failed")); }
+	});
+}
+
+async function clearRendererTelemetryQueues(): Promise<void> {
+	const liveShells = [...trustedShellWebContents.values()].filter((contents) => !contents.isDestroyed());
+	await Promise.all(liveShells.map(requestRendererQueuePurge));
+}
 
 let mainWindow: BaseWindow | null = null;
 let trayController: TrayController | null = null;
@@ -144,6 +256,13 @@ const trayLifecycle = createTrayLifecycle({
 	getTrayController: () => trayController,
 	focusWindow: () => focusMainWindow(),
 });
+// Icon/taskbar-shortcut folder drop, mirroring VS Code: relayed to the
+// renderer's global drop handling so it opens the same create-project flow.
+const OPEN_FOLDER_PATH_CHANNEL = "app:openFolderPath";
+// Folder path from a cold-start launch (icon/shortcut drop while not running)
+// whose renderer isn't mounted yet. Flushed once the shell signals readiness
+// via TRAY_RENDERER_READY_CHANNEL — see the OPEN_FOLDER_PATH_CHANNEL handler.
+let pendingFolderPath: string | null = null;
 let daemonProcess: ChildProcess | null = null;
 let daemonStoppingProcess: ChildProcess | null = null;
 let daemonRestartAfterExitProcess: ChildProcess | null = null;
@@ -152,6 +271,8 @@ let daemonStartEpoch = 0;
 let daemonStatus: DaemonStatus = { state: "stopped" };
 let daemonOutput = "";
 let browserViewHost: BrowserViewHost | null = null;
+let browserProfileIpc: BrowserProfileIpc | null = null;
+let browserProfileImporter: BrowserProfileImportService | null = null;
 let windowComposition: WindowComposition | null = null;
 const browserCleanupPromises = new Set<Promise<void>>();
 let browserQuitCleanupPromise: Promise<void> | null = null;
@@ -168,6 +289,14 @@ let terminalFocused = false;
 let supervisorLink: SupervisorLinkHandle | null = null;
 // Guard: prevents stacking multiple flashFrame(true) calls when notifications arrive rapidly.
 let isFlashing = false;
+// macOS: the in-flight dock bounce, cancelled once the window regains focus
+// so a "critical" bounce stops as soon as the user looks at the app. Held as
+// one object so the id and its criticality can never drift apart; a pending
+// critical bounce is not replaced by a later informational notification.
+let pendingBounce: { id: number; critical: boolean } | null = null;
+// Live mirror of the persisted `soundNotificationsEnabled` UI setting, kept in sync by the
+// uiSettings:set handler so a toggle flip takes effect without an app restart.
+let soundNotificationsEnabled = DEFAULT_UI_SETTINGS.soundNotificationsEnabled;
 
 const isDev = !app.isPackaged;
 
@@ -198,6 +327,29 @@ function syncNativeWindowBackground(): void {
 	mainWindow.setBackgroundColor(
 		nativeTheme.shouldUseDarkColors ? NATIVE_WINDOW_BACKGROUND_DARK : NATIVE_WINDOW_BACKGROUND_LIGHT,
 	);
+}
+
+function resolvedDaemonDataDir(): string {
+	const override = process.env.AO_DATA_DIR?.trim();
+	if (override) return override;
+	if (isDev) return path.join(os.homedir(), ".ao", DEV_STATE_SUBDIR, "data");
+	return path.join(os.homedir(), ".ao", "data");
+}
+
+// Cursor Agent reads TERM_THEME at process start. The daemon applies it from
+// this file when spawning a PTY. The renderer writes the resolved light/dark
+// scheme here so it matches the xterm palette (not Electron nativeTheme alone).
+function persistTerminalThemeHint(scheme: "light" | "dark"): void {
+	const dir = resolvedDaemonDataDir();
+	try {
+		mkdirSync(dir, { recursive: true, mode: 0o750 });
+		const target = path.join(dir, "terminal-theme");
+		const temporary = `${target}.${process.pid}.tmp`;
+		writeFileSync(temporary, `${scheme}\n`, { mode: 0o600 });
+		renameSync(temporary, target);
+	} catch (error) {
+		console.warn("AO: unable to persist terminal theme hint", error);
+	}
 }
 
 nativeTheme.on("updated", syncNativeWindowBackground);
@@ -332,9 +484,17 @@ function buildWindowsAppMenu(): Menu {
 async function disposeBrowserViewHost(): Promise<void> {
 	const host = browserViewHost;
 	browserViewHost = null;
-	if (!host) return;
+	const profileIpc = browserProfileIpc;
+	browserProfileIpc = null;
+	profileIpc?.dispose();
+	const profileImporter = browserProfileImporter;
+	browserProfileImporter = null;
+	if (!host && !profileImporter) return;
 	const cleanup = Promise.resolve()
-		.then(() => host.dispose())
+		.then(async () => {
+			await profileImporter?.dispose();
+			await host?.dispose();
+		})
 		.catch((error) => {
 			console.error("browser host cleanup failed:", error);
 		});
@@ -344,6 +504,16 @@ async function disposeBrowserViewHost(): Promise<void> {
 		() => browserCleanupPromises.delete(cleanup),
 	);
 	await cleanup;
+}
+
+function browserProfileStateDir(): string {
+	const runFile = runFilePath();
+	return path.dirname(runFile ?? path.join(os.homedir(), ".ao", "running.json"));
+}
+
+async function clearElectronBrowserProfileData(partition: string): Promise<void> {
+	const browserSession = session.fromPartition(partition);
+	await Promise.all([browserSession.clearStorageData(), browserSession.clearCache()]);
 }
 
 async function disposeAllBrowserViewHosts(): Promise<void> {
@@ -370,6 +540,15 @@ async function createWindowInternal(): Promise<void> {
 		await agentBrowserRuntime.dispose();
 		return;
 	}
+	const browserProfileStore = await createBrowserProfileStore({ stateDir: browserProfileStateDir() });
+	const browserHistoryStore = new BrowserHistoryStore({ stateDir: browserProfileStateDir() });
+	const profileImporter = new BrowserProfileImportService({
+		stateDir: browserProfileStateDir(),
+		profileStore: browserProfileStore,
+		historyStore: browserHistoryStore,
+		fromPartition: (partition) => session.fromPartition(partition),
+	});
+	await profileImporter.initialize();
 	const windowOptions: Electron.BaseWindowConstructorOptions = {
 		width: 1320,
 		height: 860,
@@ -404,15 +583,38 @@ async function createWindowInternal(): Promise<void> {
 	syncNativeWindowBackground();
 	const shellWebContents = getShellWebContents();
 	if (!shellWebContents) throw new Error("AO shell WebContents was not created");
+	trustedShellWebContents.set(shellWebContents.id, shellWebContents);
+	agentSwitchVisibilityController?.registerWindow(shellWebContents.id);
+	shellWebContents.once("destroyed", () => {
+		trustedShellWebContents.delete(shellWebContents.id);
+		agentSwitchVisibilityController?.destroyWindow(shellWebContents.id);
+	});
 
 	// On Windows the app paints its own title bar (WindowTitlebar), so the native
 	// menu bar is hidden (autoHideMenuBar above). The role-based menu is still
 	// installed so its accelerators keep working and act on the focused pane;
-	// setMenuBarVisibility(false) keeps the strip itself out of view. macOS/Linux
-	// keep their native menus.
+	// setMenuBarVisibility(false) keeps the strip itself out of view. macOS gets
+	// an explicit menu so DevTools avoids Electron's unsafe built-in role; Linux
+	// keeps its native menu.
 	if (process.platform === "win32") {
 		Menu.setApplicationMenu(buildWindowsAppMenu());
 		mainWindow.setMenuBarVisibility(false);
+	} else if (process.platform === "darwin") {
+		Menu.setApplicationMenu(
+			Menu.buildFromTemplate(
+				buildMacAppMenuTemplate(() => {
+					const fallback = () => getShellWebContents()?.toggleDevTools();
+					const host = browserViewHost;
+					if (!host) {
+						fallback();
+						return;
+					}
+					void host.toggleDevToolsForLastFocused().then((state) => {
+						if (!state) fallback();
+					}).catch(fallback);
+				}),
+			),
+		);
 	}
 
 	// Harden navigation: never let renderer/terminal content open in-app windows or
@@ -442,7 +644,9 @@ async function createWindowInternal(): Promise<void> {
 		false,
 		() => keybindingOverrides,
 		() => keybindingRecordingActive,
-		() => true,
+		(id, chord) =>
+			!browserViewHost?.isLastUsedBrowser() ||
+			shouldHandleAppShortcutInBrowserContext(id, chord, isMac),
 		(id) => {
 			if (id !== "toggle-browser-devtools") return;
 			void browserViewHost?.toggleDevToolsForLastFocused().catch(() => undefined);
@@ -463,6 +667,34 @@ async function createWindowInternal(): Promise<void> {
 		isKeybindingRecording: () => keybindingRecordingActive,
 		agentBrowserRuntime,
 		isCloseShellTerminalShortcutEnabled: () => closeShellTerminalShortcutEnabled,
+		browserProfileStore,
+		browserHistoryStore,
+		clearBrowserProfileData: clearElectronBrowserProfileData,
+	});
+	browserProfileImporter = profileImporter;
+	browserProfileIpc = registerBrowserProfileIpc({
+		ipcMain,
+		shellWebContents,
+		mainWindow,
+		store: browserProfileStore,
+		importer: profileImporter,
+		host: browserViewHost,
+		buildMenu: (items: BrowserProfileMenuItem[]) => {
+			const menu = Menu.buildFromTemplate(items as Electron.MenuItemConstructorOptions[]);
+			return { popup: (options) => menu.popup(options as Electron.PopupOptions) };
+		},
+		confirmSwitch: async (labels: BrowserProfileMenuInput["labels"]) => {
+			const result = await dialog.showMessageBox({
+				type: "warning",
+				title: labels.switchTitle,
+				message: labels.switchMessage,
+				detail: labels.switchDetail,
+				buttons: [labels.cancel, labels.confirm],
+				defaultId: 0,
+				cancelId: 0,
+			});
+			return result.response === 1;
+		},
 	});
 	if (daemonStatus.state === "ready") establishBrowserRuntimeLink();
 
@@ -510,6 +742,10 @@ async function createWindowInternal(): Promise<void> {
 			composition.dispose();
 		});
 		mainWindow = null;
+		// Drop any pending dock bounce with the window it was attached to: its
+		// focus listener died with the window, so leaving the id set would make
+		// the next bounce skip attaching one to the replacement window.
+		cancelDockBounce();
 		trayLifecycle.clearPendingTarget();
 	});
 }
@@ -556,6 +792,60 @@ function runFilePath(): string | null {
 	return defaultRunFilePath(process.platform, process.env, os.homedir());
 }
 
+function editorStateDir(): string {
+	const runFile = runFilePath();
+	if (!runFile) throw new Error("AO state directory is not available.");
+	return path.dirname(runFile);
+}
+
+async function resolveSessionWorkspaceForDesktop(sessionId: string): Promise<string> {
+	if (daemonStatus.state !== "ready" || !daemonStatus.port) {
+		throw new Error("AO daemon is not ready.");
+	}
+	const controller = new AbortController();
+	const timer = setTimeout(() => controller.abort(), DAEMON_PROBE_TIMEOUT_MS);
+	try {
+		const response = await net.fetch(
+			`http://127.0.0.1:${daemonStatus.port}/api/v1/desktop/sessions/${encodeURIComponent(sessionId)}/workspace`,
+			{ signal: controller.signal },
+		);
+		const body = await response.json() as Record<string, unknown>;
+		if (!response.ok) {
+			const message = typeof body.message === "string" ? body.message : "Session workspace is not available.";
+			throw new Error(message);
+		}
+		const workspacePath = body.workspacePath;
+		if (typeof workspacePath !== "string" || !path.isAbsolute(workspacePath)) {
+			throw new Error("Session workspace is not available.");
+		}
+		return workspacePath;
+	} catch (error) {
+		if (error instanceof Error && error.name === "AbortError") {
+			throw new Error("Timed out while resolving the session workspace.");
+		}
+		throw error;
+	} finally {
+		clearTimeout(timer);
+	}
+}
+
+const editorHandoff = createEditorHandoff({
+	platform: process.platform,
+	env: process.env,
+	homeDir: os.homedir(),
+	resolveWorkspace: resolveSessionWorkspaceForDesktop,
+	readPreference: async () => (await readEditorSettings(editorStateDir())).preferredEditorId,
+	writePreference: async (editorId) => {
+		await writeEditorPreference(editorStateDir(), editorId);
+	},
+	launch: (command, args, cwd) => launchCommand(command, args, cwd),
+	openDirectory: async (workspacePath) => {
+		const error = await shell.openPath(workspacePath);
+		if (error) throw new Error(error);
+	},
+	logError: (message, error) => console.error(message, error),
+});
+
 // How long to wait for the login shell to print its env before giving up. A
 // misconfigured rc that blocks (or a slow nvm/pyenv chain) must not hang startup;
 // the daemon then falls back to the static PATH floor.
@@ -566,6 +856,7 @@ const SHELL_ENV_TIMEOUT_MS = 3_000;
 let cachedShellEnv: Record<string, string> | null = null;
 // Memoize the in-flight resolution so concurrent/repeat awaits are cheap.
 let shellEnvPromise: Promise<void> | null = null;
+let terminalShellPreference: TerminalShellPreference = { ...DEFAULT_TERMINAL_SHELL };
 
 // Telemetry defaults stamped on the daemon env on every platform; explicit env
 // always wins.
@@ -580,6 +871,11 @@ function telemetryOverrides(): Record<string, string> {
 		AO_TELEMETRY_REMOTE: process.env.AO_TELEMETRY_REMOTE ?? (isDev ? "off" : "posthog"),
 		AO_TELEMETRY_POSTHOG_KEY: process.env.AO_TELEMETRY_POSTHOG_KEY ?? DEFAULT_POSTHOG_PROJECT_KEY,
 		AO_TELEMETRY_POSTHOG_HOST: process.env.AO_TELEMETRY_POSTHOG_HOST ?? DEFAULT_POSTHOG_HOST,
+		// Daemon-side Sentry (5xx + panics with Go stacks). Stamped on the daemon
+		// env so the spawned daemon inherits the DSN; off in dev to match the
+		// PostHog remote gate, and an explicit env always wins. A blank value
+		// leaves the daemon's Sentry a no-op.
+		AO_SENTRY_DSN: process.env.AO_SENTRY_DSN ?? (isDev ? "" : DEFAULT_SENTRY_DSN),
 		// The daemon binary has no version of its own that release tooling sets,
 		// so without this every daemon event lands unattributable to a release.
 		AO_TELEMETRY_APP_VERSION: process.env.AO_TELEMETRY_APP_VERSION ?? app.getVersion(),
@@ -629,12 +925,44 @@ const runLoginShell: ShellRunner = (shellPath, args) =>
 		});
 	});
 
-// Resolve the login-shell env once and cache it. No-op on Windows (the launchd
-// shell split does not apply; a static PATH floor suffices). Awaited at the
-// daemon-spawn chokepoint so the cache is populated before the first spawn.
+function lookupWindowsExecutable(candidate: string): string | null {
+	const trimmed = candidate.trim().replace(/^"|"$/g, "");
+	if (!trimmed) return null;
+	const hasDirectory = trimmed.includes("\\") || trimmed.includes("/") || path.isAbsolute(trimmed);
+	const candidates = hasDirectory
+		? [trimmed]
+		: (process.env.PATH ?? process.env.Path ?? "")
+				.split(path.delimiter)
+				.filter(Boolean)
+				.map((directory) => path.join(directory, trimmed));
+	for (const resolved of candidates) {
+		if (existsSync(resolved)) return resolved;
+	}
+	return null;
+}
+
+// Resolve the login-shell env once and cache it. On Windows the selected
+// terminal shell is used for the probe too, so shell profiles and PATH exports
+// stay consistent between standalone terminals and daemon startup.
 function ensureShellEnv(): Promise<void> {
-	if (process.platform === "win32") return Promise.resolve();
 	if (!shellEnvPromise) {
+		if (process.platform === "win32") {
+			const probe =
+				resolveWindowsShellProbe(terminalShellPreference, process.env, lookupWindowsExecutable) ??
+				resolveWindowsShellProbe(DEFAULT_TERMINAL_SHELL, process.env, lookupWindowsExecutable);
+			if (!probe) {
+				shellEnvPromise = Promise.resolve();
+				cachedShellEnv = null;
+				return shellEnvPromise;
+			}
+			shellEnvPromise = resolveShellEnvWithSpec(probe, runLoginShell).then((resolved) => {
+				cachedShellEnv = resolved;
+				if (!resolved) {
+					console.error("AO: could not read the login-shell environment; falling back to the process environment.");
+				}
+			});
+			return shellEnvPromise;
+		}
 		shellEnvPromise = resolveShellEnv(process.env, runLoginShell).then((resolved) => {
 			cachedShellEnv = resolved;
 			if (!resolved) {
@@ -650,6 +978,36 @@ function ensureShellEnv(): Promise<void> {
 // AO_APP_RUN_ID in the environment wins, which lets a test or a wrapper pin it.
 const appRunId = process.env.AO_APP_RUN_ID ?? `apprun-${randomUUID()}`;
 const browserRuntimeToken = randomBytes(32).toString("base64url");
+let stagedBundledTmuxBinary: string | null = null;
+
+async function ensureBundledTmuxStaged(): Promise<void> {
+	const source = bundledTmuxBinaryPath(app.isPackaged, process.resourcesPath, process.platform);
+	const destination = stableBundledTmuxBinaryPath(
+		app.isPackaged,
+		process.env.AO_DATA_DIR?.trim() || path.join(os.homedir(), ".ao"),
+		app.getVersion(),
+		process.platform,
+		process.arch,
+	);
+	if (!source || !destination) {
+		stagedBundledTmuxBinary = null;
+		return;
+	}
+	if (existsSync(destination)) {
+		stagedBundledTmuxBinary = destination;
+		return;
+	}
+	await mkdir(path.dirname(destination), { recursive: true, mode: 0o750 });
+	const temporary = `${destination}.tmp-${process.pid}-${randomUUID()}`;
+	try {
+		await copyFile(source, temporary);
+		await chmod(temporary, 0o755);
+		await rename(temporary, destination);
+	} finally {
+		await rm(temporary, { force: true });
+	}
+	stagedBundledTmuxBinary = destination;
+}
 
 function daemonEnv(forceKeep = keepDaemonAlive(process.env)): NodeJS.ProcessEnv {
 	// AO_OWNER is the daemon's durable spawn-mode record: the daemon writes it
@@ -665,8 +1023,10 @@ function daemonEnv(forceKeep = keepDaemonAlive(process.env)): NodeJS.ProcessEnv 
 	// is how the daemon recognises the previous run's shells as orphans and
 	// destroys them (see internal/service/shellterm).
 	const AO_OWNER = forceKeep ? "persistent" : "app";
+	const bundledTmuxBinary = stagedBundledTmuxBinary;
 	const ownerTag = {
 		AO_OWNER,
+		AO_DATA_DIR: desktopDataDir,
 		AO_APP_RUN_ID: appRunId,
 		// The browser runtime token is handed over through the child's private
 		// stdin pipe below. Never put it in the daemon environment, where a
@@ -686,6 +1046,7 @@ function daemonEnv(forceKeep = keepDaemonAlive(process.env)): NodeJS.ProcessEnv 
 			(app.isPackaged
 				? path.join(process.resourcesPath, "acp-runtime")
 				: path.join(app.getAppPath(), "resources", "acp-runtime")),
+		...(bundledTmuxBinary ? { AO_TMUX_BINARY: bundledTmuxBinary, AO_TMUX_SOCKET_NAME: "ao" } : {}),
 	};
 	// In dev mode, inject isolation defaults so the dev daemon never collides with
 	// the installed app. User-set env vars take priority (checked first).
@@ -694,10 +1055,15 @@ function daemonEnv(forceKeep = keepDaemonAlive(process.env)): NodeJS.ProcessEnv 
 		if (!process.env.AO_PORT) devExtras.AO_PORT = String(DEV_DAEMON_PORT);
 		if (!process.env.AO_RUN_FILE) devExtras.AO_RUN_FILE = runFilePath() ?? "";
 		if (!process.env.AO_DATA_DIR) devExtras.AO_DATA_DIR = path.join(os.homedir(), ".ao", DEV_STATE_SUBDIR, "data");
+		devExtras.AO_ALLOWED_ORIGINS = devDaemonAllowedOrigins(
+			process.env.AO_ALLOWED_ORIGINS,
+			rendererUrl(),
+		);
 	}
-	// Windows keeps the old behavior exactly: no shell probe, no unix PATH floor.
+	// Windows keeps its native environment semantics while overlaying values
+	// exported by the selected login-shell probe.
 	if (process.platform === "win32") {
-		return { ...process.env, ...devExtras, ...telemetryOverrides(), ...ownerTag };
+		return { ...process.env, ...(cachedShellEnv ?? {}), ...devExtras, ...telemetryOverrides(), ...ownerTag };
 	}
 	return buildDaemonEnv(process.env, cachedShellEnv, { ...devExtras, ...telemetryOverrides(), ...ownerTag });
 }
@@ -1146,6 +1512,16 @@ async function startDaemonInner(startEpoch: number): Promise<DaemonStatus> {
 		});
 		return daemonStatus;
 	}
+	try {
+		await ensureBundledTmuxStaged();
+	} catch (err) {
+		setDaemonStatus({
+			state: "error",
+			message: `Could not stage AO's bundled tmux under the AO data directory: ${(err as Error).message}`,
+			code: "binary_missing",
+		});
+		return daemonStatus;
+	}
 
 	daemonOutput = "";
 	setDaemonStatus({ state: "starting" });
@@ -1489,6 +1865,14 @@ ipcMain.handle("daemon:restart", async () => {
 		return reportDaemonRestartFailure(error);
 	}
 });
+ipcMain.handle("editorHandoff:getState", (event, sessionId: string) => {
+	if (event.sender !== getShellWebContents()) throw new Error("Untrusted editor handoff request.");
+	return editorHandoff.getState(typeof sessionId === "string" ? sessionId : "");
+});
+ipcMain.handle("editorHandoff:open", (event, input) => {
+	if (event.sender !== getShellWebContents()) throw new Error("Untrusted editor handoff request.");
+	return editorHandoff.open(input && typeof input === "object" ? input : { sessionId: "" });
+});
 ipcMain.handle("app:getVersion", () => app.getVersion());
 ipcMain.handle("app:openExternal", async (_event, url: string) => {
 	await openAllowedAppExternalURL(url, shell);
@@ -1508,12 +1892,22 @@ ipcMain.handle("theme:set", (_event, preference: "light" | "dark" | "system") =>
 	}
 });
 
+ipcMain.handle("theme:persist-terminal", (_event, scheme: unknown) => {
+	if (scheme === "light" || scheme === "dark") {
+		persistTerminalThemeHint(scheme);
+	}
+});
+
 // Renderer calls this when focus lands on real shell UI (not the titlebar menu), so menu:action's panel fallback below doesn't go stale.
 ipcMain.on("shell:focus", () => browserViewHost?.forgetLastFocusedPanel());
 
 ipcMain.on("browser:overlay", (event, open: unknown) => {
 	if (event.sender !== getShellWebContents() || typeof open !== "boolean") return;
 	windowComposition?.setOverlayOpen(open);
+	// Raising the shell can leave the live page's own compositor surface stale
+	// (the same class of bug window-composition.ts already works around for
+	// the shell itself) — nudge it the same way once the shell is on top.
+	if (open) browserViewHost?.refreshLastFocusedPanelSurface();
 });
 
 ipcMain.on(SET_CLOSE_SHELL_TERMINAL_SHORTCUT_ENABLED_CHANNEL, (_event, enabled: unknown) => {
@@ -1552,10 +1946,12 @@ ipcMain.handle("menu:action", (_event, action: string) => {
 		case "view.reload":
 			return wc.reload();
 		case "view.devtools":
-			return browserViewHost?.toggleDevToolsForLastFocused().then((state) => {
-				if (state) return state;
-				return wc.toggleDevTools();
-			}).catch(() => wc.toggleDevTools()) ?? wc.toggleDevTools();
+			if (browserViewHost) {
+				return browserViewHost.toggleDevToolsForLastFocused().then((state) => {
+					if (!state) wc?.toggleDevTools();
+				}).catch(() => wc?.toggleDevTools());
+			}
+			return wc?.toggleDevTools();
 		case "view.zoomIn":
 			return wc.setZoomLevel(wc.getZoomLevel() + 0.5);
 		case "view.zoomOut":
@@ -1586,9 +1982,39 @@ ipcMain.handle("menu:action", (_event, action: string) => {
 			return;
 	}
 });
-ipcMain.handle("telemetry:getBootstrap", () =>
-	buildTelemetryBootstrap(process.env, app.getVersion(), process.platform, os.homedir(), app.isPackaged),
-);
+ipcMain.handle("telemetry:getBootstrap", () => {
+	if (!telemetryPolicyController) return null;
+	return buildTelemetryBootstrap({ ...process.env, AO_DATA_DIR: desktopDataDir }, app.getVersion(), process.platform, os.homedir(), app.isPackaged, telemetryPolicyController.snapshot());
+});
+ipcMain.handle("telemetry:getPolicy", () => telemetryPolicyController?.snapshot() ?? failClosedTelemetryPolicyView());
+ipcMain.handle("telemetry:setEventsEnabled", (_event, input: { eventsEnabled?: unknown; expectedGeneration?: unknown }) => {
+	if (!telemetryPolicyController || typeof input?.eventsEnabled !== "boolean" || typeof input.expectedGeneration !== "string") throw new Error("invalid telemetry policy request");
+	return telemetryPolicyController.setEventsEnabled(input.eventsEnabled, input.expectedGeneration);
+});
+ipcMain.on(TELEMETRY_RENDERER_QUEUES_CLEARED_CHANNEL, (event, input: unknown) => {
+	const trustedSender = trustedShellWebContents.get(event.sender.id);
+	if (!trustedSender || trustedSender !== event.sender || trustedSender.isDestroyed()) return;
+	if (!input || typeof input !== "object" || Array.isArray(input)) return;
+	const result = input as Record<string, unknown>;
+	if (Object.keys(result).length !== 2 || typeof result.requestId !== "string" || typeof result.ok !== "boolean") return;
+	const pending = pendingRendererQueuePurges.get(result.requestId);
+	if (!pending || pending.senderId !== event.sender.id) return;
+	finishRendererQueuePurge(result.requestId, result.ok ? undefined : new Error("renderer telemetry queue purge failed"));
+});
+ipcMain.handle("telemetry:capture", (_event, request: RendererTelemetryCapture) => {
+	const sanitized = sanitizeRendererCapture(request);
+	if (!telemetryPolicyController || !sanitized) return false;
+	return telemetryPolicyController.capture(sanitized);
+});
+ipcMain.on(AGENT_SWITCH_VISIBILITY_IPC_CHANNEL, (event, request: unknown) => {
+	const trustedSender = trustedShellWebContents.get(event.sender.id);
+	if (trustedSender !== event.sender || trustedSender.isDestroyed()) return;
+	agentSwitchVisibilityController?.signal(event.sender.id, request);
+});
+
+function failClosedTelemetryPolicyView(): TelemetryPolicyView {
+	return { eventsEnabled: false, consentGeneration: "unavailable", updatedAt: new Date(0).toISOString(), acknowledged: false, state: "cleanup_failed", environmentVeto: true, durabilitySupported: false, reason: "invalid_authority" };
+}
 async function chooseDirectory(title: string): Promise<string | null> {
 	const options: OpenDialogOptions = {
 		properties: ["openDirectory"],
@@ -1614,6 +2040,10 @@ ipcMain.handle("app:scanImportFolder", async (_event, input: { path: string; mod
 ipcMain.handle("app:checkAncestorRepo", async (_event, path: string) => {
 	await ensureShellEnv();
 	return ancestorRepositorySetupWarning(path, { env: daemonEnv(), homeDir: os.homedir() });
+});
+ipcMain.handle("app:getRepositoryBranch", async (_event, path: string) => {
+	await ensureShellEnv();
+	return resolveCheckedOutBranch(path, { env: daemonEnv(), homeDir: os.homedir() });
 });
 ipcMain.handle("clipboard:writeText", (_event, text: string) => {
 	clipboard.writeText(text, "clipboard");
@@ -1661,13 +2091,17 @@ ipcMain.handle("updateSettings:set", async (_event, settings: UpdateSettings) =>
 
 ipcMain.handle("uiSettings:get", async (): Promise<UiSettings> => {
 	const runFile = runFilePath();
-	if (!runFile) return { locale: "en" };
+	if (!runFile) return { ...DEFAULT_UI_SETTINGS };
 	return readUiSettings(path.dirname(runFile));
 });
-	ipcMain.handle("uiSettings:set", async (_event, settings: UiSettings): Promise<UiSettings> => {
+	ipcMain.handle("uiSettings:set", async (_event, settings: Partial<UiSettings>): Promise<UiSettings> => {
 		const runFile = runFilePath();
 	const result = !runFile ? coerceUiSettings(settings) : await writeUiSettings(path.dirname(runFile), settings);
 	trayController?.setLocale(result.locale);
+	soundNotificationsEnabled = result.soundNotificationsEnabled;
+	terminalShellPreference = result.terminalShell;
+	shellEnvPromise = null;
+	cachedShellEnv = null;
 	return result;
 	});
 
@@ -1704,6 +2138,13 @@ ipcMain.handle("updates:install", () => {
 	quitAndInstallUpdate();
 });
 
+function cancelDockBounce(): void {
+	if (pendingBounce === null) return;
+	const { id } = pendingBounce;
+	pendingBounce = null;
+	app.dock?.cancelBounce(id);
+}
+
 ipcMain.handle(
 	"notifications:show",
 	(_event, notification: { id: string; title: string; body?: string; type?: string }) => {
@@ -1733,22 +2174,39 @@ ipcMain.handle(
 			toast.show();
 		}
 
-		// Dock (macOS) / taskbar (Windows/Linux) attention signal — only for the
-		// actionable types. A merged/closed PR still toasts above, but shouldn't
-		// bounce the dock as insistently as an agent blocked waiting on the user.
-		if (shouldSignalAttention(notification.type)) {
-			if (process.platform === "darwin" && app.dock) {
-				app.dock.bounce("informational");
-			} else if (process.platform === "win32" || process.platform === "linux") {
-				if (!isFlashing) {
-					isFlashing = true;
-					mainWindow.flashFrame(true);
-					mainWindow.once("focus", () => {
-						isFlashing = false;
-						mainWindow?.flashFrame(false);
-					});
+		// Dock (macOS) / taskbar (Windows/Linux) attention signal. On macOS every
+		// notification bounces the dock — urgency is carried by the bounce type,
+		// so a merged PR bounces once while a blocked agent keeps bouncing. On
+		// Windows/Linux only the actionable types flash (see
+		// shouldSignalAttention), preserving the pre-existing behavior there.
+		if (process.platform === "darwin" && app.dock) {
+			// A pending critical bounce (agent blocked on the user) is never
+			// replaced: a later informational notification must not downgrade it
+			// to a one-shot bounce.
+			if (shouldReplaceBounce(pendingBounce)) {
+				// A focus listener from an earlier un-cancelled bounce still works for
+				// the new id, so only attach one at a time.
+				const hadPendingBounce = pendingBounce !== null;
+				cancelDockBounce();
+				const bounceType = dockBounceType(notification.type);
+				const id = app.dock.bounce(bounceType);
+				if (typeof id === "number" && id >= 0) {
+					pendingBounce = { id, critical: bounceType === "critical" };
+					if (!hadPendingBounce) mainWindow.once("focus", cancelDockBounce);
 				}
 			}
+		} else if ((process.platform === "win32" || process.platform === "linux") && shouldSignalAttention(notification.type)) {
+			if (!isFlashing) {
+				isFlashing = true;
+				mainWindow.flashFrame(true);
+				mainWindow.once("focus", () => {
+					isFlashing = false;
+					mainWindow?.flashFrame(false);
+				});
+			}
+		}
+		if (shouldSignalAttention(notification.type) && soundNotificationsEnabled) {
+			shell.beep();
 		}
 	},
 );
@@ -1767,6 +2225,9 @@ if (!app.isPackaged) {
 			setTimeout(() => {
 				mainWindow?.flashFrame(false);
 			}, 2000);
+		}
+		if (soundNotificationsEnabled) {
+			shell.beep();
 		}
 	});
 }
@@ -1805,7 +2266,13 @@ ipcMain.handle("notifications:setBadge", (_event, count: number) => {
 
 ipcMain.on(TRAY_SET_ATTENTION_STATE_CHANNEL, (event, state) => trayLifecycle.handleSetAttentionState(event, state));
 
-ipcMain.on(TRAY_RENDERER_READY_CHANNEL, (event) => trayLifecycle.handleRendererReady(event));
+ipcMain.on(TRAY_RENDERER_READY_CHANNEL, (event) => {
+	trayLifecycle.handleRendererReady(event);
+	if (pendingFolderPath && event.sender === getShellWebContents()) {
+		event.sender.send(OPEN_FOLDER_PATH_CHANNEL, pendingFolderPath);
+		pendingFolderPath = null;
+	}
+});
 
 // Cloud auth IPC — cloud:getSession, cloud:signIn, cloud:signOut.
 // Data dir resolves to ~/.ao (prod) or ~/.ao/dev (dev) matching daemon conventions.
@@ -1822,6 +2289,15 @@ function notifyRenderersOfCloudSession(account: import("./shared/cloud-account")
 }
 
 installCloudIPC(cloudDataDir, notifyRenderersOfCloudSession);
+
+// Dev-only local (email/password) sign-in against a loopback Docker control
+// plane running AO_CLOUD_LOCAL_AUTH. Gated to unpackaged/dev builds + loopback
+// CP inside the handlers; a no-op surface for production/WorkOS users.
+installCloudLocalAuthIPC(cloudDataDir, notifyRenderersOfCloudSession);
+
+// Cloud control-plane proxy IPC — cloudCp:request/openStream/closeStream.
+// CP calls go through main so the WorkOS bearer token never reaches a renderer.
+installCloudCpProxy(cloudDataDir);
 
 function focusCloudWindow(): void {
 	const window = BaseWindow.getAllWindows()[0];
@@ -1855,6 +2331,28 @@ app.on("second-instance", (_event, argv) => {
 	const deepLink = findCloudDeepLinkArg(argv);
 	if (deepLink) {
 		void handleCloudDeepLinkAndFocus(deepLink);
+		return;
+	}
+	// A folder dropped on the taskbar icon/shortcut while already running.
+	// Usually the renderer is already mounted and listening, so send directly
+	// — but this can still fire while the first instance is early in
+	// app.whenReady() or creating its window, before any shell WebContents
+	// exists. Fall back to the same pendingFolderPath queue the cold-start
+	// path uses rather than silently dropping it.
+	const folderPath = parseOpenFolderPathArg(argv);
+	if (folderPath) {
+		const window = BaseWindow.getAllWindows()[0];
+		if (window) {
+			if (window.isMinimized()) window.restore();
+			window.show();
+			window.focus();
+		}
+		const contents = getShellWebContents();
+		if (contents) {
+			contents.send(OPEN_FOLDER_PATH_CHANNEL, folderPath);
+		} else {
+			pendingFolderPath = folderPath;
+		}
 		return;
 	}
 	const window = BaseWindow.getAllWindows()[0];
@@ -1920,6 +2418,29 @@ async function writeAppStateOnLaunch(): Promise<void> {
 }
 
 app.whenReady().then(async () => {
+	const visibilityKillSwitched = (process.env.AO_TELEMETRY_DISABLED_EVENTS ?? "").split(",").some((name) => name.trim() === "ao.agent_switch.visibility_failure");
+	// The approved release gate is intentionally closed. Tests inject the
+	// dedicated no-cache sender; the shipping composition creates no visibility
+	// network transport until that gate is separately approved.
+	agentSwitchVisibilityController = new AgentSwitchVisibilityController({ send: async () => undefined, killSwitched: visibilityKillSwitched, diagnostic: (code) => console.warn("agent switch visibility diagnostic:", code) });
+	for (const shellContents of trustedShellWebContents.values()) agentSwitchVisibilityController.registerWindow(shellContents.id);
+	const authority = new TelemetryPolicyAuthority({ dataDir: desktopDataDir, packagedDefault: app.isPackaged, platform: process.platform });
+	const daemonPolicy = new DaemonTelemetryPolicyClient(() => daemonStatus.state === "ready" && daemonStatus.port ? `http://127.0.0.1:${daemonStatus.port}` : null, (url, init) => net.fetch(url, init));
+	const policyController = new DesktopTelemetryController({
+		authority,
+		daemon: daemonPolicy,
+		environmentAllowsEvents: rendererTelemetryEnabled(process.env, app.isPackaged),
+		transportFactory: () => initMainSentry(app.getVersion(), app.getPath("userData")),
+		visibility: agentSwitchVisibilityController,
+		clearRendererQueues: clearRendererTelemetryQueues,
+		broadcast: (view) => {
+			for (const shellContents of trustedShellWebContents.values()) if (!shellContents.isDestroyed()) shellContents.send(TELEMETRY_POLICY_CHANGED_CHANNEL, view);
+		},
+	});
+	telemetryPolicyController = policyController;
+	try { await policyController.initialize(); }
+	catch (error) { console.error("telemetry policy bootstrap failed; reporting remains disabled:", error); }
+	setInterval(() => { if (policyController.snapshot().state !== "applied") void policyController.retryPendingCleanup(); }, 1_000).unref();
 	// Capture install provenance BEFORE relocation. moveToApplicationsFolder()
 	// relaunches from /Applications WITHOUT forwarding our --installed-via arg, and
 	// code past a successful move never runs in this instance, so a post-move-only
@@ -1981,8 +2502,12 @@ app.whenReady().then(async () => {
 
 	registerRendererProtocol();
 	applyRuntimeAppIcon();
+	const initialUiSettings = keybindingRunFile
+		? await readUiSettings(path.dirname(keybindingRunFile))
+		: { ...DEFAULT_UI_SETTINGS };
+	soundNotificationsEnabled = initialUiSettings.soundNotificationsEnabled;
+	terminalShellPreference = initialUiSettings.terminalShell;
 	if (isTrayEnabled(process.platform, app.isPackaged, app.getVersion())) {
-		const initialUiSettings = keybindingRunFile ? await readUiSettings(path.dirname(keybindingRunFile)) : { locale: "en" as const };
 		trayController = createTrayController({
 			focusWindow: focusMainWindow,
 			openSession: trayLifecycle.openSession,
@@ -1997,6 +2522,14 @@ app.whenReady().then(async () => {
 	const deepLinkArg = findCloudDeepLinkArg(process.argv);
 	if (deepLinkArg) {
 		void handleCloudDeepLinkAndFocus(deepLinkArg);
+	}
+
+	// Windows/Linux: a folder dropped on the taskbar icon/shortcut while the
+	// app was not running launches it with the folder's path in argv. The
+	// renderer isn't mounted yet — queue it, flushed on TRAY_RENDERER_READY_CHANNEL.
+	const folderPathArg = parseOpenFolderPathArg(process.argv);
+	if (folderPathArg) {
+		pendingFolderPath = folderPathArg;
 	}
 
 	app.on("activate", () => {
@@ -2018,7 +2551,10 @@ app.on("before-quit", (event) => {
 	if (!browserCleanupComplete) {
 		event.preventDefault();
 		if (!browserQuitCleanupPromise) {
-			browserQuitCleanupPromise = disposeAllBrowserViewHosts().finally(() => {
+			browserQuitCleanupPromise = Promise.all([
+				disposeAllBrowserViewHosts(),
+				telemetryPolicyController?.close() ?? Promise.resolve(),
+			]).then(() => undefined).finally(() => {
 				browserCleanupComplete = true;
 				browserQuitCleanupPromise = null;
 				app.quit();

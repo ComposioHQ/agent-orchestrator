@@ -177,6 +177,7 @@ func summarizeReview(pr domain.PullRequest, comments []domain.PullRequestComment
 		}
 		link := PRReviewCommentLink{
 			URL:              c.URL,
+			ReviewID:         c.ReviewID,
 			File:             c.File,
 			Line:             c.Line,
 			Body:             c.Body,
@@ -207,11 +208,10 @@ func summarizeReview(pr domain.PullRequest, comments []domain.PullRequestComment
 		reviewURLByAuthor[reviewer] = review.URL
 		isBot[reviewer] = review.IsBot
 	}
-	// Reviews carries every reviewer's latest decisive verdict (approved and
-	// changes_requested alike), not just the changes-requested subset used for
-	// the unresolved-comment grouping above, so an approved review's summary
-	// body is surfaced too.
-	for reviewer, review := range latestDecisiveReviews(reviews) {
+	// Reviews carries every reviewer's latest submitted review, including
+	// non-decisive COMMENTED reviews normalized as ReviewNone. The unresolved
+	// grouping above still uses decisive changes-requested reviews only.
+	for reviewer, review := range latestReviewSummaries(reviews) {
 		out.Reviews = append(out.Reviews, PRReviewEntry{
 			Reviewer:         reviewer,
 			Verdict:          reviewOrNone(review.State),
@@ -250,6 +250,27 @@ func summarizeReview(pr domain.PullRequest, comments []domain.PullRequestComment
 		}
 	}
 	return out
+}
+
+// latestReviewSummaries returns each reviewer's newest submitted review.
+// Providers normalize non-decisive COMMENTED reviews as ReviewNone; a
+// ReviewRequired value is an aggregate PR decision, not a submitted review.
+func latestReviewSummaries(reviews []domain.PullRequestReview) map[string]domain.PullRequestReview {
+	latestByReviewer := map[string]domain.PullRequestReview{}
+	for _, review := range reviews {
+		if review.State == domain.ReviewRequired {
+			continue
+		}
+		reviewer := strings.TrimSpace(review.Author)
+		if reviewer == "" {
+			reviewer = "unknown"
+		}
+		current, ok := latestByReviewer[reviewer]
+		if !ok || reviewAfter(review, current) {
+			latestByReviewer[reviewer] = review
+		}
+	}
+	return latestByReviewer
 }
 
 // latestDecisiveReviews returns each reviewer's most recent decisive review —

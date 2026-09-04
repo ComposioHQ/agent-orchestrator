@@ -56,59 +56,113 @@ func (c *conversation) RequestPermission(
 	if len(params.Options) == 0 {
 		return acpsdk.RequestPermissionResponse{Outcome: acpsdk.NewRequestPermissionOutcomeCancelled()}, nil
 	}
-	requestID := uuid.NewString()
-	options := make(map[string]acpsdk.PermissionOption, len(params.Options))
+	c.mu.Lock()
+	policy, mode := c.permissionFor, c.permissionMode
+	c.mu.Unlock()
+	if policy != nil {
+		if selected, handled := policy(mode, params); handled {
+			for _, option := range params.Options {
+				if option.OptionId == selected {
+					return acpsdk.RequestPermissionResponse{
+						Outcome: acpsdk.NewRequestPermissionOutcomeSelected(selected),
+					}, nil
+				}
+			}
+			return acpsdk.RequestPermissionResponse{}, fmt.Errorf(
+				"provider permission policy selected unoffered option %q", selected)
+		}
+	}
 	decisions := make([]ports.ChatDecisionOption, 0, len(params.Options))
 	for _, option := range params.Options {
 		id := string(option.OptionId)
-		options[id] = option
 		raw, _ := json.Marshal(option)
-		decisions = append(decisions, ports.ChatDecisionOption{ID: id, Label: option.Name, Raw: raw})
+		decisions = append(decisions, ports.ChatDecisionOption{
+			ID: id, Label: option.Name, Kind: ports.ChatDecisionKind(option.Kind), Raw: raw,
+		})
+	}
+	summary := "Permission required"
+	if params.ToolCall.Title != nil && strings.TrimSpace(*params.ToolCall.Title) != "" {
+		summary = *params.ToolCall.Title
+	}
+	selected, err := c.RequestApproval(ctx, ClientApprovalRequest{
+		Summary: summary, ActivityKind: activityKindFromTool(pointerValue(params.ToolCall.Kind)),
+		Detail:    approvalToolDetail(params.ToolCall, activityKindFromTool(pointerValue(params.ToolCall.Kind))),
+		Decisions: decisions,
+	})
+	if err != nil || selected == "" {
+		return acpsdk.RequestPermissionResponse{Outcome: acpsdk.NewRequestPermissionOutcomeCancelled()}, err
+	}
+	return acpsdk.RequestPermissionResponse{
+		Outcome: acpsdk.NewRequestPermissionOutcomeSelected(acpsdk.PermissionOptionId(selected)),
+	}, nil
+}
+
+// RequestApproval parks a provider extension on AO's durable approval flow.
+func (c *conversation) RequestApproval(
+	ctx context.Context,
+	params ClientApprovalRequest,
+) (string, error) {
+	if len(params.Decisions) == 0 {
+		return "", nil
+	}
+	requestID := uuid.NewString()
+	options := make(map[string]json.RawMessage, len(params.Decisions))
+	for _, option := range params.Decisions {
+		options[option.ID] = append(json.RawMessage(nil), option.Raw...)
 	}
 	request := &parkedPermission{options: options, result: make(chan string, 1)}
 
 	c.mu.Lock()
 	if c.closed {
 		c.mu.Unlock()
-		return acpsdk.RequestPermissionResponse{Outcome: acpsdk.NewRequestPermissionOutcomeCancelled()}, nil
+		return "", nil
 	}
 	c.pending[requestID] = request
 	turnID := c.activeTurn
 	c.mu.Unlock()
-
-	summary := "Permission required"
-	if params.ToolCall.Title != nil && strings.TrimSpace(*params.ToolCall.Title) != "" {
-		summary = *params.ToolCall.Title
-	}
 	c.emit(ports.ChatEvent{
 		Kind:           ports.ChatEventApprovalRequested,
 		ProviderTurnID: turnID,
 		ProviderItemID: requestID,
-		ActivityKind:   activityKindFromTool(pointerValue(params.ToolCall.Kind)),
+		ActivityKind:   params.ActivityKind,
 		ActivityStatus: domain.ActivityStatusPending,
-		Summary:        summary,
+		Summary:        params.Summary,
+		Detail:         params.Detail,
 		RequestID:      requestID,
-		Decisions:      decisions,
+		Decisions:      params.Decisions,
 	})
 
 	timer := timeAfter(approvalWait)
 	select {
 	case selected := <-request.result:
-		if selected == "" {
-			return acpsdk.RequestPermissionResponse{Outcome: acpsdk.NewRequestPermissionOutcomeCancelled()}, nil
-		}
-		return acpsdk.RequestPermissionResponse{
-			Outcome: acpsdk.NewRequestPermissionOutcomeSelected(acpsdk.PermissionOptionId(selected)),
-		}, nil
+		return selected, nil
 	case <-ctx.Done():
 		c.discardPermission(requestID)
 		c.emit(ports.ChatEvent{Kind: ports.ChatEventApprovalResolved, RequestID: requestID})
-		return acpsdk.RequestPermissionResponse{Outcome: acpsdk.NewRequestPermissionOutcomeCancelled()}, nil
+		return "", nil
 	case <-timer:
 		c.discardPermission(requestID)
 		c.emit(ports.ChatEvent{Kind: ports.ChatEventApprovalResolved, RequestID: requestID})
-		return acpsdk.RequestPermissionResponse{Outcome: acpsdk.NewRequestPermissionOutcomeCancelled()}, nil
+		return "", nil
 	}
+}
+
+func approvalToolDetail(tool acpsdk.ToolCallUpdate, activityKind domain.ActivityKind) []byte {
+	detail := map[string]any{
+		"protocol": "acp", "toolKind": pointerValue(tool.Kind),
+		"subjectKind": string(activityKind),
+	}
+	if tool.RawInput != nil {
+		detail["input"] = tool.RawInput
+	}
+	if claude := nestedMap(tool.Meta, "claudeCode"); claude != nil {
+		copyDetail(detail, claude, "toolName", "providerToolName")
+	}
+	encoded, err := json.Marshal(detail)
+	if err != nil {
+		return nil
+	}
+	return encoded
 }
 
 // UnstableCreateElicitation bridges ACP's structured input request into AO's
@@ -138,12 +192,24 @@ func (c *conversation) UnstableCreateElicitation(
 		return acpsdk.NewUnstableCreateElicitationResponseCancel(), errors.New("ACP elicitation has no mode")
 	}
 
+	response, err := c.RequestInput(ctx, request)
+	if err != nil {
+		return acpsdk.NewUnstableCreateElicitationResponseCancel(), err
+	}
+	return acpInputResponse(response), nil
+}
+
+// RequestInput parks a provider extension on AO's durable structured-input flow.
+func (c *conversation) RequestInput(
+	ctx context.Context,
+	request ports.ChatInputRequest,
+) (ports.ChatInputResponse, error) {
 	requestID := uuid.NewString()
 	parked := &parkedInput{request: request, result: make(chan ports.ChatInputResponse, 1)}
 	c.mu.Lock()
 	if c.closed {
 		c.mu.Unlock()
-		return acpsdk.NewUnstableCreateElicitationResponseCancel(), nil
+		return ports.ChatInputResponse{Action: ports.ChatInputActionCancel}, nil
 	}
 	c.pendingInputs[requestID] = parked
 	turnID := c.activeTurn
@@ -157,16 +223,24 @@ func (c *conversation) UnstableCreateElicitation(
 	timer := timeAfter(approvalWait)
 	select {
 	case response := <-parked.result:
-		return acpInputResponse(response), nil
+		return response, nil
 	case <-ctx.Done():
 		c.discardInput(requestID)
 		c.emit(ports.ChatEvent{Kind: ports.ChatEventInputResolved, RequestID: requestID})
-		return acpsdk.NewUnstableCreateElicitationResponseCancel(), nil
+		return ports.ChatInputResponse{Action: ports.ChatInputActionCancel}, nil
 	case <-timer:
 		c.discardInput(requestID)
 		c.emit(ports.ChatEvent{Kind: ports.ChatEventInputResolved, RequestID: requestID})
-		return acpsdk.NewUnstableCreateElicitationResponseCancel(), nil
+		return ports.ChatInputResponse{Action: ports.ChatInputActionCancel}, nil
 	}
+}
+
+// UpdatePlan publishes a provider extension plan on the active AO turn.
+func (c *conversation) UpdatePlan(plan *domain.ConversationPlan) {
+	c.mu.Lock()
+	turnID := c.activeTurn
+	c.mu.Unlock()
+	c.emit(ports.ChatEvent{Kind: ports.ChatEventPlanUpdated, ProviderTurnID: turnID, Plan: plan})
 }
 
 func (c *conversation) ResolveInput(
@@ -406,11 +480,18 @@ func (c *conversation) SessionUpdate(_ context.Context, params acpsdk.SessionNot
 	}
 
 	update := params.Update
+	providerOutputResumed := update.AgentMessageChunk != nil ||
+		update.AgentThoughtChunk != nil ||
+		update.ToolCall != nil ||
+		update.Plan != nil
+	if providerOutputResumed {
+		c.completeProviderFailure(turnID)
+	}
 	switch {
 	case update.AgentMessageChunk != nil:
-		id := messageID(update.AgentMessageChunk.MessageId, "assistant", turnID)
+		id := c.providerItemID(messageID(update.AgentMessageChunk.MessageId, "assistant", turnID))
 		if delta := contentText(update.AgentMessageChunk.Content); delta != "" {
-			if parentID := parentToolUseID(update.AgentMessageChunk.Meta); parentID != "" {
+			if parentID := c.providerItemID(parentToolUseID(update.AgentMessageChunk.Meta)); parentID != "" {
 				c.mu.Lock()
 				item, existed := c.nestedMessages[id]
 				item.text += delta
@@ -433,7 +514,7 @@ func (c *conversation) SessionUpdate(_ context.Context, params acpsdk.SessionNot
 			c.emit(ports.ChatEvent{Kind: ports.ChatEventMessageDelta, ProviderTurnID: turnID, ProviderItemID: id, Delta: delta})
 		}
 	case update.AgentThoughtChunk != nil:
-		id := messageID(update.AgentThoughtChunk.MessageId, "thought", turnID)
+		id := c.providerItemID(messageID(update.AgentThoughtChunk.MessageId, "thought", turnID))
 		if delta := contentText(update.AgentThoughtChunk.Content); delta != "" {
 			c.mu.Lock()
 			_, existed := c.thoughts[id]
@@ -463,14 +544,21 @@ func (c *conversation) SessionUpdate(_ context.Context, params acpsdk.SessionNot
 		tool := c.mergeToolUpdate(update.ToolCallUpdate)
 		if delta := terminalOutput(update.ToolCallUpdate.Meta); delta != "" {
 			c.emit(ports.ChatEvent{Kind: ports.ChatEventCommandOutputDelta, ProviderTurnID: turnID,
-				ProviderItemID: tool.id, Delta: delta})
+				ProviderItemID: c.providerItemID(tool.id), Delta: delta})
 		}
 		c.emit(c.toolEvent(turnID, tool, toolTerminal(tool.status)))
 		c.emitDiffs(turnID, tool.content)
 	case update.Plan != nil:
 		c.emit(ports.ChatEvent{Kind: ports.ChatEventPlanUpdated, ProviderTurnID: turnID, Plan: normalizePlan(update.Plan.Entries)})
-	case update.SessionInfoUpdate != nil && update.SessionInfoUpdate.Title != nil:
-		c.emit(ports.ChatEvent{Kind: ports.ChatEventThreadRenamed, Title: *update.SessionInfoUpdate.Title})
+	case update.SessionInfoUpdate != nil:
+		if update.SessionInfoUpdate.Title != nil {
+			c.emit(ports.ChatEvent{Kind: ports.ChatEventThreadRenamed, Title: *update.SessionInfoUpdate.Title})
+		}
+		if turnID != "" {
+			if event, ok := c.sessionFailureEvent(turnID, update.SessionInfoUpdate.Meta); ok {
+				c.emit(event)
+			}
+		}
 	case update.ConfigOptionUpdate != nil:
 		// The update is a complete replacement, not a delta. Model changes can
 		// rebuild effort and fast-mode choices, including removing an option.
@@ -561,7 +649,9 @@ func (c *conversation) toolEvent(turnID string, tool *toolState, completed bool)
 	}
 	if claude := nestedMap(tool.meta, "claudeCode"); claude != nil {
 		copyDetail(detailMap, claude, "toolName", "providerToolName")
-		copyDetail(detailMap, claude, "parentToolUseId", "parentProviderItemId")
+		if parentID, ok := claude["parentToolUseId"].(string); ok && parentID != "" {
+			detailMap["parentProviderItemId"] = c.providerItemID(parentID)
+		}
 		copyDetail(detailMap, claude, "subagent", "nestedAgent")
 		copyDetail(detailMap, claude, "subagentType", "subagentType")
 		copyDetail(detailMap, claude, "subagentRetry", "subagentRetry")
@@ -601,7 +691,7 @@ func (c *conversation) toolEvent(turnID string, tool *toolState, completed bool)
 		summary = "Agent tool"
 	}
 	return ports.ChatEvent{
-		Kind: kind, ProviderTurnID: turnID, ProviderItemID: tool.id,
+		Kind: kind, ProviderTurnID: turnID, ProviderItemID: c.providerItemID(tool.id),
 		ActivityKind: activityKindFromTool(tool.kind), ActivityStatus: status,
 		Summary: summary, Detail: detail,
 	}
@@ -680,6 +770,81 @@ func nestedMap(meta map[string]any, key string) map[string]any {
 	}
 	value, _ := meta[key].(map[string]any)
 	return value
+}
+
+// sessionFailureEvent translates the retry/failure extension advertised by
+// claude-agent-acp into an ordinary durable activity. The extension is parsed at
+// the ACP boundary so neither the service nor the renderer depends on its vendor
+// namespace. A stable provider item id makes successive retry attempts update one
+// row; settling the enclosing turn then settles this running status with it.
+func (c *conversation) sessionFailureEvent(
+	turnID string,
+	meta map[string]any,
+) (ports.ChatEvent, bool) {
+	jetbrains := nestedMap(meta, "jetbrains")
+	air := nestedMap(jetbrains, "air")
+	version, versionOK := number(air["version"])
+	failure := nestedMap(air, "sessionFailure")
+	if !versionOK || version < 1 || failure == nil {
+		return ports.ChatEvent{}, false
+	}
+
+	id, _ := failure["id"].(string)
+	title, _ := failure["title"].(string)
+	id = strings.TrimSpace(id)
+	title = strings.TrimSpace(title)
+	if id == "" || title == "" {
+		return ports.ChatEvent{}, false
+	}
+
+	detailMap := map[string]any{"event": "provider.failure"}
+	for _, key := range []string{"category", "severity"} {
+		if value, ok := failure[key].(string); ok && strings.TrimSpace(value) != "" {
+			detailMap[key] = strings.TrimSpace(value)
+		}
+	}
+	if details, ok := failure["details"].(string); ok && strings.TrimSpace(details) != "" {
+		detailMap["text"] = strings.TrimSpace(details)
+	}
+	if revision, ok := number(failure["revision"]); ok && revision >= 0 {
+		detailMap["revision"] = revision
+	}
+	detail, _ := json.Marshal(detailMap)
+	event := ports.ChatEvent{
+		Kind:           ports.ChatEventActivityStarted,
+		ProviderTurnID: turnID,
+		// Some adapters mint a fresh extension incident id for every retry when
+		// their provider turn id is not known yet. AO already has the durable turn
+		// boundary, so key the live failure to that boundary and update one row.
+		ProviderItemID: c.providerItemID("session-failure:" + turnID),
+		ActivityKind:   domain.ActivityKindSystem,
+		ActivityStatus: domain.ActivityStatusRunning,
+		Summary:        title,
+		Detail:         detail,
+	}
+	c.mu.Lock()
+	c.providerFailure = &event
+	c.mu.Unlock()
+	return event, true
+}
+
+// completeProviderFailure removes a stale retry warning as soon as the provider
+// produces substantive output again. The AIR extension advances failures but
+// deliberately sends no recovery update, so AO closes its normalized activity
+// on the first message, thought, tool call, or plan after the failure.
+func (c *conversation) completeProviderFailure(turnID string) {
+	c.mu.Lock()
+	if c.providerFailure == nil || c.providerFailure.ProviderTurnID != turnID {
+		c.mu.Unlock()
+		return
+	}
+	event := *c.providerFailure
+	c.providerFailure = nil
+	c.mu.Unlock()
+
+	event.Kind = ports.ChatEventActivityCompleted
+	event.ActivityStatus = domain.ActivityStatusCompleted
+	c.emit(event)
 }
 
 func cloneMeta(meta map[string]any) map[string]any {

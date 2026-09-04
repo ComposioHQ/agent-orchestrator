@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { UpdateStatus } from "../../main/update-settings";
 import { aoBridge } from "../lib/bridge";
 
@@ -12,14 +12,30 @@ import { aoBridge } from "../lib/bridge";
  * the main process suppresses them for automatic checks. Update telemetry is
  * owned by the main process and subscribed once in lib/update-telemetry.ts.
  */
-export function useUpdateStatus(): UpdateStatus {
+export function useUpdateStatus(onStatusEvent?: (status: UpdateStatus) => void): UpdateStatus {
 	const [status, setStatus] = useState<UpdateStatus>({ state: "idle" });
+	const onStatusEventRef = useRef(onStatusEvent);
+	onStatusEventRef.current = onStatusEvent;
 	useEffect(() => {
 		let live = true;
-		void aoBridge.updates.getStatus().then((s) => {
-			if (live) setStatus(s);
+		// A push that lands before the listener exists is gone for good, so the
+		// listener is registered BEFORE the snapshot is requested.
+		let pushed = false;
+		const off = aoBridge.updates.onStatus((next) => {
+			pushed = true;
+			onStatusEventRef.current?.(next);
+			setStatus(next);
 		});
-		const off = aoBridge.updates.onStatus(setStatus);
+		void aoBridge.updates.getStatus().then((s) => {
+			// And the snapshot is dropped once a live push has landed. It describes
+			// the state at request time, so applying it late walked the UI backwards:
+			// a completed check would arrive first and the older mount-time snapshot
+			// would overwrite it, leaving "Last checked" stuck until Settings was
+			// closed and reopened.
+			if (!live || pushed) return;
+			onStatusEventRef.current?.(s);
+			setStatus(s);
+		});
 		return () => {
 			live = false;
 			off?.();

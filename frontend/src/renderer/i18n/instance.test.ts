@@ -160,11 +160,13 @@ describe("app i18next instance", () => {
 	});
 
 	it("keeps interpolation variables aligned between locales", () => {
-		const variables = (message: string) =>
-			[...message.matchAll(/{{\s*([\w.-]+)\s*}}/g)].map((match) => match[1]).sort();
+		const variables = (message: string | string[]) => {
+			const msgs = Array.isArray(message) ? message : [message];
+			return msgs.flatMap((msg) => [...msg.matchAll(/{{\s*([\w.-]+)\s*}}/g)].map((match) => match[1])).sort();
+		};
 		for (const locale of APP_LOCALES) {
 			if (locale === "en") continue;
-			const catalog = allCatalogs[locale] as Record<keyof typeof enMessages, string>;
+			const catalog = allCatalogs[locale] as Record<keyof typeof enMessages, string | string[]>;
 			for (const key of Object.keys(enMessages) as (keyof typeof enMessages)[]) {
 				expect(variables(catalog[key]), `${locale} placeholder mismatch for ${key}`).toEqual(
 					variables(enMessages[key]),
