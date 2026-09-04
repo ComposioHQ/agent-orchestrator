@@ -727,6 +727,67 @@ func TestRuntimeObservation_ExitedWorkloadKeepsSessionLive(t *testing.T) {
 	}
 }
 
+func TestRuntimeObservation_ClassifiedStartupPromptBecomesNeedsInputAndClearsOnSignal(t *testing.T) {
+	st := newFakeStore()
+	sink := &fakeNotificationSink{}
+	m := New(st, nil, WithNotificationSink(sink))
+	now := time.Date(2026, 9, 4, 16, 0, 0, 0, time.UTC)
+	m.clock = func() time.Time { return now }
+	rec := working("mer-1")
+	rec.DisplayName = "Claude repair"
+	rec.Activity = domain.Activity{State: domain.ActivityIdle, LastActivityAt: now.Add(-time.Minute)}
+	rec.FirstSignalAt = time.Time{}
+	rec.Metadata.RuntimeLaunchID = "launch-1"
+	st.sessions[rec.ID] = rec
+
+	if err := m.ApplyRuntimeObservation(ctx, rec.ID, ports.RuntimeFacts{
+		Runtime:       ports.ProbeAlive,
+		Workload:      ports.ProbeDead,
+		LaunchID:      "launch-1",
+		ObservedAt:    now,
+		StartupPrompt: domain.StartupPromptBypassResponsibility,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	blocked := st.sessions[rec.ID]
+	if blocked.IsTerminated || blocked.Activity.State != domain.ActivityBlocked || blocked.StartupPrompt != domain.StartupPromptBypassResponsibility {
+		t.Fatalf("classified startup prompt = %+v, want live blocked bypass responsibility", blocked)
+	}
+	if len(sink.intents) != 1 || sink.intents[0].Type != domain.NotificationNeedsInput {
+		t.Fatalf("notification intents = %+v, want one needs-input escalation", sink.intents)
+	}
+
+	if err := m.ApplyActivitySignal(ctx, rec.ID, ports.ActivitySignal{
+		Valid: true, State: domain.ActivityIdle, LaunchID: "launch-1", Timestamp: now.Add(time.Second),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	recovered := st.sessions[rec.ID]
+	if recovered.StartupPrompt != domain.StartupPromptNone || recovered.FirstSignalAt.IsZero() {
+		t.Fatalf("first activity signal did not clear stale startup prompt: %+v", recovered)
+	}
+}
+
+func TestRuntimeObservation_DoesNotClassifyStartupPromptAfterFirstSignal(t *testing.T) {
+	m, st, _ := newManager()
+	rec := working("mer-1")
+	rec.Metadata.RuntimeLaunchID = "launch-1"
+	st.sessions[rec.ID] = rec
+
+	if err := m.ApplyRuntimeObservation(ctx, rec.ID, ports.RuntimeFacts{
+		Runtime:       ports.ProbeAlive,
+		Workload:      ports.ProbeDead,
+		LaunchID:      "launch-1",
+		StartupPrompt: domain.StartupPromptWorkspaceTrust,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	got := st.sessions[rec.ID]
+	if got.Activity.State != domain.ActivityExited || got.StartupPrompt != domain.StartupPromptNone {
+		t.Fatalf("post-signal workload death = %+v, want exited without startup classification", got)
+	}
+}
+
 func TestRuntimeObservation_AliveWorkloadCannotResurrectExitedSession(t *testing.T) {
 	m, st, _ := newManager()
 	rec := working("mer-1")
@@ -3446,6 +3507,7 @@ func TestMarkSpawnedClearsFirstSignalAndLeavesResumeIdentityUnverified(t *testin
 	m, st, _ := newManager()
 	rec := working("mer-1")
 	rec.FirstSignalAt = time.Now().Add(-time.Hour)
+	rec.StartupPrompt = domain.StartupPromptWorkspaceTrust
 	rec.Metadata.RuntimeLaunchID = "launch-old"
 	rec.Metadata.AgentSessionID = "native-1"
 	rec.Metadata.AgentSessionIDLaunchID = "launch-old"
@@ -3456,6 +3518,9 @@ func TestMarkSpawnedClearsFirstSignalAndLeavesResumeIdentityUnverified(t *testin
 	got := st.sessions["mer-1"]
 	if !got.FirstSignalAt.IsZero() {
 		t.Fatalf("spawn/restore must clear the receipt, got %+v", got)
+	}
+	if got.StartupPrompt != domain.StartupPromptNone {
+		t.Fatalf("spawn/restore must clear a prompt classification from the prior launch, got %+v", got)
 	}
 	if got.Metadata.AgentSessionID != "native-1" || got.Metadata.AgentSessionIDLaunchID != "launch-old" {
 		t.Fatalf("spawn/restore must retain the resume hint without re-proving it, got %+v", got.Metadata)

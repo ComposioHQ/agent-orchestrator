@@ -6,6 +6,29 @@ import "time"
 // callbacks, not inferred from transcript/JSONL
 type ActivityState string
 
+// StartupPromptKind is a conservative classification of a provider-owned
+// onboarding prompt observed before the current launch has produced its first
+// activity hook. It stores only the prompt class, never rendered pane text.
+type StartupPromptKind string
+
+const (
+	StartupPromptNone                 StartupPromptKind = ""
+	StartupPromptWorkspaceTrust       StartupPromptKind = "workspace_trust"
+	StartupPromptBypassResponsibility StartupPromptKind = "bypass_responsibility"
+)
+
+// Valid reports whether k is one of the prompt classes AO can safely expose.
+// Unknown provider text must remain unclassified instead of becoming a false
+// needs-input diagnosis.
+func (k StartupPromptKind) Valid() bool {
+	switch k {
+	case StartupPromptWorkspaceTrust, StartupPromptBypassResponsibility:
+		return true
+	default:
+		return false
+	}
+}
+
 // Activity states. WaitingInput and Blocked are sticky (see IsSticky).
 //
 // WaitingInput and Blocked both mean "paused on the user" but demand opposite

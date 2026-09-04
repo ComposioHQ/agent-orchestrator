@@ -101,6 +101,38 @@ func TestBuildLaunchCommands(t *testing.T) {
 	}
 }
 
+func TestClaudeDangerousBypassRequiresExplicitManagedAuthorization(t *testing.T) {
+	base := LaunchConfig{
+		Harness:    HarnessClaudeCode,
+		Binary:     "claude",
+		Permission: PermissionBypassPermissions,
+	}
+	without, err := BuildLaunchCommand(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !containsArg(without, "--permission-mode") || containsArg(without, "--dangerously-skip-permissions") {
+		t.Fatalf("unmanaged bypass command = %#v, want compatibility mode only", without)
+	}
+	base.AllowDangerousBypass = true
+	with, err := BuildLaunchCommand(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !containsArg(with, "--dangerously-skip-permissions") || containsArg(with, "--permission-mode") {
+		t.Fatalf("managed bypass command = %#v, want documented no-prompt flag only", with)
+	}
+}
+
+func containsArg(args []string, want string) bool {
+	for _, arg := range args {
+		if arg == want {
+			return true
+		}
+	}
+	return false
+}
+
 func TestBuildRestoreCommands(t *testing.T) {
 	tests := []struct {
 		name string

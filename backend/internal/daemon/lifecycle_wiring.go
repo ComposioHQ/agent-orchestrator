@@ -65,7 +65,7 @@ func startLifecycle(ctx context.Context, store *sqlite.Store, runtime ports.Runt
 		lifecycle.WithStartupSignalGate(startupSignalGatesInput(agents)),
 		lifecycle.WithUrgentNudgeGate(urgentNudgeWaitingInputSafe(agents)),
 	)
-	rp := reaper.New(lcm, store, runtime, reaper.Config{Logger: logger})
+	rp := reaper.New(lcm, store, runtime, reaper.Config{Logger: logger, Agents: agents})
 	activityPoller := activityobserver.New(store, lcm, runtime, agents, activityobserver.Config{Logger: logger})
 	return &lifecycleStack{
 		LCM:           lcm,

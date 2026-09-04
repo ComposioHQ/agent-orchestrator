@@ -28,6 +28,13 @@ export type ChangedFile = {
 
 export type SessionKind = "worker" | "orchestrator";
 
+/**
+ * A redacted, structurally verified Claude startup prompt. The daemon only
+ * exposes this when it has not observed the launch hook yet, so it is safe to
+ * use alongside `needs_input` without carrying terminal text into the UI.
+ */
+export type StartupPrompt = "workspace_trust" | "bypass_responsibility";
+
 /** Lifecycle state of a single pull request, mirrors the daemon's enum. */
 export type PRState = "open" | "draft" | "merged" | "closed";
 
@@ -91,6 +98,12 @@ export type WorkspaceSession = {
 	mode?: SessionMode;
 	branch?: string;
 	status: SessionStatus;
+	/**
+	 * The specific startup prompt behind a `needs_input` status, when the
+	 * daemon can prove it from the current terminal frame. It deliberately
+	 * contains no terminal text.
+	 */
+	startupPrompt?: StartupPrompt;
 	/** Stack-aware PR context derived by the daemon independently of runtime activity. */
 	scmStatus?: SessionStatus;
 	/**

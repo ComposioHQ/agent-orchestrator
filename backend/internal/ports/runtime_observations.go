@@ -24,6 +24,10 @@ type RuntimeFacts struct {
 	Runtime    ProbeResult
 	Workload   ProbeResult
 	LaunchID   string
+	// StartupPrompt is an optional redacted current-pane classification supplied
+	// only when the runtime is alive but its supervised provider workload died
+	// before acknowledging startup.
+	StartupPrompt domain.StartupPromptKind
 }
 
 // ActivitySignal is pushed by the agent hooks. Only a Valid activity state is

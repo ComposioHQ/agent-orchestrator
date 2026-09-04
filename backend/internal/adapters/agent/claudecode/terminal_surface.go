@@ -5,6 +5,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/terminalui"
+	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
@@ -27,10 +28,31 @@ func (p *Plugin) InspectTerminalSurface(output string) ports.TerminalSurfaceObse
 	case claudeConfirmationFrameVisible(recent):
 		observation.Work = ports.TerminalSurfaceWorkBlocked
 		observation.Composer = ports.TerminalComposerUnknown
+		observation.StartupPrompt = claudeStartupPromptKind(recent)
 	case observation.Composer != ports.TerminalComposerUnknown:
 		observation.Work = ports.TerminalSurfaceWorkIdle
 	}
 	return observation
+}
+
+// claudeStartupPromptKind recognizes only the two first-launch confirmation
+// frames AO can address without a human click. The structural confirmation
+// check is repeated here so historic transcript prose cannot become lifecycle
+// evidence. The returned enum deliberately excludes screen text and choices.
+func claudeStartupPromptKind(output string) domain.StartupPromptKind {
+	if !claudeConfirmationFrameVisible(output) {
+		return domain.StartupPromptNone
+	}
+	text := strings.ToLower(strings.Join(terminalui.PlainTerminalLines(output), "\n"))
+	switch {
+	case strings.Contains(text, "is this a project you created or one you trust?") &&
+		(strings.Contains(text, "no, exit") || strings.Contains(text, "yes, i trust")):
+		return domain.StartupPromptWorkspaceTrust
+	case strings.Contains(text, "bypass permissions") && strings.Contains(text, "no, exit"):
+		return domain.StartupPromptBypassResponsibility
+	default:
+		return domain.StartupPromptNone
+	}
 }
 
 func claudeComposerState(state terminalui.ComposerState) ports.TerminalComposerState {

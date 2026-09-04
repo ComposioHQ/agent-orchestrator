@@ -20,6 +20,20 @@ import (
 // the design doc's 5s sampling window for runtime liveness.
 const DefaultTickInterval = 5 * time.Second
 
+// DefaultStartupPromptGrace is the bounded acknowledgement window after a
+// terminal launch. Before it expires, a missing first hook is normal startup;
+// after it expires, the reaper may inspect one current styled pane and only a
+// known provider-owned prompt can change lifecycle state.
+const DefaultStartupPromptGrace = 30 * time.Second
+
+const (
+	// startupPromptProbeLines bounds the renderer sample used only when a
+	// supervised workload disappears before its first hook. The observation is
+	// current-screen evidence, never terminal scrollback.
+	startupPromptProbeLines   = 16
+	startupPromptProbeTimeout = 750 * time.Millisecond
+)
+
 // Circuit breaker against mass termination (issue #3475): if one cycle
 // concludes that most of the board is dead at once, that is not N independent
 // agent exits — it is one infrastructure outage (or an adapter bug) being
@@ -46,6 +60,12 @@ type Config struct {
 	// because a single failed probe must not kill the loop. nil means
 	// slog.Default.
 	Logger *slog.Logger
+	// Agents resolves adapter-declared prompt readiness and conservative
+	// current-pane inspection. Nil leaves startup-prompt classification disabled.
+	Agents ports.AgentResolver
+	// StartupPromptGrace bounds how long a launch may remain unacknowledged
+	// before a current-pane inspection is eligible. <=0 uses the safe default.
+	StartupPromptGrace time.Duration
 }
 
 type sessionSource interface {
@@ -63,13 +83,16 @@ type runtimeProber interface {
 // Reaper is the polling timer. Construct it with New; start the background
 // goroutine with Start, or drive a single cycle synchronously with Tick.
 type Reaper struct {
-	sink     runtimeObservationSink
-	sessions sessionSource
-	runtime  runtimeProber
-	workload ports.SupervisedProcessInspector
-	tick     time.Duration
-	clock    func() time.Time
-	logger   *slog.Logger
+	sink               runtimeObservationSink
+	sessions           sessionSource
+	runtime            runtimeProber
+	workload           ports.SupervisedProcessInspector
+	surface            ports.StyledTerminalOutputReader
+	agents             ports.AgentResolver
+	tick               time.Duration
+	startupPromptGrace time.Duration
+	clock              func() time.Time
+	logger             *slog.Logger
 
 	// The periodic loop and boot-time reconciliation may call Tick on the same
 	// Reaper concurrently, so the per-run warning set needs synchronization.
@@ -85,15 +108,23 @@ func New(sink runtimeObservationSink, sessions sessionSource, runtime runtimePro
 		sessions:            sessions,
 		runtime:             runtime,
 		tick:                cfg.Tick,
+		startupPromptGrace:  cfg.StartupPromptGrace,
 		clock:               cfg.Clock,
 		logger:              cfg.Logger,
+		agents:              cfg.Agents,
 		warnedMissingHandle: make(map[domain.SessionID]struct{}),
 	}
 	if workload, ok := runtime.(ports.SupervisedProcessInspector); ok {
 		r.workload = workload
 	}
+	if surface, ok := runtime.(ports.StyledTerminalOutputReader); ok {
+		r.surface = surface
+	}
 	if r.tick <= 0 {
 		r.tick = DefaultTickInterval
+	}
+	if r.startupPromptGrace <= 0 {
+		r.startupPromptGrace = DefaultStartupPromptGrace
 	}
 	if r.clock == nil {
 		// UTC, not bare time.Now: the observed timestamp reaches sessions.
@@ -253,9 +284,53 @@ func (r *Reaper) probeOne(ctx context.Context, sess domain.SessionRecord, now ti
 				facts.Workload = ports.ProbeDead
 			}
 		}
+		if r.startupPromptGraceElapsed(sess, now) {
+			facts.StartupPrompt = r.classifyStartupPrompt(ctx, sess, handle)
+		}
 	}
 
 	return facts, true
+}
+
+func (r *Reaper) startupPromptGraceElapsed(sess domain.SessionRecord, now time.Time) bool {
+	if !sess.FirstSignalAt.IsZero() || sess.Activity.LastActivityAt.IsZero() {
+		return false
+	}
+	return !now.Before(sess.Activity.LastActivityAt.Add(r.startupPromptGrace))
+}
+
+// classifyStartupPrompt asks an adapter to inspect one bounded, styled current
+// pane only after the runtime is alive and startup remains unacknowledged past
+// its grace window. Any unavailable surface, adapter mismatch, timeout, error,
+// or unknown text is inconclusive.
+func (r *Reaper) classifyStartupPrompt(ctx context.Context, sess domain.SessionRecord, handle ports.RuntimeHandle) domain.StartupPromptKind {
+	if !sess.FirstSignalAt.IsZero() || r.surface == nil || r.agents == nil {
+		return domain.StartupPromptNone
+	}
+	agent, ok := r.agents.Agent(sess.Harness)
+	if !ok {
+		return domain.StartupPromptNone
+	}
+	readiness, ok := agent.(ports.StartupInputReadinessSignaler)
+	if !ok || !readiness.FirstSignalProvesInputReady() {
+		return domain.StartupPromptNone
+	}
+	inspector, ok := agent.(ports.TerminalSurfaceInspector)
+	if !ok {
+		return domain.StartupPromptNone
+	}
+	probeCtx, cancel := context.WithTimeout(ctx, startupPromptProbeTimeout)
+	defer cancel()
+	output, err := r.surface.GetStyledOutput(probeCtx, handle, startupPromptProbeLines)
+	if err != nil {
+		r.logger.Debug("reaper: startup prompt surface unavailable", "session", sess.ID, "err", err)
+		return domain.StartupPromptNone
+	}
+	observation := inspector.InspectTerminalSurface(output)
+	if observation.Work != ports.TerminalSurfaceWorkBlocked || !observation.StartupPrompt.Valid() {
+		return domain.StartupPromptNone
+	}
+	return observation.StartupPrompt
 }
 
 // warnMissingHandleOnce logs at most once per session for this Reaper's lifetime.

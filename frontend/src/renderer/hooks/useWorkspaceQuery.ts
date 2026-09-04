@@ -107,6 +107,10 @@ async function fetchWorkspaces(): Promise<WorkspaceSummary[]> {
 				.filter((session) => session.projectId === project.id)
 				.map((session) => {
 					const status = toSessionStatus(session.status, session.isTerminated);
+					const startupPrompt =
+						session.startupPrompt === "workspace_trust" || session.startupPrompt === "bypass_responsibility"
+							? session.startupPrompt
+							: undefined;
 					const scmStatus = session.scmStatus ? toSessionStatus(session.scmStatus) : undefined;
 					const kanbanColumn = toKanbanColumn(session.kanbanColumn, status);
 					const activity = toSessionActivity(session.activity);
@@ -139,6 +143,7 @@ async function fetchWorkspaces(): Promise<WorkspaceSummary[]> {
 						mode: session.mode === "chat" ? "chat" : "tui",
 						branch: session.branch || undefined,
 						status,
+						startupPrompt,
 						scmStatus,
 						kanbanColumn,
 						displayStatus: session.displayStatus || undefined,

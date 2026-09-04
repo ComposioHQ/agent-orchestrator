@@ -441,6 +441,11 @@ type LaunchConfig struct {
 	SystemPrompt     string
 	SystemPromptFile string
 	WorkspacePath    string
+	// ManagedWorkspace is asserted only by AO after its workspace manager has
+	// created or restored WorkspacePath. Adapters may use it to apply a
+	// provider's one-time workspace onboarding without trusting an arbitrary
+	// caller-supplied path.
+	ManagedWorkspace bool
 }
 
 // WorkspaceHookConfig carries inputs needed to install workspace-local agent hooks.
@@ -474,6 +479,9 @@ type RestoreConfig struct {
 	// system-prompt flag should re-apply this in their resume command.
 	SystemPrompt     string
 	SystemPromptFile string
+	// ManagedWorkspace has the same provenance contract as LaunchConfig's
+	// field. A restored provider session must not weaken that boundary.
+	ManagedWorkspace bool
 }
 
 // SessionRef identifies an AO session whose agent-owned metadata may be read.

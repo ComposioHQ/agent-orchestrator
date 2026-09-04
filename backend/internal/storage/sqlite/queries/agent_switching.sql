@@ -59,69 +59,28 @@ INSERT INTO agent_switches (
 ON CONFLICT DO NOTHING;
 
 -- name: GetAgentSwitch :one
-SELECT id, session_id, idempotency_key, request_fingerprint,
-    from_harness, target_harness,
-    target_native_session_ref, target_start_mode,
-    state, agent_handoff_status, source_transcript_status, semantic_handoff_included,
-    agent_handoff_path, agent_handoff_hash,
-    source_generation_id, target_generation_id, target_runtime_handle_id,
-    target_acknowledged_at, error_code, failure_point,
-    requested_at, updated_at,
-    final_handoff_path, final_handoff_hash
+SELECT agent_switches.*
 FROM agent_switches
 WHERE id = ?;
 
 -- name: GetAgentSwitchByIdempotencyKey :one
-SELECT id, session_id, idempotency_key, request_fingerprint,
-    from_harness, target_harness,
-    target_native_session_ref, target_start_mode,
-    state, agent_handoff_status, source_transcript_status, semantic_handoff_included,
-    agent_handoff_path, agent_handoff_hash,
-    source_generation_id, target_generation_id, target_runtime_handle_id,
-    target_acknowledged_at, error_code, failure_point,
-    requested_at, updated_at,
-    final_handoff_path, final_handoff_hash
+SELECT agent_switches.*
 FROM agent_switches
 WHERE session_id = ? AND idempotency_key = ?;
 
 -- name: GetActiveAgentSwitch :one
-SELECT id, session_id, idempotency_key, request_fingerprint,
-    from_harness, target_harness,
-    target_native_session_ref, target_start_mode,
-    state, agent_handoff_status, source_transcript_status, semantic_handoff_included,
-    agent_handoff_path, agent_handoff_hash,
-    source_generation_id, target_generation_id, target_runtime_handle_id,
-    target_acknowledged_at, error_code, failure_point,
-    requested_at, updated_at,
-    final_handoff_path, final_handoff_hash
+SELECT agent_switches.*
 FROM agent_switches
 WHERE session_id = ?
   AND state NOT IN ('completed', 'failed');
 
 -- name: ListActiveAgentSwitches :many
-SELECT id, session_id, idempotency_key, request_fingerprint,
-       from_harness, target_harness,
-       target_native_session_ref, target_start_mode,
-       state, agent_handoff_status, source_transcript_status,
-       semantic_handoff_included,
-       agent_handoff_path, agent_handoff_hash,
-       source_generation_id, target_generation_id,
-       target_runtime_handle_id, target_acknowledged_at,
-       error_code, failure_point, requested_at, updated_at,
-       final_handoff_path, final_handoff_hash
+SELECT agent_switches.*
 FROM agent_switches
 WHERE state NOT IN ('completed', 'failed');
 
 -- name: ListAgentSwitches :many
-SELECT id, session_id, idempotency_key, request_fingerprint,
-    from_harness, target_harness,
-    target_native_session_ref, target_start_mode,
-    state, agent_handoff_status, source_transcript_status, semantic_handoff_included,
-    agent_handoff_path, agent_handoff_hash,
-    source_generation_id, target_generation_id, target_runtime_handle_id,
-    target_acknowledged_at, error_code, failure_point,
-    requested_at, updated_at,
-    final_handoff_path, final_handoff_hash
+SELECT agent_switches.*
 FROM agent_switches
 WHERE session_id = ?
 ORDER BY requested_at DESC, id DESC;
@@ -268,6 +227,7 @@ UPDATE sessions SET
     activity_state = sqlc.arg(activity_state),
     activity_last_at = sqlc.arg(activity_last_at),
     first_signal_at = sqlc.arg(first_signal_at),
+    startup_prompt = sqlc.arg(startup_prompt),
     agent_session_id = sqlc.arg(agent_session_id),
     agent_session_id_launch_id = sqlc.arg(agent_session_id_launch_id),
     latest_user_prompt = sqlc.arg(latest_user_prompt),
@@ -304,6 +264,7 @@ WHERE sessions.id = sqlc.arg(id)
 UPDATE sessions SET
     activity_state = 'exited',
     activity_last_at = sqlc.arg(stopped_at),
+    startup_prompt = '',
     updated_at = sqlc.arg(stopped_at)
 WHERE id = sqlc.arg(session_id)
   AND is_terminated = 0
@@ -315,6 +276,7 @@ WHERE id = sqlc.arg(session_id)
 UPDATE sessions SET
     activity_state = 'exited',
     activity_last_at = sqlc.arg(stopped_at),
+    startup_prompt = '',
     updated_at = sqlc.arg(stopped_at)
 WHERE id = sqlc.arg(session_id)
   AND is_terminated = 0
@@ -344,6 +306,7 @@ UPDATE sessions SET
     activity_state = 'idle',
     activity_last_at = sqlc.arg(activated_at),
     first_signal_at = NULL,
+    startup_prompt = '',
     runtime_handle_id = sqlc.arg(runtime_handle_id),
     runtime_launch_id = sqlc.arg(target_generation_id),
     agent_session_id = sqlc.arg(target_native_session_id),
@@ -366,6 +329,7 @@ UPDATE sessions SET
     activity_state = 'idle',
     activity_last_at = sqlc.arg(activated_at),
     first_signal_at = NULL,
+    startup_prompt = '',
     runtime_handle_id = '',
     runtime_launch_id = '',
     agent_session_id_launch_id = '',

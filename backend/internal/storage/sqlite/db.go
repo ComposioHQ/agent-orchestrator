@@ -1402,6 +1402,11 @@ BEGIN
     ON conversation_turns(conversation_id, retry_of_turn_id)
     WHERE retry_of_turn_id IS NOT NULL`,
 		}},
+	// 0126_session_startup_prompt.sql. Session projections read this redacted
+	// startup-blockade class on every API list, so a burned migration must be
+	// repaired before the daemon starts serving stale/failed session reads.
+	{version: 126, table: "sessions", column: "startup_prompt",
+		addDDL: `ALTER TABLE sessions ADD COLUMN startup_prompt TEXT NOT NULL DEFAULT ''`},
 }
 
 // reconcileSchema verifies that the columns in schemaRepairs physically exist

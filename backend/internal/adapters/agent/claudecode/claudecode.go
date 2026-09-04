@@ -21,6 +21,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -181,17 +182,18 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 		permissions = cfg.Config.Permissions
 	}
 	return agentruntime.BuildLaunchCommand(agentruntime.LaunchConfig{
-		Harness:          agentruntime.HarnessClaudeCode,
-		Binary:           binary,
-		SessionID:        cfg.SessionID,
-		NativeSessionID:  cfg.NativeSessionID,
-		Model:            cfg.Config.Model,
-		Prompt:           cfg.Prompt,
-		SystemPrompt:     cfg.SystemPrompt,
-		SystemPromptFile: cfg.SystemPromptFile,
-		Permission:       agentruntime.PermissionPolicy(permissions),
-		AllowedTools:     cfg.AllowedTools,
-		DisallowedTools:  cfg.DisallowedTools,
+		Harness:              agentruntime.HarnessClaudeCode,
+		Binary:               binary,
+		SessionID:            cfg.SessionID,
+		NativeSessionID:      cfg.NativeSessionID,
+		Model:                cfg.Config.Model,
+		Prompt:               cfg.Prompt,
+		SystemPrompt:         cfg.SystemPrompt,
+		SystemPromptFile:     cfg.SystemPromptFile,
+		Permission:           agentruntime.PermissionPolicy(permissions),
+		AllowedTools:         cfg.AllowedTools,
+		DisallowedTools:      cfg.DisallowedTools,
+		AllowDangerousBypass: cfg.ManagedWorkspace,
 	})
 }
 
@@ -212,11 +214,18 @@ func (p *Plugin) PreLaunch(ctx context.Context, cfg ports.LaunchConfig) error {
 	if cfg.WorkspacePath == "" {
 		return nil
 	}
+	if !cfg.ManagedWorkspace {
+		return errors.New("claude-code: refusing to pre-trust an unmanaged workspace")
+	}
 	cfgPath, err := claudeConfigPath()
 	if err != nil {
 		return err
 	}
-	return ensureWorkspaceTrusted(cfgPath, cfg.WorkspacePath)
+	trustRoots, err := managedWorkspaceTrustRoots(ctx, cfg.WorkspacePath)
+	if err != nil {
+		return err
+	}
+	return ensureWorkspaceTrusted(cfgPath, trustRoots...)
 }
 
 // GetRestoreCommand rebuilds the argv that continues an existing Claude Code
@@ -245,16 +254,17 @@ func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig)
 		return nil, false, err
 	}
 	return agentruntime.BuildRestoreCommand(agentruntime.RestoreConfig{
-		Harness:          agentruntime.HarnessClaudeCode,
-		Binary:           binary,
-		SessionID:        cfg.Session.ID,
-		Metadata:         cfg.Session.Metadata,
-		Prompt:           cfg.Prompt,
-		SystemPrompt:     cfg.SystemPrompt,
-		SystemPromptFile: cfg.SystemPromptFile,
-		Permission:       agentruntime.PermissionPolicy(cfg.Permissions),
-		AllowedTools:     cfg.AllowedTools,
-		DisallowedTools:  cfg.DisallowedTools,
+		Harness:              agentruntime.HarnessClaudeCode,
+		Binary:               binary,
+		SessionID:            cfg.Session.ID,
+		Metadata:             cfg.Session.Metadata,
+		Prompt:               cfg.Prompt,
+		SystemPrompt:         cfg.SystemPrompt,
+		SystemPromptFile:     cfg.SystemPromptFile,
+		Permission:           agentruntime.PermissionPolicy(cfg.Permissions),
+		AllowedTools:         cfg.AllowedTools,
+		DisallowedTools:      cfg.DisallowedTools,
+		AllowDangerousBypass: cfg.ManagedWorkspace,
 	})
 }
 
@@ -572,15 +582,30 @@ func claudeConfigPath() (string, error) {
 // and the last rename drops the other's trust entry.
 var claudeTrustMu sync.Mutex
 
-func ensureWorkspaceTrusted(configPath, workspacePath string) error {
-	return ensureWorkspaceTrustedForOS(configPath, workspacePath, runtime.GOOS)
+func ensureWorkspaceTrusted(configPath string, workspacePaths ...string) error {
+	return ensureWorkspaceTrustedForOS(configPath, runtime.GOOS, workspacePaths...)
 }
 
-func ensureWorkspaceTrustedForOS(configPath, workspacePath, goos string) error {
+func ensureWorkspaceTrustedForOS(configPath, goos string, workspacePaths ...string) error {
 	claudeTrustMu.Lock()
 	defer claudeTrustMu.Unlock()
-	if goos == "windows" {
-		workspacePath = strings.ReplaceAll(workspacePath, `\`, "/")
+	if len(workspacePaths) == 0 {
+		return errors.New("claude-code: no workspace trust roots supplied")
+	}
+	trustRoots := make([]string, 0, len(workspacePaths))
+	seen := make(map[string]struct{}, len(workspacePaths))
+	for _, workspacePath := range workspacePaths {
+		if goos == "windows" {
+			workspacePath = strings.ReplaceAll(workspacePath, `\`, "/")
+		}
+		if strings.TrimSpace(workspacePath) == "" || strings.ContainsAny(workspacePath, "\x00\r\n") {
+			return fmt.Errorf("claude-code: unsafe workspace trust root %q", workspacePath)
+		}
+		if _, ok := seen[workspacePath]; ok {
+			continue
+		}
+		seen[workspacePath] = struct{}{}
+		trustRoots = append(trustRoots, workspacePath)
 	}
 
 	root := map[string]any{}
@@ -610,17 +635,23 @@ func ensureWorkspaceTrustedForOS(configPath, workspacePath, goos string) error {
 		root["projects"] = projects
 	}
 
-	entry, _ := projects[workspacePath].(map[string]any)
-	if entry == nil {
-		entry = map[string]any{}
-		projects[workspacePath] = entry
+	changed := false
+	for _, workspacePath := range trustRoots {
+		entry, _ := projects[workspacePath].(map[string]any)
+		if entry == nil {
+			entry = map[string]any{}
+			projects[workspacePath] = entry
+		}
+		if trusted, ok := entry["hasTrustDialogAccepted"].(bool); ok && trusted {
+			continue
+		}
+		entry["hasTrustDialogAccepted"] = true
+		changed = true
 	}
-
-	if trusted, ok := entry["hasTrustDialogAccepted"].(bool); ok && trusted {
-		// Already trusted — no write needed, so no race window at all.
+	if !changed {
+		// All roots are already trusted — no write needed, so no race window.
 		return nil
 	}
-	entry["hasTrustDialogAccepted"] = true
 
 	out, err := json.MarshalIndent(root, "", "  ")
 	if err != nil {
@@ -649,4 +680,141 @@ func ensureWorkspaceTrustedForOS(configPath, workspacePath, goos string) error {
 		return fmt.Errorf("claude-code: replace config: %w", err)
 	}
 	return nil
+}
+
+// managedWorkspaceTrustRoots resolves the two Claude trust scopes that a
+// linked git worktree can present: its checkout root and the primary checkout
+// that owns the shared .git directory. It is deliberately called only after
+// the session manager attests ManagedWorkspace. The adapter never trusts an
+// arbitrary path from an API or reviewer invocation.
+func managedWorkspaceTrustRoots(ctx context.Context, workspacePath string) ([]string, error) {
+	workspacePath = strings.TrimSpace(workspacePath)
+	if workspacePath == "" || strings.ContainsAny(workspacePath, "\x00\r\n") {
+		return nil, fmt.Errorf("claude-code: unsafe managed workspace path %q", workspacePath)
+	}
+	requestedRoot, err := absoluteTrustRoot(workspacePath)
+	if err != nil {
+		return nil, err
+	}
+	// AO can also manage an isolated scratch directory. It has no .git entry
+	// by design, so the manager attestation is the authorization boundary in
+	// that case; trust only its canonical directory. If a .git entry exists,
+	// require the stronger worktree/common-repository proof below instead of
+	// treating a malformed repository as scratch.
+	if _, err := os.Lstat(filepath.Join(requestedRoot, ".git")); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			requestedReal, resolveErr := canonicalTrustRoot(requestedRoot)
+			if resolveErr != nil {
+				return nil, resolveErr
+			}
+			return uniqueTrustRoots(requestedRoot, requestedReal), nil
+		}
+		return nil, fmt.Errorf("claude-code: inspect managed workspace git marker: %w", err)
+	}
+	probeCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	cmd := aoprocess.CommandContext(probeCtx, "git", "-C", workspacePath, "rev-parse", "--show-toplevel", "--git-common-dir")
+	output, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("claude-code: verify managed workspace: %w", err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
+	if len(lines) != 2 {
+		return nil, errors.New("claude-code: managed workspace did not report a checkout and common git directory")
+	}
+	reportedWorktreeRoot, err := absoluteTrustRoot(lines[0])
+	if err != nil {
+		return nil, err
+	}
+	commonDir := strings.TrimSpace(lines[1])
+	if !filepath.IsAbs(commonDir) {
+		commonDir = filepath.Join(reportedWorktreeRoot, commonDir)
+	}
+	commonDir, err = absoluteTrustRoot(commonDir)
+	if err != nil {
+		return nil, err
+	}
+	repositoryRoot, err := absoluteTrustRoot(filepath.Dir(commonDir))
+	if err != nil {
+		return nil, err
+	}
+	worktreeReal, err := canonicalTrustRoot(reportedWorktreeRoot)
+	if err != nil {
+		return nil, err
+	}
+	requestedReal, err := canonicalTrustRoot(requestedRoot)
+	if err != nil {
+		return nil, err
+	}
+	if requestedReal != worktreeReal {
+		return nil, errors.New("claude-code: managed workspace path is not the git worktree root")
+	}
+	repositoryReal, err := canonicalTrustRoot(repositoryRoot)
+	if err != nil {
+		return nil, err
+	}
+	verify := aoprocess.CommandContext(probeCtx, "git", "-C", repositoryRoot, "rev-parse", "--show-toplevel")
+	verifiedRoot, err := verify.Output()
+	if err != nil {
+		return nil, fmt.Errorf("claude-code: verify common repository: %w", err)
+	}
+	verifiedRepositoryRoot, err := canonicalTrustRoot(strings.TrimSpace(string(verifiedRoot)))
+	if err != nil {
+		return nil, err
+	}
+	if verifiedRepositoryRoot != repositoryReal {
+		return nil, errors.New("claude-code: common git directory does not belong to its reported repository root")
+	}
+	return uniqueTrustRoots(requestedRoot, reportedWorktreeRoot, worktreeReal, repositoryRoot, repositoryReal), nil
+}
+
+func absoluteTrustRoot(path string) (string, error) {
+	path = strings.TrimSpace(path)
+	if path == "" || strings.ContainsAny(path, "\x00\r\n") {
+		return "", fmt.Errorf("claude-code: unsafe workspace trust root %q", path)
+	}
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return "", fmt.Errorf("claude-code: resolve workspace trust root: %w", err)
+	}
+	info, err := os.Stat(abs)
+	if err != nil {
+		return "", fmt.Errorf("claude-code: inspect workspace trust root: %w", err)
+	}
+	if !info.IsDir() {
+		return "", fmt.Errorf("claude-code: workspace trust root %q is not a directory", abs)
+	}
+	return filepath.Clean(abs), nil
+}
+
+func canonicalTrustRoot(path string) (string, error) {
+	abs, err := absoluteTrustRoot(path)
+	if err != nil {
+		return "", err
+	}
+	resolved, err := filepath.EvalSymlinks(abs)
+	if err != nil {
+		return "", fmt.Errorf("claude-code: resolve workspace trust root: %w", err)
+	}
+	info, err := os.Stat(resolved)
+	if err != nil {
+		return "", fmt.Errorf("claude-code: inspect workspace trust root: %w", err)
+	}
+	if !info.IsDir() {
+		return "", fmt.Errorf("claude-code: workspace trust root %q is not a directory", resolved)
+	}
+	return filepath.Clean(resolved), nil
+}
+
+func uniqueTrustRoots(paths ...string) []string {
+	roots := make([]string, 0, len(paths))
+	seen := make(map[string]struct{}, len(paths))
+	for _, path := range paths {
+		if _, ok := seen[path]; ok {
+			continue
+		}
+		seen[path] = struct{}{}
+		roots = append(roots, path)
+	}
+	return roots
 }
