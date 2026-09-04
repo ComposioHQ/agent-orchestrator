@@ -1467,17 +1467,28 @@ describe("Sidebar", () => {
 		expect(dialog).toHaveTextContent("repository folder");
 	});
 
-	it("renames a session inline by double-clicking its name", async () => {
+	it("renames a session inline by double-clicking its full navigation target", async () => {
 		const user = userEvent.setup();
 		const workspaceWithSession = { ...workspace, sessions: [session] };
 		renderSidebar({ workspaces: [workspaceWithSession] });
 
-		await user.dblClick(screen.getByText("fix login"));
+		await user.dblClick(screen.getByRole("button", { name: "Open fix login" }));
 		const input = screen.getByLabelText("Rename fix login");
 		await user.clear(input);
-		await user.type(input, "polish login{Enter}");
+		await user.type(input, "  polish login  {Enter}");
 
 		await waitFor(() => expect(renameSessionMock).toHaveBeenCalledWith("proj-1-1", "polish login"));
+	});
+
+	it("starts the same inline rename from the session context menu", async () => {
+		const user = userEvent.setup();
+		renderSidebar({ workspaces: [{ ...workspace, sessions: [session] }] });
+
+		fireEvent.contextMenu(screen.getByRole("button", { name: "Open fix login" }));
+		await user.click(await screen.findByRole("menuitem", { name: "Rename fix login" }));
+
+		expect(screen.getByRole("textbox", { name: "Rename fix login" })).toHaveFocus();
+		expect(navigateMock).not.toHaveBeenCalled();
 	});
 
 	it("caps the inline rename input at 20 characters", async () => {
@@ -1541,6 +1552,20 @@ describe("Sidebar", () => {
 		const input = screen.getByLabelText("Rename fix login");
 		await user.clear(input);
 		await user.type(input, "discard me{Escape}");
+
+		expect(renameSessionMock).not.toHaveBeenCalled();
+		expect(screen.getByLabelText("Open fix login")).toBeInTheDocument();
+	});
+
+	it.each(["", "fix login"])("does not persist the no-op rename %j", async (nextName) => {
+		const user = userEvent.setup();
+		renderSidebar({ workspaces: [{ ...workspace, sessions: [session] }] });
+
+		await user.dblClick(screen.getByRole("button", { name: "Open fix login" }));
+		const input = screen.getByLabelText("Rename fix login");
+		await user.clear(input);
+		if (nextName) await user.type(input, nextName);
+		await user.keyboard("{Enter}");
 
 		expect(renameSessionMock).not.toHaveBeenCalled();
 		expect(screen.getByLabelText("Open fix login")).toBeInTheDocument();
