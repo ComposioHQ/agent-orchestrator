@@ -26,6 +26,11 @@ session (it execs `tmux`, which runs `claude`/`codex`, etc.), and the agent's
 (`runtimeEnv` -> `HookPATH(m.executable, os.Getenv, ...)` in
 `backend/internal/session_manager/manager.go`).
 
+AO keeps that executable directory first after adding agent and Node runtime
+directories, and applies the same pin to reviewer and shell-terminal launches.
+Interactive login shells can still reorder `PATH` through user startup files,
+so this is a launch invariant and a best-effort convenience inside a shell.
+
 So whatever environment the daemon receives propagates to the entire stack:
 
 ```
