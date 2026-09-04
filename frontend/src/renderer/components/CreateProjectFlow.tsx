@@ -384,6 +384,23 @@ export function CreateProjectFlow({
 	const prepareProjectGit = async () => {
 		if (!projectValidation) return;
 		setError(null);
+		const remoteUrl = projectRemoteUrl.trim();
+		if (remoteUrl !== "") {
+			if (!isValidProjectRemote(remoteUrl)) {
+				setError(t("createProject.cloneInvalidUrl"));
+				return;
+			}
+			try {
+				const checkGitRepository = aoBridge.app.checkGitRepository;
+				if (checkGitRepository && !(await checkGitRepository(remoteUrl))) {
+					setError(t("createProject.cloneRepositoryUnavailable", { defaultValue: "This isn't a repository or you don't have access" }));
+					return;
+				}
+			} catch {
+				setError(t("createProject.cloneRepositoryUnavailable", { defaultValue: "This isn't a repository or you don't have access" }));
+				return;
+			}
+		}
 		setProjectPrepEvents(projectRequestedActionEvents(projectValidation.root.repoPath, projectApprovedActions));
 		setIsPreparingGit(true);
 		try {
@@ -392,7 +409,7 @@ export function CreateProjectFlow({
 					importKind: "project",
 					path: projectValidation.root.repoPath,
 					approvedActions: projectApprovedActions,
-					remoteUrl: projectRemoteUrl.trim() || undefined,
+					remoteUrl: remoteUrl || undefined,
 				},
 			});
 			if (apiError || !data) throw new Error(apiErrorMessage(apiError, t("createProject.couldNotAdd")));
@@ -472,7 +489,7 @@ export function CreateProjectFlow({
 			{hasModePicker && (
 				<>
 					<CreateProjectSourceDialog
-						childOpen={childTransitioning || cloneDialogOpen || folderPickerOpen || projectImportOpen}
+						childOpen={childTransitioning || cloneDialogOpen || folderPickerOpen || projectImportOpen || selectedPath !== null}
 						cloudAvailable={cloudAvailable}
 						cloudEnabled={cloudEnabled}
 						disabled={isBusy}
@@ -715,6 +732,18 @@ function suggestedProjectRemoteUrl(repoPath: string): string {
 		return `https://github.com/username/${withGitSuffix}`;
 	}
 	return `https://github.com/username/${withGitSuffix}`;
+}
+
+function isValidProjectRemote(value: string): boolean {
+	if (!value || /\s/.test(value) || value.startsWith("-")) return false;
+	if (/^[^/@:\s]+@[^/\s]+:.+\/.+$/.test(value)) return true;
+	try {
+		const parsed = new URL(value);
+		return ["file:", "git:", "http:", "https:", "ssh:"].includes(parsed.protocol) &&
+			parsed.pathname.split("/").filter(Boolean).length >= 2;
+	} catch {
+		return false;
+	}
 }
 
 function persistSuggestedProjectRemoteUrl(remoteUrl: string) {
