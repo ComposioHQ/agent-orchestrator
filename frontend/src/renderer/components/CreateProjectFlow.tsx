@@ -1282,11 +1282,12 @@ function ProjectImportDialog({
 									{validation.root.requiredActions.map((action) => {
 											const checked = approvedActions.includes(action);
 											return (
-												<label
+												<div
 													key={action}
-													className="flex cursor-pointer items-start gap-3 px-3 py-3 transition-colors hover:bg-muted/50"
+													className="flex items-start gap-3 px-3 py-3 transition-colors hover:bg-muted/50"
 												>
 													<input
+														id={`projectImportAction-${action}`}
 														type="checkbox"
 														className="mt-0.5 size-4 rounded border-border"
 														checked={checked}
@@ -1300,7 +1301,12 @@ function ProjectImportDialog({
 														}
 													/>
 													<span className="min-w-0 flex-1">
-														<span className="block text-[13px] font-medium text-foreground">{gitActionLabel(action)}</span>
+														<Label
+															htmlFor={`projectImportAction-${action}`}
+															className="block cursor-pointer text-[13px] font-medium text-foreground"
+														>
+															{gitActionLabel(action)}
+														</Label>
 														{action === "set_remote" ? (
 															<span className="mt-3 block space-y-2">
 																<Label
@@ -1325,8 +1331,8 @@ function ProjectImportDialog({
 																</span>
 															</span>
 														) : null}
-														</span>
-												</label>
+													</span>
+												</div>
 											);
 										})}
 									</div>

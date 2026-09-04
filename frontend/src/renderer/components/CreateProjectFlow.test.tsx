@@ -480,6 +480,9 @@ describe("CreateProjectFlow project import validation", () => {
 		await user.click(await screen.findByRole("button", { name: "Import an existing project" }));
 
 		const remoteAction = screen.getByRole("checkbox");
+		expect(remoteAction).toBeChecked();
+		await user.click(screen.getByLabelText("Origin remote URL"));
+		expect(remoteAction).toBeChecked();
 		await user.click(remoteAction);
 
 		expect(screen.getByText("Approve all required setup actions to continue importing this project.")).toBeInTheDocument();
