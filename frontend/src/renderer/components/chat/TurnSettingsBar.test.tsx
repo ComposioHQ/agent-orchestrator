@@ -243,8 +243,7 @@ describe("ACP session config options", () => {
 		);
 
 		await user.click(screen.getByRole("button", { name: "Model" }));
-		await user.hover(screen.getByRole("menuitem", { name: "Sonnet" }));
- (await screen.findByRole("menuitem", { name: "Sonnet 5 (provider alias)" })).focus();
+		screen.getByRole("menuitem", { name: "Sonnet 5 (provider alias)" }).focus();
  await user.keyboard("{Enter}");
 		expect(onChange).toHaveBeenCalledWith("model", { value: "sonnet" });
 	});

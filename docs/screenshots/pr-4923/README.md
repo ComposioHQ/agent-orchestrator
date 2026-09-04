@@ -14,7 +14,7 @@ No explicit selection is labeled Provider default, without guessing the catalog 
 
 ## Family and version menus
 
-The new screenshots below use the actual React renderer with explicit provider fixtures (not live provider execution). Playwright opens the family submenu, clicks the version, and asserts the exact request ID. Opus/Fable use the Claude ACP control surface; Astra uses Codex's native model control. Local symlinked dependencies use fallback fonts.
+The new screenshots below use the actual React renderer with explicit provider fixtures (not live provider execution). Playwright opens Opus because it has multiple advertised versions; singleton Astra and Fable are direct choices. It clicks the version and asserts the exact request ID. Opus/Fable use the Claude ACP control surface; Astra uses Codex's native model control. Local symlinked dependencies use fallback fonts.
 
 ![Codex Astra family](astra-versions.png)
 ![Claude Opus versions](opus-versions.png)

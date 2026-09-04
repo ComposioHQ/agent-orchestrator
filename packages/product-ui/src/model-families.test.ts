@@ -14,6 +14,16 @@ describe("model families", () => {
 		expect(groups.map((g)=>g.label)).toEqual(["Opus (a)","Opus (b)","Custom"]);
 		expect(groups[2].nested).toBe(false);
 	});
+	it("renders a family directly when only one version is advertised", () => {
+		const groups = groupModelFamilies([
+			{ id: "gpt-6-astra", label: "GPT-6 Astra" },
+			{ id: "claude-fable-5-1[1m]", label: "Fable 5.1" },
+		]);
+		expect(groups.map((group) => ({ label: group.label, nested: group.nested }))).toEqual([
+			{ label: "Astra", nested: false },
+			{ label: "Fable", nested: false },
+		]);
+	});
 	it("labels an unprefixed family without truncating its selector", () => {
  expect(groupModelFamilies([{ id:"opus",label:"Opus" },{id:"anthropic/claude-opus-5",label:"Opus 5"}]).map(g=>g.label)).toEqual(["Opus (local)","Opus (anthropic)"]);
  });

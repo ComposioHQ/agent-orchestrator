@@ -8,7 +8,9 @@ for (const family of ["Astra", "Opus", "Fable"]) {
  const id=family === "Astra" ? "gpt-6-astra" : family === "Opus" ? "claude-opus-4-8" : "claude-fable-5-1[1m]";
  const label=family === "Astra" ? "GPT-6 Astra" : family === "Opus" ? "Opus 4.8" : "Fable 5.1";
 	test(`${family} family selects exact advertised version @T0`, async ({ page }) => {
-		options[0].choices=[{value:"default",name:"Default"},{value:id,name:label}];
+		options[0].choices = family === "Opus"
+			? [{ value: "default", name: "Default" }, { value: "opus[1m]", name: "Opus 5" }, { value: id, name: label }]
+			: [{ value: "default", name: "Default" }, { value: id, name: label }];
  let chosen: unknown;
  const projectId = "model-identity";
 		const sessionId = "astra-chat";
@@ -40,8 +42,8 @@ for (const family of ["Astra", "Opus", "Fable"]) {
 		await trigger.click();
 		await expect(page.getByRole("menuitem", { name: /^Effort/ })).toHaveCount(0);
 		if (harness === "codex") await page.getByRole("menuitem", { name: /^Model/ }).hover();
-		await page.getByRole("menuitem", {name:family,exact:true}).hover();
-  const choice=page.getByRole("menuitem", {name:new RegExp("^"+label.replaceAll(".","\\."))});
+		if (family === "Opus") await page.getByRole("menuitem", { name: family, exact: true }).hover();
+		const choice = page.getByRole("menuitem", { name: new RegExp("^" + label.replaceAll(".", "\\.")) });
   await expect(choice).toBeVisible();
   await page.screenshot({path:`../docs/screenshots/pr-4923/${family.toLowerCase()}-versions.png`});
   await choice.click();
