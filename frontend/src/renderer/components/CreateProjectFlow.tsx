@@ -30,6 +30,8 @@ import { cn } from "../lib/utils";
 import type { ProjectKind } from "../types/workspace";
 import { CreateProjectAgentSheet, type CreateProjectAgentSelection } from "./CreateProjectAgentSheet";
 import CloneRepositoryDialog, { type CloneRepositoryDetails, type CloneRepositorySelection } from "./CloneRepositoryDialog";
+import { ModalBackdrop } from "./ModalBackdrop";
+import { PathRow } from "./PathRow";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
@@ -58,6 +60,8 @@ export function CreateProjectFlow({
 	children,
 	droppedPath,
 	embedded = false,
+	existingProjectNames = [],
+	existingProjectPaths = [],
 	idleLabel,
 	mode = "single_repo",
 	onCloneProject,
@@ -67,6 +71,8 @@ export function CreateProjectFlow({
 	sourceSignal,
 }: {
 	children?: (state: { choosePath: () => void; disabled: boolean; error: string | null; label: string }) => ReactNode;
+	existingProjectNames?: readonly string[];
+	existingProjectPaths?: readonly string[];
 	// A folder was dropped on the app window (ShellLayout owns the global
 	// listener). Mirrors openSignal but carries a path: skips straight to the
 	// mode picker with the native OS dialog step skipped.
@@ -492,6 +498,8 @@ export function CreateProjectFlow({
 						<CloneRepositoryDialog
 							disabled={isBusy}
 							error={error}
+							existingProjectNames={existingProjectNames}
+							existingProjectPaths={existingProjectPaths}
 							onBack={() => {
 								setError(null);
 								setCloneDialogOpen(false);
@@ -729,7 +737,7 @@ function CreateProjectFlowBackdrop({ open }: { open: boolean }) {
 	return (
 		<Dialog.Root open={open}>
 			<Dialog.Portal>
-				<Dialog.Overlay className="dialog-overlay data-[state=open]:animate-overlay-in data-[state=closed]:animate-overlay-out" />
+				<ModalBackdrop />
 			</Dialog.Portal>
 		</Dialog.Root>
 	);
@@ -1202,7 +1210,7 @@ function ProjectImportDialog({
 	return (
 		<Dialog.Root open={open} onOpenChange={onOpenChange}>
 			<Dialog.Portal>
-				<Dialog.Overlay className="dialog-overlay data-[state=open]:animate-overlay-in data-[state=closed]:animate-overlay-out" />
+				<ModalBackdrop />
 				<Dialog.Content
 					className="fixed left-1/2 top-1/2 z-overlay flex max-h-[min(640px,calc(100svh-24px))] w-[min(560px,calc(100vw-24px))] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-lg border border-border bg-popover p-0 text-popover-foreground shadow-xl data-[state=open]:animate-modal-in data-[state=closed]:animate-modal-out motion-reduce:animate-none"
 					onInteractOutside={(event) => event.preventDefault()}
@@ -1233,22 +1241,16 @@ function ProjectImportDialog({
 							<Label htmlFor="projectImportFolder" className="text-[13px] font-semibold text-[var(--color-text-import-title)]">
 								{t("createProject.projectFolder")}
 							</Label>
-							<button
-								type="button"
-								id="projectImportFolder"
-								aria-label={t("createProject.change")}
-								className="flex h-control-form w-full items-center overflow-hidden rounded-md border border-transparent bg-[var(--color-bg-import-card)] text-left text-[13px] text-foreground outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-50"
+							<PathRow
+								action={t("createProject.change")}
+								ariaLabel={t("createProject.change")}
 								disabled={disabled}
+								id="projectImportFolder"
+								icon={<Folder className="size-4 shrink-0 text-[var(--color-text-import-muted)]" aria-hidden="true" />}
 								onClick={onChangeFolder}
 							>
-								<span className="flex min-w-0 flex-1 items-center gap-3 px-3">
-									<Folder className="size-4 shrink-0 text-[var(--color-text-import-muted)]" aria-hidden="true" />
-									<span className="truncate">{displayImportPath(validation.root.repoPath)}</span>
-								</span>
-								<span className="flex h-full shrink-0 items-center border-l border-border/60 px-4 text-foreground hover:bg-foreground/10">
-									{t("createProject.change")}
-								</span>
-							</button>
+								{displayImportPath(validation.root.repoPath)}
+							</PathRow>
 						</div>
 						{hasChildRepos || suggestWorkspace ? (
 							<div className="text-[12px] leading-5 text-foreground">
@@ -1445,20 +1447,14 @@ function CreateProjectFolderDialog({
 					<div className="min-h-0 overflow-y-auto px-4 pb-1 pt-3">
 						{hasScan ? (
 							<div className="space-y-3">
-								<div className="flex items-center gap-3 rounded-md border border-[var(--color-border-import-modal)] bg-[var(--color-bg-import-card)] px-3 py-2.5">
-									<Folder className="size-4 shrink-0 text-[var(--color-text-import-muted)]" aria-hidden="true" />
-									<div className="min-w-0 flex-1">
-										<div className="truncate font-mono text-[13px] font-semibold text-[var(--color-text-import-title)]">
-											{displayImportPath(scan.path)}
-										</div>
-										<div className="mt-0.5 text-[11px] text-[var(--color-text-import-muted)]">
-											{isWorkspace ? t("createProject.workspaceRoot") : t("createProject.projectFolder")}
-										</div>
-									</div>
-									<Button type="button" variant="outline" disabled={disabled} onClick={onChooseFolder}>
-										{t("createProject.change")}
-									</Button>
-								</div>
+								<PathRow
+									action={t("createProject.change")}
+									disabled={disabled}
+									icon={<Folder className="size-4 shrink-0 text-[var(--color-text-import-muted)]" aria-hidden="true" />}
+									onClick={onChooseFolder}
+								>
+									{displayImportPath(scan.path)}
+								</PathRow>
 
 								{error && (
 									<div className="rounded-lg border border-destructive/40 bg-destructive/10">

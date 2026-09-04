@@ -4,6 +4,8 @@ import { AnimatePresence, motion } from "motion/react";
 import { type FormEvent, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { aoBridge } from "../lib/bridge";
+import { ModalBackdrop } from "./ModalBackdrop";
+import { PathRow } from "./PathRow";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
@@ -128,6 +130,7 @@ export default function CloneRepositoryDialog({
 	return (
 		<Dialog.Root open={open} onOpenChange={(next) => !next && !disabled && onClose()}>
 			<Dialog.Portal>
+				<ModalBackdrop />
 				<Dialog.Content className="fixed left-1/2 top-1/2 z-overlay flex max-h-[min(640px,calc(100svh-24px))] w-[min(560px,calc(100vw-24px))] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-lg border border-border bg-popover p-0 text-popover-foreground shadow-xl data-[state=open]:animate-modal-in data-[state=closed]:animate-modal-out motion-reduce:animate-none">
 					<div className="relative flex shrink-0 items-center gap-3 px-4 pt-3">
 						<Button
@@ -217,24 +220,18 @@ export default function CloneRepositoryDialog({
 								<Label htmlFor="cloneDestination" className="text-[13px] font-semibold text-[var(--color-text-import-title)]">
 									{t("createProject.cloneDestination")}
 								</Label>
-								<button
-									type="button"
-									id="cloneDestination"
-									aria-label={t("createProject.cloneChoose")}
-									aria-describedby={destinationError ? "cloneDestinationError" : undefined}
-									aria-invalid={destinationError ? true : undefined}
-									className="flex h-control-form w-full items-center overflow-hidden rounded-md border border-transparent bg-[var(--color-bg-import-card)] text-left text-[13px] text-foreground outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-50"
+								<PathRow
+									action={t("createProject.cloneChoose")}
+									ariaDescribedBy={destinationError ? "cloneDestinationError" : undefined}
+									ariaInvalid={Boolean(destinationError)}
+									ariaLabel={t("createProject.cloneChoose")}
 									disabled={disabled || choosingDestination}
+									icon={<Folder className="size-4 shrink-0 text-[var(--color-text-import-muted)]" aria-hidden="true" />}
+									id="cloneDestination"
 									onClick={() => void chooseDestination()}
 								>
-									<span className="flex min-w-0 flex-1 items-center gap-3 px-3">
-										<Folder className="size-4 shrink-0 text-[var(--color-text-import-muted)]" aria-hidden="true" />
-										<span className="truncate">{value.destinationParent || t("createProject.cloneDestinationPlaceholder")}</span>
-									</span>
-									<span className="flex h-full shrink-0 items-center border-l border-border/60 px-4 text-foreground hover:bg-foreground/10">
-										{t("createProject.cloneChoose")}
-									</span>
-								</button>
+									{value.destinationParent || t("createProject.cloneDestinationPlaceholder")}
+								</PathRow>
 								{destinationError ? (
 									<p id="cloneDestinationError" className="text-pretty text-[12px] leading-5 text-destructive" role="alert">
 										{destinationError}
