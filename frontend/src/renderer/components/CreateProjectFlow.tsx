@@ -1618,7 +1618,10 @@ function mergeWorkspaceImportRepo(
 		hasRemote: scanRepo?.hasRemote ?? Boolean(validationRepo?.hasOrigin),
 		status: scanRepo?.status ?? (validationRepo?.blockingErrors.length ? "error" : "ok"),
 		reason: scanRepo?.reason ?? validationRepo?.blockingErrors[0],
-		needsGitInit: scanRepo?.needsGitInit ?? validationRepo?.needsGitInit,
+		// The daemon validation is authoritative here: the legacy folder scan
+		// uses needsGitInit as a general "Git setup is needed" flag, while the
+		// validation API reserves it for folders that are not repositories.
+		needsGitInit: validationRepo ? validationRepo.needsGitInit : scanRepo?.needsGitInit,
 		requiredActions: validationRepo?.requiredActions ?? [],
 		blockingErrors: validationRepo?.blockingErrors ?? [],
 		isRepo: validationRepo?.isRepo,
