@@ -131,6 +131,9 @@ func migrate(db *sql.DB) error {
 	if err := goose.SetDialect("sqlite3"); err != nil {
 		return fmt.Errorf("set goose dialect: %w", err)
 	}
+	if err := repairRenumberedClaudeCodeAccountMigrationHistory(db); err != nil {
+		return fmt.Errorf("repair renumbered Claude Code account migration history: %w", err)
+	}
 	if err := repairRenumberedAgentInstallJobsMigrationHistory(db); err != nil {
 		return fmt.Errorf("repair renumbered agent-install-jobs migration history: %w", err)
 	}
@@ -184,6 +187,58 @@ func migrate(db *sql.DB) error {
 		return fmt.Errorf("run migrations: %w", err)
 	}
 	return reconcileSchema(db)
+}
+
+// repairRenumberedClaudeCodeAccountMigrationHistory preserves development
+// databases opened while this feature branch used 0125 for the Claude Code
+// tables. Main now owns 0125 and the unchanged Claude migration lives at 0126.
+func repairRenumberedClaudeCodeAccountMigrationHistory(db *sql.DB) error {
+	var gooseTable, claudeSchema, failurePoint int
+	if err := db.QueryRow(
+		`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'goose_db_version'`,
+	).Scan(&gooseTable); err != nil || gooseTable == 0 {
+		return err
+	}
+	if err := db.QueryRow(`
+SELECT COUNT(*) FROM sqlite_master
+WHERE (type = 'table' AND name IN ('claude_code_active_account', 'claude_code_account_switches'))
+   OR (type = 'index' AND name = 'idx_claude_code_account_switches_one_active')`).Scan(&claudeSchema); err != nil {
+		return err
+	}
+	if claudeSchema != 3 {
+		return nil
+	}
+	if err := db.QueryRow(
+		`SELECT COUNT(*) FROM pragma_table_info('agent_switches') WHERE name = 'failure_point'`,
+	).Scan(&failurePoint); err != nil {
+		return err
+	}
+	if failurePoint != 0 {
+		return nil
+	}
+
+	var oldApplied, canonicalApplied int
+	if err := db.QueryRow(`
+SELECT COALESCE((SELECT is_applied FROM goose_db_version WHERE version_id = 125 ORDER BY id DESC LIMIT 1), 0),
+       COALESCE((SELECT is_applied FROM goose_db_version WHERE version_id = 126 ORDER BY id DESC LIMIT 1), 0)`).Scan(&oldApplied, &canonicalApplied); err != nil {
+		return err
+	}
+	if oldApplied == 0 || canonicalApplied != 0 {
+		return nil
+	}
+
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.Exec(`INSERT INTO goose_db_version (version_id, is_applied) VALUES (126, 1)`); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM goose_db_version WHERE version_id = 125`); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // repairRenumberedAgentInstallJobsMigrationHistory preserves development
