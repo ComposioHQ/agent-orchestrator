@@ -8,6 +8,7 @@ import { CreateProjectFlow, type CloneProjectInput, type CreateProjectInput } fr
 const bridgeMocks = vi.hoisted(() => ({
 	checkAncestorRepo: vi.fn(),
 	chooseDirectory: vi.fn(),
+	getRepositoryBranch: vi.fn(),
 	scanImportFolder: vi.fn(),
 }));
 
@@ -23,6 +24,7 @@ vi.mock("../lib/bridge", () => ({
 		app: {
 			checkAncestorRepo: bridgeMocks.checkAncestorRepo,
 			chooseDirectory: bridgeMocks.chooseDirectory,
+			getRepositoryBranch: bridgeMocks.getRepositoryBranch,
 			scanImportFolder: bridgeMocks.scanImportFolder,
 		},
 	},
@@ -88,13 +90,25 @@ function CloudTestProviders({ children }: { children: ReactNode }) {
 vi.mock("./CreateProjectAgentSheet", () => ({
 	CreateProjectAgentSheet: ({
 		kind,
+		onSubmit,
 		open,
 		path,
 	}: {
 		kind: string;
+		onSubmit: (selection: { workerAgent: string; orchestratorAgent: string }) => Promise<void>;
 		open: boolean;
 		path: string | null;
-	}) => (open ? <div data-kind={kind} data-path={path ?? ""} data-testid="agent-sheet" /> : null),
+	}) =>
+		open ? (
+			<div data-kind={kind} data-path={path ?? ""} data-testid="agent-sheet">
+				<button
+					type="button"
+					onClick={() => void onSubmit({ workerAgent: "codex", orchestratorAgent: "codex" })}
+				>
+					Submit agents
+				</button>
+			</div>
+		) : null,
 }));
 
 // Probe stand-in: the real dialog needs its own form state and validation.
@@ -179,6 +193,7 @@ function projectValidation(
 beforeEach(() => {
 	bridgeMocks.checkAncestorRepo.mockReset().mockResolvedValue(undefined);
 	bridgeMocks.chooseDirectory.mockReset();
+	bridgeMocks.getRepositoryBranch.mockReset().mockResolvedValue(undefined);
 	bridgeMocks.scanImportFolder.mockReset().mockImplementation(async ({ path }: { path: string }) => okScan(path));
 	apiMocks.POST.mockReset();
 	apiMocks.apiErrorMessage.mockClear();
@@ -472,6 +487,35 @@ describe("CreateProjectFlow project import validation", () => {
 		const sheet = await screen.findByTestId("agent-sheet");
 		expect(sheet).toHaveAttribute("data-path", "/repo/project");
 		expect(screen.queryByText("Prepare project")).not.toBeInTheDocument();
+	});
+
+	it("passes the checked-out branch when creating an imported project", async () => {
+		const user = userEvent.setup();
+		const onCreateProject = vi.fn(async () => undefined);
+		bridgeMocks.chooseDirectory.mockResolvedValue("/repo/project");
+		bridgeMocks.getRepositoryBranch.mockResolvedValue("main");
+		apiMocks.POST.mockResolvedValueOnce({ data: projectValidation("/repo/project") });
+
+		render(
+			<CreateProjectFlow mode="choose" {...noop} onCreateProject={onCreateProject}>
+				{({ choosePath }) => <button onClick={choosePath}>New project</button>}
+			</CreateProjectFlow>,
+		);
+
+		await user.click(screen.getByRole("button", { name: "New project" }));
+		await user.click(await screen.findByRole("button", { name: "Import an existing project" }));
+		await user.click(await screen.findByRole("button", { name: "Submit agents" }));
+
+		await waitFor(() =>
+			expect(onCreateProject).toHaveBeenCalledWith({
+				path: "/repo/project",
+				asWorkspace: false,
+				defaultBranch: "main",
+				workerAgent: "codex",
+				orchestratorAgent: "codex",
+			}),
+		);
+		expect(bridgeMocks.getRepositoryBranch).toHaveBeenCalledWith("/repo/project");
 	});
 
 	it("shows queued and running setup progress after continue is clicked", async () => {

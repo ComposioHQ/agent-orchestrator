@@ -403,6 +403,42 @@ describe("shell workspace startup", () => {
 		expect(screen.getByTestId("global-toast")).toHaveTextContent("Project already added");
 	});
 
+	it("forwards an explicit default branch when creating a local project", async () => {
+		shellMocks.state.daemonStatus = { state: "ready", port: 4777 };
+		vi.mocked(apiClient.POST).mockResolvedValueOnce({
+			data: {
+				project: {
+					id: "proj-new",
+					name: "proj-new",
+					kind: "single_repo",
+					path: "/repo/project",
+					workspaceRepos: [],
+				},
+			},
+		});
+
+		await renderShell();
+
+		await shellMocks.state.shellValue?.createProject?.({
+			path: "/repo/project",
+			defaultBranch: "main",
+			workerAgent: "codex",
+			orchestratorAgent: "codex",
+		});
+
+		expect(apiClient.POST).toHaveBeenCalledWith("/api/v1/projects", {
+			body: {
+				path: "/repo/project",
+				asWorkspace: undefined,
+				config: {
+					defaultBranch: "main",
+					worker: { agent: "codex" },
+					orchestrator: { agent: "codex" },
+				},
+			},
+		});
+	});
+
 	it("leaves the session topbar row to the session split instead of reserving a full-width shell row", async () => {
 		shellMocks.state.routeParams = { sessionId: "sess-1" };
 		await renderShell();
