@@ -71,6 +71,7 @@ export async function installFakeBridge(page: Page, opts: FakeBridgeOptions = {}
 			const ao = {
 					app: {
 						getVersion: async () => version,
+						getGitHubLogin: async () => "test-user",
 						chooseDirectory: async () => null,
 						openExternal: async () => undefined,
 						scanImportFolder: async ({ path }: { path: string }) => ({ path, repos: [] }),
@@ -596,6 +597,7 @@ export async function installFakeAgent(page: Page, opts: FakeAgentOptions = {}):
 			const ao = {
 					app: {
 						getVersion: async () => version,
+						getGitHubLogin: async () => "test-user",
 						chooseDirectory: async () => null,
 						openExternal: async () => undefined,
 						scanImportFolder: async ({ path }: { path: string }) => ({ path, repos: [] }),
