@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"io/fs"
-	"log"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -68,6 +68,7 @@ type Service struct {
 	clock          func() time.Time
 	telemetry      ports.EventSink
 	defaultHarness domain.AgentHarness
+	logger         *slog.Logger
 	// addMu serialises the whole body of Add. Workspace registration performs
 	// filesystem mutations (git init, .gitignore writes, commits) that are not
 	// covered by the store's own writeMu, so path/id conflict checks plus the
@@ -88,6 +89,9 @@ type Deps struct {
 	Sessions       SessionTeardowner
 	Clock          func() time.Time
 	Telemetry      ports.EventSink
+	// Logger receives structured logs. Left nil, the service falls back to
+	// slog.Default, keeping service-focused tests logger-free.
+	Logger *slog.Logger
 }
 
 // New returns a project service backed by the given durable store.
@@ -107,9 +111,13 @@ func NewWithDeps(d Deps) *Service {
 		clock:          d.Clock,
 		telemetry:      d.Telemetry,
 		defaultHarness: defaultHarness,
+		logger:         d.Logger,
 	}
 	if s.clock == nil {
 		s.clock = time.Now
+	}
+	if s.logger == nil {
+		s.logger = slog.Default()
 	}
 	return s
 }
@@ -125,7 +133,7 @@ func (m *Service) List(ctx context.Context) ([]Summary, error) {
 		folderMissing := false
 		exists, err := folderExists(row.Path)
 		if err != nil {
-			log.Printf("project: stat %s: %v", row.Path, err)
+			m.logger.Warn("project: stat failed", "path", row.Path, "error", err)
 		} else {
 			folderMissing = !exists
 		}
@@ -763,7 +771,7 @@ func (m *Service) projectFromRow(ctx context.Context, row domain.ProjectRecord) 
 	folderMissing := false
 	exists, err := folderExists(row.Path)
 	if err != nil {
-		log.Printf("project: stat %s: %v", row.Path, err)
+		m.logger.Warn("project: stat failed", "path", row.Path, "error", err)
 	} else {
 		folderMissing = !exists
 	}

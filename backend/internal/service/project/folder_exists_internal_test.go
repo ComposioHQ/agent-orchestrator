@@ -65,7 +65,7 @@ func TestFolderExists_HelperSemantics(t *testing.T) {
 //
 //   exists, err := folderExists(row.Path)
 //   if err != nil {
-//       log.Printf("project: stat %s: %v", row.Path, err)
+//       logger.Warn("project: stat failed", "path", row.Path, "error", err)
 //       // folderMissing stays false (zero-value)
 //   } else {
 //       folderMissing = !exists
