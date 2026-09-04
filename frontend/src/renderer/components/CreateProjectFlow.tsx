@@ -436,7 +436,9 @@ export function CreateProjectFlow({
 					error,
 					label,
 				})}
-			<CreateProjectFlowBackdrop open={modePickerOpen || cloneDialogOpen || folderPickerOpen || selectedPath !== null || childTransitioning} />
+			<CreateProjectFlowBackdrop
+				open={(modePickerOpen || cloneDialogOpen || folderPickerOpen || selectedPath !== null || childTransitioning) && !projectImportOpen}
+			/>
 			{hasModePicker && embedded && !modePickerOpen && !cloneDialogOpen && selectedPath === null && (
 				<div className="flex w-full flex-col items-center gap-3">
 					{cloudEnabled && (
@@ -724,7 +726,7 @@ function CreateProjectFlowBackdrop({ open }: { open: boolean }) {
 	return (
 		<Dialog.Root open={open}>
 			<Dialog.Portal>
-				<Dialog.Overlay className="fixed inset-0 z-overlay bg-black/55 data-[state=open]:animate-overlay-in data-[state=closed]:animate-overlay-out motion-reduce:animate-none" />
+				<Dialog.Overlay className="dialog-overlay data-[state=open]:animate-overlay-in data-[state=closed]:animate-overlay-out" />
 			</Dialog.Portal>
 		</Dialog.Root>
 	);
@@ -1197,7 +1199,7 @@ function ProjectImportDialog({
 	return (
 		<Dialog.Root open={open} onOpenChange={onOpenChange}>
 			<Dialog.Portal>
-				<Dialog.Overlay className="fixed inset-0 z-overlay bg-black/55 data-[state=open]:animate-overlay-in data-[state=closed]:animate-overlay-out motion-reduce:animate-none" />
+				<Dialog.Overlay className="dialog-overlay data-[state=open]:animate-overlay-in data-[state=closed]:animate-overlay-out" />
 				<Dialog.Content
 					className="fixed left-1/2 top-1/2 z-overlay flex max-h-[min(640px,calc(100svh-24px))] w-[min(560px,calc(100vw-24px))] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-lg border border-border bg-popover p-0 text-popover-foreground shadow-xl data-[state=open]:animate-modal-in data-[state=closed]:animate-modal-out motion-reduce:animate-none"
 					onInteractOutside={(event) => event.preventDefault()}
