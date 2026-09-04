@@ -1113,8 +1113,11 @@ export default function TerminalScreen() {
 						style={({ pressed }) => [styles.headerBrowserBtn, pressed && { opacity: 0.6 }]}
 					>
 						{/* A spinner rather than a dimmed glyph: the recheck only runs while
-						    the icon is already faint, so fading it further reads as broken. */}
-						{rechecking ? (
+						    the icon is already faint, so fading it further reads as broken.
+						    `starting` shows it too — that POST is disabled-but-silent for up
+						    to REQUEST_TIMEOUT_MS otherwise, the same dead-button shape the
+						    recheck spinner exists to remove. */}
+						{rechecking || interfaceSwitch.starting ? (
 							<ActivityIndicator size="small" color={t.blue} />
 						) : (
 							<Feather
