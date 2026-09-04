@@ -136,6 +136,25 @@ func TestValidateProjectImportMissingPathReturnsBlockingError(t *testing.T) {
 	}
 }
 
+func TestValidateProjectImportRejectsAOStatePath(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	statePath := filepath.Join(home, ".ao", "data")
+	if err := os.MkdirAll(statePath, 0o750); err != nil {
+		t.Fatal(err)
+	}
+
+	svc := New(Deps{Store: newFakeStore()})
+	result, err := svc.Validate(context.Background(), ImportValidationInput{ImportKind: ImportKindProject, Path: statePath})
+	if err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	if result.IsValid || result.NextStep != ImportNextStepError {
+		t.Fatalf("result = %#v, want unsafe-path error", result)
+	}
+	wantActions(t, result.BlockingErrors, []string{"IMPORT_PATH_UNSAFE"})
+}
+
 func TestValidateProjectImportUnbornRepositoryNeedsCommitAndRemote(t *testing.T) {
 	ctx := context.Background()
 	repo := filepath.Join(t.TempDir(), "repo")

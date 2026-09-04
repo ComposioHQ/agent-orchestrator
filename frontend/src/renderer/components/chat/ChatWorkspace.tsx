@@ -275,6 +275,8 @@ export interface ChatWorkspaceProps {
 	models?: ChatModel[];
 	/** The AO session this surface renders for. Used to attach the reviewer pane. */
 	session?: WorkspaceSession;
+	/** Refresh the owning workspace cache after the shared primary tab is renamed. */
+	onSessionRenamed?: () => void | Promise<void>;
 	/** The selected reviewer pane. Kept even while its tab is temporarily unavailable. */
 	reviewerTarget?: ReviewerTerminalTarget;
 	/** Switch the active tab back to the chat timeline. */
@@ -389,6 +391,7 @@ export function ChatWorkspace({
 	reviewerTerminal,
 	onOpenReviewerTerminal,
 	session,
+	onSessionRenamed,
 	reviewerTarget,
 	onSelectChat,
 	shellTerminals,
@@ -1000,6 +1003,7 @@ export function ChatWorkspace({
 				onTabsKeyDown={handleChatTabsKeyDown}
 				headerActions={headerActions}
 				session={session}
+				onSessionRenamed={onSessionRenamed}
 				sessionTabAction={sessionTabAction}
 				tabStripAction={tabStripAction}
 				workspaceTabActions={workspaceTabActions}
@@ -1330,6 +1334,7 @@ function ChatHeader({
 	inline,
 	topbarBounds,
 	session,
+	onSessionRenamed,
 }: {
 	snapshot: ConversationSnapshot;
 	sessionTitle?: string;
@@ -1353,6 +1358,7 @@ function ChatHeader({
 	orderedAuxiliaryTabs: ChatAuxiliaryTab[];
 	onReorderAuxiliaryTabs: (keys: string[]) => void;
 	session?: WorkspaceSession;
+	onSessionRenamed?: () => void | Promise<void>;
 	/** Fullscreen content cannot see the normal topbar portal outside its subtree. */
 	inline?: boolean;
 	topbarBounds: TopbarBounds;
@@ -1411,6 +1417,7 @@ function ChatHeader({
 								isActive={timelineActive}
 								label={label}
 								onSelect={timelineActive ? undefined : onSelectChat}
+								onRenamed={onSessionRenamed}
 								session={session}
 								tabAction={sessionTabAction}
 							/>

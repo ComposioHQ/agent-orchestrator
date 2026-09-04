@@ -30,6 +30,7 @@ import {
 	LogOut,
 	MoreVertical,
 	PanelLeft,
+	Pencil,
 	Pin,
 	PinOff,
 	Plus,
@@ -74,7 +75,6 @@ import { cloudSessionsQueryKey, workspaceQueryKey } from "../hooks/useWorkspaceQ
 import { usePinSession, useUnpinSession } from "../hooks/usePinSession";
 import { spawnCloudOrchestrator } from "../lib/cloud-orchestrator";
 import { spawnOrchestrator } from "../lib/spawn-orchestrator";
-import { renameSession } from "../lib/rename-session";
 import { formatTimeCompact, formatTimeTerse } from "../lib/format-time";
 import { useTerminateSession } from "../hooks/useTerminateSession";
 import { useResizable } from "../hooks/useResizable";
@@ -84,6 +84,7 @@ import { useLocalSignInDialogStore } from "../stores/local-signin-dialog-store";
 import { useShellMaybe } from "../lib/shell-context";
 import { useSidebarUpdateDismissal } from "../hooks/useSidebarUpdateDismissal";
 import { useUpdateStatus } from "../hooks/useUpdateStatus";
+import { MAX_SESSION_DISPLAY_NAME_LEN, useSessionRename } from "../hooks/useSessionRename";
 import { effectiveShortcutBindings, shortcutBindingKeys } from "../../shared/shortcuts";
 import {
 	ContextMenu,
@@ -158,7 +159,6 @@ const PROJECT_DRAG_OVERLAY_STYLE: CSSProperties = { willChange: "transform" };
 
 // Mirrors the daemon's display-name cap (maxDisplayNameLen) and the spawn
 // `--name` flag, so inline edits never round-trip a value the API would reject.
-const MAX_DISPLAY_NAME_LEN = 20;
 
 // Reorder drags start from the row's primary click surface. The 4px activation
 // distance keeps a plain navigation/disclosure click from starting a drag;
@@ -1683,40 +1683,28 @@ function SessionRow({
 		: undefined;
 	const switchStatusId = useId();
 	const describedBy = switchLabel ? switchStatusId : undefined;
-	const [isEditing, setIsEditing] = useState(false);
-	const [draft, setDraft] = useState(session.title);
+	const queryClient = useQueryClient();
+	const refreshWorkspaces = useCallback(
+		() => queryClient.invalidateQueries({ queryKey: workspaceQueryKey }),
+		[queryClient],
+	);
+	const rename = useSessionRename(session, refreshWorkspaces);
 	const [sessionPressed, setSessionPressed] = useState(false);
 	const lastTouchAtRef = useRef(0);
 	const suppressTouchOpenRef = useRef(false);
-	// Escape must not be swallowed by the blur-to-save path: the keydown handler
-	// blurs the input, so it flags a cancel here for onBlur to honour.
-	const cancelledRef = useRef(false);
+	const pendingOpenRef = useRef<number | null>(null);
+	const cancelPendingOpen = useCallback(() => {
+		if (pendingOpenRef.current === null) return;
+		window.clearTimeout(pendingOpenRef.current);
+		pendingOpenRef.current = null;
+	}, []);
+	useEffect(() => cancelPendingOpen, [cancelPendingOpen]);
+	const beginRename = useCallback(() => {
+		cancelPendingOpen();
+		rename.begin();
+	}, [cancelPendingOpen, rename.begin]);
 
-	const queryClient = useQueryClient();
-
-	const startEditing = useCallback(() => {
-		setDraft(session.title);
-		setIsEditing(true);
-	}, [session.title]);
-
-	const commit = async () => {
-		if (cancelledRef.current) {
-			cancelledRef.current = false;
-			setIsEditing(false);
-			return;
-		}
-		setIsEditing(false);
-		const name = draft.trim();
-		if (!name || name === session.title) return;
-		try {
-			await renameSession(session.id, name);
-			await queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
-		} catch (err) {
-			console.error("Failed to rename session:", err);
-		}
-	};
-
-	if (isEditing) {
+	if (rename.isEditing) {
 		return (
 			<SidebarMenuSubItem className={cn(indented && "pl-0.5")}>
 				<div
@@ -1735,9 +1723,9 @@ function SessionRow({
 							session.lastUserMessageAt && "pr-[36px]",
 						)}
 						data-session-inline-editor=""
-						maxLength={MAX_DISPLAY_NAME_LEN}
-						onBlur={() => void commit()}
-						onChange={(e) => setDraft(e.target.value)}
+						maxLength={MAX_SESSION_DISPLAY_NAME_LEN}
+						onBlur={() => void rename.commit()}
+						onChange={(e) => rename.setDraft(e.target.value)}
 						onFocus={(e) => e.currentTarget.select()}
 						onKeyDown={(e) => {
 							if (e.key === "Enter") {
@@ -1745,11 +1733,10 @@ function SessionRow({
 								e.currentTarget.blur();
 							} else if (e.key === "Escape") {
 								e.preventDefault();
-								cancelledRef.current = true;
-								e.currentTarget.blur();
+								rename.cancel();
 							}
 						}}
-						value={draft}
+						value={rename.draft}
 					/>
 					<SessionMessageAge session={session} />
 				</div>
@@ -1758,12 +1745,14 @@ function SessionRow({
 	}
 
 	return (
-		<SidebarMenuSubItem
-			className={cn(indented && "pl-0.5", reorder?.isDragging && "z-chrome cursor-grabbing opacity-60")}
-			data-dragging={reorder?.isDragging ? "true" : undefined}
-			ref={reorder?.setNodeRef}
-			style={reorder ? sortableRowStyle(reorder) : undefined}
-		>
+		<ContextMenu>
+			<ContextMenuTrigger asChild>
+				<SidebarMenuSubItem
+					className={cn(indented && "pl-0.5", reorder?.isDragging && "z-chrome cursor-grabbing opacity-60")}
+					data-dragging={reorder?.isDragging ? "true" : undefined}
+					ref={reorder?.setNodeRef}
+					style={reorder ? sortableRowStyle(reorder) : undefined}
+				>
 			<motion.div
 				layout={disableLayout || listIsDragging ? false : "position"}
 				layoutDependency={disableLayout ? undefined : layoutDependency}
@@ -1801,22 +1790,36 @@ function SessionRow({
 							)}
 							{...(reorder?.listeners ?? {})}
 							onClick={(event) => {
-								if (
-									event.detail > 1 &&
-									(event.target as HTMLElement).closest("[data-session-name]")
-								) {
+								if (event.detail === 0) {
+									cancelPendingOpen();
+									onOpen();
+									return;
+								}
+								if (event.detail > 1) {
+									cancelPendingOpen();
 									return;
 								}
 								if (suppressTouchOpenRef.current) {
 									suppressTouchOpenRef.current = false;
 									return;
 								}
-								onOpen();
+								// Wait for the native double-click window before navigating. A
+								// second click cancels this so inline rename has no route side effect.
+								cancelPendingOpen();
+								pendingOpenRef.current = window.setTimeout(() => {
+									pendingOpenRef.current = null;
+									onOpen();
+								}, 500);
 							}}
 							onKeyDown={(event) => {
 								if (event.key !== "F2") return;
 								event.preventDefault();
-								startEditing();
+								beginRename();
+							}}
+							onDoubleClick={(event) => {
+								event.preventDefault();
+								event.stopPropagation();
+								beginRename();
 							}}
 							ref={reorder?.setActivatorNodeRef}
 							type="button"
@@ -1829,17 +1832,12 @@ function SessionRow({
 										active ? "text-foreground" : "text-muted-foreground group-hover/session-row:text-foreground",
 									)}
 									data-session-name=""
-									onDoubleClick={(event) => {
-										event.preventDefault();
-										event.stopPropagation();
-										startEditing();
-									}}
 									onPointerUp={(event) => {
 										if (event.pointerType !== "touch") return;
 										const now = Date.now();
 										if (now - lastTouchAtRef.current <= 500) {
 											suppressTouchOpenRef.current = true;
-											startEditing();
+										beginRename();
 										}
 										lastTouchAtRef.current = now;
 									}}
@@ -1862,7 +1860,15 @@ function SessionRow({
 					/>
 				</div>
 			</motion.div>
-		</SidebarMenuSubItem>
+				</SidebarMenuSubItem>
+			</ContextMenuTrigger>
+			<ContextMenuContent className="min-w-44">
+				<ContextMenuItem aria-label={t("shell.renameSession", { title: session.title })} onSelect={beginRename}>
+					<Pencil aria-hidden="true" />
+					{t("shell.rename")}
+				</ContextMenuItem>
+			</ContextMenuContent>
+		</ContextMenu>
 	);
 }
 
