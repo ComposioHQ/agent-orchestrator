@@ -280,3 +280,62 @@ func (mutatingLaunchGate) PreLaunch(_ context.Context, req ports.PreLaunchReques
 	req.Env["SNEAKED_IN"] = "1"
 	return ports.PreLaunchDecision{Allow: true}, nil
 }
+
+// menard-software/setup-agent-orchestrator#432, the follow-on to the gate
+// itself. Seeing the effective config root is not enough: if the child inherits
+// CLAUDE_CONFIG_DIR from the operator's environment, a contribute-only gate
+// cannot put the child and the state it seeds in the same root. It writes trust
+// to the root it owns, the child reads the root it inherited, and the child
+// stops at a prompt whose answer exists in a file it never opens.
+//
+// That is the measured incident: trust true in the default root for the exact
+// worktree paths, absent from the effective inherited root.
+func TestSpawn_LaunchGateCanTakeOwnershipOfTheAgentConfigRoot(t *testing.T) {
+	const inherited = "/home/rose/.ao/bench-claude"
+	const aoOwned = "/ao/data/claude-session-config/mer-1"
+	gate := &recordingLaunchGate{decision: ports.PreLaunchDecision{
+		Allow:       true,
+		EnvOverride: map[string]string{"CLAUDE_CONFIG_DIR": aoOwned},
+	}}
+	rt, _, deps := gateSpawnDepsWithProjectEnv(t, gate, map[string]string{"CLAUDE_CONFIG_DIR": inherited})
+	m := New(deps)
+
+	if _, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker}); err != nil {
+		t.Fatalf("spawn: %v", err)
+	}
+	if got := gate.seen[0].Env["CLAUDE_CONFIG_DIR"]; got != inherited {
+		t.Fatalf("gate saw %q, want the inherited root it must decide about", got)
+	}
+	if got := rt.lastCfg.Env["CLAUDE_CONFIG_DIR"]; got != aoOwned {
+		t.Fatalf("child CLAUDE_CONFIG_DIR = %q, want the AO-owned root %q; a gate that "+
+			"cannot redirect it seeds trust into a file the child never reads", got, aoOwned)
+	}
+}
+
+// An override is bounded. A gate may take a variable the agent owns; it may not
+// take one the daemon owns, or it could redirect a session's own reporting.
+func TestSpawn_LaunchGateOverrideCannotTakeAOOwnedVariables(t *testing.T) {
+	gate := &recordingLaunchGate{decision: ports.PreLaunchDecision{
+		Allow: true,
+		EnvOverride: map[string]string{
+			"AO_SESSION_ID":     "someone-else",
+			"AO_DATA_DIR":       "/tmp/elsewhere",
+			"CLAUDE_CONFIG_DIR": "/ao/owned",
+		},
+	}}
+	rt, _, deps := gateSpawnDeps(t, gate)
+	m := New(deps)
+
+	if _, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker}); err != nil {
+		t.Fatalf("spawn: %v", err)
+	}
+	if got := rt.lastCfg.Env["AO_SESSION_ID"]; got == "someone-else" {
+		t.Fatal("a gate override must not take an AO-owned variable")
+	}
+	if got := rt.lastCfg.Env["AO_DATA_DIR"]; got == "/tmp/elsewhere" {
+		t.Fatal("a gate override must not redirect the session data dir")
+	}
+	if got := rt.lastCfg.Env["CLAUDE_CONFIG_DIR"]; got != "/ao/owned" {
+		t.Fatalf("CLAUDE_CONFIG_DIR = %q, want the agent-owned variable to be overridable", got)
+	}
+}

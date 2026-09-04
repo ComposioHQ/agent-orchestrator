@@ -3,6 +3,7 @@ package ports
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
@@ -608,13 +609,39 @@ const (
 // PreLaunchDecision is a gate's answer. The zero value refuses, so a gate that
 // returns nothing by mistake stops the launch rather than waving it through.
 type PreLaunchDecision struct {
-	// Env is merged into the child environment. Keys already set by AO are not
+	// Env is merged into the child environment. Keys already set are not
 	// replaced: a gate contributes, it does not take over the environment.
 	Env map[string]string
+	// EnvOverride replaces keys that are already set, which Env deliberately
+	// cannot do. It is separate from Env so that taking ownership of a variable
+	// is a visible act rather than a side effect of contributing one.
+	//
+	// It exists for one narrow case: an agent whose configuration root is chosen
+	// by the environment. Claude reads CLAUDE_CONFIG_DIR, and an operator or an
+	// outer process may already have set it. A gate that can only contribute is
+	// then unable to put the child and whatever seeds the child's state in the
+	// same root -- it writes trust to the root it owns, the child reads the root
+	// it inherited, and the child stops at a prompt whose answer exists in a
+	// file it never opens. That was observed live, and it is why contribute-only
+	// is not enough.
+	//
+	// AO's own variables are never overridable: see LaunchGateProtectedEnv. A
+	// gate may take a variable the agent owns; it may not take one the daemon
+	// owns.
+	EnvOverride map[string]string
 	// Reason is required when Allow is false and is surfaced to the caller.
 	Reason string
 	// PromptKind optionally names the machine-readable blocker a gate
 	// recognised, for example workspace_trust or bypass_acknowledgement.
 	PromptKind string
 	Allow      bool
+}
+
+
+// LaunchGateProtectedEnv reports whether a launch gate is forbidden to override
+// this variable. AO's own names carry session identity and callback wiring into
+// the child; rewriting them could redirect a session's activity reporting or its
+// data store, which is a different power from choosing an agent's config root.
+func LaunchGateProtectedEnv(key string) bool {
+	return strings.HasPrefix(key, "AO_")
 }

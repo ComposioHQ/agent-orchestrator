@@ -4772,6 +4772,14 @@ func (m *Manager) applyLaunchGate(ctx context.Context, id domain.SessionID, cfg 
 		}
 		env[key] = value
 	}
+	// An override is the gate taking ownership of a variable the agent reads,
+	// which contributing cannot do. AO's own names stay AO's.
+	for key, value := range decision.EnvOverride {
+		if key == "" || ports.LaunchGateProtectedEnv(key) {
+			continue
+		}
+		env[key] = value
+	}
 	return nil
 }
 

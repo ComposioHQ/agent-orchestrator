@@ -139,3 +139,53 @@ func TestLauncherSpawnWithoutGateIsUnchanged(t *testing.T) {
 		t.Fatal("runtime.Create must run when no gate is wired")
 	}
 }
+
+// Reviewer half of #432. The measured incident was on a reviewer child: its
+// environment carried CLAUDE_CONFIG_DIR pointing at a root whose state file had
+// none of the trusted paths. Parity means the reviewer gate can take ownership
+// of that root exactly as the worker gate can, and is bounded the same way.
+func TestLauncherSpawnGateCanTakeOwnershipOfTheReviewerConfigRoot(t *testing.T) {
+	const inherited = "/home/rose/.ao/bench-claude"
+	const aoOwned = "/ao/data/claude-session-config/mer-1-reviewer"
+	gate := &reviewGateRecorder{decision: ports.PreLaunchDecision{
+		Allow:       true,
+		EnvOverride: map[string]string{"CLAUDE_CONFIG_DIR": aoOwned},
+	}}
+	rt := &fakeRuntime{}
+	l := NewLauncher(
+		fakeReviewerResolver{reviewer: &fakeReviewer{env: map[string]string{"CLAUDE_CONFIG_DIR": inherited}}, ok: true},
+		rt, t.TempDir(), WithLaunchGate(gate))
+
+	if _, err := l.Spawn(context.Background(), launchSpec()); err != nil {
+		t.Fatalf("Spawn: %v", err)
+	}
+	if got := gate.seen[0].Env["CLAUDE_CONFIG_DIR"]; got != inherited {
+		t.Fatalf("gate saw %q, want the inherited root", got)
+	}
+	if got := rt.createCfg.Env["CLAUDE_CONFIG_DIR"]; got != aoOwned {
+		t.Fatalf("reviewer child CLAUDE_CONFIG_DIR = %q, want the AO-owned root %q", got, aoOwned)
+	}
+}
+
+func TestLauncherSpawnGateOverrideCannotTakeAOOwnedVariables(t *testing.T) {
+	gate := &reviewGateRecorder{decision: ports.PreLaunchDecision{
+		Allow: true,
+		EnvOverride: map[string]string{
+			"AO_REVIEW_SESSION_ID": "hijacked",
+			"CLAUDE_CONFIG_DIR":    "/ao/owned",
+		},
+	}}
+	rt := &fakeRuntime{}
+	l := NewLauncher(fakeReviewerResolver{reviewer: &fakeReviewer{}, ok: true}, rt, t.TempDir(),
+		WithLaunchGate(gate))
+
+	if _, err := l.Spawn(context.Background(), launchSpec()); err != nil {
+		t.Fatalf("Spawn: %v", err)
+	}
+	if got := rt.createCfg.Env["AO_REVIEW_SESSION_ID"]; got == "hijacked" {
+		t.Fatal("a gate override must not take an AO-owned reviewer variable")
+	}
+	if got := rt.createCfg.Env["CLAUDE_CONFIG_DIR"]; got != "/ao/owned" {
+		t.Fatalf("CLAUDE_CONFIG_DIR = %q, want the agent-owned variable overridable", got)
+	}
+}
