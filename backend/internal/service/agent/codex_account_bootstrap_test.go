@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -94,6 +95,101 @@ func TestCodexBootstrapCooldownAndSafeFailure(t *testing.T) {
 	factory.mu.Unlock()
 	if opens != 1 {
 		t.Fatalf("cooldown opened %d clients", opens)
+	}
+}
+
+// The credential-file helpers summarize CreateTemp, Write, Sync, Close, and
+// rename failures behind an opaque message but must preserve the underlying os
+// error so bootstrap can still tell a transient I/O fault from an unsafe-storage
+// rejection. Before the cause was preserved, every one of these was classified
+// account_storage_unsafe with retryable=false and blocked Codex until restart.
+func TestBootstrapStorageFailureClassifiesPreservedIOCause(t *testing.T) {
+	const summary = "codex replacement staging could not be written"
+	for name, tc := range map[string]struct {
+		err       error
+		reason    string
+		retryable bool
+	}{
+		"transient path write": {
+			err:       codexStorageIOFailure(summary, &os.PathError{Op: "write", Path: "/private/staging/auth.json", Err: syscall.ENOSPC}),
+			reason:    "account_storage_unavailable",
+			retryable: true,
+		},
+		"transient rename link": {
+			err:       codexStorageIOFailure("codex replacement could not be committed", &os.LinkError{Op: "rename", Old: "/private/staging/tmp", New: "/private/home/auth.json", Err: syscall.EIO}),
+			reason:    "account_storage_unavailable",
+			retryable: true,
+		},
+		"permission stays unsafe": {
+			err:       codexStorageIOFailure(summary, &os.PathError{Op: "open", Path: "/private/staging/auth.json", Err: os.ErrPermission}),
+			reason:    "account_storage_unsafe",
+			retryable: false,
+		},
+		"validation stays unsafe": {
+			err:       errors.New("codex file has an unsafe ancestor"),
+			reason:    "account_storage_unsafe",
+			retryable: false,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			var failure *codexBootstrapFailure
+			if !errors.As(bootstrapStorageFailure(tc.err), &failure) {
+				t.Fatalf("not a bootstrap failure: %#v", tc.err)
+			}
+			if failure.reason != tc.reason || failure.retryable != tc.retryable {
+				t.Fatalf("classified %s retryable=%t, want %s retryable=%t", failure.reason, failure.retryable, tc.reason, tc.retryable)
+			}
+			// The preserved cause must never surface a path through the message.
+			if strings.Contains(tc.err.Error(), "/private/") {
+				t.Fatalf("opaque summary leaked a path: %q", tc.err.Error())
+			}
+		})
+	}
+}
+
+// Task creation admits through POST /api/v1/orchestrators/delegate. A transient
+// bootstrap failure must render the retryable 503 envelope on that endpoint and
+// then admit a later attempt without restarting the daemon.
+func TestCodexBootstrapDelegateEndpointRecoversAfterRetry(t *testing.T) {
+	root := t.TempDir()
+	attempts := 0
+	factory := &fakeCodexAccountFactory{open: func(ports.CodexAccountContext) (ports.CodexAccountClient, error) {
+		attempts++
+		if attempts == 1 {
+			return nil, errors.New("secret credential /private/path")
+		}
+		return &fakeCodexAccountClient{read: ports.CodexAccountObservation{Authentication: domain.AgentAuthenticationUnauthorized}}, nil
+	}}
+	manager := newCodexAccountManager(context.Background(), filepath.Join(root, "accounts"), filepath.Join(root, "pending"), filepath.Join(root, "staging"), filepath.Join(root, "global"), factory, nil, nil)
+	now := time.Now()
+	manager.now = func() time.Time { return now }
+	service := &Service{codexAccounts: manager}
+
+	err := service.WaitCodexAccountBootstrap(context.Background())
+	if err == nil {
+		t.Fatal("first delegate admission unexpectedly succeeded")
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/orchestrators/delegate", nil)
+	req = req.WithContext(context.WithValue(req.Context(), middleware.RequestIDKey, "delegate-request"))
+	rec := httptest.NewRecorder()
+	envelope.WriteError(rec, req, err)
+	var body envelope.APIError
+	if decodeErr := json.Unmarshal(rec.Body.Bytes(), &body); decodeErr != nil {
+		t.Fatal(decodeErr)
+	}
+	if rec.Code != http.StatusServiceUnavailable || body.Code != "CODEX_ACCOUNT_MANAGEMENT_UNAVAILABLE" || body.RequestID != "delegate-request" || body.Details["retryable"] != true {
+		t.Fatalf("delegate failure envelope = %d %s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "secret") || strings.Contains(rec.Body.String(), "/private/path") {
+		t.Fatal("provider error leaked through delegate envelope")
+	}
+
+	now = now.Add(time.Minute)
+	if err := service.WaitCodexAccountBootstrap(context.Background()); err != nil {
+		t.Fatalf("delegate retry remained blocked: %v", err)
+	}
+	if attempts != 2 {
+		t.Fatalf("attempts = %d", attempts)
 	}
 }
 

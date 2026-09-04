@@ -91,9 +91,15 @@ func bootstrapFailure(reason string, retryable bool) error {
 
 func bootstrapStorageFailure(err error) error {
 	// Filesystem validation failures are plain errors, deliberately fail closed.
-	// Only recognizable I/O failures are eligible for another attempt.
+	// Only recognizable I/O failures are eligible for another attempt. The
+	// secure-file helpers summarize their cause behind an opaque, path-free
+	// message but preserve the underlying os error through Unwrap, so a transient
+	// disk or I/O fault is not misclassified as unsafe storage and left blocked
+	// until AO restarts.
 	var pathErr *os.PathError
-	retryable := errors.As(err, &pathErr) && !errors.Is(err, os.ErrPermission) && !errors.Is(err, os.ErrExist) && !errors.Is(err, syscall.ENOTDIR) && !errors.Is(err, syscall.ELOOP)
+	var linkErr *os.LinkError
+	isIOFault := errors.As(err, &pathErr) || errors.As(err, &linkErr)
+	retryable := isIOFault && !errors.Is(err, os.ErrPermission) && !errors.Is(err, os.ErrExist) && !errors.Is(err, syscall.ENOTDIR) && !errors.Is(err, syscall.ELOOP)
 	if !retryable {
 		return bootstrapFailure("account_storage_unsafe", false)
 	}
