@@ -949,12 +949,16 @@ export function SessionPaneTab({
 	const providerLabel = session ? agentLabel(session.provider) : undefined;
 	const tabIcon = session ? <AgentAvatar className="size-terminal-agent-icon" decorative provider={session.provider} /> : icon;
 	const connected = appearance === "connected";
-	const rename = useSessionRename(session, onRenamed);
-	const editingContent = session && rename.isEditing ? (
+	// A session object supplies the tab presentation; refresh wiring explicitly
+	// opts the owning surface into rename so shared preview/cloud tabs cannot
+	// persist a title without updating their query cache.
+	const renameSession = onRenamed ? session : undefined;
+	const rename = useSessionRename(renameSession, onRenamed);
+	const editingContent = renameSession && rename.isEditing ? (
 		<div className="flex h-full min-w-0 flex-1 items-center gap-2 px-2">
 			{tabIcon}
 			<input
-				aria-label={t("shell.renameSession", { title: session.title })}
+				aria-label={t("shell.renameSession", { title: renameSession.title })}
 				autoFocus
 				className="min-w-0 flex-1 rounded-xs border border-accent bg-background px-1 text-control text-foreground outline-none ring-1 ring-accent"
 				maxLength={MAX_SESSION_DISPLAY_NAME_LEN}
@@ -980,20 +984,20 @@ export function SessionPaneTab({
 			active={isActive}
 			buttonProps={{
 				"aria-current": isActive,
-				"aria-keyshortcuts": session ? "F2" : undefined,
+				"aria-keyshortcuts": renameSession ? "F2" : undefined,
 				"aria-label": [label, providerLabel, activityLabel].filter(Boolean).join(" · "),
 				"aria-selected": isActive,
 				onClick: (event) => {
 					if (event.detail > 1) return;
 					onSelect?.();
 				},
-				onDoubleClick: session
+				onDoubleClick: renameSession
 					? (event) => {
 							event.preventDefault();
 							rename.begin();
 						}
 					: undefined,
-				onKeyDown: session
+				onKeyDown: renameSession
 					? (event) => {
 							if (event.key !== "F2") return;
 							event.preventDefault();
@@ -1014,14 +1018,14 @@ export function SessionPaneTab({
 			<span className="truncate">{label}</span>
 		</TerminalTabFrame>
 	);
-	if (!session || rename.isEditing) return tabFrame;
+	if (!renameSession || rename.isEditing) return tabFrame;
 	return (
 		<ContextMenu>
 			<ContextMenuTrigger asChild>
 				<span className="contents">{tabFrame}</span>
 			</ContextMenuTrigger>
 			<ContextMenuContent className="min-w-44">
-				<ContextMenuItem aria-label={t("shell.renameSession", { title: session.title })} onSelect={rename.begin}>
+				<ContextMenuItem aria-label={t("shell.renameSession", { title: renameSession.title })} onSelect={rename.begin}>
 					<Pencil aria-hidden="true" />
 					{t("shell.rename")}
 				</ContextMenuItem>
