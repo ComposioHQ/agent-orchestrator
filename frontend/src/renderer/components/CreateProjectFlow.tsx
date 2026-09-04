@@ -1258,7 +1258,7 @@ function ProjectImportDialog({
 							>
 								<span className="flex min-w-0 flex-1 items-center gap-3 px-3">
 									<Folder className="size-4 shrink-0 text-[var(--color-text-import-muted)]" aria-hidden="true" />
-									<span className="truncate font-mono">{displayImportPath(validation.root.repoPath)}</span>
+									<span className="truncate">{displayImportPath(validation.root.repoPath)}</span>
 								</span>
 								<span className="flex h-full shrink-0 items-center border-l border-border/60 px-4 text-foreground hover:bg-foreground/10">
 									{t("createProject.change")}
@@ -1343,7 +1343,7 @@ function ProjectImportDialog({
 																	id="projectImportRemote"
 																	autoCapitalize="none"
 																	autoComplete="off"
-																	className="bg-[var(--color-bg-import-card)] font-mono text-[13px]"
+													className="bg-[var(--color-bg-import-card)] text-[13px]"
 																	disabled={disabled}
 																	placeholder={t("createProject.cloneRepositoryUrlPlaceholder")}
 																	spellCheck={false}
