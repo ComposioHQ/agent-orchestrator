@@ -744,6 +744,8 @@ export function Sidebar({
 								onCloneProject={onCloneProject}
 								onCreateProject={onCreateProject}
 								onInitializeProject={onInitializeProject}
+								existingProjectPaths={workspaces.map((workspace) => workspace.path)}
+								existingProjectNames={workspaces.map((workspace) => workspace.name)}
 							/>
 						}
 					/>
@@ -2424,11 +2426,17 @@ function SidebarSearchButton({ onOpen }: { onOpen: () => void }) {
 }
 
 function CreateProjectButton({
+	existingProjectPaths,
+	existingProjectNames,
 	hideTrigger = false,
 	onCloneProject,
 	onCreateProject,
 	onInitializeProject,
-}: Pick<SidebarProps, "onCloneProject" | "onCreateProject" | "onInitializeProject"> & { hideTrigger?: boolean }) {
+}: Pick<SidebarProps, "onCloneProject" | "onCreateProject" | "onInitializeProject"> & {
+	existingProjectPaths: readonly string[];
+	existingProjectNames: readonly string[];
+	hideTrigger?: boolean;
+}) {
 	const { t } = useTranslation();
 	// Single CreateProjectFlow owner for the sidebar: the header "+" stays mounted
 	// (CSS-hidden when collapsed or on the empty start page) so it can own
@@ -2444,6 +2452,8 @@ function CreateProjectButton({
 			onCreateProject={onCreateProject}
 			onInitializeProject={onInitializeProject}
 			openSignal={createProjectNonce}
+			existingProjectPaths={existingProjectPaths}
+			existingProjectNames={existingProjectNames}
 		>
 			{({ disabled, choosePath, label }) => (
 				<Tooltip>

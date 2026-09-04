@@ -508,6 +508,7 @@ function ShellLayout() {
 			workerAgent: string;
 			orchestratorAgent: string;
 			trackerIntake?: components["schemas"]["TrackerIntakeConfig"];
+			signal?: AbortSignal;
 		}) => {
 			void addRendererExceptionStep("Project clone requested", {
 				source: "project-clone",
@@ -520,6 +521,7 @@ function ShellLayout() {
 				throw new Error(status.message || "AO daemon is not ready.");
 			}
 			const { data, error } = await apiClient.POST("/api/v1/projects/clone", {
+				signal: input.signal,
 				body: {
 					remoteUrl: input.remoteUrl,
 					destinationParent: input.destinationParent,
