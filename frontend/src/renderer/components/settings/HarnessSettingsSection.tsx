@@ -86,7 +86,7 @@ export function HarnessSettingsSection({ titleHidden = false }: { titleHidden?: 
 	const plans = useMemo(() => new Map(installers.data?.map((plan) => [plan.agentId, plan]) ?? []), [installers.data]);
 	const jobMap = useMemo(() => new Map(jobs.data?.map((job) => [job.target, job]) ?? []), [jobs.data]);
 	const installed = useMemo(
-		() => new Set(agents.data?.agents.filter((agent) => agent.installation.state === "installed").map((agent) => agent.id) ?? []),
+		() => new Set<AgentId>(agents.data?.agents.filter((agent) => agent.installation.state === "installed").map((agent) => agent.id as AgentId) ?? []),
 		[agents.data],
 	);
 	const normalizedSearch = search.trim().toLowerCase();
