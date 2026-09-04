@@ -9882,6 +9882,8 @@ components:
           type: string
         autoReview:
           type: boolean
+        canonicalRepoURL:
+          type: string
         containerReap:
           $ref: '#/components/schemas/ContainerReapConfig'
         defaultBranch:

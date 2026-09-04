@@ -255,6 +255,9 @@ func (m *Service) Add(ctx context.Context, in AddInput) (Project, error) {
 		}
 		row.Kind = domain.ProjectKindWorkspace
 		row.RepoOriginURL = resolveGitOriginURL(path)
+		if err := row.Config.ValidateCanonicalRepository(row.RepoOriginURL); err != nil {
+			return Project{}, apierr.Invalid("INVALID_PROJECT_CONFIG", err.Error(), nil)
+		}
 		if err := m.store.UpsertWorkspaceProject(ctx, row, repos); err != nil {
 			return Project{}, apierr.Internal("PROJECT_ADD_FAILED", "Failed to register workspace project")
 		}
@@ -273,6 +276,9 @@ func (m *Service) Add(ctx context.Context, in AddInput) (Project, error) {
 		})
 	}
 	row.RepoOriginURL = resolveGitOriginURL(path)
+	if err := row.Config.ValidateCanonicalRepository(row.RepoOriginURL); err != nil {
+		return Project{}, apierr.Invalid("INVALID_PROJECT_CONFIG", err.Error(), nil)
+	}
 	if err := m.store.UpsertProject(ctx, row); err != nil {
 		return Project{}, apierr.Internal("PROJECT_ADD_FAILED", "Failed to register project")
 	}
@@ -600,6 +606,9 @@ func (m *Service) UpdateSettings(ctx context.Context, id domain.ProjectID, in Up
 			return Project{}, apierr.Invalid("INVALID_PROJECT_CONFIG", err.Error(), nil)
 		}
 	}
+	if err := in.Config.ValidateCanonicalRepository(row.RepoOriginURL); err != nil {
+		return Project{}, apierr.Invalid("INVALID_PROJECT_CONFIG", err.Error(), nil)
+	}
 	updated, err := m.store.UpdateProjectSettings(ctx, string(id), displayName, in.Config)
 	if err != nil {
 		return Project{}, apierr.Internal("PROJECT_SETTINGS_UPDATE_FAILED", "Failed to update project settings")
@@ -684,6 +693,9 @@ func (m *Service) SetConfig(ctx context.Context, id domain.ProjectID, in SetConf
 			return Project{}, apierr.Invalid("INVALID_PROJECT_CONFIG", err.Error(), nil)
 		}
 	}
+	if err := in.Config.ValidateCanonicalRepository(row.RepoOriginURL); err != nil {
+		return Project{}, apierr.Invalid("INVALID_PROJECT_CONFIG", err.Error(), nil)
+	}
 	row.Config = in.Config
 	if err := m.store.UpsertProject(ctx, row); err != nil {
 		return Project{}, apierr.Internal("PROJECT_CONFIG_UPDATE_FAILED", "Failed to update project config")
@@ -692,6 +704,9 @@ func (m *Service) SetConfig(ctx context.Context, id domain.ProjectID, in SetConf
 }
 
 func validateScratchProjectConfig(cfg domain.ProjectConfig) error {
+	if cfg.CanonicalRepoURL != "" {
+		return errors.New("scratch projects do not support canonicalRepoURL")
+	}
 	if strings.TrimSpace(cfg.DefaultBranch) != "" {
 		return errors.New("scratch projects do not support defaultBranch")
 	}

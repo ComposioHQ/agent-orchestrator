@@ -1661,7 +1661,7 @@ func writeSessionPRError(w http.ResponseWriter, r *http.Request, err error) {
 	case errors.Is(err, sessionsvc.ErrSessionNoWorkspace):
 		envelope.WriteAPIError(w, r, http.StatusUnprocessableEntity, "unprocessable", "SESSION_NO_WORKSPACE", "Session has no workspace", nil)
 	case errors.Is(err, sessionsvc.ErrProjectMismatch):
-		envelope.WriteAPIError(w, r, http.StatusUnprocessableEntity, "unprocessable", "PR_PROJECT_MISMATCH", "PR does not belong to the session project", nil)
+		envelope.WriteAPIError(w, r, http.StatusUnprocessableEntity, "unprocessable", "PR_PROJECT_MISMATCH", "PR repository must match the project origin or its explicit canonicalRepoURL. For a fork, configure the upstream HTTPS repository URL with ao project set-config <project-id> --canonical-repo-url <url> (replaces config; preserve existing fields with --config-json). Git remotes alone do not grant trust.", nil)
 	case errors.Is(err, sessionsvc.ErrSCMUnavailable):
 		envelope.WriteAPIError(w, r, http.StatusServiceUnavailable, "unavailable", "SCM_UNAVAILABLE", "SCM unavailable", nil)
 	default:

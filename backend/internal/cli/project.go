@@ -103,6 +103,7 @@ type reviewerConfig struct {
 // client. The CLI sets common fields via flags and the whole object via
 // --config-json.
 type projectConfig struct {
+	CanonicalRepoURL  string              `json:"canonicalRepoURL,omitempty"`
 	DefaultBranch     string              `json:"defaultBranch,omitempty"`
 	SessionPrefix     string              `json:"sessionPrefix,omitempty"`
 	Env               map[string]string   `json:"env,omitempty"`
@@ -126,6 +127,7 @@ type setConfigRequest struct {
 }
 
 type projectSetConfigOptions struct {
+	canonicalRepoURL  string
 	defaultBranch     string
 	sessionPrefix     string
 	model             string
@@ -319,6 +321,7 @@ func newProjectSetConfigCommand(ctx *commandContext) *cobra.Command {
 	}
 	f := cmd.Flags()
 	f.StringVar(&opts.defaultBranch, "default-branch", "", "Base branch for new worktrees; auto infers each repository's Git default")
+	f.StringVar(&opts.canonicalRepoURL, "canonical-repo-url", "", "Explicit upstream HTTPS repository URL for PR claims (same provider and host as origin)")
 	f.StringVar(&opts.sessionPrefix, "session-prefix", "", "Displayed session-id prefix")
 	f.StringVar(&opts.model, "model", "", "Agent model override (e.g. claude-opus-4-5)")
 	f.StringVar(&opts.permission, "permission", "", "Permission mode: default, accept-edits, auto, bypass-permissions")
@@ -361,6 +364,7 @@ func buildProjectConfig(opts projectSetConfigOptions) (projectConfig, error) {
 		return projectConfig{}, err
 	}
 	cfg := projectConfig{
+		CanonicalRepoURL:  opts.canonicalRepoURL,
 		DefaultBranch:     opts.defaultBranch,
 		SessionPrefix:     opts.sessionPrefix,
 		Env:               env,
