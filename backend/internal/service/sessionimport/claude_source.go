@@ -153,6 +153,12 @@ func (s *ClaudeSource) readSession(ctx context.Context, configDir, path, fileNam
 		return ImportableSession{}, false, nil
 	}
 
+	// Out of scope: stop before the expensive full read. A project's listing
+	// otherwise scans every conversation on the machine to show a handful.
+	if opts.IncludeCWD != nil && !opts.IncludeCWD(meta.cwd) {
+		return ImportableSession{}, false, nil
+	}
+
 	// One full pass yields both the display count and the import signals. A
 	// transcript too large to scan keeps count 0 (unknown) and is classified
 	// meaningful on size alone.

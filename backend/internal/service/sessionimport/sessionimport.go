@@ -74,6 +74,11 @@ type DiscoverOptions struct {
 	// MaxScanBytes caps the bytes read from each transcript's head and tail when
 	// extracting metadata. 0 selects a sensible default.
 	MaxScanBytes int64
+	// IncludeCWD, when set, decides from a conversation's working directory
+	// whether it is wanted at all. It is consulted as soon as the head is
+	// parsed, before the full transcript read, so a scoped listing pays only a
+	// cheap head read for everything it is going to discard.
+	IncludeCWD func(cwd string) bool
 	// MetadataOnly skips the full transcript read that produces message counts
 	// and the import verdict, keeping only what the head and tail already give:
 	// identity, working directory, branch, title, recency. Resolving one known

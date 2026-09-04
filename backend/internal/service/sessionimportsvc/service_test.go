@@ -452,3 +452,62 @@ func TestImportRecordsTrunkAsSourceEvenThoughItIsNotAdopted(t *testing.T) {
 		t.Errorf("the source branch should still be recorded, got %q", sessions.spawned.ResumeNativeSession.SourceBranch)
 	}
 }
+
+// A project's listing must not pay to fully read every conversation on the
+// machine just to show its own handful.
+func TestScopedDiscoveryNarrowsTheScan(t *testing.T) {
+	sessions := []sessionimport.ImportableSession{
+		{Provider: domain.HarnessClaudeCode, NativeSessionID: "mine", CWD: "/Users/dev/code", Meaning: sessionimport.MeaningMeaningful},
+		{Provider: domain.HarnessClaudeCode, NativeSessionID: "elsewhere", CWD: "/tmp/other", Meaning: sessionimport.MeaningMeaningful},
+	}
+	src := &scopeRecordingSource{inner: &fakeSource{provider: domain.HarnessClaudeCode, sessions: sessions}}
+	projects := &fakeProjects{list: []projectsvc.Summary{{ID: "proj", Path: "/Users/dev/code"}}}
+	svc := New(&fakeSessions{}, &fakeStore{}, projects, src)
+
+	got, err := svc.Discover(context.Background(), sessionimport.DiscoverOptions{}, "proj")
+	if err != nil {
+		t.Fatalf("discover: %v", err)
+	}
+	if len(got) != 1 || got[0].NativeSessionID != "mine" {
+		t.Fatalf("want only the project's conversation, got %+v", got)
+	}
+	if src.lastOpts.IncludeCWD == nil {
+		t.Fatal("a scoped listing must push the scope into the scan, not filter afterwards")
+	}
+	if src.lastOpts.IncludeCWD("/tmp/other") {
+		t.Error("a conversation outside the project must be skipped before it is read")
+	}
+	if !src.lastOpts.IncludeCWD("/Users/dev/code") {
+		t.Error("the project's own conversations must still be read")
+	}
+
+	// An unscoped listing reads everything, as it must.
+	if _, err := svc.Discover(context.Background(), sessionimport.DiscoverOptions{}, ""); err != nil {
+		t.Fatalf("discover all: %v", err)
+	}
+	if src.lastOpts.IncludeCWD != nil {
+		t.Error("an unscoped listing must not narrow the scan")
+	}
+}
+
+// scopeRecordingSource captures the options discovery was asked for.
+type scopeRecordingSource struct {
+	inner    *fakeSource
+	lastOpts sessionimport.DiscoverOptions
+}
+
+func (s *scopeRecordingSource) Provider() domain.AgentHarness { return s.inner.Provider() }
+func (s *scopeRecordingSource) Discover(ctx context.Context, opts sessionimport.DiscoverOptions) ([]sessionimport.ImportableSession, error) {
+	s.lastOpts = opts
+	found, err := s.inner.Discover(ctx, opts)
+	if err != nil || opts.IncludeCWD == nil {
+		return found, err
+	}
+	kept := found[:0]
+	for _, f := range found {
+		if opts.IncludeCWD(f.CWD) {
+			kept = append(kept, f)
+		}
+	}
+	return kept, nil
+}

@@ -110,6 +110,23 @@ func (s *Service) WithClassification(agents AgentRegistry, dataDir string, logge
 // the machine.
 func (s *Service) Discover(ctx context.Context, opts sessionimport.DiscoverOptions, projectID domain.ProjectID) ([]sessionimport.ImportableSession, error) {
 	opts.ExcludeRoots = append(opts.ExcludeRoots, s.excludeRoots...)
+
+	// A project's listing narrows the scan itself rather than scanning every
+	// conversation on the machine and discarding almost all of it. Resolving the
+	// project needs only the working directory, which the head read already
+	// gives, so out-of-scope transcripts are dropped before the full read.
+	var projects []projectsvc.Summary
+	if projectID != "" {
+		var err error
+		if projects, err = s.projects.List(ctx); err != nil {
+			return nil, err
+		}
+		opts.IncludeCWD = func(cwd string) bool {
+			id, ok := bestProjectForDir(projects, cwd)
+			return ok && id == projectID
+		}
+	}
+
 	found, err := s.disco.Discover(ctx, opts)
 	if err != nil {
 		return found, err
@@ -123,10 +140,6 @@ func (s *Service) Discover(ctx context.Context, opts sessionimport.DiscoverOptio
 		return found, nil
 	}
 
-	projects, err := s.projects.List(ctx)
-	if err != nil {
-		return nil, err
-	}
 	// Resolve each conversation the same way import does, so what a project
 	// lists is exactly what importing from it would produce. Matching the most
 	// specific project means a nested repo's conversations belong to the nested

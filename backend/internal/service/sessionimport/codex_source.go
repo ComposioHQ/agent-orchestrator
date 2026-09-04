@@ -275,6 +275,12 @@ func (s *CodexSource) readSegment(ctx context.Context, path string, opts Discove
 		}
 	}
 
+	// Out of scope: stop before the expensive full read. A project's listing
+	// otherwise scans every conversation on the machine to show a handful.
+	if opts.IncludeCWD != nil && !opts.IncludeCWD(meta.cwd) {
+		return codexSegment{}, false, nil
+	}
+
 	// One full pass yields both the display count and the import signals.
 	signals := Signals{FirstPrompt: meta.firstUserText}
 	count := 0
