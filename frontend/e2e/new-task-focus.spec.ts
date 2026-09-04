@@ -166,14 +166,13 @@ for (const animated of [false, true]) {
 	});
 }
 
-test("renderer: New task from the sidebar context menu focuses the composer prompt @T0", async ({ page }) => {
+test("renderer: New task from the sidebar project context menu focuses the composer prompt @T0", async ({ page }) => {
 	await setup(page);
 	await page.goto(`/#/projects/${projectId}/sessions/${sessionA}`);
 	await expect(page.getByRole("combobox", { name: "Message the agent" })).toBeVisible();
 	await page
 		.getByRole("button", { name: new RegExp(`Project actions for ${projectId}`) })
 		.first()
-		.locator("xpath=ancestor::li[1]")
 		.click({ button: "right", force: true });
 	await page.getByRole("menuitem", { name: /New session/ }).click();
 	await expect(page.getByRole("dialog")).toBeVisible();
