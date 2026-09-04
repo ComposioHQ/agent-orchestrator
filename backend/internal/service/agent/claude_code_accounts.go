@@ -444,7 +444,7 @@ func (m *claudeCodeAccountManager) reconcileGlobalSignOut(ctx context.Context) e
 	activeID := m.active.AccountID
 	m.mu.Unlock()
 	if activeID == "" {
-		return nil
+		return m.repairOrphanedValidAccounts(ctx)
 	}
 	if _, ok := m.catalog.record(activeID); !ok {
 		return m.setActivePointer(ctx, "")
@@ -466,6 +466,37 @@ func (m *claudeCodeAccountManager) reconcileGlobalSignOut(ctx context.Context) e
 		return err
 	}
 	return nil
+}
+
+// repairOrphanedValidAccounts repairs the state produced by older builds that
+// saved isolated logins without ever activating the first account. Requiring
+// every saved card to still be valid distinguishes that state from an explicit
+// logout, which always leaves at least one signed-out card behind.
+func (m *claudeCodeAccountManager) repairOrphanedValidAccounts(ctx context.Context) error {
+	m.mu.Lock()
+	globalSwitchSupported := m.caps.GlobalSwitch.State == domain.ClaudeCodeCapabilitySupported
+	m.mu.Unlock()
+	if !globalSwitchSupported {
+		return nil
+	}
+	accounts := m.catalog.snapshots("")
+	if len(accounts) == 0 {
+		return nil
+	}
+	for _, account := range accounts {
+		if account.Status != domain.ClaudeCodeAccountStatusValid {
+			return nil
+		}
+	}
+	target := accounts[0]
+	credential, found, err := m.keychain.Get(ctx, claudecode.ClaudeAccountVaultService, target.ID)
+	if err != nil {
+		return err
+	}
+	if !found {
+		return nil
+	}
+	return m.activateCredentialWithoutSource(ctx, credential, target.Identity)
 }
 
 func (m *claudeCodeAccountManager) setActivePointer(ctx context.Context, id string) error {
@@ -699,6 +730,26 @@ func readClaudeCodeOAuthIdentity(configPath string) (domain.ClaudeCodeAccountIde
 		}
 	}
 	return identity, sanitized, nil
+}
+
+func readOptionalClaudeCodeOAuthIdentity(configPath string) (map[string]any, error) {
+	data, err := os.ReadFile(configPath)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var root map[string]json.RawMessage
+	if err := json.Unmarshal(data, &root); err != nil {
+		return nil, err
+	}
+	raw, ok := root["oauthAccount"]
+	if !ok || len(bytes.TrimSpace(raw)) == 0 || bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+		return nil, nil
+	}
+	_, identity, err := readClaudeCodeOAuthIdentity(configPath)
+	return identity, err
 }
 
 func validClaudeCodeAccountIdentity(identity domain.ClaudeCodeAccountIdentity) bool {

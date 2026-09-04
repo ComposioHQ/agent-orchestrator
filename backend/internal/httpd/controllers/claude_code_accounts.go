@@ -251,6 +251,8 @@ func writeClaudeCodeAccountError(w http.ResponseWriter, r *http.Request, err err
 		envelope.WriteAPIError(w, r, http.StatusNotFound, "not_found", "CLAUDE_CODE_ACCOUNT_NOT_FOUND", "Claude Code account or switch not found", nil)
 	case errors.Is(err, ports.ErrClaudeCodeAccountAlreadyActive):
 		envelope.WriteAPIError(w, r, http.StatusConflict, "conflict", "CLAUDE_CODE_ACCOUNT_ALREADY_ACTIVE", "This Claude Code account is already active", nil)
+	case errors.Is(err, ports.ErrClaudeCodeAccountDeleteRequiresLogout):
+		envelope.WriteAPIError(w, r, http.StatusConflict, "conflict", "CLAUDE_CODE_ACCOUNT_DELETE_REQUIRES_LOGOUT", "Log out of this Claude Code account before deleting it", nil)
 	case errors.Is(err, ports.ErrClaudeCodeAccountRevisionConflict):
 		envelope.WriteAPIError(w, r, http.StatusConflict, "conflict", "CLAUDE_CODE_ACCOUNT_REVISION_CONFLICT", "The active Claude Code account changed", nil)
 	case errors.Is(err, ports.ErrClaudeCodeAccountSwitchInProgress):

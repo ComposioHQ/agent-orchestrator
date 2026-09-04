@@ -103,16 +103,13 @@ it("keeps the plan section visible while plan metadata is unavailable", async ()
 	expect(screen.getByText("No boosts available")).toBeInTheDocument();
 });
 
-it("allows an inactive signed-in account to be deleted directly", async () => {
+it("requires an inactive signed-in account to be logged out before deletion", async () => {
 	renderSection();
 	await screen.findAllByText("other@example.com");
 	await userEvent.click(document.querySelector(`[data-account-id="${inactiveAccount.id}"] button`) as HTMLButtonElement);
-	await userEvent.click(screen.getByRole("button", { name: "Delete account" }));
-	const dialog = await screen.findByRole("dialog");
-	expect(within(dialog).getByText("This account will be removed from AO.")).toBeInTheDocument();
-	await userEvent.click(within(dialog).getByRole("button", { name: "Delete account" }));
-	await waitFor(() => expect(deleteMock).toHaveBeenCalled());
-	expect(await screen.findByText("Account deleted.")).toHaveAttribute("aria-live", "polite");
+	expect(screen.getByRole("button", { name: "Log out" })).toBeInTheDocument();
+	expect(screen.queryByRole("button", { name: "Delete account" })).not.toBeInTheDocument();
+	expect(deleteMock).not.toHaveBeenCalled();
 });
 
 it("adds account B without making it active", async () => {

@@ -159,7 +159,7 @@ func (s *Service) LogoutClaudeCodeAccount(ctx context.Context, accountID string)
 	return s.claudeCodeAccounts.cached(), nil
 }
 
-// DeleteClaudeCodeAccount removes an inactive account credential and descriptor.
+// DeleteClaudeCodeAccount removes an inactive signed-out account descriptor.
 func (s *Service) DeleteClaudeCodeAccount(ctx context.Context, accountID string) (ClaudeCodeAccounts, error) {
 	if err := s.WaitClaudeCodeAccountBootstrap(ctx); err != nil {
 		return ClaudeCodeAccounts{}, err
@@ -176,6 +176,8 @@ func mapClaudeCodeAccountError(err error) error {
 		return apierr.NotFound("CLAUDE_CODE_ACCOUNT_NOT_FOUND", "Claude Code account not found")
 	case errors.Is(err, ports.ErrClaudeCodeAccountAlreadyActive):
 		return apierr.Conflict("CLAUDE_CODE_ACCOUNT_ALREADY_ACTIVE", "The active Claude Code account cannot be deleted", nil)
+	case errors.Is(err, ports.ErrClaudeCodeAccountDeleteRequiresLogout):
+		return apierr.Conflict("CLAUDE_CODE_ACCOUNT_DELETE_REQUIRES_LOGOUT", "Log out of this Claude Code account before deleting it", nil)
 	case errors.Is(err, ports.ErrClaudeCodeAccountRevisionConflict):
 		return apierr.Conflict("CLAUDE_CODE_ACCOUNT_REVISION_CONFLICT", "Claude Code account state changed; refresh and try again", nil)
 	case errors.Is(err, ports.ErrClaudeCodeGlobalAccountChanged):

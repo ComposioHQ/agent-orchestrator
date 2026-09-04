@@ -274,6 +274,43 @@ func TestClaudeCodeBootstrapImportsCanonicalAccountWithoutPersistingSecrets(t *t
 	}
 }
 
+func TestClaudeCodeAddFirstAccountActivatesCanonicalCredential(t *testing.T) {
+	m, keychain, state, home := newTestClaudeCodeManager(t)
+	if err := m.bootstrapInner(); err != nil {
+		t.Fatal(err)
+	}
+	terminal := &fakeClaudeCodeTerminal{result: shellterm.ShellTerminal{HandleID: "terminal-1", Title: "Add Claude Code account", CreatedAt: time.Now().UTC()}}
+	terminal.onOpen = func(in shellterm.OpenCommandTerminalInput) error {
+		if err := os.WriteFile(filepath.Join(in.Env["CLAUDE_CONFIG_DIR"], ".claude.json"), claudeIdentityJSON(testClaudeAccountA, "a@example.com"), 0o600); err != nil {
+			return err
+		}
+		return keychain.Set(context.Background(), claudecode.IsolatedCredentialService(in.Env["CLAUDE_SECURESTORAGE_CONFIG_DIR"]), "test-user", claudeCredentialJSON("secret-a"))
+	}
+	m.terminal = terminal
+	started, err := m.openLoginTerminal(context.Background(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := m.verifyLogin(context.Background(), started.Operation.OperationID)
+	if err != nil || result.Status != domain.ClaudeCodeAccountLoginCompleted || result.Account == nil || !result.Account.Active {
+		t.Fatalf("first Add: result=%+v err=%v", result, err)
+	}
+	if !state.found || state.active.AccountID != testClaudeAccountA || state.active.Revision != 1 {
+		t.Fatalf("active pointer = %+v found=%v", state.active, state.found)
+	}
+	canonical, found, err := keychain.Get(context.Background(), claudecode.ClaudeCanonicalCredentialService, "test-user")
+	if err != nil || !found {
+		t.Fatalf("canonical credential: found=%v err=%v", found, err)
+	}
+	if has, err := claudecode.HasAccountCredential(canonical); err != nil || !has || strings.Contains(string(canonical), `"mcpOAuth"`) {
+		t.Fatalf("canonical credential was not activated safely: has=%v err=%v", has, err)
+	}
+	identity, _, err := readClaudeCodeOAuthIdentity(filepath.Join(home, ".claude.json"))
+	if err != nil || identity.AccountUUID != testClaudeAccountA {
+		t.Fatalf("canonical identity = %+v err=%v", identity, err)
+	}
+}
+
 func TestClaudeCodeAddAccountLeavesCanonicalAccountUnchanged(t *testing.T) {
 	m, keychain, state, home := newTestClaudeCodeManager(t)
 	canonicalCredential := claudeCredentialJSON("secret-a")
@@ -321,6 +358,39 @@ func TestClaudeCodeAddAccountLeavesCanonicalAccountUnchanged(t *testing.T) {
 		if value, ok := terminal.opened[0].Env[key]; !ok || value != "" {
 			t.Fatalf("override %s was not explicitly cleared", key)
 		}
+	}
+}
+
+func TestClaudeCodeReconcileRepairsAllValidAccountsWithoutActivePointer(t *testing.T) {
+	m, keychain, state, home := newTestClaudeCodeManager(t)
+	if err := m.bootstrapInner(); err != nil {
+		t.Fatal(err)
+	}
+	createdAt := time.Date(2026, 9, 2, 9, 0, 0, 0, time.UTC)
+	if _, err := m.catalog.upsert(context.Background(), domain.ClaudeCodeAccountIdentity{
+		AccountUUID: testClaudeAccountA, EmailAddress: "a@example.com", DisplayName: "Account A",
+	}, claudeCredentialJSON("secret-a"), createdAt); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.catalog.upsert(context.Background(), domain.ClaudeCodeAccountIdentity{
+		AccountUUID: testClaudeAccountB, EmailAddress: "b@example.com", DisplayName: "Account B",
+	}, claudeCredentialJSON("secret-b"), createdAt.Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := m.reconcileGlobal(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if !state.found || state.active.AccountID != testClaudeAccountA || state.active.Revision != 1 {
+		t.Fatalf("repaired active pointer = %+v found=%v", state.active, state.found)
+	}
+	canonical, found, err := keychain.Get(context.Background(), claudecode.ClaudeCanonicalCredentialService, "test-user")
+	if err != nil || !found || !strings.Contains(string(canonical), "secret-a") || strings.Contains(string(canonical), "secret-b") {
+		t.Fatalf("repaired canonical credential: found=%v err=%v value=%s", found, err, canonical)
+	}
+	identity, _, err := readClaudeCodeOAuthIdentity(filepath.Join(home, ".claude.json"))
+	if err != nil || identity.AccountUUID != testClaudeAccountA {
+		t.Fatalf("repaired canonical identity = %+v err=%v", identity, err)
 	}
 }
 
@@ -481,6 +551,12 @@ func TestClaudeCodeActiveLogoutPreservesSharedCredentialAndDeletesLocally(t *tes
 	if view.ActiveAccountID != "" || state.active.Revision != 2 || len(view.Accounts) != 1 || view.Accounts[0].Status != domain.ClaudeCodeAccountStatusSignedOut {
 		t.Fatalf("logout view = %+v pointer=%+v", view, state.active)
 	}
+	if err := m.reconcileGlobal(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got := m.cached(); got.ActiveAccountID != "" || got.Accounts[0].Status != domain.ClaudeCodeAccountStatusSignedOut {
+		t.Fatalf("explicit logout was repaired unexpectedly: %+v", got)
+	}
 	if err := m.deleteAccount(context.Background(), testClaudeAccountA); err != nil {
 		t.Fatal(err)
 	}
@@ -489,7 +565,7 @@ func TestClaudeCodeActiveLogoutPreservesSharedCredentialAndDeletesLocally(t *tes
 	}
 }
 
-func TestClaudeCodeDeleteInactiveAccountRemovesCredentialAndProfile(t *testing.T) {
+func TestClaudeCodeDeleteRequiresInactiveSignedOutAccount(t *testing.T) {
 	m, keychain, _, home := newTestClaudeCodeManager(t)
 	keychain.items[claudecode.ClaudeCanonicalCredentialService+"\x00test-user"] = claudeCredentialJSON("secret-a")
 	if err := os.WriteFile(filepath.Join(home, ".claude.json"), claudeIdentityJSON(testClaudeAccountA, "a@example.com"), 0o600); err != nil {
@@ -504,6 +580,15 @@ func TestClaudeCodeDeleteInactiveAccountRemovesCredentialAndProfile(t *testing.T
 		t.Fatal(err)
 	}
 
+	if err := m.deleteAccount(context.Background(), testClaudeAccountB); !errors.Is(err, ports.ErrClaudeCodeAccountDeleteRequiresLogout) {
+		t.Fatalf("delete signed-in account error = %v", err)
+	}
+	if _, found, err := keychain.Get(context.Background(), claudecode.ClaudeAccountVaultService, testClaudeAccountB); err != nil || !found {
+		t.Fatalf("rejected delete changed credential: found=%v err=%v", found, err)
+	}
+	if err := m.logout(context.Background(), testClaudeAccountB); err != nil {
+		t.Fatal(err)
+	}
 	if err := m.deleteAccount(context.Background(), testClaudeAccountB); err != nil {
 		t.Fatal(err)
 	}

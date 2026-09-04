@@ -12,6 +12,7 @@ import (
 var (
 	ErrClaudeCodeAccountSwitchInProgress          = errors.New("account switch already in progress for Claude Code")
 	ErrClaudeCodeAccountAlreadyActive             = errors.New("account is already active for Claude Code")
+	ErrClaudeCodeAccountDeleteRequiresLogout      = errors.New("account must be signed out before deletion for Claude Code")
 	ErrClaudeCodeAccountNotFound                  = errors.New("account not found for Claude Code")
 	ErrClaudeCodeActiveAccountUnavailable         = errors.New("active Claude Code account is unavailable")
 	ErrClaudeCodeAccountSwitchNotFound            = errors.New("account switch not found for Claude Code")

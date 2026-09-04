@@ -101,6 +101,13 @@ func (m *claudeCodeAccountManager) deleteAccount(ctx context.Context, accountID 
 	if activeID == accountID {
 		return ports.ErrClaudeCodeAccountAlreadyActive
 	}
+	record, ok := m.catalog.record(accountID)
+	if !ok || record.Snapshot.Status == domain.ClaudeCodeAccountStatusBroken {
+		return ports.ErrClaudeCodeAccountNotFound
+	}
+	if record.Snapshot.Status != domain.ClaudeCodeAccountStatusSignedOut {
+		return ports.ErrClaudeCodeAccountDeleteRequiresLogout
+	}
 	if err := m.catalog.delete(ctx, accountID, m.now()); err != nil {
 		return err
 	}

@@ -199,14 +199,16 @@ func (m *claudeCodeAccountManager) verifyLogin(ctx context.Context, operationID 
 		return m.finishLogin(operationID, domain.ClaudeCodeAccountLoginFailed, "credential_save_failed", "The verified Claude Code credential could not be saved.", nil), nil
 	}
 	m.resetPlanUsage(identity.AccountUUID)
-	if targetAccountID != "" {
-		m.mu.Lock()
-		active := m.active
-		m.mu.Unlock()
-		if active.AccountID == targetAccountID {
-			if err := m.replaceActiveCredentialAndAdvance(ctx, accountCredential, identity); err != nil {
-				return m.finishLogin(operationID, domain.ClaudeCodeAccountLoginFailed, "credential_activation_failed", "The active Claude Code credential could not be replaced safely.", nil), nil
-			}
+	m.mu.Lock()
+	active := m.active
+	m.mu.Unlock()
+	if active.AccountID == "" {
+		if err := m.activateCredentialWithoutSource(ctx, accountCredential, identity); err != nil {
+			return m.finishLogin(operationID, domain.ClaudeCodeAccountLoginFailed, "credential_activation_failed", "The Claude Code credential could not be activated safely.", nil), nil
+		}
+	} else if targetAccountID != "" && active.AccountID == targetAccountID {
+		if err := m.replaceActiveCredentialAndAdvance(ctx, accountCredential, identity); err != nil {
+			return m.finishLogin(operationID, domain.ClaudeCodeAccountLoginFailed, "credential_activation_failed", "The active Claude Code credential could not be replaced safely.", nil), nil
 		}
 	}
 	snapshot := record.Snapshot
@@ -215,6 +217,64 @@ func (m *claudeCodeAccountManager) verifyLogin(ctx context.Context, operationID 
 	snapshot.Active = snapshot.ID == m.active.AccountID
 	m.mu.Unlock()
 	return m.finishLogin(operationID, domain.ClaudeCodeAccountLoginCompleted, "login_completed", "Claude Code account saved.", &snapshot), nil
+}
+
+// activateCredentialWithoutSource installs a saved account when Claude is
+// currently signed out. It is deliberately separate from switching because
+// there is no source credential to checkpoint or restore.
+func (m *claudeCodeAccountManager) activateCredentialWithoutSource(ctx context.Context, accountCredential []byte, identity domain.ClaudeCodeAccountIdentity) error {
+	releaseLocks, err := claudecode.AcquireCredentialLocks(ctx, m.claudeDir)
+	if err != nil {
+		return err
+	}
+	defer releaseLocks()
+
+	live, found, err := m.keychain.Get(ctx, claudecode.ClaudeCanonicalCredentialService, m.keychainAccount)
+	if err != nil {
+		return err
+	}
+	if found {
+		hasAccountCredential, err := claudecode.HasAccountCredential(live)
+		if err != nil {
+			return err
+		}
+		if hasAccountCredential {
+			return ports.ErrClaudeCodeGlobalAccountChanged
+		}
+	}
+	previousIdentity, err := readOptionalClaudeCodeOAuthIdentity(m.configPath)
+	if err != nil {
+		return err
+	}
+	fields, err := claudecode.AccountCredentialFields(accountCredential)
+	if err != nil {
+		return err
+	}
+	merged, err := claudecode.MergeCredentialFields(fields, live)
+	if err != nil {
+		return err
+	}
+	if err := m.keychain.Set(ctx, claudecode.ClaudeCanonicalCredentialService, m.keychainAccount, merged); err != nil {
+		return err
+	}
+	rollback := func() error {
+		rollbackCtx := context.WithoutCancel(ctx)
+		credentialErr := m.keychain.Delete(rollbackCtx, claudecode.ClaudeCanonicalCredentialService, m.keychainAccount)
+		if found {
+			credentialErr = m.keychain.Set(rollbackCtx, claudecode.ClaudeCanonicalCredentialService, m.keychainAccount, live)
+		}
+		return errors.Join(credentialErr, claudecode.WriteOAuthAccount(rollbackCtx, m.configPath, previousIdentity))
+	}
+	if err := claudecode.WriteOAuthAccount(ctx, m.configPath, claudeCodeIdentityMap(identity)); err != nil {
+		return errors.Join(err, rollback())
+	}
+	if err := m.setActivePointer(ctx, identity.AccountUUID); err != nil {
+		return errors.Join(err, rollback())
+	}
+	m.mu.Lock()
+	m.unmanaged = nil
+	m.mu.Unlock()
+	return nil
 }
 
 func (m *claudeCodeAccountManager) replaceActiveCredentialAndAdvance(ctx context.Context, accountCredential []byte, identity domain.ClaudeCodeAccountIdentity) error {
