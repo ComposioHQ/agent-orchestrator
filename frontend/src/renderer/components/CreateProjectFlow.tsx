@@ -711,11 +711,11 @@ function projectRequestedActionEvents(repoPath: string, actions: string[]): GitP
 
 function suggestedProjectRemoteUrl(repoPath: string): string {
 	if (typeof window === "undefined") return "";
-	const saved = window.localStorage.getItem(LAST_IMPORT_REMOTE_URL_KEY)?.trim() ?? "";
-	if (saved === "") return "";
 	const repoName = repoPath.split(/[\\/]/).filter(Boolean).pop()?.trim();
+	const saved = window.localStorage.getItem(LAST_IMPORT_REMOTE_URL_KEY)?.trim() ?? "";
 	if (!repoName) return saved;
 	const withGitSuffix = repoName.endsWith(".git") ? repoName : `${repoName}.git`;
+	if (saved === "") return `https://github.com/username/${withGitSuffix}`;
 	const sshMatch = saved.match(/^(git@[^:]+:[^/]+\/)([^/]+?)(\.git)?$/);
 	if (sshMatch) return `${sshMatch[1]}${withGitSuffix}`;
 	try {
@@ -727,9 +727,9 @@ function suggestedProjectRemoteUrl(repoPath: string): string {
 			return parsed.toString();
 		}
 	} catch {
-		return saved;
+		return `https://github.com/username/${withGitSuffix}`;
 	}
-	return saved;
+	return `https://github.com/username/${withGitSuffix}`;
 }
 
 function persistSuggestedProjectRemoteUrl(remoteUrl: string) {
