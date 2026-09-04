@@ -565,6 +565,10 @@ export async function sanitizeRendererProperties(
 			if (typeof properties?.error_category === "string") safe.error_category = properties.error_category;
 			if (properties?.phase === "check" || properties?.phase === "download") safe.phase = properties.phase;
 			if (properties?.trigger === "automatic" || properties?.trigger === "manual") safe.trigger = properties.trigger;
+			for (const key of ["transferred_bytes", "total_bytes", "stalled_ms"] as const) {
+				const value = properties?.[key];
+				if (typeof value === "number" && Number.isFinite(value) && value >= 0) safe[key] = value;
+			}
 			break;
 		case "ao.renderer.mobile_connect_opened":
 			// Whether the bridge was already on when the modal opened separates

@@ -88,9 +88,16 @@ async function importAutoUpdater(
   const BrowserWindow = {
     getAllWindows: vi.fn(() => [fakeWindow]),
   };
+  class CancellationToken {
+    cancelled = false;
+
+    cancel(): void {
+      this.cancelled = true;
+    }
+  }
   const statusMessages = () => sent.filter((m) => m.channel === "updates:status");
   const telemetryMessages = () => sent.filter((m) => m.channel === "updates:telemetry");
-  vi.doMock("electron-updater", () => ({ autoUpdater }));
+  vi.doMock("electron-updater", () => ({ autoUpdater, CancellationToken }));
   vi.doMock("electron", () => ({
     app: {
       isPackaged: options.isPackaged ?? true,
@@ -576,7 +583,10 @@ describe("startAutoUpdates", () => {
       updaterEvents.get("checking-for-update")?.();
       updaterEvents.get("update-available")?.({ version: "2.1.0" });
       updaterEvents.get("download-progress")?.({ percent: 42 });
-      return Promise.resolve({ downloadPromise: lateDownload.promise });
+      return Promise.resolve({
+        downloadPromise: lateDownload.promise,
+        cancellationToken: { cancel: vi.fn() },
+      });
     });
     const startPromise = module.startAutoUpdates(stateDir);
     await flushMicrotasks();
@@ -795,7 +805,10 @@ describe("startAutoUpdates", () => {
 
     autoUpdater.checkForUpdates.mockImplementationOnce(() => {
       updaterEvents.get("checking-for-update")?.();
-      return Promise.resolve({ downloadPromise: automaticDownload.promise });
+      return Promise.resolve({
+        downloadPromise: automaticDownload.promise,
+        cancellationToken: { cancel: vi.fn() },
+      });
     });
     const startPromise = module.startAutoUpdates(stateDir);
     await Promise.resolve();
@@ -841,6 +854,7 @@ describe("startAutoUpdates", () => {
     const err = new Error("download failed");
     autoUpdater.checkForUpdates.mockResolvedValueOnce({
       downloadPromise: lateDownload.promise,
+      cancellationToken: { cancel: vi.fn() },
     });
 
     const startPromise = module.startAutoUpdates(stateDir);
@@ -897,6 +911,129 @@ describe("startAutoUpdates", () => {
       state: "error",
       message: "manual download failed",
     });
+  });
+
+  it("cancels and reports a manual download after bounded progress inactivity", async () => {
+    vi.useFakeTimers();
+    const download = deferred<string[]>();
+    const { module, autoUpdater, updaterEvents, telemetryMessages } =
+      await importAutoUpdater();
+    autoUpdater.downloadUpdate.mockReturnValueOnce(download.promise);
+
+    const downloadPromise = module.downloadUpdateNow("manual-download");
+    await flushMicrotasks();
+    updaterEvents.get("download-progress")?.({
+      percent: 2.25,
+      transferred: 3_798_105,
+      total: 168_658_927,
+    });
+
+    await vi.advanceTimersByTimeAsync(module.DOWNLOAD_STALL_TIMEOUT_MS);
+    await downloadPromise;
+
+    const cancellationToken = autoUpdater.downloadUpdate.mock.calls[0]?.[0];
+    expect(cancellationToken?.cancelled).toBe(true);
+    expect(module.getUpdateStatus()).toEqual({
+      state: "error",
+      message: "Update download stalled. Check your connection and try again.",
+      requestId: "manual-download",
+    });
+    updaterEvents.get("download-progress")?.({ percent: 90, transferred: 90, total: 100 });
+    updaterEvents.get("update-downloaded")?.({ version: "2.0.0" });
+    expect(module.getUpdateStatus()).toEqual({
+      state: "error",
+      message: "Update download stalled. Check your connection and try again.",
+      requestId: "manual-download",
+    });
+    expect(telemetryMessages().map((message) => message.payload)).toContainEqual({
+      event: "ao.renderer.update_failed",
+      phase: "download",
+      trigger: "manual",
+      error_category: "network",
+      transferred_bytes: 3_798_105,
+      total_bytes: 168_658_927,
+      stalled_ms: module.DOWNLOAD_STALL_TIMEOUT_MS,
+    });
+  });
+
+  it("resets the watchdog on real progress and lets the download complete", async () => {
+    vi.useFakeTimers();
+    const download = deferred<string[]>();
+    const { module, autoUpdater, updaterEvents } = await importAutoUpdater();
+    autoUpdater.downloadUpdate.mockReturnValueOnce(download.promise);
+
+    const downloadPromise = module.downloadUpdateNow("manual-download");
+    await flushMicrotasks();
+    await vi.advanceTimersByTimeAsync(module.DOWNLOAD_STALL_TIMEOUT_MS - 1);
+    updaterEvents.get("download-progress")?.({ percent: 40, transferred: 40, total: 100 });
+    await vi.advanceTimersByTimeAsync(module.DOWNLOAD_STALL_TIMEOUT_MS - 1);
+
+    expect(module.getUpdateStatus()).toEqual({
+      state: "downloading",
+      version: undefined,
+      percent: 40,
+      requestId: "manual-download",
+    });
+    download.resolve([]);
+    updaterEvents.get("update-downloaded")?.({ version: "2.0.0" });
+    await downloadPromise;
+    expect(module.getUpdateStatus()).toEqual(
+      expect.objectContaining({ state: "downloaded", version: "2.0.0" }),
+    );
+  });
+
+  it("cancels a stalled automatic download and leaves a retryable terminal status", async () => {
+    vi.useFakeTimers();
+    const download = deferred<string[]>();
+    const cancellationToken = { cancel: vi.fn() };
+    const { module, autoUpdater, updaterEvents, telemetryMessages } = await importAutoUpdater();
+    autoUpdater.checkForUpdates.mockImplementationOnce(() => {
+      updaterEvents.get("update-available")?.({ version: "2.0.0" });
+      updaterEvents.get("download-progress")?.({ percent: 8, transferred: 8, total: 100 });
+      return Promise.resolve({ downloadPromise: download.promise, cancellationToken });
+    });
+
+    const startPromise = module.startAutoUpdates(stateDir);
+    await flushMicrotasks();
+    await vi.advanceTimersByTimeAsync(module.DOWNLOAD_STALL_TIMEOUT_MS);
+    await startPromise;
+
+    expect(cancellationToken.cancel).toHaveBeenCalledOnce();
+    expect(module.getUpdateStatus()).toEqual({
+      state: "error",
+      version: "2.0.0",
+      message: "Update download stalled. Check your connection and try again.",
+      checkedAt: expect.any(Number),
+    });
+    expect(telemetryMessages().map((message) => message.payload)).toContainEqual({
+      event: "ao.renderer.update_failed",
+      phase: "download",
+      trigger: "automatic",
+      error_category: "network",
+      to_version: "2.0.0",
+      transferred_bytes: 8,
+      total_bytes: 100,
+      stalled_ms: module.DOWNLOAD_STALL_TIMEOUT_MS,
+    });
+  });
+
+  it("starts a queued retry only after the stalled download releases ownership", async () => {
+    vi.useFakeTimers();
+    const first = deferred<string[]>();
+    const { module, autoUpdater } = await importAutoUpdater();
+    autoUpdater.downloadUpdate
+      .mockReturnValueOnce(first.promise)
+      .mockResolvedValueOnce([]);
+
+    const firstAttempt = module.downloadUpdateNow("first");
+    await flushMicrotasks();
+    const retry = module.downloadUpdateNow("retry");
+    await flushMicrotasks();
+    expect(autoUpdater.downloadUpdate).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(module.DOWNLOAD_STALL_TIMEOUT_MS);
+    await Promise.all([firstAttempt, retry]);
+    expect(autoUpdater.downloadUpdate).toHaveBeenCalledTimes(2);
   });
 
   it("keeps manual updater error events visible to the renderer", async () => {
