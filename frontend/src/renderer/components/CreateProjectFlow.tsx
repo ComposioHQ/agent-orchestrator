@@ -1217,6 +1217,7 @@ function ProjectImportDialog({
 }) {
 	if (!validation || !step) return null;
 	const needsRemote = validation.root.requiredActions.includes("set_remote");
+	const hasChildRepos = (validation.childRepos?.length ?? 0) > 0;
 	const hasFailedStep = events.some((event) => event.state === "error");
 	const missingApprovals = validation.root.requiredActions.filter((action) => !approvedActions.includes(action));
 	const continueDisabled = disabled || missingApprovals.length > 0 || (needsRemote && remoteUrl.trim() === "");
@@ -1262,6 +1263,11 @@ function ProjectImportDialog({
 								Change
 							</Button>
 						</div>
+						{hasChildRepos ? (
+							<div className="rounded-md border border-[var(--color-border-import-modal)] bg-[var(--color-bg-import-card)] px-4 py-3 text-[12px] leading-5 text-[var(--color-text-import-muted)]">
+								Contains child Git repos. Import as workspace if AO should keep them separate.
+							</div>
+						) : null}
 						{validation.warning ? (
 							<div className="rounded-md border border-[var(--color-border-import-modal)] bg-[var(--color-bg-import-card)] px-3 py-3 text-[12px] leading-5 text-[var(--color-text-import-muted)]">
 								{validation.warning}
