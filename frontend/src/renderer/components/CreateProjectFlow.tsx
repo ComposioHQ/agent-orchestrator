@@ -1265,9 +1265,17 @@ function ProjectImportDialog({
 								</span>
 							</button>
 						</div>
-						{hasChildRepos ? (
-							<div className="border-l-2 border-primary/50 pl-3 text-[12px] leading-5 text-muted-foreground">
-								{t("createProject.projectHasChildRepos")}
+						{hasChildRepos || suggestWorkspace ? (
+							<div className="text-[12px] leading-5 text-muted-foreground">
+								<span>{t(hasChildRepos ? "createProject.projectHasChildRepos" : "createProject.projectSuggestWorkspace")}</span>{" "}
+								<button
+									type="button"
+									className="inline-flex items-center rounded-full border border-border/70 bg-muted/50 px-2 py-0.5 text-[11px] font-medium text-foreground transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-50"
+									disabled={disabled}
+									onClick={onTryWorkspace}
+								>
+									{t("createProject.tryImportWorkspace")}
+								</button>
 							</div>
 						) : null}
 						{validation.warning ? (
@@ -1278,11 +1286,6 @@ function ProjectImportDialog({
 						{error ? (
 							<div className="rounded-md bg-destructive/10 px-3 py-2.5 text-[12px] leading-5 text-destructive" role="alert">
 								{error}
-							</div>
-						) : null}
-						{suggestWorkspace ? (
-							<div className="border-l-2 border-primary/50 pl-3 text-[12px] leading-5 text-muted-foreground">
-								{t("createProject.projectSuggestWorkspace")}
 							</div>
 						) : null}
 						{step === "prepare_git" ? (
@@ -1385,11 +1388,6 @@ function ProjectImportDialog({
 						) : null}
 						{step === "prepare_git" ? (
 							<>
-								{suggestWorkspace ? (
-									<Button type="button" variant="outline" disabled={disabled} onClick={onTryWorkspace}>
-										{t("createProject.tryImportWorkspace")}
-									</Button>
-								) : null}
 								<Button type="button" variant="outline" disabled={disabled} onClick={onBack}>
 									{t("createProject.back")}
 								</Button>

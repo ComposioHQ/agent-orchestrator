@@ -382,9 +382,9 @@ describe("CreateProjectFlow project import validation", () => {
 		await user.click(screen.getByRole("button", { name: "New project" }));
 		await user.click(await screen.findByRole("button", { name: "Import an existing project" }));
 
-		expect(await screen.findByText("Contains child Git repos. Import as workspace if AO should keep them separate.")).toBeInTheDocument();
-		expect(await screen.findByText("Try importing as workspace")).toBeInTheDocument();
-		expect(screen.getByRole("button", { name: "Continue" })).toBeInTheDocument();
+		expect(await screen.findByText("Contains child Git repos.")).toBeInTheDocument();
+		await user.click(await screen.findByRole("button", { name: "Import as workspace" }));
+		expect(await screen.findByRole("button", { name: "Import a workspace folder" })).toBeInTheDocument();
 	});
 
 	it("shows only the missing Git preparation steps for a project root", async () => {
