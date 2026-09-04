@@ -191,9 +191,17 @@ if (disableGpu === "1" || disableGpu === "true" || disableGpu === "yes" || disab
 // keeps this directory open, and two Chromium instances sharing one profile
 // corrupt its LevelDB stores. Mirrors how dev already isolates running.json and
 // the daemon data dir into ~/.ao/dev.
+// AO_DEV_ELECTRON_DIR overrides the dev profile location. The default dev path
+// is shared by every checkout, and Chromium puts a singleton lock in a profile,
+// so a second worktree's `npm run dev` loses requestSingleInstanceLock() and
+// exits immediately. That is a real constraint for a tool built around parallel
+// worktree sessions: two sessions could not both run the app. Packaged builds
+// are deliberately NOT overridable — their profile is part of the install.
 app.setPath(
 	"userData",
-	app.isPackaged ? path.join(os.homedir(), ".ao", "electron") : path.join(os.homedir(), ".ao", "dev", "electron"),
+	app.isPackaged
+		? path.join(os.homedir(), ".ao", "electron")
+		: (process.env.AO_DEV_ELECTRON_DIR ?? path.join(os.homedir(), ".ao", "dev", "electron")),
 );
 
 // Resolve once against the launch cwd, before the daemon can chdir. The exact

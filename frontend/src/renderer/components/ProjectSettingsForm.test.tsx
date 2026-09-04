@@ -1127,9 +1127,7 @@ describe("ProjectSettingsForm", () => {
 		await userEvent.click(await screen.findByRole("button", { name: "Default reviewer agent" }));
 		const reviewerLabels = (await screen.findAllByRole("menuitem"))
 			.map((option) => option.textContent)
-			.filter(
-				(label) => label !== "Project default" && label !== "Custom model…" && label !== "Enter model ID…",
-			);
+			.filter((label) => label !== "Project default" && label !== "Enter model ID…");
 
 		expect(reviewerLabels).toEqual([
 			"Claude Code",

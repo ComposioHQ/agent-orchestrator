@@ -27,7 +27,8 @@ session (it execs `tmux`, which runs `claude`/`codex`, etc.), and the agent's
 `backend/internal/session_manager/manager.go`).
 
 AO keeps that executable directory first after adding agent and Node runtime
-directories, and applies the same pin to reviewer and shell-terminal launches.
+directories, including Codex Chat provider launches, and applies the same pin
+to reviewer and shell-terminal launches.
 Interactive login shells can still reorder `PATH` through user startup files,
 so this is a launch invariant and a best-effort convenience inside a shell.
 

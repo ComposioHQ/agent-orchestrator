@@ -17,6 +17,7 @@ import { KeyboardShortcutsSettingsDialog } from "../components/settings/Keyboard
 import { ShellTopbar } from "../components/ShellTopbar";
 import { SessionTopbarProvider } from "../components/SessionTopbarPortal";
 import { OrchestratorReplacementDialog } from "../components/OrchestratorReplacementDialog";
+import { RestartToUpdateDialog } from "../components/RestartToUpdateDialog";
 import { Sidebar } from "../components/Sidebar";
 import { SidebarProvider } from "../components/ui/sidebar";
 import { TitlebarNav } from "../components/TitlebarNav";
@@ -823,6 +824,7 @@ function ShellLayout() {
 				<GlobalNewTaskDialog />
 				<GlobalToast />
 				<SettingsDialog />
+				<RestartToUpdateDialog />
 				<KeyboardShortcutsDialog
 					open={isKeyboardShortcutsOpen}
 					onOpenChange={setIsKeyboardShortcutsOpen}
