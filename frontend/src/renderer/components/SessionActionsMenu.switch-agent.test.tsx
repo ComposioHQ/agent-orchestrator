@@ -185,4 +185,24 @@ describe("SessionActionsMenu > Switch agent", () => {
 
 		await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
 	});
+
+	// Suppressing the opening-race dismissal must not leave keyboard focus
+	// stranded on the external session-actions trigger: once the opening
+	// focus race has settled, focus has to live inside the opened dialog.
+	it("moves focus into the opened dialog", async () => {
+		renderHarness();
+
+		await userEvent.click(await screen.findByRole("button", { name: "Session actions" }));
+		await userEvent.click(await screen.findByRole("menuitem", { name: "Switch agent" }));
+		const dialog = await screen.findByRole("dialog", { name: "Switch agent" });
+
+		// Let the opening focus race (dialog FocusScope vs. the closing
+		// menu's focus return) settle across the same couple of frames the
+		// opening-race exemption covers.
+		await new Promise((resolve) => requestAnimationFrame(resolve));
+		await new Promise((resolve) => requestAnimationFrame(resolve));
+
+		await waitFor(() => expect(dialog).toContainElement(document.activeElement as HTMLElement | null));
+		expect(document.activeElement).not.toBe(screen.getByRole("button", { name: "Session actions" }));
+	});
 });
