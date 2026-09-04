@@ -32,15 +32,16 @@ const shellMocks = vi.hoisted(() => {
 			code?: "not_ready";
 		},
 		shellValue: undefined as
-			| {
-					workspaceStartupState?: string;
-					createProject?: (input: {
-						path: string;
-						workerAgent: string;
-						orchestratorAgent: string;
-						asWorkspace?: boolean;
-					}) => Promise<void>;
-			  }
+				| {
+						workspaceStartupState?: string;
+						createProject?: (input: {
+							path: string;
+							defaultBranch?: string;
+							workerAgent: string;
+							orchestratorAgent: string;
+							asWorkspace?: boolean;
+						}) => Promise<void>;
+				  }
 			| undefined,
 	};
 	return {
