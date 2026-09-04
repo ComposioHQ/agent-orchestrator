@@ -635,12 +635,6 @@ export class CloudAPI {
     );
   }
 
-  async sessionSCM(orgId: string, sessionId: string) {
-    return this.request<{ scm: CloudSessionSCM | null }>(
-      this.orgPath(orgId, `/sessions/${encodeURIComponent(sessionId)}/scm`),
-    );
-  }
-
   async createSession(
     orgId: string,
     input: {
