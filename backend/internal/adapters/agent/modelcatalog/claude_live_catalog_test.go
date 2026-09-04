@@ -3,10 +3,11 @@ package modelcatalog
 import (
 	"context"
 	"errors"
-	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
 func TestClaudeDiscoveryUsesAdvertisedVersionedChoices(t *testing.T) {
