@@ -372,6 +372,12 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 						) : null}
 					</div>
 				) : null}
+				{workspace?.folderMissing ? (
+					<div className="mx-3 my-3 flex items-center gap-3 rounded-md border border-border bg-surface px-3 py-2 text-xs text-muted-foreground">
+						<AlertTriangle className="size-icon-base shrink-0 text-warning" aria-hidden="true" />
+						<span className="min-w-0 flex-1">{t("home.folderMissing")}</span>
+					</div>
+				) : null}
 				{workspaceStartupState === "error" || workspaceQuery.isError ? (
 					<p className="py-10 text-center text-xs text-passive">{t("shell.couldNotLoadSessions")}</p>
 				) : showWelcome ? (

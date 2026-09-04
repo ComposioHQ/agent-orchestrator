@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io/fs"
+	"log"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -121,6 +122,13 @@ func (m *Service) List(ctx context.Context) ([]Summary, error) {
 	}
 	out := make([]Summary, 0, len(projects))
 	for _, row := range projects {
+		folderMissing := false
+		exists, err := folderExists(row.Path)
+		if err != nil {
+			log.Printf("project: stat %s: %v", row.Path, err)
+		} else {
+			folderMissing = !exists
+		}
 		out = append(out, Summary{
 			ID:                domain.ProjectID(row.ID),
 			Name:              displayName(row),
@@ -128,6 +136,7 @@ func (m *Service) List(ctx context.Context) ([]Summary, error) {
 			Kind:              row.Kind.WithDefault(),
 			SessionPrefix:     resolveSessionPrefix(row),
 			OrchestratorAgent: row.Config.Orchestrator.Harness,
+			FolderMissing:     folderMissing,
 		})
 	}
 	return out, nil
@@ -751,11 +760,20 @@ func (m *Service) suggestID(ctx context.Context, base domain.ProjectID) domain.P
 
 func (m *Service) projectFromRow(ctx context.Context, row domain.ProjectRecord) Project {
 	kind := row.Kind.WithDefault()
+	folderMissing := false
+	exists, err := folderExists(row.Path)
+	if err != nil {
+		log.Printf("project: stat %s: %v", row.Path, err)
+	} else {
+		folderMissing = !exists
+	}
 	defaultBranch := ""
 	if kind != domain.ProjectKindScratch {
 		defaultBranch = row.Config.WorktreeBaseBranch()
 		if defaultBranch == "" {
-			defaultBranch = resolveDefaultBranch(ctx, row.Path)
+			if !folderMissing {
+				defaultBranch = resolveDefaultBranch(ctx, row.Path)
+			}
 			if defaultBranch == "" {
 				defaultBranch = domain.DefaultBranchAuto
 			}
@@ -769,6 +787,7 @@ func (m *Service) projectFromRow(ctx context.Context, row domain.ProjectRecord) 
 		Repo:          row.RepoOriginURL,
 		DefaultBranch: defaultBranch,
 		Agent:         string(m.defaultHarness),
+		FolderMissing: folderMissing,
 	}
 	p.Config = projectConfigPtr(row.Config)
 	return p
@@ -810,6 +829,23 @@ func normalizePath(raw string) (string, error) {
 		return "", apierr.Invalid("INVALID_PATH", "Repository path is invalid", nil)
 	}
 	return filepath.Clean(abs), nil
+}
+
+// folderExists reports whether path currently exists as a directory. Only
+// os.ErrNotExist (or a path that is not a directory) means "missing". All other
+// stat errors are surfaced so the caller can log them and avoid guessing.
+func folderExists(path string) (bool, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return false, nil
+		}
+		return false, err
+	}
+	if !info.IsDir() {
+		return false, nil
+	}
+	return true, nil
 }
 
 func ensureDirectoryPath(path string) error {

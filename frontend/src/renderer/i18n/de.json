@@ -44,6 +44,7 @@
 	"common.yes": "Ja",
 	"board.empty.body": "Beschreiben Sie eine Aufgabe — der Orchestrator plant sie, startet Worker-Sitzungen und verfolgt sie hier, während die Arbeit voranschreitet.",
 	"board.empty.title": "Noch keine Worker-Sitzungen",
+	"home.folderMissing": "Ordner fehlt",
 	"home.jumpBack": "Direkt weitermachen",
 	"home.recentProjects": "Zuletzt verwendete Projekte",
 	"home.currentProjects": "Aktuelle Projekte",

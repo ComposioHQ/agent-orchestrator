@@ -44,6 +44,7 @@
 	"common.yes": "Oui",
 	"board.empty.body": "Décrivez une tâche et l'orchestrateur la planifie, crée des sessions worker et les suit ici au fur et à mesure de l'avancement.",
 	"board.empty.title": "Aucune session worker pour le moment",
+	"home.folderMissing": "Dossier manquant",
 	"home.jumpBack": "Reprendre là où vous en étiez",
 	"home.recentProjects": "Projets récents",
 	"home.currentProjects": "Projets actuels",

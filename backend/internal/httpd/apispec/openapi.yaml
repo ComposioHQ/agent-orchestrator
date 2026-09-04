@@ -9843,6 +9843,8 @@ components:
           $ref: '#/components/schemas/ProjectConfig'
         defaultBranch:
           type: string
+        folderMissing:
+          type: boolean
         id:
           type: string
         kind:
@@ -9868,6 +9870,7 @@ components:
       - path
       - repo
       - defaultBranch
+      - folderMissing
       type: object
     ProjectConfig:
       properties:
@@ -9937,6 +9940,8 @@ components:
       type: object
     ProjectSummary:
       properties:
+        folderMissing:
+          type: boolean
         id:
           type: string
         kind:
@@ -9961,6 +9966,7 @@ components:
       - path
       - kind
       - sessionPrefix
+      - folderMissing
       type: object
     PromoteQueuedTurnResponse:
       properties:

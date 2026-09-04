@@ -44,6 +44,7 @@
 	"common.yes": "是",
 	"board.empty.body": "描述一个任务后，编排器会进行规划、创建 worker 会话，并在工作推进时在此跟踪。",
 	"board.empty.title": "还没有 worker 会话",
+	"home.folderMissing": "文件夹缺失",
 	"home.jumpBack": "继续进行",
 	"home.recentProjects": "最近的项目",
 	"home.currentProjects": "当前项目",
