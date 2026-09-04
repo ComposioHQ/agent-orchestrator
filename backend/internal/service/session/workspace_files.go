@@ -2060,9 +2060,9 @@ func parseGitDirFile(content string) (string, bool) {
 		line = strings.TrimSpace(line)
 		const prefix = "gitdir:"
 		if strings.HasPrefix(line, prefix) {
-			path := strings.TrimSpace(strings.TrimPrefix(line, prefix))
-			if path != "" {
-				return path, true
+			gitdir := strings.TrimSpace(strings.TrimPrefix(line, prefix))
+			if gitdir != "" {
+				return gitdir, true
 			}
 		}
 	}
