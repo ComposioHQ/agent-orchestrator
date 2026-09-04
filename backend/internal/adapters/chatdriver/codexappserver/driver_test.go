@@ -958,6 +958,8 @@ func TestApprovalSettingsMirrorTUIPosture(t *testing.T) {
 		policy, sandbox, reviewer string
 	}{
 		{ports.PermissionModeDefault, "", "", ""},
+		{ports.PermissionModeManual, "on-request", "read-only", "user"},
+		{ports.PermissionModeDontAsk, "never", "workspace-write", "user"},
 		{ports.PermissionModeBypassPermissions, "never", "danger-full-access", "user"},
 		{ports.PermissionModeAcceptEdits, "on-request", "workspace-write", "user"},
 		{ports.PermissionModeAuto, "on-request", "workspace-write", "auto_review"},

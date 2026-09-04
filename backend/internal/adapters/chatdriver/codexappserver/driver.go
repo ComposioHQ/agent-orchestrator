@@ -513,6 +513,10 @@ func initializeConnection(ctx context.Context, connection *conn) error {
 // approvalSettings leaves Default/unknown entirely to native Codex configuration.
 func approvalSettings(mode ports.PermissionMode) (policy, sandbox string) {
 	switch ports.NormalizePermissionMode(mode) {
+	case ports.PermissionModeManual:
+		return "on-request", "read-only"
+	case ports.PermissionModeDontAsk:
+		return "never", "workspace-write"
 	case ports.PermissionModeAcceptEdits, ports.PermissionModeAuto:
 		return "on-request", "workspace-write"
 	case ports.PermissionModeBypassPermissions:
@@ -526,7 +530,7 @@ func approvalReviewer(mode ports.PermissionMode) string {
 	switch ports.NormalizePermissionMode(mode) {
 	case ports.PermissionModeAuto:
 		return "auto_review"
-	case ports.PermissionModeAcceptEdits, ports.PermissionModeBypassPermissions:
+	case ports.PermissionModeManual, ports.PermissionModeDontAsk, ports.PermissionModeAcceptEdits, ports.PermissionModeBypassPermissions:
 		return "user"
 	default:
 		return ""

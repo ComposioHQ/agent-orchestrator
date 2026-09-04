@@ -28,6 +28,8 @@ func TestPermissionModesAcrossChatStartResumeAndTurn(t *testing.T) {
 		policy, sandbox, reviewer string
 	}{
 		{ports.PermissionModeDefault, "", "", ""},
+		{ports.PermissionModeManual, "on-request", "read-only", "user"},
+		{ports.PermissionModeDontAsk, "never", "workspace-write", "user"},
 		{ports.PermissionMode("unknown"), "", "", ""},
 		{ports.PermissionModeAcceptEdits, "on-request", "workspace-write", "user"},
 		{ports.PermissionModeAuto, "on-request", "workspace-write", "auto_review"},
@@ -90,33 +92,37 @@ func TestPermissionModesAcrossChatStartResumeAndTurn(t *testing.T) {
 	}
 }
 
-func TestBypassToDefaultRestoresProviderNativePermissions(t *testing.T) {
-	d, srv := newTestDriver(t)
-	srv.respondTo("thread/start", nativeReadOnlyResponse)
-	conv, err := d.Start(context.Background(), ports.ChatStartConfig{WorkspacePath: "/tmp/ws", Permissions: ports.PermissionModeBypassPermissions})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = conv.Close() }()
-	if _, err = conv.SendTurn(context.Background(), ports.ChatUserMessage{Text: "use defaults", Settings: ports.ChatTurnSettings{Approval: ports.PermissionModeDefault}}); err != nil {
-		t.Fatal(err)
-	}
-	probe := srv.awaitFrame(func(f frame) bool {
-		return f.Method == "thread/start" && strings.Contains(string(f.Params), `"ephemeral":true`)
-	})
-	probeParams := permissionParams(t, probe)
-	if _, ok := probeParams["approvalPolicy"]; ok {
-		t.Fatal("native probe overrode approvals")
-	}
-	if _, ok := probeParams["sandbox"]; ok {
-		t.Fatal("native probe overrode sandbox")
-	}
-	if !srv.sentMethod("thread/unsubscribe") {
-		t.Fatal("native probe left loaded")
-	}
-	turn := permissionParams(t, srv.awaitFrame(func(f frame) bool { return f.Method == "turn/start" }))
-	if turn["approvalPolicy"] != "untrusted" || turn["approvalsReviewer"] != "user" || !reflect.DeepEqual(turn["sandboxPolicy"], map[string]any{"type": "readOnly", "networkAccess": false}) {
-		t.Fatalf("native policy not restored: %#v", turn)
+func TestExplicitToDefaultRestoresProviderNativePermissions(t *testing.T) {
+	for _, mode := range []ports.PermissionMode{ports.PermissionModeBypassPermissions, ports.PermissionModeManual, ports.PermissionModeDontAsk} {
+		t.Run(string(mode), func(t *testing.T) {
+			d, srv := newTestDriver(t)
+			srv.respondTo("thread/start", nativeReadOnlyResponse)
+			conv, err := d.Start(context.Background(), ports.ChatStartConfig{WorkspacePath: "/tmp/ws", Permissions: mode})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() { _ = conv.Close() }()
+			if _, err = conv.SendTurn(context.Background(), ports.ChatUserMessage{Text: "use defaults", Settings: ports.ChatTurnSettings{Approval: ports.PermissionModeDefault}}); err != nil {
+				t.Fatal(err)
+			}
+			probe := srv.awaitFrame(func(f frame) bool {
+				return f.Method == "thread/start" && strings.Contains(string(f.Params), `"ephemeral":true`)
+			})
+			probeParams := permissionParams(t, probe)
+			if _, ok := probeParams["approvalPolicy"]; ok {
+				t.Fatal("native probe overrode approvals")
+			}
+			if _, ok := probeParams["sandbox"]; ok {
+				t.Fatal("native probe overrode sandbox")
+			}
+			if !srv.sentMethod("thread/unsubscribe") {
+				t.Fatal("native probe left loaded")
+			}
+			turn := permissionParams(t, srv.awaitFrame(func(f frame) bool { return f.Method == "turn/start" }))
+			if turn["approvalPolicy"] != "untrusted" || turn["approvalsReviewer"] != "user" || !reflect.DeepEqual(turn["sandboxPolicy"], map[string]any{"type": "readOnly", "networkAccess": false}) {
+				t.Fatalf("native policy not restored: %#v", turn)
+			}
+		})
 	}
 }
 

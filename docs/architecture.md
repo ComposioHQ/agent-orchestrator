@@ -920,6 +920,31 @@ sequenceDiagram
 
 ### Codex approval defaults
 
+Desktop and mobile use the same AO permission menu. Codex Chat applies explicit
+policies on the next turn:
+
+| AO choice | Approval policy | Sandbox | Reviewer |
+| --- | --- | --- | --- |
+| Auto | on-request | workspace-write | auto_review |
+| Manual | on-request | read-only | user |
+| Accept Edits | on-request | workspace-write | user |
+| Don't Ask | never | workspace-write | user |
+| Bypass Permissions | never | danger-full-access | user |
+
+Manual permits read-only work and asks when writes need escalation. Don't Ask
+retains workspace confinement and denies approval escalation. These are separate
+policies; neither is an alias for native defaults or unrestricted access.
+`manual` and `dont-ask` are currently Chat-only API values supported by Codex.
+Project/TUI configuration and other Chat harnesses reject them rather than
+silently falling back to a different policy. Chat-to-TUI handoff reads the durable
+conversation policy during preflight and refuses these two modes before stopping
+Chat; it also refuses to proceed if that policy cannot be read. ACP sessions use advertised native
+mode IDs, mapped to the same five labels; unavailable choices remain disabled,
+and custom provider choices keep their own labels and IDs.
+
+The separate **Provider configuration** action resets the stored `default`
+policy. It cannot be called Manual: native configuration may itself be permissive.
+
 Codex's **Default** permission choice delegates to native configuration; unknown
 permission values normalize to Default. Fresh TUI launch/restore and Chat start
 send no approval, reviewer, or sandbox override for that choice. Only explicit
