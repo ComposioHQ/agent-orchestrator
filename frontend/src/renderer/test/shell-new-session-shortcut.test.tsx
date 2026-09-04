@@ -18,6 +18,7 @@ const shellMocks = vi.hoisted(() => {
 		openFolderPathListener: undefined as ((path: string) => void) | undefined,
 		routeParams: {} as { projectId?: string; sessionId?: string },
 		routeSearch: {} as Record<string, unknown>,
+		matchRouteTarget: null as string | null,
 		workspaces: [] as WorkspaceSummary[],
 		workspaceQuery: {
 			data: [] as WorkspaceSummary[],
@@ -46,7 +47,15 @@ const shellMocks = vi.hoisted(() => {
 			state.newShellTerminalListener = listener;
 			return vi.fn();
 		}),
-		openShellTerminal: vi.fn(),
+		openShellTerminal: vi.fn((input: { projectId?: string; sessionId?: string }) => ({
+			handleId: "pending-shell:test",
+			projectId: input.projectId,
+			sessionId: input.sessionId,
+			workingDir: "",
+			title: "Terminal 1",
+			createdAt: new Date().toISOString(),
+			optimistic: true as const,
+		})),
 		onOpenSettingsShortcut: vi.fn((listener: () => void) => {
 			state.openSettingsListener = listener;
 			return vi.fn();
@@ -96,7 +105,7 @@ vi.mock("@tanstack/react-router", async (importOriginal) => ({
 	...(await importOriginal<typeof import("@tanstack/react-router")>()),
 	createFileRoute: () => (options: unknown) => ({ options }),
 	Outlet: () => null,
-	useMatchRoute: () => () => false,
+	useMatchRoute: () => (options: { to: string }) => shellMocks.state.matchRouteTarget === options.to,
 	useNavigate: () => shellMocks.navigate,
 	useParams: () => shellMocks.state.routeParams,
 	useSearch: () => shellMocks.state.routeSearch,
@@ -130,6 +139,7 @@ vi.mock("../lib/bridge", () => ({
 
 vi.mock("../hooks/useWorkspaceQuery", () => ({
 	useWorkspaceQuery: () => shellMocks.state.workspaceQuery,
+	useWorkspaceTraySessions: () => ({ data: [] }),
 	workspaceQueryKey: ["workspaces"],
 	workspaceQueryOptions: {},
 }));
@@ -138,32 +148,46 @@ vi.mock("../hooks/useDaemonStatus", () => ({
 	useDaemonStatus: () => shellMocks.state.daemonStatus,
 }));
 
+// TerminalCacheProvider resolves the cloud terminal transport in production.
+// These shell shortcut tests never mount a terminal, so keep that unrelated
+// settings/query path out of the provider-free harness.
+vi.mock("../hooks/useCloudCp", () => ({
+	useCloudCp: () => ({ client: {}, ready: false, baseUrl: "" }),
+}));
+
 // The shell layout opens standalone terminals; this suite only covers the
 // shortcut subscriptions, so the mutation is stubbed rather than driven.
 vi.mock("../hooks/useShellTerminals", () => ({
 	useShellTerminals: () => ({ data: [], isSuccess: true }),
-	useOpenShellTerminal: () => ({ mutate: shellMocks.openShellTerminal }),
+	useOpenShellTerminal: () => ({
+		open: shellMocks.openShellTerminal,
+		mutate: shellMocks.openShellTerminal,
+	}),
 }));
 
-vi.mock("../hooks/useAgentsQuery", () => ({
-	agentsQueryKey: ["agents"],
-	agentsQueryOptions: {},
-	refreshAgents: vi.fn(),
+vi.mock("../hooks/useAgentReadinessQuery", () => ({
+	agentReadinessQueryKey: ["agent-readiness"],
 	// The shell reports the install's agent inventory once per launch, so the
 	// mock has to answer this too. Undefined data means the hook reports nothing,
 	// which keeps these shortcut tests free of telemetry side effects.
-	useAgentsQuery: () => ({ data: undefined }),
+	useAgentReadinessQuery: () => ({ data: undefined }),
+	useEnsureAgentReadiness: vi.fn(),
 }));
 
 vi.mock("../components/NotificationCenter", () => ({ NotificationRuntime: () => null }));
+vi.mock("../components/DaemonStartupLoader", () => ({
+	DaemonStartupLoader: () => <div data-testid="daemon-startup-loader" />,
+}));
 vi.mock("../components/CommandPalette", () => ({ CommandPalette: () => null }));
 vi.mock("../components/OrchestratorReplacementDialog", () => ({ OrchestratorReplacementDialog: () => null }));
 vi.mock("../components/ShellTopbar", () => ({ ShellTopbar: () => null }));
 vi.mock("../components/TitlebarNav", async () => {
-	const { useUiStore: useStore } = await vi.importActual<typeof import("../stores/ui-store")>("../stores/ui-store");
+	const { sidebarIsVisible, useUiStore: useStore } = await vi.importActual<
+		typeof import("../stores/ui-store")
+	>("../stores/ui-store");
 	return {
 		TitlebarNav: () => {
-			const isSidebarOpen = useStore((state) => state.isSidebarOpen);
+			const isSidebarOpen = useStore(sidebarIsVisible);
 			const toggleSidebar = useStore((state) => state.toggleSidebar);
 			return (
 				<button
@@ -207,6 +231,7 @@ vi.mock("../components/GlobalNewTaskDialog", async () => {
 vi.mock("../components/Sidebar", async () => {
 	const { useUiStore: useStore } = await vi.importActual<typeof import("../stores/ui-store")>("../stores/ui-store");
 	return {
+		SIDEBAR_DEFAULT_WIDTH: 240,
 		Sidebar: ({ topbarOffset }: { topbarOffset?: string }) => {
 			const nonce = useStore((state) => state.createProjectNonce);
 			const folderDropRequest = useStore((state) => state.folderDropRequest);
@@ -291,6 +316,7 @@ beforeEach(() => {
 	shellMocks.state.openFolderPathListener = undefined;
 	shellMocks.state.routeParams = {};
 	shellMocks.state.routeSearch = {};
+	shellMocks.state.matchRouteTarget = null;
 	shellMocks.state.workspaces = workspaces;
 	shellMocks.state.workspaceQuery = {
 		data: workspaces,
@@ -305,10 +331,14 @@ beforeEach(() => {
 	useUiStore.setState({
 		createProjectNonce: 0,
 		folderDropRequest: null,
+		isSidebarAutoCollapsed: false,
 		isSidebarOpen: true,
 		newTaskRequest: null,
 		newShellTerminalNonce: 0,
+		activeShellTerminalHandleId: null,
 		settingsModal: null,
+		sidebarAutoCollapseOverride: false,
+		sidebarWorkspaceDemandPx: null,
 	});
 });
 
@@ -343,8 +373,8 @@ describe("shell workspace startup", () => {
 		);
 
 		const view = await renderShell();
-		expect(shellMocks.state.shellValue?.workspaceStartupState).toBe("loading");
-		expect(screen.getByTestId("sidebar-provider")).toHaveAttribute("data-open", "false");
+		expect(screen.getByTestId("daemon-startup-loader")).toBeInTheDocument();
+		expect(screen.queryByTestId("sidebar-provider")).not.toBeInTheDocument();
 		expect(shellMocks.queryClient.fetchQuery).toHaveBeenCalledWith(expect.objectContaining({ staleTime: 0 }));
 
 		await act(async () => resolveFetch?.(workspaces));
@@ -371,7 +401,7 @@ describe("shell workspace startup", () => {
 		await waitFor(() =>
 			expect(shellMocks.queryClient.fetchQuery).toHaveBeenCalledWith(expect.objectContaining({ staleTime: 0 })),
 		);
-		expect(shellMocks.state.shellValue?.workspaceStartupState).toBe("loading");
+		expect(screen.getByTestId("daemon-startup-loader")).toBeInTheDocument();
 	});
 
 	it("forces a workspace fetch when a daemon returns ready on the same port", async () => {
@@ -379,7 +409,7 @@ describe("shell workspace startup", () => {
 		shellMocks.queryClient.fetchQuery.mockResolvedValue(workspaces);
 
 		const view = await renderShell();
-		expect(shellMocks.state.shellValue?.workspaceStartupState).toBe("loading");
+		expect(screen.getByTestId("daemon-startup-loader")).toBeInTheDocument();
 		expect(shellMocks.queryClient.fetchQuery).not.toHaveBeenCalled();
 
 		shellMocks.state.daemonStatus = { state: "ready", port: 4777 };
@@ -424,6 +454,53 @@ describe("shell workspace startup", () => {
 });
 
 describe("shell sidebar toggle", () => {
+	it("keeps a manual expansion open while workspace pressure is active", async () => {
+		const clientWidth = vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1280);
+		useUiStore.setState({
+			isSidebarAutoCollapsed: false,
+			isSidebarOpen: true,
+			sidebarAutoCollapseOverride: false,
+			sidebarWorkspaceDemandPx: 1068,
+		});
+
+		try {
+			await renderShell();
+			await waitFor(() => expect(useUiStore.getState().isSidebarAutoCollapsed).toBe(true));
+			expect(screen.getByTestId("sidebar-provider")).toHaveAttribute("data-open", "false");
+
+			fireEvent.click(screen.getByRole("button", { name: "Expand sidebar" }));
+
+			expect(useUiStore.getState().sidebarAutoCollapseOverride).toBe(true);
+			expect(screen.getByTestId("sidebar-provider")).toHaveAttribute("data-open", "true");
+
+			// ResizeObserver can report transient geometry while the rail animates.
+			// Automatic pressure changes must never revoke the user's explicit choice.
+			act(() => {
+				useUiStore.getState().setSidebarAutoCollapsed(false);
+				useUiStore.getState().setSidebarAutoCollapsed(true);
+			});
+
+			expect(useUiStore.getState().sidebarAutoCollapseOverride).toBe(true);
+			expect(screen.getByTestId("sidebar-provider")).toHaveAttribute("data-open", "true");
+			expect(screen.getByRole("button", { name: "Collapse sidebar" })).toBeInTheDocument();
+
+			fireEvent.click(screen.getByRole("button", { name: "Collapse sidebar" }));
+
+			// Browser pressure still owns the icon rail. Returning from the manual
+			// expansion must not remove that rail's layout width and shift the
+			// inspector boundary after the transition.
+			expect(useUiStore.getState()).toMatchObject({
+				isSidebarAutoCollapsed: true,
+				isSidebarOpen: true,
+				sidebarAutoCollapseOverride: false,
+			});
+			expect(screen.getByTestId("sidebar-provider")).toHaveAttribute("data-open", "false");
+			expect(screen.getByRole("button", { name: "Expand sidebar" })).toBeInTheDocument();
+		} finally {
+			clientWidth.mockRestore();
+		}
+	});
+
 	it("does not open a collapsed sidebar on titlebar hover", async () => {
 		useUiStore.setState({ isSidebarOpen: false });
 		await renderShell();
@@ -460,7 +537,8 @@ describe("shell new-shell-terminal shortcut subscription", () => {
 	// Regression: the shell LAYOUT must own this, not the session view. When the
 	// session view owned it, the shortcut did nothing outside a session route —
 	// nothing was mounted to hear it.
-	it("opens a terminal even with no session on screen", async () => {
+	it("opens a terminal from the dedicated terminals route", async () => {
+		shellMocks.state.matchRouteTarget = "/terminals";
 		await renderShell();
 
 		pressNewShellTerminal();
@@ -469,16 +547,15 @@ describe("shell new-shell-terminal shortcut subscription", () => {
 		expect(shellMocks.openShellTerminal).toHaveBeenCalledTimes(1);
 	});
 
-	it("scopes the terminal to the project in scope", async () => {
+	// Regression (#4772): ⌘T on the project board must not yank users into /terminals.
+	it("ignores the shortcut on the project board", async () => {
 		shellMocks.state.routeParams = { projectId: "proj-1" };
 		await renderShell();
 
 		pressNewShellTerminal();
 
-		expect(shellMocks.openShellTerminal).toHaveBeenCalledWith(
-			expect.objectContaining({ projectId: "proj-1" }),
-			expect.anything(),
-		);
+		expect(useUiStore.getState().newShellTerminalNonce).toBe(0);
+		expect(shellMocks.openShellTerminal).not.toHaveBeenCalled();
 	});
 
 	// Regression: a terminal opened from a session view must carry the session
@@ -511,6 +588,7 @@ describe("shell new-shell-terminal shortcut subscription", () => {
 	});
 
 	it("re-fires on a repeat press so a second terminal can be opened", async () => {
+		shellMocks.state.routeParams = { sessionId: "sess-1" };
 		await renderShell();
 
 		pressNewShellTerminal();

@@ -172,7 +172,11 @@ func (s *resetEventSource) EventsAfter(_ context.Context, after int64, _ int) ([
 
 func (*resetEventSource) LatestSeq(context.Context) (int64, error) { return 1, nil }
 
-func TestEventsStreamResetsCursorAheadOfCurrentDatabase(t *testing.T) {
+// A cursor ahead of head means the change_log was truncated or replaced. Such a
+// client is sent to head, not to zero: replaying from zero costs it the entire
+// backlog, and because every connected client is reset at the same moment, they
+// stampede together. The gap is recovered from the next snapshot fetch instead.
+func TestEventsStreamClampsCursorAheadOfCurrentDatabaseToHead(t *testing.T) {
 	live := &fakeEventSubscriber{}
 	src := &resetEventSource{}
 	router := NewRouterWithControl(config.Config{}, discardLogger(), nil, APIDeps{
@@ -194,14 +198,19 @@ func TestEventsStreamResetsCursorAheadOfCurrentDatabase(t *testing.T) {
 	}
 	defer resp.Body.Close()
 
-	if got := resp.Header.Get("X-AO-Event-After"); got != "0" {
-		t.Fatalf("X-AO-Event-After = %q, want 0", got)
+	// resetEventSource reports a head of 1, so a cursor of 100 lands on 1.
+	if got := resp.Header.Get("X-AO-Event-After"); got != "1" {
+		t.Fatalf("X-AO-Event-After = %q, want 1 (head, not a replay from zero)", got)
 	}
-	if ids := readSSEIDs(t, resp.Body, 1); ids[0] != "1" {
-		t.Fatalf("id = %q, want 1", ids[0])
+
+	// The replayed event (seq 1) is at the cursor, so it is not re-sent. Only a
+	// genuinely newer event reaches the client — proving no backlog was replayed.
+	live.publish(testCDCEvent(2))
+	if ids := readSSEIDs(t, resp.Body, 1); ids[0] != "2" {
+		t.Fatalf("id = %q, want 2 (history before head must not be replayed)", ids[0])
 	}
-	if src.after != 0 {
-		t.Fatalf("EventsAfter called with %d, want reset cursor 0", src.after)
+	if src.after != 1 {
+		t.Fatalf("EventsAfter called with %d, want head cursor 1", src.after)
 	}
 }
 
@@ -384,4 +393,57 @@ func testCDCEventWithType(seq int64, typ cdc.EventType) cdc.Event {
 		Payload:   json.RawMessage(`{"status":"running"}`),
 		CreatedAt: time.Unix(seq, 0).UTC(),
 	}
+}
+
+// An idle stream sent nothing at all, which is fine on a LAN and broken behind
+// a proxy: Cloudflare buffers a lone small write and has nothing to push it
+// through, so a single agent reply sat unseen for over a minute while the same
+// stream worked instantly over the LAN. The bulk replay always arrived because
+// it is large enough to flush on its own.
+//
+// A periodic comment frame keeps the pipe moving and carries any buffered event
+// out with it. Comments are the SSE no-op: clients ignore them, and the cursor
+// is untouched.
+func TestEventsStreamHeartbeatsWhileIdle(t *testing.T) {
+	restore := eventsHeartbeatInterval
+	eventsHeartbeatInterval = 50 * time.Millisecond
+	defer func() { eventsHeartbeatInterval = restore }()
+
+	live := &fakeEventSubscriber{}
+	src := &fakeEventSource{live: live}
+	router := NewRouterWithControl(config.Config{}, discardLogger(), nil, APIDeps{
+		CDC:    src,
+		Events: live,
+	}, ControlDeps{})
+	ts := httptest.NewServer(router)
+	defer ts.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	// Past head, so the server clamps to head and replays nothing: the stream is
+	// genuinely idle and anything that arrives can only be a heartbeat.
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, ts.URL+"/api/v1/events?after=999999", nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("GET /api/v1/events: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	deadline := time.Now().Add(4 * time.Second)
+	seen := ""
+	buf := make([]byte, 256)
+	for time.Now().Before(deadline) {
+		n, err := resp.Body.Read(buf)
+		if err != nil {
+			break
+		}
+		seen += string(buf[:n])
+		for _, line := range strings.Split(seen, "\n") {
+			// An SSE comment: a frame beginning with a colon.
+			if strings.HasPrefix(line, ":") {
+				return
+			}
+		}
+	}
+	t.Fatalf("idle stream sent no comment frame in 4s (got %q); a buffering proxy has nothing to flush an event through", seen)
 }

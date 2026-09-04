@@ -29,6 +29,9 @@ type fakeAgent struct {
 	loadParams          acpsdk.LoadSessionRequest
 	resumeParams        acpsdk.ResumeSessionRequest
 	loadUpdates         []acpsdk.SessionUpdate
+	loadUpdateBatches   [][]acpsdk.SessionUpdate
+	blockLoadCall       int
+	loadStarted         chan struct{}
 	loadCalls           int
 	resumeCalls         int
 	promptParams        acpsdk.PromptRequest
@@ -43,6 +46,7 @@ type fakeAgent struct {
 	mode                string
 	modeNotFound        bool // SetSessionMode returns -32601
 	configNotFound      bool // SetSessionConfigOption returns -32601
+	configErr           error
 	newSessionUpdates   []acpsdk.SessionUpdate
 	options             map[string]string
 	newConfig           []acpsdk.SessionConfigOption
@@ -53,6 +57,113 @@ type fakeAgent struct {
 	steerPrompt         []acpsdk.ContentBlock
 	steerMeta           map[string]any
 	steerOut            string
+}
+
+type legacyKimiAgent struct {
+	mu          sync.Mutex
+	model       string
+	modelCalls  int
+	mode        string
+	modeCalls   int
+	configCalls int
+}
+
+func fakeLegacyKimiSpawn(agent *legacyKimiAgent) spawnFunc {
+	return func(Launch, string) (*process, error) {
+		clientToAgentR, clientToAgentW := io.Pipe()
+		agentToClientR, agentToClientW := io.Pipe()
+		go serveLegacyKimi(agent, clientToAgentR, agentToClientW)
+		var once sync.Once
+		return &process{
+			stdin: clientToAgentW, stdout: agentToClientR,
+			stop: func() error {
+				once.Do(func() {
+					_ = clientToAgentW.Close()
+					_ = clientToAgentR.Close()
+					_ = agentToClientW.Close()
+					_ = agentToClientR.Close()
+				})
+				return nil
+			},
+		}, nil
+	}
+}
+
+func serveLegacyKimi(agent *legacyKimiAgent, in io.Reader, out io.Writer) {
+	decoder := json.NewDecoder(in)
+	encoder := json.NewEncoder(out)
+	for {
+		var request struct {
+			ID     json.RawMessage `json:"id"`
+			Method string          `json:"method"`
+			Params json.RawMessage `json:"params"`
+		}
+		if err := decoder.Decode(&request); err != nil {
+			return
+		}
+		result := any(map[string]any{})
+		var responseError any
+		switch request.Method {
+		case "initialize":
+			result = map[string]any{
+				"protocolVersion": acpsdk.ProtocolVersionNumber,
+				"agentCapabilities": map[string]any{
+					"sessionCapabilities": map[string]any{"resume": map[string]any{}},
+				},
+			}
+		case "session/new":
+			result = map[string]any{
+				"sessionId": "kimi-session-1",
+				"models": map[string]any{
+					"currentModelId": "kimi-code/kimi-for-coding",
+					"availableModels": []map[string]any{{
+						"modelId": "kimi-code/kimi-for-coding",
+						"name":    "Kimi for Coding", "description": "Kimi coding model",
+					}},
+				},
+				"modes": map[string]any{
+					"currentModeId": "default",
+					"availableModes": []map[string]any{{
+						"id": "default", "name": "Default", "description": "The default mode.",
+					}},
+				},
+			}
+		case "session/set_model":
+			var params struct {
+				ModelID string `json:"modelId"`
+			}
+			_ = json.Unmarshal(request.Params, &params)
+			agent.mu.Lock()
+			agent.model = params.ModelID
+			agent.modelCalls++
+			agent.mu.Unlock()
+		case "session/set_mode":
+			var params struct {
+				ModeID string `json:"modeId"`
+			}
+			_ = json.Unmarshal(request.Params, &params)
+			agent.mu.Lock()
+			agent.mode = params.ModeID
+			agent.modeCalls++
+			agent.mu.Unlock()
+		case "session/set_config_option":
+			agent.mu.Lock()
+			agent.configCalls++
+			agent.mu.Unlock()
+			responseError = map[string]any{"code": -32601, "message": "Method not found"}
+		default:
+			responseError = map[string]any{"code": -32601, "message": "Method not found"}
+		}
+		response := map[string]any{"jsonrpc": "2.0", "id": request.ID}
+		if responseError != nil {
+			response["error"] = responseError
+		} else {
+			response["result"] = result
+		}
+		if err := encoder.Encode(response); err != nil {
+			return
+		}
+	}
 }
 
 var _ acpsdk.Agent = (*fakeAgent)(nil)
@@ -151,8 +262,21 @@ func (a *fakeAgent) LoadSession(ctx context.Context, params acpsdk.LoadSessionRe
 	a.mu.Lock()
 	a.loadParams = params
 	a.loadCalls++
+	loadCall := a.loadCalls
 	updates := append([]acpsdk.SessionUpdate(nil), a.loadUpdates...)
+	if batch := a.loadCalls - 1; batch < len(a.loadUpdateBatches) {
+		updates = append([]acpsdk.SessionUpdate(nil), a.loadUpdateBatches[batch]...)
+	}
+	block := a.blockLoadCall == loadCall
+	started := a.loadStarted
 	a.mu.Unlock()
+	if block {
+		if started != nil {
+			close(started)
+		}
+		<-ctx.Done()
+		return acpsdk.LoadSessionResponse{}, ctx.Err()
+	}
 	for _, update := range updates {
 		if err := a.conn.SessionUpdate(ctx, acpsdk.SessionNotification{SessionId: params.SessionId, Update: update}); err != nil {
 			return acpsdk.LoadSessionResponse{}, err
@@ -163,6 +287,11 @@ func (a *fakeAgent) LoadSession(ctx context.Context, params acpsdk.LoadSessionRe
 func (a *fakeAgent) SetSessionConfigOption(_ context.Context, params acpsdk.SetSessionConfigOptionRequest) (acpsdk.SetSessionConfigOptionResponse, error) {
 	a.mu.Lock()
 	a.setCalls++
+	if a.configErr != nil {
+		err := a.configErr
+		a.mu.Unlock()
+		return acpsdk.SetSessionConfigOptionResponse{}, err
+	}
 	if a.configNotFound {
 		a.mu.Unlock()
 		return acpsdk.SetSessionConfigOptionResponse{}, acpsdk.NewMethodNotFound("session/set_config_option")
@@ -530,6 +659,7 @@ func TestACPDriverNegotiatesRichClientCapabilitiesAndNativePromptContent(t *test
 	}
 	if !conv.Capabilities().Has(ports.ChatCapabilityImages) ||
 		!conv.Capabilities().Has(ports.ChatCapabilityEmbeddedContext) ||
+		!conv.Capabilities().Has(ports.ChatCapabilityResourceLinks) ||
 		!conv.Capabilities().Has(ports.ChatCapabilityElicitation) {
 		t.Fatalf("conversation capabilities = %#v", conv.Capabilities())
 	}
@@ -540,6 +670,7 @@ func TestACPDriverNegotiatesRichClientCapabilitiesAndNativePromptContent(t *test
 			{Type: "image", Data: "aW1hZ2U=", MIMEType: "image/png"},
 			{Type: "resource_link", URI: "file:///repo/README.md", Name: "README.md"},
 			{Type: "resource", URI: "file:///repo/notes.txt", Name: "notes.txt", MIMEType: "text/plain", Text: "notes"},
+			{Type: "resource", URI: ports.ChatInternalReplayResourceURI, Name: "replay", MIMEType: "application/json", Text: `{}`, Internal: true},
 		},
 	})
 	if err != nil {
@@ -557,8 +688,13 @@ func TestACPDriverNegotiatesRichClientCapabilitiesAndNativePromptContent(t *test
 	prompt := agent.promptParams.Prompt
 	promptMessageID := agent.promptParams.MessageId
 	agent.mu.Unlock()
-	if len(prompt) != 4 || prompt[1].Image == nil || prompt[2].ResourceLink == nil || prompt[3].Resource == nil {
+	if len(prompt) != 5 || prompt[1].Image == nil || prompt[2].ResourceLink == nil ||
+		prompt[3].Resource == nil || prompt[4].Resource == nil {
 		t.Fatalf("native prompt = %#v", prompt)
+	}
+	internalResource := prompt[4].Resource.Resource.TextResourceContents
+	if internalResource == nil || internalResource.Meta[aoInternalReplayMetaKey] != true {
+		t.Fatalf("internal replay ACP metadata = %#v", internalResource)
 	}
 	if promptMessageID == nil || *promptMessageID != "ao-client-message-1" {
 		t.Fatalf("ACP prompt message id = %v, want AO's durable client id", promptMessageID)
@@ -626,15 +762,26 @@ func TestACPDriverReappliesLaunchContextWhenResuming(t *testing.T) {
 	if _, err := conv.(ports.ChatHistoryReader).ReadHistory(context.Background()); !errors.Is(err, ports.ErrChatHistoryUnavailable) {
 		t.Fatalf("ReadHistory error = %v, want ErrChatHistoryUnavailable after session/resume", err)
 	}
+	if _, ok := conv.(ports.ChatHistoryRefresher); ok {
+		t.Fatal("resume-only ACP conversation advertised refreshable history")
+	}
 }
 
-func TestACPDriverClosesReplayTurnsAsRecoveredWithoutBlockingResume(t *testing.T) {
+func TestACPDriverRefreshesHistoryWithAnotherSessionLoad(t *testing.T) {
 	userOneID := "11111111-1111-4111-8111-111111111111"
 	answerOneID := "22222222-2222-4222-8222-222222222222"
 	userTwoID := "33333333-3333-4333-8333-333333333333"
 	answerTwoID := "44444444-4444-4444-8444-444444444444"
 	userOne := acpsdk.UpdateUserMessageText("Inspect the repository")
 	userOne.UserMessageChunk.MessageId = &userOneID
+	replayBlock := acpsdk.ResourceBlock(acpsdk.EmbeddedResourceResource{
+		TextResourceContents: &acpsdk.TextResourceContents{
+			Uri: ports.ChatInternalReplayResourceURI, Text: `{"kind":"approximate_conversation_context"}`,
+			Meta: map[string]any{aoInternalReplayMetaKey: true},
+		},
+	})
+	replaySeed := acpsdk.UpdateUserMessage(replayBlock)
+	replaySeed.UserMessageChunk.MessageId = &userOneID
 	answerOneA := acpsdk.UpdateAgentMessageText("The repository ")
 	answerOneA.AgentMessageChunk.MessageId = &answerOneID
 	answerOneB := acpsdk.UpdateAgentMessageText("is ready.")
@@ -652,7 +799,11 @@ func TestACPDriverClosesReplayTurnsAsRecoveredWithoutBlockingResume(t *testing.T
 		capabilities: &acpsdk.AgentCapabilities{
 			LoadSession: true,
 		},
-		loadUpdates: []acpsdk.SessionUpdate{userOne, answerOneA, answerOneB, userTwo, answerTwo, pendingTool},
+		loadUpdateBatches: [][]acpsdk.SessionUpdate{
+			{userOne, replaySeed, answerOneA, answerOneB},
+			{userOne, replaySeed, answerOneA, answerOneB, userTwo, answerTwo, pendingTool},
+			{userOne, replaySeed, answerOneA, answerOneB, userTwo, answerTwo, pendingTool},
+		},
 	}
 	driver := New(Config{
 		Harness:      domain.HarnessClaudeCode,
@@ -669,13 +820,15 @@ func TestACPDriverClosesReplayTurnsAsRecoveredWithoutBlockingResume(t *testing.T
 		ProviderConversationID: "provider-session-1",
 		WorkspacePath:          t.TempDir(),
 		SystemPrompt:           "AO load instructions",
+		ProviderScopeID:        "history-scope",
 	})
 	if err != nil {
 		t.Fatalf("Resume: %v", err)
 	}
 	defer conv.Close()
-	if _, ok := conv.(ports.ChatHistoryRefresher); ok {
-		t.Fatal("ACP session/load replay is a frozen snapshot, not refreshable history")
+	refresher, ok := conv.(ports.ChatHistoryRefresher)
+	if !ok {
+		t.Fatal("load-capable ACP conversation does not advertise refreshable history")
 	}
 
 	agent.mu.Lock()
@@ -691,9 +844,56 @@ func TestACPDriverClosesReplayTurnsAsRecoveredWithoutBlockingResume(t *testing.T
 		t.Fatalf("session/load metadata = %#v, want recomputed system prompt", loadMeta)
 	}
 
-	history, err := conv.(ports.ChatHistoryReader).ReadHistory(context.Background())
+	initial, err := conv.(ports.ChatHistoryReader).ReadHistory(context.Background())
 	if err != nil {
 		t.Fatalf("ReadHistory: %v", err)
+	}
+	initialTurns := 0
+	for _, event := range initial {
+		if event.Kind == ports.ChatEventTurnCompleted {
+			initialTurns++
+		}
+	}
+	if initialTurns != 1 {
+		t.Fatalf("initial completed turns = %d, want only the first replayed turn", initialTurns)
+	}
+	history, err := refresher.RefreshHistory(context.Background())
+	if err != nil {
+		t.Fatalf("RefreshHistory: %v", err)
+	}
+	agent.mu.Lock()
+	loadCalls = agent.loadCalls
+	agent.mu.Unlock()
+	if loadCalls != 2 {
+		t.Fatalf("session/load calls = %d, want a fresh provider observation", loadCalls)
+	}
+	if len(history) <= len(initial) {
+		t.Fatalf("refreshed history has %d events, want more than initial snapshot's %d", len(history), len(initial))
+	}
+	for i := range initial {
+		if initial[i].ProviderEventID != history[i].ProviderEventID {
+			t.Fatalf("event %d identity changed across replay: %q != %q",
+				i, initial[i].ProviderEventID, history[i].ProviderEventID)
+		}
+	}
+	identical, err := refresher.RefreshHistory(context.Background())
+	if err != nil {
+		t.Fatalf("RefreshHistory identical replay: %v", err)
+	}
+	agent.mu.Lock()
+	loadCalls = agent.loadCalls
+	agent.mu.Unlock()
+	if loadCalls != 3 {
+		t.Fatalf("session/load calls = %d after identical refresh, want another provider observation", loadCalls)
+	}
+	if len(identical) != len(history) {
+		t.Fatalf("identical replay has %d events, want %d", len(identical), len(history))
+	}
+	for i := range history {
+		if history[i].ProviderEventID != identical[i].ProviderEventID {
+			t.Fatalf("identical replay event %d changed identity: %q != %q",
+				i, history[i].ProviderEventID, identical[i].ProviderEventID)
+		}
 	}
 	var states []domain.TurnState
 	var recoveredActivity bool
@@ -701,7 +901,8 @@ func TestACPDriverClosesReplayTurnsAsRecoveredWithoutBlockingResume(t *testing.T
 		if event.Kind == ports.ChatEventTurnCompleted {
 			states = append(states, event.TurnState)
 		}
-		if event.ProviderItemID == "history-tool" && event.Kind == ports.ChatEventActivityCompleted {
+		if event.ProviderItemID == (&conversation{providerScopeID: "history-scope"}).providerItemID("history-tool") &&
+			event.Kind == ports.ChatEventActivityCompleted {
 			recoveredActivity = event.ActivityStatus == domain.ActivityStatusRecovered
 		}
 	}
@@ -711,6 +912,16 @@ func TestACPDriverClosesReplayTurnsAsRecoveredWithoutBlockingResume(t *testing.T
 	}
 	if !recoveredActivity {
 		t.Fatalf("history = %#v, want pending replay tool settled as recovered", history)
+	}
+	if history[0].ProviderTurnID != historyTurnID("history-scope", userOneID) ||
+		history[1].ProviderItemID != (&conversation{providerScopeID: "history-scope"}).providerItemID(userOneID) ||
+		history[1].ClientMessageID != (&conversation{providerScopeID: "history-scope"}).providerItemID(userOneID) ||
+		history[2].ProviderItemID != (&conversation{providerScopeID: "history-scope"}).providerItemID(answerOneID) {
+		t.Fatalf("history ids do not use the durable provider scope: %#v", history[:3])
+	}
+	if len(history[1].ProviderItemAliases) != 1 || history[1].ProviderItemAliases[0] != userOneID ||
+		len(history[2].ProviderItemAliases) != 1 || history[2].ProviderItemAliases[0] != answerOneID {
+		t.Fatalf("history does not preserve legacy raw item aliases: %#v", history[:3])
 	}
 	if !conv.Capabilities().Has(ports.ChatCapabilityHistory) {
 		t.Fatal("session/load conversation did not advertise replayable history")
@@ -724,6 +935,63 @@ func TestACPDriverClosesReplayTurnsAsRecoveredWithoutBlockingResume(t *testing.T
 	case event := <-conv.Events():
 		t.Fatalf("history leaked onto the live event stream: %#v", event)
 	case <-time.After(30 * time.Millisecond):
+	}
+}
+
+func TestACPDriverHistoryRefreshHonorsCancellation(t *testing.T) {
+	userID := "11111111-1111-4111-8111-111111111111"
+	user := acpsdk.UpdateUserMessageText("Inspect the repository")
+	user.UserMessageChunk.MessageId = &userID
+	refreshStarted := make(chan struct{})
+	agent := &fakeAgent{
+		capabilities:  &acpsdk.AgentCapabilities{LoadSession: true},
+		loadUpdates:   []acpsdk.SessionUpdate{user},
+		blockLoadCall: 2,
+		loadStarted:   refreshStarted,
+	}
+	driver := New(Config{
+		Harness:      domain.HarnessClaudeCode,
+		Capabilities: ports.ChatCapabilities{ports.ChatCapabilityStreaming: true},
+		Probe:        func(context.Context) error { return nil },
+		Launch:       func(context.Context, LaunchConfig) (Launch, error) { return Launch{Command: "fake"}, nil },
+	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	driver.spawn = fakeSpawn(agent)
+
+	conv, err := driver.Resume(context.Background(), ports.ChatResumeConfig{
+		ProviderConversationID: "provider-session-1",
+		WorkspacePath:          t.TempDir(),
+	})
+	if err != nil {
+		t.Fatalf("Resume: %v", err)
+	}
+	defer conv.Close()
+	refresher := conv.(ports.ChatHistoryRefresher)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		_, refreshErr := refresher.RefreshHistory(ctx)
+		done <- refreshErr
+	}()
+	<-refreshStarted
+	cancel()
+	if err := <-done; !errors.Is(err, context.Canceled) {
+		t.Fatalf("RefreshHistory error = %v, want context cancellation", err)
+	}
+}
+
+func TestHistoricalUserContentSuppressesOnlyMarkedInternalReplayResources(t *testing.T) {
+	resource := acpsdk.ResourceBlock(acpsdk.EmbeddedResourceResource{
+		TextResourceContents: &acpsdk.TextResourceContents{
+			Uri: ports.ChatInternalReplayResourceURI, Text: `{"kind":"approximate_conversation_context"}`,
+		},
+	})
+	if got := historicalUserContent(resource); got != "[Embedded context]" {
+		t.Fatalf("unmarked reserved resource = %q, want visible embedded context", got)
+	}
+
+	resource.Resource.Resource.TextResourceContents.Meta = map[string]any{aoInternalReplayMetaKey: true}
+	if got := historicalUserContent(resource); got != "" {
+		t.Fatalf("marked internal replay resource = %q, want hidden", got)
 	}
 }
 
@@ -764,6 +1032,115 @@ func TestACPDriverClosesTrailingUserOnlyHistoryAsRecovered(t *testing.T) {
 	if len(history) != 3 || history[2].Kind != ports.ChatEventTurnCompleted ||
 		history[2].TurnState != domain.TurnStateRecovered {
 		t.Fatalf("history = %#v, want trailing recovered turn", history)
+	}
+}
+
+func TestConversationCapabilitiesTreatLoadSessionAsResume(t *testing.T) {
+	configured := ports.ChatCapabilities{ports.ChatCapabilityResume: true}
+	init := acpsdk.InitializeResponse{AgentCapabilities: acpsdk.AgentCapabilities{
+		LoadSession: true,
+	}}
+	if !conversationCapabilities(configured, init)[ports.ChatCapabilityResume] {
+		t.Fatal("loadSession-only ACP agent was reported as non-resumable")
+	}
+}
+
+func TestACPDriverUsesProviderPermissionPolicyBeforeParking(t *testing.T) {
+	agent := &fakeAgent{promptNoPermission: true}
+	driver := New(Config{
+		Harness:      domain.HarnessCursor,
+		Capabilities: ports.ChatCapabilities{ports.ChatCapabilityApprovals: true},
+		Probe:        func(context.Context) error { return nil },
+		Launch:       func(context.Context, LaunchConfig) (Launch, error) { return Launch{Command: "fake"}, nil },
+		PermissionPolicy: func(mode ports.PermissionMode, params acpsdk.RequestPermissionRequest) (acpsdk.PermissionOptionId, bool) {
+			if mode != ports.PermissionModeBypassPermissions {
+				return "", false
+			}
+			return params.Options[0].OptionId, true
+		},
+	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	driver.spawn = fakeSpawn(agent)
+
+	opened, err := driver.Start(context.Background(), ports.ChatStartConfig{
+		WorkspacePath: t.TempDir(), Permissions: ports.PermissionModeBypassPermissions,
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer opened.Close()
+	ready := nextEvent(t, opened.Events())
+	if ready.Kind != ports.ChatEventControllerState {
+		t.Fatalf("first event = %#v, want controller state", ready)
+	}
+
+	conv := opened.(*conversation)
+	if err := conv.applyTurnSettings(context.Background(), ports.ChatTurnSettings{}); err != nil {
+		t.Fatalf("apply empty settings: %v", err)
+	}
+	conv.mu.Lock()
+	modeAfterEmpty := conv.permissionMode
+	conv.mu.Unlock()
+	if modeAfterEmpty != ports.PermissionModeBypassPermissions {
+		t.Fatalf("permission mode after empty turn settings = %q, want launch mode %q",
+			modeAfterEmpty, ports.PermissionModeBypassPermissions)
+	}
+	response, err := conv.RequestPermission(context.Background(), acpsdk.RequestPermissionRequest{
+		ToolCall: acpsdk.ToolCallUpdate{ToolCallId: "edit-1", Kind: acpsdk.Ptr(acpsdk.ToolKindEdit)},
+		Options: []acpsdk.PermissionOption{{
+			OptionId: "allow-once", Name: "Allow", Kind: acpsdk.PermissionOptionKindAllowOnce,
+		}},
+	})
+	if err != nil {
+		t.Fatalf("RequestPermission: %v", err)
+	}
+	if response.Outcome.Selected == nil || response.Outcome.Selected.OptionId != "allow-once" {
+		t.Fatalf("permission response = %#v", response)
+	}
+	select {
+	case event := <-opened.Events():
+		t.Fatalf("automatic policy emitted a parked approval: %#v", event)
+	case <-time.After(30 * time.Millisecond):
+	}
+}
+
+func TestACPDriverKeepsPermissionPolicyWhenLaterTurnSettingFails(t *testing.T) {
+	agent := &fakeAgent{}
+	driver := New(Config{
+		Harness: domain.HarnessCursor,
+		Probe:   func(context.Context) error { return nil },
+		Launch:  func(context.Context, LaunchConfig) (Launch, error) { return Launch{Command: "fake"}, nil },
+		SessionOptions: func(settings ports.ChatTurnSettings) []SessionOption {
+			if settings.Model == "" {
+				return nil
+			}
+			return []SessionOption{{ID: "model", Value: settings.Model}}
+		},
+	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	driver.spawn = fakeSpawn(agent)
+
+	opened, err := driver.Start(context.Background(), ports.ChatStartConfig{WorkspacePath: t.TempDir()})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer opened.Close()
+	_ = nextEvent(t, opened.Events())
+
+	agent.mu.Lock()
+	agent.configErr = errors.New("set model failed")
+	agent.mu.Unlock()
+	conv := opened.(*conversation)
+	err = conv.applyTurnSettings(context.Background(), ports.ChatTurnSettings{
+		Approval: ports.PermissionModeAcceptEdits,
+		Model:    "cursor-model",
+	})
+	if err == nil {
+		t.Fatal("applyTurnSettings succeeded, want config error")
+	}
+	conv.mu.Lock()
+	mode := conv.permissionMode
+	conv.mu.Unlock()
+	if mode != ports.PermissionModeDefault {
+		t.Fatalf("permission mode after rejected settings = %q, want %q", mode, ports.PermissionModeDefault)
 	}
 }
 
@@ -910,6 +1287,147 @@ func TestACPDriverPreservesNestedToolAndTerminalMetadata(t *testing.T) {
 	}
 	if detail["parentProviderItemId"] != "agent-tool" || detail["terminalId"] != "child-tool" || detail["output"] != "ok\n" {
 		t.Fatalf("tool detail = %#v", detail)
+	}
+}
+
+func TestACPDriverNamespacesOpaqueItemIDsByProviderScope(t *testing.T) {
+	type observed struct {
+		messageID string
+		toolID    string
+		parentID  string
+	}
+	open := func(t *testing.T, providerScopeID string) observed {
+		t.Helper()
+		agent := &fakeAgent{}
+		driver := New(Config{
+			Harness:      domain.HarnessClaudeCode,
+			Capabilities: ports.ChatCapabilities{ports.ChatCapabilityStreaming: true},
+			Probe:        func(context.Context) error { return nil },
+			Launch:       func(context.Context, LaunchConfig) (Launch, error) { return Launch{Command: "fake"}, nil },
+		}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+		driver.spawn = fakeSpawn(agent)
+		opened, err := driver.Start(context.Background(), ports.ChatStartConfig{
+			SessionID: domain.SessionID("session-1"), WorkspacePath: t.TempDir(),
+			ProviderScopeID: providerScopeID,
+		})
+		if err != nil {
+			t.Fatalf("Start: %v", err)
+		}
+		t.Cleanup(func() { _ = opened.Close() })
+		_ = nextEvent(t, opened.Events())
+		conv := opened.(*conversation)
+		conv.mu.Lock()
+		conv.activeTurn = "turn-1"
+		conv.mu.Unlock()
+
+		messageID := "reused-message"
+		message := acpsdk.UpdateAgentMessageText("working")
+		message.AgentMessageChunk.MessageId = &messageID
+		if err := agent.conn.SessionUpdate(context.Background(), acpsdk.SessionNotification{
+			SessionId: acpsdk.SessionId(opened.ProviderConversationID()), Update: message,
+		}); err != nil {
+			t.Fatalf("message update: %v", err)
+		}
+		messageEvent := nextEvent(t, opened.Events())
+
+		if err := agent.conn.SessionUpdate(context.Background(), acpsdk.SessionNotification{
+			SessionId: acpsdk.SessionId(opened.ProviderConversationID()),
+			Update: acpsdk.SessionUpdate{ToolCall: &acpsdk.SessionUpdateToolCall{
+				SessionUpdate: "tool_call", ToolCallId: "reused-tool", Title: "Run tests",
+				Kind: acpsdk.ToolKindExecute, Status: acpsdk.ToolCallStatusPending,
+				Meta: map[string]any{"claudeCode": map[string]any{"parentToolUseId": "reused-parent"}},
+			}},
+		}); err != nil {
+			t.Fatalf("tool update: %v", err)
+		}
+		toolEvent := nextEvent(t, opened.Events())
+		var detail map[string]any
+		if err := json.Unmarshal(toolEvent.Detail, &detail); err != nil {
+			t.Fatalf("tool detail: %v", err)
+		}
+		parentID, _ := detail["parentProviderItemId"].(string)
+		return observed{
+			messageID: messageEvent.ProviderItemID,
+			toolID:    toolEvent.ProviderItemID,
+			parentID:  parentID,
+		}
+	}
+
+	first := open(t, "scope-one")
+	second := open(t, "scope-two")
+	if first.messageID == second.messageID || first.toolID == second.toolID || first.parentID == second.parentID {
+		t.Fatalf("provider scopes reused opaque ids: first=%+v second=%+v", first, second)
+	}
+	firstScope := &conversation{providerScopeID: "scope-one"}
+	if first.messageID != firstScope.providerItemID("reused-message") ||
+		first.toolID != firstScope.providerItemID("reused-tool") ||
+		first.parentID != firstScope.providerItemID("reused-parent") {
+		t.Fatalf("first scoped ids = %+v", first)
+	}
+	secondScope := &conversation{providerScopeID: "scope-two"}
+	if second.messageID != secondScope.providerItemID("reused-message") ||
+		second.toolID != secondScope.providerItemID("reused-tool") ||
+		second.parentID != secondScope.providerItemID("reused-parent") {
+		t.Fatalf("second scoped ids = %+v", second)
+	}
+}
+
+func TestACPOpaqueIDNamespaceIsUnambiguous(t *testing.T) {
+	first := &conversation{providerScopeID: "a"}
+	second := &conversation{providerScopeID: "a:b"}
+
+	firstID := first.providerItemID("b:c")
+	secondID := second.providerItemID("c")
+	if firstID == secondID {
+		t.Fatalf("distinct scope/id pairs collided at %q", firstID)
+	}
+
+	firstTurn := historyTurnID("a", "b:c")
+	secondTurn := historyTurnID("a:b", "c")
+	if firstTurn == secondTurn {
+		t.Fatalf("distinct history scope/id pairs collided at %q", firstTurn)
+	}
+}
+
+func TestACPLegacyUnscopedHistoryIdentityRemainsCompatible(t *testing.T) {
+	conv := &conversation{
+		history: &historyCapture{
+			sessionID: "legacy-session", occurrences: make(map[string]int),
+		},
+	}
+	conv.startHistoryTurn("legacy-user")
+	if got := conv.history.turnID; got != "acp-history-turn:legacy-session:legacy-user" {
+		t.Fatalf("legacy history turn = %q", got)
+	}
+	if got := conv.providerItemID("legacy-item"); got != "legacy-item" {
+		t.Fatalf("legacy provider item = %q, want raw identity", got)
+	}
+}
+
+func TestACPHistoryEventIdentityIsUnambiguousWithNULInOpaqueIDs(t *testing.T) {
+	capture := func(event ports.ChatEvent) string {
+		t.Helper()
+		conv := &conversation{
+			providerScopeID: "scope",
+			history: &historyCapture{
+				sessionID:   "session",
+				occurrences: make(map[string]int),
+			},
+		}
+		if !conv.captureHistoryEvent(event) {
+			t.Fatal("captureHistoryEvent did not capture replay event")
+		}
+		return conv.history.events[0].ProviderEventID
+	}
+
+	first := capture(ports.ChatEvent{
+		Kind: ports.ChatEventMessageDelta, ProviderTurnID: "a", ProviderItemID: "b\x00c",
+	})
+	second := capture(ports.ChatEvent{
+		Kind: ports.ChatEventMessageDelta, ProviderTurnID: "a\x00b", ProviderItemID: "c",
+	})
+	if first == second {
+		t.Fatalf("distinct history events collided at %q", first)
 	}
 }
 
@@ -1117,6 +1635,151 @@ func TestACPDriverMapsCostRateLimitsAndAuthRecovery(t *testing.T) {
 	}
 }
 
+func TestACPDriverNormalizesClaudeRetryStatus(t *testing.T) {
+	agent := &fakeAgent{
+		promptBlock:   true,
+		promptStarted: make(chan struct{}, 1),
+	}
+	driver := New(Config{
+		Harness:      domain.HarnessClaudeCode,
+		Capabilities: ports.ChatCapabilities{ports.ChatCapabilityStreaming: true},
+		Probe:        func(context.Context) error { return nil },
+		Launch:       func(context.Context, LaunchConfig) (Launch, error) { return Launch{Command: "fake"}, nil },
+	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	driver.spawn = fakeSpawn(agent)
+	opened, err := driver.Start(context.Background(), ports.ChatStartConfig{WorkspacePath: t.TempDir()})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer opened.Close()
+	_ = nextEvent(t, opened.Events())
+	agent.mu.Lock()
+	clientMeta := agent.initParams.ClientCapabilities.Meta
+	agent.mu.Unlock()
+	jetbrains, _ := clientMeta["jetbrains"].(map[string]any)
+	air, _ := jetbrains["air"].(map[string]any)
+	version, versionOK := number(air["version"])
+	capabilities, _ := air["capabilities"].([]any)
+	capability := ""
+	if len(capabilities) == 1 {
+		capability, _ = capabilities[0].(string)
+	}
+	if !versionOK || version != 1 || capability != "sessionFailure" {
+		t.Fatalf("session failure capability = %#v", air)
+	}
+
+	ref, err := opened.SendTurn(context.Background(), ports.ChatUserMessage{Text: "continue"})
+	if err != nil {
+		t.Fatalf("SendTurn: %v", err)
+	}
+	if err := opened.(ports.ChatDeferredTurnStarter).StartDeferredTurn(ref.ProviderTurnID); err != nil {
+		t.Fatalf("StartDeferredTurn: %v", err)
+	}
+	select {
+	case <-agent.promptStarted:
+	case <-time.After(time.Second):
+		t.Fatal("ACP prompt did not start")
+	}
+
+	if err := agent.conn.SessionUpdate(context.Background(), acpsdk.SessionNotification{
+		SessionId: acpsdk.SessionId(opened.ProviderConversationID()),
+		Update: acpsdk.SessionUpdate{SessionInfoUpdate: &acpsdk.SessionSessionInfoUpdate{
+			SessionUpdate: "session_info_update",
+			Meta: map[string]any{
+				"jetbrains": map[string]any{
+					"air": map[string]any{
+						"version": float64(1),
+						"sessionFailure": map[string]any{
+							"id":       "claude-turn:error",
+							"revision": float64(2),
+							"category": "connection",
+							"severity": "warning",
+							"title":    "Reconnecting to Claude, attempt 2 of 10.",
+							"details":  "The API request failed. Trying again in 4s.",
+							"actions":  []any{"new_session"},
+						},
+					},
+				},
+			},
+		}},
+	}); err != nil {
+		t.Fatalf("session retry update: %v", err)
+	}
+
+	var retry ports.ChatEvent
+	retryItemID := "session-failure:" + ref.ProviderTurnID
+	for retry.Kind == "" {
+		event := nextEvent(t, opened.Events())
+		if event.Kind == ports.ChatEventActivityStarted && event.ProviderItemID == retryItemID {
+			retry = event
+		}
+	}
+	if retry.ProviderTurnID != ref.ProviderTurnID ||
+		retry.ActivityKind != domain.ActivityKindSystem ||
+		retry.ActivityStatus != domain.ActivityStatusRunning ||
+		retry.Summary != "Reconnecting to Claude, attempt 2 of 10." {
+		t.Fatalf("retry event = %#v", retry)
+	}
+	var detail map[string]any
+	if err := json.Unmarshal(retry.Detail, &detail); err != nil {
+		t.Fatalf("retry detail: %v", err)
+	}
+	if detail["event"] != "provider.failure" ||
+		detail["category"] != "connection" ||
+		detail["severity"] != "warning" ||
+		detail["text"] != "The API request failed. Trying again in 4s." {
+		t.Fatalf("retry detail = %#v", detail)
+	}
+
+	// Claude can use a new extension incident id for each attempt before its
+	// provider turn id is available. AO must still update one per-turn activity.
+	if err := agent.conn.SessionUpdate(context.Background(), acpsdk.SessionNotification{
+		SessionId: acpsdk.SessionId(opened.ProviderConversationID()),
+		Update: acpsdk.SessionUpdate{SessionInfoUpdate: &acpsdk.SessionSessionInfoUpdate{
+			SessionUpdate: "session_info_update",
+			Meta: map[string]any{
+				"jetbrains": map[string]any{
+					"air": map[string]any{
+						"version": float64(1),
+						"sessionFailure": map[string]any{
+							"id":       "another-incident-id",
+							"revision": float64(1),
+							"category": "connection",
+							"severity": "warning",
+							"title":    "Reconnecting to Claude, attempt 3 of 10.",
+							"details":  "Connection error. Trying again in 8s.",
+						},
+					},
+				},
+			},
+		}},
+	}); err != nil {
+		t.Fatalf("next session retry update: %v", err)
+	}
+	nextRetry := nextEvent(t, opened.Events())
+	if nextRetry.Kind != ports.ChatEventActivityStarted ||
+		nextRetry.ProviderItemID != retry.ProviderItemID ||
+		nextRetry.Summary != "Reconnecting to Claude, attempt 3 of 10." {
+		t.Fatalf("next retry event = %#v", nextRetry)
+	}
+
+	if err := agent.conn.SessionUpdate(context.Background(), acpsdk.SessionNotification{
+		SessionId: acpsdk.SessionId(opened.ProviderConversationID()),
+		Update: acpsdk.SessionUpdate{AgentMessageChunk: &acpsdk.SessionUpdateAgentMessageChunk{
+			SessionUpdate: "agent_message_chunk",
+			Content:       acpsdk.ContentBlock{Text: &acpsdk.ContentBlockText{Text: "Back online."}},
+		}},
+	}); err != nil {
+		t.Fatalf("recovery update: %v", err)
+	}
+	recovered := nextEvent(t, opened.Events())
+	if recovered.Kind != ports.ChatEventActivityCompleted ||
+		recovered.ProviderItemID != retry.ProviderItemID ||
+		recovered.ActivityStatus != domain.ActivityStatusCompleted {
+		t.Fatalf("recovered retry event = %#v", recovered)
+	}
+}
+
 func TestACPDriverExposesAndMutatesAdvertisedConfigOptions(t *testing.T) {
 	initial := []acpsdk.SessionConfigOption{
 		selectConfigOption("model", "Model", "model", "sonnet", "sonnet", "opus"),
@@ -1176,6 +1839,62 @@ func TestACPDriverExposesAndMutatesAdvertisedConfigOptions(t *testing.T) {
 	agent.mu.Unlock()
 	if gotValue != "opus" || calls != 1 {
 		t.Fatalf("agent received model = %q across %d calls", gotValue, calls)
+	}
+}
+
+func TestACPDriverConsumesLegacyKimiSelectorsOnSDK0135(t *testing.T) {
+	agent := &legacyKimiAgent{}
+	driver := New(Config{
+		Harness:      domain.HarnessKimi,
+		Capabilities: ports.ChatCapabilities{ports.ChatCapabilityStreaming: true},
+		Probe:        func(context.Context) error { return nil },
+		Launch:       func(context.Context, LaunchConfig) (Launch, error) { return Launch{Command: "fake"}, nil },
+		SessionOptions: func(settings ports.ChatTurnSettings) []SessionOption {
+			if settings.Model == "" {
+				return nil
+			}
+			return []SessionOption{{ID: "model", Value: settings.Model}}
+		},
+	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	driver.spawn = fakeLegacyKimiSpawn(agent)
+
+	conv, err := driver.Start(context.Background(), ports.ChatStartConfig{
+		WorkspacePath: t.TempDir(), Model: "kimi-code/kimi-for-coding",
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer conv.Close()
+
+	options, err := conv.(ports.ChatConfigOptionController).ListConfigOptions(context.Background())
+	if err != nil {
+		t.Fatalf("ListConfigOptions: %v", err)
+	}
+	if len(options) != 2 || options[0].ID != "model" || options[0].Current.Select != "kimi-code/kimi-for-coding" ||
+		options[1].ID != "mode" || options[1].Current.Select != "default" {
+		t.Fatalf("legacy Kimi options = %#v, want model and default mode", options)
+	}
+
+	controller := conv.(ports.ChatConfigOptionController)
+	if _, err := controller.SetConfigOption(context.Background(), "model", ports.ChatConfigOptionValue{
+		Select: "kimi-code/kimi-for-coding",
+	}); err != nil {
+		t.Fatalf("SetConfigOption model: %v", err)
+	}
+	if _, err := controller.SetConfigOption(context.Background(), "mode", ports.ChatConfigOptionValue{
+		Select: "default",
+	}); err != nil {
+		t.Fatalf("SetConfigOption mode: %v", err)
+	}
+
+	agent.mu.Lock()
+	model, modelCalls := agent.model, agent.modelCalls
+	mode, modeCalls, configCalls := agent.mode, agent.modeCalls, agent.configCalls
+	agent.mu.Unlock()
+	if model != "kimi-code/kimi-for-coding" || modelCalls != 2 ||
+		mode != "default" || modeCalls != 1 || configCalls != 0 {
+		t.Fatalf("legacy setters: model=%q/%d mode=%q/%d config=%d",
+			model, modelCalls, mode, modeCalls, configCalls)
 	}
 }
 
@@ -1343,6 +2062,30 @@ func selectConfigOption(id, name, category, current string, values ...string) ac
 	}}
 }
 
+func TestDiscoverConfigOptionsReadsSessionCatalogWithoutPrompt(t *testing.T) {
+	agent := &fakeAgent{newConfig: []acpsdk.SessionConfigOption{
+		selectConfigOption("model", "Model", "model", "sonnet", "sonnet", "opus"),
+	}}
+	driver := New(Config{
+		Harness: domain.HarnessCline,
+		Launch: func(context.Context, LaunchConfig) (Launch, error) {
+			return Launch{Command: "cline", Args: []string{"--acp"}}, nil
+		},
+	}, slog.New(slog.DiscardHandler))
+	driver.spawn = fakeSpawn(agent)
+
+	got, err := driver.discoverConfigOptions(context.Background(), t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].Category != "model" || got[0].Current.Select != "sonnet" || len(got[0].Choices) != 2 {
+		t.Fatalf("options = %#v", got)
+	}
+	if agent.promptParams.Prompt != nil {
+		t.Fatalf("discovery sent a prompt: %#v", agent.promptParams)
+	}
+}
+
 func booleanConfigOption(id, name string, current bool) acpsdk.SessionConfigOption {
 	return acpsdk.SessionConfigOption{Boolean: &acpsdk.SessionConfigOptionBoolean{
 		Id: acpsdk.SessionConfigId(id), Name: name, CurrentValue: current, Type: "boolean",
@@ -1458,6 +2201,42 @@ func TestACPDriverSendTurnPropagatesMethodNotFound(t *testing.T) {
 	})
 	if !errors.Is(err, ErrACPSetterUnsupported) {
 		t.Fatalf("SendTurn with -32601 mode setter: err = %v, want ErrACPSetterUnsupported", err)
+	}
+}
+
+func TestACPDriverRejectsUnsupportedTurnSettingsAtStartAndSend(t *testing.T) {
+	agent := &fakeAgent{}
+	driver := New(Config{
+		Harness:      domain.HarnessKimi,
+		Capabilities: ports.ChatCapabilities{ports.ChatCapabilityStreaming: true},
+		Probe:        func(context.Context) error { return nil },
+		Launch:       func(context.Context, LaunchConfig) (Launch, error) { return Launch{Command: "fake"}, nil },
+		ValidateTurnSettings: func(_ ports.PermissionMode, settings ports.ChatTurnSettings) error {
+			if ports.NormalizePermissionMode(settings.Approval) == ports.PermissionModeDefault {
+				return nil
+			}
+			return ports.ErrChatPermissionModeUnsupported
+		},
+	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	driver.spawn = fakeSpawn(agent)
+
+	_, err := driver.Start(context.Background(), ports.ChatStartConfig{
+		WorkspacePath: t.TempDir(), Permissions: ports.PermissionModeAuto,
+	})
+	if !errors.Is(err, ports.ErrChatPermissionModeUnsupported) {
+		t.Fatalf("Start unsupported permissions error = %v", err)
+	}
+
+	conv, err := driver.Start(context.Background(), ports.ChatStartConfig{WorkspacePath: t.TempDir()})
+	if err != nil {
+		t.Fatalf("Start default permissions: %v", err)
+	}
+	defer conv.Close()
+	_, err = conv.SendTurn(context.Background(), ports.ChatUserMessage{
+		Text: "do work", Settings: ports.ChatTurnSettings{Approval: ports.PermissionModeAuto},
+	})
+	if !errors.Is(err, ports.ErrChatPermissionModeUnsupported) {
+		t.Fatalf("SendTurn unsupported permissions error = %v", err)
 	}
 }
 

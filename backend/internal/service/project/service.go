@@ -19,6 +19,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apierr"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	aoprocess "github.com/aoagents/agent-orchestrator/backend/internal/process"
+	"github.com/aoagents/agent-orchestrator/backend/internal/reqid"
 )
 
 // Manager is the controller-facing contract for the /api/v1/projects surface.
@@ -201,10 +202,16 @@ func (m *Service) Add(ctx context.Context, in AddInput) (Project, error) {
 	if existing, ok, err := m.store.GetProject(ctx, string(id)); err != nil {
 		return Project{}, apierr.Internal("PROJECT_LOAD_FAILED", "Failed to load project")
 	} else if ok && existing.ArchivedAt.IsZero() && existing.Path != path {
-		return Project{}, apierr.Conflict("ID_ALREADY_REGISTERED", "A project with this id is already registered for a different path", map[string]any{
-			"existingProjectId":  existing.ID,
-			"suggestedProjectId": string(m.suggestID(ctx, id)),
-		})
+		if in.ProjectID != nil {
+			return Project{}, apierr.Conflict("ID_ALREADY_REGISTERED", "A project with this id is already registered for a different path", map[string]any{
+				"existingProjectId":  existing.ID,
+				"suggestedProjectId": string(m.suggestID(ctx, id)),
+			})
+		}
+		// A caller that omitted projectId asked the service to derive one from
+		// the basename. Resolve that derived collision here; explicit IDs retain
+		// their conflict semantics so user intent is never silently rewritten.
+		id = m.suggestID(ctx, id)
 	}
 
 	var projectConfig domain.ProjectConfig
@@ -234,7 +241,7 @@ func (m *Service) Add(ctx context.Context, in AddInput) (Project, error) {
 		if err := m.store.UpsertWorkspaceProject(ctx, row, repos); err != nil {
 			return Project{}, apierr.Internal("PROJECT_ADD_FAILED", "Failed to register workspace project")
 		}
-		m.emitProjectAdded(row, projectCountBefore == 0)
+		m.emitProjectAdded(ctx, row, projectCountBefore == 0)
 		p := m.projectFromRow(ctx, row)
 		p.WorkspaceRepos = workspaceReposFromRecords(repos)
 		return p, nil
@@ -252,7 +259,7 @@ func (m *Service) Add(ctx context.Context, in AddInput) (Project, error) {
 	if err := m.store.UpsertProject(ctx, row); err != nil {
 		return Project{}, apierr.Internal("PROJECT_ADD_FAILED", "Failed to register project")
 	}
-	m.emitProjectAdded(row, projectCountBefore == 0)
+	m.emitProjectAdded(ctx, row, projectCountBefore == 0)
 	return m.projectFromRow(ctx, row), nil
 }
 
@@ -483,7 +490,7 @@ func (m *Service) activeProjectCount(ctx context.Context) (int, error) {
 	return len(projects), nil
 }
 
-func (m *Service) emitProjectAdded(row domain.ProjectRecord, firstProject bool) {
+func (m *Service) emitProjectAdded(ctx context.Context, row domain.ProjectRecord, firstProject bool) {
 	if m.telemetry == nil {
 		return
 	}
@@ -504,6 +511,7 @@ func (m *Service) emitProjectAdded(row domain.ProjectRecord, firstProject bool) 
 		OccurredAt: at,
 		Level:      ports.TelemetryLevelInfo,
 		ProjectID:  &projectID,
+		RequestID:  reqid.FromContext(ctx),
 		Payload:    payload,
 	})
 	if !firstProject {
@@ -515,6 +523,7 @@ func (m *Service) emitProjectAdded(row domain.ProjectRecord, firstProject bool) 
 		OccurredAt: at,
 		Level:      ports.TelemetryLevelInfo,
 		ProjectID:  &projectID,
+		RequestID:  reqid.FromContext(ctx),
 		Payload:    payload,
 	})
 }

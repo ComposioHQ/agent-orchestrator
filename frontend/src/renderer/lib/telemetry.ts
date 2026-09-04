@@ -4,6 +4,7 @@ import { isLoopbackHostname } from "./loopback";
 import { ORCHESTRATOR_SPAWN_SOURCES } from "./orchestrator-spawn-sources";
 import { DEFAULT_POSTHOG_HOST, DEFAULT_POSTHOG_PROJECT_KEY } from "../../shared/posthog-config";
 import { EDITOR_IDS } from "../../shared/editor-handoff";
+import { captureExceptionToSentry, initSentry } from "./sentry";
 
 const POSTHOG_KEY = import.meta.env.VITE_AO_POSTHOG_KEY?.trim() || DEFAULT_POSTHOG_PROJECT_KEY;
 const POSTHOG_HOST = import.meta.env.VITE_AO_POSTHOG_HOST?.trim() || DEFAULT_POSTHOG_HOST;
@@ -591,6 +592,11 @@ export async function sanitizeRendererProperties(
 			}
 			if (properties?.outcome === "succeeded" || properties?.outcome === "failed") safe.outcome = properties.outcome;
 			break;
+		case "ao.renderer.review_auto_review_toggled":
+			// The session-scoped switch duplicates a project-level setting, so
+			// whether anyone reaches for it decides if it stays a separate control.
+			if (typeof properties?.enabled === "boolean") safe.enabled = properties.enabled;
+			break;
 		case "ao.renderer.mobile_bridge_toggled":
 			// The host, port, and connection password in the QR never leave the
 			// machine: only the direction of the switch and whether it worked.
@@ -685,15 +691,20 @@ export async function initTelemetry(): Promise<boolean> {
 		// unpackaged build that has not opted in. The client is never created.
 		if (!bootstrap) return false;
 		disabledEventMatchers = bootstrap.disabledEvents ?? [];
-		telemetryContext = buildTelemetryContext(
-			bootstrap.appVersion,
-			bootstrap.platform,
-			releaseChannelFrom(await readUpdateSettingsForTelemetry()),
-		);
+		const channel = releaseChannelFrom(await readUpdateSettingsForTelemetry());
+		telemetryContext = buildTelemetryContext(bootstrap.appVersion, bootstrap.platform, channel);
 		posthog.init(POSTHOG_KEY, buildPostHogConfig(bootstrap.distinctId));
 		posthog.register({
 			...telemetryContext,
 			surface: "renderer",
+		});
+		// Typed renderer fault intake has its own main-owned policy gate. PostHog
+		// product analytics are intentionally independent of that preference.
+		void initSentry({
+			release: bootstrap.appVersion,
+			channel,
+			platform: bootstrap.platform,
+			distinctId: bootstrap.distinctId,
 		});
 		bindErrorHandlers();
 		startDailyActiveHeartbeat({
@@ -736,6 +747,17 @@ export async function initTelemetry(): Promise<boolean> {
 	return attempt;
 }
 
+/**
+ * Acknowledges the renderer part of failure-reporting cleanup. Renderer fault
+ * intake forwards directly through preload and owns no durable or retry queue;
+ * PostHog product-analytics queues are deliberately outside this policy.
+ */
+export function clearRendererTelemetryQueues(): void {}
+
+// Failure-reporting enablement is enforced in preload/main. It never opts the
+// independent PostHog client in or out.
+export function applyRendererTelemetryPolicy(_enabled: boolean): void {}
+
 export async function captureRendererEvent(event: string, properties?: Record<string, unknown>): Promise<void> {
 	// Checked before the reservations so a silenced stream does not consume a
 	// rate-limit slot on its way to being discarded, matching the daemon, where
@@ -761,6 +783,14 @@ export async function captureRendererException(error: unknown, properties?: Reco
 	if (!(await initTelemetry())) return;
 	const safeProperties = withTelemetryContext(await sanitizeRendererExceptionProperties(error, properties));
 	posthog.captureException(normalizeException(error), safeProperties);
+	// Mirror into Sentry (no-op unless a DSN is configured). Source drives the
+	// category so a boundary crash classifies as render_crash.
+	const source = typeof properties?.source === "string" ? properties.source : undefined;
+	captureExceptionToSentry(normalizeException(error), {
+		category: source === "react-error-boundary" ? "render_crash" : undefined,
+		operation: typeof properties?.operation === "string" ? properties.operation : undefined,
+		unhandled: properties?.unhandled === true,
+	});
 }
 
 export async function addRendererExceptionStep(message: string, properties?: Record<string, unknown>): Promise<void> {

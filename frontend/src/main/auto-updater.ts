@@ -3,6 +3,7 @@ import { app, BrowserWindow, dialog } from "electron";
 import { accessSync, constants as fsConstants, existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
+import semver from "semver";
 import {
   readUpdateSettings,
   updateUpdateSettings,
@@ -92,8 +93,10 @@ let stagedEscalated = false;
 let stagedRequestId: string | undefined;
 let escalationTimer: ReturnType<typeof setInterval> | undefined;
 let escalationStateDir: string | undefined;
-const AUTOMATIC_UPDATE_CHECK_INTERVAL_MS = 60 * 60 * 1000;
+const STABLE_AUTOMATIC_UPDATE_CHECK_INTERVAL_MS = 60 * 60 * 1000;
+const NIGHTLY_AUTOMATIC_UPDATE_CHECK_INTERVAL_MS = 15 * 60 * 1000;
 let automaticUpdateTimer: ReturnType<typeof setInterval> | undefined;
+let automaticUpdateTimerIntervalMs: number | undefined;
 type UpdaterOperation =
   | "automatic-check"
   | "manual-check"
@@ -111,8 +114,18 @@ let automaticCheckInFlight = false;
 // restarts, and automatic failures are UI-suppressed, so the install goes
 // silently stale (#3526). At the threshold, statuses carry staleCheckNudge so
 // the renderer can suggest a restart.
-const STALE_CHECK_NUDGE_THRESHOLD = 3; // hourly checks → ~3h of staleness
+const STALE_CHECK_NUDGE_THRESHOLD = 3;
 let consecutiveAutomaticNetFailures = 0;
+// Consecutive automatic-check failures of ANY kind. The net:: streak above
+// exists to suggest a restart, and it resets on every non-net error, so the
+// failure mode that actually strands an install — a manifest 404 on every
+// check — can never trip it. This counter does not care why the check failed:
+// past the threshold the renderer is told, because an updater that has failed
+// this many times in a row is indistinguishable from a healthy one otherwise.
+const FAILING_CHECK_THRESHOLD = 3;
+let consecutiveAutomaticCheckFailures = 0;
+let automaticCheckFailureCounted = false;
+let failingChecksPublished = false;
 // One automatic check can both emit an "error" event and reject
 // checkForUpdates(); count that as a single failure.
 let automaticCheckNetFailureCounted = false;
@@ -122,8 +135,8 @@ let automaticCheckNetFailureCounted = false;
 let activeUpdaterPhase: UpdatePhase = "check";
 let pendingUpdateVersion: string | undefined;
 // Session-scoped time of the most recent completed feed check. Packaged apps
-// check at launch when automatic updates are enabled, while disabled installs
-// truthfully remain "not checked yet" until the user asks.
+// check the selected channel at launch regardless of whether automatic
+// downloading is enabled.
 let lastCheckedAtMs: number | undefined;
 
 // emitUpdateOutcome pushes an update outcome to renderers on a channel separate
@@ -157,10 +170,15 @@ function broadcast(
     lastCheckedAtMs === undefined || status.checkedAt !== undefined
       ? status
       : { ...status, checkedAt: lastCheckedAtMs };
-  const stamped: UpdateStatus =
-    consecutiveAutomaticNetFailures >= STALE_CHECK_NUDGE_THRESHOLD
-      ? { ...statusWithCheckTime, staleCheckNudge: true }
-      : statusWithCheckTime;
+  const stamped: UpdateStatus = {
+    ...statusWithCheckTime,
+    ...(consecutiveAutomaticNetFailures >= STALE_CHECK_NUDGE_THRESHOLD
+      ? { staleCheckNudge: true }
+      : {}),
+    ...(consecutiveAutomaticCheckFailures >= FAILING_CHECK_THRESHOLD
+      ? { checksFailing: true }
+      : {}),
+  };
   if (owner === "independent") {
     independentStatusRevision += 1;
     if (
@@ -221,6 +239,110 @@ async function readAppUpdateYml(): Promise<
   } catch {
     return undefined;
   }
+}
+
+interface GitHubReleaseSummary {
+  tag_name: string;
+  draft: boolean;
+  prerelease: boolean;
+  assets?: Array<{ name?: string }>;
+}
+
+/**
+ * Resolve a completed Nightly release through GitHub's API. electron-updater's
+ * GitHub provider discovers prereleases through releases.atom, which can lag
+ * behind a just-published release even when the release and manifest are ready.
+ * This is used only for user-requested checks; failures fall back to the normal
+ * provider so API rate limits or an outage never break update checks.
+ */
+async function fetchLatestCompletedNightlyTag(
+  owner: string,
+  repo: string,
+): Promise<string | undefined> {
+  try {
+    const response = await fetch(
+      `https://api.github.com/repos/${owner}/${repo}/releases?per_page=100`,
+      {
+        cache: "no-store",
+        headers: {
+          Accept: "application/vnd.github+json",
+          "X-GitHub-Api-Version": "2022-11-28",
+          "User-Agent": `ao-desktop/${app.getVersion()}`,
+        },
+        signal: AbortSignal.timeout(10000),
+      },
+    );
+    if (!response.ok) return undefined;
+    const releases = (await response.json()) as GitHubReleaseSummary[];
+    const manifestName = `nightly${platformSuffix()}.yml`;
+    return releases
+      .filter((release) => {
+        const parsed = semver.valid(release.tag_name);
+        return (
+          !release.draft &&
+          release.prerelease &&
+          parsed !== null &&
+          semver.prerelease(parsed)?.[0] === "nightly" &&
+          release.assets?.some((asset) => asset.name === manifestName) === true
+        );
+      })
+      .sort((left, right) => semver.rcompare(left.tag_name, right.tag_name))[0]
+      ?.tag_name;
+  } catch {
+    return undefined;
+  }
+}
+
+function usesDirectNightlyFeed(
+  settings: Pick<UpdateSettings, "channel" | "feature">,
+): boolean {
+  return settings.channel === "nightly" && settings.feature === null;
+}
+
+/**
+ * Point one Nightly check directly at the newest completed release. Applies to
+ * automatic checks as well as manual ones: an atom feed that lags a fresh
+ * release makes a background check answer "not-available" and the install goes
+ * silently stale, and an entry whose manifest has not finished uploading 404s
+ * a check whose error the automatic path deliberately swallows — in both cases
+ * the sidebar never learns an update exists.
+ * The returned reset restores the normal GitHub provider for later background
+ * checks; electron-updater retains the direct provider with the discovered
+ * update, so a subsequent Download action still uses the correct asset URLs.
+ */
+async function configureDirectNightlyFeed(
+  settings: UpdateSettings,
+): Promise<(() => void) | undefined> {
+  if (!usesDirectNightlyFeed(settings)) return undefined;
+  const coordinates = await readAppUpdateYml();
+  if (!coordinates) return undefined;
+  const tag = await fetchLatestCompletedNightlyTag(
+    coordinates.owner,
+    coordinates.repo,
+  );
+  if (!tag) return undefined;
+  const runningVersion = app.getVersion();
+  if (
+    semver.valid(runningVersion) !== null &&
+    semver.prerelease(runningVersion)?.[0] === "nightly" &&
+    semver.lt(tag, runningVersion)
+  ) {
+    return undefined;
+  }
+
+  autoUpdater.setFeedURL({
+    provider: "generic",
+    url: `https://github.com/${coordinates.owner}/${coordinates.repo}/releases/download/${tag}`,
+    channel: "nightly",
+    useMultipleRangeRequest: false,
+  });
+  return () => {
+    autoUpdater.setFeedURL({
+      provider: "github",
+      owner: coordinates.owner,
+      repo: coordinates.repo,
+    });
+  };
 }
 
 /** Platform suffix matching the feed.mjs naming convention. */
@@ -343,7 +465,10 @@ async function runSerializedUpdaterOperation(
     activeUpdaterRequestId = requestId;
     activeUpdaterPhase = operation === "manual-download" ? "download" : "check";
     pendingUpdateVersion = undefined;
-    if (operation === "automatic-check") automaticCheckNetFailureCounted = false;
+    if (operation === "automatic-check") {
+      automaticCheckNetFailureCounted = false;
+      automaticCheckFailureCounted = false;
+    }
     try {
       await runOperation();
     } finally {
@@ -433,6 +558,30 @@ function recordAutomaticNetFailure(): void {
 function recordAutomaticCheckFailure(err: unknown): void {
   if (isNetError(err)) recordAutomaticNetFailure();
   else consecutiveAutomaticNetFailures = 0;
+  // Guarded like the net streak: one check can surface as both an "error" event
+  // and a checkForUpdates() rejection, and that is one failure, not two.
+  if (!automaticCheckFailureCounted) {
+    automaticCheckFailureCounted = true;
+    consecutiveAutomaticCheckFailures += 1;
+  }
+}
+
+/** True once automatic checks have failed enough times to be worth surfacing. */
+function automaticChecksAreFailing(): boolean {
+  return consecutiveAutomaticCheckFailures >= FAILING_CHECK_THRESHOLD;
+}
+
+// publishFailingChecks re-sends the current status once the streak crosses the
+// threshold. The suppressed automatic failure deliberately leaves the state
+// alone — an error the user never asked for must not replace a truthful idle or
+// not-available — but the flag itself is news, and restoring produces no
+// broadcast at all when there was no prior status to restore. Without this the
+// renderer only learns on its next mount, which is why a stranded install looks
+// identical to a healthy one. Sent once per streak, not once per failure.
+function publishFailingChecks(): void {
+  if (!automaticChecksAreFailing() || failingChecksPublished) return;
+  failingChecksPublished = true;
+  broadcast(lastStatus);
 }
 
 // errorMessage extracts the user-facing message for an update error status,
@@ -484,6 +633,8 @@ function wireUpdaterEvents(): void {
   autoUpdater.on("update-available", (info) => {
     // A successful check proves the network stack is healthy.
     consecutiveAutomaticNetFailures = 0;
+    consecutiveAutomaticCheckFailures = 0;
+    failingChecksPublished = false;
     // A manual re-check reports the already-staged build as merely "available"
     // (autoDownload is off on that path). It is still in cache and installs on
     // quit, so keep the richer downloaded status instead of hiding the row.
@@ -497,6 +648,8 @@ function wireUpdaterEvents(): void {
   autoUpdater.on("update-not-available", () => {
     // A successful check proves the network stack is healthy.
     consecutiveAutomaticNetFailures = 0;
+    consecutiveAutomaticCheckFailures = 0;
+    failingChecksPublished = false;
     broadcastCompletedCheck({ state: "not-available" });
     // The staged build outlives a "nothing newer" answer (e.g. after a channel
     // switch); follow up so the restart row returns.
@@ -508,6 +661,8 @@ function wireUpdaterEvents(): void {
     // succeeded, so a later error is a download failure even when the
     // operation began life as a check.
     consecutiveAutomaticNetFailures = 0;
+    consecutiveAutomaticCheckFailures = 0;
+    failingChecksPublished = false;
     activeUpdaterPhase = "download";
     return broadcastUpdaterStatus({
       state: "downloading",
@@ -543,15 +698,16 @@ function wireUpdaterEvents(): void {
   });
   autoUpdater.on("error", (err) => {
     // Never crash on update failure (offline, unsigned macOS, etc.).
-    // Automatic failures restore the previous status so the UI does not flash
-    // an error the user never asked for. That suppression is a UI decision and
-    // must not suppress the telemetry: automatic checks run hourly and are the
+    // A one-off automatic failure restores the previous status so the UI does
+    // not flash an error the user never asked for. That suppression is a UI
+    // decision and must not suppress the telemetry: automatic checks are the
     // main way an install goes silently stale.
     emitUpdateFailure(err);
     if (activeUpdaterOperation === "automatic-check") {
       console.error("auto-update check failed:", err);
       recordAutomaticCheckFailure(err);
       restoreAutomaticCheckPreviousStatus();
+      publishFailingChecks();
       return;
     }
     // Manifest 404 (missing latest-mac.yml etc.) is a routine condition,
@@ -595,35 +751,54 @@ export function getUpdateStatus(): UpdateStatus {
   // Derive the nudge at read time: a streak can cross the threshold without
   // any broadcast (no checking-for-update → restore no-ops), and Settings
   // seeds from this getter (#3526).
-  return consecutiveAutomaticNetFailures >= STALE_CHECK_NUDGE_THRESHOLD
-    ? { ...lastStatus, staleCheckNudge: true }
-    : lastStatus;
+  return {
+    ...lastStatus,
+    ...(consecutiveAutomaticNetFailures >= STALE_CHECK_NUDGE_THRESHOLD
+      ? { staleCheckNudge: true }
+      : {}),
+    ...(consecutiveAutomaticCheckFailures >= FAILING_CHECK_THRESHOLD
+      ? { checksFailing: true }
+      : {}),
+  };
 }
 
-async function runAutomaticUpdateCheck(stateDir: string): Promise<boolean> {
-  let shouldSchedule = true;
+function automaticUpdateCheckInterval(settings: UpdateSettings): number {
+  return settings.channel === "nightly" && settings.feature === null
+    ? NIGHTLY_AUTOMATIC_UPDATE_CHECK_INTERVAL_MS
+    : STABLE_AUTOMATIC_UPDATE_CHECK_INTERVAL_MS;
+}
+
+async function runAutomaticUpdateCheck(
+  stateDir: string,
+): Promise<number> {
+  let nextIntervalMs =
+    automaticUpdateTimerIntervalMs ?? STABLE_AUTOMATIC_UPDATE_CHECK_INTERVAL_MS;
   try {
     await runSerializedUpdaterOperation("automatic-check", async () => {
       const settings = await reconcileAndPersist(
         stateDir,
         await readUpdateSettings(stateDir),
       );
-      if (!settings.enabled) {
-        shouldSchedule = false;
-        // Stop while this serialized snapshot still owns updater ordering. A
-        // later settings write that enables updates can then schedule safely.
-        stopPeriodicAutomaticUpdateCheck();
-        return;
-      }
+      nextIntervalMs = automaticUpdateCheckInterval(settings);
 
       escalationStateDir = stateDir;
       wireUpdaterEvents();
       configureFeed(settings);
-      autoUpdater.autoDownload = true;
+      // Discovery is always on for the selected release channel. This preference
+      // controls only whether electron-updater downloads the discovered build or
+      // leaves it in `available` for the sidebar action.
+      autoUpdater.autoDownload = settings.enabled;
       applyInstallOnQuitPolicy();
+      // Only nightly resolves a direct feed. Skipping the await entirely on the
+      // other channels keeps this check's event ordering exactly as it was.
+      const restoreFeed = usesDirectNightlyFeed(settings)
+        ? await configureDirectNightlyFeed(settings)
+        : undefined;
       try {
         const result = await autoUpdater.checkForUpdates();
-        if (result?.downloadPromise) await result.downloadPromise;
+        if (settings.enabled && result?.downloadPromise) {
+          await result.downloadPromise;
+        }
       } catch (err) {
         // electron-updater normally also emits "error" (handled in
         // wireUpdaterEvents); a reject-only failure must still restore the
@@ -632,21 +807,39 @@ async function runAutomaticUpdateCheck(stateDir: string): Promise<boolean> {
         // (#3526). Record before restoring so the restore broadcast is stamped.
         recordAutomaticCheckFailure(err);
         restoreAutomaticCheckPreviousStatus();
+        publishFailingChecks();
         throw err;
+      } finally {
+        // After the download too: the staged build is already resolved against
+        // the direct provider, and later background checks start from the
+        // normal GitHub feed again.
+        restoreFeed?.();
       }
     });
   } catch (err) {
     console.error("auto-update check failed:", err);
   }
-  return shouldSchedule;
+  return nextIntervalMs;
 }
 
-function schedulePeriodicAutomaticUpdateCheck(stateDir: string): void {
-  if (automaticUpdateTimer !== undefined) return;
-  automaticUpdateTimer = setInterval(
-    () => void requestAutomaticUpdateCheck(stateDir),
-    AUTOMATIC_UPDATE_CHECK_INTERVAL_MS,
-  );
+function schedulePeriodicAutomaticUpdateCheck(
+  stateDir: string,
+  intervalMs: number,
+): void {
+  if (
+    automaticUpdateTimer !== undefined &&
+    automaticUpdateTimerIntervalMs === intervalMs
+  ) {
+    return;
+  }
+  stopPeriodicAutomaticUpdateCheck();
+  automaticUpdateTimerIntervalMs = intervalMs;
+  automaticUpdateTimer = setInterval(() => {
+    void requestAutomaticUpdateCheck(stateDir).then((nextIntervalMs) => {
+      if (nextIntervalMs !== undefined)
+        schedulePeriodicAutomaticUpdateCheck(stateDir, nextIntervalMs);
+    });
+  }, intervalMs);
   automaticUpdateTimer.unref?.();
 }
 
@@ -654,19 +847,22 @@ function stopPeriodicAutomaticUpdateCheck(): void {
   if (automaticUpdateTimer === undefined) return;
   clearInterval(automaticUpdateTimer);
   automaticUpdateTimer = undefined;
+  automaticUpdateTimerIntervalMs = undefined;
 }
 
 function reconcileAutomaticUpdateSchedule(
   stateDir: string,
-  enabled: boolean,
+  settings: UpdateSettings,
 ): void {
-  if (enabled) schedulePeriodicAutomaticUpdateCheck(stateDir);
-  else stopPeriodicAutomaticUpdateCheck();
+  schedulePeriodicAutomaticUpdateCheck(
+    stateDir,
+    automaticUpdateCheckInterval(settings),
+  );
 }
 
 async function requestAutomaticUpdateCheck(
   stateDir: string,
-): Promise<boolean | undefined> {
+): Promise<number | undefined> {
   if (automaticCheckInFlight) return undefined;
   automaticCheckInFlight = true;
   try {
@@ -677,12 +873,14 @@ async function requestAutomaticUpdateCheck(
 }
 
 // startAutoUpdates configures electron-updater from the user's ~/.ao settings.
-// It is a thin shell: all policy (channel, opt-in) comes from update-settings.
+// Channel controls discovery; enabled controls whether a discovered build is
+// downloaded automatically. Both preferences come from update-settings.
 // Caller guards on app.isPackaged.
 export async function startAutoUpdates(stateDir: string): Promise<void> {
   startRetirementPollTimer(stateDir);
-  const shouldSchedule = await requestAutomaticUpdateCheck(stateDir);
-  if (shouldSchedule === true) schedulePeriodicAutomaticUpdateCheck(stateDir);
+  const intervalMs = await requestAutomaticUpdateCheck(stateDir);
+  if (intervalMs !== undefined)
+    schedulePeriodicAutomaticUpdateCheck(stateDir, intervalMs);
 }
 
 async function persistUpdaterSettings(
@@ -691,7 +889,7 @@ async function persistUpdaterSettings(
 ): Promise<void> {
   await writeUpdateSettings(stateDir, settings);
   configureFeed(settings);
-  reconcileAutomaticUpdateSchedule(stateDir, settings.enabled);
+  reconcileAutomaticUpdateSchedule(stateDir, settings);
 }
 
 /** Persist settings and reconcile the live updater feed/timer as one updater operation. */
@@ -720,7 +918,7 @@ export async function checkForUpdatesNow(
 ): Promise<void> {
   escalationStateDir = stateDir;
   wireUpdaterEvents();
-  if (!app.isPackaged) {
+	if (!app.isPackaged) {
     emitUpdateOutcome({
       event: "ao.renderer.update_unsupported",
       phase: activeUpdaterPhase,
@@ -744,12 +942,17 @@ export async function checkForUpdatesNow(
           stateDir,
           options.settings ?? (await readUpdateSettings(stateDir)),
         );
-        reconcileAutomaticUpdateSchedule(stateDir, settings.enabled);
+        reconcileAutomaticUpdateSchedule(stateDir, settings);
         configureFeed(settings);
         autoUpdater.autoDownload = false;
         applyInstallOnQuitPolicy();
         broadcastUpdaterStatus({ state: "checking" });
-        await autoUpdater.checkForUpdates();
+        const restoreFeed = await configureDirectNightlyFeed(settings);
+        try {
+          await autoUpdater.checkForUpdates();
+        } finally {
+          restoreFeed?.();
+        }
       },
       options.requestId,
     );
@@ -808,7 +1011,7 @@ export async function returnToHome(
           current.feature ? { ...current, feature: null } : current,
         );
         const settings = await reconcileAndPersist(stateDir, cleared);
-        reconcileAutomaticUpdateSchedule(stateDir, settings.enabled);
+        reconcileAutomaticUpdateSchedule(stateDir, settings);
         configureFeed(settings);
         autoUpdater.autoDownload = false;
         applyInstallOnQuitPolicy();
@@ -829,7 +1032,7 @@ export async function returnToHome(
 // downloadUpdateNow starts downloading the update found by checkForUpdatesNow.
 export async function downloadUpdateNow(requestId?: string): Promise<void> {
   wireUpdaterEvents();
-  if (!app.isPackaged) {
+	if (!app.isPackaged) {
     emitUpdateOutcome({
       event: "ao.renderer.update_unsupported",
       phase: activeUpdaterPhase,
@@ -941,7 +1144,7 @@ function applyInstallOnQuitPolicy(): void {
 // quitAndInstallUpdate installs a downloaded update and relaunches. isSilent
 // false keeps the installer UI on Windows; isForceRunAfter relaunches the app.
 export function quitAndInstallUpdate(): void {
-  if (!app.isPackaged) return;
+	if (!app.isPackaged) return;
   const blocker = getMacInstallBlocker();
   if (blocker !== undefined) {
     console.warn("update install blocked:", blocker);

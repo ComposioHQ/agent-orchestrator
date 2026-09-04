@@ -2,6 +2,7 @@ package review
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -61,19 +62,21 @@ type Launcher interface {
 
 // LaunchSpec is the engine's request to (re)launch a reviewer for one pass.
 type LaunchSpec struct {
-	RunID           string
-	BatchID         string
-	ReviewSessionID string
-	WorkerID        domain.SessionID
-	ProjectID       domain.ProjectID
-	Harness         domain.ReviewerHarness
-	WorkspacePath   string
-	AgentSessionID  string
-	PreviousRuns    []domain.ReviewRun
-	PRURL           string
-	TargetSHA       string
-	ReviewQueue     []ports.ReviewTask
-	ReviewIndex     int
+	RunID                string
+	BatchID              string
+	ReviewSessionID      string
+	WorkerID             domain.SessionID
+	ProjectID            domain.ProjectID
+	Harness              domain.ReviewerHarness
+	AgentConfig          domain.AgentConfig
+	WorkspacePath        string
+	AgentSessionID       string
+	RequireNativeHistory bool
+	PreviousRuns         []domain.ReviewRun
+	PRURL                string
+	TargetSHA            string
+	ReviewQueue          []ports.ReviewTask
+	ReviewIndex          int
 }
 
 // LaunchResult is the terminal/runtime state created by a reviewer launch.
@@ -246,6 +249,7 @@ func (l *agentLauncher) invocation(spec LaunchSpec) ports.ReviewInvocation {
 		TargetSHA:       spec.TargetSHA,
 		ReviewQueue:     spec.ReviewQueue,
 		ReviewIndex:     spec.ReviewIndex,
+		Config:          spec.AgentConfig,
 		WorkspacePath:   spec.WorkspacePath,
 		DataDir:         l.dataDir,
 		RunFilePath:     l.runFile,
@@ -320,6 +324,7 @@ func (l *agentLauncher) prepareIdleInvocation(spec LaunchSpec) (ports.ReviewInvo
 		ReviewerID:       reviewerHandleID(spec.WorkerID),
 		WorkerSessionID:  spec.WorkerID,
 		AgentSessionID:   spec.AgentSessionID,
+		Config:           spec.AgentConfig,
 		WorkspacePath:    spec.WorkspacePath,
 		DataDir:          l.dataDir,
 		RunFilePath:      l.runFile,
@@ -411,6 +416,9 @@ func (l *agentLauncher) launchReviewerTerminalWithMode(ctx context.Context, spec
 				cmd = restoreCmd
 			}
 		}
+	}
+	if restoring && spec.RequireNativeHistory && len(cmd.Argv) == 0 {
+		return LaunchResult{}, errors.New("reviewer native history resume is unavailable")
 	}
 	if len(cmd.Argv) == 0 {
 		var err error

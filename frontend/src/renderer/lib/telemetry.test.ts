@@ -130,6 +130,16 @@ describe("telemetry sanitizers", () => {
 		expect(safe).toEqual({});
 	});
 
+	it("reports the session auto-review switch with only its direction", async () => {
+		const safe = await sanitizeRendererProperties("ao.renderer.review_auto_review_toggled", {
+			enabled: true,
+			// Must be dropped: the session's id and the title the user typed.
+			session_id: "sess-1",
+			session_name: "fix the login bug",
+		});
+		expect(safe).toEqual({ enabled: true });
+	});
+
 	it("reports the mobile connect open with only the bridge state", async () => {
 		const safe = await sanitizeRendererProperties("ao.renderer.mobile_connect_opened", {
 			bridge_enabled: true,

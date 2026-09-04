@@ -1,14 +1,13 @@
-import { Bot, CircleHelp, GitBranch, Inbox, MonitorCog, RefreshCw, Settings2, TriangleAlert, X } from "lucide-react";
+import { BadgeCheck, Bot, CircleHelp, Cloud, GitBranch, Globe2, Inbox, Keyboard, MonitorCog, RefreshCw, Settings2, Smartphone, TriangleAlert, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { GlobalSettingsForm, type GlobalSettingsSection } from "./GlobalSettingsForm";
+import { useCloudGate } from "../hooks/useCloudGate";
+import { GlobalSettingsForm } from "./GlobalSettingsForm";
 import {
 	ProjectSettingsForm,
 	type ProjectSettingsSaveState,
 	type ProjectSettingsSection,
 } from "./ProjectSettingsForm";
-import { ConnectMobileModal } from "./ConnectMobileModal";
-import { KeyboardShortcutsSettingsDialog } from "./settings/KeyboardShortcutsSettingsDialog";
 import {
 	Dialog,
 	DialogClose,
@@ -20,7 +19,7 @@ import {
 	settingsDialogContentClass,
 	settingsDialogHeaderClass,
 } from "./ui/dialog";
-import { type SettingsModal, useUiStore } from "../stores/ui-store";
+import { type GlobalSettingsSection, type SettingsModal, useUiStore } from "../stores/ui-store";
 import { cn } from "../lib/utils";
 import { Button } from "./ui/button";
 
@@ -39,12 +38,8 @@ export function SettingsDialog() {
 	const { t } = useTranslation();
 	const settingsModal = useUiStore((state) => state.settingsModal);
 	const closeSettings = useUiStore((state) => state.closeSettings);
-	const openGlobalSettings = useUiStore((state) => state.openGlobalSettings);
-	const openProjectSettings = useUiStore((state) => state.openProjectSettings);
-	const [keyboardShortcutsOpen, setKeyboardShortcutsOpen] = useState(false);
-	const [connectMobileOpen, setConnectMobileOpen] = useState(false);
-	const keyboardShortcutsRestoreRef = useRef<SettingsModal | null>(null);
-	const connectMobileRestoreRef = useRef<SettingsModal | null>(null);
+	// Reads the daemon settings the dialog tree already queries; no extra fetch.
+	const { cloudEnabled } = useCloudGate();
 
 	// Keep the last non-null settings so the content stays rendered during the
 	// exit animation (when settingsModal is already null but the dialog hasn't
@@ -56,8 +51,15 @@ export function SettingsDialog() {
 	if (settingsModal !== null) lastSettingsRef.current = settingsModal;
 	const displaySettings = lastSettingsRef.current;
 
-	const globalSections: Array<{ id: Exclude<GlobalSettingsSection, "all">; label: string; icon: typeof Settings2 }> = [
+	const globalSections: Array<{ id: GlobalSettingsSection; label: string; icon: typeof Settings2 }> = [
 		{ id: "general", label: t("settings.general"), icon: Settings2 },
+		{ id: "harness", label: t("settings.harness"), icon: Bot },
+		{ id: "agents", label: t("settings.agents"), icon: BadgeCheck },
+		{ id: "browserProfiles", label: t("settings.browserProfiles"), icon: Globe2 },
+		// Only deployments with the cloud offering get the Cloud page.
+		...(cloudEnabled ? [{ id: "cloud" as const, label: t("settings.cloud"), icon: Cloud }] : []),
+		{ id: "mobile", label: t("settings.mobile"), icon: Smartphone },
+		{ id: "shortcuts", label: t("settings.shortcuts"), icon: Keyboard },
 		{ id: "updates", label: t("settings.updates"), icon: RefreshCw },
 		{ id: "help", label: t("settings.help"), icon: CircleHelp },
 	];
@@ -70,7 +72,7 @@ export function SettingsDialog() {
 	];
 
 	const isProjectSettings = displaySettings?.scope === "project";
-	const [activeSection, setActiveSection] = useState<Exclude<GlobalSettingsSection, "all">>("general");
+	const [activeSection, setActiveSection] = useState<GlobalSettingsSection>("general");
 	const [activeProjectSection, setActiveProjectSection] = useState<ProjectSettingsSection>("general");
 	const [projectSaveState, setProjectSaveState] = useState<ProjectSettingsSaveState>(initialProjectSaveState);
 
@@ -78,43 +80,13 @@ export function SettingsDialog() {
 		? (projectSections.find((s) => s.id === activeProjectSection)?.label ?? t("settings.project.identity"))
 		: (globalSections.find((section) => section.id === activeSection)?.label ?? t("settings.general"));
 
-	const openKeyboardShortcuts = () => {
-		if (!settingsModal) return;
-		keyboardShortcutsRestoreRef.current = settingsModal;
-		setKeyboardShortcutsOpen(true);
-		closeSettings();
-	};
-
-	const restoreSettings = () => {
-		const previousSettings = keyboardShortcutsRestoreRef.current;
-		keyboardShortcutsRestoreRef.current = null;
-		if (!previousSettings) return;
-		if (previousSettings.scope === "global") openGlobalSettings();
-		else openProjectSettings(previousSettings.projectId);
-	};
-
-	const openConnectMobile = () => {
-		if (!settingsModal) return;
-		connectMobileRestoreRef.current = settingsModal;
-		setConnectMobileOpen(true);
-		closeSettings();
-	};
-
-	const restoreConnectMobileSettings = () => {
-		const previousSettings = connectMobileRestoreRef.current;
-		connectMobileRestoreRef.current = null;
-		if (!previousSettings) return;
-		if (previousSettings.scope === "global") openGlobalSettings();
-		else openProjectSettings(previousSettings.projectId);
-	};
-
 	const closeSettingsDialog = () => {
 		if (isProjectSettings && projectSaveState.isPending) return;
 		closeSettings();
 	};
 
 	useEffect(() => {
-		if (settingsModal?.scope === "global") setActiveSection("general");
+		if (settingsModal?.scope === "global") setActiveSection(settingsModal.section ?? "general");
 		if (settingsModal?.scope === "project") {
 			setActiveProjectSection("general");
 			setProjectSaveState(initialProjectSaveState());
@@ -122,8 +94,7 @@ export function SettingsDialog() {
 	}, [settingsModal]);
 
 	return (
-		<>
-			<Dialog open={settingsModal !== null} onOpenChange={(open) => !open && closeSettingsDialog()}>
+		<Dialog open={settingsModal !== null} onOpenChange={(open) => !open && closeSettingsDialog()}>
 			<DialogContent
 				className={cn(
 					settingsDialogContentClass,
@@ -223,8 +194,6 @@ export function SettingsDialog() {
 							) : (
 								<GlobalSettingsForm
 									section={activeSection}
-									onOpenKeyboardShortcuts={openKeyboardShortcuts}
-									onOpenConnectMobile={openConnectMobile}
 								/>
 							)}
 						</div>
@@ -233,31 +202,18 @@ export function SettingsDialog() {
 				)}
 		</DialogContent>
 			</Dialog>
-			<KeyboardShortcutsSettingsDialog
-				open={keyboardShortcutsOpen}
-				onOpenChange={(open) => {
-					setKeyboardShortcutsOpen(open);
-					if (!open) restoreSettings();
-				}}
-			/>
-			<ConnectMobileModal
-				open={connectMobileOpen}
-				onOpenChange={(open) => {
-					setConnectMobileOpen(open);
-					if (!open) restoreConnectMobileSettings();
-				}}
-			/>
-		</>
 	);
 }
 
 function SettingsNavItem({
 	active,
+	disabled,
 	icon: Icon,
 	label,
 	onClick,
 }: {
 	active: boolean;
+	disabled?: boolean;
 	icon: typeof Settings2;
 	label: string;
 	onClick: () => void;
@@ -266,11 +222,12 @@ function SettingsNavItem({
 		<button
 			aria-current={active ? "page" : undefined}
 			className={cn(
-				"flex h-9 w-full items-center gap-2 rounded-md px-2.5 text-left text-sm font-medium transition-[background-color,color,transform] duration-fast ease-out active:scale-press focus:outline-none focus-visible:outline-none focus-visible:ring-0",
+				"flex h-9 w-full items-center gap-2 rounded-md px-2.5 text-left text-sm font-medium transition-[background-color,color,transform] duration-fast ease-out active:scale-press focus:outline-none focus-visible:outline-none focus-visible:ring-0 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent disabled:hover:text-muted-foreground",
 				active
 					? "bg-interactive-active text-foreground"
 					: "text-muted-foreground hover:bg-interactive-hover hover:text-foreground",
 			)}
+			disabled={disabled}
 			onClick={onClick}
 			type="button"
 		>

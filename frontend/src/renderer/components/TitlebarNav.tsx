@@ -3,7 +3,8 @@ import { ArrowLeft, ArrowRight, PanelLeft } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { isLinuxPlatform, isMacPlatform } from "../lib/platform";
-import { useUiStore } from "../stores/ui-store";
+import { sidebarIsCompact, sidebarIsVisible, sidebarOccupiesLayout, useUiStore } from "../stores/ui-store";
+import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 
 const isMac = isMacPlatform();
 const isLinux = isLinuxPlatform();
@@ -48,20 +49,28 @@ export function TitlebarNav({
   isFullScreen?: boolean;
 }) {
   const { t } = useTranslation();
-  const { isSidebarOpen, toggleSidebar } = useUiStore();
+  const toggleSidebar = useUiStore((state) => state.toggleSidebar);
+  const isSidebarOpen = useUiStore(sidebarIsVisible);
+  const isSidebarCompact = useUiStore(sidebarIsCompact);
+  const sidebarHasLayout = useUiStore(sidebarOccupiesLayout);
   const router = useRouter();
   const canGoBack = useCanGoBack();
   const canGoForward = useCanGoForward();
 
   if (!isMac && !isLinux) return null;
+  if (isSidebarCompact) return null;
 
   // macOS: pinned beside the traffic lights. Native dots sit at y: 12 with a
   // 12px hit target (centerline 18); the 40px clearance band is items-centered,
   // so top: -2px puts the toggle/arrows on that same centerline. Linux: no
   // traffic lights, so it sits at the sidebar's top-left within the reserved
-  // titlebar band (cluster-left-linux, not flush to the window edge).
+  // titlebar band (cluster-left-linux, not flush to the window edge) — and when
+  // the sidebar is off-canvas it shifts right to clear the framed centre
+  // panel's left border instead of straddling it.
   const leftClass = !isMac
-    ? "left-titlebar-cluster-left-linux"
+    ? isSidebarOpen
+      ? "left-titlebar-cluster-left-linux"
+      : "left-titlebar-cluster-left-linux-panel"
     : isFullScreen
       ? "left-titlebar-cluster-left-fullscreen"
       : "left-titlebar-cluster-left";
@@ -69,7 +78,7 @@ export function TitlebarNav({
   // 1px) so the cluster shares its centerline with the project title.
   const topClass = !isMac
     ? "top-0.75"
-    : isFullScreen && hasSessionTopbar && !isSidebarOpen
+    : isFullScreen && hasSessionTopbar && !sidebarHasLayout
       ? "top-1.5"
       : isFullScreen
         ? "top-0"
@@ -134,18 +143,24 @@ function TitlebarButton({
   children: React.ReactNode;
 }) {
   return (
-    <button
-      aria-label={label}
-      aria-disabled={disabled || undefined}
-      className="grid size-control-md place-items-center rounded-md text-passive transition-colors hover:bg-interactive-hover hover:text-muted-foreground disabled:cursor-not-allowed disabled:opacity-55 disabled:hover:bg-transparent disabled:hover:text-passive"
-      disabled={disabled}
-      onClick={onClick}
-      style={noDragStyle}
-      tabIndex={tabIndex}
-      title={title}
-      type="button"
-    >
-      {children}
-    </button>
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span className="inline-flex">
+          <button
+            aria-label={label}
+            aria-disabled={disabled || undefined}
+            className="grid size-control-md place-items-center rounded-md text-passive transition-colors hover:bg-interactive-hover hover:text-muted-foreground disabled:cursor-not-allowed disabled:opacity-55 disabled:hover:bg-transparent disabled:hover:text-passive"
+            disabled={disabled}
+            onClick={onClick}
+            style={noDragStyle}
+            tabIndex={tabIndex}
+            type="button"
+          >
+            {children}
+          </button>
+        </span>
+      </TooltipTrigger>
+      <TooltipContent side="bottom">{title}</TooltipContent>
+    </Tooltip>
   );
 }

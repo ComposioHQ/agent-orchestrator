@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { EditorHandoffState, OpenSessionTargetInput } from "../../shared/editor-handoff";
 import { TopbarOpenEditorButton } from "./TopbarOpenEditorButton";
+import { TooltipProvider } from "./ui/tooltip";
 
 vi.mock("../lib/telemetry", () => ({ captureRendererEvent: vi.fn() }));
 
@@ -34,12 +35,57 @@ function renderButton() {
 	const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
 	return render(
 		<QueryClientProvider client={client}>
-			<TopbarOpenEditorButton sessionId="sess-1" projectId="proj-1" />
+			<TooltipProvider>
+				<TopbarOpenEditorButton sessionId="sess-1" projectId="proj-1" />
+			</TooltipProvider>
 		</QueryClientProvider>,
 	);
 }
 
 describe("TopbarOpenEditorButton", () => {
+	// The bug this PR chases: the worktree goes away after getState was cached,
+	// so the control is still enabled, the click fails, and nothing refreshes the
+	// state, leaving it enabled to fail again. Failing the open must re-read
+	// availability and disable the control.
+	it("refreshes availability after a failed open so the control stops inviting the click", async () => {
+		const getState = vi
+			.fn()
+			.mockResolvedValueOnce(availableState)
+			.mockResolvedValue({ ...availableState, workspaceAvailable: false, unavailableReason: "Session workspace is not available" });
+		window.ao!.editorHandoff.getState = getState;
+		window.ao!.editorHandoff.open = vi.fn().mockRejectedValue(
+			new Error("Error invoking remote method 'editorHandoff:open': Error: Session workspace is not available"),
+		);
+		renderButton();
+
+		const main = await screen.findByRole("button", { name: "Open in Cursor" });
+		expect(main).toBeEnabled();
+
+		await userEvent.click(main);
+
+		// the failure must trigger a refetch, not just show a message
+		await waitFor(() => expect(getState).toHaveBeenCalledTimes(2));
+		await waitFor(() => expect(screen.getByRole("button", { name: "Open in Cursor" })).toBeDisabled());
+	});
+
+	// Regression: an ipcMain rejection arrives wrapped as "Error invoking remote
+	// method 'editorHandoff:open': Error: <reason>", and the topbar used to paint
+	// that whole string into the actions row.
+	it("shows the reason, not Electron's remote-method wrapper, when the open fails", async () => {
+		setState(availableState);
+		window.ao!.editorHandoff.open = vi.fn().mockRejectedValue(
+			new Error("Error invoking remote method 'editorHandoff:open': Error: Session workspace is not available"),
+		);
+		renderButton();
+
+		await userEvent.click(await screen.findByRole("button", { name: "Open in Cursor" }));
+
+		const alert = await screen.findByRole("alert");
+		expect(alert).toHaveTextContent("Session workspace is not available");
+		expect(alert.textContent).not.toContain("Error invoking remote method");
+	});
+
+
 	beforeEach(() => {
 		openMock.mockClear();
 		openMock.mockImplementation(async ({ targetId }: OpenSessionTargetInput) => {
@@ -54,10 +100,33 @@ describe("TopbarOpenEditorButton", () => {
 	it("uses persisted Cursor as the primary target and sends no filesystem path", async () => {
 		renderButton();
 		const button = await screen.findByRole("button", { name: "Open in Cursor" });
-		expect(button).toHaveAttribute("data-priority", "primary");
-		expect(button.querySelector("[data-compact-label]")).toHaveTextContent("Open");
+		expect(button).not.toHaveAttribute("data-priority");
+		expect(button.querySelector("[data-compact-label]")).not.toBeInTheDocument();
+		expect(button.querySelector("svg")).toBeInTheDocument();
+		expect(button).toHaveClass("topbar-control--icon");
+		expect(button).not.toHaveClass("border", "bg-raised");
+		const options = screen.getByRole("button", { name: "Open workspace options" });
+		expect(options).toHaveClass("topbar-control--icon", "hover:bg-transparent");
+		expect(button).toHaveClass("hover:bg-transparent");
+		// The button's tooltip trigger wraps it in a span (disabled buttons don't
+		// fire pointer events, so the hoverable element has to be the wrapper) —
+		// the actual topbar group is one level up.
+		const group = button.parentElement?.parentElement;
+		expect(group).toHaveClass("gap-0", "rounded-md", "hover:bg-interactive-hover", "data-[state=open]:bg-interactive-hover");
+		expect(group).toHaveAttribute("data-state", "closed");
 		await userEvent.click(button);
 		await waitFor(() => expect(openMock).toHaveBeenCalledWith({ sessionId: "sess-1" }));
+	});
+
+	it("keeps the shared editor control highlighted while options are open", async () => {
+		renderButton();
+		const options = await screen.findByRole("button", { name: "Open workspace options" });
+		const group = options.parentElement?.parentElement;
+
+		await userEvent.click(options);
+
+		expect(group).toHaveAttribute("data-state", "open");
+		expect(group).toHaveClass("data-[state=open]:bg-interactive-hover");
 	});
 
 	it("keeps the no-editor state visible and offers Finder and Terminal", async () => {

@@ -11,11 +11,10 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as ShellRouteImport } from './routes/_shell'
 import { Route as ShellIndexRouteImport } from './routes/_shell.index'
-import { Route as ShellUsageRouteImport } from './routes/_shell.usage'
-import { Route as ShellTerminalsRouteImport } from './routes/_shell.terminals'
 import { Route as ShellSettingsRouteImport } from './routes/_shell.settings'
-import { Route as ShellSessionsSessionIdRouteImport } from './routes/_shell.sessions.$sessionId'
+import { Route as ShellTerminalsRouteImport } from './routes/_shell.terminals'
 import { Route as ShellProjectsProjectIdRouteImport } from './routes/_shell.projects.$projectId'
+import { Route as ShellSessionsSessionIdRouteImport } from './routes/_shell.sessions.$sessionId'
 import { Route as ShellProjectsProjectIdSettingsRouteImport } from './routes/_shell.projects.$projectId_.settings'
 import { Route as ShellProjectsProjectIdSessionsSessionIdRouteImport } from './routes/_shell.projects.$projectId_.sessions.$sessionId'
 
@@ -28,9 +27,9 @@ const ShellIndexRoute = ShellIndexRouteImport.update({
   path: '/',
   getParentRoute: () => ShellRoute,
 } as any)
-const ShellUsageRoute = ShellUsageRouteImport.update({
-  id: '/usage',
-  path: '/usage',
+const ShellSettingsRoute = ShellSettingsRouteImport.update({
+  id: '/settings',
+  path: '/settings',
   getParentRoute: () => ShellRoute,
 } as any)
 const ShellTerminalsRoute = ShellTerminalsRouteImport.update({
@@ -38,19 +37,14 @@ const ShellTerminalsRoute = ShellTerminalsRouteImport.update({
   path: '/terminals',
   getParentRoute: () => ShellRoute,
 } as any)
-const ShellSettingsRoute = ShellSettingsRouteImport.update({
-  id: '/settings',
-  path: '/settings',
+const ShellProjectsProjectIdRoute = ShellProjectsProjectIdRouteImport.update({
+  id: '/projects/$projectId',
+  path: '/projects/$projectId',
   getParentRoute: () => ShellRoute,
 } as any)
 const ShellSessionsSessionIdRoute = ShellSessionsSessionIdRouteImport.update({
   id: '/sessions/$sessionId',
   path: '/sessions/$sessionId',
-  getParentRoute: () => ShellRoute,
-} as any)
-const ShellProjectsProjectIdRoute = ShellProjectsProjectIdRouteImport.update({
-  id: '/projects/$projectId',
-  path: '/projects/$projectId',
   getParentRoute: () => ShellRoute,
 } as any)
 const ShellProjectsProjectIdSettingsRoute =
@@ -152,11 +146,11 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ShellIndexRouteImport
       parentRoute: typeof ShellRoute
     }
-    '/_shell/usage': {
-      id: '/_shell/usage'
-      path: '/usage'
-      fullPath: '/usage'
-      preLoaderRoute: typeof ShellUsageRouteImport
+    '/_shell/settings': {
+      id: '/_shell/settings'
+      path: '/settings'
+      fullPath: '/settings'
+      preLoaderRoute: typeof ShellSettingsRouteImport
       parentRoute: typeof ShellRoute
     }
     '/_shell/terminals': {
@@ -166,11 +160,11 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ShellTerminalsRouteImport
       parentRoute: typeof ShellRoute
     }
-    '/_shell/settings': {
-      id: '/_shell/settings'
-      path: '/settings'
-      fullPath: '/settings'
-      preLoaderRoute: typeof ShellSettingsRouteImport
+    '/_shell/projects/$projectId': {
+      id: '/_shell/projects/$projectId'
+      path: '/projects/$projectId'
+      fullPath: '/projects/$projectId'
+      preLoaderRoute: typeof ShellProjectsProjectIdRouteImport
       parentRoute: typeof ShellRoute
     }
     '/_shell/sessions/$sessionId': {
@@ -178,13 +172,6 @@ declare module '@tanstack/react-router' {
       path: '/sessions/$sessionId'
       fullPath: '/sessions/$sessionId'
       preLoaderRoute: typeof ShellSessionsSessionIdRouteImport
-      parentRoute: typeof ShellRoute
-    }
-    '/_shell/projects/$projectId': {
-      id: '/_shell/projects/$projectId'
-      path: '/projects/$projectId'
-      fullPath: '/projects/$projectId'
-      preLoaderRoute: typeof ShellProjectsProjectIdRouteImport
       parentRoute: typeof ShellRoute
     }
     '/_shell/projects/$projectId_/settings': {
