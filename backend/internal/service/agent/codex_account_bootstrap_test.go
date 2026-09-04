@@ -23,28 +23,36 @@ import (
 )
 
 func TestCodexBootstrapRecoversAfterTransientFailure(t *testing.T) {
-	root := t.TempDir()
-	attempts := 0
-	factory := &fakeCodexAccountFactory{open: func(ports.CodexAccountContext) (ports.CodexAccountClient, error) {
-		attempts++
-		if attempts == 1 {
-			return nil, errors.New("secret credential /private/path")
-		}
-		return &fakeCodexAccountClient{read: ports.CodexAccountObservation{Authentication: domain.AgentAuthenticationUnauthorized}}, nil
-	}}
-	manager := newCodexAccountManager(context.Background(), filepath.Join(root, "accounts"), filepath.Join(root, "pending"), filepath.Join(root, "staging"), filepath.Join(root, "global"), factory, nil, nil)
-	now := time.Now()
-	manager.now = func() time.Time { return now }
-	service := &Service{codexAccounts: manager}
-	if err := service.WaitCodexAccountBootstrap(context.Background()); err == nil {
-		t.Fatal("first failure admitted launch")
-	}
-	now = now.Add(time.Minute)
-	if err := service.WaitCodexAccountBootstrap(context.Background()); err != nil {
-		t.Fatalf("retry remained blocked: %v", err)
-	}
-	if attempts != 2 {
-		t.Fatalf("attempts = %d", attempts)
+	for name, firstError := range map[string]error{
+		"provider unavailable":           errors.New("secret credential /private/path"),
+		"executable installed later":     &os.PathError{Op: "fork/exec", Path: "/private/codex", Err: os.ErrNotExist},
+		"executable permission repaired": &os.PathError{Op: "fork/exec", Path: "/private/codex", Err: os.ErrPermission},
+	} {
+		t.Run(name, func(t *testing.T) {
+			root := t.TempDir()
+			attempts := 0
+			factory := &fakeCodexAccountFactory{open: func(ports.CodexAccountContext) (ports.CodexAccountClient, error) {
+				attempts++
+				if attempts == 1 {
+					return nil, firstError
+				}
+				return &fakeCodexAccountClient{read: ports.CodexAccountObservation{Authentication: domain.AgentAuthenticationUnauthorized}}, nil
+			}}
+			manager := newCodexAccountManager(context.Background(), filepath.Join(root, "accounts"), filepath.Join(root, "pending"), filepath.Join(root, "staging"), filepath.Join(root, "global"), factory, nil, nil)
+			now := time.Now()
+			manager.now = func() time.Time { return now }
+			service := &Service{codexAccounts: manager}
+			if err := service.WaitCodexAccountBootstrap(context.Background()); err == nil {
+				t.Fatal("first failure admitted launch")
+			}
+			now = now.Add(time.Minute)
+			if err := service.WaitCodexAccountBootstrap(context.Background()); err != nil {
+				t.Fatalf("retry remained blocked: %v", err)
+			}
+			if attempts != 2 {
+				t.Fatalf("attempts = %d", attempts)
+			}
+		})
 	}
 }
 

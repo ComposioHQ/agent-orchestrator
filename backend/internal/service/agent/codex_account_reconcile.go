@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"syscall"
@@ -206,7 +205,7 @@ func (m *codexAccountManager) reconcileGlobalInner(ctx context.Context) error {
 	if err != nil {
 		m.setGlobalAuthenticationFailure(failedAuthentication(m.now(), domain.AgentReadinessReasonAuthCheckFailed, "Authentication check failed."))
 		m.setUnmanagedGlobal("Device Codex account", domain.CodexAuthMethodUnknown, nil, "global_account_unverified", "AO could not verify the device's current Codex account.")
-		return bootstrapFailure("account_client_unavailable", !errors.Is(err, os.ErrPermission) && !errors.Is(err, exec.ErrNotFound) && !errors.Is(err, os.ErrNotExist))
+		return bootstrapFailure("account_client_unavailable", true)
 	}
 	observation, readErr := client.Read(readCtx, false)
 	_ = client.Close()
@@ -264,7 +263,7 @@ func (m *codexAccountManager) reconcileGlobalInner(ctx context.Context) error {
 		verifiedClient, openErr := m.factory.Open(verifyCtx, ports.CodexAccountContext{Home: home, Managed: true})
 		if openErr != nil {
 			verifyCancel()
-			return bootstrapFailure("account_client_unavailable", !errors.Is(openErr, os.ErrPermission) && !errors.Is(openErr, exec.ErrNotFound) && !errors.Is(openErr, os.ErrNotExist))
+			return bootstrapFailure("account_client_unavailable", true)
 		}
 		checked, checkErr := verifiedClient.Read(verifyCtx, true)
 		_ = verifiedClient.Close()
