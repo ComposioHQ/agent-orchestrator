@@ -69,11 +69,6 @@ function errorMessage(error: unknown) {
 	return error instanceof Error ? error.message : "Could not load projects";
 }
 
-function expandedSidebarWidthPx(): number {
-	const inlineWidth = Number.parseFloat(document.documentElement.style.getPropertyValue("--ao-sidebar-w"));
-	return Number.isFinite(inlineWidth) && inlineWidth > 0 ? inlineWidth : SIDEBAR_DEFAULT_WIDTH;
-}
-
 function normalizeProjectPath(path: string): string {
 	if (!path) return path;
 	const trimmed = path.trim().replace(/[\\/]+$/, "");

@@ -366,7 +366,6 @@ beforeEach(() => {
 		createProjectNonce: 0,
 		folderDropRequest: null,
 		globalToast: null,
-		isSidebarAutoCollapsed: false,
 		isSidebarOpen: true,
 		newTaskRequest: null,
 		newShellTerminalNonce: 0,
