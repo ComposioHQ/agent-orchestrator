@@ -446,7 +446,7 @@ export function CreateProjectFlow({
 					label,
 				})}
 			<CreateProjectFlowBackdrop
-				open={(modePickerOpen || cloneDialogOpen || folderPickerOpen || selectedPath !== null || childTransitioning) && !projectImportOpen}
+				open={modePickerOpen || cloneDialogOpen || folderPickerOpen || selectedPath !== null || childTransitioning || projectImportOpen}
 			/>
 			{hasModePicker && embedded && !modePickerOpen && !cloneDialogOpen && selectedPath === null && (
 				<div className="flex w-full flex-col items-center gap-3">
@@ -1210,7 +1210,6 @@ function ProjectImportDialog({
 	return (
 		<Dialog.Root open={open} onOpenChange={onOpenChange}>
 			<Dialog.Portal>
-				<ModalBackdrop />
 				<Dialog.Content
 					className="fixed left-1/2 top-1/2 z-overlay flex max-h-[min(640px,calc(100svh-24px))] w-[min(560px,calc(100vw-24px))] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-lg border border-border bg-popover p-0 text-popover-foreground shadow-xl data-[state=open]:animate-modal-in data-[state=closed]:animate-modal-out motion-reduce:animate-none"
 					onInteractOutside={(event) => event.preventDefault()}
