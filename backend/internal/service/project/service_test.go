@@ -3,6 +3,7 @@ package project_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/url"
 	"os"
 	"os/exec"
@@ -1052,6 +1053,36 @@ func TestManager_AddValidationAndConflicts(t *testing.T) {
 
 	_, err = m.Add(ctx, project.AddInput{Path: repoB, ProjectID: ptr("shared")})
 	wantCode(t, err, "ID_ALREADY_REGISTERED")
+}
+
+func TestManager_AddRejectsEquivalentRepositoryPaths(t *testing.T) {
+	for _, aliasFirst := range []bool{false, true} {
+		t.Run(fmt.Sprintf("alias-first=%v", aliasFirst), func(t *testing.T) {
+			m := newManager(t)
+			repo := gitRepo(t)
+			alias := filepath.Join(t.TempDir(), "alias")
+			if err := os.Symlink(repo, alias); err != nil {
+				t.Skipf("symlink unavailable: %v", err)
+			}
+			first, second := repo, alias
+			if aliasFirst {
+				first, second = alias, repo
+			}
+			if _, err := m.Add(context.Background(), project.AddInput{Path: first, ProjectID: ptr("original")}); err != nil {
+				t.Fatal(err)
+			}
+			_, err := m.Add(context.Background(), project.AddInput{Path: second, ProjectID: ptr("duplicate")})
+			wantCode(t, err, "PATH_ALREADY_REGISTERED")
+			var conflict *apierr.Error
+			if !errors.As(err, &conflict) || conflict.Details["existingProjectId"] != "original" {
+				t.Fatalf("conflict = %#v", err)
+			}
+			rows, err := m.List(context.Background())
+			if err != nil || len(rows) != 1 {
+				t.Fatalf("rows=%v err=%v", rows, err)
+			}
+		})
+	}
 }
 
 func TestManager_AddAllocatesUniqueIDForCollidingDerivedIDs(t *testing.T) {
