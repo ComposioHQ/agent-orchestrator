@@ -727,6 +727,7 @@ function CreateProjectSourceDialog({
 	onSelect: (source: ProjectSource) => void;
 	open: boolean;
 }) {
+	const { t } = useTranslation();
 	return (
 		<Dialog.Root open={open} onOpenChange={onOpenChange}>
 			<Dialog.Portal>
@@ -739,6 +740,8 @@ function CreateProjectSourceDialog({
 							: "data-[state=open]:animate-modal-in data-[state=closed]:animate-modal-out",
 					)}
 				>
+					<Dialog.Title className="sr-only">{t("createProject.addCodeTitle")}</Dialog.Title>
+					<Dialog.Description className="sr-only">{t("createProject.addCodeDescription")}</Dialog.Description>
 					<div className="flex w-full flex-col items-center gap-3">
 						{cloudEnabled && (
 							<ProjectOfferingTabs disabled={disabled} offering={offering} onOfferingChange={onOfferingChange} />
