@@ -37,9 +37,7 @@ export function ChatSettingsSheet({
 }) {
 	const t = useTheme();
 	const styles = useThemedStyles(makeStyles);
-	const selected = snapshot.settings.model
-		? models.find((model) => model.id === snapshot.settings.model)
-		: models.find((model) => model.default);
+	const selected = models.find((model) => model.id === snapshot.settings.model);
 	const efforts = selected?.efforts ?? [];
 	const usesProviderOptions = can(snapshot, "config_options");
 	const hasProviderModel = options.some(
@@ -53,10 +51,12 @@ export function ChatSettingsSheet({
 					{error ? <View accessibilityRole="alert" style={styles.error}><Feather name="alert-circle" size={14} color={t.red} /><Text style={styles.errorText}>{error}</Text></View> : null}
 					{snapshot.modelReroute ? <View style={styles.reroute}><Feather name="shuffle" size={14} color={t.amber} /><View style={{ flex: 1 }}><Text style={styles.rerouteTitle}>Currently answered by {snapshot.modelReroute.toModel}</Text><Text style={styles.rerouteCopy}>{snapshot.modelReroute.fromModel ? `${snapshot.modelReroute.fromModel} was requested. ` : ""}{snapshot.modelReroute.reason || "The provider selected a fallback model for this conversation."}</Text></View></View> : null}
 					{(!usesProviderOptions || !hasProviderModel) && (models.length || snapshot.settings.model) ? <SettingsSection icon="cpu" title="Model">
+						{!snapshot.settings.model ? <Choice label="Provider default" hint="Uses the native provider configuration" selected disabled onPress={() => {}} /> : null}
 						{snapshot.settings.model && !selected ? <Choice label={snapshot.settings.model} hint="Not in the provider catalog" selected disabled onPress={() => {}} /> : null}
 						{models.map((model) => <Choice key={model.id} label={model.displayName} hint={model.description || (model.default ? "Provider default" : undefined)} selected={model.id === selected?.id} disabled={disabled} onPress={() => onSettings({ ...snapshot.settings, model: model.id, reasoningEffort: undefined })} />)}
 					</SettingsSection> : null}
-					{(!usesProviderOptions || !hasProviderModel) && efforts.length ? <SettingsSection icon="activity" title="Reasoning effort">
+					{(!usesProviderOptions || !hasProviderModel) && (efforts.length || snapshot.settings.reasoningEffort) ? <SettingsSection icon="activity" title="Reasoning effort">
+						{snapshot.settings.reasoningEffort && !efforts.includes(snapshot.settings.reasoningEffort) ? <Choice label={capitalize(snapshot.settings.reasoningEffort)} hint="Requested effort" selected disabled onPress={() => {}} /> : null}
 						{efforts.map((effort) => <Choice key={effort} label={capitalize(effort)} selected={effort === (snapshot.settings.reasoningEffort ?? selected?.defaultEffort)} disabled={disabled} onPress={() => onSettings({ ...snapshot.settings, reasoningEffort: effort })} />)}
 					</SettingsSection> : null}
 					{(!usesProviderOptions || !hasProviderMode) ? <SettingsSection icon="shield" title="Approvals">

@@ -18,6 +18,20 @@ function choices(node: React.ReactNode): Record<string, unknown>[] {
 }
 
 describe("model identity in mobile settings", () => {
+	it("does not mark the catalog default as the native configured model", () => {
+		const snapshot = { settings: {}, capabilities: [] } as unknown as ConversationSnapshot;
+		const rows = choices(ChatSettingsSheet({ snapshot, models: [{ id: "terra", displayName: "Terra", default: true, efforts: ["high"], defaultEffort: "high" }], options: [], onRefresh: vi.fn(), onSettings: vi.fn(), onOption: vi.fn() }));
+		expect(rows.find((row) => row.label === "Provider default")).toMatchObject({ selected: true });
+		expect(rows.find((row) => row.label === "Terra")?.selected).toBe(false);
+		expect(rows.some((row) => row.label === "High")).toBe(false);
+	});
+
+	it("keeps an explicit effort visible when the model is unresolved", () => {
+		const snapshot = { settings: { reasoningEffort: "high" }, capabilities: [] } as unknown as ConversationSnapshot;
+		const rows = choices(ChatSettingsSheet({ snapshot, models: [], options: [], onRefresh: vi.fn(), onSettings: vi.fn(), onOption: vi.fn() }));
+		expect(rows.find((row) => row.label === "High")).toMatchObject({ selected: true, disabled: true, hint: "Requested effort" });
+	});
+
 	it.each([true, false])("preserves unlisted model with empty catalog=%s", (empty) => {
 		const snapshot = { settings: { model: "gpt-6-astra" }, capabilities: [] } as unknown as ConversationSnapshot;
 		const tree = ChatSettingsSheet({ snapshot, models: empty ? [] : [{ id: "terra", displayName: "Terra", default: true, efforts: ["high"], defaultEffort: "high" }], options: [], onRefresh: vi.fn(), onSettings: vi.fn(), onOption: vi.fn() });

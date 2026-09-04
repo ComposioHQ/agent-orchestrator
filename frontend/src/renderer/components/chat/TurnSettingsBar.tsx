@@ -116,7 +116,8 @@ export function TurnSettingsBar({
 }) {
 	const selected = models.find((model) => model.id === settings.model);
 	// A stale catalog is not evidence that an explicit request uses its default.
-	const effective = settings.model ? selected : models.find((model) => model.default);
+	// The catalog default need not match the user's native provider config.
+	const effective = selected;
 	const chosenLabel = effective?.displayName ?? settings.model ?? "Provider default";
 	const rerouted = reroute
 		? models.find((model) => model.id === reroute.toModel)?.displayName ?? reroute.toModel

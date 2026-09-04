@@ -308,6 +308,12 @@ describe("ACP session config options", () => {
 		expect(screen.queryByRole("menuitem", { name: /^Effort/ })).not.toBeInTheDocument();
 	});
 
+	it("does not claim a catalog default is the native configured model", () => {
+		render(<TurnSettingsBar models={[{ id: "terra", displayName: "Terra", default: true, defaultEffort: "high", efforts: ["high"] }]} settings={{}} onChange={vi.fn()} />);
+		expect(screen.getByRole("button", { name: "Model and reasoning effort for the next turn" })).toHaveTextContent("Provider default");
+		expect(screen.getByRole("button", { name: "Model and reasoning effort for the next turn" })).not.toHaveTextContent("High");
+	});
+
 	it("identifies provider substitution for an unlisted request", () => {
 		render(<TurnSettingsBar models={[]} settings={{ model: "gpt-6-astra", reasoningEffort: "high" }} reroute={{ fromModel: "gpt-6-astra", toModel: "terra", reason: "capacity", at: "2026-09-05T00:00:00Z" }} onChange={vi.fn()} />);
 		const trigger = screen.getByRole("button", { name: "Model and reasoning effort for the next turn" });
