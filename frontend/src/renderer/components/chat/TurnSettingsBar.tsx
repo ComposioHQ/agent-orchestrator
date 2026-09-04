@@ -524,7 +524,6 @@ function MenuToggle({
 		>
 			<span>{label}</span>
 			<Switch
-				size="compact"
 				aria-label={label}
 				checked={checked}
 				onPointerDown={(event) => event.stopPropagation()}

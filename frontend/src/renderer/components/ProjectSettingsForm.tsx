@@ -555,7 +555,6 @@ function SettingsBody({
 									checked={form.autoReview}
 									id="project-auto-review"
 									onCheckedChange={(checked) => setForm((f) => ({ ...f, autoReview: checked }))}
-									size="sm"
 								/>
 							</div>
 						</div>

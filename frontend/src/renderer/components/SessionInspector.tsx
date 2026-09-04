@@ -391,7 +391,6 @@ function InspectorPolicyRow({
 				disabled={disabled}
 				id={id}
 				onCheckedChange={onCheckedChange}
-				size="sm"
 			/>
 		</div>
 	);
