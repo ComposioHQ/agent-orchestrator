@@ -8,6 +8,8 @@ import { CreateProjectFlow, type CloneProjectInput, type CreateProjectInput } fr
 const bridgeMocks = vi.hoisted(() => ({
 	checkAncestorRepo: vi.fn(),
 	chooseDirectory: vi.fn(),
+	getGitHubLogin: vi.fn(),
+	getRepositoryBranch: vi.fn(),
 	scanImportFolder: vi.fn(),
 }));
 
@@ -16,6 +18,8 @@ vi.mock("../lib/bridge", () => ({
 		app: {
 			checkAncestorRepo: bridgeMocks.checkAncestorRepo,
 			chooseDirectory: bridgeMocks.chooseDirectory,
+			getGitHubLogin: bridgeMocks.getGitHubLogin,
+			getRepositoryBranch: bridgeMocks.getRepositoryBranch,
 			scanImportFolder: bridgeMocks.scanImportFolder,
 		},
 	},
@@ -116,6 +120,8 @@ const noop = {
 beforeEach(() => {
 	bridgeMocks.checkAncestorRepo.mockReset().mockResolvedValue(undefined);
 	bridgeMocks.chooseDirectory.mockReset();
+	bridgeMocks.getGitHubLogin.mockReset().mockResolvedValue("test-user");
+	bridgeMocks.getRepositoryBranch.mockReset().mockResolvedValue(undefined);
 	bridgeMocks.scanImportFolder.mockReset().mockImplementation(async ({ path }: { path: string }) => okScan(path));
 	cloudMocks.cloudEnabled = false;
 	cloudMocks.sessionStatus = "unauthenticated";

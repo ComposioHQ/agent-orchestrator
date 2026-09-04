@@ -14,6 +14,8 @@ export const aoBridge: AoBridge =
 			},
 			scanImportFolder: async ({ path }) => ({ path, repos: [] }),
 			checkAncestorRepo: async () => undefined,
+			getRepositoryBranch: async () => undefined,
+			getGitHubLogin: async () => "preview",
 			getPathForFile: () => "",
 			onOpenFolderPath: () => () => undefined,
 			onNewSessionShortcut: () => () => undefined,

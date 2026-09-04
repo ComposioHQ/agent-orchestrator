@@ -65,6 +65,16 @@ describe("preload getPathForFile bridge", () => {
 	});
 });
 
+describe("preload repository branch bridge", () => {
+	it("invokes the main-process branch probe over IPC", async () => {
+		electronMocks.invoke.mockResolvedValueOnce("main");
+
+		await expect(exposedBridge().app.getRepositoryBranch("/repo/project")).resolves.toBe("main");
+
+		expect(electronMocks.invoke).toHaveBeenCalledWith("app:getRepositoryBranch", "/repo/project");
+	});
+});
+
 describe("preload telemetry generation bridge", () => {
 	it("tags captures with the latest broadcast generation without a renderer reload", async () => {
 		telemetryPolicyBroadcastListener?.({}, { eventsEnabled: false, consentGeneration: "generation-off", updatedAt: "2026-08-28T10:15:30.000Z", acknowledged: true, state: "applied", environmentVeto: false, durabilitySupported: true });

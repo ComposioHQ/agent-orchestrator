@@ -49,6 +49,7 @@ const {
 	historyForwardMock,
 	navigateMock,
 	mockParams,
+	postMock,
 	renameSessionMock,
 	spawnMock,
 	updateStatusMock,
@@ -67,6 +68,7 @@ const {
 		dragOvers: new Map<string, (event: DragOverTestEvent) => void>(),
 		dragStarts: new Map<string, (event: { active: { id: string } }) => void>(),
 		getMock: vi.fn(),
+		postMock: vi.fn(),
 		navigateMock: vi.fn(),
 		mockParams: { projectId: undefined as string | undefined, sessionId: undefined as string | undefined },
 		renameSessionMock: vi.fn().mockResolvedValue(undefined),
@@ -170,7 +172,7 @@ vi.mock("../lib/bridge", async (importOriginal) => {
 });
 
 vi.mock("../lib/api-client", () => ({
-	apiClient: { GET: getMock },
+	apiClient: { GET: getMock, POST: postMock },
 	apiErrorMessage: (error: unknown) => {
 		if (error instanceof Error) return error.message;
 		if (typeof error === "object" && error !== null && "message" in error && typeof error.message === "string") {
@@ -377,10 +379,66 @@ beforeEach(() => {
 		},
 		error: undefined,
 	});
+	postMock.mockReset();
+	postMock.mockImplementation(async (path: string, options?: { body?: { importKind?: string; path?: string } }) => {
+		if (path === "/api/v1/imports/validate") {
+			const selectedPath = options?.body?.path ?? "/repo/workspace";
+			const importKind = options?.body?.importKind ?? "workspace";
+			return {
+				data: {
+					importKind,
+					isValid: true,
+					blockingErrors: [],
+					root: {
+						repoPath: selectedPath,
+						isRepo: false,
+						hasCommit: false,
+						hasOrigin: false,
+						isEmptyFolder: false,
+						needsGitInit: false,
+						requiredActions: [],
+						blockingErrors: [],
+					},
+					childRepos: [],
+					nextStep: "continue",
+				},
+				error: undefined,
+			};
+		}
+		if (path === "/api/v1/imports/prepare-git") {
+			const selectedPath = options?.body?.path ?? "/repo/workspace";
+			return {
+				data: {
+					events: [],
+					validation: {
+						importKind: "workspace",
+						isValid: true,
+						blockingErrors: [],
+						root: {
+							repoPath: selectedPath,
+							isRepo: false,
+							hasCommit: false,
+							hasOrigin: false,
+							isEmptyFolder: false,
+							needsGitInit: false,
+							requiredActions: [],
+							blockingErrors: [],
+						},
+						childRepos: [],
+						nextStep: "continue",
+					},
+				},
+				error: undefined,
+			};
+		}
+		return { data: undefined, error: undefined };
+	});
 	window.ao!.app.scanImportFolder = vi.fn().mockImplementation(async ({ path }: { path: string }) => ({
 		path,
 		repos: [],
 	}));
+	window.ao!.app.getGitHubLogin = vi.fn().mockResolvedValue("test-user");
+	window.ao!.app.getRepositoryBranch = vi.fn().mockResolvedValue(undefined);
 	navigateMock.mockReset();
 	renameSessionMock.mockReset().mockResolvedValue(undefined);
 	spawnMock.mockReset();
@@ -1159,6 +1217,42 @@ describe("Sidebar", () => {
 		const onCreateProject = vi.fn().mockRejectedValue(new Error("workspace not registered")) as CreateProjectHandler;
 		window.ao!.app.chooseDirectory = vi.fn().mockResolvedValue("/Users/test/dev/acme");
 		window.ao!.app.checkAncestorRepo = vi.fn().mockResolvedValue(undefined);
+		postMock.mockImplementation(async (path: string, options?: { body?: { importKind?: string; path?: string } }) => {
+			if (path === "/api/v1/imports/validate") {
+				return {
+					data: {
+						importKind: options?.body?.importKind ?? "workspace",
+						isValid: true,
+						blockingErrors: [],
+						root: {
+							repoPath: options?.body?.path ?? "/Users/test/dev/acme",
+							isRepo: false,
+							hasCommit: false,
+							hasOrigin: false,
+							isEmptyFolder: false,
+							needsGitInit: false,
+							requiredActions: [],
+							blockingErrors: [],
+						},
+						childRepos: [
+							{
+								repoPath: "/Users/test/dev/acme/api",
+								isRepo: true,
+								hasCommit: true,
+								hasOrigin: true,
+								isEmptyFolder: false,
+								needsGitInit: false,
+								requiredActions: [],
+								blockingErrors: [],
+							},
+						],
+						nextStep: "continue",
+					},
+					error: undefined,
+				};
+			}
+			return { data: undefined, error: undefined };
+		});
 		window.ao!.app.scanImportFolder = vi.fn().mockResolvedValueOnce({
 			path: "/Users/test/dev/acme",
 			repos: [],
@@ -1190,7 +1284,8 @@ describe("Sidebar", () => {
 
 		await user.click(screen.getByLabelText("New project"));
 		await user.click(screen.getByRole("button", { name: /^Import a workspace folder$/i }));
-		await user.click(await screen.findByRole("button", { name: "Continue" }));
+		await screen.findByRole("dialog", { name: "Import workspace" });
+		await user.click(screen.getByRole("button", { name: "Continue" }));
 		await screen.findByRole("dialog", { name: "Set up workspace" });
 		await chooseOption(screen.getByRole("combobox", { name: "Orchestrator agent" }), "Claude Code");
 		await user.click(screen.getByRole("button", { name: "Create workspace and start" }));
@@ -1200,7 +1295,7 @@ describe("Sidebar", () => {
 		expect(screen.getByText("web")).toBeInTheDocument();
 		expect(screen.getByText("Repository name is reserved by AO.")).toBeInTheDocument();
 		expect(screen.getByText("api")).toBeInTheDocument();
-		expect(screen.getByText("main")).toBeInTheDocument();
+		expect(screen.getByText("main github.com/acme/api")).toBeInTheDocument();
 		expect(screen.getByText("Resolve 1 failed repository to continue")).toBeInTheDocument();
 		expect(window.ao!.app.checkAncestorRepo).toHaveBeenCalledWith("/Users/test/dev/acme");
 		expect(window.ao!.app.scanImportFolder).toHaveBeenCalledWith({
@@ -1209,23 +1304,39 @@ describe("Sidebar", () => {
 		});
 	});
 
-	it("shows non-git child repos as needs git init in the valid list", async () => {
+	it("blocks workspace import when no child repository is initialized", async () => {
 		const user = userEvent.setup();
 		const onCreateProject = vi.fn().mockRejectedValue(new Error("workspace not registered")) as CreateProjectHandler;
 		window.ao!.app.chooseDirectory = vi.fn().mockResolvedValue("/repo/workspace");
 		window.ao!.app.checkAncestorRepo = vi.fn().mockResolvedValue(undefined);
+		postMock.mockImplementation(async (path: string, options?: { body?: { importKind?: string; path?: string } }) => {
+			if (path === "/api/v1/imports/validate") {
+				return {
+					data: {
+						importKind: options?.body?.importKind ?? "workspace",
+						isValid: false,
+						blockingErrors: ["WORKSPACE_CHILD_REPO_REQUIRED"],
+						root: {
+							repoPath: options?.body?.path ?? "/repo/workspace",
+							isRepo: false,
+							hasCommit: false,
+							hasOrigin: false,
+							isEmptyFolder: false,
+							needsGitInit: false,
+							requiredActions: [],
+							blockingErrors: [],
+						},
+						childRepos: [],
+						nextStep: "error",
+					},
+					error: undefined,
+				};
+			}
+			return { data: undefined, error: undefined };
+		});
 		window.ao!.app.scanImportFolder = vi.fn().mockResolvedValue({
 			path: "/repo/workspace",
 			repos: [
-				{
-					name: "api",
-					path: "/repo/workspace/api",
-					relativePath: "api",
-					branch: "main",
-					remote: "git@github.com:acme/api.git",
-					hasRemote: true,
-					status: "ok",
-				},
 				{
 					name: "docs",
 					path: "/repo/workspace/docs",
@@ -1242,17 +1353,173 @@ describe("Sidebar", () => {
 
 		await user.click(screen.getByLabelText("New project"));
 		await user.click(screen.getByRole("button", { name: /^Import a workspace folder$/i }));
-		await user.click(await screen.findByRole("button", { name: "Continue" }));
-		await screen.findByRole("dialog", { name: "Set up workspace" });
-		await chooseOption(screen.getByRole("combobox", { name: "Orchestrator agent" }), "Claude Code");
-		await user.click(screen.getByRole("button", { name: "Create workspace and start" }));
+		await screen.findByRole("dialog", { name: "Import workspace" });
 
-		expect(await screen.findByText(/Import failed · workspace not registered/i)).toBeInTheDocument();
+		expect(
+			await screen.findByText(
+				"Initialize at least one direct child repository with a commit and origin remote before importing this workspace.",
+			),
+		).toBeInTheDocument();
+		expect(screen.queryByText("docs")).not.toBeInTheDocument();
+		expect(screen.queryByText("Needs git init")).not.toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: "Approve and set up" })).not.toBeInTheDocument();
+		expect(onCreateProject).not.toHaveBeenCalled();
+	});
+
+	it("shows expandable setup panels only for initialized child repositories that need fixes", async () => {
+		const user = userEvent.setup();
+		window.ao!.app.chooseDirectory = vi.fn().mockResolvedValue("/repo/workspace");
+		window.ao!.app.checkAncestorRepo = vi.fn().mockResolvedValue(undefined);
+		postMock.mockImplementation(async (path: string, options?: { body?: { importKind?: string; path?: string } }) => {
+			if (path === "/api/v1/imports/validate") {
+				return {
+					data: {
+						importKind: options?.body?.importKind ?? "workspace",
+						isValid: true,
+						blockingErrors: [],
+						root: {
+							repoPath: options?.body?.path ?? "/repo/workspace",
+							isRepo: false,
+							hasCommit: false,
+							hasOrigin: false,
+							isEmptyFolder: false,
+							needsGitInit: false,
+							requiredActions: [],
+							blockingErrors: [],
+						},
+						childRepos: [
+							{
+								repoPath: "/repo/workspace/api",
+								isRepo: true,
+								hasCommit: true,
+								hasOrigin: true,
+								isEmptyFolder: false,
+								needsGitInit: false,
+								requiredActions: [],
+								blockingErrors: [],
+							},
+							{
+								repoPath: "/repo/workspace/unborn",
+								isRepo: true,
+								hasCommit: false,
+								hasOrigin: false,
+								isEmptyFolder: false,
+								needsGitInit: false,
+								requiredActions: ["git_commit", "set_remote"],
+								blockingErrors: [],
+							},
+							{
+								repoPath: "/repo/workspace/no-remote",
+								isRepo: true,
+								hasCommit: true,
+								hasOrigin: false,
+								isEmptyFolder: false,
+								needsGitInit: false,
+								requiredActions: ["set_remote"],
+								blockingErrors: [],
+							},
+						],
+						nextStep: "prepare_git",
+					},
+					error: undefined,
+				};
+			}
+			return { data: undefined, error: undefined };
+		});
+		window.ao!.app.scanImportFolder = vi.fn().mockResolvedValue({
+			path: "/repo/workspace",
+			repos: [
+				{
+					name: "docs",
+					path: "/repo/workspace/docs",
+					relativePath: "docs",
+					branch: "",
+					remote: "",
+					hasRemote: false,
+					status: "ok",
+					needsGitInit: true,
+				},
+			],
+		});
+		renderSidebar({ onCreateProject: vi.fn().mockResolvedValue(undefined) as CreateProjectHandler });
+
+		await user.click(screen.getByLabelText("New project"));
+		await user.click(screen.getByRole("button", { name: /^Import a workspace folder$/i }));
+		await screen.findByRole("dialog", { name: "Import workspace" });
+
 		expect(screen.getByText("api")).toBeInTheDocument();
-		expect(screen.getByText("main")).toBeInTheDocument();
-		expect(screen.getByText("docs")).toBeInTheDocument();
-		expect(screen.getByText("Needs git init")).toBeInTheDocument();
-		expect(screen.queryByText(/Origin remote is required/)).not.toBeInTheDocument();
+		expect(screen.getByText("unborn")).toBeInTheDocument();
+		expect(screen.getByText("no-remote")).toBeInTheDocument();
+		expect(screen.getByText("2 required steps")).toBeInTheDocument();
+		expect(screen.getByText("1 required step")).toBeInTheDocument();
+		const remoteInputs = screen.getAllByLabelText("Origin remote URL");
+		expect(remoteInputs).toHaveLength(2);
+		expect(remoteInputs[0]).toHaveValue("https://github.com/test-user/no-remote.git");
+		expect(remoteInputs[1]).toHaveValue("https://github.com/test-user/unborn.git");
+		expect(
+			screen.getAllByText(
+				"To create sessions and PRs successfully, make sure this repository also exists on github.com and that you can push the default branch to it.",
+			),
+		).toHaveLength(2);
+		expect(screen.queryByText("docs")).not.toBeInTheDocument();
+		expect(screen.queryByText("Needs git init")).not.toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Approve and set up" })).toBeInTheDocument();
+	});
+
+	it("prefers the GitHub login over a stale saved remote owner when suggesting workspace remotes", async () => {
+		const user = userEvent.setup();
+		window.localStorage.setItem("ao.import.lastRemoteUrl", "https://github.com/chauhan/old.git");
+		window.localStorage.setItem("ao.import.lastRemoteOwner", "chauhan");
+		window.ao!.app.chooseDirectory = vi.fn().mockResolvedValue("/repo/workspace");
+		window.ao!.app.checkAncestorRepo = vi.fn().mockResolvedValue(undefined);
+		postMock.mockImplementation(async (path: string, options?: { body?: { importKind?: string; path?: string } }) => {
+			if (path === "/api/v1/imports/validate") {
+				return {
+					data: {
+						importKind: options?.body?.importKind ?? "workspace",
+						isValid: true,
+						blockingErrors: [],
+						root: {
+							repoPath: options?.body?.path ?? "/repo/workspace",
+							isRepo: false,
+							hasCommit: false,
+							hasOrigin: false,
+							isEmptyFolder: false,
+							needsGitInit: false,
+							requiredActions: [],
+							blockingErrors: [],
+						},
+						childRepos: [
+							{
+								repoPath: "/repo/workspace/temp",
+								isRepo: true,
+								hasCommit: false,
+								hasOrigin: false,
+								isEmptyFolder: false,
+								needsGitInit: false,
+								requiredActions: ["git_commit", "set_remote"],
+								blockingErrors: [],
+							},
+						],
+						nextStep: "prepare_git",
+					},
+					error: undefined,
+				};
+			}
+			return { data: undefined, error: undefined };
+		});
+		window.ao!.app.scanImportFolder = vi.fn().mockResolvedValue({
+			path: "/repo/workspace",
+			repos: [],
+		});
+
+		renderSidebar({ onCreateProject: vi.fn().mockResolvedValue(undefined) as CreateProjectHandler });
+
+		await user.click(screen.getByLabelText("New project"));
+		await user.click(screen.getByRole("button", { name: /^Import a workspace folder$/i }));
+		await screen.findByRole("dialog", { name: "Import workspace" });
+
+		expect(await screen.findByLabelText("Origin remote URL")).toHaveValue("https://github.com/test-user/temp.git");
 	});
 
 	it("does not rescan folders for non-validation create failures", async () => {
