@@ -162,6 +162,7 @@ var (
 	ErrSpawnPrepare        = errors.New("prepare")
 	ErrSpawnPromptDelivery = errors.New("prompt delivery")
 	ErrSpawnLaunchCommand  = errors.New("launch command")
+	ErrSpawnLaunchGate     = errors.New("launch readiness")
 	ErrSpawnSupervisor     = errors.New("supervisor")
 	ErrSpawnPrepareLaunch  = errors.New("prepare launch")
 	ErrRuntimeCreate       = errors.New("runtime")
@@ -403,6 +404,7 @@ type Manager struct {
 	// lookPath is exec.LookPath in production; tests substitute a stub so
 	// they don't need real binaries on PATH. Returns ports.ErrAgentBinaryNotFound
 	// when the binary is missing so the sentinel propagates through toAPIError.
+	launchGate ports.LaunchGate
 	lookPath func(string) (string, error)
 	// executable resolves the daemon's own binary (os.Executable in
 	// production); its directory is prepended to spawned sessions' PATH so the
@@ -710,6 +712,10 @@ type Deps struct {
 	// callbacks reach this daemon even when another AO daemon is also running.
 	RunFilePath string
 	Clock       func() time.Time
+	// LaunchGate is consulted after the workspace exists and the child argv is
+	// final, but before any child is created. Nil disables it and leaves spawn
+	// behaviour unchanged; see ports.LaunchGate for why the seam is there.
+	LaunchGate ports.LaunchGate
 	// LookPath overrides exec.LookPath for the pre-launch agent-binary check.
 	// Production wiring leaves this nil and the manager defaults to
 	// exec.LookPath; tests inject a stub so they need not seed real binaries.
@@ -759,6 +765,7 @@ func New(d Deps) *Manager {
 		reconcileWorkers:               d.ReconcileWorkers,
 		defaultBranchRefreshTimeout:    defaultBranchRefreshTimeout,
 		openTranscriptFile:             os.Open,
+		launchGate:                     d.LaunchGate,
 		lookPath:                       d.LookPath,
 		executable:                     d.Executable,
 		newLaunchID:                    d.NewLaunchID,
@@ -1036,6 +1043,13 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn %s: %w", id, err)
 	}
 	m.augmentRuntimePATHForLaunchBinary(ctx, env, argv)
+	// Last point at which every trusted value is resolved and no child exists.
+	// A refusal here must look like the binary check: no runtime.Create, the
+	// workspace torn down, and the reason carried to the caller.
+	if err := m.applyLaunchGate(ctx, id, cfg, ws.Path, adapterConfig, argv, env); err != nil {
+		m.rollbackSeedSpawnWorkspace(ctx, rec, ws, workspaceProject, true)
+		return domain.SessionRecord{}, 0, 0, wrapSpawnStage(id, ErrSpawnLaunchGate, err)
+	}
 	argv, launchID, err := m.superviseAgentProcess(agent, id, env, argv)
 	if err != nil {
 		m.rollbackSeedSpawnWorkspace(ctx, rec, ws, workspaceProject, true)
@@ -4715,6 +4729,75 @@ func freshLaunchArgv(ctx context.Context, agent ports.Agent, id domain.SessionID
 // that return an argv[0] like "claude" without verifying. Some adapters prefix
 // their command with `env KEY=value`; in that case validate the first real
 // executable after the environment assignments.
+// applyLaunchGate consults an optional pre-spawn gate. It is deliberately the
+// smallest thing that can work: no gate means no change, a refusal stops the
+// spawn before any child exists, and a permitted launch may gain environment
+// entries that AO has not already set. A gate never rewrites argv, and never
+// removes or overrides an AO-owned variable.
+func (m *Manager) applyLaunchGate(ctx context.Context, id domain.SessionID, cfg ports.SpawnConfig,
+	workspacePath string, adapterConfig ports.AgentConfig, argv []string, env map[string]string) error {
+	if m.launchGate == nil {
+		return nil
+	}
+	decision, err := m.launchGate.PreLaunch(ctx, ports.PreLaunchRequest{
+		SessionID:     string(id),
+		Kind:          cfg.Kind,
+		Harness:       cfg.Harness,
+		WorkspacePath: workspacePath,
+		GitCommonDir:  m.gitCommonDir(ctx, workspacePath),
+		Permissions:   adapterConfig.Permissions,
+		Argv:          append([]string(nil), argv...),
+	})
+	if err != nil {
+		return fmt.Errorf("%w: %w", ports.ErrLaunchNotReady, err)
+	}
+	if !decision.Allow {
+		reason := strings.TrimSpace(decision.Reason)
+		if reason == "" {
+			reason = "gate refused the launch without a reason"
+		}
+		if kind := strings.TrimSpace(decision.PromptKind); kind != "" {
+			return fmt.Errorf("%w: %s (%s)", ports.ErrLaunchNotReady, reason, kind)
+		}
+		return fmt.Errorf("%w: %s", ports.ErrLaunchNotReady, reason)
+	}
+	for key, value := range decision.Env {
+		if key == "" {
+			continue
+		}
+		if _, taken := env[key]; taken {
+			continue
+		}
+		env[key] = value
+	}
+	return nil
+}
+
+// gitCommonDir reports the workspace's git common directory, or "" when the
+// path is not a git worktree. A gate that proves worktree provenance needs the
+// real value from git rather than a path this manager guessed.
+func (m *Manager) gitCommonDir(ctx context.Context, workspacePath string) string {
+	if workspacePath == "" {
+		return ""
+	}
+	out, err := exec.CommandContext(ctx, "git", "-C", workspacePath, "rev-parse", "--git-common-dir").Output()
+	if err != nil {
+		return ""
+	}
+	dir := strings.TrimSpace(string(out))
+	if dir == "" {
+		return ""
+	}
+	if !filepath.IsAbs(dir) {
+		dir = filepath.Join(workspacePath, dir)
+	}
+	resolved, err := filepath.Abs(dir)
+	if err != nil {
+		return ""
+	}
+	return resolved
+}
+
 func (m *Manager) validateAgentBinary(argv []string) error {
 	if len(argv) == 0 {
 		return fmt.Errorf("agent: empty launch argv: %w", ports.ErrAgentBinaryNotFound)

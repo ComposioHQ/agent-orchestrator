@@ -534,3 +534,58 @@ const (
 	PromptDeliveryAfterStart  PromptDeliveryStrategy = "after_start"
 	PromptDeliveryCustomAgent PromptDeliveryStrategy = "custom_agent"
 )
+
+// ErrLaunchNotReady is returned by a LaunchGate that refuses a spawn. AO must
+// surface it instead of creating a child, so a session card never represents a
+// child that was never able to become ready.
+var ErrLaunchNotReady = errors.New("agent: launch not ready")
+
+// LaunchGate is an optional, daemon-owned contract invoked after the workspace
+// exists and the child argv is final, but before any child process is created.
+//
+// It exists because process creation is not successful startup. An agent can be
+// spawned and then stop before its agent loop -- at a workspace-trust prompt, at
+// a permission acknowledgement, or on a conversation that no longer exists --
+// and AO would report that as ordinary work in progress. The gate is the one
+// place where a caller still holds every trusted value (session, workspace, git
+// common dir, resolved permissions, exact argv) and the child does not yet
+// exist, so it can contribute a narrow child environment or refuse visibly.
+//
+// It deliberately mirrors the existing pre-launch agent-binary check: same
+// position in Spawn, same fail-closed shape, same rollback. Nil disables it and
+// leaves spawn behaviour byte-identical.
+type LaunchGate interface {
+	PreLaunch(ctx context.Context, req PreLaunchRequest) (PreLaunchDecision, error)
+}
+
+// PreLaunchRequest carries only daemon-owned values. Every field is resolved by
+// AO itself; nothing here is supplied by the task or by the agent.
+type PreLaunchRequest struct {
+	SessionID     string
+	Kind          domain.SessionKind
+	Harness       domain.AgentHarness
+	WorkspacePath string
+	// GitCommonDir is the workspace's resolved git common directory, empty when
+	// the workspace is not a git worktree. A gate that verifies AO-created
+	// worktree provenance needs it, and must not infer it from WorkspacePath.
+	GitCommonDir string
+	Permissions  PermissionMode
+	// Argv is the exact child command line, after adapter resolution and after
+	// the binary check. A gate may read it to confirm that a resolved
+	// permission mode actually reaches the child, but must not rewrite it.
+	Argv []string
+}
+
+// PreLaunchDecision is a gate's answer. The zero value refuses, so a gate that
+// returns nothing by mistake stops the launch rather than waving it through.
+type PreLaunchDecision struct {
+	// Env is merged into the child environment. Keys already set by AO are not
+	// replaced: a gate contributes, it does not take over the environment.
+	Env map[string]string
+	// Reason is required when Allow is false and is surfaced to the caller.
+	Reason string
+	// PromptKind optionally names the machine-readable blocker a gate
+	// recognised, for example workspace_trust or bypass_acknowledgement.
+	PromptKind string
+	Allow      bool
+}
