@@ -382,8 +382,8 @@ describe("CreateProjectFlow project import validation", () => {
 		await user.click(screen.getByRole("button", { name: "New project" }));
 		await user.click(await screen.findByRole("button", { name: "Import an existing project" }));
 
-		expect(await screen.findByText("Contains child Git repos.")).toBeInTheDocument();
-		await user.click(await screen.findByRole("button", { name: "Import as workspace" }));
+		expect(await screen.findByText("This folder contains child Git repos.")).toBeInTheDocument();
+		await user.click(await screen.findByRole("button", { name: "Import as workspace instead" }));
 		expect(await screen.findByRole("button", { name: "Import a workspace folder" })).toBeInTheDocument();
 	});
 

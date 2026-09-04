@@ -1270,7 +1270,7 @@ function ProjectImportDialog({
 								<span>{t(hasChildRepos ? "createProject.projectHasChildRepos" : "createProject.projectSuggestWorkspace")}</span>{" "}
 								<button
 									type="button"
-									className="inline-flex items-center rounded-full border border-border/70 bg-muted/50 px-2 py-0.5 text-[11px] font-medium text-foreground transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-50"
+									className="inline-flex items-center rounded-md border border-border/70 bg-muted/50 px-2 py-0.5 text-[11px] font-medium text-foreground transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-50"
 									disabled={disabled}
 									onClick={onTryWorkspace}
 								>
