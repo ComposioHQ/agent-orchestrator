@@ -81,16 +81,18 @@ func (s *Service) Status(ctx context.Context, sessionID domain.SessionID, capabi
 	status := s.runtime.Status()
 	if !status.Connected {
 		if starter, ok := s.runtime.(runtimeStarter); ok {
-			if err := starter.Ensure(ctx); err == nil {
+			ensureErr := starter.Ensure(ctx)
+			switch {
+			case ensureErr == nil:
 				status = s.runtime.Status()
-			} else {
-				if !errors.Is(err, browserruntime.ErrUnavailable) {
-					return browserruntime.Status{}, err
-				}
+			case errors.Is(ensureErr, browserruntime.ErrUnavailable):
 				status = s.runtime.Status()
+			default:
+				return browserruntime.Status{}, ensureErr
 			}
 		}
 		if !status.Connected {
+			//nolint:nilerr // Runtime unavailability is the successful, actionable status payload.
 			return status, nil
 		}
 	}
@@ -104,6 +106,7 @@ func (s *Service) Status(ctx context.Context, sessionID domain.SessionID, capabi
 	if err != nil {
 		status.State = browserruntime.ReadinessUnavailable
 		status.RecommendedAction = "Retry browser status; if it persists, reopen the AO desktop app."
+		//nolint:nilerr // Provider faults are represented as actionable status, never agent-facing error text.
 		return status, nil
 	}
 	var live struct {
@@ -331,7 +334,7 @@ func (s *Service) authorize(ctx context.Context, sessionID domain.SessionID, cap
 	return nil
 }
 
-func decodeRuntimeValue(value interface{}, out interface{}) error {
+func decodeRuntimeValue(value, out interface{}) error {
 	data, err := json.Marshal(value)
 	if err != nil {
 		return fmt.Errorf("encode browser runtime result: %w", err)

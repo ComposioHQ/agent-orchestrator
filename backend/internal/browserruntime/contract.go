@@ -5,13 +5,20 @@ package browserruntime
 type ReadinessState string
 
 const (
-	ReadinessDesktopClosed     ReadinessState = "desktop_closed"
+	// ReadinessDesktopClosed means no desktop or hidden browser provider is connected.
+	ReadinessDesktopClosed ReadinessState = "desktop_closed"
+	// ReadinessRuntimeConnecting means the hidden Electron provider is starting.
 	ReadinessRuntimeConnecting ReadinessState = "runtime_connecting"
-	ReadinessTargetStarting    ReadinessState = "target_starting"
-	ReadinessPageLoading       ReadinessState = "page_loading"
-	ReadinessReady             ReadinessState = "ready"
-	ReadinessRecovering        ReadinessState = "recovering"
-	ReadinessUnavailable       ReadinessState = "unavailable"
+	// ReadinessTargetStarting means a browser target is being created.
+	ReadinessTargetStarting ReadinessState = "target_starting"
+	// ReadinessPageLoading means the target is navigating or loading content.
+	ReadinessPageLoading ReadinessState = "page_loading"
+	// ReadinessReady means the target can accept browser operations.
+	ReadinessReady ReadinessState = "ready"
+	// ReadinessRecovering means the runtime lost its provider and is reconnecting.
+	ReadinessRecovering ReadinessState = "recovering"
+	// ReadinessUnavailable means browser operations cannot currently proceed.
+	ReadinessUnavailable ReadinessState = "unavailable"
 )
 
 // Target describes the exact logical tab observed by the runtime.

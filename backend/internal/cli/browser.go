@@ -342,7 +342,6 @@ func newBrowserCommand(ctx *commandContext) *cobra.Command {
 		{action: "double-click", use: "double-click [ref]", short: "Double-click an element"},
 		{action: "right-click", use: "right-click [ref]", short: "Open an element's context menu"},
 	} {
-		pointer := pointer
 		cmd.AddCommand(&cobra.Command{
 			Use: pointer.use, Short: pointer.short, Args: atMostOneArg,
 			RunE: func(cmd *cobra.Command, args []string) error {
@@ -372,7 +371,6 @@ func newBrowserCommand(ctx *commandContext) *cobra.Command {
 	})
 
 	for _, navigation := range []string{"back", "forward", "reload"} {
-		navigation := navigation
 		cmd.AddCommand(&cobra.Command{
 			Use: navigation, Short: navigation + " the active browser tab", Args: noArgs,
 			RunE: func(cmd *cobra.Command, _ []string) error { return runMutation(cmd, navigation, nil) },
@@ -759,7 +757,6 @@ func newBrowserCommand(ctx *commandContext) *cobra.Command {
 	}
 	var dialogPrompt string
 	for _, decision := range []string{"accept", "dismiss"} {
-		decision := decision
 		sub := &cobra.Command{Use: decision, Short: decision + " the open JavaScript dialog", Args: noArgs,
 			RunE: func(cmd *cobra.Command, _ []string) error {
 				args := map[string]any{}
@@ -853,7 +850,6 @@ func newBrowserCommand(ctx *commandContext) *cobra.Command {
 	cmd.AddCommand(networkCmd)
 
 	for _, action := range []string{"console", "errors"} {
-		action := action
 		var since int
 		logCmd := &cobra.Command{
 			Use:   action,

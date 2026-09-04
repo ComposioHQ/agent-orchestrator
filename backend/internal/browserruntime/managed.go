@@ -27,10 +27,12 @@ type Managed struct {
 	lastErr  error
 }
 
+// NewManaged wraps a broker with lazy hidden-provider startup.
 func NewManaged(ctx context.Context, broker *Broker) *Managed {
 	return &Managed{ctx: ctx, broker: broker}
 }
 
+// Status reports the connected provider or an in-progress hidden-provider launch.
 func (m *Managed) Status() Status {
 	status := m.broker.Status()
 	if status.Connected {
@@ -69,7 +71,8 @@ func (m *Managed) Ensure(ctx context.Context) error {
 			args = append(args, appPath)
 		}
 		args = append(args, "--ao-browser-runtime-worker")
-		cmd := exec.CommandContext(m.ctx, executable, args...)
+		// The desktop supplies an absolute executable path and no shell is involved.
+		cmd := exec.CommandContext(m.ctx, executable, args...) //nolint:gosec // Intentional trusted Electron provider launch.
 		cmd.Env = os.Environ()
 		cmd.Stdout, cmd.Stderr, cmd.Stdin = io.Discard, io.Discard, nil
 		if err := cmd.Start(); err != nil {
@@ -108,6 +111,7 @@ func (m *Managed) Ensure(ctx context.Context) error {
 	}
 }
 
+// Execute dispatches a command, starting the hidden provider when necessary.
 func (m *Managed) Execute(ctx context.Context, sessionID domain.SessionID, action string, args map[string]interface{}) (Result, error) {
 	result, err := m.broker.Execute(ctx, sessionID, action, args)
 	if !errors.Is(err, ErrUnavailable) {
@@ -119,6 +123,7 @@ func (m *Managed) Execute(ctx context.Context, sessionID domain.SessionID, actio
 	return m.broker.Execute(ctx, sessionID, action, args)
 }
 
+// DestroySession removes live browser resources without starting a provider.
 func (m *Managed) DestroySession(ctx context.Context, sessionID domain.SessionID) error {
 	return m.broker.DestroySession(ctx, sessionID)
 }

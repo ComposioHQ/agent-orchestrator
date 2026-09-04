@@ -30,8 +30,10 @@ const (
 	RuntimeTokenEnv = "AO_BROWSER_RUNTIME_TOKEN" //nolint:gosec // Environment variable name, not a credential.
 	// RuntimeAddressEnv carries the exact listener address into running.json so
 	// Electron never has to duplicate the backend's platform-specific naming.
-	RuntimeAddressEnv    = "AO_BROWSER_RUNTIME_ADDRESS"
-	WorkerExecutableEnv  = "AO_BROWSER_RUNTIME_WORKER_EXECUTABLE"
+	RuntimeAddressEnv = "AO_BROWSER_RUNTIME_ADDRESS"
+	// WorkerExecutableEnv identifies the trusted Electron executable used for the hidden provider.
+	WorkerExecutableEnv = "AO_BROWSER_RUNTIME_WORKER_EXECUTABLE"
+	// WorkerAppPathEnv identifies the unpackaged Electron application directory in development.
 	WorkerAppPathEnv     = "AO_BROWSER_RUNTIME_WORKER_APP_PATH"
 	helloTimeout         = 5 * time.Second
 	maxRuntimeFrameBytes = 8 << 20
