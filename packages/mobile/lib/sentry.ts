@@ -9,10 +9,12 @@
 // cycle to regenerate the committed native projects, and the config plugin for
 // source maps. Adding it without that would leave the committed ios/ prebuild
 // inconsistent. Ship steps, in order:
-//   1. `npx expo install @sentry/react-native`  (do not hand-pin the version)
+//   1. `npx expo install @sentry/react-native`  (do not hand-pin the version),
+//      then point loadSdk() below at the real import
 //   2. add the @sentry/react-native Expo config plugin, then `npx expo prebuild`
-//   3. wire EAS build-time source-map upload (there is no OTA: no expo-updates,
-//      so maps are keyed by release + dist at EAS build time, not at OTA push)
+//   3. wire source-map upload at EAS build time AND on every `eas update`
+//      (the Sentry Expo plugin does both), and set `dist` to the running
+//      expo-updates id so an OTA bundle's maps resolve
 //   4. set EXPO_PUBLIC_SENTRY_DSN and update the store Data-Safety / App-Privacy
 //      declarations (a second processor gates the mobile release)
 // Until then this file compiles and runs as a no-op with no native dependency.
@@ -74,7 +76,13 @@ export function setMobileDaemonVersion(version: string): void {
 	ctx = { ...ctx, daemonVersion: version };
 }
 
-/** Initialize once. No DSN → stays a no-op forever. */
+// Stub until @sentry/react-native is installed (ship steps above). Not a
+// computed import(): Metro rejects those in app code at bundle time.
+async function loadSdk(): Promise<SentryLike | null> {
+	return null;
+}
+
+/** Initialize once. No DSN or no SDK → stays a no-op forever. */
 export async function initMobileSentry(context: MobileObservabilityContext = {}): Promise<void> {
 	ctx = context;
 	if (initStarted || sentry) return;
@@ -82,12 +90,8 @@ export async function initMobileSentry(context: MobileObservabilityContext = {})
 	if (!d) return;
 	initStarted = true;
 	try {
-		// Dormant placeholder: Metro only bundles a dynamic import() with a static
-		// string literal, so this computed specifier is intentionally NOT bundled
-		// today (keeps the package dependency-free). SHIP STEP: install the SDK and
-		// replace this line with `const mod = await import("@sentry/react-native")`.
-		const spec = ["@sentry", "react-native"].join("/");
-		const mod = (await import(spec)) as unknown as SentryLike;
+		const mod = await loadSdk();
+		if (!mod) return;
 		mod.init({
 			dsn: d,
 			release: context.release,

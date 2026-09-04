@@ -50,6 +50,7 @@ describe("MobileDevicesSection", () => {
 		expect(screen.getAllByRole("listitem")[0]).not.toHaveClass("rounded-lg", "border", "px-3", "bg-[var(--color-bg-settings-input)]");
 		expect(screen.getByText("M31s")).toBeInTheDocument();
 		expect(screen.queryByText("Live")).not.toBeInTheDocument();
+		expect(screen.getAllByTestId("bell")).toHaveLength(2);
 		expect(screen.queryByText(/2 hours ago/)).not.toBeInTheDocument();
 	});
 

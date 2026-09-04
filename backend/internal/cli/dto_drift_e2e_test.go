@@ -61,6 +61,23 @@ type fakeAgentCatalog struct{}
 
 var _ controllers.AgentCatalog = (*fakeAgentCatalog)(nil)
 
+func (f *fakeAgentCatalog) CachedReadiness(context.Context) (agentsvc.Readiness, error) {
+	return f.readiness(), nil
+}
+
+func (f *fakeAgentCatalog) EnsureReadiness(context.Context, []string, domain.AgentReadinessPurpose) (agentsvc.Readiness, error) {
+	return f.readiness(), nil
+}
+
+func (f *fakeAgentCatalog) readiness() agentsvc.Readiness {
+	return agentsvc.Readiness{Agents: []domain.AgentReadinessSnapshot{{
+		ID: "codex", Label: "Codex",
+		Installation:       domain.AgentInstallationObservation{State: domain.AgentInstallationInstalled, Freshness: domain.AgentReadinessFresh},
+		Authentication:     domain.AgentAuthenticationObservation{State: domain.AgentAuthenticationAuthorized, Freshness: domain.AgentReadinessFresh},
+		EffectiveReadiness: domain.AgentReadinessReady,
+	}}}
+}
+
 func (f *fakeAgentCatalog) List(context.Context) (agentsvc.Inventory, error) {
 	return authorizedCodexInventory(), nil
 }
@@ -76,11 +93,12 @@ func (f *fakeAgentCatalog) Probe(_ context.Context, agentID string) (agentsvc.Pr
 
 func (f *fakeAgentCatalog) Models(_ context.Context, agentID, _ string, _ bool) (ports.AgentModelCatalog, error) {
 	return ports.AgentModelCatalog{
-		AgentID:       agentID,
-		SelectionMode: ports.ModelSelectionText,
-		Models:        []ports.AgentModelInfo{},
-		AllowCustom:   true,
-		Source:        "test",
+		AgentID:          agentID,
+		SelectionMode:    ports.ModelSelectionText,
+		Models:           []ports.AgentModelInfo{},
+		CustomModelEntry: ports.CustomModelEntryDirect,
+		AllowCustom:      true,
+		Source:           "test",
 	}, nil
 }
 

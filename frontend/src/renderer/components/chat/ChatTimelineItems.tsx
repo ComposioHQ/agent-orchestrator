@@ -7,10 +7,9 @@
  * re-sorting. Those belong to the daemon.
  */
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
 	AlertTriangle,
-	Archive,
 	Brain,
 	ChevronDown,
 	ChevronRight,
@@ -65,7 +64,7 @@ import {
 	exploredFileCount,
 	isNonzeroCommandExit,
 } from "./activity-command";
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "../ui/tooltip";
+import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
 import {
 	DropdownMenu,
 	DropdownMenuContent,
@@ -86,6 +85,7 @@ import {
 	type ConversationItem,
 	type TurnDiff,
 } from "../../types/conversation";
+import { resolveTurnFilePath, turnFileOpenPath, turnPathHints } from "../../lib/turn-file-open-path";
 
 const timeFormatter = new Intl.DateTimeFormat(undefined, {
 	hour: "2-digit",
@@ -110,7 +110,156 @@ const ATTACHMENT_REFERENCE_BLOCK =
 const STAGED_ATTACHMENT_PATH = /^\.ao\/attachments\/(?:attachment|image)-[A-Za-z0-9][A-Za-z0-9._-]*$/;
 const IMAGE_ATTACHMENT_PATH = /\.(?:png|jpe?g|gif|webp|bmp)$/i;
 
-function humanMessageParts(text: string): { body: string; attachments: string[] } {
+/** Smooth baseline, with adaptive catch-up when provider chunks outrun playback. */
+const STREAM_BASE_CHARACTERS_PER_SECOND = 58;
+const STREAM_TARGET_BACKLOG_CHARACTERS = 72;
+const STREAM_MAX_CHARACTERS_PER_SECOND = 720;
+const STREAM_MAX_FRAME_DELTA_MS = 100;
+const STREAM_GRAPHEME_SEGMENTER = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+
+function streamGraphemes(text: string): string[] {
+	return Array.from(STREAM_GRAPHEME_SEGMENTER.segment(text), ({ segment }) => segment);
+}
+
+function reconciledStreamPrefix(visibleText: string, targetGraphemes: string[]): string {
+	let boundary = 0;
+	for (const grapheme of targetGraphemes) {
+		const nextBoundary = boundary + grapheme.length;
+		if (nextBoundary > visibleText.length) break;
+		boundary = nextBoundary;
+	}
+	return visibleText.slice(0, boundary);
+}
+
+function useSmoothStreamingText(message: ConversationMessage): string {
+	// A snapshot can first reach the renderer after the provider has already emitted
+	// text. Keep that first durable burst visible; only later deltas need smoothing.
+	const [visibleText, setVisibleText] = useState(() => message.text);
+	const visibleRef = useRef(visibleText);
+	const targetRef = useRef(message.text);
+	const visibleGraphemesRef = useRef(streamGraphemes(visibleText));
+	const targetGraphemesRef = useRef(streamGraphemes(message.text));
+	const messageIdRef = useRef(message.id);
+	const frameRef = useRef<number | undefined>(undefined);
+	const lastFrameAtRef = useRef<number | undefined>(undefined);
+	const fractionalCharactersRef = useRef(0);
+	const [reducedMotion, setReducedMotion] = useState(
+		() => typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches,
+	);
+
+	useEffect(() => {
+		const mediaQuery = window.matchMedia("(prefers-reduced-motion: reduce)");
+		const update = () => setReducedMotion(mediaQuery.matches);
+		mediaQuery.addEventListener("change", update);
+		return () => mediaQuery.removeEventListener("change", update);
+	}, []);
+
+	const cancelDrain = useCallback(() => {
+		if (frameRef.current !== undefined) {
+			window.cancelAnimationFrame(frameRef.current);
+			frameRef.current = undefined;
+		}
+		lastFrameAtRef.current = undefined;
+		fractionalCharactersRef.current = 0;
+	}, []);
+
+	const scheduleDrain = useCallback(() => {
+		if (frameRef.current !== undefined) return;
+
+		const tick = (now: number) => {
+			frameRef.current = undefined;
+			const previousFrameAt = lastFrameAtRef.current ?? now;
+			lastFrameAtRef.current = now;
+			const backlog = targetGraphemesRef.current.length - visibleGraphemesRef.current.length;
+			if (backlog <= 0) {
+				fractionalCharactersRef.current = 0;
+				return;
+			}
+
+			// Keep a small, intentional buffer for smoothness. As it grows, increase
+			// throughput instead of letting a long response fall further behind.
+			const catchup = Math.max(0, backlog - STREAM_TARGET_BACKLOG_CHARACTERS);
+			const charactersPerSecond = Math.min(
+				STREAM_MAX_CHARACTERS_PER_SECOND,
+				STREAM_BASE_CHARACTERS_PER_SECOND + catchup * 2,
+			);
+			const elapsedMs = Math.min(STREAM_MAX_FRAME_DELTA_MS, Math.max(0, now - previousFrameAt));
+			fractionalCharactersRef.current += charactersPerSecond * elapsedMs / 1000;
+			const count = Math.floor(fractionalCharactersRef.current);
+			if (count < 1) {
+				frameRef.current = window.requestAnimationFrame(tick);
+				return;
+			}
+			fractionalCharactersRef.current -= count;
+			const current = visibleGraphemesRef.current;
+			const target = targetGraphemesRef.current;
+			if (current.length >= target.length) return;
+			const nextGraphemes = target.slice(current.length, current.length + count);
+			const next = current.concat(nextGraphemes).join("");
+			visibleRef.current = next;
+			visibleGraphemesRef.current = current.concat(nextGraphemes);
+			setVisibleText(next);
+			if (visibleGraphemesRef.current.length < targetGraphemesRef.current.length) {
+				frameRef.current = window.requestAnimationFrame(tick);
+			}
+		};
+
+		lastFrameAtRef.current = undefined;
+		fractionalCharactersRef.current = 0;
+		frameRef.current = window.requestAnimationFrame(tick);
+	}, []);
+
+	useEffect(() => {
+		if (message.id !== messageIdRef.current) {
+			cancelDrain();
+			messageIdRef.current = message.id;
+			targetRef.current = message.text;
+			targetGraphemesRef.current = streamGraphemes(message.text);
+			const initial = message.text;
+			visibleRef.current = initial;
+			visibleGraphemesRef.current = streamGraphemes(initial);
+			setVisibleText(initial);
+			return;
+		}
+
+		targetRef.current = message.text;
+		targetGraphemesRef.current = streamGraphemes(message.text);
+		if (!message.streaming || reducedMotion) {
+			cancelDrain();
+			visibleRef.current = message.text;
+			visibleGraphemesRef.current = targetGraphemesRef.current;
+			setVisibleText(message.text);
+			return;
+		}
+		// A provider correction or rollback can replace the current prefix. In that
+		// case the durable snapshot is authoritative and should be shown immediately.
+		if (!message.text.startsWith(visibleRef.current)) {
+			visibleRef.current = message.text;
+			visibleGraphemesRef.current = targetGraphemesRef.current;
+			setVisibleText(message.text);
+			return;
+		}
+		// A later combining mark or ZWJ can merge the last visible grapheme into a
+		// different target grapheme. Reconcile that trailing fragment before using
+		// the old grapheme count, otherwise the drain can skip the merged suffix.
+		const reconciled = reconciledStreamPrefix(visibleRef.current, targetGraphemesRef.current);
+		if (reconciled !== visibleRef.current) {
+			visibleRef.current = reconciled;
+			visibleGraphemesRef.current = streamGraphemes(reconciled);
+			setVisibleText(reconciled);
+		}
+		if (visibleGraphemesRef.current.length < targetGraphemesRef.current.length) scheduleDrain();
+	}, [cancelDrain, message.id, message.text, message.streaming, reducedMotion, scheduleDrain]);
+
+	useEffect(
+		() => cancelDrain,
+		[cancelDrain],
+	);
+
+	return visibleText;
+}
+
+function stagedAttachmentParts(text: string): { body: string; attachments: string[] } {
 	const match = ATTACHMENT_REFERENCE_BLOCK.exec(text);
 	if (!match?.[1]) return { body: text, attachments: [] };
 
@@ -128,6 +277,116 @@ function humanMessageParts(text: string): { body: string; attachments: string[] 
 	return { body: text.slice(0, match.index), attachments };
 }
 
+/** A status message followed by a full-width rule, with no text inside the rule. */
+function TwoRowTimelineMarker({
+	message,
+	detail,
+	tone = "text-muted-foreground/70",
+	detailTone = "text-muted-foreground/70",
+	action,
+}: {
+	message: string;
+	detail?: string;
+	tone?: string;
+	detailTone?: string;
+	action?: ReactNode;
+}) {
+	return (
+		<div className="flex min-w-0 flex-col gap-1 py-1">
+			<div className={cn("flex min-w-0 items-baseline gap-2 text-[11px]", tone)}>
+				<span className="shrink-0">{message}</span>
+				{detail ? (
+					<span className={cn("min-w-0 truncate", detailTone)} title={detail}>
+						{detail}
+					</span>
+				) : null}
+				{action}
+			</div>
+			<span aria-hidden="true" className="h-px w-full bg-border" />
+		</div>
+	);
+}
+
+export function CompactionMarker({ activity }: { activity: ConversationActivity }) {
+	const reclaimed = activity.detail?.tokensReclaimed;
+	const after = activity.detail?.tokensAfter;
+	const contextWindow = activity.detail?.contextWindow;
+	const detail = reclaimed ? `−${formatTokens(reclaimed)}` : undefined;
+	const fullness = after && contextWindow ? `${Math.round((after / contextWindow) * 100)}% full` : undefined;
+
+	return (
+		<TwoRowTimelineMarker
+			message="The conversation history was compacted"
+			detail={[detail, fullness].filter(Boolean).join(" · ") || undefined}
+		/>
+	);
+}
+
+export interface TurnOutcomeRetryControl {
+	onRetry: () => void;
+	pending?: boolean;
+	error?: string;
+	disabled?: boolean;
+}
+
+export function TurnOutcome({
+	state,
+	error,
+	retry,
+}: {
+	state: "recovered" | "interrupted" | "failed";
+	error?: string;
+	retry?: TurnOutcomeRetryControl;
+}) {
+	const copy = {
+		recovered: {
+			label: "This turn was recovered from an earlier session",
+			tone: "text-muted-foreground/70",
+		},
+		interrupted: {
+			label: "The agent was interrupted by you",
+			tone: "text-muted-foreground/70",
+		},
+		failed: { label: "The agent ran into a problem", tone: "text-destructive" },
+	}[state];
+
+	return (
+		<TwoRowTimelineMarker
+			message={copy.label}
+			detail={error}
+			tone={copy.tone}
+			detailTone={state === "failed" ? "text-destructive" : undefined}
+			action={
+				retry ? (
+					<>
+						{retry.error ? (
+							<span role="alert" className="max-w-[50%] text-pretty text-right text-[10px] leading-tight text-destructive">
+								{retry.error}
+							</span>
+						) : null}
+						<button
+							type="button"
+							onClick={retry.onRetry}
+							disabled={retry.pending || retry.disabled}
+							aria-label="Retry this turn"
+							title={retry.error ?? (retry.disabled ? "Wait for the current turn to finish" : "Send this prompt again as a new turn")}
+							data-testid="retry-turn"
+							className="shrink-0 rounded px-1.5 py-0.5 text-[10px] text-muted-foreground/70 transition-colors hover:text-foreground focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring disabled:pointer-events-none disabled:opacity-50"
+						>
+							{retry.pending ? "Retrying…" : "Retry"}
+						</button>
+					</>
+				) : undefined
+			}
+		/>
+	);
+}
+
+function formatTokens(tokens: number): string {
+	if (tokens < 1000) return `${tokens}`;
+	return `${(tokens / 1000).toFixed(1)}k`;
+}
+
 function attachmentName(path: string): string {
 	return path.slice(path.lastIndexOf("/") + 1);
 }
@@ -138,6 +397,51 @@ function attachmentURL(apiBaseUrl: string, sessionId: string, path: string): str
 		.map(encodeURIComponent)
 		.join("/")}`;
 	return apiBaseUrl ? new URL(route, apiBaseUrl).toString() : route;
+}
+
+function StagedAttachmentItems({
+	paths,
+	sessionId,
+	apiBaseUrl,
+	ariaLabel,
+	className,
+}: {
+	paths: string[];
+	sessionId: string;
+	apiBaseUrl: string;
+	ariaLabel: string;
+	className?: string;
+}) {
+	if (paths.length === 0) return null;
+	return (
+		<ul aria-label={ariaLabel} className={cn("flex max-w-full flex-wrap gap-2", className)}>
+			{paths.map((path) => {
+				const name = attachmentName(path);
+				return IMAGE_ATTACHMENT_PATH.test(path) ? (
+					<li
+						key={path}
+						className="max-w-full overflow-hidden rounded-md border border-border bg-background"
+					>
+						<img
+							src={attachmentURL(apiBaseUrl, sessionId, path)}
+							alt={name}
+							loading="lazy"
+							className="block h-auto max-h-80 max-w-full object-contain"
+						/>
+					</li>
+				) : (
+					<li
+						key={path}
+						title={path}
+						className="flex max-w-full items-center gap-1.5 rounded-md border border-border bg-background px-2 py-1.5 text-xs text-muted-foreground"
+					>
+						<FileIcon aria-hidden="true" className="size-3.5 shrink-0" />
+						<span className="truncate">{name}</span>
+					</li>
+				);
+			})}
+		</ul>
+	);
 }
 
 /** Collapse the home directory so a long absolute path does not eat the row. */
@@ -167,7 +471,7 @@ function formatMessageTimestamp(iso: string, now = new Date()): string {
 	const today = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
 	const daysAgo = Math.round((today - messageDay) / 86_400_000);
 	if (daysAgo === 0) return timeFormatter.format(parsed);
-	if (daysAgo === 1) return "Yesterday";
+	if (daysAgo === 1) return `Yesterday · ${timeFormatter.format(parsed)}`;
 	return dateFormatter.format(parsed);
 }
 
@@ -185,6 +489,7 @@ export function HumanMessage({
 	onEdit,
 	editing = false,
 	editText,
+	editReconstructedContext = false,
 	onEditStart,
 	onEditDraftChange,
 	onEditCancel,
@@ -208,6 +513,7 @@ export function HumanMessage({
 	onEdit?: (turnId: string, text: string) => Promise<unknown> | void;
 	editing?: boolean;
 	editText?: string;
+	editReconstructedContext?: boolean;
 	onEditStart?: () => void;
 	onEditDraftChange?: (text: string) => void;
 	onEditCancel?: () => void;
@@ -219,7 +525,7 @@ export function HumanMessage({
 	activateBranchPending?: boolean;
 	activateBranchError?: string;
 }) {
-	const { body, attachments } = humanMessageParts(message.text);
+	const { body, attachments } = stagedAttachmentParts(message.text);
 	return (
 		<div className="group/message flex flex-col items-end gap-1">
 			{/* A queued message reads as not-yet-sent rather than as sent-and-ignored:
@@ -230,6 +536,7 @@ export function HumanMessage({
 					content={message.content ?? []}
 					pending={editPending}
 					busy={editBusy}
+					reconstructedContext={editReconstructedContext}
 					error={editError}
 					onDraftChange={onEditDraftChange}
 					onCancel={() => onEditCancel?.()}
@@ -240,56 +547,54 @@ export function HumanMessage({
 				/>
 			) : (
 				<div
-					title={formatMessageTimestamp(message.createdAt) || undefined}
 					className={cn(
-						"cursor-chat-human-message w-fit max-w-[min(78%,560px)] rounded-[10px] px-3 py-2 text-sm leading-[1.55]",
+						"cursor-chat-human-message w-fit max-w-[min(78%,560px)] rounded-[10px] px-3 py-2.5 text-sm leading-[1.55]",
 						animateIn && "chat-human-message-enter",
 						queued
-							? "bg-transparent text-muted-foreground"
+							? "border border-dashed border-border-strong bg-transparent text-muted-foreground"
 							: "bg-raised text-foreground",
 					)}
 				>
 					{body ? <p className="break-words whitespace-pre-wrap text-pretty">{body}</p> : null}
-					{attachments.length > 0 ? (
-						<ul aria-label="Attached files" className={cn("flex max-w-full flex-wrap gap-2", body && "mt-2")}>
-							{attachments.map((path) => {
-								const name = attachmentName(path);
-								return IMAGE_ATTACHMENT_PATH.test(path) ? (
-									<li key={path} className="max-w-full overflow-hidden rounded-md border border-border bg-background">
-										<img src={attachmentURL(apiBaseUrl, sessionId, path)} alt={name} loading="lazy" className="block h-auto max-h-80 max-w-full object-contain" />
-									</li>
-								) : (
-									<li key={path} title={path} className="flex max-w-full items-center gap-1.5 rounded-md border border-border bg-background px-2 py-1.5 text-xs text-muted-foreground">
-										<FileIcon aria-hidden="true" className="size-3.5 shrink-0" />
-										<span className="truncate">{name}</span>
-									</li>
-								);
-							})}
-						</ul>
-					) : null}
+					<StagedAttachmentItems
+						paths={attachments}
+						sessionId={sessionId}
+						apiBaseUrl={apiBaseUrl}
+						ariaLabel="Attached files"
+						className={cn(body && "mt-2")}
+					/>
 				</div>
 			)}
 			{editing ? null : (
 				<div className="mt-1 flex h-7 items-center gap-1">
-					<div className="flex items-center gap-1 opacity-0 transition-opacity duration-150 focus-within:opacity-100 group-hover/message:opacity-100">
-						{onEdit && onEditStart && message.turnId ? (
-							<button
-								type="button"
-								onClick={onEditStart}
-								aria-label="Edit user message"
-								title="Edit user message"
-								className="flex size-7 items-center justify-center rounded-md text-muted-foreground transition-[background-color,color,transform] hover:bg-interactive-hover hover:text-foreground"
-							>
-								<Pencil aria-hidden="true" className="size-3" />
-							</button>
-						) : null}
+					<div className="flex items-center gap-1 opacity-0 transition-opacity duration-150 ease-out focus-within:opacity-100 group-hover/message:opacity-100 motion-reduce:transition-none">
 						<span
-							className="w-12 shrink-0 px-1 text-right text-[11px] tabular-nums text-muted-foreground/75 opacity-0 transition-opacity group-hover/message:opacity-100 group-focus-within/message:opacity-100"
+							className="shrink-0 px-0.5 text-[11px] tabular-nums text-muted-foreground/75"
 							aria-label={`Sent ${formatMessageTimestamp(message.createdAt)}`}
 						>
 							{formatMessageTimestamp(message.createdAt)}
 						</span>
-						<CopyButton text={message.text} label="Copy user message" compact />
+						{onEdit && onEditStart && message.turnId ? (
+							<Tooltip>
+								<TooltipTrigger asChild>
+									<button
+										type="button"
+										onClick={onEditStart}
+										aria-label="Edit user message"
+										className="flex size-7 items-center justify-center rounded-md text-muted-foreground transition-[scale,background-color,color] duration-150 ease-out hover:bg-interactive-hover hover:text-foreground active:scale-[0.96] motion-reduce:transition-none motion-reduce:active:scale-100"
+									>
+										<Pencil aria-hidden="true" className="size-3" />
+									</button>
+								</TooltipTrigger>
+								<TooltipContent side="bottom">Edit user message</TooltipContent>
+							</Tooltip>
+						) : null}
+						<CopyButton
+							text={message.text}
+							label="Copy user message"
+							compact
+							className="size-7 justify-center rounded-md px-0 py-0 transition-[scale,background-color,color] duration-150 ease-out hover:bg-interactive-hover hover:text-foreground active:scale-[0.96] motion-reduce:transition-none motion-reduce:active:scale-100"
+						/>
 					</div>
 					{branchPoint && onActivateBranch ? (
 						<ConversationBranchNavigator
@@ -358,13 +663,12 @@ export function OriginMessage({ message }: { message: ConversationMessage }) {
 	);
 }
 
-/** The agent's prose. A trailing caret marks text still arriving. */
+/** The agent's prose. Streaming is represented by text arriving in place. */
 export function AssistantMessage({
 	message,
 	showCopy = false,
 	onRollback,
 	durationMs,
-	showStreamingIndicator = message.streaming,
 }: {
 	message: ConversationMessage;
 	/** Only the final answer of a finished turn owns the turn's copy action. */
@@ -376,64 +680,47 @@ export function AssistantMessage({
 	onRollback?: () => void;
 	/** How long the finished turn took; sits next to rollback on the action row. */
 	durationMs?: number;
-	/** Only the newest item can still be visibly writing; older streaming fragments
-	 * are waiting on a tool rather than missing content. */
-	showStreamingIndicator?: boolean;
 }) {
-	const visiblyStreaming = message.streaming && showStreamingIndicator;
-	const hasText = message.text.trim().length > 0;
+	const visibleText = useSmoothStreamingText(message);
+	const renderingStreaming = message.streaming || visibleText.length < message.text.length;
 	const hasDuration = durationMs !== undefined && durationMs > 0;
-	const showActions = !visiblyStreaming && (showCopy || Boolean(onRollback) || hasDuration);
+	const showActions = !renderingStreaming && (showCopy || Boolean(onRollback) || hasDuration);
 	return (
-		<div
-			title={formatMessageTimestamp(message.createdAt) || undefined}
-			className={cn("group/message relative", visiblyStreaming && hasText && "chat-assistant-streaming")}
-		>
-			<ChatMarkdown text={message.text} streaming={message.streaming} />
-			{visiblyStreaming ? (
-				hasText ? (
-					<span aria-label="still writing" className="sr-only" />
-				) : (
-					<span
-						role="status"
-						aria-label="still writing"
-						className="inline-flex items-center gap-1.5 text-[11px] text-muted-foreground"
-					>
-						<Loader2 aria-hidden="true" className="size-3 animate-spin" />
-						Writing…
-					</span>
-				)
-			) : showActions ? (
+		<div className="group/message relative">
+			<ChatMarkdown text={visibleText} streaming={renderingStreaming} />
+			{showActions ? (
 				// One action row for the completed answer, not one after every prose
-				// fragment the provider emitted while working. Always visible: hover-only
-				// chrome is easy to miss next to a short reply.
+				// fragment the provider emitted while working. Copy, rollback, and
+				// duration stay visible; only the wall-clock time reveals on hover.
 				<div className="mt-1 flex h-7 items-center gap-0.5">
 					{showCopy ? (
-						<>
-							{/* The stored markdown, not a re-serialization of what was rendered:
-							   pasting it into an editor has to give back what the agent wrote. */}
-							<CopyButton
-								text={message.text}
-								label="Copy message as markdown"
-								compact
-								className="-ml-1.5"
-							/>
-						</>
+						/* The stored markdown, not a re-serialization of what was rendered:
+						   pasting it into an editor has to give back what the agent wrote. */
+						<CopyButton
+							text={message.text}
+							label="Copy message as markdown"
+							compact
+							className="-ml-1.5 size-7 justify-center rounded-md px-0 py-0 transition-[scale,background-color,color] duration-150 ease-out hover:bg-interactive-hover hover:text-foreground active:scale-[0.96] motion-reduce:transition-none motion-reduce:active:scale-100"
+						/>
 					) : null}
 					{onRollback ? (
-						<button
-							type="button"
-							onClick={onRollback}
-							aria-label="Roll back to here"
-							title="Roll back to here"
-							className="flex size-7 items-center justify-center rounded-md text-muted-foreground transition-[background-color,color,transform] hover:bg-interactive-hover hover:text-foreground"
-						>
-							<Undo2 aria-hidden="true" className="size-3" />
-						</button>
+						<Tooltip>
+							<TooltipTrigger asChild>
+								<button
+									type="button"
+									onClick={onRollback}
+									aria-label="Roll back to here"
+									className="flex size-7 items-center justify-center rounded-md text-muted-foreground transition-[scale,background-color,color] duration-150 ease-out hover:bg-interactive-hover hover:text-foreground active:scale-[0.96] motion-reduce:transition-none motion-reduce:active:scale-100"
+								>
+									<Undo2 aria-hidden="true" className="size-3" />
+								</button>
+							</TooltipTrigger>
+							<TooltipContent side="bottom">Roll back to here</TooltipContent>
+						</Tooltip>
 					) : null}
 					{hasDuration ? <TurnDuration durationMs={durationMs} /> : null}
 					<span
-						className="w-12 shrink-0 px-1 text-[11px] tabular-nums text-muted-foreground/75 opacity-0 transition-opacity group-hover/message:opacity-100 group-focus-within/message:opacity-100"
+						className="w-auto shrink-0 px-1 text-[11px] tabular-nums text-muted-foreground/75 opacity-0 transition-opacity duration-150 ease-out group-hover/message:opacity-100 group-focus-within/message:opacity-100 motion-reduce:transition-none"
 						aria-label={`Sent ${formatMessageTimestamp(message.createdAt)}`}
 					>
 						{formatMessageTimestamp(message.createdAt)}
@@ -623,7 +910,7 @@ function GenericActivityRow({ activity }: { activity: ConversationActivity }) {
 							// Said explicitly rather than implied by the label: "Ran command"
 							// alone never tells the reader what ran, and the collapsed row
 							// deliberately keeps only the category.
-							<pre className="overflow-x-auto rounded-md border border-border bg-background px-2.5 py-1.5 font-mono text-[10.5px] leading-relaxed text-foreground">
+							<pre className="scrollbar-none overflow-x-auto rounded-md border border-border bg-background px-2.5 py-1.5 font-mono text-[10.5px] leading-relaxed text-foreground">
 								{detail.command}
 							</pre>
 						) : null}
@@ -726,7 +1013,7 @@ function TerminalInput({ text, truncated }: { text: string; truncated?: boolean 
 				<Keyboard aria-hidden="true" className="size-3" />
 				Agent typed
 			</span>
-			<pre className="overflow-x-auto rounded-md border border-dashed border-border-strong bg-background px-2.5 py-1.5 font-mono text-[10.5px] leading-relaxed text-accent">
+			<pre className="scrollbar-none overflow-x-auto rounded-md border border-dashed border-border-strong bg-background px-2.5 py-1.5 font-mono text-[10.5px] leading-relaxed text-accent">
 				{shown}
 			</pre>
 			{truncated ? (
@@ -788,7 +1075,7 @@ function CommandOutput({
 				ref={pre}
 				aria-live={streaming ? "polite" : undefined}
 				className={cn(
-					"max-h-64 overflow-auto font-mono leading-relaxed text-muted-foreground",
+					"scrollbar-none max-h-64 overflow-auto font-mono leading-relaxed text-muted-foreground",
 					embedded
 						? "cursor-chat-explore-output px-3 py-2 text-[11px]"
 						: "rounded-md border border-border bg-background px-2.5 py-2 text-[10.5px]",
@@ -1012,7 +1299,7 @@ function Patch({ patch, truncated }: { patch: string; truncated?: boolean }) {
 		// `chat-code` is what the token colours are scoped to, so a patch without it
 		// tokenizes correctly and renders in one flat colour.
 		<div className="chat-code mb-1 mt-0.5 overflow-hidden rounded-md border border-border bg-background">
-			<pre className="max-h-72 overflow-auto px-2.5 py-2">
+			<pre className="scrollbar-none max-h-72 overflow-auto px-2.5 py-2">
 				<code className="font-mono text-[10.5px] leading-[1.55] text-foreground">
 					<HighlightedCode code={patch} language="diff" />
 				</code>
@@ -1184,7 +1471,7 @@ function McpToolRow({ activity }: { activity: ConversationActivity }) {
 							<span className="text-[10px] uppercase tracking-[0.08em] text-muted-foreground/70">
 								Progress
 							</span>
-							<pre className="max-h-40 overflow-auto rounded-md border border-border bg-background px-2.5 py-1.5 font-mono text-[10.5px] leading-relaxed text-muted-foreground">
+							<pre className="scrollbar-none max-h-40 overflow-auto rounded-md border border-border bg-background px-2.5 py-1.5 font-mono text-[10.5px] leading-relaxed text-muted-foreground">
 								{detail.progress}
 							</pre>
 						</div>
@@ -1572,18 +1859,43 @@ function ReauthRow({ activity }: { activity: ConversationActivity }) {
  * back needs to see that this arrived mid-turn, since it explains why the agent
  * changed course without a new exchange starting.
  */
-export function SteerMessage({ activity }: { activity: ConversationActivity }) {
+export function SteerMessage({
+	activity,
+	sessionId,
+	apiBaseUrl = getApiBaseUrl(),
+}: {
+	activity: ConversationActivity;
+	sessionId: string;
+	apiBaseUrl?: string;
+}) {
 	const text = activity.detail?.text ?? activity.summary;
+	const { body, attachments } = stagedAttachmentParts(text);
+	let stagedImagesToMatch = attachments.filter((path) => IMAGE_ATTACHMENT_PATH.test(path)).length;
+	// Composer images are recorded twice: once as durable staged paths and once as
+	// native prompt blocks. Suppress only the corresponding leading native images;
+	// later image blocks may be distinct provider content and must remain visible.
+	const remainingContent = (activity.detail?.content ?? []).filter((item) => {
+		if (item.type !== "image" || stagedImagesToMatch === 0) return true;
+		stagedImagesToMatch -= 1;
+		return false;
+	});
 	return (
 		<div className="flex flex-col items-end gap-1">
 			<div className="w-fit max-w-[min(78%,560px)] break-words whitespace-pre-wrap rounded-[10px] border border-accent-dim bg-raised px-3 py-2.5 text-sm leading-[1.55] text-foreground">
-				{text ? <p>{text}</p> : null}
-				<ConversationContentItems
-					content={activity.detail?.content ?? []}
+				{body ? <p>{body}</p> : null}
+				<StagedAttachmentItems
+					paths={attachments}
+					sessionId={sessionId}
+					apiBaseUrl={apiBaseUrl}
 					ariaLabel="Steered attachments"
+					className={cn(body && "mt-2")}
+				/>
+				<ConversationContentItems
+					content={remainingContent}
+					ariaLabel={attachments.length > 0 ? "Steered content" : "Steered attachments"}
 					imageLabel="Image"
 					imageAlt={(position) => `Steered attachment ${position}`}
-					className={cn(text && "mt-2")}
+					className={cn((body || attachments.length > 0) && "mt-2")}
 				/>
 			</div>
 			<span className="flex items-center gap-1 text-[11px] text-muted-foreground">
@@ -1685,7 +1997,7 @@ export function ApprovalCard({
 					{detail?.reason ?? approvalPrompt(subjectKind)}
 				</p>
 
-				<pre className="mt-2 max-h-32 overflow-auto whitespace-pre-wrap break-words rounded-md border border-border/70 bg-background/45 px-2.5 py-1.5 font-mono text-[12px] leading-[1.45] text-muted-foreground">
+				<pre className="mt-2 scrollbar-none max-h-32 overflow-auto whitespace-pre-wrap break-words rounded-md border border-border/70 bg-background/45 px-2.5 py-1.5 font-mono text-[12px] leading-[1.45] text-muted-foreground">
 					{detail?.rawCommand ?? command}
 				</pre>
 
@@ -1883,52 +2195,6 @@ function resolvedApprovalOutcome(
 }
 
 /* -------------------------------------------------------------------------- */
-/* compaction                                                                  */
-/* -------------------------------------------------------------------------- */
-
-/**
- * Where the conversation's earlier history was summarized to reclaim context.
- *
- * It renders as a divider rather than an activity row because that is what it is:
- * everything above it is no longer what the agent sees verbatim. Without the
- * marker, a conversation that quietly lost half its history reads as if the agent
- * simply forgot — the user would have no way to tell a compaction from a bug.
- *
- * Figures are shown only when the provider's reports allowed them to be computed.
- * A compaction right after a daemon restart genuinely does not know what it saved,
- * and a "0 tokens freed" label would be a lie rather than a gap.
- */
-export function CompactionMarker({ activity }: { activity: ConversationActivity }) {
-	const reclaimed = activity.detail?.tokensReclaimed;
-	const after = activity.detail?.tokensAfter;
-	const window = activity.detail?.contextWindow;
-
-	return (
-		<div className="flex items-center gap-2 py-1" data-compaction="true">
-			<span aria-hidden="true" className="h-px flex-1 bg-border" />
-			<Archive aria-hidden="true" className="size-3 shrink-0 text-muted-foreground/70" />
-			<span className="shrink-0 text-[10px] uppercase tracking-[0.08em] text-muted-foreground/70">
-				History compacted
-			</span>
-			{reclaimed ? (
-				<span className="shrink-0 font-mono text-[10px] tabular-nums text-muted-foreground/70">
-					&minus;{formatTokens(reclaimed)}
-				</span>
-			) : null}
-			{after && window ? (
-				<span
-					className="shrink-0 font-mono text-[10px] tabular-nums text-muted-foreground/70"
-					title={`${after.toLocaleString()} of ${window.toLocaleString()} context tokens in use`}
-				>
-					{Math.round((after / window) * 100)}% full
-				</span>
-			) : null}
-			<span aria-hidden="true" className="h-px flex-1 bg-border" />
-		</div>
-	);
-}
-
-/* -------------------------------------------------------------------------- */
 /* turn diff                                                                   */
 /* -------------------------------------------------------------------------- */
 
@@ -2025,20 +2291,19 @@ export function TurnChangedFiles({
 					const tooltipOldPath = file.oldPath
 						? resolveTurnFilePath(file.oldPath, pathHints)
 						: undefined;
+					const openPath = turnFileOpenPath(file.path, pathHints);
+					const location = fileLocationLabel(tooltipPath, tooltipOldPath);
 
 					const body = (
 						<>
 							<span className="sr-only">{status.label}</span>
 							<FileIcon aria-hidden="true" className="size-3.5 shrink-0 text-muted-foreground" />
-							{/* Same path tooltip as mid-turn Edited rows — not a native
-							    ellipsis title of the basename. */}
-							<FileLocationLabel
-								path={file.path}
-								oldPath={file.oldPath}
-								locationPath={tooltipPath}
-								locationOldPath={tooltipOldPath}
+							<span
 								className="min-w-0 flex-1 truncate text-[12px] text-foreground/80"
-							/>
+								title=""
+							>
+								{fileBasename(file.path)}
+							</span>
 							{file.additions > 0 ? (
 								<span className="shrink-0 font-mono text-[11px] tabular-nums text-success">
 									+{file.additions}
@@ -2060,16 +2325,48 @@ export function TurnChangedFiles({
 					return (
 						<li key={`${file.status}-${file.oldPath ?? ""}-${file.path}`}>
 							{onOpenFile ? (
-								<button
-									type="button"
-									onClick={() => onOpenFile(file.path)}
-									aria-label={`Open ${file.path} in Files`}
-									className={rowClass}
-								>
-									{body}
-								</button>
+								<Tooltip>
+									<TooltipTrigger asChild>
+										<button
+											type="button"
+											onClick={() => onOpenFile(openPath)}
+											aria-label={`Open ${openPath} in Files`}
+											className={rowClass}
+										>
+											{body}
+										</button>
+									</TooltipTrigger>
+									<TooltipContent side="top" className="max-w-[min(28rem,90vw)] font-mono text-[11px] font-normal">
+										{location}
+									</TooltipContent>
+								</Tooltip>
 							) : (
-								<div className={rowClass}>{body}</div>
+								<div className={rowClass}>
+									<span className="sr-only">{status.label}</span>
+									<FileIcon aria-hidden="true" className="size-3.5 shrink-0 text-muted-foreground" />
+									<FileLocationLabel
+										path={file.path}
+										oldPath={file.oldPath}
+										locationPath={tooltipPath}
+										locationOldPath={tooltipOldPath}
+										className="min-w-0 flex-1 truncate text-[12px] text-foreground/80"
+									/>
+									{file.additions > 0 ? (
+										<span className="shrink-0 font-mono text-[11px] tabular-nums text-success">
+											+{file.additions}
+										</span>
+									) : null}
+									{file.deletions > 0 ? (
+										<span className="shrink-0 font-mono text-[11px] tabular-nums text-destructive">
+											&minus;{file.deletions}
+										</span>
+									) : null}
+									{file.additions === 0 && file.deletions === 0 ? (
+										<span className="shrink-0 font-mono text-[11px] tabular-nums text-muted-foreground/50">
+											0
+										</span>
+									) : null}
+								</div>
 							)}
 						</li>
 					);
@@ -2118,29 +2415,24 @@ function FileLocationLabel({
 	const location = fileLocationLabel(locationPath ?? path, locationOldPath ?? oldPath);
 
 	return (
-		<TooltipProvider delayDuration={200}>
-			<Tooltip>
-				<TooltipTrigger asChild>
-					{/* `title=""` blocks Chromium's native ellipsis tooltip so only the
-					    path tooltip below appears — otherwise hover shows the basename. */}
-					<span
-						className={cn(
-							"min-w-0 truncate text-[11.5px] text-foreground/65 outline-none",
-							className,
-						)}
-						title=""
-					>
-						{fileBasename(path)}
-					</span>
-				</TooltipTrigger>
-				<TooltipContent
-					side="top"
-					className="max-w-[min(28rem,90vw)] border-border bg-popover px-2.5 py-1.5 font-mono text-[11px] font-normal text-muted-foreground shadow-none"
+		<Tooltip>
+			<TooltipTrigger asChild>
+				{/* `title=""` blocks Chromium's native ellipsis tooltip so only the
+				    path tooltip below appears — otherwise hover shows the basename. */}
+				<span
+					className={cn(
+						"min-w-0 truncate text-[11.5px] text-foreground/65 outline-none",
+						className,
+					)}
+					title=""
 				>
-					{location}
-				</TooltipContent>
-			</Tooltip>
-		</TooltipProvider>
+					{fileBasename(path)}
+				</span>
+			</TooltipTrigger>
+			<TooltipContent side="top" className="max-w-[min(28rem,90vw)] font-mono text-[11px] font-normal">
+				{location}
+			</TooltipContent>
+		</Tooltip>
 	);
 }
 
@@ -2148,67 +2440,10 @@ function fileLocationLabel(path: string, oldPath?: string): string {
 	return oldPath ? `${shortenPaths(oldPath)} → ${shortenPaths(path)}` : shortenPaths(path);
 }
 
-/**
- * Absolute paths and a worktree cwd gathered from the same turn's activities, so a
- * turn-diff basename can be shown like the Edited tooltip.
- */
-type TurnPathHints = {
-	byBase: Map<string, string | undefined>;
-	cwd?: string;
-};
-
-function rememberTurnPathHint(byBase: Map<string, string | undefined>, absolutePath: string) {
-	const base = fileBasename(absolutePath);
-	if (!byBase.has(base)) {
-		byBase.set(base, absolutePath);
-		return;
-	}
-	if (byBase.get(base) !== absolutePath) byBase.set(base, undefined);
-}
-
-function turnPathHints(items: ConversationItem[] | undefined): TurnPathHints {
-	const byBase = new Map<string, string | undefined>();
-	let cwd: string | undefined;
-	if (!items?.length) return { byBase, cwd };
-
-	for (const item of items) {
-		if (item.kind !== "activity") continue;
-		if (!cwd && item.detail?.cwd) cwd = item.detail.cwd;
-		if (item.activityKind !== "file_change") continue;
-		for (const file of fileChangeFiles(item)) {
-			if (looksAbsolutePath(file.path)) rememberTurnPathHint(byBase, file.path);
-			if (file.oldPath && looksAbsolutePath(file.oldPath)) rememberTurnPathHint(byBase, file.oldPath);
-		}
-	}
-	return { byBase, cwd };
-}
-
-function looksAbsolutePath(path: string): boolean {
-	return path.startsWith("/") || path.startsWith("~") || /^[A-Za-z]:[\\/]/.test(path);
-}
-
-/** Prefer an absolute path from the turn; otherwise join the worktree cwd. */
-function resolveTurnFilePath(path: string, hints: TurnPathHints): string {
-	if (looksAbsolutePath(path)) return path;
-	const fromBasename = hints.byBase.get(fileBasename(path));
-	if (fromBasename) return fromBasename;
-	if (hints.cwd) {
-		const rel = path.replace(/^\.\//, "");
-		return `${hints.cwd.replace(/\/$/, "")}/${rel}`;
-	}
-	return path;
-}
-
 /** Basename only — the row is too narrow for a full path; the tooltip carries that. */
 function fileBasename(path: string): string {
 	const slash = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
 	return slash >= 0 ? path.slice(slash + 1) : path;
-}
-
-/** Exact below a thousand, because that is where the digits still mean something. */
-function formatTokens(tokens: number): string {
-	if (tokens < 1000) return `${tokens}`;
-	return `${(tokens / 1000).toFixed(1)}k`;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -2222,75 +2457,6 @@ export function TurnDuration({ durationMs }: { durationMs: number }) {
 		<span className="shrink-0 px-1 font-sans text-[12px] leading-none tabular-nums text-muted-foreground">
 			{formatDuration(durationMs)}
 		</span>
-	);
-}
-
-export interface TurnOutcomeRetryControl {
-	onRetry: () => void;
-	pending?: boolean;
-	error?: string;
-	disabled?: boolean;
-}
-
-/**
- * How a turn ended when it did not complete cleanly. Successful turns skip this —
- * their duration already sits on the answer action row. `interrupted` is kept
- * distinct from failed because the provider reports it that way. `recovered`
- * closes replayed history without claiming the provider reported an outcome.
- */
-export function TurnOutcome({
-	state,
-	error,
-	retry,
-}: {
-	state: "recovered" | "interrupted" | "failed";
-	error?: string;
-	/** Re-dispatch this failed turn's prompt. Absent when retry is ineligible. */
-	retry?: TurnOutcomeRetryControl;
-}) {
-	const copy = {
-		recovered: { label: "Outcome unknown", tone: "text-muted-foreground/70" },
-		interrupted: { label: "Stopped", tone: "text-muted-foreground/70" },
-		failed: { label: "Failed", tone: "text-destructive" },
-	}[state];
-
-	return (
-		<div className="flex items-center gap-2 pt-1">
-			<span aria-hidden="true" className="h-px min-w-0 flex-1 bg-border" />
-			<span className={cn("shrink-0 text-[10px] uppercase tracking-[0.08em]", copy.tone)}>
-				{copy.label}
-			</span>
-			{error ? (
-				<span className="max-w-[40%] shrink truncate text-[10px] text-destructive" title={error}>
-					{error}
-				</span>
-			) : null}
-			{retry?.error ? (
-				<span
-					role="alert"
-					className="max-w-[50%] text-pretty text-right text-[10px] leading-tight text-destructive"
-				>
-					{retry.error}
-				</span>
-			) : null}
-			{retry ? (
-				<button
-					type="button"
-					onClick={retry.onRetry}
-					disabled={retry.pending || retry.disabled}
-					aria-label="Retry this turn"
-					title={
-						retry.error ??
-						(retry.disabled ? "Wait for the current turn to finish" : "Send this prompt again as a new turn")
-					}
-					data-testid="retry-turn"
-					className="shrink-0 rounded px-1.5 py-0.5 text-[10px] uppercase tracking-[0.08em] text-muted-foreground/70 transition-colors hover:text-foreground focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring disabled:pointer-events-none disabled:opacity-50"
-				>
-					{retry.pending ? "Retrying…" : "Retry"}
-				</button>
-			) : null}
-			<span aria-hidden="true" className="h-px min-w-0 flex-1 bg-border" />
-		</div>
 	);
 }
 

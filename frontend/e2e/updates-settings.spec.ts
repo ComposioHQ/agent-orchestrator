@@ -17,12 +17,19 @@ test("downloaded update keeps the full version readable and actions aligned", as
 	await page.goto("/#/settings");
 	await page.getByRole("button", { name: "Updates" }).click();
 
-	await expect(page.getByRole("status")).toContainText("Downloaded. Restart to finish updating.");
+	await expect(page.getByTestId("update-status-line")).toContainText("Downloaded. Restart to finish updating.");
+
+	// The heading carries the base version; the full nightly stamp sits on its
+	// own monospace line. As one heading it wrapped mid-token and swallowed the
+	// row, and the primary action grew across it.
 	const version = page.getByTestId("app-version");
-	await expect(version).toContainText("v0.12.7-nightly.202608240525");
+	await expect(version).toHaveText("v0.12.7");
+	await expect(version).toHaveAttribute("aria-label", "Current version - v0.12.7-nightly.202608240525");
+	await expect(page.getByText("0.12.7-nightly.202608240525", { exact: true })).toBeVisible();
+
 	await expect(page.getByRole("button", { name: "Restart & install" })).toBeVisible();
 	await expect(page.getByRole("button", { name: "Check for updates" })).toBeVisible();
-	await expect(page.getByText("Enabled", { exact: true })).toBeVisible();
+	await expect(page.getByRole("switch", { name: "Automatic Updates" })).toBeChecked();
 	await expect(page.getByRole("button", { name: "Updates channel" })).toContainText("Nightly");
 	await expect(page.locator(".nightly-warning")).toBeVisible();
 
@@ -34,4 +41,7 @@ test("downloaded update keeps the full version readable and actions aligned", as
 	expect(restartBox).not.toBeNull();
 	expect(checkBox).not.toBeNull();
 	expect(Math.abs((restartBox?.height ?? 0) - (checkBox?.height ?? 0))).toBeLessThan(1);
+	// The actions row must not overrun the version block.
+	const versionBox = await version.boundingBox();
+	expect(restartBox?.x ?? 0).toBeGreaterThan((versionBox?.x ?? 0) + (versionBox?.width ?? 0));
 });

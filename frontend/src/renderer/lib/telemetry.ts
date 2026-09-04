@@ -592,6 +592,11 @@ export async function sanitizeRendererProperties(
 			}
 			if (properties?.outcome === "succeeded" || properties?.outcome === "failed") safe.outcome = properties.outcome;
 			break;
+		case "ao.renderer.review_auto_review_toggled":
+			// The session-scoped switch duplicates a project-level setting, so
+			// whether anyone reaches for it decides if it stays a separate control.
+			if (typeof properties?.enabled === "boolean") safe.enabled = properties.enabled;
+			break;
 		case "ao.renderer.mobile_bridge_toggled":
 			// The host, port, and connection password in the QR never leave the
 			// machine: only the direction of the switch and whether it worked.
@@ -693,7 +698,8 @@ export async function initTelemetry(): Promise<boolean> {
 			...telemetryContext,
 			surface: "renderer",
 		});
-		// Same consent gate as PostHog. No-op unless VITE_AO_SENTRY_DSN is set.
+		// Typed renderer fault intake has its own main-owned policy gate. PostHog
+		// product analytics are intentionally independent of that preference.
 		void initSentry({
 			release: bootstrap.appVersion,
 			channel,
@@ -740,6 +746,17 @@ export async function initTelemetry(): Promise<boolean> {
 	initPromise = attempt;
 	return attempt;
 }
+
+/**
+ * Acknowledges the renderer part of failure-reporting cleanup. Renderer fault
+ * intake forwards directly through preload and owns no durable or retry queue;
+ * PostHog product-analytics queues are deliberately outside this policy.
+ */
+export function clearRendererTelemetryQueues(): void {}
+
+// Failure-reporting enablement is enforced in preload/main. It never opts the
+// independent PostHog client in or out.
+export function applyRendererTelemetryPolicy(_enabled: boolean): void {}
 
 export async function captureRendererEvent(event: string, properties?: Record<string, unknown>): Promise<void> {
 	// Checked before the reservations so a silenced stream does not consume a

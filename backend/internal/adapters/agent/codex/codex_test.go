@@ -150,7 +150,7 @@ func sessionHookFlags(t *testing.T) []string {
 		}
 	}
 	if runtime.GOOS == "windows" {
-		executable = `"` + executable + `"`
+		executable = `& "` + executable + `"`
 	} else {
 		executable = `'` + strings.ReplaceAll(executable, `'`, `'"'"'`) + `'`
 	}

@@ -1,10 +1,11 @@
-// spawn.go - injectable hostSpawner seam. The real detached-process spawn is
-// Windows-only (spawn_windows.go). This file defines the type and the
-// defaultSpawnHost variable; the non-windows stub is in spawn_other.go.
+// spawn.go - shared detached pty-host spawn support. Platform files provide
+// defaultSpawnHost; tests can inject a hostSpawner through Options.
 package conpty
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"path/filepath"
 	"strings"
 )
@@ -13,6 +14,17 @@ import (
 // loopback address ("127.0.0.1:PORT") and OS pid once it prints READY.
 // Injectable for tests: replace this field on Options before calling New.
 type hostSpawner func(ctx context.Context, sessionID, cwd string, argv []string, env map[string]string) (addr string, pid int, err error)
+
+// cleanupStartedHostFailure preserves evidence of a child that may still own
+// the session. A successful kill proves the failed spawn left no runtime;
+// otherwise the stable PID and joined cleanup error let Create expose a typed
+// partial-effect result instead of incorrectly claiming no effect.
+func cleanupStartedHostFailure(pid int, cause error, kill func() error) (int, error) {
+	if killErr := kill(); killErr != nil {
+		return pid, errors.Join(cause, fmt.Errorf("kill started pty-host pid %d: %w", pid, killErr))
+	}
+	return 0, cause
+}
 
 // stripEnvAssignments splits a launch argv that may begin with a Unix-style
 // `env NAME=VALUE ...` prefix into the environment assignments ("NAME=VALUE"
@@ -47,40 +59,82 @@ func stripEnvAssignments(argv []string) (assignments, rest []string) {
 	return argv[1:i], argv[i:]
 }
 
-func mergeWindowsEnv(base []string, overlay map[string]string, assignments []string) []string {
-	merged := make(map[string]string, len(base)+len(overlay)+len(assignments))
-	canonical := make(map[string]string, len(base)+len(overlay)+len(assignments))
-	for _, entry := range base {
-		if key, value, ok := strings.Cut(entry, "="); ok {
-			setWindowsEnv(merged, canonical, key, value)
+// interactiveTerminalEnv builds the environment inherited by the detached
+// pty-host and, in turn, by the interactive agent process it owns.
+//
+// AO itself may run under an agent or CI process that sets NO_COLOR for
+// captured logs. That ambient preference must not leak into an interactive
+// terminal. Projects can still opt out of color explicitly through RuntimeConfig
+// or an `env NO_COLOR=...` argv prefix. The native PTY and its xterm clients
+// support 24-bit SGR color, so advertise that capability consistently with the
+// legacy tmux runtime.
+func interactiveTerminalEnv(base []string, configured map[string]string, assignments []string) []string {
+	values := make(map[string]string, len(base)+len(configured)+len(assignments)+2)
+	canonical := make(map[string]string, len(base)+len(configured)+len(assignments)+2)
+	order := make([]string, 0, len(base)+len(configured)+len(assignments)+2)
+	raw := make([]string, 0)
+	appendEntry := func(entry string, explicit bool) {
+		key, value, ok := strings.Cut(entry, "=")
+		if !ok {
+			raw = append(raw, entry)
+			return
 		}
+		folded := strings.ToUpper(key)
+		switch folded {
+		case "TERM", "COLORTERM":
+			return
+		case "NO_COLOR":
+			if !explicit {
+				return
+			}
+		}
+		if existing, ok := canonical[folded]; ok && existing != key {
+			delete(values, existing)
+		}
+		canonical[folded] = key
+		values[key] = value
+		order = append(order, key)
+	}
+
+	for _, entry := range base {
+		appendEntry(entry, false)
 	}
 	for _, entry := range assignments {
-		if key, value, ok := strings.Cut(entry, "="); ok {
-			setWindowsEnv(merged, canonical, key, value)
+		appendEntry(entry, true)
+	}
+	for _, entry := range orderedConfiguredEnv(configured) {
+		appendEntry(entry.key+"="+entry.value, true)
+	}
+
+	env := make([]string, 0, len(values)+len(raw)+2)
+	env = append(env, raw...)
+	seen := make(map[string]bool, len(values))
+	for _, key := range order {
+		if seen[key] {
+			continue
 		}
+		seen[key] = true
+		value, ok := values[key]
+		if !ok {
+			continue
+		}
+		env = append(env, key+"="+value)
 	}
-	for _, entry := range orderedWindowsOverlay(overlay) {
-		setWindowsEnv(merged, canonical, entry.key, entry.value)
-	}
-	out := make([]string, 0, len(merged))
-	for key, value := range merged {
-		out = append(out, key+"="+value)
-	}
-	return out
+	env = append(env, "TERM=xterm-256color", "COLORTERM=truecolor")
+	return env
 }
 
-type windowsEnvPair struct {
+type configuredEnvPair struct {
 	key   string
 	value string
 }
 
-func orderedWindowsOverlay(overlay map[string]string) []windowsEnvPair {
-	out := make([]windowsEnvPair, 0, len(overlay))
-	var pinnedPath windowsEnvPair
+func orderedConfiguredEnv(configured map[string]string) []configuredEnvPair {
+	out := make([]configuredEnvPair, 0, len(configured))
+	var pinnedPath configuredEnvPair
 	hasPinnedPath := false
-	for key, value := range overlay {
-		pair := windowsEnvPair{key: key, value: value}
+	for key, value := range configured {
+		pair := configuredEnvPair{key: key, value: value}
 		if key == "PATH" {
 			pinnedPath = pair
 			hasPinnedPath = true
@@ -92,13 +146,4 @@ func orderedWindowsOverlay(overlay map[string]string) []windowsEnvPair {
 		out = append(out, pinnedPath)
 	}
 	return out
-}
-
-func setWindowsEnv(merged, canonical map[string]string, key, value string) {
-	folded := strings.ToUpper(key)
-	if existing, ok := canonical[folded]; ok && existing != key {
-		delete(merged, existing)
-	}
-	canonical[folded] = key
-	merged[key] = value
 }

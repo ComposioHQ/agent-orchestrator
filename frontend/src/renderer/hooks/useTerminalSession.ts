@@ -24,7 +24,7 @@ import { workspaceQueryKey } from "./useWorkspaceQuery";
  * The slice of xterm's Terminal the attachment needs. Structural, so tests can
  * drive the hook with a tiny fake instead of a real xterm + DOM.
  */
-export type TerminalUserInputSource = "keyboard" | "paste" | "composition" | "shortcut" | "wheel";
+export type TerminalUserInputSource = "keyboard" | "paste" | "composition" | "shortcut" | "wheel" | "protocol";
 
 export type AttachableTerminal = {
 	cols: number;
@@ -45,7 +45,11 @@ export type AttachableTerminal = {
 	 * without exposing an intermediate row.
 	 */
 	prepareForActivation: () => Promise<void>;
-	onUserInput: (listener: (data: string, source: TerminalUserInputSource) => void) => { dispose: () => void };
+	/** Tell Cursor Agent the live light/dark scheme (private 997 notification). */
+	notifyCursorColorScheme: () => void;
+	/** Send an explicit UI action through the same guarded path as user input. */
+	sendUserInput: (data: string, source?: TerminalUserInputSource) => boolean;
+	onUserInput: (listener: (data: string, source: TerminalUserInputSource) => boolean | void) => { dispose: () => void };
 	onResize: (listener: (size: { cols: number; rows: number }) => void) => { dispose: () => void };
 };
 
@@ -86,6 +90,12 @@ export type UseTerminalSessionOptions = {
 
 const RETRY_BASE_MS = 500;
 const RETRY_MAX_MS = 8_000;
+// Flat retry while a cloud session has never attached: the control plane
+// answers the terminal-ticket mint with a cheap 409 until the sandbox worker
+// connects, so this is a poll for readiness, not a reconnect storm.
+// Exponential backoff here only adds dead seconds between "worker ready" and
+// "terminal attached" (a worker ready at 17s would wait for the 23s attempt).
+const CLOUD_CONNECT_RETRY_MS = 1_000;
 const OPEN_TIMEOUT_MS = 3_000;
 // Trailing debounce on grid changes: a pane drag emits a burst of intermediate
 // sizes; the attached program should get one SIGWINCH when the drag settles,
@@ -152,6 +162,11 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 	// False only while the initial replay is being buffered — the pane keeps a
 	// cover over xterm until the burst has been written and parsed.
 	const [replaySettled, setReplaySettled] = useState(true);
+	// True once this attachment has opened at least once. Lets the pane show a
+	// calm "Connecting…" during the first connect (e.g. a cloud sandbox worker
+	// still checking in) and reserve "disconnected — reattaching" for a genuine
+	// mid-session drop.
+	const [hasAttached, setHasAttached] = useState(false);
 
 	const sessionRef = useRef(session);
 	sessionRef.current = session;
@@ -177,6 +192,10 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 		attempts: 0,
 		generation: 0,
 		inputReady: false,
+		// Mirrors the hasAttached state for callbacks: false until this
+		// attachment's first successful open, which switches the cloud pane's
+		// flat readiness polling over to exponential reconnect backoff.
+		hasAttachedOnce: false,
 		detached: true,
 		// True only after this attachment opens parked at 0×0. The next visible
 		// activation must promote it back to a positive primary grid.
@@ -193,6 +212,7 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 		replayTailQuietTimer: null as ReturnType<typeof setTimeout> | null,
 		replayTailCapTimer: null as ReturnType<typeof setTimeout> | null,
 		replayTailPending: false,
+		queuedProtocolInputs: [] as string[],
 		// The current attachment's flush, published so teardown can land buffered
 		// bytes instead of discarding them (the closure lives inside connect).
 		flushReplay: null as ((preserveBeforeTeardown?: boolean) => void) | null,
@@ -247,6 +267,7 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 		r.replayChunks = [];
 		r.replayBytes = 0;
 		r.replayTailPending = false;
+		r.queuedProtocolInputs = [];
 		r.lastPublishedGrid = null;
 		// Nothing is buffering any more, so nothing should stay covered. connect()
 		// re-arms the gate immediately after calling this, in the same tick, so
@@ -300,13 +321,21 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 		}
 		transition("reattaching");
 		// Not ready → no timer; the daemonReady effect reconnects when it flips.
-		if (!optionsRef.current.daemonReady) {
+		// A cloud pane targets its sandbox worker, not the local daemon, so it
+		// keeps retrying on its own backoff regardless of local daemon state.
+		if (!optionsRef.current.daemonReady && !sessionRef.current?.cloud) {
 			return;
 		}
 		if (r.retryTimer) {
 			return;
 		}
-		const delay = Math.min(RETRY_BASE_MS * 2 ** r.attempts, RETRY_MAX_MS);
+		// First connect of a cloud pane = polling for sandbox readiness; keep it
+		// flat (see CLOUD_CONNECT_RETRY_MS). After a real attachment, drops back
+		// to exponential backoff like every other reconnect.
+		const delay =
+			!r.hasAttachedOnce && sessionRef.current?.cloud
+				? CLOUD_CONNECT_RETRY_MS
+				: Math.min(RETRY_BASE_MS * 2 ** r.attempts, RETRY_MAX_MS);
 		r.attempts += 1;
 		r.retryTimer = setTimeout(() => {
 			r.retryTimer = null;
@@ -553,8 +582,12 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 				clearOpenTimer(generation);
 				r.inputReady = true;
 				r.attempts = 0;
+				r.hasAttachedOnce = true;
 				setError(undefined);
+				setHasAttached(true);
 				transition("attached");
+				terminal.notifyCursorColorScheme();
+				flushQueuedProtocolInputs();
 				// Bound the gate from here: the daemon fires onOpen from setPTY and
 				// starts copyOut immediately after, so the replay is imminent and
 				// the cap now measures the burst rather than the connect handshake.
@@ -621,14 +654,33 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 				}
 			}),
 		);
-		const input = terminal.onUserInput((data) => {
-			if (
-				!isCurrentAttachment(generation, handle, mux) ||
-				!r.inputReady ||
-				optionsRef.current.inputDisabled ||
-				optionsRef.current.isVisible === false
-			) {
-				return;
+		const flushQueuedProtocolInputs = () => {
+			if (!isCurrentAttachment(generation, handle, mux) || !r.inputReady) return;
+			for (const queued of r.queuedProtocolInputs) {
+				mux.sendInput(handle, queued);
+			}
+			r.queuedProtocolInputs = [];
+		};
+		const input = terminal.onUserInput((data, source) => {
+			if (!isCurrentAttachment(generation, handle, mux)) {
+				return false;
+			}
+			// Protocol replies must bypass visibility and ownership gates so hidden panes stay connected.
+			if (source === "protocol") {
+				if (!r.inputReady) {
+					r.queuedProtocolInputs.push(data);
+					return true;
+				}
+				mux.sendInput(handle, data);
+				return true;
+			}
+			if (!r.inputReady) {
+				return false;
+			}
+			// Agent color-scheme bytes are not human input — forwarding them must not
+			// flush the replay gate or reveal the tail (that was the theme-toggle jank).
+			if (optionsRef.current.inputDisabled || optionsRef.current.isVisible === false) {
+				return false;
 			}
 			// Input is accepted from `opened`, which lands before the replay — so a
 			// user can type while the gate still holds the burst, and their echo
@@ -638,6 +690,7 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 			if (r.replayBuffering) flushReplay();
 			else revealReplayTail();
 			mux.sendInput(handle, data);
+			return true;
 		});
 		// xterm only fires onResize when the grid actually changed; the debounce
 		// additionally collapses a drag/fullscreen/layout burst into one PTY
@@ -728,9 +781,13 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 			r.handle = handle;
 			r.detached = false;
 			r.attempts = 0;
+			r.hasAttachedOnce = false;
 			setError(undefined);
+			setHasAttached(false);
 			if (handle) {
-				if (optionsRef.current.daemonReady) {
+				// A cloud pane connects to its sandbox worker directly, so it must
+				// not wait on the LOCAL daemon being ready; only local panes do.
+				if (optionsRef.current.daemonReady || Boolean(sessionRef.current?.cloud)) {
 					transition("connecting");
 					connect();
 				} else {
@@ -862,5 +919,10 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 		[teardownMux],
 	);
 
-	return { attach, state, error, replaySettled, syncVisibleSize };
+	useEffect(() => {
+		if (!replaySettled) return;
+		runtime.current.terminal?.notifyCursorColorScheme();
+	}, [replaySettled]);
+
+	return { attach, state, error, replaySettled, hasAttached, syncVisibleSize };
 }

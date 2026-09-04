@@ -35,6 +35,7 @@ func TestGetAgentHooksFootprintIsGitignored(t *testing.T) {
 			if ha.Harness == "kimi" {
 				cfg.Env = map[string]string{"KIMI_CODE_HOME": filepath.Join(cfg.DataDir, "kimi")}
 			}
+			ensureAgentBinary(t, string(ha.Harness))
 			if err := ha.Agent.GetAgentHooks(context.Background(), cfg); err != nil {
 				t.Fatalf("GetAgentHooks: %v", err)
 			}
@@ -157,6 +158,23 @@ func workspaceFiles(t *testing.T, root string) []string {
 		t.Fatalf("walk workspace: %v", err)
 	}
 	return files
+}
+
+func ensureAgentBinary(t *testing.T, name string) {
+	t.Helper()
+	dir := t.TempDir()
+	binPath := filepath.Join(dir, name)
+	version := "0.80.6"
+	if name == "omp" {
+		version = "17.1.0"
+	}
+	script := "#!/usr/bin/env sh\nif [ \"${1:-}\" = \"--version\" ]; then\n  echo \"" + name + " " + version + "\"\nfi\nexit 0\n"
+	if err := os.WriteFile(binPath, []byte(script), 0755); err != nil {
+		t.Fatalf("write fake agent binary %q: %v", binPath, err)
+	}
+
+	old := os.Getenv("PATH")
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+old)
 }
 
 func hasLine(content, line string) bool {
