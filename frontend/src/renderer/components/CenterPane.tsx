@@ -24,6 +24,7 @@ import {
 import { useObservedAgentSwitchLifecycle } from "../hooks/useObservedAgentSwitchLifecycle";
 import { useAgentSwitchPresentationVisibility, useAgentSwitchRouteVisibility } from "../hooks/useAgentSwitchVisibility";
 import { useTabScrollEdges } from "../hooks/useTabScrollEdges";
+import { MAX_SESSION_DISPLAY_NAME_LEN, useSessionRename } from "../hooks/useSessionRename";
 import { useSwitchAgentState } from "../hooks/useSwitchAgent";
 import { useTruncatedText } from "../hooks/useTruncatedText";
 import type { ShellTerminal } from "../hooks/useShellTerminals";
@@ -52,6 +53,7 @@ import { ShellTerminalTab } from "./ShellTerminalTab";
 import { TerminalTabFrame } from "./TerminalTabFrame";
 import { TerminalPane } from "./TerminalPane";
 import { SessionTopbarPortal } from "./SessionTopbarPortal";
+import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from "./ui/context-menu";
 
 type CenterPaneProps = {
 	session?: WorkspaceSession;
@@ -936,15 +938,57 @@ export function SessionPaneTab({
 	const providerLabel = session ? agentLabel(session.provider) : undefined;
 	const tabIcon = session ? <AgentAvatar className="size-terminal-agent-icon" decorative provider={session.provider} /> : icon;
 	const connected = appearance === "connected";
-	return (
+	const rename = useSessionRename(session);
+	const editingContent = session && rename.isEditing ? (
+		<div className="flex h-full min-w-0 flex-1 items-center gap-2 px-2">
+			{tabIcon}
+			<input
+				aria-label={t("shell.renameSession", { title: session.title })}
+				autoFocus
+				className="min-w-0 flex-1 rounded-xs border border-accent bg-background px-1 text-control text-foreground outline-none ring-1 ring-accent"
+				maxLength={MAX_SESSION_DISPLAY_NAME_LEN}
+				onBlur={() => void rename.commit()}
+				onChange={(event) => rename.setDraft(event.target.value)}
+				onFocus={(event) => event.currentTarget.select()}
+				onKeyDown={(event) => {
+					if (event.key === "Enter") {
+						event.preventDefault();
+						event.currentTarget.blur();
+					} else if (event.key === "Escape") {
+						event.preventDefault();
+						rename.cancel();
+					}
+				}}
+				value={rename.draft}
+			/>
+		</div>
+	) : undefined;
+	const tabFrame = (
 		<TerminalTabFrame
-			action={tabAction ? <span data-testid="session-tab-action">{tabAction}</span> : undefined}
+			action={!rename.isEditing && tabAction ? <span data-testid="session-tab-action">{tabAction}</span> : undefined}
 			active={isActive}
 			buttonProps={{
 				"aria-current": isActive,
+				"aria-keyshortcuts": session ? "F2" : undefined,
 				"aria-label": [label, providerLabel, activityLabel].filter(Boolean).join(" · "),
 				"aria-selected": isActive,
-				onClick: onSelect,
+				onClick: (event) => {
+					if (event.detail > 1) return;
+					onSelect?.();
+				},
+				onDoubleClick: session
+					? (event) => {
+							event.preventDefault();
+							rename.begin();
+						}
+					: undefined,
+				onKeyDown: session
+					? (event) => {
+							if (event.key !== "F2") return;
+							event.preventDefault();
+							rename.begin();
+						}
+					: undefined,
 				role: "tab",
 				tabIndex: isActive ? 0 : -1,
 				title: title ?? (isTruncated ? label : t("terminal.sessionAria")),
@@ -953,9 +997,23 @@ export function SessionPaneTab({
 			buttonRef={ref}
 			className="w-shell-tab-connected min-w-shell-tab-min"
 			data-terminal-role={connected ? undefined : "primary"}
+			editingContent={editingContent}
 		>
 			{tabIcon}
 			<span className="truncate">{label}</span>
 		</TerminalTabFrame>
+	);
+	if (!session || rename.isEditing) return tabFrame;
+	return (
+		<ContextMenu>
+			<ContextMenuTrigger asChild>
+				<span className="contents">{tabFrame}</span>
+			</ContextMenuTrigger>
+			<ContextMenuContent className="min-w-44">
+				<ContextMenuItem onSelect={rename.begin}>
+					{t("shell.renameSession", { title: session.title })}
+				</ContextMenuItem>
+			</ContextMenuContent>
+		</ContextMenu>
 	);
 }
