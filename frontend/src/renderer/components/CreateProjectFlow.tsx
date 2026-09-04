@@ -40,6 +40,7 @@ export type CloneProjectInput = Pick<CloneRepositorySelection, "remoteUrl" | "de
 	CreateProjectAgentSelection;
 
 const LAST_CLONE_DESTINATION_KEY = "ao.clone.lastDestinationParent";
+const LAST_IMPORT_REMOTE_URL_KEY = "ao.import.lastRemoteUrl";
 type ImportValidationResult = components["schemas"]["ImportValidationResult"];
 type GitPreparationEvent = components["schemas"]["GitPreparationEvent"];
 type ProjectImportStep = "blocked" | "prepare_git";
@@ -185,7 +186,7 @@ export function CreateProjectFlow({
 				setProjectValidation(validation);
 				setProjectPrepEvents([]);
 				setProjectApprovedActions(validation.root.requiredActions);
-				setProjectRemoteUrl("");
+				setProjectRemoteUrl(validation.root.requiredActions.includes("set_remote") ? suggestedProjectRemoteUrl(validation.root.repoPath) : "");
 				setProjectSuggestWorkspace(validation.nextStep === "choose_import_kind");
 				if (!validation.isValid || validation.nextStep === "error") {
 					setError(importValidationMessage(validation));
@@ -377,7 +378,7 @@ export function CreateProjectFlow({
 	const prepareProjectGit = async () => {
 		if (!projectValidation) return;
 		setError(null);
-		setProjectPrepEvents([]);
+		setProjectPrepEvents(projectRequestedActionEvents(projectValidation.root.repoPath, projectApprovedActions));
 		setIsPreparingGit(true);
 		try {
 			const { data, error: apiError } = await apiClient.POST("/api/v1/imports/prepare-git", {
@@ -392,6 +393,7 @@ export function CreateProjectFlow({
 			setProjectPrepEvents(data.events);
 			setProjectValidation(data.validation);
 			setProjectApprovedActions(data.validation.root.requiredActions);
+			if (projectRemoteUrl.trim() !== "") persistSuggestedProjectRemoteUrl(projectRemoteUrl);
 			const failed = data.events.find((event) => event.state === "error");
 			if (failed) {
 				setError(projectPreparationFailureMessage(failed));
@@ -575,6 +577,7 @@ export function CreateProjectFlow({
 				remoteUrl={projectRemoteUrl}
 				suggestWorkspace={projectSuggestWorkspace}
 				step={projectImportStep}
+				isPreparingGit={isPreparingGit}
 				events={projectPrepEvents}
 				validation={projectValidation}
 			/>
@@ -679,6 +682,52 @@ function latestProjectActionState(action: string, events: GitPreparationEvent[])
 		if (events[index]?.action === action) return events[index].state;
 	}
 	return "required";
+}
+
+function orderedProjectActions(actions: string[]): string[] {
+	const rank = new Map([
+		["git_init", 0],
+		["git_commit", 1],
+		["set_remote", 2],
+	]);
+	return [...actions].sort((left, right) => (rank.get(left) ?? Number.MAX_SAFE_INTEGER) - (rank.get(right) ?? Number.MAX_SAFE_INTEGER));
+}
+
+function projectRequestedActionEvents(repoPath: string, actions: string[]): GitPreparationEvent[] {
+	const ordered = orderedProjectActions(actions);
+	return ordered.map((action, index) => ({
+		repoPath,
+		action: action as GitPreparationEvent["action"],
+		state: index === 0 ? "running" : "pending",
+	}));
+}
+
+function suggestedProjectRemoteUrl(repoPath: string): string {
+	if (typeof window === "undefined") return "";
+	const saved = window.localStorage.getItem(LAST_IMPORT_REMOTE_URL_KEY)?.trim() ?? "";
+	if (saved === "") return "";
+	const repoName = repoPath.split(/[\\/]/).filter(Boolean).pop()?.trim();
+	if (!repoName) return saved;
+	const withGitSuffix = repoName.endsWith(".git") ? repoName : `${repoName}.git`;
+	const sshMatch = saved.match(/^(git@[^:]+:[^/]+\/)([^/]+?)(\.git)?$/);
+	if (sshMatch) return `${sshMatch[1]}${withGitSuffix}`;
+	try {
+		const parsed = new URL(saved);
+		const segments = parsed.pathname.split("/").filter(Boolean);
+		if (segments.length >= 2) {
+			segments[segments.length - 1] = withGitSuffix;
+			parsed.pathname = `/${segments.join("/")}`;
+			return parsed.toString();
+		}
+	} catch {
+		return saved;
+	}
+	return saved;
+}
+
+function persistSuggestedProjectRemoteUrl(remoteUrl: string) {
+	if (typeof window === "undefined") return;
+	window.localStorage.setItem(LAST_IMPORT_REMOTE_URL_KEY, remoteUrl.trim());
 }
 
 function projectPreparationFailureMessage(event: GitPreparationEvent): string {
@@ -1138,6 +1187,7 @@ function ProjectImportDialog({
 	remoteUrl,
 	suggestWorkspace,
 	step,
+	isPreparingGit,
 	validation,
 }: {
 	approvedActions: string[];
@@ -1155,6 +1205,7 @@ function ProjectImportDialog({
 	remoteUrl: string;
 	suggestWorkspace: boolean;
 	step: ProjectImportStep | null;
+	isPreparingGit: boolean;
 	validation: ImportValidationResult | null;
 }) {
 	if (!validation || !step) return null;
@@ -1226,10 +1277,27 @@ function ProjectImportDialog({
 									<p className="mt-1 text-[12px] leading-5 text-[var(--color-text-import-muted)]">
 										Approve the required setup actions for this folder. AO will run only the selected required steps before continuing.
 									</p>
+									{isPreparingGit ? (
+										<p className="mt-3 text-[12px] leading-5 text-[var(--color-text-import-title)]">
+											Running project setup. AO is preparing this repository now.
+										</p>
+									) : null}
 									<div className="mt-3 space-y-3">
 										{validation.root.requiredActions.map((action) => {
 											const state = latestProjectActionState(action, events);
 											const checked = approvedActions.includes(action);
+											const statusLabel =
+												state === "required"
+													? action === "set_remote"
+														? "Set URL"
+														: "Ready"
+													: state === "pending"
+														? "Queued"
+														: state === "running"
+															? "Running"
+															: state === "success"
+																? "Done"
+																: "Failed";
 											const tone =
 												state === "success"
 													? "text-success"
@@ -1237,7 +1305,9 @@ function ProjectImportDialog({
 														? "text-destructive"
 														: state === "running"
 															? "text-[var(--color-text-import-title)]"
-															: "text-[var(--color-text-import-muted)]";
+															: state === "pending"
+																? "text-[var(--color-text-import-muted)]"
+																: "text-[var(--color-text-import-muted)]";
 											return (
 												<label
 													key={action}
@@ -1263,35 +1333,35 @@ function ProjectImportDialog({
 														<span className="mt-1 block text-[12px] leading-5 text-[var(--color-text-import-muted)]">
 															{gitActionDescription(action)}
 														</span>
+														{action === "set_remote" ? (
+															<span className="mt-3 block space-y-2">
+																<Label
+																	htmlFor="projectImportRemote"
+																	className="text-[12px] font-semibold text-[var(--color-text-import-title)]"
+																>
+																	Origin remote URL
+																</Label>
+																<Input
+																	id="projectImportRemote"
+																	autoCapitalize="none"
+																	autoComplete="off"
+																	className="bg-[var(--color-bg-import-card)] font-mono text-[13px]"
+																	disabled={disabled}
+																	placeholder="https://github.com/org/repository.git"
+																	spellCheck={false}
+																	value={remoteUrl}
+																	onChange={(event) => onChangeRemote(event.target.value)}
+																/>
+															</span>
+														) : null}
 													</span>
 													<span className={cn("shrink-0 text-[12px] font-medium capitalize", tone)}>
-														{state === "required" ? "Required" : state}
+														{statusLabel}
 													</span>
 												</label>
 											);
 										})}
 									</div>
-									{needsRemote ? (
-										<div className="mt-4 space-y-2">
-											<Label htmlFor="projectImportRemote" className="text-[13px] font-semibold text-[var(--color-text-import-title)]">
-												Origin remote URL
-											</Label>
-											<Input
-												id="projectImportRemote"
-												autoCapitalize="none"
-												autoComplete="off"
-												className="bg-[var(--color-bg-import-modal)] font-mono text-[13px]"
-												disabled={disabled}
-												placeholder="https://github.com/org/repository.git"
-												spellCheck={false}
-												value={remoteUrl}
-												onChange={(event) => onChangeRemote(event.target.value)}
-											/>
-											<p className="text-[12px] leading-5 text-[var(--color-text-import-muted)]">
-												Add the repository URL AO should configure as <code>origin</code>.
-											</p>
-										</div>
-									) : null}
 									{missingApprovals.length > 0 ? (
 										<p className="mt-4 text-[12px] leading-5 text-[var(--color-text-import-muted)]">
 											Approve all required setup actions to continue importing this project.

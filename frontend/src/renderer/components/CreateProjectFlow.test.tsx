@@ -474,6 +474,58 @@ describe("CreateProjectFlow project import validation", () => {
 		expect(screen.queryByText("Prepare project")).not.toBeInTheDocument();
 	});
 
+	it("shows queued and running setup progress after continue is clicked", async () => {
+		const user = userEvent.setup();
+		bridgeMocks.chooseDirectory.mockResolvedValue("/repo/project");
+		let resolvePrepare!: (value: unknown) => void;
+		apiMocks.POST
+			.mockResolvedValueOnce({
+				data: projectValidation("/repo/project", {
+					nextStep: "prepare_git",
+					root: {
+						isRepo: false,
+						hasCommit: false,
+						hasOrigin: false,
+						needsGitInit: true,
+						requiredActions: ["git_init", "git_commit", "set_remote"],
+					},
+				}),
+			})
+			.mockReturnValueOnce(
+				new Promise((resolve) => {
+					resolvePrepare = resolve;
+				}),
+			);
+
+		render(
+			<CreateProjectFlow mode="choose" {...noop}>
+				{({ choosePath }) => <button onClick={choosePath}>New project</button>}
+			</CreateProjectFlow>,
+		);
+
+		await user.click(screen.getByRole("button", { name: "New project" }));
+		await user.click(await screen.findByRole("button", { name: "Import an existing project" }));
+		await user.type(await screen.findByLabelText("Origin remote URL"), "https://github.com/acme/project.git");
+		await user.click(screen.getByRole("button", { name: "Continue" }));
+
+		expect(await screen.findByText("Running project setup. AO is preparing this repository now.")).toBeInTheDocument();
+		expect(screen.getByText("Running")).toBeInTheDocument();
+		expect(screen.getAllByText("Queued")).not.toHaveLength(0);
+
+		resolvePrepare({
+			data: {
+				events: [
+					{ repoPath: "/repo/project", action: "git_init", state: "success" },
+					{ repoPath: "/repo/project", action: "git_commit", state: "success" },
+					{ repoPath: "/repo/project", action: "set_remote", state: "success" },
+				],
+				validation: projectValidation("/repo/project"),
+			},
+		});
+
+		expect((await screen.findByTestId("agent-sheet"))).toHaveAttribute("data-path", "/repo/project");
+	});
+
 	it("shows a failed preparation step and allows retry", async () => {
 		const user = userEvent.setup();
 		bridgeMocks.chooseDirectory.mockResolvedValue("/repo/project");
