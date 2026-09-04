@@ -30,6 +30,7 @@ import { cn } from "../lib/utils";
 import type { ProjectKind } from "../types/workspace";
 import { CreateProjectAgentSheet, type CreateProjectAgentSelection } from "./CreateProjectAgentSheet";
 import CloneRepositoryDialog, { type CloneRepositoryDetails, type CloneRepositorySelection } from "./CloneRepositoryDialog";
+import CreateProjectProgressDialog from "./CreateProjectProgressDialog";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
@@ -60,6 +61,18 @@ type ProjectSource = "clone" | "local" | "workspace";
 
 /** Where the new project should live: on this machine or in AO Cloud. */
 type ProjectOffering = "local" | "cloud";
+type CreateProgressStage = "starting" | "connecting" | "creating" | "settingUp" | "finishing" | "complete";
+
+function createProgressMessage(stage: CreateProgressStage, workspace: boolean): string {
+	switch (stage) {
+		case "starting": return "Preparing the project";
+		case "connecting": return "Connecting to the repository";
+		case "creating": return workspace ? "Creating the workspace" : "Creating the project";
+		case "settingUp": return "Setting up the project";
+		case "finishing": return "Finishing project setup";
+		default: return "Project created";
+	}
+}
 
 // Shared create-project flow. Local projects/workspaces use the native folder
 // picker; remote projects progressively reveal a lazily loaded clone form.
