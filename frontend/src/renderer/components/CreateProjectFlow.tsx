@@ -141,6 +141,15 @@ export function CreateProjectFlow({
 	const projectImportOpen = projectImportStep !== null && projectValidation !== null;
 	const isBusy = isChoosingPath || isCreating || isInitializing || isPreparingGit;
 	const showGlobalToast = useUiStore((state) => state.showGlobalToast);
+	const resetProjectImportState = () => {
+		setProjectValidation(null);
+		setProjectImportStep(null);
+		setProjectPrepEvents([]);
+		setProjectApprovedActions([]);
+		setProjectRemoteUrl("");
+		setProjectSuggestWorkspace(false);
+		setProjectImportShake(false);
+	};
 
 	const reportProjectError = (message: string) => {
 		setError(message);
@@ -163,12 +172,7 @@ export function CreateProjectFlow({
 		setPendingDropPath(null);
 		setError(null);
 		setValidationScan(null);
-		setProjectValidation(null);
-		setProjectImportStep(null);
-		setProjectPrepEvents([]);
-		setProjectApprovedActions([]);
-		setProjectRemoteUrl("");
-		setProjectSuggestWorkspace(false);
+		resetProjectImportState();
 		if (source === "clone") {
 			transitionToChild(() => setCloneDialogOpen(true));
 			return;
@@ -182,12 +186,7 @@ export function CreateProjectFlow({
 	const chooseDirectory = async (kind: ProjectKind, presetPath?: string) => {
 		setError(null);
 		setValidationScan(null);
-		setProjectValidation(null);
-		setProjectImportStep(null);
-		setProjectPrepEvents([]);
-		setProjectApprovedActions([]);
-		setProjectRemoteUrl("");
-		setProjectSuggestWorkspace(false);
+		resetProjectImportState();
 		setRepositorySetup(null);
 		setRepositorySetupWarning(null);
 		setSelectedKind(kind);
@@ -260,12 +259,7 @@ export function CreateProjectFlow({
 		setPendingDropPath(presetPath ?? null);
 		// Each entry starts on the default Local choice, never a leftover Cloud one.
 		setOffering("local");
-		setProjectValidation(null);
-		setProjectImportStep(null);
-		setProjectPrepEvents([]);
-		setProjectApprovedActions([]);
-		setProjectRemoteUrl("");
-		setProjectSuggestWorkspace(false);
+		resetProjectImportState();
 		if (hasModePicker) {
 			setError(null);
 			setCloneSelection(null);
@@ -372,12 +366,7 @@ export function CreateProjectFlow({
 	};
 
 	const reopenSourcePicker = () => {
-		setProjectImportStep(null);
-		setProjectPrepEvents([]);
-		setProjectApprovedActions([]);
-		setProjectRemoteUrl("");
-		setProjectSuggestWorkspace(false);
-		setProjectValidation(null);
+		resetProjectImportState();
 		if (hasModePicker) {
 			setModePickerOpen(true);
 			return;
@@ -601,12 +590,7 @@ export function CreateProjectFlow({
 				onOpenChange={(open) => {
 					if (isBusy) return;
 					if (!open) {
-						setProjectImportStep(null);
-						setProjectPrepEvents([]);
-						setProjectApprovedActions([]);
-						setProjectRemoteUrl("");
-						setProjectSuggestWorkspace(false);
-						setProjectValidation(null);
+						resetProjectImportState();
 						setError(null);
 					}
 				}}
@@ -629,6 +613,7 @@ export function CreateProjectFlow({
 					if (!open) {
 						setSelectedPath(null);
 						setCloneSelection(null);
+						resetProjectImportState();
 						if (!folderPickerOpen) {
 							setError(null);
 						}
