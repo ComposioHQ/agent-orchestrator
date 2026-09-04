@@ -44,6 +44,12 @@ const LAST_IMPORT_REMOTE_URL_KEY = "ao.import.lastRemoteUrl";
 type ImportValidationResult = components["schemas"]["ImportValidationResult"];
 type GitPreparationEvent = components["schemas"]["GitPreparationEvent"];
 type ProjectImportStep = "blocked" | "prepare_git";
+type WorkspaceImportStep = "blocked" | "prepare_git" | "review";
+type WorkspaceRepoPreparation = {
+	repoPath: string;
+	approvedActions: string[];
+	remoteUrl: string;
+};
 
 type CreateProjectFlowMode = ProjectKind | "choose";
 type ProjectSource = "clone" | "local" | "workspace";
@@ -109,6 +115,10 @@ export function CreateProjectFlow({
 	const [projectApprovedActions, setProjectApprovedActions] = useState<string[]>([]);
 	const [projectRemoteUrl, setProjectRemoteUrl] = useState("");
 	const [projectSuggestWorkspace, setProjectSuggestWorkspace] = useState(false);
+	const [workspaceValidation, setWorkspaceValidation] = useState<ImportValidationResult | null>(null);
+	const [workspaceImportStep, setWorkspaceImportStep] = useState<WorkspaceImportStep | null>(null);
+	const [workspacePrepEvents, setWorkspacePrepEvents] = useState<GitPreparationEvent[]>([]);
+	const [workspaceRepoPreparations, setWorkspaceRepoPreparations] = useState<Record<string, WorkspaceRepoPreparation>>({});
 	const [isChoosingPath, setIsChoosingPath] = useState(false);
 	const [isCreating, setIsCreating] = useState(false);
 	const [isInitializing, setIsInitializing] = useState(false);
@@ -131,6 +141,7 @@ export function CreateProjectFlow({
 
 	const hasModePicker = mode === "choose";
 	const projectImportOpen = projectImportStep !== null && projectValidation !== null;
+	const workspaceImportOpen = workspaceImportStep !== null && workspaceValidation !== null;
 	const isBusy = isChoosingPath || isCreating || isInitializing || isPreparingGit;
 
 	const transitionToChild = (open: () => void) => {
@@ -152,6 +163,10 @@ export function CreateProjectFlow({
 		setProjectApprovedActions([]);
 		setProjectRemoteUrl("");
 		setProjectSuggestWorkspace(false);
+		setWorkspaceValidation(null);
+		setWorkspaceImportStep(null);
+		setWorkspacePrepEvents([]);
+		setWorkspaceRepoPreparations({});
 		if (source === "clone") {
 			transitionToChild(() => setCloneDialogOpen(true));
 			return;
@@ -171,6 +186,10 @@ export function CreateProjectFlow({
 		setProjectApprovedActions([]);
 		setProjectRemoteUrl("");
 		setProjectSuggestWorkspace(false);
+		setWorkspaceValidation(null);
+		setWorkspaceImportStep(null);
+		setWorkspacePrepEvents([]);
+		setWorkspaceRepoPreparations({});
 		setRepositorySetup(null);
 		setRepositorySetupWarning(null);
 		setSelectedKind(kind);
@@ -199,6 +218,15 @@ export function CreateProjectFlow({
 				}
 			}
 			if (path && kind === "workspace") {
+				const validation = await validateImportFolder(path, "workspace");
+				setWorkspaceValidation(validation);
+				setWorkspacePrepEvents([]);
+				setWorkspaceRepoPreparations(workspacePreparationState(validation));
+				if (!validation.isValid || validation.nextStep === "error") {
+					setError(importValidationMessage(validation));
+					setWorkspaceImportStep("blocked");
+					return;
+				}
 				try {
 					const warning = await aoBridge.app.checkAncestorRepo(path);
 					if (warning) {
@@ -208,24 +236,10 @@ export function CreateProjectFlow({
 				} catch {
 					// Ancestor check failed — proceed without warning
 				}
-			}
-			if (path && kind === "workspace" && hasModePicker && !presetPath) {
-				try {
-					const scan = await aoBridge.app.scanImportFolder({
-						path,
-						mode: kind === "workspace" ? "workspace" : "project",
-					});
-					setValidationScan(scan);
-					const blockingReason = scan.repos.find(
-						(repo) => repo.status === "error" && repo.reason !== "Repository must have at least one commit.",
-					)?.reason;
-					setError(blockingReason ?? null);
-				} catch (err) {
-					setValidationScan({ path, repos: [] });
-					setError(err instanceof Error ? err.message : t("createProject.couldNotAdd"));
+				if (hasModePicker) {
+					setWorkspaceImportStep(validation.nextStep === "prepare_git" ? "prepare_git" : "review");
+					return;
 				}
-				transitionToChild(() => setFolderPickerOpen(true));
-				return;
 			}
 			if (path) {
 				setModePickerOpen(false);
@@ -249,6 +263,10 @@ export function CreateProjectFlow({
 		setProjectApprovedActions([]);
 		setProjectRemoteUrl("");
 		setProjectSuggestWorkspace(false);
+		setWorkspaceValidation(null);
+		setWorkspaceImportStep(null);
+		setWorkspacePrepEvents([]);
+		setWorkspaceRepoPreparations({});
 		if (hasModePicker) {
 			setError(null);
 			setCloneSelection(null);
@@ -333,20 +351,37 @@ export function CreateProjectFlow({
 			setError(message);
 			if (hasModePicker && !cloneSelection) {
 				if (shouldScanCreateFailure(message)) {
-					try {
-						const scan = await aoBridge.app.scanImportFolder({
-							path: selectedPath,
-							mode: selectedKind === "workspace" ? "workspace" : "project",
-						});
-						setValidationScan(scan);
-					} catch {
-						setValidationScan({ path: selectedPath, repos: [] });
+					if (selectedKind === "workspace") {
+						try {
+							const validation = await validateImportFolder(selectedPath, "workspace");
+							setWorkspaceValidation(validation);
+							setWorkspacePrepEvents([]);
+							setWorkspaceRepoPreparations(workspacePreparationState(validation));
+							setWorkspaceImportStep(validation.nextStep === "prepare_git" ? "prepare_git" : "review");
+						} catch {
+							setWorkspaceValidation(null);
+						}
+						} else {
+							try {
+								const scan = await aoBridge.app.scanImportFolder({
+									path: selectedPath,
+									mode: "project",
+								});
+								setValidationScan(scan);
+						} catch {
+							setValidationScan({ path: selectedPath, repos: [] });
+						}
 					}
 				} else {
 					setValidationScan(null);
+					setWorkspaceValidation(null);
 				}
 				setSelectedPath(null);
-				setFolderPickerOpen(true);
+				if (selectedKind === "workspace") {
+					setWorkspaceImportStep((current) => current ?? "review");
+				} else {
+					setFolderPickerOpen(true);
+				}
 			}
 		} finally {
 			setIsCreating(false);
@@ -361,6 +396,18 @@ export function CreateProjectFlow({
 		setProjectRemoteUrl("");
 		setProjectSuggestWorkspace(false);
 		setProjectValidation(null);
+		if (hasModePicker) {
+			setModePickerOpen(true);
+			return;
+		}
+		setError(null);
+	};
+
+	const reopenWorkspacePicker = () => {
+		setWorkspaceImportStep(null);
+		setWorkspacePrepEvents([]);
+		setWorkspaceRepoPreparations({});
+		setWorkspaceValidation(null);
 		if (hasModePicker) {
 			setModePickerOpen(true);
 			return;
@@ -424,6 +471,64 @@ export function CreateProjectFlow({
 		}
 	};
 
+	const continueWorkspaceImport = (validation = workspaceValidation) => {
+		if (!validation) return;
+		setWorkspaceImportStep(null);
+		setSelectedPath(validation.root.repoPath);
+	};
+
+	const prepareWorkspaceGit = async () => {
+		if (!workspaceValidation) return;
+		setError(null);
+		setWorkspacePrepEvents(workspaceRequestedActionEvents(workspaceValidation, workspaceRepoPreparations));
+		setIsPreparingGit(true);
+		try {
+			const repositories = workspaceValidation.childRepos
+				?.filter((repo) => repo.requiredActions.length > 0)
+				.map((repo) => workspaceRepoPreparations[repo.repoPath])
+				.filter((repo): repo is WorkspaceRepoPreparation => Boolean(repo))
+				.map((repo) => ({
+					repoPath: repo.repoPath,
+					approvedActions: repo.approvedActions,
+					remoteUrl: repo.remoteUrl.trim() || undefined,
+				}));
+			const { data, error: apiError } = await apiClient.POST("/api/v1/imports/prepare-git", {
+				body: {
+					importKind: "workspace",
+					path: workspaceValidation.root.repoPath,
+					repositories,
+				},
+			});
+			if (apiError || !data) throw new Error(apiErrorMessage(apiError, t("createProject.couldNotAdd")));
+			setWorkspacePrepEvents(data.events);
+			setWorkspaceValidation(data.validation);
+			const nextPreparations = workspacePreparationState(data.validation, workspaceRepoPreparations);
+			setWorkspaceRepoPreparations(nextPreparations);
+			for (const repo of Object.values(workspaceRepoPreparations)) {
+				if (repo.remoteUrl.trim() !== "") persistSuggestedProjectRemoteUrl(repo.remoteUrl);
+			}
+			const failed = data.events.find((event) => event.state === "error");
+			if (failed) {
+				setError(projectPreparationFailureMessage(failed));
+				return;
+			}
+			if (!data.validation.isValid || data.validation.nextStep === "error") {
+				setError(importValidationMessage(data.validation));
+				setWorkspaceImportStep("blocked");
+				return;
+			}
+			if (data.validation.nextStep === "continue") {
+				continueWorkspaceImport(data.validation);
+				return;
+			}
+			setWorkspaceImportStep("prepare_git");
+		} catch (err) {
+			setError(err instanceof Error ? err.message : t("createProject.couldNotAdd"));
+		} finally {
+			setIsPreparingGit(false);
+		}
+	};
+
 	const label = isInitializing
 		? hasModePicker
 			? t("createProject.initializing")
@@ -446,7 +551,9 @@ export function CreateProjectFlow({
 					error,
 					label,
 				})}
-			<CreateProjectFlowBackdrop open={modePickerOpen || cloneDialogOpen || folderPickerOpen || selectedPath !== null || childTransitioning} />
+			<CreateProjectFlowBackdrop
+				open={modePickerOpen || cloneDialogOpen || folderPickerOpen || projectImportOpen || workspaceImportOpen || selectedPath !== null || childTransitioning}
+			/>
 			{hasModePicker && embedded && !modePickerOpen && !cloneDialogOpen && selectedPath === null && (
 				<div className="flex w-full flex-col items-center gap-3">
 					{cloudEnabled && (
@@ -471,7 +578,7 @@ export function CreateProjectFlow({
 			{hasModePicker && (
 				<>
 					<CreateProjectSourceDialog
-						childOpen={childTransitioning || cloneDialogOpen || folderPickerOpen}
+						childOpen={childTransitioning || cloneDialogOpen || folderPickerOpen || projectImportOpen || workspaceImportOpen}
 						cloudAvailable={cloudAvailable}
 						cloudEnabled={cloudEnabled}
 						disabled={isBusy}
@@ -588,6 +695,49 @@ export function CreateProjectFlow({
 				events={projectPrepEvents}
 				validation={projectValidation}
 			/>
+			<WorkspaceImportDialog
+				disabled={isBusy}
+				error={error}
+				events={workspacePrepEvents}
+				isPreparingGit={isPreparingGit}
+				onBack={reopenWorkspacePicker}
+				onChangeFolder={() => void chooseDirectory("workspace")}
+				onChangeRepoApprovedActions={(repoPath, approvedActions) =>
+					setWorkspaceRepoPreparations((current) => {
+						const existing = current[repoPath];
+						if (!existing) return current;
+						return { ...current, [repoPath]: { ...existing, approvedActions } };
+					})
+				}
+				onChangeRepoRemote={(repoPath, remoteUrl) =>
+					setWorkspaceRepoPreparations((current) => {
+						const existing = current[repoPath];
+						if (!existing) return current;
+						return { ...current, [repoPath]: { ...existing, remoteUrl } };
+					})
+				}
+				onContinue={() => {
+					if (workspaceImportStep === "prepare_git") {
+						void prepareWorkspaceGit();
+						return;
+					}
+					continueWorkspaceImport();
+				}}
+				onOpenChange={(open) => {
+					if (isBusy) return;
+					if (!open) {
+						setWorkspaceImportStep(null);
+						setWorkspacePrepEvents([]);
+						setWorkspaceRepoPreparations({});
+						setWorkspaceValidation(null);
+						setError(null);
+					}
+				}}
+				open={workspaceImportOpen}
+				step={workspaceImportStep}
+				validation={workspaceValidation}
+				repoPreparations={workspaceRepoPreparations}
+			/>
 			<CreateProjectAgentSheet
 				action={cloneSelection ? "clone" : "create"}
 				error={error}
@@ -691,6 +841,14 @@ function latestProjectActionState(action: string, events: GitPreparationEvent[])
 	return "required";
 }
 
+function latestWorkspaceActionState(repoPath: string, action: string, events: GitPreparationEvent[]): string {
+	for (let index = events.length - 1; index >= 0; index -= 1) {
+		const event = events[index];
+		if (event?.repoPath === repoPath && event.action === action) return event.state;
+	}
+	return "required";
+}
+
 function orderedProjectActions(actions: string[]): string[] {
 	const rank = new Map([
 		["git_init", 0],
@@ -707,6 +865,41 @@ function projectRequestedActionEvents(repoPath: string, actions: string[]): GitP
 		action: action as GitPreparationEvent["action"],
 		state: index === 0 ? "running" : "pending",
 	}));
+}
+
+function workspacePreparationState(
+	validation: ImportValidationResult,
+	existing: Record<string, WorkspaceRepoPreparation> = {},
+): Record<string, WorkspaceRepoPreparation> {
+	const next: Record<string, WorkspaceRepoPreparation> = {};
+	for (const repo of validation.childRepos ?? []) {
+		if (repo.requiredActions.length === 0) continue;
+		const current = existing[repo.repoPath];
+		next[repo.repoPath] = {
+			repoPath: repo.repoPath,
+			approvedActions: current ? current.approvedActions.filter((action) => repo.requiredActions.includes(action)) : [...repo.requiredActions],
+			remoteUrl:
+				repo.requiredActions.includes("set_remote")
+					? (current?.remoteUrl ?? suggestedProjectRemoteUrl(repo.repoPath))
+					: "",
+		};
+	}
+	return next;
+}
+
+function workspaceRequestedActionEvents(
+	validation: ImportValidationResult,
+	repos: Record<string, WorkspaceRepoPreparation>,
+): GitPreparationEvent[] {
+	const requested: Array<{ repoPath: string; action: GitPreparationEvent["action"] }> = [];
+	for (const repo of validation.childRepos ?? []) {
+		const input = repos[repo.repoPath];
+		if (!input) continue;
+		for (const action of orderedProjectActions(input.approvedActions)) {
+			requested.push({ repoPath: repo.repoPath, action: action as GitPreparationEvent["action"] });
+		}
+	}
+	return requested.map((event, index) => ({ ...event, state: index === 0 ? "running" : "pending" }));
 }
 
 function suggestedProjectRemoteUrl(repoPath: string): string {
@@ -739,6 +932,16 @@ function persistSuggestedProjectRemoteUrl(remoteUrl: string) {
 
 function projectPreparationFailureMessage(event: GitPreparationEvent): string {
 	return `${displayImportPath(event.repoPath)} failed while running ${gitActionLabel(event.action)}. Review the step below, then retry or go back.`;
+}
+
+function repoDisplayName(repoPath: string): string {
+	return repoPath.split(/[\\/]/).filter(Boolean).pop() ?? repoPath;
+}
+
+function repoSetupSummary(repo: components["schemas"]["RepoGitStatus"]): string {
+	if (repo.needsGitInit) return "No Git yet";
+	if (repo.requiredActions.length === 0) return "Ready";
+	return "Git initialized";
 }
 
 function shouldScanCreateFailure(message: string): boolean {
@@ -1413,6 +1616,312 @@ function ProjectImportDialog({
 								</Button>
 							</>
 						) : null}
+					</div>
+				</Dialog.Content>
+			</Dialog.Portal>
+		</Dialog.Root>
+	);
+}
+
+function WorkspaceImportDialog({
+	disabled,
+	error,
+	events,
+	isPreparingGit,
+	onBack,
+	onChangeFolder,
+	onChangeRepoApprovedActions,
+	onChangeRepoRemote,
+	onContinue,
+	onOpenChange,
+	open,
+	repoPreparations,
+	step,
+	validation,
+}: {
+	disabled: boolean;
+	error: string | null;
+	events: GitPreparationEvent[];
+	isPreparingGit: boolean;
+	onBack: () => void;
+	onChangeFolder: () => void;
+	onChangeRepoApprovedActions: (repoPath: string, approvedActions: string[]) => void;
+	onChangeRepoRemote: (repoPath: string, remoteUrl: string) => void;
+	onContinue: () => void;
+	onOpenChange: (open: boolean) => void;
+	open: boolean;
+	repoPreparations: Record<string, WorkspaceRepoPreparation>;
+	step: WorkspaceImportStep | null;
+	validation: ImportValidationResult | null;
+}) {
+	if (!validation || !step) return null;
+	const childRepos = validation.childRepos ?? [];
+	const reposNeedingSetup = childRepos.filter((repo) => repo.requiredActions.length > 0);
+	const readyRepos = childRepos.filter((repo) => repo.requiredActions.length === 0);
+	const hasFailedStep = events.some((event) => event.state === "error");
+	const missingApprovals = reposNeedingSetup.flatMap((repo) => {
+		const input = repoPreparations[repo.repoPath];
+		if (!input) return repo.requiredActions.map((action) => `${repo.repoPath}:${action}`);
+		return repo.requiredActions
+			.filter((action) => !input.approvedActions.includes(action))
+			.map((action) => `${repo.repoPath}:${action}`);
+	});
+	const missingRemote = reposNeedingSetup.some((repo) => {
+		if (!repo.requiredActions.includes("set_remote")) return false;
+		const input = repoPreparations[repo.repoPath];
+		return !input || input.remoteUrl.trim() === "";
+	});
+	const continueDisabled =
+		disabled ||
+		(step === "prepare_git" && (missingApprovals.length > 0 || missingRemote)) ||
+		(step === "review" && childRepos.length === 0);
+
+	return (
+		<Dialog.Root open={open} onOpenChange={onOpenChange}>
+			<Dialog.Portal>
+				<Dialog.Overlay className="fixed inset-0 z-overlay bg-black/55 data-[state=open]:animate-overlay-in data-[state=closed]:animate-overlay-out motion-reduce:animate-none" />
+				<Dialog.Content
+					className="fixed left-1/2 top-1/2 z-overlay flex max-h-[min(760px,calc(100svh-24px))] w-[min(760px,calc(100vw-24px))] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-lg border border-[var(--color-border-import-modal)] bg-[var(--color-bg-import-modal)] p-0 text-[var(--color-text-import-title)] shadow-[var(--shadow-import-modal)] data-[state=open]:animate-modal-in data-[state=closed]:animate-modal-out motion-reduce:animate-none"
+					onInteractOutside={(event) => event.preventDefault()}
+					onPointerDownOutside={(event) => event.preventDefault()}
+				>
+					<div className="flex items-start gap-3 border-b border-[var(--color-border-import-modal)] px-4 py-3">
+						<Button type="button" variant="outline" size="icon" aria-label="Back to import source" disabled={disabled} onClick={onBack}>
+							<ChevronRight className="size-4 rotate-180" aria-hidden="true" />
+						</Button>
+						<div className="min-w-0 flex-1">
+							<Dialog.Title className="text-[18px] font-semibold text-[var(--color-text-import-title)]">
+								{step === "prepare_git" ? "Prepare workspace" : "Import workspace"}
+							</Dialog.Title>
+							<Dialog.Description className="mt-1 text-[13px] leading-5 text-[var(--color-text-import-muted)]">
+								{step === "blocked"
+									? "AO found a problem with this folder before workspace setup can continue."
+									: "Review the child repositories in this workspace before AO creates the workspace."}
+							</Dialog.Description>
+						</div>
+						<Dialog.Close asChild>
+							<button type="button" className="settings-close-button" aria-label="Close workspace import dialog" disabled={disabled}>
+								<X className="size-4" aria-hidden="true" />
+							</button>
+						</Dialog.Close>
+					</div>
+					<div className="min-h-0 space-y-4 overflow-y-auto px-4 py-4">
+						<div className="flex items-center gap-3 rounded-md border border-[var(--color-border-import-modal)] bg-[var(--color-bg-import-card)] px-3 py-2.5">
+							<Folder className="size-4 shrink-0 text-[var(--color-text-import-muted)]" aria-hidden="true" />
+							<div className="min-w-0 flex-1">
+								<div className="truncate font-mono text-[13px] font-semibold text-[var(--color-text-import-title)]">
+									{displayImportPath(validation.root.repoPath)}
+								</div>
+								<div className="mt-0.5 text-[11px] text-[var(--color-text-import-muted)]">Workspace folder</div>
+							</div>
+							<Button type="button" variant="outline" disabled={disabled} onClick={onChangeFolder}>
+								Change
+							</Button>
+						</div>
+						{childRepos.some((repo) => repo.isRepo) ? (
+							<div className="rounded-md border border-[var(--color-border-import-modal)] bg-[var(--color-bg-import-card)] px-4 py-3 text-[12px] leading-5 text-[var(--color-text-import-muted)]">
+								Contains child Git repos. AO will import them as workspace repos.
+							</div>
+						) : null}
+						{validation.warning ? (
+							<div className="rounded-md border border-[var(--color-border-import-modal)] bg-[var(--color-bg-import-card)] px-3 py-3 text-[12px] leading-5 text-[var(--color-text-import-muted)]">
+								{validation.warning}
+							</div>
+						) : null}
+						{error ? (
+							<div className="rounded-lg border border-destructive/40 bg-destructive/10 px-4 py-3 text-[12px] leading-5 text-destructive" role="alert">
+								{error}
+							</div>
+						) : null}
+						{step === "prepare_git" ? (
+							<section className="space-y-3">
+								<div className="rounded-lg border border-[var(--color-border-import-modal)] bg-[var(--color-bg-import-card)] px-4 py-4">
+									<h3 className="text-[13px] font-semibold text-[var(--color-text-import-title)]">Needs setup</h3>
+									<p className="mt-1 text-[12px] leading-5 text-[var(--color-text-import-muted)]">
+										Approve the missing setup for each child repository. AO will run only the selected required steps.
+									</p>
+									{reposNeedingSetup.some((repo) => repo.requiredActions.includes("set_remote")) ? (
+										<p className="mt-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[12px] leading-5 text-[var(--color-text-import-title)]">
+											To create sessions and PRs successfully, make sure each repository with an origin URL also exists on GitHub and that you can push its default branch.
+										</p>
+									) : null}
+									{isPreparingGit ? (
+										<p className="mt-3 text-[12px] leading-5 text-[var(--color-text-import-title)]">
+											Running workspace setup. AO is preparing these repositories now.
+										</p>
+									) : null}
+									<div className="mt-3 space-y-3">
+										{reposNeedingSetup.map((repo) => {
+											const input = repoPreparations[repo.repoPath];
+											const summary = repoSetupSummary(repo);
+											return (
+												<div
+													key={repo.repoPath}
+													className="rounded-md border border-[var(--color-border-import-modal)] bg-[var(--color-bg-import-modal)] px-3 py-3"
+												>
+													<div className="flex items-start gap-3">
+														{repo.needsGitInit ? (
+															<CircleDashed className="mt-0.5 size-4 shrink-0 text-[var(--color-text-import-muted)]" aria-hidden="true" />
+														) : (
+															<GitBranch className="mt-0.5 size-4 shrink-0 text-[var(--color-text-import-muted)]" aria-hidden="true" />
+														)}
+														<div className="min-w-0 flex-1">
+															<div className="flex items-center gap-2">
+																<h4 className="truncate text-[13px] font-semibold text-[var(--color-text-import-title)]">
+																	{repoDisplayName(repo.repoPath)}
+																</h4>
+																<span className="rounded-full bg-[var(--color-bg-import-chip)] px-2 py-0.5 text-[11px] font-medium text-[var(--color-text-import-muted)]">
+																	{summary}
+																</span>
+															</div>
+															<p className="mt-1 truncate font-mono text-[12px] text-[var(--color-text-import-muted)]">
+																{displayImportPath(repo.repoPath)}
+															</p>
+														</div>
+													</div>
+													<div className="mt-3 space-y-3">
+														{repo.requiredActions.map((action) => {
+															const checked = input?.approvedActions.includes(action) ?? false;
+															const state = latestWorkspaceActionState(repo.repoPath, action, events);
+															const statusLabel =
+																state === "required"
+																	? action === "set_remote"
+																		? "Set URL"
+																		: "Ready"
+																	: state === "pending"
+																		? "Queued"
+																		: state === "running"
+																			? "Running"
+																			: state === "success"
+																				? "Done"
+																				: "Failed";
+															const tone =
+																state === "success"
+																	? "text-success"
+																	: state === "error"
+																		? "text-destructive"
+																		: state === "running"
+																			? "text-[var(--color-text-import-title)]"
+																			: "text-[var(--color-text-import-muted)]";
+															return (
+																<label
+																	key={`${repo.repoPath}:${action}`}
+																	className="flex cursor-pointer items-start gap-3 rounded-md border border-[var(--color-border-import-modal)] bg-[var(--color-bg-import-card)] px-3 py-3"
+																>
+																	<input
+																		type="checkbox"
+																		className="mt-0.5 size-4 rounded border-border"
+																		checked={checked}
+																		disabled={disabled}
+																		onChange={(event) =>
+																			onChangeRepoApprovedActions(
+																				repo.repoPath,
+																				event.target.checked
+																					? [...(input?.approvedActions ?? []), action]
+																					: (input?.approvedActions ?? []).filter((value) => value !== action),
+																			)
+																		}
+																	/>
+																	<span className="min-w-0 flex-1">
+																		<span className="block text-[13px] font-medium text-[var(--color-text-import-title)]">
+																			{gitActionLabel(action)}
+																		</span>
+																		<span className="mt-1 block text-[12px] leading-5 text-[var(--color-text-import-muted)]">
+																			{gitActionDescription(action)}
+																		</span>
+																		{action === "set_remote" ? (
+																			<span className="mt-3 block space-y-2">
+																				<Label
+																					htmlFor={`workspaceImportRemote:${repo.repoPath}`}
+																					className="text-[12px] font-semibold text-[var(--color-text-import-title)]"
+																				>
+																					Origin remote URL
+																				</Label>
+																				<Input
+																					id={`workspaceImportRemote:${repo.repoPath}`}
+																					autoCapitalize="none"
+																					autoComplete="off"
+																					className="bg-[var(--color-bg-import-card)] font-mono text-[13px]"
+																					disabled={disabled}
+																					placeholder="https://github.com/org/repository.git"
+																					spellCheck={false}
+																					value={input?.remoteUrl ?? ""}
+																					onChange={(event) => onChangeRepoRemote(repo.repoPath, event.target.value)}
+																				/>
+																			</span>
+																		) : null}
+																	</span>
+																	<span className={cn("shrink-0 text-[12px] font-medium capitalize", tone)}>
+																		{statusLabel}
+																	</span>
+																</label>
+															);
+														})}
+													</div>
+												</div>
+											);
+										})}
+									</div>
+									{missingApprovals.length > 0 ? (
+										<p className="mt-4 text-[12px] leading-5 text-[var(--color-text-import-muted)]">
+											Approve all required setup actions to continue importing this workspace.
+										</p>
+									) : null}
+								</div>
+							</section>
+						) : null}
+						{readyRepos.length > 0 ? (
+							<section className="space-y-3">
+								<div className="rounded-lg border border-[var(--color-border-import-modal)] bg-[var(--color-bg-import-card)] px-4 py-4">
+									<h3 className="text-[13px] font-semibold text-[var(--color-text-import-title)]">Ready repositories</h3>
+									<div className="mt-3 space-y-2">
+										{readyRepos.map((repo) => (
+											<div
+												key={repo.repoPath}
+												className="flex items-center gap-3 rounded-md border border-[var(--color-border-import-modal)] bg-[var(--color-bg-import-modal)] px-3 py-3"
+											>
+												<CheckCircle2 className="size-4 shrink-0 text-success" aria-hidden="true" />
+												<div className="min-w-0 flex-1">
+													<div className="truncate text-[13px] font-semibold text-[var(--color-text-import-title)]">
+														{repoDisplayName(repo.repoPath)}
+													</div>
+													<div className="mt-1 truncate font-mono text-[12px] text-[var(--color-text-import-muted)]">
+														{displayImportPath(repo.repoPath)}
+													</div>
+												</div>
+												<span className="shrink-0 text-[12px] font-medium text-success">Ready</span>
+											</div>
+										))}
+									</div>
+								</div>
+							</section>
+						) : null}
+						{step === "review" && childRepos.length === 0 ? (
+							<div className="rounded-md border border-[var(--color-border-import-modal)] bg-[var(--color-bg-import-card)] px-4 py-3 text-[12px] leading-5 text-[var(--color-text-import-muted)]">
+								No child repositories were found under this workspace folder yet.
+							</div>
+						) : null}
+					</div>
+					<div className="flex shrink-0 items-center justify-end gap-2 border-t border-[var(--color-border-import-modal)] px-4 py-4">
+						{step === "blocked" ? (
+							<>
+								<Button type="button" variant="outline" disabled={disabled} onClick={onBack}>
+									Back
+								</Button>
+								<Button type="button" variant="primary" disabled={disabled} onClick={onChangeFolder}>
+									Choose another folder
+								</Button>
+							</>
+						) : (
+							<>
+								<Button type="button" variant="outline" disabled={disabled} onClick={onBack}>
+									Back
+								</Button>
+								<Button type="button" variant="primary" disabled={continueDisabled} onClick={onContinue}>
+									{step === "prepare_git" ? (hasFailedStep ? "Retry" : "Continue") : "Continue"}
+								</Button>
+							</>
+						)}
 					</div>
 				</Dialog.Content>
 			</Dialog.Portal>
