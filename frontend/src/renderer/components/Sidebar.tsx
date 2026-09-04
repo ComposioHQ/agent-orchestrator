@@ -1221,6 +1221,13 @@ const ProjectItemContent = memo(function ProjectItemContent({
 		setRemoveError(null);
 		setConfirmOpen(true);
 	};
+	const sessionProjectActions: SessionProjectActions = {
+		isProjectRestarting,
+		isRemoving,
+		onNewSession: () => requestNewTask(workspace.id),
+		onProjectSettings: () => selection.goSettings(workspace.id),
+		onRemoveProject: removeProject,
+	};
 
 	const handleConfirmRemove = async () => {
 		setConfirmOpen(false);
@@ -1508,6 +1515,7 @@ const ProjectItemContent = memo(function ProjectItemContent({
 															active={selection.activeSessionId === session.id}
 															disableLayout
 															onOpen={() => openSession(session.id)}
+															projectActions={sessionProjectActions}
 														/>
 													))}
 												</SidebarMenuSub>
@@ -1536,6 +1544,7 @@ const ProjectItemContent = memo(function ProjectItemContent({
 																	listIsDragging={sessionDragging}
 																	dropTransitionDisabled={dropTransitionDisabledId === session.id}
 																	onOpen={openSession}
+																	projectActions={sessionProjectActions}
 																/>
 															))}
 														</SidebarMenuSub>
@@ -1659,6 +1668,7 @@ const SortableSessionRow = memo(function SortableSessionRow({
 	listIsDragging,
 	dropTransitionDisabled,
 	onOpen,
+	projectActions,
 }: {
 	session: WorkspaceSession;
 	active: boolean;
@@ -1667,6 +1677,7 @@ const SortableSessionRow = memo(function SortableSessionRow({
 	listIsDragging: boolean;
 	dropTransitionDisabled: boolean;
 	onOpen: (sessionId: string) => void;
+	projectActions: SessionProjectActions;
 }) {
 	const { isDragging, listeners, setActivatorNodeRef, setNodeRef, transform, transition } = useSortable({
 		id: session.id,
@@ -1680,6 +1691,7 @@ const SortableSessionRow = memo(function SortableSessionRow({
 			}}
 			layoutDependency={layoutDependency}
 			listIsDragging={listIsDragging}
+			projectActions={projectActions}
 			reorder={{
 				isDragging,
 				listeners,
@@ -1697,6 +1709,14 @@ type SessionReorder = Pick<SortableRow, "isDragging" | "listeners" | "setActivat
 	dropTransitionDisabled: boolean;
 };
 
+type SessionProjectActions = {
+	isProjectRestarting: boolean;
+	isRemoving: boolean;
+	onNewSession: () => void;
+	onProjectSettings: () => void;
+	onRemoveProject: () => void;
+};
+
 // One worker-session row. Reads as a link by default; double-click/double-tap
 // on the name or F2 flips the label into an inline input (Enter/blur saves,
 // Escape cancels) that persists through the daemon rename endpoint.
@@ -1708,6 +1728,7 @@ function SessionRow({
 	listIsDragging = false,
 	disableLayout = false,
 	onOpen,
+	projectActions,
 	reorder,
 }: {
 	session: WorkspaceSession;
@@ -1718,6 +1739,7 @@ function SessionRow({
 	/** Project drags pause nested session projection work. */
 	disableLayout?: boolean;
 	onOpen: () => void;
+	projectActions?: SessionProjectActions;
 	/** Present only for rows inside a reorderable project list. */
 	reorder?: SessionReorder;
 }) {
@@ -1889,6 +1911,29 @@ function SessionRow({
 					<Pencil aria-hidden="true" />
 					{t("shell.rename")}
 				</ContextMenuItem>
+				{projectActions ? (
+					<>
+						<ContextMenuSeparator />
+						<ContextMenuItem disabled={projectActions.isProjectRestarting} onSelect={projectActions.onNewSession}>
+							<Plus aria-hidden="true" />
+							{t("shell.newSession")}
+						</ContextMenuItem>
+						<ContextMenuSeparator />
+						<ContextMenuItem onSelect={projectActions.onProjectSettings}>
+							<Settings aria-hidden="true" />
+							{t("shell.projectSettings")}
+						</ContextMenuItem>
+						<ContextMenuSeparator />
+						<ContextMenuItem
+							className="text-destructive focus:text-destructive [&_svg]:text-destructive"
+							disabled={projectActions.isRemoving}
+							onSelect={projectActions.onRemoveProject}
+						>
+							<Trash2 aria-hidden="true" />
+							{t("shell.removeProjectTitle")}
+						</ContextMenuItem>
+					</>
+				) : null}
 			</ContextMenuContent>
 		</ContextMenu>
 	);

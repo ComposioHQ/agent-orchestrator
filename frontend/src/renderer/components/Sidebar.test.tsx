@@ -1486,6 +1486,14 @@ describe("Sidebar", () => {
 
 		fireEvent.contextMenu(screen.getByRole("button", { name: "Open fix login" }));
 		const renameItem = await screen.findByRole("menuitem", { name: "Rename fix login" });
+		const menu = renameItem.closest('[role="menu"]');
+		if (!menu) throw new Error("Session context menu not found");
+		expect(within(menu as HTMLElement).getAllByRole("menuitem").map((item) => item.textContent)).toEqual([
+			"Rename",
+			"New session",
+			"Project settings",
+			"Remove project",
+		]);
 		expect(renameItem).toHaveTextContent(/^Rename$/);
 		expect(renameItem.querySelector("svg")).toBeInTheDocument();
 		await user.click(renameItem);
