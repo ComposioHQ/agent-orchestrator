@@ -2568,6 +2568,74 @@ describe("install-on-quit policy", () => {
     }
   });
 
+  // Regression: dropping a stale staged build stopped AO advertising it, but
+  // the build itself stayed in the cache with install-on-quit armed. On Windows
+  // and Linux BaseUpdater.addQuitHandler re-reads autoInstallOnAppQuit at quit
+  // time, so quitting before the replacement landed installed the channel the
+  // user had just left.
+  it("disables install-on-quit while a stale staged build awaits replacement", async () => {
+    const { module, autoUpdater, updaterEvents } = await importAutoUpdater({
+      enabled: false,
+      channel: "nightly",
+      nightlyAck: true,
+      feature: null,
+    });
+
+    await module.checkForUpdatesNow(stateDir);
+    updaterEvents.get("update-downloaded")?.({ version: "2.1.0-nightly.1" });
+    expect(autoUpdater.autoInstallOnAppQuit).toBe(true);
+
+    await module.checkForUpdatesNow(stateDir, {
+      settings: { enabled: false, channel: "latest", nightlyAck: false, feature: null },
+    });
+
+    expect(autoUpdater.autoInstallOnAppQuit).toBe(false);
+  });
+
+  it("re-enables install-on-quit once the replacement is staged", async () => {
+    const { module, autoUpdater, updaterEvents } = await importAutoUpdater({
+      enabled: false,
+      channel: "nightly",
+      nightlyAck: true,
+      feature: null,
+    });
+
+    await module.checkForUpdatesNow(stateDir);
+    updaterEvents.get("update-downloaded")?.({ version: "2.1.0-nightly.1" });
+    await module.checkForUpdatesNow(stateDir, {
+      settings: { enabled: false, channel: "latest", nightlyAck: false, feature: null },
+    });
+    expect(autoUpdater.autoInstallOnAppQuit).toBe(false);
+
+    updaterEvents.get("update-downloaded")?.({ version: "2.0.0" });
+    expect(autoUpdater.autoInstallOnAppQuit).toBe(true);
+  });
+
+  it("keeps install-on-quit off for an uninstallable location even once replaced", async () => {
+    const restore = stubProcess("darwin", TRANSLOCATED_EXEC_PATH);
+    try {
+      const { module, autoUpdater, updaterEvents } = await importAutoUpdater({
+        enabled: false,
+        channel: "nightly",
+        nightlyAck: true,
+        feature: null,
+      });
+
+      await module.checkForUpdatesNow(stateDir);
+      updaterEvents.get("update-downloaded")?.({ version: "2.1.0-nightly.1" });
+      await module.checkForUpdatesNow(stateDir, {
+        settings: { enabled: false, channel: "latest", nightlyAck: false, feature: null },
+      });
+      updaterEvents.get("update-downloaded")?.({ version: "2.0.0" });
+
+      // The location blocker outranks the replacement: nothing installs from a
+      // translocated bundle whatever is staged.
+      expect(autoUpdater.autoInstallOnAppQuit).toBe(false);
+    } finally {
+      restore();
+    }
+  });
+
   it("leaves install-on-quit on for an installable location", async () => {
     const { root, execPath } = makeBundle();
     const restore = stubProcess("darwin", execPath);
