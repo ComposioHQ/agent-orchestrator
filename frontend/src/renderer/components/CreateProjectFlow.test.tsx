@@ -663,6 +663,7 @@ describe("CreateProjectFlow project import validation", () => {
 		await user.click(screen.getByRole("button", { name: "Continue" }));
 
 		await waitFor(() => expect(useUiStore.getState().globalToast?.body).toMatch(/failed while running Remote setup/i));
+		await waitFor(() => expect(screen.getByRole("dialog", { name: "Prepare project" })).toHaveClass("project-import-shake"));
 		expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
 		expect(screen.queryByTestId("agent-sheet")).not.toBeInTheDocument();
 	});

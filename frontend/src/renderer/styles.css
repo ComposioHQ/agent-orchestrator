@@ -322,6 +322,10 @@
 	backdrop-filter: blur(var(--blur-overlay));
 }
 
+@utility project-import-shake {
+	animation: modal-shake 280ms ease-in-out;
+}
+
 @utility agent-switch-terminal-scrim {
 	background-color: color-mix(in srgb, var(--color-terminal) 95%, transparent);
 	-webkit-backdrop-filter: blur(3px);
