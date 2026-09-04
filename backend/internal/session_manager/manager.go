@@ -395,6 +395,9 @@ type Manager struct {
 	clock                       func() time.Time
 	reconcileWorkers            int
 	defaultBranchRefreshTimeout time.Duration
+	// defaultBranchRefreshes reuses a project's resolved base refs across a
+	// burst of spawns, which is what importing a history is.
+	defaultBranchRefreshes *defaultBranchCache
 	// openTranscriptFile is os.Open in production. The narrow seam lets tests
 	// deterministically prove that a post-stop transcript read failure falls
 	// back without advertising the provider path.
@@ -758,6 +761,7 @@ func New(d Deps) *Manager {
 		clock:                          d.Clock,
 		reconcileWorkers:               d.ReconcileWorkers,
 		defaultBranchRefreshTimeout:    defaultBranchRefreshTimeout,
+		defaultBranchRefreshes:         newDefaultBranchCache(),
 		openTranscriptFile:             os.Open,
 		lookPath:                       d.LookPath,
 		executable:                     d.Executable,
@@ -1163,6 +1167,9 @@ func (m *Manager) refreshDefaultBranchesBestEffort(ctx context.Context, project 
 	if strings.TrimSpace(project.Path) == "" {
 		return nil
 	}
+	if cached, ok := m.defaultBranchRefreshes.lookup(project.ID); ok {
+		return cached
+	}
 	refresher, ok := m.workspace.(ports.WorkspaceDefaultBranchRefresher)
 	if !ok {
 		return nil
@@ -1231,6 +1238,7 @@ func (m *Manager) refreshDefaultBranchesBestEffort(ctx context.Context, project 
 			)
 		}
 	}
+	m.defaultBranchRefreshes.store(project.ID, baseRefs)
 	return baseRefs
 }
 
