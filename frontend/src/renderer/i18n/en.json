@@ -234,7 +234,7 @@
 	"createProject.importProjectDesc": "Import a single Git repository as one project.",
 	"createProject.originRemoteUrl": "Origin remote URL",
 	"createProject.prepareProjectTitle": "Prepare project",
-	"createProject.projectHasChildRepos": "This folder contains child Git repos.",
+	"createProject.projectHasChildRepos": "This folder contains child Git repos",
 	"createProject.projectImportApproval": "AO needs your approval before it initializes Git, creates a first commit, or sets the origin remote.",
 	"createProject.projectImportBlocked": "AO found a problem with this folder before project setup can continue.",
 	"createProject.projectSetup": "Project setup",
