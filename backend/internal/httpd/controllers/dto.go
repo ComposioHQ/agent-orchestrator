@@ -1089,6 +1089,40 @@ type EnsureAgentReadinessRequest struct {
 	Purpose  domain.AgentReadinessPurpose `json:"purpose" enum:"display,launch"`
 }
 
+// KimiSubscriptionResponse is absent for missing, signed-out, or custom Kimi
+// providers. Hosted subscription data is returned without credentials or raw
+// provider payloads.
+type KimiSubscriptionResponse struct {
+	Available bool                              `json:"available"`
+	Capacity  *KimiSubscriptionCapacityResponse `json:"capacity,omitempty"`
+}
+
+// KimiSubscriptionCapacityResponse is the cached live-read result.
+type KimiSubscriptionCapacityResponse struct {
+	State            string                          `json:"state" enum:"available,near_limit,exhausted,unknown"`
+	Freshness        string                          `json:"freshness" enum:"fresh,stale,checking"`
+	Plan             *string                         `json:"plan,omitempty"`
+	AuthMethod       string                          `json:"authMethod" enum:"oauth,api_key,unknown"`
+	UsedPercent      *float64                        `json:"usedPercent,omitempty" minimum:"0" maximum:"100"`
+	RemainingPercent *float64                        `json:"remainingPercent,omitempty" minimum:"0" maximum:"100"`
+	ResetsAt         *time.Time                      `json:"resetsAt,omitempty"`
+	ObservedAt       *time.Time                      `json:"observedAt,omitempty"`
+	CheckedAt        *time.Time                      `json:"checkedAt,omitempty"`
+	AttemptedAt      *time.Time                      `json:"attemptedAt,omitempty"`
+	ReasonCode       string                          `json:"reasonCode"`
+	Reason           string                          `json:"reason"`
+	Limits           []KimiSubscriptionLimitResponse `json:"limits"`
+}
+
+// KimiSubscriptionLimitResponse is one safe provider-reported quota window.
+type KimiSubscriptionLimitResponse struct {
+	Name                  string     `json:"name"`
+	UsedPercent           float64    `json:"usedPercent" minimum:"0" maximum:"100"`
+	RemainingPercent      float64    `json:"remainingPercent" minimum:"0" maximum:"100"`
+	WindowDurationMinutes *int64     `json:"windowDurationMinutes,omitempty"`
+	ResetsAt              *time.Time `json:"resetsAt,omitempty"`
+}
+
 // CodexAccountsResponse is the controller-owned, redacted cached account view.
 type CodexAccountsResponse struct {
 	ActiveAccountID        string                               `json:"activeAccountId,omitempty"`

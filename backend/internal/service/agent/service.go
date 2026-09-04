@@ -61,6 +61,7 @@ type Service struct {
 	modelCalls    map[string]*modelCatalogCall
 	codexAccounts *codexAccountManager
 	codexSwitches CodexAccountSwitchCoordinator
+	kimiUsage     *kimiSubscriptionCoordinator
 }
 
 // CodexAccountSwitchCoordinator owns global switch execution and recovery.
@@ -86,6 +87,7 @@ type Deps struct {
 	CodexAccounts          ports.CodexAccountClientFactory
 	CodexAccountState      CodexAccountStateStore
 	CodexOperationGate     ports.CodexOperationGate
+	KimiSubscriptions      ports.KimiSubscriptionReader
 }
 
 // ProjectLookup resolves the registered working directory used for model
@@ -112,6 +114,9 @@ func NewWithDeps(deps Deps) *Service {
 	svc := newService(agents, deps.Cache, deps.Projects, deps.Discoverer)
 	if deps.CodexAccountRoot != "" && deps.CodexGlobalHome != "" {
 		svc.codexAccounts = newCodexAccountManager(deps.Context, deps.CodexAccountRoot, deps.CodexPendingRoot, deps.CodexSwitchStagingRoot, deps.CodexGlobalHome, deps.CodexAccounts, deps.CodexAccountState, deps.Logger, deps.CodexOperationGate)
+	}
+	if deps.KimiSubscriptions != nil {
+		svc.kimiUsage = newKimiSubscriptionCoordinator(deps.KimiSubscriptions, deps.Logger)
 	}
 	svc.readiness = newReadinessCoordinator(readinessCoordinatorConfig{
 		Agents: agents, Factory: agentregistry.Harnessed, Context: deps.Context, Logger: deps.Logger,

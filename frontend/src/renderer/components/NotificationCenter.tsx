@@ -17,7 +17,6 @@ import {
 } from "lucide-react";
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useMarkAllNotificationsReadMutation, useNotificationsQuery } from "../hooks/useNotificationsQuery";
-import { useQuotaAlerts } from "../hooks/useProviderQuota";
 import { useRestoreSession } from "../hooks/useRestoreSession";
 import { useWorkspaceQuery } from "../hooks/useWorkspaceQuery";
 import type { WorkspaceSummary } from "../types/workspace";
@@ -148,9 +147,6 @@ export function NotificationRuntime() {
 	const { openPrimary } = useNotificationTargetNavigation();
 	const unreadQuery = useNotificationsQuery("unread");
 	const unreadCount = getCachedUnreadCount(unreadQuery.data);
-	const quotaAlerts = useQuotaAlerts();
-	const quotaAlertsInitialized = useRef(false);
-	const seenQuotaAlertIds = useRef(new Set<string>());
 	const params = useParams({ strict: false }) as { sessionId?: string };
 	const routeSessionIdRef = useRef(params.sessionId);
 	routeSessionIdRef.current = params.sessionId;
@@ -188,20 +184,6 @@ export function NotificationRuntime() {
 			if (notification) openPrimary(notification);
 		});
 	}, [openPrimary, queryClient]);
-
-	useEffect(() => {
-		if (!quotaAlerts.data) return;
-		if (!quotaAlertsInitialized.current) {
-			for (const alert of quotaAlerts.data) seenQuotaAlertIds.current.add(alert.id);
-			quotaAlertsInitialized.current = true;
-			return;
-		}
-		for (const alert of quotaAlerts.data.slice().reverse()) {
-			if (seenQuotaAlertIds.current.has(alert.id)) continue;
-			seenQuotaAlertIds.current.add(alert.id);
-			void aoBridge.notifications.show({ id: alert.id, title: alert.title, body: alert.body, type: "quota" });
-		}
-	}, [quotaAlerts.data]);
 
 	return null;
 }

@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -23,18 +22,19 @@ import (
 
 const (
 	kimiUsageEndpoint = "https://api.kimi.com/coding/v1/usages"
-	kimiUsageTimeout  = 20 * time.Second
+	kimiUsageTimeout  = 10 * time.Second
 	maxUsageBody      = 1 << 20
 )
 
-// QuotaPlugin is the installed Kimi capability required by the quota reader.
-type QuotaPlugin interface {
+type subscriptionPlugin interface {
 	ResolveBinary(context.Context) (string, error)
 }
 
-// QuotaRefresher reads hosted Kimi Code subscription usage without a session.
-type QuotaRefresher struct {
-	plugin   QuotaPlugin
+// SubscriptionReader performs a provider-authoritative read for the active
+// hosted Kimi Code account. Custom/BYOK configurations are rejected before a
+// credential can be sent to the hosted endpoint.
+type SubscriptionReader struct {
+	plugin   subscriptionPlugin
 	dataDir  string
 	client   *http.Client
 	endpoint string
@@ -42,108 +42,87 @@ type QuotaRefresher struct {
 	timeout  time.Duration
 }
 
-// NewQuotaRefresher creates a daemon-owned Kimi plan-usage reader.
-func NewQuotaRefresher(plugin QuotaPlugin, dataDir string) *QuotaRefresher {
-	return &QuotaRefresher{
-		plugin:   plugin,
-		dataDir:  dataDir,
-		client:   &http.Client{},
-		endpoint: kimiUsageEndpoint,
-		now:      func() time.Time { return time.Now().UTC() },
-		timeout:  kimiUsageTimeout,
+// NewSubscriptionReader returns a reader for the active hosted Kimi account.
+func NewSubscriptionReader(plugin subscriptionPlugin, dataDir string) *SubscriptionReader {
+	return &SubscriptionReader{
+		plugin: plugin, dataDir: dataDir, client: &http.Client{}, endpoint: kimiUsageEndpoint,
+		now: func() time.Time { return time.Now().UTC() }, timeout: kimiUsageTimeout,
 	}
 }
 
-// QuotaAccountPresent reports whether a hosted Kimi Code account is readable.
-func (r *QuotaRefresher) QuotaAccountPresent(ctx context.Context, provider domain.QuotaProviderID, accountID domain.QuotaAccountID) (bool, error) {
-	if r == nil || r.plugin == nil || provider != "kimi" || accountID != "default" {
-		return false, nil
+// ReadKimiSubscription fetches and normalizes the active hosted account usage.
+func (r *SubscriptionReader) ReadKimiSubscription(ctx context.Context) (ports.KimiSubscriptionObservation, error) {
+	if r == nil || r.plugin == nil {
+		return ports.KimiSubscriptionObservation{}, ports.ErrKimiSubscriptionUnsupported
 	}
 	if _, err := r.plugin.ResolveBinary(ctx); err != nil {
-		if errors.Is(err, ports.ErrAgentBinaryNotFound) {
-			return false, nil
-		}
-		return false, err
-	}
-	_, err := resolveHostedKimiCredential(r.dataDir)
-	if errors.Is(err, ports.ErrQuotaRefreshUnsupported) {
-		return false, nil
-	}
-	return err == nil, err
-}
-
-// RefreshQuota fetches and normalizes Kimi's current subscription limits.
-func (r *QuotaRefresher) RefreshQuota(ctx context.Context, provider domain.QuotaProviderID, accountID domain.QuotaAccountID) (domain.QuotaSnapshot, error) {
-	if r == nil || r.plugin == nil || provider != "kimi" || accountID != "default" {
-		return domain.QuotaSnapshot{}, ports.ErrQuotaRefreshUnsupported
-	}
-	if _, err := r.plugin.ResolveBinary(ctx); err != nil {
-		return domain.QuotaSnapshot{}, fmt.Errorf("resolve Kimi: %w", err)
+		return ports.KimiSubscriptionObservation{}, fmt.Errorf("resolve Kimi: %w", err)
 	}
 	credential, err := resolveHostedKimiCredential(r.dataDir)
 	if err != nil {
-		return domain.QuotaSnapshot{}, err
+		return ports.KimiSubscriptionObservation{}, err
 	}
 	readCtx, cancel := context.WithTimeout(ctx, r.timeout)
 	defer cancel()
 	req, err := http.NewRequestWithContext(readCtx, http.MethodGet, r.endpoint, http.NoBody)
 	if err != nil {
-		return domain.QuotaSnapshot{}, fmt.Errorf("create Kimi usage request: %w", err)
+		return ports.KimiSubscriptionObservation{}, fmt.Errorf("create Kimi usage request: %w", err)
 	}
 	req.Header.Set("Authorization", "Bearer "+credential.token)
 	req.Header.Set("Accept", "application/json")
 	resp, err := r.client.Do(req)
 	if err != nil {
 		if errors.Is(readCtx.Err(), context.DeadlineExceeded) {
-			return domain.QuotaSnapshot{}, fmt.Errorf("kimi usage read timed out: %w", readCtx.Err())
+			return ports.KimiSubscriptionObservation{}, fmt.Errorf("kimi usage read timed out: %w", readCtx.Err())
 		}
 		if readCtx.Err() != nil {
-			return domain.QuotaSnapshot{}, fmt.Errorf("read Kimi usage: %w", readCtx.Err())
+			return ports.KimiSubscriptionObservation{}, fmt.Errorf("read Kimi usage: %w", readCtx.Err())
 		}
-		return domain.QuotaSnapshot{}, fmt.Errorf("read Kimi usage: %w", err)
+		return ports.KimiSubscriptionObservation{}, fmt.Errorf("read Kimi usage: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
 		switch resp.StatusCode {
 		case http.StatusUnauthorized:
-			return domain.QuotaSnapshot{}, fmt.Errorf("kimi authentication failed; sign in again (HTTP %d)", resp.StatusCode)
+			return ports.KimiSubscriptionObservation{}, fmt.Errorf("kimi authentication failed; sign in again (HTTP %d)", resp.StatusCode)
+		case http.StatusNotFound:
+			return ports.KimiSubscriptionObservation{}, fmt.Errorf("kimi subscription usage is unavailable (HTTP %d)", resp.StatusCode)
 		case http.StatusTooManyRequests:
-			return domain.QuotaSnapshot{}, fmt.Errorf("kimi usage request was rate limited (HTTP %d)", resp.StatusCode)
+			return ports.KimiSubscriptionObservation{}, fmt.Errorf("kimi usage request was rate limited (HTTP %d)", resp.StatusCode)
 		default:
 			if resp.StatusCode >= http.StatusInternalServerError {
-				return domain.QuotaSnapshot{}, fmt.Errorf("kimi usage service failed (HTTP %d)", resp.StatusCode)
+				return ports.KimiSubscriptionObservation{}, fmt.Errorf("kimi usage service failed (HTTP %d)", resp.StatusCode)
 			}
-			return domain.QuotaSnapshot{}, fmt.Errorf("kimi usage request failed with HTTP %d", resp.StatusCode)
+			return ports.KimiSubscriptionObservation{}, fmt.Errorf("kimi usage request failed with HTTP %d", resp.StatusCode)
 		}
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxUsageBody+1))
 	if err != nil {
-		return domain.QuotaSnapshot{}, fmt.Errorf("read Kimi usage response: %w", err)
+		return ports.KimiSubscriptionObservation{}, fmt.Errorf("read Kimi usage response: %w", err)
 	}
 	if len(body) > maxUsageBody {
-		return domain.QuotaSnapshot{}, errors.New("kimi usage response exceeded size limit")
+		return ports.KimiSubscriptionObservation{}, errors.New("kimi usage response exceeded size limit")
 	}
 	var payload kimiUsagePayload
 	if err := json.Unmarshal(body, &payload); err != nil {
-		return domain.QuotaSnapshot{}, fmt.Errorf("decode Kimi usage response: %w", err)
+		return ports.KimiSubscriptionObservation{}, fmt.Errorf("decode Kimi usage response: %w", err)
 	}
-	snapshot, err := normalizeUsagePayload(payload, r.now())
+	observation, err := normalizeUsagePayload(payload, r.now())
 	if err != nil {
-		return domain.QuotaSnapshot{}, err
+		return ports.KimiSubscriptionObservation{}, err
 	}
-	snapshot.AuthMode = credential.authMode
-	return snapshot, nil
+	observation.AuthMethod = credential.authMethod
+	return observation, nil
 }
 
 type kimiHostedCredential struct {
-	token    string
-	authMode string
+	token      string
+	authMethod string
 }
 
 func resolveHostedKimiCredential(dataDir string) (kimiHostedCredential, error) {
-	if baseURL := strings.TrimSpace(os.Getenv("KIMI_CODE_BASE_URL")); baseURL != "" &&
-		!isHostedKimiBaseURL(baseURL) {
-		return kimiHostedCredential{}, ports.ErrQuotaRefreshUnsupported
+	if baseURL := strings.TrimSpace(os.Getenv("KIMI_CODE_BASE_URL")); baseURL != "" && !isHostedKimiBaseURL(baseURL) {
+		return kimiHostedCredential{}, ports.ErrKimiSubscriptionUnsupported
 	}
 	homes := make([]string, 0, 3)
 	if discovered, ok := kimiAuthHomes(); ok {
@@ -169,20 +148,20 @@ func resolveHostedKimiCredential(dataDir string) (kimiHostedCredential, error) {
 			}
 		}
 	}
-	// An environment-only token is safe only when the caller explicitly selects
-	// Kimi's hosted endpoint. Otherwise it may belong to a custom provider.
+	// Environment-only credentials are safe only when the hosted endpoint was
+	// selected explicitly. Otherwise the token may belong to a custom provider.
 	if isHostedKimiBaseURL(strings.TrimSpace(os.Getenv("KIMI_CODE_BASE_URL"))) {
 		for _, name := range []string{"KIMI_API_KEY", "KIMI_CODE_API_KEY"} {
 			if value := strings.TrimSpace(os.Getenv(name)); value != "" {
-				return kimiHostedCredential{token: value, authMode: "api_key"}, nil
+				return kimiHostedCredential{token: value, authMethod: "api_key"}, nil
 			}
 		}
 	}
-	return kimiHostedCredential{}, ports.ErrQuotaRefreshUnsupported
+	return kimiHostedCredential{}, ports.ErrKimiSubscriptionUnsupported
 }
 
 func hostedCredentialFromConfig(path string) (kimiHostedCredential, bool, error) {
-	data, err := os.ReadFile(path) //nolint:gosec // Kimi user/AO config selected by the same adapter lookup as auth detection.
+	data, err := os.ReadFile(path) //nolint:gosec // Selected Kimi config path from the adapter's bounded home lookup.
 	if os.IsNotExist(err) {
 		return kimiHostedCredential{}, false, nil
 	}
@@ -207,33 +186,30 @@ func hostedCredentialFromConfig(path string) (kimiHostedCredential, bool, error)
 			providerID = "managed:kimi-code"
 		}
 	}
-	if providerID != "" && providerID != "managed:kimi-code" {
-		return kimiHostedCredential{}, false, ports.ErrQuotaRefreshUnsupported
-	}
 	if providerID != "managed:kimi-code" {
-		return kimiHostedCredential{}, false, ports.ErrQuotaRefreshUnsupported
+		return kimiHostedCredential{}, false, ports.ErrKimiSubscriptionUnsupported
 	}
 	provider := config.Providers[providerID]
 	if providerType := strings.TrimSpace(provider.Type); providerType != "" && providerType != "kimi" {
-		return kimiHostedCredential{}, false, ports.ErrQuotaRefreshUnsupported
+		return kimiHostedCredential{}, false, ports.ErrKimiSubscriptionUnsupported
 	}
 	effectiveBaseURL := firstNonBlank(provider.BaseURL, provider.Env["KIMI_BASE_URL"])
 	if effectiveBaseURL != "" && !isHostedKimiBaseURL(effectiveBaseURL) {
-		return kimiHostedCredential{}, false, ports.ErrQuotaRefreshUnsupported
+		return kimiHostedCredential{}, false, ports.ErrKimiSubscriptionUnsupported
 	}
 	if token := strings.TrimSpace(provider.APIKey); token != "" {
-		return kimiHostedCredential{token: token, authMode: "api_key"}, true, nil
+		return kimiHostedCredential{token: token, authMethod: "api_key"}, true, nil
 	}
 	if token := strings.TrimSpace(provider.Env["KIMI_API_KEY"]); token != "" {
-		return kimiHostedCredential{token: token, authMode: "api_key"}, true, nil
+		return kimiHostedCredential{token: token, authMethod: "api_key"}, true, nil
 	}
 	if provider.OAuth == nil || strings.TrimSpace(provider.OAuth.Key) == "" {
-		return kimiHostedCredential{}, false, ports.ErrQuotaRefreshUnsupported
+		return kimiHostedCredential{}, false, ports.ErrKimiSubscriptionUnsupported
 	}
 	credentialPath := kimiOAuthCredentialPath(filepath.Dir(path), provider.OAuth.Key)
-	data, err = os.ReadFile(credentialPath) //nolint:gosec // referenced by the selected managed Kimi config.
+	data, err = os.ReadFile(credentialPath) //nolint:gosec // Referenced by the selected managed Kimi config.
 	if os.IsNotExist(err) {
-		return kimiHostedCredential{}, false, ports.ErrQuotaRefreshUnsupported
+		return kimiHostedCredential{}, false, ports.ErrKimiSubscriptionUnsupported
 	}
 	if err != nil {
 		return kimiHostedCredential{}, false, fmt.Errorf("read Kimi credential: %w", err)
@@ -245,9 +221,9 @@ func hostedCredentialFromConfig(path string) (kimiHostedCredential, bool, error)
 		return kimiHostedCredential{}, false, fmt.Errorf("decode Kimi credential: %w", err)
 	}
 	if token := strings.TrimSpace(credential.AccessToken); token != "" {
-		return kimiHostedCredential{token: token, authMode: "oauth"}, true, nil
+		return kimiHostedCredential{token: token, authMethod: "oauth"}, true, nil
 	}
-	return kimiHostedCredential{}, false, ports.ErrQuotaRefreshUnsupported
+	return kimiHostedCredential{}, false, ports.ErrKimiSubscriptionUnsupported
 }
 
 func isHostedKimiBaseURL(value string) bool {
@@ -310,88 +286,64 @@ func (n *kimiNumber) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-var nonQuotaID = regexp.MustCompile(`[^a-z0-9]+`)
-
-func normalizeUsagePayload(payload kimiUsagePayload, observedAt time.Time) (domain.QuotaSnapshot, error) {
-	limits := make([]domain.QuotaLimit, 0, len(payload.Limits)+1)
+func normalizeUsagePayload(payload kimiUsagePayload, observedAt time.Time) (ports.KimiSubscriptionObservation, error) {
+	limits := make([]domain.KimiSubscriptionLimit, 0, len(payload.Limits)+1)
 	if payload.Usage != nil {
-		if limit, ok := normalizeKimiLimit(*payload.Usage, kimiUsageWindow{}, "Weekly limit", "weekly", observedAt); ok {
+		weeklyMinutes := int64(7 * 24 * 60)
+		if limit, ok := normalizeKimiLimit(*payload.Usage, "Weekly limit", &weeklyMinutes, observedAt); ok {
 			limits = append(limits, limit)
 		}
 	}
 	for i, raw := range payload.Limits {
 		label := firstNonBlank(raw.Name, raw.Title, raw.Scope, windowLabel(raw.Window), fmt.Sprintf("Limit #%d", i+1))
-		id := quotaID(label)
-		if label == windowLabel(raw.Window) {
-			id = windowID(raw.Window)
+		var minutes *int64
+		if duration, ok := windowDuration(raw.Window); ok {
+			value := int64(duration / time.Minute)
+			minutes = &value
 		}
-		if limit, ok := normalizeKimiLimit(raw.Detail, raw.Window, label, id, observedAt); ok {
+		if limit, ok := normalizeKimiLimit(raw.Detail, label, minutes, observedAt); ok {
 			limits = append(limits, limit)
 		}
 	}
 	if len(limits) == 0 {
-		return domain.QuotaSnapshot{}, errors.New("kimi usage response contained no valid limits")
+		return ports.KimiSubscriptionObservation{}, errors.New("kimi usage response contained no valid limits")
 	}
-	return domain.NormalizeQuotaSnapshot(domain.QuotaSnapshot{
-		Provider:     "kimi",
-		AccountID:    "default",
-		AccountLabel: "Kimi",
-		PlanType:     strings.TrimSpace(payload.User.Membership.Level),
-		Capabilities: domain.QuotaCapabilities{SupportsRead: true, SupportsHistory: true},
-		Limits:       limits,
-		ObservedAt:   observedAt,
-		Completeness: domain.QuotaComplete,
-	}), nil
+	var plan *string
+	if value := strings.TrimSpace(payload.User.Membership.Level); value != "" {
+		plan = &value
+	}
+	return ports.KimiSubscriptionObservation{Plan: plan, AuthMethod: "unknown", Limits: limits, ObservedAt: observedAt.UTC()}, nil
 }
 
-func normalizeKimiLimit(raw kimiUsageDetail, window kimiUsageWindow, fallbackLabel, fallbackID string, observedAt time.Time) (domain.QuotaLimit, bool) {
+func normalizeKimiLimit(raw kimiUsageDetail, fallbackLabel string, minutes *int64, observedAt time.Time) (domain.KimiSubscriptionLimit, bool) {
 	if raw.Used == nil && raw.Remaining == nil && raw.Limit == nil {
-		return domain.QuotaLimit{}, false
+		return domain.KimiSubscriptionLimit{}, false
 	}
 	if negative(raw.Used) || negative(raw.Remaining) || negative(raw.Limit) {
-		return domain.QuotaLimit{}, false
+		return domain.KimiSubscriptionLimit{}, false
 	}
-	used := kimiFloat(raw.Used)
-	remaining := kimiFloat(raw.Remaining)
-	total := kimiFloat(raw.Limit)
-	if remaining != nil && total != nil && *remaining > *total {
-		return domain.QuotaLimit{}, false
+	used, remaining, total := kimiFloat(raw.Used), kimiFloat(raw.Remaining), kimiFloat(raw.Limit)
+	if total == nil || *total <= 0 || remaining != nil && *remaining > *total {
+		return domain.KimiSubscriptionLimit{}, false
 	}
-	if used == nil && remaining != nil && total != nil {
+	if used == nil && remaining != nil {
 		value := *total - *remaining
 		used = &value
 	}
-	if remaining == nil && used != nil && total != nil {
-		value := max(0, *total-*used)
+	if used == nil {
+		return domain.KimiSubscriptionLimit{}, false
+	}
+	if remaining == nil {
+		value := math.Max(0, *total-*used)
 		remaining = &value
 	}
-	var usedPercent *float64
-	if used != nil && total != nil && *total > 0 {
-		value := *used / *total * 100
-		usedPercent = &value
-	}
-	label := firstNonBlank(raw.Name, raw.Title, fallbackLabel)
-	limit := domain.QuotaLimit{
-		ID:             domain.QuotaLimitID(firstNonBlank(fallbackID, quotaID(label))),
-		Name:           label,
-		Category:       domain.QuotaRateLimit,
-		Scope:          domain.QuotaAccountScope,
-		UsedPercent:    usedPercent,
-		RemainingValue: remaining,
-		TotalValue:     total,
-		Unit:           "requests",
-		WindowType:     firstNonBlank(windowID(window), fallbackID),
-		ObservedAt:     observedAt,
-	}
-	if duration, ok := windowDuration(window); ok {
-		limit.WindowDuration = &duration
-	}
-	limit.ResetsAt = kimiResetAt(raw, observedAt)
-	if remaining != nil {
-		reached := *remaining <= 0
-		limit.Reached = &reached
-	}
-	return limit, true
+	usedPercent := math.Max(0, math.Min(100, *used / *total * 100))
+	remainingPercent := math.Max(0, math.Min(100, *remaining / *total * 100))
+	return domain.KimiSubscriptionLimit{
+		Name: firstNonBlank(raw.Name, raw.Title, fallbackLabel), UsedPercent: usedPercent,
+		RemainingPercent: remainingPercent, WindowDurationMinutes: minutes,
+		ResetsAt: kimiResetAt(raw, observedAt),
+	}, true
 }
 
 func kimiResetAt(raw kimiUsageDetail, observedAt time.Time) *time.Time {
@@ -403,7 +355,7 @@ func kimiResetAt(raw kimiUsageDetail, observedAt time.Time) *time.Time {
 	}
 	for _, seconds := range []*kimiNumber{raw.ResetIn, raw.ResetInV1, raw.TTL} {
 		if seconds != nil && *seconds > 0 {
-			reset := observedAt.Add(time.Duration(*seconds) * time.Second)
+			reset := observedAt.Add(time.Duration(*seconds) * time.Second).UTC()
 			return &reset
 		}
 	}
@@ -443,24 +395,6 @@ func windowLabel(window kimiUsageWindow) string {
 		return fmt.Sprintf("%dm limit", int64(duration/time.Minute))
 	}
 	return fmt.Sprintf("%ds limit", int64(duration/time.Second))
-}
-
-func windowID(window kimiUsageWindow) string {
-	duration, ok := windowDuration(window)
-	if !ok {
-		return ""
-	}
-	if duration%time.Hour == 0 {
-		return fmt.Sprintf("%dh", int64(duration/time.Hour))
-	}
-	if duration%time.Minute == 0 {
-		return fmt.Sprintf("%dm", int64(duration/time.Minute))
-	}
-	return fmt.Sprintf("%ds", int64(duration/time.Second))
-}
-
-func quotaID(value string) string {
-	return strings.Trim(nonQuotaID.ReplaceAllString(strings.ToLower(strings.TrimSpace(value)), "_"), "_")
 }
 
 func firstNonBlank(values ...string) string {

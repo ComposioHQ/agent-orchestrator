@@ -377,7 +377,6 @@ function useSelection() {
 	);
 	return useMemo(() => ({
 		isHome: pathname === "/",
-		isUsage: pathname === "/usage",
 		activeProjectId: params.projectId,
 		activeSessionId: params.sessionId,
 		goHome,
@@ -921,12 +920,6 @@ export function Sidebar({
 					/>
 					<CloudSignInRailButton tabIndex={isCollapsed ? 0 : -1} />
 					<CloudAccountRailButton tabIndex={isCollapsed ? 0 : -1} />
-					<Tooltip>
-						<TooltipTrigger asChild>
-							<button aria-label={t("planUsage.title")} className={cn("grid size-control-board place-items-center rounded-lg text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground [&_svg]:size-icon-base", selection.isUsage && "bg-interactive-active text-foreground")} onClick={selection.goUsage} tabIndex={isCollapsed ? 0 : -1} type="button"><Gauge aria-hidden="true" /></button>
-						</TooltipTrigger>
-						<TooltipContent side="right">{t("planUsage.title")}</TooltipContent>
-					</Tooltip>
 					<Tooltip>
 						<TooltipTrigger asChild>
 							<button

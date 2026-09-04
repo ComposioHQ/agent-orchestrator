@@ -23,6 +23,7 @@ type AgentCatalog interface {
 	Probe(ctx context.Context, agentID string) (agentsvc.ProbeResult, error)
 	Models(ctx context.Context, agentID, projectID string, refresh bool) (ports.AgentModelCatalog, error)
 	RevalidateModels(ctx context.Context, agentID, projectID string) (ports.AgentModelCatalog, error)
+	KimiSubscription(ctx context.Context, force bool) (agentsvc.KimiSubscription, error)
 }
 
 // AgentsController owns the /agents routes.
@@ -39,6 +40,54 @@ func (c *AgentsController) Register(r chi.Router) {
 	r.Post("/agents/{agent}/probe", c.probe)
 	r.Get("/agents/{agent}/models", c.models)
 	r.Post("/agents/{agent}/models/refresh", c.refreshModels)
+	r.Get("/agents/kimi/subscription", c.kimiSubscription)
+	r.Post("/agents/kimi/subscription/refresh", c.refreshKimiSubscription)
+}
+
+func (c *AgentsController) kimiSubscription(w http.ResponseWriter, r *http.Request) {
+	c.writeKimiSubscription(w, r, false)
+}
+
+func (c *AgentsController) refreshKimiSubscription(w http.ResponseWriter, r *http.Request) {
+	c.writeKimiSubscription(w, r, true)
+}
+
+func (c *AgentsController) writeKimiSubscription(w http.ResponseWriter, r *http.Request, force bool) {
+	if c.Catalog == nil {
+		path := "/api/v1/agents/kimi/subscription"
+		if force {
+			path += "/refresh"
+		}
+		apispec.NotImplemented(w, r, r.Method, path)
+		return
+	}
+	result, err := c.Catalog.KimiSubscription(r.Context(), force)
+	if err != nil {
+		envelope.WriteError(w, r, err)
+		return
+	}
+	envelope.WriteJSON(w, http.StatusOK, newKimiSubscriptionResponse(result))
+}
+
+func newKimiSubscriptionResponse(input agentsvc.KimiSubscription) KimiSubscriptionResponse {
+	response := KimiSubscriptionResponse{Available: input.Available}
+	if !input.Available {
+		return response
+	}
+	limits := make([]KimiSubscriptionLimitResponse, len(input.Capacity.Limits))
+	for i, limit := range input.Capacity.Limits {
+		limits[i] = KimiSubscriptionLimitResponse{
+			Name: limit.Name, UsedPercent: limit.UsedPercent, RemainingPercent: limit.RemainingPercent,
+			WindowDurationMinutes: limit.WindowDurationMinutes, ResetsAt: limit.ResetsAt,
+		}
+	}
+	response.Capacity = &KimiSubscriptionCapacityResponse{
+		State: string(input.Capacity.State), Freshness: string(input.Capacity.Freshness), Plan: input.Capacity.Plan,
+		AuthMethod: input.Capacity.AuthMethod, UsedPercent: input.Capacity.UsedPercent, RemainingPercent: input.Capacity.RemainingPercent,
+		ResetsAt: input.Capacity.ResetsAt, ObservedAt: input.Capacity.ObservedAt, CheckedAt: input.Capacity.CheckedAt,
+		AttemptedAt: input.Capacity.AttemptedAt, ReasonCode: input.Capacity.ReasonCode, Reason: input.Capacity.Reason, Limits: limits,
+	}
+	return response
 }
 
 func (c *AgentsController) readiness(w http.ResponseWriter, r *http.Request) {

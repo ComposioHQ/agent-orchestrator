@@ -281,7 +281,6 @@ func newController(
 	conv ports.ChatConversation,
 	store Store,
 	activity ActivityRecorder,
-	quota ports.QuotaCollector,
 	log *slog.Logger,
 	newID IDFactory,
 	now Clock,
@@ -953,16 +952,11 @@ func (c *Controller) readRateLimits() {
 	if !ok {
 		return
 	}
-	identity, ok := c.conv.(ports.ChatQuotaIdentity)
-	if !ok || c.quota == nil {
-		return
-	}
-	provider, accountID := identity.QuotaIdentity()
 
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(context.Background()), rateLimitReadTimeout)
 	defer cancel()
 
-	limits, err := c.quota.CollectRateLimits(ctx, provider, accountID, reporter.ReadRateLimits)
+	limits, err := reporter.ReadRateLimits(ctx)
 	if err != nil {
 		c.log.Debug("chat rate limit read failed", "session", c.sessionID, "error", err)
 		return
@@ -978,15 +972,6 @@ func (c *Controller) readRateLimits() {
 		PlanLabel:                limits.PlanLabel,
 	}); err != nil {
 		c.log.Debug("failed to record chat rate limits", "session", c.sessionID, "error", err)
-	}
-}
-
-func (c *Controller) recordQuotaSnapshot(ctx context.Context, snapshot *domain.QuotaSnapshot) {
-	if c.quota == nil || snapshot == nil {
-		return
-	}
-	if err := c.quota.RecordQuotaSnapshot(ctx, *snapshot); err != nil {
-		c.log.Debug("failed to record provider quota", "session", c.sessionID, "provider", snapshot.Provider, "error", err)
 	}
 }
 

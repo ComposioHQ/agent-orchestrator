@@ -119,20 +119,20 @@ type kimiOAuthRef struct {
 
 type kimiCredentialSource struct {
 	Type    string            `json:"type" toml:"type"`
-	APIKey  string            `json:"api_key" toml:"api_key"`
 	BaseURL string            `json:"base_url" toml:"base_url"`
+	APIKey  string            `json:"api_key" toml:"api_key"`
 	Env     map[string]string `json:"env" toml:"env"`
 	OAuth   *kimiOAuthRef     `json:"oauth" toml:"oauth"`
+}
+
+type kimiModelConfig struct {
+	Provider string `json:"provider" toml:"provider"`
 }
 
 type kimiAuthConfig struct {
 	DefaultModel string                          `json:"default_model" toml:"default_model"`
 	Providers    map[string]kimiCredentialSource `json:"providers" toml:"providers"`
 	Models       map[string]kimiModelConfig      `json:"models" toml:"models"`
-}
-
-type kimiModelConfig struct {
-	Provider string `json:"provider" toml:"provider"`
 }
 
 func kimiConfigOAuthCredentialPaths(path string) ([]string, error) {

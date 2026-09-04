@@ -30,7 +30,6 @@ type APIDeps struct {
 	Activity           controllers.ActivityRecorder
 	UsageHooks         controllers.UsageHookRecorder
 	UsageSummary       controllers.UsageSummaryService
-	Quota              controllers.QuotaService
 	PRs                prsvc.ActionManager
 	Reviews            reviewsvc.Manager
 	Notifications      controllers.NotificationService
@@ -110,7 +109,6 @@ type API struct {
 	sessions      *controllers.SessionsController
 	desktop       *controllers.DesktopWorkspaceController
 	usage         *controllers.UsageController
-	quota         *controllers.QuotaController
 	prs           *controllers.PRsController
 	reviews       *controllers.ReviewsController
 	notifications *controllers.NotificationsController
@@ -153,7 +151,6 @@ func NewAPI(cfg config.Config, deps APIDeps) *API {
 		},
 		desktop:       &controllers.DesktopWorkspaceController{Svc: deps.DesktopWorkspaces},
 		usage:         &controllers.UsageController{Svc: deps.UsageSummary},
-		quota:         &controllers.QuotaController{Svc: deps.Quota},
 		prs:           &controllers.PRsController{Svc: deps.PRs},
 		reviews:       &controllers.ReviewsController{Svc: deps.Reviews},
 		notifications: &controllers.NotificationsController{Svc: deps.Notifications, Stream: deps.NotificationStream},
@@ -193,7 +190,6 @@ func (a *API) Register(root chi.Router) {
 			a.sessions.Register(r)
 			a.desktop.Register(r)
 			a.usage.Register(r)
-			a.quota.Register(r)
 			a.prs.Register(r)
 			a.reviews.Register(r)
 			a.notifications.Register(r)

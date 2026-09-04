@@ -121,44 +121,6 @@ func New(opts Options) *Service {
 	}
 }
 
-// RefreshQuota reads one authoritative snapshot from any live provider
-// conversation that advertises on-demand quota. Provider IDs remain opaque: the
-// service discovers them from the adapter result instead of switching on names.
-func (s *Service) RefreshQuota(ctx context.Context, provider domain.QuotaProviderID, accountID domain.QuotaAccountID) (domain.QuotaSnapshot, error) {
-	s.mu.RLock()
-	controllers := make([]*Controller, 0, len(s.controllers))
-	for _, controller := range s.controllers {
-		controllers = append(controllers, controller)
-	}
-	s.mu.RUnlock()
-	for _, controller := range controllers {
-		reporter, ok := controller.conv.(ports.ChatUsageReporter)
-		if !ok {
-			continue
-		}
-		identity, ok := controller.conv.(ports.ChatQuotaIdentity)
-		if !ok {
-			continue
-		}
-		candidateProvider, candidateAccount := identity.QuotaIdentity()
-		if candidateProvider != provider || candidateAccount != accountID {
-			continue
-		}
-		limits, err := reporter.ReadRateLimits(ctx)
-		if err != nil {
-			return domain.QuotaSnapshot{}, err
-		}
-		if limits.Quota == nil {
-			return domain.QuotaSnapshot{}, fmt.Errorf("provider quota read returned no account snapshot")
-		}
-		snapshot := domain.NormalizeQuotaSnapshot(*limits.Quota)
-		if snapshot.AccountID == accountID {
-			return snapshot, nil
-		}
-	}
-	return domain.QuotaSnapshot{}, ports.ErrQuotaRefreshUnsupported
-}
-
 func (s *Service) controllerGate(id domain.SessionID) controllerGate {
 	s.gateMu.Lock()
 	defer s.gateMu.Unlock()

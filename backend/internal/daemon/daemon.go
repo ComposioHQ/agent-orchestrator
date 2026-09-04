@@ -20,6 +20,7 @@ import (
 	"github.com/google/uuid"
 
 	codexagent "github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/codex"
+	kimiagent "github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/kimi"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/modelcatalog"
 	chatdriveracp "github.com/aoagents/agent-orchestrator/backend/internal/adapters/chatdriver/acp"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/chatdriver/codexappserver"
@@ -55,7 +56,6 @@ import (
 	notificationsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/notification"
 	prsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/pr"
 	projectsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/project"
-	quotasvc "github.com/aoagents/agent-orchestrator/backend/internal/service/quota"
 	settingssvc "github.com/aoagents/agent-orchestrator/backend/internal/service/settings"
 	"github.com/aoagents/agent-orchestrator/backend/internal/service/systemcheck"
 	"github.com/aoagents/agent-orchestrator/backend/internal/service/systeminstall"
@@ -360,7 +360,6 @@ func Run() error {
 	// resolver (AO_AGENT validated here for compatibility), and the agent
 	// messenger, then mount it on the API.
 	chatDrivers := chatdriverregistry.Build(log)
-	quotaSvc := quotasvc.New(store)
 
 	// Daemon-owned preferences. The store's type is field-compatible with the
 	// service's, adapted here so neither package imports the other. Offering
@@ -422,7 +421,6 @@ func Run() error {
 		// The LCM satisfies ActivityRecorder directly: a chat turn is a pure
 		// lifecycle reduction, same as a hook signal from a terminal session.
 		Activity: lcStack.LCM,
-		Quota:    quotaSvc,
 		Log:      log,
 		NewID:    uuid.NewString,
 		OnAccountChanged: func(sessionID domain.SessionID, generation string, harness domain.AgentHarness) {
@@ -444,39 +442,6 @@ func Run() error {
 			}
 			agentSvc.ObserveActiveCodexAccountCapacity(observation)
 		},
-	})
-	quotaSvc.SetRefresher(chatSvc)
-	if codexDriver, err := chatDrivers.Driver(domain.HarnessCodex); err == nil {
-		if refresher, ok := codexDriver.(quotasvc.AccountRefresher); ok {
-			quotaSvc.RegisterRefresher("codex", "default", refresher)
-		}
-	}
-	if claudeAgent, ok := agents.Agent(domain.HarnessClaudeCode); ok {
-		if plugin, ok := claudeAgent.(interface {
-			ports.AgentBinaryResolver
-			ports.AgentAuthChecker
-		}); ok {
-			quotaSvc.RegisterRefresher("claude", "default", claudeacp.NewQuotaRefresher(plugin))
-		}
-	}
-	if kimiAgent, ok := agents.Agent(domain.HarnessKimi); ok {
-		if plugin, ok := kimiAgent.(kimi.QuotaPlugin); ok {
-			quotaSvc.RegisterRefresher("kimi", "default", kimi.NewQuotaRefresher(plugin, cfg.DataDir))
-		}
-	}
-	const quotaRefreshInterval = 5 * time.Minute
-	quotaRefreshDone := quotaSvc.StartAutoRefresh(ctx, quotaRefreshInterval)
-	lcStack.LCM.SetActivityObserver(func(session domain.SessionRecord, signal ports.ActivitySignal) {
-		if session.Kind != domain.KindWorker || !signal.Valid || signal.State != domain.ActivityIdle {
-			return
-		}
-		if !quotaRefreshOnIdleHarness(session.Harness) {
-			return
-		}
-		go quotaSvc.RefreshRegisteredIfStale(ctx)
-	})
-	quotaMaintenanceDone := quotaSvc.StartMaintenance(ctx, func(err error) {
-		log.Warn("quota history maintenance failed", "err", err)
 	})
 
 	codexModelDriver := codexappserver.New(codexagent.New(), log)
@@ -521,6 +486,7 @@ func Run() error {
 			return codexagent.New().ResolveBinary(resolveCtx)
 		}, log),
 		CodexOperationGate: codexOperationGate,
+		KimiSubscriptions:  kimiagent.NewSubscriptionReader(kimiagent.New(), cfg.DataDir),
 	}
 	agentSvc = agentsvc.NewWithDeps(agentDeps)
 	agentSvc.WarmModelCatalogs(ctx)
@@ -801,7 +767,6 @@ func Run() error {
 		Activity:           lcStack.LCM,
 		UsageHooks:         usageCollector,
 		UsageSummary:       usagesvc.NewSummaryReader(store),
-		Quota:              quotaSvc,
 		Telemetry:          telemetrySink,
 		Mobile:             mc,
 		DevImport: devimportsvc.New(devimportsvc.Deps{

@@ -17,25 +17,27 @@ import (
 )
 
 type fakeAgentCatalog struct {
-	inventory       agentsvc.Inventory
-	refreshed       agentsvc.Inventory
-	probed          agentsvc.ProbeResult
-	err             error
-	listCalls       int
-	refreshCalls    int
-	probeCalls      int
-	probeAgent      string
-	models          ports.AgentModelCatalog
-	modelCalls      int
-	modelAgent      string
-	modelProject    string
-	modelRefresh    bool
-	revalidateCalls int
-	readiness       agentsvc.Readiness
-	readinessCalls  int
-	ensureCalls     int
-	ensureAgentIDs  []string
-	ensurePurpose   domain.AgentReadinessPurpose
+	inventory        agentsvc.Inventory
+	refreshed        agentsvc.Inventory
+	probed           agentsvc.ProbeResult
+	err              error
+	listCalls        int
+	refreshCalls     int
+	probeCalls       int
+	probeAgent       string
+	models           ports.AgentModelCatalog
+	modelCalls       int
+	modelAgent       string
+	modelProject     string
+	modelRefresh     bool
+	revalidateCalls  int
+	readiness        agentsvc.Readiness
+	readinessCalls   int
+	ensureCalls      int
+	ensureAgentIDs   []string
+	ensurePurpose    domain.AgentReadinessPurpose
+	kimiSubscription agentsvc.KimiSubscription
+	kimiForces       []bool
 }
 
 func (f *fakeAgentCatalog) CachedReadiness(context.Context) (agentsvc.Readiness, error) {
@@ -82,6 +84,56 @@ func (f *fakeAgentCatalog) RevalidateModels(_ context.Context, agentID, projectI
 	f.modelAgent = agentID
 	f.modelProject = projectID
 	return f.models, f.err
+}
+
+func (f *fakeAgentCatalog) KimiSubscription(_ context.Context, force bool) (agentsvc.KimiSubscription, error) {
+	f.kimiForces = append(f.kimiForces, force)
+	return f.kimiSubscription, f.err
+}
+
+func TestKimiSubscriptionUsesCachedAndForcedReads(t *testing.T) {
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	remaining, used := 76.0, 24.0
+	plan := "Ultra"
+	catalog := &fakeAgentCatalog{kimiSubscription: agentsvc.KimiSubscription{
+		Available: true,
+		Capacity: domain.KimiSubscriptionSnapshot{
+			State: domain.KimiSubscriptionAvailable, Freshness: domain.AgentReadinessFresh, Plan: &plan, AuthMethod: "oauth",
+			UsedPercent: &used, RemainingPercent: &remaining, ReasonCode: domain.KimiSubscriptionReasonAvailable,
+			Reason: "available", Limits: []domain.KimiSubscriptionLimit{{Name: "Weekly limit", UsedPercent: used, RemainingPercent: remaining}},
+		},
+	}}
+	srv := httptest.NewServer(httpd.NewRouterWithControl(config.Config{}, log, nil, httpd.APIDeps{Agents: catalog}, httpd.ControlDeps{}))
+	defer srv.Close()
+
+	for _, tc := range []struct{ method, path string }{
+		{http.MethodGet, "/api/v1/agents/kimi/subscription"},
+		{http.MethodPost, "/api/v1/agents/kimi/subscription/refresh"},
+	} {
+		body, status, _ := doRequest(t, srv, tc.method, tc.path, "")
+		if status != http.StatusOK {
+			t.Fatalf("%s %s = %d, body=%s", tc.method, tc.path, status, body)
+		}
+		for _, want := range []string{`"available":true`, `"plan":"Ultra"`, `"remainingPercent":76`, `"name":"Weekly limit"`} {
+			if !strings.Contains(string(body), want) {
+				t.Fatalf("body missing %s: %s", want, body)
+			}
+		}
+	}
+	if len(catalog.kimiForces) != 2 || catalog.kimiForces[0] || !catalog.kimiForces[1] {
+		t.Fatalf("force calls = %#v", catalog.kimiForces)
+	}
+}
+
+func TestKimiSubscriptionOmitsCapacityWhenUnavailable(t *testing.T) {
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	catalog := &fakeAgentCatalog{kimiSubscription: agentsvc.KimiSubscription{Capacity: domain.KimiSubscriptionSnapshot{Reason: "must stay private"}}}
+	srv := httptest.NewServer(httpd.NewRouterWithControl(config.Config{}, log, nil, httpd.APIDeps{Agents: catalog}, httpd.ControlDeps{}))
+	defer srv.Close()
+	body, status, _ := doRequest(t, srv, http.MethodGet, "/api/v1/agents/kimi/subscription", "")
+	if status != http.StatusOK || !strings.Contains(string(body), `"available":false`) || strings.Contains(string(body), "capacity") || strings.Contains(string(body), "must stay private") {
+		t.Fatalf("unavailable response = %d, body=%s", status, body)
+	}
 }
 
 func TestListAgents(t *testing.T) {

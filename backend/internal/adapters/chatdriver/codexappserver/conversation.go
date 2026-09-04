@@ -93,7 +93,6 @@ var _ ports.ChatModelLister = (*conversation)(nil)
 // account has no limits to report", which is the wrong answer to show a user
 // whose turns are about to start failing.
 var _ ports.ChatUsageReporter = (*conversation)(nil)
-var _ ports.ChatQuotaIdentity = (*conversation)(nil)
 
 // Same reason, for compaction. Losing this method does not break a build; it just
 // makes the control disappear and long conversations start failing again.
@@ -408,10 +407,6 @@ func (c *conversation) ReadRateLimits(ctx context.Context) (ports.ChatRateLimits
 	}
 	observedAt := time.Now().UTC()
 	return chatRateLimitsFromCapacity(capacityObservationFromEnvelope(resp, observedAt, false), observedAt), nil
-}
-
-func (c *conversation) QuotaIdentity() (domain.QuotaProviderID, domain.QuotaAccountID) {
-	return "codex", "default"
 }
 
 // Compact asks the provider to summarize earlier history and reclaim context.

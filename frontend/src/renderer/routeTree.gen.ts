@@ -64,7 +64,6 @@ export interface FileRoutesByFullPath {
   '/': typeof ShellIndexRoute
   '/settings': typeof ShellSettingsRoute
   '/terminals': typeof ShellTerminalsRoute
-  '/usage': typeof ShellUsageRoute
   '/projects/$projectId': typeof ShellProjectsProjectIdRoute
   '/sessions/$sessionId': typeof ShellSessionsSessionIdRoute
   '/projects/$projectId/settings': typeof ShellProjectsProjectIdSettingsRoute
@@ -73,7 +72,6 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/settings': typeof ShellSettingsRoute
   '/terminals': typeof ShellTerminalsRoute
-  '/usage': typeof ShellUsageRoute
   '/': typeof ShellIndexRoute
   '/projects/$projectId': typeof ShellProjectsProjectIdRoute
   '/sessions/$sessionId': typeof ShellSessionsSessionIdRoute
@@ -85,7 +83,6 @@ export interface FileRoutesById {
   '/_shell': typeof ShellRouteWithChildren
   '/_shell/settings': typeof ShellSettingsRoute
   '/_shell/terminals': typeof ShellTerminalsRoute
-  '/_shell/usage': typeof ShellUsageRoute
   '/_shell/': typeof ShellIndexRoute
   '/_shell/projects/$projectId': typeof ShellProjectsProjectIdRoute
   '/_shell/sessions/$sessionId': typeof ShellSessionsSessionIdRoute
@@ -98,7 +95,6 @@ export interface FileRouteTypes {
     | '/'
     | '/settings'
     | '/terminals'
-    | '/usage'
     | '/projects/$projectId'
     | '/sessions/$sessionId'
     | '/projects/$projectId/settings'
@@ -107,7 +103,6 @@ export interface FileRouteTypes {
   to:
     | '/settings'
     | '/terminals'
-    | '/usage'
     | '/'
     | '/projects/$projectId'
     | '/sessions/$sessionId'
@@ -118,7 +113,6 @@ export interface FileRouteTypes {
     | '/_shell'
     | '/_shell/settings'
     | '/_shell/terminals'
-    | '/_shell/usage'
     | '/_shell/'
     | '/_shell/projects/$projectId'
     | '/_shell/sessions/$sessionId'
@@ -194,7 +188,6 @@ declare module '@tanstack/react-router' {
 interface ShellRouteChildren {
   ShellSettingsRoute: typeof ShellSettingsRoute
   ShellTerminalsRoute: typeof ShellTerminalsRoute
-  ShellUsageRoute: typeof ShellUsageRoute
   ShellIndexRoute: typeof ShellIndexRoute
   ShellProjectsProjectIdRoute: typeof ShellProjectsProjectIdRoute
   ShellSessionsSessionIdRoute: typeof ShellSessionsSessionIdRoute
@@ -205,7 +198,6 @@ interface ShellRouteChildren {
 const ShellRouteChildren: ShellRouteChildren = {
   ShellSettingsRoute: ShellSettingsRoute,
   ShellTerminalsRoute: ShellTerminalsRoute,
-  ShellUsageRoute: ShellUsageRoute,
   ShellIndexRoute: ShellIndexRoute,
   ShellProjectsProjectIdRoute: ShellProjectsProjectIdRoute,
   ShellSessionsSessionIdRoute: ShellSessionsSessionIdRoute,

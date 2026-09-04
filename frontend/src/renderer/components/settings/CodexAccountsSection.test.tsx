@@ -5,6 +5,8 @@ import { beforeEach, expect, it, vi } from "vitest";
 import { useUiStore } from "../../stores/ui-store";
 import { CodexAccountsSection } from "./CodexAccountsSection";
 
+vi.mock("./KimiSubscriptionGroup", () => ({ KimiSubscriptionGroup: () => null }));
+
 const { deleteMock, getMock, postMock, scrollIntoViewMock, terminalStateCallback, terminalTarget } = vi.hoisted(() => ({
 	deleteMock: vi.fn(),
 	getMock: vi.fn(),

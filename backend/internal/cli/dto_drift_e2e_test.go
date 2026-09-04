@@ -106,6 +106,10 @@ func (f *fakeAgentCatalog) RevalidateModels(ctx context.Context, agentID, projec
 	return f.Models(ctx, agentID, projectID, false)
 }
 
+func (f *fakeAgentCatalog) KimiSubscription(context.Context, bool) (agentsvc.KimiSubscription, error) {
+	return agentsvc.KimiSubscription{}, nil
+}
+
 func authorizedCodexInventory() agentsvc.Inventory {
 	info := agentsvc.Info{ID: "codex", Label: "Codex", AuthStatus: "authorized"}
 	return agentsvc.Inventory{
