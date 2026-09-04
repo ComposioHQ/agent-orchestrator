@@ -357,19 +357,6 @@ function codedError(message: string, code: "NOT_A_GIT_REPO" | "PROJECT_UNBORN") 
 	return error;
 }
 
-async function openCreateProjectDialog(
-	path = "/repo/new-project",
-) {
-	const user = userEvent.setup();
-	window.ao!.app.chooseDirectory = vi.fn().mockResolvedValue(path);
-	await user.click(screen.getByLabelText("New project"));
-	await user.click(screen.getByRole("button", { name: /^Import an existing project$/i }));
-	await screen.findByRole("dialog", { name: "Set up project" });
-	await chooseOption(screen.getByRole("combobox", { name: "Worker agent" }), "Codex");
-	await chooseOption(screen.getByRole("combobox", { name: "Orchestrator agent" }), "Claude Code");
-	return user;
-}
-
 beforeEach(() => {
 	window.localStorage.clear();
 	dragEnds.clear();
