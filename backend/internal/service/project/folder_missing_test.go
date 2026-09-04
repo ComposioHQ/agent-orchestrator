@@ -14,6 +14,7 @@ import (
 // T1. FolderMissing false when directory exists (happy path).
 func TestFolderMissing_FalseWhenDirectoryExists(t *testing.T) {
 	ctx := context.Background()
+	configureCommitter(t)
 	m := newManager(t)
 	repo := gitRepoWithCommit(t, t.TempDir())
 
@@ -48,6 +49,7 @@ func TestFolderMissing_FalseWhenDirectoryExists(t *testing.T) {
 // T2. FolderMissing true after directory deleted + recovery.
 func TestFolderMissing_LifecycleDeleteAndRecovery(t *testing.T) {
 	ctx := context.Background()
+	configureCommitter(t)
 	m := newManager(t)
 	repo := gitRepoWithCommit(t, t.TempDir())
 
@@ -117,6 +119,7 @@ func TestFolderMissing_LifecycleDeleteAndRecovery(t *testing.T) {
 // T3. Non-directory file at the path is treated as missing.
 func TestFolderMissing_NonDirectoryFileCountsAsMissing(t *testing.T) {
 	ctx := context.Background()
+	configureCommitter(t)
 	m := newManager(t)
 	repo := gitRepoWithCommit(t, t.TempDir())
 
@@ -152,6 +155,7 @@ func TestFolderMissing_NonDirectoryFileCountsAsMissing(t *testing.T) {
 // T4. Missing folder yields FolderMissing=true and falls back to DefaultBranchAuto.
 func TestFolderMissing_MissingFolderFallsBackToAutoBranch(t *testing.T) {
 	ctx := context.Background()
+	configureCommitter(t)
 	m := newManager(t)
 	repo := gitRepoWithCommit(t, t.TempDir())
 
@@ -183,6 +187,7 @@ func TestFolderMissing_MissingFolderFallsBackToAutoBranch(t *testing.T) {
 // T7. Remove after external deletion proves Remove works when folder is gone.
 func TestFolderMissing_RemoveAfterExternalDeletion(t *testing.T) {
 	ctx := context.Background()
+	configureCommitter(t)
 	store, err := sqlitetest.Open(t.TempDir())
 	if err != nil {
 		t.Fatalf("open store: %v", err)
