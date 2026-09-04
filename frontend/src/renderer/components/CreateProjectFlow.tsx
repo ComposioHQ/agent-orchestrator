@@ -1418,6 +1418,7 @@ function ProjectImportDialog({
 	isPreparingGit: boolean;
 	validation: ImportValidationResult | null;
 }) {
+	const { t } = useTranslation();
 	if (!validation || !step) return null;
 	const needsRemote = validation.root.requiredActions.includes("set_remote");
 	const hasChildRepos = (validation.childRepos?.length ?? 0) > 0;
@@ -1434,21 +1435,21 @@ function ProjectImportDialog({
 					onPointerDownOutside={(event) => event.preventDefault()}
 				>
 					<div className="flex items-start gap-3 border-b border-[var(--color-border-import-modal)] px-4 py-3">
-						<Button type="button" variant="outline" size="icon" aria-label="Back to import source" disabled={disabled} onClick={onBack}>
+						<Button type="button" variant="outline" size="icon" aria-label={t("createProject.backToSource")} disabled={disabled} onClick={onBack}>
 							<ChevronRight className="size-4 rotate-180" aria-hidden="true" />
 						</Button>
 						<div className="min-w-0 flex-1">
 							<Dialog.Title className="text-[18px] font-semibold text-[var(--color-text-import-title)]">
-								{step === "prepare_git" ? "Prepare project" : "Import project"}
+								{step === "prepare_git" ? t("createProject.prepareProjectTitle") : t("createProject.importProject")}
 							</Dialog.Title>
 							<Dialog.Description className="mt-1 text-[13px] leading-5 text-[var(--color-text-import-muted)]">
 								{step === "blocked"
-									? "AO found a problem with this folder before project setup can continue."
-									: "AO needs your approval before it initializes Git, creates a first commit, or sets the origin remote."}
+									? t("createProject.projectImportBlocked")
+									: t("createProject.projectImportApproval")}
 							</Dialog.Description>
 						</div>
 						<Dialog.Close asChild>
-							<button type="button" className="settings-close-button" aria-label="Close project import dialog" disabled={disabled}>
+							<button type="button" className="settings-close-button" aria-label={t("createProject.closeProjectImport")} disabled={disabled}>
 								<X className="size-4" aria-hidden="true" />
 							</button>
 						</Dialog.Close>
@@ -1460,15 +1461,15 @@ function ProjectImportDialog({
 								<div className="truncate font-mono text-[13px] font-semibold text-[var(--color-text-import-title)]">
 									{displayImportPath(validation.root.repoPath)}
 								</div>
-								<div className="mt-0.5 text-[11px] text-[var(--color-text-import-muted)]">Project folder</div>
+								<div className="mt-0.5 text-[11px] text-[var(--color-text-import-muted)]">{t("createProject.projectFolder")}</div>
 							</div>
 							<Button type="button" variant="outline" disabled={disabled} onClick={onChangeFolder}>
-								Change
+								{t("createProject.change")}
 							</Button>
 						</div>
 						{hasChildRepos ? (
 							<div className="rounded-md border border-[var(--color-border-import-modal)] bg-[var(--color-bg-import-card)] px-4 py-3 text-[12px] leading-5 text-[var(--color-text-import-muted)]">
-								Contains child Git repos. Import as workspace if AO should keep them separate.
+								{t("createProject.projectHasChildRepos")}
 							</div>
 						) : null}
 						{validation.warning ? (
@@ -1483,19 +1484,19 @@ function ProjectImportDialog({
 						) : null}
 						{suggestWorkspace ? (
 							<div className="rounded-md border border-[var(--color-border-import-modal)] bg-[var(--color-bg-import-card)] px-4 py-3 text-[13px] leading-5 text-[var(--color-text-import-muted)]">
-								Try importing this folder as a workspace if you want AO to treat the child repositories as separate projects. Continue as project if you want AO to initialize only the selected root folder.
+								{t("createProject.projectSuggestWorkspace")}
 							</div>
 						) : null}
 						{step === "prepare_git" ? (
 							<section className="space-y-3">
 								<div className="rounded-lg border border-[var(--color-border-import-modal)] bg-[var(--color-bg-import-card)] px-4 py-4">
-									<h3 className="text-[13px] font-semibold text-[var(--color-text-import-title)]">Project setup</h3>
+									<h3 className="text-[13px] font-semibold text-[var(--color-text-import-title)]">{t("createProject.projectSetup")}</h3>
 									<p className="mt-1 text-[12px] leading-5 text-[var(--color-text-import-muted)]">
-										Approve the required setup actions for this folder. AO will run only the selected required steps before continuing.
+										{t("createProject.projectSetupApproval")}
 									</p>
 									{isPreparingGit ? (
 										<p className="mt-3 text-[12px] leading-5 text-[var(--color-text-import-title)]">
-											Running project setup. AO is preparing this repository now.
+											{t("createProject.projectSetupRunning")}
 										</p>
 									) : null}
 									<div className="mt-3 space-y-3">
@@ -1555,7 +1556,7 @@ function ProjectImportDialog({
 																	htmlFor="projectImportRemote"
 																	className="text-[12px] font-semibold text-[var(--color-text-import-title)]"
 																>
-																	Origin remote URL
+																	{t("createProject.originRemoteUrl")}
 																</Label>
 																<Input
 																	id="projectImportRemote"
@@ -1563,13 +1564,13 @@ function ProjectImportDialog({
 																	autoComplete="off"
 																	className="bg-[var(--color-bg-import-card)] font-mono text-[13px]"
 																	disabled={disabled}
-																	placeholder="https://github.com/org/repository.git"
+																	placeholder={t("createProject.cloneRepositoryUrlPlaceholder")}
 																	spellCheck={false}
 																	value={remoteUrl}
 																	onChange={(event) => onChangeRemote(event.target.value)}
 																/>
 																<span className="block rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[12px] leading-5 text-[var(--color-text-import-title)]">
-																	To create sessions and PRs successfully, make sure this repository also exists on GitHub and that you can push the default branch to it.
+																	{t("createProject.remoteRepoRequired")}
 																</span>
 															</span>
 														) : null}
@@ -1583,7 +1584,7 @@ function ProjectImportDialog({
 									</div>
 									{missingApprovals.length > 0 ? (
 										<p className="mt-4 text-[12px] leading-5 text-[var(--color-text-import-muted)]">
-											Approve all required setup actions to continue importing this project.
+											{t("createProject.projectSetupContinue")}
 										</p>
 									) : null}
 								</div>
@@ -1594,10 +1595,10 @@ function ProjectImportDialog({
 						{step === "blocked" ? (
 							<>
 								<Button type="button" variant="outline" disabled={disabled} onClick={onBack}>
-									Back
+									{t("createProject.back")}
 								</Button>
 								<Button type="button" variant="primary" disabled={disabled} onClick={onChangeFolder}>
-									Choose another folder
+									{t("createProject.chooseAnotherFolder")}
 								</Button>
 							</>
 						) : null}
@@ -1605,14 +1606,14 @@ function ProjectImportDialog({
 							<>
 								{suggestWorkspace ? (
 									<Button type="button" variant="outline" disabled={disabled} onClick={onTryWorkspace}>
-										Try importing as workspace
+										{t("createProject.tryImportWorkspace")}
 									</Button>
 								) : null}
 								<Button type="button" variant="outline" disabled={disabled} onClick={onBack}>
-									Back
+									{t("createProject.back")}
 								</Button>
 								<Button type="button" variant="primary" disabled={continueDisabled} onClick={onContinue}>
-									{hasFailedStep ? "Retry" : "Continue"}
+									{hasFailedStep ? t("createProject.retry") : t("createProject.cloneContinue")}
 								</Button>
 							</>
 						) : null}
@@ -1654,6 +1655,7 @@ function WorkspaceImportDialog({
 	step: WorkspaceImportStep | null;
 	validation: ImportValidationResult | null;
 }) {
+	const { t } = useTranslation();
 	if (!validation || !step) return null;
 	const childRepos = validation.childRepos ?? [];
 	const reposNeedingSetup = childRepos.filter((repo) => repo.requiredActions.length > 0);
@@ -1686,7 +1688,7 @@ function WorkspaceImportDialog({
 					onPointerDownOutside={(event) => event.preventDefault()}
 				>
 					<div className="flex items-start gap-3 border-b border-[var(--color-border-import-modal)] px-4 py-3">
-						<Button type="button" variant="outline" size="icon" aria-label="Back to import source" disabled={disabled} onClick={onBack}>
+						<Button type="button" variant="outline" size="icon" aria-label={t("createProject.backToSource")} disabled={disabled} onClick={onBack}>
 							<ChevronRight className="size-4 rotate-180" aria-hidden="true" />
 						</Button>
 						<div className="min-w-0 flex-1">
@@ -1700,7 +1702,7 @@ function WorkspaceImportDialog({
 							</Dialog.Description>
 						</div>
 						<Dialog.Close asChild>
-							<button type="button" className="settings-close-button" aria-label="Close workspace import dialog" disabled={disabled}>
+							<button type="button" className="settings-close-button" aria-label={t("createProject.closeWorkspaceImport")} disabled={disabled}>
 								<X className="size-4" aria-hidden="true" />
 							</button>
 						</Dialog.Close>
@@ -1712,15 +1714,15 @@ function WorkspaceImportDialog({
 								<div className="truncate font-mono text-[13px] font-semibold text-[var(--color-text-import-title)]">
 									{displayImportPath(validation.root.repoPath)}
 								</div>
-								<div className="mt-0.5 text-[11px] text-[var(--color-text-import-muted)]">Workspace folder</div>
+								<div className="mt-0.5 text-[11px] text-[var(--color-text-import-muted)]">{t("createProject.workspaceFolder")}</div>
 							</div>
 							<Button type="button" variant="outline" disabled={disabled} onClick={onChangeFolder}>
-								Change
+								{t("createProject.change")}
 							</Button>
 						</div>
 						{childRepos.some((repo) => repo.isRepo) ? (
 							<div className="rounded-md border border-[var(--color-border-import-modal)] bg-[var(--color-bg-import-card)] px-4 py-3 text-[12px] leading-5 text-[var(--color-text-import-muted)]">
-								Contains child Git repos. AO will import them as workspace repos.
+								{t("createProject.workspaceHasChildRepos")}
 							</div>
 						) : null}
 						{validation.warning ? (
@@ -1736,18 +1738,18 @@ function WorkspaceImportDialog({
 						{step === "prepare_git" ? (
 							<section className="space-y-3">
 								<div className="rounded-lg border border-[var(--color-border-import-modal)] bg-[var(--color-bg-import-card)] px-4 py-4">
-									<h3 className="text-[13px] font-semibold text-[var(--color-text-import-title)]">Needs setup</h3>
+									<h3 className="text-[13px] font-semibold text-[var(--color-text-import-title)]">{t("createProject.workspaceNeedsSetup")}</h3>
 									<p className="mt-1 text-[12px] leading-5 text-[var(--color-text-import-muted)]">
-										Approve the missing setup for each child repository. AO will run only the selected required steps.
+										{t("createProject.workspaceSetupApproval")}
 									</p>
 									{reposNeedingSetup.some((repo) => repo.requiredActions.includes("set_remote")) ? (
 										<p className="mt-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[12px] leading-5 text-[var(--color-text-import-title)]">
-											To create sessions and PRs successfully, make sure each repository with an origin URL also exists on GitHub and that you can push its default branch.
+											{t("createProject.workspaceRemoteRepoRequired")}
 										</p>
 									) : null}
 									{isPreparingGit ? (
 										<p className="mt-3 text-[12px] leading-5 text-[var(--color-text-import-title)]">
-											Running workspace setup. AO is preparing these repositories now.
+											{t("createProject.workspaceSetupRunning")}
 										</p>
 									) : null}
 									<div className="mt-3 space-y-3">
@@ -1835,7 +1837,7 @@ function WorkspaceImportDialog({
 																					htmlFor={`workspaceImportRemote:${repo.repoPath}`}
 																					className="text-[12px] font-semibold text-[var(--color-text-import-title)]"
 																				>
-																					Origin remote URL
+																					{t("createProject.originRemoteUrl")}
 																				</Label>
 																				<Input
 																					id={`workspaceImportRemote:${repo.repoPath}`}
@@ -1843,7 +1845,7 @@ function WorkspaceImportDialog({
 																					autoComplete="off"
 																					className="bg-[var(--color-bg-import-card)] font-mono text-[13px]"
 																					disabled={disabled}
-																					placeholder="https://github.com/org/repository.git"
+																					placeholder={t("createProject.cloneRepositoryUrlPlaceholder")}
 																					spellCheck={false}
 																					value={input?.remoteUrl ?? ""}
 																					onChange={(event) => onChangeRepoRemote(repo.repoPath, event.target.value)}
@@ -1864,7 +1866,7 @@ function WorkspaceImportDialog({
 									</div>
 									{missingApprovals.length > 0 ? (
 										<p className="mt-4 text-[12px] leading-5 text-[var(--color-text-import-muted)]">
-											Approve all required setup actions to continue importing this workspace.
+											{t("createProject.workspaceSetupContinue")}
 										</p>
 									) : null}
 								</div>
@@ -1873,7 +1875,7 @@ function WorkspaceImportDialog({
 						{readyRepos.length > 0 ? (
 							<section className="space-y-3">
 								<div className="rounded-lg border border-[var(--color-border-import-modal)] bg-[var(--color-bg-import-card)] px-4 py-4">
-									<h3 className="text-[13px] font-semibold text-[var(--color-text-import-title)]">Ready repositories</h3>
+									<h3 className="text-[13px] font-semibold text-[var(--color-text-import-title)]">{t("createProject.readyRepositories")}</h3>
 									<div className="mt-3 space-y-2">
 										{readyRepos.map((repo) => (
 											<div
@@ -1889,7 +1891,7 @@ function WorkspaceImportDialog({
 														{displayImportPath(repo.repoPath)}
 													</div>
 												</div>
-												<span className="shrink-0 text-[12px] font-medium text-success">Ready</span>
+												<span className="shrink-0 text-[12px] font-medium text-success">{t("createProject.ready")}</span>
 											</div>
 										))}
 									</div>
@@ -1898,7 +1900,7 @@ function WorkspaceImportDialog({
 						) : null}
 						{step === "review" && childRepos.length === 0 ? (
 							<div className="rounded-md border border-[var(--color-border-import-modal)] bg-[var(--color-bg-import-card)] px-4 py-3 text-[12px] leading-5 text-[var(--color-text-import-muted)]">
-								No child repositories were found under this workspace folder yet.
+								{t("createProject.workspaceNoChildRepos")}
 							</div>
 						) : null}
 					</div>
@@ -1906,19 +1908,19 @@ function WorkspaceImportDialog({
 						{step === "blocked" ? (
 							<>
 								<Button type="button" variant="outline" disabled={disabled} onClick={onBack}>
-									Back
+									{t("createProject.back")}
 								</Button>
 								<Button type="button" variant="primary" disabled={disabled} onClick={onChangeFolder}>
-									Choose another folder
+									{t("createProject.chooseAnotherFolder")}
 								</Button>
 							</>
 						) : (
 							<>
 								<Button type="button" variant="outline" disabled={disabled} onClick={onBack}>
-									Back
+									{t("createProject.back")}
 								</Button>
 								<Button type="button" variant="primary" disabled={continueDisabled} onClick={onContinue}>
-									{step === "prepare_git" ? (hasFailedStep ? "Retry" : "Continue") : "Continue"}
+									{step === "prepare_git" ? (hasFailedStep ? t("createProject.retry") : t("createProject.cloneContinue")) : t("createProject.cloneContinue")}
 								</Button>
 							</>
 						)}
