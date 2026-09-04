@@ -1586,7 +1586,7 @@ function WorkspaceSetupRepoPanel({
 	return (
 		<details
 			className="group overflow-hidden rounded-md border border-[var(--color-border-import-modal)] bg-[var(--color-bg-import-modal)]"
-			defaultOpen={openByDefault}
+			open={openByDefault}
 		>
 			<summary className="flex cursor-pointer list-none items-center gap-3 px-4 py-3">
 				<ChevronRight
