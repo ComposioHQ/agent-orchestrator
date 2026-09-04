@@ -32,6 +32,7 @@ import {
 	LogOut,
 	MoreVertical,
 	PanelLeft,
+	Pencil,
 	Pin,
 	PinOff,
 	Plus,
@@ -1884,8 +1885,9 @@ function SessionRow({
 				</SidebarMenuSubItem>
 			</ContextMenuTrigger>
 			<ContextMenuContent className="min-w-44">
-				<ContextMenuItem onSelect={rename.begin}>
-					{t("shell.renameSession", { title: session.title })}
+				<ContextMenuItem aria-label={t("shell.renameSession", { title: session.title })} onSelect={rename.begin}>
+					<Pencil aria-hidden="true" />
+					{t("shell.rename")}
 				</ContextMenuItem>
 			</ContextMenuContent>
 		</ContextMenu>

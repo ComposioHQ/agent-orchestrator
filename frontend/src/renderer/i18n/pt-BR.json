@@ -1107,6 +1107,7 @@
 	"shell.removeProjectLead": "Isso removerá {{name}} do AO",
 	"shell.removeProjectTitle": "Remover projeto",
 	"shell.removingNamed": "Removendo {{name}}…",
+	"shell.rename": "Renomear",
 	"shell.renameSession": "Renomear {{title}}",
 	"shell.restartToUpdate": "Reiniciar para atualizar",
 	"shell.restartInstallUpdate": "Reiniciar para instalar a atualização",

@@ -230,7 +230,10 @@ describe("CenterPane toolbar session label", () => {
 		renderCenterPane({ session: worker, onSelectSessionTerminal });
 
 		fireEvent.contextMenu(screen.getByRole("tab", { name: /^do the thing/ }));
-		await user.click(await screen.findByRole("menuitem", { name: "Rename do the thing" }));
+		const renameItem = await screen.findByRole("menuitem", { name: "Rename do the thing" });
+		expect(renameItem).toHaveTextContent(/^Rename$/);
+		expect(renameItem.querySelector("svg")).toBeInTheDocument();
+		await user.click(renameItem);
 
 		expect(screen.getByRole("textbox", { name: "Rename do the thing" })).toHaveFocus();
 		expect(onSelectSessionTerminal).not.toHaveBeenCalled();

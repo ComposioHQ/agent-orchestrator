@@ -1091,6 +1091,7 @@
 	"shell.removeProjectLead": "Dadurch wird {{name}} aus AO entfernt",
 	"shell.removeProjectTitle": "Projekt entfernen",
 	"shell.removingNamed": "{{name}} wird entfernt…",
+	"shell.rename": "Umbenennen",
 	"shell.renameSession": "{{title}} umbenennen",
 	"shell.restartToUpdate": "Neu starten zum Aktualisieren",
 	"shell.restartInstallUpdate": "Neu starten, um Update zu installieren",

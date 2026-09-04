@@ -1485,7 +1485,10 @@ describe("Sidebar", () => {
 		renderSidebar({ workspaces: [{ ...workspace, sessions: [session] }] });
 
 		fireEvent.contextMenu(screen.getByRole("button", { name: "Open fix login" }));
-		await user.click(await screen.findByRole("menuitem", { name: "Rename fix login" }));
+		const renameItem = await screen.findByRole("menuitem", { name: "Rename fix login" });
+		expect(renameItem).toHaveTextContent(/^Rename$/);
+		expect(renameItem.querySelector("svg")).toBeInTheDocument();
+		await user.click(renameItem);
 
 		expect(screen.getByRole("textbox", { name: "Rename fix login" })).toHaveFocus();
 		expect(navigateMock).not.toHaveBeenCalled();

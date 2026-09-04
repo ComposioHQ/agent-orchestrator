@@ -1214,6 +1214,7 @@
 	"shell.removeProjectLead": "This will remove {{name}} from AO",
 	"shell.removeProjectTitle": "Remove project",
 	"shell.removingNamed": "Removing {{name}}…",
+	"shell.rename": "Rename",
 	"shell.renameSession": "Rename {{title}}",
 	"shell.restartToUpdate": "Restart to update",
 	"shell.restartInstallUpdate": "Restart to install update",

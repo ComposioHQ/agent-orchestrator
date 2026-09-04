@@ -1077,6 +1077,7 @@
 	"shell.removeProjectLead": "这将从 AO 中移除 {{name}}",
 	"shell.removeProjectTitle": "移除项目",
 	"shell.removingNamed": "正在移除 {{name}}…",
+	"shell.rename": "重命名",
 	"shell.renameSession": "重命名{{title}}",
 	"shell.restartToUpdate": "重启以更新",
 	"shell.restartInstallUpdate": "重启以安装更新",

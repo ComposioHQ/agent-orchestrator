@@ -1091,6 +1091,7 @@
 	"shell.removeProjectLead": "AO에서 {{name}}을(를) 제거합니다",
 	"shell.removeProjectTitle": "프로젝트 제거",
 	"shell.removingNamed": "{{name}} 제거 중…",
+	"shell.rename": "이름 바꾸기",
 	"shell.renameSession": "{{title}} 이름 바꾸기",
 	"shell.restartToUpdate": "다시 시작하여 업데이트",
 	"shell.restartInstallUpdate": "다시 시작하여 업데이트 설치",

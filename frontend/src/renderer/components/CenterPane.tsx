@@ -1,6 +1,7 @@
 import {
 	ArrowRight,
 	CheckCircle2,
+	Pencil,
 	TriangleAlert,
 	X,
 } from "lucide-react";
@@ -1020,8 +1021,9 @@ export function SessionPaneTab({
 				<span className="contents">{tabFrame}</span>
 			</ContextMenuTrigger>
 			<ContextMenuContent className="min-w-44">
-				<ContextMenuItem onSelect={rename.begin}>
-					{t("shell.renameSession", { title: session.title })}
+				<ContextMenuItem aria-label={t("shell.renameSession", { title: session.title })} onSelect={rename.begin}>
+					<Pencil aria-hidden="true" />
+					{t("shell.rename")}
 				</ContextMenuItem>
 			</ContextMenuContent>
 		</ContextMenu>
