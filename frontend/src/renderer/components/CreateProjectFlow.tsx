@@ -1360,7 +1360,7 @@ function ProjectImportDialog({
 																	onChange={(event) => onChangeRemote(event.target.value)}
 																/>
 																<span className="block rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[12px] leading-5 text-[var(--color-text-import-title)]">
-																	AO can initialize Git, create the first commit, and set this origin URL locally. To create sessions and PRs successfully, make sure this repository also exists on GitHub and that you can push the default branch to it.
+																	To create sessions and PRs successfully, make sure this repository also exists on GitHub and that you can push the default branch to it.
 																</span>
 															</span>
 														) : null}

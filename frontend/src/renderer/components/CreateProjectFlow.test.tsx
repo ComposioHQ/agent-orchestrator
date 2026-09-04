@@ -399,7 +399,7 @@ describe("CreateProjectFlow project import validation", () => {
 		expect(screen.getByLabelText("Origin remote URL")).toBeInTheDocument();
 		expect(
 			screen.getByText(
-				"AO can initialize Git, create the first commit, and set this origin URL locally. To create sessions and PRs successfully, make sure this repository also exists on GitHub and that you can push the default branch to it.",
+				"To create sessions and PRs successfully, make sure this repository also exists on GitHub and that you can push the default branch to it.",
 			),
 		).toBeInTheDocument();
 		expect(screen.queryByText("Plain folder")).not.toBeInTheDocument();
