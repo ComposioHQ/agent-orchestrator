@@ -20,6 +20,7 @@ import (
 	"github.com/google/uuid"
 
 	codexagent "github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/codex"
+	cursoragent "github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/cursor"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/modelcatalog"
 	chatdriveracp "github.com/aoagents/agent-orchestrator/backend/internal/adapters/chatdriver/acp"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/chatdriver/codexappserver"
@@ -465,6 +466,7 @@ func Run() error {
 	// (issue #2685).
 	tracker := newMultiTracker(cfg.GitLab, log)
 	codexPlugin := codexagent.New()
+	cursorPlugin := cursoragent.New()
 	codexHome, err := codexPlugin.NativeSessionConfigDir(ctx, nil)
 	if err != nil {
 		stop()
@@ -484,7 +486,8 @@ func Run() error {
 		CodexAccounts: codexappserver.NewAccountFactoryWithResolver(func(resolveCtx context.Context) (string, error) {
 			return codexagent.New().ResolveBinary(resolveCtx)
 		}, log),
-		CodexOperationGate: codexOperationGate,
+		CodexOperationGate:      codexOperationGate,
+		CursorSubscriptionUsage: cursoragent.NewSubscriptionUsageReader(cursorPlugin),
 	}
 	agentSvc = agentsvc.NewWithDeps(agentDeps)
 	agentSvc.WarmModelCatalogs(ctx)

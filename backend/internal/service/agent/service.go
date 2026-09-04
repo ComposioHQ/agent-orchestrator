@@ -61,6 +61,7 @@ type Service struct {
 	modelCalls    map[string]*modelCatalogCall
 	codexAccounts *codexAccountManager
 	codexSwitches CodexAccountSwitchCoordinator
+	cursorUsage   *cursorSubscriptionUsageCoordinator
 }
 
 // CodexAccountSwitchCoordinator owns global switch execution and recovery.
@@ -73,19 +74,20 @@ type CodexAccountSwitchCoordinator interface {
 
 // Deps contains optional durable dependencies for the agent catalog service.
 type Deps struct {
-	Cache                  ports.AgentModelCatalogCache
-	Discoverer             ports.AgentModelDiscoverer
-	Projects               ProjectLookup
-	Sessions               SessionUsageLookup
-	Context                context.Context
-	Logger                 *slog.Logger
-	CodexAccountRoot       string
-	CodexPendingRoot       string
-	CodexSwitchStagingRoot string
-	CodexGlobalHome        string
-	CodexAccounts          ports.CodexAccountClientFactory
-	CodexAccountState      CodexAccountStateStore
-	CodexOperationGate     ports.CodexOperationGate
+	Cache                   ports.AgentModelCatalogCache
+	Discoverer              ports.AgentModelDiscoverer
+	Projects                ProjectLookup
+	Sessions                SessionUsageLookup
+	Context                 context.Context
+	Logger                  *slog.Logger
+	CodexAccountRoot        string
+	CodexPendingRoot        string
+	CodexSwitchStagingRoot  string
+	CodexGlobalHome         string
+	CodexAccounts           ports.CodexAccountClientFactory
+	CodexAccountState       CodexAccountStateStore
+	CodexOperationGate      ports.CodexOperationGate
+	CursorSubscriptionUsage ports.SubscriptionUsageReader
 }
 
 // ProjectLookup resolves the registered working directory used for model
@@ -117,6 +119,9 @@ func NewWithDeps(deps Deps) *Service {
 		Agents: agents, Factory: agentregistry.Harnessed, Context: deps.Context, Logger: deps.Logger,
 		AuthenticationCheck: svc.structuredCodexAuthentication,
 	})
+	if deps.CursorSubscriptionUsage != nil {
+		svc.cursorUsage = newCursorSubscriptionUsageCoordinator(deps.Context, deps.CursorSubscriptionUsage)
+	}
 	svc.sessions = deps.Sessions
 	return svc
 }

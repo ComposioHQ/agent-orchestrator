@@ -6,7 +6,11 @@ const BIN_BUILD_TOOLS = ["corepack", "npm", "npx"];
 const BUILD_ONLY_CONTENT = ["include", "lib", "node_modules", "share", "CHANGELOG.md", "README.md"];
 
 export function runtimeSourceFiles() {
-	return ["package.json", "package-lock.json"];
+	return [
+		"package.json",
+		"package-lock.json",
+		"ao-cursor-subscription-usage.cjs",
+	];
 }
 
 export function createWorkDirectory(outputRoot) {

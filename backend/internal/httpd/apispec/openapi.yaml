@@ -6953,6 +6953,8 @@ components:
           type:
           - "null"
           - string
+        subscriptionUsage:
+          $ref: '#/components/schemas/SubscriptionUsageSnapshot'
         usageCount:
           type: integer
       required:
@@ -11348,6 +11350,120 @@ components:
       required:
       - runId
       - verdict
+      type: object
+    SubscriptionUsageLimit:
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        remainingPercent:
+          maximum: 100
+          minimum: 0
+          type:
+          - "null"
+          - number
+        remainingValue:
+          minimum: 0
+          type:
+          - "null"
+          - number
+        resetsAt:
+          format: date-time
+          type:
+          - "null"
+          - string
+        state:
+          enum:
+          - active
+          - unlimited
+          - disabled
+          - unavailable
+          type: string
+        totalValue:
+          minimum: 0
+          type:
+          - "null"
+          - number
+        unit:
+          type: string
+        usedPercent:
+          maximum: 100
+          minimum: 0
+          type:
+          - "null"
+          - number
+        usedValue:
+          minimum: 0
+          type:
+          - "null"
+          - number
+      required:
+      - id
+      - name
+      - state
+      type: object
+    SubscriptionUsageSnapshot:
+      properties:
+        attemptedAt:
+          format: date-time
+          type:
+          - "null"
+          - string
+        checkedAt:
+          format: date-time
+          type:
+          - "null"
+          - string
+        freshness:
+          enum:
+          - fresh
+          - stale
+          - checking
+          type: string
+        limits:
+          items:
+            $ref: '#/components/schemas/SubscriptionUsageLimit'
+          type: array
+        observedAt:
+          format: date-time
+          type:
+          - "null"
+          - string
+        plan:
+          type:
+          - "null"
+          - string
+        reason:
+          type: string
+        reasonCode:
+          type: string
+        remainingPercent:
+          maximum: 100
+          minimum: 0
+          type:
+          - "null"
+          - number
+        state:
+          enum:
+          - available
+          - near_limit
+          - exhausted
+          - unknown
+          - unsupported
+          type: string
+        usedPercent:
+          maximum: 100
+          minimum: 0
+          type:
+          - "null"
+          - number
+      required:
+      - state
+      - freshness
+      - reasonCode
+      - reason
+      - limits
       type: object
     SwitchAgentRequest:
       properties:

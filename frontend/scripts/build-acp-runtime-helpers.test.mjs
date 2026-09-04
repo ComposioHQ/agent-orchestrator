@@ -39,10 +39,11 @@ describe("createWorkDirectory", () => {
 });
 
 describe("runtimeSourceFiles", () => {
-	it("packages and fingerprints the ACP runtime manifest", () => {
+	it("packages and fingerprints the ACP runtime manifest and Cursor helper", () => {
 		expect(runtimeSourceFiles()).toEqual([
 			"package.json",
 			"package-lock.json",
+			"ao-cursor-subscription-usage.cjs",
 		]);
 	});
 });

@@ -115,6 +115,7 @@ type AgentReadinessSnapshot struct {
 	Installation       AgentInstallationObservation   `json:"installation"`
 	Authentication     AgentAuthenticationObservation `json:"authentication"`
 	EffectiveReadiness AgentEffectiveReadiness        `json:"effectiveReadiness" enum:"ready,not_ready,unknown"`
+	SubscriptionUsage  *SubscriptionUsageSnapshot     `json:"subscriptionUsage,omitempty"`
 	UsageCount         int                            `json:"usageCount"`
 	LastUsedAt         *time.Time                     `json:"lastUsedAt,omitempty" format:"date-time"`
 }

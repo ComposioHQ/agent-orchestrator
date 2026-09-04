@@ -2452,6 +2452,7 @@ export interface components {
             label: string;
             /** Format: date-time */
             lastUsedAt?: null | string;
+            subscriptionUsage?: components["schemas"]["SubscriptionUsageSnapshot"];
             usageCount: number;
         };
         AgentSwitch: {
@@ -4075,6 +4076,38 @@ export interface components {
             runId: string;
             /** @description Review verdict: approved or changes_requested. */
             verdict: string;
+        };
+        SubscriptionUsageLimit: {
+            id: string;
+            name: string;
+            remainingPercent?: null | number;
+            remainingValue?: null | number;
+            /** Format: date-time */
+            resetsAt?: null | string;
+            /** @enum {string} */
+            state: "active" | "unlimited" | "disabled" | "unavailable";
+            totalValue?: null | number;
+            unit?: string;
+            usedPercent?: null | number;
+            usedValue?: null | number;
+        };
+        SubscriptionUsageSnapshot: {
+            /** Format: date-time */
+            attemptedAt?: null | string;
+            /** Format: date-time */
+            checkedAt?: null | string;
+            /** @enum {string} */
+            freshness: "fresh" | "stale" | "checking";
+            limits: components["schemas"]["SubscriptionUsageLimit"][];
+            /** Format: date-time */
+            observedAt?: null | string;
+            plan?: null | string;
+            reason: string;
+            reasonCode: string;
+            remainingPercent?: null | number;
+            /** @enum {string} */
+            state: "available" | "near_limit" | "exhausted" | "unknown" | "unsupported";
+            usedPercent?: null | number;
         };
         SwitchAgentRequest: {
             /** @description Optional retry key. Reusing it with a different request is rejected. */

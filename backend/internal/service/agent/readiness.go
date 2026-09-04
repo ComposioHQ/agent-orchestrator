@@ -67,6 +67,9 @@ func (s *Service) EnsureReadiness(ctx context.Context, agentIDs []string, purpos
 		}
 		return Readiness{}, err
 	}
+	if purpose == domain.AgentReadinessPurposeDisplay {
+		s.ensureCursorSubscriptionUsage(ctx, items, false)
+	}
 	return s.withReadinessUsage(ctx, items)
 }
 
@@ -87,6 +90,9 @@ func (s *Service) InvalidateAgentInstallation(agentID string) {
 // InvalidateAgentAuthentication marks an agent's authentication observation stale.
 func (s *Service) InvalidateAgentAuthentication(agentID string) {
 	s.readiness.Invalidate(agentID, readinessInvalidateAuthentication)
+	if agentID == string(domain.HarnessCursor) && s.cursorUsage != nil {
+		s.cursorUsage.invalidate()
+	}
 	if agentID == string(domain.HarnessCodex) && s.codexAccounts != nil {
 		if accountID := s.codexAccounts.activeAccountID(); accountID != "" {
 			s.codexAccounts.invalidate(accountID)
@@ -105,6 +111,7 @@ func (s *Service) RecheckAgent(agentID string) {
 func (s *Service) WarmReadiness() { s.readiness.Warm() }
 
 func (s *Service) withReadinessUsage(ctx context.Context, snapshots []domain.AgentReadinessSnapshot) (Readiness, error) {
+	s.attachCursorSubscriptionUsage(snapshots)
 	if s.sessions == nil {
 		return Readiness{Agents: snapshots}, nil
 	}
@@ -151,11 +158,38 @@ func (s *Service) Refresh(ctx context.Context) (Inventory, error) {
 	if err != nil {
 		return Inventory{}, err
 	}
+	s.ensureCursorSubscriptionUsage(ctx, items, true)
 	readiness, err := s.withReadinessUsage(ctx, items)
 	if err != nil {
 		return Inventory{}, err
 	}
 	return projectInventory(readiness.Agents), nil
+}
+
+func (s *Service) ensureCursorSubscriptionUsage(ctx context.Context, snapshots []domain.AgentReadinessSnapshot, force bool) {
+	if s.cursorUsage == nil {
+		return
+	}
+	for i := range snapshots {
+		if snapshots[i].ID != string(domain.HarnessCursor) {
+			continue
+		}
+		usage := s.cursorUsage.ensure(ctx, snapshots[i], force)
+		snapshots[i].SubscriptionUsage = &usage
+		return
+	}
+}
+
+func (s *Service) attachCursorSubscriptionUsage(snapshots []domain.AgentReadinessSnapshot) {
+	if s.cursorUsage == nil {
+		return
+	}
+	for i := range snapshots {
+		if snapshots[i].ID == string(domain.HarnessCursor) {
+			usage := s.cursorUsage.cached()
+			snapshots[i].SubscriptionUsage = &usage
+		}
+	}
 }
 
 // RefreshFresh is retained for the system-check compatibility boundary.

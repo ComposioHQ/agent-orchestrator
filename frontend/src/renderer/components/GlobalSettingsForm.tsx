@@ -5,6 +5,7 @@ import { GeneralSettingsSection } from "./settings/GeneralSettingsSection";
 import { HarnessSettingsSection } from "./settings/HarnessSettingsSection";
 import { CloudCredentialsSection } from "./settings/CloudCredentialsSection";
 import { CodexAccountsSection } from "./settings/CodexAccountsSection";
+import { CursorSubscriptionUsageSection } from "./settings/CursorSubscriptionUsageSection";
 import { ConnectMobileContent } from "./settings/ConnectMobileContent";
 import { KeyboardShortcutsContent } from "./settings/KeyboardShortcutsContent";
 import { MobileDevicesSection } from "./settings/MobileDevicesSection";
@@ -47,6 +48,7 @@ export function GlobalSettingsForm({
 			{(all || section === "harness") && <HarnessSettingsSection titleHidden={titleHidden} />}
 
 			{(all || section === "agents") && <CodexAccountsSection titleHidden={titleHidden} />}
+			{(all || section === "agents") && <CursorSubscriptionUsageSection titleHidden={titleHidden} />}
 
 			{(all || section === "browserProfiles") && <BrowserProfilesSection titleHidden={titleHidden} />}
 			{(all || section === "cloud") && <CloudCredentialsSection titleHidden={titleHidden} />}
