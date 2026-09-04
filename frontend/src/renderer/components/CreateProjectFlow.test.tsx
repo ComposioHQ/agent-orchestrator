@@ -264,6 +264,24 @@ describe("CreateProjectFlow droppedPath", () => {
 		);
 	});
 
+	it("retains the selected folder and agent sheet after an unrelated create failure", async () => {
+		const user = userEvent.setup();
+		const onCreateProject = vi.fn().mockRejectedValueOnce(new Error("AO daemon is not ready.")).mockResolvedValueOnce(undefined);
+		apiMocks.POST.mockResolvedValueOnce({ data: projectValidation("/dropped/project") });
+		const { rerender } = render(
+			<CreateProjectFlow mode="choose" {...noop} onCreateProject={onCreateProject} droppedPath={null} />,
+		);
+		rerender(<CreateProjectFlow mode="choose" {...noop} onCreateProject={onCreateProject} droppedPath={{ nonce: 1, path: "/dropped/project" }} />);
+		await user.click(await screen.findByRole("button", { name: "Import an existing project" }));
+		await user.click(await screen.findByRole("button", { name: "Submit agents" }));
+		await waitFor(() => expect(onCreateProject).toHaveBeenCalledTimes(1));
+		expect(screen.getByTestId("agent-sheet")).toHaveAttribute("data-path", "/dropped/project");
+		await user.click(screen.getByRole("button", { name: "Submit agents" }));
+		await waitFor(() => expect(onCreateProject).toHaveBeenCalledTimes(2));
+		await waitFor(() => expect(screen.queryByTestId("agent-sheet")).not.toBeInTheDocument());
+		expect(bridgeMocks.chooseDirectory).not.toHaveBeenCalled();
+	});
+
 	it("ignores a drop while the agent sheet is already open", async () => {
 		const user = userEvent.setup();
 		apiMocks.POST.mockResolvedValueOnce({ data: projectValidation("/dropped/first") });
