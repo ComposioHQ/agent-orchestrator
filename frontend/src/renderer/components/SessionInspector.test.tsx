@@ -2977,20 +2977,9 @@ describe("SessionInspector summary reviews", () => {
     await userEvent.click(await screen.findByRole("button", { name: /Select reviewer agent/ }));
     await userEvent.click(await screen.findByRole("menuitem", { name: /codex/i }));
     await waitFor(() =>
-      expect(postMock).toHaveBeenCalledWith(
-        "/api/v1/sessions/{sessionId}/reviews/switch",
-        {
-          params: { path: { sessionId: "sess-1" } },
-          body: { harness: undefined, agentConfig: undefined },
-        },
-      ),
-    );
-    expect(screen.queryByRole("menuitem", { name: "GPT-5 Mini" })).not.toBeInTheDocument();
-    await userEvent.click(await screen.findByRole("button", { name: /Select reviewer agent/ }));
-    await userEvent.click(await screen.findByRole("menuitem", { name: /codex/i }));
-    await waitFor(() =>
       expect(screen.getByRole("menuitem", { name: "GPT-5 Mini" })).toBeInTheDocument(),
     );
+    expect(postCallsFor("/api/v1/sessions/{sessionId}/reviews/switch")).toHaveLength(0);
     await userEvent.click(screen.getByRole("menuitem", { name: "GPT-5 Mini" }));
 
     await waitFor(() =>

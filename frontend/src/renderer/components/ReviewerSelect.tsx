@@ -207,8 +207,11 @@ function ReviewerHarnessOption({
 		enabled: false,
 	});
 	const catalog = catalogQuery.data;
-	const isCurrent = currentHarness === persistHarness;
-	const isCurrentDefaultSelection = isCurrent && currentModel === "" && currentMode === "";
+	const effectiveCurrentHarness =
+		currentHarness || (persistHarness === "" ? (resolvedHarness ?? "") : "");
+	const effectivePersistHarness = persistHarness || resolvedHarness || "";
+	const isCurrentHarness = effectiveCurrentHarness !== "" && effectiveCurrentHarness === effectivePersistHarness;
+	const isCurrentDefaultSelection = isCurrentHarness && currentModel === "" && currentMode === "";
 	const selectDefault = () => onSelect(persistHarness, {});
 
 	if (!resolvedHarness) {
@@ -237,7 +240,7 @@ function ReviewerHarnessOption({
 					<AgentSelectMenuItem
 						agentId={resolvedHarness}
 						label={agent.label}
-						selected={isCurrent}
+						selected={isCurrentHarness}
 						status={agent.status}
 						statusTone={agent.statusTone}
 						disabled={agent.disabled}
@@ -253,7 +256,7 @@ function ReviewerHarnessOption({
 				disabled={agent.disabled}
 				aria-label={agent.status ? `${agent.label}${agent.status}` : agent.label}
 				onClick={(event) => {
-					if (!isCurrentDefaultSelection) {
+					if (!isCurrentHarness) {
 						event.preventDefault();
 						closeMenu();
 						selectDefault();
@@ -263,7 +266,7 @@ function ReviewerHarnessOption({
 				<AgentSelectMenuItem
 					agentId={resolvedHarness}
 					label={agent.label}
-					selected={isCurrent}
+					selected={isCurrentHarness}
 					status={agent.status}
 					statusTone={agent.statusTone}
 					disabled={agent.disabled}
@@ -284,7 +287,7 @@ function ReviewerHarnessOption({
 				) : null}
 				{modelOptions(catalog).map((option) => {
 					const selected =
-						isCurrent &&
+						isCurrentHarness &&
 						((option.kind === "mode" && currentMode === option.value) ||
 							(option.kind === "model" && currentModel === option.value));
 					return (
