@@ -1445,6 +1445,7 @@
 	"files.feedbackError": "Impossible d'envoyer le commentaire",
 	"files.minimize": "Réduire les fichiers",
 	"files.maximize": "Agrandir les fichiers",
+	"files.openInCenter": "Ouvrir dans le panneau central : {{path}}",
 	"files.loading": "Chargement des fichiers...",
 	"files.error.load": "Impossible de charger les fichiers.",
 	"files.collapseFile": "Réduire {{file}}",

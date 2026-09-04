@@ -379,7 +379,9 @@ describe("BrowserPanel", () => {
 		});
 		expect(toolbar).toHaveClass("browser-panel__toolbar--url-takeover");
 		expect(within(toolbar).getByRole("button", { name: /back/i })).toHaveClass("browser-panel__navigation-btn");
+		expect(within(toolbar).getByRole("button", { name: /back/i }).parentElement).toHaveClass("browser-panel__navigation-control");
 		expect(within(toolbar).getByRole("button", { name: /forward/i })).toHaveClass("browser-panel__navigation-btn");
+		expect(within(toolbar).getByRole("button", { name: /forward/i }).parentElement).toHaveClass("browser-panel__navigation-control");
 		expect(within(toolbar).getByRole("button", { name: /reload/i })).toHaveClass("browser-panel__navigation-btn");
 
 		act(() => {
