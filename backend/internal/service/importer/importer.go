@@ -172,6 +172,9 @@ func (m *Manager) Validate(ctx context.Context, in ImportValidationInput) (Impor
 	if normalizeErr != nil {
 		return invalidImportResult(importKind, strings.TrimSpace(in.Path), "INVALID_PATH"), nil //nolint:nilerr // validation failures are reported in-band so the UI can show blocking errors
 	}
+	if unsafeImportPath(path) {
+		return invalidImportResult(importKind, path, "IMPORT_PATH_UNSAFE"), nil
+	}
 	result := ImportValidationResult{
 		ImportKind:     importKind,
 		IsValid:        true,
@@ -259,6 +262,9 @@ func (m *Manager) PrepareGit(ctx context.Context, in GitPreparationInput) (GitPr
 	}
 	events := []GitPreparationEvent{}
 	for _, target := range targets {
+		if unsafeImportPath(target.Status.RepoPath) {
+			return GitPreparationResult{}, apierr.Invalid("IMPORT_PATH_UNSAFE", "Selected folder is too broad for automatic Git setup.", map[string]any{"path": target.Status.RepoPath})
+		}
 		required := actionSet(target.Status.RequiredActions)
 		for action := range required {
 			if !containsAction(target.Input.ApprovedActions, action) {
@@ -460,6 +466,40 @@ func normalizeImportPath(raw string) (string, error) {
 		return "", err
 	}
 	return filepath.Clean(abs), nil
+}
+
+// unsafeImportPath protects broad user and AO-owned directories from the Git
+// preparation actions below. Import preparation is deliberately separate from
+// project setup, so it cannot rely on the latter's path-safety guard.
+func unsafeImportPath(path string) bool {
+	clean := comparableImportPath(path)
+	if filepath.Dir(clean) == clean {
+		return true
+	}
+
+	home, err := os.UserHomeDir()
+	if err != nil || strings.TrimSpace(home) == "" {
+		return false
+	}
+	home = comparableImportPath(home)
+	if sameImportPath(clean, home) {
+		return true
+	}
+	for _, broadName := range []string{"Desktop", "Documents", "Downloads"} {
+		if sameImportPath(clean, comparableImportPath(filepath.Join(home, broadName))) {
+			return true
+		}
+	}
+	aoState := comparableImportPath(filepath.Join(home, ".ao"))
+	return sameImportPath(clean, aoState) || isImportDescendant(clean, aoState)
+}
+
+func isImportDescendant(path, parent string) bool {
+	rel, err := filepath.Rel(parent, path)
+	if err != nil || rel == "." || rel == "" || rel == ".." {
+		return false
+	}
+	return !strings.HasPrefix(rel, ".."+string(os.PathSeparator))
 }
 
 func isImportFolderEmpty(path string) bool {

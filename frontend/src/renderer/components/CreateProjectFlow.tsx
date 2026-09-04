@@ -653,6 +653,8 @@ function importBlockingErrorLabel(code: string): string {
 			return "Repair the Git metadata or choose a different folder.";
 		case "CHILD_REPO_SCAN_FAILED":
 			return "AO could not inspect the repositories under this folder.";
+		case "IMPORT_PATH_UNSAFE":
+			return "Choose a specific project folder outside AO's own state directories.";
 		default:
 			return "Choose a different folder or repair the repository before continuing.";
 	}
