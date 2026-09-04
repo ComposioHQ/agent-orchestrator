@@ -750,7 +750,7 @@ func (r *Runner) configureWorkerGitCredential(ctx context.Context, helperPath st
 		{"config", "--local", "--replace-all", "credential.useHttpPath", "true"},
 	}
 	for _, arguments := range commands {
-		command := exec.CommandContext(ctx, "git", append([]string{"-C", r.workspaceDir}, arguments...)...)
+		command := exec.CommandContext(ctx, "git", append([]string{"-C", r.workspaceDir}, arguments...)...) //nolint:gosec // Arguments are fixed control-plane Git configuration commands.
 		if output, err := command.CombinedOutput(); err != nil {
 			return fmt.Errorf(
 				"configure worker Git credential: %w: %s",

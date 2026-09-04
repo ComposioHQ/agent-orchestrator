@@ -15,6 +15,7 @@ import (
 // operation. Installation credentials may only be minted for these operations.
 type CredentialOperation string
 
+// Supported credential operations.
 const (
 	OperationObserve             CredentialOperation = "observe"
 	OperationIssueRead           CredentialOperation = "issue-read"

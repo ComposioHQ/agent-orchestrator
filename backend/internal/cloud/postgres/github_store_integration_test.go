@@ -218,7 +218,7 @@ func TestGitHubStoreIntegrationIsolationRevocationAndAtomicConfirmation(t *testi
 
 func createPendingIntegrationAttempt(
 	t *testing.T,
-	ctx context.Context,
+	ctx context.Context, //nolint:revive // Test helper signature keeps the test handle first.
 	store *Store,
 	orgID clouddomain.OrgID,
 	userID clouddomain.UserID,

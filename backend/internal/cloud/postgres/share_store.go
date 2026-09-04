@@ -644,6 +644,7 @@ func (s *Store) ListSharedProjectGrants(ctx context.Context, userID string) ([]S
 	return out, rows.Err()
 }
 
+// Project-share errors describe invalid or unavailable sharing resources.
 var (
 	ErrProjectShareLinkNotFound     = errors.New("cloud project share link not found")
 	ErrProjectShareGrantNotFound    = errors.New("cloud project share grant not found")

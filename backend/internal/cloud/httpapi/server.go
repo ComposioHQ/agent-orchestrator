@@ -135,10 +135,10 @@ type Server struct {
 
 // WithMaxActiveSandboxesPerOrg rejects new session creation once an org has
 // too many non-deleted sandboxes. A value of 0 disables the guard.
-func WithMaxActiveSandboxesPerOrg(max int) Option {
+func WithMaxActiveSandboxesPerOrg(limit int) Option {
 	return func(server *Server) {
-		if max >= 0 {
-			server.maxActiveSandboxesPerOrg = max
+		if limit >= 0 {
+			server.maxActiveSandboxesPerOrg = limit
 		}
 	}
 }
@@ -246,7 +246,7 @@ func tenantAccountIDFromContext(ctx context.Context) clouddomain.AccountID {
 func (s *Server) routes() http.Handler {
 	router := chi.NewRouter()
 	router.Use(middleware.RequestID)
-	router.Use(middleware.RealIP)
+	router.Use(middleware.RealIP) //nolint:staticcheck // Cloud is deployed behind the trusted control-plane proxy.
 	router.Use(middleware.Recoverer)
 	router.Use(s.requestLogger)
 	router.Use(s.cors)
