@@ -383,3 +383,69 @@ func TestSpawn_LaunchGateRequestCarriesTheFullParityFields(t *testing.T) {
 		t.Fatalf("Kind = %q, want the spawn's kind", req.Kind)
 	}
 }
+
+// P1 from review 5113322042, the one the reviewer called out as "not merely
+// future scope": Restore rebuilds env and argv and creates a child without ever
+// consulting the gate, so a restored Claude child kept its inherited
+// CLAUDE_CONFIG_DIR while the older trust writer seeded the default root. The
+// exact two-roots condition, reachable through a path this PR had not gated.
+func TestRestore_LaunchGateRunsBeforeTheRelaunchedChild(t *testing.T) {
+	const inherited = "/home/rose/.ao/bench-claude"
+	st := newFakeStore()
+	config := testRoleAgents()
+	config.Env = map[string]string{"CLAUDE_CONFIG_DIR": inherited}
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: config}
+	rt := &fakeRuntime{}
+	gate := &recordingLaunchGate{decision: ports.PreLaunchDecision{Allow: true}}
+	m := New(Deps{
+		Runtime: rt, Agents: fakeAgents{}, Workspace: &fakeWorkspace{}, Store: st,
+		Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, LaunchGate: gate,
+		LookPath: func(string) (string, error) { return "/bin/true", nil },
+	})
+	seedTerminal(st, "mer-1", domain.SessionMetadata{WorkspacePath: "/ws/mer-1", Branch: "b", AgentSessionID: "agent-x"})
+
+	if _, err := m.RestoreWithMode(ctx, "mer-1"); err != nil {
+		t.Fatalf("restore: %v", err)
+	}
+	if len(gate.seen) == 0 {
+		t.Fatal("restore relaunched a child without consulting the launch gate")
+	}
+	req := gate.seen[0]
+	if got := req.Env["CLAUDE_CONFIG_DIR"]; got != inherited {
+		t.Fatalf("gate saw CLAUDE_CONFIG_DIR = %q, want the inherited %q", got, inherited)
+	}
+	if req.LaunchID == "" {
+		t.Fatal("a restored launch must carry its identity to the gate")
+	}
+	if req.Role != ports.LaunchRoleWorker {
+		t.Fatalf("Role = %q, want worker", req.Role)
+	}
+}
+
+// A refusal on restore must not leave a replaced child: nothing is created.
+func TestRestore_LaunchGateRefusalCreatesNoChild(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: testRoleAgents()}
+	rt := &fakeRuntime{}
+	gate := &recordingLaunchGate{decision: ports.PreLaunchDecision{
+		Allow: false, Reason: "workspace trust not accepted", PromptKind: "workspace_trust",
+	}}
+	m := New(Deps{
+		Runtime: rt, Agents: fakeAgents{}, Workspace: &fakeWorkspace{}, Store: st,
+		Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, LaunchGate: gate,
+		LookPath: func(string) (string, error) { return "/bin/true", nil },
+	})
+	seedTerminal(st, "mer-1", domain.SessionMetadata{WorkspacePath: "/ws/mer-1", Branch: "b", AgentSessionID: "agent-x"})
+
+	_, err := m.RestoreWithMode(ctx, "mer-1")
+
+	if err == nil {
+		t.Fatal("a refused restore must fail rather than relaunch")
+	}
+	if !errors.Is(err, ports.ErrLaunchNotReady) {
+		t.Fatalf("err = %v, want ports.ErrLaunchNotReady", err)
+	}
+	if rt.created != 0 {
+		t.Fatalf("runtime.Create ran %d times on a refused restore", rt.created)
+	}
+}

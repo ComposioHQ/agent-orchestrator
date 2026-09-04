@@ -2298,10 +2298,24 @@ func (m *Manager) relaunchSessionWithPolicyAndGeneration(ctx context.Context, op
 	m.augmentRuntimePATHForLaunchBinary(ctx, env, argv)
 	launchID := strings.TrimSpace(reservedGeneration)
 	if launchID == "" {
-		argv, launchID, err = m.superviseAgentProcess(agent, rec.ID, env, argv)
-	} else {
-		argv, err = m.wrapAgentProcessWithLaunchID(agent, rec.ID, env, argv, launchID, true)
+		launchID, err = m.freshLaunchID()
+		if err != nil {
+			m.cleanupSystemPromptDir(rec.ID)
+			return RestoreResult{}, fmt.Errorf("%s %s: supervisor: %w", operation, rec.ID, err)
+		}
 	}
+	// A restored or relaunched child is a child. Gating only Spawn left the
+	// exact two-roots condition reachable through Restore: the older Claude
+	// PreLaunch still seeded the default root while the relaunched child kept
+	// its inherited CLAUDE_CONFIG_DIR. The gate runs here before any replacement
+	// for the same reason it runs in Spawn -- this is the last point where the
+	// argv and env are final and no new child exists.
+	if err := m.applyLaunchGateForRecord(ctx, rec, ws.Path, agentConfig, argv, env,
+		launchGateIdentity{launchID: launchID, conversationID: rec.Metadata.ProviderConversationID}); err != nil {
+		m.cleanupSystemPromptDir(rec.ID)
+		return RestoreResult{}, fmt.Errorf("%s %s: %w", operation, rec.ID, wrapSpawnStage(rec.ID, ErrSpawnLaunchGate, err))
+	}
+	argv, err = m.wrapAgentProcessWithLaunchID(agent, rec.ID, env, argv, launchID, true)
 	if err != nil {
 		m.cleanupSystemPromptDir(rec.ID)
 		return RestoreResult{}, fmt.Errorf("%s %s: supervisor: %w", operation, rec.ID, err)
@@ -4749,6 +4763,17 @@ func freshLaunchArgv(ctx context.Context, agent ports.Agent, id domain.SessionID
 type launchGateIdentity struct {
 	launchID       string
 	conversationID string
+}
+
+// applyLaunchGateForRecord gates a launch for an existing session record. It is
+// the entry point restore, relaunch, restart and agent switching use, since
+// those have a record rather than a SpawnConfig.
+func (m *Manager) applyLaunchGateForRecord(ctx context.Context, rec domain.SessionRecord,
+	workspacePath string, adapterConfig ports.AgentConfig, argv []string, env map[string]string,
+	identity launchGateIdentity) error {
+	return m.applyLaunchGate(ctx, rec.ID,
+		ports.SpawnConfig{Kind: rec.Kind, Harness: rec.Harness},
+		workspacePath, adapterConfig, argv, env, identity)
 }
 
 func (m *Manager) applyLaunchGate(ctx context.Context, id domain.SessionID, cfg ports.SpawnConfig,
