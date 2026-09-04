@@ -1231,7 +1231,7 @@ function ProjectImportDialog({
 							<Dialog.Title className="text-[18px] font-semibold text-[var(--color-text-import-title)]">
 								{step === "prepare_git" ? t("createProject.prepareProjectTitle") : t("createProject.importProject")}
 							</Dialog.Title>
-							<Dialog.Description className="mt-0.5 text-[12px] leading-5 text-muted-foreground">
+							<Dialog.Description className="sr-only">
 								{step === "blocked"
 									? t("createProject.projectImportBlocked")
 									: t("createProject.projectImportApproval")}
