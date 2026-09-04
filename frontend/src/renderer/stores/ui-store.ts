@@ -53,6 +53,12 @@ export type InspectorSessionState = {
 	initialized?: boolean;
 };
 
+export type GlobalToast = {
+	title: string;
+	body?: string;
+	nonce: number;
+};
+
 // Selection (which project/session is open) now lives in the URL — the router
 // is the single source of truth, read via route params. This store holds only
 // ephemeral UI: theme, sidebar collapse, command palette, per-session inspector
@@ -74,6 +80,7 @@ export type UiState = {
 	restartingProjectIds: ReadonlySet<string>;
 	orchestratorReplacementErrors: Record<string, OrchestratorReplacementFailure>;
 	orchestratorStartupErrors: Record<string, string>;
+	globalToast: GlobalToast | null;
 	// Transient "open the New Task dialog for this project" signal. The nonce
 	// bumps on every request so a repeat press (even for the same project) still
 	// re-fires; the always-mounted GlobalNewTaskDialog consumes it. Selection
@@ -132,6 +139,8 @@ export type UiState = {
 	setProjectRestarting: (projectId: string, restarting: boolean) => void;
 	setOrchestratorReplacementError: (projectId: string, failure: OrchestratorReplacementFailure | null) => void;
 	setOrchestratorStartupError: (projectId: string, message: string | null) => void;
+	showGlobalToast: (title: string, body?: string) => void;
+	clearGlobalToast: () => void;
 	requestNewTask: (projectId: string) => void;
 	requestCreateProject: () => void;
 	requestCreateProjectFromPath: (path: string) => void;
@@ -191,6 +200,7 @@ export const useUiStore = create<UiState>((set, get) => ({
 	restartingProjectIds: new Set<string>(),
 	orchestratorReplacementErrors: {},
 	orchestratorStartupErrors: {},
+	globalToast: null,
 	newTaskRequest: null,
 	createProjectNonce: 0,
 	folderDropRequest: null,
@@ -357,6 +367,11 @@ export const useUiStore = create<UiState>((set, get) => ({
 			}
 			return { orchestratorStartupErrors };
 		}),
+	showGlobalToast: (title, body) =>
+		set((state) => ({
+			globalToast: { title, body, nonce: (state.globalToast?.nonce ?? 0) + 1 },
+		})),
+	clearGlobalToast: () => set({ globalToast: null }),
 	requestNewTask: (projectId) =>
 		set((state) => ({ newTaskRequest: { projectId, nonce: (state.newTaskRequest?.nonce ?? 0) + 1 } })),
 	requestCreateProject: () => set((state) => ({ createProjectNonce: state.createProjectNonce + 1 })),
