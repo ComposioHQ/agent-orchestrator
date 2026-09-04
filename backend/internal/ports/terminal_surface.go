@@ -1,5 +1,7 @@
 package ports
 
+import "github.com/aoagents/agent-orchestrator/backend/internal/domain"
+
 // TerminalSurfaceWorkState is the provider TUI's current, rendered work state.
 // The zero value is deliberately unknown so an unrecognized or partial frame
 // can never become evidence for a destructive action.
@@ -31,6 +33,10 @@ const (
 type TerminalSurfaceObservation struct {
 	Work     TerminalSurfaceWorkState
 	Composer TerminalComposerState
+	// StartupPrompt is a typed, redacted classification of a provider-owned
+	// prompt on the current screen. It is set only for a structurally current
+	// confirmation frame; arbitrary transcript text remains unclassified.
+	StartupPrompt domain.StartupPromptKind
 	// NativeConversationNotStarted is positive provider-owned proof that the
 	// visible TUI is still on its initial composer and has no native history to
 	// transfer. False means unknown or started; callers must fail closed.

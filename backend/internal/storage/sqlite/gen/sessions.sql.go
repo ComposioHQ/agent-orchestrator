@@ -73,6 +73,7 @@ SET session_mode = ?,
     controller_generation = '',
     activity_state = 'idle',
     activity_last_at = ?,
+    startup_prompt = '',
     updated_at = ?
 WHERE id = ? AND session_mode = ? AND is_terminated = 0
 `
@@ -111,7 +112,7 @@ const getSession = `-- name: GetSession :one
 SELECT id, project_id, num, issue_id, kind, harness,
     activity_state, activity_last_at, is_terminated, branch, workspace_path,
     runtime_handle_id, agent_session_id, agent_session_id_launch_id, prompt,
-    created_at, updated_at, display_name, first_signal_at, preview_url,
+    created_at, updated_at, display_name, first_signal_at, startup_prompt, preview_url,
     preview_revision, cleanup_generation, runtime_launch_id,
     workspace_repo_path, terminate_on_pr_merge, diff_base_sha, diff_base_ref,
     reviewer_harness, reviewer_agent_config, is_pinned, pinned_at,
@@ -140,6 +141,7 @@ type GetSessionRow struct {
 	UpdatedAt                 time.Time
 	DisplayName               string
 	FirstSignalAt             sql.NullTime
+	StartupPrompt             string
 	PreviewURL                string
 	PreviewRevision           int64
 	CleanupGeneration         int64
@@ -189,6 +191,7 @@ func (q *Queries) GetSession(ctx context.Context, id domain.SessionID) (GetSessi
 		&i.UpdatedAt,
 		&i.DisplayName,
 		&i.FirstSignalAt,
+		&i.StartupPrompt,
 		&i.PreviewURL,
 		&i.PreviewRevision,
 		&i.CleanupGeneration,
@@ -220,7 +223,7 @@ func (q *Queries) GetSession(ctx context.Context, id domain.SessionID) (GetSessi
 const insertSession = `-- name: InsertSession :exec
 INSERT INTO sessions (
     id, project_id, num, issue_id, kind, harness, reviewer_harness, reviewer_agent_config, auto_review_enabled, display_name,
-    activity_state, activity_last_at, first_signal_at, is_terminated,
+    activity_state, activity_last_at, first_signal_at, startup_prompt, is_terminated,
     branch, workspace_path, workspace_repo_path, diff_base_sha, diff_base_ref, runtime_handle_id,
     runtime_launch_id, agent_session_id, agent_session_id_launch_id, prompt,
     latest_user_prompt, latest_user_prompt_at, latest_assistant_update, native_transcript_path,
@@ -231,7 +234,7 @@ INSERT INTO sessions (
     ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
     ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
     ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
 )
 `
 
@@ -249,6 +252,7 @@ type InsertSessionParams struct {
 	ActivityState             domain.ActivityState
 	ActivityLastAt            time.Time
 	FirstSignalAt             sql.NullTime
+	StartupPrompt             string
 	IsTerminated              bool
 	Branch                    string
 	WorkspacePath             string
@@ -296,6 +300,7 @@ func (q *Queries) InsertSession(ctx context.Context, arg InsertSessionParams) er
 		arg.ActivityState,
 		arg.ActivityLastAt,
 		arg.FirstSignalAt,
+		arg.StartupPrompt,
 		arg.IsTerminated,
 		arg.Branch,
 		arg.WorkspacePath,
@@ -334,7 +339,7 @@ const listAllSessions = `-- name: ListAllSessions :many
 SELECT id, project_id, num, issue_id, kind, harness,
     activity_state, activity_last_at, is_terminated, branch, workspace_path,
     runtime_handle_id, agent_session_id, agent_session_id_launch_id, prompt,
-    created_at, updated_at, display_name, first_signal_at, preview_url,
+    created_at, updated_at, display_name, first_signal_at, startup_prompt, preview_url,
     preview_revision, cleanup_generation, runtime_launch_id,
     workspace_repo_path, terminate_on_pr_merge, diff_base_sha, diff_base_ref,
     reviewer_harness, reviewer_agent_config, is_pinned, pinned_at,
@@ -363,6 +368,7 @@ type ListAllSessionsRow struct {
 	UpdatedAt                 time.Time
 	DisplayName               string
 	FirstSignalAt             sql.NullTime
+	StartupPrompt             string
 	PreviewURL                string
 	PreviewRevision           int64
 	CleanupGeneration         int64
@@ -418,6 +424,7 @@ func (q *Queries) ListAllSessions(ctx context.Context) ([]ListAllSessionsRow, er
 			&i.UpdatedAt,
 			&i.DisplayName,
 			&i.FirstSignalAt,
+			&i.StartupPrompt,
 			&i.PreviewURL,
 			&i.PreviewRevision,
 			&i.CleanupGeneration,
@@ -460,7 +467,7 @@ const listSessionsByProject = `-- name: ListSessionsByProject :many
 SELECT id, project_id, num, issue_id, kind, harness,
     activity_state, activity_last_at, is_terminated, branch, workspace_path,
     runtime_handle_id, agent_session_id, agent_session_id_launch_id, prompt,
-    created_at, updated_at, display_name, first_signal_at, preview_url,
+    created_at, updated_at, display_name, first_signal_at, startup_prompt, preview_url,
     preview_revision, cleanup_generation, runtime_launch_id,
     workspace_repo_path, terminate_on_pr_merge, diff_base_sha, diff_base_ref,
     reviewer_harness, reviewer_agent_config, is_pinned, pinned_at,
@@ -489,6 +496,7 @@ type ListSessionsByProjectRow struct {
 	UpdatedAt                 time.Time
 	DisplayName               string
 	FirstSignalAt             sql.NullTime
+	StartupPrompt             string
 	PreviewURL                string
 	PreviewRevision           int64
 	CleanupGeneration         int64
@@ -544,6 +552,7 @@ func (q *Queries) ListSessionsByProject(ctx context.Context, projectID domain.Pr
 			&i.UpdatedAt,
 			&i.DisplayName,
 			&i.FirstSignalAt,
+			&i.StartupPrompt,
 			&i.PreviewURL,
 			&i.PreviewRevision,
 			&i.CleanupGeneration,
@@ -885,7 +894,7 @@ func (q *Queries) UpdateBrowserCapabilityVerifier(ctx context.Context, arg Updat
 const updateSession = `-- name: UpdateSession :exec
 UPDATE sessions SET
     issue_id = ?, kind = ?, harness = ?, reviewer_harness = ?, reviewer_agent_config = ?, auto_review_enabled = ?, display_name = ?,
-    activity_state = ?, activity_last_at = ?, first_signal_at = ?, is_terminated = ?,
+    activity_state = ?, activity_last_at = ?, first_signal_at = ?, startup_prompt = ?, is_terminated = ?,
     branch = ?, workspace_path = ?, workspace_repo_path = ?, diff_base_sha = ?, diff_base_ref = ?, runtime_handle_id = ?,
     runtime_launch_id = ?, agent_session_id = ?, agent_session_id_launch_id = ?, prompt = ?,
     latest_user_prompt = ?, latest_user_prompt_at = ?, latest_assistant_update = ?, native_transcript_path = ?,
@@ -907,6 +916,7 @@ type UpdateSessionParams struct {
 	ActivityState             domain.ActivityState
 	ActivityLastAt            time.Time
 	FirstSignalAt             sql.NullTime
+	StartupPrompt             string
 	IsTerminated              bool
 	Branch                    string
 	WorkspacePath             string
@@ -950,6 +960,7 @@ func (q *Queries) UpdateSession(ctx context.Context, arg UpdateSessionParams) er
 		arg.ActivityState,
 		arg.ActivityLastAt,
 		arg.FirstSignalAt,
+		arg.StartupPrompt,
 		arg.IsTerminated,
 		arg.Branch,
 		arg.WorkspacePath,

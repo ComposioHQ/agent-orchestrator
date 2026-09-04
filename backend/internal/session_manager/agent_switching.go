@@ -1375,7 +1375,8 @@ func (m *Manager) prepareTargetActivation(ctx context.Context, store ports.Agent
 	}
 	launch := ports.LaunchConfig{
 		DataDir: m.dataDir, SessionID: string(rec.ID), WorkspacePath: rec.Metadata.WorkspacePath,
-		Kind: rec.Kind, SystemPrompt: systemPrompt, SystemPromptFile: systemFile,
+		ManagedWorkspace: true,
+		Kind:             rec.Kind, SystemPrompt: systemPrompt, SystemPromptFile: systemFile,
 		Config: config, Permissions: config.Permissions,
 	}
 	promptDelivery, err := agent.GetPromptDeliveryStrategy(ctx, launch)
@@ -1392,6 +1393,7 @@ func (m *Manager) prepareTargetActivation(ctx context.Context, store ports.Agent
 			Session: ports.SessionRef{ID: string(rec.ID), WorkspacePath: rec.Metadata.WorkspacePath, Metadata: map[string]string{ports.MetadataKeyAgentSessionID: candidate.NativeSessionID}},
 			Kind:    rec.Kind, DataDir: m.dataDir, SystemPrompt: systemPrompt, SystemPromptFile: systemFile,
 			Config: config, Permissions: config.Permissions,
+			ManagedWorkspace: true,
 		})
 		if restoreErr != nil {
 			return preparedTargetActivation{}, fmt.Errorf("restore command: %w", restoreErr)
@@ -1538,6 +1540,7 @@ func (m *Manager) prepareTargetLaunchPrompt(ctx context.Context, rec domain.Sess
 			Kind: rec.Kind, DataDir: m.dataDir, Prompt: prompt,
 			SystemPrompt: launch.SystemPrompt, SystemPromptFile: launch.SystemPromptFile,
 			Config: launch.Config, Permissions: launch.Config.Permissions,
+			ManagedWorkspace: true,
 		})
 		if buildErr != nil {
 			return fmt.Errorf("restore command: %w", buildErr)

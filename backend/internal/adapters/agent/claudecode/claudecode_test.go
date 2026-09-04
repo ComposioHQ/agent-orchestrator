@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -121,6 +122,24 @@ func TestGetLaunchCommandBypassWithPrompt(t *testing.T) {
 	}
 	if !reflect.DeepEqual(cmd, want) {
 		t.Fatalf("unexpected command\nwant: %#v\n got: %#v", want, cmd)
+	}
+}
+
+func TestGetLaunchCommandManagedBypassUsesDocumentedNoPromptFlag(t *testing.T) {
+	p := &Plugin{resolvedBinary: "claude"}
+
+	cmd, err := p.GetLaunchCommand(context.Background(), ports.LaunchConfig{
+		Permissions:      ports.PermissionModeBypassPermissions,
+		ManagedWorkspace: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !contains(cmd, "--dangerously-skip-permissions") {
+		t.Fatalf("managed bypass command %#v missing documented no-prompt flag", cmd)
+	}
+	if contains(cmd, "--permission-mode") {
+		t.Fatalf("managed bypass command %#v retained the prompt-prone permission-mode flag", cmd)
 	}
 }
 
@@ -951,7 +970,7 @@ func TestEnsureWorkspaceTrustedNormalizesWindowsProjectKey(t *testing.T) {
 
 	const workspacePath = `D:\dev\agent-orchestrator\.ao\worktrees\demo\worker-1`
 	const wantKey = `D:/dev/agent-orchestrator/.ao/worktrees/demo/worker-1`
-	if err := ensureWorkspaceTrustedForOS(cfgPath, workspacePath, "windows"); err != nil {
+	if err := ensureWorkspaceTrustedForOS(cfgPath, "windows", workspacePath); err != nil {
 		t.Fatalf("ensureWorkspaceTrustedForOS: %v", err)
 	}
 
@@ -974,7 +993,7 @@ func TestEnsureWorkspaceTrustedLeavesNonWindowsProjectKeyUnchanged(t *testing.T)
 	}
 
 	const workspacePath = `/worktrees/project\with-backslash`
-	if err := ensureWorkspaceTrustedForOS(cfgPath, workspacePath, "linux"); err != nil {
+	if err := ensureWorkspaceTrustedForOS(cfgPath, "linux", workspacePath); err != nil {
 		t.Fatalf("ensureWorkspaceTrustedForOS: %v", err)
 	}
 
@@ -1026,6 +1045,115 @@ func TestEnsureWorkspaceTrustedCreatesMissingConfig(t *testing.T) {
 	entry := projects[work].(map[string]any)
 	if entry["hasTrustDialogAccepted"] != true {
 		t.Fatalf("entry not trusted in freshly-created config: %#v", entry)
+	}
+}
+
+func TestPreLaunchTrustsVerifiedWorktreeAndItsCommonRepository(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is required for the managed-worktree fixture")
+	}
+	repo := t.TempDir()
+	runClaudeGit(t, repo, "init")
+	runClaudeGit(t, repo, "config", "user.email", "ao-test@example.invalid")
+	runClaudeGit(t, repo, "config", "user.name", "AO test")
+	if err := os.WriteFile(filepath.Join(repo, "README.md"), []byte("fixture\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	runClaudeGit(t, repo, "add", "README.md")
+	runClaudeGit(t, repo, "commit", "-m", "initial")
+
+	worktree := filepath.Join(t.TempDir(), "worker")
+	runClaudeGit(t, repo, "worktree", "add", "-b", "worker", worktree, "HEAD")
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	if err := (&Plugin{}).PreLaunch(context.Background(), ports.LaunchConfig{WorkspacePath: worktree, ManagedWorkspace: true}); err != nil {
+		t.Fatalf("PreLaunch: %v", err)
+	}
+	projects := readJSON(t, filepath.Join(home, ".claude.json"))["projects"].(map[string]any)
+	// The launched worktree path stays literal so it matches Claude's CWD;
+	// git may canonicalize the shared primary checkout through macOS /private.
+	worktreeTrust, err := absoluteTrustRoot(worktree)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repoTrust, err := canonicalTrustRoot(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, trustRoot := range []string{worktreeTrust, repoTrust} {
+		entry, ok := projects[trustRoot].(map[string]any)
+		if !ok || entry["hasTrustDialogAccepted"] != true {
+			t.Fatalf("trusted project %q = %#v, want accepted", trustRoot, projects[trustRoot])
+		}
+	}
+}
+
+func TestPreLaunchTrustsManagedScratchWorkspaceWithoutGit(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	workspace := t.TempDir()
+
+	if err := (&Plugin{}).PreLaunch(context.Background(), ports.LaunchConfig{
+		WorkspacePath:    workspace,
+		ManagedWorkspace: true,
+	}); err != nil {
+		t.Fatalf("PreLaunch managed scratch: %v", err)
+	}
+
+	root := readJSON(t, filepath.Join(home, ".claude.json"))
+	projects, ok := root["projects"].(map[string]any)
+	if !ok {
+		t.Fatalf("projects = %#v, want object", root["projects"])
+	}
+	entry, ok := projects[filepath.Clean(workspace)].(map[string]any)
+	if !ok || entry["hasTrustDialogAccepted"] != true {
+		t.Fatalf("managed scratch trust entry = %#v, want accepted", projects[filepath.Clean(workspace)])
+	}
+}
+
+func TestPreLaunchRefusesManagedWorkspaceWithInvalidGitMarker(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is required for the malformed-worktree fixture")
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	workspace := t.TempDir()
+	if err := os.WriteFile(filepath.Join(workspace, ".git"), []byte("not a gitdir\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	err := (&Plugin{}).PreLaunch(context.Background(), ports.LaunchConfig{
+		WorkspacePath:    workspace,
+		ManagedWorkspace: true,
+	})
+	if err == nil || !strings.Contains(err.Error(), "verify managed workspace") {
+		t.Fatalf("PreLaunch error = %v, want invalid-worktree refusal", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(home, ".claude.json")); !os.IsNotExist(statErr) {
+		t.Fatalf("invalid worktree PreLaunch wrote Claude config: stat error = %v", statErr)
+	}
+}
+
+func TestPreLaunchRefusesUnmanagedWorkspaceWithoutWritingTrust(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	err := (&Plugin{}).PreLaunch(context.Background(), ports.LaunchConfig{
+		WorkspacePath: t.TempDir(),
+	})
+	if err == nil || !strings.Contains(err.Error(), "unmanaged workspace") {
+		t.Fatalf("PreLaunch error = %v, want unmanaged-workspace refusal", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(home, ".claude.json")); !os.IsNotExist(statErr) {
+		t.Fatalf("unmanaged PreLaunch wrote Claude config: stat error = %v", statErr)
+	}
+}
+
+func runClaudeGit(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git -C %s %s: %v: %s", dir, strings.Join(args, " "), err, out)
 	}
 }
 
@@ -1117,6 +1245,7 @@ func TestInspectTerminalSurfaceSeparatesClaudeWorkFromComposer(t *testing.T) {
 		output     string
 		wantWork   ports.TerminalSurfaceWorkState
 		wantEditor ports.TerminalComposerState
+		wantPrompt domain.StartupPromptKind
 	}{
 		{
 			name:       "idle empty composer",
@@ -1172,6 +1301,26 @@ func TestInspectTerminalSurfaceSeparatesClaudeWorkFromComposer(t *testing.T) {
 			wantEditor: ports.TerminalComposerUnknown,
 		},
 		{
+			name: "current workspace trust prompt is classified without retaining text",
+			output: "Is this a project you created or one you trust?\n" +
+				"❯ 1. Yes, I trust this project\n" +
+				"  2. No, exit Claude Code\n" +
+				"Press enter to confirm",
+			wantWork:   ports.TerminalSurfaceWorkBlocked,
+			wantEditor: ports.TerminalComposerUnknown,
+			wantPrompt: domain.StartupPromptWorkspaceTrust,
+		},
+		{
+			name: "current bypass responsibility prompt is classified without accepting it",
+			output: "Bypass permissions lets Claude act without asking.\n" +
+				"❯ 1. I understand the responsibility\n" +
+				"  2. No, exit Claude Code\n" +
+				"Press enter to confirm",
+			wantWork:   ports.TerminalSurfaceWorkBlocked,
+			wantEditor: ports.TerminalComposerUnknown,
+			wantPrompt: domain.StartupPromptBypassResponsibility,
+		},
+		{
 			name: "permission dialog with a non-first selected option",
 			output: "Claude wants to run Bash\n" +
 				"  1. Yes\n" +
@@ -1214,6 +1363,15 @@ func TestInspectTerminalSurfaceSeparatesClaudeWorkFromComposer(t *testing.T) {
 			wantEditor: ports.TerminalComposerEmpty,
 		},
 		{
+			name: "completed workspace trust wording above current composer is not startup evidence",
+			output: "Is this a project you created or one you trust?\n" +
+				"❯ 1. Yes, I trust this project\n" +
+				"  2. No, exit Claude Code\n" +
+				"Press enter to confirm\n" + rule + "\n❯\u00a0\x1b[7m \x1b[0m\n" + rule,
+			wantWork:   ports.TerminalSurfaceWorkIdle,
+			wantEditor: ports.TerminalComposerEmpty,
+		},
+		{
 			name: "permission wording in completed response is not current chrome",
 			output: "The command asked: Do you want to proceed?\n" +
 				"It then said: Press enter to confirm.\n" + rule + "\n❯\u00a0\x1b[7m \x1b[0m\n" + rule + "\n⏵⏵ bypass permissions on",
@@ -1245,8 +1403,8 @@ func TestInspectTerminalSurfaceSeparatesClaudeWorkFromComposer(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := plugin.InspectTerminalSurface(tt.output)
-			if got.Work != tt.wantWork || got.Composer != tt.wantEditor {
-				t.Fatalf("InspectTerminalSurface() = %+v, want work=%v composer=%v", got, tt.wantWork, tt.wantEditor)
+			if got.Work != tt.wantWork || got.Composer != tt.wantEditor || got.StartupPrompt != tt.wantPrompt {
+				t.Fatalf("InspectTerminalSurface() = %+v, want work=%v composer=%v prompt=%v", got, tt.wantWork, tt.wantEditor, tt.wantPrompt)
 			}
 		})
 	}

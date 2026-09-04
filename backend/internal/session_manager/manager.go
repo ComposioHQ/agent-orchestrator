@@ -1006,6 +1006,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		DataDir:          m.dataDir,
 		SessionID:        string(id),
 		WorkspacePath:    ws.Path,
+		ManagedWorkspace: true,
 		Kind:             cfg.Kind,
 		Prompt:           prompt,
 		SystemPrompt:     systemPrompt,
@@ -2340,6 +2341,7 @@ func (m *Manager) relaunchSessionWithPolicyAndGeneration(ctx context.Context, op
 			DataDir:          m.dataDir,
 			SessionID:        string(rec.ID),
 			WorkspacePath:    ws.Path,
+			ManagedWorkspace: true,
 			Kind:             rec.Kind,
 			Prompt:           rec.Metadata.Prompt,
 			SystemPrompt:     systemPrompt,
@@ -4431,7 +4433,7 @@ func (m *Manager) prepareWorkspace(ctx context.Context, agent ports.Agent, id do
 		return fmt.Errorf("install hooks: %w", err)
 	}
 	if pl, ok := agent.(preLauncher); ok {
-		if err := pl.PreLaunch(ctx, ports.LaunchConfig{DataDir: m.dataDir, SessionID: string(id), WorkspacePath: workspacePath}); err != nil {
+		if err := pl.PreLaunch(ctx, ports.LaunchConfig{DataDir: m.dataDir, SessionID: string(id), WorkspacePath: workspacePath, ManagedWorkspace: true}); err != nil {
 			m.cleanupPreparedAgentWorkspace(ctx, agent, id, workspacePath, env)
 			return fmt.Errorf("pre-launch: %w", err)
 		}
@@ -4616,7 +4618,7 @@ func restoreArgv(ctx context.Context, agent ports.Agent, id domain.SessionID, wo
 		WorkspacePath: workspacePath,
 		Metadata:      map[string]string{ports.MetadataKeyAgentSessionID: meta.AgentSessionID},
 	}
-	cmd, ok, err := agent.GetRestoreCommand(ctx, ports.RestoreConfig{Session: ref, Kind: kind, DataDir: dataDir, SystemPrompt: systemPrompt, SystemPromptFile: systemPromptFile, Config: agentConfig, Permissions: agentConfig.Permissions})
+	cmd, ok, err := agent.GetRestoreCommand(ctx, ports.RestoreConfig{Session: ref, Kind: kind, DataDir: dataDir, SystemPrompt: systemPrompt, SystemPromptFile: systemPromptFile, Config: agentConfig, Permissions: agentConfig.Permissions, ManagedWorkspace: true})
 	if err != nil {
 		return nil, "", "", fmt.Errorf("restore command: %w", err)
 	}
@@ -4683,6 +4685,7 @@ func freshLaunchArgv(ctx context.Context, agent ports.Agent, id domain.SessionID
 		DataDir:          dataDir,
 		SessionID:        string(id),
 		WorkspacePath:    workspacePath,
+		ManagedWorkspace: true,
 		Kind:             kind,
 		Prompt:           meta.Prompt,
 		SystemPrompt:     systemPrompt,

@@ -81,6 +81,7 @@ func (r *Reviewer) ReviewCommand(ctx context.Context, inv ports.ReviewInvocation
 		// from an id that the process was not launched with.
 		SessionID:        agentSessionID,
 		WorkspacePath:    inv.WorkspacePath,
+		ManagedWorkspace: true,
 		Prompt:           inv.Prompt,
 		SystemPrompt:     inv.SystemPrompt,
 		SystemPromptFile: inv.SystemPromptFile,
@@ -115,9 +116,10 @@ func (r *Reviewer) PreLaunch(ctx context.Context, inv ports.ReviewInvocation) er
 		return nil
 	}
 	return pl.PreLaunch(ctx, ports.LaunchConfig{
-		Config:        inv.Config,
-		SessionID:     workeragent.SessionUUID(inv.ReviewerID),
-		WorkspacePath: inv.WorkspacePath,
+		Config:           inv.Config,
+		SessionID:        workeragent.SessionUUID(inv.ReviewerID),
+		WorkspacePath:    inv.WorkspacePath,
+		ManagedWorkspace: true,
 	})
 }
 

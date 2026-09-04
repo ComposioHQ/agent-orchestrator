@@ -107,6 +107,10 @@ type SessionRecord struct {
 	// read back as SessionModeTUI.
 	Mode     SessionMode `json:"mode" enum:"chat,tui"`
 	Activity Activity    `json:"activity"`
+	// StartupPrompt is a durable, redacted class for a provider-owned
+	// first-launch prompt that blocked this exact terminal generation before
+	// any activity hook arrived. Empty means no classified blockade.
+	StartupPrompt StartupPromptKind `json:"startupPrompt,omitempty" enum:"workspace_trust,bypass_responsibility"`
 	// FirstSignalAt is when the FIRST agent hook callback arrived for the
 	// current spawn/restore: raw signal receipt, independent of the derived
 	// activity state. Zero means no hook has ever reported, which deriveStatus

@@ -665,6 +665,7 @@ func (m *Manager) preflightInterfaceTarget(
 			},
 			Kind: rec.Kind, DataDir: m.dataDir, SystemPrompt: systemPrompt,
 			Config: config, Permissions: config.Permissions,
+			ManagedWorkspace: true,
 		})
 		if err == nil && !resumable {
 			return ErrNativeConversationMissing

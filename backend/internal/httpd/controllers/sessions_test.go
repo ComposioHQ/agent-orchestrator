@@ -2776,6 +2776,38 @@ func TestSessionsAPI_CleanupWithoutProjectFilter(t *testing.T) {
 	}
 }
 
+func TestSessionsAPI_ListsRedactedStartupPromptAsNeedsInput(t *testing.T) {
+	svc := newFakeSessionService()
+	session := svc.sessions["ao-1"]
+	session.Status = domain.StatusNeedsInput
+	session.Activity = domain.Activity{
+		State:          domain.ActivityBlocked,
+		LastActivityAt: time.Date(2026, 9, 4, 12, 0, 0, 0, time.UTC),
+	}
+	session.StartupPrompt = domain.StartupPromptWorkspaceTrust
+	svc.sessions[session.ID] = session
+	srv := newSessionTestServer(t, svc)
+
+	body, status, _ := doRequest(t, srv, http.MethodGet, "/api/v1/sessions?project=ao", "")
+	if status != http.StatusOK {
+		t.Fatalf("GET sessions = %d, want 200; body=%s", status, body)
+	}
+	var list struct {
+		Sessions []struct {
+			Status        string `json:"status"`
+			StartupPrompt string `json:"startupPrompt"`
+		} `json:"sessions"`
+	}
+	mustJSON(t, body, &list)
+	if len(list.Sessions) != 1 || list.Sessions[0].Status != string(domain.StatusNeedsInput) ||
+		list.Sessions[0].StartupPrompt != string(domain.StartupPromptWorkspaceTrust) {
+		t.Fatalf("startup prompt projection = %#v", list.Sessions)
+	}
+	if strings.Contains(string(body), "Is this a project") || strings.Contains(string(body), "No, exit") {
+		t.Fatalf("startup prompt projection leaked terminal text: %s", body)
+	}
+}
+
 type sessionBody struct {
 	ID               string `json:"id"`
 	ProjectID        string `json:"projectId"`

@@ -63,6 +63,10 @@ type LaunchConfig struct {
 	Permission       PermissionPolicy
 	AllowedTools     []string
 	DisallowedTools  []string
+	// AllowDangerousBypass permits the Claude-specific documented bypass flag.
+	// The caller may set it only after an explicit bypass policy and a verified
+	// AO-managed workspace; it is deliberately false by default.
+	AllowDangerousBypass bool
 	// ProviderArgs are trusted host-owned flags inserted before model and
 	// prompt arguments. Desktop AO uses these for its Codex activity hooks;
 	// workers normally leave them empty.
@@ -84,6 +88,9 @@ type RestoreConfig struct {
 	AllowedTools     []string
 	DisallowedTools  []string
 	ProviderArgs     []string
+	// AllowDangerousBypass has the same explicit authorization boundary as the
+	// fresh-launch configuration.
+	AllowDangerousBypass bool
 }
 
 // BuildLaunchCommand returns argv for a fresh interactive agent process.
@@ -184,6 +191,19 @@ func ClaudePermissionArgs(policy PermissionPolicy) []string {
 	}
 }
 
+// ClaudePermissionArgsForLaunch returns the documented Claude Code launch
+// arguments for an explicitly authorized policy. Current Claude Code requires
+// --dangerously-skip-permissions to begin an unattended bypass session; merely
+// requesting --permission-mode bypassPermissions may still open its
+// responsibility dialog. Keep the generic compatibility mapping unless the
+// caller has independently proved that this is an AO-managed workspace.
+func ClaudePermissionArgsForLaunch(policy PermissionPolicy, allowDangerousBypass bool) []string {
+	if NormalizePermissionPolicy(policy) == PermissionBypassPermissions && allowDangerousBypass {
+		return []string{"--dangerously-skip-permissions"}
+	}
+	return ClaudePermissionArgs(policy)
+}
+
 // CodexPermissionArgs maps AO policy onto Codex approval flags.
 func CodexPermissionArgs(policy PermissionPolicy) []string {
 	switch NormalizePermissionPolicy(policy) {
@@ -219,7 +239,7 @@ func buildClaudeLaunch(cfg LaunchConfig) ([]string, error) {
 	} else if cfg.SessionID != "" {
 		cmd = append(cmd, "--session-id", ClaudeSessionID(cfg.SessionID))
 	}
-	cmd = append(cmd, ClaudePermissionArgs(cfg.Permission)...)
+	cmd = append(cmd, ClaudePermissionArgsForLaunch(cfg.Permission, cfg.AllowDangerousBypass)...)
 	cmd = appendClaudeToolArgs(cmd, cfg.AllowedTools, cfg.DisallowedTools)
 	cmd = append(cmd, cfg.ProviderArgs...)
 	if model := strings.TrimSpace(cfg.Model); model != "" {
@@ -238,7 +258,7 @@ func buildClaudeLaunch(cfg LaunchConfig) ([]string, error) {
 
 func buildClaudeRestore(cfg RestoreConfig, identity string) ([]string, error) {
 	cmd := []string{cfg.Binary}
-	cmd = append(cmd, ClaudePermissionArgs(cfg.Permission)...)
+	cmd = append(cmd, ClaudePermissionArgsForLaunch(cfg.Permission, cfg.AllowDangerousBypass)...)
 	cmd = appendClaudeToolArgs(cmd, cfg.AllowedTools, cfg.DisallowedTools)
 	cmd = append(cmd, cfg.ProviderArgs...)
 	var err error

@@ -8,7 +8,9 @@ import (
 	"log/slog"
 	"strings"
 	"testing"
+	"time"
 
+	claudecode "github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/claudecode"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
@@ -38,6 +40,8 @@ type fakeRuntime struct {
 	err           error
 	workloadAlive bool
 	workloadErr   error
+	styledOutput  string
+	styledErr     error
 }
 
 func (r fakeRuntime) IsAlive(context.Context, ports.RuntimeHandle) (bool, error) {
@@ -46,6 +50,19 @@ func (r fakeRuntime) IsAlive(context.Context, ports.RuntimeHandle) (bool, error)
 
 func (r fakeRuntime) IsSupervisedProcessAlive(context.Context, ports.RuntimeHandle, ports.SupervisedProcessRef) (bool, error) {
 	return r.workloadAlive, r.workloadErr
+}
+
+func (r fakeRuntime) GetStyledOutput(context.Context, ports.RuntimeHandle, int) (string, error) {
+	return r.styledOutput, r.styledErr
+}
+
+type fakeAgents struct {
+	agents map[domain.AgentHarness]ports.Agent
+}
+
+func (a fakeAgents) Agent(harness domain.AgentHarness) (ports.Agent, bool) {
+	agent, ok := a.agents[harness]
+	return agent, ok
 }
 
 func probableSession(id domain.SessionID) domain.SessionRecord {
@@ -84,6 +101,94 @@ func TestTick_ReportsSupervisedWorkloadExit(t *testing.T) {
 	got := lcm.observed["mer-1"]
 	if got.Runtime != ports.ProbeAlive || got.Workload != ports.ProbeDead || got.LaunchID != "launch-1" {
 		t.Fatalf("unexpected supervised workload facts: %+v", got)
+	}
+}
+
+func TestTick_ClassifiesCurrentClaudeStartupPromptAfterUnacknowledgedWorkloadExit(t *testing.T) {
+	lcm := &fakeLCM{}
+	session := probableSession("mer-1")
+	session.Harness = domain.HarnessClaudeCode
+	session.Metadata.RuntimeLaunchID = "launch-1"
+	session.Activity.LastActivityAt = time.Now().Add(-DefaultStartupPromptGrace - time.Second)
+	sessions := fakeSessions{rows: []domain.SessionRecord{session}}
+	runtime := fakeRuntime{
+		alive:         true,
+		workloadAlive: false,
+		styledOutput: "Bypass permissions lets Claude act without asking.\n" +
+			"❯ 1. I understand the responsibility\n" +
+			"  2. No, exit Claude Code\n" +
+			"Press enter to confirm",
+	}
+	r := New(lcm, sessions, runtime, Config{
+		Logger: quietLogger(),
+		Agents: fakeAgents{agents: map[domain.AgentHarness]ports.Agent{
+			domain.HarnessClaudeCode: claudecode.New(),
+		}},
+	})
+	if err := r.Tick(ctx); err != nil {
+		t.Fatal(err)
+	}
+	got := lcm.observed[session.ID]
+	if got.Runtime != ports.ProbeAlive || got.Workload != ports.ProbeDead || got.StartupPrompt != domain.StartupPromptBypassResponsibility {
+		t.Fatalf("startup-prompt observation = %+v, want live/dead typed bypass prompt", got)
+	}
+}
+
+func TestTick_DoesNotInspectStartupPromptBeforeAcknowledgementGrace(t *testing.T) {
+	lcm := &fakeLCM{}
+	session := probableSession("mer-1")
+	session.Harness = domain.HarnessClaudeCode
+	session.Metadata.RuntimeLaunchID = "launch-1"
+	session.Activity.LastActivityAt = time.Now()
+	sessions := fakeSessions{rows: []domain.SessionRecord{session}}
+	runtime := fakeRuntime{
+		alive:         true,
+		workloadAlive: true,
+		styledOutput: "Bypass permissions lets Claude act without asking.\n" +
+			"❯ 1. I understand the responsibility\n" +
+			"  2. No, exit Claude Code\n" +
+			"Press enter to confirm",
+	}
+	r := New(lcm, sessions, runtime, Config{
+		Logger: quietLogger(),
+		Agents: fakeAgents{agents: map[domain.AgentHarness]ports.Agent{
+			domain.HarnessClaudeCode: claudecode.New(),
+		}},
+	})
+	if err := r.Tick(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got := lcm.observed[session.ID]; got.StartupPrompt != domain.StartupPromptNone {
+		t.Fatalf("pre-grace observation classified a startup prompt: %+v", got)
+	}
+}
+
+func TestTick_DoesNotClassifyPromptAfterFirstSignal(t *testing.T) {
+	lcm := &fakeLCM{}
+	session := probableSession("mer-1")
+	session.Harness = domain.HarnessClaudeCode
+	session.Metadata.RuntimeLaunchID = "launch-1"
+	session.FirstSignalAt = time.Now()
+	sessions := fakeSessions{rows: []domain.SessionRecord{session}}
+	runtime := fakeRuntime{
+		alive:         true,
+		workloadAlive: false,
+		styledOutput: "Bypass permissions lets Claude act without asking.\n" +
+			"❯ 1. I understand the responsibility\n" +
+			"  2. No, exit Claude Code\n" +
+			"Press enter to confirm",
+	}
+	r := New(lcm, sessions, runtime, Config{
+		Logger: quietLogger(),
+		Agents: fakeAgents{agents: map[domain.AgentHarness]ports.Agent{
+			domain.HarnessClaudeCode: claudecode.New(),
+		}},
+	})
+	if err := r.Tick(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got := lcm.observed[session.ID]; got.StartupPrompt != domain.StartupPromptNone {
+		t.Fatalf("post-signal observation classified a startup prompt: %+v", got)
 	}
 }
 

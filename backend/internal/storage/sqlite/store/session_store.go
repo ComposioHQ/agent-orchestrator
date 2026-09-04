@@ -82,6 +82,7 @@ func (s *Store) UpdateSessionFromActivitySignal(ctx context.Context, rec domain.
 		ActivityState:                activity.State,
 		ActivityLastAt:               activity.LastActivityAt,
 		FirstSignalAt:                timeToNullTime(rec.FirstSignalAt),
+		StartupPrompt:                string(normalizeStartupPrompt(rec.StartupPrompt)),
 		AgentSessionID:               rec.Metadata.AgentSessionID,
 		AgentSessionIDLaunchID:       rec.Metadata.AgentSessionIDLaunchID,
 		LatestUserPrompt:             rec.Metadata.LatestUserPrompt,
@@ -440,6 +441,7 @@ func rowToRecord(row gen.GetSessionRow) domain.SessionRecord {
 			LastActivityAt: row.ActivityLastAt,
 		},
 		FirstSignalAt:      nullTimeToTime(row.FirstSignalAt),
+		StartupPrompt:      normalizeStartupPrompt(domain.StartupPromptKind(row.StartupPrompt)),
 		IsTerminated:       row.IsTerminated,
 		IsPinned:           row.IsPinned,
 		PinnedAt:           nullTimeToTimePtr(row.PinnedAt),
@@ -502,6 +504,7 @@ func recordToInsert(rec domain.SessionRecord, num int64) gen.InsertSessionParams
 		ActivityState:             activity.State,
 		ActivityLastAt:            activity.LastActivityAt,
 		FirstSignalAt:             timeToNullTime(rec.FirstSignalAt),
+		StartupPrompt:             string(normalizeStartupPrompt(rec.StartupPrompt)),
 		IsTerminated:              rec.IsTerminated,
 		IsPinned:                  rec.IsPinned,
 		PinnedAt:                  timePtrToNullTime(rec.PinnedAt),
@@ -549,6 +552,7 @@ func recordToUpdate(rec domain.SessionRecord) gen.UpdateSessionParams {
 		ActivityState:             activity.State,
 		ActivityLastAt:            activity.LastActivityAt,
 		FirstSignalAt:             timeToNullTime(rec.FirstSignalAt),
+		StartupPrompt:             string(normalizeStartupPrompt(rec.StartupPrompt)),
 		IsTerminated:              rec.IsTerminated,
 		IsPinned:                  rec.IsPinned,
 		PinnedAt:                  timePtrToNullTime(rec.PinnedAt),
@@ -638,6 +642,13 @@ func timePtrToNullTime(t *time.Time) sql.NullTime {
 		return sql.NullTime{}
 	}
 	return sql.NullTime{Time: *t, Valid: true}
+}
+
+func normalizeStartupPrompt(kind domain.StartupPromptKind) domain.StartupPromptKind {
+	if kind.Valid() {
+		return kind
+	}
+	return domain.StartupPromptNone
 }
 
 func normalActivity(a domain.Activity, fallback time.Time) domain.Activity {

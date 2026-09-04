@@ -426,12 +426,38 @@ func (m *Manager) ApplyRuntimeObservation(ctx context.Context, id domain.Session
 		terminationLaunch   string
 		terminationRevision time.Time
 		shouldTerminate     bool
+		startupPromptIntent *ports.NotificationIntent
 	)
 	if err := m.mutate(ctx, id, func(cur domain.SessionRecord, now time.Time) (domain.SessionRecord, bool) {
 		if cur.IsTerminated || !matchesLaunch(cur) {
 			return cur, false
 		}
 		currentLaunch := cur.Metadata.RuntimeLaunchID
+		if currentLaunch != "" && f.Runtime == ports.ProbeAlive && f.StartupPrompt.Valid() && cur.FirstSignalAt.IsZero() {
+			// An unacknowledged launch may have hit a current, provider-owned
+			// onboarding prompt. The reaper supplies only a conservative enum from
+			// a styled current pane after its bounded grace; never infer this state
+			// from generic output or a failed probe. Keeping it blocked rather than
+			// exited makes the API, board, and notification agree that human
+			// attention is needed while Send stays safely gated.
+			if cur.Activity.State == domain.ActivityBlocked && cur.StartupPrompt == f.StartupPrompt {
+				return cur, false
+			}
+			next := cur
+			next.Activity = domain.Activity{State: domain.ActivityBlocked, LastActivityAt: timeOr(f.ObservedAt, now)}
+			next.StartupPrompt = f.StartupPrompt
+			delete(m.flights, id)
+			if !cur.Activity.State.NeedsInput() {
+				startupPromptIntent = &ports.NotificationIntent{
+					Type:               domain.NotificationNeedsInput,
+					SessionID:          next.ID,
+					ProjectID:          next.ProjectID,
+					CreatedAt:          next.Activity.LastActivityAt,
+					SessionDisplayName: next.DisplayName,
+				}
+			}
+			return next, true
+		}
 		if currentLaunch != "" && f.Runtime == ports.ProbeAlive && f.Workload == ports.ProbeDead {
 			if cur.Activity.State == domain.ActivityExited {
 				return cur, false
@@ -452,8 +478,14 @@ func (m *Manager) ApplyRuntimeObservation(ctx context.Context, id domain.Session
 		terminationRevision = cur.UpdatedAt
 		shouldTerminate = true
 		return cur, false
-	}); err != nil || !shouldTerminate {
+	}); err != nil {
 		return err
+	}
+	if startupPromptIntent != nil {
+		m.emitNotification(ctx, startupPromptIntent)
+	}
+	if !shouldTerminate {
+		return nil
 	}
 
 	finalizeSessionUsage(ctx, id, terminationLaunch, terminationRevision, finalizer)
@@ -656,6 +688,10 @@ func (m *Manager) ApplyActivitySignal(ctx context.Context, id domain.SessionID, 
 	next.Activity = act
 	if next.FirstSignalAt.IsZero() {
 		next.FirstSignalAt = timeOr(s.Timestamp, now)
+		// The first authoritative activity signal proves this launch made it
+		// past the classified startup pane. Do not leave a stale prompt type on
+		// an active/idle session after recovery or a retry.
+		next.StartupPrompt = domain.StartupPromptNone
 	}
 	if s.State == domain.ActivityExited {
 		// The agent process can exit while the managed tmux session remains
@@ -1169,6 +1205,7 @@ func (m *Manager) markSpawned(
 		// a relaunch with broken hooks degrades to no_signal instead of inheriting
 		// a stale "signals worked once" fact.
 		rec.FirstSignalAt = time.Time{}
+		rec.StartupPrompt = domain.StartupPromptNone
 		rec.Metadata = mergeMetadata(rec.Metadata, metadata)
 		if domain.NormalizeSessionMode(rec.Mode) == domain.SessionModeChat &&
 			strings.TrimSpace(metadata.ControllerGeneration) != "" {

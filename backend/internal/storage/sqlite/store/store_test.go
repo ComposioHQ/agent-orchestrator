@@ -829,6 +829,35 @@ func TestSessionFirstSignalRoundTrip(t *testing.T) {
 	}
 }
 
+func TestSessionStartupPromptRoundTripAndRejectsUnknownValue(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedProject(t, s, "mer")
+	r, err := s.CreateSession(ctx, sampleRecord("mer"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.StartupPrompt = domain.StartupPromptWorkspaceTrust
+	if err := s.UpdateSession(ctx, r); err != nil {
+		t.Fatal(err)
+	}
+	got, found, err := s.GetSession(ctx, r.ID)
+	if err != nil || !found || got.StartupPrompt != domain.StartupPromptWorkspaceTrust {
+		t.Fatalf("typed startup prompt round-trip = (%+v, found=%v, err=%v)", got, found, err)
+	}
+
+	// Domain writes fail closed: an unknown future/raw value cannot become an
+	// API-visible prompt type just because it reached a full-record update.
+	got.StartupPrompt = domain.StartupPromptKind("untrusted text")
+	if err := s.UpdateSession(ctx, got); err != nil {
+		t.Fatal(err)
+	}
+	final, _, err := s.GetSession(ctx, r.ID)
+	if err != nil || final.StartupPrompt != domain.StartupPromptNone {
+		t.Fatalf("unknown startup prompt persisted as %q, err=%v", final.StartupPrompt, err)
+	}
+}
+
 func TestPRCRUD(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()

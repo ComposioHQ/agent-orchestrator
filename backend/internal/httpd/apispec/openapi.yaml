@@ -7952,6 +7952,11 @@ components:
           - mergeable
           - merged
           type: string
+        startupPrompt:
+          enum:
+          - workspace_trust
+          - bypass_responsibility
+          type: string
         status:
           enum:
           - working
