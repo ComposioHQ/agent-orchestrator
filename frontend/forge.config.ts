@@ -289,6 +289,12 @@ const config: ForgeConfig = {
 				repository: parseReleaseRepo(process.env.AO_RELEASE_REPO),
 				prerelease: process.env.AO_RELEASE_PRERELEASE === "true",
 				draft: false,
+				// Ask GitHub to compose the body from the PRs merged since the last
+				// release. Without it the publisher creates the release with an empty
+				// body, and the app's new "what's new" section has nothing to show:
+				// electron-updater reads release notes from the release body, so an
+				// empty body means users get told nothing about what changed.
+				generateReleaseNotes: true,
 			},
 		},
 	],
