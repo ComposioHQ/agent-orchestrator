@@ -1113,6 +1113,7 @@
 	"shell.removeProjectTitle": "프로젝트 제거",
 	"shell.removingNamed": "{{name}} 제거 중…",
 	"shell.renameSession": "{{title}} 이름 바꾸기",
+	"shell.rename": "이름 바꾸기",
 	"shell.restartToUpdate": "다시 시작하여 업데이트",
 	"shell.restartInstallUpdate": "다시 시작하여 업데이트 설치",
 	"shell.restartInstallUpdateVersion": "다시 시작하여 업데이트 v{{version}} 설치",

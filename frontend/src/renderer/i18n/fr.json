@@ -1129,6 +1129,7 @@
 	"shell.removeProjectTitle": "Supprimer le projet",
 	"shell.removingNamed": "Suppression de {{name}}…",
 	"shell.renameSession": "Renommer {{title}}",
+	"shell.rename": "Renommer",
 	"shell.restartToUpdate": "Redémarrer pour mettre à jour",
 	"shell.restartInstallUpdate": "Redémarrer pour installer la mise à jour",
 	"shell.restartInstallUpdateVersion": "Redémarrer pour installer la mise à jour v{{version}}",

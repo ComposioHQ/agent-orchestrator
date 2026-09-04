@@ -1099,6 +1099,7 @@
 	"shell.removeProjectTitle": "移除项目",
 	"shell.removingNamed": "正在移除 {{name}}…",
 	"shell.renameSession": "重命名{{title}}",
+	"shell.rename": "重命名",
 	"shell.restartToUpdate": "重启以更新",
 	"shell.restartInstallUpdate": "重启以安装更新",
 	"shell.restartInstallUpdateVersion": "重启以安装更新 v{{version}}",

@@ -1129,6 +1129,7 @@
 	"shell.removeProjectTitle": "Remover projeto",
 	"shell.removingNamed": "Removendo {{name}}…",
 	"shell.renameSession": "Renomear {{title}}",
+	"shell.rename": "Renomear",
 	"shell.restartToUpdate": "Reiniciar para atualizar",
 	"shell.restartInstallUpdate": "Reiniciar para instalar a atualização",
 	"shell.restartInstallUpdateVersion": "Reiniciar para instalar a atualização v{{version}}",

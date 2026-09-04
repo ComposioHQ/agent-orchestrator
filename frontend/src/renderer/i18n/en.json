@@ -1236,6 +1236,7 @@
 	"shell.removeProjectTitle": "Remove project",
 	"shell.removingNamed": "Removing {{name}}…",
 	"shell.renameSession": "Rename {{title}}",
+	"shell.rename": "Rename",
 	"shell.restartToUpdate": "Restart to update",
 	"shell.restartInstallUpdate": "Restart to install update",
 	"shell.restartInstallUpdateVersion": "Restart to install update v{{version}}",
