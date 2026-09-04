@@ -936,7 +936,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 				}
 			} catch {
 				// The mutation owns the typed error. A policy dialog that was already
-				// open stays open; a direct switch must not open one on failure.
+				// open stays open; a direct switch shows its error in the session notice.
 			}
 		},
 		[interfaceSwitch],
@@ -1599,7 +1599,16 @@ export function SessionView({ sessionId }: SessionViewProps) {
 									<SessionFileWorkspace annotation={fileAnnotation} path={fileTabs.activePath} sessionId={sessionId} />
 								</div>
 							) : null}
-							{interfaceTransitionHasUnacknowledgedNotice(interfaceSwitch.transition) ? (
+							{interfaceSwitch.startError && !interfaceSwitchDialogOpen ? (
+								<div role="alert" className="absolute left-1/2 top-3 z-20 flex w-[min(34rem,calc(100%-1.5rem))] -translate-x-1/2 items-start gap-3 rounded-lg border border-destructive/40 bg-popover px-3 py-2.5 text-xs shadow-md">
+									<div className="min-w-0 flex-1">
+										<p className="font-medium">Could not switch interfaces</p>
+										<p className="mt-1 break-words text-muted-foreground">{interfaceSwitch.startError}</p>
+									</div>
+									<button type="button" aria-label="Dismiss interface switch error" className="shrink-0 rounded px-1 text-muted-foreground hover:text-foreground" onClick={interfaceSwitch.resetStartError}>Dismiss</button>
+								</div>
+							) : null}
+							{!interfaceSwitch.startError && interfaceTransitionHasUnacknowledgedNotice(interfaceSwitch.transition) ? (
 								<SessionInterfaceTransitionNotice
 									transition={interfaceSwitch.transition}
 									dismissing={interfaceSwitch.acknowledgingNotice}
