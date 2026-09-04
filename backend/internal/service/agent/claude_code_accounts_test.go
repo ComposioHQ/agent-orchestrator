@@ -394,6 +394,33 @@ func TestClaudeCodeReconcileRepairsAllValidAccountsWithoutActivePointer(t *testi
 	}
 }
 
+func TestClaudeCodeActivateSavedAccountWhenNoAccountIsActive(t *testing.T) {
+	m, keychain, state, home := newTestClaudeCodeManager(t)
+	if err := m.bootstrapInner(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.catalog.upsert(context.Background(), domain.ClaudeCodeAccountIdentity{
+		AccountUUID: testClaudeAccountB, EmailAddress: "b@example.com", DisplayName: "Account B",
+	}, claudeCredentialJSON("secret-b"), m.now()); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := m.activateAccount(context.Background(), testClaudeAccountB); err != nil {
+		t.Fatal(err)
+	}
+	if !state.found || state.active.AccountID != testClaudeAccountB || state.active.Revision != 1 {
+		t.Fatalf("active pointer = %+v found=%v", state.active, state.found)
+	}
+	canonical, found, err := keychain.Get(context.Background(), claudecode.ClaudeCanonicalCredentialService, "test-user")
+	if err != nil || !found || !strings.Contains(string(canonical), "secret-b") {
+		t.Fatalf("canonical credential: found=%v err=%v value=%s", found, err, canonical)
+	}
+	identity, _, err := readClaudeCodeOAuthIdentity(filepath.Join(home, ".claude.json"))
+	if err != nil || identity.AccountUUID != testClaudeAccountB {
+		t.Fatalf("canonical identity = %+v err=%v", identity, err)
+	}
+}
+
 func TestClaudeCodeReconcileImportsExternalAccountChangeAndAdvancesRevision(t *testing.T) {
 	m, keychain, state, home := newTestClaudeCodeManager(t)
 	keychain.items[claudecode.ClaudeCanonicalCredentialService+"\x00test-user"] = claudeCredentialJSON("secret-a")

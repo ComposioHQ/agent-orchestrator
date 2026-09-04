@@ -148,6 +148,17 @@ func (s *Service) CancelClaudeCodeAccountLogin(ctx context.Context, operationID 
 	return s.claudeCodeAccounts.cancelLogin(ctx, strings.TrimSpace(operationID))
 }
 
+// ActivateClaudeCodeAccount makes a saved account active when Claude Code is signed out.
+func (s *Service) ActivateClaudeCodeAccount(ctx context.Context, accountID string) (ClaudeCodeAccounts, error) {
+	if err := s.WaitClaudeCodeAccountBootstrap(ctx); err != nil {
+		return ClaudeCodeAccounts{}, err
+	}
+	if err := s.claudeCodeAccounts.activateAccount(ctx, strings.TrimSpace(accountID)); err != nil {
+		return ClaudeCodeAccounts{}, mapClaudeCodeAccountError(err)
+	}
+	return s.claudeCodeAccounts.cached(), nil
+}
+
 // LogoutClaudeCodeAccount deletes local account credentials while retaining its card.
 func (s *Service) LogoutClaudeCodeAccount(ctx context.Context, accountID string) (ClaudeCodeAccounts, error) {
 	if err := s.WaitClaudeCodeAccountBootstrap(ctx); err != nil {

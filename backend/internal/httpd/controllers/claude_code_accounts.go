@@ -27,6 +27,7 @@ type ClaudeCodeAccountService interface {
 	SubscribeClaudeCodeAccounts(context.Context) (<-chan agentsvc.ClaudeCodeAccounts, error)
 	OpenClaudeCodeAccountLoginTerminal(context.Context) (agentsvc.ClaudeCodeAccountLoginTerminalStart, error)
 	OpenClaudeCodeAccountReauthenticationTerminal(context.Context, string) (agentsvc.ClaudeCodeAccountLoginTerminalStart, error)
+	ActivateClaudeCodeAccount(context.Context, string) (agentsvc.ClaudeCodeAccounts, error)
 	LogoutClaudeCodeAccount(context.Context, string) (agentsvc.ClaudeCodeAccounts, error)
 	DeleteClaudeCodeAccount(context.Context, string) (agentsvc.ClaudeCodeAccounts, error)
 	VerifyClaudeCodeAccountLogin(context.Context, string) (domain.ClaudeCodeAccountLoginOperation, error)
@@ -48,6 +49,7 @@ func (c *ClaudeCodeAccountsController) Register(r chi.Router) {
 	r.Post("/agents/claude-code/accounts/{accountId}/login-terminal", c.openReauthenticationTerminal)
 	r.Post("/agents/claude-code/accounts/login-operations/{operationId}/verify", c.verifyLogin)
 	r.Post("/agents/claude-code/accounts/login-operations/{operationId}/cancel", c.cancelLogin)
+	r.Post("/agents/claude-code/accounts/{accountId}/activate", c.activateAccount)
 	r.Post("/agents/claude-code/accounts/{accountId}/logout", c.logoutAccount)
 	r.Delete("/agents/claude-code/accounts/{accountId}", c.deleteAccount)
 	r.Post("/agents/claude-code/account-switches", c.startSwitch)
@@ -168,6 +170,22 @@ func (c *ClaudeCodeAccountsController) cancelLogin(w http.ResponseWriter, r *htt
 		return
 	}
 	envelope.WriteJSON(w, http.StatusOK, newClaudeCodeLoginResponse(result))
+}
+
+func (c *ClaudeCodeAccountsController) activateAccount(w http.ResponseWriter, r *http.Request) {
+	if c.Svc == nil {
+		apispec.NotImplemented(w, r, "POST", "/api/v1/agents/claude-code/accounts/{accountId}/activate")
+		return
+	}
+	if !requireEmptyRequestBody(w, r) {
+		return
+	}
+	result, err := c.Svc.ActivateClaudeCodeAccount(r.Context(), strings.TrimSpace(chi.URLParam(r, "accountId")))
+	if err != nil {
+		envelope.WriteError(w, r, err)
+		return
+	}
+	envelope.WriteJSON(w, http.StatusOK, newClaudeCodeAccountsResponse(result))
 }
 
 func (c *ClaudeCodeAccountsController) logoutAccount(w http.ResponseWriter, r *http.Request) {

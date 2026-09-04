@@ -1196,7 +1196,7 @@ func agentOperations() []operation {
 		},
 		{
 			method: http.MethodPost, path: "/api/v1/agents/claude-code/accounts/login-terminal", id: "openClaudeCodeAccountLoginTerminal", tag: "agents",
-			summary: "Open isolated native Claude Code login without changing the active account",
+			summary: "Open isolated native Claude Code login without changing an existing active account",
 			resps:   []respUnit{{http.StatusAccepted, controllers.OpenClaudeCodeAccountLoginTerminalResponse{}}, {http.StatusConflict, envelope.APIError{}}, {http.StatusServiceUnavailable, envelope.APIError{}}, {http.StatusNotImplemented, envelope.APIError{}}},
 		},
 		{
@@ -1213,6 +1213,11 @@ func agentOperations() []operation {
 			method: http.MethodPost, path: "/api/v1/agents/claude-code/accounts/login-operations/{operationId}/cancel", id: "cancelClaudeCodeAccountLogin", tag: "agents",
 			summary: "Cancel one isolated Claude Code account login operation", pathParams: []any{controllers.ClaudeCodeAccountLoginIDParam{}},
 			resps: []respUnit{{http.StatusOK, controllers.ClaudeCodeAccountLoginResponse{}}, {http.StatusNotFound, envelope.APIError{}}, {http.StatusServiceUnavailable, envelope.APIError{}}},
+		},
+		{
+			method: http.MethodPost, path: "/api/v1/agents/claude-code/accounts/{accountId}/activate", id: "activateClaudeCodeAccount", tag: "agents",
+			summary: "Activate a saved Claude Code account while the device is signed out", pathParams: []any{controllers.ClaudeCodeAccountIDParam{}},
+			resps: []respUnit{{http.StatusOK, controllers.ClaudeCodeAccountsResponse{}}, {http.StatusBadRequest, envelope.APIError{}}, {http.StatusNotFound, envelope.APIError{}}, {http.StatusConflict, envelope.APIError{}}, {http.StatusServiceUnavailable, envelope.APIError{}}, {http.StatusNotImplemented, envelope.APIError{}}},
 		},
 		{
 			method: http.MethodPost, path: "/api/v1/agents/claude-code/accounts/{accountId}/logout", id: "logoutClaudeCodeAccount", tag: "agents",

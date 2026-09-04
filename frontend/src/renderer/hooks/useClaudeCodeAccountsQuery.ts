@@ -49,6 +49,12 @@ export async function cancelClaudeCodeAccountLogin(operationId: string): Promise
 	return data as ClaudeCodeAccountLoginOperation;
 }
 
+export async function activateClaudeCodeAccount(accountId: string): Promise<ClaudeCodeAccountsResponse> {
+	const { data, error } = await apiClient.POST("/api/v1/agents/claude-code/accounts/{accountId}/activate", { params: { path: { accountId } } });
+	if (error) throw new Error(apiErrorMessage(error));
+	return data as ClaudeCodeAccountsResponse;
+}
+
 export async function logoutClaudeCodeAccount(accountId: string): Promise<ClaudeCodeAccountsResponse> {
 	const { data, error } = await apiClient.POST("/api/v1/agents/claude-code/accounts/{accountId}/logout", { params: { path: { accountId } } });
 	if (error) throw new Error(apiErrorMessage(error));

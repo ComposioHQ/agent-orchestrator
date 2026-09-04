@@ -43,7 +43,7 @@ export function ClaudeCodeAccountsSection({ titleHidden }: { titleHidden?: boole
 	const accountsError = accountsQuery.error ? t("settings.claudeCodeAccounts.loadFailed") : null;
 	const switchBlocksMutations = Boolean(currentSwitch && currentSwitch.phase !== "completed" && currentSwitch.phase !== "failed");
 	const mutationDisabled = Boolean(activeLogin || switchBlocksMutations || pendingAction?.submitting || actions.loginPending || actions.recoverPending);
-	const switchSourceAvailable = Boolean(data?.activeAccountId && activeAccount && !data.unmanagedGlobalAccount);
+	const accountSelectionAvailable = Boolean(data && !data.unmanagedGlobalAccount && (!data.activeAccountId || activeAccount));
 	const switchTargets = data?.accounts.filter((account) => account.id !== data.activeAccountId) ?? [];
 	const switchUnsupported = data?.capabilities.globalSwitch.state !== "supported";
 
@@ -96,7 +96,13 @@ export function ClaudeCodeAccountsSection({ titleHidden }: { titleHidden?: boole
 		setPendingAction({ ...pending, submitting: true });
 		try {
 			switch (pending.kind) {
-				case "switch": await actions.switchAccount(pending.account, data.accountRevision, pending.idempotencyKey); break;
+				case "switch":
+					if (data.activeAccountId) await actions.switchAccount(pending.account, data.accountRevision, pending.idempotencyKey);
+					else {
+						await actions.activateAccount(pending.account);
+						setAnnouncement(t("settings.claudeCodeAccounts.switchSuccessWithLabel", { label: claudeCodeAccountDisplayLabel(pending.account) }));
+					}
+					break;
 				case "logout": await actions.logoutAccount(pending.account); setAnnouncement(t("settings.claudeCodeAccounts.logoutSuccess")); break;
 				case "delete": await actions.deleteAccount(pending.account); if (expandedAccount === pending.account.id) setExpandedAccount(null); setAnnouncement(t("settings.claudeCodeAccounts.deleteSuccess")); break;
 			}
@@ -132,7 +138,7 @@ export function ClaudeCodeAccountsSection({ titleHidden }: { titleHidden?: boole
 	return <SettingsSection title={t("settings.claudeCodeAccounts.title")} sectionId="claude-code-accounts" titleHidden={titleHidden}>
 		<AgentProviderGroup provider="claude-code" name="Claude Code" summary={summary} expanded={providerExpanded || Boolean(activeLogin)} onExpandedChange={setProviderExpanded} collapseLocked={Boolean(activeLogin)} action={<div className="flex items-center gap-2">
 			{switchPresentation?.busy && switchStatus ? <LoaderCircle className="size-5 animate-spin text-muted-foreground" aria-label={switchStatus} /> : null}
-			{switchSourceAvailable && switchTargets.length > 0 ? <DropdownMenu><DropdownMenuTrigger asChild><Button type="button" size="sm" variant="outline" disabled={mutationDisabled || switchUnsupported} title={switchUnsupported ? t(claudeCodeAccountReasonKey(data?.capabilities.globalSwitch.reasonCode)) : undefined}><ArrowRightLeft aria-hidden="true" />{t("settings.claudeCodeAccounts.switchConfirm")}</Button></DropdownMenuTrigger><DropdownMenuContent align="end" className="min-w-64">{switchTargets.map((account) => { const authorized = account.authentication.state === "authorized" || account.authentication.state === "not_applicable"; const fallback = account.status === "signed_out" ? t("settings.claudeCodeAccounts.signedOut") : account.status === "broken" ? t("settings.claudeCodeAccounts.unavailable") : t("settings.claudeCodeAccounts.signedIn"); const remaining = claudeCodeRemainingPercent(account); const details = [claudeCodePlanName(account.planUsage.plan), remaining == null ? null : `${formatClaudeCodePercentage(remaining, i18n.language)} ${t("settings.claudeCodeAccounts.remaining")}`].filter(Boolean).join(" · ") || fallback; return <DropdownMenuItem key={account.id} disabled={account.status !== "valid" || !authorized} onSelect={() => openPending("switch", account)}><UserRound aria-hidden="true" /><div className="min-w-0"><p className="truncate text-foreground">{claudeCodeAccountDisplayLabel(account)}</p><p className="truncate text-micro text-muted-foreground">{details}</p></div></DropdownMenuItem>; })}</DropdownMenuContent></DropdownMenu> : null}
+			{accountSelectionAvailable && switchTargets.length > 0 ? <DropdownMenu><DropdownMenuTrigger asChild><Button type="button" size="sm" variant="outline" disabled={mutationDisabled || switchUnsupported} title={switchUnsupported ? t(claudeCodeAccountReasonKey(data?.capabilities.globalSwitch.reasonCode)) : undefined}><ArrowRightLeft aria-hidden="true" />{t("settings.claudeCodeAccounts.switchConfirm")}</Button></DropdownMenuTrigger><DropdownMenuContent align="end" className="min-w-64">{switchTargets.map((account) => { const authorized = account.authentication.state === "authorized" || account.authentication.state === "not_applicable"; const fallback = account.status === "signed_out" ? t("settings.claudeCodeAccounts.signedOut") : account.status === "broken" ? t("settings.claudeCodeAccounts.unavailable") : t("settings.claudeCodeAccounts.signedIn"); const remaining = claudeCodeRemainingPercent(account); const details = [claudeCodePlanName(account.planUsage.plan), remaining == null ? null : `${formatClaudeCodePercentage(remaining, i18n.language)} ${t("settings.claudeCodeAccounts.remaining")}`].filter(Boolean).join(" · ") || fallback; return <DropdownMenuItem key={account.id} disabled={account.status !== "valid" || !authorized} onSelect={() => openPending("switch", account)}><UserRound aria-hidden="true" /><div className="min-w-0"><p className="truncate text-foreground">{claudeCodeAccountDisplayLabel(account)}</p><p className="truncate text-micro text-muted-foreground">{details}</p></div></DropdownMenuItem>; })}</DropdownMenuContent></DropdownMenu> : null}
 			<Button type="button" size="sm" title={data && data.capabilities.nativeLogin.state !== "supported" ? t(claudeCodeAccountReasonKey(data.capabilities.nativeLogin.reasonCode)) : undefined} onClick={() => void beginLogin()} disabled={mutationDisabled || data?.capabilities.nativeLogin.state !== "supported"}><Plus aria-hidden="true" />{t("settings.claudeCodeAccounts.add")}</Button>
 		</div>}>
 			{actions.error ? <p role="alert" className="border-b border-border px-4 py-3 text-xs text-error">{actions.error}</p> : null}

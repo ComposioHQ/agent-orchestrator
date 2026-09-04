@@ -135,6 +135,68 @@ it("adds account B without making it active", async () => {
 	expect(screen.getByText("Account added.")).toHaveAttribute("aria-live", "polite");
 });
 
+it("shows the first added account as active after login completes", async () => {
+	const emptyResponse = { ...accountResponse, activeAccountId: undefined, accountRevision: 0, accounts: [] };
+	const firstAccount = { ...activeAccount, active: true };
+	const activatedResponse = { ...emptyResponse, activeAccountId: firstAccount.id, accountRevision: 1, accounts: [firstAccount] };
+	const firstLogin = {
+		...pendingLogin,
+		operation: { ...pendingLogin.operation, operationId: "login-first" },
+		shellTerminal: { ...pendingLogin.shellTerminal, handleId: "shellterm-login-first" },
+	};
+	let loginVerified = false;
+	postMock.mockImplementation((path: string) => {
+		if (path.endsWith("/ensure")) return Promise.resolve({ data: loginVerified ? activatedResponse : emptyResponse });
+		if (path.endsWith("/accounts/login-terminal")) return Promise.resolve({ data: firstLogin });
+		if (path.includes("/login-operations/") && path.endsWith("/verify")) {
+			loginVerified = true;
+			return Promise.resolve({ data: { ...firstLogin.operation, status: "completed", reasonCode: "login_completed", account: firstAccount } });
+		}
+		return Promise.resolve({ data: {} });
+	});
+	renderSection(emptyResponse);
+
+	await userEvent.click(await screen.findByRole("button", { name: "Add account" }));
+	await screen.findByTestId("claude-code-account-login-terminal");
+	act(() => terminalStateCallback.value?.("exited"));
+
+	const row = await screen.findByText("active@example.com");
+	expect(row.closest("[data-account-id]")).toHaveTextContent("In use");
+});
+
+it("lets the user activate a saved account when none is active", async () => {
+	const noActiveResponse = {
+		...accountResponse,
+		activeAccountId: undefined,
+		accountRevision: 0,
+		accounts: [{ ...activeAccount, active: false }, inactiveAccount],
+	};
+	const activatedResponse = {
+		...noActiveResponse,
+		activeAccountId: inactiveAccount.id,
+		accountRevision: 1,
+		accounts: [{ ...activeAccount, active: false }, { ...inactiveAccount, active: true }],
+	};
+	postMock.mockImplementation((path: string) => {
+		if (path.endsWith("/ensure")) return Promise.resolve({ data: noActiveResponse });
+		if (path.endsWith("/activate")) return Promise.resolve({ data: activatedResponse });
+		return Promise.resolve({ data: {} });
+	});
+	renderSection(noActiveResponse);
+	await screen.findByText("other@example.com");
+
+	await userEvent.click(screen.getByRole("button", { name: "Switch account" }));
+	await userEvent.click(await screen.findByRole("menuitem", { name: /other@example.com/ }));
+	const dialog = await screen.findByRole("dialog");
+	await userEvent.click(within(dialog).getByRole("button", { name: "Switch account" }));
+
+	await waitFor(() => expect(postMock).toHaveBeenCalledWith(
+		"/api/v1/agents/claude-code/accounts/{accountId}/activate",
+		{ params: { path: { accountId: inactiveAccount.id } } },
+	));
+	expect(document.querySelector(`[data-account-id="${inactiveAccount.id}"]`)).toHaveTextContent("In use");
+});
+
 it("surfaces unsupported macOS capabilities and disables account mutations", async () => {
 	const reason = "Claude Code account management is available on macOS only.";
 	const unsupported = capability("unsupported", reason);

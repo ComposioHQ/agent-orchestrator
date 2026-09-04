@@ -19,6 +19,7 @@ type fakeClaudeCodeAccounts struct {
 	result       agentsvc.ClaudeCodeAccounts
 	err          error
 	events       chan agentsvc.ClaudeCodeAccounts
+	activatedID  string
 	switchConfig ports.ClaudeCodeAccountSwitchConfig
 	switchResult domain.ClaudeCodeAccountSwitch
 }
@@ -42,6 +43,10 @@ func (f *fakeClaudeCodeAccounts) OpenClaudeCodeAccountLoginTerminal(context.Cont
 }
 func (f *fakeClaudeCodeAccounts) OpenClaudeCodeAccountReauthenticationTerminal(context.Context, string) (agentsvc.ClaudeCodeAccountLoginTerminalStart, error) {
 	return agentsvc.ClaudeCodeAccountLoginTerminalStart{}, nil
+}
+func (f *fakeClaudeCodeAccounts) ActivateClaudeCodeAccount(_ context.Context, accountID string) (agentsvc.ClaudeCodeAccounts, error) {
+	f.activatedID = accountID
+	return f.result, f.err
 }
 func (f *fakeClaudeCodeAccounts) LogoutClaudeCodeAccount(context.Context, string) (agentsvc.ClaudeCodeAccounts, error) {
 	return f.result, nil
@@ -88,6 +93,26 @@ func TestClaudeCodeAccountSwitchRouteIsStrictAndAccepted(t *testing.T) {
 	router.ServeHTTP(response, req)
 	if response.Code != http.StatusBadRequest || strings.Contains(response.Body.String(), "secret") {
 		t.Fatalf("strict response status=%d body=%s", response.Code, response.Body.String())
+	}
+}
+
+func TestClaudeCodeActivateAccountRoute(t *testing.T) {
+	fake := &fakeClaudeCodeAccounts{result: agentsvc.ClaudeCodeAccounts{
+		ActiveAccountID: "account-b", AccountRevision: 1, Accounts: []domain.ClaudeCodeAccountSnapshot{},
+	}}
+	router := chi.NewRouter()
+	router.Route("/api/v1", (&ClaudeCodeAccountsController{Svc: fake}).Register)
+
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/v1/agents/claude-code/accounts/account-b/activate", nil))
+	if response.Code != http.StatusOK || fake.activatedID != "account-b" || !strings.Contains(response.Body.String(), `"activeAccountId":"account-b"`) {
+		t.Fatalf("activate status=%d account=%q body=%s", response.Code, fake.activatedID, response.Body.String())
+	}
+
+	response = httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/v1/agents/claude-code/accounts/account-b/activate", strings.NewReader(`{}`)))
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("non-empty activate status=%d body=%s", response.Code, response.Body.String())
 	}
 }
 

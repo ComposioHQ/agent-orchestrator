@@ -4,7 +4,9 @@ import { useTranslation } from "react-i18next";
 import { shellTerminalsQueryKey } from "./useShellTerminals";
 import {
 	cancelClaudeCodeAccountLogin,
+	activateClaudeCodeAccount,
 	deleteClaudeCodeAccount,
+	ensureClaudeCodeAccounts,
 	logoutClaudeCodeAccount,
 	openClaudeCodeAccountLoginTerminal,
 	openClaudeCodeAccountReauthenticationTerminal,
@@ -85,7 +87,13 @@ export function useClaudeCodeAccountActions(queryClient: QueryClient) {
 					},
 				};
 			});
-			if (operation.status === "completed") void queryClient.invalidateQueries({ queryKey: shellTerminalsQueryKey });
+			if (operation.status === "completed") {
+				void queryClient.invalidateQueries({ queryKey: shellTerminalsQueryKey });
+				if (operation.account?.active) {
+					try { writeClaudeCodeAccounts(queryClient, await ensureClaudeCodeAccounts()); }
+					catch { void queryClient.invalidateQueries({ queryKey: claudeCodeAccountsQueryKey }); }
+				}
+			}
 			return operation;
 		} catch (cause) {
 			setError(t("settings.claudeCodeAccounts.loginVerificationFailed"));
@@ -95,6 +103,12 @@ export function useClaudeCodeAccountActions(queryClient: QueryClient) {
 			setLoginOperationPending(false);
 		}
 	}, [queryClient, t, writeCurrent]);
+
+	const activateAccount = useCallback(async (account: ClaudeCodeAccount) => {
+		setError(null);
+		try { writeClaudeCodeAccounts(queryClient, await activateClaudeCodeAccount(account.id)); }
+		catch (cause) { setError(t("settings.claudeCodeAccounts.switchFailed")); throw cause; }
+	}, [queryClient, t]);
 
 	const closeLogin = useCallback(async (login: ClaudeCodeActiveLogin) => {
 		setError(null);
@@ -157,6 +171,6 @@ export function useClaudeCodeAccountActions(queryClient: QueryClient) {
 	return {
 		error, loginPending, loginOperationPending, recoverPending,
 		beginLogin, verifyLogin, closeLogin, retryLogin,
-		switchAccount, recoverSwitch, logoutAccount, deleteAccount,
+		activateAccount, switchAccount, recoverSwitch, logoutAccount, deleteAccount,
 	};
 }

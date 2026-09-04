@@ -10,6 +10,52 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
+func (m *claudeCodeAccountManager) activateAccount(ctx context.Context, accountID string) error {
+	accountID = strings.TrimSpace(accountID)
+	exclusive, err := m.acquireExclusive(ctx)
+	if err != nil {
+		return err
+	}
+	if exclusive != nil {
+		defer exclusive.Release()
+	}
+	release, err := m.acquireMutation(ctx)
+	if err != nil {
+		return err
+	}
+	defer release()
+
+	m.mu.Lock()
+	active := m.active
+	caps := m.caps
+	m.mu.Unlock()
+	if caps.GlobalSwitch.State != domain.ClaudeCodeCapabilitySupported {
+		return ports.ErrClaudeCodeAccountManagementUnsupported
+	}
+	if active.AccountID == accountID {
+		return ports.ErrClaudeCodeAccountAlreadyActive
+	}
+	if active.AccountID != "" {
+		return ports.ErrClaudeCodeGlobalAccountChanged
+	}
+	record, ok := m.catalog.record(accountID)
+	if !ok || record.Snapshot.Status != domain.ClaudeCodeAccountStatusValid {
+		return ports.ErrClaudeCodeAccountNotFound
+	}
+	credential, found, err := m.keychain.Get(ctx, claudecode.ClaudeAccountVaultService, accountID)
+	if err != nil {
+		return err
+	}
+	if !found {
+		return ports.ErrClaudeCodeAccountNotFound
+	}
+	if err := m.activateCredentialWithoutSource(ctx, credential, record.Snapshot.Identity); err != nil {
+		return err
+	}
+	m.publish()
+	return nil
+}
+
 func (m *claudeCodeAccountManager) logout(ctx context.Context, accountID string) error {
 	accountID = strings.TrimSpace(accountID)
 	record, ok := m.catalog.record(accountID)

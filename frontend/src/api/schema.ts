@@ -209,6 +209,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/agents/claude-code/accounts/{accountId}/activate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Activate a saved Claude Code account while the device is signed out */
+        post: operations["activateClaudeCodeAccount"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/agents/claude-code/accounts/{accountId}/login-terminal": {
         parameters: {
             query?: never;
@@ -320,7 +337,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Open isolated native Claude Code login without changing the active account */
+        /** Open isolated native Claude Code login without changing an existing active account */
         post: operations["openClaudeCodeAccountLoginTerminal"];
         delete?: never;
         options?: never;
@@ -5127,6 +5144,74 @@ export interface operations {
         };
     };
     deleteClaudeCodeAccount: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Stable Claude Code account UUID. */
+                accountId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ClaudeCodeAccountsResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    activateClaudeCodeAccount: {
         parameters: {
             query?: never;
             header?: never;
