@@ -2,8 +2,11 @@
  * A ```mermaid fence rendered as a diagram instead of source text.
  *
  * Renders the same chrome as a code block (language label, copy control) so a
- * diagram never looks like a different kind of object in the timeline, plus a
- * source toggle for the case the layout engine misread the author's intent.
+ * diagram never looks like a different kind of object in the timeline, plus an
+ * always-visible Diagram/Code switch for when the layout engine misread the
+ * author's intent or the reader wants the source. The switch stays visible
+ * rather than hover-revealed like the copy control: a diagram whose source
+ * is undiscoverable reads as a picture the reader cannot audit.
  *
  * Loading shows the source as plain text and swaps in the diagram when the
  * engine chunk arrives — the same plain-first pattern as syntax highlighting,
@@ -18,7 +21,6 @@
  */
 
 import { memo, useCallback, useEffect, useState, type MouseEvent } from "react";
-import { Code, Network } from "lucide-react";
 import { cn } from "../../lib/utils";
 import { isWebLink, openLinkInSystemBrowser } from "../../lib/external-link-policy";
 import { isRenderableDiagram, renderMermaidDiagram, type DiagramTheme } from "../../lib/mermaid-diagram";
@@ -97,11 +99,13 @@ export const MermaidBlock = memo(function MermaidBlock({
 		};
 	}, [code, theme, streaming]);
 
-	const toggleSource = useCallback(() => setShowSource((value) => !value), []);
-
 	// A `click A https://…` directive in the source becomes a live anchor in
 	// the SVG. Letting it navigate would drive the whole renderer to that
 	// URL, so it goes through the same policy as chat links instead.
+	// Non-web schemes end at `openLinkInSystemBrowser` too, but that IPC is
+	// allowlisted main-side (`main/external-open.ts`: http/https/mailto
+	// only), so `file://` and custom schemes from a `click` directive are
+	// rejected there and never reach `shell.openExternal`.
 	const onDiagramClick = useCallback(
 		(event: MouseEvent<HTMLDivElement>) => {
 			const anchor = (event.target as Element).closest?.("a[href]");
@@ -120,6 +124,19 @@ export const MermaidBlock = memo(function MermaidBlock({
 		[onLinkOpen],
 	);
 
+	// Middle-click fires `auxclick`, not `click`: without this a middle-click
+	// on a diagram anchor would skip the policy above and fall through to the
+	// app-level window-open guard. Right-click (button 2) is ignored — this
+	// surface builds no native context menu, so there is no "open link" path
+	// to intercept there.
+	const onDiagramAuxClick = useCallback(
+		(event: MouseEvent<HTMLDivElement>) => {
+			if (event.button !== 1) return;
+			onDiagramClick(event);
+		},
+		[onDiagramClick],
+	);
+
 	const showingDiagram = svg !== undefined && !showSource;
 
 	return (
@@ -128,27 +145,44 @@ export const MermaidBlock = memo(function MermaidBlock({
 				<span className="font-mono text-[10px] uppercase tracking-wide text-muted-foreground">
 					mermaid
 				</span>
-				<div className="ml-auto flex items-center gap-0.5 opacity-0 transition-opacity duration-150 focus-within:opacity-100 group-hover/code:opacity-100">
+				<div className="ml-auto flex items-center gap-1.5">
 					{svg !== undefined ? (
-						<button
-							type="button"
-							onClick={toggleSource}
-							aria-pressed={showSource}
-							aria-label={showSource ? "Show diagram" : "Show source"}
-							title={showSource ? "Show diagram" : "Show source"}
-							className={cn(
-								"flex size-7 items-center justify-center rounded-md transition-[background-color,color,transform] hover:bg-interactive-hover hover:text-foreground",
-								showSource ? "text-accent" : "text-muted-foreground",
-							)}
+						<div
+							role="group"
+							aria-label="Diagram view"
+							className="flex items-center rounded-md border border-border bg-background p-0.5"
 						>
-							{showSource ? (
-								<Network aria-hidden="true" className="size-3" />
-							) : (
-								<Code aria-hidden="true" className="size-3" />
-							)}
-						</button>
+							<button
+								type="button"
+								onClick={() => setShowSource(false)}
+								aria-pressed={!showSource}
+								className={cn(
+									"rounded px-2 py-0.5 font-mono text-[10px] uppercase tracking-wide transition-colors",
+									showSource
+										? "text-muted-foreground hover:text-foreground"
+										: "bg-raised text-foreground",
+								)}
+							>
+								Diagram
+							</button>
+							<button
+								type="button"
+								onClick={() => setShowSource(true)}
+								aria-pressed={showSource}
+								className={cn(
+									"rounded px-2 py-0.5 font-mono text-[10px] uppercase tracking-wide transition-colors",
+									showSource
+										? "bg-raised text-foreground"
+										: "text-muted-foreground hover:text-foreground",
+								)}
+							>
+								Code
+							</button>
+						</div>
 					) : null}
-					<CopyButton text={code} label="Copy diagram source" />
+					<div className="flex items-center gap-0.5 opacity-0 transition-opacity duration-150 focus-within:opacity-100 group-hover/code:opacity-100">
+						<CopyButton text={code} label="Copy diagram source" />
+					</div>
 				</div>
 			</div>
 			{showingDiagram ? (
@@ -164,6 +198,7 @@ export const MermaidBlock = memo(function MermaidBlock({
 						role="img"
 						aria-label="Mermaid diagram"
 						onClick={onDiagramClick}
+						onAuxClick={onDiagramAuxClick}
 						// The theme already matches AO's: the diagram re-renders with
 						// mermaid's dark theme when AO is dark (see
 						// useDiagramTheme), so no CSS inversion is applied here.

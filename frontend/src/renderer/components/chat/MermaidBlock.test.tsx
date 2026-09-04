@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { aoBridge } from "../../lib/bridge";
@@ -32,12 +32,21 @@ describe("MermaidBlock", () => {
 		expect(renderDiagram).toHaveBeenCalledWith(CODE, expect.stringMatching(/light|dark/));
 		expect(screen.getByRole("button", { name: /copy diagram source/i })).toBeInTheDocument();
 
-		await user.click(screen.getByRole("button", { name: /show source/i }));
+		await user.click(screen.getByRole("button", { name: "Code" }));
 		expect(screen.getByText(/A\[User\]/)).toBeInTheDocument();
 		expect(screen.queryByTestId("mermaid-diagram")).not.toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Code" })).toHaveAttribute("aria-pressed", "true");
+		expect(screen.getByRole("button", { name: "Diagram" })).toHaveAttribute(
+			"aria-pressed",
+			"false",
+		);
 
-		await user.click(screen.getByRole("button", { name: /show diagram/i }));
+		await user.click(screen.getByRole("button", { name: "Diagram" }));
 		expect(screen.getByTestId("mermaid-diagram")).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Diagram" })).toHaveAttribute(
+			"aria-pressed",
+			"true",
+		);
 	});
 
 	it("shows source text without calling the engine while streaming", () => {
@@ -102,5 +111,29 @@ describe("MermaidBlock", () => {
 		await user.click(await screen.findByText("docs"));
 		expect(openExternal).toHaveBeenCalledWith("https://example.com/i/1");
 		openExternal.mockRestore();
+	});
+
+	it("routes a middle-click on a diagram link through the same policy", async () => {
+		const onLinkOpen = vi.fn();
+		renderDiagram.mockResolvedValue(
+			'<svg xmlns="http://www.w3.org/2000/svg"><a href="https://example.com/i/1"><text>docs</text></a></svg>',
+		);
+		render(<MermaidBlock code={CODE} onLinkOpen={onLinkOpen} />);
+
+		// Middle-click fires auxclick, not click: without interception it
+		// would skip the chat link policy for the window-open guard.
+		fireEvent(await screen.findByText("docs"), new MouseEvent("auxclick", { bubbles: true, button: 1 }));
+		expect(onLinkOpen).toHaveBeenCalledWith("https://example.com/i/1");
+	});
+
+	it("ignores non-middle aux clicks on diagram links", async () => {
+		const onLinkOpen = vi.fn();
+		renderDiagram.mockResolvedValue(
+			'<svg xmlns="http://www.w3.org/2000/svg"><a href="https://example.com/i/1"><text>docs</text></a></svg>',
+		);
+		render(<MermaidBlock code={CODE} onLinkOpen={onLinkOpen} />);
+
+		fireEvent(await screen.findByText("docs"), new MouseEvent("auxclick", { bubbles: true, button: 2 }));
+		expect(onLinkOpen).not.toHaveBeenCalled();
 	});
 });
