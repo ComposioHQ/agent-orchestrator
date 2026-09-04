@@ -342,6 +342,68 @@ describe("startAutoUpdates", () => {
     }
   });
 
+  // Regression: the nightly direct feed is electron-updater's GENERIC provider,
+  // which never populates releaseNotes -- only GitHubProvider does -- and
+  // nightly-mac.yml has no field for them. So "what's new" could never say
+  // anything on nightly unless the notes are resolved out of band.
+  it("carries release notes for nightly, whose feed provider cannot", async () => {
+    const platformManifest =
+      process.platform === "darwin"
+        ? "nightly-mac.yml"
+        : process.platform === "linux"
+          ? "nightly-linux.yml"
+          : "nightly.yml";
+    const resourcesPath = mkdtempSync(nodePath.join(os.tmpdir(), "ao-nightly-notes-"));
+    writeFileSync(
+      nodePath.join(resourcesPath, "app-update.yml"),
+      "provider: github\nowner: Untrivial-ai\nrepo: agent-orchestrator\n",
+    );
+    const originalResourcesPath = Object.getOwnPropertyDescriptor(process, "resourcesPath");
+    Object.defineProperty(process, "resourcesPath", { configurable: true, value: resourcesPath });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify([
+            {
+              tag_name: "v1.0.1-nightly.202608231517",
+              draft: false,
+              prerelease: true,
+              body: "<ul><li>Stopped the re-stage loop</li><li>Rebuilt the Updates page</li></ul>",
+              assets: [{ name: platformManifest }],
+            },
+          ]),
+          { status: 200 },
+        ),
+      ),
+    );
+
+    try {
+      const { module, updaterEvents, statusMessages } = await importAutoUpdater({
+        enabled: false,
+        channel: "nightly",
+        nightlyAck: true,
+        feature: null,
+      });
+
+      await module.checkForUpdatesNow(stateDir);
+      updaterEvents.get("update-available")?.({ version: "1.0.1-nightly.202608231517" });
+
+      // HTML stripped, list items kept as separate lines.
+      expect(statusMessages().at(-1)?.payload).toMatchObject({
+        state: "available",
+        releaseNotes: "Stopped the re-stage loop\nRebuilt the Updates page",
+      });
+    } finally {
+      if (originalResourcesPath) {
+        Object.defineProperty(process, "resourcesPath", originalResourcesPath);
+      } else {
+        Reflect.deleteProperty(process, "resourcesPath");
+      }
+      rmSync(resourcesPath, { recursive: true, force: true });
+    }
+  });
+
   it("automatic nightly checks resolve the newest completed release without the Atom feed", async () => {
     const platformManifest =
       process.platform === "darwin"
@@ -1933,6 +1995,75 @@ describe("startAutoUpdates", () => {
     const second = await importAutoUpdaterKeepingStagedFile();
     await second.module.startAutoUpdates(stateDir);
     expect(second.module.getUpdateStatus().staged).toBeUndefined();
+  });
+
+  // Regression: electron-updater keeps its request open when a download stops
+  // receiving bytes, so the last percentage stuck forever, the serialized
+  // updater queue stayed occupied, and nothing offered a retry.
+  it("cancels a download that stops advancing and offers a retry", async () => {
+    vi.useFakeTimers();
+    const { module, autoUpdater, updaterEvents, statusMessages } = await importAutoUpdater();
+    const cancel = vi.fn();
+    autoUpdater.downloadUpdate.mockImplementation((token: { cancel?: () => void } | undefined) => {
+      if (token) token.cancel = cancel;
+      return new Promise(() => undefined);
+    });
+
+    void module.downloadUpdateNow("manual-download-1");
+    await flushMicrotasks();
+    updaterEvents.get("download-progress")?.({ percent: 37 });
+    expect(statusMessages().at(-1)?.payload).toMatchObject({ state: "downloading", percent: 37 });
+
+    // Just short of the window: still considered alive.
+    await vi.advanceTimersByTimeAsync(2 * 60 * 1000 - 1);
+    expect(cancel).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(1);
+    expect(cancel).toHaveBeenCalledTimes(1);
+    expect(statusMessages().at(-1)?.payload).toMatchObject({
+      state: "error",
+      message: "Download stopped responding. Try again.",
+    });
+  });
+
+  it("keeps a slow but advancing download alive", async () => {
+    vi.useFakeTimers();
+    const { module, autoUpdater, updaterEvents } = await importAutoUpdater();
+    const cancel = vi.fn();
+    autoUpdater.downloadUpdate.mockImplementation((token: { cancel?: () => void } | undefined) => {
+      if (token) token.cancel = cancel;
+      return new Promise(() => undefined);
+    });
+
+    void module.downloadUpdateNow();
+    await flushMicrotasks();
+    // Progress every 90 seconds for five minutes: slow, but never stalled.
+    for (const percent of [10, 20, 30, 40]) {
+      updaterEvents.get("download-progress")?.({ percent });
+      await vi.advanceTimersByTimeAsync(90 * 1000);
+    }
+    expect(cancel).not.toHaveBeenCalled();
+  });
+
+  it("does not replace the stall message with a cancellation error", async () => {
+    vi.useFakeTimers();
+    const { module, autoUpdater, updaterEvents, statusMessages } = await importAutoUpdater();
+    autoUpdater.downloadUpdate.mockImplementation((token: { cancel?: () => void } | undefined) => {
+      if (token) token.cancel = () => undefined;
+      return new Promise(() => undefined);
+    });
+
+    void module.downloadUpdateNow();
+    await flushMicrotasks();
+    updaterEvents.get("download-progress")?.({ percent: 12 });
+    await vi.advanceTimersByTimeAsync(2 * 60 * 1000);
+
+    // electron-updater surfaces our own cancellation as an error; the retry
+    // wording already on screen is more useful than "cancelled".
+    updaterEvents.get("error")?.(new Error("Cancelled"));
+    expect(statusMessages().at(-1)?.payload).toMatchObject({
+      message: "Download stopped responding. Try again.",
+    });
   });
 
   it("stamps the staged build onto every status, including transient ones", async () => {

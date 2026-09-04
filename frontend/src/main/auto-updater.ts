@@ -1,4 +1,5 @@
 import { autoUpdater } from "electron-updater";
+import { CancellationToken } from "builder-util-runtime";
 import { app, BrowserWindow, dialog } from "electron";
 import { accessSync, constants as fsConstants, existsSync, readFileSync } from "node:fs";
 import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
@@ -93,6 +94,9 @@ let stagedVersion: string | undefined;
 // sanitized. Held here because only the updater events carry it, and the
 // renderer needs it on every subsequent status too, not just the one event.
 let offeredReleaseNotes: string | undefined;
+// Notes resolved out-of-band for a feed whose provider cannot carry them.
+// Used only as a fallback, so a provider that does supply notes always wins.
+let directFeedReleaseNotes: string | undefined;
 // Which feed channel the staged build came from. A build staged from one
 // channel is already armed with the OS installer, so switching channels has
 // to notice that it no longer belongs (see stagedBuildIsStale).
@@ -143,6 +147,53 @@ let automaticCheckNetFailureCounted = false;
 // broadcast a status, and error statuses carry no version.
 let activeUpdaterPhase: UpdatePhase = "check";
 let pendingUpdateVersion: string | undefined;
+// Stalled-download watchdog. electron-updater keeps its request open when a
+// download stops receiving bytes, so AO kept the last percentage forever, held
+// the updater queue occupied, and offered nothing to retry. Bytes that are
+// genuinely slow still advance the percentage, so inactivity is the signal, not
+// elapsed time.
+const DOWNLOAD_STALL_TIMEOUT_MS = 2 * 60 * 1000;
+let downloadStallTimer: ReturnType<typeof setTimeout> | undefined;
+let activeDownloadCancellation: CancellationToken | undefined;
+let downloadStalled = false;
+
+function clearDownloadStallWatchdog(): void {
+  if (downloadStallTimer !== undefined) {
+    clearTimeout(downloadStallTimer);
+    downloadStallTimer = undefined;
+  }
+  activeDownloadCancellation = undefined;
+}
+
+/**
+ * (Re)arm the watchdog. Called on every progress event, so the deadline only
+ * expires when nothing has advanced for the whole window.
+ */
+function armDownloadStallWatchdog(): void {
+  if (downloadStallTimer !== undefined) clearTimeout(downloadStallTimer);
+  downloadStallTimer = setTimeout(() => {
+    downloadStallTimer = undefined;
+    downloadStalled = true;
+    console.error("update download stalled; cancelling");
+    // Cancel so electron-updater releases its request and the serialized
+    // operation can finish. Without this the queue stays blocked and even a
+    // manual retry would just wait behind the dead download.
+    activeDownloadCancellation?.cancel();
+    activeDownloadCancellation = undefined;
+    emitUpdateOutcome(
+      updateFailureOutcome("download stalled", "download", activeUpdateTrigger(), pendingUpdateVersion),
+    );
+    broadcast(
+      withActiveRequest({
+        state: "error",
+        message: "Download stopped responding. Try again.",
+        ...(pendingUpdateVersion === undefined ? {} : { version: pendingUpdateVersion }),
+      }),
+    );
+  }, DOWNLOAD_STALL_TIMEOUT_MS);
+  downloadStallTimer.unref?.();
+}
+
 // Session-scoped time of the most recent completed feed check. Packaged apps
 // check the selected channel at launch regardless of whether automatic
 // downloading is enabled.
@@ -264,6 +315,7 @@ interface GitHubReleaseSummary {
   tag_name: string;
   draft: boolean;
   prerelease: boolean;
+  body?: string | null;
   assets?: Array<{ name?: string }>;
 }
 
@@ -277,7 +329,7 @@ interface GitHubReleaseSummary {
 async function fetchLatestCompletedNightlyTag(
   owner: string,
   repo: string,
-): Promise<string | undefined> {
+): Promise<{ tag: string; body?: string } | undefined> {
   try {
     const response = await fetch(
       `https://api.github.com/repos/${owner}/${repo}/releases?per_page=100`,
@@ -294,7 +346,7 @@ async function fetchLatestCompletedNightlyTag(
     if (!response.ok) return undefined;
     const releases = (await response.json()) as GitHubReleaseSummary[];
     const manifestName = `nightly${platformSuffix()}.yml`;
-    return releases
+    const newest = releases
       .filter((release) => {
         const parsed = semver.valid(release.tag_name);
         return (
@@ -305,8 +357,17 @@ async function fetchLatestCompletedNightlyTag(
           release.assets?.some((asset) => asset.name === manifestName) === true
         );
       })
-      .sort((left, right) => semver.rcompare(left.tag_name, right.tag_name))[0]
-      ?.tag_name;
+      .sort((left, right) => semver.rcompare(left.tag_name, right.tag_name))[0];
+    if (newest === undefined) return undefined;
+    // The body comes back on the same response, so carrying it costs nothing.
+    // Nightly needs it: the direct feed below is electron-updater's GENERIC
+    // provider, which never populates releaseNotes (only GitHubProvider does),
+    // and nightly-mac.yml has no field for them. Without this the "what's new"
+    // section could never say anything on the nightly channel.
+    return {
+      tag: newest.tag_name,
+      ...(typeof newest.body === "string" ? { body: newest.body } : {}),
+    };
   } catch {
     return undefined;
   }
@@ -335,11 +396,12 @@ async function configureDirectNightlyFeed(
   if (!usesDirectNightlyFeed(settings)) return undefined;
   const coordinates = await readAppUpdateYml();
   if (!coordinates) return undefined;
-  const tag = await fetchLatestCompletedNightlyTag(
+  const release = await fetchLatestCompletedNightlyTag(
     coordinates.owner,
     coordinates.repo,
   );
-  if (!tag) return undefined;
+  if (!release) return undefined;
+  const { tag } = release;
   const runningVersion = app.getVersion();
   if (
     semver.valid(runningVersion) !== null &&
@@ -349,6 +411,9 @@ async function configureDirectNightlyFeed(
     return undefined;
   }
 
+  // Stand in for what the generic provider cannot supply. Overwritten by the
+  // real thing if a later event does carry notes.
+  directFeedReleaseNotes = normalizeReleaseNotes(release.body);
   autoUpdater.setFeedURL({
     provider: "generic",
     url: `https://github.com/${coordinates.owner}/${coordinates.repo}/releases/download/${tag}`,
@@ -529,6 +594,7 @@ function stagedBuildIsStale(
 function discardStagedBuild(): void {
   forgetPersistedStagedBuild(escalationStateDir);
   offeredReleaseNotes = undefined;
+  directFeedReleaseNotes = undefined;
   stagedVersion = undefined;
   stagedChannel = undefined;
   stagedAtMs = undefined;
@@ -829,8 +895,11 @@ function wireUpdaterEvents(): void {
       return;
     }
     pendingUpdateVersion = info?.version;
-    offeredReleaseNotes = normalizeReleaseNotes(info?.releaseNotes);
+    offeredReleaseNotes = normalizeReleaseNotes(info?.releaseNotes) ?? directFeedReleaseNotes;
     broadcastCompletedCheck({ state: "available", version: info?.version });
+  });
+  autoUpdater.on("update-cancelled", () => {
+    clearDownloadStallWatchdog();
   });
   autoUpdater.on("update-not-available", () => {
     // A successful check proves the network stack is healthy.
@@ -851,6 +920,7 @@ function wireUpdaterEvents(): void {
     consecutiveAutomaticCheckFailures = 0;
     failingChecksPublished = false;
     activeUpdaterPhase = "download";
+    armDownloadStallWatchdog();
     return broadcastUpdaterStatus({
       state: "downloading",
       version: pendingUpdateVersion,
@@ -858,6 +928,8 @@ function wireUpdaterEvents(): void {
     });
   });
   autoUpdater.on("update-downloaded", (info) => {
+    clearDownloadStallWatchdog();
+    downloadStalled = false;
     emitUpdateOutcome({
       event: "ao.renderer.update_downloaded",
       phase: "download",
@@ -872,7 +944,8 @@ function wireUpdaterEvents(): void {
     const restaged = stagedAtMs !== undefined && info?.version === stagedVersion;
     stagedVersion = info?.version;
     stagedChannel = autoUpdater.channel ?? undefined;
-    offeredReleaseNotes = normalizeReleaseNotes(info?.releaseNotes) ?? offeredReleaseNotes;
+    offeredReleaseNotes =
+      normalizeReleaseNotes(info?.releaseNotes) ?? offeredReleaseNotes ?? directFeedReleaseNotes;
     if (!restaged) {
       stagedAtMs = Date.now();
       stagedEscalated = false;
@@ -900,6 +973,15 @@ function wireUpdaterEvents(): void {
     }
   });
   autoUpdater.on("error", (err) => {
+    clearDownloadStallWatchdog();
+    if (downloadStalled) {
+      // Our own cancellation surfacing as an error. The stall status is already
+      // published and is more useful than "cancelled"; replacing it would lose
+      // the retry wording.
+      downloadStalled = false;
+      console.info("update download cancelled after stalling:", err);
+      return;
+    }
     // Never crash on update failure (offline, unsigned macOS, etc.).
     // A one-off automatic failure restores the previous status so the UI does
     // not flash an error the user never asked for. That suppression is a UI
@@ -1021,13 +1103,18 @@ async function runAutomaticUpdateCheck(
         const result = await autoUpdater.checkForUpdates();
         if (settings.enabled) {
           if (result?.downloadPromise) {
+            // The provider owns this download's token; hand it to the watchdog
+            // so a stall can actually be cancelled rather than just reported.
+            activeDownloadCancellation = result.cancellationToken;
             await result.downloadPromise;
           } else if (supersedesStagedBuild(result?.updateInfo?.version)) {
             // autoDownload was suspended for the staged build, but this is a
             // different version, so it still has to be fetched automatically.
             activeUpdaterPhase = "download";
             pendingUpdateVersion = result?.updateInfo?.version;
-            await autoUpdater.downloadUpdate();
+            const token = new CancellationToken();
+            activeDownloadCancellation = token;
+            await autoUpdater.downloadUpdate(token);
           }
         }
       } catch (err) {
@@ -1291,7 +1378,11 @@ export async function downloadUpdateNow(requestId?: string): Promise<void> {
     await runSerializedUpdaterOperation(
       "manual-download",
       async () => {
-        await autoUpdater.downloadUpdate();
+        // Manual downloads get no provider token, so make one: without it the
+        // watchdog could report a stall but never release the request.
+        const token = new CancellationToken();
+        activeDownloadCancellation = token;
+        await autoUpdater.downloadUpdate(token);
       },
       requestId,
     );
