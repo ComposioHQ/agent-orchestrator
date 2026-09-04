@@ -2981,7 +2981,7 @@ describe("SessionInspector summary reviews", () => {
         "/api/v1/sessions/{sessionId}/reviews/switch",
         {
           params: { path: { sessionId: "sess-1" } },
-          body: { agentConfig: { permissions: "bypass-permissions" } },
+          body: { harness: undefined, agentConfig: undefined },
         },
       ),
     );
@@ -2998,7 +2998,7 @@ describe("SessionInspector summary reviews", () => {
         "/api/v1/sessions/{sessionId}/reviews/switch",
         {
           params: { path: { sessionId: "sess-1" } },
-          body: { agentConfig: { model: "gpt-5-mini", permissions: "bypass-permissions" } },
+          body: { harness: undefined, agentConfig: { model: "gpt-5-mini", permissions: "bypass-permissions" } },
         },
       ),
     );
@@ -3049,7 +3049,7 @@ describe("SessionInspector summary reviews", () => {
     expect(postCallsFor("/api/v1/sessions/{sessionId}/reviews/switch")).toHaveLength(1);
   });
 
-  it("shows suggested reviewer models but not arbitrary custom reviewer entry", async () => {
+  it("shows suggested reviewer models after reopening the selected reviewer picker", async () => {
     getMock.mockImplementation(async (path: string, options?: { params?: { path?: { agent?: string } } }) => {
       if (path === "/api/v1/agents/{agent}/models") {
         const agent = options?.params?.path?.agent ?? "";
@@ -3094,6 +3094,17 @@ describe("SessionInspector summary reviews", () => {
     renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
     await openReviewsSection();
 
+    await userEvent.click(await screen.findByRole("button", { name: /Select reviewer agent/ }));
+    await userEvent.click(await screen.findByRole("menuitem", { name: /^opencode$/i }));
+    await waitFor(() =>
+      expect(postMock).toHaveBeenCalledWith(
+        "/api/v1/sessions/{sessionId}/reviews/switch",
+        {
+          params: { path: { sessionId: "sess-1" } },
+          body: { harness: "opencode" },
+        },
+      ),
+    );
     await userEvent.click(await screen.findByRole("button", { name: /Select reviewer agent/ }));
     await userEvent.click(await screen.findByRole("menuitem", { name: /^opencode$/i }));
     expect(await screen.findByRole("menuitem", { name: "Suggested A" })).toBeInTheDocument();
@@ -3144,7 +3155,7 @@ describe("SessionInspector summary reviews", () => {
     expect(screen.queryByRole("textbox", { name: /custom opencode/i })).not.toBeInTheDocument();
   });
 
-  it("selects the default reviewer model when clicking a reviewer with model choices", async () => {
+  it("keeps the current default reviewer open for model selection", async () => {
     getMock.mockImplementation(async (path: string, options?: { params?: { path?: { agent?: string } } }) => {
       if (path === "/api/v1/agents/{agent}/models" && options?.params?.path?.agent === "codex") {
         return {
@@ -3178,33 +3189,20 @@ describe("SessionInspector summary reviews", () => {
     await userEvent.click(await screen.findByRole("menuitem", { name: /codex/i }));
 
     await waitFor(() =>
-      expect(postMock).toHaveBeenCalledWith(
-        "/api/v1/sessions/{sessionId}/reviews/switch",
-        {
-          params: { path: { sessionId: "sess-1" } },
-          body: { agentConfig: undefined },
-        },
-      ),
-    );
-    expect(screen.queryByRole("menuitem", { name: "GPT-5 Mini" })).not.toBeInTheDocument();
-    expect(postCallsFor("/api/v1/sessions/{sessionId}/reviews/switch")).toHaveLength(1);
-
-    await userEvent.click(await screen.findByRole("button", { name: /Select reviewer agent/ }));
-    await userEvent.click(await screen.findByRole("menuitem", { name: /codex/i }));
-    await waitFor(() =>
       expect(screen.getByRole("menuitem", { name: "GPT-5 Mini" })).toBeInTheDocument(),
     );
+    expect(postCallsFor("/api/v1/sessions/{sessionId}/reviews/switch")).toHaveLength(0);
     await userEvent.click(screen.getByRole("menuitem", { name: "GPT-5 Mini" }));
     await waitFor(() =>
       expect(postMock).toHaveBeenLastCalledWith(
         "/api/v1/sessions/{sessionId}/reviews/switch",
         {
           params: { path: { sessionId: "sess-1" } },
-          body: { agentConfig: { model: "gpt-5-mini" } },
+          body: { harness: undefined, agentConfig: { model: "gpt-5-mini" } },
         },
       ),
     );
-    expect(postCallsFor("/api/v1/sessions/{sessionId}/reviews/switch")).toHaveLength(2);
+    expect(postCallsFor("/api/v1/sessions/{sessionId}/reviews/switch")).toHaveLength(1);
   });
 
   it("clears hidden session reviewer config when returning an explicit default-matching reviewer to project default", async () => {

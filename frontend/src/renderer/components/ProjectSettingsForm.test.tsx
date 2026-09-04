@@ -780,9 +780,6 @@ describe("ProjectSettingsForm", () => {
 		const codexOption = (await screen.findAllByRole("menuitem")).find((option) => option.textContent?.includes("Codex"));
 		expect(codexOption).toBeTruthy();
 		await userEvent.click(codexOption!);
-		expect(screen.queryByRole("menuitem", { name: /GPT-5 Mini/i })).not.toBeInTheDocument();
-		await userEvent.click(reviewer);
-		await userEvent.click(await screen.findByRole("menuitem", { name: /codex/i }));
 		await userEvent.click(await screen.findByRole("menuitem", { name: /GPT-5 Mini/i }));
 		expect(reviewer).toHaveTextContent("Codex · GPT-5 Mini");
 
