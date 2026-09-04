@@ -41,7 +41,6 @@ export type CloneProjectInput = Pick<CloneRepositorySelection, "remoteUrl" | "de
 
 const LAST_CLONE_DESTINATION_KEY = "ao.clone.lastDestinationParent";
 type ImportValidationResult = components["schemas"]["ImportValidationResult"];
-type RepoGitStatus = components["schemas"]["RepoGitStatus"];
 type GitPreparationEvent = components["schemas"]["GitPreparationEvent"];
 type ProjectImportStep = "blocked" | "prepare_git";
 
@@ -106,6 +105,7 @@ export function CreateProjectFlow({
 	const [projectValidation, setProjectValidation] = useState<ImportValidationResult | null>(null);
 	const [projectImportStep, setProjectImportStep] = useState<ProjectImportStep | null>(null);
 	const [projectPrepEvents, setProjectPrepEvents] = useState<GitPreparationEvent[]>([]);
+	const [projectApprovedActions, setProjectApprovedActions] = useState<string[]>([]);
 	const [projectRemoteUrl, setProjectRemoteUrl] = useState("");
 	const [projectSuggestWorkspace, setProjectSuggestWorkspace] = useState(false);
 	const [isChoosingPath, setIsChoosingPath] = useState(false);
@@ -148,6 +148,7 @@ export function CreateProjectFlow({
 		setProjectValidation(null);
 		setProjectImportStep(null);
 		setProjectPrepEvents([]);
+		setProjectApprovedActions([]);
 		setProjectRemoteUrl("");
 		setProjectSuggestWorkspace(false);
 		if (source === "clone") {
@@ -166,6 +167,7 @@ export function CreateProjectFlow({
 		setProjectValidation(null);
 		setProjectImportStep(null);
 		setProjectPrepEvents([]);
+		setProjectApprovedActions([]);
 		setProjectRemoteUrl("");
 		setProjectSuggestWorkspace(false);
 		setRepositorySetup(null);
@@ -182,7 +184,8 @@ export function CreateProjectFlow({
 				const validation = await validateImportFolder(path, "project");
 				setProjectValidation(validation);
 				setProjectPrepEvents([]);
-				setProjectRemoteUrl(validation.root.requiredActions.includes("set_remote") ? "" : "");
+				setProjectApprovedActions(validation.root.requiredActions);
+				setProjectRemoteUrl("");
 				setProjectSuggestWorkspace(validation.nextStep === "choose_import_kind");
 				if (!validation.isValid || validation.nextStep === "error") {
 					setError(importValidationMessage(validation));
@@ -242,6 +245,7 @@ export function CreateProjectFlow({
 		setProjectValidation(null);
 		setProjectImportStep(null);
 		setProjectPrepEvents([]);
+		setProjectApprovedActions([]);
 		setProjectRemoteUrl("");
 		setProjectSuggestWorkspace(false);
 		if (hasModePicker) {
@@ -345,6 +349,7 @@ export function CreateProjectFlow({
 	const reopenSourcePicker = () => {
 		setProjectImportStep(null);
 		setProjectPrepEvents([]);
+		setProjectApprovedActions([]);
 		setProjectRemoteUrl("");
 		setProjectSuggestWorkspace(false);
 		setProjectValidation(null);
@@ -360,6 +365,7 @@ export function CreateProjectFlow({
 		setPendingDropPath(projectValidation.root.repoPath);
 		setProjectImportStep(null);
 		setProjectPrepEvents([]);
+		setProjectApprovedActions([]);
 		setProjectRemoteUrl("");
 		setProjectSuggestWorkspace(false);
 		setProjectValidation(null);
@@ -378,13 +384,14 @@ export function CreateProjectFlow({
 				body: {
 					importKind: "project",
 					path: projectValidation.root.repoPath,
-					approvedActions: projectValidation.root.requiredActions,
+					approvedActions: projectApprovedActions,
 					remoteUrl: projectRemoteUrl.trim() || undefined,
 				},
 			});
 			if (apiError || !data) throw new Error(apiErrorMessage(apiError, t("createProject.couldNotAdd")));
 			setProjectPrepEvents(data.events);
 			setProjectValidation(data.validation);
+			setProjectApprovedActions(data.validation.root.requiredActions);
 			const failed = data.events.find((event) => event.state === "error");
 			if (failed) {
 				setError(projectPreparationFailureMessage(failed));
@@ -430,7 +437,7 @@ export function CreateProjectFlow({
 					error,
 					label,
 				})}
-			<CreateProjectFlowBackdrop open={modePickerOpen || cloneDialogOpen || folderPickerOpen || projectImportOpen || selectedPath !== null || childTransitioning} />
+			<CreateProjectFlowBackdrop open={modePickerOpen || cloneDialogOpen || folderPickerOpen || selectedPath !== null || childTransitioning} />
 			{hasModePicker && embedded && !modePickerOpen && !cloneDialogOpen && selectedPath === null && (
 				<div className="flex w-full flex-col items-center gap-3">
 					{cloudEnabled && (
@@ -545,7 +552,9 @@ export function CreateProjectFlow({
 			<ProjectImportDialog
 				disabled={isBusy}
 				error={error}
+				approvedActions={projectApprovedActions}
 				onBack={reopenSourcePicker}
+				onChangeApprovedActions={setProjectApprovedActions}
 				onChangeFolder={() => void chooseDirectory("single_repo")}
 				onChangeRemote={setProjectRemoteUrl}
 				onContinue={() => void prepareProjectGit()}
@@ -554,6 +563,7 @@ export function CreateProjectFlow({
 					if (!open) {
 						setProjectImportStep(null);
 						setProjectPrepEvents([]);
+						setProjectApprovedActions([]);
 						setProjectRemoteUrl("");
 						setProjectSuggestWorkspace(false);
 						setProjectValidation(null);
@@ -651,6 +661,19 @@ function gitActionLabel(action: string): string {
 	}
 }
 
+function gitActionDescription(action: string): string {
+	switch (action) {
+		case "git_init":
+			return "Create a Git repository in this folder.";
+		case "git_commit":
+			return "Create the first commit so the project has a usable history.";
+		case "set_remote":
+			return "Configure the origin remote for this repository.";
+		default:
+			return "Apply the required repository setup.";
+	}
+}
+
 function latestProjectActionState(action: string, events: GitPreparationEvent[]): string {
 	for (let index = events.length - 1; index >= 0; index -= 1) {
 		if (events[index]?.action === action) return events[index].state;
@@ -660,14 +683,6 @@ function latestProjectActionState(action: string, events: GitPreparationEvent[])
 
 function projectPreparationFailureMessage(event: GitPreparationEvent): string {
 	return `${displayImportPath(event.repoPath)} failed while running ${gitActionLabel(event.action)}. Review the step below, then retry or go back.`;
-}
-
-function projectGitStateSummary(root: RepoGitStatus): string[] {
-	return [
-		root.isRepo ? "Git repository detected" : "Plain folder",
-		root.hasCommit ? "Has an initial commit" : "No commit yet",
-		root.hasOrigin ? "Origin remote configured" : "No origin remote",
-	];
 }
 
 function shouldScanCreateFailure(message: string): boolean {
@@ -681,7 +696,7 @@ function CreateProjectFlowBackdrop({ open }: { open: boolean }) {
 	return (
 		<Dialog.Root open={open}>
 			<Dialog.Portal>
-				<Dialog.Overlay className="dialog-overlay data-[state=open]:animate-overlay-in data-[state=closed]:animate-overlay-out" />
+				<Dialog.Overlay className="fixed inset-0 z-overlay bg-black/55 data-[state=open]:animate-overlay-in data-[state=closed]:animate-overlay-out motion-reduce:animate-none" />
 			</Dialog.Portal>
 		</Dialog.Root>
 	);
@@ -1105,10 +1120,12 @@ function ImportSourcePicker({
 }
 
 function ProjectImportDialog({
+	approvedActions,
 	disabled,
 	error,
 	events,
 	onBack,
+	onChangeApprovedActions,
 	onChangeFolder,
 	onChangeRemote,
 	onContinue,
@@ -1120,10 +1137,12 @@ function ProjectImportDialog({
 	step,
 	validation,
 }: {
+	approvedActions: string[];
 	disabled: boolean;
 	error: string | null;
 	events: GitPreparationEvent[];
 	onBack: () => void;
+	onChangeApprovedActions: (actions: string[]) => void;
 	onChangeFolder: () => void;
 	onChangeRemote: (value: string) => void;
 	onContinue: () => void;
@@ -1138,11 +1157,17 @@ function ProjectImportDialog({
 	if (!validation || !step) return null;
 	const needsRemote = validation.root.requiredActions.includes("set_remote");
 	const hasFailedStep = events.some((event) => event.state === "error");
-	const continueDisabled = disabled || (needsRemote && remoteUrl.trim() === "");
+	const missingApprovals = validation.root.requiredActions.filter((action) => !approvedActions.includes(action));
+	const continueDisabled = disabled || missingApprovals.length > 0 || (needsRemote && remoteUrl.trim() === "");
 	return (
 		<Dialog.Root open={open} onOpenChange={onOpenChange}>
 			<Dialog.Portal>
-				<Dialog.Content className="fixed left-1/2 top-1/2 z-overlay flex max-h-[min(700px,calc(100svh-24px))] w-[min(680px,calc(100vw-24px))] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-lg border border-[var(--color-border-import-modal)] bg-[var(--color-bg-import-modal)] p-0 text-[var(--color-text-import-title)] shadow-[var(--shadow-import-modal)] data-[state=open]:animate-modal-in data-[state=closed]:animate-modal-out motion-reduce:animate-none">
+				<Dialog.Overlay className="fixed inset-0 z-overlay bg-black/55 data-[state=open]:animate-overlay-in data-[state=closed]:animate-overlay-out motion-reduce:animate-none" />
+				<Dialog.Content
+					className="fixed left-1/2 top-1/2 z-overlay flex max-h-[min(700px,calc(100svh-24px))] w-[min(680px,calc(100vw-24px))] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-lg border border-[var(--color-border-import-modal)] bg-[var(--color-bg-import-modal)] p-0 text-[var(--color-text-import-title)] shadow-[var(--shadow-import-modal)] data-[state=open]:animate-modal-in data-[state=closed]:animate-modal-out motion-reduce:animate-none"
+					onInteractOutside={(event) => event.preventDefault()}
+					onPointerDownOutside={(event) => event.preventDefault()}
+				>
 					<div className="flex items-start gap-3 border-b border-[var(--color-border-import-modal)] px-4 py-3">
 						<Button type="button" variant="outline" size="icon" aria-label="Back to import source" disabled={disabled} onClick={onBack}>
 							<ChevronRight className="size-4 rotate-180" aria-hidden="true" />
@@ -1176,16 +1201,6 @@ function ProjectImportDialog({
 								Change
 							</Button>
 						</div>
-						<div className="grid gap-2 sm:grid-cols-3">
-							{projectGitStateSummary(validation.root).map((summary) => (
-								<div
-									key={summary}
-									className="rounded-md border border-[var(--color-border-import-modal)] bg-[var(--color-bg-import-card)] px-3 py-2 text-[12px] text-[var(--color-text-import-muted)]"
-								>
-									{summary}
-								</div>
-							))}
-						</div>
 						{validation.warning ? (
 							<div className="rounded-md border border-[var(--color-border-import-modal)] bg-[var(--color-bg-import-card)] px-3 py-3 text-[12px] leading-5 text-[var(--color-text-import-muted)]">
 								{validation.warning}
@@ -1203,38 +1218,83 @@ function ProjectImportDialog({
 						) : null}
 						{step === "prepare_git" ? (
 							<section className="space-y-3">
-								<div>
-									<h3 className="text-[12px] font-semibold uppercase tracking-[0.08em] text-[var(--color-text-import-muted)]">
-										Required steps
-									</h3>
-									<div className="mt-2 space-y-2">
-										{validation.root.requiredActions.map((action) => (
-											<ProjectPreparationStepRow
-												key={action}
-												action={action}
-												state={latestProjectActionState(action, events)}
+								<div className="rounded-lg border border-[var(--color-border-import-modal)] bg-[var(--color-bg-import-card)] px-4 py-4">
+									<h3 className="text-[13px] font-semibold text-[var(--color-text-import-title)]">Project setup</h3>
+									<p className="mt-1 text-[12px] leading-5 text-[var(--color-text-import-muted)]">
+										Approve the required setup actions for this folder. AO will run only the selected required steps before continuing.
+									</p>
+									<div className="mt-3 space-y-3">
+										{validation.root.requiredActions.map((action) => {
+											const state = latestProjectActionState(action, events);
+											const checked = approvedActions.includes(action);
+											const tone =
+												state === "success"
+													? "text-success"
+													: state === "error"
+														? "text-destructive"
+														: state === "running"
+															? "text-[var(--color-text-import-title)]"
+															: "text-[var(--color-text-import-muted)]";
+											return (
+												<label
+													key={action}
+													className="flex cursor-pointer items-start gap-3 rounded-md border border-[var(--color-border-import-modal)] bg-[var(--color-bg-import-modal)] px-3 py-3"
+												>
+													<input
+														type="checkbox"
+														className="mt-0.5 size-4 rounded border-border"
+														checked={checked}
+														disabled={disabled}
+														onChange={(event) =>
+															onChangeApprovedActions(
+																event.target.checked
+																	? [...approvedActions, action]
+																	: approvedActions.filter((value) => value !== action),
+															)
+														}
+													/>
+													<span className="min-w-0 flex-1">
+														<span className="block text-[13px] font-medium text-[var(--color-text-import-title)]">
+															{gitActionLabel(action)}
+														</span>
+														<span className="mt-1 block text-[12px] leading-5 text-[var(--color-text-import-muted)]">
+															{gitActionDescription(action)}
+														</span>
+													</span>
+													<span className={cn("shrink-0 text-[12px] font-medium capitalize", tone)}>
+														{state === "required" ? "Required" : state}
+													</span>
+												</label>
+											);
+										})}
+									</div>
+									{needsRemote ? (
+										<div className="mt-4 space-y-2">
+											<Label htmlFor="projectImportRemote" className="text-[13px] font-semibold text-[var(--color-text-import-title)]">
+												Origin remote URL
+											</Label>
+											<Input
+												id="projectImportRemote"
+												autoCapitalize="none"
+												autoComplete="off"
+												className="bg-[var(--color-bg-import-modal)] font-mono text-[13px]"
+												disabled={disabled}
+												placeholder="https://github.com/org/repository.git"
+												spellCheck={false}
+												value={remoteUrl}
+												onChange={(event) => onChangeRemote(event.target.value)}
 											/>
-										))}
-									</div>
+											<p className="text-[12px] leading-5 text-[var(--color-text-import-muted)]">
+												Add the repository URL AO should configure as <code>origin</code>.
+											</p>
+										</div>
+									) : null}
+									{missingApprovals.length > 0 ? (
+										<p className="mt-4 text-[12px] leading-5 text-[var(--color-text-import-muted)]">
+											Approve all required setup actions to continue importing this project.
+										</p>
+									) : null}
 								</div>
-								{needsRemote ? (
-									<div className="space-y-2">
-										<Label htmlFor="projectImportRemote" className="text-[13px] font-semibold text-[var(--color-text-import-title)]">
-											Origin remote URL
-										</Label>
-										<Input
-											id="projectImportRemote"
-											autoCapitalize="none"
-											autoComplete="off"
-											className="bg-[var(--color-bg-import-card)] font-mono text-[13px]"
-											disabled={disabled}
-											placeholder="https://github.com/org/repository.git"
-											spellCheck={false}
-											value={remoteUrl}
-											onChange={(event) => onChangeRemote(event.target.value)}
-										/>
-									</div>
-								) : null}
 							</section>
 						) : null}
 					</div>
@@ -1268,23 +1328,6 @@ function ProjectImportDialog({
 				</Dialog.Content>
 			</Dialog.Portal>
 		</Dialog.Root>
-	);
-}
-
-function ProjectPreparationStepRow({ action, state }: { action: string; state: string }) {
-	const tone =
-		state === "success"
-			? "text-success"
-			: state === "error"
-				? "text-destructive"
-				: state === "running"
-					? "text-[var(--color-text-import-title)]"
-					: "text-[var(--color-text-import-muted)]";
-	return (
-		<div className="flex items-center justify-between gap-3 rounded-md border border-[var(--color-border-import-modal)] bg-[var(--color-bg-import-card)] px-3 py-2.5 text-[13px]">
-			<span>{gitActionLabel(action)}</span>
-			<span className={tone}>{state === "required" ? "Required" : state}</span>
-		</div>
 	);
 }
 

@@ -376,10 +376,43 @@ describe("CreateProjectFlow project import validation", () => {
 		await user.click(await screen.findByRole("button", { name: "Import an existing project" }));
 
 		expect(await screen.findByText("Prepare project")).toBeInTheDocument();
+		expect(screen.getByText("Project setup")).toBeInTheDocument();
 		expect(screen.queryByText("Git initialization")).not.toBeInTheDocument();
 		expect(screen.getByText("Initial commit")).toBeInTheDocument();
 		expect(screen.getByText("Remote setup")).toBeInTheDocument();
 		expect(screen.getByLabelText("Origin remote URL")).toBeInTheDocument();
+		expect(screen.queryByText("Plain folder")).not.toBeInTheDocument();
+		expect(screen.queryByText("No commit yet")).not.toBeInTheDocument();
+		expect(screen.queryByText("No origin remote")).not.toBeInTheDocument();
+	});
+
+	it("requires the user to keep all required setup actions approved", async () => {
+		const user = userEvent.setup();
+		bridgeMocks.chooseDirectory.mockResolvedValue("/repo/project");
+		apiMocks.POST.mockResolvedValueOnce({
+			data: projectValidation("/repo/project", {
+				nextStep: "prepare_git",
+				root: {
+					hasOrigin: false,
+					requiredActions: ["set_remote"],
+				},
+			}),
+		});
+
+		render(
+			<CreateProjectFlow mode="choose" {...noop}>
+				{({ choosePath }) => <button onClick={choosePath}>New project</button>}
+			</CreateProjectFlow>,
+		);
+
+		await user.click(screen.getByRole("button", { name: "New project" }));
+		await user.click(await screen.findByRole("button", { name: "Import an existing project" }));
+
+		const remoteAction = screen.getByRole("checkbox");
+		await user.click(remoteAction);
+
+		expect(screen.getByText("Approve all required setup actions to continue importing this project.")).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Continue" })).toBeDisabled();
 	});
 
 	it("prepares the project and then opens agent selection", async () => {
