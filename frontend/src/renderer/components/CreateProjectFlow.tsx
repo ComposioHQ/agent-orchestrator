@@ -121,6 +121,9 @@ export function CreateProjectFlow({
 	const [isCreating, setIsCreating] = useState(false);
 	const [isInitializing, setIsInitializing] = useState(false);
 	const [isPreparingGit, setIsPreparingGit] = useState(false);
+	const [createProgressOpen, setCreateProgressOpen] = useState(false);
+	const [createProgress, setCreateProgress] = useState(0);
+	const [createProgressStage, setCreateProgressStage] = useState<CreateProgressStage>("starting");
 	const [repositorySetup, setRepositorySetup] = useState<"NOT_A_GIT_REPO" | "PROJECT_UNBORN" | null>(null);
 	const [repositorySetupWarning, setRepositorySetupWarning] = useState<string | null>(null);
 	// A path that arrived via droppedPath, staged until the user confirms
@@ -146,6 +149,33 @@ export function CreateProjectFlow({
 		setWorkspaceRemoteUrls({});
 		setWorkspacePrepEvents([]);
 	};
+
+	useEffect(() => {
+		if (!createProgressOpen) return;
+		const startedAt = Date.now();
+		const updateProgress = () => {
+			const elapsed = Date.now() - startedAt;
+			if (elapsed < 800) {
+				setCreateProgressStage("starting");
+				setCreateProgress(Math.min(12, 4 + elapsed / 100));
+			} else if (elapsed < 1800) {
+				setCreateProgressStage("connecting");
+				setCreateProgress(12 + ((elapsed - 800) / 1000) * 18);
+			} else if (elapsed < 5000) {
+				setCreateProgressStage("creating");
+				setCreateProgress(30 + ((elapsed - 1800) / 3200) * 38);
+			} else if (elapsed < 7600) {
+				setCreateProgressStage("settingUp");
+				setCreateProgress(68 + ((elapsed - 5000) / 2600) * 17);
+			} else {
+				setCreateProgressStage("finishing");
+				setCreateProgress(Math.min(90, 85 + (elapsed - 7600) / 1000));
+			}
+		};
+		updateProgress();
+		const timer = window.setInterval(updateProgress, 250);
+		return () => window.clearInterval(timer);
+	}, [createProgressOpen]);
 
 	const transitionToChild = (open: () => void) => {
 		setChildTransitioning(true);
@@ -303,6 +333,12 @@ export function CreateProjectFlow({
 		if (!selectedPath) return;
 		setError(null);
 		setIsCreating(true);
+		const showProgress = Boolean(cloneSelection) || selectedKind === "workspace";
+		if (showProgress) {
+			setCreateProgress(0);
+			setCreateProgressStage("starting");
+			setCreateProgressOpen(true);
+		}
 		try {
 			if (cloneSelection) {
 				await onCloneProject({
@@ -312,6 +348,11 @@ export function CreateProjectFlow({
 				});
 				setSelectedPath(null);
 				setCloneSelection(null);
+				if (showProgress) {
+					setCreateProgress(100);
+					setCreateProgressStage("complete");
+					await new Promise((resolve) => window.setTimeout(resolve, 180));
+				}
 				return;
 			}
 			if (selectedKind === "single_repo" && repositorySetup) {
@@ -331,6 +372,11 @@ export function CreateProjectFlow({
 				...selection,
 			});
 			setSelectedPath(null);
+			if (showProgress) {
+				setCreateProgress(100);
+				setCreateProgressStage("complete");
+				await new Promise((resolve) => window.setTimeout(resolve, 180));
+			}
 		} catch (err) {
 			const code = err instanceof Error && "code" in err ? (err.code as string | undefined) : undefined;
 			const message = err instanceof Error ? err.message : t("createProject.couldNotAdd");
@@ -371,6 +417,7 @@ export function CreateProjectFlow({
 				setFolderPickerOpen(true);
 			}
 		} finally {
+			setCreateProgressOpen(false);
 			setIsCreating(false);
 			setIsInitializing(false);
 		}
@@ -466,7 +513,7 @@ export function CreateProjectFlow({
 					error,
 					label,
 				})}
-			<CreateProjectFlowBackdrop open={modePickerOpen || cloneDialogOpen || folderPickerOpen || selectedPath !== null || childTransitioning} />
+			<CreateProjectFlowBackdrop open={modePickerOpen || cloneDialogOpen || folderPickerOpen || selectedPath !== null || createProgressOpen || childTransitioning} />
 			{hasModePicker && embedded && !modePickerOpen && !cloneDialogOpen && selectedPath === null && (
 				<div className="flex w-full flex-col items-center gap-3">
 					{cloudEnabled && (
@@ -619,10 +666,16 @@ export function CreateProjectFlow({
 						: undefined
 				}
 				onSubmit={createProject}
-				open={selectedPath !== null}
+				open={selectedPath !== null && !createProgressOpen}
 				path={selectedPath}
 				repositorySetupNeeded={repositorySetup !== null}
 				repositorySetupWarning={repositorySetupWarning}
+			/>
+			<CreateProjectProgressDialog
+				message={createProgressMessage(createProgressStage, selectedKind === "workspace")}
+				onCancel={() => setCreateProgressOpen(false)}
+				open={createProgressOpen}
+				progress={createProgress}
 			/>
 			{error && !hasModePicker && (
 				<span className="sr-only" role="status">
