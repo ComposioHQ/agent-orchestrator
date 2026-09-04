@@ -21,6 +21,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
@@ -103,14 +104,85 @@ func (g Gate) root(sessionID string) (string, error) {
 	if strings.ContainsAny(sessionID, `/\`) || sessionID == "." || sessionID == ".." {
 		return "", fmt.Errorf("claudetrust: session id is not a single path segment")
 	}
-	root := filepath.Join(base, sessionID)
-	if err := os.MkdirAll(root, 0o700); err != nil {
-		return "", fmt.Errorf("claudetrust: create config root: %w", err)
+	if err := ensureRealDir(base); err != nil {
+		return "", err
 	}
-	if err := os.Chmod(root, 0o700); err != nil {
-		return "", fmt.Errorf("claudetrust: secure config root: %w", err)
+	root := filepath.Join(base, sessionID)
+	if err := ensureRealDir(root); err != nil {
+		return "", err
 	}
 	return root, nil
+}
+
+// ensureRealDir creates a directory and refuses a symlink at that exact path.
+//
+// A same-user process that can write AO's data directory could otherwise
+// pre-create a predictable session root as a symlink, and the gate would then
+// write a .claude.json outside the daemon's data directory entirely.
+// os.MkdirAll is content with an existing symlink to a directory, so the check
+// is explicit and uses Lstat, which does not follow the final component.
+func ensureRealDir(path string) error {
+	info, err := os.Lstat(path)
+	switch {
+	case err == nil:
+		if info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("claudetrust: %s is a symlink; refusing to write through it", path)
+		}
+		if !info.IsDir() {
+			return fmt.Errorf("claudetrust: %s exists and is not a directory", path)
+		}
+	case os.IsNotExist(err):
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			return fmt.Errorf("claudetrust: create config root parent: %w", err)
+		}
+		// Mkdir, not MkdirAll, on the final component: MkdirAll succeeds when
+		// the path already resolves through a symlink, which is the case being
+		// rejected. Mkdir fails with EEXIST instead, and the Lstat above then
+		// names it.
+		if err := os.Mkdir(path, 0o700); err != nil && !os.IsExist(err) {
+			return fmt.Errorf("claudetrust: create config root: %w", err)
+		}
+		return ensureRealDir(path)
+	default:
+		return fmt.Errorf("claudetrust: inspect config root: %w", err)
+	}
+	if err := os.Chmod(path, 0o700); err != nil {
+		return fmt.Errorf("claudetrust: secure config root: %w", err)
+	}
+	return nil
+}
+
+// withRootLock serializes read/modify/write of one session's state across
+// processes and goroutines. Atomic replacement alone is not enough: two callers
+// that both load, both mutate, and both rename lose whichever wrote first,
+// including unrelated entries the loser had added.
+func withRootLock(root string, action func() error) (err error) {
+	lockPath := filepath.Join(root, ".launch-gate.lock")
+	if info, statErr := os.Lstat(lockPath); statErr == nil && info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("claudetrust: lock path is a symlink; refusing to follow it")
+	}
+	flags := os.O_RDWR | os.O_CREATE
+	if syscall.O_NOFOLLOW != 0 {
+		flags |= syscall.O_NOFOLLOW
+	}
+	handle, openErr := os.OpenFile(lockPath, flags, 0o600)
+	if openErr != nil {
+		return fmt.Errorf("claudetrust: open state lock: %w", openErr)
+	}
+	defer func() {
+		if closeErr := handle.Close(); closeErr != nil && err == nil {
+			err = fmt.Errorf("claudetrust: close state lock: %w", closeErr)
+		}
+	}()
+	if lockErr := syscall.Flock(int(handle.Fd()), syscall.LOCK_EX); lockErr != nil {
+		return fmt.Errorf("claudetrust: lock state: %w", lockErr)
+	}
+	defer func() {
+		if unlockErr := syscall.Flock(int(handle.Fd()), syscall.LOCK_UN); unlockErr != nil && err == nil {
+			err = fmt.Errorf("claudetrust: unlock state: %w", unlockErr)
+		}
+	}()
+	return action()
 }
 
 func loadState(path string) (map[string]any, error) {
@@ -134,7 +206,14 @@ func loadState(path string) (map[string]any, error) {
 }
 
 func writeTrust(root, worktree string) error {
+	return withRootLock(root, func() error { return writeTrustLocked(root, worktree) })
+}
+
+func writeTrustLocked(root, worktree string) error {
 	path := filepath.Join(root, stateFile)
+	if info, err := os.Lstat(path); err == nil && info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("claudetrust: %s is a symlink; refusing to write through it", path)
+	}
 	state, err := loadState(path)
 	if err != nil {
 		return err
@@ -191,7 +270,11 @@ func writeTrust(root, worktree string) error {
 // path is compared exactly: a parent entry must not confer trust on a child
 // directory that nobody trusted.
 func hasTrust(root, worktree string) (bool, error) {
-	state, err := loadState(filepath.Join(root, stateFile))
+	path := filepath.Join(root, stateFile)
+	if info, err := os.Lstat(path); err == nil && info.Mode()&os.ModeSymlink != 0 {
+		return false, fmt.Errorf("claudetrust: %s is a symlink; refusing to read through it", path)
+	}
+	state, err := loadState(path)
 	if err != nil {
 		return false, err
 	}

@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
@@ -224,5 +225,112 @@ func TestUnusableInputsRefuse(t *testing.T) {
 	if _, err := (Gate{Base: t.TempDir()}).PreLaunch(context.Background(),
 		request("../escape", worktree, ports.LaunchRoleWorker, nil)); err == nil {
 		t.Fatal("a session id that is not one path segment must error")
+	}
+}
+
+// P1 from review 5113322042: a same-user process that can write AO's data
+// directory could pre-create a predictable session root as a symlink, and the
+// gate would then write .claude.json outside the daemon's data directory.
+func TestSymlinkedSessionRootIsRefused(t *testing.T) {
+	base := t.TempDir()
+	outside := t.TempDir()
+	if err := os.Symlink(outside, filepath.Join(base, "mer-1")); err != nil {
+		t.Fatalf("stage symlink: %v", err)
+	}
+
+	_, err := Gate{Base: base}.PreLaunch(context.Background(),
+		request("mer-1", t.TempDir(), ports.LaunchRoleWorker, nil))
+
+	if err == nil {
+		t.Fatal("a symlinked session root must be refused, not written through")
+	}
+	if !strings.Contains(err.Error(), "symlink") {
+		t.Fatalf("err = %v, want it to name the symlink", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(outside, stateFile)); statErr == nil {
+		t.Fatal("the gate wrote state outside the AO-owned base")
+	}
+}
+
+func TestSymlinkedBaseIsRefused(t *testing.T) {
+	parent := t.TempDir()
+	outside := t.TempDir()
+	base := filepath.Join(parent, "config-base")
+	if err := os.Symlink(outside, base); err != nil {
+		t.Fatalf("stage symlink: %v", err)
+	}
+
+	_, err := Gate{Base: base}.PreLaunch(context.Background(),
+		request("mer-1", t.TempDir(), ports.LaunchRoleWorker, nil))
+
+	if err == nil || !strings.Contains(err.Error(), "symlink") {
+		t.Fatalf("err = %v, want a symlinked base refused", err)
+	}
+}
+
+func TestSymlinkedStateFileIsRefused(t *testing.T) {
+	base := t.TempDir()
+	root := filepath.Join(base, "mer-1")
+	if err := os.MkdirAll(root, 0o700); err != nil {
+		t.Fatalf("stage root: %v", err)
+	}
+	elsewhere := filepath.Join(t.TempDir(), "target.json")
+	if err := os.WriteFile(elsewhere, []byte("{}\n"), 0o600); err != nil {
+		t.Fatalf("stage target: %v", err)
+	}
+	if err := os.Symlink(elsewhere, filepath.Join(root, stateFile)); err != nil {
+		t.Fatalf("stage symlink: %v", err)
+	}
+
+	_, err := Gate{Base: base}.PreLaunch(context.Background(),
+		request("mer-1", t.TempDir(), ports.LaunchRoleWorker, nil))
+
+	if err == nil || !strings.Contains(err.Error(), "symlink") {
+		t.Fatalf("err = %v, want a symlinked state file refused", err)
+	}
+	raw, readErr := os.ReadFile(elsewhere)
+	if readErr != nil {
+		t.Fatalf("read target: %v", readErr)
+	}
+	if strings.Contains(string(raw), "hasTrustDialogAccepted") {
+		t.Fatal("the gate wrote through the symlink")
+	}
+}
+
+// Atomic replacement alone is not enough: two callers that both load, mutate
+// and rename lose whichever wrote first, including unrelated entries. Every
+// worktree written concurrently must survive.
+func TestConcurrentTrustWritesAllSurvive(t *testing.T) {
+	base := t.TempDir()
+	gate := Gate{Base: base}
+	worktrees := make([]string, 12)
+	for i := range worktrees {
+		worktrees[i] = filepath.Join(t.TempDir(), "wt")
+	}
+
+	var wg sync.WaitGroup
+	errs := make(chan error, len(worktrees))
+	for _, worktree := range worktrees {
+		wg.Add(1)
+		go func(worktree string) {
+			defer wg.Done()
+			if _, err := gate.PreLaunch(context.Background(),
+				request("mer-1", worktree, ports.LaunchRoleWorker, nil)); err != nil {
+				errs <- err
+			}
+		}(worktree)
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Fatalf("concurrent PreLaunch: %v", err)
+	}
+
+	trusted := trustedPaths(t, filepath.Join(base, "mer-1"))
+	for _, worktree := range worktrees {
+		if !trusted[worktree] {
+			t.Fatalf("worktree %q was lost by a concurrent write; %d of %d survived",
+				worktree, len(trusted), len(worktrees))
+		}
 	}
 }

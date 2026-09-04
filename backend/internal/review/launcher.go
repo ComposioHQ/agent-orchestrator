@@ -441,24 +441,26 @@ func (l *agentLauncher) launchReviewerTerminalWithMode(ctx context.Context, spec
 		}
 	}
 	handleID := reviewerHandleID(spec.WorkerID)
-	// The reviewer handle is stable per worker, so a still-live pane from a
-	// previous pass would otherwise block `tmux new-session` (duplicate name) or,
-	// worse, keep serving under its old harness. Destroy any stale pane on this
-	// handle first so the reviewer always (re)launches under spec.Harness's
-	// sandbox/permissions/env — which are applied only here at Create, never by
-	// Notify. Destroy is idempotent when no pane exists (first spawn / dead pane).
-	if err := l.runtime.Destroy(ctx, ports.RuntimeHandle{ID: handleID}); err != nil {
-		return LaunchResult{}, fmt.Errorf("reviewer replace stale pane: %w", err)
-	}
 	workingDirectory := cmd.WorkingDirectory
 	if workingDirectory == "" {
 		workingDirectory = spec.WorkspacePath
 	}
 	reviewerEnv := l.runtimeEnv(ctx, spec, cmd.Argv, cmd.Env)
-	// Same gate, same fail-closed shape, same position as the worker seam: the
-	// child argv and environment are final and no pane exists yet.
+	// The gate runs before the destroy, not after it. Destroying first and
+	// gating second means a refusal removes a live reviewer that nothing is
+	// allowed to replace: the session loses a working pane and gains nothing.
+	// Resolve argv and env, ask, and only then replace.
 	if err := l.applyLaunchGate(ctx, spec, workingDirectory, cmd.Argv, reviewerEnv); err != nil {
 		return LaunchResult{}, err
+	}
+	// The reviewer handle is stable per worker, so a still-live pane from a
+	// previous pass would otherwise block `tmux new-session` (duplicate name) or,
+	// worse, keep serving under its old harness. Destroy any stale pane on this
+	// handle so the reviewer always (re)launches under spec.Harness's
+	// sandbox/permissions/env — which are applied only here at Create, never by
+	// Notify. Destroy is idempotent when no pane exists (first spawn / dead pane).
+	if err := l.runtime.Destroy(ctx, ports.RuntimeHandle{ID: handleID}); err != nil {
+		return LaunchResult{}, fmt.Errorf("reviewer replace stale pane: %w", err)
 	}
 	handle, err := l.runtime.Create(ctx, ports.RuntimeConfig{
 		SessionID:     domain.SessionID(handleID),
