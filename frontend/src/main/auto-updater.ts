@@ -6,6 +6,7 @@ import path from "node:path";
 import semver from "semver";
 import {
   readUpdateSettings,
+  macDifferentialUpdatesEnabled,
   updateUpdateSettings,
   writeUpdateSettings,
   UPDATE_SETTINGS_FILE_NAME,
@@ -22,6 +23,78 @@ import {
   type UpdatePhase,
   type UpdateTrigger,
 } from "../shared/update-telemetry";
+
+const FAIL_CLOSED_UPDATE_SETTINGS: UpdateSettings = {
+  enabled: false,
+  channel: "latest",
+  nightlyAck: false,
+  feature: null,
+  macDifferentialUpdates: false,
+};
+let currentUpdateSettings: UpdateSettings = FAIL_CLOSED_UPDATE_SETTINGS;
+let differentialEligible = false;
+let pendingTargetBytes: number | undefined;
+let transferObservation = {
+  attemptedDifferential: false,
+  fallback: false,
+  transferred: undefined as number | undefined,
+  total: undefined as number | undefined,
+};
+let updaterLoggerWired = false;
+
+// electron-updater defaults this flag to false on macOS. Override it before
+// any renderer or settings hydration can race an update operation.
+autoUpdater.disableDifferentialDownload = true;
+
+export function applyUpdaterPolicy(
+  settings: UpdateSettings,
+  platform: NodeJS.Platform = process.platform,
+): void {
+  currentUpdateSettings = settings;
+  const eligible = macDifferentialUpdatesEnabled({ platform, settings });
+  differentialEligible = eligible;
+  autoUpdater.disableDifferentialDownload = !eligible;
+  console.info("[auto-updater] mac differential policy", {
+    eligible,
+    platform,
+    channel: settings.channel,
+    featurePinned: settings.feature !== null,
+    developerMode: settings.macDifferentialUpdates === true,
+  });
+}
+
+function wireUpdaterLogger(): void {
+  if (updaterLoggerWired) return;
+  updaterLoggerWired = true;
+  const base = autoUpdater.logger ?? console;
+  const callBase = (level: "info" | "warn" | "error" | "debug", args: unknown[]) => {
+    const method = base[level] as ((...values: unknown[]) => void) | undefined;
+    method?.apply(base, args);
+  };
+  const observe = (level: "info" | "warn", first: unknown, rest: unknown[]) => {
+    const message = typeof first === "string" ? first : "";
+    if (message.startsWith("Differential download:")) {
+      transferObservation.attemptedDifferential = true;
+      callBase("info", ["[auto-updater] differential transfer attempted"]);
+      return;
+    }
+    if (/(?:fall(?:ing)? back|fallback) to full download/i.test(message)) {
+      transferObservation.fallback = true;
+      if (/cannot download differentially/i.test(message)) {
+        transferObservation.attemptedDifferential = true;
+      }
+      callBase("warn", ["[auto-updater] differential transfer fell back to full download"]);
+      return;
+    }
+    callBase(level, [first, ...rest]);
+  };
+  autoUpdater.logger = {
+    info: (first: unknown, ...rest: unknown[]) => observe("info", first, rest),
+    warn: (first: unknown, ...rest: unknown[]) => observe("warn", first, rest),
+    error: (...args: unknown[]) => callBase("error", args),
+    debug: (...args: unknown[]) => callBase("debug", args),
+  };
+}
 
 // reconcileAndPersist clears a pinned feature build whose PR has been retired
 // (merged/closed/deleted/expired) and persists the change, so the next check
@@ -610,6 +683,7 @@ function isManifest404Error(err: unknown): boolean {
 // to the renderer as an UpdateStatus. Idempotent: safe to call on every entry
 // point (launch auto-check and manual check).
 function wireUpdaterEvents(): void {
+  wireUpdaterLogger();
   if (eventsWired) return;
   eventsWired = true;
   // With a build staged, "checking" briefly hides the sidebar restart row; that
@@ -631,6 +705,19 @@ function wireUpdaterEvents(): void {
     broadcastUpdaterStatus({ state: "checking" });
   });
   autoUpdater.on("update-available", (info) => {
+    const candidateFiles = Array.isArray(info?.files) ? info.files : [];
+    const targetFile =
+      candidateFiles.find((file) => {
+        const url = typeof file?.url === "string" ? file.url : "";
+        return process.arch === "arm64" ? url.includes("arm64") : !url.includes("arm64");
+      }) ?? candidateFiles[0];
+    pendingTargetBytes = Number.isFinite(targetFile?.size) ? targetFile.size : undefined;
+    transferObservation = {
+      attemptedDifferential: false,
+      fallback: false,
+      transferred: undefined,
+      total: undefined,
+    };
     // A successful check proves the network stack is healthy.
     consecutiveAutomaticNetFailures = 0;
     consecutiveAutomaticCheckFailures = 0;
@@ -664,10 +751,18 @@ function wireUpdaterEvents(): void {
     consecutiveAutomaticCheckFailures = 0;
     failingChecksPublished = false;
     activeUpdaterPhase = "download";
+    const transferred = Number.isFinite(p?.transferred) ? p.transferred : undefined;
+    const total = Number.isFinite(p?.total) ? p.total : undefined;
+    const bytesPerSecond = Number.isFinite(p?.bytesPerSecond) ? p.bytesPerSecond : undefined;
+    transferObservation.transferred = transferred;
+    transferObservation.total = total;
     return broadcastUpdaterStatus({
       state: "downloading",
       version: pendingUpdateVersion,
       percent: Math.max(0, Math.min(100, Math.round(p?.percent ?? 0))),
+      ...(transferred === undefined ? {} : { transferred }),
+      ...(total === undefined ? {} : { total }),
+      ...(bytesPerSecond === undefined ? {} : { bytesPerSecond }),
     });
   });
   autoUpdater.on("update-downloaded", (info) => {
@@ -676,6 +771,13 @@ function wireUpdaterEvents(): void {
       phase: "download",
       trigger: activeUpdateTrigger(),
       ...(info?.version ? { to_version: info.version } : {}),
+      differential_eligible: differentialEligible,
+      transfer_mode: transferObservation.attemptedDifferential ? "differential" : "full",
+      fallback: transferObservation.fallback,
+      ...(transferObservation.transferred === undefined
+        ? {}
+        : { transferred_bytes: transferObservation.transferred }),
+      ...(pendingTargetBytes === undefined ? {} : { target_bytes: pendingTargetBytes }),
     });
     stagedVersion = info?.version;
     stagedAtMs = Date.now();
@@ -783,6 +885,7 @@ async function runAutomaticUpdateCheck(
 
       escalationStateDir = stateDir;
       wireUpdaterEvents();
+      applyUpdaterPolicy(settings);
       configureFeed(settings);
       // Discovery is always on for the selected release channel. This preference
       // controls only whether electron-updater downloads the discovered build or
@@ -887,6 +990,7 @@ async function persistUpdaterSettings(
   stateDir: string,
   settings: UpdateSettings,
 ): Promise<void> {
+  applyUpdaterPolicy(settings);
   await writeUpdateSettings(stateDir, settings);
   configureFeed(settings);
   reconcileAutomaticUpdateSchedule(stateDir, settings);
@@ -942,6 +1046,7 @@ export async function checkForUpdatesNow(
           stateDir,
           options.settings ?? (await readUpdateSettings(stateDir)),
         );
+        applyUpdaterPolicy(settings);
         reconcileAutomaticUpdateSchedule(stateDir, settings);
         configureFeed(settings);
         autoUpdater.autoDownload = false;
@@ -1011,6 +1116,7 @@ export async function returnToHome(
           current.feature ? { ...current, feature: null } : current,
         );
         const settings = await reconcileAndPersist(stateDir, cleared);
+        applyUpdaterPolicy(settings);
         reconcileAutomaticUpdateSchedule(stateDir, settings);
         configureFeed(settings);
         autoUpdater.autoDownload = false;
@@ -1050,6 +1156,7 @@ export async function downloadUpdateNow(requestId?: string): Promise<void> {
     await runSerializedUpdaterOperation(
       "manual-download",
       async () => {
+        applyUpdaterPolicy(currentUpdateSettings);
         await autoUpdater.downloadUpdate();
       },
       requestId,
@@ -1071,6 +1178,20 @@ export async function downloadUpdateNow(requestId?: string): Promise<void> {
       });
     }
   }
+}
+
+/** Persist the narrow Developer Mode mirror and apply its fail-closed policy. */
+export async function setMacDifferentialUpdates(
+  stateDir: string,
+  enabled: boolean,
+): Promise<void> {
+  await runSerializedUpdaterOperation("settings-write", async () => {
+    const settings = await updateUpdateSettings(stateDir, (current) => ({
+      ...current,
+      macDifferentialUpdates: enabled === true,
+    }));
+    applyUpdaterPolicy(settings);
+  });
 }
 
 // getMacInstallBlocker is the macOS install preflight. An app launched straight

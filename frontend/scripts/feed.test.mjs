@@ -167,30 +167,42 @@ describe("hashFile", () => {
 	});
 });
 
-// Regression coverage for #3034: mac zips must never produce a .blockmap
-// sidecar, since Squirrel.Mac's ShipIt `ditto` install step fails against
-// the AppleDouble-less format @electron-forge/maker-zip produces, and a
-// sidecar-driven differential update against it is the likely corruption
-// path. win/linux keep the existing blockmap sidecar behavior unchanged.
-describe("generateFeeds mac blockmap exclusion (#3034)", () => {
+describe("generateFeeds guarded mac blockmap rollout", () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 	});
 
-	it("does not call writeBlockmap or write a .blockmap sidecar for mac zips", async () => {
+	it("writes Nightly mac sidecars for both architectures", async () => {
+		const dir = mkdtempSync(join(tmpdir(), "feed-test-"));
+		const macZips = [
+			"Agent.Orchestrator-darwin-arm64-0.10.4.zip",
+			"Agent.Orchestrator-darwin-x64-0.10.4.zip",
+		];
+		for (const macZip of macZips) writeFileSync(join(dir, macZip), "fake mac zip");
+
+		await generateFeeds(dir, "0.10.4", "nightly", "2026-06-27T12:00:00.000Z");
+
+		for (const macZip of macZips) {
+			expect(writeBlockmap).toHaveBeenCalledWith(join(dir, macZip));
+			expect(existsSync(join(dir, `${macZip}.blockmap`))).toBe(true);
+		}
+
+		const yml = readFileSync(join(dir, "nightly-mac.yml"), "utf8");
+		expect(yml).not.toContain("blockMapSize");
+		for (const macZip of macZips) expect(yml).toContain(`url: ${macZip}`);
+
+		rmSync(dir, { recursive: true, force: true });
+	});
+
+	it.each(["latest", "pr3288"])("keeps %s mac feeds full-download-only", async (channel) => {
 		const dir = mkdtempSync(join(tmpdir(), "feed-test-"));
 		const macZip = "Agent.Orchestrator-darwin-arm64-0.10.4.zip";
 		writeFileSync(join(dir, macZip), "fake mac zip");
 
-		await generateFeeds(dir, "0.10.4", "nightly", "2026-06-27T12:00:00.000Z");
+		await generateFeeds(dir, "0.10.4", channel, "2026-06-27T12:00:00.000Z");
 
 		expect(writeBlockmap).not.toHaveBeenCalled();
 		expect(existsSync(join(dir, `${macZip}.blockmap`))).toBe(false);
-
-		const yml = readFileSync(join(dir, "nightly-mac.yml"), "utf8");
-		expect(yml).not.toContain("blockMapSize");
-		expect(yml).toContain(`url: ${macZip}`);
-
 		rmSync(dir, { recursive: true, force: true });
 	});
 

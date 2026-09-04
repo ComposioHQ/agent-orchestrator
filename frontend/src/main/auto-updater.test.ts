@@ -9,6 +9,7 @@ type UpdateSettings = {
   channel: "latest" | "nightly";
   nightlyAck: boolean;
   feature: { pr: number } | null;
+  macDifferentialUpdates?: boolean;
 };
 
 type UpdateSettingsReader = ReturnType<
@@ -34,6 +35,13 @@ type AutoUpdaterMock = {
   allowDowngrade: boolean;
   autoDownload: boolean;
   autoInstallOnAppQuit: boolean;
+  disableDifferentialDownload: boolean;
+  logger: {
+    info: (message: unknown, ...args: unknown[]) => void;
+    warn: (message: unknown, ...args: unknown[]) => void;
+    error: (message: unknown, ...args: unknown[]) => void;
+    debug: (message: unknown, ...args: unknown[]) => void;
+  };
 };
 
 function createAutoUpdaterMock(): AutoUpdaterMock {
@@ -48,8 +56,119 @@ function createAutoUpdaterMock(): AutoUpdaterMock {
     allowDowngrade: false,
     autoDownload: false,
     autoInstallOnAppQuit: false,
+    disableDifferentialDownload: false,
+    logger: {
+      info: vi.fn(),
+      warn: vi.fn(),
+      error: vi.fn(),
+      debug: vi.fn(),
+    },
   };
 }
+
+describe("macOS differential update policy", () => {
+  it("starts fail-closed before settings hydration", async () => {
+    const { autoUpdater } = await importAutoUpdater();
+
+    expect(autoUpdater.disableDifferentialDownload).toBe(true);
+  });
+
+  it("reports differential fallback and real transfer progress without signed URLs", async () => {
+    const { module, autoUpdater, updaterEvents, telemetryMessages, statusMessages } =
+      await importAutoUpdater({
+        enabled: true,
+        channel: "nightly",
+        nightlyAck: true,
+        feature: null,
+        macDifferentialUpdates: true,
+      });
+    module.applyUpdaterPolicy(
+      {
+        enabled: true,
+        channel: "nightly",
+        nightlyAck: true,
+        feature: null,
+        macDifferentialUpdates: true,
+      },
+      "darwin",
+    );
+    await module.checkForUpdatesNow("/tmp/ao-state");
+    updaterEvents.get("update-available")?.({
+      version: "1.2.3",
+      files: [{ url: "AO-darwin-arm64.zip", size: 1000 }],
+    });
+    autoUpdater.logger.info("Differential download: https://example.test/AO.zip?token=secret");
+    autoUpdater.logger.warn("Cannot download differentially, fallback to full download: checksum mismatch");
+    updaterEvents.get("download-progress")?.({
+      percent: 25,
+      transferred: 250,
+      total: 1000,
+      bytesPerSecond: 125,
+    });
+    updaterEvents.get("update-downloaded")?.({ version: "1.2.3" });
+
+    expect(statusMessages().at(-2)?.payload).toMatchObject({
+      state: "downloading",
+      transferred: 250,
+      total: 1000,
+      bytesPerSecond: 125,
+    });
+    expect(telemetryMessages().at(-1)?.payload).toMatchObject({
+      event: "ao.renderer.update_downloaded",
+      transfer_mode: "differential",
+      fallback: true,
+      transferred_bytes: 250,
+      target_bytes: 1000,
+      to_version: "1.2.3",
+    });
+    expect(JSON.stringify(telemetryMessages())).not.toContain("secret");
+  });
+
+  it("enables only macOS Nightly Developer Mode without a feature pin", async () => {
+    const { module, autoUpdater } = await importAutoUpdater();
+
+    module.applyUpdaterPolicy(
+      {
+        enabled: true,
+        channel: "nightly",
+        nightlyAck: true,
+        feature: null,
+        macDifferentialUpdates: true,
+      },
+      "darwin",
+    );
+    expect(autoUpdater.disableDifferentialDownload).toBe(false);
+
+    module.applyUpdaterPolicy(
+      {
+        enabled: true,
+        channel: "nightly",
+        nightlyAck: true,
+        feature: { pr: 3288 },
+        macDifferentialUpdates: true,
+      },
+      "darwin",
+    );
+    expect(autoUpdater.disableDifferentialDownload).toBe(true);
+  });
+
+  it("re-applies fail-closed policy before a manual download", async () => {
+    const { module, autoUpdater } = await importAutoUpdater({
+      enabled: true,
+      channel: "latest",
+      nightlyAck: false,
+      feature: null,
+      macDifferentialUpdates: true,
+    });
+    await module.checkForUpdatesNow("/tmp/ao-state");
+    autoUpdater.disableDifferentialDownload = false;
+
+    await module.downloadUpdateNow();
+
+    expect(autoUpdater.disableDifferentialDownload).toBe(true);
+    expect(autoUpdater.downloadUpdate).toHaveBeenCalledTimes(1);
+  });
+});
 
 async function importAutoUpdater(
   settings: UpdateSettings | UpdateSettingsReader = {
@@ -119,6 +238,10 @@ async function importAutoUpdater(
     writeUpdateSettings,
     updateUpdateSettings,
     UPDATE_SETTINGS_FILE_NAME: "update-settings.json",
+    macDifferentialUpdatesEnabled: ({ platform, settings }: {
+      platform: NodeJS.Platform;
+      settings: UpdateSettings;
+    }) => platform === "darwin" && settings.channel === "nightly" && settings.feature === null && settings.macDifferentialUpdates === true,
   }));
   vi.doMock("./feature-builds", () => ({
     reconcileFeaturePin:

@@ -82,6 +82,40 @@ a ZIP for electron-updater. The ZIP and `latest-mac.yml` must remain available:
 electron-updater cannot install an update from a DMG. Nightly and preview
 channels omit the first-install DMG.
 
+## Guarded macOS Nightly differential updates
+
+macOS ZIP blockmaps are an experimental Nightly-only release asset. The client
+attempts a differential transfer only when all of these conditions hold:
+
+- the host is macOS;
+- the effective update channel is `nightly`;
+- no `pr<N>` feature release is pinned; and
+- Developer Mode is enabled.
+
+The updater defaults to full ZIP downloads before renderer hydration, when the
+settings file is missing or malformed, and for every other platform, channel,
+or mode combination. Stable and preview feeds must not publish macOS blockmaps.
+Windows and Linux updater behavior is unchanged.
+
+The release kill switch is asset-side: remove every `.zip.blockmap` asset from
+the affected Nightly release. MacUpdater then performs a clean full ZIP
+download without a client update. Do not remove the ZIP or `nightly-mac.yml`.
+After rollback, confirm the feed still resolves, the full ZIP SHA-512 matches
+the manifest, and updater telemetry reports full transfer or a single fallback.
+
+electron-updater 6.8.9 owns reconstruction, SHA-512 verification, and one clean
+full-download fallback when the old blockmap is missing, the sidecar is
+unavailable or corrupt, Range requests fail, reconstruction fails, or the
+target digest does not match. AO does not implement a second downloader.
+Structured updater logs and telemetry record eligibility, transfer mode,
+fallback, byte counts, and target version without signed URLs or credentials.
+
+This guarded rollout preserves the safety boundary documented in #3034,
+#3151, #3267, and #3288. It does not enable stable or feature-channel
+differential updates, change ZIP creation, signing, notarization, or claim that
+native Squirrel installation is transactional. Staged A-to-B replacement
+semantics remain separate work.
+
 ## Incident rule
 
 Exactly one publisher is a correctness requirement. If the conductor is
