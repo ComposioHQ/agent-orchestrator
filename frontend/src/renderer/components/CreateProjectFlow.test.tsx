@@ -201,6 +201,7 @@ beforeEach(() => {
 	cloudMocks.sessionStatus = "unauthenticated";
 	cloudMocks.createProject.mockReset();
 	cloudMocks.signIn.mockReset();
+	window.localStorage.clear();
 });
 
 describe("CreateProjectFlow droppedPath", () => {
@@ -401,6 +402,33 @@ describe("CreateProjectFlow project import validation", () => {
 		expect(screen.queryByText("No origin remote")).not.toBeInTheDocument();
 	});
 
+	it("prefills a default GitHub remote URL for the selected project", async () => {
+		const user = userEvent.setup();
+		bridgeMocks.chooseDirectory.mockResolvedValue("/repo/project-no-git");
+		apiMocks.POST.mockResolvedValueOnce({
+			data: projectValidation("/repo/project-no-git", {
+				nextStep: "prepare_git",
+				root: {
+					hasOrigin: false,
+					requiredActions: ["set_remote"],
+				},
+			}),
+		});
+
+		render(
+			<CreateProjectFlow mode="choose" {...noop}>
+				{({ choosePath }) => <button onClick={choosePath}>New project</button>}
+			</CreateProjectFlow>,
+		);
+
+		await user.click(screen.getByRole("button", { name: "New project" }));
+		await user.click(await screen.findByRole("button", { name: "Import an existing project" }));
+
+		expect(await screen.findByLabelText("Origin remote URL")).toHaveValue(
+			"https://github.com/username/project-no-git.git",
+		);
+	});
+
 	it("requires the user to keep all required setup actions approved", async () => {
 		const user = userEvent.setup();
 		bridgeMocks.chooseDirectory.mockResolvedValue("/repo/project");
@@ -471,7 +499,9 @@ describe("CreateProjectFlow project import validation", () => {
 
 		await user.click(screen.getByRole("button", { name: "New project" }));
 		await user.click(await screen.findByRole("button", { name: "Import an existing project" }));
-		await user.type(await screen.findByLabelText("Origin remote URL"), "https://github.com/acme/project.git");
+		const remoteInput = await screen.findByLabelText("Origin remote URL");
+		await user.clear(remoteInput);
+		await user.type(remoteInput, "https://github.com/acme/project.git");
 		await user.click(screen.getByRole("button", { name: "Continue" }));
 
 		await waitFor(() =>
@@ -549,7 +579,9 @@ describe("CreateProjectFlow project import validation", () => {
 
 		await user.click(screen.getByRole("button", { name: "New project" }));
 		await user.click(await screen.findByRole("button", { name: "Import an existing project" }));
-		await user.type(await screen.findByLabelText("Origin remote URL"), "https://github.com/acme/project.git");
+		const remoteInput = await screen.findByLabelText("Origin remote URL");
+		await user.clear(remoteInput);
+		await user.type(remoteInput, "https://github.com/acme/project.git");
 		await user.click(screen.getByRole("button", { name: "Continue" }));
 
 		expect(await screen.findByText("Running project setup. AO is preparing this repository now.")).toBeInTheDocument();
@@ -608,7 +640,9 @@ describe("CreateProjectFlow project import validation", () => {
 
 		await user.click(screen.getByRole("button", { name: "New project" }));
 		await user.click(await screen.findByRole("button", { name: "Import an existing project" }));
-		await user.type(await screen.findByLabelText("Origin remote URL"), "https://github.com/acme/project.git");
+		const remoteInput = await screen.findByLabelText("Origin remote URL");
+		await user.clear(remoteInput);
+		await user.type(remoteInput, "https://github.com/acme/project.git");
 		await user.click(screen.getByRole("button", { name: "Continue" }));
 
 		expect(await screen.findByText(/failed while running Remote setup/i)).toBeInTheDocument();
