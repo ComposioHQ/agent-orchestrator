@@ -3,6 +3,7 @@ import { isCancelledError, useQueryClient } from "@tanstack/react-query";
 import { memo, type CSSProperties, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { FolderPlus } from "lucide-react";
 import { useTranslation } from "react-i18next";
+import { toast } from "sonner";
 import { CommandPalette } from "../components/CommandPalette";
 import { CenterPanelShell } from "../components/CenterPanelShell";
 import { DaemonFailureBanner } from "../components/DaemonFailureBanner";
@@ -449,6 +450,7 @@ function ShellLayout() {
 				const message = spawnError instanceof Error ? spawnError.message : "Could not start orchestrator";
 				const startupMessage = `Project added, but orchestrator did not start: ${message}`;
 				setOrchestratorStartupError(workspace.id, startupMessage);
+				toast.error(startupMessage);
 			}
 		},
 		[navigate, queryClient, setOrchestratorStartupError, updateWorkspaces],
