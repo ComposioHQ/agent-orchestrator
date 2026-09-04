@@ -438,19 +438,30 @@ vi.mock("./SessionFileExplorer", () => ({
 		isMaximized,
 		onOpenFile,
 		onToggleMaximized,
+		revealRequest,
 	}: {
 		isMaximized?: boolean;
 		onOpenFile?: (path: string) => void;
 		onToggleMaximized?: (next: boolean) => void;
+		revealRequest?: { path: string; key: number } | null;
 	}) => (
 		<div>
 			<button type="button" onClick={() => onToggleMaximized?.(!isMaximized)}>
 				{isMaximized ? "files center" : "files rail"}
 			</button>
 			{!isMaximized && onOpenFile ? (
-				<button type="button" onClick={() => onOpenFile("src/App.tsx")}>
-					open src/App.tsx
-				</button>
+				<>
+					<span>{revealRequest ? `rail preview ${revealRequest.path}` : "file tree"}</span>
+					<button type="button">select src/App.tsx</button>
+					<button type="button" onClick={() => onOpenFile("src/App.tsx")}>
+						pop out src/App.tsx
+					</button>
+					{revealRequest ? (
+						<button type="button" onClick={() => onOpenFile(revealRequest.path)}>
+							pop out {revealRequest.path}
+						</button>
+					) : null}
+				</>
 			) : null}
 		</div>
 	),
@@ -636,9 +647,6 @@ describe("SessionView", () => {
 			activeShellTerminalHandleId: null,
 			inspectorSessions: {},
 			isSidebarOpen: true,
-			isSidebarAutoCollapsed: false,
-			sidebarAutoCollapseOverride: false,
-			sidebarWorkspaceDemandPx: null,
 			visibleTerminalKindBySession: {},
 		});
 		browserDestroy.mockReset();
@@ -866,6 +874,8 @@ describe("SessionView", () => {
 		render(<SessionView sessionId="sess-1" />);
 
 		fireEvent.click(screen.getByRole("button", { name: "view review file" }));
+		await screen.findByText("rail preview src/panel.tsx");
+		fireEvent.click(screen.getByRole("button", { name: "pop out src/panel.tsx" }));
 		expect(await screen.findByTestId("session-file-workspace")).toHaveTextContent("src/panel.tsx");
 
 		fireEvent.click(screen.getByRole("button", { name: "New terminal" }));
@@ -956,6 +966,8 @@ describe("SessionView", () => {
 		const view = render(<SessionView sessionId="sess-1" />);
 
 		fireEvent.click(screen.getByRole("button", { name: "view review file" }));
+		await screen.findByText("rail preview src/panel.tsx");
+		fireEvent.click(screen.getByRole("button", { name: "pop out src/panel.tsx" }));
 		await screen.findByTestId("session-file-workspace");
 		fireEvent.click(screen.getByRole("button", { name: "reorder auxiliary tabs" }));
 		expect(screen.getByTestId("auxiliary-tab-order-sess-1")).toHaveTextContent(
@@ -991,6 +1003,8 @@ describe("SessionView", () => {
 		render(<SessionView sessionId="sess-1" />);
 
 		fireEvent.click(screen.getByRole("button", { name: "view review file" }));
+		await screen.findByText("rail preview src/panel.tsx");
+		fireEvent.click(screen.getByRole("button", { name: "pop out src/panel.tsx" }));
 		await screen.findByTestId("session-file-workspace");
 		fireEvent.click(screen.getByRole("button", { name: "reorder auxiliary tabs" }));
 		fireEvent.click(screen.getByRole("button", { name: "Close panel.tsx" }));
@@ -1032,6 +1046,8 @@ describe("SessionView", () => {
 
 		await screen.findByRole("button", { name: "Reviewer" });
 		fireEvent.click(screen.getByRole("button", { name: "view review file" }));
+		await screen.findByText("rail preview src/panel.tsx");
+		fireEvent.click(screen.getByRole("button", { name: "pop out src/panel.tsx" }));
 		await screen.findByTestId("session-file-workspace");
 		fireEvent.click(screen.getByRole("button", { name: "reorder reviewer tab" }));
 		expect(screen.getByTestId("auxiliary-tab-order-sess-1")).toHaveTextContent(
@@ -1070,6 +1086,8 @@ describe("SessionView", () => {
 		const view = render(<SessionView sessionId="sess-1" />);
 
 		fireEvent.click(screen.getByRole("button", { name: "view review file" }));
+		await screen.findByText("rail preview src/panel.tsx");
+		fireEvent.click(screen.getByRole("button", { name: "pop out src/panel.tsx" }));
 		await screen.findByTestId("session-file-workspace");
 		fireEvent.click(screen.getByRole("button", { name: "reorder auxiliary tabs" }));
 		fireEvent.click(screen.getByRole("button", { name: "session one shell" }));
@@ -1895,22 +1913,32 @@ describe("SessionView", () => {
 		expect(toggle).toHaveAttribute("aria-pressed", "false");
 	});
 
-	it("compacts non-primary session chrome when Browser pressure collapses the sidebar", () => {
+	it("keeps session chrome expanded when Browser is active", () => {
 		useUiStore.setState({
 			isSidebarOpen: true,
-			isSidebarAutoCollapsed: true,
-			sidebarAutoCollapseOverride: false,
 			inspectorSessions: { "sess-1": { initialized: true, isOpen: true, view: "browser" } },
 		});
 
 		render(<SessionView sessionId="sess-1" />);
 
 		const topbar = screen.getByTestId("mock-session-topbar");
-		expect(topbar).toHaveAttribute("data-compact-actions", "true");
+		expect(topbar).toHaveAttribute("data-compact-actions", "false");
 		expect(topbar.closest("[data-compact-session-chrome]")).toHaveAttribute(
 			"data-compact-session-chrome",
-			"true",
+			"false",
 		);
+	});
+
+	it("never shrinks the inspector when entering Browser", async () => {
+		window.localStorage.setItem("ao.inspector.widthPx", "720");
+		window.localStorage.setItem("ao.workspace.browser.canvasWidthPx", "460");
+		render(<SessionView sessionId="sess-1" />);
+		expect(document.documentElement.style.getPropertyValue("--ao-inspector-w")).toBe("720px");
+
+		fireEvent.click(screen.getByRole("tab", { name: "Browser" }));
+		await waitFor(() => {
+			expect(document.documentElement.style.getPropertyValue("--ao-inspector-w")).toBe("720px");
+		});
 	});
 
 	it("restores and clamps the persisted inspector width in pixels", () => {
@@ -1972,32 +2000,32 @@ describe("SessionView", () => {
 
 		fireEvent.click(screen.getByRole("tab", { name: "Browser" }));
 		expect(document.documentElement.style.getPropertyValue("--ao-inspector-w")).toBe("820px");
-		expect(useUiStore.getState().sidebarWorkspaceDemandPx).toBe(1548);
+		expect(useUiStore.getState().isSidebarOpen).toBe(true);
 
 		fireEvent.click(screen.getByRole("tab", { name: "Summary" }));
 		expect(document.documentElement.style.getPropertyValue("--ao-inspector-w")).toBe("500px");
 	});
 
-	it("raises shell pressure only for Browser and clears it for every utility view", async () => {
+	it("never changes the sidebar preference while browser surfaces open and close", async () => {
 		render(<SessionView sessionId="sess-1" />);
-		expect(useUiStore.getState().sidebarWorkspaceDemandPx).toBeNull();
+		expect(useUiStore.getState().isSidebarOpen).toBe(true);
 
 		fireEvent.click(screen.getByRole("tab", { name: "Reviews" }));
-		expect(useUiStore.getState().sidebarWorkspaceDemandPx).toBeNull();
+		expect(useUiStore.getState().isSidebarOpen).toBe(true);
 
 		fireEvent.click(screen.getByRole("tab", { name: "Browser" }));
-		expect(useUiStore.getState().sidebarWorkspaceDemandPx).toBe(1628);
+		expect(useUiStore.getState().isSidebarOpen).toBe(true);
 
 		fireEvent.click(screen.getByRole("tab", { name: "Summary" }));
-		expect(useUiStore.getState().sidebarWorkspaceDemandPx).toBeNull();
+		expect(useUiStore.getState().isSidebarOpen).toBe(true);
 
 		fireEvent.click(screen.getByRole("tab", { name: "Browser" }));
 		fireEvent.click(screen.getByRole("button", { name: "open files" }));
-		expect(useUiStore.getState().sidebarWorkspaceDemandPx).toBeNull();
+		expect(useUiStore.getState().isSidebarOpen).toBe(true);
 
 		fireEvent.click(screen.getByRole("tab", { name: "Browser" }));
 		fireEvent.click(screen.getByRole("button", { name: "Close inspector panel" }));
-		await waitFor(() => expect(useUiStore.getState().sidebarWorkspaceDemandPx).toBeNull());
+		await waitFor(() => expect(useUiStore.getState().isSidebarOpen).toBe(true));
 	});
 
 	it("mounts the inspector in sync when navigating from an orchestrator session", () => {
@@ -2124,12 +2152,18 @@ describe("SessionView", () => {
 		expect(screen.getByText("terminal center")).toBeInTheDocument();
 	});
 
-	it("opens docked files as center tabs while preserving the agent surface", () => {
+	it("previews docked files and only opens a center tab on explicit pop-out", () => {
 		act(() => useUiStore.getState().setInspectorOpen("sess-1", true));
 		render(<SessionView sessionId="sess-1" />);
 
 		fireEvent.click(screen.getByRole("button", { name: "open files" }));
-		fireEvent.click(screen.getByRole("button", { name: "open src/App.tsx" }));
+		fireEvent.click(screen.getByRole("button", { name: "select src/App.tsx" }));
+
+		expect(screen.queryByRole("tab", { name: "App.tsx" })).not.toBeInTheDocument();
+		expect(screen.queryByTestId("session-file-workspace")).not.toBeInTheDocument();
+		expect(screen.getByText("terminal center")).toBeInTheDocument();
+
+		fireEvent.click(screen.getByRole("button", { name: "pop out src/App.tsx" }));
 
 		expect(screen.getByRole("tab", { name: "App.tsx" })).toHaveAttribute("aria-selected", "true");
 		expect(screen.getByTestId("session-file-workspace")).toHaveTextContent("src/App.tsx");
@@ -2140,18 +2174,24 @@ describe("SessionView", () => {
 		expect(screen.getByRole("tab", { name: "App.tsx" })).toHaveAttribute("aria-selected", "false");
 	});
 
-	it("opens a review file target in a center tab and keeps the Files inspector visible", async () => {
+	it("previews a review file target in the Files inspector without replacing the center", async () => {
 		act(() => useUiStore.getState().setInspectorOpen("sess-1", true));
 		render(<SessionView sessionId="sess-1" />);
 
 		fireEvent.click(screen.getByRole("button", { name: "view review file" }));
 
 		await waitFor(() => {
-			expect(screen.getByRole("tab", { name: "panel.tsx" })).toHaveAttribute("aria-selected", "true");
-			expect(screen.getByTestId("session-file-workspace")).toHaveTextContent("src/panel.tsx");
+			expect(screen.getByText("rail preview src/panel.tsx")).toBeInTheDocument();
 		});
+		expect(screen.queryByRole("tab", { name: "panel.tsx" })).not.toBeInTheDocument();
+		expect(screen.queryByTestId("session-file-workspace")).not.toBeInTheDocument();
+		expect(screen.getByText("terminal center")).toBeInTheDocument();
 		expect(useUiStore.getState().inspectorSessions["sess-1"]?.view).toBe("files");
 		expect(screen.queryByRole("button", { name: "files center" })).not.toBeInTheDocument();
+
+		fireEvent.click(screen.getByRole("button", { name: "pop out src/panel.tsx" }));
+		expect(screen.getByRole("tab", { name: "panel.tsx" })).toHaveAttribute("aria-selected", "true");
+		expect(screen.getByTestId("session-file-workspace")).toHaveTextContent("src/panel.tsx");
 	});
 
 	it("resolves a basename against workspace files before opening on a cold cache", async () => {
@@ -2187,8 +2227,9 @@ describe("SessionView", () => {
 		fireEvent.click(screen.getByRole("button", { name: "view review basename" }));
 
 		await waitFor(() => {
-			expect(screen.getByTestId("session-file-workspace")).toHaveTextContent("docs/notes.txt");
+			expect(screen.getByText("rail preview docs/notes.txt")).toBeInTheDocument();
 		});
+		expect(screen.queryByTestId("session-file-workspace")).not.toBeInTheDocument();
 	});
 
 	it("resolves a chat basename against workspace files before opening on a cold cache", async () => {
@@ -2225,8 +2266,9 @@ describe("SessionView", () => {
 		fireEvent.click(screen.getByRole("button", { name: "open chat basename" }));
 
 		await waitFor(() => {
-			expect(screen.getByTestId("session-file-workspace")).toHaveTextContent("docs/notes.txt");
+			expect(screen.getByText("rail preview docs/notes.txt")).toBeInTheDocument();
 		});
+		expect(screen.queryByTestId("session-file-workspace")).not.toBeInTheDocument();
 	});
 
 	it("maximizes files over the whole app window and returns to the rail", () => {

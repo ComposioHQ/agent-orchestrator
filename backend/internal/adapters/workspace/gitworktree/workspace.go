@@ -152,6 +152,7 @@ func (w *Workspace) ResolveDefaultBranch(ctx context.Context, repoPath, configur
 		}, nil
 	}
 	remote := "origin"
+	qualifiedRemote := false
 	if candidateRemote, candidateBranch, ok := strings.Cut(branch, "/"); ok && candidateRemote != "" && candidateBranch != "" {
 		exists, err := w.remoteExists(ctx, repo, candidateRemote)
 		if err != nil {
@@ -160,15 +161,38 @@ func (w *Workspace) ResolveDefaultBranch(ctx context.Context, repoPath, configur
 		if exists {
 			remote = candidateRemote
 			branch = candidateBranch
+			qualifiedRemote = true
 		}
 	}
 	if err := w.validateBranch(ctx, repo, branch); err != nil {
 		return ports.WorkspaceDefaultBranch{}, err
 	}
+	remoteRef := "refs/remotes/" + remote + "/" + branch
+	if exists, err := w.refExists(ctx, repo, remoteRef); err != nil {
+		return ports.WorkspaceDefaultBranch{}, err
+	} else if exists {
+		return ports.WorkspaceDefaultBranch{
+			Remote:  remote,
+			Branch:  branch,
+			BaseRef: remoteRef,
+		}, nil
+	}
+	if !qualifiedRemote {
+		localRef := "refs/heads/" + branch
+		if exists, err := w.refExists(ctx, repo, localRef); err != nil {
+			return ports.WorkspaceDefaultBranch{}, err
+		} else if exists {
+			return ports.WorkspaceDefaultBranch{
+				Remote:  remote,
+				Branch:  branch,
+				BaseRef: localRef,
+			}, nil
+		}
+	}
 	return ports.WorkspaceDefaultBranch{
 		Remote:  remote,
 		Branch:  branch,
-		BaseRef: "refs/remotes/" + remote + "/" + branch,
+		BaseRef: remoteRef,
 	}, nil
 }
 
@@ -186,6 +210,10 @@ func (w *Workspace) FetchDefaultBranch(ctx context.Context, repoPath string, tar
 		return errors.New("gitworktree: branch is required")
 	}
 	wantRef := "refs/remotes/" + target.Remote + "/" + target.Branch
+	localRef := "refs/heads/" + target.Branch
+	if target.BaseRef == localRef {
+		return nil
+	}
 	if target.BaseRef != wantRef {
 		return fmt.Errorf("gitworktree: invalid default branch target %q (want %q)", target.BaseRef, wantRef)
 	}

@@ -17,6 +17,7 @@ import (
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/controllers"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/envelope"
+	importsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/importer"
 	projectsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/project"
 )
 
@@ -341,6 +342,10 @@ var schemaNames = map[string]string{ //nolint:gosec // Public OpenAPI type names
 	"ControllersAgentInstallerCatalogResponse":    "AgentInstallerCatalogResponse",
 	"ControllersStartAgentInstallRequest":         "StartAgentInstallRequest",
 	"ControllersAgentInstallJobsResponse":         "AgentInstallJobsResponse",
+	"AgentauthAction":                             "AgentAuthAction",
+	"AgentauthPlan":                               "AgentAuthPlan",
+	"ControllersListAgentAuthPlansResponse":       "ListAgentAuthPlansResponse",
+	"ControllersStartAgentAuthResponse":           "StartAgentAuthResponse",
 	"PortsAgentModelCatalog":                      "AgentModelsResponse",
 	"PortsAgentModelInfo":                         "AgentModelInfo",
 	"ControllersListNotificationsQuery":           "ListNotificationsQuery",
@@ -391,6 +396,14 @@ var schemaNames = map[string]string{ //nolint:gosec // Public OpenAPI type names
 	// httpd/controllers: import wire envelopes
 	"ControllersImportStatusResponse": "ImportStatusResponse",
 	"ControllersImportRunResponse":    "ImportRunResponse",
+	// service/importer: project import onboarding DTOs
+	"ImporterImportValidationInput":         "ImportValidationInput",
+	"ImporterImportValidationResult":        "ImportValidationResult",
+	"ImporterRepoGitStatus":                 "RepoGitStatus",
+	"ImporterGitPreparationInput":           "GitPreparationInput",
+	"ImporterGitPreparationResult":          "GitPreparationResult",
+	"ImporterGitPreparationEvent":           "GitPreparationEvent",
+	"ImporterGitRepositoryPreparationInput": "GitRepositoryPreparationInput",
 	// httpd/controllers: dev wire envelopes
 	"ControllersDevImportProjectsRequest":  "DevImportProjectsRequest",
 	"ControllersDevImportProjectsResponse": "DevImportProjectsResponse",
@@ -1050,6 +1063,26 @@ func shellTerminalOperations() []operation {
 func agentOperations() []operation {
 	return []operation{
 		{
+			method: http.MethodGet, path: "/api/v1/agents/auth-plans", id: "listAgentAuthPlans", tag: "agents",
+			summary: "Return display-safe native authentication plans for supported agents",
+			resps: []respUnit{
+				{http.StatusOK, controllers.ListAgentAuthPlansResponse{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPost, path: "/api/v1/agents/{agent}/auth", id: "startAgentAuth", tag: "agents",
+			summary:    "Open the fixed native authentication flow for one agent",
+			pathParams: []any{controllers.AgentIDParam{}},
+			resps: []respUnit{
+				{http.StatusCreated, controllers.StartAgentAuthResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
 			method: http.MethodGet, path: "/api/v1/agents", id: "listAgents", tag: "agents",
 			summary: "Return cached supported and locally installed agent adapters",
 			resps: []respUnit{
@@ -1347,7 +1380,7 @@ func mobileDeviceOperations() []operation {
 	}
 }
 
-// importOperations declares the 2 /import operations. Must stay 1:1 with
+// importOperations declares the /import operations. Must stay 1:1 with
 // the routes ImportController.Register mounts (enforced by the parity test).
 func importOperations() []operation {
 	return []operation{
@@ -1366,6 +1399,26 @@ func importOperations() []operation {
 			resps: []respUnit{
 				{http.StatusOK, controllers.ImportRunResponse{}},
 				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPost, path: "/api/v1/imports/validate", id: "validateImport", tag: "import",
+			summary: "Validate a selected folder for project import onboarding",
+			reqBody: importsvc.ImportValidationInput{},
+			resps: []respUnit{
+				{http.StatusOK, importsvc.ImportValidationResult{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPost, path: "/api/v1/imports/prepare-git", id: "prepareImportGit", tag: "import",
+			summary: "Run approved Git preparation actions for project import onboarding",
+			reqBody: importsvc.GitPreparationInput{},
+			resps: []respUnit{
+				{http.StatusOK, importsvc.GitPreparationResult{}},
+				{http.StatusBadRequest, envelope.APIError{}},
 				{http.StatusNotImplemented, envelope.APIError{}},
 			},
 		},

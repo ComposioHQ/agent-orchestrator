@@ -59,7 +59,12 @@ import {
 	interfaceTransitionIsActive,
 	useSessionInterfaceTransition,
 } from "../hooks/useSessionInterfaceTransition";
-import { toCloudWorkspaceSession, useCloudSessionQuery, useWorkspaceQuery } from "../hooks/useWorkspaceQuery";
+import {
+	toCloudWorkspaceSession,
+	useCloudSessionQuery,
+	useWorkspaceQuery,
+	workspaceQueryKey,
+} from "../hooks/useWorkspaceQuery";
 import { useCloudGate } from "../hooks/useCloudGate";
 import { useAgentSwitchRouteVisibility } from "../hooks/useAgentSwitchVisibility";
 import { useSessionHandoffMenu } from "../hooks/useSessionHandoffMenu";
@@ -98,10 +103,6 @@ const CHAT_READABLE_MIN_PX = 560;
 // canvas workflow. This is still wide enough for the timeline and composer, and
 // is separate from the roomier utility-view floor above.
 const BROWSER_CHAT_MIN_PX = 440;
-// Browser is a co-working surface, so reclaim navigation space before chat
-// reaches its survival floor. Utility inspector views keep the compact 560px
-// target; Browser protects a comfortable conversation column instead.
-const BROWSER_CHAT_COMFORT_PX = 720;
 const WORKSPACE_ABSOLUTE_MIN_PX = 300;
 const INSPECTOR_SEPARATOR_RESERVE_PX = 8;
 const EMPTY_AUXILIARY_TAB_ORDER: string[] = [];
@@ -201,15 +202,6 @@ function sizingGeometryEqual(a: InspectorSizing, b: InspectorSizing): boolean {
 	);
 }
 
-function workspaceDemandPx(sizing: InspectorSizing): number {
-	const chatTarget = sizing.mode === "browser" ? BROWSER_CHAT_COMFORT_PX : CHAT_READABLE_MIN_PX;
-	return (
-		chatTarget +
-		Number.parseFloat(initialInspectorSize(sizing)) +
-		INSPECTOR_SEPARATOR_RESERVE_PX
-	);
-}
-
 type BrowserPopOutPhase = "docked" | "opening" | "open" | "closing";
 type BrowserPopOutRect = { top: number; left: number; width: number; height: number };
 type BrowserPopOutState = {
@@ -261,6 +253,7 @@ function SessionInspectorRail({
 	isOpen,
 	onExpand,
 	onCloseAnimationComplete,
+	restoreMinWidth,
 	sizing,
 	settledClosed,
 	splitRef,
@@ -269,6 +262,7 @@ function SessionInspectorRail({
 	isOpen: boolean;
 	onExpand: () => void;
 	onCloseAnimationComplete?: () => void;
+	restoreMinWidth?: number;
 	sizing: InspectorSizing;
 	settledClosed: boolean;
 	splitRef: RefObject<HTMLDivElement | null>;
@@ -293,6 +287,7 @@ function SessionInspectorRail({
 		max: maxWidth,
 		edge: "left",
 		onExpand,
+		restoreMin: restoreMinWidth,
 	});
 
 	useLayoutEffect(() => {
@@ -386,6 +381,10 @@ function SessionInspectorRail({
 export function SessionView({ sessionId, cloudOrgId, projectId }: SessionViewProps) {
 	const { t } = useTranslation();
 	const queryClient = useQueryClient();
+	const refreshWorkspaces = useCallback(
+		() => queryClient.invalidateQueries({ queryKey: workspaceQueryKey }),
+		[queryClient],
+	);
 	const { cloudEnabled } = useCloudGate();
 	const workspaceQuery = useWorkspaceQuery();
 	const workspaces = workspaceQuery.data ?? [];
@@ -413,7 +412,6 @@ export function SessionView({ sessionId, cloudOrgId, projectId }: SessionViewPro
 	const initializeInspectorSession = useUiStore((state) => state.initializeInspectorSession);
 	const setBrowserContentRevealed = useUiStore((state) => state.setBrowserContentRevealed);
 	const setBrowserUnseen = useUiStore((state) => state.setBrowserUnseen);
-	const setSidebarWorkspaceDemand = useUiStore((state) => state.setSidebarWorkspaceDemand);
 	const { daemonStatus } = useShell();
 	const previewBaselineRef = useRef<{ sessionId: string; key: string } | null>(null);
 	const sessionSplitRef = useRef<HTMLDivElement | null>(null);
@@ -428,6 +426,9 @@ export function SessionView({ sessionId, cloudOrgId, projectId }: SessionViewPro
 		phase: "docked",
 	});
 	const [filesPoppedOut, setFilesPoppedOut] = useState(false);
+	const [filePreviewRequestsBySession, setFilePreviewRequestsBySession] = useState<
+		Record<string, { path: string; key: number }>
+	>({});
 	const [fileTabsBySession, setFileTabsBySession] = useState<Record<string, SessionFileTabState>>({});
 	const fileTabs = fileTabsBySession[sessionId] ?? EMPTY_SESSION_FILE_TABS;
 	const [auxiliaryTabOrderBySession, setAuxiliaryTabOrderBySession] = useState<Record<string, string[]>>({});
@@ -862,14 +863,7 @@ export function SessionView({ sessionId, cloudOrgId, projectId }: SessionViewPro
 	// Orchestrators get the full workspace width; only workers need the inspector rail.
 	const hasInspector = Boolean(session && !isOrchestrator);
 	const sizing = useMemo(() => inspectorSizing(inspectorView), [inspectorView]);
-	// Utility views remain ordinary inspector rails. Only the docked Browser is a
-	// co-work canvas that may reclaim navigation width from the shell.
-	const browserWorkspacePressureActive = useCallback(
-		(view: InspectorView, inspectorOpen = isInspectorOpen) =>
-			hasInspector && view === "browser" && inspectorOpen && !browserPoppedOut && !filesPoppedOut,
-		[browserPoppedOut, filesPoppedOut, hasInspector, isInspectorOpen],
-	);
-	const adaptiveWorkspaceActive = browserWorkspacePressureActive(inspectorView);
+	const browserEntryWidthFloorRef = useRef<number | null>(null);
 
 	// Arm the shared width transition before the selected inspector surface
 	// changes its CSS variable. Browser becomes a co-work canvas; utility views
@@ -894,13 +888,6 @@ export function SessionView({ sessionId, cloudOrgId, projectId }: SessionViewPro
 		[],
 	);
 
-	const publishWorkspaceDemand = useCallback(
-		(nextSizing: InspectorSizing, active = adaptiveWorkspaceActive) => {
-			setSidebarWorkspaceDemand(active ? workspaceDemandPx(nextSizing) : null);
-		},
-		[adaptiveWorkspaceActive, setSidebarWorkspaceDemand],
-	);
-
 	const prepareWorkspaceProfile = useCallback(
 		(nextSizing: InspectorSizing) => {
 			armWorkspaceTransition();
@@ -918,34 +905,27 @@ export function SessionView({ sessionId, cloudOrgId, projectId }: SessionViewPro
 	const transitionInspectorView = useCallback(
 		(next: InspectorView) => {
 			if (next === inspectorView) return;
+			if (next === "browser") {
+				const currentWidth = Number.parseFloat(
+					document.documentElement.style.getPropertyValue(inspectorWidthVar),
+				);
+				browserEntryWidthFloorRef.current = Number.isFinite(currentWidth) ? currentWidth : null;
+			} else {
+				browserEntryWidthFloorRef.current = null;
+			}
 			const nextSizing = inspectorSizing(next);
 			if (!sizingGeometryEqual(sizing, nextSizing)) prepareWorkspaceProfile(nextSizing);
-			publishWorkspaceDemand(nextSizing, browserWorkspacePressureActive(next));
 			setInspectorViewForSession(sessionId, next);
 		},
 		[
-			browserWorkspacePressureActive,
 			inspectorView,
 			prepareWorkspaceProfile,
-			publishWorkspaceDemand,
 			sessionId,
 			setInspectorViewForSession,
 			sizing,
 		],
 	);
 
-	// Publish a declarative width demand; the persistent shell is the sole owner
-	// of measuring the outer row and deciding whether navigation should compact.
-	useLayoutEffect(() => {
-		publishWorkspaceDemand(sizing);
-	}, [publishWorkspaceDemand, sizing]);
-
-	useLayoutEffect(
-		() => () => {
-			setSidebarWorkspaceDemand(null);
-		},
-		[setSidebarWorkspaceDemand],
-	);
 	const activeInterfaceTransition = interfaceTransitionIsActive(interfaceSwitch.transition);
 	const chatControllerTransitioning = Boolean(
 		interfaceSwitch.transition?.targetMode === "chat" &&
@@ -1237,17 +1217,12 @@ export function SessionView({ sessionId, cloudOrgId, projectId }: SessionViewPro
 			{handoffMenuItem}
 		</SessionActionsMenu>
 	);
-	const compactSessionChrome = adaptiveWorkspaceActive;
 	const sessionHeaderActions = (
 		<div
-			className="session-topbar-session-chrome flex shrink-0 items-center gap-1"
-			data-compact-session-chrome={compactSessionChrome ? "true" : "false"}
+			className="session-topbar-session-chrome flex shrink-0 items-center"
+			data-compact-session-chrome="false"
 		>
-			<ShellTopbar
-				compactActions={compactSessionChrome}
-				embedded
-				sessionAction={cloudInterfaceSwitchAction}
-			/>
+			<ShellTopbar embedded sessionAction={cloudInterfaceSwitchAction} />
 		</div>
 	);
 
@@ -1278,12 +1253,16 @@ export function SessionView({ sessionId, cloudOrgId, projectId }: SessionViewPro
 		);
 	}, [queryClient, sessionId, t]);
 
-	const openResolvedWorkspaceFile = useCallback(
+	const revealResolvedWorkspaceFile = useCallback(
 		async (rawPath: string) => {
 			const data = await fetchWorkspaceFiles();
-			openCenterFile(matchWorkspaceFilePath(rawPath, data.files ?? []));
+			const path = matchWorkspaceFilePath(rawPath, data.files ?? []);
+			setFilePreviewRequestsBySession((current) => ({
+				...current,
+				[sessionId]: { path, key: (current[sessionId]?.key ?? 0) + 1 },
+			}));
 		},
-		[fetchWorkspaceFiles, openCenterFile],
+		[fetchWorkspaceFiles, sessionId],
 	);
 
 	const handleOpenFiles = useCallback(() => {
@@ -1294,17 +1273,17 @@ export function SessionView({ sessionId, cloudOrgId, projectId }: SessionViewPro
 	const handleOpenReviewFile = useCallback(
 		(target: { line?: number; path: string }) => {
 			prepareFilesInspector();
-			void openResolvedWorkspaceFile(target.path);
+			void revealResolvedWorkspaceFile(target.path);
 		},
-		[openResolvedWorkspaceFile, prepareFilesInspector],
+		[prepareFilesInspector, revealResolvedWorkspaceFile],
 	);
 
 	const handleOpenFile = useCallback(
 		(path: string) => {
 			prepareFilesInspector();
-			void openResolvedWorkspaceFile(path);
+			void revealResolvedWorkspaceFile(path);
 		},
-		[openResolvedWorkspaceFile, prepareFilesInspector],
+		[prepareFilesInspector, revealResolvedWorkspaceFile],
 	);
 
 	const handleToggleFilesPopOut = useCallback(
@@ -1481,18 +1460,8 @@ export function SessionView({ sessionId, cloudOrgId, projectId }: SessionViewPro
 	}, [browserPoppedOut, hasInspector, inspectorView, isInspectorOpen, sessionId, setBrowserUnseen]);
 
 	const handleToggleInspector = useCallback(() => {
-		const nextOpen = !isInspectorOpen;
-		publishWorkspaceDemand(sizing, browserWorkspacePressureActive(inspectorView, nextOpen));
 		toggleInspector(sessionId);
-	}, [
-		browserWorkspacePressureActive,
-		inspectorView,
-		isInspectorOpen,
-		publishWorkspaceDemand,
-		sessionId,
-		sizing,
-		toggleInspector,
-	]);
+	}, [sessionId, toggleInspector]);
 
 	useEffect(() => {
 		if (!hasInspector) return;
@@ -1653,6 +1622,7 @@ export function SessionView({ sessionId, cloudOrgId, projectId }: SessionViewPro
 									session={session}
 									reviewerTerminal={reviewerTerminal}
 									onOpenReviewerTerminal={selectReviewerTerminal}
+									onSessionRenamed={refreshWorkspaces}
 									reviewerTarget={
 										routedTerminalTarget.kind === "reviewer" ? routedTerminalTarget : undefined
 									}
@@ -1745,6 +1715,9 @@ export function SessionView({ sessionId, cloudOrgId, projectId }: SessionViewPro
 						isOpen={isInspectorOpen}
 						onCloseAnimationComplete={handleInspectorCloseAnimationComplete}
 						onExpand={() => setInspectorOpenForSession(sessionId, true)}
+						restoreMinWidth={
+							sizing.mode === "browser" ? (browserEntryWidthFloorRef.current ?? undefined) : undefined
+						}
 						sizing={sizing}
 						settledClosed={!isInspectorOpen && inspectorSettledClosed}
 						splitRef={sessionSplitRef}
@@ -1755,9 +1728,9 @@ export function SessionView({ sessionId, cloudOrgId, projectId }: SessionViewPro
 							filesView={
 								session ? (
 									<SessionFileExplorer
-										activePath={fileTabs.activePath}
 										onOpenFile={openCenterFile}
 										onToggleMaximized={handleToggleFilesPopOut}
+										revealRequest={filePreviewRequestsBySession[sessionId] ?? null}
 										sessionId={session.id}
 									/>
 								) : null

@@ -11,6 +11,7 @@ import (
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apierr"
 	"github.com/aoagents/agent-orchestrator/backend/internal/observe/ownership"
+	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
 func TestWriteErrorSerializesWrappedReportingOwner(t *testing.T) {
@@ -150,6 +151,33 @@ func TestWriteError_NonTransientStays500(t *testing.T) {
 				t.Fatalf("status = %d, want 500", status)
 			}
 		})
+	}
+}
+
+func TestWriteError_WorkspaceRepoUnavailableMapsTo404(t *testing.T) {
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/sessions/s1/workspace/files", nil)
+	// The sentinel reaches WriteError wrapped by application layers, so match
+	// the wrapped shape too.
+	err := fmt.Errorf("git -C /repo status: %w", ports.ErrWorkspaceRepoUnavailable)
+
+	WriteError(rec, req, err)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404", rec.Code)
+	}
+	var body APIError
+	if decodeErr := json.Unmarshal(rec.Body.Bytes(), &body); decodeErr != nil {
+		t.Fatalf("decode response: %v", decodeErr)
+	}
+	if body.Code != "PROJECT_FOLDER_MISSING" {
+		t.Fatalf("code = %q, want PROJECT_FOLDER_MISSING", body.Code)
+	}
+	if body.Error != "not_found" {
+		t.Fatalf("error = %q, want not_found", body.Error)
+	}
+	if body.Message != "Project repository is missing from disk" {
+		t.Fatalf("message = %q, want the missing-repo message", body.Message)
 	}
 }
 

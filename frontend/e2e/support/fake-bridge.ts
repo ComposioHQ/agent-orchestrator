@@ -69,13 +69,14 @@ export async function installFakeBridge(page: Page, opts: FakeBridgeOptions = {}
 			// resolves — an incomplete object would throw the moment the app touched
 			// a missing method.
 			const ao = {
-				app: {
-					getVersion: async () => version,
-					chooseDirectory: async () => null,
-					openExternal: async () => undefined,
-					scanImportFolder: async ({ path }: { path: string }) => ({ path, repos: [] }),
-					checkAncestorRepo: async () => undefined,
-					getPathForFile: () => "",
+					app: {
+						getVersion: async () => version,
+						chooseDirectory: async () => null,
+						openExternal: async () => undefined,
+						scanImportFolder: async ({ path }: { path: string }) => ({ path, repos: [] }),
+						checkAncestorRepo: async () => undefined,
+						getRepositoryBranch: async () => undefined,
+						getPathForFile: () => "",
 					onOpenFolderPath: () => () => undefined,
 					onNewSessionShortcut: unsubscribe,
 					onKeyboardShortcutsHelp: unsubscribe,
@@ -593,13 +594,14 @@ export async function installFakeAgent(page: Page, opts: FakeAgentOptions = {}):
 				...(error ? { error } : {}),
 			});
 			const ao = {
-				app: {
-					getVersion: async () => version,
-					chooseDirectory: async () => null,
-					openExternal: async () => undefined,
-					scanImportFolder: async ({ path }: { path: string }) => ({ path, repos: [] }),
-					checkAncestorRepo: async () => undefined,
-					getPathForFile: () => "",
+					app: {
+						getVersion: async () => version,
+						chooseDirectory: async () => null,
+						openExternal: async () => undefined,
+						scanImportFolder: async ({ path }: { path: string }) => ({ path, repos: [] }),
+						checkAncestorRepo: async () => undefined,
+						getRepositoryBranch: async () => undefined,
+						getPathForFile: () => "",
 					onOpenFolderPath: () => () => undefined,
 					onNewSessionShortcut: unsubscribe,
 					onKeyboardShortcutsHelp: unsubscribe,

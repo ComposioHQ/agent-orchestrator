@@ -255,9 +255,10 @@ interface GitHubReleaseSummary {
  * This is used only for user-requested checks; failures fall back to the normal
  * provider so API rate limits or an outage never break update checks.
  */
-async function fetchLatestCompletedNightlyTag(
+async function fetchLatestCompletedPrereleaseTag(
   owner: string,
   repo: string,
+  channel: string,
 ): Promise<string | undefined> {
   try {
     const response = await fetch(
@@ -274,7 +275,7 @@ async function fetchLatestCompletedNightlyTag(
     );
     if (!response.ok) return undefined;
     const releases = (await response.json()) as GitHubReleaseSummary[];
-    const manifestName = `nightly${platformSuffix()}.yml`;
+    const manifestName = `${channel}${platformSuffix()}.yml`;
     return releases
       .filter((release) => {
         const parsed = semver.valid(release.tag_name);
@@ -282,7 +283,7 @@ async function fetchLatestCompletedNightlyTag(
           !release.draft &&
           release.prerelease &&
           parsed !== null &&
-          semver.prerelease(parsed)?.[0] === "nightly" &&
+          semver.prerelease(parsed)?.[0] === channel &&
           release.assets?.some((asset) => asset.name === manifestName) === true
         );
       })
@@ -293,10 +294,11 @@ async function fetchLatestCompletedNightlyTag(
   }
 }
 
-function usesDirectNightlyFeed(
+function directPrereleaseChannel(
   settings: Pick<UpdateSettings, "channel" | "feature">,
-): boolean {
-  return settings.channel === "nightly" && settings.feature === null;
+): string | undefined {
+  if (settings.feature) return `pr${settings.feature.pr}`;
+  return settings.channel === "nightly" ? "nightly" : undefined;
 }
 
 /**
@@ -310,21 +312,23 @@ function usesDirectNightlyFeed(
  * checks; electron-updater retains the direct provider with the discovered
  * update, so a subsequent Download action still uses the correct asset URLs.
  */
-async function configureDirectNightlyFeed(
+async function configureDirectPrereleaseFeed(
   settings: UpdateSettings,
 ): Promise<(() => void) | undefined> {
-  if (!usesDirectNightlyFeed(settings)) return undefined;
+  const channel = directPrereleaseChannel(settings);
+  if (!channel) return undefined;
   const coordinates = await readAppUpdateYml();
   if (!coordinates) return undefined;
-  const tag = await fetchLatestCompletedNightlyTag(
+  const tag = await fetchLatestCompletedPrereleaseTag(
     coordinates.owner,
     coordinates.repo,
+    channel,
   );
   if (!tag) return undefined;
   const runningVersion = app.getVersion();
   if (
     semver.valid(runningVersion) !== null &&
-    semver.prerelease(runningVersion)?.[0] === "nightly" &&
+    semver.prerelease(runningVersion)?.[0] === channel &&
     semver.lt(tag, runningVersion)
   ) {
     return undefined;
@@ -333,7 +337,7 @@ async function configureDirectNightlyFeed(
   autoUpdater.setFeedURL({
     provider: "generic",
     url: `https://github.com/${coordinates.owner}/${coordinates.repo}/releases/download/${tag}`,
-    channel: "nightly",
+    channel,
     useMultipleRangeRequest: false,
   });
   return () => {
@@ -789,10 +793,10 @@ async function runAutomaticUpdateCheck(
       // leaves it in `available` for the sidebar action.
       autoUpdater.autoDownload = settings.enabled;
       applyInstallOnQuitPolicy();
-      // Only nightly resolves a direct feed. Skipping the await entirely on the
-      // other channels keeps this check's event ordering exactly as it was.
-      const restoreFeed = usesDirectNightlyFeed(settings)
-        ? await configureDirectNightlyFeed(settings)
+      // Only prerelease channels resolve a direct feed. Skipping the await on
+      // stable keeps that check's event ordering exactly as it was.
+      const restoreFeed = directPrereleaseChannel(settings)
+        ? await configureDirectPrereleaseFeed(settings)
         : undefined;
       try {
         const result = await autoUpdater.checkForUpdates();
@@ -947,7 +951,7 @@ export async function checkForUpdatesNow(
         autoUpdater.autoDownload = false;
         applyInstallOnQuitPolicy();
         broadcastUpdaterStatus({ state: "checking" });
-        const restoreFeed = await configureDirectNightlyFeed(settings);
+        const restoreFeed = await configureDirectPrereleaseFeed(settings);
         try {
           await autoUpdater.checkForUpdates();
         } finally {
