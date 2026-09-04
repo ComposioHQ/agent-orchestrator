@@ -2087,6 +2087,28 @@ function UpdateStatusRow({
 	tabIndex: number;
 }) {
 	const { t } = useTranslation();
+	if (status.state === "replacing" || status.state === "replacement-failed") {
+		const from = status.stagedCandidate?.version ?? "?";
+		const to = status.replacementCandidate?.version ?? status.version ?? "?";
+		const failed = status.state === "replacement-failed";
+		return (
+			<button
+				aria-label={failed ? t("shell.retryUpdateVersion", { version: to }) : t("shell.replacingRestartDisabled", { version: to })}
+				className={cn(NAV_ROW_CLASS, "flex w-full items-center text-left [&_svg]:size-icon-md [&_svg]:shrink-0")}
+				data-testid={failed ? "sidebar-update-replacement-failed" : "sidebar-update-replacing"}
+				disabled={!failed}
+				onClick={failed ? () => void aoBridge.updates.download() : undefined}
+				tabIndex={tabIndex}
+				type="button"
+			>
+				{failed ? <AlertTriangle aria-hidden="true" /> : <Download aria-hidden="true" />}
+				<span className="min-w-0 flex-1">
+					<span className="block truncate">{failed ? t("settings.updates.retryVersion", { version: to }) : t("shell.replacingUpdate", { from, to })}</span>
+					<span className="block truncate text-caption font-normal text-warning">{t("shell.externalQuitRisk", { version: from })}</span>
+				</span>
+			</button>
+		);
+	}
 	if (status.state === "available") {
 		if (availableDismissed) return null;
 		// A manual check leaves autoDownload off, so without this the row would
@@ -2212,6 +2234,22 @@ function UpdateStatusRail({
 	tabIndex: number;
 }) {
 	const { t } = useTranslation();
+	if (status.state === "replacing" || status.state === "replacement-failed") {
+		const from = status.stagedCandidate?.version ?? "?";
+		const to = status.replacementCandidate?.version ?? status.version ?? "?";
+		const failed = status.state === "replacement-failed";
+		const label = failed ? t("shell.retryReplacementWarning", { from, to }) : t("shell.replacingRestartDisabledDetailed", { from, to });
+		return (
+			<Tooltip>
+				<TooltipTrigger asChild>
+					<button aria-label={label} className="grid size-9 place-items-center rounded-lg text-warning" disabled={!failed} onClick={failed ? () => void aoBridge.updates.download() : undefined} tabIndex={tabIndex} type="button">
+						{failed ? <AlertTriangle aria-hidden="true" /> : <Download aria-hidden="true" />}
+					</button>
+				</TooltipTrigger>
+				<TooltipContent side="right">{label}</TooltipContent>
+			</Tooltip>
+		);
+	}
 	if (status.state === "available") {
 		if (availableDismissed) return null;
 		const label = t("settings.updates.available", { version: status.version ? ` (v${status.version})` : "" });

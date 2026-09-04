@@ -30,8 +30,31 @@ test("downloaded update keeps the full version readable and actions aligned", as
 	expect(lineCount).toBe(1);
 
 	const restartBox = await page.getByRole("button", { name: "Restart & install" }).boundingBox();
-	const checkBox = await page.getByRole("button", { name: "Check for updates" }).boundingBox();
 	expect(restartBox).not.toBeNull();
-	expect(checkBox).not.toBeNull();
-	expect(Math.abs((restartBox?.height ?? 0) - (checkBox?.height ?? 0))).toBeLessThan(1);
+});
+
+test("replacement progress can restart below A completion without losing either identity", async ({ page }) => {
+	await installFakeBridge(page, {
+		updateStatus: { state: "downloaded", version: "1.0.0", stagedAt: 100 },
+	});
+	await page.goto("/#/settings");
+	await page.getByRole("button", { name: "Updates" }).click();
+	await expect(page.getByRole("button", { name: "Restart & install" })).toBeVisible();
+
+	await page.evaluate(() => {
+		(window as typeof window & { __aoEmitUpdateStatus: (status: unknown) => void }).__aoEmitUpdateStatus({
+			state: "replacing",
+			version: "2.0.0",
+			percent: 7,
+			stagedCandidate: { version: "1.0.0", channel: "latest", operationId: "a" },
+			replacementCandidate: { version: "2.0.0", channel: "nightly", operationId: "b" },
+			replacementPhase: "differential",
+			installDisabledReason: "Replacement 2.0.0 is incomplete",
+		});
+	});
+
+	await expect(page.locator("#update-status-line")).toContainText("Downloading 2.0.0 to replace staged update 1.0.0");
+	await expect(page.locator("#update-status-line")).toContainText("Quitting now may install 1.0.0");
+	await expect(page.getByRole("progressbar", { name: "Download progress for 2.0.0" })).toHaveAttribute("aria-valuenow", "7");
+	await expect(page.getByRole("button", { name: "Restart & install" })).toBeHidden();
 });

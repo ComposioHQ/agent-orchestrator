@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import nodePath from "node:path";
@@ -185,9 +185,14 @@ async function flushMicrotasks(turns = 16): Promise<void> {
 }
 
 describe("startAutoUpdates", () => {
-  const stateDir = "/tmp/ao-state";
+  let stateDir: string;
+
+  beforeEach(() => {
+    stateDir = mkdtempSync(nodePath.join(os.tmpdir(), "ao-updater-state-"));
+  });
 
   afterEach(() => {
+    rmSync(stateDir, { recursive: true, force: true });
     vi.useRealTimers();
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
@@ -745,8 +750,7 @@ describe("startAutoUpdates", () => {
       return automaticCheck.promise;
     });
     const startPromise = module.startAutoUpdates(stateDir);
-    await Promise.resolve();
-    await Promise.resolve();
+    await vi.waitFor(() => expect(autoUpdater.checkForUpdates).toHaveBeenCalledTimes(2));
 
     vi.setSystemTime(stagedAt + 49 * 60 * 60 * 1000);
     runEscalation();
@@ -798,8 +802,7 @@ describe("startAutoUpdates", () => {
       return Promise.resolve({ downloadPromise: automaticDownload.promise });
     });
     const startPromise = module.startAutoUpdates(stateDir);
-    await Promise.resolve();
-    await Promise.resolve();
+    await vi.waitFor(() => expect(autoUpdater.checkForUpdates).toHaveBeenCalledTimes(2));
 
     vi.setSystemTime(stagedAt + 49 * 60 * 60 * 1000);
     runEscalation();
@@ -807,27 +810,25 @@ describe("startAutoUpdates", () => {
     await Promise.resolve();
     updaterEvents.get("update-available")?.({ version: "2.2.0" });
     updaterEvents.get("download-progress")?.({ percent: 64 });
-    expect(module.getUpdateStatus()).toEqual({
-      state: "downloading",
+    expect(module.getUpdateStatus()).toMatchObject({
+      state: "replacing",
       version: "2.2.0",
       percent: 64,
-      checkedAt: expect.any(Number),
+      stagedCandidate: expect.objectContaining({ version: "2.1.0" }),
+      replacementCandidate: expect.objectContaining({ version: "2.2.0" }),
+      replacementPhase: "full-fallback",
     });
 
     updaterEvents.get("error")?.(err);
     automaticDownload.resolve();
     await startPromise;
 
-    expect(consoleErrorSpy).toHaveBeenCalledWith(
-      "auto-update check failed:",
-      err,
-    );
-    expect(module.getUpdateStatus()).toEqual({
-      state: "downloaded",
-      version: "2.1.0",
-      stagedAt,
-      escalated: true,
-      checkedAt: expect.any(Number),
+    expect(consoleErrorSpy).not.toHaveBeenCalledWith("auto-update check failed:", err);
+    expect(module.getUpdateStatus()).toMatchObject({
+      state: "replacement-failed",
+      message: "download failed",
+      stagedCandidate: expect.objectContaining({ version: "2.1.0" }),
+      replacementCandidate: expect.objectContaining({ version: "2.2.0" }),
     });
   });
 
@@ -844,8 +845,7 @@ describe("startAutoUpdates", () => {
     });
 
     const startPromise = module.startAutoUpdates(stateDir);
-    await Promise.resolve();
-    await Promise.resolve();
+    await vi.waitFor(() => expect(autoUpdater.checkForUpdates).toHaveBeenCalledTimes(1));
     let startSettled = false;
     void startPromise.then(() => {
       startSettled = true;
@@ -1508,8 +1508,7 @@ describe("startAutoUpdates", () => {
     autoUpdater.checkForUpdates.mockReturnValueOnce(automaticCheck.promise);
 
     const startPromise = module.startAutoUpdates(stateDir);
-    await flushMicrotasks();
-    expect(reconcileFeaturePin).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => expect(reconcileFeaturePin).toHaveBeenCalledTimes(1));
 
     const runRetirementPoll = intervalWithDelay(setIntervalSpy, 30 * 60 * 1000);
     runRetirementPoll();
@@ -1551,7 +1550,7 @@ describe("startAutoUpdates", () => {
       });
 
     const startPromise = module.startAutoUpdates(stateDir);
-    await flushMicrotasks();
+    await vi.waitFor(() => expect(autoUpdater.checkForUpdates).toHaveBeenCalledTimes(1));
     const featureCheck = module.checkForUpdatesNow(stateDir, {
       settings: featureSettings,
       requestId: "feature-2709",
@@ -1981,6 +1980,25 @@ describe("quitAndInstallUpdate", () => {
       expect(autoUpdater.quitAndInstall).not.toHaveBeenCalled();
     } finally {
       restore();
+    }
+  });
+
+  it("blocks AO-triggered restart while a replacement is incomplete", async () => {
+    const stateDir = mkdtempSync(nodePath.join(os.tmpdir(), "ao-replacement-install-"));
+    try {
+      const { module, autoUpdater, dialog, updaterEvents } = await importAutoUpdater();
+      await module.checkForUpdatesNow(stateDir);
+      updaterEvents.get("update-downloaded")?.({ version: "1.0.1" });
+      updaterEvents.get("update-available")?.({ version: "1.0.2" });
+
+      module.quitAndInstallUpdate();
+
+      expect(autoUpdater.quitAndInstall).not.toHaveBeenCalled();
+      expect(dialog.showMessageBox).toHaveBeenCalledWith(expect.objectContaining({
+        detail: expect.stringContaining("Quitting outside AO may still install 1.0.1"),
+      }));
+    } finally {
+      rmSync(stateDir, { recursive: true, force: true });
     }
   });
 });

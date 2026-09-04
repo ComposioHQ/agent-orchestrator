@@ -22,6 +22,9 @@ import {
   type UpdatePhase,
   type UpdateTrigger,
 } from "../shared/update-telemetry";
+import { StagedUpdateJournalStore } from "./staged-update-journal";
+import { candidateFromUpdateInfo, effectiveUpdateChannel, journalToUpdateStatus } from "./staged-update-adapter";
+import { transitionStagedUpdate, type StagedUpdateEvent, type StagedUpdateJournal, type UpdateCandidate } from "./staged-update-state";
 
 // reconcileAndPersist clears a pinned feature build whose PR has been retired
 // (merged/closed/deleted/expired) and persists the change, so the next check
@@ -91,6 +94,10 @@ let stagedVersion: string | undefined;
 let stagedAtMs: number | undefined;
 let stagedEscalated = false;
 let stagedRequestId: string | undefined;
+let stagedJournal: StagedUpdateJournal = { schemaVersion: 1, state: "none" };
+let stagedJournalStore: StagedUpdateJournalStore | undefined;
+let stagedJournalDir: string | undefined;
+let stagedJournalQueue: Promise<void> = Promise.resolve();
 let escalationTimer: ReturnType<typeof setInterval> | undefined;
 let escalationStateDir: string | undefined;
 const STABLE_AUTOMATIC_UPDATE_CHECK_INTERVAL_MS = 60 * 60 * 1000;
@@ -138,6 +145,62 @@ let pendingUpdateVersion: string | undefined;
 // check the selected channel at launch regardless of whether automatic
 // downloading is enabled.
 let lastCheckedAtMs: number | undefined;
+
+async function ensureStagedJournal(stateDir: string): Promise<void> {
+  if (stagedJournalStore !== undefined && stagedJournalDir === stateDir) {
+    return;
+  }
+  stagedJournalDir = stateDir;
+  stagedJournalStore = new StagedUpdateJournalStore(stateDir);
+  try {
+    stagedJournal = await stagedJournalStore.read(app.getVersion());
+    await stagedJournalStore.write(stagedJournal);
+  } catch (error) {
+    console.error("staged update journal could not be restored:", error);
+    stagedJournal = { schemaVersion: 1, state: "none" };
+  }
+  if (stagedJournal.state === "native-possibly-staged") {
+    stagedVersion = stagedJournal.staged.version;
+    stagedAtMs = stagedJournal.stagedAt;
+    broadcast(journalToUpdateStatus(stagedJournal));
+  } else if (stagedJournal.state !== "none") {
+    stagedVersion = stagedJournal.staged.version;
+    broadcast(journalToUpdateStatus(stagedJournal));
+  }
+}
+
+function persistJournalTransition(event: StagedUpdateEvent): void {
+  const store = stagedJournalStore;
+  if (store === undefined) return;
+  stagedJournal = transitionStagedUpdate(stagedJournal, event);
+  const journal = stagedJournal;
+  stagedJournalQueue = stagedJournalQueue.then(() => store.write(journal)).catch((error) => {
+    console.error("staged update journal transition failed:", error);
+  });
+}
+
+function candidateFromUpdater(info: any): UpdateCandidate | undefined {
+  if (typeof info?.version !== "string" || info.version.length === 0) return undefined;
+  const channel = effectiveUpdateChannel(autoUpdater.channel);
+  const file = Array.isArray(info.files) ? info.files[0] : undefined;
+  const feedUrl = typeof autoUpdater.getFeedURL === "function"
+    ? autoUpdater.getFeedURL()
+    : undefined;
+  return candidateFromUpdateInfo({
+    version: info.version,
+    channel,
+    ...(typeof info.releaseName === "string" ? { releaseTag: info.releaseName } : {}),
+    ...(typeof feedUrl === "string" ? { feedUrl } : {}),
+    ...(typeof file?.url === "string" ? { assetName: path.basename(file.url) } : {}),
+    ...(typeof file?.sha512 === "string" ? { sha512: file.sha512 } : {}),
+    operationId: activeUpdaterRequestId ?? `${activeUpdaterOperation ?? "updater"}:${channel}:${info.version}:${Date.now()}`,
+  });
+}
+
+function selectedChannelRequiresReplacement(): boolean {
+  if (stagedJournal.state === "none" || stagedJournal.state === "version-mismatch") return false;
+  return stagedJournal.staged.channel !== effectiveUpdateChannel(autoUpdater.channel);
+}
 
 // emitUpdateOutcome pushes an update outcome to renderers on a channel separate
 // from "updates:status", so suppressing a status for UI reasons (as the
@@ -472,6 +535,7 @@ async function runSerializedUpdaterOperation(
     try {
       await runOperation();
     } finally {
+      await stagedJournalQueue;
       activeUpdaterOperation = undefined;
       activeUpdaterRequestId = undefined;
       if (operation === "automatic-check")
@@ -643,6 +707,21 @@ function wireUpdaterEvents(): void {
       return;
     }
     pendingUpdateVersion = info?.version;
+    const offered = candidateFromUpdater(info);
+    if (offered && stagedJournal.state !== "none" && stagedJournal.state !== "version-mismatch") {
+      const currentlyStaged = stagedJournal.staged;
+      if (offered.version !== currentlyStaged.version || offered.channel !== currentlyStaged.channel) {
+        persistJournalTransition({ type: "replacement-discovered", replacement: offered, at: Date.now() });
+        const offeredFile = Array.isArray(info?.files) ? info.files[0] : undefined;
+        persistJournalTransition({
+          type: "replacement-phase",
+          operationId: offered.operationId,
+          phase: typeof offeredFile?.blockMapSize === "number" ? "differential" : "full-fallback",
+        });
+        broadcastCompletedCheck(journalToUpdateStatus(stagedJournal));
+        return;
+      }
+    }
     broadcastCompletedCheck({ state: "available", version: info?.version });
   });
   autoUpdater.on("update-not-available", () => {
@@ -650,6 +729,7 @@ function wireUpdaterEvents(): void {
     consecutiveAutomaticNetFailures = 0;
     consecutiveAutomaticCheckFailures = 0;
     failingChecksPublished = false;
+    if (stagedJournal.state !== "none") persistJournalTransition({ type: "no-update" });
     broadcastCompletedCheck({ state: "not-available" });
     // The staged build outlives a "nothing newer" answer (e.g. after a channel
     // switch); follow up so the restart row returns.
@@ -664,6 +744,17 @@ function wireUpdaterEvents(): void {
     consecutiveAutomaticCheckFailures = 0;
     failingChecksPublished = false;
     activeUpdaterPhase = "download";
+    if (stagedJournal.state === "replacing") {
+      if (stagedJournal.phase === "checking") {
+        persistJournalTransition({ type: "replacement-phase", operationId: stagedJournal.replacement.operationId, phase: "full-fallback" });
+      }
+      return broadcastUpdaterStatus(journalToUpdateStatus(stagedJournal, {
+        percent: Math.max(0, Math.min(100, Math.round(p?.percent ?? 0))),
+        transferred: p?.transferred,
+        total: p?.total,
+        bytesPerSecond: p?.bytesPerSecond,
+      }));
+    }
     return broadcastUpdaterStatus({
       state: "downloading",
       version: pendingUpdateVersion,
@@ -677,8 +768,23 @@ function wireUpdaterEvents(): void {
       trigger: activeUpdateTrigger(),
       ...(info?.version ? { to_version: info.version } : {}),
     });
+    const downloadedAt = Date.now();
+    const downloaded = candidateFromUpdater(info);
+    if (downloaded) {
+      if ((stagedJournal.state === "replacing" || stagedJournal.state === "replacement-failed") && stagedJournal.replacement.version === downloaded.version) {
+        if (stagedJournal.state === "replacement-failed") {
+          persistJournalTransition({ type: "replacement-discovered", replacement: { ...downloaded, operationId: stagedJournal.replacement.operationId }, at: downloadedAt });
+        }
+        const operationId = stagedJournal.state === "replacing" ? stagedJournal.replacement.operationId : downloaded.operationId;
+        persistJournalTransition({ type: "replacement-phase", operationId, phase: "native-handoff" });
+        broadcast(journalToUpdateStatus(stagedJournal));
+        persistJournalTransition({ type: "handoff-succeeded", operationId, at: downloadedAt });
+      } else if (stagedJournal.state === "none" || stagedJournal.state === "version-mismatch") {
+        persistJournalTransition({ type: "initial-handoff-succeeded", candidate: downloaded, at: downloadedAt });
+      }
+    }
     stagedVersion = info?.version;
-    stagedAtMs = Date.now();
+    stagedAtMs = downloadedAt;
     stagedEscalated = false;
     stagedRequestId = activeUpdaterRequestId;
     automaticCheckPreviousStatus = undefined;
@@ -703,6 +809,11 @@ function wireUpdaterEvents(): void {
     // decision and must not suppress the telemetry: automatic checks are the
     // main way an install goes silently stale.
     emitUpdateFailure(err);
+    if (stagedJournal.state === "replacing") {
+      persistJournalTransition({ type: "replacement-failed", operationId: stagedJournal.replacement.operationId, at: Date.now(), message: errorMessage(err) });
+      broadcast(journalToUpdateStatus(stagedJournal));
+      return;
+    }
     if (activeUpdaterOperation === "automatic-check") {
       console.error("auto-update check failed:", err);
       recordAutomaticCheckFailure(err);
@@ -771,6 +882,7 @@ function automaticUpdateCheckInterval(settings: UpdateSettings): number {
 async function runAutomaticUpdateCheck(
   stateDir: string,
 ): Promise<number> {
+  await ensureStagedJournal(stateDir);
   let nextIntervalMs =
     automaticUpdateTimerIntervalMs ?? STABLE_AUTOMATIC_UPDATE_CHECK_INTERVAL_MS;
   try {
@@ -787,7 +899,7 @@ async function runAutomaticUpdateCheck(
       // Discovery is always on for the selected release channel. This preference
       // controls only whether electron-updater downloads the discovered build or
       // leaves it in `available` for the sidebar action.
-      autoUpdater.autoDownload = settings.enabled;
+      autoUpdater.autoDownload = settings.enabled || selectedChannelRequiresReplacement();
       applyInstallOnQuitPolicy();
       // Only nightly resolves a direct feed. Skipping the await entirely on the
       // other channels keeps this check's event ordering exactly as it was.
@@ -877,6 +989,7 @@ async function requestAutomaticUpdateCheck(
 // downloaded automatically. Both preferences come from update-settings.
 // Caller guards on app.isPackaged.
 export async function startAutoUpdates(stateDir: string): Promise<void> {
+  await ensureStagedJournal(stateDir);
   startRetirementPollTimer(stateDir);
   const intervalMs = await requestAutomaticUpdateCheck(stateDir);
   if (intervalMs !== undefined)
@@ -916,6 +1029,7 @@ export async function checkForUpdatesNow(
   stateDir: string,
   options: UpdateCheckOptions = {},
 ): Promise<void> {
+  await ensureStagedJournal(stateDir);
   escalationStateDir = stateDir;
   wireUpdaterEvents();
 	if (!app.isPackaged) {
@@ -944,7 +1058,7 @@ export async function checkForUpdatesNow(
         );
         reconcileAutomaticUpdateSchedule(stateDir, settings);
         configureFeed(settings);
-        autoUpdater.autoDownload = false;
+        autoUpdater.autoDownload = selectedChannelRequiresReplacement();
         applyInstallOnQuitPolicy();
         broadcastUpdaterStatus({ state: "checking" });
         const restoreFeed = await configureDirectNightlyFeed(settings);
@@ -987,6 +1101,7 @@ export async function returnToHome(
   stateDir: string,
   requestId?: string,
 ): Promise<void> {
+  await ensureStagedJournal(stateDir);
   escalationStateDir = stateDir;
   wireUpdaterEvents();
   if (!app.isPackaged) {
@@ -1013,7 +1128,7 @@ export async function returnToHome(
         const settings = await reconcileAndPersist(stateDir, cleared);
         reconcileAutomaticUpdateSchedule(stateDir, settings);
         configureFeed(settings);
-        autoUpdater.autoDownload = false;
+        autoUpdater.autoDownload = selectedChannelRequiresReplacement();
         applyInstallOnQuitPolicy();
         broadcastUpdaterStatus({ state: "checking" });
         await autoUpdater.checkForUpdates();
@@ -1050,6 +1165,17 @@ export async function downloadUpdateNow(requestId?: string): Promise<void> {
     await runSerializedUpdaterOperation(
       "manual-download",
       async () => {
+        if (stagedJournal.state === "replacement-failed") {
+          persistJournalTransition({
+            type: "replacement-discovered",
+            replacement: {
+              ...stagedJournal.replacement,
+              operationId: requestId ?? stagedJournal.replacement.operationId,
+            },
+            at: Date.now(),
+          });
+          broadcast(journalToUpdateStatus(stagedJournal));
+        }
         await autoUpdater.downloadUpdate();
       },
       requestId,
@@ -1145,6 +1271,16 @@ function applyInstallOnQuitPolicy(): void {
 // false keeps the installer UI on Windows; isForceRunAfter relaunches the app.
 export function quitAndInstallUpdate(): void {
 	if (!app.isPackaged) return;
+  if (stagedJournal.state === "replacing" || stagedJournal.state === "replacement-failed") {
+    console.warn("update install blocked while replacement is incomplete");
+    void dialog.showMessageBox({
+      type: "warning",
+      message: "Finish replacing the staged update first",
+      detail: `AO cannot restart into ${stagedJournal.replacement.version} yet. Quitting outside AO may still install ${stagedJournal.staged.version}.`,
+      buttons: ["OK"],
+    });
+    return;
+  }
   const blocker = getMacInstallBlocker();
   if (blocker !== undefined) {
     console.warn("update install blocked:", blocker);

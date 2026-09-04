@@ -357,7 +357,7 @@ function UpdateActions({
 
 	const manualCheckPending = manualCheckRequestId !== null;
 	const checking = effectiveStatus.state === "checking" || manualCheckPending;
-	const downloading = effectiveStatus.state === "downloading";
+	const downloading = effectiveStatus.state === "downloading" || effectiveStatus.state === "replacing";
 	const busy = checking || downloading;
 	const displayStatus: UpdateStatus = manualCheckPending && effectiveStatus.state !== "checking" ? { ...effectiveStatus, state: "checking" } : effectiveStatus;
 	const checkedAt = effectiveStatus.checkedAt
@@ -454,6 +454,24 @@ function UpdateActions({
 				</div>
 
 				<div className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:justify-end [&>button]:flex-1 sm:[&>button]:flex-none">
+					{effectiveStatus.state === "replacing" && (
+						<Button
+							type="button"
+							variant="primary"
+							size="sm"
+							disabled
+							aria-label={t("settings.updates.downloadingVersion", { version: effectiveStatus.replacementCandidate?.version ?? effectiveStatus.version })}
+							aria-describedby="update-replacement-install-reason"
+						>
+							<DownloadProgressIcon percent={effectiveStatus.percent ?? 0} />
+							{effectiveStatus.percent ?? 0}%
+						</Button>
+					)}
+					{effectiveStatus.state === "replacement-failed" && (
+						<Button type="button" variant="primary" size="sm" onClick={() => void aoBridge.updates.download()}>
+							{t("settings.updates.retryVersion", { version: effectiveStatus.replacementCandidate?.version ?? effectiveStatus.version })}
+						</Button>
+					)}
 					{effectiveStatus.state === "downloading" && (
 						<Button type="button" variant="primary" size="sm" disabled>
 							<DownloadProgressIcon percent={effectiveStatus.percent ?? 0} />
@@ -529,6 +547,40 @@ function UpdateStatusLine({ status }: { status: UpdateStatus }) {
 	let label: string;
 
 	switch (status.state) {
+		case "replacing": {
+			const from = status.stagedCandidate?.version ?? "?";
+			const to = status.replacementCandidate?.version ?? status.version ?? "?";
+			const metrics = status.transferred !== undefined || status.total !== undefined || status.bytesPerSecond !== undefined || status.etaSeconds !== undefined
+				? t("settings.updates.replacementMetrics", {
+					transferred: status.transferred ?? "?",
+					total: status.total ?? "?",
+					rate: status.bytesPerSecond ?? "?",
+					eta: status.etaSeconds ?? "?",
+				})
+				: null;
+			return (
+				<div className="text-settings-label">
+					<p className="text-pretty text-sm font-medium leading-5">
+						{t("settings.updates.replacingTitle", { from, to })}
+					</p>
+					<p id="update-replacement-install-reason" className="mt-1 text-xs leading-4 text-warning">
+						{t("settings.updates.replacingWarning", { from, phase: status.replacementPhase })}
+					</p>
+					{metrics && <p className="mt-1 text-xs leading-4 tabular-nums text-settings-muted">{metrics}</p>}
+					<div role="progressbar" aria-live="off" aria-label={t("settings.updates.progressVersion", { version: to })} aria-valuemin={0} aria-valuemax={100} aria-valuenow={status.percent ?? 0} className="sr-only" />
+				</div>
+			);
+		}
+		case "replacement-failed": {
+			const from = status.stagedCandidate?.version ?? "?";
+			const to = status.replacementCandidate?.version ?? status.version ?? "?";
+			return (
+				<div className="text-error">
+					<p className="text-pretty text-sm font-medium leading-5">{t("settings.updates.replacementFailed", { to, message: status.message })}</p>
+					<p id="update-replacement-install-reason" className="mt-1 text-xs leading-4 text-warning">{t("settings.updates.replacementFailedWarning", { from, to })}</p>
+				</div>
+			);
+		}
 		case "checking":
 			label = t("settings.updates.checking");
 			break;
