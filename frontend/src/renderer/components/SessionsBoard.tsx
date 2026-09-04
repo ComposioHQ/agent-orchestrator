@@ -39,6 +39,7 @@ import { restartProjectOrchestrator } from "../lib/restart-orchestrator";
 import { usesPreviewWorkspaceData } from "../lib/preview-mode";
 import { demoBoardSessions } from "../lib/demo-board-sessions";
 import { isLinuxPlatform, isMacPlatform, usesBoardActionsInPanel } from "../lib/platform";
+import { formatOrchestratorStartupError } from "../lib/orchestrator-startup-error";
 import { cn } from "../lib/utils";
 import { useUiStore } from "../stores/ui-store";
 import { RestoreUnavailableDialog } from "./RestoreUnavailableDialog";
@@ -129,7 +130,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 	const requestNewTask = useUiStore((state) => state.requestNewTask);
 	const isProjectRestarting = projectId ? restartingProjectIds.has(projectId) : false;
 	const health = workspace ? orchestratorHealth(workspace, isProjectRestarting) : { state: "ok" as const };
-	const visibleSpawnError = spawnError ?? orchestratorStartupError;
+	const visibleSpawnError = formatOrchestratorStartupError(spawnError ?? orchestratorStartupError ?? "");
 
 	// The board instance survives project-to-project navigation (same route,
 	// new param), so a spawn failure must not follow the user to another board.
@@ -210,7 +211,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 				});
 			} catch (error) {
 				console.error("Failed to spawn cloud orchestrator:", error);
-				setSpawnError(error instanceof Error ? error.message : t("shell.couldNotSpawn"));
+				setSpawnError(formatOrchestratorStartupError(error instanceof Error ? error.message : t("shell.couldNotSpawn")));
 			} finally {
 				setIsSpawning(false);
 			}
@@ -238,7 +239,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 			// Never fail silently: the daemon's message (e.g. a worktree/branch
 			// conflict) is the only actionable signal the user gets.
 			console.error("Failed to spawn orchestrator:", error);
-			setSpawnError(error instanceof Error ? error.message : t("shell.couldNotSpawn"));
+			setSpawnError(formatOrchestratorStartupError(error instanceof Error ? error.message : t("shell.couldNotSpawn")));
 			setCanCreateAsTui(isChatPreflightError(error));
 		} finally {
 			setIsSpawning(false);
