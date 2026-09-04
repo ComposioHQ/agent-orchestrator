@@ -247,7 +247,7 @@ describe("ACP session config options", () => {
 		expect(onChange).toHaveBeenCalledWith("model", { value: "sonnet" });
 	});
 
-	it("shows Codex's three native permission choices", async () => {
+	it("shows Codex's distinct native and explicit permission choices", async () => {
 		const user = userEvent.setup();
 		const onChange = vi.fn();
 		render(
@@ -260,7 +260,7 @@ describe("ACP session config options", () => {
 		);
 
 		expect(screen.getByRole("button", { name: "Approval policy for the next turn" })).toHaveTextContent(
-			"Full access",
+			"Native defaults",
 		);
 		await user.click(screen.getByRole("button", { name: "Approval policy for the next turn" }));
 		expect(screen.getByRole("menuitem", { name: "Ask for approval" })).toBeInTheDocument();
@@ -269,7 +269,7 @@ describe("ACP session config options", () => {
 		expect(screen.queryByRole("menuitem", { name: "Default approvals" })).not.toBeInTheDocument();
 		expect(screen.queryByRole("menuitem", { name: "Accept edits" })).not.toBeInTheDocument();
 		expect(screen.queryByRole("menuitem", { name: "Auto-approve" })).not.toBeInTheDocument();
-		expect(screen.getByRole("menuitem", { name: "Full access" })).toBeInTheDocument();
+		expect(screen.getByRole("menuitem", { name: "Native defaults" })).toBeInTheDocument();
 
 		await user.click(screen.getByRole("menuitem", { name: "Approve for me" }));
 		expect(onChange).toHaveBeenCalledWith({ approvalMode: "auto" });
@@ -291,7 +291,7 @@ describe("ACP session config options", () => {
 			screen.getByRole("button", { name: "Model and reasoning effort for the next turn" }),
 		).toHaveTextContent("gpt-5.6-terra High");
 		expect(screen.getByRole("button", { name: "Approval policy for the next turn" })).toHaveTextContent(
-			"Full access",
+			"Native defaults",
 		);
 	});
 
@@ -308,7 +308,7 @@ describe("ACP session config options", () => {
 			"Bypass permissions",
 		);
 	});
-	it("distinguishes Codex bypass permissions from its default full-access posture", () => {
+	it("distinguishes Codex bypass permissions from its native defaults", () => {
 		render(
 			<TurnSettingsBar
 				harness="codex"

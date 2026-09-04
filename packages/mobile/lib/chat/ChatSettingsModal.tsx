@@ -8,10 +8,10 @@ import type { ChatConfigOption, ChatModel, ConversationSnapshot, TurnSettings } 
 import { can } from "./types";
 
 const APPROVALS = [
-	{ id: "default", label: "Default", hint: "The worktree is the safety boundary" },
+	{ id: "default", label: "Native defaults", hint: "Use the agent’s configured approvals and sandbox" },
 	{ id: "accept-edits", label: "Ask outside worktree", hint: "Edits here are allowed; anything else asks" },
 	{ id: "auto", label: "Ask when unsure", hint: "The agent decides when to check with you" },
-	{ id: "bypass-permissions", label: "Never ask", hint: "No approvals or sandbox prompts" },
+	{ id: "bypass-permissions", label: "Bypass permissions", hint: "Explicitly disable approvals and sandbox protections" },
 ] as const;
 
 export function ChatSettingsSheet({

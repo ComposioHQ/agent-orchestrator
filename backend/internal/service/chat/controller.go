@@ -1236,6 +1236,11 @@ func (c *Controller) SetSettings(ctx context.Context, settings domain.Conversati
 // turnSettings converts the stored choices into what a driver takes per turn.
 func (c *Controller) turnSettings() ports.ChatTurnSettings {
 	current := c.Settings()
+	// Durable settings describe the complete desired policy. An omitted approval
+	// means Default, not inheritance of a prior provider-side override.
+	if current.ApprovalMode == "" {
+		current.ApprovalMode = domain.PermissionModeDefault
+	}
 	return ports.ChatTurnSettings{
 		Model:    current.Model,
 		Effort:   current.ReasoningEffort,

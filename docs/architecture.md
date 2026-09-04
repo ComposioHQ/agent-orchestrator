@@ -918,6 +918,31 @@ sequenceDiagram
 
 ---
 
+### Codex approval defaults
+
+Codex's **Default** permission choice delegates to native configuration; unknown
+permission values normalize to Default. Fresh TUI launch/restore and Chat start
+send no approval, reviewer, or sandbox override for that choice. Only explicit
+**Bypass permissions** selects AO's unrestricted approval/sandbox posture.
+The shared runtime maps durable read-only mode to a read-only sandbox with no
+approval escalation. Cloud currently rejects interactive read-only launches until
+OS filesystem confinement is available; its existing headless Codex path separately
+requests the read-only sandbox. This change does not enable a new read-only launch path.
+
+Codex retains per-turn permission overrides and may restore them from a saved
+thread. Returning to Default after an explicit override, or resuming a Default
+Chat conversation, therefore requires a wire-level reset to provider-resolved
+native settings. AO uses the fresh native thread response when available;
+otherwise it opens an ephemeral thread with no overrides and no model turn,
+reads its effective policy, and unsubscribes it. This is necessary because
+`config/read` can omit built-in defaults. AO never invents fallback permissions:
+unresolved settings or failed probe cleanup block the turn/resume. A retained
+host is left untouched while its current turn runs; its next Default turn resets
+the policy before dispatch. Full native turn sandbox settings are preserved,
+including network access and writable roots, before the first resumed model turn.
+Granular native approval rules are preserved. Unrecognized sandbox variants or
+malformed approval policies are rejected rather than mapped to full access.
+
 ## Terminal Multiplexing
 
 The mux is the primary agent controller only for TUI-mode sessions. Chat-mode
