@@ -2036,6 +2036,73 @@ ipcMain.handle("app:getRepositoryBranch", async (_event, path: string) => {
 	await ensureShellEnv();
 	return resolveCheckedOutBranch(path, { env: daemonEnv(), homeDir: os.homedir() });
 });
+async function readCommandStdout(command: string, args: string[], env: NodeJS.ProcessEnv): Promise<string> {
+	return new Promise((resolve) => {
+		let child: ReturnType<typeof spawn>;
+		try {
+			child = spawn(command, args, { env, stdio: ["ignore", "pipe", "ignore"], windowsHide: true });
+		} catch {
+			resolve("");
+			return;
+		}
+		let settled = false;
+		let stdout = "";
+		const finish = (value: string) => {
+			if (settled) return;
+			settled = true;
+			resolve(value.trim());
+		};
+		const timer = setTimeout(() => {
+			child.kill("SIGKILL");
+			finish("");
+		}, 5000);
+		child.stdout?.on("data", (chunk: Buffer) => {
+			stdout += chunk.toString("utf8");
+		});
+		child.once("error", () => {
+			clearTimeout(timer);
+			finish("");
+		});
+		child.once("exit", (code) => {
+			clearTimeout(timer);
+			finish(code === 0 ? stdout : "");
+		});
+	});
+}
+
+async function resolveGitHubToken(): Promise<string> {
+	const env = daemonEnv();
+	for (const name of ["AO_GITHUB_TOKEN", "GITHUB_TOKEN"]) {
+		const token = env[name]?.trim();
+		if (token) return token;
+	}
+	return readCommandStdout("gh", ["auth", "token"], env);
+}
+
+async function resolveGitHubLogin(): Promise<string> {
+	const token = await resolveGitHubToken();
+	if (!token) return "";
+	try {
+		const response = await net.fetch("https://api.github.com/user", {
+			headers: {
+				Accept: "application/vnd.github+json",
+				Authorization: `Bearer ${token}`,
+				"User-Agent": `AO-Desktop/${app.getVersion()}`,
+			},
+			signal: AbortSignal.timeout(5000),
+		});
+		if (!response.ok) return "";
+		const payload = (await response.json()) as { login?: unknown };
+		return typeof payload.login === "string" ? payload.login.trim() : "";
+	} catch {
+		return "";
+	}
+}
+
+ipcMain.handle("app:getGitHubLogin", async () => {
+	await ensureShellEnv();
+	return resolveGitHubLogin();
+});
 ipcMain.handle("clipboard:writeText", (_event, text: string) => {
 	clipboard.writeText(text, "clipboard");
 	if (process.platform === "linux") {
