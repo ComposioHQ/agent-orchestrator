@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { useState, type ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { CreateProjectFlow, type CloneProjectInput, type CreateProjectInput } from "./CreateProjectFlow";
+import { useUiStore } from "../stores/ui-store";
 
 const bridgeMocks = vi.hoisted(() => ({
 	checkAncestorRepo: vi.fn(),
@@ -202,6 +203,7 @@ beforeEach(() => {
 	cloudMocks.createProject.mockReset();
 	cloudMocks.signIn.mockReset();
 	window.localStorage.clear();
+	useUiStore.setState({ globalToast: null });
 });
 
 describe("CreateProjectFlow droppedPath", () => {
@@ -323,7 +325,7 @@ describe("CreateProjectFlow project import validation", () => {
 		await user.click(screen.getByRole("button", { name: "New project" }));
 		await user.click(await screen.findByRole("button", { name: "Import an existing project" }));
 
-		expect(await screen.findByText("Choose a folder AO can read.")).toBeInTheDocument();
+		await waitFor(() => expect(useUiStore.getState().globalToast?.body).toBe("Choose a folder AO can read."));
 		expect(screen.queryByTestId("agent-sheet")).not.toBeInTheDocument();
 		await user.click(screen.getByRole("button", { name: "Back to import source" }));
 		expect(screen.getByRole("button", { name: "Import an existing project" })).toBeInTheDocument();
@@ -660,7 +662,7 @@ describe("CreateProjectFlow project import validation", () => {
 		await user.type(remoteInput, "https://github.com/acme/project.git");
 		await user.click(screen.getByRole("button", { name: "Continue" }));
 
-		expect(await screen.findByText(/failed while running Remote setup/i)).toBeInTheDocument();
+		await waitFor(() => expect(useUiStore.getState().globalToast?.body).toMatch(/failed while running Remote setup/i));
 		expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
 		expect(screen.queryByTestId("agent-sheet")).not.toBeInTheDocument();
 	});

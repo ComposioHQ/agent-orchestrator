@@ -304,6 +304,7 @@
 	--animate-status-pulse: status-pulse 1.8s ease-in-out infinite;
 	--animate-overlay-in: overlay-in 80ms var(--ease-out);
 	--animate-modal-in: modal-in 120ms var(--ease-out);
+	--animate-modal-shake: modal-shake 280ms ease-in-out;
 	--animate-popover-in: popover-in 150ms var(--ease-out);
 	/* Exits are shorter than entries: the system is responding, not deciding. */
 	--animate-overlay-out: overlay-out 60ms ease-in;
@@ -1908,6 +1909,12 @@ textarea,
 		opacity: 1;
 		scale: 1;
 	}
+}
+
+@keyframes modal-shake {
+	0%, 100% { translate: 0; }
+	25% { translate: -6px 0; }
+	75% { translate: 6px 0; }
 }
 
 @keyframes modal-out {

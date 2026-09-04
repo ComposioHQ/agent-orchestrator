@@ -26,6 +26,7 @@ import { cloudProjectsQueryKey } from "../hooks/useWorkspaceQuery";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
 import { aoBridge } from "../lib/bridge";
 import { useCloudSession } from "../lib/cloud-session";
+import { useUiStore } from "../stores/ui-store";
 import { cn } from "../lib/utils";
 import type { ProjectKind } from "../types/workspace";
 import { CreateProjectAgentSheet, type CreateProjectAgentSelection } from "./CreateProjectAgentSheet";
@@ -115,6 +116,7 @@ export function CreateProjectFlow({
 	const [projectApprovedActions, setProjectApprovedActions] = useState<string[]>([]);
 	const [projectRemoteUrl, setProjectRemoteUrl] = useState("");
 	const [projectSuggestWorkspace, setProjectSuggestWorkspace] = useState(false);
+	const [projectImportShake, setProjectImportShake] = useState(false);
 	const [isChoosingPath, setIsChoosingPath] = useState(false);
 	const [isCreating, setIsCreating] = useState(false);
 	const [isInitializing, setIsInitializing] = useState(false);
@@ -138,6 +140,15 @@ export function CreateProjectFlow({
 	const hasModePicker = mode === "choose";
 	const projectImportOpen = projectImportStep !== null && projectValidation !== null;
 	const isBusy = isChoosingPath || isCreating || isInitializing || isPreparingGit;
+	const showGlobalToast = useUiStore((state) => state.showGlobalToast);
+
+	const reportProjectError = (message: string) => {
+		setError(message);
+		showGlobalToast(t("createProject.setupFailedToastTitle", { defaultValue: "Project setup failed" }), message);
+		setProjectImportShake(false);
+		window.requestAnimationFrame(() => setProjectImportShake(true));
+		window.setTimeout(() => setProjectImportShake(false), 320);
+	};
 
 	const transitionToChild = (open: () => void) => {
 		setChildTransitioning(true);
@@ -195,7 +206,7 @@ export function CreateProjectFlow({
 				setProjectRemoteUrl(validation.root.requiredActions.includes("set_remote") ? suggestedProjectRemoteUrl(validation.root.repoPath) : "");
 				setProjectSuggestWorkspace(validation.nextStep === "choose_import_kind");
 				if (!validation.isValid || validation.nextStep === "error") {
-					setError(importValidationMessage(validation));
+					reportProjectError(importValidationMessage(validation));
 					setProjectImportStep("blocked");
 					return;
 				}
@@ -228,7 +239,7 @@ export function CreateProjectFlow({
 					setError(blockingReason ?? null);
 				} catch (err) {
 					setValidationScan({ path, repos: [] });
-					setError(err instanceof Error ? err.message : t("createProject.couldNotAdd"));
+					reportProjectError(err instanceof Error ? err.message : t("createProject.couldNotAdd"));
 				}
 				transitionToChild(() => setFolderPickerOpen(true));
 				return;
@@ -239,7 +250,7 @@ export function CreateProjectFlow({
 				setFolderPickerOpen(false);
 			}
 		} catch (err) {
-			setError(err instanceof Error ? err.message : t("createProject.couldNotAdd"));
+			reportProjectError(err instanceof Error ? err.message : t("createProject.couldNotAdd"));
 		} finally {
 			setIsChoosingPath(false);
 		}
@@ -387,17 +398,17 @@ export function CreateProjectFlow({
 		const remoteUrl = projectRemoteUrl.trim();
 		if (remoteUrl !== "") {
 			if (!isValidProjectRemote(remoteUrl)) {
-				setError(t("createProject.cloneInvalidUrl"));
+				reportProjectError(t("createProject.cloneInvalidUrl"));
 				return;
 			}
 			try {
 				const checkGitRepository = aoBridge.app.checkGitRepository;
 				if (checkGitRepository && !(await checkGitRepository(remoteUrl))) {
-					setError(t("createProject.cloneRepositoryUnavailable", { defaultValue: "This isn't a repository or you don't have access" }));
+					reportProjectError(t("createProject.cloneRepositoryUnavailable", { defaultValue: "This isn't a repository or you don't have access" }));
 					return;
 				}
 			} catch {
-				setError(t("createProject.cloneRepositoryUnavailable", { defaultValue: "This isn't a repository or you don't have access" }));
+				reportProjectError(t("createProject.cloneRepositoryUnavailable", { defaultValue: "This isn't a repository or you don't have access" }));
 				return;
 			}
 		}
@@ -419,11 +430,11 @@ export function CreateProjectFlow({
 			if (projectRemoteUrl.trim() !== "") persistSuggestedProjectRemoteUrl(projectRemoteUrl);
 			const failed = data.events.find((event) => event.state === "error");
 			if (failed) {
-				setError(projectPreparationFailureMessage(failed));
+				reportProjectError(projectPreparationFailureMessage(failed));
 				return;
 			}
 			if (!data.validation.isValid || data.validation.nextStep === "error") {
-				setError(importValidationMessage(data.validation));
+				reportProjectError(importValidationMessage(data.validation));
 				setProjectImportStep("blocked");
 				setProjectSuggestWorkspace(false);
 				return;
@@ -434,7 +445,7 @@ export function CreateProjectFlow({
 				setSelectedPath(data.validation.root.repoPath);
 			}
 		} catch (err) {
-			setError(err instanceof Error ? err.message : t("createProject.couldNotAdd"));
+			reportProjectError(err instanceof Error ? err.message : t("createProject.couldNotAdd"));
 		} finally {
 			setIsPreparingGit(false);
 		}
@@ -580,13 +591,13 @@ export function CreateProjectFlow({
 			)}
 			<ProjectImportDialog
 				disabled={isBusy}
-				error={error}
 				approvedActions={projectApprovedActions}
 				onBack={reopenSourcePicker}
 				onChangeApprovedActions={setProjectApprovedActions}
 				onChangeFolder={() => void chooseDirectory("single_repo")}
 				onChangeRemote={setProjectRemoteUrl}
 				onContinue={() => void prepareProjectGit()}
+				shake={projectImportShake}
 				onOpenChange={(open) => {
 					if (isBusy) return;
 					if (!open) {
@@ -1195,7 +1206,6 @@ function ImportSourcePicker({
 function ProjectImportDialog({
 	approvedActions,
 	disabled,
-	error,
 	events,
 	onBack,
 	onChangeApprovedActions,
@@ -1206,6 +1216,7 @@ function ProjectImportDialog({
 	onTryWorkspace,
 	open,
 	remoteUrl,
+	shake,
 	suggestWorkspace,
 	step,
 	isPreparingGit,
@@ -1213,7 +1224,6 @@ function ProjectImportDialog({
 }: {
 	approvedActions: string[];
 	disabled: boolean;
-	error: string | null;
 	events: GitPreparationEvent[];
 	onBack: () => void;
 	onChangeApprovedActions: (actions: string[]) => void;
@@ -1224,6 +1234,7 @@ function ProjectImportDialog({
 	onTryWorkspace: () => void;
 	open: boolean;
 	remoteUrl: string;
+	shake: boolean;
 	suggestWorkspace: boolean;
 	step: ProjectImportStep | null;
 	isPreparingGit: boolean;
@@ -1240,7 +1251,7 @@ function ProjectImportDialog({
 		<Dialog.Root open={open} onOpenChange={onOpenChange}>
 			<Dialog.Portal>
 				<Dialog.Content
-					className="fixed left-1/2 top-1/2 z-overlay flex max-h-[min(640px,calc(100svh-24px))] w-[min(560px,calc(100vw-24px))] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-lg border border-border bg-popover p-0 text-popover-foreground shadow-xl data-[state=open]:animate-modal-in data-[state=closed]:animate-modal-out motion-reduce:animate-none"
+					className={cn("fixed left-1/2 top-1/2 z-overlay flex max-h-[min(640px,calc(100svh-24px))] w-[min(560px,calc(100vw-24px))] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-lg border border-border bg-popover p-0 text-popover-foreground shadow-xl data-[state=open]:animate-modal-in data-[state=closed]:animate-modal-out motion-reduce:animate-none", shake && "animate-modal-shake")}
 					onInteractOutside={(event) => event.preventDefault()}
 					onPointerDownOutside={(event) => event.preventDefault()}
 				>
@@ -1296,11 +1307,6 @@ function ProjectImportDialog({
 						{validation.warning ? (
 							<div className="border-l-2 border-amber-500/60 pl-3 text-[12px] leading-5 text-muted-foreground">
 								{validation.warning}
-							</div>
-						) : null}
-						{error ? (
-							<div className="rounded-md bg-destructive/10 px-3 py-2.5 text-[12px] leading-5 text-destructive" role="alert">
-								{error}
 							</div>
 						) : null}
 						{step === "prepare_git" ? (
