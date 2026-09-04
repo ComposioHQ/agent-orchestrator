@@ -864,6 +864,7 @@ describe("agent browser runtime", () => {
 
 	it("returns one explicit observation with target, snapshot, image, and problems", async () => {
 		const { host, webContentsListeners } = setupHost();
+		await host.execute("sess-1", "__status");
 		const consoleListener = webContentsListeners.get("console-message");
 		consoleListener?.({} as never, { level: "error", message: "render failed" } as never);
 

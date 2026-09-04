@@ -872,11 +872,11 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 				case "drag":
 					return runMutation(entry, args, signal, () => dragEntry(entry, args));
 				case "back":
-					return runMutation(entry, args, signal, () => invokeNav(entry.state.viewId, (contents) => contents.goBack(), true));
+					return runMutation(entry, args, signal, async () => invokeNav(entry.state.viewId, (contents) => contents.goBack(), true));
 				case "forward":
-					return runMutation(entry, args, signal, () => invokeNav(entry.state.viewId, (contents) => contents.goForward(), true));
+					return runMutation(entry, args, signal, async () => invokeNav(entry.state.viewId, (contents) => contents.goForward(), true));
 				case "reload":
-					return runMutation(entry, args, signal, () => invokeNav(entry.state.viewId, (contents) => contents.reload(), true));
+					return runMutation(entry, args, signal, async () => invokeNav(entry.state.viewId, (contents) => contents.reload(), true));
 				case "fill":
 					return runMutation(entry, args, signal, (target) =>
 						fillEntry(entry, target, stringArg(args, "text", "INVALID_ARGUMENT", "text is required", true)),
@@ -1733,7 +1733,9 @@ async function observeEntry(entry: BrowserEntry, options: ObserveEntryOptions): 
 async function snapshotEntry(entry: BrowserEntry, interactiveOnly: boolean, frameId?: string): Promise<Record<string, unknown>> {
 	await ensureDebugger(entry);
 	await entry.view.webContents.debugger.sendCommand("Accessibility.enable");
-	const response = (await entry.view.webContents.debugger.sendCommand("Accessibility.getFullAXTree", frameId ? { frameId } : undefined)) as {
+	const response = (await (frameId
+		? entry.view.webContents.debugger.sendCommand("Accessibility.getFullAXTree", { frameId })
+		: entry.view.webContents.debugger.sendCommand("Accessibility.getFullAXTree"))) as {
 		nodes?: AXNode[];
 	};
 	const nodes = response.nodes ?? [];
