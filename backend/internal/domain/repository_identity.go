@@ -46,7 +46,7 @@ func ParseRepositoryIdentity(raw string) (RepositoryIdentity, error) {
 	if (u.Scheme != "https" && u.Scheme != "http" && u.Scheme != "ssh") || u.Hostname() == "" || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || u.RawPath != "" || strings.ContainsAny(u.Path, `\`) {
 		return RepositoryIdentity{}, invalid
 	}
-	if u.Scheme != "ssh" && (u.User != nil || u.Port() != "") {
+	if u.Scheme != "ssh" && u.Port() != "" {
 		return RepositoryIdentity{}, invalid
 	}
 	parts := strings.Split(strings.TrimSuffix(strings.TrimPrefix(u.Path, "/"), "/"), "/")
@@ -73,7 +73,8 @@ func (c ProjectConfig) ValidateCanonicalRepository(origin string) error {
 		return nil
 	}
 	upstream, err := ParseRepositoryIdentity(c.CanonicalRepoURL)
-	if err != nil || !strings.HasPrefix(c.CanonicalRepoURL, "https://") {
+	canonicalURL, urlErr := url.Parse(c.CanonicalRepoURL)
+	if err != nil || urlErr != nil || canonicalURL.Scheme != "https" || canonicalURL.User != nil {
 		return fmt.Errorf("canonicalRepoURL: use an HTTPS repository URL without credentials, query, fragment, or port")
 	}
 	checkout, err := ParseRepositoryIdentity(origin)

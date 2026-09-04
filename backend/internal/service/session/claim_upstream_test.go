@@ -25,6 +25,7 @@ func TestClaimPRExplicitCanonicalRepository(t *testing.T) {
 		name, origin, canonical, ref, wantRepo, wantURL string
 		wantErr                                         error
 	}{
+		{"authenticated checkout origin", "https://git-user:token@github.com/alice/repo.git", "https://github.com/acme/repo", "7", "acme/repo", "https://github.com/acme/repo/pull/7", nil},
 		{"github upstream URL", "git@github.com:alice/repo.git", "https://github.com/acme/repo", "https://github.com/acme/repo/pull/7", "acme/repo", "https://github.com/acme/repo/pull/7", nil},
 		{"github upstream number", "https://github.com/alice/repo", "https://github.com/acme/repo", "7", "acme/repo", "https://github.com/acme/repo/pull/7", nil},
 		{"origin remains trusted", "https://github.com/alice/repo", "https://github.com/acme/repo", "https://github.com/alice/repo/pull/7", "alice/repo", "https://github.com/alice/repo/pull/7", nil},

@@ -8,6 +8,7 @@ func TestCanonicalRepositoryValidation(t *testing.T) {
 		valid                   bool
 	}{
 		{"legacy", "", "", true},
+		{"authenticated checkout origin", "https://git-user:token@github.com/alice/repo.git", "https://github.com/acme/repo", true},
 		{"github fork", "git@github.com:alice/repo.git", "https://github.com/acme/repo", true},
 		{"gitlab nested", "ssh://git@gitlab.example.com/alice/team/repo.git", "https://gitlab.example.com/group/subgroup/repo", true},
 		{"cross host", "https://gitlab.com/alice/repo", "https://gitlab.example.com/group/repo", false},
