@@ -204,19 +204,23 @@ export function useOpenShellTerminal() {
 }
 
 /** Closes a shell and destroys its PTY. */
+export async function closeShellTerminal(handleId: string): Promise<void> {
+	if (usePreviewData) {
+		previewShellTerminals = previewShellTerminals.filter((shell) => shell.handleId !== handleId);
+		return;
+	}
+	const { error } = await apiClient.DELETE("/api/v1/shell-terminals/{handleId}", {
+		params: { path: { handleId } },
+	});
+	// The desired postcondition is already true when the daemon no longer owns
+	// the record. Treat this as confirmed cleanup, not a failed cancellation.
+	if (error && apiErrorCode(error) !== "SHELL_TERMINAL_NOT_FOUND") throw error;
+}
+
 export function useCloseShellTerminal() {
 	const queryClient = useQueryClient();
 	return useMutation({
-		mutationFn: async (handleId: string): Promise<void> => {
-			if (usePreviewData) {
-				previewShellTerminals = previewShellTerminals.filter((s) => s.handleId !== handleId);
-				return;
-			}
-			const { error } = await apiClient.DELETE("/api/v1/shell-terminals/{handleId}", {
-				params: { path: { handleId } },
-			});
-			if (error) throw error;
-		},
+		mutationFn: closeShellTerminal,
 		onMutate: async (handleId) => {
 			const previous = queryClient.getQueryData<ShellTerminal[]>(shellTerminalsQueryKey);
 			const removeClosedShell = () => {

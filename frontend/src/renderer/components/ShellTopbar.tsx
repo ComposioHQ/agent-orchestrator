@@ -469,25 +469,31 @@ export function TopbarKillButton({
 
 	return (
 		<div className="inline-flex items-center gap-1.5" style={noDragStyle}>
-			<SessionTerminationPopover
-				onConfirm={confirmKill}
-				onOpenChange={setConfirmOpen}
-				open={confirmOpen}
-				session={session}
-				trigger={
-					<TopbarButton
-						aria-label={isPending ? t("shell.killing") : t("shell.killSession")}
-						disabled={isPending}
-						onClick={() => {
-							clearTerminateSessionState(queryClient, session.id);
-						}}
-						title={t("shell.killSession")}
-						variant="killIcon"
-					>
-						<Trash2 className="size-icon-md" aria-hidden="true" />
-					</TopbarButton>
-				}
-			/>
+			<Tooltip>
+				<TooltipTrigger asChild>
+					<span className="inline-flex">
+						<SessionTerminationPopover
+							onConfirm={confirmKill}
+							onOpenChange={setConfirmOpen}
+							open={confirmOpen}
+							session={session}
+							trigger={
+								<TopbarButton
+									aria-label={isPending ? t("shell.killing") : t("shell.killSession")}
+									disabled={isPending}
+									onClick={() => {
+										clearTerminateSessionState(queryClient, session.id);
+									}}
+									variant="killIcon"
+								>
+									<Trash2 className="size-icon-md" aria-hidden="true" />
+								</TopbarButton>
+							}
+						/>
+					</span>
+				</TooltipTrigger>
+				<TooltipContent side="bottom">{t("shell.killSession")}</TooltipContent>
+			</Tooltip>
 			{error ? <TopbarActionError>{error}</TopbarActionError> : null}
 		</div>
 	);

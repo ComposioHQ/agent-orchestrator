@@ -64,7 +64,7 @@ import {
 	exploredFileCount,
 	isNonzeroCommandExit,
 } from "./activity-command";
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "../ui/tooltip";
+import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
 import {
 	DropdownMenu,
 	DropdownMenuContent,
@@ -259,7 +259,7 @@ function useSmoothStreamingText(message: ConversationMessage): string {
 	return visibleText;
 }
 
-function humanMessageParts(text: string): { body: string; attachments: string[] } {
+function stagedAttachmentParts(text: string): { body: string; attachments: string[] } {
 	const match = ATTACHMENT_REFERENCE_BLOCK.exec(text);
 	if (!match?.[1]) return { body: text, attachments: [] };
 
@@ -399,6 +399,51 @@ function attachmentURL(apiBaseUrl: string, sessionId: string, path: string): str
 	return apiBaseUrl ? new URL(route, apiBaseUrl).toString() : route;
 }
 
+function StagedAttachmentItems({
+	paths,
+	sessionId,
+	apiBaseUrl,
+	ariaLabel,
+	className,
+}: {
+	paths: string[];
+	sessionId: string;
+	apiBaseUrl: string;
+	ariaLabel: string;
+	className?: string;
+}) {
+	if (paths.length === 0) return null;
+	return (
+		<ul aria-label={ariaLabel} className={cn("flex max-w-full flex-wrap gap-2", className)}>
+			{paths.map((path) => {
+				const name = attachmentName(path);
+				return IMAGE_ATTACHMENT_PATH.test(path) ? (
+					<li
+						key={path}
+						className="max-w-full overflow-hidden rounded-md border border-border bg-background"
+					>
+						<img
+							src={attachmentURL(apiBaseUrl, sessionId, path)}
+							alt={name}
+							loading="lazy"
+							className="block h-auto max-h-80 max-w-full object-contain"
+						/>
+					</li>
+				) : (
+					<li
+						key={path}
+						title={path}
+						className="flex max-w-full items-center gap-1.5 rounded-md border border-border bg-background px-2 py-1.5 text-xs text-muted-foreground"
+					>
+						<FileIcon aria-hidden="true" className="size-3.5 shrink-0" />
+						<span className="truncate">{name}</span>
+					</li>
+				);
+			})}
+		</ul>
+	);
+}
+
 /** Collapse the home directory so a long absolute path does not eat the row. */
 function shortenPaths(text: string): string {
 	return text.replace(/\/(?:Users|home)\/[^/\s]+/g, "~");
@@ -480,7 +525,7 @@ export function HumanMessage({
 	activateBranchPending?: boolean;
 	activateBranchError?: string;
 }) {
-	const { body, attachments } = humanMessageParts(message.text);
+	const { body, attachments } = stagedAttachmentParts(message.text);
 	return (
 		<div className="group/message flex flex-col items-end gap-1">
 			{/* A queued message reads as not-yet-sent rather than as sent-and-ignored:
@@ -511,23 +556,13 @@ export function HumanMessage({
 					)}
 				>
 					{body ? <p className="break-words whitespace-pre-wrap text-pretty">{body}</p> : null}
-					{attachments.length > 0 ? (
-						<ul aria-label="Attached files" className={cn("flex max-w-full flex-wrap gap-2", body && "mt-2")}>
-							{attachments.map((path) => {
-								const name = attachmentName(path);
-								return IMAGE_ATTACHMENT_PATH.test(path) ? (
-									<li key={path} className="max-w-full overflow-hidden rounded-md border border-border bg-background">
-										<img src={attachmentURL(apiBaseUrl, sessionId, path)} alt={name} loading="lazy" className="block h-auto max-h-80 max-w-full object-contain" />
-									</li>
-								) : (
-									<li key={path} title={path} className="flex max-w-full items-center gap-1.5 rounded-md border border-border bg-background px-2 py-1.5 text-xs text-muted-foreground">
-										<FileIcon aria-hidden="true" className="size-3.5 shrink-0" />
-										<span className="truncate">{name}</span>
-									</li>
-								);
-							})}
-						</ul>
-					) : null}
+					<StagedAttachmentItems
+						paths={attachments}
+						sessionId={sessionId}
+						apiBaseUrl={apiBaseUrl}
+						ariaLabel="Attached files"
+						className={cn(body && "mt-2")}
+					/>
 				</div>
 			)}
 			{editing ? null : (
@@ -540,15 +575,19 @@ export function HumanMessage({
 							{formatMessageTimestamp(message.createdAt)}
 						</span>
 						{onEdit && onEditStart && message.turnId ? (
-							<button
-								type="button"
-								onClick={onEditStart}
-								aria-label="Edit user message"
-								title="Edit user message"
-								className="flex size-7 items-center justify-center rounded-md text-muted-foreground transition-[scale,background-color,color] duration-150 ease-out hover:bg-interactive-hover hover:text-foreground active:scale-[0.96] motion-reduce:transition-none motion-reduce:active:scale-100"
-							>
-								<Pencil aria-hidden="true" className="size-3" />
-							</button>
+							<Tooltip>
+								<TooltipTrigger asChild>
+									<button
+										type="button"
+										onClick={onEditStart}
+										aria-label="Edit user message"
+										className="flex size-7 items-center justify-center rounded-md text-muted-foreground transition-[scale,background-color,color] duration-150 ease-out hover:bg-interactive-hover hover:text-foreground active:scale-[0.96] motion-reduce:transition-none motion-reduce:active:scale-100"
+									>
+										<Pencil aria-hidden="true" className="size-3" />
+									</button>
+								</TooltipTrigger>
+								<TooltipContent side="bottom">Edit user message</TooltipContent>
+							</Tooltip>
 						) : null}
 						<CopyButton
 							text={message.text}
@@ -665,15 +704,19 @@ export function AssistantMessage({
 						/>
 					) : null}
 					{onRollback ? (
-						<button
-							type="button"
-							onClick={onRollback}
-							aria-label="Roll back to here"
-							title="Roll back to here"
-							className="flex size-7 items-center justify-center rounded-md text-muted-foreground transition-[scale,background-color,color] duration-150 ease-out hover:bg-interactive-hover hover:text-foreground active:scale-[0.96] motion-reduce:transition-none motion-reduce:active:scale-100"
-						>
-							<Undo2 aria-hidden="true" className="size-3" />
-						</button>
+						<Tooltip>
+							<TooltipTrigger asChild>
+								<button
+									type="button"
+									onClick={onRollback}
+									aria-label="Roll back to here"
+									className="flex size-7 items-center justify-center rounded-md text-muted-foreground transition-[scale,background-color,color] duration-150 ease-out hover:bg-interactive-hover hover:text-foreground active:scale-[0.96] motion-reduce:transition-none motion-reduce:active:scale-100"
+								>
+									<Undo2 aria-hidden="true" className="size-3" />
+								</button>
+							</TooltipTrigger>
+							<TooltipContent side="bottom">Roll back to here</TooltipContent>
+						</Tooltip>
 					) : null}
 					{hasDuration ? <TurnDuration durationMs={durationMs} /> : null}
 					<span
@@ -1816,18 +1859,43 @@ function ReauthRow({ activity }: { activity: ConversationActivity }) {
  * back needs to see that this arrived mid-turn, since it explains why the agent
  * changed course without a new exchange starting.
  */
-export function SteerMessage({ activity }: { activity: ConversationActivity }) {
+export function SteerMessage({
+	activity,
+	sessionId,
+	apiBaseUrl = getApiBaseUrl(),
+}: {
+	activity: ConversationActivity;
+	sessionId: string;
+	apiBaseUrl?: string;
+}) {
 	const text = activity.detail?.text ?? activity.summary;
+	const { body, attachments } = stagedAttachmentParts(text);
+	let stagedImagesToMatch = attachments.filter((path) => IMAGE_ATTACHMENT_PATH.test(path)).length;
+	// Composer images are recorded twice: once as durable staged paths and once as
+	// native prompt blocks. Suppress only the corresponding leading native images;
+	// later image blocks may be distinct provider content and must remain visible.
+	const remainingContent = (activity.detail?.content ?? []).filter((item) => {
+		if (item.type !== "image" || stagedImagesToMatch === 0) return true;
+		stagedImagesToMatch -= 1;
+		return false;
+	});
 	return (
 		<div className="flex flex-col items-end gap-1">
 			<div className="w-fit max-w-[min(78%,560px)] break-words whitespace-pre-wrap rounded-[10px] border border-accent-dim bg-raised px-3 py-2.5 text-sm leading-[1.55] text-foreground">
-				{text ? <p>{text}</p> : null}
-				<ConversationContentItems
-					content={activity.detail?.content ?? []}
+				{body ? <p>{body}</p> : null}
+				<StagedAttachmentItems
+					paths={attachments}
+					sessionId={sessionId}
+					apiBaseUrl={apiBaseUrl}
 					ariaLabel="Steered attachments"
+					className={cn(body && "mt-2")}
+				/>
+				<ConversationContentItems
+					content={remainingContent}
+					ariaLabel={attachments.length > 0 ? "Steered content" : "Steered attachments"}
 					imageLabel="Image"
 					imageAlt={(position) => `Steered attachment ${position}`}
-					className={cn(text && "mt-2")}
+					className={cn((body || attachments.length > 0) && "mt-2")}
 				/>
 			</div>
 			<span className="flex items-center gap-1 text-[11px] text-muted-foreground">
@@ -2257,26 +2325,21 @@ export function TurnChangedFiles({
 					return (
 						<li key={`${file.status}-${file.oldPath ?? ""}-${file.path}`}>
 							{onOpenFile ? (
-								<TooltipProvider delayDuration={200}>
-									<Tooltip>
-										<TooltipTrigger asChild>
-											<button
-												type="button"
-												onClick={() => onOpenFile(openPath)}
-												aria-label={`Open ${openPath} in Files`}
-												className={rowClass}
-											>
-												{body}
-											</button>
-										</TooltipTrigger>
-										<TooltipContent
-											side="top"
-											className="max-w-[min(28rem,90vw)] border-border bg-popover px-2.5 py-1.5 font-mono text-[11px] font-normal text-muted-foreground shadow-none"
+								<Tooltip>
+									<TooltipTrigger asChild>
+										<button
+											type="button"
+											onClick={() => onOpenFile(openPath)}
+											aria-label={`Open ${openPath} in Files`}
+											className={rowClass}
 										>
-											{location}
-										</TooltipContent>
-									</Tooltip>
-								</TooltipProvider>
+											{body}
+										</button>
+									</TooltipTrigger>
+									<TooltipContent side="top" className="max-w-[min(28rem,90vw)] font-mono text-[11px] font-normal">
+										{location}
+									</TooltipContent>
+								</Tooltip>
 							) : (
 								<div className={rowClass}>
 									<span className="sr-only">{status.label}</span>
@@ -2352,29 +2415,24 @@ function FileLocationLabel({
 	const location = fileLocationLabel(locationPath ?? path, locationOldPath ?? oldPath);
 
 	return (
-		<TooltipProvider delayDuration={200}>
-			<Tooltip>
-				<TooltipTrigger asChild>
-					{/* `title=""` blocks Chromium's native ellipsis tooltip so only the
-					    path tooltip below appears — otherwise hover shows the basename. */}
-					<span
-						className={cn(
-							"min-w-0 truncate text-[11.5px] text-foreground/65 outline-none",
-							className,
-						)}
-						title=""
-					>
-						{fileBasename(path)}
-					</span>
-				</TooltipTrigger>
-				<TooltipContent
-					side="top"
-					className="max-w-[min(28rem,90vw)] border-border bg-popover px-2.5 py-1.5 font-mono text-[11px] font-normal text-muted-foreground shadow-none"
+		<Tooltip>
+			<TooltipTrigger asChild>
+				{/* `title=""` blocks Chromium's native ellipsis tooltip so only the
+				    path tooltip below appears — otherwise hover shows the basename. */}
+				<span
+					className={cn(
+						"min-w-0 truncate text-[11.5px] text-foreground/65 outline-none",
+						className,
+					)}
+					title=""
 				>
-					{location}
-				</TooltipContent>
-			</Tooltip>
-		</TooltipProvider>
+					{fileBasename(path)}
+				</span>
+			</TooltipTrigger>
+			<TooltipContent side="top" className="max-w-[min(28rem,90vw)] font-mono text-[11px] font-normal">
+				{location}
+			</TooltipContent>
+		</Tooltip>
 	);
 }
 

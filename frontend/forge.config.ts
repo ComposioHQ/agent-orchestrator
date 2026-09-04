@@ -1,5 +1,8 @@
 import type { ForgeConfig } from "@electron-forge/shared-types";
+import { AutoUnpackNativesPlugin } from "@electron-forge/plugin-auto-unpack-natives";
 import { VitePlugin } from "@electron-forge/plugin-vite";
+import { rebuild } from "@electron/rebuild";
+import electronPackage from "electron/package.json";
 import MakerNSIS from "./makers/maker-nsis";
 import MakerDMG, { sealDmg, verifyDmg } from "./makers/maker-dmg";
 import MakerAppImage from "./makers/maker-appimage";
@@ -25,6 +28,34 @@ const AUTH_PROTOCOL = {
 	schemes: ["ao-app"],
 };
 const AUTH_PROTOCOL_MIME_TYPE = "x-scheme-handler/ao-app";
+const PACKAGED_EXTERNAL_DEPENDENCIES = [
+	"/node_modules/better-sqlite3",
+	"/node_modules/bindings",
+	"/node_modules/file-uri-to-path",
+];
+
+function ignoreFromVitePackage(file: string): boolean {
+	if (!file) return false;
+	if (file.startsWith("/.vite")) return false;
+	if (file === "/node_modules") return false;
+	return !PACKAGED_EXTERNAL_DEPENDENCIES.some(
+		(dependency) => file === dependency || file.startsWith(`${dependency}/`),
+	);
+}
+
+async function prepareNativeDependencies(platform: NodeJS.Platform, arch: string): Promise<void> {
+	// Rebuild in the source tree, where prebuild-install and its helper packages
+	// are available. The Vite package intentionally carries only the resulting
+	// native runtime, not the install-time download toolchain.
+	await rebuild({
+		buildPath: process.cwd(),
+		electronVersion: electronPackage.version,
+		platform,
+		arch,
+		onlyModules: ["better-sqlite3"],
+		force: true,
+	});
+}
 
 export function extraResourcesForPlatform(platform: NodeJS.Platform): string[] {
 	return [
@@ -55,6 +86,11 @@ function parseReleaseRepo(value: string | undefined): { owner: string; name: str
 const config: ForgeConfig = {
 	packagerConfig: {
 		asar: true,
+		// The Vite plugin normally packages only .vite. better-sqlite3 must stay
+		// external so Electron can load its native binary, so include its minimal
+		// runtime dependency tree explicitly; AutoUnpackNativesPlugin then places
+		// the .node binary outside app.asar.
+		ignore: ignoreFromVitePackage,
 		appBundleId: "dev.agent-orchestrator.desktop",
 		name: "Agent Orchestrator",
 		executableName: EXECUTABLE_NAME,
@@ -96,7 +132,8 @@ const config: ForgeConfig = {
 		// Writing it after signing (a postPackage hook) adds an unsealed resource
 		// and macOS reports the app as "damaged". owner/repo are baked from
 		// AO_RELEASE_REPO at build time.
-		prePackage: async () => {
+		prePackage: async (_forgeConfig, platform, arch) => {
+			await prepareNativeDependencies(platform as NodeJS.Platform, arch);
 			const { owner, name } = parseReleaseRepo(process.env.AO_RELEASE_REPO);
 			const yml = [
 				"provider: github",
@@ -106,6 +143,19 @@ const config: ForgeConfig = {
 				"",
 			].join("\n");
 			writeFileSync("app-update.yml", yml);
+		},
+		packageAfterPrune: async (_forgeConfig, buildPath) => {
+			const nativeModule = path.join(
+				buildPath,
+				"node_modules",
+				"better-sqlite3",
+				"build",
+				"Release",
+				"better_sqlite3.node",
+			);
+			if (!existsSync(nativeModule)) {
+				throw new Error("Packaged app is missing the better-sqlite3 native runtime");
+			}
 		},
 		// Assert the native resource survived Electron Packager's copy/asar/sign
 		// pipeline. A source build succeeding is not enough: a missing extraResource
@@ -243,6 +293,7 @@ const config: ForgeConfig = {
 		},
 	],
 	plugins: [
+		new AutoUnpackNativesPlugin({}),
 		new VitePlugin({
 			build: [
 				{ entry: "src/main.ts", config: "vite.main.config.ts", target: "main" },

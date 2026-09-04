@@ -85,6 +85,7 @@ type SessionService interface {
 	SpawnOrchestrator(ctx context.Context, projectID domain.ProjectID, clean bool, requestedMode domain.SessionMode) (domain.Session, error)
 	Get(ctx context.Context, id domain.SessionID) (domain.Session, error)
 	Restore(ctx context.Context, id domain.SessionID) (sessionsvc.RestoreOutcome, error)
+	ExitAgent(ctx context.Context, id domain.SessionID) (sessionsvc.ExitAgentOutcome, error)
 	ResumeAgent(ctx context.Context, id domain.SessionID) (sessionsvc.ResumeAgentOutcome, error)
 	SwitchAgent(ctx context.Context, id domain.SessionID, in sessionsvc.SwitchAgentInput) (domain.AgentSwitch, error)
 	RecoverAgentSwitch(ctx context.Context, id domain.SessionID, switchID domain.AgentSwitchID) (domain.AgentSwitch, error)
@@ -98,7 +99,7 @@ type SessionService interface {
 	SetTerminateOnPRMerge(ctx context.Context, id domain.SessionID, terminate bool) (domain.Session, error)
 	SetAutoInjectReview(ctx context.Context, id domain.SessionID, autoInject bool) (domain.Session, error)
 	SetAutoInjectCI(ctx context.Context, id domain.SessionID, autoInject bool) (domain.Session, error)
-	SetReviewerHarness(ctx context.Context, id domain.SessionID, harness domain.ReviewerHarness) (domain.Session, error)
+	SetReviewerHarness(ctx context.Context, id domain.SessionID, harness domain.ReviewerHarness, config domain.AgentConfig) (domain.Session, error)
 	SetAutoReview(ctx context.Context, id domain.SessionID, enabled bool) (domain.Session, error)
 	Send(ctx context.Context, id domain.SessionID, message string, attachment *ports.SpawnAttachment) error
 	DelegateTask(ctx context.Context, in sessionsvc.DelegateTaskInput) (sessionsvc.DelegateTaskOutcome, error)
@@ -182,6 +183,7 @@ func (c *SessionsController) Register(r chi.Router) {
 	r.Put("/sessions/{sessionId}/reviewer", c.setReviewer)
 	r.Put("/sessions/{sessionId}/auto-review", c.setAutoReview)
 	r.Post("/sessions/{sessionId}/restore", c.restore)
+	r.Post("/sessions/{sessionId}/exit-agent", c.exitAgent)
 	r.Post("/sessions/{sessionId}/resume-agent", c.resumeAgent)
 	r.Post("/sessions/{sessionId}/switch-agent", c.switchAgent)
 	r.Get("/sessions/{sessionId}/agent-switches", c.listAgentSwitches)
@@ -1084,7 +1086,7 @@ func (c *SessionsController) setReviewer(w http.ResponseWriter, r *http.Request)
 		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_JSON", "Invalid JSON body", nil)
 		return
 	}
-	sess, err := c.Svc.SetReviewerHarness(r.Context(), sessionID(r), in.Harness)
+	sess, err := c.Svc.SetReviewerHarness(r.Context(), sessionID(r), in.Harness, in.AgentConfig)
 	if err != nil {
 		envelope.WriteError(w, r, err)
 		return
@@ -1168,6 +1170,23 @@ func (c *SessionsController) resumeAgent(w http.ResponseWriter, r *http.Request)
 		SessionID:  sessionID(r),
 		ResumeMode: out.Mode,
 		Session:    sessionView(out.Session),
+	})
+}
+
+func (c *SessionsController) exitAgent(w http.ResponseWriter, r *http.Request) {
+	if c.Svc == nil {
+		apispec.NotImplemented(w, r, "POST", "/api/v1/sessions/{sessionId}/exit-agent")
+		return
+	}
+	out, err := c.Svc.ExitAgent(r.Context(), sessionID(r))
+	if err != nil {
+		envelope.WriteError(w, r, err)
+		return
+	}
+	envelope.WriteJSON(w, http.StatusOK, ExitAgentResponse{
+		OK:        true,
+		SessionID: sessionID(r),
+		Session:   sessionView(out.Session),
 	})
 }
 
@@ -1806,12 +1825,14 @@ func previewFileURL(r *http.Request, id domain.SessionID, entry string) (string,
 }
 
 func sessionView(s domain.Session) SessionView {
+	terminalGeneration := s.Metadata.RuntimeLaunchID
 	view := SessionView{
-		Session:         s,
-		Branch:          s.Metadata.Branch,
-		PreviewURL:      s.Metadata.PreviewURL,
-		PreviewRevision: s.Metadata.PreviewRevision,
-		Model:           s.Metadata.Model,
+		Session:            s,
+		Branch:             s.Metadata.Branch,
+		TerminalGeneration: terminalGeneration,
+		PreviewURL:         s.Metadata.PreviewURL,
+		PreviewRevision:    s.Metadata.PreviewRevision,
+		Model:              s.Metadata.Model,
 		LastUserMessageAt: func() *time.Time {
 			if s.Metadata.LatestUserPromptAt.IsZero() {
 				return nil

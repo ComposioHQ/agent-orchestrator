@@ -1760,6 +1760,81 @@ func (s *Store) CancelQueuedTurnByID(
 	return nil
 }
 
+// ErrInvalidQueuedTurnOrder means the requested queue order does not match the
+// current undispatched queue exactly.
+var ErrInvalidQueuedTurnOrder = errors.New("invalid queued turn order")
+
+// ReorderQueuedTurns permutes the durable queue order by reassigning existing
+// requested_at values. The caller must pass every currently queued turn id in
+// the desired FIFO order.
+func (s *Store) ReorderQueuedTurns(
+	ctx context.Context,
+	conversationID string,
+	turnIDs []string,
+) error {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+
+	current, err := s.qr.SelectQueuedConversationTurnOrder(ctx, conversationID)
+	if err != nil {
+		return fmt.Errorf("list queued turns for reorder: %w", err)
+	}
+	if len(current) != len(turnIDs) {
+		return fmt.Errorf("%w: got %d ids for %d queued turns", ErrInvalidQueuedTurnOrder, len(turnIDs), len(current))
+	}
+	if len(current) == 0 {
+		return nil
+	}
+
+	currentByID := make(map[string]time.Time, len(current))
+	for _, row := range current {
+		currentByID[row.ID] = row.RequestedAt
+	}
+	seen := make(map[string]struct{}, len(turnIDs))
+	for _, turnID := range turnIDs {
+		if _, ok := currentByID[turnID]; !ok {
+			return fmt.Errorf("%w: unknown turn %s", ErrInvalidQueuedTurnOrder, turnID)
+		}
+		if _, dup := seen[turnID]; dup {
+			return fmt.Errorf("%w: duplicate turn %s", ErrInvalidQueuedTurnOrder, turnID)
+		}
+		seen[turnID] = struct{}{}
+	}
+
+	requestedAts := make([]time.Time, len(current))
+	for i, row := range current {
+		requestedAts[i] = row.RequestedAt
+	}
+	sort.Slice(requestedAts, func(i, j int) bool {
+		return requestedAts[i].Before(requestedAts[j])
+	})
+
+	tx, err := s.writeDB.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin queued turn reorder: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	q := s.qw.WithTx(tx)
+	for i, turnID := range turnIDs {
+		rows, err := q.UpdateQueuedConversationTurnRequestedAt(ctx,
+			gen.UpdateQueuedConversationTurnRequestedAtParams{
+				RequestedAt:    requestedAts[i],
+				ID:             turnID,
+				ConversationID: conversationID,
+			})
+		if err != nil {
+			return fmt.Errorf("reorder queued turn %s: %w", turnID, err)
+		}
+		if rows == 0 {
+			return fmt.Errorf("%w: %s", ErrQueuedTurnNotAvailable, turnID)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit queued turn reorder: %w", err)
+	}
+	return nil
+}
+
 // UpdateQueuedTurnMessage rewrites the durable human prompt for a turn that has
 // not yet dispatched. Attachments are cleared because the edit path is text-only.
 func (s *Store) UpdateQueuedTurnMessage(

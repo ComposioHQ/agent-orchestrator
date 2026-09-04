@@ -21,6 +21,7 @@ import {
   DropdownMenuShortcut,
   DropdownMenuTrigger,
 } from "./ui/dropdown-menu";
+import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 
 // Windows-only: macOS keeps its system menu bar and inset traffic lights; Linux
 // keeps the existing minimal chrome. Only Windows loses the native title bar and
@@ -188,50 +189,68 @@ export function WindowTitlebar() {
       {/* Sidebar collapse toggle — same ui-store path as the macOS TitlebarNav
 			    cluster, so it stays in sync with the SidebarProvider. The brand
 			    logo + name stay in the sidebar header instead of duplicating here. */}
-      <button
-        aria-label={
-          isSidebarOpen ? t("shell.collapseSidebar") : t("shell.expandSidebar")
-        }
-        className="window-titlebar__toggle"
-        onClick={toggleSidebar}
-        title={
-          isSidebarOpen
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <button
+            aria-label={
+              isSidebarOpen
+                ? t("shell.collapseSidebar")
+                : t("shell.expandSidebar")
+            }
+            className="window-titlebar__toggle"
+            onClick={toggleSidebar}
+            type="button"
+          >
+            <PanelLeft
+              aria-hidden="true"
+              className="window-titlebar__toggle-icon"
+            />
+          </button>
+        </TooltipTrigger>
+        <TooltipContent side="bottom">
+          {isSidebarOpen
             ? t("shell.collapseSidebarTitle")
-            : t("shell.expandSidebarTitle")
-        }
-        type="button"
-      >
-        <PanelLeft
-          aria-hidden="true"
-          className="window-titlebar__toggle-icon"
-        />
-      </button>
-      <button
-        aria-label={t("titlebar.goBack")}
-        className="window-titlebar__toggle"
-        disabled={!canGoBack}
-        onClick={() => router.history.back()}
-        title={t("titlebar.goBack")}
-        type="button"
-      >
-        <ArrowLeft
-          aria-hidden="true"
-          className="window-titlebar__toggle-icon"
-        />
-      </button>
-      <button
-        aria-label={t("titlebar.goForward")}
-        className="window-titlebar__toggle"
-        disabled={!canGoForward}
-        onClick={() => router.history.forward()}
-        title={t("titlebar.goForward")}
-        type="button"
-      >
-        <ArrowRight
-          aria-hidden="true"
-          className="window-titlebar__toggle-icon"
-        />
-      </button>
+            : t("shell.expandSidebarTitle")}
+        </TooltipContent>
+      </Tooltip>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <span className="inline-flex">
+            <button
+              aria-label={t("titlebar.goBack")}
+              className="window-titlebar__toggle"
+              disabled={!canGoBack}
+              onClick={() => router.history.back()}
+              type="button"
+            >
+              <ArrowLeft
+                aria-hidden="true"
+                className="window-titlebar__toggle-icon"
+              />
+            </button>
+          </span>
+        </TooltipTrigger>
+        <TooltipContent side="bottom">{t("titlebar.goBack")}</TooltipContent>
+      </Tooltip>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <span className="inline-flex">
+            <button
+              aria-label={t("titlebar.goForward")}
+              className="window-titlebar__toggle"
+              disabled={!canGoForward}
+              onClick={() => router.history.forward()}
+              type="button"
+            >
+              <ArrowRight
+                aria-hidden="true"
+                className="window-titlebar__toggle-icon"
+              />
+            </button>
+          </span>
+        </TooltipTrigger>
+        <TooltipContent side="bottom">{t("titlebar.goForward")}</TooltipContent>
+      </Tooltip>
       <nav className="window-titlebar__menus">
         <TopMenu
           id="view"

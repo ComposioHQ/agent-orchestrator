@@ -14,12 +14,14 @@ import {
 	TerminalPane,
 	providerScrollsByKeyboard,
 } from "./TerminalPane";
+import { TooltipProvider } from "./ui/tooltip";
 
 const {
 	attachMock,
 	getMock,
 	postMock,
 	prepareForActivationMock,
+	sendUserInputMock,
 	terminalError,
 	terminalState,
 	replaySettled,
@@ -33,6 +35,7 @@ const {
 		getMock: vi.fn(async (_path: string, _options: unknown) => ({ data: undefined })),
 		postMock: vi.fn(),
 		prepareForActivationMock: vi.fn(async (): Promise<void> => undefined),
+		sendUserInputMock: vi.fn(),
 		terminalError: { value: undefined as string | undefined },
 		terminalState: { value: "idle" },
 		replaySettled: { value: true },
@@ -76,6 +79,7 @@ vi.mock("./XtermTerminal", () => ({
 				showLatestOutput: vi.fn(),
 				prepareForActivation: prepareForActivationMock,
 				notifyCursorColorScheme: vi.fn(),
+				sendUserInput: sendUserInputMock,
 				onUserInput: vi.fn(() => disposable),
 				onResize: vi.fn(() => disposable),
 			});
@@ -136,18 +140,33 @@ beforeEach(() => {
 	attachMock.mockClear();
 	prepareForActivationMock.mockReset();
 	prepareForActivationMock.mockResolvedValue(undefined);
+	sendUserInputMock.mockReset();
+	sendUserInputMock.mockReturnValue(true);
 	xtermMounts.value = 0;
 	xtermUnmounts.value = 0;
 	useUiStore.setState({ inspectorSessions: {} });
 });
 
-function renderPane(session?: WorkspaceSession) {
+function renderPane(
+	session?: WorkspaceSession,
+	inputRequest?: { id: number; data: string },
+	onInputRequestResult?: (id: number, accepted: boolean) => void,
+) {
 	const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 	const previousAO = window.ao;
 	window.ao = {} as typeof window.ao;
 	const result = render(
 		<QueryClientProvider client={queryClient}>
-			<TerminalPane daemonReady fontSize={12} session={session} theme="dark" />
+			<TooltipProvider>
+				<TerminalPane
+					daemonReady
+					fontSize={12}
+					inputRequest={inputRequest}
+					onInputRequestResult={onInputRequestResult}
+					session={session}
+					theme="dark"
+				/>
+			</TooltipProvider>
 		</QueryClientProvider>,
 	);
 	return {
@@ -191,19 +210,21 @@ function renderCachedPane({
 
 	const tree = (nextSession?: WorkspaceSession, nextTarget?: TerminalTarget, showPane = true) => (
 		<QueryClientProvider client={queryClient}>
-			<TerminalCacheProvider daemonReady theme="dark">
-				{showPane ? (
-					<TerminalPane
-						daemonReady
-						fontSize={12}
-						session={nextSession}
-						terminalTarget={nextTarget}
-						theme="dark"
-					/>
-				) : (
-					<div data-testid="away" />
-				)}
-			</TerminalCacheProvider>
+			<TooltipProvider>
+				<TerminalCacheProvider daemonReady theme="dark">
+					{showPane ? (
+						<TerminalPane
+							daemonReady
+							fontSize={12}
+							session={nextSession}
+							terminalTarget={nextTarget}
+							theme="dark"
+						/>
+					) : (
+						<div data-testid="away" />
+					)}
+				</TerminalCacheProvider>
+			</TooltipProvider>
 		</QueryClientProvider>
 	);
 	const result = render(tree(session, terminalTarget));
@@ -223,11 +244,73 @@ function activeXterm(): HTMLElement {
 }
 
 describe("TerminalPane empty states", () => {
+	it("reports terminal attachment state changes to an optional observer", async () => {
+		const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+		const previousAO = window.ao;
+		window.ao = {} as typeof window.ao;
+		const onTerminalStateChange = vi.fn();
+		const target = {
+			kind: "shell" as const,
+			handleId: "shellterm-login-1",
+			generation: "2026-08-29T12:00:00Z",
+			title: "Codex login",
+		};
+		const view = render(
+			<QueryClientProvider client={queryClient}>
+				<TerminalPane daemonReady fontSize={12} onTerminalStateChange={onTerminalStateChange} terminalTarget={target} theme="dark" />
+			</QueryClientProvider>,
+		);
+		try {
+			await waitFor(() => expect(onTerminalStateChange).toHaveBeenLastCalledWith("idle"));
+			terminalState.value = "exited";
+			view.rerender(
+				<QueryClientProvider client={queryClient}>
+					<TerminalPane daemonReady fontSize={12} onTerminalStateChange={onTerminalStateChange} terminalTarget={target} theme="dark" />
+				</QueryClientProvider>,
+			);
+			await waitFor(() => expect(onTerminalStateChange).toHaveBeenLastCalledWith("exited"));
+		} finally {
+			window.ao = previousAO;
+		}
+	});
+
 	it("uses the full top, right, and bottom extent for the terminal grid", () => {
 		const view = renderPane({ ...worker, terminalHandleId: "term-1" });
 		try {
 			expect(screen.getByTestId("xterm").parentElement).toHaveClass("pl-2");
 			expect(screen.getByTestId("xterm").parentElement).not.toHaveClass("pt-2", "pr-2", "pb-2", "p-2");
+		} finally {
+			view.restore();
+		}
+	});
+
+	it("forwards an explicit input request after the terminal is attached", async () => {
+		terminalState.value = "attached";
+		const onInputRequestResult = vi.fn();
+		const view = renderPane(
+			{ ...worker, terminalHandleId: "term-1" },
+			{ id: 1, data: "/login\r" },
+			onInputRequestResult,
+		);
+		try {
+			await waitFor(() => expect(sendUserInputMock).toHaveBeenCalledWith("/login\r"));
+			expect(onInputRequestResult).toHaveBeenCalledWith(1, true);
+		} finally {
+			view.restore();
+		}
+	});
+
+	it("reports rejected input requests without consuming them", async () => {
+		terminalState.value = "attached";
+		sendUserInputMock.mockReturnValue(false);
+		const onInputRequestResult = vi.fn();
+		const view = renderPane(
+			{ ...worker, terminalHandleId: "term-1" },
+			{ id: 1, data: "/login\r" },
+			onInputRequestResult,
+		);
+		try {
+			await waitFor(() => expect(onInputRequestResult).toHaveBeenCalledWith(1, false));
 		} finally {
 			view.restore();
 		}
@@ -355,12 +438,14 @@ describe("TerminalPane replay cover", () => {
 			replaySettled.value = true;
 			view.rerender(
 				<QueryClientProvider client={view.queryClient}>
-					<TerminalPane
-						daemonReady
-						fontSize={12}
-						session={{ ...worker, terminalHandleId: "term-1" }}
-						theme="dark"
-					/>
+					<TooltipProvider>
+						<TerminalPane
+							daemonReady
+							fontSize={12}
+							session={{ ...worker, terminalHandleId: "term-1" }}
+							theme="dark"
+						/>
+					</TooltipProvider>
 				</QueryClientProvider>,
 			);
 			expect(screen.getByTestId("terminal-replay-cover")).toBeInTheDocument();
@@ -496,6 +581,26 @@ describe("TerminalCacheProvider", () => {
 			expect(activeXterm()).not.toBe(oldGeneration);
 			expect(xtermMounts.value).toBe(2);
 			await waitFor(() => expect(xtermUnmounts.value).toBe(1));
+			expect(attachMock).toHaveBeenCalledTimes(2);
+		} finally {
+			view.restore();
+		}
+	});
+
+	it("disposes an exited PTY attachment when the controller generation changes on the same handle", async () => {
+		const first = { ...sessionA, terminalGeneration: "launch-1" };
+		const replacement = { ...first, terminalGeneration: "launch-2" };
+		const view = renderCachedPane({ session: first, sessions: [first] });
+		try {
+			const oldGeneration = await waitFor(() => activeXterm());
+			act(() => {
+				view.queryClient.setQueryData(workspaceQueryKey, workspaceWithSessions([replacement]));
+			});
+			view.show(replacement);
+
+			await waitFor(() => expect(oldGeneration.isConnected).toBe(false));
+			expect(activeXterm()).not.toBe(oldGeneration);
+			expect(xtermMounts.value).toBe(2);
 			expect(attachMock).toHaveBeenCalledTimes(2);
 		} finally {
 			view.restore();

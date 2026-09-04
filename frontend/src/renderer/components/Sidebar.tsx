@@ -1,6 +1,6 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { useCanGoBack, useNavigate, useParams, useRouter, useRouterState } from "@tanstack/react-router";
+import { useNavigate, useParams, useRouterState } from "@tanstack/react-router";
 import {
 	DndContext,
 	DragOverlay,
@@ -22,8 +22,6 @@ import { SortableContext, useSortable, verticalListSortingStrategy } from "@dnd-
 import { CSS } from "@dnd-kit/utilities";
 import {
 	AlertTriangle,
-	ArrowLeft,
-	ArrowRight,
 	ChevronRight,
 	Download,
 	Folder,
@@ -32,6 +30,7 @@ import {
 	LogOut,
 	MoreVertical,
 	PanelLeft,
+	Pencil,
 	Pin,
 	PinOff,
 	Plus,
@@ -76,14 +75,16 @@ import { cloudSessionsQueryKey, workspaceQueryKey } from "../hooks/useWorkspaceQ
 import { usePinSession, useUnpinSession } from "../hooks/usePinSession";
 import { spawnCloudOrchestrator } from "../lib/cloud-orchestrator";
 import { spawnOrchestrator } from "../lib/spawn-orchestrator";
-import { renameSession } from "../lib/rename-session";
 import { formatTimeCompact, formatTimeTerse } from "../lib/format-time";
 import { useTerminateSession } from "../hooks/useTerminateSession";
 import { useResizable } from "../hooks/useResizable";
 import { useCloudGate } from "../hooks/useCloudGate";
+import { useCloudLocalAuth } from "../hooks/useCloudLocalAuth";
+import { useLocalSignInDialogStore } from "../stores/local-signin-dialog-store";
 import { useShellMaybe } from "../lib/shell-context";
 import { useSidebarUpdateDismissal } from "../hooks/useSidebarUpdateDismissal";
 import { useUpdateStatus } from "../hooks/useUpdateStatus";
+import { MAX_SESSION_DISPLAY_NAME_LEN, useSessionRename } from "../hooks/useSessionRename";
 import { effectiveShortcutBindings, shortcutBindingKeys } from "../../shared/shortcuts";
 import {
 	ContextMenu,
@@ -124,15 +125,13 @@ import { useKeybindingsStore } from "../stores/keybindings-store";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { CreateProjectFlow, type CloneProjectInput, type CreateProjectInput } from "./CreateProjectFlow";
 import { ResizeHandle } from "./ResizeHandle";
-import { isLinuxPlatform, isMacPlatform, isWindowsPlatform } from "../lib/platform";
+import { isMacPlatform, isWindowsPlatform } from "../lib/platform";
 import { useCloudSession } from "../lib/cloud-session";
-import { useCanGoForward } from "./TitlebarNav";
 
 // macOS paints framed chrome: the fixed TitlebarNav cluster carries the
 // sidebar toggle + history arrows above this surface. Windows hangs the sidebar
 // under its custom titlebar.
 const isMac = isMacPlatform();
-const isLinux = isLinuxPlatform();
 const isWindows = isWindowsPlatform();
 const noDragStyle = isMac ? ({ WebkitAppRegion: "no-drag" } as React.CSSProperties) : undefined;
 
@@ -160,7 +159,6 @@ const PROJECT_DRAG_OVERLAY_STYLE: CSSProperties = { willChange: "transform" };
 
 // Mirrors the daemon's display-name cap (maxDisplayNameLen) and the spawn
 // `--name` flag, so inline edits never round-trip a value the API would reject.
-const MAX_DISPLAY_NAME_LEN = 20;
 
 // Reorder drags start from the row's primary click surface. The 4px activation
 // distance keeps a plain navigation/disclosure click from starting a drag;
@@ -331,8 +329,6 @@ function readExpandedProjectIds(): ReadonlySet<string> {
 type SidebarProps = {
 	/** Hide the sidebar's right edge stroke on the welcome board inset chrome. */
 	hideEdgeBorder?: boolean;
-	/** Preserve navigation as an icon rail when workspace pressure collapses the expanded sidebar. */
-	autoCompact?: boolean;
 	underTopbar?: boolean;
 	/** Chrome height to clear when underTopbar is set. Defaults to --size-toolbar. */
 	topbarOffset?: "toolbar" | "titlebar" | "trafficLights" | "session";
@@ -410,7 +406,6 @@ function SessionStatusDot({ session }: { session: WorkspaceSession }) {
 // _shell owns the persistent open state. Collapsed sidebars move fully off-canvas.
 export function Sidebar({
 	hideEdgeBorder = false,
-	autoCompact = false,
 	underTopbar = true,
 	topbarOffset = "toolbar",
 	workspaceError,
@@ -425,10 +420,6 @@ export function Sidebar({
 	const { state, setOpen, toggleSidebar } = useSidebar();
 	const isCollapsed = state === "collapsed";
 	const [expandedChromeVisible, setExpandedChromeVisible] = useState(!isCollapsed);
-	const router = useRouter();
-	const canGoBack = useCanGoBack();
-	const canGoForward = useCanGoForward();
-	const showCompactRailHistory = autoCompact && isCollapsed && (isMac || isLinux) && !isWindows;
 	// One IPC subscription for both footer variants of the restart-to-update prompt.
 	const updateStatus = useUpdateStatus();
 	const availableUpdateVersion = updateStatus.state === "available" ? updateStatus.version : undefined;
@@ -639,7 +630,7 @@ export function Sidebar({
 	return (
 		// Pinned sidebars start below shell chrome.
 		<SidebarRoot
-			collapsible={autoCompact ? "icon" : "offcanvas"}
+			collapsible="offcanvas"
 			data-expanded-chrome={expandedChromeVisible ? "visible" : "hidden"}
 			data-topbar-offset={underTopbar ? topbarOffset : undefined}
 			className={cn(
@@ -701,38 +692,6 @@ export function Sidebar({
 						{isCollapsed ? t("shell.expandSidebar") : t("shell.collapseSidebar")}
 					</TooltipContent>
 				</Tooltip>
-				{showCompactRailHistory ? (
-					<div className="flex flex-col items-center gap-1 pb-2">
-						<Tooltip>
-							<TooltipTrigger asChild>
-								<button
-									aria-label={t("titlebar.goBack")}
-									className="grid size-control-board place-items-center rounded-lg text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground disabled:cursor-not-allowed disabled:opacity-55 disabled:hover:bg-transparent disabled:hover:text-muted-foreground [&_svg]:size-icon-base"
-									disabled={!canGoBack}
-									onClick={() => router.history.back()}
-									type="button"
-								>
-									<ArrowLeft aria-hidden="true" />
-								</button>
-							</TooltipTrigger>
-							<TooltipContent side="right">{t("titlebar.goBack")}</TooltipContent>
-						</Tooltip>
-						<Tooltip>
-							<TooltipTrigger asChild>
-								<button
-									aria-label={t("titlebar.goForward")}
-									className="grid size-control-board place-items-center rounded-lg text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground disabled:cursor-not-allowed disabled:opacity-55 disabled:hover:bg-transparent disabled:hover:text-muted-foreground [&_svg]:size-icon-base"
-									disabled={!canGoForward}
-									onClick={() => router.history.forward()}
-									type="button"
-								>
-									<ArrowRight aria-hidden="true" />
-								</button>
-							</TooltipTrigger>
-							<TooltipContent side="right">{t("titlebar.goForward")}</TooltipContent>
-						</Tooltip>
-					</div>
-				) : null}
 			</SidebarHeader>
 
 			{/* Keep Search + section chrome fixed; only the project tree scrolls. */}
@@ -1379,24 +1338,26 @@ const ProjectItemContent = memo(function ProjectItemContent({
 							>
 								<Tooltip>
 									<TooltipTrigger asChild>
-										<button
-											aria-current={orchestratorActive ? "page" : undefined}
-											aria-label={
-												orchestrator
-													? t("shell.openProjectOrchestrator", {
-															name: workspace.name,
-														})
-													: t("shell.spawnProjectOrchestrator", {
-															name: workspace.name,
-														})
-											}
-											className={cn(HOVER_ACTION_CLASS, orchestratorActive && "text-foreground")}
-											disabled={isSpawning || isProjectRestarting}
-											onClick={() => void openOrchestrator()}
-											type="button"
-										>
-											<OrchestratorIcon aria-hidden="true" strokeWidth={orchestratorActive ? 2.5 : 2} />
-										</button>
+										<span className="inline-flex">
+											<button
+												aria-current={orchestratorActive ? "page" : undefined}
+												aria-label={
+													orchestrator
+														? t("shell.openProjectOrchestrator", {
+																name: workspace.name,
+															})
+														: t("shell.spawnProjectOrchestrator", {
+																name: workspace.name,
+															})
+												}
+												className={cn(HOVER_ACTION_CLASS, orchestratorActive && "text-foreground")}
+												disabled={isSpawning || isProjectRestarting}
+												onClick={() => void openOrchestrator()}
+												type="button"
+											>
+												<OrchestratorIcon aria-hidden="true" strokeWidth={orchestratorActive ? 2.5 : 2} />
+											</button>
+										</span>
 									</TooltipTrigger>
 									<TooltipContent>
 										{isProjectRestarting
@@ -1409,17 +1370,26 @@ const ProjectItemContent = memo(function ProjectItemContent({
 									</TooltipContent>
 								</Tooltip>
 								<DropdownMenu>
-									<DropdownMenuTrigger asChild>
-										<button
-											aria-label={t("shell.projectActions", {
+									<Tooltip>
+										<TooltipTrigger asChild>
+											<DropdownMenuTrigger asChild>
+												<button
+													aria-label={t("shell.projectActions", {
+														name: workspace.name,
+													})}
+													className={HOVER_ACTION_CLASS}
+													type="button"
+												>
+													<MoreVertical aria-hidden="true" />
+												</button>
+											</DropdownMenuTrigger>
+										</TooltipTrigger>
+										<TooltipContent>
+											{t("shell.projectActions", {
 												name: workspace.name,
 											})}
-											className={HOVER_ACTION_CLASS}
-											type="button"
-										>
-											<MoreVertical aria-hidden="true" />
-										</button>
-									</DropdownMenuTrigger>
+										</TooltipContent>
+									</Tooltip>
 									<DropdownMenuContent side="right" align="start" className="min-w-44">
 										<DropdownMenuItem disabled={isProjectRestarting} onSelect={() => requestNewTask(workspace.id)}>
 											<Plus aria-hidden="true" />
@@ -1713,40 +1683,28 @@ function SessionRow({
 		: undefined;
 	const switchStatusId = useId();
 	const describedBy = switchLabel ? switchStatusId : undefined;
-	const [isEditing, setIsEditing] = useState(false);
-	const [draft, setDraft] = useState(session.title);
+	const queryClient = useQueryClient();
+	const refreshWorkspaces = useCallback(
+		() => queryClient.invalidateQueries({ queryKey: workspaceQueryKey }),
+		[queryClient],
+	);
+	const rename = useSessionRename(session, refreshWorkspaces);
 	const [sessionPressed, setSessionPressed] = useState(false);
 	const lastTouchAtRef = useRef(0);
 	const suppressTouchOpenRef = useRef(false);
-	// Escape must not be swallowed by the blur-to-save path: the keydown handler
-	// blurs the input, so it flags a cancel here for onBlur to honour.
-	const cancelledRef = useRef(false);
+	const pendingOpenRef = useRef<number | null>(null);
+	const cancelPendingOpen = useCallback(() => {
+		if (pendingOpenRef.current === null) return;
+		window.clearTimeout(pendingOpenRef.current);
+		pendingOpenRef.current = null;
+	}, []);
+	useEffect(() => cancelPendingOpen, [cancelPendingOpen]);
+	const beginRename = useCallback(() => {
+		cancelPendingOpen();
+		rename.begin();
+	}, [cancelPendingOpen, rename.begin]);
 
-	const queryClient = useQueryClient();
-
-	const startEditing = useCallback(() => {
-		setDraft(session.title);
-		setIsEditing(true);
-	}, [session.title]);
-
-	const commit = async () => {
-		if (cancelledRef.current) {
-			cancelledRef.current = false;
-			setIsEditing(false);
-			return;
-		}
-		setIsEditing(false);
-		const name = draft.trim();
-		if (!name || name === session.title) return;
-		try {
-			await renameSession(session.id, name);
-			await queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
-		} catch (err) {
-			console.error("Failed to rename session:", err);
-		}
-	};
-
-	if (isEditing) {
+	if (rename.isEditing) {
 		return (
 			<SidebarMenuSubItem className={cn(indented && "pl-0.5")}>
 				<div
@@ -1765,9 +1723,9 @@ function SessionRow({
 							session.lastUserMessageAt && "pr-[36px]",
 						)}
 						data-session-inline-editor=""
-						maxLength={MAX_DISPLAY_NAME_LEN}
-						onBlur={() => void commit()}
-						onChange={(e) => setDraft(e.target.value)}
+						maxLength={MAX_SESSION_DISPLAY_NAME_LEN}
+						onBlur={() => void rename.commit()}
+						onChange={(e) => rename.setDraft(e.target.value)}
 						onFocus={(e) => e.currentTarget.select()}
 						onKeyDown={(e) => {
 							if (e.key === "Enter") {
@@ -1775,11 +1733,10 @@ function SessionRow({
 								e.currentTarget.blur();
 							} else if (e.key === "Escape") {
 								e.preventDefault();
-								cancelledRef.current = true;
-								e.currentTarget.blur();
+								rename.cancel();
 							}
 						}}
-						value={draft}
+						value={rename.draft}
 					/>
 					<SessionMessageAge session={session} />
 				</div>
@@ -1788,12 +1745,14 @@ function SessionRow({
 	}
 
 	return (
-		<SidebarMenuSubItem
-			className={cn(indented && "pl-0.5", reorder?.isDragging && "z-chrome cursor-grabbing opacity-60")}
-			data-dragging={reorder?.isDragging ? "true" : undefined}
-			ref={reorder?.setNodeRef}
-			style={reorder ? sortableRowStyle(reorder) : undefined}
-		>
+		<ContextMenu>
+			<ContextMenuTrigger asChild>
+				<SidebarMenuSubItem
+					className={cn(indented && "pl-0.5", reorder?.isDragging && "z-chrome cursor-grabbing opacity-60")}
+					data-dragging={reorder?.isDragging ? "true" : undefined}
+					ref={reorder?.setNodeRef}
+					style={reorder ? sortableRowStyle(reorder) : undefined}
+				>
 			<motion.div
 				layout={disableLayout || listIsDragging ? false : "position"}
 				layoutDependency={disableLayout ? undefined : layoutDependency}
@@ -1831,22 +1790,36 @@ function SessionRow({
 							)}
 							{...(reorder?.listeners ?? {})}
 							onClick={(event) => {
-								if (
-									event.detail > 1 &&
-									(event.target as HTMLElement).closest("[data-session-name]")
-								) {
+								if (event.detail === 0) {
+									cancelPendingOpen();
+									onOpen();
+									return;
+								}
+								if (event.detail > 1) {
+									cancelPendingOpen();
 									return;
 								}
 								if (suppressTouchOpenRef.current) {
 									suppressTouchOpenRef.current = false;
 									return;
 								}
-								onOpen();
+								// Wait for the native double-click window before navigating. A
+								// second click cancels this so inline rename has no route side effect.
+								cancelPendingOpen();
+								pendingOpenRef.current = window.setTimeout(() => {
+									pendingOpenRef.current = null;
+									onOpen();
+								}, 500);
 							}}
 							onKeyDown={(event) => {
 								if (event.key !== "F2") return;
 								event.preventDefault();
-								startEditing();
+								beginRename();
+							}}
+							onDoubleClick={(event) => {
+								event.preventDefault();
+								event.stopPropagation();
+								beginRename();
 							}}
 							ref={reorder?.setActivatorNodeRef}
 							type="button"
@@ -1859,17 +1832,12 @@ function SessionRow({
 										active ? "text-foreground" : "text-muted-foreground group-hover/session-row:text-foreground",
 									)}
 									data-session-name=""
-									onDoubleClick={(event) => {
-										event.preventDefault();
-										event.stopPropagation();
-										startEditing();
-									}}
 									onPointerUp={(event) => {
 										if (event.pointerType !== "touch") return;
 										const now = Date.now();
 										if (now - lastTouchAtRef.current <= 500) {
 											suppressTouchOpenRef.current = true;
-											startEditing();
+										beginRename();
 										}
 										lastTouchAtRef.current = now;
 									}}
@@ -1892,7 +1860,15 @@ function SessionRow({
 					/>
 				</div>
 			</motion.div>
-		</SidebarMenuSubItem>
+				</SidebarMenuSubItem>
+			</ContextMenuTrigger>
+			<ContextMenuContent className="min-w-44">
+				<ContextMenuItem aria-label={t("shell.renameSession", { title: session.title })} onSelect={beginRename}>
+					<Pencil aria-hidden="true" />
+					{t("shell.rename")}
+				</ContextMenuItem>
+			</ContextMenuContent>
+		</ContextMenu>
 	);
 }
 
@@ -1974,6 +1950,10 @@ function CloudSignInRow({ tabIndex }: { tabIndex: number }) {
 	const { t } = useTranslation();
 	const { cloudEnabled } = useCloudGate();
 	const { configured, status, signIn } = useCloudSession();
+	// Dev + loopback CP: open the local email/password dialog instead of WorkOS.
+	const { available: localAuthAvailable } = useCloudLocalAuth();
+	const openLocalSignIn = useLocalSignInDialogStore((s) => s.openDialog);
+	const onSignIn = () => (localAuthAvailable ? openLocalSignIn() : signIn());
 	if (!configured || !cloudEnabled || status !== "unauthenticated") return null;
 
 	return (
@@ -1983,7 +1963,7 @@ function CloudSignInRow({ tabIndex }: { tabIndex: number }) {
 				NAV_ROW_CLASS,
 				"flex h-9 w-full items-center text-left [&_svg]:size-icon-md [&_svg]:shrink-0",
 			)}
-			onClick={() => signIn()}
+			onClick={onSignIn}
 			tabIndex={tabIndex}
 			type="button"
 		>
@@ -1998,6 +1978,10 @@ function CloudSignInRailButton({ tabIndex }: { tabIndex: number }) {
 	const { t } = useTranslation();
 	const { cloudEnabled } = useCloudGate();
 	const { configured, status, signIn } = useCloudSession();
+	// Dev + loopback CP: open the local email/password dialog instead of WorkOS.
+	const { available: localAuthAvailable } = useCloudLocalAuth();
+	const openLocalSignIn = useLocalSignInDialogStore((s) => s.openDialog);
+	const onSignIn = () => (localAuthAvailable ? openLocalSignIn() : signIn());
 	if (!configured || !cloudEnabled || status !== "unauthenticated") return null;
 
 	return (
@@ -2006,7 +1990,7 @@ function CloudSignInRailButton({ tabIndex }: { tabIndex: number }) {
 				<button
 					aria-label={t("shell.signInToAOCloud")}
 					className="grid size-control-board place-items-center rounded-lg text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground [&_svg]:size-icon-base"
-					onClick={() => signIn()}
+					onClick={onSignIn}
 					tabIndex={tabIndex}
 					type="button"
 				>
@@ -2464,18 +2448,20 @@ function CreateProjectButton({
 			{({ disabled, choosePath, label }) => (
 				<Tooltip>
 					<TooltipTrigger asChild>
-						<button
-							aria-label={t("shell.newProject")}
-							className={cn(
-								"grid size-icon-xl shrink-0 place-items-center rounded-sm text-passive transition-colors hover:bg-interactive-hover hover:text-foreground",
-								hideTrigger && "hidden",
-							)}
-							disabled={disabled}
-							onClick={choosePath}
-							type="button"
-						>
-							<Plus className="size-icon-sm" aria-hidden="true" />
-						</button>
+						<span className="inline-flex">
+							<button
+								aria-label={t("shell.newProject")}
+								className={cn(
+									"grid size-icon-xl shrink-0 place-items-center rounded-sm text-passive transition-colors hover:bg-interactive-hover hover:text-foreground",
+									hideTrigger && "hidden",
+								)}
+								disabled={disabled}
+								onClick={choosePath}
+								type="button"
+							>
+								<Plus className="size-icon-sm" aria-hidden="true" />
+							</button>
+						</span>
 					</TooltipTrigger>
 					<TooltipContent>{label}</TooltipContent>
 				</Tooltip>

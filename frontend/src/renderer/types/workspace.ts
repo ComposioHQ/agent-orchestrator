@@ -58,11 +58,14 @@ export type AgentSwitchSummary = {
 	id: string;
 	state: string;
 	targetHarness: string;
+	updatedAt?: string;
 };
 
 export type WorkspaceSession = {
 	id: string;
 	terminalHandleId?: string;
+	/** Opaque controller generation; changes even when a restarted PTY reuses its handle. */
+	terminalGeneration?: string;
 	workspaceId: string;
 	workspaceName: string;
 	title: string;
@@ -71,6 +74,12 @@ export type WorkspaceSession = {
 	provider: AgentProvider;
 	/** Reviewer selected for this session; absent means use the project default. */
 	reviewerHarness?: ReviewerHarnessId;
+	/** Per-session reviewer override, including hidden fields preserved across saves. */
+	reviewerConfig?: {
+		model?: string;
+		mode?: string;
+		permissions?: string;
+	};
 	/** Whether the daemon may automatically review this session after it becomes idle. */
 	autoReviewEnabled?: boolean;
 	kind?: SessionKind;
@@ -306,6 +315,7 @@ export type WorkspaceSummary = {
 	kind?: ProjectKind | typeof CLOUD_PROJECT_KIND;
 	/** Local checkout path; empty string for cloud projects (no local folder). */
 	path: string;
+	folderMissing?: boolean;
 	workspaceRepos?: WorkspaceRepoSummary[];
 	type?: "main" | "worktree";
 	orchestratorAgent?: AgentProvider;

@@ -118,6 +118,15 @@ async function resolveDefaultBranch(repoPath: string, options: ScanOptions = {})
 	return "auto";
 }
 
+export async function resolveCheckedOutBranch(repoPath: string, options: ScanOptions = {}): Promise<string | undefined> {
+	try {
+		const branch = await gitOutput(repoPath, ["symbolic-ref", "--short", "HEAD"], options);
+		return branch || undefined;
+	} catch {
+		return undefined;
+	}
+}
+
 async function scanGitRepo(
 	repoPath: string,
 	rootPath: string,
