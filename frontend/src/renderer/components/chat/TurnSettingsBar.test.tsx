@@ -295,6 +295,26 @@ describe("ACP session config options", () => {
 		);
 	});
 
+	it("preserves an unlisted model through catalog refresh without borrowing default effort", async () => {
+		const user = userEvent.setup();
+		const props = { settings: { model: "gpt-6-astra" }, onChange: vi.fn() };
+		const { rerender } = render(<TurnSettingsBar {...props} models={[]} />);
+		const trigger = () => screen.getByRole("button", { name: "Model and reasoning effort for the next turn" });
+		expect(trigger()).toHaveTextContent("gpt-6-astra");
+		rerender(<TurnSettingsBar {...props} models={[{ id: "terra", displayName: "Terra", default: true, efforts: ["high"], defaultEffort: "high" }]} />);
+		expect(trigger()).toHaveTextContent("gpt-6-astra");
+		expect(trigger()).not.toHaveTextContent("High");
+		await user.click(trigger());
+		expect(screen.queryByRole("menuitem", { name: /^Effort/ })).not.toBeInTheDocument();
+	});
+
+	it("identifies provider substitution for an unlisted request", () => {
+		render(<TurnSettingsBar models={[]} settings={{ model: "gpt-6-astra", reasoningEffort: "high" }} reroute={{ fromModel: "gpt-6-astra", toModel: "terra", reason: "capacity", at: "2026-09-05T00:00:00Z" }} onChange={vi.fn()} />);
+		const trigger = screen.getByRole("button", { name: "Model and reasoning effort for the next turn" });
+		expect(trigger).toHaveTextContent("terra High");
+		expect(trigger).toHaveAttribute("title", "The provider answered with terra instead of gpt-6-astra: capacity");
+	});
+
 	it("labels bypass permission policy plainly", () => {
 		render(
 			<TurnSettingsBar

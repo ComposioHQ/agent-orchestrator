@@ -115,17 +115,15 @@ export function TurnSettingsBar({
 	children?: ReactNode;
 }) {
 	const selected = models.find((model) => model.id === settings.model);
-	const fallback = models.find((model) => model.default);
-	// The label says what will actually be used: the provider's default is a real
-	// answer, not an absence, so it is named rather than shown as "none".
-	const chosenLabel = selected?.displayName ?? fallback?.displayName ?? "Provider default";
+	// A stale catalog is not evidence that an explicit request uses its default.
+	const effective = settings.model ? selected : models.find((model) => model.default);
+	const chosenLabel = effective?.displayName ?? settings.model ?? "Provider default";
 	const rerouted = reroute
 		? models.find((model) => model.id === reroute.toModel)?.displayName ?? reroute.toModel
 		: undefined;
 	const modelLabel = rerouted ?? chosenLabel;
-	const efforts = (selected ?? fallback)?.efforts ?? [];
-	const effortLabel =
-		settings.reasoningEffort ?? (selected ?? fallback)?.defaultEffort ?? undefined;
+	const efforts = effective?.efforts ?? [];
+	const effortLabel = settings.reasoningEffort ?? effective?.defaultEffort ?? undefined;
 	const approvalCopy = harness === "codex" ? CODEX_APPROVAL_COPY : APPROVAL_COPY;
 	const approvalOrder = harness === "codex" ? CODEX_APPROVAL_ORDER : APPROVAL_ORDER;
 	const approvalLabel = approvalCopy[settings.approvalMode ?? "default"].label;
@@ -138,7 +136,7 @@ export function TurnSettingsBar({
 		if (!onChangeConfigOption) return;
 		void Promise.resolve(onChangeConfigOption(optionId, value)).catch(() => {});
 	};
-	const nativeModelMenu = Boolean(onChange && models.length > 0 && grouped.model.length === 0);
+	const nativeModelMenu = Boolean(onChange && (models.length > 0 || settings.model || reroute) && grouped.model.length === 0);
 	const clubbedLeft =
 		grouped.model.length > 0 ||
 		grouped.effort.length > 0 ||
@@ -325,6 +323,9 @@ function ModelEffortPicker({
 								className="model-menu-scroll flex max-h-[calc(var(--size-select-menu-max)-var(--space-2)*2)] flex-col overflow-y-auto overscroll-contain"
 								onScroll={updateScrollCue}
 							>
+								{settings.model && !models.some((model) => model.id === settings.model) ? (
+									<OptionMenuItem active disabled>{settings.model} (not in catalog)</OptionMenuItem>
+								) : null}
 								{models.map((model) => (
 									<OptionMenuItem
 									key={model.id}
