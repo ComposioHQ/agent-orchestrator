@@ -125,6 +125,7 @@ export function OptionMenuSubTrigger({
 	label,
 	value,
 	children,
+	onClick,
 	...props
 }: React.ComponentProps<typeof DropdownMenuPrimitive.SubTrigger> & {
 	label?: string;
@@ -136,7 +137,10 @@ export function OptionMenuSubTrigger({
 			// Stop the click reaching the composer's click-to-focus handler without
 			// calling preventDefault, which Radix's composeEventHandlers reads as a
 			// signal to skip its own open/close handling.
-			onClick={(e) => e.stopPropagation()}
+			onClick={(e) => {
+				e.stopPropagation();
+				onClick?.(e);
+			}}
 			{...props}
 		>
 			{children ?? (

@@ -2977,6 +2977,18 @@ describe("SessionInspector summary reviews", () => {
     await userEvent.click(await screen.findByRole("button", { name: /Select reviewer agent/ }));
     await userEvent.click(await screen.findByRole("menuitem", { name: /codex/i }));
     await waitFor(() =>
+      expect(postMock).toHaveBeenCalledWith(
+        "/api/v1/sessions/{sessionId}/reviews/switch",
+        {
+          params: { path: { sessionId: "sess-1" } },
+          body: { agentConfig: { permissions: "bypass-permissions" } },
+        },
+      ),
+    );
+    expect(screen.queryByRole("menuitem", { name: "GPT-5 Mini" })).not.toBeInTheDocument();
+    await userEvent.click(await screen.findByRole("button", { name: /Select reviewer agent/ }));
+    await userEvent.click(await screen.findByRole("menuitem", { name: /codex/i }));
+    await waitFor(() =>
       expect(screen.getByRole("menuitem", { name: "GPT-5 Mini" })).toBeInTheDocument(),
     );
     await userEvent.click(screen.getByRole("menuitem", { name: "GPT-5 Mini" }));
@@ -2992,7 +3004,7 @@ describe("SessionInspector summary reviews", () => {
     );
   });
 
-  it("allows setting a custom reviewer model from another text-reviewer row before selecting it", async () => {
+  it("does not expose arbitrary custom reviewer models from another reviewer row", async () => {
     getMock.mockImplementation(async (path: string, options?: { params?: { path?: { agent?: string } } }) => {
       if (path === "/api/v1/agents/{agent}/models") {
         const agent = options?.params?.path?.agent ?? "";
@@ -3021,25 +3033,23 @@ describe("SessionInspector summary reviews", () => {
     await openReviewsSection();
 
     await userEvent.click(await screen.findByRole("button", { name: /Select reviewer agent/ }));
-    await userEvent.click(await screen.findByRole("menuitem", { name: /^custom opencode model$/i }));
-
-    const customInput = await screen.findByRole("textbox", { name: /custom opencode/i });
-    await userEvent.type(customInput, "private/custom-model");
-    await userEvent.click(screen.getByRole("menuitem", { name: /use “private\/custom-model” as a custom model/i }));
+    await userEvent.click(await screen.findByRole("menuitem", { name: /^opencode$/i }));
 
     await waitFor(() =>
       expect(postMock).toHaveBeenCalledWith(
         "/api/v1/sessions/{sessionId}/reviews/switch",
         {
           params: { path: { sessionId: "sess-1" } },
-          body: { harness: "opencode", agentConfig: { model: "private/custom-model" } },
+          body: { harness: "opencode" },
         },
       ),
     );
+    expect(screen.queryByRole("menuitem", { name: /^custom opencode model$/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("textbox", { name: /custom opencode/i })).not.toBeInTheDocument();
     expect(postCallsFor("/api/v1/sessions/{sessionId}/reviews/switch")).toHaveLength(1);
   });
 
-  it("allows custom reviewer models for text-selection catalogs with suggested models", async () => {
+  it("shows suggested reviewer models but not arbitrary custom reviewer entry", async () => {
     getMock.mockImplementation(async (path: string, options?: { params?: { path?: { agent?: string } } }) => {
       if (path === "/api/v1/agents/{agent}/models") {
         const agent = options?.params?.path?.agent ?? "";
@@ -3087,23 +3097,11 @@ describe("SessionInspector summary reviews", () => {
     await userEvent.click(await screen.findByRole("button", { name: /Select reviewer agent/ }));
     await userEvent.click(await screen.findByRole("menuitem", { name: /^opencode$/i }));
     expect(await screen.findByRole("menuitem", { name: "Suggested A" })).toBeInTheDocument();
-    await userEvent.click(await screen.findByRole("menuitem", { name: /^custom opencode model$/i }));
-    const customInput = await screen.findByRole("textbox", { name: /custom opencode/i });
-    await userEvent.type(customInput, "private/custom-model");
-    await userEvent.click(screen.getByRole("menuitem", { name: /use “private\/custom-model” as a custom model/i }));
-
-    await waitFor(() =>
-      expect(postMock).toHaveBeenCalledWith(
-        "/api/v1/sessions/{sessionId}/reviews/switch",
-        {
-          params: { path: { sessionId: "sess-1" } },
-          body: { harness: "opencode", agentConfig: { model: "private/custom-model" } },
-        },
-      ),
-    );
+    expect(screen.queryByRole("menuitem", { name: /^custom opencode model$/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("textbox", { name: /custom opencode/i })).not.toBeInTheDocument();
   });
 
-  it("allows a custom reviewer model for text-selection harnesses", async () => {
+  it("allows selecting a text-selection reviewer harness without exposing custom reviewer entry", async () => {
     getMock.mockImplementation(async (path: string, options?: { params?: { path?: { agent?: string } } }) => {
       if (path === "/api/v1/agents/{agent}/models") {
         const agent = options?.params?.path?.agent ?? "";
@@ -3142,25 +3140,11 @@ describe("SessionInspector summary reviews", () => {
         },
       ),
     );
-
-    await userEvent.click(await screen.findByRole("button", { name: /Select reviewer agent/ }));
-    await userEvent.click(await screen.findByRole("menuitem", { name: /^custom opencode model$/i }));
-    const customInput = await screen.findByRole("textbox", { name: /custom opencode/i });
-    await userEvent.type(customInput, "private/custom-model");
-    await userEvent.click(screen.getByRole("menuitem", { name: /use “private\/custom-model” as a custom model/i }));
-
-    await waitFor(() =>
-      expect(postMock).toHaveBeenLastCalledWith(
-        "/api/v1/sessions/{sessionId}/reviews/switch",
-        {
-          params: { path: { sessionId: "sess-1" } },
-          body: { harness: "opencode", agentConfig: { model: "private/custom-model" } },
-        },
-      ),
-    );
+    expect(screen.queryByRole("menuitem", { name: /^custom opencode model$/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("textbox", { name: /custom opencode/i })).not.toBeInTheDocument();
   });
 
-  it("does not save an empty reviewer config just by opening a harness submenu", async () => {
+  it("selects the default reviewer model when clicking a reviewer with model choices", async () => {
     getMock.mockImplementation(async (path: string, options?: { params?: { path?: { agent?: string } } }) => {
       if (path === "/api/v1/agents/{agent}/models" && options?.params?.path?.agent === "codex") {
         return {
@@ -3194,13 +3178,25 @@ describe("SessionInspector summary reviews", () => {
     await userEvent.click(await screen.findByRole("menuitem", { name: /codex/i }));
 
     await waitFor(() =>
+      expect(postMock).toHaveBeenCalledWith(
+        "/api/v1/sessions/{sessionId}/reviews/switch",
+        {
+          params: { path: { sessionId: "sess-1" } },
+          body: { agentConfig: undefined },
+        },
+      ),
+    );
+    expect(screen.queryByRole("menuitem", { name: "GPT-5 Mini" })).not.toBeInTheDocument();
+    expect(postCallsFor("/api/v1/sessions/{sessionId}/reviews/switch")).toHaveLength(1);
+
+    await userEvent.click(await screen.findByRole("button", { name: /Select reviewer agent/ }));
+    await userEvent.click(await screen.findByRole("menuitem", { name: /codex/i }));
+    await waitFor(() =>
       expect(screen.getByRole("menuitem", { name: "GPT-5 Mini" })).toBeInTheDocument(),
     );
-    expect(postCallsFor("/api/v1/sessions/{sessionId}/reviews/switch")).toHaveLength(0);
-
     await userEvent.click(screen.getByRole("menuitem", { name: "GPT-5 Mini" }));
     await waitFor(() =>
-      expect(postMock).toHaveBeenCalledWith(
+      expect(postMock).toHaveBeenLastCalledWith(
         "/api/v1/sessions/{sessionId}/reviews/switch",
         {
           params: { path: { sessionId: "sess-1" } },
@@ -3208,7 +3204,7 @@ describe("SessionInspector summary reviews", () => {
         },
       ),
     );
-    expect(postCallsFor("/api/v1/sessions/{sessionId}/reviews/switch")).toHaveLength(1);
+    expect(postCallsFor("/api/v1/sessions/{sessionId}/reviews/switch")).toHaveLength(2);
   });
 
   it("clears hidden session reviewer config when returning an explicit default-matching reviewer to project default", async () => {
