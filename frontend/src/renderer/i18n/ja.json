@@ -1743,5 +1743,6 @@
 	"importSession.importedCount_one": "{{count}} 件のセッションをインポートしました",
 	"importSession.importedCount_other": "{{count}} 件のセッションをインポートしました",
 	"importSession.failedCount_one": "{{count}} 件失敗",
-	"importSession.failedCount_other": "{{count}} 件失敗"
+	"importSession.failedCount_other": "{{count}} 件失敗",
+	"importSession.keepsRunning": "作業を続けられます"
 }

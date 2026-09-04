@@ -1743,5 +1743,6 @@
 	"importSession.importedCount_one": "{{count}} Sitzung importiert",
 	"importSession.importedCount_other": "{{count}} Sitzungen importiert",
 	"importSession.failedCount_one": "{{count}} fehlgeschlagen",
-	"importSession.failedCount_other": "{{count}} fehlgeschlagen"
+	"importSession.failedCount_other": "{{count}} fehlgeschlagen",
+	"importSession.keepsRunning": "Sie können weiterarbeiten"
 }

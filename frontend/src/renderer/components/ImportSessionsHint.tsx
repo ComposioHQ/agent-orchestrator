@@ -1,7 +1,8 @@
-import { Download, X } from "lucide-react";
+import { Download, LoaderCircle, X } from "lucide-react";
 import { useCallback, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useHasReadyAgent } from "../hooks/useAgentReadinessQuery";
+import { useImportRunStore } from "../stores/import-run-store";
 import { useUiStore } from "../stores/ui-store";
 
 const dismissedStorageKey = "ao.importSessionsHint.dismissed";
@@ -52,6 +53,10 @@ export function ImportSessionsHint() {
 	// user has installed and logged into. Without one this route only
 	// dead-ends, so it is not offered. It appears once an agent is ready.
 	const hasAgent = useHasReadyAgent();
+	// A run started from the dialog keeps going after it is closed, so the
+	// sidebar is where its progress stays visible.
+	const runProgress = useImportRunStore((state) => state.progress);
+	const running = useImportRunStore((state) => state.running);
 
 	const dismiss = useCallback(() => {
 		persistDismissed();
@@ -64,6 +69,28 @@ export function ImportSessionsHint() {
 		setDismissed(true);
 		setImportSessionOpen(true);
 	}, [setImportSessionOpen]);
+
+	// Reopening the dialog from a running row must not retire the entry, since
+	// the row is the only place that run is visible.
+	const reopen = useCallback(() => setImportSessionOpen(true), [setImportSessionOpen]);
+
+	// A run in progress outranks both the dismissal and the readiness gate:
+	// something the user started must not vanish while it is still working.
+	if (running && runProgress) {
+		return (
+			<button
+				className="sidebar-expanded-chrome mx-2 mb-2 flex h-9 items-center gap-2 rounded-lg border border-border bg-surface-raised/50 px-2.5 text-caption text-foreground transition-colors hover:bg-interactive-hover group-data-[collapsible=icon]:hidden"
+				data-testid="import-sessions-running"
+				onClick={reopen}
+				type="button"
+			>
+				<LoaderCircle aria-hidden="true" className="size-icon-sm shrink-0 animate-spin text-muted-foreground" />
+				<span className="truncate">
+					{t("importSession.importingProgress", { done: runProgress.done, total: runProgress.total })}
+				</span>
+			</button>
+		);
+	}
 
 	if (dismissed || !hasAgent) return null;
 

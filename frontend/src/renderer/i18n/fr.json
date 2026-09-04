@@ -1771,5 +1771,6 @@
 	"importSession.importedCount_other": "{{count}} sessions importées",
 	"importSession.failedCount_one": "{{count}} en échec",
 	"importSession.failedCount_many": "{{count}} en échec",
-	"importSession.failedCount_other": "{{count}} en échec"
+	"importSession.failedCount_other": "{{count}} en échec",
+	"importSession.keepsRunning": "vous pouvez continuer à travailler"
 }

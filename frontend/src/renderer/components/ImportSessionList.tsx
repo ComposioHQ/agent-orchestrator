@@ -2,11 +2,10 @@ import { Check, Download, LoaderCircle, TriangleAlert } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import {
 	type ImportableSession,
-	type ImportAllProgress,
 	useImportableSessions,
-	useImportAllSessions,
 	useImportSession,
 } from "../hooks/useImportableSessions";
+import { type ImportRunProgress, useImportRunStore } from "../stores/import-run-store";
 import { agentLabel } from "../lib/agent-options";
 import { AgentAvatar } from "./AgentAvatar";
 import { Button } from "./ui/button";
@@ -32,7 +31,12 @@ export function ImportSessionList({ projectId, active = true, onImported }: Impo
 	const { t } = useTranslation();
 	const query = useImportableSessions(IMPORT_WINDOW_DAYS, active, projectId);
 	const importMutation = useImportSession();
-	const bulk = useImportAllSessions();
+	// The run lives in a store, so closing this dialog leaves it going.
+	const runProgress = useImportRunStore((state) => state.progress);
+	const running = useImportRunStore((state) => state.running);
+	const startRun = useImportRunStore((state) => state.start);
+	const stopRun = useImportRunStore((state) => state.stop);
+	const dismissRun = useImportRunStore((state) => state.dismiss);
 
 	const sessions = query.data ?? [];
 	const pendingId = importMutation.isPending ? importMutation.variables?.nativeSessionId : undefined;
@@ -96,12 +100,12 @@ export function ImportSessionList({ projectId, active = true, onImported }: Impo
 		<>
 			<ImportAllBar
 				remaining={remaining}
-				progress={bulk.progress}
-				running={bulk.running}
+				progress={runProgress}
+				running={running}
 				disabled={importMutation.isPending}
-				onImportAll={() => void bulk.importAll(sessions)}
-				onStop={bulk.stop}
-				onDismiss={bulk.clear}
+				onImportAll={() => void startRun(sessions)}
+				onStop={stopRun}
+				onDismiss={dismissRun}
 			/>
 			<div className="flex flex-col gap-4">
 				{folders.map((folder) => (
@@ -120,7 +124,7 @@ export function ImportSessionList({ projectId, active = true, onImported }: Impo
 									key={`${session.provider}:${session.nativeSessionId}`}
 									session={session}
 									pending={pendingId === session.nativeSessionId}
-									disabled={importMutation.isPending || bulk.running}
+									disabled={importMutation.isPending || running}
 									onImport={() => handleImport(session)}
 								/>
 							))}
@@ -226,7 +230,7 @@ function ImportAllBar({
 	onDismiss,
 }: {
 	remaining: number;
-	progress: ImportAllProgress | null;
+	progress: ImportRunProgress | null;
 	running: boolean;
 	disabled: boolean;
 	onImportAll: () => void;
@@ -252,9 +256,13 @@ function ImportAllBar({
 	if (running && progress) {
 		return (
 			<div className="mb-3 flex items-center justify-between gap-3 rounded-lg border border-border bg-surface-raised/40 px-3 py-2">
-				<span className="flex items-center gap-2 text-caption text-muted-foreground">
-					<LoaderCircle className="size-icon-sm animate-spin" aria-hidden="true" />
-					{t("importSession.importingProgress", { done: progress.done, total: progress.total })}
+				<span className="flex min-w-0 items-center gap-2 text-caption text-muted-foreground">
+					<LoaderCircle className="size-icon-sm shrink-0 animate-spin" aria-hidden="true" />
+					<span className="truncate">
+						{t("importSession.importingProgress", { done: progress.done, total: progress.total })}
+						{" · "}
+						{t("importSession.keepsRunning")}
+					</span>
 				</span>
 				<Button onClick={onStop} type="button" variant="outline">
 					{t("importSession.stop")}

@@ -1725,5 +1725,6 @@
 	"importSession.importedCount_one": "Imported {{count}} session",
 	"importSession.importedCount_other": "Imported {{count}} sessions",
 	"importSession.failedCount_one": "{{count}} failed",
-	"importSession.failedCount_other": "{{count}} failed"
+	"importSession.failedCount_other": "{{count}} failed",
+	"importSession.keepsRunning": "you can keep working"
 }

@@ -1725,5 +1725,6 @@
 	"importSession.importedCount_one": "已导入 {{count}} 个会话",
 	"importSession.importedCount_other": "已导入 {{count}} 个会话",
 	"importSession.failedCount_one": "{{count}} 个失败",
-	"importSession.failedCount_other": "{{count}} 个失败"
+	"importSession.failedCount_other": "{{count}} 个失败",
+	"importSession.keepsRunning": "可以继续工作"
 }

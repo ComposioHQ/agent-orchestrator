@@ -1771,5 +1771,6 @@
 	"importSession.importedCount_other": "{{count}} sesiones importadas",
 	"importSession.failedCount_one": "{{count}} con error",
 	"importSession.failedCount_many": "{{count}} con error",
-	"importSession.failedCount_other": "{{count}} con error"
+	"importSession.failedCount_other": "{{count}} con error",
+	"importSession.keepsRunning": "puedes seguir trabajando"
 }
