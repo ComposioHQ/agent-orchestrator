@@ -1602,10 +1602,10 @@ export function SessionView({ sessionId }: SessionViewProps) {
 							{interfaceSwitch.startError && !interfaceSwitchDialogOpen ? (
 								<div role="alert" className="absolute left-1/2 top-3 z-20 flex w-[min(34rem,calc(100%-1.5rem))] -translate-x-1/2 items-start gap-3 rounded-lg border border-destructive/40 bg-popover px-3 py-2.5 text-xs shadow-md">
 									<div className="min-w-0 flex-1">
-										<p className="font-medium">Could not switch interfaces</p>
+										<p className="font-medium">{t("session.interfaceSwitchFailed")}</p>
 										<p className="mt-1 break-words text-muted-foreground">{interfaceSwitch.startError}</p>
 									</div>
-									<button type="button" aria-label="Dismiss interface switch error" className="shrink-0 rounded px-1 text-muted-foreground hover:text-foreground" onClick={interfaceSwitch.resetStartError}>Dismiss</button>
+									<button type="button" aria-label={t("session.dismissInterfaceSwitchError")} className="shrink-0 rounded px-1 text-muted-foreground hover:text-foreground" onClick={interfaceSwitch.resetStartError}>{t("session.dismissInterfaceSwitchNotice")}</button>
 								</div>
 							) : null}
 							{!interfaceSwitch.startError && interfaceTransitionHasUnacknowledgedNotice(interfaceSwitch.transition) ? (

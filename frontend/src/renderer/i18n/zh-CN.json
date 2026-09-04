@@ -1748,5 +1748,8 @@
 	"settings.project.autoReviewToggle": "Auto review PRs",
 	"settings.project.autoReviewDescription": "When enabled, new worker sessions will automatically review their pull requests. This can still be toggled per session after spawn.",
 	"settings.project.reviewer": "Reviewer",
-	"settings.models.customAgentModelAria": "{{label}} 自定义模型"
+	"settings.models.customAgentModelAria": "{{label}} 自定义模型",
+	"session.interfaceSwitchFailed": "无法切换界面",
+	"session.dismissInterfaceSwitchError": "关闭界面切换错误提示",
+	"session.dismissInterfaceSwitchNotice": "关闭"
 }

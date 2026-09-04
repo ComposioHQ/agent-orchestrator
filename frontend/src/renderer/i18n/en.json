@@ -1748,5 +1748,8 @@
 	"inspector.usage.processedTokensAria": "{{count}} tokens processed",
 	"inspector.usage.processedTokensUnavailable": "Processed tokens unavailable",
 	"settings.project.reviewer": "Reviewer",
-	"settings.models.customAgentModelAria": "Custom {{label}} model"
+	"settings.models.customAgentModelAria": "Custom {{label}} model",
+	"session.interfaceSwitchFailed": "Could not switch interfaces",
+	"session.dismissInterfaceSwitchError": "Dismiss interface switch error",
+	"session.dismissInterfaceSwitchNotice": "Dismiss"
 }
