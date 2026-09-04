@@ -108,6 +108,7 @@ type agentLauncher struct {
 	runFile    string
 	auth       agentAuthResolver
 	executable func() (string, error)
+	launchGate ports.LaunchGate
 }
 
 type preLaunchReviewer interface {
@@ -131,6 +132,18 @@ type LauncherOption func(*agentLauncher)
 func WithAgentAuth(auth agentAuthResolver) LauncherOption {
 	return func(l *agentLauncher) {
 		l.auth = auth
+	}
+}
+
+// WithLaunchGate gives the reviewer the same pre-spawn gate the worker seam
+// uses. Parity is the point: the reviewer is created on its own path, so a gate
+// wired only into Spawn would leave a reviewer able to strand at a startup
+// prompt while the session it reviews looks healthy -- which is one of the
+// split-brain shapes this gate exists to stop. Nil leaves reviewer launches
+// unchanged.
+func WithLaunchGate(gate ports.LaunchGate) LauncherOption {
+	return func(l *agentLauncher) {
+		l.launchGate = gate
 	}
 }
 
@@ -441,11 +454,17 @@ func (l *agentLauncher) launchReviewerTerminalWithMode(ctx context.Context, spec
 	if workingDirectory == "" {
 		workingDirectory = spec.WorkspacePath
 	}
+	reviewerEnv := l.runtimeEnv(ctx, spec, cmd.Argv, cmd.Env)
+	// Same gate, same fail-closed shape, same position as the worker seam: the
+	// child argv and environment are final and no pane exists yet.
+	if err := l.applyLaunchGate(ctx, spec, workingDirectory, cmd.Argv, reviewerEnv); err != nil {
+		return LaunchResult{}, err
+	}
 	handle, err := l.runtime.Create(ctx, ports.RuntimeConfig{
 		SessionID:     domain.SessionID(handleID),
 		WorkspacePath: workingDirectory,
 		Argv:          cmd.Argv,
-		Env:           l.runtimeEnv(ctx, spec, cmd.Argv, cmd.Env),
+		Env:           reviewerEnv,
 	})
 	if err != nil {
 		return LaunchResult{}, fmt.Errorf("reviewer runtime: %w", err)
@@ -714,4 +733,50 @@ func (l *agentLauncher) Destroy(ctx context.Context, handleID string) error {
 		return nil
 	}
 	return l.runtime.Destroy(ctx, ports.RuntimeHandle{ID: handleID})
+}
+
+
+// applyLaunchGate consults the optional pre-spawn gate for a reviewer child.
+// It mirrors the worker seam exactly: nil gate means no change, a refusal or a
+// gate error stops the launch before any pane is created, and a permitted
+// launch may gain environment entries AO has not already set.
+func (l *agentLauncher) applyLaunchGate(ctx context.Context, spec LaunchSpec,
+	workspacePath string, argv []string, env map[string]string) error {
+	if l.launchGate == nil {
+		return nil
+	}
+	envCopy := make(map[string]string, len(env))
+	for key, value := range env {
+		envCopy[key] = value
+	}
+	decision, err := l.launchGate.PreLaunch(ctx, ports.PreLaunchRequest{
+		SessionID:     string(spec.WorkerID),
+		WorkspacePath: workspacePath,
+		Argv:          append([]string(nil), argv...),
+		Env:           envCopy,
+		Role:          ports.LaunchRoleReviewer,
+	})
+	if err != nil {
+		return fmt.Errorf("reviewer %w: %w", ports.ErrLaunchNotReady, err)
+	}
+	if !decision.Allow {
+		reason := strings.TrimSpace(decision.Reason)
+		if reason == "" {
+			reason = "gate refused the reviewer launch without a reason"
+		}
+		if kind := strings.TrimSpace(decision.PromptKind); kind != "" {
+			return fmt.Errorf("reviewer %w: %s (%s)", ports.ErrLaunchNotReady, reason, kind)
+		}
+		return fmt.Errorf("reviewer %w: %s", ports.ErrLaunchNotReady, reason)
+	}
+	for key, value := range decision.Env {
+		if key == "" {
+			continue
+		}
+		if _, taken := env[key]; taken {
+			continue
+		}
+		env[key] = value
+	}
+	return nil
 }

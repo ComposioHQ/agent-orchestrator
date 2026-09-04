@@ -574,7 +574,36 @@ type PreLaunchRequest struct {
 	// the binary check. A gate may read it to confirm that a resolved
 	// permission mode actually reaches the child, but must not rewrite it.
 	Argv []string
+	// Env is the resolved child environment as it stands immediately before the
+	// child is created. It is a copy: mutating it has no effect, and a gate
+	// contributes through PreLaunchDecision.Env instead.
+	//
+	// A gate cannot do its job without this. An agent's own configuration root
+	// is frequently an environment variable -- Claude reads CLAUDE_CONFIG_DIR --
+	// and AO or its operator may already have set one. A gate that assumed the
+	// default root would write its state to a file the child never reads, and
+	// the child would still stop at the prompt that state was meant to answer,
+	// with every observable surface reporting that the state exists. That exact
+	// discrepancy was observed live: trust recorded true in the home root for
+	// the precise worktree paths, and absent from the effective inherited root
+	// the reviewer child actually used.
+	Env map[string]string
+	// Role distinguishes the session's own agent from a reviewer sidecar
+	// launched beside it. Both create children, by separate paths, and a gate
+	// that saw only one of them would leave the other able to strand silently.
+	Role LaunchRole
 }
+
+// LaunchRole names which child a gate is being asked about.
+type LaunchRole string
+
+const (
+	// LaunchRoleWorker is the session's own agent, created by Spawn.
+	LaunchRoleWorker LaunchRole = "worker"
+	// LaunchRoleReviewer is the reviewer sidecar, created by the review
+	// launcher on its own path.
+	LaunchRoleReviewer LaunchRole = "reviewer"
+)
 
 // PreLaunchDecision is a gate's answer. The zero value refuses, so a gate that
 // returns nothing by mistake stops the launch rather than waving it through.

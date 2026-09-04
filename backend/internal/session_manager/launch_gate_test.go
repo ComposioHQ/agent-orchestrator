@@ -33,8 +33,15 @@ func (g *recordingLaunchGate) PreLaunch(_ context.Context, req ports.PreLaunchRe
 
 func gateSpawnDeps(t *testing.T, gate ports.LaunchGate) (*fakeRuntime, *fakeWorkspace, Deps) {
 	t.Helper()
+	return gateSpawnDepsWithProjectEnv(t, gate, nil)
+}
+
+func gateSpawnDepsWithProjectEnv(t *testing.T, gate ports.LaunchGate, projectEnv map[string]string) (*fakeRuntime, *fakeWorkspace, Deps) {
+	t.Helper()
 	st := newFakeStore()
-	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: testRoleAgents()}
+	config := testRoleAgents()
+	config.Env = projectEnv
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: config}
 	rt := &fakeRuntime{}
 	ws := &fakeWorkspace{}
 	return rt, ws, Deps{
@@ -201,3 +208,75 @@ func TestSpawn_WithoutLaunchGateIsUnchanged(t *testing.T) {
 	}
 }
 
+
+
+// The reported #4895 condition, at the worker seam.
+//
+// Trust was recorded true in the operator's home Claude root for the exact
+// worktree paths, and was absent from the root the child actually read, because
+// CLAUDE_CONFIG_DIR was already set in the inherited environment. Every surface
+// said the state existed; the child still stopped at the prompt that state was
+// meant to answer.
+//
+// A gate cannot detect that unless it is told the resolved child environment.
+// Guessing the default root is precisely the mistake that produced the incident.
+func TestSpawn_LaunchGateSeesTheEffectiveConfigRootFromTheChildEnvironment(t *testing.T) {
+	const inherited = "/home/rose/.ao/bench-claude"
+	gate := &recordingLaunchGate{decision: ports.PreLaunchDecision{Allow: true}}
+	// Model the operator's environment: a config root is already chosen for the
+	// child before AO ever consults a gate.
+	rt, _, deps := gateSpawnDepsWithProjectEnv(t, gate, map[string]string{"CLAUDE_CONFIG_DIR": inherited})
+	m := New(deps)
+
+	if _, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker}); err != nil {
+		t.Fatalf("spawn: %v", err)
+	}
+	if len(gate.seen) != 1 {
+		t.Fatalf("gate consulted %d times, want exactly once", len(gate.seen))
+	}
+	observed := gate.seen[0].Env["CLAUDE_CONFIG_DIR"]
+	if observed != inherited {
+		t.Fatalf("gate saw CLAUDE_CONFIG_DIR = %q, want the inherited %q; without it a gate "+
+			"writes its state to a root the child never reads", observed, inherited)
+	}
+	if got := rt.lastCfg.Env["CLAUDE_CONFIG_DIR"]; got != inherited {
+		t.Fatalf("child CLAUDE_CONFIG_DIR = %q, want the same root the gate was shown", got)
+	}
+}
+
+// The gate is told which child it is being asked about, so worker and reviewer
+// cannot be silently conflated.
+func TestSpawn_LaunchGateRequestNamesTheWorkerRole(t *testing.T) {
+	gate := &recordingLaunchGate{decision: ports.PreLaunchDecision{Allow: true}}
+	_, _, deps := gateSpawnDeps(t, gate)
+	m := New(deps)
+
+	if _, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker}); err != nil {
+		t.Fatalf("spawn: %v", err)
+	}
+	if got := gate.seen[0].Role; got != ports.LaunchRoleWorker {
+		t.Fatalf("role = %q, want %q", got, ports.LaunchRoleWorker)
+	}
+}
+
+// The gate gets a copy. Reaching into the child environment directly would let
+// a gate change a launch it had already been asked to judge.
+func TestSpawn_LaunchGateCannotMutateTheChildEnvironmentThroughItsRequest(t *testing.T) {
+	gate := &mutatingLaunchGate{}
+	rt, _, deps := gateSpawnDeps(t, gate)
+	m := New(deps)
+
+	if _, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker}); err != nil {
+		t.Fatalf("spawn: %v", err)
+	}
+	if _, leaked := rt.lastCfg.Env["SNEAKED_IN"]; leaked {
+		t.Fatal("a gate must not reach the child environment except through its decision")
+	}
+}
+
+type mutatingLaunchGate struct{}
+
+func (mutatingLaunchGate) PreLaunch(_ context.Context, req ports.PreLaunchRequest) (ports.PreLaunchDecision, error) {
+	req.Env["SNEAKED_IN"] = "1"
+	return ports.PreLaunchDecision{Allow: true}, nil
+}

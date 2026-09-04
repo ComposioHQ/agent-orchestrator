@@ -4747,6 +4747,8 @@ func (m *Manager) applyLaunchGate(ctx context.Context, id domain.SessionID, cfg 
 		GitCommonDir:  m.gitCommonDir(ctx, workspacePath),
 		Permissions:   adapterConfig.Permissions,
 		Argv:          append([]string(nil), argv...),
+		Env:           copyEnv(env),
+		Role:          ports.LaunchRoleWorker,
 	})
 	if err != nil {
 		return fmt.Errorf("%w: %w", ports.ErrLaunchNotReady, err)
@@ -4771,6 +4773,19 @@ func (m *Manager) applyLaunchGate(ctx context.Context, id domain.SessionID, cfg 
 		env[key] = value
 	}
 	return nil
+}
+
+// copyEnv hands a gate its own copy, so a gate cannot reach into the child
+// environment except through its decision.
+func copyEnv(env map[string]string) map[string]string {
+	if env == nil {
+		return nil
+	}
+	out := make(map[string]string, len(env))
+	for key, value := range env {
+		out[key] = value
+	}
+	return out
 }
 
 // gitCommonDir reports the workspace's git common directory, or "" when the
