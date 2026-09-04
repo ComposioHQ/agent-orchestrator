@@ -1413,10 +1413,10 @@ function CreateProjectFolderDialog({
 									</div>
 								) : null}
 
-								{workspaceRequiresInitializedChildRepo && !error ? (
-									<div className="rounded-md border border-[var(--color-border-import-modal)] bg-[var(--color-bg-import-card)] px-3 py-3 text-[12px] leading-5 text-[var(--color-text-import-muted)]">
-										Importing a workspace requires at least one direct child Git repository that already has a commit and an origin remote. Plain folders are not initialized from this flow.
-									</div>
+				{workspaceRequiresInitializedChildRepo && !error ? (
+					<div className="rounded-md border border-[var(--color-border-import-modal)] bg-[var(--color-bg-import-card)] px-3 py-3 text-[12px] leading-5 text-[var(--color-text-import-muted)]">
+						{t("createProject.workspaceRequiresInitializedChildRepo")}
+					</div>
 								) : null}
 
 								{readyRepos.map((repo) => (
@@ -1431,9 +1431,9 @@ function CreateProjectFolderDialog({
 								{setupRepos.length > 0 ? (
 									<div className="rounded-md border border-[var(--color-border-import-modal)] bg-[var(--color-bg-import-card)] p-4">
 										<div className="space-y-1">
-											<h3 className="text-[14px] font-semibold text-[var(--color-text-import-title)]">Workspace setup</h3>
-											<p className="text-[12px] leading-6 text-[var(--color-text-import-muted)]">
-												Approve the required setup actions for each initialized child repository. AO will run only the selected required steps before continuing.
+						<h3 className="text-[14px] font-semibold text-[var(--color-text-import-title)]">{t("createProject.workspaceSetup")}</h3>
+						<p className="text-[12px] leading-6 text-[var(--color-text-import-muted)]">
+							{t("createProject.workspaceSetupApproval")}
 											</p>
 										</div>
 										<div
@@ -1582,6 +1582,7 @@ function WorkspaceSetupRepoPanel({
 	repo: DisplayImportRepo;
 	remoteUrl: string;
 }) {
+	const { t } = useTranslation();
 	const actionCount = repo.requiredActions.length;
 	return (
 		<details
@@ -1607,7 +1608,7 @@ function WorkspaceSetupRepoPanel({
 			</summary>
 			<div className="space-y-3 border-t border-[var(--color-border-import-modal)] px-4 py-4">
 				<p className="text-[12px] leading-5 text-[var(--color-text-import-muted)]">
-					Approve only the missing setup for this initialized child repository.
+					{t("createProject.workspaceSetupRepoApproval")}
 				</p>
 				{orderedGitActions(repo.requiredActions).map((action) => {
 					const checked = approvedActions.includes(action);
@@ -1656,6 +1657,7 @@ function WorkspaceSetupActionCard({
 	onChangeChecked: (checked: boolean) => void;
 	onChangeRemoteUrl: (remoteUrl: string) => void;
 }) {
+	const { t } = useTranslation();
 	const label = workspaceActionStateLabel(action, state, checked, remoteUrl);
 	return (
 		<div className="rounded-md border border-[var(--color-border-import-modal)] bg-[var(--color-bg-import-card)] px-4 py-4">
@@ -1679,7 +1681,7 @@ function WorkspaceSetupActionCard({
 			{action === "set_remote" ? (
 				<div className="mt-4 space-y-2 pl-7">
 					<Label htmlFor={inputId} className="text-[12px] font-semibold text-[var(--color-text-import-title)]">
-						Origin remote URL
+						{t("createProject.originRemoteUrl")}
 					</Label>
 					<Input
 						id={inputId}
@@ -1687,7 +1689,7 @@ function WorkspaceSetupActionCard({
 						autoComplete="off"
 						className="bg-[var(--color-bg-import-modal)] font-mono text-[13px]"
 						disabled={disabled}
-						placeholder="https://github.com/org/repository.git"
+						placeholder={t("createProject.originRemoteUrlPlaceholder")}
 						spellCheck={false}
 						value={remoteUrl}
 						onChange={(event) => onChangeRemoteUrl(event.target.value)}

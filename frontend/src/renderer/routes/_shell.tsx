@@ -10,6 +10,7 @@ import { DaemonStartupLoader } from "../components/DaemonStartupLoader";
 import { NotificationRuntime } from "../components/NotificationCenter";
 import { TrayRuntime } from "../components/TrayRuntime";
 import { GlobalNewTaskDialog } from "../components/GlobalNewTaskDialog";
+import { GlobalToast } from "../components/GlobalToast";
 import { SettingsDialog } from "../components/SettingsDialog";
 import { KeyboardShortcutsDialog } from "../components/KeyboardShortcutsDialog";
 import { KeyboardShortcutsSettingsDialog } from "../components/settings/KeyboardShortcutsSettingsDialog";
@@ -71,6 +72,17 @@ function errorMessage(error: unknown) {
 function expandedSidebarWidthPx(): number {
 	const inlineWidth = Number.parseFloat(document.documentElement.style.getPropertyValue("--ao-sidebar-w"));
 	return Number.isFinite(inlineWidth) && inlineWidth > 0 ? inlineWidth : SIDEBAR_DEFAULT_WIDTH;
+}
+
+function normalizeProjectPath(path: string): string {
+	if (!path) return path;
+	const trimmed = path.trim().replace(/[\\/]+$/, "");
+	return trimmed === "" ? path : trimmed;
+}
+
+function findRegisteredWorkspaceByPath(workspaces: WorkspaceSummary[], path: string): WorkspaceSummary | undefined {
+	const normalizedPath = normalizeProjectPath(path);
+	return workspaces.find((workspace) => normalizeProjectPath(workspace.path) === normalizedPath);
 }
 
 type CreateProjectConfigInput = {
@@ -371,6 +383,7 @@ function ShellLayout() {
 	const orchestratorReplacementErrors = useUiStore((state) => state.orchestratorReplacementErrors);
 	const setOrchestratorReplacementError = useUiStore((state) => state.setOrchestratorReplacementError);
 	const setOrchestratorStartupError = useUiStore((state) => state.setOrchestratorStartupError);
+	const showGlobalToast = useUiStore((state) => state.showGlobalToast);
 	const replacementErrorProjectId = Object.keys(orchestratorReplacementErrors)[0] ?? null;
 	const isStartupLoading =
 		!usesPreviewWorkspaceData &&
@@ -503,6 +516,17 @@ function ShellLayout() {
 			if (error) {
 				const failure = new Error(apiErrorMessage(error)) as Error & { code?: string };
 				failure.code = apiErrorCode(error);
+				if (failure.code === "PATH_ALREADY_REGISTERED") {
+					const registeredWorkspace = findRegisteredWorkspaceByPath(
+						queryClient.getQueryData<WorkspaceSummary[]>(workspaceQueryKey) ?? workspacesRef.current,
+						input.path,
+					);
+					if (registeredWorkspace) {
+						showGlobalToast("Project already added", "Opened the registered project for this folder.");
+						void navigate({ to: "/projects/$projectId", params: { projectId: registeredWorkspace.id } });
+						return;
+					}
+				}
 				void captureRendererException(failure, {
 					source: "project-add",
 					operation: "project_add",
@@ -513,7 +537,7 @@ function ShellLayout() {
 			if (!data?.project) throw new Error("Project creation returned no project");
 			await completeProjectCreation(data.project, input, "project_add");
 		},
-		[completeProjectCreation],
+		[completeProjectCreation, navigate, queryClient, showGlobalToast],
 	);
 
 	const cloneProject = useCallback(
@@ -880,6 +904,7 @@ function ShellLayout() {
 					</div>
 				) : null}
 				<GlobalNewTaskDialog />
+				<GlobalToast />
 				<SettingsDialog />
 				<KeyboardShortcutsDialog
 					open={isKeyboardShortcutsOpen}
