@@ -137,7 +137,11 @@ import { keepDaemonAlive, shouldLinkOnAttach } from "./main/daemon-owner";
 import { readMigrationState, updateMigration, writeAppStateMarker, type MigrationState } from "./main/app-state";
 import { isAllowedAppExternalURL, openAllowedAppExternalURL } from "./main/external-open";
 import { dockBounceType, shouldReplaceBounce, shouldSignalAttention, shouldToast } from "./main/notification-signals";
-import { buildMacAppMenuTemplate, buildWindowsAppMenuTemplate } from "./main/menu";
+import {
+	buildLinuxAppMenuTemplate,
+	buildMacAppMenuTemplate,
+	buildWindowsAppMenuTemplate,
+} from "./main/menu";
 import { ancestorRepositorySetupWarning, scanImportFolder } from "./main/import-folder-scan";
 import { parseOpenFolderPathArg } from "./main/open-folder-arg";
 import { AGENT_SWITCH_VISIBILITY_IPC_CHANNEL } from "./shared/agent-switch-observability";
@@ -472,6 +476,20 @@ function buildWindowsAppMenu(): Menu {
 	);
 }
 
+// Menu installed on Linux where the native menu bar is hidden by default.
+// The role-based menu preserves standard accelerators (Reload, DevTools, zoom,
+// full screen, edit commands) while routing DevTools through AO's guarded handler.
+function buildLinuxAppMenu(): Menu {
+	return Menu.buildFromTemplate(
+		buildLinuxAppMenuTemplate(() => {
+			const fallback = () => getShellWebContents()?.toggleDevTools();
+			void browserViewHost?.toggleDevToolsForLastFocused().then((state) => {
+				if (!state) fallback();
+			}).catch(fallback);
+		}),
+	);
+}
+
 async function disposeBrowserViewHost(): Promise<void> {
 	const host = browserViewHost;
 	browserViewHost = null;
@@ -549,8 +567,8 @@ async function createWindowInternal(): Promise<void> {
 		icon: windowIconPath(),
 		backgroundColor: NATIVE_WINDOW_BACKGROUND_DARK,
 		// Windows goes frameless and the renderer paints the whole titlebar,
-		// including custom min/max/close controls. macOS/Linux keep the inset
-		// traffic-light chrome.
+		// including custom min/max/close controls. macOS keeps the inset
+		// traffic-light chrome, and Linux uses standard frame decorations.
 		...(process.platform === "win32"
 			? {
 					titleBarStyle: "hidden" as const,
@@ -558,11 +576,17 @@ async function createWindowInternal(): Promise<void> {
 					// accelerators) below; the visible menu is painted by WindowTitlebar.
 					autoHideMenuBar: true,
 				}
-			: {
-					titleBarStyle: "hiddenInset" as const,
-					// Fixed natural titlebar position — never moved on sidebar toggle.
-					trafficLightPosition: { x: MAC_WINDOW_BUTTON_X, y: MAC_WINDOW_BUTTON_Y },
-				}),
+			: process.platform === "linux"
+				? {
+						// Auto-hide the native menu bar strip. Accelerators stay active
+						// via the application menu; pressing Alt reveals the menu bar.
+						autoHideMenuBar: true,
+					}
+				: {
+						titleBarStyle: "hiddenInset" as const,
+						// Fixed natural titlebar position — never moved on sidebar toggle.
+						trafficLightPosition: { x: MAC_WINDOW_BUTTON_X, y: MAC_WINDOW_BUTTON_Y },
+					}),
 	};
 	mainWindow = new BaseWindow(windowOptions);
 	const composition = createWindowComposition({
@@ -586,7 +610,8 @@ async function createWindowInternal(): Promise<void> {
 	// installed so its accelerators keep working and act on the focused pane;
 	// setMenuBarVisibility(false) keeps the strip itself out of view. macOS gets
 	// an explicit menu so DevTools avoids Electron's unsafe built-in role; Linux
-	// keeps its native menu.
+	// installs the role-based menu so accelerators and guarded DevTools work,
+	// while autoHideMenuBar and setMenuBarVisibility(false) hide the menu strip.
 	if (process.platform === "win32") {
 		Menu.setApplicationMenu(buildWindowsAppMenu());
 		mainWindow.setMenuBarVisibility(false);
@@ -606,6 +631,9 @@ async function createWindowInternal(): Promise<void> {
 				}),
 			),
 		);
+	} else if (process.platform === "linux") {
+		Menu.setApplicationMenu(buildLinuxAppMenu());
+		mainWindow.setMenuBarVisibility(false);
 	}
 
 	// Harden navigation: never let renderer/terminal content open in-app windows or
