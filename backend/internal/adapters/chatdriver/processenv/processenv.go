@@ -28,15 +28,10 @@ func Merge(overlay map[string]string) []string {
 		merged[key] = value
 	}
 
-	keys := make([]string, 0, len(merged))
-	for key := range merged {
-		keys = append(keys, key)
+	out := make([]string, 0, len(merged))
+	for key, value := range merged {
+		out = append(out, key+"="+value)
 	}
-	sort.Strings(keys)
-
-	out := make([]string, 0, len(keys))
-	for _, key := range keys {
-		out = append(out, key+"="+merged[key])
-	}
+	sort.Strings(out)
 	return out
 }
