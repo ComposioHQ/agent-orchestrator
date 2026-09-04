@@ -35,7 +35,7 @@ import { Input } from "./ui/input";
 import { Label } from "./ui/label";
 import { Tabs, TabsList, TabsTrigger } from "./ui/tabs";
 
-export type CreateProjectInput = { path: string; asWorkspace?: boolean } & CreateProjectAgentSelection;
+export type CreateProjectInput = { path: string; asWorkspace?: boolean; defaultBranch?: string } & CreateProjectAgentSelection;
 export type CloneProjectInput = Pick<CloneRepositorySelection, "remoteUrl" | "destinationParent"> &
 	CreateProjectAgentSelection;
 
@@ -315,7 +315,14 @@ export function CreateProjectFlow({
 				setIsInitializing(false);
 				setIsCreating(true);
 			}
-			await onCreateProject({ path: selectedPath, asWorkspace: selectedKind === "workspace", ...selection });
+			const defaultBranch =
+				selectedKind === "single_repo" ? await aoBridge.app.getRepositoryBranch(selectedPath) : undefined;
+			await onCreateProject({
+				path: selectedPath,
+				asWorkspace: selectedKind === "workspace",
+				...(defaultBranch ? { defaultBranch } : {}),
+				...selection,
+			});
 			setSelectedPath(null);
 		} catch (err) {
 			const code = err instanceof Error && "code" in err ? (err.code as string | undefined) : undefined;

@@ -88,10 +88,12 @@ type CreateProjectConfigInput = {
 	workerAgent: string;
 	orchestratorAgent: string;
 	trackerIntake?: components["schemas"]["TrackerIntakeConfig"];
+	defaultBranch?: string;
 };
 
 export function createProjectConfig(input: CreateProjectConfigInput): components["schemas"]["ProjectConfig"] {
 	return {
+		...(input.defaultBranch ? { defaultBranch: input.defaultBranch } : {}),
 		worker: { agent: input.workerAgent as components["schemas"]["RoleOverride"]["agent"] },
 		orchestrator: { agent: input.orchestratorAgent as components["schemas"]["RoleOverride"]["agent"] },
 		...(input.trackerIntake ? { trackerIntake: input.trackerIntake } : {}),
@@ -414,6 +416,7 @@ function ShellLayout() {
 			orchestratorAgent: string;
 			trackerIntake?: components["schemas"]["TrackerIntakeConfig"];
 			asWorkspace?: boolean;
+			defaultBranch?: string;
 		}) => {
 			void addRendererExceptionStep("Project add requested", {
 				source: "project-add",
