@@ -343,6 +343,8 @@ describe("CreateProjectFlow project import validation", () => {
 
 		expect(await screen.findByText("Choose a folder AO can read.")).toBeInTheDocument();
 		expect(screen.queryByTestId("agent-sheet")).not.toBeInTheDocument();
+		await user.click(screen.getByRole("button", { name: "Back to import source" }));
+		expect(screen.getByRole("button", { name: "Import an existing project" })).toBeInTheDocument();
 	});
 
 	it("suggests workspace import when a plain root contains child repositories", async () => {
@@ -383,8 +385,9 @@ describe("CreateProjectFlow project import validation", () => {
 		await user.click(await screen.findByRole("button", { name: "Import an existing project" }));
 
 		expect(await screen.findByText("This folder contains child Git repos")).toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: "Clone from Git" })).not.toBeInTheDocument();
 		await user.click(await screen.findByRole("button", { name: "Import as workspace instead" }));
-		expect(await screen.findByRole("button", { name: "Import a workspace folder" })).toBeInTheDocument();
+		expect(await screen.findByTestId("agent-sheet")).toHaveAttribute("data-path", "/repo/parent");
 	});
 
 	it("shows only the missing Git preparation steps for a project root", async () => {

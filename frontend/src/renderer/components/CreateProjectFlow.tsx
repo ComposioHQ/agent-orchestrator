@@ -367,16 +367,9 @@ export function CreateProjectFlow({
 
 	const tryProjectAsWorkspace = () => {
 		if (!projectValidation) return;
-		setPendingDropPath(projectValidation.root.repoPath);
-		setProjectImportStep(null);
-		setProjectPrepEvents([]);
-		setProjectApprovedActions([]);
-		setProjectRemoteUrl("");
-		setProjectSuggestWorkspace(false);
-		setProjectValidation(null);
-		setError(null);
-		setSelectedKind("workspace");
-		setModePickerOpen(true);
+		setPendingDropPath(null);
+		setModePickerOpen(false);
+		void chooseDirectory("workspace", projectValidation.root.repoPath);
 	};
 
 	const prepareProjectGit = async () => {
@@ -468,7 +461,7 @@ export function CreateProjectFlow({
 			{hasModePicker && (
 				<>
 					<CreateProjectSourceDialog
-						childOpen={childTransitioning || cloneDialogOpen || folderPickerOpen}
+						childOpen={childTransitioning || cloneDialogOpen || folderPickerOpen || projectImportOpen}
 						cloudAvailable={cloudAvailable}
 						cloudEnabled={cloudEnabled}
 						disabled={isBusy}
