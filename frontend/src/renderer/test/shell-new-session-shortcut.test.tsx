@@ -370,6 +370,7 @@ beforeEach(() => {
 		isSidebarOpen: true,
 		newTaskRequest: null,
 		newShellTerminalNonce: 0,
+		activeShellTerminalHandleId: null,
 		settingsModal: null,
 		sidebarAutoCollapseOverride: false,
 		sidebarWorkspaceDemandPx: null,

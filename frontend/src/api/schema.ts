@@ -21,6 +21,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/agents/{agent}/auth": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Open the fixed native authentication flow for one agent */
+        post: operations["startAgentAuth"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/agents/{agent}/install": {
         parameters: {
             query?: never;
@@ -101,6 +118,23 @@ export interface paths {
         put?: never;
         /** Verify an installed harness without reinstalling or probing authentication */
         post: operations["verifyAgentInstall"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/agents/auth-plans": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Return display-safe native authentication plans for supported agents */
+        get: operations["listAgentAuthPlans"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -2297,6 +2331,17 @@ export interface components {
             path: string;
             projectId?: null | string;
         };
+        AgentAuthPlan: {
+            action: string;
+            agentId: string;
+            available: boolean;
+            displayCommand?: string;
+            documentationUrl: string;
+            guidance?: string;
+            /** @enum {string} */
+            launchMode: "terminal" | "documentation";
+            reason?: string;
+        };
         AgentAuthenticationObservation: {
             /** Format: date-time */
             attemptedAt: null | string;
@@ -3228,6 +3273,9 @@ export interface components {
             ok: boolean;
             sessionId: string;
         };
+        ListAgentAuthPlansResponse: {
+            plans: components["schemas"]["AgentAuthPlan"][];
+        };
         ListAgentSwitchesResponse: {
             switches: components["schemas"]["AgentSwitch"][];
         };
@@ -3954,6 +4002,13 @@ export interface components {
             paths: string[];
             sessionId: string;
         };
+        StartAgentAuthResponse: {
+            action: string;
+            agentId: string;
+            guidance?: string;
+            terminal: components["schemas"]["ShellTerminalResponse"];
+            terminalInput?: string;
+        };
         StartAgentInstallRequest: {
             /** @description Server-issued installation method id. Omit to use the recommended viable method. */
             method?: string;
@@ -4216,6 +4271,56 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ListAgentsResponse"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    startAgentAuth: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Agent adapter identifier. */
+                agent: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StartAgentAuthResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
                 };
             };
             /** @description Internal Server Error */
@@ -4555,6 +4660,44 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    listAgentAuthPlans: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ListAgentAuthPlansResponse"];
                 };
             };
             /** @description Internal Server Error */

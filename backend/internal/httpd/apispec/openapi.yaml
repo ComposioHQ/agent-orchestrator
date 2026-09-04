@@ -33,6 +33,45 @@ paths:
       summary: Return cached supported and locally installed agent adapters
       tags:
       - agents
+  /api/v1/agents/{agent}/auth:
+    post:
+      operationId: startAgentAuth
+      parameters:
+      - description: Agent adapter identifier.
+        in: path
+        name: agent
+        required: true
+        schema:
+          description: Agent adapter identifier.
+          type: string
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StartAgentAuthResponse'
+          description: Created
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Open the fixed native authentication flow for one agent
+      tags:
+      - agents
   /api/v1/agents/{agent}/install:
     get:
       operationId: getAgentInstallStatus
@@ -310,6 +349,31 @@ paths:
                 $ref: '#/components/schemas/APIError'
           description: Not Implemented
       summary: Verify an installed harness without reinstalling or probing authentication
+      tags:
+      - agents
+  /api/v1/agents/auth-plans:
+    get:
+      operationId: listAgentAuthPlans
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListAgentAuthPlansResponse'
+          description: OK
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Return display-safe native authentication plans for supported agents
       tags:
       - agents
   /api/v1/agents/codex/account-switches:
@@ -6582,6 +6646,34 @@ components:
       required:
       - path
       type: object
+    AgentAuthPlan:
+      properties:
+        action:
+          type: string
+        agentId:
+          type: string
+        available:
+          type: boolean
+        displayCommand:
+          type: string
+        documentationUrl:
+          type: string
+        guidance:
+          type: string
+        launchMode:
+          enum:
+          - terminal
+          - documentation
+          type: string
+        reason:
+          type: string
+      required:
+      - agentId
+      - action
+      - launchMode
+      - available
+      - documentationUrl
+      type: object
     AgentAuthenticationObservation:
       properties:
         attemptedAt:
@@ -9180,6 +9272,15 @@ components:
       - ok
       - sessionId
       type: object
+    ListAgentAuthPlansResponse:
+      properties:
+        plans:
+          items:
+            $ref: '#/components/schemas/AgentAuthPlan'
+          type: array
+      required:
+      - plans
+      type: object
     ListAgentSwitchesResponse:
       properties:
         switches:
@@ -11093,6 +11194,23 @@ components:
       required:
       - sessionId
       - paths
+      type: object
+    StartAgentAuthResponse:
+      properties:
+        action:
+          type: string
+        agentId:
+          type: string
+        guidance:
+          type: string
+        terminal:
+          $ref: '#/components/schemas/ShellTerminalResponse'
+        terminalInput:
+          type: string
+      required:
+      - agentId
+      - action
+      - terminal
       type: object
     StartAgentInstallRequest:
       properties:

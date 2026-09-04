@@ -235,6 +235,13 @@ describe("normalizeApiOperation", () => {
 		expect(normalizeApiOperation("POST", "/api/v1/projects/clone")).toBe("POST /api/v1/projects/clone");
 		expect(normalizeApiOperation("POST", "/api/v1/projects/initialize")).toBe("POST /api/v1/projects/initialize");
 		expect(normalizeApiOperation("POST", "/api/v1/sessions/cleanup")).toBe("POST /api/v1/sessions/cleanup");
+		expect(normalizeApiOperation("GET", "/api/v1/agents/auth-plans")).toBe("GET /api/v1/agents/auth-plans");
+	});
+
+	it("normalizes agent ids in authentication routes", () => {
+		expect(normalizeApiOperation("POST", "/api/v1/agents/claude-code/auth")).toBe(
+			"POST /api/v1/agents/:id/auth",
+		);
 	});
 
 	it("keeps workspace file routes aligned with the generated API schema", () => {

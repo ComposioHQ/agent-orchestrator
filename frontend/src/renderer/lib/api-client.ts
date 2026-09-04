@@ -62,10 +62,12 @@ export function setApiDaemonStatus(nextStatus: DaemonStatus): void {
 const ROUTE_TEMPLATES = [
 	"/api/v1/agents",
 	"/api/v1/agents/install-jobs",
+	"/api/v1/agents/auth-plans",
 	"/api/v1/agents/installers",
 	"/api/v1/agents/refresh",
 	"/api/v1/agents/readiness",
 	"/api/v1/agents/readiness/ensure",
+	"/api/v1/agents/{agent}/auth",
 	"/api/v1/agents/{agent}/install",
 	"/api/v1/agents/codex/accounts",
 	"/api/v1/agents/codex/accounts/{accountId}",

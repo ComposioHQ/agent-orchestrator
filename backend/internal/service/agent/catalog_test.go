@@ -59,6 +59,12 @@ type mutableInstallAgent struct {
 	installed atomic.Bool
 }
 
+type mutableAuthAgent struct {
+	fakeAgent
+	status    *ports.AgentAuthStatus
+	authCalls atomic.Int32
+}
+
 type blockingResolverAgent struct {
 	fakeAgent
 	started chan struct{}
@@ -212,6 +218,11 @@ func (f *mutableInstallAgent) ResolveBinary(context.Context) (string, error) {
 		return "", ports.ErrAgentBinaryNotFound
 	}
 	return "agent", nil
+}
+
+func (f *mutableAuthAgent) AuthStatus(context.Context) (ports.AgentAuthStatus, error) {
+	f.authCalls.Add(1)
+	return *f.status, nil
 }
 
 func (f *blockingResolverAgent) ResolveBinary(ctx context.Context) (string, error) {
@@ -680,6 +691,36 @@ func TestProbeBypassesRefreshRateLimitForOneAgent(t *testing.T) {
 	}
 }
 
+func TestProbeRechecksCachedUnauthorizedAuthentication(t *testing.T) {
+	status := ports.AgentAuthStatusUnauthorized
+	agent := &mutableAuthAgent{status: &status}
+	svc := NewWithAgents([]agentregistry.HarnessAgent{{
+		Harness:  domain.AgentHarness("codex"),
+		Manifest: adapters.Manifest{ID: "codex", Name: "Codex"},
+		Agent:    agent,
+	}})
+
+	initial, err := svc.EnsureAgentReadiness(context.Background(), "codex", domain.AgentReadinessPurposeLaunch)
+	if err != nil {
+		t.Fatalf("EnsureAgentReadiness: %v", err)
+	}
+	if initial.Authentication.State != domain.AgentAuthenticationUnauthorized {
+		t.Fatalf("initial authentication = %q, want unauthorized", initial.Authentication.State)
+	}
+
+	status = ports.AgentAuthStatusAuthorized
+	got, err := svc.Probe(context.Background(), "codex")
+	if err != nil {
+		t.Fatalf("Probe: %v", err)
+	}
+	if got.Agent.AuthStatus != ports.AgentAuthStatusAuthorized {
+		t.Fatalf("Probe authStatus = %q, want authorized", got.Agent.AuthStatus)
+	}
+	if calls := agent.authCalls.Load(); calls != 2 {
+		t.Fatalf("authentication checks = %d, want fresh check after cached unauthorized", calls)
+	}
+}
+
 func TestProbeReportsUnsupportedAndMissingAgent(t *testing.T) {
 	svc := NewWithAgents([]agentregistry.HarnessAgent{
 		harnessAgent("missing", "Missing", ports.ErrAgentBinaryNotFound),
@@ -1133,6 +1174,20 @@ func harnessAuthAgent(id, label string, status ports.AgentAuthStatus, err error)
 			Name: label,
 		},
 		Agent: fakeAuthAgent{fakeAgent: fakeAgent{}, status: status, authErr: err},
+	}
+}
+
+func TestResolveAgentBinaryUsesRequestedAdapter(t *testing.T) {
+	t.Parallel()
+
+	svc := NewWithAgents([]agentregistry.HarnessAgent{harnessAgent("codex", "Codex", nil)})
+
+	path, err := svc.ResolveAgentBinary(context.Background(), "codex")
+	if err != nil {
+		t.Fatalf("ResolveAgentBinary(codex): %v", err)
+	}
+	if path != "agent" {
+		t.Fatalf("ResolveAgentBinary(codex) = %q, want adapter-resolved path", path)
 	}
 }
 

@@ -569,12 +569,14 @@ describe("GlobalSettingsForm", () => {
 		expect(screen.queryByRole("combobox", { name: "Report type" })).not.toBeInTheDocument();
 		expect(screen.queryByLabelText("Include safe diagnostics")).not.toBeInTheDocument();
 		expect(screen.queryByLabelText("Expected behavior")).not.toBeInTheDocument();
-		expect(screen.getByRole("radiogroup", { name: "Report destination" })).toBeInTheDocument();
-		expect(screen.getByRole("radio", { name: "GitHub" })).toHaveAttribute("aria-checked", "true");
+		expect(screen.getByRole("group", { name: "Report destination" })).toBeInTheDocument();
+		expect(screen.queryByRole("radiogroup", { name: "Report destination" })).not.toBeInTheDocument();
 		expect(screen.queryByLabelText("Report preview")).not.toBeInTheDocument();
 
 		expect(screen.getByRole("button", { name: /copy & create github issue/i })).toBeInTheDocument();
-		expect(screen.queryByRole("button", { name: /copy & open email/i })).not.toBeInTheDocument();
+		expect(screen.getByRole("button", { name: /copy & open discord/i })).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: /copy & open email/i })).toBeInTheDocument();
+		expect(screen.getByLabelText("What happened?")).toHaveClass("resize-none");
 		await user.click(screen.getByRole("button", { name: /copy & create github issue/i }));
 
 		await waitFor(() => expect(writeText).toHaveBeenCalledTimes(1));
@@ -606,9 +608,8 @@ describe("GlobalSettingsForm", () => {
 		await user.type(await screen.findByLabelText("Title"), "Need help with setup");
 		await user.type(screen.getByLabelText("What happened?"), "The setup flow stalls after the first prompt.");
 
-		await user.click(screen.getByRole("radio", { name: "Discord" }));
 		expect(screen.getByRole("button", { name: /copy & open discord/i })).toBeInTheDocument();
-		expect(screen.queryByRole("button", { name: /copy & open email/i })).not.toBeInTheDocument();
+		expect(screen.getByRole("button", { name: /copy & open email/i })).toBeInTheDocument();
 		await user.click(screen.getByRole("button", { name: /copy & open discord/i }));
 		await waitFor(() => expect(writeText).toHaveBeenCalledTimes(1));
 		expect(writeText.mock.calls[0][0]).toContain("**AO feedback**");
@@ -616,12 +617,9 @@ describe("GlobalSettingsForm", () => {
 		expect(screen.getByLabelText("Title")).toHaveValue("");
 		expect(screen.getByLabelText("What happened?")).toHaveValue("");
 
-		await user.click(screen.getByRole("radio", { name: "Email" }));
-		expect(screen.getByRole("button", { name: /copy & open email/i })).toBeInTheDocument();
-		expect(screen.queryByRole("button", { name: /copy & open discord/i })).not.toBeInTheDocument();
-		expect(screen.queryByText("Discord draft copied.")).not.toBeInTheDocument();
 		expect(screen.getByRole("button", { name: /copy & open email/i })).toBeDisabled();
 		await user.type(screen.getByLabelText("Title"), "Need help with setup");
+		expect(screen.queryByText("Discord draft copied.")).not.toBeInTheDocument();
 		await user.type(screen.getByLabelText("What happened?"), "The setup flow stalls after the first prompt.");
 		await user.click(screen.getByRole("button", { name: /copy & open email/i }));
 

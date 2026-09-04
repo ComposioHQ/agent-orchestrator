@@ -411,7 +411,10 @@ func TestLinuxRuntimeDestroyReapsTermIgnoringProcessTreeEndToEnd(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 
-	sess := runtime.resolve(handle.ID)
+	sess, err := runtime.resolveWithEvidence(context.Background(), handle.ID)
+	if err != nil {
+		t.Fatalf("resolve session: %v", err)
+	}
 	if sess == nil {
 		t.Fatal("session not found in runtime")
 	}
