@@ -14,32 +14,185 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
-func (m *codexAccountManager) bootstrap() {
-	m.bootstrapOnce.Do(func() {
-		defer close(m.bootstrapDone)
-		err := m.bootstrapInner()
-		m.mu.Lock()
-		m.bootstrapErr = err
-		m.bootstrapped = err == nil
+type codexAccountBootstrapFailure struct {
+	category string
+	cause    error
+}
+
+func (e *codexAccountBootstrapFailure) Error() string {
+	return "codex account bootstrap failed: " + e.category
+}
+
+func (e *codexAccountBootstrapFailure) Unwrap() error { return e.cause }
+
+func newCodexAccountBootstrapFailure(category string, err error) error {
+	if err == nil {
+		return nil
+	}
+	var classified *codexAccountBootstrapFailure
+	if errors.As(err, &classified) {
+		return err
+	}
+	return &codexAccountBootstrapFailure{category: category, cause: err}
+}
+
+func codexAccountBootstrapFailureCategory(err error) string {
+	var classified *codexAccountBootstrapFailure
+	if errors.As(err, &classified) {
+		return classified.category
+	}
+	return "unknown"
+}
+
+func (m *codexAccountManager) startOrJoinBootstrap() (*codexAccountBootstrapCall, error) {
+	if err := m.ctx.Err(); err != nil {
+		return nil, err
+	}
+	m.mu.Lock()
+	if m.bootstrapped {
 		m.mu.Unlock()
-		m.publish()
-	})
+		return nil, nil
+	}
+	if m.bootstrapCall != nil {
+		call := m.bootstrapCall
+		m.mu.Unlock()
+		return call, nil
+	}
+	if !m.bootstrapNextRetryAt.IsZero() && m.now().Before(m.bootstrapNextRetryAt) {
+		err := m.bootstrapLastErr
+		m.mu.Unlock()
+		if err == nil {
+			err = newCodexAccountBootstrapFailure("retry_backoff", errors.New("codex account bootstrap retry is pending"))
+		}
+		return nil, err
+	}
+	call := m.startBootstrapLocked()
+	m.mu.Unlock()
+	go m.runBootstrap(call)
+	return call, nil
+}
+
+func (m *codexAccountManager) startBootstrapLocked() *codexAccountBootstrapCall {
+	m.bootstrapRetryGeneration++
+	m.bootstrapNextRetryAt = time.Time{}
+	call := &codexAccountBootstrapCall{done: make(chan struct{}), attempt: m.bootstrapFailures + 1}
+	m.bootstrapCall = call
+	return call
+}
+
+func (m *codexAccountManager) waitBootstrap(ctx context.Context) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	call, err := m.startOrJoinBootstrap()
+	if err != nil || call == nil {
+		return err
+	}
+	select {
+	case <-call.done:
+		return call.err
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (m *codexAccountManager) runBootstrap(call *codexAccountBootstrapCall) {
+	startedAt := m.now()
+	err := m.bootstrapInner()
+	finishedAt := m.now()
+	category := codexAccountBootstrapFailureCategory(err)
+	var (
+		retryDelay      time.Duration
+		nextRetryAt     time.Time
+		retryGeneration uint64
+		shouldRetry     bool
+	)
+
+	m.mu.Lock()
+	if m.bootstrapCall != call {
+		m.mu.Unlock()
+		return
+	}
+	call.err = err
+	m.bootstrapCall = nil
+	if err == nil {
+		m.bootstrapped = true
+		m.bootstrapLastErr = nil
+		m.bootstrapFailures = 0
+		m.bootstrapNextRetryAt = time.Time{}
+		m.bootstrapRetryGeneration++
+	} else {
+		m.bootstrapLastErr = err
+		if m.ctx.Err() == nil {
+			m.bootstrapFailures++
+			retryDelay = m.bootstrapRetryDelayLocked()
+			nextRetryAt = finishedAt.Add(retryDelay)
+			m.bootstrapNextRetryAt = nextRetryAt
+			m.bootstrapRetryGeneration++
+			retryGeneration = m.bootstrapRetryGeneration
+			shouldRetry = true
+		}
+	}
+	close(call.done)
+	m.mu.Unlock()
+	m.publish()
+
+	duration := finishedAt.Sub(startedAt)
+	if err == nil {
+		m.logger.Info("Codex account bootstrap completed", "attempt", call.attempt, "duration_ms", duration.Milliseconds())
+		go m.warmAfterBootstrap()
+		return
+	}
+	if !shouldRetry {
+		m.logger.Debug("Codex account bootstrap stopped", "attempt", call.attempt, "duration_ms", duration.Milliseconds(), "failure_category", category)
+		return
+	}
+	m.logger.Warn("Codex account bootstrap failed", "attempt", call.attempt, "duration_ms", duration.Milliseconds(), "failure_category", category, "next_retry_at", nextRetryAt)
+	go m.scheduleBootstrapRetry(retryGeneration, retryDelay)
+}
+
+func (m *codexAccountManager) bootstrapRetryDelayLocked() time.Duration {
+	delays := m.bootstrapRetryDelays
+	if len(delays) == 0 {
+		delays = defaultCodexAccountBootstrapRetryDelays
+	}
+	return delays[min(m.bootstrapFailures-1, len(delays)-1)]
+}
+
+func (m *codexAccountManager) scheduleBootstrapRetry(generation uint64, delay time.Duration) {
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+	case <-m.ctx.Done():
+		return
+	}
+
+	m.mu.Lock()
+	valid := m.ctx.Err() == nil && !m.bootstrapped && m.bootstrapCall == nil && m.bootstrapRetryGeneration == generation && !m.bootstrapNextRetryAt.IsZero()
+	if !valid {
+		m.mu.Unlock()
+		return
+	}
+	call := m.startBootstrapLocked()
+	m.mu.Unlock()
+	go m.runBootstrap(call)
 }
 
 func (m *codexAccountManager) bootstrapInner() error {
 	if err := cleanupPendingCredentialHomes(m.pendingRoot); err != nil {
-		return err
+		return newCodexAccountBootstrapFailure("pending_cleanup", err)
 	}
 	if err := cleanupPendingCredentialHomes(m.switchStagingRoot); err != nil {
-		return err
+		return newCodexAccountBootstrapFailure("switch_staging_cleanup", err)
 	}
 	if err := m.catalog.refresh(); err != nil {
-		return err
+		return newCodexAccountBootstrapFailure("catalog_refresh", err)
 	}
 	if m.stateStore != nil {
 		active, ok, err := m.stateStore.GetCodexActiveAccount(m.ctx)
 		if err != nil {
-			return err
+			return newCodexAccountBootstrapFailure("active_account_read", err)
 		}
 		if ok {
 			m.mu.Lock()
@@ -47,7 +200,7 @@ func (m *codexAccountManager) bootstrapInner() error {
 			m.mu.Unlock()
 		}
 	}
-	return m.reconcileGlobal(m.ctx)
+	return newCodexAccountBootstrapFailure("credential_reconcile", m.reconcileGlobal(m.ctx))
 }
 
 func (m *codexAccountManager) reconcileGlobal(ctx context.Context) error {
@@ -81,24 +234,24 @@ func (m *codexAccountManager) runGlobalReconciliation(call *accountReconcileCall
 func (m *codexAccountManager) reconcileGlobalInner() error {
 	exclusive, err := m.acquireGlobalMutation(m.ctx)
 	if err != nil {
-		return err
+		return newCodexAccountBootstrapFailure("operation_gate", err)
 	}
 	if exclusive != nil {
 		defer exclusive.Release()
 	}
 	release, err := m.acquireAccountMutation(m.ctx)
 	if err != nil {
-		return err
+		return newCodexAccountBootstrapFailure("account_mutation_gate", err)
 	}
 	defer release()
 	if m.factory == nil || m.globalHome == "" {
-		return errors.New("codex global account discovery is unavailable")
+		return newCodexAccountBootstrapFailure("account_client_open", errors.New("codex global account discovery is unavailable"))
 	}
 	select {
 	case m.processes <- struct{}{}:
 		defer func() { <-m.processes }()
 	case <-m.ctx.Done():
-		return m.ctx.Err()
+		return newCodexAccountBootstrapFailure("operation_gate", m.ctx.Err())
 	}
 	readCtx, cancel := context.WithTimeout(m.ctx, codexAccountAuthTimeout)
 	defer cancel()
@@ -106,21 +259,28 @@ func (m *codexAccountManager) reconcileGlobalInner() error {
 	if err != nil {
 		m.setGlobalAuthenticationFailure(failedAuthentication(m.now(), domain.AgentReadinessReasonAuthCheckFailed, "Authentication check failed."))
 		m.setUnmanagedGlobal("Device Codex account", domain.CodexAuthMethodUnknown, nil, "global_account_unverified", "AO could not verify the device's current Codex account.")
-		return errors.New("global Codex account read failed")
+		return newCodexAccountBootstrapFailure("account_client_open", err)
 	}
 	observation, readErr := client.Read(readCtx, false)
 	_ = client.Close()
 	if readErr != nil || observation.Authentication == domain.AgentAuthenticationUnknown {
 		m.setGlobalAuthenticationFailure(failedAuthentication(m.now(), domain.AgentReadinessReasonAuthCheckInconclusive, "Authentication check was inconclusive."))
 		m.setUnmanagedGlobal("Device Codex account", observation.Method, observation.Email, "global_account_unverified", "AO could not verify the device's current Codex account.")
-		return errors.New("global Codex account read was inconclusive")
+		if readErr == nil {
+			readErr = errors.New("global Codex account read was inconclusive")
+		}
+		category := "account_read"
+		if errors.Is(readErr, context.DeadlineExceeded) || errors.Is(readCtx.Err(), context.DeadlineExceeded) {
+			category = "account_read_timeout"
+		}
+		return newCodexAccountBootstrapFailure(category, readErr)
 	}
 	if observation.Authentication == domain.AgentAuthenticationUnauthorized {
 		m.setGlobalAuthentication(accountAuthenticationObservation(m.now(), observation.Authentication))
 		m.mu.Lock()
 		m.unmanaged = nil
 		m.mu.Unlock()
-		return m.setActivePointer(m.ctx, "")
+		return newCodexAccountBootstrapFailure("active_account_write", m.setActivePointer(m.ctx, ""))
 	}
 	if observation.Authentication != domain.AgentAuthenticationAuthorized && observation.Authentication != domain.AgentAuthenticationNotApplicable {
 		m.setGlobalAuthenticationFailure(failedAuthentication(m.now(), domain.AgentReadinessReasonAuthCheckInconclusive, "Authentication check was inconclusive."))
@@ -140,7 +300,7 @@ func (m *codexAccountManager) reconcileGlobalInner() error {
 	}
 	observation = credentialObservation
 	if err := m.catalog.refresh(); err != nil {
-		return err
+		return newCodexAccountBootstrapFailure("catalog_refresh", err)
 	}
 	record, found := m.matchGlobalAccount(observation, globalCredential)
 	if !found {
@@ -151,17 +311,17 @@ func (m *codexAccountManager) reconcileGlobalInner() error {
 		pendingID := m.newID()
 		pendingDir, home, createErr := createPendingCredentialHome(m.pendingRoot, pendingID)
 		if createErr != nil {
-			return createErr
+			return newCodexAccountBootstrapFailure("credential_reconcile", createErr)
 		}
 		defer func() { _ = os.RemoveAll(pendingDir) }()
 		if err := writePrivateFileAtomic(filepath.Join(home, codexCredentialFilename), globalCredential); err != nil {
-			return err
+			return newCodexAccountBootstrapFailure("credential_reconcile", err)
 		}
 		verifyCtx, verifyCancel := context.WithTimeout(m.ctx, codexAccountAuthTimeout)
 		verifiedClient, openErr := m.factory.Open(verifyCtx, ports.CodexAccountContext{Home: home, Managed: true})
 		if openErr != nil {
 			verifyCancel()
-			return openErr
+			return newCodexAccountBootstrapFailure("account_client_open", openErr)
 		}
 		checked, checkErr := verifiedClient.Read(verifyCtx, true)
 		_ = verifiedClient.Close()
@@ -172,28 +332,28 @@ func (m *codexAccountManager) reconcileGlobalInner() error {
 		}
 		record, err = m.catalog.commitPending(pendingDir, checked)
 		if err != nil {
-			return err
+			return newCodexAccountBootstrapFailure("credential_reconcile", err)
 		}
 		observation = checked
 	}
 	if err := writePrivateFileAtomic(filepath.Join(record.Home, codexCredentialFilename), globalCredential); err != nil {
-		return err
+		return newCodexAccountBootstrapFailure("credential_reconcile", err)
 	}
 	if err := m.catalog.updateVerifiedDescriptor(record.Snapshot.ID, observation); err != nil {
-		return err
+		return newCodexAccountBootstrapFailure("credential_reconcile", err)
 	}
 	if err := m.catalog.refresh(); err != nil {
-		return err
+		return newCodexAccountBootstrapFailure("catalog_refresh", err)
 	}
 	if latestGlobal, latestErr := readOpaqueCredential(m.globalCredentialPath()); latestErr != nil || !bytes.Equal(latestGlobal, globalCredential) {
 		m.setUnmanagedGlobal(accountLabel("device", observation.Method, observation.Email), observation.Method, observation.Email, "global_account_changed", "The device Codex account changed while AO was reconciling it.")
-		return ports.ErrCodexGlobalAccountChanged
+		return newCodexAccountBootstrapFailure("global_account_changed", ports.ErrCodexGlobalAccountChanged)
 	}
 	m.catalog.updateSnapshot(record.Snapshot.ID, func(snapshot *domain.CodexAccountSnapshot) {
 		snapshot.Authentication = accountAuthenticationObservation(m.now(), observation.Authentication)
 	})
 	if err := m.setActivePointer(m.ctx, record.Snapshot.ID); err != nil {
-		return err
+		return newCodexAccountBootstrapFailure("active_account_write", err)
 	}
 	m.mu.Lock()
 	m.unmanaged = nil

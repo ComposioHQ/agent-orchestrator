@@ -310,33 +310,23 @@ func (s *Service) WarmCodexAccounts() {
 	if s.codexAccounts == nil {
 		return
 	}
-	go func() {
-		s.codexAccounts.bootstrap()
-		select {
-		case <-s.codexAccounts.bootstrapDone:
-		case <-s.codexAccounts.ctx.Done():
-			return
-		}
-		s.codexAccounts.mu.Lock()
-		bootstrapErr := s.codexAccounts.bootstrapErr
-		s.codexAccounts.mu.Unlock()
-		if bootstrapErr != nil {
-			return
-		}
-		capabilities := s.codexAccounts.detectCapabilities(s.codexAccounts.ctx)
-		records, err := s.codexAccounts.catalog.recordsFor(nil)
-		if err != nil {
-			return
-		}
-		if capabilities.AccountRead.State == domain.CodexCapabilitySupported {
-			for _, record := range records {
-				if record.Snapshot.Status == domain.CodexAccountStatusValid {
-					_, _ = s.codexAccounts.ensureAuthentication(s.codexAccounts.ctx, record, domain.AgentReadinessPurposeDisplay, false)
-				}
+	_, _ = s.codexAccounts.startOrJoinBootstrap()
+}
+
+func (m *codexAccountManager) warmAfterBootstrap() {
+	capabilities := m.detectCapabilities(m.ctx)
+	records, err := m.catalog.recordsFor(nil)
+	if err != nil {
+		return
+	}
+	if capabilities.AccountRead.State == domain.CodexCapabilitySupported {
+		for _, record := range records {
+			if record.Snapshot.Status == domain.CodexAccountStatusValid {
+				_, _ = m.ensureAuthentication(m.ctx, record, domain.AgentReadinessPurposeDisplay, false)
 			}
 		}
-		_ = s.codexAccounts.capacity.ensure(s.codexAccounts.ctx, records, capabilities)
-	}()
+	}
+	_ = m.capacity.ensure(m.ctx, records, capabilities)
 }
 
 // WaitCodexAccountBootstrap waits for the daemon-owned bootstrap gate.
@@ -344,19 +334,13 @@ func (s *Service) WaitCodexAccountBootstrap(ctx context.Context) error {
 	if s.codexAccounts == nil {
 		return apierr.Unavailable("CODEX_ACCOUNT_MANAGEMENT_UNAVAILABLE", "Codex account management is unavailable")
 	}
-	go s.codexAccounts.bootstrap()
-	select {
-	case <-s.codexAccounts.bootstrapDone:
-		s.codexAccounts.mu.Lock()
-		err := s.codexAccounts.bootstrapErr
-		s.codexAccounts.mu.Unlock()
-		if err != nil {
-			return apierr.Unavailable("CODEX_ACCOUNT_MANAGEMENT_UNAVAILABLE", "Codex account setup did not complete")
+	if err := s.codexAccounts.waitBootstrap(ctx); err != nil {
+		if ctx.Err() != nil {
+			return ctx.Err()
 		}
-		return nil
-	case <-ctx.Done():
-		return ctx.Err()
+		return apierr.Unavailable("CODEX_ACCOUNT_MANAGEMENT_UNAVAILABLE", "Codex account setup did not complete")
 	}
+	return nil
 }
 
 // BeginCodexAccountMutation gives Session Manager exclusive ownership of the
