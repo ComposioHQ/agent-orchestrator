@@ -415,6 +415,7 @@ describe("CreateProjectFlow project import validation", () => {
 		expect(screen.queryByText("Git initialization")).not.toBeInTheDocument();
 		expect(screen.getByText("Initial commit")).toBeInTheDocument();
 		expect(screen.getByText("Remote setup")).toBeInTheDocument();
+		expect(screen.queryByText("Create the first commit so the project has a usable history.")).not.toBeInTheDocument();
 		expect(screen.getByLabelText("Origin remote URL")).toBeInTheDocument();
 		expect(
 			screen.getByText(

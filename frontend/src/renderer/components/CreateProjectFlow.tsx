@@ -670,19 +670,6 @@ function gitActionLabel(action: string): string {
 	}
 }
 
-function gitActionDescription(action: string): string {
-	switch (action) {
-		case "git_init":
-			return "Create a Git repository in this folder.";
-		case "git_commit":
-			return "Create the first commit so the project has a usable history.";
-		case "set_remote":
-			return "Configure the origin remote for this repository.";
-		default:
-			return "Apply the required repository setup.";
-	}
-}
-
 function latestProjectActionState(action: string, events: GitPreparationEvent[]): string {
 	for (let index = events.length - 1; index >= 0; index -= 1) {
 		if (events[index]?.action === action) return events[index].state;
@@ -1221,24 +1208,30 @@ function ProjectImportDialog({
 	const hasFailedStep = events.some((event) => event.state === "error");
 	const missingApprovals = validation.root.requiredActions.filter((action) => !approvedActions.includes(action));
 	const continueDisabled = disabled || missingApprovals.length > 0 || (needsRemote && remoteUrl.trim() === "");
+	const statusIcon = (state: string) => {
+		if (state === "success") return <CheckCircle2 className="size-4 text-success" aria-hidden="true" />;
+		if (state === "error") return <XCircle className="size-4 text-destructive" aria-hidden="true" />;
+		if (state === "running") return <CircleDashed className="size-4 animate-spin text-primary" aria-hidden="true" />;
+		return <CircleDashed className="size-4 text-muted-foreground" aria-hidden="true" />;
+	};
 	return (
 		<Dialog.Root open={open} onOpenChange={onOpenChange}>
 			<Dialog.Portal>
 				<Dialog.Overlay className="fixed inset-0 z-overlay bg-black/55 data-[state=open]:animate-overlay-in data-[state=closed]:animate-overlay-out motion-reduce:animate-none" />
 				<Dialog.Content
-					className="fixed left-1/2 top-1/2 z-overlay flex max-h-[min(700px,calc(100svh-24px))] w-[min(680px,calc(100vw-24px))] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-lg border border-[var(--color-border-import-modal)] bg-[var(--color-bg-import-modal)] p-0 text-[var(--color-text-import-title)] shadow-[var(--shadow-import-modal)] data-[state=open]:animate-modal-in data-[state=closed]:animate-modal-out motion-reduce:animate-none"
+					className="fixed left-1/2 top-1/2 z-overlay flex max-h-[min(640px,calc(100svh-24px))] w-[min(560px,calc(100vw-24px))] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-lg border border-border bg-popover p-0 text-popover-foreground shadow-xl data-[state=open]:animate-modal-in data-[state=closed]:animate-modal-out motion-reduce:animate-none"
 					onInteractOutside={(event) => event.preventDefault()}
 					onPointerDownOutside={(event) => event.preventDefault()}
 				>
-					<div className="flex items-start gap-3 border-b border-[var(--color-border-import-modal)] px-4 py-3">
+					<div className="relative flex shrink-0 items-center gap-3 px-4 pt-3">
 						<Button type="button" variant="outline" size="icon" aria-label={t("createProject.backToSource")} disabled={disabled} onClick={onBack}>
 							<ChevronRight className="size-4 rotate-180" aria-hidden="true" />
 						</Button>
-						<div className="min-w-0 flex-1">
+						<div className="min-w-0 flex-1 pr-8">
 							<Dialog.Title className="text-[18px] font-semibold text-[var(--color-text-import-title)]">
 								{step === "prepare_git" ? t("createProject.prepareProjectTitle") : t("createProject.importProject")}
 							</Dialog.Title>
-							<Dialog.Description className="mt-1 text-[13px] leading-5 text-[var(--color-text-import-muted)]">
+							<Dialog.Description className="mt-0.5 text-[12px] leading-5 text-muted-foreground">
 								{step === "blocked"
 									? t("createProject.projectImportBlocked")
 									: t("createProject.projectImportApproval")}
@@ -1250,53 +1243,51 @@ function ProjectImportDialog({
 							</button>
 						</Dialog.Close>
 					</div>
-					<div className="min-h-0 space-y-4 overflow-y-auto px-4 py-4">
-						<div className="flex items-center gap-3 rounded-md border border-[var(--color-border-import-modal)] bg-[var(--color-bg-import-card)] px-3 py-2.5">
-							<Folder className="size-4 shrink-0 text-[var(--color-text-import-muted)]" aria-hidden="true" />
+					<div className="min-h-0 space-y-4 overflow-y-auto px-4 pb-1 pt-4">
+						<div className="flex items-center gap-3 rounded-md bg-muted/50 px-3 py-2.5">
+							<Folder className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
 							<div className="min-w-0 flex-1">
-								<div className="truncate font-mono text-[13px] font-semibold text-[var(--color-text-import-title)]">
+								<div className="truncate font-mono text-[12px] font-medium text-foreground">
 									{displayImportPath(validation.root.repoPath)}
 								</div>
-								<div className="mt-0.5 text-[11px] text-[var(--color-text-import-muted)]">{t("createProject.projectFolder")}</div>
+								<div className="mt-0.5 text-[11px] text-muted-foreground">{t("createProject.projectFolder")}</div>
 							</div>
-							<Button type="button" variant="outline" disabled={disabled} onClick={onChangeFolder}>
+							<Button type="button" variant="ghost" size="sm" disabled={disabled} onClick={onChangeFolder}>
 								{t("createProject.change")}
 							</Button>
 						</div>
 						{hasChildRepos ? (
-							<div className="rounded-md border border-[var(--color-border-import-modal)] bg-[var(--color-bg-import-card)] px-4 py-3 text-[12px] leading-5 text-[var(--color-text-import-muted)]">
+							<div className="border-l-2 border-primary/50 pl-3 text-[12px] leading-5 text-muted-foreground">
 								{t("createProject.projectHasChildRepos")}
 							</div>
 						) : null}
 						{validation.warning ? (
-							<div className="rounded-md border border-[var(--color-border-import-modal)] bg-[var(--color-bg-import-card)] px-3 py-3 text-[12px] leading-5 text-[var(--color-text-import-muted)]">
+							<div className="border-l-2 border-amber-500/60 pl-3 text-[12px] leading-5 text-muted-foreground">
 								{validation.warning}
 							</div>
 						) : null}
 						{error ? (
-							<div className="rounded-lg border border-destructive/40 bg-destructive/10 px-4 py-3 text-[12px] leading-5 text-destructive" role="alert">
+							<div className="rounded-md bg-destructive/10 px-3 py-2.5 text-[12px] leading-5 text-destructive" role="alert">
 								{error}
 							</div>
 						) : null}
 						{suggestWorkspace ? (
-							<div className="rounded-md border border-[var(--color-border-import-modal)] bg-[var(--color-bg-import-card)] px-4 py-3 text-[13px] leading-5 text-[var(--color-text-import-muted)]">
+							<div className="border-l-2 border-primary/50 pl-3 text-[12px] leading-5 text-muted-foreground">
 								{t("createProject.projectSuggestWorkspace")}
 							</div>
 						) : null}
 						{step === "prepare_git" ? (
-							<section className="space-y-3">
-								<div className="rounded-lg border border-[var(--color-border-import-modal)] bg-[var(--color-bg-import-card)] px-4 py-4">
+							<section className="space-y-2">
+								<div className="flex items-center justify-between">
 									<h3 className="text-[13px] font-semibold text-[var(--color-text-import-title)]">{t("createProject.projectSetup")}</h3>
-									<p className="mt-1 text-[12px] leading-5 text-[var(--color-text-import-muted)]">
-										{t("createProject.projectSetupApproval")}
-									</p>
 									{isPreparingGit ? (
-										<p className="mt-3 text-[12px] leading-5 text-[var(--color-text-import-title)]">
+										<span className="text-[11px] text-muted-foreground" role="status">
 											{t("createProject.projectSetupRunning")}
-										</p>
+										</span>
 									) : null}
-									<div className="mt-3 space-y-3">
-										{validation.root.requiredActions.map((action) => {
+								</div>
+								<div className="divide-y divide-border overflow-hidden rounded-md border border-border/70 bg-background/40">
+									{validation.root.requiredActions.map((action) => {
 											const state = latestProjectActionState(action, events);
 											const checked = approvedActions.includes(action);
 											const statusLabel =
@@ -1311,20 +1302,10 @@ function ProjectImportDialog({
 															: state === "success"
 																? "Done"
 																: "Failed";
-											const tone =
-												state === "success"
-													? "text-success"
-													: state === "error"
-														? "text-destructive"
-														: state === "running"
-															? "text-[var(--color-text-import-title)]"
-															: state === "pending"
-																? "text-[var(--color-text-import-muted)]"
-																: "text-[var(--color-text-import-muted)]";
 											return (
 												<label
 													key={action}
-													className="flex cursor-pointer items-start gap-3 rounded-md border border-[var(--color-border-import-modal)] bg-[var(--color-bg-import-modal)] px-3 py-3"
+													className="flex cursor-pointer items-start gap-3 px-3 py-3 transition-colors hover:bg-muted/50"
 												>
 													<input
 														type="checkbox"
@@ -1340,12 +1321,7 @@ function ProjectImportDialog({
 														}
 													/>
 													<span className="min-w-0 flex-1">
-														<span className="block text-[13px] font-medium text-[var(--color-text-import-title)]">
-															{gitActionLabel(action)}
-														</span>
-														<span className="mt-1 block text-[12px] leading-5 text-[var(--color-text-import-muted)]">
-															{gitActionDescription(action)}
-														</span>
+														<span className="block text-[13px] font-medium text-foreground">{gitActionLabel(action)}</span>
 														{action === "set_remote" ? (
 															<span className="mt-3 block space-y-2">
 																<Label
@@ -1365,29 +1341,29 @@ function ProjectImportDialog({
 																	value={remoteUrl}
 																	onChange={(event) => onChangeRemote(event.target.value)}
 																/>
-																<span className="block rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[12px] leading-5 text-[var(--color-text-import-title)]">
+																<span className="block text-[11px] leading-4 text-muted-foreground">
 																	{t("createProject.remoteRepoRequired")}
 																</span>
 															</span>
 														) : null}
 													</span>
-													<span className={cn("shrink-0 text-[12px] font-medium capitalize", tone)}>
-														{statusLabel}
+													<span className="flex shrink-0 items-center gap-1.5 text-[11px] text-muted-foreground">
+														{statusIcon(state)}
+														<span>{statusLabel}</span>
 													</span>
 												</label>
 											);
 										})}
 									</div>
 									{missingApprovals.length > 0 ? (
-										<p className="mt-4 text-[12px] leading-5 text-[var(--color-text-import-muted)]">
+										<p className="text-[11px] leading-4 text-muted-foreground">
 											{t("createProject.projectSetupContinue")}
 										</p>
 									) : null}
-								</div>
 							</section>
 						) : null}
 					</div>
-					<div className="flex shrink-0 items-center justify-end gap-2 border-t border-[var(--color-border-import-modal)] px-4 py-4">
+					<div className="flex shrink-0 items-center justify-end gap-2 px-4 pb-4 pt-3">
 						{step === "blocked" ? (
 							<>
 								<Button type="button" variant="outline" disabled={disabled} onClick={onBack}>
