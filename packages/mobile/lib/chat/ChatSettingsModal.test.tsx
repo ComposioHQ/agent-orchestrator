@@ -22,7 +22,7 @@ describe("model identity in mobile settings", () => {
 		const snapshot = { settings: {}, capabilities: [] } as unknown as ConversationSnapshot;
 		const rows = choices(ChatSettingsSheet({ snapshot, models: [{ id: "terra", displayName: "Terra", default: true, efforts: ["high"], defaultEffort: "high" }], options: [], onRefresh: vi.fn(), onSettings: vi.fn(), onOption: vi.fn() }));
 		expect(rows.find((row) => row.label === "Provider default")).toMatchObject({ selected: true });
-		expect(rows.find((row) => row.label === "Terra")?.selected).toBe(false);
+		expect(rows.find((row) => row.label === "Terra")?.selected).toBeFalsy();
 		expect(rows.some((row) => row.label === "High")).toBe(false);
 	});
 

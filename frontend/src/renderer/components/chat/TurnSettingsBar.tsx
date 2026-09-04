@@ -1,3 +1,4 @@
+import { ModelFamilyOptions } from "../ModelFamilyOptions";
 /**
  * What the next turn will be sent with: model, reasoning effort, approval mode.
  *
@@ -327,29 +328,7 @@ function ModelEffortPicker({
 								{settings.model && !models.some((model) => model.id === settings.model) ? (
 									<OptionMenuItem active disabled>{settings.model} (not in catalog)</OptionMenuItem>
 								) : null}
-								{models.map((model) => (
-									<OptionMenuItem
-									key={model.id}
-									active={model.id === settings.model}
-									onSelect={() =>
-										onChange({ ...settings, model: model.id, reasoningEffort: undefined })
-									}
-									className={cn("text-xs")}
-									>
-										<span className="flex w-full items-baseline gap-2">
-											<span
-												className={cn(
-																"text-xs",
-													model.id === settings.model
-														? "text-foreground"
-														: "text-muted-foreground",
-												)}
-											>
-												{model.displayName}
-											</span>
-									</span>
-									</OptionMenuItem>
-								))}
+								<ModelFamilyOptions models={models.map((model) => ({ id: model.id, label: model.displayName }))} value={settings.model} onSelect={(id) => onChange({ ...settings, model: id, reasoningEffort: undefined })} />
 							</div>
 							<div
 								className={cn("model-menu-overflow-cue", canScrollDown ? "opacity-100" : "opacity-0")}
@@ -646,6 +625,9 @@ function ConfigOptionChoices({
 	option: ChatConfigOption;
 	onChange: (value: ChatConfigOptionValue) => void;
 }) {
+	if (option.type === "select" && (option.category === "model" || option.id === "model")) {
+		return <ModelFamilyOptions models={(option.choices ?? []).map((choice) => ({ id: choice.value, label: choice.name, description: choice.description, provider: choice.group }))} value={option.currentValue} onSelect={(value) => onChange({ value })} />;
+	}
 	if (option.type === "boolean") {
 		return (
 			<>
