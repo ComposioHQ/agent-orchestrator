@@ -18,7 +18,7 @@ export function ClaudeCodeAccountUsage({ account }: { account: ClaudeCodeAccount
 	const available = usage.windows.length > 0;
 
 	return <div className="ml-9 mt-4 space-y-5 pb-1 text-xs">
-		<PlanCard accountId={account.id} plan={plan} promotion={usage.promotion} locale={i18n.language} />
+		<PlanCard accountId={account.id} plan={plan} promotion={usage.promotion} showPromotionStatus={account.active} locale={i18n.language} />
 		{generalWindows.length > 0 ? <UsageWindowGroup title={t("settings.claudeCodeAccounts.generalUsageLimits")} windows={generalWindows} locale={i18n.language} /> : null}
 		{modelWindows.length > 0 ? <UsageWindowGroup title={t("settings.claudeCodeAccounts.modelUsageLimits")} windows={modelWindows} locale={i18n.language} /> : null}
 		{!available ? <p className="flex items-center gap-2 rounded-md border border-border/70 bg-muted/15 px-3.5 py-3 text-muted-foreground" role="status">
@@ -29,7 +29,7 @@ export function ClaudeCodeAccountUsage({ account }: { account: ClaudeCodeAccount
 	</div>;
 }
 
-function PlanCard({ accountId, plan, promotion, locale }: { accountId: string; plan: string | null; promotion: Promotion | null | undefined; locale: string }) {
+function PlanCard({ accountId, plan, promotion, showPromotionStatus, locale }: { accountId: string; plan: string | null; promotion: Promotion | null | undefined; showPromotionStatus: boolean; locale: string }) {
 	const { t } = useTranslation();
 	const headingId = `claude-code-account-${accountId}-plan-heading`;
 	const endDate = promotion ? formatPromotionDate(promotion.endsOn, locale) : null;
@@ -40,10 +40,10 @@ function PlanCard({ accountId, plan, promotion, locale }: { accountId: string; p
 		<h4 id={headingId} className="mb-2 font-medium text-foreground">{t("settings.claudeCodeAccounts.yourPlan")}</h4>
 		<div className="flex flex-wrap items-center justify-between gap-4 rounded-md border border-border/70 bg-muted/15 px-3.5 py-3">
 			<p className={`text-sm font-medium ${plan ? "text-foreground" : "text-muted-foreground"}`}>{plan ?? t("settings.claudeCodeAccounts.planUnavailable")}</p>
-			{promotion && endDate && percent ? <p className="flex items-center gap-1.5 font-medium text-foreground">
+			{showPromotionStatus && promotion && endDate && percent ? <p className="flex items-center gap-1.5 font-medium text-foreground">
 				{t("settings.claudeCodeAccounts.boostSummary", { percent, date: endDate.visible })}
 				<span tabIndex={0} aria-label={details ?? undefined} title={details ?? undefined} className="inline-flex rounded-sm text-muted-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring"><Info className="size-3.5" aria-hidden="true" /></span>
-			</p> : <p className="text-muted-foreground">{t("settings.claudeCodeAccounts.noBoostsAvailable")}</p>}
+			</p> : showPromotionStatus ? <p className="text-muted-foreground">{t("settings.claudeCodeAccounts.noBoostsAvailable")}</p> : null}
 		</div>
 	</section>;
 }

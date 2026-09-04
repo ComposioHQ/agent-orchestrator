@@ -91,6 +91,18 @@ it("shows when no plan boost is available", async () => {
 	expect(screen.getByText("No boosts available")).toBeInTheDocument();
 });
 
+it("does not claim whether an inactive account has a plan boost", async () => {
+	const response = { ...accountResponse, accounts: [activeAccount, inactiveAccount] };
+	postMock.mockImplementation((path: string) => path.endsWith("/ensure") ? Promise.resolve({ data: response }) : Promise.resolve({ data: {} }));
+	const { container } = renderSection(response);
+	await screen.findAllByText("other@example.com");
+	fireEvent.click(container.querySelector(`[data-account-id="${inactiveAccount.id}"] button`) as HTMLButtonElement);
+	expect(screen.getByText("Your plan")).toBeInTheDocument();
+	expect(screen.getByText("Pro plan")).toBeInTheDocument();
+	expect(screen.queryByText("50% higher through Sep 13")).not.toBeInTheDocument();
+	expect(screen.queryByText("No boosts available")).not.toBeInTheDocument();
+});
+
 it("keeps the plan section visible while plan metadata is unavailable", async () => {
 	const account = { ...activeAccount, planUsage: { ...planUsage, plan: undefined, promotion: undefined, windows: [] } };
 	const response = { ...accountResponse, accounts: [account], activeAccountId: account.id };
