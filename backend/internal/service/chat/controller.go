@@ -1224,6 +1224,13 @@ func (c *Controller) Settings() domain.ConversationSettings {
 // The row is written first: if that fails, the in-memory copy must not move, or a
 // restart would silently revert a choice the user watched take effect.
 func (c *Controller) SetSettings(ctx context.Context, settings domain.ConversationSettings) error {
+	// Serialize with ArmHandoff: target preflight must observe either this
+	// committed choice or a refusal, never a choice changed during source drain.
+	c.sendMu.Lock()
+	defer c.sendMu.Unlock()
+	if c.handoffActive() {
+		return ErrControllerHandoff
+	}
 	if err := explicitPermissionModeError(c.harness, settings.ApprovalMode); err != nil {
 		return err
 	}

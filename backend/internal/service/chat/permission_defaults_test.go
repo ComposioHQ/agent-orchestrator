@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
+	chatsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/chat"
 )
 
 func TestReplacingBypassSettingsWithEmptyApprovalDispatchesDefault(t *testing.T) {
@@ -63,5 +65,87 @@ func TestExplicitChatPermissionModes(t *testing.T) {
 				t.Fatal("unsupported policy persisted")
 			}
 		})
+	}
+}
+
+// Signal when the drain reaches its cancellation wait, without timing sleeps.
+type observedDrainContext struct {
+	context.Context
+	waiting chan struct{}
+}
+
+func (c observedDrainContext) Done() <-chan struct{} {
+	select {
+	case c.waiting <- struct{}{}:
+	default:
+	}
+	return c.Context.Done()
+}
+
+func TestSettingsCannotChangeWhileChatHandoffDrains(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	initial := domain.ConversationSettings{ApprovalMode: domain.PermissionModeAcceptEdits}
+	if _, err := h.svc.SetTurnSettings(ctx, testSession, initial); err != nil {
+		t.Fatal(err)
+	}
+	// Keep a real accepted turn running so drain cannot complete on its own.
+	if _, err := h.svc.Send(ctx, testSession, ports.ChatUserMessage{Text: "still running"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.svc.ArmChatHandoff(ctx, testSession, domain.SessionInterfaceTransitionDrain); err != nil {
+		t.Fatal(err)
+	}
+	drainCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	done := make(chan error, 1)
+	waiting := make(chan struct{}, 1)
+	observed := observedDrainContext{Context: drainCtx, waiting: waiting}
+	go func() {
+		done <- h.svc.PrepareChatHandoff(observed, testSession, domain.SessionInterfaceTransitionDrain)
+	}()
+	select {
+	case <-waiting:
+	case <-time.After(3 * time.Second):
+		t.Fatal("drain did not reach active-turn wait")
+	}
+	for _, next := range []domain.ConversationSettings{
+		{ApprovalMode: domain.PermissionModeManual}, {ApprovalMode: domain.PermissionModeDontAsk}, {Model: "new-model"},
+	} {
+		if _, err := h.svc.SetTurnSettings(ctx, testSession, next); !errors.Is(err, chatsvc.ErrControllerHandoff) {
+			t.Fatalf("settings during armed handoff: %v", err)
+		}
+	}
+	controller, err := h.svc.Controller(testSession)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if controller.Settings() != initial {
+		t.Fatalf("in-memory settings changed: %+v", controller.Settings())
+	}
+	conversation, err := h.st.ConversationForSession(ctx, testSession)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if conversation.Settings != initial {
+		t.Fatalf("durable settings changed during handoff: %+v", conversation.Settings)
+	}
+	select {
+	case err := <-done:
+		t.Fatalf("drain settled with turn running: %v", err)
+	default:
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("cancel drain: %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("drain did not cancel")
+	}
+	// A failed/cancelled handoff reopens settings together with message intake.
+	if _, err := h.svc.SetTurnSettings(ctx, testSession, domain.ConversationSettings{ApprovalMode: domain.PermissionModeManual}); err != nil {
+		t.Fatalf("settings after cancelled handoff: %v", err)
 	}
 }
