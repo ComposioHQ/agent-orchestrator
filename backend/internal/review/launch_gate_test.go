@@ -219,3 +219,33 @@ func TestLauncherSpawnPermittedByGateStillReplacesTheStalePane(t *testing.T) {
 		t.Fatal("a permitted launch must create the replacement")
 	}
 }
+
+// P1 from review 5113322042. The reviewer request omitted Kind, Harness,
+// GitCommonDir and resolved Permissions, and substituted the reviewer command's
+// working directory for the AO-created workspace. A gate asked to trust a path
+// must be given the path AO owns.
+func TestLauncherSpawnGateRequestCarriesFullParityFields(t *testing.T) {
+	gate := &reviewGateRecorder{decision: ports.PreLaunchDecision{Allow: true}}
+	rt := &fakeRuntime{}
+	// The reviewer is told to run somewhere other than the AO worktree.
+	reviewer := &fakeReviewer{workingDirectory: "/somewhere/else"}
+	l := NewLauncher(fakeReviewerResolver{reviewer: reviewer, ok: true}, rt, t.TempDir(),
+		WithLaunchGate(gate))
+
+	if _, err := l.Spawn(context.Background(), launchSpec()); err != nil {
+		t.Fatalf("Spawn: %v", err)
+	}
+	req := gate.seen[0]
+	if req.WorkspacePath != "/ws/mer-1" {
+		t.Fatalf("WorkspacePath = %q, want the AO-created worktree, not the reviewer CWD", req.WorkspacePath)
+	}
+	if req.Harness == "" {
+		t.Fatal("Harness must reach the gate")
+	}
+	if req.LaunchID != "run-1" {
+		t.Fatalf("LaunchID = %q, want the reviewer run id", req.LaunchID)
+	}
+	if req.Role != ports.LaunchRoleReviewer {
+		t.Fatalf("Role = %q", req.Role)
+	}
+}

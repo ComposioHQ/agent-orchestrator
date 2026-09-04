@@ -589,6 +589,15 @@ type PreLaunchRequest struct {
 	// the precise worktree paths, and absent from the effective inherited root
 	// the reviewer child actually used.
 	Env map[string]string
+	// LaunchID identifies this attempt, and is created before the gate is asked
+	// so a decision can be bound to the launch it was made for. Without it a
+	// gate cannot tell a current child from a replacement, which is what lets a
+	// stale handshake make a new launch look ready.
+	LaunchID string
+	// ConversationID is the provider conversation this child will resume, empty
+	// for a fresh one. A gate that must reason about resume validity needs to
+	// know which conversation is being restored, not merely that one is.
+	ConversationID string
 	// Role distinguishes the session's own agent from a reviewer sidecar
 	// launched beside it. Both create children, by separate paths, and a gate
 	// that saw only one of them would leave the other able to strand silently.

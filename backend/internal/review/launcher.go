@@ -450,7 +450,7 @@ func (l *agentLauncher) launchReviewerTerminalWithMode(ctx context.Context, spec
 	// gating second means a refusal removes a live reviewer that nothing is
 	// allowed to replace: the session loses a working pane and gains nothing.
 	// Resolve argv and env, ask, and only then replace.
-	if err := l.applyLaunchGate(ctx, spec, workingDirectory, cmd.Argv, reviewerEnv); err != nil {
+	if err := l.applyLaunchGate(ctx, spec, cmd.Argv, reviewerEnv); err != nil {
 		return LaunchResult{}, err
 	}
 	// The reviewer handle is stable per worker, so a still-live pane from a
@@ -743,7 +743,7 @@ func (l *agentLauncher) Destroy(ctx context.Context, handleID string) error {
 // gate error stops the launch before any pane is created, and a permitted
 // launch may gain environment entries AO has not already set.
 func (l *agentLauncher) applyLaunchGate(ctx context.Context, spec LaunchSpec,
-	workspacePath string, argv []string, env map[string]string) error {
+	argv []string, env map[string]string) error {
 	if l.launchGate == nil {
 		return nil
 	}
@@ -751,12 +751,22 @@ func (l *agentLauncher) applyLaunchGate(ctx context.Context, spec LaunchSpec,
 	for key, value := range env {
 		envCopy[key] = value
 	}
+	// WorkspacePath is the AO-created worktree, not the reviewer command's
+	// working directory. A reviewer may be told to run somewhere else; a gate
+	// asked to trust a path must be given the path AO owns, or it would trust
+	// whatever directory a harness happened to choose.
 	decision, err := l.launchGate.PreLaunch(ctx, ports.PreLaunchRequest{
-		SessionID:     string(spec.WorkerID),
-		WorkspacePath: workspacePath,
-		Argv:          append([]string(nil), argv...),
-		Env:           envCopy,
-		Role:          ports.LaunchRoleReviewer,
+		SessionID:      string(spec.WorkerID),
+		WorkspacePath:  spec.WorkspacePath,
+		GitCommonDir:   gitCommonDir(ctx, spec.WorkspacePath),
+		Argv:           append([]string(nil), argv...),
+		Env:            envCopy,
+		Role:           ports.LaunchRoleReviewer,
+		Kind:           domain.KindWorker,
+		Harness:        domain.AgentHarness(spec.Harness),
+		Permissions:    reviewerPermissions(spec),
+		LaunchID:       reviewerLaunchID(spec),
+		ConversationID: spec.AgentSessionID,
 	})
 	if err != nil {
 		return fmt.Errorf("reviewer %w: %w", ports.ErrLaunchNotReady, err)
@@ -789,4 +799,47 @@ func (l *agentLauncher) applyLaunchGate(ctx context.Context, spec LaunchSpec,
 		env[key] = value
 	}
 	return nil
+}
+
+
+// reviewerLaunchID identifies one reviewer attempt. The run id is the daemon's
+// own per-attempt identity, so a gate can bind its decision to this pass rather
+// than to the reviewer handle, which is stable across passes and would make two
+// attempts indistinguishable.
+func reviewerLaunchID(spec LaunchSpec) string {
+	if id := strings.TrimSpace(spec.RunID); id != "" {
+		return id
+	}
+	return strings.TrimSpace(spec.ReviewSessionID)
+}
+
+// reviewerPermissions reports the mode the reviewer child will actually run
+// under, so a gate sees the resolved value rather than inferring one from argv.
+func reviewerPermissions(spec LaunchSpec) ports.PermissionMode {
+	return ports.PermissionMode(strings.TrimSpace(string(spec.AgentConfig.Permissions)))
+}
+
+// gitCommonDir reports the workspace's git common directory, empty when the
+// path is not a git worktree. A gate proving AO-worktree provenance needs the
+// value git reports, not one derived from the path.
+func gitCommonDir(ctx context.Context, workspacePath string) string {
+	if strings.TrimSpace(workspacePath) == "" {
+		return ""
+	}
+	out, err := exec.CommandContext(ctx, "git", "-C", workspacePath, "rev-parse", "--git-common-dir").Output()
+	if err != nil {
+		return ""
+	}
+	dir := strings.TrimSpace(string(out))
+	if dir == "" {
+		return ""
+	}
+	if !filepath.IsAbs(dir) {
+		dir = filepath.Join(workspacePath, dir)
+	}
+	resolved, err := filepath.Abs(dir)
+	if err != nil {
+		return ""
+	}
+	return resolved
 }

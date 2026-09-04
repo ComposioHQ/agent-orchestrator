@@ -1043,14 +1043,23 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn %s: %w", id, err)
 	}
 	m.augmentRuntimePATHForLaunchBinary(ctx, env, argv)
+	// The launch identity is created before the gate is asked, so the decision
+	// is bound to the launch it was made for and the child runs under the same
+	// id the gate was shown.
+	launchID, err := m.freshLaunchID()
+	if err != nil {
+		m.rollbackSeedSpawnWorkspace(ctx, rec, ws, workspaceProject, true)
+		return domain.SessionRecord{}, 0, 0, wrapSpawnStage(id, ErrSpawnSupervisor, err)
+	}
 	// Last point at which every trusted value is resolved and no child exists.
 	// A refusal here must look like the binary check: no runtime.Create, the
 	// workspace torn down, and the reason carried to the caller.
-	if err := m.applyLaunchGate(ctx, id, cfg, ws.Path, adapterConfig, argv, env); err != nil {
+	if err := m.applyLaunchGate(ctx, id, cfg, ws.Path, adapterConfig, argv, env,
+		launchGateIdentity{launchID: launchID, conversationID: rec.Metadata.ProviderConversationID}); err != nil {
 		m.rollbackSeedSpawnWorkspace(ctx, rec, ws, workspaceProject, true)
 		return domain.SessionRecord{}, 0, 0, wrapSpawnStage(id, ErrSpawnLaunchGate, err)
 	}
-	argv, launchID, err := m.superviseAgentProcess(agent, id, env, argv)
+	argv, err = m.superviseAgentProcessWithID(agent, id, env, argv, launchID)
 	if err != nil {
 		m.rollbackSeedSpawnWorkspace(ctx, rec, ws, workspaceProject, true)
 		return domain.SessionRecord{}, 0, 0, wrapSpawnStage(id, ErrSpawnSupervisor, err)
@@ -4734,8 +4743,17 @@ func freshLaunchArgv(ctx context.Context, agent ports.Agent, id domain.SessionID
 // spawn before any child exists, and a permitted launch may gain environment
 // entries that AO has not already set. A gate never rewrites argv, and never
 // removes or overrides an AO-owned variable.
+// launchGateIdentity carries the identity a gate needs to bind its decision to
+// one attempt. It is a struct so adding resume facts later does not reshape
+// every caller.
+type launchGateIdentity struct {
+	launchID       string
+	conversationID string
+}
+
 func (m *Manager) applyLaunchGate(ctx context.Context, id domain.SessionID, cfg ports.SpawnConfig,
-	workspacePath string, adapterConfig ports.AgentConfig, argv []string, env map[string]string) error {
+	workspacePath string, adapterConfig ports.AgentConfig, argv []string, env map[string]string,
+	identity launchGateIdentity) error {
 	if m.launchGate == nil {
 		return nil
 	}
@@ -4747,8 +4765,10 @@ func (m *Manager) applyLaunchGate(ctx context.Context, id domain.SessionID, cfg 
 		GitCommonDir:  m.gitCommonDir(ctx, workspacePath),
 		Permissions:   adapterConfig.Permissions,
 		Argv:          append([]string(nil), argv...),
-		Env:           copyEnv(env),
-		Role:          ports.LaunchRoleWorker,
+		Env:            copyEnv(env),
+		Role:           ports.LaunchRoleWorker,
+		LaunchID:       identity.launchID,
+		ConversationID: identity.conversationID,
 	})
 	if err != nil {
 		return fmt.Errorf("%w: %w", ports.ErrLaunchNotReady, err)
@@ -4872,6 +4892,13 @@ func (m *Manager) validateRuntimePrerequisites() error {
 	return nil
 }
 
+// superviseAgentProcessWithID supervises under an identity the caller already
+// created, so the id a gate was shown is the id the child runs under.
+func (m *Manager) superviseAgentProcessWithID(agent ports.Agent, id domain.SessionID, env map[string]string, argv []string, launchID string) ([]string, error) {
+	_, switchingCapable := agent.(ports.AgentContinuationCapabilityProvider)
+	return m.wrapAgentProcessWithLaunchID(agent, id, env, argv, launchID, switchingCapable)
+}
+
 func (m *Manager) superviseAgentProcess(agent ports.Agent, id domain.SessionID, env map[string]string, argv []string) ([]string, string, error) {
 	// Switching-capable providers always use the exact-generation
 	// supervisor, even when their native hooks also report exit. That gives a
@@ -4889,10 +4916,22 @@ func (m *Manager) superviseAgentProcessForSwitch(agent ports.Agent, id domain.Se
 	return m.superviseAgentProcessMode(agent, id, env, argv, true)
 }
 
-func (m *Manager) superviseAgentProcessMode(agent ports.Agent, id domain.SessionID, env map[string]string, argv []string, force bool) ([]string, string, error) {
+// freshLaunchID creates the identity for one launch attempt. It is exported
+// within the package so a caller can create the identity *before* asking a
+// launch gate, and then supervise under that same id: a gate decision that
+// names no launch cannot be bound to the child it permitted.
+func (m *Manager) freshLaunchID() (string, error) {
 	launchID := m.newLaunchID()
 	if strings.TrimSpace(launchID) == "" {
-		return nil, "", errors.New("generated empty launch id")
+		return "", errors.New("generated empty launch id")
+	}
+	return launchID, nil
+}
+
+func (m *Manager) superviseAgentProcessMode(agent ports.Agent, id domain.SessionID, env map[string]string, argv []string, force bool) ([]string, string, error) {
+	launchID, err := m.freshLaunchID()
+	if err != nil {
+		return nil, "", err
 	}
 	wrapped, err := m.wrapAgentProcessWithLaunchID(agent, id, env, argv, launchID, force)
 	if err != nil {

@@ -339,3 +339,47 @@ func TestSpawn_LaunchGateOverrideCannotTakeAOOwnedVariables(t *testing.T) {
 		t.Fatalf("CLAUDE_CONFIG_DIR = %q, want the agent-owned variable to be overridable", got)
 	}
 }
+
+// P1 from review 5113322042: a gate cannot bind a decision to the current
+// (session, launch, conversation) unless the identity exists before it is
+// asked. Spawn used to generate the launch id after the gate.
+func TestSpawn_LaunchGateSeesTheLaunchIdentityItWillRunUnder(t *testing.T) {
+	gate := &recordingLaunchGate{decision: ports.PreLaunchDecision{Allow: true}}
+	_, _, deps := gateSpawnDeps(t, gate)
+	deps.NewLaunchID = func() string { return "launch-under-test" }
+	m := New(deps)
+
+	if _, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker}); err != nil {
+		t.Fatalf("spawn: %v", err)
+	}
+	if got := gate.seen[0].LaunchID; got != "launch-under-test" {
+		t.Fatalf("gate saw LaunchID %q, want the id the child runs under", got)
+	}
+}
+
+// The gate's request must carry every daemon-owned value the port promises, or
+// a gate that needs one cannot make the same decision on both paths.
+func TestSpawn_LaunchGateRequestCarriesTheFullParityFields(t *testing.T) {
+	gate := &recordingLaunchGate{decision: ports.PreLaunchDecision{Allow: true}}
+	_, _, deps := gateSpawnDeps(t, gate)
+	m := New(deps)
+
+	if _, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker}); err != nil {
+		t.Fatalf("spawn: %v", err)
+	}
+	req := gate.seen[0]
+	for name, empty := range map[string]bool{
+		"SessionID":     req.SessionID == "",
+		"WorkspacePath": req.WorkspacePath == "",
+		"LaunchID":      req.LaunchID == "",
+		"Argv":          len(req.Argv) == 0,
+		"Role":          req.Role == "",
+	} {
+		if empty {
+			t.Fatalf("request field %s is empty", name)
+		}
+	}
+	if req.Kind != domain.KindWorker {
+		t.Fatalf("Kind = %q, want the spawn's kind", req.Kind)
+	}
+}
