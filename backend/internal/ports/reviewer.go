@@ -61,6 +61,13 @@ type ReviewerRestorer interface {
 	ReviewRestoreCommand(ctx context.Context, inv ReviewInvocation) (cmd ReviewCommandSpec, ok bool, err error)
 }
 
+// ReviewerIdleRestorePolicy lets one-shot reviewers opt out of recreating an
+// idle terminal after daemon restart. A native process exists only while a
+// concrete review run is active, so relaunching it without a run is incorrect.
+type ReviewerIdleRestorePolicy interface {
+	SkipIdleReviewRestore(inv ReviewInvocation) bool
+}
+
 // ReviewerReusePolicy is implemented by interactive reviewer adapters that
 // need a fresh TUI for each task because request-scoped context is fixed at
 // process launch. Returning false forces a fresh launch for every pass.
@@ -99,6 +106,9 @@ type ReviewInvocation struct {
 	ReviewQueue []ReviewTask
 	// ReviewIndex is this invocation's zero-based position in ReviewQueue.
 	ReviewIndex int
+	// PreviousRuns lets a one-shot adapter decide whether a provider-native
+	// resume belongs to the exact same review target and head.
+	PreviousRuns []domain.ReviewRun
 	// Config carries the reviewer's resolved agent configuration override.
 	Config domain.AgentConfig
 	// WorkspacePath is the worker's checkout the reviewer reads.

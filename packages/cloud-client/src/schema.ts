@@ -1611,9 +1611,9 @@ export interface components {
         /** @enum {string} */
         AOReviewRunStatus: "running" | "complete" | "delivered" | "failed" | "cancelled";
         /** @enum {string} */
-        AOReviewVerdict: "" | "approved" | "changes_requested";
+        AOReviewVerdict: "" | "approved" | "comment" | "changes_requested";
         /** @enum {string} */
-        AOReviewState: "needs_review" | "running" | "up_to_date" | "changes_requested" | "ineligible";
+        AOReviewState: "needs_review" | "running" | "up_to_date" | "commented" | "changes_requested" | "ineligible";
         AOReviewRun: {
             id: string;
             reviewId: string;

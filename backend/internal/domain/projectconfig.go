@@ -173,6 +173,9 @@ func (c ProjectConfig) Validate() error {
 	if err := c.AgentConfig.Validate(); err != nil {
 		return err
 	}
+	if c.AgentConfig.Mode == "native-review" || c.AgentConfig.NativeReview != nil {
+		return fmt.Errorf("agentConfig: native-review is only valid for reviewers")
+	}
 	if err := validateNameComponent("sessionPrefix", c.SessionPrefix); err != nil {
 		return err
 	}
@@ -182,6 +185,9 @@ func (c ProjectConfig) Validate() error {
 		}
 		if err := ro.AgentConfig.Validate(); err != nil {
 			return fmt.Errorf("%s.%w", role, err)
+		}
+		if ro.AgentConfig.Mode == "native-review" || ro.AgentConfig.NativeReview != nil {
+			return fmt.Errorf("%s.agentConfig: native-review is only valid for reviewers", role)
 		}
 	}
 	for _, s := range c.Symlinks {
@@ -196,7 +202,7 @@ func (c ProjectConfig) Validate() error {
 		if !rv.Harness.IsKnown() {
 			return fmt.Errorf("reviewers[%d].harness: unknown harness %q", i, rv.Harness)
 		}
-		if err := rv.AgentConfig.Validate(); err != nil {
+		if err := rv.AgentConfig.ValidateReviewer(rv.Harness); err != nil {
 			return fmt.Errorf("reviewers[%d].%w", i, err)
 		}
 	}

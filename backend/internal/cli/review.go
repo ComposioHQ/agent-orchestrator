@@ -1,18 +1,23 @@
 package cli
 
 import (
+	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 	"text/tabwriter"
 	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
+
+	"github.com/aoagents/agent-orchestrator/backend/internal/nativeqwen"
 )
 
 // reviewRun mirrors the daemon's domain.ReviewRun for the CLI client.
@@ -63,14 +68,28 @@ type reviewRunResponse struct {
 // submitReviewItem mirrors controllers.SubmitReviewItem.
 type submitReviewItem struct {
 	RunID          string `json:"runId"`
+	Status         string `json:"status,omitempty"`
 	Verdict        string `json:"verdict"`
 	Body           string `json:"body,omitempty"`
 	GithubReviewID string `json:"githubReviewId,omitempty"`
 }
 
+type qwenNativeRecord struct {
+	SchemaVersion   int             `json:"schemaVersion"`
+	NativeTarget    string          `json:"nativeTarget"`
+	TargetSHA       string          `json:"targetSha"`
+	RequestedEffort string          `json:"requestedEffort,omitempty"`
+	EffectiveEffort string          `json:"effectiveEffort,omitempty"`
+	Completion      string          `json:"completion"`
+	Reason          string          `json:"reason,omitempty"`
+	ProviderResult  json.RawMessage `json:"providerResult,omitempty"`
+	RawStdout       string          `json:"rawStdout,omitempty"`
+}
+
 // submitReviewRequest mirrors controllers.SubmitReviewInput.
 type submitReviewRequest struct {
 	RunID          string             `json:"runId,omitempty"`
+	Status         string             `json:"status,omitempty"`
 	Verdict        string             `json:"verdict,omitempty"`
 	Body           string             `json:"body,omitempty"`
 	GithubReviewID string             `json:"githubReviewId,omitempty"`
@@ -103,7 +122,204 @@ func newReviewCommand(ctx *commandContext) *cobra.Command {
 	cmd.AddCommand(newReviewSubmitCommand(ctx))
 	cmd.AddCommand(newReviewCancelCommand(ctx))
 	cmd.AddCommand(newReviewTriggerCommand(ctx))
+	cmd.AddCommand(newQwenNativeRunCommand(ctx))
 	return cmd
+}
+
+func newQwenNativeRunCommand(ctx *commandContext) *cobra.Command {
+	var manifestPath string
+	cmd := &cobra.Command{
+		Use:    "qwen-native-run",
+		Hidden: true,
+		Args:   cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return ctx.runQwenNative(cmd, manifestPath)
+		},
+	}
+	cmd.Flags().StringVar(&manifestPath, "manifest", "", "AO-owned native review manifest")
+	return cmd
+}
+
+func (c *commandContext) runQwenNative(cmd *cobra.Command, manifestPath string) error {
+	manifestPath = strings.TrimSpace(manifestPath)
+	if manifestPath == "" {
+		return usageError{errors.New("usage: --manifest is required")}
+	}
+	raw, err := os.ReadFile(manifestPath)
+	if err != nil {
+		return fmt.Errorf("read native Qwen manifest: %w", err)
+	}
+	defer func() { _ = os.Remove(manifestPath) }()
+	var manifest nativeqwen.Manifest
+	if err := json.Unmarshal(raw, &manifest); err != nil {
+		return fmt.Errorf("decode native Qwen manifest: %w", err)
+	}
+	if err := manifest.Validate(); err != nil {
+		return err
+	}
+	runCtx, cancel := context.WithCancel(cmd.Context())
+	defer cancel()
+	stopEscapeWatch := watchNativeReviewEscape(runCtx, cmd.InOrStdin(), cancel)
+	defer stopEscapeWatch()
+	failed := 0
+	for _, task := range manifest.Tasks {
+		resultPath := qwenNativeSubmissionPath(manifestPath, task.RunID)
+		item, cached, err := readQwenNativeSubmission(resultPath, task)
+		if err != nil {
+			return err
+		}
+		if !cached {
+			stdout, exitCode, runErr := c.deps.NativeQwenRun(runCtx, manifest.QwenBinary, manifest.WorkspacePath, task, cmd.ErrOrStderr())
+			if runCtx.Err() != nil {
+				return runCtx.Err()
+			}
+			outcome := nativeqwen.Outcome{Status: "failed", Reason: "Qwen review process failed to start"}
+			if runErr == nil {
+				outcome = nativeqwen.Parse(stdout, exitCode)
+			} else {
+				outcome.Reason = runErr.Error()
+			}
+			record := qwenNativeRecord{
+				SchemaVersion:   1,
+				NativeTarget:    task.Target,
+				TargetSHA:       task.TargetSHA,
+				RequestedEffort: task.Options.Effort,
+				EffectiveEffort: effectiveNativeEffort(task.Options),
+				Completion:      outcome.Status,
+				Reason:          outcome.Reason,
+			}
+			if json.Valid(outcome.Raw) {
+				record.ProviderResult = outcome.Raw
+			} else if len(outcome.Raw) > 0 {
+				record.RawStdout = string(outcome.Raw)
+			}
+			body, err := json.MarshalIndent(record, "", "  ")
+			if err != nil {
+				return fmt.Errorf("encode native Qwen result: %w", err)
+			}
+			item = submitReviewRequest{RunID: task.RunID, Status: outcome.Status, Verdict: outcome.Verdict, Body: string(body)}
+			// Persist before contacting AO. If the daemon request fails after Qwen
+			// already posted optional PR comments, restore replays this exact
+			// idempotent submission instead of running the provider a second time.
+			if err := writeQwenNativeSubmission(resultPath, item); err != nil {
+				return fmt.Errorf("persist native Qwen result for run %s: %w", task.RunID, err)
+			}
+		}
+		path := "sessions/" + url.PathEscape(manifest.WorkerSessionID) + "/reviews/submit"
+		var response reviewRunResponse
+		if err := c.postJSON(runCtx, path, item, &response); err != nil {
+			return fmt.Errorf("record native Qwen result for run %s: %w", task.RunID, err)
+		}
+		if err := os.Remove(resultPath); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("remove recorded native Qwen result for run %s: %w", task.RunID, err)
+		}
+		if item.Status == "failed" {
+			failed++
+			_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "native Qwen review failed for %s\n", task.Target)
+		} else {
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "recorded %s native Qwen review for %s\n", item.Verdict, task.Target)
+		}
+	}
+	if failed > 0 {
+		return fmt.Errorf("%d native Qwen review(s) did not produce a verdict", failed)
+	}
+	return nil
+}
+
+func qwenNativeSubmissionPath(manifestPath, runID string) string {
+	hash := sha256.Sum256([]byte(runID))
+	return filepath.Join(filepath.Dir(manifestPath), fmt.Sprintf("native-result-%x.json", hash[:12]))
+}
+
+func readQwenNativeSubmission(path string, task nativeqwen.Task) (submitReviewRequest, bool, error) {
+	raw, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return submitReviewRequest{}, false, nil
+	}
+	if err != nil {
+		return submitReviewRequest{}, false, fmt.Errorf("read recorded native Qwen result: %w", err)
+	}
+	var item submitReviewRequest
+	if err := json.Unmarshal(raw, &item); err != nil {
+		return submitReviewRequest{}, false, fmt.Errorf("decode recorded native Qwen result: %w", err)
+	}
+	var record qwenNativeRecord
+	if err := json.Unmarshal([]byte(item.Body), &record); err != nil || item.RunID != task.RunID || record.NativeTarget != task.Target || record.TargetSHA != task.TargetSHA {
+		return submitReviewRequest{}, false, errors.New("recorded native Qwen result does not match the current run target")
+	}
+	return item, true, nil
+}
+
+func writeQwenNativeSubmission(path string, item submitReviewRequest) error {
+	raw, err := json.Marshal(item)
+	if err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".native-result-*")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmp.Name()
+	defer func() { _ = os.Remove(tmpPath) }()
+	if err := tmp.Chmod(0o600); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if _, err := tmp.Write(raw); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmpPath, path)
+}
+
+func watchNativeReviewEscape(ctx context.Context, input io.Reader, cancel context.CancelFunc) func() {
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		buf := make([]byte, 1)
+		for {
+			if _, err := input.Read(buf); err != nil {
+				return
+			}
+			if buf[0] == '\x1b' {
+				cancel()
+				return
+			}
+			select {
+			case <-ctx.Done():
+				return
+			default:
+			}
+		}
+	}()
+	return func() {
+		// Production uses the wrapper process's stdin file. Closing it releases a
+		// blocked Read when the provider finishes normally, so the input watcher
+		// cannot outlive the one-shot command.
+		if closer, ok := input.(io.Closer); ok {
+			_ = closer.Close()
+			<-done
+			return
+		}
+		select {
+		case <-done:
+		default:
+		}
+	}
+}
+
+func effectiveNativeEffort(options nativeqwen.Options) string {
+	if options.Comment {
+		return "high"
+	}
+	return options.Effort
 }
 
 func newReviewListCommand(ctx *commandContext) *cobra.Command {
@@ -150,7 +366,7 @@ func newReviewSubmitCommand(ctx *commandContext) *cobra.Command {
 	})
 	cmd.Flags().StringVar(&opts.session, "session", "", "Worker session id (or pass it as the positional argument)")
 	cmd.Flags().StringVar(&opts.runID, "run", "", "Review run id (required)")
-	cmd.Flags().StringVar(&opts.verdict, "verdict", "", "Review verdict: approved or changes_requested (required)")
+	cmd.Flags().StringVar(&opts.verdict, "verdict", "", "Review verdict: approved, comment, or changes_requested (required)")
 	cmd.Flags().StringVar(&opts.body, "body", "", "Review body: a path to a Markdown file, or - to read from stdin (so nothing is written into the worktree)")
 	cmd.Flags().StringVar(&opts.reviewID, "review-id", "", "Id of the GitHub PR review just posted (the .id from the gh api POST that created the review)")
 	cmd.Flags().StringVar(&opts.reviews, "reviews", "", "JSON review results array or object: a path, or - to read from stdin")
@@ -174,7 +390,7 @@ func (c *commandContext) submitReview(cmd *cobra.Command, args []string, opts re
 	}
 	verdict := strings.TrimSpace(opts.verdict)
 	if verdict == "" {
-		return usageError{errors.New("usage: --verdict is required (approved or changes_requested)")}
+		return usageError{errors.New("usage: --verdict is required (approved, comment, or changes_requested)")}
 	}
 	var body string
 	if path := strings.TrimSpace(opts.body); path != "" {

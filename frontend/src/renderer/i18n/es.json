@@ -865,6 +865,7 @@
 	"settings.language.de": "Deutsch",
 	"settings.language.ptBR": "Português (Brasil)",
 	"settings.models.agentDefault": "Predeterminado del agente",
+	"settings.models.qwenNativeReview": "Revisión nativa",
 	"settings.models.autoRouteLabel": "Auto (enruta automáticamente)",
 	"settings.models.browse": "Explorar",
 	"settings.models.custom": "Introducir ID del modelo…",

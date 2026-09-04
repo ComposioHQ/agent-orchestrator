@@ -47,12 +47,13 @@ type AOReviewVerdict string
 const (
 	AOReviewVerdictNone             AOReviewVerdict = ""
 	AOReviewVerdictApproved         AOReviewVerdict = "approved"
+	AOReviewVerdictComment          AOReviewVerdict = "comment"
 	AOReviewVerdictChangesRequested AOReviewVerdict = "changes_requested"
 )
 
 // Valid reports whether v is a verdict a reviewer may submit.
 func (v AOReviewVerdict) Valid() bool {
-	return v == AOReviewVerdictApproved || v == AOReviewVerdictChangesRequested
+	return v == AOReviewVerdictApproved || v == AOReviewVerdictComment || v == AOReviewVerdictChangesRequested
 }
 
 // AOReviewState is the current AO review state for one pull request head.
@@ -63,6 +64,7 @@ const (
 	AOReviewNeedsReview      AOReviewState = "needs_review"
 	AOReviewRunning          AOReviewState = "running"
 	AOReviewUpToDate         AOReviewState = "up_to_date"
+	AOReviewCommented        AOReviewState = "commented"
 	AOReviewChangesRequested AOReviewState = "changes_requested"
 	AOReviewIneligible       AOReviewState = "ineligible"
 )

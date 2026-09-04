@@ -850,6 +850,7 @@
 	"settings.language.de": "Deutsch",
 	"settings.language.ptBR": "Português (Brasil)",
 	"settings.models.agentDefault": "Agent-Standard",
+	"settings.models.qwenNativeReview": "Native Überprüfung",
 	"settings.models.autoRouteLabel": "Auto (routet automatisch)",
 	"settings.models.browse": "Durchsuchen",
 	"settings.models.custom": "Modell-ID eingeben…",

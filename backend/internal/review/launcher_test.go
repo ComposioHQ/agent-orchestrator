@@ -249,6 +249,16 @@ type fakeRestoringReviewer struct {
 	restoreOK   bool
 }
 
+type fakeIdleRestorePolicyReviewer struct {
+	fakeReviewer
+	gotPolicy ports.ReviewInvocation
+}
+
+func (f *fakeIdleRestorePolicyReviewer) SkipIdleReviewRestore(inv ports.ReviewInvocation) bool {
+	f.gotPolicy = inv
+	return true
+}
+
 func (f *fakeRestoringReviewer) ReviewRestoreCommand(_ context.Context, inv ports.ReviewInvocation) (ports.ReviewCommandSpec, bool, error) {
 	f.restored = true
 	f.gotRestore = inv
@@ -531,6 +541,25 @@ func TestLauncherRestoreTerminalStartsIdlePane(t *testing.T) {
 	}
 	if reviewer.gotInv.DataDir != dataDir {
 		t.Fatalf("restore invocation data dir = %q, want %q", reviewer.gotInv.DataDir, dataDir)
+	}
+}
+
+func TestLauncherRestoreTerminalLetsOneShotReviewerSkipIdlePane(t *testing.T) {
+	reviewer := &fakeIdleRestorePolicyReviewer{}
+	rt := &fakeRuntime{}
+	l := newTestLauncher(t, reviewer, rt)
+	spec := launchSpec()
+	spec.PreviousRuns = []domain.ReviewRun{{ID: "run-1", Status: domain.ReviewRunComplete}}
+
+	launch, err := l.RestoreTerminal(context.Background(), spec)
+	if err != nil {
+		t.Fatalf("RestoreTerminal: %v", err)
+	}
+	if launch.HandleID != "" || rt.created {
+		t.Fatalf("idle one-shot restore created a runtime: launch=%+v created=%v", launch, rt.created)
+	}
+	if len(reviewer.gotPolicy.PreviousRuns) != 1 || reviewer.gotPolicy.PreviousRuns[0].ID != "run-1" {
+		t.Fatalf("restore policy invocation = %+v", reviewer.gotPolicy)
 	}
 }
 

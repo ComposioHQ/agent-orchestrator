@@ -133,6 +133,8 @@ func (c *Coordinator) EvaluateSession(ctx context.Context, id domain.SessionID) 
 			reason = "review_running"
 		case reviewcore.ReviewStateUpToDate:
 			reason = "already_approved"
+		case reviewcore.ReviewStateCommented:
+			reason = "commented_same_sha"
 		case reviewcore.ReviewStateChangesRequested:
 			reason = "changes_requested_same_sha"
 		case reviewcore.ReviewStateIneligible:
@@ -195,6 +197,9 @@ func existingHeadReason(runs []domain.ReviewRun, prURL, targetSHA string) string
 		}
 		if run.Verdict == domain.VerdictApproved {
 			return "already_approved"
+		}
+		if run.Verdict == domain.VerdictComment {
+			return "commented_same_sha"
 		}
 		if run.Verdict == domain.VerdictChangesRequested {
 			return "changes_requested_same_sha"

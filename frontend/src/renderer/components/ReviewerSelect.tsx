@@ -117,7 +117,11 @@ export function ReviewerSelect({
 			void queryClient.prefetchQuery(agentModelsQueryOptions(harness, menuProjectID));
 		}
 	}, [defaultHarness, menuOpen, menuProjectID, queryClient, selectableOptions]);
-	const selectedModelLabel = modelOrModeLabel(triggerCatalog.data, model, mode, t("settings.models.agentDefault"));
+	const nativeReviewLabel = t("settings.models.qwenNativeReview");
+	const selectedModelLabel =
+		effectiveHarness === "qwen" && mode === "native-review"
+			? nativeReviewLabel
+			: modelOrModeLabel(triggerCatalog.data, model, mode, t("settings.models.agentDefault"));
 	const triggerLabel = [value ? agentLabel(value) : (defaultTriggerLabel ?? defaultOptionLabel ?? defaultHarness), selectedModelLabel]
 		.filter(Boolean)
 		.join(" · ");
@@ -202,6 +206,7 @@ function ReviewerHarnessOption({
 	});
 	const catalog = catalogQuery.data;
 	const isCurrent = currentHarness === persistHarness;
+	const choices = reviewerModelOptions(resolvedHarness, catalog, t("settings.models.qwenNativeReview"));
 
 	if (!resolvedHarness) {
 		return (
@@ -214,7 +219,7 @@ function ReviewerHarnessOption({
 		);
 	}
 
-	const hasChoices = hasModelChoices(catalog);
+	const hasChoices = choices.length > 0;
 	const supportsCustomModel = supportsReviewerCustomModel(catalog);
 	const catalogKnown = catalogQuery.data !== undefined || catalogQuery.isFetched;
 
@@ -297,7 +302,7 @@ function ReviewerHarnessOption({
 						</OptionMenuSubContent>
 					</OptionMenuSub>
 				) : null}
-				{modelOptions(catalog).map((option) => {
+				{choices.map((option) => {
 					const selected =
 						isCurrent &&
 						((option.kind === "mode" && currentMode === option.value) ||
@@ -375,10 +380,6 @@ function supportsReviewerCustomModel(catalog?: AgentModelCatalog): boolean {
 	return catalog?.selectionMode === "text" && catalog.allowCustom === true;
 }
 
-function hasModelChoices(catalog?: AgentModelCatalog): boolean {
-	return modelOptions(catalog).length > 0;
-}
-
 function modelOptions(catalog?: AgentModelCatalog): Array<{ kind: "model" | "mode"; label: string; value: string }> {
 	if (!catalog) return [];
 	if (catalog.selectionMode !== "catalog" && catalog.selectionMode !== "mode" && catalog.selectionMode !== "text") return [];
@@ -387,6 +388,18 @@ function modelOptions(catalog?: AgentModelCatalog): Array<{ kind: "model" | "mod
 		label: item.label,
 		value: item.id,
 	}));
+}
+
+export function reviewerModelOptions(
+	harness: string | undefined,
+	catalog: AgentModelCatalog | undefined,
+	nativeReviewLabel: string,
+): Array<{ kind: "model" | "mode"; label: string; value: string }> {
+	const options = modelOptions(catalog);
+	if (harness === "qwen" && !options.some((option) => option.kind === "mode" && option.value === "native-review")) {
+		options.push({ kind: "mode", label: nativeReviewLabel, value: "native-review" });
+	}
+	return options;
 }
 
 function modelOrModeLabel(catalog: AgentModelCatalog | undefined, model: string, mode: string, emptyLabel: string): string {

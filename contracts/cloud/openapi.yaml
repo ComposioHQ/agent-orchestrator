@@ -3077,10 +3077,10 @@ components:
       enum: [running, complete, delivered, failed, cancelled]
     AOReviewVerdict:
       type: string
-      enum: ["", approved, changes_requested]
+      enum: ["", approved, comment, changes_requested]
     AOReviewState:
       type: string
-      enum: [needs_review, running, up_to_date, changes_requested, ineligible]
+      enum: [needs_review, running, up_to_date, commented, changes_requested, ineligible]
     AOReviewRun:
       type: object
       additionalProperties: false

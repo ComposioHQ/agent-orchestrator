@@ -300,6 +300,42 @@ func TestSubmitPersistsThenAppliesThenStampsDelivered(t *testing.T) {
 	}
 }
 
+func TestSubmitPersistsCommentWithoutTreatingItAsApprovalOrFailure(t *testing.T) {
+	st := &fakeStore{
+		ok:  true,
+		run: domain.ReviewRun{ID: "run-1", SessionID: "mer-1", PRURL: "pr1", TargetSHA: "sha1", Status: domain.ReviewRunRunning},
+	}
+	svc := New(nil, st)
+	run, err := svc.Submit(context.Background(), "mer-1", "run-1", domain.VerdictComment, `{"verdictLine":"COMMENT"}`, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if run.Status != domain.ReviewRunComplete || run.Verdict != domain.VerdictComment {
+		t.Fatalf("run = %+v", run)
+	}
+}
+
+func TestSubmitManyRecordsNativeInfrastructureFailureWithoutDelivery(t *testing.T) {
+	st := &fakeStore{
+		ok:  true,
+		run: domain.ReviewRun{ID: "run-1", SessionID: "mer-1", PRURL: "pr1", TargetSHA: "sha1", Status: domain.ReviewRunRunning},
+	}
+	reducer := &fakeReducer{outcome: lifecycle.ReviewDeliverySent}
+	svc := New(nil, st, WithLifecycleReducer(reducer))
+	runs, err := svc.SubmitMany(context.Background(), "mer-1", []SubmittedReview{{
+		RunID: "run-1", Status: domain.ReviewRunFailed, Body: `{"reason":"timed out"}`,
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(runs) != 1 || runs[0].Status != domain.ReviewRunFailed || runs[0].Verdict != domain.VerdictNone {
+		t.Fatalf("runs = %+v", runs)
+	}
+	if reducer.batchCalls != 0 || st.markCalls != 0 {
+		t.Fatalf("failed result was delivered: reducer=%d mark=%d", reducer.batchCalls, st.markCalls)
+	}
+}
+
 func TestApplyReviewActivitySignalPersistsNativeReviewerSessionID(t *testing.T) {
 	st := &fakeStore{
 		reviewOK: true,
