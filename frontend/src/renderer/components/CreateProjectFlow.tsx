@@ -1244,17 +1244,26 @@ function ProjectImportDialog({
 						</Dialog.Close>
 					</div>
 					<div className="min-h-0 space-y-4 overflow-y-auto px-4 pb-1 pt-4">
-						<div className="flex items-center gap-3 rounded-md bg-muted/50 px-3 py-2.5">
-							<Folder className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
-							<div className="min-w-0 flex-1">
-								<div className="truncate font-mono text-[12px] font-medium text-foreground">
-									{displayImportPath(validation.root.repoPath)}
-								</div>
-								<div className="mt-0.5 text-[11px] text-muted-foreground">{t("createProject.projectFolder")}</div>
-							</div>
-							<Button type="button" variant="ghost" size="sm" disabled={disabled} onClick={onChangeFolder}>
-								{t("createProject.change")}
-							</Button>
+						<div className="space-y-2">
+							<Label htmlFor="projectImportFolder" className="text-[13px] font-semibold text-[var(--color-text-import-title)]">
+								{t("createProject.projectFolder")}
+							</Label>
+							<button
+								type="button"
+								id="projectImportFolder"
+								aria-label={t("createProject.change")}
+								className="flex h-control-form w-full items-center overflow-hidden rounded-md border border-transparent bg-[var(--color-bg-import-card)] text-left text-[13px] text-foreground outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-50"
+								disabled={disabled}
+								onClick={onChangeFolder}
+							>
+								<span className="flex min-w-0 flex-1 items-center gap-3 px-3">
+									<Folder className="size-4 shrink-0 text-[var(--color-text-import-muted)]" aria-hidden="true" />
+									<span className="truncate font-mono">{displayImportPath(validation.root.repoPath)}</span>
+								</span>
+								<span className="flex h-full shrink-0 items-center border-l border-border/60 px-4 text-foreground hover:bg-foreground/10">
+									{t("createProject.change")}
+								</span>
+							</button>
 						</div>
 						{hasChildRepos ? (
 							<div className="border-l-2 border-primary/50 pl-3 text-[12px] leading-5 text-muted-foreground">
