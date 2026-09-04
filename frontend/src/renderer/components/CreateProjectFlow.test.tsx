@@ -609,8 +609,10 @@ describe("CreateProjectFlow project import validation", () => {
 		await user.click(screen.getByRole("button", { name: "Continue" }));
 
 		expect(await screen.findByText("Running project setup. AO is preparing this repository now.")).toBeInTheDocument();
-		expect(screen.getByText("Running")).toBeInTheDocument();
-		expect(screen.getAllByText("Queued")).not.toHaveLength(0);
+		expect(screen.queryByText("Running")).not.toBeInTheDocument();
+		expect(screen.queryByText("Queued")).not.toBeInTheDocument();
+		expect(screen.queryByText("Ready")).not.toBeInTheDocument();
+		expect(screen.queryByText("Set URL")).not.toBeInTheDocument();
 
 		resolvePrepare({
 			data: {

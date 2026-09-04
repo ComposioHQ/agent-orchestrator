@@ -670,13 +670,6 @@ function gitActionLabel(action: string): string {
 	}
 }
 
-function latestProjectActionState(action: string, events: GitPreparationEvent[]): string {
-	for (let index = events.length - 1; index >= 0; index -= 1) {
-		if (events[index]?.action === action) return events[index].state;
-	}
-	return "required";
-}
-
 function orderedProjectActions(actions: string[]): string[] {
 	const rank = new Map([
 		["git_init", 0],
@@ -1208,12 +1201,6 @@ function ProjectImportDialog({
 	const hasFailedStep = events.some((event) => event.state === "error");
 	const missingApprovals = validation.root.requiredActions.filter((action) => !approvedActions.includes(action));
 	const continueDisabled = disabled || missingApprovals.length > 0 || (needsRemote && remoteUrl.trim() === "");
-	const statusIcon = (state: string) => {
-		if (state === "success") return <CheckCircle2 className="size-4 text-success" aria-hidden="true" />;
-		if (state === "error") return <XCircle className="size-4 text-destructive" aria-hidden="true" />;
-		if (state === "running") return <CircleDashed className="size-4 animate-spin text-primary" aria-hidden="true" />;
-		return <CircleDashed className="size-4 text-muted-foreground" aria-hidden="true" />;
-	};
 	return (
 		<Dialog.Root open={open} onOpenChange={onOpenChange}>
 			<Dialog.Portal>
@@ -1300,20 +1287,7 @@ function ProjectImportDialog({
 								</div>
 								<div className="divide-y divide-border overflow-hidden rounded-md border border-border/70 bg-background/40">
 									{validation.root.requiredActions.map((action) => {
-											const state = latestProjectActionState(action, events);
 											const checked = approvedActions.includes(action);
-											const statusLabel =
-												state === "required"
-													? action === "set_remote"
-														? "Set URL"
-														: "Ready"
-													: state === "pending"
-														? "Queued"
-														: state === "running"
-															? "Running"
-															: state === "success"
-																? "Done"
-																: "Failed";
 											return (
 												<label
 													key={action}
@@ -1358,11 +1332,7 @@ function ProjectImportDialog({
 																</span>
 															</span>
 														) : null}
-													</span>
-													<span className="flex shrink-0 items-center gap-1.5 text-[11px] text-muted-foreground">
-														{statusIcon(state)}
-														<span>{statusLabel}</span>
-													</span>
+														</span>
 												</label>
 											);
 										})}
