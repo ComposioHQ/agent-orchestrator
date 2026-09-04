@@ -1729,7 +1729,12 @@ function SessionRow({
 		: undefined;
 	const switchStatusId = useId();
 	const describedBy = switchLabel ? switchStatusId : undefined;
-	const rename = useSessionRename(session);
+	const queryClient = useQueryClient();
+	const refreshWorkspaces = useCallback(
+		() => queryClient.invalidateQueries({ queryKey: workspaceQueryKey }),
+		[queryClient],
+	);
+	const rename = useSessionRename(session, refreshWorkspaces);
 	const [sessionPressed, setSessionPressed] = useState(false);
 	const lastTouchAtRef = useRef(0);
 	const suppressTouchOpenRef = useRef(false);

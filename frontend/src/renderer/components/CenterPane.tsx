@@ -15,6 +15,7 @@ import {
 	type ReactNode,
 	type WheelEvent as ReactWheelEvent,
 } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import {
 	findActiveAgentSwitch,
@@ -24,6 +25,7 @@ import {
 import { useObservedAgentSwitchLifecycle } from "../hooks/useObservedAgentSwitchLifecycle";
 import { useAgentSwitchPresentationVisibility, useAgentSwitchRouteVisibility } from "../hooks/useAgentSwitchVisibility";
 import { useTabScrollEdges } from "../hooks/useTabScrollEdges";
+import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { MAX_SESSION_DISPLAY_NAME_LEN, useSessionRename } from "../hooks/useSessionRename";
 import { useSwitchAgentState } from "../hooks/useSwitchAgent";
 import { useTruncatedText } from "../hooks/useTruncatedText";
@@ -171,6 +173,11 @@ export function CenterPane({
 	const [isFullscreen, setIsFullscreen] = useState(false);
 	const [terminalBounds, setTerminalBounds] = useState({ leftInset: 0, rightInset: 0, width: 0 });
 	const [tabOrderBySession, setTabOrderBySession] = useState<Record<string, string[]>>({});
+	const queryClient = useQueryClient();
+	const refreshWorkspaces = useCallback(
+		() => queryClient.invalidateQueries({ queryKey: workspaceQueryKey }),
+		[queryClient],
+	);
 	const isSidebarOpen = useUiStore(sidebarOccupiesLayout);
 	const sessionId = session?.id;
 	const auxiliaryTabs = useMemo<AuxiliaryTab[]>(
@@ -618,6 +625,7 @@ export function CenterPane({
 											isActive={target.kind === "worker" && !workspaceActiveTabKey}
 											label={sessionTabLabel}
 											onSelect={onSelectSessionTerminal}
+											onRenamed={refreshWorkspaces}
 											session={session}
 											tabAction={sessionTabAction}
 										/>
@@ -911,6 +919,7 @@ type SessionPaneTabProps = {
 	isActive: boolean;
 	appearance?: "primary" | "connected";
 	onSelect?: () => void;
+	onRenamed?: () => void | Promise<void>;
 	session?: WorkspaceSession;
 	icon?: ReactNode;
 	title?: string;
@@ -927,6 +936,7 @@ export function SessionPaneTab({
 	isActive,
 	appearance = "primary",
 	onSelect,
+	onRenamed,
 	session,
 	icon,
 	title,
@@ -938,7 +948,7 @@ export function SessionPaneTab({
 	const providerLabel = session ? agentLabel(session.provider) : undefined;
 	const tabIcon = session ? <AgentAvatar className="size-terminal-agent-icon" decorative provider={session.provider} /> : icon;
 	const connected = appearance === "connected";
-	const rename = useSessionRename(session);
+	const rename = useSessionRename(session, onRenamed);
 	const editingContent = session && rename.isEditing ? (
 		<div className="flex h-full min-w-0 flex-1 items-center gap-2 px-2">
 			{tabIcon}
