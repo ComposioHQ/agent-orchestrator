@@ -1,6 +1,6 @@
 import { createFileRoute, Outlet, useMatchRoute, useNavigate, useParams } from "@tanstack/react-router";
 import { isCancelledError, useQueryClient, type QueryClient } from "@tanstack/react-query";
-import { memo, type CSSProperties, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { memo, type CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { FolderPlus } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { CommandPalette } from "../components/CommandPalette";
@@ -17,7 +17,7 @@ import { KeyboardShortcutsSettingsDialog } from "../components/settings/Keyboard
 import { ShellTopbar } from "../components/ShellTopbar";
 import { SessionTopbarProvider } from "../components/SessionTopbarPortal";
 import { OrchestratorReplacementDialog } from "../components/OrchestratorReplacementDialog";
-import { Sidebar, SIDEBAR_DEFAULT_WIDTH } from "../components/Sidebar";
+import { Sidebar } from "../components/Sidebar";
 import { SidebarProvider } from "../components/ui/sidebar";
 import { TitlebarNav } from "../components/TitlebarNav";
 import { WindowTitlebar } from "../components/WindowTitlebar";
@@ -39,7 +39,6 @@ import { aoBridge } from "../lib/bridge";
 import { handleModifierLinkClick } from "../lib/external-link-policy";
 import { recordProjectOpened } from "../lib/project-history";
 import { cn } from "../lib/utils";
-import { adaptiveSidebarShouldCompact } from "../lib/adaptive-sidebar";
 import {
 	isLinuxPlatform,
 	isMacPlatform,
@@ -47,7 +46,7 @@ import {
 	usesFramedAppTopbar,
 	hidesShellTopbar,
 } from "../lib/platform";
-import { sidebarIsCompact, sidebarIsVisible, sidebarOccupiesLayout, useUiStore } from "../stores/ui-store";
+import { sidebarIsVisible, sidebarOccupiesLayout, useUiStore } from "../stores/ui-store";
 import { matchesRendererShortcut } from "../stores/keybindings-store";
 import { sessionIsActive, toProjectKind, type WorkspaceSummary } from "../types/workspace";
 import type { components } from "../../api/schema";
@@ -67,11 +66,6 @@ export const Route = createFileRoute("/_shell")({
 
 function errorMessage(error: unknown) {
 	return error instanceof Error ? error.message : "Could not load projects";
-}
-
-function expandedSidebarWidthPx(): number {
-	const inlineWidth = Number.parseFloat(document.documentElement.style.getPropertyValue("--ao-sidebar-w"));
-	return Number.isFinite(inlineWidth) && inlineWidth > 0 ? inlineWidth : SIDEBAR_DEFAULT_WIDTH;
 }
 
 function normalizeProjectPath(path: string): string {
@@ -194,12 +188,7 @@ function ShellLayout() {
 	const themeStyle = useUiStore((state) => state.themeStyle);
 	const isSidebarOpen = useUiStore(sidebarIsVisible);
 	const toggleSidebar = useUiStore((state) => state.toggleSidebar);
-	const isSidebarCompact = useUiStore(sidebarIsCompact);
 	const sidebarHasLayout = useUiStore(sidebarOccupiesLayout);
-	const sidebarWorkspaceDemandPx = useUiStore((state) => state.sidebarWorkspaceDemandPx);
-	const setSidebarAutoCollapsed = useUiStore((state) => state.setSidebarAutoCollapsed);
-	const clearSidebarAutoCollapse = useUiStore((state) => state.clearSidebarAutoCollapse);
-	const shellContentRowRef = useRef<HTMLDivElement | null>(null);
 	const syncSystemTheme = useUiStore((state) => state.syncSystemTheme);
 	const requestNewTask = useUiStore((state) => state.requestNewTask);
 	const requestCreateProject = useUiStore((state) => state.requestCreateProject);
@@ -208,34 +197,6 @@ function ShellLayout() {
 	const newShellTerminalNonce = useUiStore((state) => state.newShellTerminalNonce);
 	const setActiveShellTerminal = useUiStore((state) => state.setActiveShellTerminal);
 	const openShellTerminal = useOpenShellTerminal();
-	// Session surfaces publish only their required center-workspace width. The
-	// persistent shell owns the single responsive decision, measured against the
-	// invariant outer row so sidebar animation cannot feed back into itself.
-	useLayoutEffect(() => {
-		if (sidebarWorkspaceDemandPx === null) {
-			clearSidebarAutoCollapse();
-			return;
-		}
-		const row = shellContentRowRef.current;
-		if (!row) return;
-		const update = () => {
-			const rowWidth = row.clientWidth || row.getBoundingClientRect().width;
-			const expandedContentWidth = Math.max(0, rowWidth - expandedSidebarWidthPx());
-			const current = useUiStore.getState().isSidebarAutoCollapsed;
-			setSidebarAutoCollapsed(
-				adaptiveSidebarShouldCompact({
-					expandedContentWidth,
-					workspaceDemand: sidebarWorkspaceDemandPx,
-					isCompact: current,
-				}),
-			);
-		};
-		update();
-		if (typeof ResizeObserver === "undefined") return;
-		const observer = new ResizeObserver(update);
-		observer.observe(row);
-		return () => observer.disconnect();
-	}, [clearSidebarAutoCollapse, setSidebarAutoCollapsed, sidebarWorkspaceDemandPx]);
 	// Single subscription for sidebar clearance + drag strip (macOS no-ops inside the hook).
 	const isFullScreen = useWindowFullScreen();
 	// Drag is on immediately for a normal windowed launch. After leaving fullscreen,
@@ -977,13 +938,11 @@ function ShellLayout() {
 				<div
 					className="flex min-h-0 w-full flex-1 overflow-x-hidden"
 					data-testid="shell-content-row"
-					ref={shellContentRowRef}
 				>
 				{/* macOS + Linux reserve a titlebar band for the fixed TitlebarNav
               cluster above a full-height sidebar; Windows hangs the sidebar
               below its custom titlebar. */}
 				<Sidebar
-					autoCompact={isSidebarCompact}
 					hideEdgeBorder={isHomeRoute}
 					underTopbar={isMac || isWindows || isLinux}
 						topbarOffset={isWindows ? "titlebar" : hideShellTopbar ? "trafficLights" : "toolbar"}

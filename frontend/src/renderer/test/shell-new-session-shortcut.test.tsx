@@ -366,14 +366,11 @@ beforeEach(() => {
 		createProjectNonce: 0,
 		folderDropRequest: null,
 		globalToast: null,
-		isSidebarAutoCollapsed: false,
 		isSidebarOpen: true,
 		newTaskRequest: null,
 		newShellTerminalNonce: 0,
 		activeShellTerminalHandleId: null,
 		settingsModal: null,
-		sidebarAutoCollapseOverride: false,
-		sidebarWorkspaceDemandPx: null,
 	});
 });
 
@@ -552,53 +549,6 @@ describe("shell workspace startup", () => {
 });
 
 describe("shell sidebar toggle", () => {
-	it("keeps a manual expansion open while workspace pressure is active", async () => {
-		const clientWidth = vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1280);
-		useUiStore.setState({
-			isSidebarAutoCollapsed: false,
-			isSidebarOpen: true,
-			sidebarAutoCollapseOverride: false,
-			sidebarWorkspaceDemandPx: 1068,
-		});
-
-		try {
-			await renderShell();
-			await waitFor(() => expect(useUiStore.getState().isSidebarAutoCollapsed).toBe(true));
-			expect(screen.getByTestId("sidebar-provider")).toHaveAttribute("data-open", "false");
-
-			fireEvent.click(screen.getByRole("button", { name: "Expand sidebar" }));
-
-			expect(useUiStore.getState().sidebarAutoCollapseOverride).toBe(true);
-			expect(screen.getByTestId("sidebar-provider")).toHaveAttribute("data-open", "true");
-
-			// ResizeObserver can report transient geometry while the rail animates.
-			// Automatic pressure changes must never revoke the user's explicit choice.
-			act(() => {
-				useUiStore.getState().setSidebarAutoCollapsed(false);
-				useUiStore.getState().setSidebarAutoCollapsed(true);
-			});
-
-			expect(useUiStore.getState().sidebarAutoCollapseOverride).toBe(true);
-			expect(screen.getByTestId("sidebar-provider")).toHaveAttribute("data-open", "true");
-			expect(screen.getByRole("button", { name: "Collapse sidebar" })).toBeInTheDocument();
-
-			fireEvent.click(screen.getByRole("button", { name: "Collapse sidebar" }));
-
-			// Browser pressure still owns the icon rail. Returning from the manual
-			// expansion must not remove that rail's layout width and shift the
-			// inspector boundary after the transition.
-			expect(useUiStore.getState()).toMatchObject({
-				isSidebarAutoCollapsed: true,
-				isSidebarOpen: true,
-				sidebarAutoCollapseOverride: false,
-			});
-			expect(screen.getByTestId("sidebar-provider")).toHaveAttribute("data-open", "false");
-			expect(screen.getByRole("button", { name: "Expand sidebar" })).toBeInTheDocument();
-		} finally {
-			clientWidth.mockRestore();
-		}
-	});
-
 	it("does not open a collapsed sidebar on titlebar hover", async () => {
 		useUiStore.setState({ isSidebarOpen: false });
 		await renderShell();
