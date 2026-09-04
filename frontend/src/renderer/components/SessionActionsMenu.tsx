@@ -11,12 +11,9 @@ import {
 export function SessionActionsMenu({
 	children,
 	inlineStatus,
-	suppressCloseAutoFocus = false,
 }: {
 	children?: ReactNode;
 	inlineStatus?: ReactNode;
-	/** Keep a newly opened sibling dialog focused while this menu unmounts. */
-	suppressCloseAutoFocus?: boolean;
 }) {
 	const { t } = useTranslation();
 	const menuItems = Children.toArray(children).filter(Boolean);
@@ -39,13 +36,7 @@ export function SessionActionsMenu({
 							<MoreVertical aria-hidden="true" className="size-icon-md" />
 						</TopbarButton>
 					</DropdownMenuTrigger>
-					<DropdownMenuContent
-						align="end"
-						className="min-w-44"
-						onCloseAutoFocus={(event) => {
-							if (suppressCloseAutoFocus) event.preventDefault();
-						}}
-					>
+					<DropdownMenuContent align="end" className="min-w-44">
 						{menuItems}
 					</DropdownMenuContent>
 				</DropdownMenu>

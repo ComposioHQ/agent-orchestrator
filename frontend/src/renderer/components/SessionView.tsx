@@ -1165,10 +1165,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 		/>
 	) : null;
 	const sessionTabActions = (
-		<SessionActionsMenu
-			inlineStatus={interfaceSwitchInlineStatus}
-			suppressCloseAutoFocus={handoffDialogOpen}
-		>
+		<SessionActionsMenu inlineStatus={interfaceSwitchInlineStatus}>
 			{interfaceSwitchMenuItem}
 			{handoffMenuItem}
 		</SessionActionsMenu>
