@@ -54,6 +54,10 @@ func (f *fakeBackend) IsAlive(_ context.Context, handle ports.RuntimeHandle) (bo
 	return true, nil
 }
 
+func (f *fakeBackend) ProbeFencedRuntime(_ context.Context, _ ports.FencedRuntimeRef) ports.FencedProbeResult {
+	return ports.FencedProbeResult{Liveness: ports.FencedUnknown, Reason: ports.FencedReasonProbeFailed}
+}
+
 func (f *fakeBackend) Attach(_ context.Context, handle ports.RuntimeHandle, _, _ uint16) (ports.Stream, error) {
 	f.record("attach", handle)
 	return fakeStream{}, nil

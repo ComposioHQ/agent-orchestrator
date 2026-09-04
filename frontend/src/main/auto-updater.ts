@@ -326,9 +326,10 @@ interface GitHubReleaseSummary {
  * This is used only for user-requested checks; failures fall back to the normal
  * provider so API rate limits or an outage never break update checks.
  */
-async function fetchLatestCompletedNightlyTag(
+async function fetchLatestCompletedPrereleaseTag(
   owner: string,
   repo: string,
+  channel: string,
 ): Promise<{ tag: string; body?: string } | undefined> {
   try {
     const response = await fetch(
@@ -345,7 +346,7 @@ async function fetchLatestCompletedNightlyTag(
     );
     if (!response.ok) return undefined;
     const releases = (await response.json()) as GitHubReleaseSummary[];
-    const manifestName = `nightly${platformSuffix()}.yml`;
+    const manifestName = `${channel}${platformSuffix()}.yml`;
     const newest = releases
       .filter((release) => {
         const parsed = semver.valid(release.tag_name);
@@ -353,17 +354,18 @@ async function fetchLatestCompletedNightlyTag(
           !release.draft &&
           release.prerelease &&
           parsed !== null &&
-          semver.prerelease(parsed)?.[0] === "nightly" &&
+          semver.prerelease(parsed)?.[0] === channel &&
           release.assets?.some((asset) => asset.name === manifestName) === true
         );
       })
       .sort((left, right) => semver.rcompare(left.tag_name, right.tag_name))[0];
     if (newest === undefined) return undefined;
     // The body comes back on the same response, so carrying it costs nothing.
-    // Nightly needs it: the direct feed below is electron-updater's GENERIC
-    // provider, which never populates releaseNotes (only GitHubProvider does),
-    // and nightly-mac.yml has no field for them. Without this the "what's new"
-    // section could never say anything on the nightly channel.
+    // Every channel resolved this way needs it: the direct feed below is
+    // electron-updater's GENERIC provider, which never populates releaseNotes
+    // (only GitHubProvider does), and the channel manifests have no field for
+    // them. Without this the "what's new" section could never say anything on
+    // nightly or on a pinned feature build.
     return {
       tag: newest.tag_name,
       ...(typeof newest.body === "string" ? { body: newest.body } : {}),
@@ -373,10 +375,11 @@ async function fetchLatestCompletedNightlyTag(
   }
 }
 
-function usesDirectNightlyFeed(
+function directPrereleaseChannel(
   settings: Pick<UpdateSettings, "channel" | "feature">,
-): boolean {
-  return settings.channel === "nightly" && settings.feature === null;
+): string | undefined {
+  if (settings.feature) return `pr${settings.feature.pr}`;
+  return settings.channel === "nightly" ? "nightly" : undefined;
 }
 
 /**
@@ -390,22 +393,24 @@ function usesDirectNightlyFeed(
  * checks; electron-updater retains the direct provider with the discovered
  * update, so a subsequent Download action still uses the correct asset URLs.
  */
-async function configureDirectNightlyFeed(
+async function configureDirectPrereleaseFeed(
   settings: UpdateSettings,
 ): Promise<(() => void) | undefined> {
-  if (!usesDirectNightlyFeed(settings)) return undefined;
+  const channel = directPrereleaseChannel(settings);
+  if (!channel) return undefined;
   const coordinates = await readAppUpdateYml();
   if (!coordinates) return undefined;
-  const release = await fetchLatestCompletedNightlyTag(
+  const release = await fetchLatestCompletedPrereleaseTag(
     coordinates.owner,
     coordinates.repo,
+    channel,
   );
   if (!release) return undefined;
   const { tag } = release;
   const runningVersion = app.getVersion();
   if (
     semver.valid(runningVersion) !== null &&
-    semver.prerelease(runningVersion)?.[0] === "nightly" &&
+    semver.prerelease(runningVersion)?.[0] === channel &&
     semver.lt(tag, runningVersion)
   ) {
     return undefined;
@@ -417,7 +422,7 @@ async function configureDirectNightlyFeed(
   autoUpdater.setFeedURL({
     provider: "generic",
     url: `https://github.com/${coordinates.owner}/${coordinates.repo}/releases/download/${tag}`,
-    channel: "nightly",
+    channel,
     useMultipleRangeRequest: false,
   });
   return () => {
@@ -1094,10 +1099,10 @@ async function runAutomaticUpdateCheck(
       autoUpdater.autoDownload =
         staleStaged || (settings.enabled && !hasStagedBuild());
       applyInstallOnQuitPolicy();
-      // Only nightly resolves a direct feed. Skipping the await entirely on the
-      // other channels keeps this check's event ordering exactly as it was.
-      const restoreFeed = usesDirectNightlyFeed(settings)
-        ? await configureDirectNightlyFeed(settings)
+      // Only prerelease channels resolve a direct feed. Skipping the await on
+      // stable keeps that check's event ordering exactly as it was.
+      const restoreFeed = directPrereleaseChannel(settings)
+        ? await configureDirectPrereleaseFeed(settings)
         : undefined;
       try {
         const result = await autoUpdater.checkForUpdates();
@@ -1271,7 +1276,7 @@ export async function checkForUpdatesNow(
         autoUpdater.autoDownload = staleStaged;
         applyInstallOnQuitPolicy();
         broadcastUpdaterStatus({ state: "checking" });
-        const restoreFeed = await configureDirectNightlyFeed(settings);
+        const restoreFeed = await configureDirectPrereleaseFeed(settings);
         try {
           settleCheckStatus(await autoUpdater.checkForUpdates());
         } finally {
