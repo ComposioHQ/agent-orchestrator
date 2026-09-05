@@ -6,11 +6,16 @@ import { createRequire } from "node:module";
 import { sign } from "node:crypto";
 import { gzipSync } from "node:zlib";
 import { closeSync, copyFileSync, fstatSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import * as fsPromises from "node:fs/promises";
 import { join } from "node:path";
 import { macV2Fixture } from "./test-fixtures/mac-differential-v2.mjs";
 import { macV2Canonical, macV2Digest, MAC_V2_METADATA } from "../src/main/mac-differential-v2-protocol";
 import { MacDifferentialV2Updater } from "../src/main/mac-differential-v2-updater";
 
+vi.mock("node:fs/promises", async importOriginal => {
+  const actual = await importOriginal();
+  return { ...actual, open: vi.fn(actual.open) };
+});
 vi.mock("electron", () => ({ net: { fetch: (...args) => globalThis.fetch(...args) } }));
 const require = createRequire(import.meta.url);
 const { MacUpdater } = require("electron-updater/out/MacUpdater.js");
@@ -51,6 +56,20 @@ async function runCase(fault = "none", { arch = "arm64", progress = true, disabl
   if (fault === "baseline-directory") { rmSync(join(cache, "update.zip")); mkdirSync(join(cache, "update.zip")); }
   const selected = f.envelope.payload.artifacts.find(entry => entry.arch === arch);
   const metadata = structuredClone(f.envelope);
+  const authorizationFaults = {
+    "schema-missing": payload => { delete payload.schemaVersion; },
+    "schema-string": payload => { payload.schemaVersion = "2"; },
+    "schema-future": payload => { payload.schemaVersion = 3; },
+    "minimum-missing": payload => { delete payload.minimumClientVersion; },
+    "minimum-malformed": payload => { payload.minimumClientVersion = ">=1.0.0"; },
+    "minimum-above": payload => { payload.minimumClientVersion = "1.0.1"; },
+    "minimum-below": payload => { payload.minimumClientVersion = "0.9.0"; },
+    "minimum-prerelease": payload => { payload.minimumClientVersion = "1.0.0-rc.1"; },
+  };
+  if (authorizationFaults[fault]) {
+    authorizationFaults[fault](metadata.payload);
+    metadata.signature.value = sign(null, Buffer.from(macV2Canonical(metadata.payload)), f.privateKey).toString("base64");
+  }
   if (fault === "signature") metadata.signature.value = "A".repeat(86) + "==";
   if (fault === "candidate") {
     metadata.payload.candidate.version = "3.0.0"; metadata.payload.candidate.tag = "v3.0.0";
@@ -139,8 +158,11 @@ async function runCase(fault = "none", { arch = "arm64", progress = true, disabl
   Object.setPrototypeOf(updater, legacy ? MacUpdater.prototype : MacDifferentialV2Updater.prototype);
   updater.v2 = { trustedKeys: fault === "unknown-key" ? {} : f.trustedKeys, timeoutMs: fault === "timeout" ? 50 : 2000,
     fetch: (url, init) => fetch(`${base}${new URL(url).pathname}`, init) };
+  if (fault === "capability-missing" || fault === "capability-unknown") {
+    Object.defineProperty(updater, "differentialCapability", { value: fault === "capability-missing" ? undefined : "mac-differential-v3" });
+  }
   updater.app = { version: "1.0.0" };
-  updater.currentVersion = new semver.SemVer("1.0.0");
+  updater.currentVersion = new semver.SemVer(fault === "installed-prerelease" ? "1.0.0-rc.1" : "1.0.0");
   updater.channel = fault === "ineligible" ? "latest" : "nightly";
   updater.logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() };
   updater.downloadedUpdateHelper = new DownloadedUpdateHelper(cache);
@@ -156,6 +178,27 @@ async function runCase(fault = "none", { arch = "arm64", progress = true, disabl
   const file = { url: new URL(selected.zip.url), info: { url: selected.zip.url, size: target.length, sha512: selected.zip.sha512 } };
   const provider = { resolveFiles: () => [file], isUseMultipleRangeRequest: false,
     getBlockMapFiles: vi.fn(() => [new URL(`${base}${new URL(selected.baseline.zip.url).pathname}.blockmap`), new URL(`${base}${file.url.pathname}.blockmap`)]) };
+  const promote = vi.spyOn(updater.downloadedUpdateHelper, "setDownloadedFile");
+  if (["cancel-final-read", "cancel-output-close", "cancel-baseline-close"].includes(fault)) {
+    const realOpen = (await vi.importActual("node:fs/promises")).open;
+    vi.mocked(fsPromises.open).mockImplementation(async (...args) => {
+      const handle = await realOpen(...args);
+      const output = args[0] !== join(cache, "update.zip");
+      let synced = false;
+      const sync = handle.sync.bind(handle), read = handle.read.bind(handle), close = handle.close.bind(handle);
+      handle.sync = async () => { await sync(); synced = true; };
+      handle.read = async (...readArgs) => {
+        const result = await read(...readArgs);
+        if (output && synced && fault === "cancel-final-read" && readArgs[3] + result.bytesRead === target.length) token.cancel();
+        return result;
+      };
+      handle.close = async () => {
+        await close();
+        if ((output && fault === "cancel-output-close") || (!output && fault === "cancel-baseline-close")) token.cancel();
+      };
+      return handle;
+    });
+  }
   const stockDifferential = vi.spyOn(AppUpdater.prototype, "differentialDownloadInstaller");
   const archProbe = vi.spyOn(require("node:child_process"), "execFileSync").mockImplementation(command => command === "sysctl" ? "sysctl.proc_translated: 0" : arch === "arm64" ? "ARM" : "x86_64");
   const descriptor = Object.getOwnPropertyDescriptor(process, "arch");
@@ -194,7 +237,9 @@ async function runCase(fault = "none", { arch = "arm64", progress = true, disabl
   }
   stockDifferential.mockRestore();
   expect(laterWork).toBe(0);
-  return { requests, handoffs, error, target, sentinelIntact, observations, rangeCount };
+  const promotions = promote.mock.calls.length;
+  promote.mockRestore();
+  return { promotions, requests, handoffs, error, target, sentinelIntact, observations, rangeCount };
 }
 
 const fullGETs = result => result.requests.filter(req => req.name.endsWith(".zip") && !req.range);
@@ -211,15 +256,26 @@ describe("real MacUpdater with isolated v2 transfer", () => {
     process.stdout.write(`${JSON.stringify({ protocol: "v2", arch, targetBytes: result.target.length, httpBytes, rangeCount: result.rangeCount, sha512: macV2Digest(result.target) })}\n`);
   });
 
-  it.each(["missing-metadata", "malformed-metadata", "oversized-metadata", "denied", "expired", "signature", "candidate", "baseline-version", "unknown-key", "alias", "map-digest", "map-shape", "missing-map", "baseline-digest", "baseline-directory", "no-cache", "ineligible", "416", "416-body", "416-delayed", "second-416", "range-reset", "range-200", "wrong-range", "short-range", "oversized-range", "reconstruction-digest", "timeout"])(
+  it.each(["schema-missing", "schema-string", "schema-future", "minimum-missing", "minimum-malformed", "minimum-above", "installed-prerelease", "capability-missing", "capability-unknown", "missing-metadata", "malformed-metadata", "oversized-metadata", "denied", "expired", "signature", "candidate", "baseline-version", "unknown-key", "alias", "map-digest", "map-shape", "missing-map", "baseline-digest", "baseline-directory", "no-cache", "ineligible", "416", "416-body", "416-delayed", "second-416", "range-reset", "range-200", "wrong-range", "short-range", "oversized-range", "reconstruction-digest", "timeout"])(
     "settles %s before exactly one clean full fallback", async fault => {
       const result = await runCase(fault);
       expect(result.error).toBeUndefined();
+      if (/^(schema-|minimum-|capability-|installed-prerelease)/.test(fault)) expect(result.rangeCount).toBe(0);
+      if (fault.startsWith("capability-")) expect(result.requests.some(req => req.name === MAC_V2_METADATA)).toBe(false);
       expect(fullGETs(result)).toHaveLength(1);
       expect(result.sentinelIntact).toBe(true);
       expect(result.handoffs).toHaveLength(1);
       expect(result.handoffs[0].equals(result.target)).toBe(true);
     });
+
+  it.each(["minimum-below", "minimum-prerelease"])("accepts a matching capable client above %s", async fault => {
+    const result = await runCase(fault);
+    expect(result.error).toBeUndefined();
+    expect(fullGETs(result)).toHaveLength(0);
+    expect(result.rangeCount).toBeGreaterThan(0);
+    expect(result.handoffs).toHaveLength(1);
+    expect(result.handoffs[0].equals(result.target)).toBe(true);
+  });
 
   it("settles repeated HTTP 416 failures on the same updater without late work or FD errors", async () => {
     const result = await runCase("416-body", { attempts: 3 });
@@ -244,6 +300,13 @@ describe("real MacUpdater with isolated v2 transfer", () => {
     expect(fullGETs(result)).toHaveLength(1);
     expect(result.handoffs).toHaveLength(0);
     expect(result.sentinelIntact).toBe(true);
+  });
+  it.each(["cancel-final-read", "cancel-output-close", "cancel-baseline-close"])("keeps %s terminal before cache promotion and handoff", async fault => {
+    const result = await runCase(fault);
+    expect(result.error?.message).toMatch(/cancel/i);
+    expect(fullGETs(result)).toHaveLength(0);
+    expect(result.promotions).toBe(0);
+    expect(result.handoffs).toHaveLength(0);
   });
   it("cancels without starting a full transfer or handing off", async () => {
     const result = await runCase("cancel");

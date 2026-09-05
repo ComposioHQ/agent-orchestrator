@@ -1,3 +1,4 @@
+import semver from "semver";
 import { createHash } from "node:crypto";
 import { constants } from "node:fs";
 import { open, rm, type FileHandle } from "node:fs/promises";
@@ -11,6 +12,8 @@ import {
 const CHUNK = 1024 * 1024;
 export interface MacV2TransferOptions {
   enabled: boolean;
+  capability: "mac-differential-v2";
+  arch: string;
   channel: string;
   installedVersion: string;
   candidateVersion: string;
@@ -113,12 +116,14 @@ async function verifiedMap(options: MacV2TransferOptions, file: MacV2File): Prom
 
 /** Reconstruct only. The caller owns the single full fallback after this settles. */
 export async function reconstructMacV2(options: MacV2TransferOptions): Promise<void> {
-  if (options.enabled !== true || options.channel !== "nightly" || !Object.keys(options.trustedKeys).length ||
+  if (options.capability !== "mac-differential-v2" || options.enabled !== true || options.channel !== "nightly" || !Object.keys(options.trustedKeys).length ||
       resolve(options.baselinePath) === resolve(options.destination)) throw new Error("Ineligible v2 attempt");
   const metadataURL = macV2ReleaseURL(`v${options.candidateVersion}`, MAC_V2_METADATA);
   const metadata = verifyMacV2Envelope(await fetchBytes(options, metadataURL, MAC_V2_MAX_METADATA), options.trustedKeys);
+  if (semver.valid(options.installedVersion) !== options.installedVersion ||
+      !semver.gte(options.installedVersion, metadata.minimumClientVersion)) throw new Error("Ineligible v2 client version");
   if (metadata.candidate.version !== options.candidateVersion || metadata.channel !== options.channel) throw new Error("Mismatched v2 candidate");
-  const artifact = metadata.artifacts.find(entry => entry.zip.url === options.target.url);
+  const artifact = metadata.artifacts.find(entry => entry.arch === options.arch && entry.zip.url === options.target.url);
   if (!artifact || artifact.zip.size !== options.target.size || artifact.zip.sha512 !== options.target.sha512 ||
       artifact.baseline.version !== options.installedVersion) throw new Error("Mismatched v2 artifact/baseline");
   let baseline: FileHandle | undefined;

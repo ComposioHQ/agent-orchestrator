@@ -32,6 +32,8 @@ The signed payload has:
 
 | Field | Contract |
 | --- | --- |
+| `schemaVersion` | Exactly numeric `2`; missing, string or unknown versions deny |
+| `minimumClientVersion` | Canonical exact SemVer; running version must be greater than or equal, with SemVer prerelease ordering |
 | `protocol` | Exactly `ao-mac-differential-v2` |
 | `repository` | Exactly `Untrivial-ai/agent-orchestrator` |
 | `channel` | Exactly `nightly` in PR1 |
@@ -71,7 +73,12 @@ JSON primitive encoding and no whitespace. The compatible client separately
 pins SPKI public keys by key ID; metadata cannot introduce its own trust key.
 Unknown keys, invalid signatures, explicit denial, expiry and malformed values
 all fall back. Authorization is re-read per attempt, not inferred from sidecar
-presence. A future conductor must refresh short-lived authorization deliberately;
+presence. This signed manifest is the authoritative remote authorization. The
+running implementation must also expose the compiled `mac-differential-v2`
+capability. A qualifying version alone never grants capability, and neither
+metadata nor settings can supply it. Local macOS, Nightly, Developer Mode and
+rollout gates must still permit the attempt; architecture must match the running
+client as well as the versioned artifact. A future conductor must refresh short-lived authorization deliberately;
 expired historical metadata simply makes the update full-ZIP-only.
 
 ## Local generation and conductor contract
@@ -80,7 +87,7 @@ expired historical metadata simply makes the update full-ZIP-only.
 `verifyMacV2Assets`. Node 24 supports the shared TypeScript schema import. No
 package, feed, build, make or publish hook invokes generation. There is no upload
 command. Explicit `allow: true`, Nightly channel, candidate/baseline identities,
-local ZIP paths, expiration and an Ed25519 private key are required. Otherwise
+minimum client version, local ZIP paths, expiration and an Ed25519 private key are required. Otherwise
 no v2 assets are generated. The key is supplied by the caller and is never
 serialized. Tests use ephemeral in-memory keys and temporary ZIPs.
 
@@ -107,9 +114,12 @@ A separate reviewed `ao-releases` change must:
 4. Download and exact-inventory-check draft assets and run both legacy and v2
    verification again. Injected maps or metadata must fail this gate.
 
-No conductor implementation or production key is included here. Rollback denies
-future v2 authorization and keeps the client disabled, omits future maps and
-preserves historical assets. Never delete release history. Short metadata expiry
+No conductor implementation or production key is included here. The remote kill
+switch is a signed manifest with `enabled: false`, or removal of the specifically
+named v2 manifest. Either makes subsequent attempts use one full ZIP. Keep the
+independent client gate disabled and omit future maps during rollback. Preserve
+historical ZIPs and maps; manifest removal is the explicit authorization
+revocation operation, not release-history deletion. Short metadata expiry
 bounds stale authorization; flags do not cancel a transfer already started.
 
 ## Supported extension and resource ownership

@@ -1,5 +1,6 @@
 // Explicit opt-in local preparation for a separately reviewed conductor change.
 // Never called by feed.mjs, package, make or publish. No upload operation exists.
+import semver from "semver";
 import { createPublicKey, sign } from "node:crypto";
 import { basename, join } from "node:path";
 import { existsSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
@@ -11,8 +12,8 @@ import {
 import { writeBlockmap } from "./blockmap.mjs";
 const identity = (url, bytes) => ({ url, size: bytes.length, sha512: macV2Digest(bytes) });
 
-export async function generateMacV2Assets({ allow = false, channel, candidate, inputs, dir, keyId, privateKey, expiresAt }) {
-  if (allow !== true || channel !== "nightly" || !keyId || !privateKey || !expiresAt || !Array.isArray(inputs) || !inputs.length) {
+export async function generateMacV2Assets({ allow = false, channel, minimumClientVersion, candidate, inputs, dir, keyId, privateKey, expiresAt }) {
+  if (typeof minimumClientVersion !== "string" || semver.valid(minimumClientVersion) !== minimumClientVersion || allow !== true || channel !== "nightly" || !keyId || !privateKey || !expiresAt || !Array.isArray(inputs) || !inputs.length) {
     throw new Error("V2 generation denied");
   }
   const created = [];
@@ -35,7 +36,7 @@ export async function generateMacV2Assets({ allow = false, channel, candidate, i
       const baseline = await make(input.baseline.zipPath, input.baseline.identity);
       artifacts.push({ arch: input.arch, ...target, baseline: { ...input.baseline.identity, ...baseline } });
     }
-    const payload = validateMacV2Payload({ protocol: "ao-mac-differential-v2", repository: MAC_V2_REPOSITORY, channel, enabled: true, expiresAt, candidate, artifacts });
+    const payload = validateMacV2Payload({ schemaVersion: 2, minimumClientVersion, protocol: "ao-mac-differential-v2", repository: MAC_V2_REPOSITORY, channel, enabled: true, expiresAt, candidate, artifacts });
     const envelope = { payload, signature: { keyId, value: sign(null, Buffer.from(macV2Canonical(payload)), privateKey).toString("base64") } };
     const destination = join(dir, MAC_V2_METADATA);
     if (existsSync(destination)) throw new Error("Existing v2 metadata");

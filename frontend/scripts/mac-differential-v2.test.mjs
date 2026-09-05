@@ -28,14 +28,21 @@ describe("isolated macOS differential v2 release contract", () => {
   it.each([undefined, false, "true", 1, null])("denies generation and verification unless allow is exactly true (%s)", async allow => {
     const f = await fixture();
     const before = readdirSync(f.dir);
-    await expect(generateMacV2Assets({ allow, dir: f.dir, channel: "nightly", candidate: f.candidate, inputs: f.inputs, keyId: "test", privateKey: f.privateKey, expiresAt: f.envelope.payload.expiresAt })).rejects.toThrow();
+    await expect(generateMacV2Assets({ minimumClientVersion: "1.0.0", allow, dir: f.dir, channel: "nightly", candidate: f.candidate, inputs: f.inputs, keyId: "test", privateKey: f.privateKey, expiresAt: f.envelope.payload.expiresAt })).rejects.toThrow();
     expect(readdirSync(f.dir)).toEqual(before);
     expect(() => verifyMacV2Assets({ allow, dir: f.dir, candidate: f.candidate, channel: "nightly", trustedKeys: f.trustedKeys })).toThrow();
   });
 
+  it.each([undefined, null, 1, "", "v1.0.0", ">=1.0.0"])("rejects invalid minimumClientVersion before generating assets (%s)", async minimumClientVersion => {
+    const f = await fixture();
+    const before = readdirSync(f.dir);
+    await expect(generateMacV2Assets({ minimumClientVersion, allow: true, dir: f.dir, channel: "nightly", candidate: f.candidate, inputs: f.inputs, keyId: "test", privateKey: f.privateKey, expiresAt: f.envelope.payload.expiresAt })).rejects.toThrow("V2 generation denied");
+    expect(readdirSync(f.dir)).toEqual(before);
+  });
+
   it.each(["latest", "pr3288", "", undefined])("denies ineligible channel %s", async channel => {
     const f = await fixture();
-    await expect(generateMacV2Assets({ allow: true, dir: f.dir, channel, candidate: f.candidate, inputs: f.inputs, keyId: "test", privateKey: f.privateKey, expiresAt: f.envelope.payload.expiresAt })).rejects.toThrow();
+    await expect(generateMacV2Assets({ minimumClientVersion: "1.0.0", allow: true, dir: f.dir, channel, candidate: f.candidate, inputs: f.inputs, keyId: "test", privateKey: f.privateKey, expiresAt: f.envelope.payload.expiresAt })).rejects.toThrow();
   });
 
   it.each(["alias", "legacy-map", "other-release", "other-repo", "duplicate-arch", "bad-commit", "unknown-field", "disabled", "expired", "malformed-allow"])("rejects even signed invalid identity: %s", async fault => {

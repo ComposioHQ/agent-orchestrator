@@ -13,6 +13,9 @@ export interface MacV2UpdaterOptions {
 
 /** Uses the dependency's declared protected extension, never its stock range worker. */
 export class MacDifferentialV2Updater extends MacUpdater {
+  // Compiled implementation capability, never supplied by metadata or settings.
+  get differentialCapability(): "mac-differential-v2" { return "mac-differential-v2"; }
+
   constructor(readonly v2: MacV2UpdaterOptions) {
     super();
     this.disableDifferentialDownload = true;
@@ -34,6 +37,7 @@ export class MacDifferentialV2Updater extends MacUpdater {
       if (options.disableDifferentialDownload !== false || !this.downloadedUpdateHelper || oldInstallerFileName !== "update.zip") return true;
       this._logger.info("Download block maps using isolated v2 resolver");
       await reconstructMacV2({
+        capability: this.differentialCapability, arch: process.arch,
         enabled: true, channel: this.channel ?? "", installedVersion: this.currentVersion.version,
         candidateVersion: options.updateInfoAndProvider.info.version,
         target: { url: fileInfo.url.href, size: fileInfo.info.size ?? 0, sha512: fileInfo.info.sha512 },
@@ -43,6 +47,8 @@ export class MacDifferentialV2Updater extends MacUpdater {
         signal: controller.signal,
         onProgress: progress => this.emit("download-progress", progress),
       });
+      // Cancellation can arrive during the last digest read or handle close.
+      controller.signal.throwIfAborted();
       return false;
     } catch {
       if (options.cancellationToken.cancelled) throw new CancellationError();

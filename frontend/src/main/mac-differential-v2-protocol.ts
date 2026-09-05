@@ -15,10 +15,12 @@ export interface MacV2Artifact {
   baseline: MacV2Identity & { zip: MacV2File; blockmap: MacV2File };
 }
 export interface MacV2Payload {
+  schemaVersion: 2;
+  minimumClientVersion: string;
   protocol: "ao-mac-differential-v2";
   repository: typeof MAC_V2_REPOSITORY;
   channel: "nightly";
-  enabled: true;
+  enabled: boolean;
   expiresAt: string;
   candidate: MacV2Identity;
   artifacts: MacV2Artifact[];
@@ -84,7 +86,9 @@ export function macV2ZipName(url: string, id: MacV2Identity, arch: MacV2Arch): s
 }
 
 export function validateMacV2Payload(value: unknown): MacV2Payload {
-  const p = record(value, ["protocol", "repository", "channel", "enabled", "expiresAt", "candidate", "artifacts"]);
+  const p = record(value, ["schemaVersion", "minimumClientVersion", "protocol", "repository", "channel", "enabled", "expiresAt", "candidate", "artifacts"]);
+  if (p.schemaVersion !== 2 || typeof p.minimumClientVersion !== "string" ||
+      semver.valid(p.minimumClientVersion) !== p.minimumClientVersion) throw new Error("Invalid v2 client authorization");
   if (p.protocol !== "ao-mac-differential-v2" || p.repository !== MAC_V2_REPOSITORY || p.channel !== "nightly") throw new Error("Ineligible v2 protocol/channel");
   if (p.enabled !== true || typeof p.expiresAt !== "string" ||
       !Number.isFinite(Date.parse(p.expiresAt)) || new Date(p.expiresAt).toISOString() !== p.expiresAt ||

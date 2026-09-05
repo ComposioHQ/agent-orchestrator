@@ -49,11 +49,16 @@ work after fallback. Cancellation starts no replacement transfer.
 
 ## Local verification
 
-The full focused main/feed/preload/shared/reconstruction suite passed 251 tests
-on an actual downloaded Node 24.20.0 runtime. The v2 suites also passed on
-Node 26.7.0. Both run on macOS arm64 with architecture selection simulated for
+The full focused main/feed/preload/shared/reconstruction suite passed 271 tests
+on an actual downloaded Node 24.20.0 runtime, including the explicit schema,
+minimum-client/capability checks and final-read/handle-close cancellation tests.
+The previous v2 suites also passed on Node 26.7.0. Both run on macOS arm64 with architecture selection simulated for
 arm64/x64; these are not native x64 runs. Project and E2E typechecks passed.
-The existing selected renderer suite previously passed 88 tests.
+The existing selected renderer suite previously passed 88 tests. Three new
+cancellation boundary tests first reproduced successful handoff after cancellation
+during final output read, output close and baseline close. Rechecking the attempt
+signal after reconstruction settles now prevents promotion, handoff and any
+replacement full GET at all three boundaries.
 
 The unsigned package command on actual Node 24.20.0 completed packaging and its
 postPackage hook, producing a local macOS app artifact. No app was launched or
