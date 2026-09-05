@@ -416,7 +416,11 @@ export function HarnessSettingsSection({ titleHidden = false }: { titleHidden?: 
 						const authStatus = readinessAgent?.authentication.state;
 						const rowHasError = failed || Boolean(authState?.error);
 						const rowAuthWorkflow = authWorkflow?.agentId === agentId ? authWorkflow : null;
-						const hasDiagnostics = Boolean(job && (job.error || job.output || job.method || job.expectedDestination));
+						const hasDiagnostics = Boolean(
+							job &&
+							(job.status === "failed" || job.status === "unsupported" || job.status === "interrupted") &&
+							(job.error || job.output || job.method || job.expectedDestination),
+						);
 
 						const authSummary = authState?.error
 							? authState.error

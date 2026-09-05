@@ -3,6 +3,7 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { apiClient } from "../../lib/api-client";
+import { aoBridge } from "../../lib/bridge";
 import { appI18n } from "../../i18n";
 import { HarnessSettingsSection } from "./HarnessSettingsSection";
 
@@ -94,6 +95,24 @@ describe("HarnessSettingsSection", () => {
 		await waitFor(() => expect(screen.getAllByText("Installed").length).toBeGreaterThan(0), { timeout: 10_000 });
 		expect(screen.getByText("Codex")).toBeInTheDocument();
 		expect(screen.queryByText(/sign in/i)).not.toBeInTheDocument();
+	});
+
+	it("shows the authentication action for an installed agent and opens documentation", async () => {
+		vi.mocked(apiClient.GET).mockImplementation(async (path) => {
+			if (path === "/api/v1/agents/readiness") return { data: catalog } as never;
+			if (path === "/api/v1/agents/installers") return { data: plans } as never;
+			if (path === "/api/v1/agents/install-jobs") return { data: { jobs: [] } } as never;
+			if (path === "/api/v1/agents/auth-plans") {
+				return { data: { plans: [{ agentId: "claude-code", action: "login", launchMode: "documentation", available: true, documentationUrl: "https://example.test/login" }] } } as never;
+			}
+			return { data: undefined } as never;
+		});
+		const openExternal = vi.spyOn(aoBridge.app, "openExternal").mockResolvedValue(undefined);
+		renderSection();
+		const row = (await screen.findByText("Claude Code")).closest('[data-agent="claude-code"]') as HTMLElement;
+		const login = await within(row).findByRole("button", { name: "Login" });
+		await userEvent.click(login);
+		expect(openExternal).toHaveBeenCalledWith("https://example.test/login");
 	});
 
 	it("starts the fixed daemon install route and exposes retry after failure", async () => {

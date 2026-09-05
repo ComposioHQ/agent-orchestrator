@@ -349,7 +349,7 @@ function SettingsBody({
 						? "saved"
 						: "idle",
 			error: validationError ?? mutationError,
-			replacementError: replacementError ?? undefined,
+			replacementError: !mutation.isPending && !mutation.isError ? replacementError ?? undefined : undefined,
 		});
 	}, [
 		mutation.error,
