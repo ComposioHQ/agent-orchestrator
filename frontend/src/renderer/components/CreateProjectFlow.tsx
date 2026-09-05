@@ -1911,14 +1911,14 @@ function CreateProjectFolderDialog({
 					<div className="min-h-0 flex-1 overflow-y-auto px-4 pb-1 pt-3">
 						{hasScan ? (
 							<div className="space-y-3">
-								<PathRow
+								{!workspaceNeedsInitializedRepo ? <PathRow
 									action={t("createProject.change")}
 									disabled={disabled}
 									icon={<Folder className="size-4 shrink-0 text-[var(--color-text-import-muted)]" aria-hidden="true" />}
 									onClick={onChooseFolder}
 								>
 									{displayImportPath(scan.path)}
-								</PathRow>
+								</PathRow> : null}
 
 								{error && (
 									<div className="rounded-lg border border-destructive/40 bg-destructive/10">
@@ -2002,7 +2002,7 @@ function CreateProjectFolderDialog({
 								<Button type="button" variant="primary" disabled={disabled} onClick={onContinueAsProject}>
 									Import as project
 								</Button>
-							) : hasScan && failedRepos.length === 0 && !error ? (
+							) : hasScan && failedRepos.length === 0 && !error && !workspaceNeedsInitializedRepo ? (
 								<Button type="button" variant="primary" disabled={disabled || workspaceNeedsInitializedRepo} onClick={onContinue}>
 									{t("createProject.cloneContinue")}
 								</Button>
