@@ -889,6 +889,13 @@ function finishDownloadedUpdate(info: any): void {
     (downloaded?.version !== stagedJournal.replacement.version || downloaded?.channel !== stagedJournal.replacement.channel ||
       (activeUpdaterOperationId && activeUpdaterOperationId !== stagedJournal.replacement.operationId))) return;
   if (stagedJournal.state === "replacement-failed") return;
+  if (stagedJournal.state === "replacing" && process.platform === "darwin" && !autoUpdater.autoInstallOnAppQuit) {
+    // A resolved download is not a handoff when MacUpdater skipped Squirrel
+    // because the current location cannot be installed to.
+    persistJournalTransition({ type: "replacement-failed", operationId: stagedJournal.replacement.operationId, at: downloadedAt, message: "The replacement could not be handed to the native installer from this location. The previous update may still install on quit." });
+    broadcast(journalToUpdateStatus(stagedJournal));
+    return;
+  }
   if (downloaded) {
     if (stagedJournal.state === "replacing" && stagedJournal.replacement.version === downloaded.version) {
       const operationId = stagedJournal.replacement.operationId;

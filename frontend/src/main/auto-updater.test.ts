@@ -2695,6 +2695,26 @@ describe("PR 4905 upstream integration", () => {
     await run;
     expect(module.getUpdateStatus()).toMatchObject({ state: "downloaded", version: "2.2.0" });
   });
+  it("retains A if macOS resolves B download without performing native handoff", async () => {
+    const restore = stubProcess("darwin", "/usr/bin/node");
+    try {
+      const { module, autoUpdater, updaterEvents } = await importAutoUpdater();
+      await module.checkForUpdatesNow(stateDir);
+      updaterEvents.get("update-downloaded")?.({ version: "2.1.0" });
+      const handoff = deferred();
+      autoUpdater.checkForUpdates.mockImplementationOnce(() => {
+        updaterEvents.get("update-available")?.({ version: "2.2.0" });
+        return Promise.resolve({ downloadPromise: handoff.promise });
+      });
+      const run = module.startAutoUpdates(stateDir);
+      await vi.waitFor(() => expect(module.getUpdateStatus().state).toBe("replacing"));
+      autoUpdater.autoInstallOnAppQuit = false;
+      updaterEvents.get("update-downloaded")?.({ version: "2.2.0" });
+      handoff.resolve();
+      await run;
+      expect(module.getUpdateStatus()).toMatchObject({ state: "replacement-failed", stagedCandidate: { version: "2.1.0" }, replacementCandidate: { version: "2.2.0" } });
+    } finally { restore(); }
+  });
   it("retains failed replacement identity when a subsequent check finds nothing", async () => {
     const { module, updaterEvents } = await importAutoUpdater();
     await module.checkForUpdatesNow(stateDir);
