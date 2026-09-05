@@ -1494,8 +1494,10 @@ describe("Sidebar", () => {
 		expect(screen.getByRole("button", { name: "Continue" })).toBeDisabled();
 
 		await user.click(screen.getByRole("checkbox"));
-		await vi.waitFor(() => expect(prepared).toBe(true), { timeout: 1_000 });
-		await vi.waitFor(() => expect(screen.getByRole("button", { name: "Continue" })).toBeEnabled());
+		expect(prepared).toBe(false);
+		expect(screen.getByRole("button", { name: "Continue" })).toBeEnabled();
+		await user.click(screen.getByRole("button", { name: "Continue" }));
+		await vi.waitFor(() => expect(prepared).toBe(true));
 	});
 
 	it("does not rescan folders for non-validation create failures", async () => {
