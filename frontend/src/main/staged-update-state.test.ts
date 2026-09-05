@@ -40,4 +40,9 @@ describe("transitionStagedUpdate", () => {
   it("retains a recoverable mismatch after relaunching an unexpected version", () => {
     expect(transitionStagedUpdate(stagedA, { type: "reconcile-running-version", version: "9.9.9" })).toMatchObject({ state: "version-mismatch", staged: A, runningVersion: "9.9.9" });
   });
+  it("retains both candidates and the staged clock on a mismatched relaunch", () => {
+    const replacing = transitionStagedUpdate(stagedA, { type: "replacement-discovered", replacement: B, at: 200 });
+    expect(transitionStagedUpdate(replacing, { type: "reconcile-running-version", version: "0.9.0" })).toMatchObject({ state: "replacing", staged: A, replacement: B, stagedAt: 100, runningVersion: "0.9.0" });
+  });
+
 });

@@ -21,9 +21,9 @@ export type ReplacementPhase =
 export type StagedUpdateJournal =
   | { schemaVersion: 1; state: "none" }
   | { schemaVersion: 1; state: "native-possibly-staged"; staged: UpdateCandidate; stagedAt: number }
-  | { schemaVersion: 1; state: "replacing"; staged: UpdateCandidate; replacement: UpdateCandidate; startedAt: number; phase: ReplacementPhase }
-  | { schemaVersion: 1; state: "replacement-failed"; staged: UpdateCandidate; replacement: UpdateCandidate; failedAt: number; phase: ReplacementPhase; message: string }
-  | { schemaVersion: 1; state: "version-mismatch"; staged: UpdateCandidate; runningVersion: string; detectedAt: number };
+  | { schemaVersion: 1; state: "replacing"; stagedAt?: number; runningVersion?: string; staged: UpdateCandidate; replacement: UpdateCandidate; startedAt: number; phase: ReplacementPhase }
+  | { schemaVersion: 1; state: "replacement-failed"; stagedAt?: number; runningVersion?: string; staged: UpdateCandidate; replacement: UpdateCandidate; failedAt: number; phase: ReplacementPhase; message: string }
+  | { schemaVersion: 1; state: "version-mismatch"; stagedAt?: number; staged: UpdateCandidate; runningVersion: string; detectedAt: number };
 
 export type StagedUpdateEvent =
   | { type: "replacement-discovered"; replacement: UpdateCandidate; at: number }
@@ -54,16 +54,12 @@ export function transitionStagedUpdate(
 ): StagedUpdateJournal {
   switch (event.type) {
     case "replacement-discovered": {
-      if (state.state === "none" || state.state === "version-mismatch") {
+      if (state.state === "none") {
         throw new Error("replacement discovery requires a possibly staged candidate");
       }
       const staged = state.staged;
-      if (event.replacement.version === staged.version && event.replacement.channel === staged.channel) {
-      return state.state === "native-possibly-staged"
-        ? state
-        : { schemaVersion: 1, state: "native-possibly-staged", staged, stagedAt: state.state === "replacing" ? state.startedAt : state.failedAt };
-      }
-      return { schemaVersion: 1, state: "replacing", staged, replacement: event.replacement, startedAt: event.at, phase: "checking" };
+      if (event.replacement.version === staged.version && event.replacement.channel === staged.channel && event.replacement.sha512 === staged.sha512 && event.replacement.assetName === staged.assetName) return state;
+      return { schemaVersion: 1, state: "replacing", staged, stagedAt: state.stagedAt, replacement: event.replacement, startedAt: event.at, phase: "checking" };
     }
     case "replacement-phase": {
       const replacement = requireOperation(state, event.operationId);
@@ -73,7 +69,7 @@ export function transitionStagedUpdate(
     case "replacement-failed": {
       const replacement = requireOperation(state, event.operationId);
       if (state.state !== "replacing") throw new Error("replacement failure requires an active replacement");
-      return { schemaVersion: 1, state: "replacement-failed", staged: state.staged, replacement, failedAt: event.at, phase: state.phase, message: event.message };
+      return { schemaVersion: 1, state: "replacement-failed", staged: state.staged, stagedAt: state.stagedAt, replacement, failedAt: event.at, phase: state.phase, message: event.message };
     }
     case "handoff-succeeded": {
       const replacement = requireOperation(state, event.operationId);
@@ -91,8 +87,8 @@ export function transitionStagedUpdate(
       if (state.state === "none") return state;
       const expected = activeReplacement(state) ?? state.staged;
       if (event.version === expected.version) return { schemaVersion: 1, state: "none" };
-      if (event.version === state.staged.version && activeReplacement(state)) return state;
-      return { schemaVersion: 1, state: "version-mismatch", staged: state.staged, runningVersion: event.version, detectedAt: event.at ?? Date.now() };
+      if (state.state === "replacing" || state.state === "replacement-failed") return event.version === state.staged.version ? state : { ...state, runningVersion: event.version };
+      return { schemaVersion: 1, state: "version-mismatch", staged: state.staged, stagedAt: state.stagedAt, runningVersion: event.version, detectedAt: event.at ?? Date.now() };
     }
   }
 }

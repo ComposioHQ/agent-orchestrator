@@ -338,6 +338,15 @@ export function apiErrorCode(error: unknown): string | undefined {
 	return undefined;
 }
 
+/** Structured recovery metadata from the daemon's stable error envelope. */
+export function apiErrorDetails(error: unknown): Record<string, unknown> | undefined {
+	if (typeof error !== "object" || error === null) return undefined;
+	const details = (error as { details?: unknown }).details;
+	return typeof details === "object" && details !== null && !Array.isArray(details)
+		? (details as Record<string, unknown>)
+		: undefined;
+}
+
 /** Correlation id from the daemon's stable error envelope. */
 export function apiErrorRequestId(error: unknown): string | undefined {
 	if (typeof error === "object" && error !== null) {

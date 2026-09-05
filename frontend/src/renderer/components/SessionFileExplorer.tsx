@@ -119,7 +119,6 @@ export function SessionFileExplorer({
 						aria-label={t("files.explorer.changedOnly")}
 						checked={changedOnly}
 						onCheckedChange={(next) => setFilesChangedOnly(sessionId, next)}
-						size="sm"
 					/>
 					{t("files.explorer.changedOnly")}
 				</label>

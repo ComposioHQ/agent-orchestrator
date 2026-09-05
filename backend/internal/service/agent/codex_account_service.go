@@ -3,6 +3,7 @@ package agent
 import (
 	"bytes"
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -311,16 +312,7 @@ func (s *Service) WarmCodexAccounts() {
 		return
 	}
 	go func() {
-		s.codexAccounts.bootstrap()
-		select {
-		case <-s.codexAccounts.bootstrapDone:
-		case <-s.codexAccounts.ctx.Done():
-			return
-		}
-		s.codexAccounts.mu.Lock()
-		bootstrapErr := s.codexAccounts.bootstrapErr
-		s.codexAccounts.mu.Unlock()
-		if bootstrapErr != nil {
+		if err := s.codexAccounts.waitBootstrap(s.codexAccounts.ctx); err != nil {
 			return
 		}
 		capabilities := s.codexAccounts.detectCapabilities(s.codexAccounts.ctx)
@@ -344,19 +336,17 @@ func (s *Service) WaitCodexAccountBootstrap(ctx context.Context) error {
 	if s.codexAccounts == nil {
 		return apierr.Unavailable("CODEX_ACCOUNT_MANAGEMENT_UNAVAILABLE", "Codex account management is unavailable")
 	}
-	go s.codexAccounts.bootstrap()
-	select {
-	case <-s.codexAccounts.bootstrapDone:
-		s.codexAccounts.mu.Lock()
-		err := s.codexAccounts.bootstrapErr
-		s.codexAccounts.mu.Unlock()
-		if err != nil {
-			return apierr.Unavailable("CODEX_ACCOUNT_MANAGEMENT_UNAVAILABLE", "Codex account setup did not complete")
-		}
+	err := s.codexAccounts.waitBootstrap(ctx)
+	if err == nil {
 		return nil
-	case <-ctx.Done():
-		return ctx.Err()
 	}
+	var failure *codexBootstrapFailure
+	if !errors.As(err, &failure) {
+		return err
+	}
+	return apierr.New(apierr.KindUnavailable, "CODEX_ACCOUNT_MANAGEMENT_UNAVAILABLE", "Codex account setup did not complete", map[string]any{
+		"reasonCode": failure.reason, "retryable": failure.retryable,
+	})
 }
 
 // BeginCodexAccountMutation gives Session Manager exclusive ownership of the

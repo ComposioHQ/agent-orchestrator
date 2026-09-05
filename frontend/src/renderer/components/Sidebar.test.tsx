@@ -2188,6 +2188,36 @@ describe("Sidebar", () => {
 		expect(screen.queryByLabelText(/Hide update/)).not.toBeInTheDocument();
 	});
 
+	it("keeps the staged restart row up while a background check runs", async () => {
+		// Regression: the row keyed off `state`, which a routine check drives
+		// through checking/available/not-available while the staged build is
+		// untouched, so the row blinked out of existence every 15 minutes on
+		// nightly. `staged` is stamped on every status for exactly this reason.
+		const stagedAt = Date.now();
+		updateStatusMock.mockResolvedValue({
+			state: "checking",
+			staged: { version: "9.9.9", stagedAt, escalated: false },
+		});
+		renderSidebar();
+
+		expect(await screen.findAllByLabelText("Restart to install update v9.9.9")).not.toHaveLength(0);
+		expect(screen.getByTestId("sidebar-update-ready")).toBeVisible();
+	});
+
+	it("names the channel and build date for a staged nightly", async () => {
+		// A raw nightly string truncates to noise in the sidebar, and two
+		// consecutive nightlies differ only in the trailing digits.
+		updateStatusMock.mockResolvedValue({
+			state: "downloaded",
+			version: "0.12.11-nightly.202609021713",
+			stagedAt: Date.now(),
+		});
+		renderSidebar();
+
+		const readyRow = await screen.findByTestId("sidebar-update-ready");
+		expect(within(readyRow).getByText("Nightly 0.12.11 · Sep 2")).toBeVisible();
+	});
+
 	it("stays quiet for a one-off update failure that has not become a streak", async () => {
 		updateStatusMock.mockResolvedValue({ state: "idle" });
 		renderSidebar();

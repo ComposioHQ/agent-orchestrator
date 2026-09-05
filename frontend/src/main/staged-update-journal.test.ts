@@ -17,6 +17,11 @@ async function tempDir(): Promise<string> {
 }
 
 describe("StagedUpdateJournalStore", () => {
+  it("migrates PR 4849 provenance without forgetting a possibly staged build", async () => {
+    const dir = await tempDir();
+    await writeFile(path.join(dir, "staged-update.json"), JSON.stringify({ version: "1.2.0", channel: "nightly", stagedAt: 100 }));
+    expect(await new StagedUpdateJournalStore(dir).read("1.0.0")).toMatchObject({ state: "version-mismatch", staged: { version: "1.2.0", channel: "nightly" }, stagedAt: 100 });
+  });
   it("round trips a valid journal", async () => {
     const store = new StagedUpdateJournalStore(await tempDir());
     await store.write(staged("1.2.0", 100));

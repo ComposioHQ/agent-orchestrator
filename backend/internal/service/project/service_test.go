@@ -3,6 +3,7 @@ package project_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/url"
 	"os"
 	"os/exec"
@@ -1054,6 +1055,36 @@ func TestManager_AddValidationAndConflicts(t *testing.T) {
 	wantCode(t, err, "ID_ALREADY_REGISTERED")
 }
 
+func TestManager_AddRejectsEquivalentRepositoryPaths(t *testing.T) {
+	for _, aliasFirst := range []bool{false, true} {
+		t.Run(fmt.Sprintf("alias-first=%v", aliasFirst), func(t *testing.T) {
+			m := newManager(t)
+			repo := gitRepo(t)
+			alias := filepath.Join(t.TempDir(), "alias")
+			if err := os.Symlink(repo, alias); err != nil {
+				t.Skipf("symlink unavailable: %v", err)
+			}
+			first, second := repo, alias
+			if aliasFirst {
+				first, second = alias, repo
+			}
+			if _, err := m.Add(context.Background(), project.AddInput{Path: first, ProjectID: ptr("original")}); err != nil {
+				t.Fatal(err)
+			}
+			_, err := m.Add(context.Background(), project.AddInput{Path: second, ProjectID: ptr("duplicate")})
+			wantCode(t, err, "PATH_ALREADY_REGISTERED")
+			var conflict *apierr.Error
+			if !errors.As(err, &conflict) || conflict.Details["existingProjectId"] != "original" {
+				t.Fatalf("conflict = %#v", err)
+			}
+			rows, err := m.List(context.Background())
+			if err != nil || len(rows) != 1 {
+				t.Fatalf("rows=%v err=%v", rows, err)
+			}
+		})
+	}
+}
+
 func TestManager_AddAllocatesUniqueIDForCollidingDerivedIDs(t *testing.T) {
 	configureCommitter(t)
 	ctx := context.Background()
@@ -1775,4 +1806,55 @@ func TestManager_AddWorkspaceRejectsBareParent(t *testing.T) {
 
 	_, err := m.Add(ctx, project.AddInput{Path: bareParent, ProjectID: ptr("bare"), AsWorkspace: true})
 	wantCode(t, err, "WORKSPACE_PARENT_BARE")
+}
+
+func TestManager_CanonicalRepositoryConfigPersistence(t *testing.T) {
+	ctx := context.Background()
+	m := newManager(t)
+	repo := gitRepo(t)
+	if out, err := exec.Command("git", "-C", repo, "remote", "add", "origin", "https://gitlab.com/alice/repo").CombinedOutput(); err != nil {
+		t.Fatalf("origin: %v %s", err, out)
+	}
+	// An unrelated remote must never enter durable claim trust automatically.
+	if out, err := exec.Command("git", "-C", repo, "remote", "add", "upstream", "https://gitlab.com/unrelated/repo").CombinedOutput(); err != nil {
+		t.Fatalf("upstream: %v %s", err, out)
+	}
+	added, err := m.Add(ctx, project.AddInput{Path: repo, ProjectID: ptr("fork")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if added.Config != nil && added.Config.CanonicalRepoURL != "" {
+		t.Fatal("remote inferred as trusted upstream")
+	}
+	cfg := domain.ProjectConfig{CanonicalRepoURL: "https://gitlab.com/group/subgroup/repo", DefaultBranch: "main"}
+	if _, err := m.SetConfig(ctx, "fork", project.SetConfigInput{Config: cfg}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := m.Get(ctx, "fork")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Project.Config == nil || got.Project.Config.CanonicalRepoURL != cfg.CanonicalRepoURL {
+		t.Fatalf("stored config = %+v", got.Project.Config)
+	}
+	for _, target := range []string{"https://github.com/group/repo", "https://gitlab.example.com/group/subgroup/repo"} {
+		bad := domain.ProjectConfig{CanonicalRepoURL: target}
+		if _, err := m.SetConfig(ctx, "fork", project.SetConfigInput{Config: bad}); err == nil {
+			t.Fatalf("SetConfig accepted %s", target)
+		}
+		if _, err := m.UpdateSettings(ctx, "fork", project.UpdateSettingsInput{DisplayName: "Fork", Config: bad}); err == nil {
+			t.Fatalf("UpdateSettings accepted %s", target)
+		}
+	}
+	got, err = m.Get(ctx, "fork")
+	if err != nil || got.Project.Config == nil || got.Project.Config.CanonicalRepoURL != cfg.CanonicalRepoURL {
+		t.Fatalf("invalid write changed config: %+v %v", got.Project.Config, err)
+	}
+	if _, err := m.SetConfig(ctx, "fork", project.SetConfigInput{}); err != nil {
+		t.Fatal(err)
+	}
+	got, err = m.Get(ctx, "fork")
+	if err != nil || (got.Project.Config != nil && got.Project.Config.CanonicalRepoURL != "") {
+		t.Fatalf("clear: %+v %v", got.Project.Config, err)
+	}
 }

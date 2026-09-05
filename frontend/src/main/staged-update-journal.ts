@@ -1,4 +1,4 @@
-import { mkdir, open, readFile, rename } from "node:fs/promises";
+import { copyFile, mkdir, open, readFile, rename } from "node:fs/promises";
 import path from "node:path";
 import { transitionStagedUpdate, type ReplacementPhase, type StagedUpdateJournal, type UpdateCandidate } from "./staged-update-state";
 
@@ -55,7 +55,19 @@ export class StagedUpdateJournalStore {
     try {
       raw = await readFile(this.file, "utf8");
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") return { schemaVersion: 1, state: "none" };
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+        // #4849 persisted this unversioned record. Preserve its native provenance
+        // when upgrading to the journal, including after a non-installing quit.
+        let legacy: { version?: unknown; channel?: unknown; stagedAt?: unknown };
+        try { legacy = JSON.parse(await readFile(path.join(this.stateDir, "staged-update.json"), "utf8")); }
+        catch (legacyError) {
+          if ((legacyError as NodeJS.ErrnoException).code === "ENOENT") return { schemaVersion: 1, state: "none" };
+          throw legacyError;
+        }
+        const candidate = { version: legacy.version, channel: legacy.channel, operationId: "legacy-migration" };
+        if (!isCandidate(candidate) || !isTimestamp(legacy.stagedAt)) throw new Error("invalid legacy staged update provenance");
+        return transitionStagedUpdate({ schemaVersion: 1, state: "native-possibly-staged", staged: candidate, stagedAt: legacy.stagedAt }, { type: "reconcile-running-version", version: runningVersion });
+      }
       throw error;
     }
     try {
@@ -63,7 +75,7 @@ export class StagedUpdateJournalStore {
       return transitionStagedUpdate(journal, { type: "reconcile-running-version", version: runningVersion });
     } catch (error) {
       const quarantine = `${this.file}.corrupt-${Date.now()}`;
-      await rename(this.file, quarantine);
+      await copyFile(this.file, quarantine);
       throw new Error(`invalid staged update journal quarantined at ${quarantine}`, { cause: error });
     }
   }
