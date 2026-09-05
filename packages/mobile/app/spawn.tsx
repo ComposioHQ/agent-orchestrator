@@ -14,6 +14,7 @@ import {
 	TextInput,
 	View,
 } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { AgentLogo } from "../lib/AgentLogo";
 import { agentErrorCopy } from "../lib/agentError";
 import { defaultAgent, rankAgents } from "../lib/agentPicker";
@@ -51,6 +52,9 @@ export default function SpawnModal() {
 	const [busy, setBusy] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 	const [keyboardHeight, setKeyboardHeight] = useState(0);
+	// Android's keyboard event reports its height with the nav bar subtracted; the
+	// root view draws under that nav bar, so screenKeyboardAvoidance adds it back.
+	const insets = useSafeAreaInsets();
 
 	const [catalog, setCatalog] = useState<AgentCatalog | null>(null);
 	const [catalogError, setCatalogError] = useState<string | null>(null);
@@ -59,7 +63,7 @@ export default function SpawnModal() {
 
 	useEffect(() => {
 		if (Platform.OS !== "android") return;
-		const avoidance = screenKeyboardAvoidance("android", 0);
+		const avoidance = screenKeyboardAvoidance("android", 0, 0);
 		const animate = (duration?: number) => LayoutAnimation.configureNext({
 			duration: duration || 250,
 			update: { type: LayoutAnimation.Types.keyboard },
@@ -229,7 +233,7 @@ export default function SpawnModal() {
 			style={[
 				styles.screen,
 				Platform.OS === "android" && keyboardHeight > 0
-					? screenKeyboardAvoidance("android", keyboardHeight).rootStyle
+					? screenKeyboardAvoidance("android", keyboardHeight, insets.bottom).rootStyle
 					: undefined,
 			]}
 			behavior={Platform.OS === "ios" ? "padding" : undefined}
