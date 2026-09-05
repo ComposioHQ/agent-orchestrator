@@ -132,10 +132,10 @@ func (s *Store) ListOrchestrationEvents(ctx context.Context, project domain.Proj
 	return scanOrchestrationEvents(rows)
 }
 
-func (s *Store) RetryDeadLetterOrchestrationEvent(ctx context.Context, id string, now time.Time) (bool, error) {
+func (s *Store) RetryDeadLetterOrchestrationEvent(ctx context.Context, project domain.ProjectID, id string, now time.Time) (bool, error) {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
-	result, err := s.writeDB.ExecContext(ctx, `UPDATE orchestration_events SET state='pending',attempt_count=0,next_attempt_at=?,lease_token=NULL,lease_expires_at=NULL,destination_session_id=NULL,submitted_at=NULL,acknowledged_at=NULL,attention_required_at=NULL,last_error='' WHERE id=? AND state='dead_letter'`, now, id)
+	result, err := s.writeDB.ExecContext(ctx, `UPDATE orchestration_events SET state='pending',attempt_count=0,next_attempt_at=?,lease_token=NULL,lease_expires_at=NULL,destination_session_id=NULL,submitted_at=NULL,acknowledged_at=NULL,attention_required_at=NULL,last_error='' WHERE id=? AND project_id=? AND state='dead_letter'`, now, id, project)
 	if err != nil {
 		return false, err
 	}

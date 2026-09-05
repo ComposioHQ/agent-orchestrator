@@ -3323,6 +3323,37 @@ func (m *Manager) SendAutomation(ctx context.Context, id domain.SessionID, messa
 	if strings.TrimSpace(clientMessageID) == "" {
 		return errors.New("automation send requires a client message id")
 	}
+	rec, ok, err := m.store.GetSession(ctx, id)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return ErrNotFound
+	}
+	if domain.NormalizeSessionMode(rec.Mode) == domain.SessionModeChat {
+		release, admitted := m.AcquireSessionInput(id)
+		if !admitted {
+			return ErrSwitchInProgress
+		}
+		defer release()
+		rec, ok, err = m.store.GetSession(ctx, id)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return ErrNotFound
+		}
+		switch {
+		case rec.IsTerminated:
+			return ErrTerminated
+		case rec.Activity.State == domain.ActivityExited:
+			return ErrAgentExited
+		case rec.Activity.State.NeedsInput():
+			return ErrAwaitingDecision
+		case rec.FirstSignalAt.IsZero():
+			return ErrStartupPending
+		}
+	}
 	return m.send(ctx, id, message, clientMessageID)
 }
 
@@ -3424,7 +3455,13 @@ func copilotOrchestratorMessage(projectID domain.ProjectID, message string) stri
 	if project == "" {
 		project = "<project>"
 	}
-	return fmt.Sprintf(`AO ORCHESTRATOR DIRECTIVE
+	marker := ""
+	if strings.HasPrefix(message, "[AO AUTOMATION batch_id=") {
+		if end := strings.IndexByte(message, '\n'); end >= 0 {
+			marker, message = message[:end+1], message[end+1:]
+		}
+	}
+	return marker + fmt.Sprintf(`AO ORCHESTRATOR DIRECTIVE
 
 You are acting as the AO orchestrator for project %s. Do not implement code changes, edit files, run implementation tests, or complete the user's task yourself.
 

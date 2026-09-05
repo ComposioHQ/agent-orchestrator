@@ -8646,6 +8646,16 @@ type flipOnNudgeMessenger struct {
 	flipped   bool
 }
 
+func TestCopilotOrchestratorMessagePreservesAutomationMarkerAtStart(t *testing.T) {
+	message := copilotOrchestratorMessage("p", "[AO AUTOMATION batch_id=batch-1] machine wake\nworker_terminated worker=w")
+	if !strings.HasPrefix(message, "[AO AUTOMATION batch_id=batch-1]") {
+		t.Fatalf("automation acknowledgement marker moved: %q", message)
+	}
+	if !strings.Contains(message, "AO ORCHESTRATOR DIRECTIVE") {
+		t.Fatalf("orchestrator safety directive missing: %q", message)
+	}
+}
+
 func (m *flipOnNudgeMessenger) Send(_ context.Context, _ domain.SessionID, msg string) error {
 	m.msgs = append(m.msgs, msg)
 	if msg == "" && !m.flipped {

@@ -14,11 +14,13 @@ import (
 )
 
 type orchestrationReaderFake struct {
-	project domain.ProjectID
-	limit   int
+	project      domain.ProjectID
+	limit        int
+	retryProject domain.ProjectID
 }
 
-func (f *orchestrationReaderFake) RetryDeadLetterOrchestrationEvent(context.Context, string, time.Time) (bool, error) {
+func (f *orchestrationReaderFake) RetryDeadLetterOrchestrationEvent(_ context.Context, project domain.ProjectID, _ string, _ time.Time) (bool, error) {
+	f.retryProject = project
 	return true, nil
 }
 
@@ -27,6 +29,17 @@ func (f *orchestrationReaderFake) ListOrchestrationEvents(_ context.Context, p d
 	f.limit = limit
 	now := time.Now().UTC()
 	return []domain.OrchestrationEvent{{ID: "e", ProjectID: p, WorkerID: "w", Kind: domain.OrchestrationWorkerTurnSettled, SourceRevision: "r", State: domain.OrchestrationSubmitted, AttemptCount: 1, EnqueuedAt: now, NextAttemptAt: now, DestinationSessionID: "o", SubmittedAt: now}}, nil
+}
+
+func TestRetryOrchestrationEventIsProjectScoped(t *testing.T) {
+	f := &orchestrationReaderFake{}
+	r := chi.NewRouter()
+	r.Route("/api/v1", func(r chi.Router) { (&controllers.OrchestrationEventsController{Store: f}).Register(r) })
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/api/v1/projects/p/orchestration-events/e/retry", nil))
+	if w.Code != http.StatusOK || f.retryProject != "p" {
+		t.Fatalf("status=%d project=%q body=%s", w.Code, f.retryProject, w.Body.String())
+	}
 }
 
 func TestListOrchestrationEventsExposesDeliveryObservability(t *testing.T) {

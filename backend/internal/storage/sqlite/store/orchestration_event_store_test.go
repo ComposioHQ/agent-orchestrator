@@ -158,3 +158,73 @@ func TestOrchestrationSourceStateDedupesAndRearmsSCMTransition(t *testing.T) {
 		t.Fatalf("events=%+v err=%v", events, err)
 	}
 }
+
+func TestActivityAndOutboxCommitRollsBackOnInjectedInsertFailure(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedProject(t, s, "p")
+	w, err := s.CreateSession(ctx, sampleRecord("p"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, ok, err := s.GetSession(ctx, w.ID)
+	if err != nil || !ok {
+		t.Fatal(err)
+	}
+	next := before
+	now := time.Now().UTC().Truncate(time.Second)
+	next.Activity = domain.Activity{State: domain.ActivityIdle, LastActivityAt: now}
+	next.UpdatedAt = now
+	event := domain.OrchestrationEvent{ID: "e", ProjectID: "p", WorkerID: w.ID, Kind: "invalid_kind", SourceRevision: "r", EnqueuedAt: now, NextAttemptAt: now}
+	if _, err := s.CommitActivityAndOrchestrationEvent(ctx, next, event); err == nil {
+		t.Fatal("invalid event insert succeeded")
+	}
+	after, ok, err := s.GetSession(ctx, w.ID)
+	if err != nil || !ok {
+		t.Fatal(err)
+	}
+	if after.Activity.State != before.Activity.State || !after.UpdatedAt.Equal(before.UpdatedAt) {
+		t.Fatalf("source fact escaped rollback: before=%+v after=%+v", before.Activity, after.Activity)
+	}
+}
+
+func TestOrchestrationRetryDeadLettersAndRequiresMatchingProjectForRearm(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedProject(t, s, "p")
+	w, err := s.CreateSession(ctx, sampleRecord("p"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	o := sampleRecord("p")
+	o.Kind = domain.KindOrchestrator
+	o, err = s.CreateSession(ctx, o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC().Truncate(time.Second)
+	e := domain.OrchestrationEvent{ID: "e", ProjectID: "p", WorkerID: w.ID, Kind: domain.OrchestrationWorkerBlocked, SourceRevision: "r", EnqueuedAt: now.Add(-16 * time.Minute), NextAttemptAt: now}
+	if ok, err := s.EnqueueOrchestrationEvent(ctx, e); err != nil || !ok {
+		t.Fatalf("enqueue=%v err=%v", ok, err)
+	}
+	if err := s.LeaseOrchestrationEvents(ctx, []string{"e"}, "batch", o.ID, now.Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RetryOrchestrationEvents(ctx, []domain.OrchestrationEvent{e}, "batch", "transient secret\nerror", now); err != nil {
+		t.Fatal(err)
+	}
+	events, err := s.ListOrchestrationEvents(ctx, "p", 10)
+	if err != nil || len(events) != 1 || events[0].State != domain.OrchestrationDeadLetter || events[0].AttentionRequiredAt.IsZero() {
+		t.Fatalf("events=%+v err=%v", events, err)
+	}
+	if changed, err := s.RetryDeadLetterOrchestrationEvent(ctx, "other", "e", now); err != nil || changed {
+		t.Fatalf("cross-project changed=%v err=%v", changed, err)
+	}
+	if changed, err := s.RetryDeadLetterOrchestrationEvent(ctx, "p", "e", now); err != nil || !changed {
+		t.Fatalf("matching project changed=%v err=%v", changed, err)
+	}
+	events, err = s.ListOrchestrationEvents(ctx, "p", 10)
+	if err != nil || events[0].State != domain.OrchestrationPending || events[0].AttemptCount != 0 || !events[0].AttentionRequiredAt.IsZero() {
+		t.Fatalf("rearmed events=%+v err=%v", events, err)
+	}
+}

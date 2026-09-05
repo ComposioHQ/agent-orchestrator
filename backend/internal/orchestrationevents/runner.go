@@ -15,31 +15,38 @@ type RecoveryStore interface {
 	MarkOrchestrationRetentionOverflow(context.Context, time.Time) (int64, error)
 }
 
-// Run owns restart recovery and cancellable daemon timers. It does not depend
-// on SSE, Electron, a shell process, or an agent-side polling loop.
+// Recover synchronously reclaims interrupted work and attempts every due
+// project. Daemon startup calls this before exposing a healthy HTTP server.
+func Recover(ctx context.Context, store RecoveryStore, dispatcher *Dispatcher) error {
+	if _, err := store.ReclaimOrchestrationEventLeases(ctx, time.Now().UTC()); err != nil {
+		return err
+	}
+	if _, err := store.MarkOrchestrationRetentionOverflow(ctx, time.Now().UTC()); err != nil {
+		return err
+	}
+	projects, err := store.ListProjects(ctx)
+	if err != nil {
+		return err
+	}
+	for _, p := range projects {
+		if err := dispatcher.DispatchProject(ctx, domain.ProjectID(p.ID)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// Run owns cancellable daemon recovery timers. It does not depend on SSE,
+// Electron, a shell process, or an agent-side polling loop.
 func Run(ctx context.Context, store RecoveryStore, dispatcher *Dispatcher, wake <-chan domain.ProjectID, log *slog.Logger) {
 	if log == nil {
 		log = slog.Default()
 	}
-	if _, err := store.ReclaimOrchestrationEventLeases(ctx, time.Now().UTC()); err != nil {
-		log.Error("orchestration dispatcher lease recovery failed", "error", err)
-	}
 	dispatchAll := func() {
-		if _, err := store.MarkOrchestrationRetentionOverflow(ctx, time.Now().UTC()); err != nil {
-			log.Warn("orchestration retention maintenance failed", "error", err)
-		}
-		projects, err := store.ListProjects(ctx)
-		if err != nil {
-			log.Error("orchestration dispatcher project scan failed", "error", err)
-			return
-		}
-		for _, p := range projects {
-			if err := dispatcher.DispatchProject(ctx, domain.ProjectID(p.ID)); err != nil {
-				log.Warn("orchestration dispatch failed", "projectID", p.ID, "error", err)
-			}
+		if err := Recover(ctx, store, dispatcher); err != nil {
+			log.Warn("orchestration dispatcher recovery scan failed", "error", err)
 		}
 	}
-	dispatchAll()
 	timer := time.NewTimer(time.Second)
 	defer timer.Stop()
 	for {

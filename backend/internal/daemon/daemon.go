@@ -511,6 +511,14 @@ func Run() error {
 		default:
 		}
 	})
+	if err := orchestrationevents.Recover(ctx, store, orchestrationDispatcher); err != nil {
+		stop()
+		lcStack.Stop()
+		if cdcErr := cdcPipe.Stop(); cdcErr != nil {
+			log.Error("cdc pipeline shutdown", "err", cdcErr)
+		}
+		return fmt.Errorf("recover orchestration events: %w", err)
+	}
 	go orchestrationevents.Run(ctx, store, orchestrationDispatcher, orchestrationWake, log)
 
 	// servers isn't clobbered. See preview_wiring.go (issue #4500).

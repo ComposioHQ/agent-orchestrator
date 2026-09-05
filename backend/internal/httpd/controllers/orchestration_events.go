@@ -14,7 +14,7 @@ import (
 
 type OrchestrationEventReader interface {
 	ListOrchestrationEvents(context.Context, domain.ProjectID, int) ([]domain.OrchestrationEvent, error)
-	RetryDeadLetterOrchestrationEvent(context.Context, string, time.Time) (bool, error)
+	RetryDeadLetterOrchestrationEvent(context.Context, domain.ProjectID, string, time.Time) (bool, error)
 }
 type OrchestrationEventsController struct{ Store OrchestrationEventReader }
 
@@ -27,7 +27,7 @@ func (c *OrchestrationEventsController) retry(w http.ResponseWriter, r *http.Req
 		apispec.NotImplemented(w, r, http.MethodPost, "/api/v1/projects/{id}/orchestration-events/{eventId}/retry")
 		return
 	}
-	changed, err := c.Store.RetryDeadLetterOrchestrationEvent(r.Context(), chi.URLParam(r, "eventId"), time.Now().UTC())
+	changed, err := c.Store.RetryDeadLetterOrchestrationEvent(r.Context(), domain.ProjectID(chi.URLParam(r, "id")), chi.URLParam(r, "eventId"), time.Now().UTC())
 	if err != nil {
 		envelope.WriteError(w, r, err)
 		return
