@@ -2,8 +2,9 @@ package session
 
 import (
 	"context"
-	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"testing"
+
+	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
 
 func TestClaimPRSSHPortPreserved(t *testing.T) {
