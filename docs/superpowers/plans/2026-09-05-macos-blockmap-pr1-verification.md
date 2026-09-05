@@ -92,7 +92,10 @@ npm run package
 ```
 
 The focused main/feed/preload suite passed 177 tests. The selected renderer
-suite passed 88 tests. Typecheck and the unsigned package command exited 0.
+suite passed 88 tests. Project and E2E typechecks passed. The unsigned package
+command exited 0 after building the Vite bundles, but its log stopped at
+"Finalizing package" and no final app artifact was present. This does not count
+as successful packaged-app acceptance.
 The full synthetic harness finished with 10 passed and 1 failed: HTTP 416
 violated descriptor integrity. Earlier runs also timed out. The regression is
 retained as a failing test, with no skip or test-side fallback workaround. These are preparation
