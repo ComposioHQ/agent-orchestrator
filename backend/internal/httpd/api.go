@@ -22,21 +22,22 @@ import (
 
 // APIDeps bundles every service the API layer's controllers depend on.
 type APIDeps struct {
-	Agents             controllers.AgentCatalog
-	CodexAccounts      controllers.CodexAccountService
-	Projects           projectsvc.Manager
-	Sessions           controllers.SessionService
-	DesktopWorkspaces  controllers.DesktopWorkspaceService
-	Activity           controllers.ActivityRecorder
-	UsageHooks         controllers.UsageHookRecorder
-	UsageSummary       controllers.UsageSummaryService
-	PRs                prsvc.ActionManager
-	Reviews            reviewsvc.Manager
-	Notifications      controllers.NotificationService
-	NotificationStream controllers.NotificationStream
-	Push               controllers.PushRegistry
-	Import             controllers.ImportService
-	ShellTerminals     controllers.ShellTerminalService
+	Agents              controllers.AgentCatalog
+	CodexAccounts       controllers.CodexAccountService
+	Projects            projectsvc.Manager
+	Sessions            controllers.SessionService
+	DesktopWorkspaces   controllers.DesktopWorkspaceService
+	Activity            controllers.ActivityRecorder
+	UsageHooks          controllers.UsageHookRecorder
+	UsageSummary        controllers.UsageSummaryService
+	PRs                 prsvc.ActionManager
+	Reviews             reviewsvc.Manager
+	Notifications       controllers.NotificationService
+	NotificationStream  controllers.NotificationStream
+	OrchestrationEvents controllers.OrchestrationEventReader
+	Push                controllers.PushRegistry
+	Import              controllers.ImportService
+	ShellTerminals      controllers.ShellTerminalService
 	// Conversations is nil until a Chat driver is wired; the controller then
 	// answers 501 rather than panicking, matching the other optional surfaces.
 	Conversations controllers.ConversationService
@@ -101,30 +102,31 @@ func normalizeAPIDeps(deps APIDeps, log *slog.Logger) APIDeps {
 // API owns one controller per resource and is the single Register call the
 // router invokes to mount the /api/v1 surface.
 type API struct {
-	cfg           config.Config
-	deps          APIDeps
-	agents        *controllers.AgentsController
-	codexAccounts *controllers.CodexAccountsController
-	projects      *controllers.ProjectsController
-	sessions      *controllers.SessionsController
-	desktop       *controllers.DesktopWorkspaceController
-	usage         *controllers.UsageController
-	prs           *controllers.PRsController
-	reviews       *controllers.ReviewsController
-	notifications *controllers.NotificationsController
-	push          *controllers.PushController
-	imports       *controllers.ImportController
-	shellTerms    *controllers.ShellTerminalsController
-	conversations *controllers.ConversationsController
-	settings      *controllers.SettingsController
-	dev           *controllers.DevController
-	browser       *controllers.BrowserController
-	system        *controllers.SystemController
-	identity      *controllers.IdentityController
-	endpoints     *controllers.EndpointsController
-	systemInstall *controllers.SystemInstallController
-	agentAuth     *controllers.AgentAuthController
-	events        *EventsController
+	cfg                 config.Config
+	deps                APIDeps
+	agents              *controllers.AgentsController
+	codexAccounts       *controllers.CodexAccountsController
+	projects            *controllers.ProjectsController
+	sessions            *controllers.SessionsController
+	desktop             *controllers.DesktopWorkspaceController
+	usage               *controllers.UsageController
+	prs                 *controllers.PRsController
+	reviews             *controllers.ReviewsController
+	notifications       *controllers.NotificationsController
+	orchestrationEvents *controllers.OrchestrationEventsController
+	push                *controllers.PushController
+	imports             *controllers.ImportController
+	shellTerms          *controllers.ShellTerminalsController
+	conversations       *controllers.ConversationsController
+	settings            *controllers.SettingsController
+	dev                 *controllers.DevController
+	browser             *controllers.BrowserController
+	system              *controllers.SystemController
+	identity            *controllers.IdentityController
+	endpoints           *controllers.EndpointsController
+	systemInstall       *controllers.SystemInstallController
+	agentAuth           *controllers.AgentAuthController
+	events              *EventsController
 }
 
 // NewAPI constructs the API surface from its dependencies. cfg carries the
@@ -149,24 +151,25 @@ func NewAPI(cfg config.Config, deps APIDeps) *API {
 			PreviewServer: deps.PreviewServer,
 			Capabilities:  deps.SessionCapabilities,
 		},
-		desktop:       &controllers.DesktopWorkspaceController{Svc: deps.DesktopWorkspaces},
-		usage:         &controllers.UsageController{Svc: deps.UsageSummary},
-		prs:           &controllers.PRsController{Svc: deps.PRs},
-		reviews:       &controllers.ReviewsController{Svc: deps.Reviews},
-		notifications: &controllers.NotificationsController{Svc: deps.Notifications, Stream: deps.NotificationStream},
-		push:          &controllers.PushController{Registry: deps.Push},
-		imports:       &controllers.ImportController{Svc: deps.Import},
-		shellTerms:    &controllers.ShellTerminalsController{Svc: deps.ShellTerminals},
-		conversations: &controllers.ConversationsController{Svc: deps.Conversations},
-		settings:      &controllers.SettingsController{Svc: deps.Settings},
-		dev:           &controllers.DevController{Import: deps.DevImport},
-		browser:       &controllers.BrowserController{Svc: deps.Browser},
-		system:        &controllers.SystemController{Checks: deps.SystemChecks},
-		identity:      &controllers.IdentityController{HostID: deps.HostID},
-		endpoints:     &controllers.EndpointsController{Source: deps.Endpoints},
-		systemInstall: &controllers.SystemInstallController{Installer: deps.Installer},
-		agentAuth:     &controllers.AgentAuthController{Svc: deps.AgentAuth},
-		events:        &EventsController{Source: deps.CDC, Live: deps.Events},
+		desktop:             &controllers.DesktopWorkspaceController{Svc: deps.DesktopWorkspaces},
+		usage:               &controllers.UsageController{Svc: deps.UsageSummary},
+		prs:                 &controllers.PRsController{Svc: deps.PRs},
+		reviews:             &controllers.ReviewsController{Svc: deps.Reviews},
+		notifications:       &controllers.NotificationsController{Svc: deps.Notifications, Stream: deps.NotificationStream},
+		orchestrationEvents: &controllers.OrchestrationEventsController{Store: deps.OrchestrationEvents},
+		push:                &controllers.PushController{Registry: deps.Push},
+		imports:             &controllers.ImportController{Svc: deps.Import},
+		shellTerms:          &controllers.ShellTerminalsController{Svc: deps.ShellTerminals},
+		conversations:       &controllers.ConversationsController{Svc: deps.Conversations},
+		settings:            &controllers.SettingsController{Svc: deps.Settings},
+		dev:                 &controllers.DevController{Import: deps.DevImport},
+		browser:             &controllers.BrowserController{Svc: deps.Browser},
+		system:              &controllers.SystemController{Checks: deps.SystemChecks},
+		identity:            &controllers.IdentityController{HostID: deps.HostID},
+		endpoints:           &controllers.EndpointsController{Source: deps.Endpoints},
+		systemInstall:       &controllers.SystemInstallController{Installer: deps.Installer},
+		agentAuth:           &controllers.AgentAuthController{Svc: deps.AgentAuth},
+		events:              &EventsController{Source: deps.CDC, Live: deps.Events},
 	}
 }
 
@@ -193,6 +196,7 @@ func (a *API) Register(root chi.Router) {
 			a.prs.Register(r)
 			a.reviews.Register(r)
 			a.notifications.Register(r)
+			a.orchestrationEvents.Register(r)
 			a.push.Register(r)
 			a.imports.Register(r)
 			a.shellTerms.Register(r)

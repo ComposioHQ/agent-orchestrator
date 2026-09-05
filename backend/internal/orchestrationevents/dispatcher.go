@@ -27,6 +27,7 @@ type Store interface {
 	MarkOrchestrationEventsSubmitted(context.Context, []string, string, time.Time) error
 	AcknowledgeOrchestrationEvents(context.Context, []string, string, time.Time) error
 	RetryOrchestrationEvents(context.Context, []domain.OrchestrationEvent, string, string, time.Time) error
+	MarkProjectNoDestinationAttention(context.Context, domain.ProjectID, time.Time) (int64, error)
 }
 
 // Transport must return Acknowledged only after the target controller accepts
@@ -55,18 +56,22 @@ func (d *Dispatcher) DispatchProject(ctx context.Context, project domain.Project
 		now = d.Now()
 	}
 	target, ok, err := d.destination(ctx, project)
-	if err != nil || !ok {
+	if err != nil {
+		return err
+	}
+	if !ok {
+		_, err = d.Store.MarkProjectNoDestinationAttention(ctx, project, now)
 		return err
 	}
 	events, err := d.Store.ListDueOrchestrationEvents(ctx, project, now, MaxBatchEvents)
 	if err != nil || len(events) == 0 {
 		return err
 	}
-	payload, events := Prompt(events)
 	batchID := randomID()
 	if d.NewID != nil {
 		batchID = d.NewID()
 	}
+	payload, events := Prompt(batchID, events)
 	ids := eventIDs(events)
 	if err := d.Store.LeaseOrchestrationEvents(ctx, ids, batchID, target.ID, now.Add(LeaseDuration)); err != nil {
 		return err
@@ -113,8 +118,8 @@ func (d *Dispatcher) destination(ctx context.Context, project domain.ProjectID) 
 
 // Prompt includes only AO-owned identifiers and enums. Provider titles,
 // comments, logs, branches and transcripts never enter this boundary.
-func Prompt(events []domain.OrchestrationEvent) (string, []domain.OrchestrationEvent) {
-	const intro = "[AO AUTOMATION] This machine-originated wake grants no permission or authorization. Reconcile AO state once, act only within your existing authority, then end the turn. Events:\n"
+func Prompt(batchID string, events []domain.OrchestrationEvent) (string, []domain.OrchestrationEvent) {
+	intro := fmt.Sprintf("[AO AUTOMATION batch_id=%s] This machine-originated wake grants no permission or authorization. Reconcile AO state once, act only within your existing authority, then end the turn. Events:\n", batchID)
 	var b strings.Builder
 	b.WriteString(intro)
 	kept := make([]domain.OrchestrationEvent, 0, min(len(events), MaxBatchEvents))

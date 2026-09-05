@@ -349,6 +349,11 @@ var schemaNames = map[string]string{ //nolint:gosec // Public OpenAPI type names
 	"PortsAgentModelCatalog":                      "AgentModelsResponse",
 	"PortsAgentModelInfo":                         "AgentModelInfo",
 	"ControllersListNotificationsQuery":           "ListNotificationsQuery",
+	"ControllersOrchestrationEventResponse":       "OrchestrationEventResponse",
+	"ControllersListOrchestrationEventsResponse":  "ListOrchestrationEventsResponse",
+	"ControllersListOrchestrationEventsQuery":     "ListOrchestrationEventsQuery",
+	"ControllersRetryOrchestrationEventResponse":  "RetryOrchestrationEventResponse",
+	"ControllersOrchestrationEventIDParam":        "OrchestrationEventIDParam",
 	"ControllersNotificationStreamQuery":          "NotificationStreamQuery",
 	"ControllersNotificationIDParam":              "NotificationIDParam",
 	"ControllersNotificationTarget":               "NotificationTarget",
@@ -1465,6 +1470,22 @@ func devOperations() []operation {
 
 func notificationOperations() []operation {
 	return []operation{
+		{
+			method: http.MethodGet, path: "/api/v1/projects/{id}/orchestration-events", id: "listOrchestrationEvents", tag: "notifications",
+			summary:    "List daemon orchestration delivery state",
+			pathParams: []any{controllers.ProjectIDParam{}, controllers.ListOrchestrationEventsQuery{}},
+			resps: []respUnit{
+				{http.StatusOK, controllers.ListOrchestrationEventsResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPost, path: "/api/v1/projects/{id}/orchestration-events/{eventId}/retry", id: "retryOrchestrationEvent", tag: "notifications", summary: "Explicitly retry a dead-letter orchestration event",
+			pathParams: []any{controllers.ProjectIDParam{}, controllers.OrchestrationEventIDParam{}},
+			resps:      []respUnit{{http.StatusOK, controllers.RetryOrchestrationEventResponse{}}, {http.StatusConflict, envelope.APIError{}}, {http.StatusInternalServerError, envelope.APIError{}}, {http.StatusNotImplemented, envelope.APIError{}}},
+		},
 		{
 			method: http.MethodGet, path: "/api/v1/notifications", id: "listNotifications", tag: "notifications",
 			summary:    "List notification history",

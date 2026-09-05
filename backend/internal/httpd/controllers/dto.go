@@ -1428,6 +1428,36 @@ type AgentInstallJobsResponse struct {
 	Jobs []systeminstall.Job `json:"jobs"`
 }
 
+type OrchestrationEventResponse struct {
+	ID                   string                            `json:"id"`
+	ProjectID            domain.ProjectID                  `json:"projectId"`
+	WorkerID             domain.SessionID                  `json:"workerId"`
+	Kind                 domain.OrchestrationEventKind     `json:"kind"`
+	SourceRevision       string                            `json:"sourceRevision"`
+	State                domain.OrchestrationDeliveryState `json:"state"`
+	AttemptCount         int                               `json:"attemptCount"`
+	EnqueuedAt           time.Time                         `json:"enqueuedAt"`
+	NextAttemptAt        time.Time                         `json:"nextAttemptAt"`
+	LeaseExpiresAt       *time.Time                        `json:"leaseExpiresAt,omitempty"`
+	DestinationSessionID domain.SessionID                  `json:"destinationSessionId,omitempty"`
+	SubmittedAt          *time.Time                        `json:"submittedAt,omitempty"`
+	AcknowledgedAt       *time.Time                        `json:"acknowledgedAt,omitempty"`
+	AttentionRequiredAt  *time.Time                        `json:"attentionRequiredAt,omitempty"`
+	LastError            string                            `json:"lastError,omitempty"`
+}
+type ListOrchestrationEventsResponse struct {
+	Events []OrchestrationEventResponse `json:"events"`
+}
+type ListOrchestrationEventsQuery struct {
+	Limit int `query:"limit,omitempty" minimum:"1" maximum:"100"`
+}
+type RetryOrchestrationEventResponse struct {
+	Retried bool `json:"retried"`
+}
+type OrchestrationEventIDParam struct {
+	EventID string `path:"eventId"`
+}
+
 // ListNotificationsQuery is the query string accepted by GET /api/v1/notifications.
 type ListNotificationsQuery struct {
 	Status string `query:"status,omitempty" enum:"unread,all,unresolved" description:"Notification filter. Defaults to unread (unseen); unresolved returns notifications whose underlying issue is still open; all includes read history."`

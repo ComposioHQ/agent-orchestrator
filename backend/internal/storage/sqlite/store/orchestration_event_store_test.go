@@ -91,3 +91,39 @@ func TestOrchestrationEventStoreRestartReclaimsExpiredLease(t *testing.T) {
 		t.Fatalf("due=%v err=%v", due, err)
 	}
 }
+
+func TestOrchestrationEventStoreTUIAcknowledgesOnlyExactDestinationAndBatch(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedProject(t, s, "p")
+	w, err := s.CreateSession(ctx, sampleRecord("p"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	o := sampleRecord("p")
+	o.Kind = domain.KindOrchestrator
+	o, err = s.CreateSession(ctx, o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC().Truncate(time.Second)
+	e := domain.OrchestrationEvent{ID: "e", ProjectID: "p", WorkerID: w.ID, Kind: domain.OrchestrationWorkerBlocked, SourceRevision: "r", EnqueuedAt: now, NextAttemptAt: now}
+	if ok, err := s.EnqueueOrchestrationEvent(ctx, e); err != nil || !ok {
+		t.Fatal(err)
+	}
+	if err := s.LeaseOrchestrationEvents(ctx, []string{"e"}, "batch", o.ID, now.Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.MarkOrchestrationEventsSubmitted(ctx, []string{"e"}, "batch", now); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := s.AcknowledgeOrchestrationBatchAccepted(ctx, o.ID, "wrong", now); err != nil || n != 0 {
+		t.Fatalf("wrong token n=%d err=%v", n, err)
+	}
+	if n, err := s.AcknowledgeOrchestrationBatchAccepted(ctx, "other", "batch", now); err != nil || n != 0 {
+		t.Fatalf("wrong destination n=%d err=%v", n, err)
+	}
+	if n, err := s.AcknowledgeOrchestrationBatchAccepted(ctx, o.ID, "batch", now); err != nil || n != 1 {
+		t.Fatalf("exact acknowledgement n=%d err=%v", n, err)
+	}
+}

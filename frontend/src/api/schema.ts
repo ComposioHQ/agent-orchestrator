@@ -912,7 +912,24 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/projects/{id}/permissions": {
+    "/api/v1/projects/{id}/orchestration-events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List daemon orchestration delivery state */
+        get: operations["listOrchestrationEvents"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{id}/orchestration-events/{eventId}/retry": {
         parameters: {
             query?: never;
             header?: never;
@@ -921,12 +938,12 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        post?: never;
+        /** Explicitly retry a dead-letter orchestration event */
+        post: operations["retryOrchestrationEvent"];
         delete?: never;
         options?: never;
         head?: never;
-        /** Remember project permissions for future sessions */
-        patch: operations["setProjectPermissions"];
+        patch?: never;
         trace?: never;
     };
     "/api/v1/projects/clone": {
@@ -2249,40 +2266,6 @@ export interface paths {
         patch: operations["renameShellTerminal"];
         trace?: never;
     };
-    "/api/v1/system/github-auth": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Check advisory GitHub CLI authentication without blocking startup */
-        get: operations["getGitHubAuthRequirement"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/system/github-auth/terminal": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Open a trusted terminal running the GitHub CLI login flow */
-        post: operations["openGitHubAuthTerminal"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/v1/system/install/{target}": {
         parameters: {
             query?: never;
@@ -2906,8 +2889,6 @@ export interface components {
             group?: string;
             groupName?: string;
             name: string;
-            /** @enum {string} */
-            permissionMode?: "default" | "accept-edits" | "auto" | "bypass-permissions";
             value: string;
         };
         ConversationConfigOptionResponse: {
@@ -3349,6 +3330,9 @@ export interface components {
             unreadCount: number;
             unresolvedCount: number;
         };
+        ListOrchestrationEventsResponse: {
+            events: components["schemas"]["OrchestrationEventResponse"][];
+        };
         ListProjectsResponse: {
             projects: components["schemas"]["ProjectSummary"][];
         };
@@ -3506,6 +3490,29 @@ export interface components {
             sessionId?: string;
             /** @description Windows shell selector: auto, git-bash, pwsh, powershell, cmd, or a custom executable path. Ignored on macOS and Linux. */
             shell?: string;
+        };
+        OrchestrationEventResponse: {
+            /** Format: date-time */
+            acknowledgedAt?: null | string;
+            attemptCount: number;
+            /** Format: date-time */
+            attentionRequiredAt?: null | string;
+            destinationSessionId?: string;
+            /** Format: date-time */
+            enqueuedAt: string;
+            id: string;
+            kind: string;
+            lastError?: string;
+            /** Format: date-time */
+            leaseExpiresAt?: null | string;
+            /** Format: date-time */
+            nextAttemptAt: string;
+            projectId: string;
+            sourceRevision: string;
+            state: string;
+            /** Format: date-time */
+            submittedAt?: null | string;
+            workerId: string;
         };
         OrchestratorResponse: {
             id: string;
@@ -3685,6 +3692,9 @@ export interface components {
             resumeMode: "native" | "saved_prompt" | "fresh";
             session: components["schemas"]["ControllersSessionView"];
             sessionId: string;
+        };
+        RetryOrchestrationEventResponse: {
+            retried: boolean;
         };
         RetryTurnResponse: {
             providerTurnId?: string;
@@ -3945,11 +3955,6 @@ export interface components {
         SetProjectConfigInput: {
             config: components["schemas"]["ProjectConfig"];
         };
-        SetProjectPermissionsInput: {
-            /** @enum {string} */
-            permissions: "default" | "accept-edits" | "auto" | "bypass-permissions";
-            sourceHarness?: string;
-        };
         SetReviewActivityRequest: {
             /** @description Native reviewer session identifier used to resume its transcript. */
             agentSessionId?: string;
@@ -4155,7 +4160,7 @@ export interface components {
              * @description Stable requirement identifier.
              * @enum {string}
              */
-            id: "git" | "tmux" | "harness" | "gh" | "github-auth";
+            id: "git" | "tmux" | "harness" | "gh";
             /** @description Human-readable requirement name. */
             label: string;
             /** @description Whether this requirement blocks the overall Ready state. */
@@ -7172,9 +7177,11 @@ export interface operations {
             };
         };
     };
-    setProjectPermissions: {
+    listOrchestrationEvents: {
         parameters: {
-            query?: never;
+            query?: {
+                limit?: number;
+            };
             header?: never;
             path: {
                 /** @description Project identifier (registry key). */
@@ -7182,11 +7189,7 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["SetProjectPermissionsInput"];
-            };
-        };
+        requestBody?: never;
         responses: {
             /** @description OK */
             200: {
@@ -7194,7 +7197,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ProjectResponse"];
+                    "application/json": components["schemas"]["ListOrchestrationEventsResponse"];
                 };
             };
             /** @description Bad Request */
@@ -7206,8 +7209,50 @@ export interface operations {
                     "application/json": components["schemas"]["APIError"];
                 };
             };
-            /** @description Not Found */
-            404: {
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    retryOrchestrationEvent: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Project identifier (registry key). */
+                id: string;
+                eventId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RetryOrchestrationEventResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -7217,6 +7262,15 @@ export interface operations {
             };
             /** @description Internal Server Error */
             500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -12452,91 +12506,6 @@ export interface operations {
             };
             /** @description Not Found */
             404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["APIError"];
-                };
-            };
-            /** @description Internal Server Error */
-            500: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["APIError"];
-                };
-            };
-            /** @description Not Implemented */
-            501: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["APIError"];
-                };
-            };
-        };
-    };
-    getGitHubAuthRequirement: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description OK */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SystemRequirement"];
-                };
-            };
-            /** @description Internal Server Error */
-            500: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["APIError"];
-                };
-            };
-            /** @description Not Implemented */
-            501: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["APIError"];
-                };
-            };
-        };
-    };
-    openGitHubAuthTerminal: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Created */
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ShellTerminalEnvelope"];
-                };
-            };
-            /** @description Bad Request */
-            400: {
                 headers: {
                     [name: string]: unknown;
                 };

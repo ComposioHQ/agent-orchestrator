@@ -35,4 +35,5 @@ type OrchestrationEvent struct {
 	AttemptCount                                int
 	EnqueuedAt, NextAttemptAt                   time.Time
 	LeaseExpiresAt, SubmittedAt, AcknowledgedAt time.Time
+	AttentionRequiredAt                         time.Time
 }

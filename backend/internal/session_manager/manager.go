@@ -3316,6 +3316,16 @@ func (m *Manager) Send(ctx context.Context, id domain.SessionID, message string,
 	return m.send(ctx, id, message, "")
 }
 
+// SendAutomation submits an AO-owned message with a stable idempotency key.
+// Chat controllers persist that key; TUI delivery is acknowledged separately
+// by the exact prompt-submit lifecycle hook.
+func (m *Manager) SendAutomation(ctx context.Context, id domain.SessionID, message, clientMessageID string) error {
+	if strings.TrimSpace(clientMessageID) == "" {
+		return errors.New("automation send requires a client message id")
+	}
+	return m.send(ctx, id, message, clientMessageID)
+}
+
 // send carries an optional idempotency key used by durable transition-message
 // retries. Ordinary callers leave it empty; the outbox preserves the key across
 // restart, rollback, and even a second overlapping handoff.

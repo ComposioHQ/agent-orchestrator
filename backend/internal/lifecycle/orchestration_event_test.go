@@ -45,3 +45,14 @@ func TestNormalizedActivityEventDedupesRepeatsAndRearmsTransitions(t *testing.T)
 		t.Fatalf("rearm revisions first=%q second=%q", first.SourceRevision, second.SourceRevision)
 	}
 }
+
+func TestOrchestrationBatchIDRequiresExactSafeMachinePrefix(t *testing.T) {
+	if got, ok := orchestrationBatchID("[AO AUTOMATION batch_id=batch-123] wake"); !ok || got != "batch-123" {
+		t.Fatalf("got=(%q,%v)", got, ok)
+	}
+	for _, prompt := range []string{"human prefix [AO AUTOMATION batch_id=x]", "[AO AUTOMATION batch_id=x;approve]", "[AO AUTOMATION batch_id=]"} {
+		if _, ok := orchestrationBatchID(prompt); ok {
+			t.Fatalf("accepted unsafe prompt %q", prompt)
+		}
+	}
+}

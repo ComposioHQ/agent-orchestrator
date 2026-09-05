@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"hash/fnv"
 	"strings"
 	"time"
 
@@ -13,7 +14,7 @@ import (
 
 const orchestrationColumns = `id, project_id, worker_id, kind, source_revision, state,
  attempt_count, enqueued_at, next_attempt_at, lease_token, lease_expires_at,
- destination_session_id, submitted_at, acknowledged_at, last_error`
+ destination_session_id, submitted_at, acknowledged_at, attention_required_at, last_error`
 
 func (s *Store) EnqueueOrchestrationEvent(ctx context.Context, e domain.OrchestrationEvent) (bool, error) {
 	s.writeMu.Lock()
@@ -32,9 +33,32 @@ func (s *Store) EnqueueOrchestrationEvent(ctx context.Context, e domain.Orchestr
 func (s *Store) ReclaimOrchestrationEventLeases(ctx context.Context, now time.Time) (int64, error) {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
-	result, err := s.writeDB.ExecContext(ctx, `UPDATE orchestration_events SET state='pending',
- lease_token=NULL,lease_expires_at=NULL,destination_session_id=NULL,next_attempt_at=?
- WHERE state IN ('leased','submitted') AND lease_expires_at<=?`, now, now)
+	result, err := s.writeDB.ExecContext(ctx, `UPDATE orchestration_events SET
+	 state=CASE WHEN attempt_count+1>=2 OR enqueued_at<=? THEN 'dead_letter' ELSE 'pending' END,
+	 attempt_count=attempt_count+1,lease_token=NULL,lease_expires_at=NULL,
+	 attention_required_at=CASE WHEN attempt_count+1>=2 OR enqueued_at<=? THEN COALESCE(attention_required_at,?) ELSE attention_required_at END,
+	 destination_session_id=NULL,next_attempt_at=?
+	 WHERE state IN ('leased','submitted') AND lease_expires_at<=?`, now.Add(-15*time.Minute), now.Add(-15*time.Minute), now, now, now)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+func (s *Store) MarkProjectNoDestinationAttention(ctx context.Context, project domain.ProjectID, now time.Time) (int64, error) {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	result, err := s.writeDB.ExecContext(ctx, `UPDATE orchestration_events SET attention_required_at=? WHERE project_id=? AND state='pending' AND attention_required_at IS NULL AND enqueued_at<=?`, now, project, now.Add(-15*time.Minute))
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+func (s *Store) MarkOrchestrationRetentionOverflow(ctx context.Context, now time.Time) (int64, error) {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	result, err := s.writeDB.ExecContext(ctx, `UPDATE orchestration_events SET state='dead_letter',attention_required_at=COALESCE(attention_required_at,?),last_error='retention limit exceeded' WHERE state='pending' AND (enqueued_at<=? OR id IN (SELECT id FROM orchestration_events AS overflow WHERE overflow.project_id=orchestration_events.project_id AND overflow.state='pending' ORDER BY overflow.enqueued_at DESC,overflow.id DESC LIMIT -1 OFFSET 10000))`, now, now.Add(-30*24*time.Hour))
 	if err != nil {
 		return 0, err
 	}
@@ -49,6 +73,26 @@ func (s *Store) ListDueOrchestrationEvents(ctx context.Context, project domain.P
 	}
 	defer rows.Close()
 	return scanOrchestrationEvents(rows)
+}
+
+func (s *Store) ListOrchestrationEvents(ctx context.Context, project domain.ProjectID, limit int) ([]domain.OrchestrationEvent, error) {
+	rows, err := s.readDB.QueryContext(ctx, `SELECT `+orchestrationColumns+` FROM orchestration_events WHERE project_id=? ORDER BY enqueued_at DESC,id DESC LIMIT ?`, project, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanOrchestrationEvents(rows)
+}
+
+func (s *Store) RetryDeadLetterOrchestrationEvent(ctx context.Context, id string, now time.Time) (bool, error) {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	result, err := s.writeDB.ExecContext(ctx, `UPDATE orchestration_events SET state='pending',attempt_count=0,next_attempt_at=?,lease_token=NULL,lease_expires_at=NULL,destination_session_id=NULL,submitted_at=NULL,acknowledged_at=NULL,attention_required_at=NULL,last_error='' WHERE id=? AND state='dead_letter'`, now, id)
+	if err != nil {
+		return false, err
+	}
+	rows, err := result.RowsAffected()
+	return rows == 1, err
 }
 
 func (s *Store) LeaseOrchestrationEvents(ctx context.Context, ids []string, token string, destination domain.SessionID, expires time.Time) error {
@@ -69,6 +113,19 @@ func (s *Store) AcknowledgeOrchestrationEvents(ctx context.Context, ids []string
 	})
 }
 
+// AcknowledgeOrchestrationBatchAccepted closes a TUI batch only when the
+// lifecycle hook reports admission of the exact AO batch id at its destination.
+func (s *Store) AcknowledgeOrchestrationBatchAccepted(ctx context.Context, destination domain.SessionID, token string, at time.Time) (int64, error) {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	result, err := s.writeDB.ExecContext(ctx, `UPDATE orchestration_events SET state='acknowledged',acknowledged_at=?,lease_token=NULL,lease_expires_at=NULL,last_error=''
+ WHERE destination_session_id=? AND lease_token=? AND state IN ('leased','submitted')`, at, destination, token)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 func (s *Store) RetryOrchestrationEvents(ctx context.Context, events []domain.OrchestrationEvent, token, message string, now time.Time) error {
 	if len(message) > 512 {
 		message = message[:512]
@@ -87,11 +144,25 @@ func (s *Store) RetryOrchestrationEvents(ctx context.Context, events []domain.Or
 			state = domain.OrchestrationDeadLetter
 		}
 		backoff := time.Second << min(attempt-1, 5)
-		if backoff > time.Minute {
-			backoff = time.Minute
+		if backoff > 48*time.Second {
+			backoff = 48 * time.Second
 		}
-		return db.ExecContext(ctx, `UPDATE orchestration_events SET state=?,attempt_count=attempt_count+1,next_attempt_at=?,lease_token=NULL,lease_expires_at=NULL,last_error=? WHERE id=? AND state IN ('leased','submitted') AND lease_token=? AND attempt_count<8`, state, now.Add(backoff), message, id, token)
+		backoff += orchestrationJitter(id, backoff/4)
+		var attention any
+		if state == domain.OrchestrationDeadLetter {
+			attention = now
+		}
+		return db.ExecContext(ctx, `UPDATE orchestration_events SET state=?,attempt_count=attempt_count+1,next_attempt_at=?,lease_token=NULL,lease_expires_at=NULL,last_error=?,attention_required_at=COALESCE(attention_required_at,?) WHERE id=? AND state IN ('leased','submitted') AND lease_token=? AND attempt_count<8`, state, now.Add(backoff), message, attention, id, token)
 	})
+}
+
+func orchestrationJitter(id string, ceiling time.Duration) time.Duration {
+	if ceiling <= 0 {
+		return 0
+	}
+	h := fnv.New64a()
+	_, _ = h.Write([]byte(id))
+	return time.Duration(h.Sum64() % uint64(ceiling))
 }
 
 func (s *Store) updateOrchestrationBatch(ctx context.Context, what string, ids []string, update func(gen.DBTX, string) (sql.Result, error)) error {
@@ -121,8 +192,8 @@ func scanOrchestrationEvent(row rowScanner) (domain.OrchestrationEvent, error) {
 	var e domain.OrchestrationEvent
 	var project, worker, kind, state string
 	var lease, destination, lastError sql.NullString
-	var leaseExpiry, submitted, ack sql.NullTime
-	err := row.Scan(&e.ID, &project, &worker, &kind, &e.SourceRevision, &state, &e.AttemptCount, &e.EnqueuedAt, &e.NextAttemptAt, &lease, &leaseExpiry, &destination, &submitted, &ack, &lastError)
+	var leaseExpiry, submitted, ack, attention sql.NullTime
+	err := row.Scan(&e.ID, &project, &worker, &kind, &e.SourceRevision, &state, &e.AttemptCount, &e.EnqueuedAt, &e.NextAttemptAt, &lease, &leaseExpiry, &destination, &submitted, &ack, &attention, &lastError)
 	e.ProjectID = domain.ProjectID(project)
 	e.WorkerID = domain.SessionID(worker)
 	e.Kind = domain.OrchestrationEventKind(kind)
@@ -132,6 +203,7 @@ func scanOrchestrationEvent(row rowScanner) (domain.OrchestrationEvent, error) {
 	e.DestinationSessionID = domain.SessionID(destination.String)
 	e.SubmittedAt = submitted.Time
 	e.AcknowledgedAt = ack.Time
+	e.AttentionRequiredAt = attention.Time
 	e.LastError = strings.TrimSpace(lastError.String)
 	return e, err
 }

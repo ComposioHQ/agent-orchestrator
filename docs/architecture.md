@@ -1043,9 +1043,15 @@ delivery.
 Transport attempts time out after five seconds and use persisted exponential
 backoff capped at one minute. Eight attempts or fifteen minutes moves a delivery
 to `dead_letter`; recovery is an explicit retry, not an endless timer. Missing
-destinations do not consume the transport budget. The dispatcher uses daemon
+destinations do not consume the transport budget. After fifteen minutes the
+event's `attentionRequiredAt` API field surfaces one durable operator alert;
+dead-letter transitions set the same field. The dispatcher uses daemon
 wakeups and cancellable due-time timers, never shell polling, cron, or a desktop
 client stream.
+
+Pending delivery retention is capped at 30 days and 10,000 rows per project.
+Overflow is retained as visible dead-letter state with `attentionRequiredAt`;
+it is never silently deleted.
 
 Upgrade from 0.12.10 adds the outbox without changing projects, sessions, or
 notifications. Startup reclaims expired leases before serving dispatch work.

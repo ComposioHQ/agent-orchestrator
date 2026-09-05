@@ -14,6 +14,7 @@ CREATE TABLE orchestration_events (
     destination_session_id TEXT REFERENCES sessions(id) ON DELETE SET NULL,
     submitted_at TIMESTAMP,
     acknowledged_at TIMESTAMP,
+    attention_required_at TIMESTAMP,
     last_error TEXT NOT NULL DEFAULT '' CHECK (length(last_error) <= 512),
     UNIQUE(project_id, worker_id, kind, source_revision)
 );

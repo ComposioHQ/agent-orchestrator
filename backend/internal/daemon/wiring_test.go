@@ -923,6 +923,10 @@ func (f *fakeSessionLifecycle) Send(context.Context, domain.SessionID, string, *
 	return nil
 }
 
+func (f *fakeSessionLifecycle) SendAutomation(context.Context, domain.SessionID, string, string) error {
+	return nil
+}
+
 func (f *fakeSessionLifecycle) Kill(_ context.Context, _ domain.SessionID) (bool, error) {
 	return false, nil
 }

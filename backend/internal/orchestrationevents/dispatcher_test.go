@@ -40,6 +40,9 @@ func (f *fakeStore) RetryOrchestrationEvents(_ context.Context, e []domain.Orche
 	f.retried = eventIDs(e)
 	return nil
 }
+func (f *fakeStore) MarkProjectNoDestinationAttention(context.Context, domain.ProjectID, time.Time) (int64, error) {
+	return 0, nil
+}
 
 type fakeTransport struct {
 	calls  int
@@ -131,7 +134,7 @@ func TestPromptIsBoundedAndExcludesUntrustedProviderText(t *testing.T) {
 	for i := range events {
 		events[i] = domain.OrchestrationEvent{ID: strings.Repeat("x", 900), WorkerID: "w", Kind: domain.OrchestrationWorkerReadyMerge, SourceRevision: "r"}
 	}
-	payload, kept := Prompt(events)
+	payload, kept := Prompt("batch", events)
 	if len(kept) > MaxBatchEvents || len(payload) > MaxPayloadBytes {
 		t.Fatalf("events=%d bytes=%d", len(kept), len(payload))
 	}
