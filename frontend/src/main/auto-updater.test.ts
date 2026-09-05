@@ -2668,22 +2668,37 @@ describe("channel downgrade safety", () => {
     });
   }
 
-  it("rejects older stable on routine manual and automatic checks", async () => {
-    const h = await importAutoUpdater(stable, { version: running });
+  it.each([false, true])("honors saved Stable on startup and later checks (automatic download %s)", async (enabled) => {
+    const h = await importAutoUpdater({ ...stable, enabled }, { version: running });
     serveVersion(h, "0.12.10");
-    await h.module.checkForUpdatesNow(stateDir);
-    expect(h.module.getUpdateStatus().state).toBe("not-available");
     await h.module.startAutoUpdates(stateDir);
-    expect(h.module.getUpdateStatus().state).toBe("not-available");
-    expect(h.autoUpdater.allowDowngrade).toBe(false);
+    expect(h.module.getUpdateStatus()).toMatchObject({ state: "available", version: "0.12.10" });
+    expect(h.autoUpdater.autoDownload).toBe(enabled);
+    await h.module.checkForUpdatesNow(stateDir);
+    expect(h.module.getUpdateStatus()).toMatchObject({ state: "available", version: "0.12.10" });
+    expect(h.autoUpdater.allowDowngrade).toBe(true);
   });
 
-  it("permits an explicit channel change but resets downgrade permission on the next routine check", async () => {
+  it("retains a saved channel switch after its first check fails", async () => {
     const h = await importAutoUpdater(nightly, { version: running });
-    serveVersion(h, "0.12.10");
+    h.writeUpdateSettings.mockImplementation(async (_dir, settings) => {
+      h.readUpdateSettings.mockResolvedValue(settings);
+    });
+    h.autoUpdater.checkForUpdates.mockRejectedValueOnce(new Error("network unavailable"));
     await h.module.checkForUpdatesNow(stateDir, { settings: stable });
-    expect(h.module.getUpdateStatus()).toMatchObject({ state: "available", version: "0.12.10" });
+    expect(h.module.getUpdateStatus().state).toBe("error");
+    serveVersion(h, "0.12.10");
     await h.module.checkForUpdatesNow(stateDir);
+    expect(h.module.getUpdateStatus()).toMatchObject({ state: "available", version: "0.12.10" });
+    await h.module.startAutoUpdates(stateDir);
+    expect(h.module.getUpdateStatus()).toMatchObject({ state: "available", version: "0.12.10" });
+  });
+
+  it("stops allowing downgrades after relaunching into the selected Stable channel", async () => {
+    const h = await importAutoUpdater(stable, { version: "0.12.10" });
+    serveVersion(h, "0.12.9", "0.12.10");
+    await h.module.startAutoUpdates(stateDir);
+    expect(h.module.getUpdateStatus().state).toBe("not-available");
     expect(h.autoUpdater.allowDowngrade).toBe(false);
   });
 

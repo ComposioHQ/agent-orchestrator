@@ -59,12 +59,14 @@ async function reconcileAndPersist(
 //
 // When settings.feature is set, the feed tracks the pr<N> prerelease channel
 // (e.g. "pr2270") with allowPrerelease enabled. Downgrades require a channel
-// transition; routine checks only move forward. Otherwise falls back to the home
+// transition, including one saved on an earlier launch. Otherwise falls back to the home
 // channel logic (latest vs nightly).
 export function configureFeed(
   settings: Pick<UpdateSettings, "channel" | "feature">,
-  allowDowngrade = false,
 ): void {
+  // A saved channel choice remains intent until the running build reaches it.
+  // Assign after channel: electron-updater's channel setter enables downgrades.
+  const allowDowngrade = isChannelTransition(settings);
   if (settings.feature !== null && settings.feature !== undefined) {
     // Feature build: pin to the pr<N> semver prerelease identifier channel.
     autoUpdater.channel = `pr${settings.feature.pr}`;
@@ -573,11 +575,6 @@ function installedUpdateChannel(): string {
 
 function isChannelTransition(settings: Pick<UpdateSettings, "channel" | "feature">): boolean {
   return effectiveChannel(settings) !== installedUpdateChannel();
-}
-
-/** A retired feature pin must still be able to return to its home release. */
-function returningFromFeatureBuild(settings: UpdateSettings): boolean {
-  return settings.feature === null && /^pr\d+$/.test(installedUpdateChannel());
 }
 
 /**
@@ -1116,7 +1113,7 @@ async function runAutomaticUpdateCheck(
 
       escalationStateDir = stateDir;
       wireUpdaterEvents();
-      configureFeed(settings, returningFromFeatureBuild(settings));
+      configureFeed(settings);
       // Discovery is always on for the selected release channel. This preference
       // controls only whether electron-updater downloads the discovered build or
       // leaves it in `available` for the sidebar action.
@@ -1309,11 +1306,7 @@ export async function checkForUpdatesNow(
           options.settings ?? (await readUpdateSettings(stateDir)),
         );
         reconcileAutomaticUpdateSchedule(stateDir, settings);
-        configureFeed(
-          settings,
-          (options.settings !== undefined && isChannelTransition(settings)) ||
-            returningFromFeatureBuild(settings),
-        );
+        configureFeed(settings);
         // Same reason as the automatic path: a channel switch leaves the old
         // channel's build armed, and only staging the new one over it helps.
         const staleStaged = stagedBuildIsStale(settings);
@@ -1386,7 +1379,7 @@ export async function returnToHome(
         );
         const settings = await reconcileAndPersist(stateDir, cleared);
         reconcileAutomaticUpdateSchedule(stateDir, settings);
-        configureFeed(settings, isChannelTransition(settings));
+        configureFeed(settings);
         // Leaving a pinned PR build is the same class of switch: its build is
         // armed and has to be superseded, not merely forgotten.
         const staleStaged = stagedBuildIsStale(settings);
