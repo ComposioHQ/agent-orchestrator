@@ -88,6 +88,8 @@ export const aoBridge: AoBridge =
 		},
 		browser: {
 			nativeCompositionEnabled: false,
+			overlayStrategy: "native" as const,
+			captureOverlayFrame: async () => null,
 			ensure: async (sessionId: string) => ({
 				viewId: `preview:${sessionId}`,
 				url: "",

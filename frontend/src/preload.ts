@@ -5,6 +5,7 @@ import type {
 	BrowserDevToolsInput,
 	BrowserDevToolsState,
 	BrowserNavState,
+	BrowserOverlayFrame,
 	BrowserRect,
 	BrowserTabsState,
 } from "./main/browser-view-host";
@@ -355,9 +356,12 @@ const api = {
 	},
 	browser: {
 		nativeCompositionEnabled: true,
+		overlayStrategy: (process.platform === "win32" ? "snapshot" : "native") as "snapshot" | "native",
 		ensure: (sessionId: string) => ipcRenderer.invoke("browser:ensure", sessionId) as Promise<BrowserNavState>,
 		setBounds: (input: BrowserBoundsInput) => ipcRenderer.send("browser:setBounds", input),
 		setOverlayOpen: (open: boolean) => ipcRenderer.send("browser:overlay", open),
+		captureOverlayFrame: (viewId: string) =>
+			ipcRenderer.invoke("browser:captureOverlayFrame", viewId) as Promise<BrowserOverlayFrame | null>,
 		navigate: (input: BrowserNavigateInput) =>
 			ipcRenderer.invoke("browser:navigate", input) as Promise<BrowserNavState>,
 		historySuggestions: (input: { viewId: string; query: string }) =>

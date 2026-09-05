@@ -104,4 +104,5 @@ describe("createWindowComposition", () => {
 		expect(removeChildView).toHaveBeenCalledWith(view);
 		expect(close).toHaveBeenCalledOnce();
 	});
+
 });

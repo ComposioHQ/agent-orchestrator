@@ -330,6 +330,7 @@ export function BrowserPanelView({
 	const {
 		viewId,
 		navState,
+		overlayFrame,
 		slotRef,
 		navigate,
 		goBack,
@@ -1174,6 +1175,20 @@ export function BrowserPanelView({
 							data-testid="browser-device-frame"
 							ref={slotRef}
 						/>
+						{overlayFrame ? (
+							<img
+								alt=""
+								className="pointer-events-none absolute max-w-none"
+								data-testid="browser-overlay-frame"
+								src={overlayFrame.dataUrl}
+								style={{
+									height: overlayFrame.cssHeight,
+									left: overlayFrame.cssLeft,
+									top: overlayFrame.cssTop,
+									width: overlayFrame.cssWidth,
+								}}
+							/>
+						) : null}
 					</div>
 					{showStaticPreview ? <StaticPreview url={navState.url} /> : null}
 					{navState.url === "" ? (

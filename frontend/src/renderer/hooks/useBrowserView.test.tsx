@@ -40,6 +40,7 @@ function setupBridge() {
 	const profileListeners = new Set<ProfileListener>();
 	const bridge = {
 		nativeCompositionEnabled: false,
+		overlayStrategy: "native" as "native" | "snapshot",
 		stateFor(viewId: string): BrowserNavState {
 			return {
 				viewId,
@@ -60,6 +61,13 @@ function setupBridge() {
 		})),
 		setBounds: vi.fn(),
 		setOverlayOpen: vi.fn(),
+		captureOverlayFrame: vi.fn(async () => ({
+			dataUrl: "data:image/jpeg;base64,c25hcHNob3Q=",
+			cssLeft: 0,
+			cssTop: 0,
+			cssWidth: 320,
+			cssHeight: 240,
+		})),
 		navigate: vi.fn(async ({ viewId }: { viewId: string }) => bridge.stateFor(viewId)),
 		clear: vi.fn(async (viewId: string) => bridge.stateFor(viewId)),
 		goBack: vi.fn(async (viewId: string) => bridge.stateFor(viewId)),
@@ -922,6 +930,62 @@ describe("useBrowserView", () => {
 
 		menu.remove();
 		await waitFor(() => expect(bridge.setOverlayOpen).toHaveBeenLastCalledWith(false));
+	});
+
+	it("mirrors and hides the native page for renderer overlays when transparent siblings are unsupported", async () => {
+		const bridge = setupBridge();
+		bridge.overlayStrategy = "snapshot";
+		const slot = createSlot();
+		const { result } = renderHook(() =>
+			useBrowserView({ sessionId: "sess-1", active: true, poppedOut: false }),
+		);
+
+		await waitFor(() => expect(bridge.ensure).toHaveBeenCalledWith("sess-1"));
+		act(() =>
+			bridge.emit({
+				viewId: "42:sess-1",
+				url: "http://localhost:3000/",
+				title: "",
+				canGoBack: false,
+				canGoForward: false,
+				isLoading: false,
+			}),
+		);
+		act(() => result.current.slotRef(slot));
+		await waitFor(() => expect(result.current.navState.url).toBe("http://localhost:3000/"));
+		bridge.setBounds.mockClear();
+
+		const menu = document.createElement("div");
+		menu.setAttribute("role", "menu");
+		menu.setAttribute("data-browser-native-overlay", "true");
+		menu.setAttribute("data-state", "open");
+		await act(async () => {
+			document.body.appendChild(menu);
+			await Promise.resolve();
+		});
+
+		await waitFor(() => expect(bridge.captureOverlayFrame).toHaveBeenCalledWith("42:sess-1"));
+		await waitFor(() => expect(result.current.overlayFrame?.dataUrl).toContain("c25hcHNob3Q="));
+		await waitFor(() =>
+			expect(bridge.setBounds).toHaveBeenLastCalledWith({
+				viewId: "42:sess-1",
+				rect: { x: 0, y: 0, width: 0, height: 0 },
+				visible: false,
+			}),
+		);
+		expect(bridge.setOverlayOpen).not.toHaveBeenCalledWith(true);
+
+		await act(async () => {
+			menu.remove();
+			await Promise.resolve();
+		});
+		await waitFor(() =>
+			expect(bridge.setBounds).toHaveBeenLastCalledWith({
+				viewId: "42:sess-1",
+				rect: { x: 12, y: 34, width: 320, height: 240 },
+				visible: true,
+			}),
+		);
 	});
 
 	it("tracks a reused portal when its data-state flips in place", async () => {

@@ -67,6 +67,7 @@ vi.mock("../hooks/useBrowserView", () => ({
 		return {
 			viewId: "42:sess-1",
 			navState: hookState.navState,
+			overlayFrame: null,
 			slotRef: vi.fn(),
 			navigate: hookState.navigate,
 			goBack: hookState.goBack,

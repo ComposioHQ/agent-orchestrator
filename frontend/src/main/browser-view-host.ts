@@ -75,6 +75,14 @@ function isValidAnnotationSelection(value: unknown): value is BrowserAnnotationS
 
 export type BrowserRect = Pick<Rectangle, "x" | "y" | "width" | "height">;
 
+export type BrowserOverlayFrame = {
+	dataUrl: string;
+	cssLeft: number;
+	cssTop: number;
+	cssWidth: number;
+	cssHeight: number;
+};
+
 export type BrowserNavState = {
 	viewId: string;
 	url: string;
@@ -1490,6 +1498,30 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		});
 	};
 
+	// Windows cannot reliably alpha-compose one WebContentsView over another,
+	// especially while the BaseWindow is maximized. Capture the live page before
+	// renderer-owned tooltips/menus cover it so the renderer can briefly paint a
+	// visually equivalent replacement instead of depending on transparent siblings.
+	const captureOverlayFrame = async (viewId: string): Promise<BrowserOverlayFrame | null> => {
+		const session = entries.get(viewId);
+		if (!session || !session.visible || session.profileSwitching || session.tabs.size === 0) return null;
+		const entry = activeEntry(session);
+		try {
+			await entry.ready;
+			const image = await entry.view.webContents.capturePage();
+			if (image.isEmpty()) return null;
+			return {
+				dataUrl: `data:image/jpeg;base64,${image.toJPEG(85).toString("base64")}`,
+				cssLeft: session.bounds.x / session.zoomFactor - session.rendererBounds.x,
+				cssTop: session.bounds.y / session.zoomFactor - session.rendererBounds.y,
+				cssWidth: session.bounds.width / session.zoomFactor,
+				cssHeight: session.bounds.height / session.zoomFactor,
+			};
+		} catch {
+			return null;
+		}
+	};
+
 	// Best-effort full-viewport capture for a browser-annotation submit. Bounded
 	// by ANNOTATION_SNAPSHOT_TIMEOUT_MS so a slow/hung capturePage() can never
 	// delay the send — on timeout, error, or an empty frame this resolves
@@ -1893,6 +1925,9 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 	on("browser:setBounds", (event, input: BrowserBoundsInput) => {
 		if (isRendererOwned(event, input.viewId)) setBounds(input, event.sender.getZoomFactor());
 	});
+	handle("browser:captureOverlayFrame", (event, viewId: string) =>
+		isRendererOwned(event, viewId) ? captureOverlayFrame(viewId) : null,
+	);
 	handle("browser:navigate", (event, input: BrowserNavigateInput) =>
 		isRendererOwned(event, input.viewId) ? navigate(input) : emptyNavState(input.viewId),
 	);

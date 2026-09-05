@@ -2455,6 +2455,28 @@ describe("agent browser network capture", () => {
 });
 
 describe("browser:setBounds", () => {
+	it("captures a renderer-aligned frame before a Windows overlay hides the native page", async () => {
+		const { emit, invoke } = setupHost();
+		const state = (await invoke("browser:ensure", "sess-1")) as BrowserNavState;
+		await invoke("browser:navigate", {
+			viewId: state.viewId,
+			url: "http://localhost:3000/",
+		});
+		emit("browser:setBounds", 1.25, {
+			viewId: state.viewId,
+			rect: { x: 100, y: 20, width: 320, height: 240 },
+			visible: true,
+		});
+
+		await expect(invoke("browser:captureOverlayFrame", state.viewId)).resolves.toEqual({
+			dataUrl: `data:image/jpeg;base64,${Buffer.from("snapshot").toString("base64")}`,
+			cssLeft: 0,
+			cssTop: 0,
+			cssWidth: 320,
+			cssHeight: 240,
+		});
+	});
+
 	it("converts page-zoomed renderer slot bounds before positioning the native view", async () => {
 		const { emit, invoke, view } = setupHost();
 		await invoke("browser:ensure", "sess-1");

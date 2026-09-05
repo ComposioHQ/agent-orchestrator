@@ -143,6 +143,8 @@ export async function installFakeBridge(page: Page, opts: FakeBridgeOptions = {}
 				},
 				browser: {
 					nativeCompositionEnabled: true,
+					overlayStrategy: "native",
+					captureOverlayFrame: async () => null,
 					ensure: async (sessionId: string) => navState(`preview:${sessionId}`),
 					setBounds: () => undefined,
 					setOverlayOpen: () => undefined,
@@ -666,6 +668,8 @@ export async function installFakeAgent(page: Page, opts: FakeAgentOptions = {}):
 				},
 				browser: {
 					nativeCompositionEnabled: true,
+					overlayStrategy: "native",
+					captureOverlayFrame: async () => null,
 					ensure: async (sessionId: string) => navState(`preview:${sessionId}`),
 					setBounds: () => undefined,
 					setOverlayOpen: () => undefined,

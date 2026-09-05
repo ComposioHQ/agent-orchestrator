@@ -175,6 +175,8 @@ if (typeof window !== "undefined") {
 		},
 		browser: {
 			nativeCompositionEnabled: true,
+			overlayStrategy: "native" as const,
+			captureOverlayFrame: async () => null,
 			ensure: async (sessionId: string) => ({
 				viewId: `test:${sessionId}`,
 				url: "",
