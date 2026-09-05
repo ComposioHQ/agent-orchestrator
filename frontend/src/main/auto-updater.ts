@@ -58,17 +58,18 @@ async function reconcileAndPersist(
 // checkForUpdates.
 //
 // When settings.feature is set, the feed tracks the pr<N> prerelease channel
-// (e.g. "pr2270") with allowPrerelease and allowDowngrade enabled so the user
-// can switch back to stable after testing. Otherwise falls back to the home
+// (e.g. "pr2270") with allowPrerelease enabled. Downgrades require a channel
+// transition; routine checks only move forward. Otherwise falls back to the home
 // channel logic (latest vs nightly).
 export function configureFeed(
   settings: Pick<UpdateSettings, "channel" | "feature">,
+  allowDowngrade = false,
 ): void {
   if (settings.feature !== null && settings.feature !== undefined) {
     // Feature build: pin to the pr<N> semver prerelease identifier channel.
     autoUpdater.channel = `pr${settings.feature.pr}`;
     autoUpdater.allowPrerelease = true;
-    autoUpdater.allowDowngrade = true; // allows switching back to stable/nightly
+    autoUpdater.allowDowngrade = allowDowngrade;
     return;
   }
 
@@ -79,7 +80,7 @@ export function configureFeed(
   // release and looks for nightly-mac.yml there, which 404s. Enable prerelease
   // scanning on the nightly channel only; stable must never pull prereleases.
   autoUpdater.allowPrerelease = channel === "nightly";
-  autoUpdater.allowDowngrade = true; // permits a nightly -> stable channel switch
+  autoUpdater.allowDowngrade = allowDowngrade;
 }
 
 let lastStatus: UpdateStatus = { state: "idle" };
@@ -562,6 +563,21 @@ function effectiveChannel(
   settings: Pick<UpdateSettings, "channel" | "feature">,
 ): string {
   return settings.feature ? `pr${settings.feature.pr}` : settings.channel;
+}
+
+/** Identify the running build independently of a channel choice already saved by Settings. */
+function installedUpdateChannel(): string {
+  const prerelease = semver.prerelease(app.getVersion())?.[0];
+  return typeof prerelease === "string" ? prerelease : "latest";
+}
+
+function isChannelTransition(settings: Pick<UpdateSettings, "channel" | "feature">): boolean {
+  return effectiveChannel(settings) !== installedUpdateChannel();
+}
+
+/** A retired feature pin must still be able to return to its home release. */
+function returningFromFeatureBuild(settings: UpdateSettings): boolean {
+  return settings.feature === null && /^pr\d+$/.test(installedUpdateChannel());
 }
 
 /**
@@ -1100,7 +1116,7 @@ async function runAutomaticUpdateCheck(
 
       escalationStateDir = stateDir;
       wireUpdaterEvents();
-      configureFeed(settings);
+      configureFeed(settings, returningFromFeatureBuild(settings));
       // Discovery is always on for the selected release channel. This preference
       // controls only whether electron-updater downloads the discovered build or
       // leaves it in `available` for the sidebar action.
@@ -1134,7 +1150,10 @@ async function runAutomaticUpdateCheck(
             // so a stall can actually be cancelled rather than just reported.
             activeDownloadCancellation = result.cancellationToken;
             await result.downloadPromise;
-          } else if (supersedesStagedBuild(result?.updateInfo?.version)) {
+          } else if (
+            result?.isUpdateAvailable === true &&
+            supersedesStagedBuild(result.updateInfo?.version)
+          ) {
             // autoDownload was suspended for the staged build, but this is a
             // different version, so it still has to be fetched automatically.
             activeUpdaterPhase = "download";
@@ -1290,7 +1309,11 @@ export async function checkForUpdatesNow(
           options.settings ?? (await readUpdateSettings(stateDir)),
         );
         reconcileAutomaticUpdateSchedule(stateDir, settings);
-        configureFeed(settings);
+        configureFeed(
+          settings,
+          (options.settings !== undefined && isChannelTransition(settings)) ||
+            returningFromFeatureBuild(settings),
+        );
         // Same reason as the automatic path: a channel switch leaves the old
         // channel's build armed, and only staging the new one over it helps.
         const staleStaged = stagedBuildIsStale(settings);
@@ -1363,7 +1386,7 @@ export async function returnToHome(
         );
         const settings = await reconcileAndPersist(stateDir, cleared);
         reconcileAutomaticUpdateSchedule(stateDir, settings);
-        configureFeed(settings);
+        configureFeed(settings, isChannelTransition(settings));
         // Leaving a pinned PR build is the same class of switch: its build is
         // armed and has to be superseded, not merely forgotten.
         const staleStaged = stagedBuildIsStale(settings);
@@ -1533,6 +1556,7 @@ export function quitAndInstallUpdate(): void {
 export async function ensureUpdatePrefs(stateDir: string): Promise<void> {
   if (existsSync(path.join(stateDir, UPDATE_SETTINGS_FILE_NAME))) return;
 
+  const installedNightly = installedUpdateChannel() === "nightly";
   const optIn = await dialog.showMessageBox({
     type: "question",
     buttons: ["Enable auto-updates", "Not now"],
@@ -1544,8 +1568,8 @@ export async function ensureUpdatePrefs(stateDir: string): Promise<void> {
   if (optIn.response !== 0) {
     await writeUpdateSettings(stateDir, {
       enabled: false,
-      channel: "latest",
-      nightlyAck: false,
+      channel: installedNightly ? "nightly" : "latest",
+      nightlyAck: installedNightly,
       feature: null,
     });
     return;
@@ -1554,8 +1578,8 @@ export async function ensureUpdatePrefs(stateDir: string): Promise<void> {
   const chan = await dialog.showMessageBox({
     type: "question",
     buttons: ["Stable", "Nightly"],
-    defaultId: 0,
-    cancelId: 0,
+    defaultId: installedNightly ? 1 : 0,
+    cancelId: installedNightly ? 1 : 0,
     message: "Which update channel?",
     detail: "Stable is released and tested. Nightly is the newest daily build.",
   });

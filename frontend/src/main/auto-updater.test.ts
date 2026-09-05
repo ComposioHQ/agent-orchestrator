@@ -2,6 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
+import semver from "semver";
 import nodePath from "node:path";
 
 type UpdateSettings = {
@@ -21,6 +22,7 @@ type ImportOptions = {
     settings: UpdateSettings,
   ) => Promise<{ settings: UpdateSettings; cleared: boolean }>;
   isPackaged?: boolean;
+  version?: string;
 };
 
 type AutoUpdaterMock = {
@@ -109,7 +111,7 @@ async function importAutoUpdater(
   vi.doMock("electron", () => ({
     app: {
       isPackaged: options.isPackaged ?? true,
-      getVersion: () => "1.0.0",
+      getVersion: () => options.version ?? "1.0.0",
     },
     BrowserWindow,
     dialog,
@@ -2649,5 +2651,131 @@ describe("install-on-quit policy", () => {
       restore();
       rmSync(root, { recursive: true, force: true });
     }
+  });
+});
+
+describe("channel downgrade safety", () => {
+  const nightly = { enabled: false, channel: "nightly", nightlyAck: true, feature: null } as const;
+  const stable = { enabled: false, channel: "latest", nightlyAck: false, feature: null } as const;
+  const running = "0.12.11-nightly.202609051608";
+
+  function serveVersion(harness: Awaited<ReturnType<typeof importAutoUpdater>>, version: string, installed = running) {
+    harness.autoUpdater.checkForUpdates.mockImplementation(async () => {
+      const available = semver.gt(version, installed) ||
+        (harness.autoUpdater.allowDowngrade && semver.lt(version, installed));
+      harness.updaterEvents.get(available ? "update-available" : "update-not-available")?.({ version });
+      return { isUpdateAvailable: available, updateInfo: { version } };
+    });
+  }
+
+  it("rejects older stable on routine manual and automatic checks", async () => {
+    const h = await importAutoUpdater(stable, { version: running });
+    serveVersion(h, "0.12.10");
+    await h.module.checkForUpdatesNow(stateDir);
+    expect(h.module.getUpdateStatus().state).toBe("not-available");
+    await h.module.startAutoUpdates(stateDir);
+    expect(h.module.getUpdateStatus().state).toBe("not-available");
+    expect(h.autoUpdater.allowDowngrade).toBe(false);
+  });
+
+  it("permits an explicit channel change but resets downgrade permission on the next routine check", async () => {
+    const h = await importAutoUpdater(nightly, { version: running });
+    serveVersion(h, "0.12.10");
+    await h.module.checkForUpdatesNow(stateDir, { settings: stable });
+    expect(h.module.getUpdateStatus()).toMatchObject({ state: "available", version: "0.12.10" });
+    await h.module.checkForUpdatesNow(stateDir);
+    expect(h.autoUpdater.allowDowngrade).toBe(false);
+  });
+
+  it.each([
+    { settings: stable, installed: "0.12.11", offered: "0.12.10" },
+    { settings: { ...stable, feature: { pr: 4900 } }, installed: "0.12.11-pr4900.2", offered: "0.12.11-pr4900.1" },
+  ])("rejects routine older releases on $installed", async ({ settings, installed, offered }) => {
+    const h = await importAutoUpdater(settings, { version: installed });
+    serveVersion(h, offered, installed);
+    await h.module.startAutoUpdates(stateDir);
+    expect(h.module.getUpdateStatus().state).toBe("not-available");
+    await h.module.checkForUpdatesNow(stateDir);
+    expect(h.module.getUpdateStatus().state).toBe("not-available");
+  });
+
+  it("does not redownload a staged candidate after rejecting an older manifest", async () => {
+    const h = await importAutoUpdater({ ...nightly, enabled: true }, { version: running });
+    await h.module.checkForUpdatesNow(stateDir);
+    h.updaterEvents.get("update-downloaded")?.({ version: "0.12.11-nightly.202609061608" });
+    serveVersion(h, "0.12.11-nightly.202609041608");
+    await h.module.startAutoUpdates(stateDir);
+    expect(h.autoUpdater.autoDownload).toBe(false);
+    expect(h.autoUpdater.downloadUpdate).not.toHaveBeenCalled();
+    expect(h.module.getUpdateStatus()).toMatchObject({ state: "downloaded", version: "0.12.11-nightly.202609061608" });
+  });
+
+  it.each([
+    { settings: stable, installed: "0.12.10", offered: "0.12.11" },
+    { settings: nightly, installed: running, offered: "0.12.11-nightly.202609061608" },
+  ])("offers newer releases on $installed without downgrade permission", async ({ settings, installed, offered }) => {
+    const h = await importAutoUpdater(settings, { version: installed });
+    serveVersion(h, offered, installed);
+    await h.module.startAutoUpdates(stateDir);
+    expect(h.module.getUpdateStatus()).toMatchObject({ state: "available", version: offered });
+    await h.module.checkForUpdatesNow(stateDir);
+    expect(h.module.getUpdateStatus()).toMatchObject({ state: "available", version: offered });
+    expect(h.autoUpdater.allowDowngrade).toBe(false);
+  });
+
+  it("allows an explicit channel switch when the preference was saved before checking", async () => {
+    const h = await importAutoUpdater(stable, { version: running });
+    serveVersion(h, "0.12.10");
+    await h.module.setUpdateSettings(stateDir, stable);
+    await h.module.checkForUpdatesNow(stateDir, { settings: stable });
+    expect(h.module.getUpdateStatus()).toMatchObject({ state: "available", version: "0.12.10" });
+  });
+
+  it("returns an installed feature build home after its pin is retired", async () => {
+    const installed = "0.12.11-pr4900.2";
+    const h = await importAutoUpdater(stable, { version: installed });
+    serveVersion(h, "0.12.10", installed);
+    await h.module.startAutoUpdates(stateDir);
+    expect(h.module.getUpdateStatus()).toMatchObject({ state: "available", version: "0.12.10" });
+  });
+
+  it("permits an explicit return home from nightly", async () => {
+    const h = await importAutoUpdater(stable, { version: running });
+    serveVersion(h, "0.12.10");
+    await h.module.returnToHome(stateDir);
+    expect(h.module.getUpdateStatus()).toMatchObject({ state: "available", version: "0.12.10" });
+  });
+
+  it("does not permit a same-channel settings check to downgrade nightly", async () => {
+    const h = await importAutoUpdater(nightly, { version: running });
+    serveVersion(h, "0.12.11-nightly.202609041608");
+    await h.module.checkForUpdatesNow(stateDir, { settings: nightly });
+    expect(h.module.getUpdateStatus().state).toBe("not-available");
+  });
+
+  it("keeps first-run nightly on nightly when automatic downloads are declined", async () => {
+    const h = await importAutoUpdater(stable, { version: running });
+    h.dialog.showMessageBox.mockResolvedValue({ response: 1 });
+    await h.module.ensureUpdatePrefs(stateDir);
+    expect(h.writeUpdateSettings).toHaveBeenCalledWith(stateDir, nightly);
+  });
+
+  it("preselects nightly for the first-run channel choice on a nightly install", async () => {
+    const h = await importAutoUpdater(stable, { version: running });
+    h.dialog.showMessageBox
+      .mockResolvedValueOnce({ response: 0 })
+      .mockResolvedValueOnce({ response: 1 })
+      .mockResolvedValueOnce({ response: 0 });
+    await h.module.ensureUpdatePrefs(stateDir);
+    expect(h.dialog.showMessageBox.mock.calls[1]?.[0]).toMatchObject({ defaultId: 1, cancelId: 1 });
+    expect(h.writeUpdateSettings).toHaveBeenCalledWith(stateDir, { ...nightly, enabled: true });
+  });
+
+  it("preserves existing explicit stable preferences on a nightly install", async () => {
+    const h = await importAutoUpdater(stable, { version: running });
+    writeFileSync(nodePath.join(stateDir, "update-settings.json"), JSON.stringify(stable));
+    await h.module.ensureUpdatePrefs(stateDir);
+    expect(h.dialog.showMessageBox).not.toHaveBeenCalled();
+    expect(h.writeUpdateSettings).not.toHaveBeenCalled();
   });
 });
