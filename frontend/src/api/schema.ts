@@ -3220,6 +3220,7 @@ export interface components {
             path: string;
             remoteUrl?: string;
             repositories?: components["schemas"]["GitRepositoryPreparationInput"][];
+            stepwise?: boolean;
         };
         GitPreparationResult: {
             events: components["schemas"]["GitPreparationEvent"][];

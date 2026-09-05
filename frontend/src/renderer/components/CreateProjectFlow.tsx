@@ -614,13 +614,63 @@ export function CreateProjectFlow({
 				setIsPreparingGit(false);
 			}
 		}
-		setProjectPrepEvents(
+		setProjectPrepEvents((current) => mergePreparationEvents(
+			current,
 			projectImportKind === "workspace"
 				? projectRepositoryPrep.flatMap((repo) => projectRequestedActionEvents(repo.repoPath, repo.approvedActions))
-				: projectRequestedActionEvents(projectValidation.root.repoPath, projectApprovedActions),
-		);
+				: projectRequestedActionEvents(projectValidation.root.repoPath, projectValidation.root.requiredActions),
+		));
 		setIsPreparingGit(true);
 		try {
+			if (projectImportKind === "project") {
+				let currentValidation = projectValidation;
+				while (currentValidation.nextStep === "prepare_git") {
+					const activeAction = orderedProjectActions(currentValidation.root.requiredActions)[0];
+					if (!activeAction) {
+						throw new Error(t("createProject.couldNotAdd"));
+					}
+					setProjectPrepEvents((current) => mergePreparationEvents(current, [{
+						repoPath: currentValidation.root.repoPath,
+						action: activeAction as GitPreparationEvent["action"],
+						state: "running",
+					}]));
+					const { data, error: apiError } = await apiClient.POST("/api/v1/imports/prepare-git", {
+						body: {
+							importKind: "project",
+							path: currentValidation.root.repoPath,
+							approvedActions: projectApprovedActions,
+							remoteUrl: remoteUrl || undefined,
+							stepwise: true,
+						},
+					});
+					if (apiError || !data) throw new Error(apiErrorMessage(apiError, t("createProject.couldNotAdd")));
+					setProjectPrepEvents((current) => mergePreparationEvents(current, data.events));
+					setProjectValidation(data.validation);
+					setProjectApprovedActions(data.validation.root.requiredActions);
+					const failed = data.events.find((event) => event.state === "error");
+					if (failed) {
+						reportProjectError(projectPreparationFailureMessage(failed));
+						return;
+					}
+					if (!data.validation.isValid || data.validation.nextStep === "error") {
+						reportProjectError(importValidationMessage(data.validation));
+						setProjectImportStep("blocked");
+						return;
+					}
+					if (data.validation.nextStep !== "prepare_git" && data.validation.nextStep !== "continue") {
+						throw new Error(t("createProject.couldNotAdd"));
+					}
+					if (data.validation.nextStep === "prepare_git" && orderedProjectActions(data.validation.root.requiredActions)[0] === activeAction) {
+						throw new Error(t("createProject.couldNotAdd"));
+					}
+					currentValidation = data.validation;
+				}
+				if (projectRemoteUrl.trim() !== "") persistSuggestedProjectRemoteUrl(projectRemoteUrl);
+				setModePickerOpen(false);
+				setProjectImportStep(null);
+				setSelectedPath(currentValidation.root.repoPath);
+				return;
+			}
 			const { data, error: apiError } = await apiClient.POST("/api/v1/imports/prepare-git", {
 				body: {
 					importKind: projectImportKind,
@@ -1011,6 +1061,10 @@ function latestPreparationEvents(events: GitPreparationEvent[]): GitPreparationE
 	const latest = new Map<string, GitPreparationEvent>();
 	for (const event of events) latest.set(`${event.repoPath}:${event.action}`, event);
 	return [...latest.values()];
+}
+
+function mergePreparationEvents(current: GitPreparationEvent[], incoming: GitPreparationEvent[]): GitPreparationEvent[] {
+	return latestPreparationEvents([...current, ...incoming]);
 }
 
 function suggestedProjectRemoteUrl(repoPath: string): string {

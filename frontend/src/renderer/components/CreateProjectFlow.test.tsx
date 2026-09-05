@@ -798,9 +798,29 @@ describe("CreateProjectFlow project import validation", () => {
 						{ repoPath: "/repo/project", action: "git_init", state: "pending" },
 						{ repoPath: "/repo/project", action: "git_init", state: "running" },
 						{ repoPath: "/repo/project", action: "git_init", state: "success" },
+					],
+					validation: projectValidation("/repo/project", {
+						nextStep: "prepare_git",
+						root: { isRepo: true, hasCommit: false, hasOrigin: false, requiredActions: ["git_commit", "set_remote"] },
+					}),
+				},
+			})
+			.mockResolvedValueOnce({
+				data: {
+					events: [
 						{ repoPath: "/repo/project", action: "git_commit", state: "pending" },
 						{ repoPath: "/repo/project", action: "git_commit", state: "running" },
 						{ repoPath: "/repo/project", action: "git_commit", state: "success" },
+					],
+					validation: projectValidation("/repo/project", {
+						nextStep: "prepare_git",
+						root: { isRepo: true, hasCommit: true, hasOrigin: false, requiredActions: ["set_remote"] },
+					}),
+				},
+			})
+			.mockResolvedValueOnce({
+				data: {
+					events: [
 						{ repoPath: "/repo/project", action: "set_remote", state: "pending" },
 						{ repoPath: "/repo/project", action: "set_remote", state: "running" },
 						{ repoPath: "/repo/project", action: "set_remote", state: "success" },
@@ -829,9 +849,11 @@ describe("CreateProjectFlow project import validation", () => {
 					path: "/repo/project",
 					approvedActions: ["git_init", "git_commit", "set_remote"],
 					remoteUrl: "https://github.com/acme/project.git",
+					stepwise: true,
 				},
 			}),
 		);
+		expect(apiMocks.POST).toHaveBeenCalledTimes(4);
 		const sheet = await screen.findByTestId("agent-sheet");
 		expect(sheet).toHaveAttribute("data-path", "/repo/project");
 		expect(screen.queryByText("Prepare project")).not.toBeInTheDocument();
@@ -920,7 +942,9 @@ describe("CreateProjectFlow project import validation", () => {
 	it("shows queued and running setup progress after continue is clicked", async () => {
 		const user = userEvent.setup();
 		bridgeMocks.chooseDirectory.mockResolvedValue("/repo/project");
-		let resolvePrepare!: (value: unknown) => void;
+		let resolveInit!: (value: unknown) => void;
+		let resolveCommit!: (value: unknown) => void;
+		let resolveRemote!: (value: unknown) => void;
 		apiMocks.POST
 			.mockResolvedValueOnce({
 				data: projectValidation("/repo/project", {
@@ -936,9 +960,15 @@ describe("CreateProjectFlow project import validation", () => {
 			})
 			.mockReturnValueOnce(
 				new Promise((resolve) => {
-					resolvePrepare = resolve;
+					resolveInit = resolve;
 				}),
-			);
+			)
+			.mockReturnValueOnce(new Promise((resolve) => {
+				resolveCommit = resolve;
+			}))
+			.mockReturnValueOnce(new Promise((resolve) => {
+				resolveRemote = resolve;
+			}));
 
 		render(
 			<CreateProjectFlow mode="choose" {...noop}>
@@ -954,17 +984,42 @@ describe("CreateProjectFlow project import validation", () => {
 		await user.click(screen.getByRole("button", { name: "Continue" }));
 
 		expect(await screen.findByText("Running project setup. AO is preparing this repository now.")).toBeInTheDocument();
-		expect(screen.queryByText("Running")).not.toBeInTheDocument();
-		expect(screen.queryByText("Ready")).not.toBeInTheDocument();
-		expect(screen.queryByText("Set URL")).not.toBeInTheDocument();
+		expect(screen.getAllByText("In progress")).toHaveLength(1);
+		expect(screen.getAllByText("Queued")).toHaveLength(2);
+		expect(apiMocks.POST).toHaveBeenCalledTimes(2);
 
-		resolvePrepare({
+		resolveInit({
 			data: {
 				events: [
 					{ repoPath: "/repo/project", action: "git_init", state: "success" },
-					{ repoPath: "/repo/project", action: "git_commit", state: "success" },
-					{ repoPath: "/repo/project", action: "set_remote", state: "success" },
 				],
+				validation: projectValidation("/repo/project", {
+					nextStep: "prepare_git",
+					root: { isRepo: true, hasCommit: false, hasOrigin: false, requiredActions: ["git_commit", "set_remote"] },
+				}),
+			},
+		});
+		await waitFor(() => expect(apiMocks.POST).toHaveBeenCalledTimes(3));
+		expect(screen.getAllByText("Done")).toHaveLength(1);
+		expect(screen.getAllByText("In progress")).toHaveLength(1);
+		expect(screen.getAllByText("Queued")).toHaveLength(1);
+
+		resolveCommit({
+			data: {
+				events: [{ repoPath: "/repo/project", action: "git_commit", state: "success" }],
+				validation: projectValidation("/repo/project", {
+					nextStep: "prepare_git",
+					root: { isRepo: true, hasCommit: true, hasOrigin: false, requiredActions: ["set_remote"] },
+				}),
+			},
+		});
+		await waitFor(() => expect(apiMocks.POST).toHaveBeenCalledTimes(4));
+		expect(screen.getAllByText("Done")).toHaveLength(2);
+		expect(screen.getAllByText("In progress")).toHaveLength(1);
+
+		resolveRemote({
+			data: {
+				events: [{ repoPath: "/repo/project", action: "set_remote", state: "success" }],
 				validation: projectValidation("/repo/project"),
 			},
 		});
@@ -980,25 +1035,50 @@ describe("CreateProjectFlow project import validation", () => {
 				data: projectValidation("/repo/project", {
 					nextStep: "prepare_git",
 					root: {
+						isRepo: false,
+						hasCommit: false,
 						hasOrigin: false,
-						requiredActions: ["set_remote"],
+						requiredActions: ["git_init", "git_commit", "set_remote"],
 					},
 				}),
 			})
 			.mockResolvedValueOnce({
 				data: {
+					events: [{ repoPath: "/repo/project", action: "git_init", state: "success" }],
+					validation: projectValidation("/repo/project", {
+						nextStep: "prepare_git",
+						root: { isRepo: true, hasCommit: false, hasOrigin: false, requiredActions: ["git_commit", "set_remote"] },
+					}),
+				},
+			})
+			.mockResolvedValueOnce({
+				data: {
 					events: [
-						{ repoPath: "/repo/project", action: "set_remote", state: "pending" },
-						{ repoPath: "/repo/project", action: "set_remote", state: "running" },
-						{ repoPath: "/repo/project", action: "set_remote", state: "error", error: "origin exists" },
+						{ repoPath: "/repo/project", action: "git_commit", state: "running" },
+						{ repoPath: "/repo/project", action: "git_commit", state: "error", error: "commit hook failed" },
 					],
 					validation: projectValidation("/repo/project", {
 						nextStep: "prepare_git",
 						root: {
 							hasOrigin: false,
-							requiredActions: ["set_remote"],
+							requiredActions: ["git_commit", "set_remote"],
 						},
 					}),
+				},
+			})
+			.mockResolvedValueOnce({
+				data: {
+					events: [{ repoPath: "/repo/project", action: "git_commit", state: "success" }],
+					validation: projectValidation("/repo/project", {
+						nextStep: "prepare_git",
+						root: { isRepo: true, hasCommit: true, hasOrigin: false, requiredActions: ["set_remote"] },
+					}),
+				},
+			})
+			.mockResolvedValueOnce({
+				data: {
+					events: [{ repoPath: "/repo/project", action: "set_remote", state: "success" }],
+					validation: projectValidation("/repo/project"),
 				},
 			});
 
@@ -1015,10 +1095,19 @@ describe("CreateProjectFlow project import validation", () => {
 		await user.type(remoteInput, "https://github.com/acme/project.git");
 		await user.click(screen.getByRole("button", { name: "Continue" }));
 
-		await waitFor(() => expect(useUiStore.getState().globalToast?.body).toMatch(/failed while running Remote setup/i));
+		await waitFor(() => expect(useUiStore.getState().globalToast?.body).toMatch(/failed while running Initial commit/i));
 		await waitFor(() => expect(screen.getByRole("dialog", { name: "Prepare project" })).toHaveClass("modal-shake"));
+		expect(screen.getAllByText("Done")).toHaveLength(1);
+		expect(screen.getAllByText("Needs attention")).toHaveLength(1);
 		expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
 		expect(screen.queryByTestId("agent-sheet")).not.toBeInTheDocument();
+
+		await user.click(screen.getByRole("button", { name: "Retry" }));
+		expect((await screen.findByTestId("agent-sheet"))).toHaveAttribute("data-path", "/repo/project");
+		expect(apiMocks.POST).toHaveBeenCalledTimes(5);
+		expect(apiMocks.POST.mock.calls[3]?.[1]).toMatchObject({
+			body: { approvedActions: ["git_commit", "set_remote"], stepwise: true },
+		});
 	});
 });
 

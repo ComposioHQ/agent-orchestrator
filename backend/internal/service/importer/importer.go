@@ -76,6 +76,7 @@ type GitPreparationInput struct {
 	RemoteURL        string                          `json:"remoteUrl,omitempty"`
 	InitialCommitMsg string                          `json:"initialCommitMessage,omitempty"`
 	Repositories     []GitRepositoryPreparationInput `json:"repositories,omitempty"`
+	Stepwise         bool                            `json:"stepwise,omitempty"`
 }
 
 // GitRepositoryPreparationInput approves Git preparation for one repository.
@@ -280,25 +281,22 @@ func (m *Manager) PrepareGit(ctx context.Context, in GitPreparationInput) (GitPr
 	if err != nil {
 		return GitPreparationResult{}, err
 	}
+	if in.Stepwise {
+		for _, target := range targets {
+			if err := validatePreparationTarget(target); err != nil {
+				return GitPreparationResult{}, err
+			}
+		}
+	}
 	events := []GitPreparationEvent{}
+	executedStep := false
 	for _, target := range targets {
-		if unsafeImportPath(target.Status.RepoPath) {
-			return GitPreparationResult{}, apierr.Invalid("IMPORT_PATH_UNSAFE", "Selected folder is too broad for automatic Git setup.", map[string]any{"path": target.Status.RepoPath})
+		if !in.Stepwise {
+			if err := validatePreparationTarget(target); err != nil {
+				return GitPreparationResult{}, err
+			}
 		}
 		required := actionSet(target.Status.RequiredActions)
-		for action := range required {
-			if !containsAction(target.Input.ApprovedActions, action) {
-				return GitPreparationResult{}, apierr.Invalid("IMPORT_ACTION_APPROVAL_REQUIRED", "Every missing Git preparation action requires explicit approval.", map[string]any{"repoPath": target.Status.RepoPath, "action": action})
-			}
-		}
-		if required[GitPreparationActionSetRemote] && strings.TrimSpace(target.Input.RemoteURL) == "" {
-			return GitPreparationResult{}, apierr.Invalid("IMPORT_REMOTE_URL_REQUIRED", "remoteUrl is required before AO can add an origin remote.", map[string]any{"repoPath": target.Status.RepoPath})
-		}
-		if required[GitPreparationActionSetRemote] {
-			if remoteErr := validateImportRemoteURL(target.Input.RemoteURL); remoteErr != nil {
-				return GitPreparationResult{}, remoteErr
-			}
-		}
 		for _, action := range []string{GitPreparationActionInit, GitPreparationActionCommit, GitPreparationActionSetRemote} {
 			if !required[action] {
 				continue
@@ -313,6 +311,13 @@ func (m *Manager) PrepareGit(ctx context.Context, in GitPreparationInput) (GitPr
 				return GitPreparationResult{Events: events, Validation: latest}, nil //nolint:nilerr // action failures are reported in-band as progress events for partial recovery
 			}
 			events = append(events, GitPreparationEvent{RepoPath: target.Status.RepoPath, Action: action, State: GitPreparationEventSuccess})
+			executedStep = true
+			if in.Stepwise {
+				break
+			}
+		}
+		if in.Stepwise && executedStep {
+			break
 		}
 	}
 	latest, err := m.Validate(ctx, ImportValidationInput{ImportKind: importKind, Path: validation.Root.RepoPath})
@@ -320,6 +325,27 @@ func (m *Manager) PrepareGit(ctx context.Context, in GitPreparationInput) (GitPr
 		return GitPreparationResult{}, err
 	}
 	return GitPreparationResult{Events: events, Validation: latest}, nil
+}
+
+func validatePreparationTarget(target gitPreparationTarget) error {
+	if unsafeImportPath(target.Status.RepoPath) {
+		return apierr.Invalid("IMPORT_PATH_UNSAFE", "Selected folder is too broad for automatic Git setup.", map[string]any{"path": target.Status.RepoPath})
+	}
+	required := actionSet(target.Status.RequiredActions)
+	for action := range required {
+		if !containsAction(target.Input.ApprovedActions, action) {
+			return apierr.Invalid("IMPORT_ACTION_APPROVAL_REQUIRED", "Every missing Git preparation action requires explicit approval.", map[string]any{"repoPath": target.Status.RepoPath, "action": action})
+		}
+	}
+	if required[GitPreparationActionSetRemote] && strings.TrimSpace(target.Input.RemoteURL) == "" {
+		return apierr.Invalid("IMPORT_REMOTE_URL_REQUIRED", "remoteUrl is required before AO can add an origin remote.", map[string]any{"repoPath": target.Status.RepoPath})
+	}
+	if required[GitPreparationActionSetRemote] {
+		if err := validateImportRemoteURL(target.Input.RemoteURL); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func invalidImportResult(importKind, path, code string) ImportValidationResult {

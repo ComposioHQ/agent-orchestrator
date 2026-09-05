@@ -465,6 +465,130 @@ func TestPrepareGitRunsApprovedMissingActionsInOrder(t *testing.T) {
 	}
 }
 
+func TestPrepareGitStepwiseExecutesOnlyNextRequiredAction(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	svc := New(Deps{Store: newFakeStore()})
+	request := GitPreparationInput{
+		ImportKind: ImportKindProject,
+		Path:       root,
+		ApprovedActions: []string{
+			GitPreparationActionInit,
+			GitPreparationActionCommit,
+			GitPreparationActionSetRemote,
+		},
+		RemoteURL: "https://example.invalid/repo.git",
+		Stepwise:  true,
+	}
+
+	result, err := svc.PrepareGit(ctx, request)
+	if err != nil {
+		t.Fatalf("PrepareGit: %v", err)
+	}
+	wantEventActions(t, result.Events, []string{
+		GitPreparationActionInit,
+		GitPreparationActionInit,
+		GitPreparationActionInit,
+	})
+	if !result.Validation.Root.IsRepo || result.Validation.Root.HasCommit || result.Validation.Root.HasOrigin {
+		t.Fatalf("validation = %#v, want only git init complete", result.Validation)
+	}
+	wantActions(t, result.Validation.Root.RequiredActions, []string{GitPreparationActionCommit, GitPreparationActionSetRemote})
+}
+
+func TestPrepareGitStepwiseCompletesInThreeCalls(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	svc := New(Deps{Store: newFakeStore()})
+	request := GitPreparationInput{
+		ImportKind: ImportKindProject,
+		Path:       root,
+		ApprovedActions: []string{
+			GitPreparationActionInit,
+			GitPreparationActionCommit,
+			GitPreparationActionSetRemote,
+		},
+		RemoteURL: "https://example.invalid/repo.git",
+		Stepwise:  true,
+	}
+
+	for index, wantAction := range []string{GitPreparationActionInit, GitPreparationActionCommit, GitPreparationActionSetRemote} {
+		result, err := svc.PrepareGit(ctx, request)
+		if err != nil {
+			t.Fatalf("PrepareGit call %d: %v", index+1, err)
+		}
+		wantEventActions(t, result.Events, []string{wantAction, wantAction, wantAction})
+		if index < 2 && result.Validation.NextStep != ImportNextStepPrepareGit {
+			t.Fatalf("call %d validation = %#v, want prepare_git", index+1, result.Validation)
+		}
+		if index == 2 && result.Validation.NextStep != ImportNextStepContinue {
+			t.Fatalf("final validation = %#v, want continue", result.Validation)
+		}
+	}
+}
+
+func TestPrepareGitStepwiseValidatesFullApprovalBeforeMutation(t *testing.T) {
+	root := t.TempDir()
+	svc := New(Deps{Store: newFakeStore()})
+
+	_, err := svc.PrepareGit(context.Background(), GitPreparationInput{
+		ImportKind:      ImportKindProject,
+		Path:            root,
+		ApprovedActions: []string{GitPreparationActionInit},
+		RemoteURL:       "https://example.invalid/repo.git",
+		Stepwise:        true,
+	})
+	if err == nil {
+		t.Fatal("PrepareGit succeeded without approval for the full plan")
+	}
+	if _, statErr := os.Stat(filepath.Join(root, ".git")); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("PrepareGit mutated before validating the full plan: %v", statErr)
+	}
+}
+
+func TestPrepareGitStepwiseRetryResumesAtMissingAction(t *testing.T) {
+	ctx := context.Background()
+	repo := filepath.Join(t.TempDir(), "repo")
+	if out, err := exec.Command("git", "init", "-b", "main", repo).CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v (%s)", err, out)
+	}
+	hook := filepath.Join(repo, ".git", "hooks", "pre-commit")
+	if err := os.WriteFile(hook, []byte("#!/bin/sh\nexit 1\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	svc := New(Deps{Store: newFakeStore()})
+	request := GitPreparationInput{
+		ImportKind:      ImportKindProject,
+		Path:            repo,
+		ApprovedActions: []string{GitPreparationActionCommit, GitPreparationActionSetRemote},
+		RemoteURL:       "https://example.invalid/retry.git",
+		Stepwise:        true,
+	}
+
+	failed, err := svc.PrepareGit(ctx, request)
+	if err != nil {
+		t.Fatalf("PrepareGit failed attempt: %v", err)
+	}
+	if len(failed.Events) != 3 || failed.Events[2].Action != GitPreparationActionCommit || failed.Events[2].State != GitPreparationEventError {
+		t.Fatalf("events = %#v, want commit failure", failed.Events)
+	}
+	if err := os.WriteFile(hook, []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	retried, err := svc.PrepareGit(ctx, request)
+	if err != nil {
+		t.Fatalf("PrepareGit retry: %v", err)
+	}
+	wantEventActions(t, retried.Events, []string{
+		GitPreparationActionCommit,
+		GitPreparationActionCommit,
+		GitPreparationActionCommit,
+	})
+	if retried.Validation.Root.HasOrigin {
+		t.Fatalf("retry ran more than the failed commit step: %#v", retried.Validation)
+	}
+}
+
 func TestPrepareGitDoesNotOverwriteExistingOrigin(t *testing.T) {
 	ctx := context.Background()
 	repo := gitRepoWithOrigin(t)
