@@ -397,7 +397,7 @@ export function CreateProjectFlow({
 		if (!selectedPath) return;
 		setError(null);
 		setIsCreating(true);
-		const showProgress = Boolean(cloneSelection) || selectedKind === "workspace";
+		const showProgress = Boolean(cloneSelection);
 		if (showProgress) {
 			setCreateProgress(0);
 			setCreateProgressStage("starting");
