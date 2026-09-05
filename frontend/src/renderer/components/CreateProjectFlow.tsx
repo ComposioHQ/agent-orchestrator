@@ -1825,7 +1825,7 @@ function WorkspaceImportRepoList({ approvedActions, disabled, events, isPreparin
 				<div className="relative">
 					<ImportRepoRow onSetup={needsSetup ? () => setExpandedPath(expanded ? null : repo.path) : undefined} repo={repo} setupExpanded={expanded} />
 				</div>
-				{needsSetup && expanded ? <WorkspaceInlineSetup approvedActions={approvedActions[repo.path] ?? repo.requiredActions} disabled={disabled || isPreparingGit} events={events} onChangeApprovedActions={(actions) => onChangeApprovedActions(repo.path, actions)} onChangeRemoteUrl={(remoteUrl) => onChangeRemoteUrl(repo.path, remoteUrl)} onPrepare={() => onPrepareRepository(repo.path)} repo={repo} remoteUrl={remoteUrls[repo.path] ?? ""} /> : null}
+				{needsSetup ? <div className={cn("grid transition-[grid-template-rows] duration-200 ease-out motion-reduce:transition-none", expanded ? "grid-rows-[1fr]" : "grid-rows-[0fr]")}><div className="min-h-0 overflow-hidden"><WorkspaceInlineSetup approvedActions={approvedActions[repo.path] ?? repo.requiredActions} disabled={disabled || isPreparingGit} events={events} onChangeApprovedActions={(actions) => onChangeApprovedActions(repo.path, actions)} onChangeRemoteUrl={(remoteUrl) => onChangeRemoteUrl(repo.path, remoteUrl)} onPrepare={() => onPrepareRepository(repo.path)} repo={repo} remoteUrl={remoteUrls[repo.path] ?? ""} /></div></div> : null}
 			</div>;
 		})}
 	</div>;
@@ -1854,16 +1854,7 @@ function WorkspaceInlineSetup({ approvedActions, disabled, events, onChangeAppro
 	}, [dirty, disabled, missingApprovals, missingRemote, onPrepare]);
 	return <div className="origin-top animate-modal-in border-t border-border/50 px-3 pb-3 pt-2 motion-reduce:animate-none"><div className="space-y-2 rounded-md border border-border/60 bg-[var(--color-bg-import-modal)] p-2.5">
 		{repo.requiredActions.map((action) => <div key={action} className="space-y-2"><label className="flex items-center gap-2 text-[12px] text-[var(--color-text-import-title)]"><input checked={approvedActions.includes(action)} disabled={disabled} onChange={(event) => { setDirty(true); onChangeApprovedActions(event.target.checked ? [...approvedActions, action] : approvedActions.filter((item) => item !== action)); }} type="checkbox" /><span className="font-medium">{gitActionLabel(action)}</span><span className="ml-auto font-mono text-[11px] text-[var(--color-text-import-muted)]">{workspaceActionStateLabel(action, events, repo.path, approvedActions.includes(action), remoteUrl)}</span></label>{action === "set_remote" ? <Input aria-label="Origin remote URL" className="h-8 bg-[var(--color-bg-import-card)] font-mono text-[12px]" disabled={disabled} placeholder="https://github.com/owner/repository.git" value={remoteUrl} onChange={(event) => { setDirty(true); onChangeRemoteUrl(event.target.value); }} /> : null}</div>)}
-		<div className="flex justify-end pt-1 text-[11px] text-[var(--color-text-import-muted)]">{isPreparingLabel(events, repo.path)}</div>
 	</div></div>;
-}
-
-function isPreparingLabel(events: GitPreparationEvent[], repoPath: string): string {
-	const latest = [...events].reverse().find((event) => event.repoPath === repoPath);
-	if (latest?.state === "running" || latest?.state === "pending") return "Applying setup…";
-	if (latest?.state === "error") return "Setup failed. Change a value to retry.";
-	if (latest?.state === "success") return "Setup applied";
-	return "Complete the setup above to apply";
 }
 
 function workspaceActionStateLabel(action: string, events: GitPreparationEvent[], repoPath: string, checked: boolean, remoteUrl: string): string {
