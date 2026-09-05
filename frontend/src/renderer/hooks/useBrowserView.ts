@@ -4,7 +4,6 @@ import type {
 	BrowserDevToolsPlacement,
 	BrowserDevToolsState,
 	BrowserNavState,
-	BrowserOverlayFrame,
 	BrowserRect,
 	BrowserTabState,
 	BrowserTabsState,
@@ -59,7 +58,6 @@ type UseBrowserViewOptions = {
 export type BrowserViewModel = {
 	viewId: string;
 	navState: BrowserNavState;
-	overlayFrame: BrowserOverlayFrame | null;
 	slotRef: (node: HTMLDivElement | null) => void;
 	navigate: (url: string) => Promise<void>;
 	goBack: () => Promise<void>;
@@ -190,20 +188,6 @@ function hiddenByFullscreen(node: HTMLElement): boolean {
 	return Boolean(fullscreen) && !fullscreen!.contains(node);
 }
 
-function afterNextPaint(): Promise<void> {
-	const schedule = (callback: () => void) => {
-		if (window.requestAnimationFrame) window.requestAnimationFrame(callback);
-		else window.setTimeout(callback, 16);
-	};
-	return new Promise((resolve) => schedule(() => schedule(resolve)));
-}
-
-async function decodeOverlayFrame(source: string): Promise<void> {
-	const image = new Image();
-	image.src = source;
-	if (typeof image.decode === "function") await image.decode().catch(() => undefined);
-}
-
 export function useBrowserView({
 	sessionId,
 	active,
@@ -214,7 +198,6 @@ export function useBrowserView({
 }: UseBrowserViewOptions): BrowserViewModel {
 	const [viewId, setViewId] = useState("");
 	const [navState, setNavState] = useState<BrowserNavState>(EMPTY_NAV_STATE);
-	const [overlayFrame, setOverlayFrame] = useState<BrowserOverlayFrame | null>(null);
 	const [annotationMode, setAnnotationModeState] = useState(false);
 	const [tabsState, setTabsState] = useState<BrowserTabsState>(EMPTY_TABS_STATE);
 	// Display-only tab order (drag-to-reorder). Re-projected onto every incoming
@@ -238,10 +221,6 @@ export function useBrowserView({
 	const observerRef = useRef<ResizeObserver | null>(null);
 	const previewTriggerRef = useRef<{ revision: number | null; target: string } | null>(null);
 	const overlayOpenRef = useRef(false);
-	const overlayModeRef = useRef<"none" | "native" | "snapshot">("none");
-	const overlayCaptureTokenRef = useRef(0);
-	const overlayParkedRef = useRef(false);
-	const overlayFrameTimerRef = useRef<number | null>(null);
 	const tabNoticeTimerRef = useRef<number | null>(null);
 	const tabsStateRef = useRef(tabsState);
 	const hasNativeBrowser = Boolean(window.ao?.browser);
@@ -300,10 +279,6 @@ export function useBrowserView({
 		const id = viewIdRef.current;
 		const node = slotNodeRef.current;
 		if (!id) return;
-		if (overlayParkedRef.current) {
-			sendHiddenBounds(id);
-			return;
-		}
 		if (!activeRef.current || !node || !node.isConnected || hiddenByFullscreen(node)) {
 			sendHiddenBounds(id);
 			return;
@@ -383,7 +358,6 @@ export function useBrowserView({
 		setStateSessionId(sessionId);
 		setViewId("");
 		setNavState(EMPTY_NAV_STATE);
-		setOverlayFrame(null);
 		setTabsState(EMPTY_TABS_STATE);
 		// Tab ids (`t1`, `t2`, ...) restart per session, so a stale order from the
 		// previous session could otherwise silently reapply to the new one.
@@ -555,68 +529,15 @@ export function useBrowserView({
 	useEffect(() => {
 		if (!hasNativeBrowser) return;
 		const update = () => {
-			const browserOverlayOpen = document.querySelector(OPEN_BROWSER_OVERLAY_SELECTOR) !== null;
-			const resizing = document.body.classList.contains("is-resizing-x");
-			const desiredMode: typeof overlayModeRef.current = resizing
-				? "native"
-				: browserOverlayOpen
-					? window.ao?.browser.overlayStrategy === "snapshot"
-						? "snapshot"
-						: "native"
-					: "none";
-			if (desiredMode === overlayModeRef.current) return;
-
-			const previousMode = overlayModeRef.current;
-			overlayModeRef.current = desiredMode;
-			overlayOpenRef.current = desiredMode !== "none";
-			overlayCaptureTokenRef.current += 1;
-			if (overlayFrameTimerRef.current !== null) {
-				window.clearTimeout(overlayFrameTimerRef.current);
-				overlayFrameTimerRef.current = null;
-			}
-			if (previousMode === "native") window.ao?.browser.setOverlayOpen(false);
-			if (previousMode === "snapshot") {
-				overlayParkedRef.current = false;
-				measureAndSend();
-				overlayFrameTimerRef.current = window.setTimeout(() => {
-					overlayFrameTimerRef.current = null;
-					setOverlayFrame(null);
-				}, 120);
-			}
-
-			if (desiredMode === "none") {
-				scheduleSettleMeasure();
-				return;
-			}
-			if (desiredMode === "native") {
-				window.ao?.browser.setOverlayOpen(true);
-				return;
-			}
-
-			const id = viewIdRef.current;
-			if (!id || !activeRef.current) return;
-			const token = ++overlayCaptureTokenRef.current;
-			void (async () => {
-				const frame = await window.ao?.browser.captureOverlayFrame?.(id).catch(() => null);
-				const live = () =>
-					overlayCaptureTokenRef.current === token &&
-					overlayModeRef.current === "snapshot" &&
-					viewIdRef.current === id;
-				if (!frame || !live()) {
-					if (live()) {
-						overlayModeRef.current = "native";
-						window.ao?.browser.setOverlayOpen(true);
-					}
-					return;
-				}
-				await decodeOverlayFrame(frame.dataUrl);
-				if (!live()) return;
-				setOverlayFrame(frame);
-				await afterNextPaint();
-				if (!live()) return;
-				overlayParkedRef.current = true;
-				sendHiddenBounds(id);
-			})();
+			const open =
+				document.body.classList.contains("is-resizing-x") ||
+				document.querySelector(OPEN_BROWSER_OVERLAY_SELECTOR) !== null;
+			if (open === overlayOpenRef.current) return;
+			overlayOpenRef.current = open;
+			// The live page never moves or becomes a bitmap. Reordering the explicit
+			// transparent shell is the complete overlay handoff.
+			window.ao?.browser.setOverlayOpen(open);
+			if (!open) scheduleSettleMeasure();
 		};
 		update();
 		const observer = new MutationObserver(update);
@@ -647,14 +568,10 @@ export function useBrowserView({
 		return () => {
 			observer.disconnect();
 			resizeObserver.disconnect();
-			if (overlayModeRef.current === "native") window.ao?.browser.setOverlayOpen(false);
-			overlayCaptureTokenRef.current += 1;
-			overlayModeRef.current = "none";
-			overlayParkedRef.current = false;
-			if (overlayFrameTimerRef.current !== null) window.clearTimeout(overlayFrameTimerRef.current);
+			window.ao?.browser.setOverlayOpen(false);
 			overlayOpenRef.current = false;
 		};
-	}, [hasNativeBrowser, measureAndSend, scheduleSettleMeasure, sendHiddenBounds]);
+	}, [hasNativeBrowser, scheduleSettleMeasure]);
 
 	useEffect(() => {
 		const handle = () => scheduleMeasure();
@@ -875,10 +792,6 @@ export function useBrowserView({
 			setAnnotationModeState(false);
 		}
 		overlayOpenRef.current = false;
-		overlayCaptureTokenRef.current += 1;
-		overlayModeRef.current = "none";
-		overlayParkedRef.current = false;
-		setOverlayFrame(null);
 		sendHiddenBounds(id);
 		window.ao?.browser.destroy(id);
 		viewIdRef.current = "";
@@ -907,7 +820,6 @@ export function useBrowserView({
 	return {
 		viewId: stateBelongsToSession ? viewId : "",
 		navState: stateBelongsToSession ? navState : EMPTY_NAV_STATE,
-		overlayFrame: stateBelongsToSession ? overlayFrame : null,
 		slotRef,
 		navigate,
 		goBack: () => (hasNativeBrowser ? withView((id) => window.ao!.browser.goBack(id)) : Promise.resolve()),
