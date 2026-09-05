@@ -461,6 +461,8 @@ describe("CreateProjectFlow project import validation", () => {
 		expect(await screen.findByText("This folder contains child Git repos")).toBeInTheDocument();
 		expect(screen.queryByRole("button", { name: "Clone from Git" })).not.toBeInTheDocument();
 		await user.click(await screen.findByRole("button", { name: "Import as workspace instead" }));
+		expect(await screen.findByRole("dialog", { name: "Import workspace" })).toBeInTheDocument();
+		await user.click(screen.getByRole("button", { name: "Continue" }));
 		expect(await screen.findByTestId("agent-sheet")).toHaveAttribute("data-path", "/repo/parent");
 	});
 

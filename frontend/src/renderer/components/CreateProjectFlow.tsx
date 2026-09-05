@@ -204,9 +204,9 @@ export function CreateProjectFlow({
 		void chooseDirectory(source === "workspace" ? "workspace" : "single_repo", presetPath ?? undefined);
 	};
 
-	const chooseDirectory = async (kind: ProjectKind, presetPath?: string) => {
+	const chooseDirectory = async (kind: ProjectKind, presetPath?: string, reviewedWorkspace = false) => {
 		setError(null);
-		setValidationScan(null);
+		if (!reviewedWorkspace) setValidationScan(null);
 		resetProjectImportState();
 		setRepositorySetup(null);
 		setRepositorySetupWarning(null);
@@ -242,6 +242,12 @@ export function CreateProjectFlow({
 				}
 			}
 			if (path && kind === "workspace") {
+				if (!reviewedWorkspace) {
+					const scan = await aoBridge.app.scanImportFolder({ path, mode: "workspace" });
+					setValidationScan(scan);
+					setFolderPickerOpen(true);
+					return;
+				}
 				try {
 					const warning = await aoBridge.app.checkAncestorRepo(path);
 					if (warning) {
@@ -254,6 +260,7 @@ export function CreateProjectFlow({
 			}
 			if (path && kind === "workspace") {
 				const validation = await validateImportFolder(path, "workspace");
+				setFolderPickerOpen(false);
 				setProjectImportKind("workspace");
 				setProjectValidation(validation);
 				setProjectPrepEvents([]);
@@ -270,8 +277,8 @@ export function CreateProjectFlow({
 					setProjectImportStep("blocked");
 					return;
 				}
-				if (validation.nextStep === "choose_import_kind" || validation.nextStep === "prepare_git") {
-					setProjectImportStep(validation.nextStep === "prepare_git" ? "prepare_git" : "blocked");
+				if (validation.nextStep === "prepare_git") {
+					setProjectImportStep("prepare_git");
 					return;
 				}
 				setModePickerOpen(false);
@@ -620,6 +627,10 @@ export function CreateProjectFlow({
 						scan={validationScan}
 						onContinue={() => {
 							if (!validationScan || error) return;
+							if (selectedKind === "workspace") {
+								void chooseDirectory("workspace", validationScan.path, true);
+								return;
+							}
 							setFolderPickerOpen(false);
 							setSelectedPath(validationScan.path);
 							setModePickerOpen(false);
