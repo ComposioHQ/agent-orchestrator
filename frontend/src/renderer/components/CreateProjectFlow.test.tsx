@@ -418,7 +418,7 @@ describe("CreateProjectFlow project import validation", () => {
 		expect(screen.getByRole("button", { name: "Import an existing project" })).toBeInTheDocument();
 	});
 
-	it("suggests workspace import when a plain root contains child repositories", async () => {
+	it("continues plain roots with child repositories as projects by default", async () => {
 		const user = userEvent.setup();
 		bridgeMocks.chooseDirectory.mockResolvedValue("/repo/parent");
 		apiMocks.POST.mockResolvedValueOnce({
@@ -446,7 +446,14 @@ describe("CreateProjectFlow project import validation", () => {
 			}),
 		});
 		apiMocks.POST.mockResolvedValueOnce({
-			data: projectValidation("/repo/parent", { nextStep: "continue" }),
+			data: {
+				events: [
+					{ repoPath: "/repo/parent", action: "git_init", state: "success" },
+					{ repoPath: "/repo/parent", action: "git_commit", state: "success" },
+					{ repoPath: "/repo/parent", action: "set_remote", state: "success" },
+				],
+				validation: projectValidation("/repo/parent"),
+			},
 		});
 
 		render(
@@ -460,8 +467,8 @@ describe("CreateProjectFlow project import validation", () => {
 
 		expect(await screen.findByText("This folder contains child Git repos")).toBeInTheDocument();
 		expect(screen.queryByRole("button", { name: "Clone from Git" })).not.toBeInTheDocument();
-		await user.click(await screen.findByRole("button", { name: "Import as workspace instead" }));
-		expect(await screen.findByRole("dialog", { name: "Import workspace" })).toBeInTheDocument();
+		await user.click(await screen.findByRole("button", { name: "Continue" }));
+		expect(await screen.findByRole("dialog", { name: "Prepare project" })).toBeInTheDocument();
 		await user.click(screen.getByRole("button", { name: "Continue" }));
 		expect(await screen.findByTestId("agent-sheet")).toHaveAttribute("data-path", "/repo/parent");
 	});
