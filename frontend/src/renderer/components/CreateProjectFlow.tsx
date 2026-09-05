@@ -34,6 +34,7 @@ import CreateProjectProgressDialog from "./CreateProjectProgressDialog";
 import { ModalBackdrop } from "./ModalBackdrop";
 import { PathRow } from "./PathRow";
 import { Button } from "./ui/button";
+import { Checkbox } from "./ui/checkbox";
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
 import { Tabs, TabsList, TabsTrigger } from "./ui/tabs";
@@ -1759,20 +1760,19 @@ function ProjectImportDialog({
 													key={action}
 													className="flex items-start gap-3 px-3 py-3 transition-colors hover:bg-muted/50"
 												>
-													<input
+													<Checkbox
 														id={`projectImportAction-${action}`}
-														type="checkbox"
-								className="mt-0.5 size-4 shrink-0 rounded border-border accent-accent"
+														className="mt-0.5"
 														checked={checked}
 														disabled={disabled}
-														onChange={(event) =>
+														onCheckedChange={(next) =>
 															onChangeApprovedActions(
-																event.target.checked
+																next === true
 																	? [...approvedActions, action]
 																	: approvedActions.filter((value) => value !== action),
-															)
-														}
-													/>
+																)
+															}
+														/>
 													<span className="min-w-0 flex-1">
 														<Label
 															htmlFor={`projectImportAction-${action}`}
@@ -2124,7 +2124,7 @@ function WorkspaceGitSetupFields({ actions, approved, disabled, onApprovalChange
 }) {
 	return <div className="space-y-2">
 		<label className="flex items-start gap-2 text-[12px] text-[var(--color-text-import-title)]">
-			<input checked={approved} className="mt-0.5 size-4 shrink-0 rounded border-border accent-accent" disabled={disabled} onChange={(event) => onApprovalChange(event.target.checked)} type="checkbox" />
+			<Checkbox checked={approved} className="mt-0.5" disabled={disabled} onCheckedChange={(checked) => onApprovalChange(checked === true)} />
 			<span className="min-w-0 flex-1"><span className="block font-medium">Set up Git for this project</span><span className="block text-[11px] leading-4 text-[var(--color-text-import-muted)]">{actions.map(gitActionLabel).join(", ")}</span></span>
 		</label>
 		{actions.includes("set_remote") ? <Input aria-label={remoteAriaLabel} className="h-8 bg-[var(--color-bg-import-card)] font-mono text-[12px]" disabled={disabled} placeholder={remotePlaceholder} value={remoteUrl} onChange={(event) => onRemoteChange(event.target.value)} /> : null}
