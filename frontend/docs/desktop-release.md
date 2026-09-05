@@ -85,7 +85,8 @@ channels omit the first-install DMG.
 ## Guarded macOS Nightly differential updates
 
 The rollout is currently disabled in `scripts/mac-differential-rollout.json`.
-Both feed generation and the client consume that gate. Keep it disabled until
+The client consumes that gate. Feed generation unconditionally suppresses macOS
+sidecars on every channel, independently of the client gate. Keep it disabled until
 the HTTP 416 dependency regression and older-client feed isolation are resolved.
 See `docs/superpowers/plans/2026-09-05-macos-blockmap-pr1-verification.md` at the
 repository root for the stop evidence.
@@ -97,12 +98,21 @@ only when all of these conditions hold:
 - the host is macOS;
 - the effective update channel is `nightly`;
 - no `pr<N>` feature release is pinned; and
-- Developer Mode is enabled.
+- Developer Mode is enabled;
+- the authoritative remote kill switch explicitly allows the attempt; and
+- the client is verified compatible.
 
-The macOS updater defaults to full ZIP downloads before renderer hydration,
+The updater explicitly disables differential downloads on every platform before renderer hydration,
 when settings are missing or malformed, and for every other channel or mode
 combination. Stable and preview feeds must not publish macOS blockmaps.
-Windows and Linux updater behavior is unchanged.
+Unsupported platforms, including Windows and Linux, remain explicitly disabled.
+
+Absent macOS sidecars are the current global safety barrier. The conductor must
+independently suppress blockmaps until a gated client baseline is deployed and
+verified. Deployment alone cannot prove all older clients upgraded: conventional
+sidecars must remain absent wherever those clients can discover them. This repo
+must not generate or publish macOS sidecars. A new client flag cannot protect an
+old binary that still implicitly permits differential downloads.
 
 The release kill switch is asset-side: remove every `.zip.blockmap` asset from
 the affected Nightly release. MacUpdater then performs a clean full ZIP

@@ -55,15 +55,16 @@ function zipBytes(payload) {
 	return readFileSync(archive);
 }
 
-async function runDownload(arch, failure = "none", disabled = false) {
-	const dir = mkdtempSync(join(tmpdir(), "ao-mac-blockmap-"));
+async function runDownload(arch, failure = "none", disabled = false, cycle = {}) {
+	const version = cycle.version ?? "2.0.0";
+	const dir = cycle.dir ?? mkdtempSync(join(tmpdir(), "ao-mac-blockmap-"));
 	temporaryDirectories.push(dir);
 	const oldFile = join(dir, "update.zip");
-	const newFile = join(dir, `AO-darwin-${arch}-2.0.0.zip`);
+	const newFile = join(dir, `AO-darwin-${arch}-${version}.zip`);
 	const oldPayload = fixtureBytes(arch);
 	const newPayload = Buffer.from(oldPayload);
-	fixtureBytes(`${arch}:patch`, 48_000).copy(newPayload, 180_000);
-	const oldBytes = await zipBytes(oldPayload);
+	fixtureBytes(`${arch}:${version}:patch`, 48_000).copy(newPayload, 180_000);
+	const oldBytes = cycle.dir ? readFileSync(oldFile) : zipBytes(oldPayload);
 	const target = await zipBytes(newPayload);
 	writeFileSync(oldFile, oldBytes);
 	writeFileSync(newFile, target);
@@ -76,7 +77,7 @@ async function runDownload(arch, failure = "none", disabled = false) {
 		writeFileSync(oldFile, damaged);
 	}
 	if (failure === "no-cached-zip") rmSync(oldFile);
-	if (failure === "kill-switch-cached-old-map") {
+	if (failure === "kill-switch-cached-old-map" || (cycle.cachedMap && !cycle.dir)) {
 		copyFileSync(`${oldFile}.blockmap`, join(dir, "current.blockmap"));
 	}
 	const requests = [];
@@ -89,7 +90,7 @@ async function runDownload(arch, failure = "none", disabled = false) {
 			res.end(body);
 		};
 		if (req.url.endsWith(".blockmap")) {
-			if ((req.url === "/old.blockmap" && failure === "missing-old-blockmap") ||
+			if (failure === "no-published-sidecars" || (req.url === "/old.blockmap" && failure === "missing-old-blockmap") ||
 				(req.url === "/new.blockmap" && ["unavailable-sidecar", "kill-switch-cached-old-map"].includes(failure))) {
 				send(404, Buffer.from("missing"));
 			} else if (req.url === "/new.blockmap" && failure === "corrupt-blockmap") {
@@ -114,7 +115,7 @@ async function runDownload(arch, failure = "none", disabled = false) {
 	await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
 	try {
 		const base = `http://127.0.0.1:${server.address().port}`;
-		const url = new URL(`${base}/AO-darwin-${arch}-2.0.0.zip`);
+		const url = new URL(`${base}/AO-darwin-${arch}-${version}.zip`);
 		const file = { url, info: { url: url.href, ...targetInfo } };
 		const provider = {
 			resolveFiles: () => [file],
@@ -133,19 +134,19 @@ async function runDownload(arch, failure = "none", disabled = false) {
 		updater.logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() };
 		const handedOff = [];
 		updater.updateDownloaded = async (_file, event) => { handedOff.push(readFileSync(event.downloadedFile)); };
-		vi.spyOn(require("node:child_process"), "execFileSync").mockImplementation(command =>
+		const archProbe = vi.spyOn(require("node:child_process"), "execFileSync").mockImplementation(command =>
 			command === "sysctl" ? "sysctl.proc_translated: 0" : arch === "arm64" ? "ARM" : "x86_64");
 		const archDescriptor = Object.getOwnPropertyDescriptor(process, "arch");
 		Object.defineProperty(process, "arch", { value: arch, configurable: true });
 		let error;
 		try {
 			await updater.doDownloadUpdate({
-				updateInfoAndProvider: { info: { version: "2.0.0", files: [file.info] }, provider },
+				updateInfoAndProvider: { info: { version, files: [file.info] }, provider },
 				cancellationToken: new CancellationToken(), requestHeaders: {},
 				disableDifferentialDownload: disabled,
 			});
 		} catch (err) { error = err; }
-		finally { Object.defineProperty(process, "arch", archDescriptor); }
+		finally { Object.defineProperty(process, "arch", archDescriptor); archProbe.mockRestore(); }
 		let sentinelIntact = true;
 		if (updater.httpExecutor.sentinel !== undefined) {
 			try { fstatSync(updater.httpExecutor.sentinel); }
@@ -153,7 +154,7 @@ async function runDownload(arch, failure = "none", disabled = false) {
 			try { closeSync(updater.httpExecutor.sentinel); }
 			catch { sentinelIntact = false; }
 		}
-		return { target, requests, handedOff, error, targetInfo, sentinelIntact, logs: updater.logger };
+		return { dir, target, requests, handedOff, error, targetInfo, sentinelIntact, logs: updater.logger };
 	} finally { await new Promise(resolve => server.close(resolve)); }
 }
 
@@ -195,6 +196,44 @@ describe("MacUpdater reconstruction and full fallback", () => {
 		expect(result.requests[0].range).toBeUndefined();
 		expect(result.handedOff[0].equals(result.target)).toBe(true);
 	});
+	it("keeps cached ZIP/map cycles full-only despite published sidecars when disabled", async () => {
+		let dir;
+		for (const version of ["2.0.0", "3.0.0"]) {
+			const result = await runDownload("arm64", "none", true, { dir, version, cachedMap: true });
+			dir = result.dir;
+			expect(result.error).toBeUndefined();
+			expect(result.sentinelIntact).toBe(true);
+			expect(result.requests).toHaveLength(1);
+			expect(result.requests[0].path).toMatch(/\.zip$/);
+			expect(result.requests[0].range).toBeUndefined();
+			expect(result.handedOff).toHaveLength(1);
+			expect(result.handedOff[0].equals(result.target)).toBe(true);
+		}
+	});
+
+	it("keeps a legacy implicit-allow client full-only across cycles while sidecars are absent", async () => {
+		let dir;
+		for (const version of ["2.0.0", "3.0.0"]) {
+			const result = await runDownload("arm64", "no-published-sidecars", false, { dir, version, cachedMap: true });
+			dir = result.dir;
+			expect(result.error).toBeUndefined();
+			expect(result.sentinelIntact).toBe(true);
+			expect(result.requests.some(req => req.range)).toBe(false);
+			expect(result.requests.filter(req => req.path.endsWith(".zip"))).toHaveLength(1);
+			expect(result.handedOff).toHaveLength(1);
+			expect(result.handedOff[0].equals(result.target)).toBe(true);
+		}
+	});
+
+	it("documents that sidecar presence activates an unpatched legacy client", async () => {
+		// This is why suppression is mandatory. A new binary's policy cannot
+		// retroactively guard an older MacUpdater with implicit differential allow.
+		const result = await runDownload("arm64", "none", false, { cachedMap: true });
+		expect(result.error).toBeUndefined();
+		expect(result.requests.some(req => req.range)).toBe(true);
+		expect(result.handedOff).toHaveLength(1);
+	});
+
 	// Keep this dependency regression last: 6.8.9 continues processing the 416
 	// response after rejecting, racing closed descriptors against the fallback.
 	it("performs one clean full download after HTTP 416", async () => {

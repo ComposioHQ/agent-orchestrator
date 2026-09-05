@@ -5,8 +5,9 @@ PR: https://github.com/Untrivial-ai/agent-orchestrator/pull/4906
 ## Current state
 
 The release gate in `frontend/scripts/mac-differential-rollout.json` is false.
-Production macOS updates stay full-download-only. Nightly macOS sidecar
-generation is also disabled. Windows and Linux behavior is unchanged.
+Production macOS updates stay full-download-only. macOS sidecar
+generation is unconditionally suppressed on every channel. Unsupported platforms,
+including Windows and Linux, explicitly disable differential downloads.
 
 Prepared changes preserve the approved eligibility matrix, fail-closed renderer
 hydration, a serialized Developer Mode mirror, stale-form protection, per-operation
@@ -91,12 +92,12 @@ npm run typecheck
 npm run package
 ```
 
-The focused main/feed/preload suite passed 177 tests. The selected renderer
+The focused main/feed/preload suite passed 180 tests. The selected renderer
 suite passed 88 tests. Project and E2E typechecks passed. The unsigned package
 command exited 0 after building the Vite bundles, but its log stopped at
 "Finalizing package" and no final app artifact was present. This does not count
 as successful packaged-app acceptance.
-The full synthetic harness finished with 10 passed and 1 failed: HTTP 416
+The full synthetic harness finished with 13 passed and 1 failed: HTTP 416
 violated descriptor integrity. Earlier runs also timed out. The regression is
 retained as a failing test, with no skip or test-side fallback workaround. These are preparation
 checks, not approval to enable the feature.
@@ -104,3 +105,29 @@ checks, not approval to enable the feature.
 The brief's `npm run build` is not defined in this checkout. `npm run package`
 is the available production bundle/package build. No release, tag, project or
 native installation is created by this work.
+
+## Rollout-isolation follow-up plan
+
+1. Set the dependency disable flag before hydration on every platform; deny every unsupported state.
+2. Remove macOS sidecar generation entirely from the release-feed path.
+3. Require explicit remote authorization and compatible-client evidence before any future allow; keep unknown denied while the authoritative contract is unresolved.
+4. Exercise real MacUpdater across cached ZIP/map cycles with sidecars present and policy disabled; record the contrasting legacy-client exposure without claiming old binaries can be patched remotely.
+5. Re-run focused tests and keep the existing PR draft with the HTTP 416 blocker retained.
+
+The isolation follow-up exercises two successive target versions against the
+same cache directory. With the dependency disable flag set, existing ZIP/map
+cache plus available sidecars still produces one full ZIP request per cycle and
+no sidecar/range request. An implicit-allow legacy client also stays full-only
+across cycles when sidecars are absent, even with a seeded cached ZIP/map. A
+separate counterexample proves that publishing sidecars activates that legacy
+client. It would be false to claim new code can retroactively disable old binaries.
+
+Remote kill-switch source/schema and compatible-client criteria remain pending
+an authoritative decision. The local gate stays false; no remote allow is inferred
+from sidecar presence, local settings, a successful check, or a version string.
+
+CI on `dd8d074c8` passed renderer smoke and both typechecks. Its full test suite
+reported 3776 passed, 6 skipped and 2 failed: the retained HTTP 416 regression
+and a telemetry fixture that supplied only an arm64 ZIP on an x64 runner. The
+fixture now supplies both architectures so it tests transfer telemetry independently
+of the host architecture.

@@ -9,7 +9,6 @@
 // `gh release upload TAG nightly*.yml --clobber`).
 import { readdirSync, writeFileSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
-import macDifferentialRollout from "./mac-differential-rollout.json" with { type: "json" };
 import { createHash } from "node:crypto";
 import { writeBlockmap } from "./blockmap.mjs";
 
@@ -54,8 +53,8 @@ export function feedFilename(channel, platform) {
 //          cannot run at all and every client falls back to a full download.
 //          The linux .blockmap sidecars we publish are consumed by nothing (see
 //          the note in generateFeeds).
-//   mac:   a sidecar is generated only for the guarded nightly rollout. Stable
-//          and feature feeds remain full-download-only (#3034/#3151/#3267).
+//   mac:   no sidecar is generated on any channel. Absence is the global
+//          barrier protecting older clients (#3034/#3151/#3267).
 //
 // When important is true, emits `important: true` after releaseDate so the
 // in-app update prompt is escalated.
@@ -75,9 +74,9 @@ export function buildYml(version, files, releaseDate, important = false) {
 
 // generateFeeds writes the yml + sidecar blockmaps for every platform present in
 // dir. version may carry +build metadata (nightly); strip it for the yml.
-// mac zips can produce sidecars only for nightly after the shared release gate
-// opens. It is currently closed for dependency and older-client safety. Removing
-// the release sidecars remains the kill switch for future download attempts.
+// mac zips never produce sidecars, including Nightly. The release conductor
+// must independently suppress them until a gated client baseline and isolation
+// from older clients have been verified. Local client flags cannot protect old binaries.
 //
 // The linux sidecars this still writes are dead weight: AppImageUpdater reads
 // its blockmap from the AppImage tail, never from a sidecar, and needs a
@@ -99,7 +98,7 @@ export async function generateFeeds(dir, rawVersion, channel, releaseDate, impor
 		const files = [];
 		for (const name of names) {
 			const { sha512, size } =
-				platform === "mac" && (channel !== "nightly" || macDifferentialRollout.enabled !== true)
+				platform === "mac"
 					? hashFile(join(dir, name))
 					: await writeBlockmap(join(dir, name));
 			files.push({ url: name, sha512, size });
@@ -123,7 +122,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
 }
 
 // hashFile computes the same {sha512, size} shape writeBlockmap returns, but
-// without writing a .blockmap sidecar file. Used for stable and feature mac zips:
+// without writing a .blockmap sidecar file. Used for mac zips on every channel:
 // Squirrel.Mac's ShipIt install step runs `ditto` against the extracted update
 // cache and fails on a corrupt one, which is the #3034 failure signature.
 //
@@ -134,9 +133,8 @@ if (import.meta.url === `file://${process.argv[1]}`) {
 // target zip that was already correctly ditto-built with its full AppleDouble
 // set. The defect is in the differential download/patch-apply mechanism itself,
 // not in the zip format (#3267 decision 4). Skipping the sidecar for mac
-// therefore remains the default baseline. The only exception is the guarded
-// nightly plus Developer Mode experiment; #3267 decision 4 records the safety
-// boundary for any broader rollout.
+// therefore remains the baseline on every channel. #3267 decision 4 records
+// the safety boundary for any future rollout.
 export function hashFile(filePath) {
 	const data = readFileSync(filePath);
 	const sha512 = createHash("sha512").update(data).digest("base64");

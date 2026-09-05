@@ -22,9 +22,8 @@ const { buildBlockMap } = require("app-builder-lib/out/targets/blockmap/blockmap
 //          reading the blockmap from the AppImage tail and requiring
 //          blockMapSize. Without it, linux differential updates are off
 //          entirely and the sidecars we write for linux are read by nobody.
-//   mac:   nightly feeds call writeBlockmap for the guarded Developer Mode
-//          rollout. Stable and feature feeds remain full-download-only
-//          (#3034, #3151, #3267 decision 4).
+//   mac:   release feeds never call writeBlockmap. Absent sidecars protect
+//          legacy clients on every channel (#3034, #3151, #3267 decision 4).
 export async function writeBlockmap(filePath) {
 	const { sha512, size } = await buildBlockMap(filePath, "gzip", `${filePath}.blockmap`);
 	return { sha512, size };

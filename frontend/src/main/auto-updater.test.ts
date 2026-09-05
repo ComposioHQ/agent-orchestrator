@@ -87,15 +87,15 @@ describe("macOS differential update policy", () => {
   afterEach(() => { restorePlatform(); vi.restoreAllMocks(); });
   const nightly: UpdateSettings = { enabled: true, channel: "nightly", nightlyAck: true, feature: null, macDifferentialUpdates: true };
 
-  it.each(["win32", "linux"] as const)("does not alter %s differential flags", async platform => {
+  it.each(["win32", "linux"] as const)("keeps unsupported %s differential downloads disabled", async platform => {
     const restore = stubProcess(platform, process.execPath);
     try {
       const { module, autoUpdater } = await importAutoUpdater(nightly);
-      expect(autoUpdater.disableDifferentialDownload).toBe(false);
+      expect(autoUpdater.disableDifferentialDownload).toBe(true);
       await module.setMacDifferentialUpdates(stateDir, true);
       await module.checkForUpdatesNow(stateDir);
       await module.downloadUpdateNow();
-      expect(autoUpdater.disableDifferentialDownload).toBe(false);
+      expect(autoUpdater.disableDifferentialDownload).toBe(true);
     } finally { restore(); }
   });
 
@@ -208,7 +208,10 @@ describe("macOS differential update policy", () => {
     await module.checkForUpdatesNow(stateDir);
     updaterEvents.get("update-available")?.({
       version: "1.2.3",
-      files: [{ url: "AO-darwin-arm64.zip", size: 1000 }],
+      files: [
+        { url: "AO-darwin-arm64.zip", size: 1000 },
+        { url: "AO-darwin-x64.zip", size: 1000 },
+      ],
     });
     autoUpdater.logger.info("Differential download: https://example.test/AO.zip?token=secret");
     autoUpdater.logger.error("Cannot download differentially, fallback to full download: checksum mismatch");

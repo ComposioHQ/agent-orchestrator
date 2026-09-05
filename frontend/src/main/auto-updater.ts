@@ -57,19 +57,19 @@ let transferObservation = {
 };
 let updaterLoggerWired = false;
 
-// electron-updater defaults this flag to false on macOS. Override it before
+// electron-updater defaults this flag to false. Override it on every platform before
 // any renderer or settings hydration can race an update operation.
-if (process.platform === "darwin") autoUpdater.disableDifferentialDownload = true;
+autoUpdater.disableDifferentialDownload = true;
 
 export function applyUpdaterPolicy(
   settings: UpdateSettings,
   platform: NodeJS.Platform = process.platform,
 ): void {
   // Keep this gate closed until the dependency and older-client feed isolation
-  // contracts pass. Sidecar generation shares the same release gate.
+  // contracts pass. This repository never generates macOS release sidecars.
   const eligible = macDifferentialRollout.enabled === true && developerModeHydrated && macDifferentialUpdatesEnabled({ platform, settings });
   differentialEligible = eligible;
-  if (platform === "darwin") autoUpdater.disableDifferentialDownload = !eligible;
+  autoUpdater.disableDifferentialDownload = !eligible;
   console.info("[auto-updater] mac differential policy", {
     eligible,
     platform,
