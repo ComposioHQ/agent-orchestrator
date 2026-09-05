@@ -75,9 +75,10 @@ func (p *Provider) ListPRsByRepo(ctx context.Context, repo ports.SCMRepo, update
 		q.Set("direction", "desc")
 		q.Set("per_page", strconv.Itoa(perPage))
 		q.Set("page", strconv.Itoa(page))
-		if !updatedAfter.IsZero() {
-			q.Set("since", updatedAfter.UTC().Format(time.RFC3339Nano))
-		}
+		// No `since` here: the pull-requests endpoint does not accept one and
+		// silently ignores it, so every changed repo re-listed all of its open
+		// PRs on every poll. The watermark is applied below instead, which the
+		// sort=updated&direction=desc ordering makes exact.
 		resp, err := p.client.doREST(ctx, http.MethodGet, repoPath(repo.Owner, repo.Name, "pulls"), q, nil)
 		if err != nil {
 			return nil, err
@@ -87,6 +88,15 @@ func (p *Provider) ListPRsByRepo(ctx context.Context, repo ports.SCMRepo, update
 			return nil, fmt.Errorf("github scm: decode open PR list: %w", err)
 		}
 		for _, pull := range pulls {
+			// Results arrive newest-updated first, so the first PR at or before the
+			// watermark means every remaining one is older too and pagination can
+			// stop. An unparseable timestamp keeps the PR rather than dropping it:
+			// a missed observation is worse than a redundant one.
+			if !updatedAfter.IsZero() {
+				if updated, err := time.Parse(time.RFC3339, pull.UpdatedAt); err == nil && !updated.After(updatedAfter) {
+					return out, nil
+				}
+			}
 			out = append(out, restListPullToSCM(pull))
 		}
 		if len(pulls) < perPage {
