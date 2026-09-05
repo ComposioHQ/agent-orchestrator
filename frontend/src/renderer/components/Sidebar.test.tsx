@@ -1501,6 +1501,59 @@ describe("Sidebar", () => {
 		await vi.waitFor(() => expect(prepared).toBe(true));
 	});
 
+	it("prepares an approved plain workspace child only after Continue", async () => {
+		const user = userEvent.setup();
+		window.ao!.app.chooseDirectory = vi.fn().mockResolvedValue("/repo/workspace");
+		window.ao!.app.checkAncestorRepo = vi.fn().mockResolvedValue(undefined);
+		let preparationBody: unknown;
+		postMock.mockImplementation(async (path: string, options?: { body?: unknown }) => {
+			if (path === "/api/v1/imports/prepare-git") {
+				preparationBody = options?.body;
+				return {
+					data: {
+						events: [],
+						validation: {
+							importKind: "workspace",
+							isValid: true,
+							blockingErrors: [],
+							root: { repoPath: "/repo/workspace", isRepo: false, hasCommit: false, hasOrigin: false, isEmptyFolder: false, needsGitInit: true, requiredActions: ["git_init", "git_commit", "set_remote"], blockingErrors: [] },
+							childRepos: [],
+							nextStep: "continue",
+						},
+					},
+					error: undefined,
+				};
+			}
+			return {
+				data: {
+					importKind: "workspace",
+					isValid: true,
+					blockingErrors: [],
+					root: { repoPath: "/repo/workspace", isRepo: false, hasCommit: false, hasOrigin: false, isEmptyFolder: false, needsGitInit: true, requiredActions: ["git_init", "git_commit", "set_remote"], blockingErrors: [] },
+					childRepos: [{ repoPath: "/repo/workspace/app", isRepo: true, hasCommit: true, hasOrigin: true, isEmptyFolder: false, needsGitInit: false, requiredActions: [], blockingErrors: [] }],
+					nextStep: "continue",
+				},
+				error: undefined,
+			};
+		});
+		window.ao!.app.scanImportFolder = vi.fn().mockResolvedValue({
+			path: "/repo/workspace",
+			repos: [
+				{ name: "app", path: "/repo/workspace/app", relativePath: "app", branch: "main", remote: "https://example.com/app.git", hasRemote: true, isRepo: true, hasCommit: true, status: "ok", needsGitInit: false },
+				{ name: "docs", path: "/repo/workspace/docs", relativePath: "docs", branch: "", remote: "", hasRemote: false, isRepo: false, hasCommit: false, status: "ok", needsGitInit: true },
+			],
+		});
+		renderSidebar({ onCreateProject: vi.fn().mockResolvedValue(undefined) as CreateProjectHandler });
+
+		await user.click(screen.getByLabelText("New project"));
+		await user.click(screen.getByRole("button", { name: /^Import a workspace folder$/i }));
+		await user.click(screen.getByRole("button", { name: "Not a Git repo · Set up" }));
+		await user.click(screen.getByRole("checkbox"));
+		expect(preparationBody).toBeUndefined();
+		await user.click(screen.getByRole("button", { name: "Continue" }));
+		await vi.waitFor(() => expect(preparationBody).toMatchObject({ repositories: [{ repoPath: "/repo/workspace/docs" }] }));
+	});
+
 	it("does not rescan folders for non-validation create failures", async () => {
 		const user = userEvent.setup();
 		const onCreateProject = vi.fn().mockRejectedValue(new Error("AO daemon is not ready.")) as CreateProjectHandler;

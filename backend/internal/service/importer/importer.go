@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
@@ -277,7 +278,7 @@ func (m *Manager) PrepareGit(ctx context.Context, in GitPreparationInput) (GitPr
 	if !validation.IsValid {
 		return GitPreparationResult{Validation: validation}, nil
 	}
-	targets, err := preparationTargets(validation, in)
+	targets, err := preparationTargets(ctx, validation, in)
 	if err != nil {
 		return GitPreparationResult{}, err
 	}
@@ -392,7 +393,7 @@ type gitPreparationTarget struct {
 	Input  GitRepositoryPreparationInput
 }
 
-func preparationTargets(validation ImportValidationResult, in GitPreparationInput) ([]gitPreparationTarget, error) {
+func preparationTargets(ctx context.Context, validation ImportValidationResult, in GitPreparationInput) ([]gitPreparationTarget, error) {
 	if validation.ImportKind == ImportKindProject {
 		return []gitPreparationTarget{{
 			Status: validation.Root,
@@ -422,6 +423,24 @@ func preparationTargets(validation ImportValidationResult, in GitPreparationInpu
 		input, ok := byPath[status.RepoPath]
 		if !ok {
 			return nil, apierr.Invalid("IMPORT_REPOSITORY_APPROVAL_REQUIRED", "Every repository with missing Git preparation requires explicit approval.", map[string]any{"repoPath": status.RepoPath})
+		}
+		targets = append(targets, gitPreparationTarget{Status: status, Input: input})
+	}
+	for repoPath, input := range byPath {
+		if slices.ContainsFunc(validation.ChildRepos, func(status RepoGitStatus) bool { return sameImportPath(status.RepoPath, repoPath) }) {
+			continue
+		}
+		resolvedPath := comparableImportPath(repoPath)
+		if !sameImportPath(filepath.Dir(resolvedPath), comparableImportPath(validation.Root.RepoPath)) {
+			return nil, apierr.Invalid("INVALID_REPOSITORY_PATH", "Repository must be a direct child of the workspace.", map[string]any{"repoPath": repoPath})
+		}
+		info, statErr := os.Stat(resolvedPath)
+		if statErr != nil || !info.IsDir() {
+			return nil, apierr.Invalid("INVALID_REPOSITORY_PATH", "Repository path is invalid.", map[string]any{"repoPath": repoPath})
+		}
+		status := inspectImportRepo(ctx, resolvedPath)
+		if len(status.BlockingErrors) > 0 {
+			return nil, apierr.Invalid("INVALID_REPOSITORY_PATH", "Repository cannot be prepared.", map[string]any{"repoPath": repoPath})
 		}
 		targets = append(targets, gitPreparationTarget{Status: status, Input: input})
 	}

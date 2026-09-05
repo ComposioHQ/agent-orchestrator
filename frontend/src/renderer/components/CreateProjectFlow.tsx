@@ -743,7 +743,7 @@ export function CreateProjectFlow({
 	const prepareWorkspaceGit = async () => {
 		if (!projectValidation || !validationScan) return;
 		const repositories = mergeWorkspaceImportRepos(validationScan, projectValidation)
-			.filter((repo) => repo.isRepo && repo.requiredActions.length > 0)
+			.filter((repo) => repo.requiredActions.length > 0 && repo.requiredActions.every((action) => workspaceApprovedActions[repo.path]?.includes(action)))
 			.map((repo) => ({
 				repoPath: repo.path,
 				approvedActions: workspaceApprovedActions[repo.path] ?? [],
@@ -896,7 +896,10 @@ export function CreateProjectFlow({
 						onContinue={() => {
 							if (!validationScan || error) return;
 							if (selectedKind === "workspace") {
-								if (projectValidation?.nextStep === "prepare_git") {
+								const hasApprovedSetup = mergeWorkspaceImportRepos(validationScan, projectValidation).some((repo) =>
+									repo.requiredActions.length > 0 && repo.requiredActions.every((action) => workspaceApprovedActions[repo.path]?.includes(action)),
+								);
+								if (projectValidation?.nextStep === "prepare_git" || hasApprovedSetup) {
 									void prepareWorkspaceGit();
 								} else {
 									setFolderPickerOpen(false);
@@ -1898,10 +1901,12 @@ function CreateProjectFolderDialog({
 	const displayRepos = isWorkspace ? mergeWorkspaceImportRepos(scan, validation) : normalizeImportRepos(scan?.repos ?? []);
 	const workspaceNeedsInitializedRepo = isWorkspace && validation?.blockingErrors.includes("WORKSPACE_CHILD_REPO_REQUIRED");
 	const workspaceRootIsProject = isWorkspace && validation?.nextStep === "choose_import_kind" && validation.root.isRepo;
-	const workspaceSetupReady = !isWorkspace || displayRepos.filter((repo) => repo.isRepo && repo.requiredActions.length > 0).every((repo) =>
-		repo.requiredActions.every((action) => workspaceApprovedActions[repo.path]?.includes(action)) &&
-		(!repo.requiredActions.includes("set_remote") || Boolean(workspaceRemoteUrls[repo.path]?.trim())),
-	);
+	const workspaceSetupReady = !isWorkspace || displayRepos.every((repo) => {
+		if (repo.requiredActions.length === 0) return true;
+		const approved = repo.requiredActions.every((action) => workspaceApprovedActions[repo.path]?.includes(action));
+		if (!repo.isRepo && !approved) return true;
+		return approved && (!repo.requiredActions.includes("set_remote") || Boolean(workspaceRemoteUrls[repo.path]?.trim()));
+	});
 	const failedRepos =
 		displayRepos.filter(
 			(repo) =>

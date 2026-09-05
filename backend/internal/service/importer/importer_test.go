@@ -859,6 +859,46 @@ func TestPrepareGitWorkspaceRunsPerRepositoryEvents(t *testing.T) {
 	}
 }
 
+func TestPrepareGitWorkspaceCanInitializeAnApprovedPlainChild(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	gitRepoWithCommitWithOrigin(t, filepath.Join(root, "ready"), "https://example.invalid/ready.git")
+	plain := filepath.Join(root, "plain")
+	if err := os.Mkdir(plain, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	svc := New(Deps{Store: newFakeStore()})
+
+	result, err := svc.PrepareGit(ctx, GitPreparationInput{
+		ImportKind: ImportKindWorkspace,
+		Path:       root,
+		Repositories: []GitRepositoryPreparationInput{{
+			RepoPath: plain,
+			ApprovedActions: []string{
+				GitPreparationActionInit,
+				GitPreparationActionCommit,
+				GitPreparationActionSetRemote,
+			},
+			RemoteURL: "https://example.invalid/plain.git",
+		}},
+	})
+	if err != nil {
+		t.Fatalf("PrepareGit: %v", err)
+	}
+	if result.Validation.NextStep != ImportNextStepContinue {
+		t.Fatalf("validation = %#v, want continue", result.Validation)
+	}
+	wantEventActions(t, result.Events, []string{
+		GitPreparationActionInit, GitPreparationActionInit, GitPreparationActionInit,
+		GitPreparationActionCommit, GitPreparationActionCommit, GitPreparationActionCommit,
+		GitPreparationActionSetRemote, GitPreparationActionSetRemote, GitPreparationActionSetRemote,
+	})
+	status := inspectImportRepo(ctx, plain)
+	if !status.IsRepo || !status.HasCommit || !status.HasOrigin {
+		t.Fatalf("plain child status = %#v, want ready repository", status)
+	}
+}
+
 func gitRepoWithOrigin(t *testing.T) string {
 	t.Helper()
 	return gitRepoWithCommitWithOrigin(t, t.TempDir(), "https://example.invalid/original.git")
