@@ -70,7 +70,25 @@ SHA-512/size metadata, no sidecars and no `blockMapSize`; Windows/Linux feed
 generation remains unchanged. Do not infer a remote control from the local JSON
 stop. A future conductor rollout must be independently reviewed after compatible
 client deployment and verification, with legacy-client isolation established.
-Audit part 2 remains pending.
+Audit part 2, supplied by orchestrator 250:
+
+- `verify-feeds.mjs` forbids macOS blockmaps across latest, nightly and pr
+  channels, requires Windows sidecars, and rejects macOS `blockMapSize`, macOS
+  sidecar URLs and any stray unreferenced blockmap.
+- `verify-remote-release` checks the exact draft asset inventory, downloads and
+  compares the assets, then reruns feed verification.
+- Audited Nightly `v0.12.11-nightly.202609041654` has Windows/Linux versioned
+  blockmaps only. Its `nightly-mac.yml` lists two versioned ZIPs without
+  `blockMapSize`.
+
+The ordinary conductor cannot currently publish or reference macOS blockmaps
+without deliberate verification policy and test changes. This is stronger than
+feed-generation suppression alone. This PR must not relax that policy or produce
+macOS sidecars. Its scope is explicit client default-disable, guarded capability
+groundwork and real fallback safety. Any future conductor relaxation is a separate
+reviewed change after compatible-client deployment and verification. Legacy
+safety still depends on absent sidecars because the audited public baseline
+has no explicit `disableDifferentialDownload` assignment.
 
 ## Evidence prerequisites
 

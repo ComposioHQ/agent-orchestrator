@@ -109,7 +109,20 @@ when settings are missing or malformed, and for every other channel or mode
 combination. Stable and preview feeds must not publish macOS blockmaps.
 Unsupported platforms, including Windows and Linux, remain explicitly disabled.
 
-Absent macOS sidecars are the current global safety barrier. The conductor must
+Absent macOS sidecars are the current global safety barrier. The conductor's
+`verify-feeds.mjs` forbids them on latest, nightly and pr channels, rejects macOS
+`blockMapSize` and sidecar URLs, and rejects stray unreferenced blockmaps.
+`verify-remote-release` verifies the exact draft inventory, downloads and compares
+assets, and reruns feed verification. Ordinary publication cannot bypass these
+checks without deliberate policy changes. Windows sidecars remain required.
+
+The audited Nightly `v0.12.11-nightly.202609041654` contains Windows/Linux
+versioned blockmaps only; its macOS manifest lists two versioned ZIPs without
+`blockMapSize`. Older public clients lack an explicit disable flag, so their
+safety still depends on that absence. Any conductor relaxation is separate
+reviewed work after compatible-client deployment and verification.
+
+The conductor must
 independently suppress blockmaps until a gated client baseline is deployed and
 verified. Deployment alone cannot prove all older clients upgraded: conventional
 sidecars must remain absent wherever those clients can discover them. This repo
