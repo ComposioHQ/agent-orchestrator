@@ -37,6 +37,7 @@ import { useRestoreSession } from "../hooks/useRestoreSession";
 import { useShellTerminals } from "../hooks/useShellTerminals";
 import { useCloudCp } from "../hooks/useCloudCp";
 import { createCloudTerminalMux } from "../lib/cloud-terminal-mux";
+import { subscribeSessionEventsBridged } from "../lib/cloud-cp/stream-bridge";
 import { XtermTerminal } from "./XtermTerminal";
 import { RestoreUnavailableDialog } from "./RestoreUnavailableDialog";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
@@ -314,12 +315,29 @@ export function TerminalCacheProvider({
 			const factory = () =>
 				createCloudTerminalMux({
 					wsBaseUrl: `${cloudCpRef.current.baseUrl.replace(/^http/i, "ws").replace(/\/+$/, "")}/api/cloud/v1`,
+					// Do not expose the temporary workspace shell. Keep the pane in its
+					// normal connecting state until the worker says the real coding-agent
+					// terminal is ready.
 					kind: "agent",
-					mintTicket: async () => {
+					waitForAgentReady: true,
+					mintTicket: async (kind) => {
 						const response = await cloudCpRef.current.client.createTerminalTicket(orgId, sessionId, {
-							kind: "agent",
+							kind,
 						});
 						return response.ticket;
+					},
+					subscribeAgentReady: (onReady) => {
+						const controller = new AbortController();
+						void subscribeSessionEventsBridged({
+							baseUrl: cloudCpRef.current.baseUrl,
+							orgId,
+							sessionId,
+							signal: controller.signal,
+							onEvent: (event) => {
+								if (event.type === "agent.ready") onReady();
+							},
+						});
+						return () => controller.abort();
 					},
 				});
 			cloudMuxFactoriesRef.current.set(sessionId, factory);

@@ -25,7 +25,11 @@ export interface CloudTerminalMuxOptions {
 	/** "agent" attaches the running coding agent; "workspace" opens a shell. */
 	kind: "agent" | "workspace";
 	/** Mints a fresh single-use terminal ticket (goes through the CP proxy). */
-	mintTicket: () => Promise<string>;
+	mintTicket: (kind: "agent" | "workspace") => Promise<string>;
+	/** Subscribes to the worker's explicit agent-ready lifecycle signal. */
+	subscribeAgentReady?: (onReady: () => void) => () => void;
+	/** Keep the pane in its connecting state until an agent-ready event arrives. */
+	waitForAgentReady?: boolean;
 	WebSocketImpl?: typeof WebSocket;
 }
 
@@ -45,6 +49,9 @@ export function createCloudTerminalMux(options: CloudTerminalMuxOptions): Termin
 
 	let socket: WebSocket | null = null;
 	let after = 0;
+	let activeKind: "agent" | "workspace" | null = options.waitForAgentReady ? null : options.kind;
+	let agentUpgradeRequested = false;
+	let agentRetryTimer: ReturnType<typeof setTimeout> | null = null;
 	let disposed = false;
 	let exited = false;
 	let connectionState: MuxConnectionState | undefined;
@@ -92,10 +99,43 @@ export function createCloudTerminalMux(options: CloudTerminalMuxOptions): Termin
 		}
 	};
 
-	const connect = async () => {
+	const openSocket = (kind: "agent" | "workspace", ticket: string) => {
+		if (disposed) return;
+		const query = new URLSearchParams({
+			ticket,
+			kind,
+			after: String(after),
+			protocol: "2",
+		});
+		const url = `${options.wsBaseUrl.replace(/\/+$/, "")}/terminal?${query.toString()}`;
+		const ws = new WS(url);
+		socket = ws;
+		ws.addEventListener("open", () => {
+			if (disposed || socket !== ws) return;
+			if (pendingResize) sendJSON({ type: "resize", columns: pendingResize.cols, rows: pendingResize.rows });
+			for (const input of pendingInput.splice(0)) sendJSON({ type: "input", data: input });
+			setConnectionState("open");
+		});
+		ws.addEventListener("message", (event) => {
+			if (socket === ws) handleMessage(event);
+		});
+		ws.addEventListener("close", (event: CloseEvent) => {
+			if (socket !== ws) return;
+			if (event.code === 1000 && !exited) {
+				exited = true;
+				exitListeners.forEach((listener) => listener());
+			}
+			setConnectionState("closed");
+		});
+		ws.addEventListener("error", () => {
+			if (socket === ws) setConnectionState("closed");
+		});
+	};
+
+	const connect = async (kind: "agent" | "workspace") => {
 		let ticket: string;
 		try {
-			ticket = await options.mintTicket();
+			ticket = await options.mintTicket(kind);
 		} catch {
 			if (disposed) return;
 			// A freshly created session's worker may not be connected yet while its
@@ -108,37 +148,39 @@ export function createCloudTerminalMux(options: CloudTerminalMuxOptions): Termin
 			return;
 		}
 		if (disposed) return;
-		const query = new URLSearchParams({
-			ticket,
-			kind: options.kind,
-			after: String(after),
-			protocol: "2",
-		});
-		const url = `${options.wsBaseUrl.replace(/\/+$/, "")}/terminal?${query.toString()}`;
-		const ws = new WS(url);
-		socket = ws;
-		ws.addEventListener("open", () => {
-			if (disposed) return;
-			if (pendingResize) sendJSON({ type: "resize", columns: pendingResize.cols, rows: pendingResize.rows });
-			for (const input of pendingInput.splice(0)) sendJSON({ type: "input", data: input });
-			setConnectionState("open");
-		});
-		ws.addEventListener("message", handleMessage);
-		ws.addEventListener("close", (event: CloseEvent) => {
-			// A normal closure (1000) is the CP telling us the terminal process
-			// exited or the terminal was closed — the pane is gone, so signal exit
-			// and let the hook stop reattaching. Any other close is a transport
-			// drop the hook should reconnect through (with a fresh ticket).
-			if (event.code === 1000 && !exited) {
-				exited = true;
-				exitListeners.forEach((listener) => listener());
-			}
-			setConnectionState("closed");
-		});
-		ws.addEventListener("error", () => setConnectionState("closed"));
+		if (kind === "workspace" && agentUpgradeRequested) return;
+		activeKind = kind;
+		openSocket(kind, ticket);
 	};
 
-	void connect();
+	const upgradeToAgent = () => {
+		if (disposed || activeKind === "agent" || agentUpgradeRequested) return;
+		agentUpgradeRequested = true;
+		void (async () => {
+			try {
+				const ticket = await options.mintTicket("agent");
+				if (disposed) return;
+				after = 0;
+				dataListeners.forEach((listener) => listener(new TextEncoder().encode("\u001bc")));
+				const previous = socket;
+				socket = null;
+				try {
+					previous?.close(1000, "switching to coding agent");
+				} catch {
+					// Already closed.
+				}
+				activeKind = "agent";
+				openSocket("agent", ticket);
+			} catch {
+				if (disposed) return;
+				agentUpgradeRequested = false;
+				agentRetryTimer = setTimeout(upgradeToAgent, 100);
+			}
+		})();
+	};
+
+	const unsubscribeAgentReady = options.subscribeAgentReady?.(upgradeToAgent);
+	if (!options.waitForAgentReady) void connect(options.kind);
 
 	return {
 		open: (_id, cols, rows) => {
@@ -184,6 +226,8 @@ export function createCloudTerminalMux(options: CloudTerminalMuxOptions): Termin
 		dispose: () => {
 			if (disposed) return;
 			disposed = true;
+			if (agentRetryTimer) clearTimeout(agentRetryTimer);
+			unsubscribeAgentReady?.();
 			dataListeners.clear();
 			exitListeners.clear();
 			openedListeners.clear();

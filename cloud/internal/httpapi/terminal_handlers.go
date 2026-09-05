@@ -113,6 +113,14 @@ func (s *Server) connectTerminal(w http.ResponseWriter, r *http.Request) {
 		s.closeTerminal(r, terminal)
 		return
 	}
+	if s.logger != nil {
+		s.logger.Info("browser terminal attached",
+			"session_id", terminal.SessionID,
+			"terminal_id", terminal.ID,
+			"kind", terminal.Kind,
+			"worker_epoch", terminal.WorkerEpoch,
+		)
+	}
 	connection.SetReadLimit(maxTerminalFrame)
 	defer func() {
 		if terminal.Kind != "agent" {
@@ -311,6 +319,14 @@ func (s *Server) writeTerminalOutput(
 			if state == "open" {
 				messageType = "ready"
 				ready = true
+				if s.logger != nil {
+					s.logger.Info("browser terminal ready",
+						"session_id", terminal.SessionID,
+						"terminal_id", terminal.ID,
+						"kind", terminal.Kind,
+						"worker_epoch", terminal.WorkerEpoch,
+					)
+				}
 			} else {
 				startingSent = true
 			}

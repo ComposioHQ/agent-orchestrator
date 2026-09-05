@@ -21,6 +21,7 @@ import (
 // control-plane or billing event onto its own session stream.
 var workerEventTypes = map[string]struct{}{
 	"agent.activity":       {},
+	"agent.ready":          {},
 	"worker.ready":         {},
 	"chat.assistant_delta": {},
 }
@@ -546,7 +547,7 @@ func (s *Server) workerEvent(w http.ResponseWriter, r *http.Request) {
 		s.appendSessionProjectionEvent(
 			r.Context(), claims.OrgID, claims.SessionID, input.Type, activity,
 		)
-	case "worker.ready":
+	case "worker.ready", "agent.ready":
 		var ready worker.ReadyEvent
 		if err := json.Unmarshal(input.Payload, &ready); err != nil ||
 			ready.WorkerID != claims.WorkerID ||

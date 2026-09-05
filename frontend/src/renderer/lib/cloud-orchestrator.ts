@@ -30,7 +30,7 @@ export async function spawnCloudOrchestrator(queryClient: QueryClient, projectId
 	const { session } = await client.createSession(orgId, {
 		projectId,
 		kind: "orchestrator",
-		harness: "claude-code",
+		harness: "codex",
 		displayName: "Orchestrator",
 		prompt: ORCHESTRATOR_KICKOFF_PROMPT,
 	});

@@ -125,6 +125,7 @@ func newSandboxReconciler(
 			DefaultRoot:  cfg.NodeOpsDefaultRootFS,
 			Region:       cfg.NodeOpsRegion,
 			SSHPubKeys:   sshPubKeys,
+			Logger:       logger,
 		})
 	case sandbox.ProviderDocker:
 		provider, err := dockerprovider.New(dockerprovider.Config{
