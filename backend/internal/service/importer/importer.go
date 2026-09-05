@@ -294,8 +294,10 @@ func (m *Manager) PrepareGit(ctx context.Context, in GitPreparationInput) (GitPr
 		if required[GitPreparationActionSetRemote] && strings.TrimSpace(target.Input.RemoteURL) == "" {
 			return GitPreparationResult{}, apierr.Invalid("IMPORT_REMOTE_URL_REQUIRED", "remoteUrl is required before AO can add an origin remote.", map[string]any{"repoPath": target.Status.RepoPath})
 		}
-		if required[GitPreparationActionSetRemote] && !validImportRemoteURL(target.Input.RemoteURL) {
-			return GitPreparationResult{}, apierr.Invalid("INVALID_GIT_URL", "Enter a valid HTTPS, SSH, Git, or file repository URL.", map[string]any{"repoPath": target.Status.RepoPath})
+		if required[GitPreparationActionSetRemote] {
+			if remoteErr := validateImportRemoteURL(target.Input.RemoteURL); remoteErr != nil {
+				return GitPreparationResult{}, remoteErr
+			}
 		}
 		for _, action := range []string{GitPreparationActionInit, GitPreparationActionCommit, GitPreparationActionSetRemote} {
 			if !required[action] {
@@ -568,26 +570,59 @@ func importRepoHasDetachedHead(ctx context.Context, path string) bool {
 
 var importScpRemotePattern = regexp.MustCompile(`^[^/@:\s]+@[^/:\s]+:(.+)$`)
 
-func validImportRemoteURL(raw string) bool {
+func validateImportRemoteURL(raw string) error {
 	value := strings.TrimSpace(raw)
 	if value == "" || strings.ContainsAny(value, "\r\n\t ") || strings.HasPrefix(value, "-") {
-		return false
+		return invalidImportRemoteURL()
 	}
 	if match := importScpRemotePattern.FindStringSubmatch(value); len(match) == 2 {
-		return strings.Trim(match[1], "/\\") != ""
+		if strings.Trim(match[1], "/\\") == "" {
+			return invalidImportRemoteURL()
+		}
+		return nil
 	}
 	parsed, err := url.Parse(value)
 	if err != nil {
-		return false
+		return invalidImportRemoteURL()
 	}
-	switch parsed.Scheme {
+	scheme := strings.ToLower(parsed.Scheme)
+	hasPassword := false
+	if parsed.User != nil {
+		_, hasPassword = parsed.User.Password()
+	}
+	if ((scheme == "http" || scheme == "https") && (parsed.User != nil || parsed.RawQuery != "")) || hasPassword || hasSensitiveImportRemoteQuery(parsed) {
+		return apierr.Invalid("GIT_URL_CONTAINS_CREDENTIALS", "Use your configured Git credentials or an SSH URL instead of putting credentials in the repository URL.", nil)
+	}
+	switch scheme {
 	case "file":
-		return len(strings.FieldsFunc(parsed.Path, func(r rune) bool { return r == '/' || r == '\\' })) >= 1
+		if len(strings.FieldsFunc(parsed.Path, func(r rune) bool { return r == '/' || r == '\\' })) >= 1 {
+			return nil
+		}
 	case "git", "http", "https", "ssh":
-		return parsed.Host != "" && len(strings.FieldsFunc(parsed.Path, func(r rune) bool { return r == '/' || r == '\\' })) >= 1
-	default:
+		if parsed.Host != "" && len(strings.FieldsFunc(parsed.Path, func(r rune) bool { return r == '/' || r == '\\' })) >= 1 {
+			return nil
+		}
+	}
+	return invalidImportRemoteURL()
+}
+
+func hasSensitiveImportRemoteQuery(parsed *url.URL) bool {
+	if parsed.RawQuery == "" {
 		return false
 	}
+	for key := range parsed.Query() {
+		normalized := strings.ToLower(key)
+		for _, marker := range []string{"auth", "credential", "key", "password", "secret", "token"} {
+			if strings.Contains(normalized, marker) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func invalidImportRemoteURL() error {
+	return apierr.Invalid("INVALID_GIT_URL", "Enter a valid HTTPS, SSH, Git, or file repository URL.", nil)
 }
 
 func importRemoteExists(path, name string) bool {

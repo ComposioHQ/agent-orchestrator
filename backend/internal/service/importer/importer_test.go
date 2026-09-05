@@ -379,6 +379,53 @@ func TestPrepareGitRejectsHostlessNetworkRemoteBeforeMutation(t *testing.T) {
 	}
 }
 
+func TestPrepareGitRejectsCredentialBearingRemoteBeforeMutation(t *testing.T) {
+	tests := []struct {
+		name      string
+		remoteURL string
+	}{
+		{name: "HTTPS username", remoteURL: "https://token@github.com/acme/repository.git"},
+		{name: "HTTPS password", remoteURL: "https://user:secret@github.com/acme/repository.git"},
+		{name: "SSH password", remoteURL: "ssh://git:secret@github.com/acme/repository.git"},
+		{name: "access token query", remoteURL: "https://github.com/acme/repository.git?access_token=secret"},
+		{name: "generic token query", remoteURL: "https://github.com/acme/repository.git?token=secret"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			svc := New(Deps{Store: newFakeStore()})
+
+			_, err := svc.PrepareGit(context.Background(), GitPreparationInput{
+				ImportKind:      ImportKindProject,
+				Path:            root,
+				ApprovedActions: []string{GitPreparationActionInit, GitPreparationActionCommit, GitPreparationActionSetRemote},
+				RemoteURL:       tc.remoteURL,
+			})
+			wantCode(t, err, "GIT_URL_CONTAINS_CREDENTIALS")
+			if _, err := os.Stat(filepath.Join(root, ".git")); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("PrepareGit mutated before rejecting credential-bearing remote: %v", err)
+			}
+		})
+	}
+}
+
+func TestValidImportRemoteURLPreservesSupportedCredentialFreeForms(t *testing.T) {
+	for _, remoteURL := range []string{
+		"https://github.com/acme/repository.git",
+		"http://git.example.test/acme/repository.git",
+		"ssh://git@github.com/acme/repository.git",
+		"git://github.com/acme/repository.git",
+		"git@github.com:acme/repository.git",
+		"file:///tmp/acme/repository.git",
+	} {
+		t.Run(remoteURL, func(t *testing.T) {
+			if err := validateImportRemoteURL(remoteURL); err != nil {
+				t.Fatalf("validateImportRemoteURL(%q) = %v, want nil", remoteURL, err)
+			}
+		})
+	}
+}
+
 func TestPrepareGitRunsApprovedMissingActionsInOrder(t *testing.T) {
 	ctx := context.Background()
 	root := t.TempDir()
