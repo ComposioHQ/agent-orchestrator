@@ -104,10 +104,10 @@ conditions are:
 - the authoritative remote kill switch explicitly allows the attempt; and
 - the client is verified compatible.
 
-The updater explicitly disables differential downloads on every platform before renderer hydration,
+The macOS updater explicitly disables differential downloads before renderer hydration,
 when settings are missing or malformed, and for every other channel or mode
 combination. Stable and preview feeds must not publish macOS blockmaps.
-Unsupported platforms, including Windows and Linux, remain explicitly disabled.
+Windows and Linux updater flags and feed behavior remain unchanged.
 
 Absent macOS sidecars are the current global safety barrier. The conductor's
 `verify-feeds.mjs` forbids them on latest, nightly and pr channels, rejects macOS

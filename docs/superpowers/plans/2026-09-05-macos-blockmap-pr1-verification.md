@@ -6,8 +6,8 @@ PR: https://github.com/Untrivial-ai/agent-orchestrator/pull/4906
 
 The local build-time stop in `frontend/scripts/mac-differential-rollout.json` is false.
 Production macOS updates stay full-download-only. macOS sidecar
-generation is unconditionally suppressed on every channel. Unsupported platforms,
-including Windows and Linux, explicitly disable differential downloads.
+generation is unconditionally suppressed on every channel. Windows and Linux
+updater flags and feed behavior remain unchanged.
 
 Prepared changes preserve the approved eligibility matrix, fail-closed renderer
 hydration, a serialized Developer Mode mirror, stale-form protection, per-operation
@@ -149,7 +149,7 @@ native installation is created by this work.
 
 ## Rollout-isolation follow-up plan
 
-1. Set the dependency disable flag before hydration on every platform; deny every unsupported state.
+1. Set the macOS dependency disable flag before hydration; deny every unsupported macOS state while preserving Windows/Linux behavior.
 2. Remove macOS sidecar generation entirely from the release-feed path.
 3. Require explicit remote authorization and compatible-client evidence before any future allow; keep unknown denied while the authoritative contract is unresolved.
 4. Exercise real MacUpdater across cached ZIP/map cycles with sidecars present and policy disabled; record the contrasting legacy-client exposure without claiming old binaries can be patched remotely.

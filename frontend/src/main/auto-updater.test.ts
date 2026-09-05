@@ -87,15 +87,20 @@ describe("macOS differential update policy", () => {
   afterEach(() => { restorePlatform(); vi.restoreAllMocks(); });
   const nightly: UpdateSettings = { enabled: true, channel: "nightly", nightlyAck: true, feature: null, macDifferentialUpdates: true };
 
-  it.each(["win32", "linux"] as const)("keeps unsupported %s differential downloads disabled", async platform => {
+  it.each(["win32", "linux"] as const)("preserves %s differential policy across updater operations", async platform => {
     const restore = stubProcess(platform, process.execPath);
     try {
       const { module, autoUpdater } = await importAutoUpdater(nightly);
-      expect(autoUpdater.disableDifferentialDownload).toBe(true);
-      await module.setMacDifferentialUpdates(stateDir, true);
-      await module.checkForUpdatesNow(stateDir);
-      await module.downloadUpdateNow();
-      expect(autoUpdater.disableDifferentialDownload).toBe(true);
+      expect(autoUpdater.disableDifferentialDownload).toBe(false);
+      for (const disabled of [false, true]) {
+        autoUpdater.disableDifferentialDownload = disabled;
+        await module.setMacDifferentialUpdates(stateDir, true);
+        await module.startAutoUpdates(stateDir);
+        await module.checkForUpdatesNow(stateDir);
+        await module.downloadUpdateNow();
+        await module.setMacDifferentialUpdates(stateDir, false);
+        expect(autoUpdater.disableDifferentialDownload).toBe(disabled);
+      }
     } finally { restore(); }
   });
 
