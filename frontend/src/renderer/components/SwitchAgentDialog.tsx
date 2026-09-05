@@ -1,6 +1,6 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { LoaderCircle, Repeat2, TriangleAlert, X } from "lucide-react";
-import { type FormEvent, useEffect, useRef, useState } from "react";
+import { type FormEvent, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
 	agentSwitchesQueryKey,
@@ -33,6 +33,7 @@ import {
 	DialogTitle,
 } from "./ui/dialog";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
+import { onMenuTeardownComplete } from "./ui/menu-focus";
 
 export const SWITCH_AGENT_OPTIONS = [
 	{ value: "claude-code", label: "Claude Code" },
@@ -57,32 +58,63 @@ function isFromDismissedMenuTrigger(target: EventTarget | null): boolean {
 	return Boolean(target.closest('[role="menuitem"], [role="menu"], [data-session-actions-trigger]'));
 }
 
-// The exemption only covers the opening interaction (the closing dropdown's
-// teardown in the ticks right after mount). After it settles, the menu and
-// trigger are ordinary outside elements again: suppressing outside events
-// from them for the dialog's whole lifetime would swallow later actions-menu
-// interactions and leave keyboard focus stranded outside the non-modal
-// dialog. Two animation frames are enough for the dropdown's same-tick
-// dismissal to have run; anything after that is a genuine outside event.
+// Longest teardown this can still be covering: Radix keeps a closing menu
+// mounted for the 100ms `animate-popover-out` exit, and its FocusScope defers
+// the focus restore one more tick after that. Safety net only — for opens with
+// no menu behind them (the toolbar icon button, an auto-open from a switch
+// error), where no teardown event will ever arrive.
+const OPENING_RACE_FALLBACK_MS = 300;
+
+// The exemption covers the opening interaction only, and only when the dialog
+// was genuinely opened from a menu: it is armed while the caret still sits on
+// the clicked menu item, and stays armed until that menu reports its teardown
+// as complete — content unmounted after the exit animation, deferred focus
+// restore dispatched. Radix keeps a closing menu mounted through its whole
+// exit animation, and only when that ends does its FocusScope restore focus to
+// the trigger, so any time-based window either expires too early (the real
+// renderer) or suppresses too long. After the teardown settles, the menu and
+// trigger are ordinary outside elements again: suppressing outside events from
+// them for the dialog's whole lifetime would swallow later actions-menu
+// interactions and leave keyboard focus stranded outside the non-modal dialog.
 function useSuppressOpeningRace(open: boolean) {
 	const suppressRef = useRef(false);
-	useEffect(() => {
-		if (!open) {
+	const armedMenuRef = useRef<Element | null>(null);
+	// Layout effect on purpose: the dialog's own FocusScope claims the caret
+	// from a passive effect, so by the time an ordinary effect ran, the clicked
+	// menu item would no longer be focused and the open could no longer be
+	// traced back to a menu.
+	useLayoutEffect(() => {
+		const disarm = () => {
 			suppressRef.current = false;
+			armedMenuRef.current = null;
+		};
+		if (!open) {
+			disarm();
 			return;
 		}
+		const active = document.activeElement;
+		if (!(active instanceof Element)) return;
+		const armed = active.closest('[role="menu"]');
+		if (!armed || !active.closest('[role="menuitem"], [role="menu"]')) return;
+		armedMenuRef.current = armed;
 		suppressRef.current = true;
-		let frames = 0;
-		let rafId = 0;
-		const tick = () => {
-			if (++frames >= 2) {
-				suppressRef.current = false;
-				return;
-			}
-			rafId = requestAnimationFrame(tick);
+		const unsubscribe = onMenuTeardownComplete(({ menu }) => {
+			const current = armedMenuRef.current;
+			if (current === null) return;
+			// Either the menu that opened this dialog finished its teardown, or it
+			// was replaced by another menu the user opened over the dialog and the
+			// armed one is already gone. Both mean the opening interaction is over.
+			if (menu !== current && current.isConnected) return;
+			// Microtask, not synchronous: an unprevented restore focuses the
+			// trigger inside this same macrotask, right after the dispatch, and
+			// that focusin is exactly what the guard exists to swallow.
+			queueMicrotask(disarm);
+		});
+		const fallback = window.setTimeout(disarm, OPENING_RACE_FALLBACK_MS);
+		return () => {
+			unsubscribe();
+			window.clearTimeout(fallback);
 		};
-		rafId = requestAnimationFrame(tick);
-		return () => cancelAnimationFrame(rafId);
 	}, [open]);
 	return suppressRef;
 }
