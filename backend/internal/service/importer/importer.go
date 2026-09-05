@@ -203,6 +203,11 @@ func (m *Manager) Validate(ctx context.Context, in ImportValidationInput) (Impor
 	root := inspectImportRepo(ctx, path)
 	result.Root = root
 	if importKind == ImportKindWorkspace {
+		if root.IsRepo {
+			result.Warning = "This folder is already a Git project. AO will import it as a project instead of a workspace."
+			result.NextStep = ImportNextStepChooseImportKind
+			return result, nil
+		}
 		children, scanErr := directChildImportRepos(ctx, path)
 		if scanErr != nil {
 			return invalidImportResult(importKind, path, "CHILD_REPO_SCAN_FAILED"), nil //nolint:nilerr // validation failures are reported in-band so the UI can show blocking errors
@@ -388,7 +393,7 @@ func directChildImportRepos(ctx context.Context, root string) ([]RepoGitStatus, 
 	}
 	repos := statuses[:0]
 	for _, status := range statuses {
-		if status.IsRepo {
+		if status.IsRepo || len(status.BlockingErrors) > 0 {
 			repos = append(repos, status)
 		}
 	}

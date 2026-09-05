@@ -340,6 +340,41 @@ func TestValidateWorkspaceImportReadyChildrenContinue(t *testing.T) {
 	}
 }
 
+func TestValidateWorkspaceImportOfGitRepoRequiresProjectChoice(t *testing.T) {
+	ctx := context.Background()
+	repo := gitRepoWithOrigin(t)
+	svc := New(Deps{Store: newFakeStore()})
+
+	result, err := svc.Validate(ctx, ImportValidationInput{ImportKind: ImportKindWorkspace, Path: repo})
+	if err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	if !result.IsValid || result.NextStep != ImportNextStepChooseImportKind || result.Warning == "" {
+		t.Fatalf("result = %#v, want project import choice", result)
+	}
+}
+
+func TestValidateWorkspaceImportReportsBareChildRepository(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	bare := filepath.Join(root, "bare")
+	if out, err := exec.Command("git", "init", "--bare", bare).CombinedOutput(); err != nil {
+		t.Fatalf("git init --bare: %v (%s)", err, out)
+	}
+	svc := New(Deps{Store: newFakeStore()})
+
+	result, err := svc.Validate(ctx, ImportValidationInput{ImportKind: ImportKindWorkspace, Path: root})
+	if err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	if result.IsValid || result.NextStep != ImportNextStepError || len(result.ChildRepos) != 1 {
+		t.Fatalf("result = %#v, want blocked bare child", result)
+	}
+	if got := result.ChildRepos[0].BlockingErrors; len(got) != 1 || got[0] != "BARE_REPOSITORY" {
+		t.Fatalf("blocking errors = %#v, want bare repository", got)
+	}
+}
+
 func TestValidateWorkspaceImportPartialChildrenExposeMissingActions(t *testing.T) {
 	ctx := context.Background()
 	root := t.TempDir()
