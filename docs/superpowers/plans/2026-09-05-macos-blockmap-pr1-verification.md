@@ -61,7 +61,11 @@ signal after reconstruction settles now prevents promotion, handoff and any
 replacement full GET at all three boundaries. Three additional cleanup-error
 regressions first reproduced full fallback after output-close, baseline-close or
 removal failure. Each now terminates without a full GET, promotion or handoff;
-both handle closes and required removal are attempted independently.
+both handle closes and required removal are attempted independently. Close
+faults are injected before descriptor release, and fstat confirms the owner is
+still live after the updater settles terminally. Only then does the test fixture
+dispose of that deliberately retained handle; it never repairs production cleanup
+or lets fallback proceed.
 
 The unsigned package command on actual Node 24.20.0 completed packaging and its
 postPackage hook, producing a local macOS app artifact. No app was launched or

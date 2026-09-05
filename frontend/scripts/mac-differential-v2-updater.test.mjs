@@ -179,6 +179,8 @@ async function runCase(fault = "none", { arch = "arm64", progress = true, disabl
   const provider = { resolveFiles: () => [file], isUseMultipleRangeRequest: false,
     getBlockMapFiles: vi.fn(() => [new URL(`${base}${new URL(selected.baseline.zip.url).pathname}.blockmap`), new URL(`${base}${file.url.pathname}.blockmap`)]) };
   const closeAttempts = [];
+  const injectedOwners = [];
+  let liveOwnerAfterAttempt = false;
   const promote = vi.spyOn(updater.downloadedUpdateHelper, "setDownloadedFile");
   if (["cancel-final-read", "cancel-output-close", "cancel-baseline-close", "cleanup-output-close", "cleanup-baseline-close"].includes(fault)) {
     const realOpen = (await vi.importActual("node:fs/promises")).open;
@@ -195,8 +197,11 @@ async function runCase(fault = "none", { arch = "arm64", progress = true, disabl
       };
       handle.close = async () => {
         closeAttempts.push(output ? "output" : "baseline");
+        if ((output && fault === "cleanup-output-close") || (!output && fault === "cleanup-baseline-close")) {
+          injectedOwners.push({ handle, close });
+          throw new Error("injected close EIO before descriptor release");
+        }
         await close();
-        if ((output && fault === "cleanup-output-close") || (!output && fault === "cleanup-baseline-close")) throw new Error("injected close failure");
         if ((output && fault === "cancel-output-close") || (!output && fault === "cancel-baseline-close")) token.cancel();
       };
       return handle;
@@ -223,6 +228,15 @@ async function runCase(fault = "none", { arch = "arm64", progress = true, disabl
     }
   } catch (err) { error = err; }
   finally {
+    // Fixture disposal happens only after the updater settles. This cannot make
+    // production cleanup succeed or hide fallback while the injected FD is live.
+    for (const owner of injectedOwners) {
+      if (owner.handle.fd >= 0) {
+        fstatSync(owner.handle.fd);
+        liveOwnerAfterAttempt = true;
+        await owner.close();
+      }
+    }
     Object.defineProperty(process, "arch", descriptor); archProbe.mockRestore();
     for (const sentinel of updater.httpExecutor.sentinels ?? []) {
       try { fstatSync(sentinel); closeSync(sentinel); } catch { sentinelIntact = false; }
@@ -244,7 +258,7 @@ async function runCase(fault = "none", { arch = "arm64", progress = true, disabl
   const promotions = promote.mock.calls.length;
   promote.mockRestore();
   const removals = vi.mocked(fsPromises.rm).mock.calls.length;
-  return { closeAttempts, removals, promotions, requests, handoffs, error, target, sentinelIntact, observations, rangeCount };
+  return { liveOwnerAfterAttempt, closeAttempts, removals, promotions, requests, handoffs, error, target, sentinelIntact, observations, rangeCount };
 }
 
 const fullGETs = result => result.requests.filter(req => req.name.endsWith(".zip") && !req.range);
@@ -321,7 +335,10 @@ describe("real MacUpdater with isolated v2 transfer", () => {
     expect(result.promotions).toBe(0);
     expect(result.handoffs).toHaveLength(0);
     expect(result.removals).toBe(1);
-    if (fault !== "cleanup-remove") expect(result.closeAttempts).toEqual(["output", "baseline"]);
+    if (fault !== "cleanup-remove") {
+      expect(result.liveOwnerAfterAttempt).toBe(true);
+      expect(result.closeAttempts).toEqual(["output", "baseline"]);
+    }
   });
   it("cancels without starting a full transfer or handing off", async () => {
     const result = await runCase("cancel");
