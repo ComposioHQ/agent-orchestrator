@@ -2,9 +2,9 @@ import { describe, expect, it } from "vitest";
 import {
 	interfaceSwitchAlert,
 	interfaceSwitchUnavailableMessage,
-	interfaceTransitionFailureAttempts,
 	interfaceTransitionNextPoll,
 	interfaceTransitionPollInterval,
+	interfaceTransitionSessionGone,
 	nativeSessionReadinessAttempts,
 } from "./interfaceTransition";
 
@@ -102,31 +102,52 @@ describe("readiness recheck is bounded", () => {
 	});
 });
 
-describe("failed rechecks get their own bounded budget", () => {
+describe("failed rechecks back off on their own count", () => {
 	const waiting = { reasonCode: "NATIVE_SESSION_UNVERIFIED" };
+	const draining = { transition: { phase: "draining" } };
 
-	it("backs off instead of hammering, and gives up", () => {
+	it("backs off instead of hammering, then holds at the ceiling rather than giving up", () => {
 		expect(interfaceTransitionNextPoll({ consecutiveFailures: 1 })).toBe(1_000);
 		expect(interfaceTransitionNextPoll({ consecutiveFailures: 2 })).toBe(2_000);
 		expect(interfaceTransitionNextPoll({ consecutiveFailures: 3 })).toBe(4_000);
 		expect(interfaceTransitionNextPoll({ consecutiveFailures: 4 })).toBe(8_000);
-		expect(
-			interfaceTransitionNextPoll({ consecutiveFailures: interfaceTransitionFailureAttempts }),
-		).toBeUndefined();
+		expect(interfaceTransitionNextPoll({ consecutiveFailures: 5 })).toBe(8_000);
+		expect(interfaceTransitionNextPoll({ consecutiveFailures: 500 })).toBe(8_000);
 	});
 
-	it("bounds a 404 arriving mid-transition, which the status poll alone cannot", () => {
-		// A failed request never advances `status`, so rescheduling on the last
-		// known phase would re-arm the 300ms transition poll forever.
-		const draining = { transition: { phase: "draining" } };
+	it("keeps a timer alive through a 90s outage mid-transition, so the handoff resumes when the link does", () => {
+		// A budget of five used to spend itself in about 75s of timeouts and leave
+		// no timer to notice the network coming back: the banner froze for good.
+		let elapsed = 0;
+		let failures = 0;
+		while (elapsed < 90_000) {
+			failures += 1;
+			const delay = interfaceTransitionNextPoll({ status: draining, consecutiveFailures: failures });
+			expect(delay).toBe(failures < 4 ? [1_000, 2_000, 4_000][failures - 1] : 8_000);
+			elapsed += (delay ?? 0) + 12_000; // each attempt also waits out REQUEST_TIMEOUT_MS
+		}
+		// The first answer after the outage resets the count; back to the fast cadence.
 		expect(interfaceTransitionNextPoll({ status: draining, consecutiveFailures: 0 })).toBe(300);
-		expect(interfaceTransitionNextPoll({ status: draining, consecutiveFailures: 1 })).toBe(1_000);
-		expect(
-			interfaceTransitionNextPoll({
-				status: draining,
-				consecutiveFailures: interfaceTransitionFailureAttempts,
-			}),
-		).toBeUndefined();
+	});
+
+	it.each([500, 502, 503])("treats a %s as the link's problem, not the session's", (failureStatus) => {
+		expect(interfaceTransitionNextPoll({ status: draining, consecutiveFailures: 1, failureStatus })).toBe(1_000);
+		expect(interfaceTransitionSessionGone(failureStatus)).toBe(false);
+	});
+
+	it.each([404, 410])("stops at once on a %s, the daemon's word that the session is gone", (failureStatus) => {
+		// A failed request never advances `status`, so rescheduling on the last
+		// known phase would otherwise re-arm the 300ms transition poll forever
+		// against a session that was deleted mid-transition.
+		expect(interfaceTransitionNextPoll({ status: draining, consecutiveFailures: 0 })).toBe(300);
+		expect(interfaceTransitionNextPoll({ status: draining, consecutiveFailures: 1, failureStatus })).toBeUndefined();
+		expect(interfaceTransitionNextPoll({ status: waiting, consecutiveFailures: 1, failureStatus })).toBeUndefined();
+		expect(interfaceTransitionSessionGone(failureStatus)).toBe(true);
+	});
+
+	it("does not mistake a request that never landed for a gone session", () => {
+		expect(interfaceTransitionSessionGone(undefined)).toBe(false);
+		expect(interfaceTransitionNextPoll({ status: draining, consecutiveFailures: 1, failureStatus: undefined })).toBe(1_000);
 	});
 
 	it("retries a cold start that never landed, so one dropped fetch is recoverable", () => {

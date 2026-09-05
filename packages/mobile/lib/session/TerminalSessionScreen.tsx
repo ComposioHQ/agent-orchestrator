@@ -643,6 +643,10 @@ export default function TerminalScreen() {
 			mountedRef.current = false;
 		};
 	}, []);
+	// The status the hook holds right now, readable after an await. The tap's
+	// closure is from the render it started in, which is the pre-tap status.
+	const interfaceStatusRef = useRef(interfaceSwitch.status);
+	interfaceStatusRef.current = interfaceSwitch.status;
 	const interfaceTransitionActive = mobileInterfaceTransitionIsActive(interfaceSwitch.transition);
 	const interfaceTransitionNotice =
 		!interfaceTransitionActive &&
@@ -1056,6 +1060,12 @@ export default function TerminalScreen() {
 				const result = await interfaceSwitch.refresh();
 				if (!mountedRef.current) return;
 				if (!result) recheck = { outcome: "not-attempted" };
+				// A superseded answer is not a verdict, same rule as the hook's own
+				// loop: the readiness tick can overtake a slow tap request, and acting
+				// on the tap's payload would alert "Could not reach AO" (or "Not ready
+				// yet" off an older body) while the button had just enabled itself.
+				// The newer request owns the answer; use whatever the hook adopted.
+				else if (result.stale) status = interfaceStatusRef.current;
 				else if (result.ok) status = result.status;
 				else recheck = { outcome: "failed", error: result.error, status: result.status };
 			} finally {
@@ -1068,6 +1078,11 @@ export default function TerminalScreen() {
 			Alert.alert(title, message);
 			return;
 		}
+		// The guard at the top saw the pre-tap render. The fresh answer can carry
+		// a transition someone else started while the recheck was in flight (the
+		// desktop button, say); starting another gets a 409 and a "Switch failed"
+		// banner for a switch that is in fact proceeding. The card takes over.
+		if (mobileInterfaceTransitionIsActive(status.transition)) return;
 		if (!interfaceBusy) {
 			void startInterfaceSwitch("drain");
 			return;
@@ -1084,6 +1099,24 @@ export default function TerminalScreen() {
 			],
 		);
 	}, [interfaceBusy, interfaceSwitch, interfaceTransitionActive, known?.activity, startInterfaceSwitch]);
+
+	// The poll keeps retrying on its own at up to 8s; this is for the user who can
+	// see the network is back and does not want to wait for the tick. The header
+	// button is disabled for the whole transition, so this is the only tap that
+	// re-asks while one is live. Same guard as the header recheck: it is the same
+	// request, and two of them against a slow link is what the guard prevents.
+	const retryInterfaceCheck = useCallback(async () => {
+		if (recheckingRef.current) return;
+		haptics.tap();
+		recheckingRef.current = true;
+		setRechecking(true);
+		try {
+			await interfaceSwitch.refresh();
+		} finally {
+			recheckingRef.current = false;
+			if (mountedRef.current) setRechecking(false);
+		}
+	}, [interfaceSwitch]);
 
 	const requestInterfaceFailureRecovery = useCallback(() => {
 		if (!interfaceFailureRecovery) return;
@@ -1384,6 +1417,15 @@ export default function TerminalScreen() {
 								</Pressable>
 							) : null}
 							{interfaceSwitch.error ? <Text style={styles.interfaceError}>{interfaceSwitch.error}</Text> : null}
+							{interfaceSwitch.fetchFailed ? (
+								<Pressable
+									disabled={rechecking}
+									onPress={() => void retryInterfaceCheck()}
+									style={styles.interfaceCancel}
+								>
+									<Text style={styles.interfaceCancelText}>{rechecking ? "Retrying…" : "Retry"}</Text>
+								</Pressable>
+							) : null}
 						</View>
 					</View>
 				) : null}

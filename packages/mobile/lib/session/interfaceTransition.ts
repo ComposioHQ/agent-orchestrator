@@ -63,19 +63,29 @@ export function interfaceTransitionPollInterval(
 	return undefined;
 }
 
-// Consecutive failed rechecks before the loop gives up. A failed request never
-// advances `status`, so a poll rescheduled from the last known status re-arms on
-// it forever: a session deleted mid-transition would 404 at 300ms indefinitely,
-// which is worse than the unbounded readiness poll this all started with. After
-// the loop stops the tap path re-asks.
-export const interfaceTransitionFailureAttempts = 5;
+// A failed request never advances `status`, so a poll rescheduled from the last
+// known status re-arms on it: a session deleted mid-transition would 404 at
+// 300ms indefinitely. But only a 404 or 410 is the daemon's word that the
+// session is gone. A timeout, a refused connection or a 5xx is a fact about the
+// link, not the session, and a link comes back, so those are retried at a
+// backoff that holds at its ceiling instead of being counted against a budget.
+// A blanket cap on failures was tried first and stranded a live handoff behind
+// any outage longer than the budget: once the last timer had fired, connectivity
+// returning changed nothing, and the banner froze until the screen was remounted.
+//
+// 401/403/429 never reach the scheduler: the hook stops polling on those (see
+// `shouldKeepPolling`), because retrying a rejected password arms the lockout.
+export function interfaceTransitionSessionGone(status: number | undefined): boolean {
+	return status === 404 || status === 410;
+}
 
 const failureBackoff = [1_000, 2_000, 4_000, 8_000];
 
 /**
- * The one scheduler for the status poll. Failures back off and are capped on
- * their own budget, because a run of failures teaches us nothing about `status`
- * and must not be paid for out of the readiness window.
+ * The one scheduler for the status poll. Failures back off on their own count,
+ * because a run of failures teaches us nothing about `status` and must not be
+ * paid for out of the readiness window. `failureStatus` is the HTTP status of
+ * the latest failure, `undefined` when nothing answered.
  *
  * Retrying on failure with no status at all is deliberate: a first fetch that
  * never landed would otherwise leave the screen with no poll to start, and the
@@ -85,10 +95,11 @@ export function interfaceTransitionNextPoll(args: {
 	status?: InterfaceTransitionStatus;
 	readinessAttempts?: number;
 	consecutiveFailures?: number;
+	failureStatus?: number;
 }): number | undefined {
 	const failures = args.consecutiveFailures ?? 0;
 	if (failures > 0) {
-		if (failures >= interfaceTransitionFailureAttempts) return undefined;
+		if (interfaceTransitionSessionGone(args.failureStatus)) return undefined;
 		return failureBackoff[Math.min(failures - 1, failureBackoff.length - 1)];
 	}
 	return interfaceTransitionPollInterval(args.status, args.readinessAttempts ?? 0);

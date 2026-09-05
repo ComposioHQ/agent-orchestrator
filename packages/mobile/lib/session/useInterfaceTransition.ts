@@ -51,6 +51,7 @@ export function useInterfaceTransition(
 	// Lets a failed fetch reach the poll effect. Without it a first fetch that never
 	// landed leaves `status` undefined, the effect schedules nothing, and no later
 	// request is ever made — the switch stays greyed out for the life of the screen.
+	// Also what the screens key their Retry action on.
 	const [fetchFailed, setFetchFailed] = useState(false);
 	const settledRef = useRef("");
 	const onSettledRef = useRef(onSettled);
@@ -59,6 +60,21 @@ export function useInterfaceTransition(
 	// newer one already has. Only the newest is allowed to write state; otherwise a
 	// stale answer could revert a `supported: true` status back to unsupported.
 	const requestSeq = useRef(0);
+	// Consecutive failed requests and the HTTP status of the latest one. Held by
+	// the hook rather than the poll effect for the same reason `readinessRef` is
+	// (below): the effect re-runs on `appActive`, so a count it owned would
+	// restart the backoff from 1s every time the app was switched, and while
+	// failures had a budget it silently refilled that too. It is written only
+	// where a request ends, so a tap recheck and the poll loop share one count,
+	// and a stale answer never touches it. Any request that lands clears it: a
+	// start POST that the daemon accepted is proof the link is back, and leaving
+	// the count on it would open the new transition on the backoff cadence with
+	// a Retry showing for a switch that is in fact proceeding.
+	const failureRef = useRef<{ count: number; status?: number }>({ count: 0 });
+	const noteRequestLanded = useCallback(() => {
+		failureRef.current = { count: 0 };
+		setFetchFailed(false);
+	}, []);
 
 	// Resolves with the fetched status so a tap can act on a fresh answer.
 	const refresh = useCallback(async (): Promise<InterfaceTransitionRecheck | undefined> => {
@@ -74,7 +90,7 @@ export function useInterfaceTransition(
 			setStatus(next);
 			setError(undefined);
 			setPollable(true);
-			setFetchFailed(false);
+			noteRequestLanded();
 			const transition = next.transition;
 			if (transition && !mobileInterfaceTransitionIsActive(transition) && settledRef.current !== transition.id) {
 				settledRef.current = transition.id;
@@ -89,6 +105,7 @@ export function useInterfaceTransition(
 				setError(message);
 				setPollable(shouldKeepPolling(httpStatus));
 				setFetchFailed(true);
+				failureRef.current = { count: failureRef.current.count + 1, status: httpStatus };
 			}
 			// The status code rides along so the caller can tell a rejection from an
 			// unreachable daemon; `shouldKeepPolling` consumes it and drops it.
@@ -96,9 +113,12 @@ export function useInterfaceTransition(
 		} finally {
 			if (current()) setLoading(false);
 		}
-	}, [cfg, sessionId]);
+	}, [cfg, noteRequestLanded, sessionId]);
 
 	useEffect(() => {
+		// A new session or config starts with a clean count: the previous
+		// session's 404 must not stop the poll for the one that replaced it.
+		failureRef.current = { count: 0 };
 		void refresh();
 	}, [refresh]);
 
@@ -107,7 +127,15 @@ export function useInterfaceTransition(
 	// desktop's live dot on. The board poll already applies this rule.
 	const [appActive, setAppActive] = useState(() => shouldPoll(RNAppState.currentState));
 	useEffect(() => {
-		const sub = RNAppState.addEventListener("change", (s) => setAppActive(shouldPoll(s)));
+		const sub = RNAppState.addEventListener("change", (s) => {
+			const active = shouldPoll(s);
+			setAppActive(active);
+			// The board poll's stop flag lives in its effect, so it gets one fresh
+			// request per foreground and recovers once the lockout clears. `pollable`
+			// is state and would survive; give it the same second chance. A single
+			// request per app switch cannot arm anything.
+			if (active) setPollable(true);
+		});
 		return () => sub.remove();
 	}, []);
 
@@ -130,16 +158,14 @@ export function useInterfaceTransition(
 		if (readinessRef.current.key !== key) readinessRef.current = { key, attempts: 0 };
 
 		let cancelled = false;
-		// Seeded from the last fetch so a failure that happened outside this loop —
-		// the mount fetch, most importantly — still gets retried.
-		let failures = fetchFailed ? 1 : 0;
 		let timer: ReturnType<typeof setTimeout> | undefined;
 
 		const schedule = (current: SessionInterfaceTransitionStatus | undefined) => {
 			const delay = interfaceTransitionNextPoll({
 				status: current,
 				readinessAttempts: readinessRef.current.attempts,
-				consecutiveFailures: failures,
+				consecutiveFailures: failureRef.current.count,
+				failureStatus: failureRef.current.status,
 			});
 			if (cancelled || delay === undefined) return;
 			timer = setTimeout(run, delay);
@@ -159,7 +185,6 @@ export function useInterfaceTransition(
 				return;
 			}
 			if (result?.ok) {
-				failures = 0;
 				// Answers are what the readiness window is for. Counting requests would
 				// let a run of timeouts spend the whole budget without ever learning
 				// whether the native session became ready.
@@ -167,7 +192,10 @@ export function useInterfaceTransition(
 				schedule(result.status);
 				return;
 			}
-			failures += 1;
+			// `refresh` has already counted this failure. A failure never produces a
+			// new status, so the loop re-arms on the one the hook still holds; the
+			// scheduler decides from the count and the status code whether that is
+			// a backoff or, for a session the daemon says is gone, a stop.
 			schedule(statusRef.current);
 		};
 
@@ -185,6 +213,7 @@ export function useInterfaceTransition(
 			setError(undefined);
 			try {
 				const transition = await startSessionInterfaceTransition(cfg, sessionId, targetMode, policy);
+				noteRequestLanded();
 				setStatus((current) => ({
 					supported: current?.supported ?? true,
 					targetMode,
@@ -198,7 +227,7 @@ export function useInterfaceTransition(
 				setStarting(false);
 			}
 		},
-		[cfg, sessionId],
+		[cfg, noteRequestLanded, sessionId],
 	);
 
 	const cancel = useCallback(async () => {
@@ -228,6 +257,7 @@ export function useInterfaceTransition(
 					sessionId,
 					transitionId,
 				);
+				noteRequestLanded();
 				setStatus((current) =>
 					current?.transition?.id === transition.id ? { ...current, transition } : current,
 				);
@@ -239,7 +269,7 @@ export function useInterfaceTransition(
 				setAcknowledgingNotice(false);
 			}
 		},
-		[cfg, sessionId],
+		[cfg, noteRequestLanded, sessionId],
 	);
 
 	return {
@@ -251,6 +281,11 @@ export function useInterfaceTransition(
 		acknowledgingNotice,
 		error,
 		acknowledgeNoticeError,
+		// True from a failed request until the next one lands. The transition
+		// banners show a Retry while it is set: the poll keeps trying on its own at
+		// up to 8s, but a user who can see the network is back should not have to
+		// wait for the tick.
+		fetchFailed,
 		start,
 		cancel,
 		acknowledgeNotice,
