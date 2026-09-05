@@ -56,6 +56,10 @@ func TestOpenCodeDiscoveryUsesPureMode(t *testing.T) {
 	if len(spec.args) != 2 || spec.args[0] != "--pure" || spec.args[1] != "models" {
 		t.Fatalf("opencode discovery args = %q, want [--pure models]", spec.args)
 	}
+	devecoSpec := commandSpecs["deveco"]
+	if got := strings.Join(devecoSpec.args, " "); got != "--pure models" {
+		t.Fatalf("deveco discovery args = %q, want [--pure models]", devecoSpec.args)
+	}
 }
 
 func TestAiderUsesDocumentedDiscoveryCommand(t *testing.T) {

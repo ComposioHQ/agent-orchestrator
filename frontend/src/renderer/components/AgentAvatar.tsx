@@ -17,6 +17,7 @@ import copilotLogo from "../assets/agents/copilot.svg";
 import crushLogo from "../assets/agents/crush.png";
 import cursorLogo from "../assets/agents/cursor.svg";
 import devinLogo from "../assets/agents/devin.png";
+import devecoLogo from "../assets/agents/deveco.svg";
 import droidLogo from "../assets/agents/droid.png";
 import gooseLogo from "../assets/agents/goose.svg";
 import grokLogo from "../assets/agents/grok.png";
@@ -40,6 +41,7 @@ const LOGOS: AgentLogoSources = {
 	claude: claudeLogo,
 	cursor: cursorLogo,
 	opencode: opencodeLogo,
+	deveco: devecoLogo,
 	copilot: copilotLogo,
 	aider: aiderLogo,
 	grok: grokLogo,

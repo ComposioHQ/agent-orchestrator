@@ -9,6 +9,7 @@ const (
 	HarnessCodex      AgentHarness = "codex"
 	HarnessAider      AgentHarness = "aider"
 	HarnessOpenCode   AgentHarness = "opencode"
+	HarnessDevEco     AgentHarness = "deveco"
 	HarnessGrok       AgentHarness = "grok"
 	HarnessDroid      AgentHarness = "droid"
 	HarnessAmp        AgentHarness = "amp"
@@ -40,7 +41,7 @@ const (
 // AllHarnesses lists every supported harness. It is the canonical set used to
 // validate user-supplied harness names (e.g. per-project role overrides).
 var AllHarnesses = []AgentHarness{
-	HarnessClaudeCode, HarnessCodex, HarnessAider, HarnessOpenCode, HarnessGrok,
+	HarnessClaudeCode, HarnessCodex, HarnessAider, HarnessOpenCode, HarnessDevEco, HarnessGrok,
 	HarnessDroid, HarnessAmp, HarnessAgy, HarnessCrush, HarnessCursor, HarnessQwen,
 	HarnessCopilot, HarnessGoose, HarnessAuggie, HarnessContinue, HarnessDevin,
 	HarnessCline, HarnessKimi, HarnessMuse, HarnessKiro, HarnessKilocode, HarnessVibe, HarnessPi,

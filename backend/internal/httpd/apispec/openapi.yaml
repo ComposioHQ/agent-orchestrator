@@ -8680,6 +8680,7 @@ components:
           - codex
           - aider
           - opencode
+          - deveco
           - grok
           - droid
           - amp
@@ -11115,6 +11116,7 @@ components:
           - codex
           - aider
           - opencode
+          - deveco
           - grok
           - droid
           - amp
