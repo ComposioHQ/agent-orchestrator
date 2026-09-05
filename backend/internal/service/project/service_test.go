@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -1856,5 +1857,58 @@ func TestManager_CanonicalRepositoryConfigPersistence(t *testing.T) {
 	got, err = m.Get(ctx, "fork")
 	if err != nil || (got.Project.Config != nil && got.Project.Config.CanonicalRepoURL != "") {
 		t.Fatalf("clear: %+v %v", got.Project.Config, err)
+	}
+}
+
+func TestManager_SetPermissionsPreservesConfig(t *testing.T) {
+	ctx := context.Background()
+	m := newManager(t)
+	if _, err := m.Add(ctx, project.AddInput{Path: gitRepo(t), ProjectID: ptr("ao")}); err != nil {
+		t.Fatal(err)
+	}
+	cfg := domain.ProjectConfig{DefaultBranch: "develop", Env: map[string]string{"KEEP": "yes"}, AgentRules: "keep rules", AgentConfig: domain.AgentConfig{Model: "base", Permissions: domain.PermissionModeDefault}, Worker: domain.RoleOverride{AgentConfig: domain.AgentConfig{Model: "worker", Permissions: domain.PermissionModeAcceptEdits}}, Orchestrator: domain.RoleOverride{AgentConfig: domain.AgentConfig{Model: "orchestrator", Permissions: domain.PermissionModeBypassPermissions}}}
+	if _, err := m.UpdateSettings(ctx, "ao", project.UpdateSettingsInput{DisplayName: "Keep name", Config: cfg}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := m.SetPermissions(ctx, "ao", project.SetPermissionsInput{Permissions: domain.PermissionModeAuto})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.AgentConfig.Permissions = domain.PermissionModeAuto
+	cfg.Worker.AgentConfig.Permissions = ""
+	cfg.Orchestrator.AgentConfig.Permissions = ""
+	if got.Name != "Keep name" || got.Config == nil || !reflect.DeepEqual(*got.Config, cfg) {
+		t.Fatalf("unexpected result: %#v config %#v", got, got.Config)
+	}
+	for _, tc := range []struct {
+		id   string
+		mode domain.PermissionMode
+	}{{"missing", domain.PermissionModeAuto}, {"../bad", domain.PermissionModeAuto}, {"ao", ""}, {"ao", "invalid"}} {
+		if _, err := m.SetPermissions(ctx, domain.ProjectID(tc.id), project.SetPermissionsInput{Permissions: tc.mode}); err == nil {
+			t.Fatalf("accepted %#v", tc)
+		}
+	}
+}
+
+func TestManager_RememberPortablePermissions(t *testing.T) {
+	m := newManager(t)
+	ctx := context.Background()
+	if _, err := m.Add(ctx, project.AddInput{Path: gitRepo(t), ProjectID: ptr("portable")}); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		source domain.AgentHarness
+		want   domain.PermissionMode
+	}{{domain.HarnessCodex, domain.PermissionModeBypassPermissions}, {domain.HarnessClaudeCode, domain.PermissionModeDefault}, {"", domain.PermissionModeDefault}} {
+		got, err := m.SetPermissions(ctx, "portable", project.SetPermissionsInput{SourceHarness: tc.source, Permissions: domain.PermissionModeDefault})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.Config.AgentConfig.Permissions != tc.want {
+			t.Fatalf("%s: got %q want %q", tc.source, got.Config.AgentConfig.Permissions, tc.want)
+		}
+	}
+	if _, err := m.SetPermissions(ctx, "portable", project.SetPermissionsInput{SourceHarness: "unknown", Permissions: domain.PermissionModeAuto}); err == nil {
+		t.Fatal("accepted unknown harness")
 	}
 }

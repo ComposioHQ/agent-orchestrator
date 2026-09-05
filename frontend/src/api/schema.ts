@@ -912,6 +912,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects/{id}/permissions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Remember project permissions for future sessions */
+        patch: operations["setProjectPermissions"];
+        trace?: never;
+    };
     "/api/v1/projects/clone": {
         parameters: {
             query?: never;
@@ -2855,6 +2872,8 @@ export interface components {
             group?: string;
             groupName?: string;
             name: string;
+            /** @enum {string} */
+            permissionMode?: "default" | "accept-edits" | "auto" | "bypass-permissions";
             value: string;
         };
         ConversationConfigOptionResponse: {
@@ -3891,6 +3910,11 @@ export interface components {
         };
         SetProjectConfigInput: {
             config: components["schemas"]["ProjectConfig"];
+        };
+        SetProjectPermissionsInput: {
+            /** @enum {string} */
+            permissions: "default" | "accept-edits" | "auto" | "bypass-permissions";
+            sourceHarness?: string;
         };
         SetReviewActivityRequest: {
             /** @description Native reviewer session identifier used to resume its transcript. */
@@ -7073,6 +7097,60 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["SetProjectConfigInput"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProjectResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    setProjectPermissions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Project identifier (registry key). */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SetProjectPermissionsInput"];
             };
         };
         responses: {

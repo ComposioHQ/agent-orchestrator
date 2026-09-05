@@ -338,3 +338,54 @@ describe("ACP session config options", () => {
 		).not.toBeInTheDocument();
 	});
 });
+
+describe("remember project permissions", () => {
+	it("keeps choosing a session policy separate from remembering the confirmed policy", async () => {
+		const user = userEvent.setup();
+		const onChange = vi.fn();
+		const remember = vi.fn();
+		const { rerender } = render(<TurnSettingsBar models={[]} harness="codex"
+			settings={{ approvalMode: "auto" }} onChange={onChange} onRememberPermissions={remember} />);
+		await user.click(screen.getByRole("button", { name: "Approval policy for the next turn" }));
+		await user.click(screen.getByRole("menuitem", { name: "Full access" }));
+		expect(onChange).toHaveBeenCalledWith({ approvalMode: "default" });
+		expect(remember).not.toHaveBeenCalled();
+		rerender(<TurnSettingsBar models={[]} harness="codex"
+			settings={{ approvalMode: "default" }} onChange={onChange} onRememberPermissions={remember} />);
+		await user.click(screen.getByRole("button", { name: "Approval policy for the next turn" }));
+		await user.click(screen.getByRole("menuitem", { name: "Remember for this project" }));
+		expect(remember).toHaveBeenCalledWith("default");
+	});
+
+	it("remembers a provider choice only through its daemon-supplied permission mapping", async () => {
+		const user = userEvent.setup();
+		const remember = vi.fn();
+		render(<TurnSettingsBar models={[]} settings={{ approvalMode: "auto" }}
+			configOptions={[{ ...OPTIONS[2], choices: [
+				{ value: "bypass", name: "Bypass Permissions", permissionMode: "bypass-permissions" },
+			] }]} onChangeConfigOption={vi.fn()} onRememberPermissions={remember} />);
+		await user.click(screen.getByRole("button", { name: "Permission mode" }));
+		await user.click(screen.getByRole("menuitem", { name: "Remember for this project" }));
+		expect(remember).toHaveBeenCalledWith("bypass-permissions");
+	});
+
+	it("does not substitute a stale AO mode for an unmapped provider choice", async () => {
+		const user = userEvent.setup();
+		render(<TurnSettingsBar models={[]} settings={{ approvalMode: "auto" }}
+			configOptions={[OPTIONS[2]]} onChangeConfigOption={vi.fn()} onRememberPermissions={vi.fn()} />);
+		await user.click(screen.getByRole("button", { name: "Permission mode" }));
+		expect(screen.queryByRole("menuitem", { name: "Remember for this project" })).not.toBeInTheDocument();
+	});
+
+	it("disables overlapping writes and shows save results", () => {
+		const props = { models: [], settings: {}, onChange: vi.fn(), onRememberPermissions: vi.fn() };
+		const { rerender } = render(<TurnSettingsBar {...props} rememberPermissionsPending />);
+		expect(screen.getByRole("button", { name: "Approval policy for the next turn" })).toBeDisabled();
+		expect(screen.getByRole("status")).toHaveTextContent("Saving project default");
+		rerender(<TurnSettingsBar {...props} rememberPermissionsError="Could not save project default" />);
+		expect(screen.getByRole("alert")).toHaveTextContent("Could not save project default");
+		expect(screen.getByRole("button", { name: "Approval policy for the next turn" })).toBeEnabled();
+		rerender(<TurnSettingsBar {...props} permissionsRemembered />);
+		expect(screen.getByRole("status")).toHaveTextContent("saved for new sessions in this project");
+	});
+});

@@ -45,6 +45,7 @@ type Manager interface {
 	// UpdateSettings atomically replaces a project's user-facing display name
 	// and per-project config, returning the updated read-model.
 	UpdateSettings(ctx context.Context, id domain.ProjectID, in UpdateSettingsInput) (Project, error)
+	SetPermissions(ctx context.Context, id domain.ProjectID, in SetPermissionsInput) (Project, error)
 
 	// SetConfig replaces a project's per-project config, returning the updated
 	// read-model.
@@ -981,4 +982,31 @@ func sessionPrefix(id string) string {
 		return id
 	}
 	return id[:12]
+}
+
+// SetPermissions remembers the approval policy for future sessions of either role.
+func (m *Service) SetPermissions(ctx context.Context, id domain.ProjectID, in SetPermissionsInput) (Project, error) {
+	if err := validateProjectID(id); err != nil {
+		return Project{}, err
+	}
+	if in.Permissions == "" || !in.Permissions.Valid() {
+		return Project{}, apierr.Invalid("INVALID_PERMISSIONS", "A valid permission mode is required", nil)
+	}
+	if in.SourceHarness != "" && !in.SourceHarness.IsKnown() {
+		return Project{}, apierr.Invalid("INVALID_HARNESS", "Unknown source harness", nil)
+	}
+	// Codex default grants full access; remember its portable equivalent so
+	// another harness does not interpret it as its own manual baseline.
+	permissions := in.Permissions
+	if in.SourceHarness == domain.HarnessCodex && permissions == domain.PermissionModeDefault {
+		permissions = domain.PermissionModeBypassPermissions
+	}
+	row, ok, err := m.store.SetProjectPermissions(ctx, string(id), permissions)
+	if err != nil {
+		return Project{}, apierr.Internal("PROJECT_PERMISSIONS_UPDATE_FAILED", "Failed to update project permissions")
+	}
+	if !ok {
+		return Project{}, apierr.NotFound("PROJECT_NOT_FOUND", "Unknown project")
+	}
+	return m.projectFromRow(ctx, row), nil
 }

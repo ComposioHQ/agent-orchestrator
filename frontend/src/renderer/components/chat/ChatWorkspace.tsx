@@ -45,6 +45,7 @@ import {
 import { isLinuxPlatform, isMacPlatform } from "../../lib/platform";
 import { handleTerminalTabListKeyDown } from "../../lib/terminal-tabs";
 import { agentLabel } from "../../lib/agent-options";
+import type { ApprovalMode } from "../../types/conversation";
 import type { ShellTerminal } from "../../hooks/useShellTerminals";
 import { sidebarOccupiesLayout, useUiStore } from "../../stores/ui-store";
 import type { TerminalTarget } from "../../types/terminal";
@@ -293,6 +294,10 @@ export interface ChatWorkspaceProps {
 	/** Resolved color theme for the reviewer terminal pane. */
 	theme?: "light" | "dark";
 	onChooseSettings?: (settings: TurnSettings) => void;
+	onRememberPermissions?: (mode: ApprovalMode) => Promise<unknown> | void;
+	rememberPermissionsPending?: boolean;
+	rememberPermissionsError?: string;
+	permissionsRemembered?: boolean;
 	/** Live provider-owned options, such as ACP model, effort, mode, and fast mode. */
 	configOptions?: ChatConfigOption[];
 	onChooseConfigOption?: (
@@ -419,6 +424,10 @@ export function ChatWorkspace({
 	busy,
 	models,
 	onChooseSettings,
+	onRememberPermissions,
+	rememberPermissionsPending,
+	rememberPermissionsError,
+	permissionsRemembered,
 	configOptions,
 	onChooseConfigOption,
 	configOptionPending,
@@ -838,6 +847,10 @@ export function ChatWorkspace({
 				<TurnSettingsBar
 					models={models ?? []}
 					settings={stableSettings}
+					onRememberPermissions={onRememberPermissions}
+					rememberPermissionsPending={rememberPermissionsPending}
+					rememberPermissionsError={rememberPermissionsError}
+					permissionsRemembered={permissionsRemembered}
 					harness={snapshot.harness}
 					reroute={stableModelReroute}
 					onChange={newWorkDisabled ? undefined : onChooseSettings}
@@ -858,6 +871,10 @@ export function ChatWorkspace({
 			newWorkDisabled,
 			onChooseConfigOption,
 			onChooseSettings,
+			onRememberPermissions,
+			rememberPermissionsPending,
+			rememberPermissionsError,
+			permissionsRemembered,
 			snapshot.controller.state,
 			stableModelReroute,
 			stableSettings,

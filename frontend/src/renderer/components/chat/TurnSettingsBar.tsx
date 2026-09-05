@@ -82,6 +82,10 @@ export function TurnSettingsBar({
 	harness,
 	reroute,
 	onChange,
+	onRememberPermissions,
+	rememberPermissionsPending,
+	rememberPermissionsError,
+	permissionsRemembered,
 	configOptions,
 	onChangeConfigOption,
 	configPending,
@@ -101,6 +105,10 @@ export function TurnSettingsBar({
 	 */
 	reroute?: ModelReroute;
 	onChange?: (next: TurnSettings) => void;
+	onRememberPermissions?: (mode: ApprovalMode) => Promise<unknown> | void;
+	rememberPermissionsPending?: boolean;
+	rememberPermissionsError?: string;
+	permissionsRemembered?: boolean;
 	/** Controls advertised by an ACP agent for this exact live session. */
 	configOptions?: ChatConfigOption[];
 	onChangeConfigOption?: (
@@ -133,7 +141,7 @@ export function TurnSettingsBar({
 		? `${modelLabel} ${capitalize(effortLabel)}`
 		: modelLabel;
 	const grouped = partitionConfigOptions(configOptions ?? []);
-	const optionDisabled = Boolean(disabled || configPending);
+	const optionDisabled = Boolean(disabled || configPending || rememberPermissionsPending);
 	const applyOption = (optionId: string, value: ChatConfigOptionValue) => {
 		if (!onChangeConfigOption) return;
 		void Promise.resolve(onChangeConfigOption(optionId, value)).catch(() => {});
@@ -146,6 +154,20 @@ export function TurnSettingsBar({
 		grouped.toggles.length > 0;
 	const modeOption = grouped.mode;
 	const planning = isPlanMode(grouped.executionMode);
+	const rememberMode = modeOption
+		? modeOption.choices.find((choice) => choice.value === modeOption.currentValue)?.permissionMode
+		: settings.approvalMode ?? "default";
+	const rememberAction = onRememberPermissions && rememberMode && !planning ? (
+		<OptionMenuItem
+			disabled={optionDisabled}
+			onSelect={() => {
+				void Promise.resolve(onRememberPermissions(rememberMode)).catch(() => {});
+			}}
+			className="mt-1 border-t border-border pt-2 text-xs"
+		>
+			Remember for this project
+		</OptionMenuItem>
+	) : null;
 	const showRightDropdown = Boolean(children || (!planning && (onChange || modeOption)));
 
 	return (
@@ -193,6 +215,7 @@ export function TurnSettingsBar({
 								option={modeOption}
 								disabled={optionDisabled}
 								onChange={(value) => applyOption(modeOption.id, value)}
+								footer={rememberAction}
 							/>
 						) : onChange ? (
 							<Picker
@@ -218,11 +241,20 @@ export function TurnSettingsBar({
 										</span>
 									</OptionMenuItem>
 								))}
+								{rememberAction}
 							</Picker>
 						) : null}
 					</div>
 				) : null}
 			</div>
+			{rememberPermissionsPending || permissionsRemembered ? (
+				<p role="status" className="px-1 text-[11px] text-muted-foreground">
+					{rememberPermissionsPending ? "Saving project default…" : "Permission mode saved for new sessions in this project."}
+				</p>
+			) : null}
+			{rememberPermissionsError ? (
+				<p role="alert" className="px-1 text-[11px] text-destructive">{rememberPermissionsError}</p>
+			) : null}
 			{error ? (
 				<p role="alert" className="px-1 text-[11px] leading-snug text-destructive">
 					{error}
@@ -620,11 +652,13 @@ function ConfigOptionPicker({
 	title,
 	onChange,
 	disabled,
+	footer,
 }: {
 	option: ChatConfigOption;
 	title?: string;
 	onChange: (value: ChatConfigOptionValue) => void;
 	disabled?: boolean;
+	footer?: ReactNode;
 }) {
 	return (
 		<Picker
@@ -633,6 +667,7 @@ function ConfigOptionPicker({
 			disabled={disabled}
 		>
 			<ConfigOptionChoices option={option} onChange={onChange} />
+			{footer}
 		</Picker>
 	);
 }

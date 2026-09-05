@@ -437,6 +437,7 @@ var schemaNames = map[string]string{ //nolint:gosec // Public OpenAPI type names
 	"ProjectInitializeRepositoryInput":  "InitializeRepositoryInput",
 	"ProjectInitializeRepositoryResult": "InitializeRepositoryResult",
 	"ProjectRemoveResult":               "RemoveProjectResult",
+	"ProjectSetPermissionsInput":        "SetProjectPermissionsInput",
 	"ProjectSetConfigInput":             "SetProjectConfigInput",
 	"ProjectUpdateSettingsInput":        "UpdateProjectSettingsInput",
 	"ProjectWorkspaceRepo":              "WorkspaceRepo",
@@ -1743,6 +1744,18 @@ func projectOperations() []operation {
 			summary:    "Replace a project's per-project config",
 			pathParams: []any{controllers.ProjectIDParam{}},
 			reqBody:    projectsvc.SetConfigInput{},
+			resps: []respUnit{
+				{http.StatusOK, controllers.ProjectResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPatch, path: "/api/v1/projects/{id}/permissions", id: "setProjectPermissions", tag: "projects",
+			summary:    "Remember project permissions for future sessions",
+			pathParams: []any{controllers.ProjectIDParam{}},
+			reqBody:    projectsvc.SetPermissionsInput{},
 			resps: []respUnit{
 				{http.StatusOK, controllers.ProjectResponse{}},
 				{http.StatusBadRequest, envelope.APIError{}},
