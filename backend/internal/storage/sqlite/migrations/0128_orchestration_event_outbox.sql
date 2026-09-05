@@ -20,8 +20,19 @@ CREATE TABLE orchestration_events (
 );
 CREATE INDEX idx_orchestration_events_due ON orchestration_events(state, next_attempt_at, enqueued_at);
 CREATE INDEX idx_orchestration_events_project ON orchestration_events(project_id, state, enqueued_at);
+CREATE TABLE orchestration_source_states (
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    worker_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL,
+    source_id TEXT NOT NULL,
+    active INTEGER NOT NULL CHECK(active IN (0,1)),
+    generation INTEGER NOT NULL DEFAULT 0,
+    updated_at TIMESTAMP NOT NULL,
+    PRIMARY KEY(project_id,worker_id,kind,source_id)
+);
 
 -- +goose Down
 DROP INDEX IF EXISTS idx_orchestration_events_project;
 DROP INDEX IF EXISTS idx_orchestration_events_due;
+DROP TABLE IF EXISTS orchestration_source_states;
 DROP TABLE IF EXISTS orchestration_events;

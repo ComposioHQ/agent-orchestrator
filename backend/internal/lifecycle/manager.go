@@ -70,6 +70,10 @@ type orchestrationBatchAcknowledgementStore interface {
 	AcknowledgeOrchestrationBatchAccepted(context.Context, domain.SessionID, string, time.Time) (int64, error)
 }
 
+type orchestrationSourceStateStore interface {
+	RecordOrchestrationSourceState(context.Context, domain.ProjectID, domain.SessionID, domain.OrchestrationEventKind, string, bool, time.Time) (bool, error)
+}
+
 // chatSpawnStore commits the lifecycle facts and the provider boundary in one
 // transaction. A fresh provider must never become the durable session owner
 // while the conversation head still names the provider it replaced.
@@ -1433,6 +1437,9 @@ func (m *Manager) MarkTerminated(ctx context.Context, id domain.SessionID) error
 			return err
 		}
 		if rec.IsTerminated {
+			if err := m.recordWorkerTerminalEvent(ctx, rec); err != nil {
+				return err
+			}
 			m.reapSessionContainers(ctx, id)
 			return nil
 		}
@@ -1474,6 +1481,9 @@ func (m *Manager) MarkTerminated(ctx context.Context, id domain.SessionID) error
 		}
 		switch outcome {
 		case terminationApplied, terminationAlreadyApplied:
+			if err := m.recordWorkerTerminalEvent(ctx, rec); err != nil {
+				return err
+			}
 			m.reapSessionContainers(ctx, id)
 			return nil
 		case terminationLaunchChanged:
@@ -1485,6 +1495,18 @@ func (m *Manager) MarkTerminated(ctx context.Context, id domain.SessionID) error
 			continue
 		}
 	}
+}
+
+func (m *Manager) recordWorkerTerminalEvent(ctx context.Context, rec domain.SessionRecord) error {
+	if rec.Kind != domain.KindWorker {
+		return nil
+	}
+	store, ok := m.store.(orchestrationSourceStateStore)
+	if !ok {
+		return nil
+	}
+	_, err := store.RecordOrchestrationSourceState(ctx, rec.ProjectID, rec.ID, domain.OrchestrationWorkerTerminated, "session", true, m.clock())
+	return err
 }
 
 // reapSessionContainers is the container leg of #2652 (the container-owning

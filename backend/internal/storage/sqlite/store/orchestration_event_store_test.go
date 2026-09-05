@@ -127,3 +127,34 @@ func TestOrchestrationEventStoreTUIAcknowledgesOnlyExactDestinationAndBatch(t *t
 		t.Fatalf("exact acknowledgement n=%d err=%v", n, err)
 	}
 }
+
+func TestOrchestrationSourceStateDedupesAndRearmsSCMTransition(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedProject(t, s, "p")
+	w, err := s.CreateSession(ctx, sampleRecord("p"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC().Truncate(time.Second)
+	created, err := s.RecordOrchestrationSourceState(ctx, "p", w.ID, domain.OrchestrationWorkerReadyMerge, "https://example.invalid/pr/1", true, now)
+	if err != nil || !created {
+		t.Fatalf("first created=%v err=%v", created, err)
+	}
+	for i := 0; i < 100; i++ {
+		created, err = s.RecordOrchestrationSourceState(ctx, "p", w.ID, domain.OrchestrationWorkerReadyMerge, "https://example.invalid/pr/1", true, now.Add(time.Duration(i)*time.Second))
+		if err != nil || created {
+			t.Fatalf("repeat %d created=%v err=%v", i, created, err)
+		}
+	}
+	if created, err = s.RecordOrchestrationSourceState(ctx, "p", w.ID, domain.OrchestrationWorkerReadyMerge, "https://example.invalid/pr/1", false, now.Add(time.Minute)); err != nil || created {
+		t.Fatalf("clear created=%v err=%v", created, err)
+	}
+	if created, err = s.RecordOrchestrationSourceState(ctx, "p", w.ID, domain.OrchestrationWorkerReadyMerge, "https://example.invalid/pr/1", true, now.Add(2*time.Minute)); err != nil || !created {
+		t.Fatalf("rearm created=%v err=%v", created, err)
+	}
+	events, err := s.ListOrchestrationEvents(ctx, "p", 10)
+	if err != nil || len(events) != 2 || events[0].SourceRevision == events[1].SourceRevision {
+		t.Fatalf("events=%+v err=%v", events, err)
+	}
+}

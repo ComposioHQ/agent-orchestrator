@@ -2,9 +2,12 @@ package store
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"fmt"
 	"hash/fnv"
+	"strconv"
 	"strings"
 	"time"
 
@@ -28,6 +31,51 @@ func (s *Store) EnqueueOrchestrationEvent(ctx context.Context, e domain.Orchestr
 	}
 	rows, err := result.RowsAffected()
 	return rows == 1, err
+}
+
+func (s *Store) RecordOrchestrationSourceState(ctx context.Context, project domain.ProjectID, worker domain.SessionID, kind domain.OrchestrationEventKind, sourceID string, active bool, now time.Time) (bool, error) {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	created := false
+	err := s.inTxDB(ctx, "record orchestration source state", func(_ *gen.Queries, db gen.DBTX) error {
+		var previous int
+		var generation int
+		err := db.QueryRowContext(ctx, `SELECT active,generation FROM orchestration_source_states WHERE project_id=? AND worker_id=? AND kind=? AND source_id=?`, project, worker, kind, sourceID).Scan(&previous, &generation)
+		if err != nil && err != sql.ErrNoRows {
+			return err
+		}
+		if err == sql.ErrNoRows {
+			if active {
+				generation = 1
+				created = true
+			}
+			_, err = db.ExecContext(ctx, `INSERT INTO orchestration_source_states(project_id,worker_id,kind,source_id,active,generation,updated_at)VALUES(?,?,?,?,?,?,?)`, project, worker, kind, sourceID, active, generation, now)
+			if err != nil {
+				return err
+			}
+		} else {
+			if (previous != 0) == active {
+				return nil
+			}
+			if active {
+				generation++
+				created = true
+			}
+			_, err = db.ExecContext(ctx, `UPDATE orchestration_source_states SET active=?,generation=?,updated_at=? WHERE project_id=? AND worker_id=? AND kind=? AND source_id=?`, active, generation, now, project, worker, kind, sourceID)
+			if err != nil {
+				return err
+			}
+		}
+		if !created {
+			return nil
+		}
+		revision := strconv.Itoa(generation)
+		sum := sha256.Sum256([]byte(string(project) + "\x00" + string(worker) + "\x00" + string(kind) + "\x00" + sourceID + "\x00" + revision))
+		id := "oe:" + hex.EncodeToString(sum[:16])
+		_, err = db.ExecContext(ctx, `INSERT INTO orchestration_events(id,project_id,worker_id,kind,source_revision,enqueued_at,next_attempt_at)VALUES(?,?,?,?,?,?,?) ON CONFLICT(project_id,worker_id,kind,source_revision) DO NOTHING`, id, project, worker, kind, revision, now, now)
+		return err
+	})
+	return created, err
 }
 
 func (s *Store) ReclaimOrchestrationEventLeases(ctx context.Context, now time.Time) (int64, error) {
