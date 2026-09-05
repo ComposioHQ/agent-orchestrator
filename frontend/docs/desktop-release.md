@@ -94,7 +94,7 @@ repository root for the stop evidence.
 There is currently no conductor kill switch or compatible-client gate. The local
 JSON flag is a disabled build-time stop, not remote authorization. A future
 Nightly experiment requires an independently reviewed rollout in `ao-releases`
-after compatible-client deployment and verification. Its required allow
+after delivery isolation and runtime safety are verified. Its required allow
 conditions are:
 
 - the host is macOS;
@@ -120,20 +120,22 @@ The audited Nightly `v0.12.11-nightly.202609041654` contains Windows/Linux
 versioned blockmaps only; its macOS manifest lists two versioned ZIPs without
 `blockMapSize`. Older public clients lack an explicit disable flag, so their
 safety still depends on that absence. Any conductor relaxation is separate
-reviewed work after compatible-client deployment and verification.
+reviewed work after delivery isolation and runtime safety are verified.
 
-First deploy and verify a compatible client baseline per channel with
-`autoUpdater.disableDifferentialDownload = true` set before checks. The future
-conductor contract requires all of: a conductor-owned global switch exactly
-`true`, an explicit channel allowlist, a minimum compatible candidate version,
-a minimum compatible installed baseline, and auditable baseline proof. Missing,
-malformed, partial, below-minimum or unproved inputs deny macOS maps.
+No bridge release is part of this design. Do not require users to pass through
+an intermediate upgrade or rely on adoption of a new baseline to protect older
+installations. Conventional macOS sidecars must remain absent on every URL
+reachable through an unchanged legacy provider.
 
-Static GitHub feeds cannot filter by the installed client version. Version
-thresholds do not protect legacy clients, and deploying one baseline does not
-prove every older installation upgraded. The independent client kill switch
-therefore remains default-disabled. This PR provides no remote authorization
-transport and makes no conductor mutation.
+A safe delivery mechanism is still under investigation. It must make experimental
+ZIP/map URLs undiscoverable by incompatible old clients, including those that
+skip releases or retain cached ZIP/maps. Static GitHub feeds and version thresholds
+cannot establish that isolation. Renaming a release or channel alone is insufficient.
+Any eventual allow still requires explicit conductor authorization, a channel
+allowlist, compatible candidate validation and auditable proof of delivery isolation;
+missing or malformed evidence denies. The independent client kill switch remains
+default-disabled. This PR provides no remote authorization transport and makes
+no conductor mutation.
 
 A separately reviewed conductor change must enforce the contract before
 artifact generation, in `verify-feeds` before upload, and in

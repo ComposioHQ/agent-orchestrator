@@ -69,8 +69,8 @@ This PR retains explicit client default-disable and unconditional macOS sidecar
 suppression. The Nightly feed regression checks both architectures, real full-ZIP
 SHA-512/size metadata, no sidecars and no `blockMapSize`; Windows/Linux feed
 generation remains unchanged. Do not infer a remote control from the local JSON
-stop. A future conductor rollout must be independently reviewed after compatible
-client deployment and verification, with legacy-client isolation established.
+stop. A future conductor rollout must be independently reviewed after delivery
+isolation and runtime safety are verified. No bridge release is permitted.
 Audit part 2, supplied by orchestrator 250:
 
 - `verify-feeds.mjs` forbids macOS blockmaps across latest, nightly and pr
@@ -87,7 +87,7 @@ without deliberate verification policy and test changes. This is stronger than
 feed-generation suppression alone. This PR must not relax that policy or produce
 macOS sidecars. Its scope is explicit client default-disable, guarded capability
 groundwork and real fallback safety. Any future conductor relaxation is a separate
-reviewed change after compatible-client deployment and verification. Legacy
+reviewed change after delivery isolation and runtime safety verification. Legacy
 safety still depends on absent sidecars because the audited public baseline
 has no explicit `disableDifferentialDownload` assignment.
 
@@ -182,34 +182,40 @@ The temporary test copy was removed; the installed dependency was unchanged.
 Immediately rerunning stock 6.8.9 produced 13 passed and the HTTP 416 descriptor
 failure. This is Node-transport evidence, not packaged Electron acceptance.
 
-## Future conductor rollout contract, audit part 3
+## Current product decision and delivery-isolation investigation
 
-Supplied by orchestrator 250 from `ao-releases` `RUNBOOK.md:542-626`. This is a
-future independently reviewed conductor change, not implemented authorization.
-Preserve the current macOS-forbidden default. First deploy clients with
-`autoUpdater.disableDifferentialDownload = true` before checks and verify the
-compatible installed baseline separately for each channel.
+The user's firm decision supersedes the earlier baseline-first rollout proposal:
+no bridge release, no intermediate-upgrade requirement, and no assumption that
+lagging or skipped-release clients have adopted a compatible baseline. Do not
+propose such a release as a path to enablement.
 
-Every future allow requires all of: conductor-owned global switch exactly true,
-explicit channel allowlist, minimum compatible candidate version, minimum
-compatible installed baseline, and auditable baseline proof. Unknown, missing,
-malformed, partial, below-minimum or unproved inputs deny. Static GitHub feeds
-cannot filter installed versions: thresholds cannot protect legacy clients.
-The independent client disable flag defaults true.
+Keep conventional macOS ZIP sidecars absent on all legacy-reachable feeds and
+keep the independent client disable flag true. The conductor's current macOS-map
+prohibition remains unchanged. Delivery isolation is not solved by version
+thresholds, channel names, local Developer Mode, manifest fields old clients
+ignore, or a successful first full download that can seed their next cache cycle.
 
-The future conductor must enforce this before generation, through `verify-feeds`
-before upload, and through `verify-remote-release` after upload. Prefer an explicit
-verified asset manifest over `dist/*`. Required acceptance coverage:
+The next investigation is a delivery mechanism that incompatible old clients
+cannot discover through their unchanged Provider URL derivation. Candidate
+boundaries to evaluate are an opt-in feed whose artifact URLs never appear in
+legacy feeds, or a distinct sidecar location resolved only by the gated client.
+Neither is approved or implemented. Evidence must include skipped-version and
+cached ZIP/map clients, both architectures, and proof that all conventional
+legacy-visible ZIP URLs remain without maps. It must also establish how remote
+authorization is validated and revoked without treating availability as consent.
 
-- Missing, partial, below-minimum or unproved gates reject latest/nightly/prN macOS maps.
-- Full gates allow only versioned macOS ZIP maps, never aliases.
-- Disabled feeds reject macOS map references and `blockMapSize`.
-- Injected draft sidecars fail remote verification.
-- Windows/Linux conductor policies remain unchanged.
-- Legacy electron-updater 6.8.9 remains full-download-only while sidecars are absent.
+Retain these independent constraints from the supplied conductor audit: explicit
+global authorization exactly true, channel allowlist, compatible candidate
+validation, auditable isolation proof, and missing/malformed denial; enforcement
+before generation, before upload and after upload; explicit verified asset
+manifest preferred over `dist/*`; versioned ZIP maps only, never aliases;
+disabled feeds reject macOS references and `blockMapSize`; injected draft maps
+fail remote verification; Windows/Linux conductor policies remain unchanged.
+These are requirements for a separate reviewed change, not existing controls.
+The earlier baseline-deployment sequence from the supplied
+`ao-releases` `RUNBOOK.md:542-626` is not the chosen design.
 
-The current feed and real MacUpdater regressions cover the final two properties
-and macOS suppression, not the future conductor controls. Rollback means global
-switch false plus client disable flag true, omit future maps, and never delete
-historical assets. No conductor policy mutation or rollout is part of #4906.
-The stock HTTP 416 fallback blocker remains open.
+Rollback preserves history: keep the client disabled, deny any future conductor
+allow, and omit future maps. No conductor mutation, publication or rollout is
+part of #4906. The stock HTTP 416 fallback blocker and packaged Electron/native
+acceptance remain unresolved independently of delivery isolation.

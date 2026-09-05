@@ -75,8 +75,8 @@ export function buildYml(version, files, releaseDate, important = false) {
 // generateFeeds writes the yml + sidecar blockmaps for every platform present in
 // dir. version may carry +build metadata (nightly); strip it for the yml.
 // mac zips never produce sidecars, including Nightly. The release conductor
-// must independently suppress them until a gated client baseline and isolation
-// from older clients have been verified. Local client flags cannot protect old binaries.
+// must independently suppress them while delivery isolation and runtime safety
+// are unresolved. Local client flags cannot protect older binaries.
 //
 // The linux sidecars this still writes are dead weight: AppImageUpdater reads
 // its blockmap from the AppImage tail, never from a sidecar, and needs a
