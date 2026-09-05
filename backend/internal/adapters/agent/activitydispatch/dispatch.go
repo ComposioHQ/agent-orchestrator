@@ -18,6 +18,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/codex"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/continueagent"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/cursor"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/deveco"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/droid"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/fake"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/kimchi"
@@ -50,6 +51,7 @@ var Derivers = map[string]DeriveFunc{
 	"aider":       aider.DeriveActivityState,
 	"kimchi":      kimchi.DeriveActivityState,
 	"opencode":    opencode.DeriveActivityState,
+	"deveco":      deveco.DeriveActivityState,
 	"prime-agent": primeagent.DeriveActivityState,
 	"amp":         amp.DeriveActivityState,
 	"pi":          pi.DeriveActivityState,

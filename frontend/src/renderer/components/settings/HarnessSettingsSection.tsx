@@ -113,8 +113,8 @@ export function HarnessSettingsSection({ titleHidden = false }: { titleHidden?: 
 		}));
 	}, []);
 
-	const plans = useMemo(() => new Map(installers.data?.map((plan) => [plan.agentId, plan]) ?? []), [installers.data]);
-	const jobMap = useMemo(() => new Map(jobs.data?.map((job) => [job.target, job]) ?? []), [jobs.data]);
+	const plans = useMemo(() => new Map<string, AgentInstallPlan>(installers.data?.map((plan) => [plan.agentId, plan]) ?? []), [installers.data]);
+	const jobMap = useMemo(() => new Map<string, InstallJob>(jobs.data?.map((job) => [job.target, job]) ?? []), [jobs.data]);
 	const agentAuthPlans = useMemo(() => new Map(authPlans.data?.map((plan) => [plan.agentId, plan]) ?? []), [authPlans.data]);
 	const readinessAgents = useMemo(() => new Map(agents.data?.agents.map((agent) => [agent.id, agent]) ?? []), [agents.data]);
 	const installed = useMemo(

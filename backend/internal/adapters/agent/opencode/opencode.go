@@ -35,6 +35,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/agentbase"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/binaryutil"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/hookutil"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/opencodefamily"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	aoprocess "github.com/aoagents/agent-orchestrator/backend/internal/process"
 
@@ -372,51 +373,11 @@ func appendPermissionFlags(cmd *[]string, permissions ports.PermissionMode) {
 
 const opencodeConfigEnvVar = "OPENCODE_CONFIG"
 
-type opencodeInlineConfig struct {
-	Schema string                           `json:"$schema,omitempty"`
-	Agent  map[string]opencodeAgentSettings `json:"agent,omitempty"`
-}
-
-type opencodeAgentSettings struct {
-	Mode   string `json:"mode,omitempty"`
-	Prompt string `json:"prompt,omitempty"`
-}
+type opencodeInlineConfig = opencodefamily.InlineConfig
+type opencodeAgentSettings = opencodefamily.AgentSettings
 
 func opencodeConfigEnvPrefix(inlinePrompt, promptFile, sessionID string) ([]string, string, error) {
-	if inlinePrompt == "" && promptFile == "" {
-		return nil, "", nil
-	}
-	if promptFile == "" {
-		return nil, "", fmt.Errorf("opencode: system prompt file required to build agent config")
-	}
-	agentName := opencodeAOAgentName(sessionID)
-	prompt := inlinePrompt
-	if prompt == "" {
-		prompt = "{file:./" + filepath.Base(promptFile) + "}"
-	}
-	dir := filepath.Dir(promptFile)
-	configPath := filepath.Join(dir, "opencode.json")
-	config := opencodeInlineConfig{
-		Schema: "https://opencode.ai/config.json",
-		Agent: map[string]opencodeAgentSettings{
-			agentName: {
-				Mode:   "primary",
-				Prompt: prompt,
-			},
-		},
-	}
-	data, err := json.MarshalIndent(config, "", "  ")
-	if err != nil {
-		return nil, "", err
-	}
-	data = append(data, '\n')
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return nil, "", fmt.Errorf("opencode: create prompt config dir: %w", err)
-	}
-	if err := hookutil.AtomicWriteFile(configPath, data, 0o600); err != nil {
-		return nil, "", fmt.Errorf("opencode: write prompt config: %w", err)
-	}
-	return []string{"env", opencodeConfigEnvVar + "=" + configPath}, agentName, nil
+	return opencodefamily.ConfigEnvPrefix("opencode", opencodeConfigEnvVar, "opencode.json", inlinePrompt, promptFile, sessionID)
 }
 
 // PrepareACPConfigContent merges AO's standing instructions and any explicit
@@ -466,29 +427,7 @@ func PrepareACPConfigContent(
 }
 
 func opencodeAOAgentName(sessionID string) string {
-	const fallback = "ao-system-prompt"
-	trimmed := strings.TrimSpace(sessionID)
-	if trimmed == "" {
-		return fallback
-	}
-	var b strings.Builder
-	for _, r := range trimmed {
-		switch {
-		case r >= 'a' && r <= 'z',
-			r >= 'A' && r <= 'Z',
-			r >= '0' && r <= '9',
-			r == '-',
-			r == '_':
-			b.WriteRune(r)
-		default:
-			b.WriteByte('-')
-		}
-	}
-	name := strings.Trim(b.String(), "-_")
-	if name == "" {
-		return fallback
-	}
-	return "ao-" + name
+	return opencodefamily.AOAgentName(sessionID)
 }
 
 // ResolveOpenCodeBinary returns the path to the opencode binary on this machine,

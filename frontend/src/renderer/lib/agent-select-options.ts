@@ -14,7 +14,7 @@ export type AgentInfo = {
 	usageCount: number;
 };
 
-export const DEFAULT_AGENT_PRIORITY = ["claude-code", "codex", "cursor", "opencode", "aider"] as const;
+export const DEFAULT_AGENT_PRIORITY = ["claude-code", "codex", "cursor", "opencode", "deveco", "aider"] as const;
 export const DEFAULT_AGENT_PRIORITY_RANK = new Map<string, number>(
 	DEFAULT_AGENT_PRIORITY.map((agent, index) => [agent, index]),
 );

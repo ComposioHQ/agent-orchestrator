@@ -135,7 +135,7 @@ describe("HarnessSettingsSection", () => {
 
 	it("keeps authentication controls hidden until a harness is installed", async () => {
 		renderSection();
-		await waitFor(() => expect(screen.getByText("1 of 27 installed")).toBeInTheDocument(), { timeout: 10_000 });
+		await waitFor(() => expect(screen.getByText("1 of 28 installed")).toBeInTheDocument(), { timeout: 10_000 });
 		const codexRow = screen.getByText("Codex").closest('[data-agent="codex"]');
 		expect(codexRow).not.toBeNull();
 		expect(within(codexRow as HTMLElement).getByRole("button", { name: "Install" })).toBeInTheDocument();
@@ -726,7 +726,7 @@ describe("HarnessSettingsSection", () => {
 		});
 		renderSection();
 		const row = (await screen.findByText("Codex")).closest('[data-agent="codex"]') as HTMLElement;
-		await waitFor(() => expect(screen.getByText("2 of 27 installed")).toBeInTheDocument());
+		await waitFor(() => expect(screen.getByText("2 of 28 installed")).toBeInTheDocument());
 		expect(within(row).queryByRole("button", { name: "Show diagnostics" })).not.toBeInTheDocument();
 	});
 
