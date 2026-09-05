@@ -1299,9 +1299,8 @@ describe("Sidebar", () => {
 
 		await user.click(screen.getByLabelText("New project"));
 		await user.click(screen.getByRole("button", { name: /^Import a workspace folder$/i }));
-		await user.click(screen.getByRole("button", { name: "Continue" }));
-		await waitFor(() => expect(useUiStore.getState().globalToast?.body).toBeTruthy());
-		expect(screen.getByRole("button", { name: "Choose another folder" })).toBeInTheDocument();
+		expect(screen.getByText("Initialize at least one child repository with a commit and origin remote before importing this workspace.")).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Continue" })).toBeDisabled();
 		expect(onCreateProject).not.toHaveBeenCalled();
 	});
 
@@ -1379,7 +1378,7 @@ describe("Sidebar", () => {
 		await user.click(screen.getByRole("button", { name: /^Import a workspace folder$/i }));
 		await screen.findByRole("dialog", { name: "Import workspace" });
 
-		expect(screen.getByText("/repo/workspace/unborn")).toBeInTheDocument();
+		expect(screen.getByText("unborn")).toBeInTheDocument();
 		expect(screen.queryByRole("dialog", { name: "Prepare project" })).not.toBeInTheDocument();
 		await user.click(screen.getByRole("button", { name: "Continue" }));
 		await screen.findByRole("dialog", { name: "Prepare project" });
@@ -1438,7 +1437,7 @@ describe("Sidebar", () => {
 		await user.click(screen.getByLabelText("New project"));
 		await user.click(screen.getByRole("button", { name: /^Import a workspace folder$/i }));
 		expect(screen.getByRole("dialog", { name: "Import workspace" })).toBeInTheDocument();
-		expect(screen.getByText("/repo/workspace/temp")).toBeInTheDocument();
+		expect(screen.getByText("temp")).toBeInTheDocument();
 		await user.click(screen.getByRole("button", { name: "Continue" }));
 		expect(screen.getByPlaceholderText("https://github.com/org/repository.git")).toBeInTheDocument();
 	});
