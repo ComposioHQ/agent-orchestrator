@@ -570,6 +570,7 @@ describe("CreateProjectFlow project import validation", () => {
 
 		await user.click(screen.getByRole("button", { name: "Import as project" }));
 		expect(screen.queryByTestId("agent-sheet")).not.toBeInTheDocument();
+		expect(screen.queryByText("Choose a project folder")).not.toBeInTheDocument();
 
 		const sheet = await screen.findByTestId("agent-sheet");
 		expect(sheet).toHaveAttribute("data-path", "/repo/project");

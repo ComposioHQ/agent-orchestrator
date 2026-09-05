@@ -8,7 +8,6 @@ import {
 	Cloud,
 	Folder,
 	FolderClosed,
-	FolderPlus,
 	Folders,
 	GitBranch,
 	GitFork,
@@ -181,6 +180,7 @@ export function CreateProjectFlow({
 
 	const hasModePicker = mode === "choose";
 	const projectImportOpen = projectImportStep !== null && projectValidation !== null;
+	const folderDialogOpen = folderPickerOpen && validationScan !== null;
 	const isBusy = isChoosingPath || isCreating || isInitializing || isPreparingGit || isCleaningClone;
 
 	useEffect(() => {
@@ -314,39 +314,51 @@ export function CreateProjectFlow({
 					return;
 				}
 				const validation = await validateImportFolder(path, "project");
-				if (preserveCurrentDialog) {
+				const applyProjectValidation = () => {
 					setError(null);
 					setValidationScan(null);
 					resetProjectImportState();
 					setRepositorySetup(null);
 					setRepositorySetupWarning(null);
 					setSelectedKind(kind);
-				}
-				setProjectImportKind("project");
-				setProjectValidation(validation);
-				setProjectPrepEvents([]);
-				setProjectApprovedActions(validation.root.requiredActions);
-				setProjectRemoteUrl(validation.root.requiredActions.includes("set_remote") ? suggestedProjectRemoteUrl(validation.root.repoPath) : "");
-				setProjectRepositoryPrep((validation.childRepos ?? []).filter((repo) => repo.requiredActions.length > 0).map((repo) => ({ repoPath: repo.repoPath, approvedActions: repo.requiredActions, remoteUrl: suggestedProjectRemoteUrl(repo.repoPath) })));
+					setProjectImportKind("project");
+					setProjectValidation(validation);
+					setProjectPrepEvents([]);
+					setProjectApprovedActions(validation.root.requiredActions);
+					setProjectRemoteUrl(validation.root.requiredActions.includes("set_remote") ? suggestedProjectRemoteUrl(validation.root.repoPath) : "");
+					setProjectRepositoryPrep((validation.childRepos ?? []).filter((repo) => repo.requiredActions.length > 0).map((repo) => ({ repoPath: repo.repoPath, approvedActions: repo.requiredActions, remoteUrl: suggestedProjectRemoteUrl(repo.repoPath) })));
+				};
+				if (!preserveCurrentDialog) applyProjectValidation();
+				const openProjectStep = (step: ProjectImportStep) => {
+					if (preserveCurrentDialog) transitionFromFolder(() => {
+						applyProjectValidation();
+						setProjectImportStep(step);
+					});
+					else setProjectImportStep(step);
+				};
 				if (!validation.isValid || validation.nextStep === "error") {
 					reportProjectError(importValidationMessage(validation));
-					if (preserveCurrentDialog) transitionFromFolder(() => setProjectImportStep("blocked"));
-					else setProjectImportStep("blocked");
+					openProjectStep("blocked");
 					return;
 				}
 				if (validation.nextStep === "choose_import_kind") {
-					if (preserveCurrentDialog) transitionFromFolder(() => setProjectImportStep("blocked"));
-					else setProjectImportStep("blocked");
+					openProjectStep("blocked");
 					return;
 				}
 				if (validation.nextStep === "prepare_git") {
-					if (preserveCurrentDialog) transitionFromFolder(() => setProjectImportStep("prepare_git"));
-					else setProjectImportStep("prepare_git");
+					openProjectStep("prepare_git");
 					return;
 				}
 				if (validation.warning) {
-					if (preserveCurrentDialog) transitionFromFolder(() => setProjectImportStep("blocked"));
-					else setProjectImportStep("blocked");
+					openProjectStep("blocked");
+					return;
+				}
+				if (preserveCurrentDialog) {
+					setModePickerOpen(false);
+					transitionFromFolder(() => {
+						applyProjectValidation();
+						setSelectedPath(path);
+					});
 					return;
 				}
 			}
@@ -505,7 +517,7 @@ export function CreateProjectFlow({
 				t("createProject.createFailedBody", { defaultValue: "AO could not create this project. Try again." }),
 				code,
 			));
-			else setError(message);
+			else reportProjectError(message);
 			if (hasModePicker && !cloneSelection && selectedKind !== "single_repo") {
 				if (shouldScanCreateFailure(message)) {
 					try {
@@ -517,11 +529,13 @@ export function CreateProjectFlow({
 					} catch {
 						setValidationScan({ path: selectedPath, repos: [] });
 					}
+					setFolderPickerOpen(true);
 				} else {
 					setValidationScan(null);
+					setFolderPickerOpen(false);
+					setModePickerOpen(true);
 				}
 				setSelectedPath(null);
-				setFolderPickerOpen(true);
 			}
 		} finally {
 			setCreateProgressOpen(false);
@@ -777,7 +791,7 @@ export function CreateProjectFlow({
 					error,
 					label,
 				})}
-			<CreateProjectFlowBackdrop open={modePickerOpen || cloneDialogOpen || folderPickerOpen || selectedPath !== null || createProgressOpen || childTransitioning || projectImportOpen} />
+			<CreateProjectFlowBackdrop open={modePickerOpen || cloneDialogOpen || folderDialogOpen || selectedPath !== null || createProgressOpen || childTransitioning || projectImportOpen} />
 			{hasModePicker && embedded && !modePickerOpen && !cloneDialogOpen && selectedPath === null && (
 				<div className="flex w-full flex-col items-center gap-3">
 					{cloudEnabled && (
@@ -802,7 +816,7 @@ export function CreateProjectFlow({
 			{hasModePicker && (
 				<>
 					<CreateProjectSourceDialog
-						childOpen={childTransitioning || cloneDialogOpen || folderPickerOpen || projectImportOpen || selectedPath !== null}
+						childOpen={childTransitioning || cloneDialogOpen || folderDialogOpen || projectImportOpen || selectedPath !== null}
 						cloudAvailable={cloudAvailable}
 						cloudEnabled={cloudEnabled}
 						disabled={isBusy}
@@ -851,7 +865,7 @@ export function CreateProjectFlow({
 						disabled={isBusy}
 						error={error}
 						kind={selectedKind}
-						open={folderPickerOpen}
+						open={folderDialogOpen}
 						scan={validationScan}
 						validation={projectValidation}
 						isPreparingGit={isPreparingGit}
@@ -1972,33 +1986,7 @@ function CreateProjectFolderDialog({
 									</div>
 								)}
 							</div>
-						) : (
-							<button
-								type="button"
-								className="flex min-h-[132px] w-full flex-col items-center justify-center rounded-lg border border-dashed border-[var(--color-border-import-modal)] bg-[var(--color-bg-import-card)] p-6 text-center transition-colors hover:bg-[var(--color-bg-import-card-hover)] disabled:pointer-events-none disabled:opacity-50 sm:min-h-[160px]"
-								disabled={disabled}
-								onClick={onChooseFolder}
-							>
-								<span className="mb-4 grid size-11 place-items-center rounded-xl bg-[var(--color-bg-import-chip)] text-[var(--color-text-import-muted)]">
-									<FolderPlus className="size-5" aria-hidden="true" />
-								</span>
-								<span className="text-[15px] font-semibold text-[var(--color-text-import-title)]">
-									{isWorkspace ? t("createProject.chooseFolder") : t("createProject.chooseProjectFolder")}
-								</span>
-								<span className="mt-2 max-w-full text-pretty text-[12px] text-[var(--color-text-import-muted)] sm:text-[13px]">
-									{isWorkspace ? t("createProject.pickerWorkspaceHint") : t("createProject.pickerProjectHint")}
-								</span>
-							</button>
-						)}
-						{error && !hasScan && (
-							<div
-								className={cn(
-									"mt-4 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-3 text-[12px] leading-5 text-destructive",
-								)}
-							>
-								{error}
-							</div>
-						)}
+						) : null}
 					</div>
 					<div className="flex shrink-0 justify-end gap-2 px-4 pb-4 pt-3">
 						<div className="flex flex-wrap items-center justify-end gap-3">

@@ -1478,7 +1478,11 @@ describe("Sidebar", () => {
 		await chooseOption(screen.getByRole("combobox", { name: "Orchestrator agent" }), "Claude Code");
 		await user.click(screen.getByRole("button", { name: "Create workspace and start" }));
 
-		expect(await screen.findByText("AO daemon is not ready.")).toBeInTheDocument();
+		await waitFor(() => expect(useUiStore.getState().globalToast).toMatchObject({
+			title: "Project setup failed",
+			body: "AO daemon is not ready.",
+		}));
+		expect(screen.getByRole("dialog", { name: "Add a project" })).toBeInTheDocument();
 		// The initial folder validation is required by the import step. The
 		// non-validation create failure must not trigger a second scan.
 		expect(window.ao!.app.checkAncestorRepo).toHaveBeenCalledWith("/repo/workspace");
