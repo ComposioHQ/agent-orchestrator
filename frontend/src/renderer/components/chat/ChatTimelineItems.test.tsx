@@ -70,6 +70,36 @@ describe("TurnOutcome", () => {
 });
 
 describe("AssistantMessage streaming", () => {
+	it("shows the first durable snapshot and a replacement message immediately", () => {
+		const text = "A first snapshot 👨‍👩‍👧‍👦";
+		const view = render(<AssistantMessage message={message({ text })} />);
+		expect(document.querySelector("p")?.textContent).toBe(text);
+		expect(frames.size).toBe(0);
+
+		view.rerender(<AssistantMessage message={message({ text: text + " buffered" })} />);
+		runFrame(0);
+		view.rerender(<AssistantMessage message={message({ id: "assistant-2", text: "New message" })} />);
+		expect(document.querySelector("p")?.textContent).toBe("New message");
+		expect(frames.size).toBe(0);
+	});
+
+	it("shows a provider correction immediately and starts a fresh drain afterward", () => {
+		const view = render(<AssistantMessage message={message()} />);
+		view.rerender(<AssistantMessage message={message({ text: "a".padEnd(2000, "x") })} />);
+		runFrame(0);
+		runFrame(150);
+		view.rerender(<AssistantMessage message={message({ text: "Corrected" })} />);
+		expect(document.querySelector("p")?.textContent).toBe("Corrected");
+		expect(frames.size).toBe(0);
+
+		view.rerender(<AssistantMessage message={message({ text: "Corrected text" })} />);
+		runFrame(190);
+		runFrame(198);
+		expect(document.querySelector("p")?.textContent).toBe("Corrected");
+		runFrame(390);
+		expect(document.querySelector("p")?.textContent).toBe("Corrected text");
+	});
+
 	it("does not force a character on high-refresh frames", () => {
 		const view = render(<AssistantMessage message={message()} />);
 		view.rerender(<AssistantMessage message={message({ text: "abcdefghij" })} />);
@@ -81,7 +111,7 @@ describe("AssistantMessage streaming", () => {
 		expect(screen.queryByText("ab")).not.toBeInTheDocument();
 	});
 
-	it("clamps an occluded-tab frame before appending backlog", () => {
+	it("shows the current snapshot immediately when an occluded tab resumes", () => {
 		const view = render(<AssistantMessage message={message()} />);
 		view.rerender(<AssistantMessage message={message({ text: "a".padEnd(2000, "x") })} />);
 
@@ -89,7 +119,46 @@ describe("AssistantMessage streaming", () => {
 		runFrame(5 * 60 * 1000);
 		const rendered = document.querySelector("p");
 
-		expect(rendered?.textContent?.length).toBeLessThan(100);
+		expect(rendered?.textContent).toBe("a".padEnd(2000, "x"));
+	});
+
+	it("shows a large received burst within 250ms", () => {
+		const view = render(<AssistantMessage message={message()} />);
+		const text = "a".padEnd(10_000, "x");
+		view.rerender(<AssistantMessage message={message({ text })} />);
+
+		runFrame(0);
+		for (let now = 16; now <= 240 && frames.size; now += 16) runFrame(now);
+
+		expect(document.querySelector("p")?.textContent).toBe(text);
+		expect(frames.size).toBe(0);
+	});
+
+	it("does not postpone the drain deadline when new snapshots keep arriving", () => {
+		const view = render(<AssistantMessage message={message()} />);
+		let text = "a".padEnd(2000, "x");
+		view.rerender(<AssistantMessage message={message({ text })} />);
+		runFrame(0);
+		for (let now = 40; now <= 200; now += 40) {
+			text += "x".repeat(2000);
+			view.rerender(<AssistantMessage message={message({ text })} />);
+			runFrame(now);
+		}
+
+		expect(document.querySelector("p")?.textContent).toBe(text);
+		expect(frames.size).toBe(0);
+	});
+
+	it("segments each snapshot once and reuses it across animation frames", () => {
+		const segment = vi.spyOn(Intl.Segmenter.prototype, "segment");
+		const view = render(<AssistantMessage message={message()} />);
+		const text = "a".padEnd(2000, "x");
+		view.rerender(<AssistantMessage message={message({ text })} />);
+		runFrame(0);
+		runFrame(50);
+		runFrame(100);
+
+		expect(segment.mock.calls.filter(([input]) => input === text)).toHaveLength(1);
 	});
 
 	it("keeps emoji and combining sequences intact while streaming", () => {
@@ -114,6 +183,17 @@ describe("AssistantMessage streaming", () => {
 		runFrame(1000);
 
 		expect(document.querySelector("p")?.textContent).toBe("a👨‍👩");
+	});
+
+	it("reconciles a later combining mark without skipping the following grapheme", () => {
+		const view = render(<AssistantMessage message={message({ text: "ae" })} />);
+		view.rerender(<AssistantMessage message={message({ text: "ae\u0301z" })} />);
+		expect(document.querySelector("p")?.textContent).toBe("a");
+		runFrame(0);
+		runFrame(20);
+		expect(document.querySelector("p")?.textContent).toBe("ae\u0301");
+		runFrame(40);
+		expect(document.querySelector("p")?.textContent).toBe("ae\u0301z");
 	});
 
 	it("shows the latest snapshot immediately when reduced motion is requested", () => {
