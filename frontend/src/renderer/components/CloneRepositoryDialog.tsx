@@ -4,7 +4,7 @@ import { AnimatePresence, motion } from "motion/react";
 import { type FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { aoBridge } from "../lib/bridge";
-import { isWindowsPlatform } from "../lib/platform";
+import { isMacPlatform, isWindowsPlatform } from "../lib/platform";
 import { PathRow } from "./PathRow";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
@@ -57,6 +57,7 @@ export default function CloneRepositoryDialog({
 	const onErrorRef = useRef(onError);
 	const lastReportedRepositoryError = useRef<string | null>(null);
 	const [choosingDestination, setChoosingDestination] = useState(false);
+	const [repositoryFieldTouched, setRepositoryFieldTouched] = useState(false);
 	const [shake, setShake] = useState(false);
 	const [destinationPickerError, setDestinationPickerError] = useState<string | null>(null);
 	const repositoryName = repositoryNameFromGitUrl(value.remoteUrl);
@@ -76,7 +77,10 @@ export default function CloneRepositoryDialog({
 			})
 		: null;
 	const duplicateError = repositoryName && projectExists ? t("createProject.cloneProjectExists") : null;
-	const inlineRepositoryError = urlError ?? repositoryAccessError ?? duplicateError;
+	const deferredRepositoryError = urlError ?? duplicateError;
+	const inlineRepositoryError = repositoryAccessError ?? (
+		repositoryFieldTouched || submitted ? deferredRepositoryError : null
+	);
 	const parentError = error === inlineRepositoryError ? null : error;
 	const destinationError = submitted && !hasDestination ? t("createProject.cloneDestinationRequired") : null;
 	const canContinue = Boolean(
@@ -120,6 +124,7 @@ export default function CloneRepositoryDialog({
 		setSubmitted(false);
 		setRepositoryCheck("idle");
 		setChoosingDestination(false);
+		setRepositoryFieldTouched(false);
 		setDestinationPickerError(null);
 		lastReportedRepositoryError.current = null;
 		clearShake();
@@ -284,6 +289,7 @@ export default function CloneRepositoryDialog({
 										spellCheck={false}
 										value={value.remoteUrl}
 										onChange={(event) => onChange({ ...value, remoteUrl: event.target.value })}
+										onBlur={() => setRepositoryFieldTouched(true)}
 									/>
 									{repositoryCheck === "checking" ? (
 										<LoaderCircle className="pointer-events-none absolute right-3 top-1/2 size-4 -translate-y-1/2 animate-spin text-muted-foreground" aria-label={t("createProject.cloneCheckingRepository", { defaultValue: "Checking repository" })} />
@@ -501,7 +507,11 @@ export function joinCloneDestination(parent: string, repositoryName: string): st
 	return `${parent.replace(/[\\/]+$/, "")}${separator}${repositoryName}`;
 }
 
-export function sameProjectPath(left: string, right: string, caseInsensitive = isWindowsPlatform()): boolean {
+export function sameProjectPath(
+	left: string,
+	right: string,
+	caseInsensitive = isMacPlatform() || isWindowsPlatform(),
+): boolean {
 	const normalize = (path: string) => path.replace(/[\\/]+$/, "").replaceAll("\\", "/");
 	const normalizedLeft = normalize(left);
 	const normalizedRight = normalize(right);

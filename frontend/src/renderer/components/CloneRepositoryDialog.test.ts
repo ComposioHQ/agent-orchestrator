@@ -63,6 +63,11 @@ describe("clone repository input", () => {
 		expect(sameProjectPath("C:\\Code\\Web-App", "C:\\Code\\web-app\\", true)).toBe(true);
 	});
 
+	it("compares paths case-insensitively by default on macOS", () => {
+		vi.spyOn(window.navigator, "platform", "get").mockReturnValue("MacIntel");
+		expect(sameProjectPath("/Users/me/Code/Web-App", "/Users/me/Code/web-app")).toBe(true);
+	});
+
 	it("allows the same project name at a different target path", async () => {
 		window.ao!.app.checkGitRepository = vi.fn().mockResolvedValue(true);
 		render(React.createElement(CloneRepositoryDialog, cloneDialogProps({
@@ -84,6 +89,9 @@ describe("clone repository input", () => {
 		const view = render(React.createElement(CloneRepositoryDialog, props));
 
 		const duplicateMessage = "A project already exists at this location";
+		expect(onError).not.toHaveBeenCalled();
+		expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+		fireEvent.blur(screen.getByRole("textbox", { name: "Repository URL" }));
 		await waitFor(() => expect(onError).toHaveBeenCalledWith(duplicateMessage));
 		expect(onError).toHaveBeenCalledTimes(1);
 		expect(screen.getAllByRole("alert")).toHaveLength(1);
@@ -97,17 +105,37 @@ describe("clone repository input", () => {
 		expect(onError).toHaveBeenCalledTimes(1);
 	});
 
-	it("reports a malformed URL once and shakes the dialog", async () => {
+	it("waits until blur to report a malformed URL, then reports it once", async () => {
+		const onError = vi.fn();
+		const props = cloneDialogProps({
+			onError,
+			value: { remoteUrl: "", destinationParent: "/code" },
+		});
+		const view = render(React.createElement(CloneRepositoryDialog, props));
+		view.rerender(React.createElement(CloneRepositoryDialog, {
+			...props,
+			value: { remoteUrl: "n", destinationParent: "/code" },
+		}));
+
+		expect(onError).not.toHaveBeenCalled();
+		expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+		fireEvent.blur(screen.getByRole("textbox", { name: "Repository URL" }));
+		await waitFor(() => expect(onError).toHaveBeenCalledWith("Enter a valid HTTPS, SSH, Git, or file URL."));
+		expect(onError).toHaveBeenCalledTimes(1);
+		expect(screen.getAllByRole("alert")).toHaveLength(1);
+		await waitFor(() => expect(screen.getByRole("dialog", { name: "Clone a Git repository" })).toHaveClass("modal-shake"));
+	});
+
+	it("reports a malformed URL when the form is submitted before blur", async () => {
 		const onError = vi.fn();
 		render(React.createElement(CloneRepositoryDialog, cloneDialogProps({
 			onError,
 			value: { remoteUrl: "not-a-repository", destinationParent: "/code" },
 		})));
 
+		const input = screen.getByRole("textbox", { name: "Repository URL" });
+		fireEvent.submit(input.closest("form")!);
 		await waitFor(() => expect(onError).toHaveBeenCalledWith("Enter a valid HTTPS, SSH, Git, or file URL."));
-		expect(onError).toHaveBeenCalledTimes(1);
-		expect(screen.getAllByRole("alert")).toHaveLength(1);
-		await waitFor(() => expect(screen.getByRole("dialog", { name: "Clone a Git repository" })).toHaveClass("modal-shake"));
 	});
 
 	it("keeps Continue disabled until a destination is selected", async () => {
