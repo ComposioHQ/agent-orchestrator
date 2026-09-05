@@ -307,7 +307,7 @@ export default function CloneRepositoryDialog({
 								</Label>
 								<PathRow
 									action={t("createProject.cloneChoose")}
-									ariaDescribedBy={destinationError ? "cloneDestinationError" : undefined}
+									ariaDescribedBy={`cloneDestinationHelp${destinationError ? " cloneDestinationError" : ""}`}
 									ariaInvalid={Boolean(destinationError)}
 									ariaLabel={t("createProject.cloneChoose")}
 									disabled={disabled || choosingDestination}
@@ -317,6 +317,11 @@ export default function CloneRepositoryDialog({
 								>
 									{value.destinationParent || t("createProject.cloneDestinationPlaceholder")}
 								</PathRow>
+								<p id="cloneDestinationHelp" className="text-pretty text-[12px] leading-5 text-[var(--color-text-import-muted)]">
+									{targetPath
+										? t("createProject.cloneDestinationTarget", { path: targetPath })
+										: t("createProject.cloneDestinationHelp")}
+								</p>
 								{destinationError ? (
 									<p id="cloneDestinationError" className="text-pretty text-[12px] leading-5 text-destructive" role="alert">
 										{destinationError}

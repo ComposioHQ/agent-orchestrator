@@ -25,6 +25,14 @@ afterEach(() => {
 });
 
 describe("clone repository input", () => {
+	it("describes the destination consistently and shows the exact checkout path", () => {
+		render(React.createElement(CloneRepositoryDialog, cloneDialogProps()));
+
+		expect(screen.getByText("Destination folder")).toBeInTheDocument();
+		expect(screen.getByText("Repository will be created at /code/web-app.")).toBeInTheDocument();
+		expect(screen.queryByText(/parent folder/i)).not.toBeInTheDocument();
+	});
+
 	it.each([
 		["https://github.com/acme/web-app.git", "web-app"],
 		["https://git.example.com/web-app.git", "web-app"],
