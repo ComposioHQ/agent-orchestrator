@@ -7,9 +7,11 @@ package systemcheck
 
 import (
 	"context"
+	"io"
 	"os"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	agentsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/agent"
@@ -18,7 +20,7 @@ import (
 
 // Requirement is one named startup gate check.
 type Requirement struct {
-	ID        string `json:"id" enum:"git,tmux,harness,gh" description:"Stable requirement identifier."`
+	ID        string `json:"id" enum:"git,tmux,harness,gh,github-auth" description:"Stable requirement identifier."`
 	Label     string `json:"label" description:"Human-readable requirement name."`
 	Satisfied bool   `json:"satisfied" description:"Whether this requirement is currently met."`
 	Required  bool   `json:"required" description:"Whether this requirement blocks the overall Ready state."`
@@ -43,12 +45,20 @@ type HarnessCatalog interface {
 type Service struct {
 	harnesses   HarnessCatalog
 	executables ports.ExecutableFinder
+	commands    ports.CommandRunner
 }
 
 // New returns a Service backed by the supplied host executable adapter and
 // harness catalog (an *agent.Service in production).
 func New(harnesses HarnessCatalog, executables ports.ExecutableFinder) *Service {
 	return &Service{harnesses: harnesses, executables: executables}
+}
+
+// NewWithCommandRunner returns a Service that can also verify GitHub CLI
+// authentication. The probe discards token output and records only whether
+// gh could resolve a credential.
+func NewWithCommandRunner(harnesses HarnessCatalog, executables ports.ExecutableFinder, commands ports.CommandRunner) *Service {
+	return &Service{harnesses: harnesses, executables: executables, commands: commands}
 }
 
 type executableFinderFunc func(string) (string, error)
@@ -61,11 +71,10 @@ func NewWithLookPath(harnesses HarnessCatalog, lookPath func(string) (string, er
 	return New(harnesses, executableFinderFunc(lookPath))
 }
 
-// CheckStartup runs only the inexpensive executable lookups that must be
-// known before AO presents its primary session UI. It deliberately excludes
-// agent inventory/authentication: those provider probes can invoke several
-// CLIs and have their own timeouts, so they belong in a later background or
-// launch-time check rather than the first-render critical path.
+// CheckStartup runs the inexpensive prerequisite probes needed before AO
+// presents its primary session UI. It deliberately excludes coding-agent
+// inventory and authentication: those provider probes can invoke several CLIs
+// and have their own timeouts. The single GitHub auth probe is bounded and advisory.
 func (s *Service) CheckStartup(ctx context.Context) (Report, error) {
 	if err := ctx.Err(); err != nil {
 		return Report{}, err
@@ -75,6 +84,7 @@ func (s *Service) CheckStartup(ctx context.Context) (Report, error) {
 		s.checkTmux(),
 		s.checkStartupHarness(ctx),
 		s.checkGH(),
+		s.checkGitHubAuth(ctx),
 	}), nil
 }
 
@@ -90,6 +100,7 @@ func (s *Service) Check(ctx context.Context) (Report, error) {
 		s.checkTmux(),
 		s.checkHarness(ctx),
 		s.checkGH(),
+		s.checkGitHubAuth(ctx),
 	}
 
 	return reportFor(requirements), nil
@@ -184,4 +195,26 @@ func (s *Service) checkGH() Requirement {
 		}
 	}
 	return Requirement{ID: "gh", Label: "gh", Satisfied: true, Detail: path}
+}
+
+// checkGitHubAuth is advisory: local work remains available when GitHub is
+// not configured, but onboarding should surface the missing capability before
+// an agent first tries to open a pull request. Token bytes are never captured.
+func (s *Service) checkGitHubAuth(ctx context.Context) Requirement {
+	const detail = "Sign in with `gh auth login` so agent sessions can open pull requests and read issues."
+	path, err := s.executables.LookPath("gh")
+	if err != nil || path == "" {
+		return Requirement{ID: "github-auth", Label: "GitHub access", Detail: detail}
+	}
+	if s.commands == nil {
+		// Lightweight embedders that provide only executable lookup retain the
+		// previous behavior. Production supplies a command runner.
+		return Requirement{ID: "github-auth", Label: "GitHub access", Satisfied: true, Detail: "Authentication check unavailable."}
+	}
+	probeCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	if err := s.commands.Run(probeCtx, []string{path, "auth", "token"}, io.Discard, io.Discard); err != nil {
+		return Requirement{ID: "github-auth", Label: "GitHub access", Detail: detail}
+	}
+	return Requirement{ID: "github-auth", Label: "GitHub access", Satisfied: true, Detail: "GitHub CLI is signed in."}
 }

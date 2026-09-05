@@ -522,7 +522,7 @@ func Run() error {
 	lcStack.trackerDone = startTrackerIntake(ctx, store, sessionSvc, tracker, log)
 
 	hostCommands := systemexec.New(cfg.DataDir)
-	systemChecks := systemcheck.New(agentSvc, hostCommands)
+	systemChecks := systemcheck.NewWithCommandRunner(agentSvc, hostCommands, hostCommands)
 	systemInstall := systeminstall.NewWithDeps(hostCommands, hostCommands, systeminstall.Deps{
 		JobStore: store,
 		Verifier: systeminstall.NewVerifier(agents, hostCommands),

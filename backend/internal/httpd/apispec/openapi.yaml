@@ -11390,6 +11390,7 @@ components:
           - tmux
           - harness
           - gh
+          - github-auth
           type: string
         label:
           description: Human-readable requirement name.

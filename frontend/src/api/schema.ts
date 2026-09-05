@@ -4097,7 +4097,7 @@ export interface components {
              * @description Stable requirement identifier.
              * @enum {string}
              */
-            id: "git" | "tmux" | "harness" | "gh";
+            id: "git" | "tmux" | "harness" | "gh" | "github-auth";
             /** @description Human-readable requirement name. */
             label: string;
             /** @description Whether this requirement blocks the overall Ready state. */

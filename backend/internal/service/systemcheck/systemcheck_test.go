@@ -3,7 +3,9 @@ package systemcheck
 import (
 	"context"
 	"errors"
+	"io"
 	"runtime"
+	"slices"
 	"testing"
 
 	agentsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/agent"
@@ -16,6 +18,16 @@ type fakeHarnessCatalog struct {
 	binary      agentsvc.Info
 	binaryOK    bool
 	binaryCalls int
+}
+
+type fakeCommandRunner struct {
+	err  error
+	argv []string
+}
+
+func (f *fakeCommandRunner) Run(_ context.Context, argv []string, _, _ io.Writer) error {
+	f.argv = append([]string(nil), argv...)
+	return f.err
 }
 
 func (f *fakeHarnessCatalog) RefreshFresh(context.Context) (agentsvc.Inventory, error) {
@@ -54,11 +66,11 @@ func TestCheck_AllSatisfied(t *testing.T) {
 	if !report.Ready {
 		t.Fatalf("Ready = false, want true; requirements=%+v", report.Requirements)
 	}
-	if len(report.Requirements) != 4 {
-		t.Fatalf("len(Requirements) = %d, want 4", len(report.Requirements))
+	if len(report.Requirements) != 5 {
+		t.Fatalf("len(Requirements) = %d, want 5", len(report.Requirements))
 	}
-	wantOrder := []string{"git", "tmux", "harness", "gh"}
-	wantRequired := map[string]bool{"git": true, "tmux": true, "harness": true, "gh": false}
+	wantOrder := []string{"git", "tmux", "harness", "gh", "github-auth"}
+	wantRequired := map[string]bool{"git": true, "tmux": true, "harness": true, "gh": false, "github-auth": false}
 	for i, id := range wantOrder {
 		if report.Requirements[i].ID != id {
 			t.Fatalf("Requirements[%d].ID = %q, want %q", i, report.Requirements[i].ID, id)
@@ -72,7 +84,7 @@ func TestCheck_AllSatisfied(t *testing.T) {
 	}
 }
 
-func TestCheckStartup_OnlyUsesExecutableLookups(t *testing.T) {
+func TestCheckStartup_SkipsAgentInventory(t *testing.T) {
 	catalog := &fakeHarnessCatalog{
 		err:      errors.New("agent auth probe must not run at startup"),
 		binary:   agentsvc.Info{ID: "claude-code", Label: "Claude Code"},
@@ -97,10 +109,10 @@ func TestCheckStartup_OnlyUsesExecutableLookups(t *testing.T) {
 	if catalog.binaryCalls != 1 {
 		t.Fatalf("FindInstalledBinary calls = %d, want 1", catalog.binaryCalls)
 	}
-	if len(report.Requirements) != 4 {
-		t.Fatalf("len(Requirements) = %d, want 4", len(report.Requirements))
+	if len(report.Requirements) != 5 {
+		t.Fatalf("len(Requirements) = %d, want 5", len(report.Requirements))
 	}
-	for i, want := range []string{"git", "tmux", "harness", "gh"} {
+	for i, want := range []string{"git", "tmux", "harness", "gh", "github-auth"} {
 		if report.Requirements[i].ID != want {
 			t.Fatalf("Requirements[%d].ID = %q, want %q", i, report.Requirements[i].ID, want)
 		}
@@ -313,6 +325,29 @@ func TestCheck_GHMissing(t *testing.T) {
 	}
 	if gh.Detail == "" {
 		t.Fatalf("gh.Detail is empty, want a not-found message")
+	}
+}
+
+func TestCheckStartup_GitHubAuthIsAdvisory(t *testing.T) {
+	catalog := &fakeHarnessCatalog{binary: agentsvc.Info{ID: "claude-code", Label: "Claude Code"}, binaryOK: true}
+	runner := &fakeCommandRunner{err: errors.New("not logged in")}
+	svc := NewWithCommandRunner(catalog, executableFinderFunc(lookPathFound(map[string]string{
+		"git": "/usr/bin/git", "tmux": "/usr/bin/tmux", "gh": "/usr/bin/gh",
+	})), runner)
+
+	report, err := svc.CheckStartup(context.Background())
+	if err != nil {
+		t.Fatalf("CheckStartup() error = %v", err)
+	}
+	if !report.Ready {
+		t.Fatalf("Ready = false, want true for advisory GitHub auth; requirements=%+v", report.Requirements)
+	}
+	auth := requirementByID(t, report, "github-auth")
+	if auth.Satisfied || auth.Required {
+		t.Fatalf("github-auth = %+v, want unsatisfied advisory", auth)
+	}
+	if got, want := runner.argv, []string{"/usr/bin/gh", "auth", "token"}; !slices.Equal(got, want) {
+		t.Fatalf("auth probe argv = %#v, want %#v", got, want)
 	}
 }
 

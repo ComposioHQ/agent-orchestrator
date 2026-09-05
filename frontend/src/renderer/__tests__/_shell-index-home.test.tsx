@@ -5,6 +5,7 @@ import type { WorkspaceSummary } from "../types/workspace";
 const routeMocks = vi.hoisted(() => ({
 	navigate: vi.fn(),
 	workspaces: [] as WorkspaceSummary[],
+	requirements: [] as Array<{ id: string; label: string; satisfied: boolean; required: boolean; detail: string }>,
 }));
 
 vi.mock("@tanstack/react-router", async (importOriginal) => ({
@@ -17,7 +18,7 @@ vi.mock("../hooks/useWorkspaceQuery", () => ({
 }));
 
 vi.mock("../hooks/useSystemRequirementsGate", () => ({
-	useSystemRequirementsGate: () => ({ blocked: false }),
+	useSystemRequirementsGate: () => ({ blocked: false, requirements: routeMocks.requirements, query: { refetch: vi.fn() } }),
 }));
 
 vi.mock("../lib/shell-context", () => ({
@@ -43,6 +44,7 @@ import { HomePage } from "../components/HomePage";
 beforeEach(() => {
 	routeMocks.navigate.mockReset();
 	routeMocks.workspaces = [];
+	routeMocks.requirements = [];
 });
 
 describe("shell index route", () => {
@@ -69,6 +71,21 @@ describe("shell index route", () => {
 
 		expect(screen.getByText("Jump back right in")).toBeInTheDocument();
 		expect(routeMocks.navigate).not.toHaveBeenCalled();
+	});
+
+	it("surfaces missing GitHub authentication on the seeded first-run home page", () => {
+		routeMocks.workspaces = [
+			{ id: "scratch", name: "Scratch", kind: "scratch", path: "/scratch", sessions: [] },
+		];
+		routeMocks.requirements = [
+			{ id: "gh", label: "gh", satisfied: true, required: false, detail: "/usr/bin/gh" },
+			{ id: "github-auth", label: "GitHub access", satisfied: false, required: false, detail: "Sign in." },
+		];
+
+		render(<HomePage />);
+
+		expect(screen.getByText("Connect GitHub for pull requests")).toBeInTheDocument();
+		expect(screen.getByText("gh auth login")).toBeInTheDocument();
 	});
 
 	it("opens a project from the recent-project list", async () => {

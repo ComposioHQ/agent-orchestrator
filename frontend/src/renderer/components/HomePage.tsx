@@ -14,6 +14,7 @@ import type { WorkspaceSummary } from "../types/workspace";
 import { BoardWelcome } from "./BoardEmptyStates";
 import { CreateProjectFlow } from "./CreateProjectFlow";
 import { DaemonStartupLoader } from "./DaemonStartupLoader";
+import { GitHubOnboardingNotice } from "./GitHubOnboardingNotice";
 import { TopbarButton } from "./TopbarButton";
 import { Badge } from "./ui/badge";
 
@@ -165,6 +166,10 @@ export function HomePage() {
 							<Star className="size-4" strokeWidth={1.8} aria-hidden="true" />
 							{t("home.starUs")}
 						</TopbarButton>
+					</div>
+
+					<div className="flex justify-center px-3">
+						<GitHubOnboardingNotice />
 					</div>
 
 					<div className="-mt-3 grid grid-cols-2 gap-3 px-3">
