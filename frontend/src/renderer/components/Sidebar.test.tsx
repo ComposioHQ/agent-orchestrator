@@ -1419,7 +1419,6 @@ describe("Sidebar", () => {
 				return {
 					data: {
 						events: [
-							{ action: "git_commit", repoPath: "/repo/workspace/temp", state: "success" },
 							{ action: "set_remote", repoPath: "/repo/workspace/temp", state: "success" },
 						],
 						validation: {
@@ -1463,11 +1462,11 @@ describe("Sidebar", () => {
 							{
 								repoPath: "/repo/workspace/temp",
 								isRepo: true,
-								hasCommit: false,
+								hasCommit: true,
 								hasOrigin: false,
 								isEmptyFolder: false,
 								needsGitInit: false,
-								requiredActions: ["git_commit", "set_remote"],
+								requiredActions: ["set_remote"],
 								blockingErrors: [],
 							},
 						],
@@ -1480,7 +1479,7 @@ describe("Sidebar", () => {
 		});
 		window.ao!.app.scanImportFolder = vi.fn().mockResolvedValue({
 			path: "/repo/workspace",
-			repos: [{ name: "temp", path: "/repo/workspace/temp", relativePath: "temp", branch: "", remote: "", hasRemote: false, status: "ok", needsGitInit: true }],
+			repos: [{ name: "temp", path: "/repo/workspace/temp", relativePath: "temp", branch: "main", remote: "", hasRemote: false, isRepo: true, hasCommit: true, status: "ok", needsGitInit: false }],
 		});
 		renderSidebar({ onCreateProject: vi.fn().mockResolvedValue(undefined) as CreateProjectHandler });
 
@@ -1489,6 +1488,8 @@ describe("Sidebar", () => {
 		expect(screen.getByRole("dialog", { name: "Import workspace" })).toBeInTheDocument();
 		expect(screen.getByText("temp")).toBeInTheDocument();
 		expect(screen.getByRole("textbox", { name: "Origin remote URL" })).toBeInTheDocument();
+		expect(screen.getByText("Remote setup")).toBeInTheDocument();
+		expect(screen.queryByText(/Initial commit/)).not.toBeInTheDocument();
 		expect(screen.getAllByRole("checkbox")).toHaveLength(1);
 		expect(screen.queryByRole("button", { name: /Set up|Hide setup/i })).not.toBeInTheDocument();
 		expect(screen.getByRole("button", { name: "Continue" })).toBeDisabled();

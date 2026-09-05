@@ -742,12 +742,12 @@ export function CreateProjectFlow({
 
 	const prepareWorkspaceGit = async () => {
 		if (!projectValidation || !validationScan) return;
-		const repositories = (projectValidation.childRepos ?? [])
-			.filter((repo) => repo.requiredActions.length > 0)
+		const repositories = mergeWorkspaceImportRepos(validationScan, projectValidation)
+			.filter((repo) => repo.isRepo && repo.requiredActions.length > 0)
 			.map((repo) => ({
-				repoPath: repo.repoPath,
-				approvedActions: workspaceApprovedActions[repo.repoPath] ?? [],
-				remoteUrl: workspaceRemoteUrls[repo.repoPath]?.trim() || undefined,
+				repoPath: repo.path,
+				approvedActions: workspaceApprovedActions[repo.path] ?? [],
+				remoteUrl: workspaceRemoteUrls[repo.path]?.trim() || undefined,
 			}));
 		if (repositories.some((repo) => repo.remoteUrl && !isValidProjectRemote(repo.remoteUrl))) {
 			reportProjectError(t("createProject.cloneInvalidUrl"));
@@ -2142,7 +2142,7 @@ function mergeWorkspaceImportRepos(scan: ImportFolderScan | null, validation: Im
 			status: repo?.status ?? (status?.blockingErrors.length ? "error" : "ok"),
 			reason: repo?.reason ?? status?.blockingErrors[0],
 			needsGitInit: status?.needsGitInit ?? repo?.needsGitInit,
-			requiredActions: status?.requiredActions ?? scanRequiredActions(repo),
+			requiredActions: repo?.isRepo !== undefined ? scanRequiredActions(repo) : status?.requiredActions ?? [],
 			blockingErrors: status?.blockingErrors ?? [],
 			isRepo: status?.isRepo ?? repo?.isRepo,
 			hasCommit: status?.hasCommit ?? repo?.hasCommit,
