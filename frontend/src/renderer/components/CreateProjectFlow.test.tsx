@@ -481,7 +481,7 @@ describe("CreateProjectFlow droppedPath", () => {
 		expect(await screen.findByLabelText("Clone URL")).toHaveValue("");
 	});
 
-	it("keeps clone progress open when creation cannot be canceled", async () => {
+	it("keeps clone progress open without offering cancellation", async () => {
 		const user = userEvent.setup();
 		let finishCreate!: () => void;
 		const onCreateProject = vi.fn(() => new Promise<void>((resolve) => {
@@ -503,12 +503,10 @@ describe("CreateProjectFlow droppedPath", () => {
 		await user.click(await screen.findByRole("button", { name: "Submit agents" }));
 		expect(await screen.findByRole("dialog", { name: "Creating the project" })).toBeInTheDocument();
 
-		await user.click(screen.getByRole("button", { name: "Cancel" }));
+		expect(screen.queryByRole("button", { name: "Cancel" })).not.toBeInTheDocument();
+		fireEvent.keyDown(document, { key: "Escape" });
 		expect(screen.getByRole("dialog", { name: "Creating the project" })).toBeInTheDocument();
 		expect(screen.queryByTestId("agent-sheet")).not.toBeInTheDocument();
-		expect(useUiStore.getState().globalToast?.body).toBe(
-			"Keep this window open until AO finishes creating the project.",
-		);
 
 		await act(async () => finishCreate());
 		await waitFor(() => expect(screen.queryByRole("dialog", { name: "Creating the project" })).not.toBeInTheDocument());
@@ -538,6 +536,11 @@ describe("CreateProjectFlow project import validation", () => {
 		await waitFor(() => expect(onOpenExistingProject).toHaveBeenCalledWith("/repo/existing"));
 		expect(apiMocks.POST).not.toHaveBeenCalled();
 		expect(screen.queryByTestId("agent-sheet")).not.toBeInTheDocument();
+		expect(useUiStore.getState().globalToasts).toHaveLength(1);
+		expect(useUiStore.getState().globalToast).toMatchObject({
+			title: "Project already added",
+			body: "Opened the registered project for this folder.",
+		});
 	});
 
 	it("uses one shared backdrop while switching between flow modals", async () => {

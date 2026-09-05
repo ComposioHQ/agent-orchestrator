@@ -140,6 +140,10 @@ export function HomePage() {
 	const openProject = (projectId: string) => {
 		void navigate({ to: "/projects/$projectId", params: { projectId } });
 	};
+	const openExistingProject = (path: string) => {
+		const project = projects.find((candidate) => candidate.path === path);
+		if (project) void navigate({ to: "/projects/$projectId", params: { projectId: project.id } });
+	};
 
 	if (workspaceStartupState === "error" || workspaceQuery.isError) {
 		return (
@@ -209,10 +213,13 @@ export function HomePage() {
 				</div>
 
 				<CreateProjectFlow
+					existingProjectNames={projects.map((project) => project.name)}
+					existingProjectPaths={projects.map((project) => project.path)}
 					mode="choose"
 					onCloneProject={cloneProject}
 					onCreateProject={createProject}
 					onInitializeProject={initializeProjectRepository}
+					onOpenExistingProject={openExistingProject}
 					sourceSignal={sourceSignal}
 				/>
 			</div>

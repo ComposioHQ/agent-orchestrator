@@ -1,8 +1,12 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { WorkspaceSummary } from "../types/workspace";
 
 const routeMocks = vi.hoisted(() => ({
+	createProjectFlowProps: null as null | {
+		existingProjectPaths?: readonly string[];
+		onOpenExistingProject?: (path: string) => void | Promise<void>;
+	},
 	navigate: vi.fn(),
 	workspaces: [] as WorkspaceSummary[],
 }));
@@ -31,7 +35,10 @@ vi.mock("../lib/shell-context", () => ({
 }));
 
 vi.mock("../components/CreateProjectFlow", () => ({
-	CreateProjectFlow: () => null,
+	CreateProjectFlow: (props: NonNullable<typeof routeMocks.createProjectFlowProps>) => {
+		routeMocks.createProjectFlowProps = props;
+		return null;
+	},
 }));
 
 vi.mock("../components/BoardEmptyStates", () => ({
@@ -43,6 +50,7 @@ import { HomePage } from "../components/HomePage";
 beforeEach(() => {
 	routeMocks.navigate.mockReset();
 	routeMocks.workspaces = [];
+	routeMocks.createProjectFlowProps = null;
 });
 
 describe("shell index route", () => {
@@ -80,6 +88,21 @@ describe("shell index route", () => {
 		render(<HomePage />);
 
 		fireEvent.click(screen.getByRole("button", { name: /Project One/ }));
+		expect(routeMocks.navigate).toHaveBeenCalledWith({
+			to: "/projects/$projectId",
+			params: { projectId: "proj-1" },
+		});
+	});
+
+	it("opens an already registered path from the import flow", async () => {
+		routeMocks.workspaces = [
+			{ id: "proj-1", name: "Project One", kind: "single_repo", path: "/repo/project-one", sessions: [] },
+		];
+
+		render(<HomePage />);
+
+		expect(routeMocks.createProjectFlowProps?.existingProjectPaths).toEqual(["/repo/project-one"]);
+		await act(async () => routeMocks.createProjectFlowProps?.onOpenExistingProject?.("/repo/project-one"));
 		expect(routeMocks.navigate).toHaveBeenCalledWith({
 			to: "/projects/$projectId",
 			params: { projectId: "proj-1" },

@@ -502,6 +502,13 @@ export function Sidebar({
 		() => applyOrder(workspaces, (workspace) => workspace.id, projectOrder, "end"),
 		[projectOrder, workspaces],
 	);
+	const openExistingProject = useCallback(
+		(path: string) => {
+			const workspace = workspaces.find((candidate) => candidate.path === path);
+			if (workspace) selection.goProject(workspace.id);
+		},
+		[selection, workspaces],
+	);
 	const projectIds = useMemo(() => orderedWorkspaces.map((workspace) => workspace.id), [orderedWorkspaces]);
 	const reorderSensors = useReorderSensors();
 	const projectDragClickGuard = usePostDragClickGuard();
@@ -744,6 +751,7 @@ export function Sidebar({
 								onCloneProject={onCloneProject}
 								onCreateProject={onCreateProject}
 								onInitializeProject={onInitializeProject}
+								onOpenExistingProject={openExistingProject}
 								existingProjectPaths={workspaces.map((workspace) => workspace.path)}
 								existingProjectNames={workspaces.map((workspace) => workspace.name)}
 							/>
@@ -2432,10 +2440,12 @@ function CreateProjectButton({
 	onCloneProject,
 	onCreateProject,
 	onInitializeProject,
+	onOpenExistingProject,
 }: Pick<SidebarProps, "onCloneProject" | "onCreateProject" | "onInitializeProject"> & {
 	existingProjectPaths: readonly string[];
 	existingProjectNames: readonly string[];
 	hideTrigger?: boolean;
+	onOpenExistingProject: (path: string) => void;
 }) {
 	const { t } = useTranslation();
 	// Single CreateProjectFlow owner for the sidebar: the header "+" stays mounted
@@ -2451,6 +2461,7 @@ function CreateProjectButton({
 			onCloneProject={onCloneProject}
 			onCreateProject={onCreateProject}
 			onInitializeProject={onInitializeProject}
+			onOpenExistingProject={onOpenExistingProject}
 			openSignal={createProjectNonce}
 			existingProjectPaths={existingProjectPaths}
 			existingProjectNames={existingProjectNames}

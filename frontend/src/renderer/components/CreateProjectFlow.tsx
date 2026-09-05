@@ -303,6 +303,7 @@ export function CreateProjectFlow({
 				if (registeredPath && onOpenExistingProject) {
 					setModePickerOpen(false);
 					setFolderPickerOpen(false);
+					showGlobalToast("Project already added", "Opened the registered project for this folder.");
 					await onOpenExistingProject(registeredPath);
 					return;
 				}
@@ -903,17 +904,6 @@ export function CreateProjectFlow({
 			/>
 			<CreateProjectProgressDialog
 				message={createProgressMessage(createProgressStage, selectedKind === "workspace")}
-				onCancel={() => {
-					if (isCreating) {
-						showGlobalToast(
-							t("createProject.cloneInProgressTitle", { defaultValue: "Project creation is still running" }),
-							t("createProject.cloneInProgressBody", { defaultValue: "Keep this window open until AO finishes creating the project." }),
-							"info",
-						);
-						return;
-					}
-					setCreateProgressOpen(false);
-				}}
 				open={createProgressOpen}
 				progress={createProgress}
 			/>
