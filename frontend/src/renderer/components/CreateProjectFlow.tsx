@@ -71,6 +71,14 @@ type ProjectSource = "clone" | "local" | "workspace";
 type ProjectOffering = "local" | "cloud";
 type CreateProgressStage = "starting" | "connecting" | "creating" | "settingUp" | "finishing" | "complete";
 
+function initialCloneDetails(): CloneRepositoryDetails {
+	return {
+		remoteUrl: "",
+		destinationParent:
+			typeof window === "undefined" ? "" : (window.localStorage.getItem(LAST_CLONE_DESTINATION_KEY) ?? ""),
+	};
+}
+
 function createProgressMessage(stage: CreateProgressStage, workspace: boolean): string {
 	switch (stage) {
 		case "starting": return "Preparing the project";
@@ -125,13 +133,10 @@ export function CreateProjectFlow({
 	const [error, setError] = useState<string | null>(null);
 	const [modePickerOpen, setModePickerOpen] = useState(false);
 	const [cloneDialogOpen, setCloneDialogOpen] = useState(false);
-	const [cloneDetails, setCloneDetails] = useState<CloneRepositoryDetails>(() => ({
-		remoteUrl: "",
-		destinationParent:
-			typeof window === "undefined" ? "" : (window.localStorage.getItem(LAST_CLONE_DESTINATION_KEY) ?? ""),
-	}));
+	const [cloneDetails, setCloneDetails] = useState<CloneRepositoryDetails>(initialCloneDetails);
 	const [cloneSelection, setCloneSelection] = useState<CloneRepositorySelection | null>(null);
 	const [preparedClonePath, setPreparedClonePath] = useState<string | null>(null);
+	const preparedClonePathRef = useRef<string | null>(null);
 	const [folderPickerOpen, setFolderPickerOpen] = useState(false);
 	const [childTransitioning, setChildTransitioning] = useState(false);
 	const [selectedKind, setSelectedKind] = useState<ProjectKind>(mode === "workspace" ? "workspace" : "single_repo");
@@ -155,6 +160,7 @@ export function CreateProjectFlow({
 	const [createProgress, setCreateProgress] = useState(0);
 	const [createProgressStage, setCreateProgressStage] = useState<CreateProgressStage>("starting");
 	const [isPreparingGit, setIsPreparingGit] = useState(false);
+	const [isCleaningClone, setIsCleaningClone] = useState(false);
 	const [repositorySetup, setRepositorySetup] = useState<"NOT_A_GIT_REPO" | "PROJECT_UNBORN" | null>(null);
 	const [repositorySetupWarning, setRepositorySetupWarning] = useState<string | null>(null);
 	// A path that arrived via droppedPath, staged until the user confirms
@@ -173,7 +179,7 @@ export function CreateProjectFlow({
 
 	const hasModePicker = mode === "choose";
 	const projectImportOpen = projectImportStep !== null && projectValidation !== null;
-	const isBusy = isChoosingPath || isCreating || isInitializing || isPreparingGit;
+	const isBusy = isChoosingPath || isCreating || isInitializing || isPreparingGit || isCleaningClone;
 
 	useEffect(() => {
 		if (!createProgressOpen) return;
@@ -216,23 +222,36 @@ export function CreateProjectFlow({
 		setProjectImportShake(false);
 	};
 
-	const abandonPreparedClone = async () => {
-		const path = preparedClonePath;
-		if (!path) return;
-		setPreparedClonePath(null);
-		try {
-			await apiClient.POST("/api/v1/projects/clone/cleanup", { body: { path } });
-		} catch {
-			// Cleanup is best effort. The marker prevents removing user-owned repos.
-		}
-	};
-
 	const reportProjectError = (message: string) => {
 		setError(message);
 		showGlobalToast(t("createProject.setupFailedToastTitle", { defaultValue: "Project setup failed" }), message, "error");
 		setProjectImportShake(false);
 		window.requestAnimationFrame(() => setProjectImportShake(true));
 		window.setTimeout(() => setProjectImportShake(false), 320);
+	};
+
+	const rememberPreparedClone = (path: string | null) => {
+		preparedClonePathRef.current = path;
+		setPreparedClonePath(path);
+	};
+
+	const abandonPreparedClone = async (): Promise<boolean> => {
+		const path = preparedClonePathRef.current;
+		if (!path) return true;
+		setIsCleaningClone(true);
+		try {
+			const { error: cleanupError } = await apiClient.POST("/api/v1/projects/clone/cleanup", { body: { path } });
+			if (cleanupError) throw new Error("clone cleanup failed");
+			rememberPreparedClone(null);
+			return true;
+		} catch {
+			reportProjectError(t("createProject.cloneCleanupFailed", {
+				defaultValue: "AO could not remove the incomplete checkout. Try again before leaving this flow.",
+			}));
+			return false;
+		} finally {
+			setIsCleaningClone(false);
+		}
 	};
 
 	const transitionToChild = (open: () => void) => {
@@ -243,19 +262,21 @@ export function CreateProjectFlow({
 		}, 80);
 	};
 
-	const selectSource = (source: ProjectSource) => {
-		void abandonPreparedClone();
+	const selectSource = async (source: ProjectSource) => {
+		if (preparedClonePathRef.current && !(await abandonPreparedClone())) return;
 		const presetPath = pendingDropPath;
 		setPendingDropPath(null);
 		setError(null);
 		setValidationScan(null);
 		resetProjectImportState();
 		if (source === "clone") {
+			setCloneDetails(initialCloneDetails());
+			setCloneSelection(null);
 			transitionToChild(() => setCloneDialogOpen(true));
 			return;
 		}
 		setCloneSelection(null);
-		setPreparedClonePath(null);
+		rememberPreparedClone(null);
 		// Keep the selector mounted behind the native picker. Closing it first
 		// exposes a blank compositor frame on Windows before Explorer takes focus.
 		void chooseDirectory(source === "workspace" ? "workspace" : "single_repo", presetPath ?? undefined);
@@ -347,6 +368,7 @@ export function CreateProjectFlow({
 		// Each entry starts on the default Local choice, never a leftover Cloud one.
 		setOffering("local");
 		resetProjectImportState();
+		setCloneDetails(initialCloneDetails());
 		if (hasModePicker) {
 			setError(null);
 			setCloneSelection(null);
@@ -386,7 +408,7 @@ export function CreateProjectFlow({
 		if (!sourceSignal || sourceSignal.nonce === lastSourceNonce.current) return;
 		lastSourceNonce.current = sourceSignal.nonce;
 		if (isBusy || modePickerOpen || cloneDialogOpen || folderPickerOpen || selectedPath !== null) return;
-		selectSource(sourceSignal.source);
+		void selectSource(sourceSignal.source);
 	}, [sourceSignal]);
 
 	const createProject = async (selection: CreateProjectAgentSelection) => {
@@ -403,9 +425,12 @@ export function CreateProjectFlow({
 			if (cloneSelection) {
 				if (!preparedClonePath) throw new Error(t("createProject.couldNotAdd"));
 				await onCreateProject({ path: selectedPath, ...selection });
+				setCreateProgress(100);
+				setCreateProgressStage("complete");
+				await new Promise((resolve) => window.setTimeout(resolve, 180));
 				setSelectedPath(null);
 				setCloneSelection(null);
-				setPreparedClonePath(null);
+				rememberPreparedClone(null);
 				return;
 			}
 			if (selectedKind === "single_repo" && repositorySetup) {
@@ -433,11 +458,14 @@ export function CreateProjectFlow({
 			setSelectedPath(null);
 		} catch (err) {
 			const code = err instanceof Error && "code" in err ? (err.code as string | undefined) : undefined;
-			const message = err instanceof Error ? err.message : t("createProject.couldNotAdd");
+			const message = cloneSelection
+				? t("createProject.cloneFailedTitle", { defaultValue: "Could not clone repository" })
+				: err instanceof Error ? err.message : t("createProject.couldNotAdd");
 			if (!cloneSelection && selectedKind === "single_repo" && isRepositorySetupRecoveryCode(code)) {
 				setRepositorySetup(code);
 			}
-			setError(message);
+			if (cloneSelection) reportProjectError(message);
+			else setError(message);
 			if (hasModePicker && !cloneSelection) {
 				if (shouldScanCreateFailure(message)) {
 					try {
@@ -463,8 +491,10 @@ export function CreateProjectFlow({
 	};
 
 	const prepareClone = async (next: CloneRepositorySelection) => {
+		if (preparedClonePathRef.current && !(await abandonPreparedClone())) return;
 		setError(null);
 		setIsPreparingGit(true);
+		let clonedPath: string | null = null;
 		try {
 			const { data, error: apiError } = await apiClient.POST("/api/v1/projects/clone/prepare", {
 			body: {
@@ -473,10 +503,11 @@ export function CreateProjectFlow({
 			},
 			});
 			if (apiError || !data) throw new Error(apiErrorMessage(apiError, t("createProject.couldNotAdd")));
+			clonedPath = data.path;
+			rememberPreparedClone(data.path);
 			const validation = await validateImportFolder(data.path, "project");
 			setCloneDialogOpen(false);
 			setCloneSelection(next);
-			setPreparedClonePath(data.path);
 			setSelectedKind("single_repo");
 			setModePickerOpen(false);
 			setProjectValidation(validation);
@@ -493,16 +524,21 @@ export function CreateProjectFlow({
 				return;
 			}
 			setSelectedPath(data.path);
-		} catch (err) {
-			reportProjectError(err instanceof Error ? err.message : t("createProject.couldNotAdd"));
+		} catch {
+			reportProjectError(clonedPath
+				? t("createProject.cloneValidationFailed", {
+					defaultValue: "AO cloned the repository but could not verify the checkout. Try again.",
+				})
+				: t("createProject.cloneFailedTitle", { defaultValue: "Could not clone repository" }));
+			if (clonedPath) await abandonPreparedClone();
 			setCloneDialogOpen(true);
 		} finally {
 			setIsPreparingGit(false);
 		}
 	};
 
-	const reopenSourcePicker = () => {
-		void abandonPreparedClone();
+	const reopenSourcePicker = async () => {
+		if (!(await abandonPreparedClone())) return;
 		setCloneSelection(null);
 		resetProjectImportState();
 		if (hasModePicker) {
@@ -510,6 +546,15 @@ export function CreateProjectFlow({
 			return;
 		}
 		setError(null);
+	};
+
+	const leaveCloneDialog = async (back: boolean) => {
+		if (!(await abandonPreparedClone())) return;
+		setError(null);
+		setCloneDialogOpen(false);
+		setCloneSelection(null);
+		setCloneDetails(initialCloneDetails());
+		if (back) setModePickerOpen(true);
 	};
 
 	const tryProjectAsWorkspace = () => {
@@ -678,17 +723,14 @@ export function CreateProjectFlow({
 							existingProjectNames={existingProjectNames}
 							existingProjectPaths={existingProjectPaths}
 							onBack={() => {
-								setError(null);
-								setCloneDialogOpen(false);
-								setModePickerOpen(true);
+								void leaveCloneDialog(true);
 							}}
 							onChange={(next) => {
 								setCloneDetails(next);
 								setError(null);
 							}}
 							onClose={() => {
-								setCloneDialogOpen(false);
-								setError(null);
+								void leaveCloneDialog(false);
 							}}
 							onContinue={(next) => void prepareClone(next)}
 							onError={reportProjectError}
@@ -750,7 +792,7 @@ export function CreateProjectFlow({
 				approvedActions={projectApprovedActions}
 				importKind={projectImportKind}
 				repositoryPrep={projectRepositoryPrep}
-				onBack={reopenSourcePicker}
+				onBack={() => void reopenSourcePicker()}
 				onChangeApprovedActions={setProjectApprovedActions}
 				onChangeFolder={() => void chooseDirectory("single_repo")}
 				onChangeRemote={setProjectRemoteUrl}
@@ -764,10 +806,12 @@ export function CreateProjectFlow({
 				onOpenChange={(open) => {
 					if (isBusy) return;
 					if (!open) {
-						void abandonPreparedClone();
-						setCloneSelection(null);
-						resetProjectImportState();
-						setError(null);
+						void (async () => {
+							if (!(await abandonPreparedClone())) return;
+							setCloneSelection(null);
+							resetProjectImportState();
+							setError(null);
+						})();
 					}
 				}}
 				onTryWorkspace={tryProjectAsWorkspace}
@@ -786,24 +830,25 @@ export function CreateProjectFlow({
 				kind={selectedKind}
 				onOpenChange={(open) => {
 					if (!open) {
-						void abandonPreparedClone();
-						setSelectedPath(null);
-						setCloneSelection(null);
-						setPreparedClonePath(null);
-						resetProjectImportState();
-						if (!folderPickerOpen) {
-							setError(null);
-						}
+						void (async () => {
+							if (!(await abandonPreparedClone())) return;
+							setSelectedPath(null);
+							setCloneSelection(null);
+							resetProjectImportState();
+							if (!folderPickerOpen) setError(null);
+						})();
 					}
 				}}
 					onBack={
 					cloneSelection
 						? () => {
-								void abandonPreparedClone();
-								setCloneSelection(null);
-								setPreparedClonePath(null);
-								setSelectedPath(null);
-								setCloneDialogOpen(true);
+								void (async () => {
+									if (!(await abandonPreparedClone())) return;
+									setCloneSelection(null);
+									setSelectedPath(null);
+									setCloneDetails(initialCloneDetails());
+									setCloneDialogOpen(true);
+								})();
 							}
 						: undefined
 				}
@@ -815,7 +860,17 @@ export function CreateProjectFlow({
 			/>
 			<CreateProjectProgressDialog
 				message={createProgressMessage(createProgressStage, selectedKind === "workspace")}
-				onCancel={() => setCreateProgressOpen(false)}
+				onCancel={() => {
+					if (isCreating) {
+						showGlobalToast(
+							t("createProject.cloneInProgressTitle", { defaultValue: "Project creation is still running" }),
+							t("createProject.cloneInProgressBody", { defaultValue: "Keep this window open until AO finishes creating the project." }),
+							"info",
+						);
+						return;
+					}
+					setCreateProgressOpen(false);
+				}}
 				open={createProgressOpen}
 				progress={createProgress}
 			/>

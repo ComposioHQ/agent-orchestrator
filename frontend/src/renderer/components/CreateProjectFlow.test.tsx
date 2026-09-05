@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import userEvent from "@testing-library/user-event";
 import { useState, type ReactNode } from "react";
@@ -116,9 +116,23 @@ vi.mock("./CreateProjectAgentSheet", () => ({
 // These tests only care whether the clone flow is on screen and that the
 // droppedPath guard leaves it alone, so a thin stub keeps the suite focused.
 vi.mock("./CloneRepositoryDialog", () => ({
-	default: ({ open, onContinue }: { open: boolean; onContinue?: (selection: { remoteUrl: string; destinationParent: string; targetPath: string }) => void }) =>
+	default: ({ open, onBack, onChange, onClose, onContinue, value }: {
+		onBack?: () => void;
+		onChange?: (value: { remoteUrl: string; destinationParent: string }) => void;
+		onClose?: () => void;
+		onContinue?: (selection: { remoteUrl: string; destinationParent: string; targetPath: string }) => void;
+		open: boolean;
+		value: { remoteUrl: string; destinationParent: string };
+	}) =>
 		open ? (
 			<div data-testid="clone-dialog">
+				<input
+					aria-label="Clone URL"
+					value={value.remoteUrl}
+					onChange={(event) => onChange?.({ ...value, remoteUrl: event.target.value })}
+				/>
+				<button type="button" onClick={onBack}>Back clone</button>
+				<button type="button" onClick={onClose}>Close clone</button>
 				<button type="button" onClick={() => onContinue?.({ remoteUrl: "file:///source/empty-repository.git", destinationParent: "/repo", targetPath: "/repo/empty-repository" })}>
 					Continue clone
 				</button>
@@ -370,6 +384,126 @@ describe("CreateProjectFlow droppedPath", () => {
 		resolveValidation({ data: projectValidation("/repo/empty-repository", { nextStep: "prepare_git" }) });
 		expect(await screen.findByText("Prepare project")).toBeInTheDocument();
 		expect(screen.queryByTestId("clone-dialog")).not.toBeInTheDocument();
+	});
+
+	it("cleans up a checkout when validation fails after cloning", async () => {
+		const user = userEvent.setup();
+		apiMocks.POST.mockImplementation(async (path: string) => {
+			if (path === "/api/v1/projects/clone/prepare") {
+				return { data: { path: "/repo/incomplete", remoteUrl: "file:///source/incomplete.git" } };
+			}
+			if (path === "/api/v1/imports/validate") {
+				return { error: { message: "rpc failed: request_id=secret" } };
+			}
+			return {};
+		});
+
+		render(
+			<CreateProjectFlow mode="choose" {...noop}>
+				{({ choosePath }) => <button onClick={choosePath}>New project</button>}
+			</CreateProjectFlow>,
+		);
+
+		await user.click(screen.getByRole("button", { name: "New project" }));
+		await user.click(await screen.findByRole("button", { name: "Clone from Git" }));
+		fireEvent.click(await screen.findByText("Continue clone"));
+
+		await waitFor(() => expect(apiMocks.POST).toHaveBeenCalledWith(
+			"/api/v1/projects/clone/cleanup",
+			{ body: { path: "/repo/incomplete" } },
+		));
+		expect(screen.getByTestId("clone-dialog")).toBeInTheDocument();
+		expect(useUiStore.getState().globalToast?.body).toBe(
+			"AO cloned the repository but could not verify the checkout. Try again.",
+		);
+		expect(useUiStore.getState().globalToast?.body).not.toContain("request_id");
+	});
+
+	it("keeps a failed checkout cleanup retryable before leaving clone", async () => {
+		const user = userEvent.setup();
+		let cleanupAttempts = 0;
+		apiMocks.POST.mockImplementation(async (path: string) => {
+			if (path === "/api/v1/projects/clone/prepare") {
+				return { data: { path: "/repo/incomplete", remoteUrl: "file:///source/incomplete.git" } };
+			}
+			if (path === "/api/v1/imports/validate") return { error: { message: "validation unavailable" } };
+			if (path === "/api/v1/projects/clone/cleanup") {
+				cleanupAttempts += 1;
+				return cleanupAttempts === 1 ? { error: { message: "permission denied" } } : {};
+			}
+			return {};
+		});
+
+		render(
+			<CreateProjectFlow mode="choose" {...noop}>
+				{({ choosePath }) => <button onClick={choosePath}>New project</button>}
+			</CreateProjectFlow>,
+		);
+
+		await user.click(screen.getByRole("button", { name: "New project" }));
+		await user.click(await screen.findByRole("button", { name: "Clone from Git" }));
+		fireEvent.click(await screen.findByText("Continue clone"));
+
+		await waitFor(() => expect(cleanupAttempts).toBe(1));
+		expect(screen.getByTestId("clone-dialog")).toBeInTheDocument();
+		expect(useUiStore.getState().globalToast?.body).toBe(
+			"AO could not remove the incomplete checkout. Try again before leaving this flow.",
+		);
+
+		fireEvent.click(screen.getByText("Back clone"));
+		await waitFor(() => expect(cleanupAttempts).toBe(2));
+		expect(await screen.findByRole("button", { name: "Clone from Git" })).toBeInTheDocument();
+		expect(screen.queryByTestId("clone-dialog")).not.toBeInTheDocument();
+	});
+
+	it("starts clone details fresh each time it opens", async () => {
+		const user = userEvent.setup();
+		render(
+			<CreateProjectFlow mode="choose" {...noop}>
+				{({ choosePath }) => <button onClick={choosePath}>New project</button>}
+			</CreateProjectFlow>,
+		);
+
+		await user.click(screen.getByRole("button", { name: "New project" }));
+		await user.click(await screen.findByRole("button", { name: "Clone from Git" }));
+		fireEvent.change(await screen.findByLabelText("Clone URL"), { target: { value: "https://example.com/old.git" } });
+		fireEvent.click(screen.getByText("Back clone"));
+		fireEvent.click(await screen.findByRole("button", { name: "Clone from Git" }));
+
+		expect(await screen.findByLabelText("Clone URL")).toHaveValue("");
+	});
+
+	it("keeps clone progress open when creation cannot be canceled", async () => {
+		const user = userEvent.setup();
+		let finishCreate!: () => void;
+		const onCreateProject = vi.fn(() => new Promise<void>((resolve) => {
+			finishCreate = resolve;
+		}));
+		apiMocks.POST
+			.mockResolvedValueOnce({ data: { path: "/repo/cloned", remoteUrl: "file:///source/cloned.git" } })
+			.mockResolvedValueOnce({ data: projectValidation("/repo/cloned") });
+
+		render(
+			<CreateProjectFlow mode="choose" {...noop} onCreateProject={onCreateProject}>
+				{({ choosePath }) => <button onClick={choosePath}>New project</button>}
+			</CreateProjectFlow>,
+		);
+
+		await user.click(screen.getByRole("button", { name: "New project" }));
+		await user.click(await screen.findByRole("button", { name: "Clone from Git" }));
+		fireEvent.click(await screen.findByText("Continue clone"));
+		await user.click(await screen.findByRole("button", { name: "Submit agents" }));
+		expect(await screen.findByRole("dialog", { name: "Creating the project" })).toBeInTheDocument();
+
+		await user.click(screen.getByRole("button", { name: "Cancel" }));
+		expect(screen.getByRole("dialog", { name: "Creating the project" })).toBeInTheDocument();
+		expect(screen.queryByTestId("agent-sheet")).not.toBeInTheDocument();
+		expect(useUiStore.getState().globalToast?.body).toBe(
+			"Keep this window open until AO finishes creating the project.",
+		);
+
+		await act(async () => finishCreate());
+		await waitFor(() => expect(screen.queryByRole("dialog", { name: "Creating the project" })).not.toBeInTheDocument());
 	});
 });
 
