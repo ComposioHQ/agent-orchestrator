@@ -9,7 +9,7 @@ export function ModelFamilyOptions({ models, value, onSelect, disabled = false }
 		<OptionMenuItem key={model.id} active={model.id === value} disabled={disabled} onSelect={() => onSelect(model.id)} className="text-xs">
 			<span className="flex min-w-0 flex-col">
 				<span>{modelVersionLabel(model)}</span>
-				{model.label !== model.id && !/^(?:claude-)?(?:opus|fable|sonnet|haiku|mythos)(?:\[[^\]]+\])?$/i.test(model.id) ? <span className="text-[10px] text-muted-foreground">{model.id}</span> : null}
+				{model.label !== model.id && !/^(?:claude-)?(?:opus|fable|sonnet|haiku|mythos)(?:\[[^\]]+\])?$/i.test(model.id) ? <span aria-hidden="true" className="text-[10px] text-muted-foreground">{model.id}</span> : null}
 			</span>
 		</OptionMenuItem>
 	);
