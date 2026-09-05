@@ -331,19 +331,15 @@ export function CreateProjectFlow({
 				setRepositorySetup(code);
 			}
 			setError(message);
-			if (hasModePicker && !cloneSelection) {
-				if (shouldScanCreateFailure(message)) {
-					try {
-						const scan = await aoBridge.app.scanImportFolder({
-							path: selectedPath,
-							mode: selectedKind === "workspace" ? "workspace" : "project",
-						});
-						setValidationScan(scan);
-					} catch {
-						setValidationScan({ path: selectedPath, repos: [] });
-					}
-				} else {
-					setValidationScan(null);
+			if (hasModePicker && !cloneSelection && shouldScanCreateFailure(message)) {
+				try {
+					const scan = await aoBridge.app.scanImportFolder({
+						path: selectedPath,
+						mode: selectedKind === "workspace" ? "workspace" : "project",
+					});
+					setValidationScan(scan);
+				} catch {
+					setValidationScan({ path: selectedPath, repos: [] });
 				}
 				setSelectedPath(null);
 				setFolderPickerOpen(true);
