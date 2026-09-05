@@ -123,7 +123,11 @@ export function TopbarOpenEditorButton({
 					<TooltipTrigger asChild>
 						<span className="inline-flex">
 							<TopbarButton
-								aria-label={stateQuery.isPending ? t("editor.preparingWorkspace") : preferred ? t("editor.openInAria", { name: preferred.name }) : t("editor.chooseEditor")}
+								aria-label={stateQuery.isPending
+									? t("editor.preparingWorkspace")
+									: preferred
+										? t("editor.openInAria", { name: preferred.name })
+										: t("editor.chooseEditor")}
 								className="hover:bg-transparent"
 								disabled={mainDisabled}
 								onClick={() => launch()}

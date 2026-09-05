@@ -38,12 +38,12 @@ function renderButton(
 	return render(
 		<QueryClientProvider client={client}>
 			<TooltipProvider>
-			<TopbarOpenEditorButton
-				sessionId="sess-1"
-				projectId="proj-1"
-				sessionCreatedAt={sessionCreatedAt}
-				sessionTerminated={sessionTerminated}
-			/>
+				<TopbarOpenEditorButton
+					sessionId="sess-1"
+					projectId="proj-1"
+					sessionCreatedAt={sessionCreatedAt}
+					sessionTerminated={sessionTerminated}
+				/>
 			</TooltipProvider>
 		</QueryClientProvider>,
 	);

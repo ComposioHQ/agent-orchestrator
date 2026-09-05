@@ -1,4 +1,3 @@
-import { QueryClient, QueryObserver } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { QueryClient, QueryObserver } from "@tanstack/react-query";
 import { computeSseRetryDelayMs } from "./sse-backoff";
@@ -288,7 +287,7 @@ describe("createEventTransport", () => {
 			});
 			expect(queryClient.invalidateQueries).not.toHaveBeenCalledWith({
 				queryKey: ["editor-handoff", "chat-1"],
-			});
+			}, { cancelRefetch: false });
 		} finally {
 			vi.useRealTimers();
 		}
@@ -299,7 +298,7 @@ describe("createEventTransport", () => {
 		try {
 			const queryClient = fakeQueryClient();
 			createEventTransport(queryClient).connect();
-			EventSourceStub.instances[0].emit(
+			cdcSources()[0].emit(
 				"session_updated",
 				JSON.stringify({
 					seq: 44,
@@ -337,7 +336,7 @@ describe("createEventTransport", () => {
 			disconnect = createEventTransport(queryClient).connect();
 
 			expect(queryClient.getQueryData(queryKey)).toEqual({ workspaceAvailable: false });
-			EventSourceStub.instances[0].emit(
+			cdcSources()[0].emit(
 				"session_updated",
 				JSON.stringify({
 					seq: 667762,
