@@ -356,6 +356,15 @@ type Store interface {
 	// Kill and successful RestoreAll must remove these rows to prevent
 	// resurrecting sessions the user intentionally terminated.
 	DeleteSessionWorktrees(ctx context.Context, id domain.SessionID) error
+	// CheckpointSpawnWorkspaceReady durably records the workspace facts of an
+	// in-flight spawn the moment the worktree exists, before anything that can
+	// block (provisioning, attachments, provider startup). It is guarded on the
+	// preparing phase in storage, so it can never move an advanced session
+	// backwards. ok=false means the session was no longer a preparing live spawn.
+	CheckpointSpawnWorkspaceReady(ctx context.Context, id domain.SessionID, checkpoint domain.SpawnWorkspaceCheckpoint, updatedAt time.Time) (bool, error)
+	// PromoteSpawnPhaseWorkspaceReady is recovery-only: it lifts a row an older
+	// build left in the preparing phase while a workspace already existed.
+	PromoteSpawnPhaseWorkspaceReady(ctx context.Context, id domain.SessionID, updatedAt time.Time) (bool, error)
 }
 
 // Manager coordinates internal session spawn, restore, kill, and cleanup over
@@ -939,6 +948,23 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		return domain.SessionRecord{}, 0, 0, wrapSpawnStage(id, ErrWorkspaceCreate, err)
 	}
 
+	// The worktree now exists on disk. Publish that fact BEFORE anything that
+	// can block or fail for minutes — post-create provisioning, attachment
+	// writes, provider startup, ACP negotiation. Until this commits, a crash
+	// leaves a seed row the reconciler may delete along with nothing else;
+	// after it, the workspace is durably attributed to this session, so a crash
+	// leaves work the reconciler must reopen rather than discard.
+	if err := m.checkpointSpawnWorkspace(ctx, rec, ws, workspaceProject, prompt,
+		resolvedModelForMetadata(cfg.Harness, agentConfig, adapterConfig), projectKind); err != nil {
+		m.rollbackSeedSpawnWorkspace(ctx, rec, ws, workspaceProject, false)
+		return domain.SessionRecord{}, 0, 0, wrapSpawnStage(id, ErrWorkspaceCreate, err)
+	}
+	rec, err = m.getRecord(ctx, id)
+	if err != nil {
+		m.rollbackSeedSpawnWorkspace(ctx, rec, ws, workspaceProject, false)
+		return domain.SessionRecord{}, 0, 0, wrapSpawnStage(id, ErrWorkspaceCreate, err)
+	}
+
 	// Per-project workspace provisioning: symlink shared files, then run any
 	// post-create commands (e.g. `pnpm install`) before the agent launches.
 	if err := m.provisionWorkspace(ctx, project, ws.Path); err != nil {
@@ -1283,6 +1309,60 @@ func (m *Manager) createSessionWorkspace(ctx context.Context, project domain.Pro
 	return info.Root, &info, nil
 }
 
+// checkpointSpawnWorkspaceReady is the crash-safety line of the spawn. It
+// commits the workspace path, repo path, branch, original prompt, and resolved
+// model together with spawn_phase = workspace_ready, and — for a single-repo
+// project — records the active session_worktrees row that makes the worktree
+// discoverable by cleanup and restore. Workspace-project spawns already wrote
+// their rows inside createSessionWorkspace.
+//
+// Everything here must be durable before the spawn touches anything slow or
+// external, because a crash between the worktree existing and this write would
+// orphan a real worktree that no session claims.
+func (m *Manager) checkpointSpawnWorkspace(
+	ctx context.Context,
+	rec domain.SessionRecord,
+	ws ports.WorkspaceInfo,
+	workspaceProject *ports.WorkspaceProjectInfo,
+	prompt string,
+	model string,
+	projectKind domain.ProjectKind,
+) error {
+	if workspaceProject == nil && projectKind == domain.ProjectKindSingleRepo {
+		// The worktree row is written first: an extra row for a session that
+		// fails a moment later is reclaimable, while a worktree with no row is
+		// invisible to every cleanup path.
+		if err := m.store.UpsertSessionWorktree(ctx, domain.SessionWorktreeRecord{
+			SessionID:    rec.ID,
+			RepoName:     domain.RootWorkspaceRepoName,
+			Branch:       ws.Branch,
+			BaseRef:      ws.BaseRef,
+			WorktreePath: ws.Path,
+			State:        "active",
+		}); err != nil {
+			return fmt.Errorf("checkpoint spawn worktree: %w", err)
+		}
+	}
+	ok, err := m.store.CheckpointSpawnWorkspaceReady(ctx, rec.ID, domain.SpawnWorkspaceCheckpoint{
+		WorkspacePath:     ws.Path,
+		WorkspaceRepoPath: ws.RepoPath,
+		Branch:            ws.Branch,
+		Prompt:            prompt,
+		Model:             model,
+	}, m.clock())
+	if err != nil {
+		return fmt.Errorf("checkpoint spawn workspace: %w", err)
+	}
+	if !ok {
+		// The row is no longer a live preparing spawn: it was terminated, deleted,
+		// or already advanced by another actor. Failing here is deliberate — the
+		// caller rolls back rather than launching a controller for a session whose
+		// durable state it does not own.
+		return fmt.Errorf("checkpoint spawn workspace: session %s is no longer a preparing spawn", rec.ID)
+	}
+	return nil
+}
+
 func resolveSpawnDiffBase(ctx context.Context, root, defaultBranch string) (string, string) {
 	for _, ref := range spawnDiffBaseRefCandidates(defaultBranch) {
 		if sha, ok := spawnGitSingleLine(ctx, root, "merge-base", "HEAD", ref); ok {
@@ -1331,20 +1411,36 @@ func spawnGitSingleLine(ctx context.Context, root string, args ...string) (strin
 	return value, value != ""
 }
 
+// destroySpawnWorkspace removes a workspace built by a spawn that then failed.
+//
+// It uses the non-forcing Destroy deliberately: a worktree with uncommitted
+// work is the user's, not the failed spawn's, and force-removing it would
+// silently delete work the agent had already produced. A refusal is reported as
+// false so the caller preserves the session and its worktree instead.
+//
+// The session_worktrees rows are removed only when the workspace is actually
+// gone. Dropping them after a refused destroy would hide a worktree that still
+// exists on disk from every later cleanup and restore path.
 func (m *Manager) destroySpawnWorkspace(ctx context.Context, ws ports.WorkspaceInfo, workspaceProject *ports.WorkspaceProjectInfo) bool {
+	var destroyed bool
 	if workspaceProject != nil {
 		if adapter, ok := m.workspace.(ports.WorkspaceProject); ok {
-			err := adapter.DestroyWorkspaceProject(ctx, *workspaceProject)
-			_ = m.store.DeleteSessionWorktrees(ctx, ws.SessionID)
-			return err == nil
+			destroyed = adapter.DestroyWorkspaceProject(ctx, *workspaceProject) == nil
+		} else {
+			destroyed = m.workspace.Destroy(ctx, ws) == nil
 		}
+	} else {
+		destroyed = m.workspace.Destroy(ctx, ws) == nil
 	}
-	err := m.workspace.Destroy(ctx, ws)
-	_ = m.store.DeleteSessionWorktrees(ctx, ws.SessionID)
-	return err == nil
+	if destroyed {
+		_ = m.store.DeleteSessionWorktrees(ctx, ws.SessionID)
+	}
+	return destroyed
 }
 
 func (m *Manager) rollbackPreparedSpawnWorkspace(ctx context.Context, rec domain.SessionRecord, ws ports.WorkspaceInfo, workspaceProject *ports.WorkspaceProjectInfo, runtimeDestroyed bool) bool {
+	ctx, cancel := m.spawnCleanupContext(ctx)
+	defer cancel()
 	if m.destroySpawnWorkspace(ctx, ws, workspaceProject) {
 		m.cleanupAgentWorkspace(ctx, rec, ws.Path)
 		return true
@@ -1354,10 +1450,17 @@ func (m *Manager) rollbackPreparedSpawnWorkspace(ctx context.Context, rec domain
 }
 
 func (m *Manager) rollbackSeedSpawnWorkspace(ctx context.Context, rec domain.SessionRecord, ws ports.WorkspaceInfo, workspaceProject *ports.WorkspaceProjectInfo, prepared bool) {
+	ctx, cancel := m.spawnCleanupContext(ctx)
+	defer cancel()
 	if m.destroySpawnWorkspace(ctx, ws, workspaceProject) {
 		if prepared {
 			m.cleanupAgentWorkspace(ctx, rec, ws.Path)
 		}
+		// The workspace checkpoint is what makes this row un-deletable, and the
+		// workspace it described is now gone. Retract it so the row is a plain
+		// seed again and a failed spawn leaves no terminated phantom in session
+		// lists, exactly as before the checkpoint existed.
+		m.retractSpawnWorkspaceCheckpoint(ctx, rec.ID)
 		m.rollbackSpawnSeedRow(ctx, rec.ID)
 		return
 	}
@@ -1515,11 +1618,32 @@ func sessionPrefix(project domain.ProjectRecord) string {
 	return project.ID[:12]
 }
 
+// spawnCleanupTimeout bounds every rollback path of a failed spawn. Cleanup
+// touches git worktrees, tmux, and provider processes, so it needs a real
+// budget — but it must not run forever either, or a wedged dependency would
+// hold the spawn request open indefinitely.
+const spawnCleanupTimeout = 30 * time.Second
+
+// spawnCleanupContext detaches rollback from the request context.
+//
+// The request context is usually already cancelled by the time rollback runs —
+// that cancellation is frequently *why* the spawn failed. Reusing it would make
+// every cleanup call fail instantly, which is exactly the case where cleanup
+// matters most: a user who hits Ctrl-C mid-spawn would be left with a live
+// tmux session, an orphaned worktree, and a half-written row. WithoutCancel
+// keeps the context's values (tracing, request id) while dropping the
+// cancellation, and WithTimeout re-bounds it.
+func (m *Manager) spawnCleanupContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(ctx), spawnCleanupTimeout)
+}
+
 // markSpawnFailedTerminated best-effort parks an orphaned spawn as terminated.
 // A phantom half-spawned row is worse than a terminal one; we only delete the
 // row when nothing observable has landed yet (seed state) via rollbackSpawn or
 // rollbackSpawnSeedRow.
 func (m *Manager) markSpawnFailedTerminated(ctx context.Context, id domain.SessionID) {
+	ctx, cancel := m.spawnCleanupContext(ctx)
+	defer cancel()
 	_ = m.lcm.MarkTerminated(ctx, id)
 	m.cleanupSystemPromptDir(id)
 }
@@ -1529,6 +1653,8 @@ func (m *Manager) markSpawnFailedTerminated(ctx context.Context, id domain.Sessi
 // that were destroyed during rollback. This keeps later restore/cleanup paths
 // from treating a removed worktree as reusable state.
 func (m *Manager) markSpawnFailedTerminatedWithoutWorkspace(ctx context.Context, id domain.SessionID) {
+	ctx, cancel := m.spawnCleanupContext(ctx)
+	defer cancel()
 	m.markSpawnFailedTerminated(ctx, id)
 	rec, ok, err := m.store.GetSession(ctx, id)
 	if err != nil || !ok {
@@ -1541,12 +1667,40 @@ func (m *Manager) markSpawnFailedTerminatedWithoutWorkspace(ctx context.Context,
 	_ = m.store.UpdateSession(ctx, rec)
 }
 
+// retractSpawnWorkspaceCheckpoint returns a row to seed state after its
+// workspace was confirmed destroyed. It is the exact inverse of
+// checkpointSpawnWorkspace and is only ever called once nothing the checkpoint
+// described still exists — otherwise it would hide a live worktree from every
+// cleanup path.
+func (m *Manager) retractSpawnWorkspaceCheckpoint(ctx context.Context, id domain.SessionID) {
+	rec, ok, err := m.store.GetSession(ctx, id)
+	if err != nil || !ok {
+		return
+	}
+	if domain.NormalizeSpawnPhase(rec.SpawnPhase) == domain.SpawnPhaseControllerReady {
+		// A controller committed under us. Its facts are not ours to retract.
+		return
+	}
+	rec.SpawnPhase = domain.SpawnPhasePreparing
+	rec.Metadata.Branch = ""
+	rec.Metadata.WorkspacePath = ""
+	rec.Metadata.WorkspaceRepoPath = ""
+	rec.Metadata.Prompt = ""
+	rec.Metadata.Model = ""
+	rec.UpdatedAt = m.clock()
+	if err := m.store.UpdateSession(ctx, rec); err != nil {
+		m.logger.Warn("spawn rollback: failed to retract workspace checkpoint", "sessionID", id, "error", err)
+	}
+}
+
 // rollbackSpawnSeedRow best-effort removes the row of a spawn that failed
 // before anything observable (worktree, runtime) was built, so failed spawns
 // don't accumulate terminated rows in session lists. DeleteSession only removes
 // rows still in seed state; if the row has progressed or the delete itself
 // fails, fall back to parking it terminated so a phantom row never looks live.
 func (m *Manager) rollbackSpawnSeedRow(ctx context.Context, id domain.SessionID) {
+	ctx, cancel := m.spawnCleanupContext(ctx)
+	defer cancel()
 	if deleted, err := m.store.DeleteSession(ctx, id); err == nil && deleted {
 		m.cleanupSystemPromptDir(id)
 		m.cleanupAttachments(ctx, id)
@@ -2145,6 +2299,13 @@ func (m *Manager) ResumeAgentWithMode(ctx context.Context, id domain.SessionID) 
 	if mode == domain.SessionModeChat && m.chat != nil && m.chat.HasLiveChatController(id) {
 		return RestoreResult{}, fmt.Errorf("resume agent %s: %w", id, ErrAgentNotExited)
 	}
+	// Retrying a spawn that never committed a controller must re-run the
+	// interrupted-spawn recovery, not the native resume path: the session has no
+	// runtime handle and no provider conversation to resume from, and its
+	// original prompt has still never been delivered.
+	if domain.NormalizeSpawnPhase(rec.SpawnPhase) != domain.SpawnPhaseControllerReady {
+		return m.recoverWorkspaceReadySpawn(ctx, "retry agent", rec)
+	}
 	if rec.Activity.State != domain.ActivityExited {
 		// Builds before the controller-stop lifecycle fix can leave a Chat row
 		// idle, active, or blocked even though no controller survived. The live
@@ -2522,6 +2683,13 @@ func (m *Manager) saveAndTeardownOne(ctx context.Context, rec domain.SessionReco
 // conversation identity. A restart-time dependency failure is not user intent
 // to terminate the session; the controller can be retried through Resume Agent.
 func (m *Manager) reconcileLive(ctx context.Context, rec domain.SessionRecord) error {
+	// A session whose spawn never committed a controller is not a session whose
+	// controller died: there is nothing to adopt, nothing to probe, and nothing
+	// to resume natively. Route it to the interrupted-spawn recovery before any
+	// of the liveness logic below can misread it.
+	if handled, err := m.recoverInterruptedSpawnIfNeeded(ctx, rec); handled {
+		return err
+	}
 	project, err := m.loadProject(ctx, rec.ProjectID)
 	if err != nil {
 		return err
@@ -3735,8 +3903,12 @@ func seedRecord(cfg ports.SpawnConfig, projectConfig domain.ProjectConfig, now t
 		Activity:    domain.Activity{State: domain.ActivityIdle, LastActivityAt: now},
 		// Resolved before this point and persisted here. There is no UPDATE
 		// statement that can change it afterwards.
-		Mode:              domain.NormalizeSessionMode(cfg.RequestedMode),
-		Metadata:          domain.SessionMetadata{Permissions: applySpawnAgentConfig(effectiveAgentConfig(cfg.Kind, projectConfig), cfg.AgentConfig).Permissions},
+		Mode:     domain.NormalizeSessionMode(cfg.RequestedMode),
+		Metadata: domain.SessionMetadata{Permissions: applySpawnAgentConfig(effectiveAgentConfig(cfg.Kind, projectConfig), cfg.AgentConfig).Permissions},
+		// A seed row owns nothing outside itself yet. Until the workspace
+		// checkpoint commits, a crash may delete this row; after it, the worktree
+		// is the user's and must be preserved.
+		SpawnPhase:        domain.SpawnPhasePreparing,
 		AutoReviewEnabled: projectConfig.AutoReview,
 		AutoInjectReview:  true,
 		AutoInjectCI:      true,

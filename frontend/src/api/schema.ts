@@ -2846,12 +2846,15 @@ export interface components {
             /** @enum {string} */
             scmStatus?: "pr_open" | "draft" | "ci_failed" | "review_pending" | "changes_requested" | "approved" | "mergeable" | "merged";
             /** @enum {string} */
+            spawnPhase: "preparing" | "workspace_ready" | "controller_ready";
+            /** @enum {string} */
             status: "working" | "pr_open" | "draft" | "ci_failed" | "review_pending" | "changes_requested" | "approved" | "mergeable" | "merged" | "needs_input" | "exited" | "idle" | "terminated" | "no_signal";
             terminalGeneration?: string;
             terminalHandleId?: string;
             terminateOnPrMerge: boolean;
             /** Format: date-time */
             updatedAt: string;
+            workspaceAvailable: boolean;
         };
         ControllersSetSecurePairingRequest: {
             enabled: boolean;

@@ -3,6 +3,7 @@ import {
 	attentionZone,
 	attentionZoneOrder,
 	isOrchestratorSession,
+	isSpawnInProgress,
 	openPRs,
 	sessionIsActive,
 	sessionNeedsAttention,
@@ -154,11 +155,18 @@ export function buildSessionActions(
 	});
 
 	if (!sessionIsActive(session) && !isOrchestratorSession(session)) {
+		// A spawn that never committed a controller has nothing to resume. The
+		// same endpoint re-runs it from its workspace checkpoint, so the action
+		// stays — the words change, because "resume" would promise a conversation
+		// that was never started.
+		const interruptedSpawn = isSpawnInProgress(session.spawnPhase);
 		items.push({
 			id: `session-action:resume:${session.id}`,
 			group: "current",
-			title: t("command.resumeAgent"),
-			subtitle: t("command.resumeAgentSubtitle"),
+			title: interruptedSpawn ? t("command.retryAgent") : t("command.resumeAgent"),
+			subtitle: interruptedSpawn
+				? t("command.retryAgentSubtitle")
+				: t("command.resumeAgentSubtitle"),
 			keywords: ["restore", "restart", "retry", "resume", session.title],
 			action: { kind: "resume-session", projectId: workspace.id, sessionId: session.id },
 		});

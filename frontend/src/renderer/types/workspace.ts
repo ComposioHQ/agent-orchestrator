@@ -61,6 +61,24 @@ export type AgentSwitchSummary = {
 	updatedAt?: string;
 };
 
+/**
+ * Durable spawn progress reported by the daemon. It answers "which of this
+ * session's facts can I trust yet?", not "what is it doing?".
+ */
+export type SpawnPhase = "preparing" | "workspace_ready" | "controller_ready";
+
+/** Narrows an unknown daemon value; anything unrecognized is left undefined. */
+export function toSpawnPhase(value: string | undefined | null): SpawnPhase | undefined {
+	return value === "preparing" || value === "workspace_ready" || value === "controller_ready"
+		? value
+		: undefined;
+}
+
+/** True while the spawn has not yet committed an agent controller. */
+export function isSpawnInProgress(phase: SpawnPhase | undefined): boolean {
+	return phase === "preparing" || phase === "workspace_ready";
+}
+
 export type WorkspaceSession = {
 	id: string;
 	terminalHandleId?: string;
@@ -89,6 +107,16 @@ export type WorkspaceSession = {
 	 * Only the daemon's durable interface-transition coordinator may change it.
 	 */
 	mode?: SessionMode;
+	/**
+	 * How far this session's spawn durably got. `preparing` and
+	 * `workspace_ready` mean the agent has not started yet — the session is
+	 * still coming up, not broken — so surfaces must not present it as a
+	 * controller that stopped. Absent from a daemon too old to send one, which
+	 * is treated as a fully spawned session.
+	 */
+	spawnPhase?: SpawnPhase;
+	/** The worktree is durably checkpointed, so opening a shell into it is safe. */
+	workspaceAvailable?: boolean;
 	branch?: string;
 	status: SessionStatus;
 	/** Stack-aware PR context derived by the daemon independently of runtime activity. */

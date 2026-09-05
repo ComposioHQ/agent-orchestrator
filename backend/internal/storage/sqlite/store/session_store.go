@@ -142,6 +142,62 @@ func (s *Store) ClaimChatControllerGeneration(
 	return nil
 }
 
+// CheckpointSpawnWorkspaceReady durably publishes the workspace facts of an
+// in-flight spawn the moment the worktree exists — before provisioning,
+// attachments, or any controller launch. Until this commits, no worktree is
+// confirmed to belong to the session, so a crash may only delete the seed row;
+// after it commits, the worktree is the user's and recovery must reopen it.
+//
+// The narrow update is guarded on the preparing phase inside SQL, so it cannot
+// move an already-advanced session backwards and cannot replay stale metadata
+// over a controller another goroutine committed. ok=false means the session was
+// no longer a preparing, live spawn.
+func (s *Store) CheckpointSpawnWorkspaceReady(
+	ctx context.Context,
+	id domain.SessionID,
+	checkpoint domain.SpawnWorkspaceCheckpoint,
+	updatedAt time.Time,
+) (bool, error) {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	rows, err := s.qw.CheckpointSpawnWorkspaceReady(ctx, gen.CheckpointSpawnWorkspaceReadyParams{
+		Branch:            checkpoint.Branch,
+		WorkspacePath:     checkpoint.WorkspacePath,
+		WorkspaceRepoPath: checkpoint.WorkspaceRepoPath,
+		Prompt:            checkpoint.Prompt,
+		Model:             checkpoint.Model,
+		SpawnPhase:        domain.SpawnPhaseWorkspaceReady,
+		UpdatedAt:         updatedAt,
+		ID:                id,
+	})
+	if err != nil {
+		return false, fmt.Errorf("checkpoint spawn workspace for session %s: %w", id, err)
+	}
+	return rows > 0, nil
+}
+
+// PromoteSpawnPhaseWorkspaceReady is used only by boot-time recovery, for rows
+// an older build left in the preparing phase while a workspace already existed.
+// It refuses to promote a row with no workspace, so a true seed can never be
+// mistaken for one that owns a worktree.
+func (s *Store) PromoteSpawnPhaseWorkspaceReady(
+	ctx context.Context,
+	id domain.SessionID,
+	updatedAt time.Time,
+) (bool, error) {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	rows, err := s.qw.PromoteSpawnPhaseWorkspaceReady(ctx, gen.PromoteSpawnPhaseWorkspaceReadyParams{
+		SpawnPhase: domain.SpawnPhaseWorkspaceReady,
+		UpdatedAt:  updatedAt,
+		ID:         id,
+	})
+	if err != nil {
+		return false, fmt.Errorf("promote spawn phase for session %s: %w", id, err)
+	}
+	return rows > 0, nil
+}
+
 // RenameSession updates only the user-facing display name for an existing
 // session. It returns ok=false when the session id does not exist. The
 // sessions_cdc_update trigger fans out a session_updated CDC event when the
@@ -435,6 +491,7 @@ func rowToRecord(row gen.GetSessionRow) domain.SessionRecord {
 		AutoReviewEnabled: row.AutoReviewEnabled,
 		DisplayName:       row.DisplayName,
 		Mode:              domain.NormalizeSessionMode(row.SessionMode),
+		SpawnPhase:        domain.NormalizeSpawnPhase(row.SpawnPhase),
 		Activity: domain.Activity{
 			State:          row.ActivityState,
 			LastActivityAt: row.ActivityLastAt,
@@ -528,6 +585,7 @@ func recordToInsert(rec domain.SessionRecord, num int64) gen.InsertSessionParams
 		CleanupGeneration:         rec.CleanupGeneration,
 		BrowserCapabilityVerifier: rec.Metadata.BrowserCapabilityVerifier,
 		SessionMode:               domain.NormalizeSessionMode(rec.Mode),
+		SpawnPhase:                domain.NormalizeSpawnPhase(rec.SpawnPhase),
 		ProviderConversationID:    rec.Metadata.ProviderConversationID,
 		ControllerGeneration:      rec.Metadata.ControllerGeneration,
 		Model:                     rec.Metadata.Model,
@@ -580,6 +638,7 @@ func recordToUpdate(rec domain.SessionRecord) gen.UpdateSessionParams {
 		ProviderConversationID:    rec.Metadata.ProviderConversationID,
 		ControllerGeneration:      rec.Metadata.ControllerGeneration,
 		Model:                     rec.Metadata.Model,
+		SpawnPhase:                domain.NormalizeSpawnPhase(rec.SpawnPhase),
 		UpdatedAt:                 rec.UpdatedAt,
 	}
 }

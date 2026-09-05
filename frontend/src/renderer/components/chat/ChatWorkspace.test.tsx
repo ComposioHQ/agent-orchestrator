@@ -995,6 +995,73 @@ describe("ChatWorkspace timeline", () => {
 		expect(openShell).toHaveBeenCalledOnce();
 	});
 
+	it("reports a spawn that has not finished as starting, not as a crash", () => {
+		render(
+			<ChatWorkspace
+				snapshot={{
+					...chatFixtureSettled,
+					controller: { state: "connecting" },
+				}}
+				session={{ ...chatSession, spawnPhase: "preparing" }}
+				onResumeAgent={vi.fn()}
+				onOpenShell={vi.fn()}
+			/>,
+		);
+
+		expect(screen.getByRole("status")).toHaveTextContent("Starting agent");
+		expect(screen.getByRole("status")).toHaveTextContent("Preparing workspace");
+		expect(screen.queryByText("The agent controller stopped")).not.toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: "Resume agent" })).not.toBeInTheDocument();
+	});
+
+	it("offers no shell for a spawn whose workspace is not checkpointed yet", () => {
+		render(
+			<ChatWorkspace
+				snapshot={{
+					...chatFixtureSettled,
+					controller: { state: "stopped" },
+				}}
+				session={{ ...chatSession, spawnPhase: "preparing", workspaceAvailable: false }}
+				onResumeAgent={vi.fn()}
+				onOpenShell={vi.fn()}
+			/>,
+		);
+
+		expect(screen.queryByRole("button", { name: "Open shell" })).not.toBeInTheDocument();
+	});
+
+	it("offers a retry and a shell when a checkpointed spawn failed to start", async () => {
+		const user = userEvent.setup();
+		const retry = vi.fn();
+		const openShell = vi.fn();
+		render(
+			<ChatWorkspace
+				snapshot={{
+					...chatFixtureSettled,
+					controller: { state: "stopped" },
+				}}
+				session={{
+					...chatSession,
+					spawnPhase: "workspace_ready",
+					workspaceAvailable: true,
+				}}
+				onResumeAgent={retry}
+				onOpenShell={openShell}
+			/>,
+		);
+
+		const banner = screen.getByRole("alert");
+		expect(banner).toHaveTextContent("Agent failed to start");
+		expect(banner).toHaveTextContent("Your workspace was preserved.");
+		// Resume promises a conversation that was never started; retry re-runs the
+		// interrupted spawn instead.
+		expect(screen.queryByRole("button", { name: "Resume agent" })).not.toBeInTheDocument();
+		await user.click(screen.getByRole("button", { name: "Retry agent" }));
+		await user.click(screen.getByRole("button", { name: "Open shell" }));
+		expect(retry).toHaveBeenCalledOnce();
+		expect(openShell).toHaveBeenCalledOnce();
+	});
+
 	it("does not report the intentional controller gap during an interface handoff as a crash", () => {
 		render(
 			<ChatWorkspace

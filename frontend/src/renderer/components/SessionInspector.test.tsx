@@ -1237,6 +1237,36 @@ describe("SessionInspector Activity section", () => {
     );
   });
 
+  it("labels the action Retry agent for a spawn that never started an agent", async () => {
+    renderWithQuery(
+      <SessionInspector
+        session={session([], {
+          status: "exited",
+          spawnPhase: "workspace_ready",
+          activity: { state: "exited", lastActivityAt: "2026-06-15T10:00:00Z" },
+        })}
+      />,
+    );
+
+    // There is no earlier agent run to resume — only an interrupted launch to
+    // finish — so the wording must not promise one.
+    expect(
+      screen.queryByRole("button", { name: "Resume agent" }),
+    ).not.toBeInTheDocument();
+    await userEvent.click(
+      activitySection().getByRole("button", { name: "Retry agent" }),
+    );
+
+    await waitFor(() =>
+      expect(postMock).toHaveBeenCalledWith(
+        "/api/v1/sessions/{sessionId}/resume-agent",
+        {
+          params: { path: { sessionId: "sess-1" } },
+        },
+      ),
+    );
+  });
+
   it("does not offer agent resume for a live or terminated session", () => {
     const live = renderWithQuery(
       <SessionInspector

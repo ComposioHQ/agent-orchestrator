@@ -40,6 +40,7 @@ The only persistent session state is:
 - `is_terminated` — Whether the session should be treated as over
 - `session_mode` plus its runtime/provider handle and generation — The currently committed controller epoch
 - `session_interface_transitions` — Durable checkpoints for an in-progress or completed TUI↔Chat handoff
+- `spawn_phase` — How far a spawn durably got: `preparing` (seed row only), `workspace_ready` (worktree, branch, and original prompt checkpointed), `controller_ready` (a controller identity is committed). It exists so a crash or a cancelled request between any two spawn side effects leaves an unambiguous recovery instruction; see "Interrupted Spawn Recovery" below
 - PR facts — `pr`, `pr_checks`, `pr_comment` tables
 
 ### What is NOT Durable
@@ -299,7 +300,9 @@ flowchart TD
     RuntimePreflight --> CreateRow
     CreateRow --> Trigger1[CDC: session.created]
     CreateRow --> CreateWS[Create git worktree]
-    CreateWS --> LaunchMode{Persisted mode}
+    CreateWS --> Checkpoint[Checkpoint workspace_ready + worktree row]
+    Checkpoint --> Provision[Provision, write attachments]
+    Provision --> LaunchMode{Persisted mode}
     LaunchMode -->|tui| CreateRT[Launch runtime tmux/conpty]
     CreateRT --> GetCmd[Get agent launch command]
     GetCmd --> ExecAgent[Execute agent in runtime]
@@ -312,6 +315,55 @@ flowchart TD
     Trigger2 --> Done([Session running])
 
 ```
+
+### Interrupted Spawn Recovery
+
+A spawn is a sequence of side effects, and a daemon crash or a cancelled request
+can land between any two of them. `spawn_phase` is what makes the leftovers
+readable, and the workspace checkpoint is what makes them safe.
+
+The checkpoint is committed the instant the worktree exists — before per-project
+provisioning, attachment writes, provider startup, or ACP negotiation, all of
+which can block for minutes. It publishes the workspace path, repo path, branch,
+original prompt, and resolved model together with `workspace_ready`, and (for a
+single-repo project) an active `session_worktrees` row. Before it commits, no
+worktree is attributed to the session; after it commits, the worktree is the
+user's.
+
+Boot-time reconciliation reads the phase and takes exactly one action:
+
+| Phase | Durable reality | Recovery |
+| --- | --- | --- |
+| `preparing`, no workspace | Only a row exists | Delete the seed row |
+| `preparing`, with workspace | A row migrated from an older build | Promote to `workspace_ready`, then recover |
+| `workspace_ready` | The worktree is real; no controller ever committed | Reopen the worktree, reapply hooks and standing instructions, start the provider **fresh**, and replay the checkpointed prompt |
+| `controller_ready` | A controller identity is committed | The ordinary native-resume path |
+
+Two rules keep the recovery from doing damage:
+
+- **Fresh, never native, below `controller_ready`.** There is no provider
+  conversation to resume, and because the prompt was never delivered to any
+  controller, replaying it there delivers it exactly once. Correspondingly, a
+  Chat session with no provider conversation id may fresh-launch **only** at
+  `workspace_ready`; anywhere else an empty id means the id was lost, not that
+  none was minted.
+- **`controller_ready` is never published without a controller identity.** The
+  phase advances in the same lifecycle write as the runtime handle/launch id or
+  Chat controller generation and the workspace metadata it describes.
+
+Rollback of a failed spawn runs on `context.WithTimeout(context.WithoutCancel(ctx),
+spawnCleanupTimeout)`. The request context is usually already cancelled — that
+cancellation is frequently *why* the spawn failed — so reusing it would make
+every cleanup call fail instantly in exactly the case where cleanup matters most.
+Cleanup destroys only workspaces it confirms safe (never force-removing a dirty
+worktree), retracts the checkpoint and deletes the seed row when the workspace is
+confirmed gone, and otherwise terminates the session while preserving the
+workspace and its worktree record.
+
+A recovery that fails after the checkpoint leaves the session live-but-exited at
+`workspace_ready`, so the UI shows "Agent failed to start", "Your workspace was
+preserved", and a **Retry agent** action that re-runs this same fresh recovery
+rather than a native resume.
 
 ### Session Interface Handoff
 

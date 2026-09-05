@@ -547,6 +547,7 @@ type Session struct {
 	LatestUserPromptAt        sql.NullTime
 	ReviewerAgentConfig       string
 	SessionPermissions        string
+	SpawnPhase                domain.SpawnPhase
 }
 
 type SessionCleanupFact struct {
