@@ -761,7 +761,7 @@ func orchestrationBatchID(prompt string) (string, bool) {
 	}
 	token := rest[:end]
 	for _, r := range token {
-		if !(r == '-' || r == '_' || r >= '0' && r <= '9' || r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z') {
+		if r != '-' && r != '_' && (r < '0' || r > '9') && (r < 'a' || r > 'z') && (r < 'A' || r > 'Z') {
 			return "", false
 		}
 	}

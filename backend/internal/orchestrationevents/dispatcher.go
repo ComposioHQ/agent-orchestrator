@@ -14,12 +14,17 @@ import (
 )
 
 const (
-	MaxBatchEvents  = 50
+	// MaxBatchEvents bounds the event count in one reconciliation turn.
+	MaxBatchEvents = 50
+	// MaxPayloadBytes bounds the encoded prompt in one reconciliation turn.
 	MaxPayloadBytes = 32 * 1024
-	AttemptTimeout  = 5 * time.Second
-	LeaseDuration   = 30 * time.Second
+	// AttemptTimeout bounds one transport submission.
+	AttemptTimeout = 5 * time.Second
+	// LeaseDuration bounds ambiguous submission recovery.
+	LeaseDuration = 30 * time.Second
 )
 
+// Store is the durable outbox surface required by Dispatcher.
 type Store interface {
 	ListSessions(context.Context, domain.ProjectID) ([]domain.SessionRecord, error)
 	ListDueOrchestrationEvents(context.Context, domain.ProjectID, time.Time, int) ([]domain.OrchestrationEvent, error)
@@ -37,12 +42,16 @@ type Transport interface {
 	Submit(context.Context, domain.SessionRecord, Batch) (Submission, error)
 }
 
+// Batch is one bounded, stable-id reconciliation request.
 type Batch struct {
 	ID, Payload string
 	EventIDs    []string
 }
+
+// Submission distinguishes a transport write from exact turn admission.
 type Submission struct{ Submitted, Acknowledged bool }
 
+// Dispatcher leases and submits due events for one project.
 type Dispatcher struct {
 	Store     Store
 	Transport Transport
@@ -50,6 +59,7 @@ type Dispatcher struct {
 	NewID     func() string
 }
 
+// DispatchProject performs at most one bounded delivery attempt.
 func (d *Dispatcher) DispatchProject(ctx context.Context, project domain.ProjectID) error {
 	now := time.Now().UTC()
 	if d.Now != nil {

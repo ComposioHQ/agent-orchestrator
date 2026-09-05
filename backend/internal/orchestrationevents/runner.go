@@ -8,6 +8,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
 
+// RecoveryStore supplies startup and retention maintenance.
 type RecoveryStore interface {
 	ListProjects(context.Context) ([]domain.ProjectRecord, error)
 	ReclaimOrchestrationEventLeases(context.Context, time.Time) (int64, error)
