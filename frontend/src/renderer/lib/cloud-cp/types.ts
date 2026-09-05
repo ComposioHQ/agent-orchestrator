@@ -289,6 +289,12 @@ export interface CloudCpPutAgentConnectionRequest {
 	secret: string;
 }
 
+/** PUT /orgs/{orgId}/provider-connections/github-pat */
+export interface CloudCpPutGitHubPATRequest {
+	/** Raw GitHub personal access token; stored encrypted and never echoed. */
+	secret: string;
+}
+
 export interface CloudCpProviderConnection {
 	id: string;
 	provider: string;
