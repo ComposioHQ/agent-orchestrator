@@ -15,6 +15,7 @@ type fakeStore struct {
 	events                            []domain.OrchestrationEvent
 	leased, submitted, acked, retried []string
 	destination                       domain.SessionID
+	leaseErr, submitErr, ackErr       error
 }
 
 func (f *fakeStore) ListSessions(context.Context, domain.ProjectID) ([]domain.SessionRecord, error) {
@@ -24,17 +25,68 @@ func (f *fakeStore) ListDueOrchestrationEvents(context.Context, domain.ProjectID
 	return f.events, nil
 }
 func (f *fakeStore) LeaseOrchestrationEvents(_ context.Context, ids []string, _ string, d domain.SessionID, _ time.Time) error {
+	if f.leaseErr != nil {
+		return f.leaseErr
+	}
 	f.leased = ids
 	f.destination = d
 	return nil
 }
 func (f *fakeStore) MarkOrchestrationEventsSubmitted(_ context.Context, ids []string, _ string, _ time.Time) error {
+	if f.submitErr != nil {
+		return f.submitErr
+	}
 	f.submitted = ids
 	return nil
 }
 func (f *fakeStore) AcknowledgeOrchestrationEvents(_ context.Context, ids []string, _ string, _ time.Time) error {
+	if f.ackErr != nil {
+		return f.ackErr
+	}
 	f.acked = ids
 	return nil
+}
+
+func TestFaultBoundariesDoNotClaimUncommittedDelivery(t *testing.T) {
+	now := time.Now()
+	session := domain.SessionRecord{ID: "o", ProjectID: "p", Kind: domain.KindOrchestrator, Mode: domain.SessionModeChat, Activity: domain.Activity{State: domain.ActivityIdle}, FirstSignalAt: now}
+	event := domain.OrchestrationEvent{ID: "e", ProjectID: "p", WorkerID: "w", Kind: domain.OrchestrationWorkerTerminated, SourceRevision: "r", EnqueuedAt: now}
+	wantErr := errors.New("injected boundary failure")
+	for _, tc := range []struct {
+		name       string
+		configure  func(*fakeStore)
+		wantWrites int
+		wantAck    bool
+	}{
+		{"after_outbox_before_lease", func(s *fakeStore) { s.leaseErr = wantErr }, 0, false},
+		{"after_lease_before_submitted", func(s *fakeStore) { s.submitErr = wantErr }, 1, false},
+		{"after_submission_before_ack", func(s *fakeStore) { s.ackErr = wantErr }, 1, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store := &fakeStore{sessions: []domain.SessionRecord{session}, events: []domain.OrchestrationEvent{event}}
+			tc.configure(store)
+			transport := &fakeTransport{result: Submission{Submitted: true, Acknowledged: true}}
+			err := (&Dispatcher{Store: store, Transport: transport, Now: func() time.Time { return now }, NewID: func() string { return "batch" }}).DispatchProject(context.Background(), "p")
+			if !errors.Is(err, wantErr) || transport.calls != tc.wantWrites || (len(store.acked) > 0) != tc.wantAck {
+				t.Fatalf("err=%v writes=%d acked=%v", err, transport.calls, store.acked)
+			}
+		})
+	}
+}
+
+func TestSubmittedTUIBatchRemainsUnacknowledgedForRestartRecovery(t *testing.T) {
+	now := time.Now()
+	store := &fakeStore{
+		sessions: []domain.SessionRecord{{ID: "o", ProjectID: "p", Kind: domain.KindOrchestrator, Mode: domain.SessionModeTUI, Activity: domain.Activity{State: domain.ActivityIdle}, FirstSignalAt: now}},
+		events:   []domain.OrchestrationEvent{{ID: "e", ProjectID: "p", WorkerID: "w", Kind: domain.OrchestrationWorkerTurnSettled, SourceRevision: "r", EnqueuedAt: now}},
+	}
+	transport := &fakeTransport{result: Submission{Submitted: true, Acknowledged: false}}
+	if err := (&Dispatcher{Store: store, Transport: transport}).DispatchProject(context.Background(), "p"); err != nil {
+		t.Fatal(err)
+	}
+	if len(store.submitted) != 1 || len(store.acked) != 0 {
+		t.Fatalf("submitted=%v acked=%v", store.submitted, store.acked)
+	}
 }
 func (f *fakeStore) RetryOrchestrationEvents(_ context.Context, e []domain.OrchestrationEvent, _, _ string, _ time.Time) error {
 	f.retried = eventIDs(e)

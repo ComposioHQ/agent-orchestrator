@@ -228,3 +228,45 @@ func TestOrchestrationRetryDeadLettersAndRequiresMatchingProjectForRearm(t *test
 		t.Fatalf("rearmed events=%+v err=%v", events, err)
 	}
 }
+
+func TestOrchestrationMissingDestinationAttentionAndRetentionAreDurableAndDeduplicated(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedProject(t, s, "p")
+	w, err := s.CreateSession(ctx, sampleRecord("p"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC().Truncate(time.Second)
+	for _, e := range []domain.OrchestrationEvent{
+		{ID: "attention", ProjectID: "p", WorkerID: w.ID, Kind: domain.OrchestrationWorkerBlocked, SourceRevision: "a", EnqueuedAt: now.Add(-16 * time.Minute), NextAttemptAt: now},
+		{ID: "expired", ProjectID: "p", WorkerID: w.ID, Kind: domain.OrchestrationWorkerTurnSettled, SourceRevision: "b", EnqueuedAt: now.Add(-31 * 24 * time.Hour), NextAttemptAt: now},
+	} {
+		if ok, err := s.EnqueueOrchestrationEvent(ctx, e); err != nil || !ok {
+			t.Fatalf("enqueue %s=%v err=%v", e.ID, ok, err)
+		}
+	}
+	if n, err := s.MarkProjectNoDestinationAttention(ctx, "p", now); err != nil || n != 2 {
+		t.Fatalf("first attention=%d err=%v", n, err)
+	}
+	if n, err := s.MarkProjectNoDestinationAttention(ctx, "p", now.Add(time.Minute)); err != nil || n != 0 {
+		t.Fatalf("deduplicated attention=%d err=%v", n, err)
+	}
+	if n, err := s.MarkOrchestrationRetentionOverflow(ctx, now); err != nil || n != 1 {
+		t.Fatalf("retention=%d err=%v", n, err)
+	}
+	events, err := s.ListOrchestrationEvents(ctx, "p", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	byID := map[string]domain.OrchestrationEvent{}
+	for _, event := range events {
+		byID[event.ID] = event
+	}
+	if byID["expired"].State != domain.OrchestrationDeadLetter || byID["expired"].LastError != "retention limit exceeded" {
+		t.Fatalf("expired=%+v", byID["expired"])
+	}
+	if byID["attention"].State != domain.OrchestrationPending || byID["attention"].AttemptCount != 0 || byID["attention"].AttentionRequiredAt.IsZero() {
+		t.Fatalf("attention=%+v", byID["attention"])
+	}
+}
