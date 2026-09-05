@@ -71,10 +71,10 @@ func NewWithLookPath(harnesses HarnessCatalog, lookPath func(string) (string, er
 	return New(harnesses, executableFinderFunc(lookPath))
 }
 
-// CheckStartup runs the inexpensive prerequisite probes needed before AO
-// presents its primary session UI. It deliberately excludes coding-agent
-// inventory and authentication: those provider probes can invoke several CLIs
-// and have their own timeouts. The single GitHub auth probe is bounded and advisory.
+// CheckStartup runs only the inexpensive prerequisite probes needed before AO
+// presents its primary session UI. It deliberately excludes authentication
+// probes because they can invoke CLIs or credential stores and must not delay
+// first render.
 func (s *Service) CheckStartup(ctx context.Context) (Report, error) {
 	if err := ctx.Err(); err != nil {
 		return Report{}, err
@@ -84,8 +84,16 @@ func (s *Service) CheckStartup(ctx context.Context) (Report, error) {
 		s.checkTmux(),
 		s.checkStartupHarness(ctx),
 		s.checkGH(),
-		s.checkGitHubAuth(ctx),
 	}), nil
+}
+
+// CheckGitHubAuth runs the bounded, advisory GitHub credential probe separately
+// from the startup gate so a slow credential store cannot delay first render.
+func (s *Service) CheckGitHubAuth(ctx context.Context) (Requirement, error) {
+	if err := ctx.Err(); err != nil {
+		return Requirement{}, err
+	}
+	return s.checkGitHubAuth(ctx), nil
 }
 
 // Check runs the complete, user-triggered requirements probe, including a

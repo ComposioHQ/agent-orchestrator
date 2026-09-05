@@ -13,6 +13,12 @@ async function fetchSystemRequirements(): Promise<components["schemas"]["SystemR
 	return data;
 }
 
+async function fetchGitHubAuthRequirement(): Promise<components["schemas"]["SystemRequirement"]> {
+	const { data, error } = await apiClient.GET("/api/v1/system/github-auth");
+	if (error || !data) throw new Error("Could not check GitHub authentication.");
+	return data;
+}
+
 export const systemRequirementsQueryOptions = {
 	queryKey: systemRequirementsQueryKey,
 	queryFn: fetchSystemRequirements,
@@ -22,6 +28,19 @@ export const systemRequirementsQueryOptions = {
 	// the same flag in SessionsBoard.
 	enabled: !usesPreviewWorkspaceData,
 };
+
+export const githubAuthRequirementQueryOptions = {
+	queryKey: ["github-auth-requirement"] as const,
+	queryFn: fetchGitHubAuthRequirement,
+	refetchOnWindowFocus: false,
+	enabled: !usesPreviewWorkspaceData,
+};
+
+/** Advisory authentication probe. Kept separate from the startup gate because
+ * credential-store access can be slow or interactive on some machines. */
+export function useGitHubAuthRequirement() {
+	return useQuery(githubAuthRequirementQueryOptions);
+}
 
 /** Single source of truth for whether the machine satisfies AO's startup
  *  requirements. Shared by SessionsBoard (which must keep the startup screen

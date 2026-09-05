@@ -77,14 +77,19 @@ function respondWith(projects: Project[], sessions: Session[], githubAuthenticat
 						{ id: "tmux", label: "tmux", satisfied: true, required: true, detail: "/usr/bin/tmux" },
 						{ id: "harness", label: "agent harness", satisfied: true, required: true, detail: "Claude Code" },
 						{ id: "gh", label: "gh", satisfied: true, required: false, detail: "/usr/bin/gh" },
-						{
-							id: "github-auth",
-							label: "GitHub access",
-							satisfied: githubAuthenticated,
-							required: false,
-							detail: githubAuthenticated ? "GitHub CLI is signed in." : "Sign in with `gh auth login`.",
-						},
 					],
+				},
+				error: undefined,
+			};
+		}
+		if (url === "/api/v1/system/github-auth") {
+			return {
+				data: {
+					id: "github-auth",
+					label: "GitHub access",
+					satisfied: githubAuthenticated,
+					required: false,
+					detail: githubAuthenticated ? "GitHub CLI is signed in." : "Sign in with `gh auth login`.",
 				},
 				error: undefined,
 			};

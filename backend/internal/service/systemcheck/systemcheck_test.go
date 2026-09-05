@@ -90,11 +90,12 @@ func TestCheckStartup_SkipsAgentInventory(t *testing.T) {
 		binary:   agentsvc.Info{ID: "claude-code", Label: "Claude Code"},
 		binaryOK: true,
 	}
-	svc := NewWithLookPath(catalog, lookPathFound(map[string]string{
+	runner := &fakeCommandRunner{err: errors.New("credential probe must not run at startup")}
+	svc := NewWithCommandRunner(catalog, executableFinderFunc(lookPathFound(map[string]string{
 		"git":  "/usr/bin/git",
 		"tmux": "/usr/bin/tmux",
 		"gh":   "/usr/bin/gh",
-	}))
+	})), runner)
 
 	report, err := svc.CheckStartup(context.Background())
 	if err != nil {
@@ -109,10 +110,13 @@ func TestCheckStartup_SkipsAgentInventory(t *testing.T) {
 	if catalog.binaryCalls != 1 {
 		t.Fatalf("FindInstalledBinary calls = %d, want 1", catalog.binaryCalls)
 	}
-	if len(report.Requirements) != 5 {
-		t.Fatalf("len(Requirements) = %d, want 5", len(report.Requirements))
+	if runner.argv != nil {
+		t.Fatalf("startup auth probe argv = %#v, want no command", runner.argv)
 	}
-	for i, want := range []string{"git", "tmux", "harness", "gh", "github-auth"} {
+	if len(report.Requirements) != 4 {
+		t.Fatalf("len(Requirements) = %d, want 4", len(report.Requirements))
+	}
+	for i, want := range []string{"git", "tmux", "harness", "gh"} {
 		if report.Requirements[i].ID != want {
 			t.Fatalf("Requirements[%d].ID = %q, want %q", i, report.Requirements[i].ID, want)
 		}
@@ -328,21 +332,17 @@ func TestCheck_GHMissing(t *testing.T) {
 	}
 }
 
-func TestCheckStartup_GitHubAuthIsAdvisory(t *testing.T) {
+func TestCheckGitHubAuth_IsAdvisory(t *testing.T) {
 	catalog := &fakeHarnessCatalog{binary: agentsvc.Info{ID: "claude-code", Label: "Claude Code"}, binaryOK: true}
 	runner := &fakeCommandRunner{err: errors.New("not logged in")}
 	svc := NewWithCommandRunner(catalog, executableFinderFunc(lookPathFound(map[string]string{
 		"git": "/usr/bin/git", "tmux": "/usr/bin/tmux", "gh": "/usr/bin/gh",
 	})), runner)
 
-	report, err := svc.CheckStartup(context.Background())
+	auth, err := svc.CheckGitHubAuth(context.Background())
 	if err != nil {
-		t.Fatalf("CheckStartup() error = %v", err)
+		t.Fatalf("CheckGitHubAuth() error = %v", err)
 	}
-	if !report.Ready {
-		t.Fatalf("Ready = false, want true for advisory GitHub auth; requirements=%+v", report.Requirements)
-	}
-	auth := requirementByID(t, report, "github-auth")
 	if auth.Satisfied || auth.Required {
 		t.Fatalf("github-auth = %+v, want unsatisfied advisory", auth)
 	}

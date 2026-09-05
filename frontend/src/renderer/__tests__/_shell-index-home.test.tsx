@@ -6,6 +6,7 @@ const routeMocks = vi.hoisted(() => ({
 	navigate: vi.fn(),
 	workspaces: [] as WorkspaceSummary[],
 	requirements: [] as Array<{ id: string; label: string; satisfied: boolean; required: boolean; detail: string }>,
+	authRequirement: undefined as { id: string; label: string; satisfied: boolean; required: boolean; detail: string } | undefined,
 }));
 
 vi.mock("@tanstack/react-router", async (importOriginal) => ({
@@ -19,6 +20,7 @@ vi.mock("../hooks/useWorkspaceQuery", () => ({
 
 vi.mock("../hooks/useSystemRequirementsGate", () => ({
 	useSystemRequirementsGate: () => ({ blocked: false, requirements: routeMocks.requirements, query: { refetch: vi.fn() } }),
+	useGitHubAuthRequirement: () => ({ data: routeMocks.authRequirement, isFetching: false, refetch: vi.fn() }),
 }));
 
 vi.mock("../lib/shell-context", () => ({
@@ -45,6 +47,7 @@ beforeEach(() => {
 	routeMocks.navigate.mockReset();
 	routeMocks.workspaces = [];
 	routeMocks.requirements = [];
+	routeMocks.authRequirement = undefined;
 });
 
 describe("shell index route", () => {
@@ -77,10 +80,10 @@ describe("shell index route", () => {
 		routeMocks.workspaces = [
 			{ id: "scratch", name: "Scratch", kind: "scratch", path: "/scratch", sessions: [] },
 		];
-		routeMocks.requirements = [
+	routeMocks.requirements = [
 			{ id: "gh", label: "gh", satisfied: true, required: false, detail: "/usr/bin/gh" },
-			{ id: "github-auth", label: "GitHub access", satisfied: false, required: false, detail: "Sign in." },
 		];
+		routeMocks.authRequirement = { id: "github-auth", label: "GitHub access", satisfied: false, required: false, detail: "Sign in." };
 
 		render(<HomePage />);
 

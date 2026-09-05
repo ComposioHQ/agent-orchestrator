@@ -1,7 +1,7 @@
 import { Check, Copy, GitPullRequest } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { useSystemRequirementsGate } from "../hooks/useSystemRequirementsGate";
+import { useGitHubAuthRequirement, useSystemRequirementsGate } from "../hooks/useSystemRequirementsGate";
 import { aoBridge } from "../lib/bridge";
 
 const GITHUB_CLI_INSTALL_URL = "https://cli.github.com/";
@@ -13,12 +13,12 @@ const GITHUB_LOGIN_COMMAND = "gh auth login";
 export function GitHubOnboardingNotice() {
 	const { t } = useTranslation();
 	const gate = useSystemRequirementsGate();
+	const authQuery = useGitHubAuthRequirement();
 	const requirements = gate.requirements ?? [];
 	const [copied, setCopied] = useState(false);
-	const [checking, setChecking] = useState(false);
 	const resetTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
 	const gh = requirements.find((requirement) => requirement.id === "gh");
-	const auth = requirements.find((requirement) => requirement.id === "github-auth");
+	const auth = authQuery.data;
 
 	useEffect(() => () => clearTimeout(resetTimer.current), []);
 
@@ -32,15 +32,11 @@ export function GitHubOnboardingNotice() {
 	};
 
 	const checkAgain = async () => {
-		setChecking(true);
-		try {
-			await gate.query?.refetch();
-		} finally {
-			setChecking(false);
-		}
+		await authQuery.refetch();
 	};
 
 	const cliMissing = !gh?.satisfied;
+	const checking = authQuery.isFetching;
 	return (
 		<div className="w-full max-w-[520px] rounded-lg border border-warning/30 bg-warning/10 px-4 py-3" role="status">
 			<div className="flex items-start gap-3">
