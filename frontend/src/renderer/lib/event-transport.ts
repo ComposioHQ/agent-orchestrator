@@ -65,7 +65,7 @@ export function createEventTransport(queryClient: QueryClient): EventTransport {
 			// Do not repeatedly cancel a slow fetch under continuous CDC traffic. A
 			// key receives at most one in-flight refresh and one queued catch-up.
 			const refreshes = new Map<string, { dirty: boolean }>();
-			const invalidate = (queryKey: QueryKey, catchUp = false) => {
+			const invalidate = (queryKey: QueryKey) => {
 				if (disposed) return;
 				const key = JSON.stringify(queryKey);
 				const running = refreshes.get(key);
@@ -75,16 +75,16 @@ export function createEventTransport(queryClient: QueryClient): EventTransport {
 				}
 				// A fetch from polling/mounting may already predate this event. Wait
 				// for it, then refresh once so joining its promise cannot lose the event.
-				const state = { dirty: !catchUp && queryClient.isFetching({ queryKey, type: "active" }) > 0 };
+				const state = { dirty: queryClient.isFetching({ queryKey, type: "active" }) > 0 };
 				refreshes.set(key, state);
 				const settled = () => {
 					refreshes.delete(key);
-					if (state.dirty && !disposed) invalidate(queryKey, true);
+					if (state.dirty && !disposed) invalidate(queryKey);
 				};
 				void queryClient.invalidateQueries({ queryKey }, { cancelRefetch: false }).then(settled, settled);
 			};
 			const applyAccountEvent = (event: Event) => {
-				if (!("data" in event)) return;
+				if (disposed || !("data" in event)) return;
 				try {
 					const decoded = JSON.parse(String((event as MessageEvent).data)) as components["schemas"]["CodexAccountsResponse"];
 					writeCodexAccounts(queryClient, decoded, "replace");
@@ -178,7 +178,7 @@ export function createEventTransport(queryClient: QueryClient): EventTransport {
 			let retries = 0;
 
 			const scheduleRetry = () => {
-				if (retryTimer) return;
+				if (disposed || retryTimer) return;
 				retries += 1;
 				retryTimer = setTimeout(() => {
 					retryTimer = undefined;
@@ -188,7 +188,7 @@ export function createEventTransport(queryClient: QueryClient): EventTransport {
 
 			const connectSource = () => {
 				// EventSource is unavailable in jsdom (tests) and some preview surfaces; guard it.
-				if (typeof EventSource === "undefined") return;
+				if (disposed || typeof EventSource === "undefined") return;
 				if (!hasTrustedApiBaseUrl()) {
 					healthAttempt += 1;
 					source?.close();
@@ -209,6 +209,7 @@ export function createEventTransport(queryClient: QueryClient): EventTransport {
 					try {
 						accountSource = new EventSource(`${baseUrl.replace(/\/+$/, "")}/api/v1/agents/codex/accounts/events`);
 						accountSource.onopen = () => {
+							if (disposed) return;
 							void queryClient.invalidateQueries({ queryKey: codexAccountsQueryKey });
 						};
 						accountSource.onerror = () => { if (accountSource?.readyState === EVENTSOURCE_CLOSED) scheduleRetry(); };
@@ -231,7 +232,7 @@ export function createEventTransport(queryClient: QueryClient): EventTransport {
 					source = new EventSource(`${baseUrl.replace(/\/+$/, "")}/api/v1/events`);
 					const connectedSource = source;
 					source.onopen = () => {
-						if (source !== connectedSource) return;
+						if (disposed || source !== connectedSource) return;
 						healthAttempt += 1;
 						retries = 0;
 						setEventsConnectionState("connected");
@@ -241,7 +242,7 @@ export function createEventTransport(queryClient: QueryClient): EventTransport {
 						refreshWorkspaces();
 					};
 					source.onerror = () => {
-						if (source !== connectedSource) return;
+						if (disposed || source !== connectedSource) return;
 						// While readyState is CONNECTING the browser retries on its own;
 						// either way the stream is not delivering, so surface it instead
 						// of looping silently against a dead daemon.

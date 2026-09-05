@@ -98,6 +98,30 @@ afterEach(() => {
 });
 
 describe("createEventTransport", () => {
+	it("ignores every stream callback after disposal", async () => {
+		vi.useFakeTimers();
+		try {
+			const client = fakeQueryClient();
+			const disconnect = createEventTransport(client).connect();
+			const cdc = cdcSources()[0];
+			const accounts = accountSources()[0];
+			disconnect();
+			cdc.onopen?.();
+			cdc.onerror?.();
+			accounts.onopen?.();
+			accounts.onerror?.();
+			accounts.emit("codex_account", JSON.stringify({ accounts: [], accountRevision: 1 }));
+			onStatusMock.mock.calls[0][0]();
+			await vi.advanceTimersByTimeAsync(60_000);
+			expect(client.invalidateQueries).not.toHaveBeenCalled();
+			expect(client.refetchQueries).not.toHaveBeenCalled();
+			expect(client.setQueryData).not.toHaveBeenCalled();
+			expect(setTransportHealthyMock).not.toHaveBeenCalled();
+			expect(getEventsConnectionState()).toBe("idle");
+			expect(EventSourceStub.instances).toHaveLength(2);
+		} finally { vi.useRealTimers(); }
+	});
+
 	it("opens the CDC and Codex account SSE connections on connect", () => {
 		createEventTransport(fakeQueryClient()).connect();
 
@@ -559,5 +583,57 @@ it("preserves real TanStack requests and fetches the newest snapshot after queue
 		expect(aborts).toBe(0);
 	} finally {
 		disconnect(); unsubscribe(); client.clear(); vi.useRealTimers();
+	}
+});
+
+it("refreshes again when a root catch-up joins an older targeted conversation fetch", async () => {
+	vi.useFakeTimers();
+	const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+	const finishes: Record<string, Array<(value: number) => void>> = { a: [], b: [] };
+	let aborts = 0;
+	const unsubscribes = ["a", "b"].map((sessionId) => new QueryObserver(client, {
+		queryKey: ["conversation", sessionId],
+		initialData: 0,
+		staleTime: Infinity,
+		queryFn: ({ signal }) => {
+			signal.addEventListener("abort", () => { aborts++; });
+			return new Promise<number>((resolve) => finishes[sessionId].push(resolve));
+		},
+	}).subscribe(() => undefined));
+	const disconnect = createEventTransport(client).connect();
+	try {
+		cdcSources()[0].onopen?.();
+		await vi.advanceTimersByTimeAsync(150);
+		finishes.a[0](1);
+		await vi.advanceTimersByTimeAsync(0);
+
+		// A targeted fetch starts while B keeps the original root refresh open.
+		cdcSources()[0].emit("session_updated", JSON.stringify({ sessionId: "a", payload: { conversationId: "conv-a" } }));
+		await vi.advanceTimersByTimeAsync(150);
+		expect(finishes.a).toHaveLength(2);
+		// A reconnect now requires a snapshot newer than that targeted fetch.
+		cdcSources()[0].onopen?.();
+		await vi.advanceTimersByTimeAsync(150);
+		finishes.b[0](1);
+		await vi.advanceTimersByTimeAsync(0);
+		expect(finishes.b).toHaveLength(2);
+
+		finishes.a[1](1);
+		finishes.b[1](2);
+		await vi.advanceTimersByTimeAsync(0);
+		expect(finishes.a).toHaveLength(3);
+		finishes.a[2](2);
+		finishes.b[2](2);
+		await vi.advanceTimersByTimeAsync(0);
+		expect(client.getQueryData(["conversation", "a"])).toBe(2);
+		expect(client.isFetching()).toBe(0);
+		expect(finishes.a).toHaveLength(3);
+		expect(finishes.b).toHaveLength(3);
+		expect(aborts).toBe(0);
+	} finally {
+		disconnect();
+		unsubscribes.forEach((unsubscribe) => unsubscribe());
+		client.clear();
+		vi.useRealTimers();
 	}
 });
