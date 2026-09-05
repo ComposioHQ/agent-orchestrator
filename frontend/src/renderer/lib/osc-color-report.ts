@@ -1,6 +1,7 @@
-// xterm answers OSC 10/11/12 queries (fg/bg/cursor) on its onData stream.
-// Cursor Agent's theme probe issues those queries on stdout and listens on
-// stdin; AO must return the live palette or the prompt bar defaults to dark.
+// xterm emits OSC 4/10/11/12 color reports on its onData stream. AO forwards
+// only strict, complete reports back to the PTY. Cursor Agent's theme probe
+// specifically issues OSC 10/11/12 queries on stdout and listens on stdin; AO
+// must return the live palette or the prompt bar defaults to dark.
 
 export type OscTerminalColors = {
 	foreground: string;
@@ -8,7 +9,10 @@ export type OscTerminalColors = {
 	cursor: string;
 };
 
-const OSC_COLOR_REPORT = /^\u001b](?:10|11|12);[^\u0007\u001b]*(?:\u0007|\u001b\\)$/;
+const OSC_COLOR_PAYLOAD =
+	"(?:4;(?:0|[1-9]\\d?|1\\d\\d|2[0-4]\\d|25[0-5])|1[0-2]);rgb:[0-9a-fA-F]{4}/[0-9a-fA-F]{4}/[0-9a-fA-F]{4}";
+const OSC_COLOR_REPORT = new RegExp(`^\\u001b]${OSC_COLOR_PAYLOAD}(?:\\u0007|\\u001b\\\\)$`);
+const COMPLETE_OSC_COLOR_REPORT = new RegExp(`^\\u001b]${OSC_COLOR_PAYLOAD}(?:\\u0007|\\u001b\\\\)`);
 const OSC_COLOR_PROBE = /\u001b\](?:10|11|12);\?/;
 const MAX_OSC_BUFFER_LENGTH = 16 * 1024;
 
@@ -70,13 +74,12 @@ export function cursorOscProbeRepliesForOutput(chunk: string, colors: OscTermina
 	return replies.length > 0 ? replies.join("") : null;
 }
 
-/** Buffer split xterm onData chunks and forward only complete OSC 10/11/12 replies. */
+/** Buffer split xterm onData chunks and forward only complete strict OSC 4/10/11/12 replies. */
 export function createOscColorReportForwarder(emit: (report: string) => void): {
 	push: (data: string) => void;
 	dispose: () => void;
 } {
 	let buffer = "";
-	const complete = /^\u001b](?:10|11|12);[^\u0007\u001b]*(?:\u0007|\u001b\\)/;
 
 	return {
 		push(data: string) {
@@ -88,18 +91,35 @@ export function createOscColorReportForwarder(emit: (report: string) => void): {
 				buffer = buffer.slice(-MAX_OSC_BUFFER_LENGTH);
 			}
 			for (;;) {
-				const match = buffer.match(complete);
-				if (!match) break;
-				emit(match[0]);
-				buffer = buffer.slice(match[0].length);
-			}
-			const oscStart = buffer.indexOf("\x1b]");
-			if (oscStart === -1) {
-				buffer = "";
+				const oscStart = buffer.indexOf("\x1b]");
+				if (oscStart === -1) {
+					buffer = buffer.endsWith("\x1b") ? "\x1b" : "";
+					return;
+				}
+				if (oscStart > 0) buffer = buffer.slice(oscStart);
+
+				const match = buffer.match(COMPLETE_OSC_COLOR_REPORT);
+				if (match) {
+					emit(match[0]);
+					buffer = buffer.slice(match[0].length);
+					continue;
+				}
+
+				const bel = buffer.indexOf("\x07");
+				const st = buffer.indexOf("\x1b\\");
+				const terminator = bel === -1 ? st : st === -1 ? bel : Math.min(bel, st);
+				if (terminator !== -1) {
+					buffer = buffer.slice(terminator + (terminator === st ? 2 : 1));
+					continue;
+				}
+
+				const nextOscStart = buffer.indexOf("\x1b]", 2);
+				if (nextOscStart !== -1) {
+					buffer = buffer.slice(nextOscStart);
+					continue;
+				}
 				return;
 			}
-			if (oscStart > 0) buffer = buffer.slice(oscStart);
-			if (!/^\u001b](?:10|11|12);/.test(buffer)) buffer = "";
 		},
 		dispose() {
 			buffer = "";

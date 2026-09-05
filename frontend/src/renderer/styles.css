@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@import "tw-animate-css";
 @import "../styles/tokens.css";
 @import "@fontsource-variable/geist";
 @import "@fontsource-variable/geist-mono";
@@ -2248,14 +2249,24 @@ html.sidebar-reordering * {
 	--queue-dock-row-height: 2.5rem;
 	--queue-dock-visible-rows: 5;
 	position: relative;
+	z-index: 0;
+	isolation: isolate;
 	overflow: hidden;
+	min-width: 0;
 	height: var(--queue-dock-row-height);
 	transition: height 420ms cubic-bezier(0.16, 1, 0.3, 1);
 	will-change: height;
 }
 
+.queue-dock[data-reordering="true"] .queue-dock-body,
+.queue-dock[data-reordering="true"] .queue-dock-scroll {
+	overflow: hidden;
+}
+
 .queue-dock {
 	height: var(--queue-dock-collapsed-height, 4.5rem);
+	min-width: 0;
+	max-width: 100%;
 	transition: height 420ms cubic-bezier(0.16, 1, 0.3, 1);
 	will-change: height;
 }
@@ -2280,7 +2291,6 @@ html.sidebar-reordering * {
 }
 
 .queue-dock-actions {
-	min-width: max-content;
 	flex-shrink: 0;
 }
 
@@ -2300,13 +2310,35 @@ html.sidebar-reordering * {
 .queue-dock-scroll {
 	display: flex;
 	min-height: 100%;
+	min-width: 0;
+	max-width: 100%;
 	flex-direction: column;
 	justify-content: flex-end;
-	overflow-y: hidden;
+	overflow: hidden;
 }
 
 .queue-dock-scroll > .queue-dock-row {
 	flex: none;
+	width: 100%;
+	min-width: 0;
+	max-width: 100%;
+	overflow: hidden;
+}
+
+.queue-dock-row-content {
+	height: var(--queue-dock-row-height, 2.5rem);
+	max-width: 100%;
+}
+
+.queue-dock-row-text {
+	display: block;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.queue-dock[data-reordering="true"] .queue-dock-row:not([data-dragging="true"]) .queue-dock-actions button {
+	transition: none;
 }
 
 .queue-dock-scroll-active {
@@ -2768,22 +2800,6 @@ html.sidebar-reordering * {
 		var(--size-topbar-control) + var(--size-topbar-control) + var(--space-2) + var(--space-3)
 	);
 	flex: 0 0 auto;
-}
-
-.session-topbar-session-chrome[data-compact-session-chrome="true"]
-	.workspace-topbar-actions
-	[data-priority]
-	[data-compact-label] {
-	inline-size: 0;
-	opacity: 0;
-	transform: translateX(-2px);
-}
-
-.session-topbar-session-chrome[data-compact-session-chrome="true"]
-	.workspace-topbar-actions
-	[data-priority].topbar-control {
-	gap: 0;
-	padding-inline: 0;
 }
 
 @container workspace-topbar (max-width: 759px) {
@@ -4220,6 +4236,8 @@ body:has(#root .platform-linux) > .browser-popout-overlay {
 }
 
 .browser-panel__toolbar {
+	container-name: browser-toolbar;
+	container-type: inline-size;
 	display: flex;
 	align-items: center;
 	gap: 2px;
@@ -4243,13 +4261,32 @@ body:has(#root .platform-linux) > .browser-popout-overlay {
 	backdrop-filter: blur(10px);
 }
 
+/* Keep the URL field useful in the narrow inspector. The selected profile name
+   remains available through the button tooltip, accessible label, and native
+   menu; only its inline label collapses at constrained toolbar widths. */
+@container browser-toolbar (max-width: 34rem) {
+	.browser-profile-button {
+		width: var(--size-control-md);
+		max-width: var(--size-control-md);
+		flex-shrink: 0;
+		justify-content: center;
+		gap: 0;
+		padding-inline: 0;
+	}
+
+	.browser-profile-button__label,
+	.browser-profile-button__chevron {
+		display: none;
+	}
+}
+
 .browser-panel__toolbar > :not(.browser-panel__url-wrap):not(button) {
 	transition:
 		opacity 140ms ease,
 		visibility 0s linear;
 }
 
-.browser-panel__toolbar--url-takeover > :not(.browser-panel__url-wrap):not(.browser-panel__navigation-btn) {
+.browser-panel__toolbar--url-takeover > :not(.browser-panel__url-wrap):not(.browser-panel__navigation-btn):not(.browser-panel__navigation-control) {
 	visibility: hidden;
 	opacity: 0;
 	pointer-events: none;
@@ -4304,6 +4341,26 @@ body:has(#root .platform-linux) > .browser-popout-overlay {
 	background: transparent;
 }
 
+.browser-panel__tab--drag-placeholder {
+	opacity: 0;
+	pointer-events: none;
+}
+
+.browser-panel__tab--drag-overlay {
+	width: 100%;
+	min-width: 0;
+	max-width: none;
+	flex: none;
+	color: var(--fg);
+	border-color: color-mix(in srgb, var(--color-border) 72%, transparent);
+	background: var(--surface);
+	box-shadow:
+		inset 0 1px 0 color-mix(in srgb, white 7%, transparent),
+		0 6px 16px color-mix(in srgb, black 22%, transparent);
+	cursor: grabbing;
+	pointer-events: none;
+}
+
 .browser-panel__tab:not(:last-child)::after {
 	position: absolute;
 	top: 8px;
@@ -4320,8 +4377,8 @@ body:has(#root .platform-linux) > .browser-popout-overlay {
 .browser-panel__tab:has(+ .browser-panel__tab--active)::after,
 .browser-panel__tab:hover::after,
 .browser-panel__tab:has(+ .browser-panel__tab:hover)::after,
-.browser-panel__tab--dragging::after,
-.browser-panel__tab:has(+ .browser-panel__tab--dragging)::after {
+.browser-panel__tab--drag-placeholder::after,
+.browser-panel__tab:has(+ .browser-panel__tab--drag-placeholder)::after {
 	opacity: 0;
 }
 
@@ -4414,6 +4471,11 @@ body:has(#root .platform-linux) > .browser-popout-overlay {
 	border-radius: 7px;
 	color: var(--fg-muted);
 	background: transparent;
+}
+
+.browser-panel__tab-new--dragging {
+	visibility: hidden;
+	pointer-events: none;
 }
 
 .browser-panel__tab-new:not(:disabled):hover {
@@ -4743,4 +4805,101 @@ html[data-native-browser-composition="true"] .browser-popout-backdrop {
 @utility reviews-agent-menu-item {
 	padding-inline: var(--space-2_5);
 	padding-block: var(--space-2);
+}
+
+/* Connect Mobile: the pairing QR and the wait before it. The placeholder is a
+   real QR carrying decoy data, so it can dissolve into the finished code
+   instead of being swapped for it. See PairingQr.tsx. */
+/* The library's SVG includes a generous quiet zone. Enlarge the artwork
+   inside the fixed card so the preview and the finished code share the same
+   visible bounds while the card still supplies the clipping edge. */
+.ao-qr-visual > svg {
+	transform: scale(0.885);
+	transform-origin: center;
+}
+
+/* A triangular ramp occupying half the cycle. With four layers offset by a
+   quarter cycle, two are always mid-ramp in opposite directions, so the
+   composite dissolves continuously instead of swapping one code for the next. */
+@keyframes ao-qr-decoy-cycle {
+	0% {
+		opacity: 0;
+	}
+	25% {
+		opacity: 0.5;
+	}
+	50% {
+		opacity: 0;
+	}
+	100% {
+		opacity: 0;
+	}
+}
+
+/* A slow wander, so the panel reads as working rather than frozen. Small
+   enough that it never looks like a layout bug. */
+@keyframes ao-qr-drift {
+	0%,
+	100% {
+		transform: translate3d(0, 0, 0);
+	}
+	25% {
+		transform: translate3d(-3px, 2px, 0);
+	}
+	50% {
+		transform: translate3d(2px, -3px, 0);
+	}
+	75% {
+		transform: translate3d(3px, 2px, 0);
+	}
+}
+
+@keyframes ao-qr-resolve-in {
+	from {
+		opacity: 0;
+		filter: blur(4px);
+	}
+	to {
+		opacity: 1;
+		filter: blur(0);
+	}
+}
+
+@keyframes ao-qr-decoy-settle {
+	to {
+		opacity: 0;
+		filter: blur(4px);
+	}
+}
+
+.ao-qr-decoy {
+	opacity: 0;
+	animation: ao-qr-decoy-cycle 4800ms linear infinite;
+}
+
+.ao-qr-drift {
+	animation: ao-qr-drift 9s ease-in-out infinite;
+}
+
+/* The real code has arrived: stop cycling and clear away together. */
+.ao-qr-decoy--settling {
+	animation: ao-qr-decoy-settle 260ms ease-out forwards;
+}
+
+.ao-qr-resolved {
+	animation: ao-qr-resolve-in ease-out both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.ao-qr-decoy {
+		animation-duration: 9000ms;
+	}
+
+	.ao-qr-drift {
+		animation: none;
+	}
+
+	.ao-qr-resolved {
+		animation: none;
+	}
 }

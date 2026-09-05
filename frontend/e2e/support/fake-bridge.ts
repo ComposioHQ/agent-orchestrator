@@ -69,13 +69,14 @@ export async function installFakeBridge(page: Page, opts: FakeBridgeOptions = {}
 			// resolves — an incomplete object would throw the moment the app touched
 			// a missing method.
 			const ao = {
-				app: {
-					getVersion: async () => version,
-					chooseDirectory: async () => null,
-					openExternal: async () => undefined,
-					scanImportFolder: async ({ path }: { path: string }) => ({ path, repos: [] }),
-					checkAncestorRepo: async () => undefined,
-					getPathForFile: () => "",
+					app: {
+						getVersion: async () => version,
+						chooseDirectory: async () => null,
+						openExternal: async () => undefined,
+						scanImportFolder: async ({ path }: { path: string }) => ({ path, repos: [] }),
+						checkAncestorRepo: async () => undefined,
+						getRepositoryBranch: async () => undefined,
+						getPathForFile: () => "",
 					onOpenFolderPath: () => () => undefined,
 					onNewSessionShortcut: unsubscribe,
 					onKeyboardShortcutsHelp: unsubscribe,
@@ -133,6 +134,12 @@ export async function installFakeBridge(page: Page, opts: FakeBridgeOptions = {}
 				},
 				telemetry: {
 					getBootstrap: async () => null,
+					getPolicy: async () => ({ eventsEnabled: false, consentGeneration: "e2e", updatedAt: new Date(0).toISOString(), acknowledged: false, state: "applied", environmentVeto: true, durabilitySupported: false, reason: "environment_veto" }),
+					setEventsEnabled: async () => ({ eventsEnabled: false, consentGeneration: "e2e", updatedAt: new Date(0).toISOString(), acknowledged: false, state: "applied", environmentVeto: true, durabilitySupported: false, reason: "environment_veto" }),
+					onPolicy: () => () => false,
+					onClearQueues: () => () => false,
+					capture: async () => false,
+					signalAgentSwitchVisibility: () => false,
 				},
 				browser: {
 					nativeCompositionEnabled: true,
@@ -140,6 +147,7 @@ export async function installFakeBridge(page: Page, opts: FakeBridgeOptions = {}
 					setBounds: () => undefined,
 					setOverlayOpen: () => undefined,
 					navigate: async ({ viewId }: { viewId: string }) => navState(viewId),
+					historySuggestions: async () => [],
 					clear: async (viewId: string) => navState(viewId),
 					goBack: async (viewId: string) => navState(viewId),
 					goForward: async (viewId: string) => navState(viewId),
@@ -165,6 +173,13 @@ export async function installFakeBridge(page: Page, opts: FakeBridgeOptions = {}
 						activeTabId: "t1",
 						tabs: [{ id: "t1", url: "", title: "", active: true }],
 					}),
+					getProfile: async (viewId: string) => ({ viewId, profileId: null, temporary: true }),
+					showProfileMenu: async () => undefined,
+					selectProfile: async () => undefined,
+					notifyPanelUsed: () => undefined,
+					notifyPanelBlur: () => undefined,
+					onFocusLocation: unsubscribe,
+					onReopenClosedTab: unsubscribe,
 					devtools: async (input: { viewId: string }) => ({ viewId: input.viewId, open: false, activeTabId: "" }),
 					destroy: () => undefined,
 					// Annotation contract (mirrors src/preload.ts): useBrowserView subscribes
@@ -177,7 +192,25 @@ export async function installFakeBridge(page: Page, opts: FakeBridgeOptions = {}
 					onTabsState: unsubscribe,
 					onAgentActivity: unsubscribe,
 					onDevToolsState: unsubscribe,
+					onProfileState: unsubscribe,
+					onProfileManage: unsubscribe,
 					onPageFocus: unsubscribe,
+				},
+				browserProfiles: {
+					list: async () => ({ profiles: [] }),
+					create: async (name: string) => {
+						const now = new Date().toISOString();
+						return { id: `fake-${name}`, name, createdAt: now, updatedAt: now };
+					},
+					rename: async ({ id, name }: { id: string; name: string }) => {
+						const now = new Date().toISOString();
+						return { id, name, createdAt: now, updatedAt: now };
+					},
+					clear: async () => undefined,
+					delete: async () => undefined,
+					discoverImportSources: async () => ({ sources: [] }),
+					import: async () => ({ sourceName: "", entries: [] }),
+					onImportProgress: () => () => undefined,
 				},
 				notifications: {
 					show: async () => undefined,
@@ -227,6 +260,13 @@ export async function installFakeBridge(page: Page, opts: FakeBridgeOptions = {}
 					getSession: async () => null,
 					signIn: async () => undefined,
 					signOut: async () => undefined,
+					localAuthAvailable: async () => false,
+					localRegister: async () => {
+						throw new Error("local auth is unavailable in e2e");
+					},
+					localLogin: async () => {
+						throw new Error("local auth is unavailable in e2e");
+					},
 					onSessionChanged: unsubscribe,
 				},
 				cloudCp: {
@@ -555,13 +595,14 @@ export async function installFakeAgent(page: Page, opts: FakeAgentOptions = {}):
 				...(error ? { error } : {}),
 			});
 			const ao = {
-				app: {
-					getVersion: async () => version,
-					chooseDirectory: async () => null,
-					openExternal: async () => undefined,
-					scanImportFolder: async ({ path }: { path: string }) => ({ path, repos: [] }),
-					checkAncestorRepo: async () => undefined,
-					getPathForFile: () => "",
+					app: {
+						getVersion: async () => version,
+						chooseDirectory: async () => null,
+						openExternal: async () => undefined,
+						scanImportFolder: async ({ path }: { path: string }) => ({ path, repos: [] }),
+						checkAncestorRepo: async () => undefined,
+						getRepositoryBranch: async () => undefined,
+						getPathForFile: () => "",
 					onOpenFolderPath: () => () => undefined,
 					onNewSessionShortcut: unsubscribe,
 					onKeyboardShortcutsHelp: unsubscribe,
@@ -614,7 +655,15 @@ export async function installFakeAgent(page: Page, opts: FakeAgentOptions = {}):
 					}),
 					open: async () => ({ id: "cursor" as const, name: "Cursor", kind: "editor" as const }),
 				},
-				telemetry: { getBootstrap: async () => null },
+				telemetry: {
+					getBootstrap: async () => null,
+					getPolicy: async () => ({ eventsEnabled: false, consentGeneration: "e2e", updatedAt: new Date(0).toISOString(), acknowledged: false, state: "applied", environmentVeto: true, durabilitySupported: false, reason: "environment_veto" }),
+					setEventsEnabled: async () => ({ eventsEnabled: false, consentGeneration: "e2e", updatedAt: new Date(0).toISOString(), acknowledged: false, state: "applied", environmentVeto: true, durabilitySupported: false, reason: "environment_veto" }),
+					onPolicy: () => () => false,
+					onClearQueues: () => () => false,
+					capture: async () => false,
+					signalAgentSwitchVisibility: () => false,
+				},
 				browser: {
 					nativeCompositionEnabled: true,
 					ensure: async (sessionId: string) => navState(`preview:${sessionId}`),
@@ -622,6 +671,7 @@ export async function installFakeAgent(page: Page, opts: FakeAgentOptions = {}):
 					setOverlayOpen: () => undefined,
 					navigate: async ({ viewId, url }: { viewId: string; url: string }) =>
 						state.browserError ? navState(viewId, "", state.browserError) : navState(viewId, url),
+					historySuggestions: async () => [],
 					clear: async (viewId: string) => navState(viewId),
 					goBack: async (viewId: string) => navState(viewId),
 					goForward: async (viewId: string) => navState(viewId),
@@ -647,6 +697,13 @@ export async function installFakeAgent(page: Page, opts: FakeAgentOptions = {}):
 						activeTabId: "t1",
 						tabs: [{ id: "t1", url: "", title: "", active: true }],
 					}),
+					getProfile: async (viewId: string) => ({ viewId, profileId: null, temporary: true }),
+					showProfileMenu: async () => undefined,
+					selectProfile: async () => undefined,
+					notifyPanelUsed: () => undefined,
+					notifyPanelBlur: () => undefined,
+					onFocusLocation: unsubscribe,
+					onReopenClosedTab: unsubscribe,
 					devtools: async (input: { viewId: string }) => ({ viewId: input.viewId, open: false, activeTabId: "" }),
 					destroy: () => undefined,
 					// Annotation contract (mirrors src/preload.ts): useBrowserView subscribes
@@ -659,7 +716,25 @@ export async function installFakeAgent(page: Page, opts: FakeAgentOptions = {}):
 					onTabsState: unsubscribe,
 					onAgentActivity: unsubscribe,
 					onDevToolsState: unsubscribe,
+					onProfileState: unsubscribe,
+					onProfileManage: unsubscribe,
 					onPageFocus: unsubscribe,
+				},
+				browserProfiles: {
+					list: async () => ({ profiles: [] }),
+					create: async (name: string) => {
+						const now = new Date().toISOString();
+						return { id: `fake-${name}`, name, createdAt: now, updatedAt: now };
+					},
+					rename: async ({ id, name }: { id: string; name: string }) => {
+						const now = new Date().toISOString();
+						return { id, name, createdAt: now, updatedAt: now };
+					},
+					clear: async () => undefined,
+					delete: async () => undefined,
+					discoverImportSources: async () => ({ sources: [] }),
+					import: async () => ({ sourceName: "", entries: [] }),
+					onImportProgress: () => () => undefined,
 				},
 				notifications: {
 					show: async () => undefined,
@@ -701,6 +776,13 @@ export async function installFakeAgent(page: Page, opts: FakeAgentOptions = {}):
 					getSession: async () => null,
 					signIn: async () => undefined,
 					signOut: async () => undefined,
+					localAuthAvailable: async () => false,
+					localRegister: async () => {
+						throw new Error("local auth is unavailable in e2e");
+					},
+					localLogin: async () => {
+						throw new Error("local auth is unavailable in e2e");
+					},
 					onSessionChanged: unsubscribe,
 				},
 				cloudCp: {

@@ -426,6 +426,105 @@ func TestBrowserScreenshotWritesWithoutOverwrite(t *testing.T) {
 	}
 }
 
+func TestBrowserScreenshotWritesRelativePath(t *testing.T) {
+	setBrowserIdentity(t)
+	cfg := setConfigEnv(t)
+	capture := &browserRequestCapture{}
+	srv := browserCLIServer(t, capture)
+	writeRunFileFor(t, cfg, srv)
+	deps := Deps{ProcessAlive: func(int) bool { return true }}
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	out, errOut, err := executeCLI(t, deps, "browser", "screenshot", "relative.png")
+	if err != nil {
+		t.Fatalf("relative screenshot err=%v stderr=%s", err, errOut)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "relative.png"))
+	if err != nil || string(data) != "png" {
+		t.Fatalf("relative screenshot data=%q err=%v", data, err)
+	}
+	if !strings.Contains(out, filepath.Join(dir, "relative.png")) {
+		t.Fatalf("relative screenshot output = %q", out)
+	}
+}
+
+func TestBrowserScreenshotJSONWritesCompactMetadata(t *testing.T) {
+	setBrowserIdentity(t)
+	cfg := setConfigEnv(t)
+	capture := &browserRequestCapture{}
+	srv := browserCLIServer(t, capture)
+	writeRunFileFor(t, cfg, srv)
+	deps := Deps{ProcessAlive: func(int) bool { return true }}
+	target := filepath.Join(t.TempDir(), "shot.png")
+
+	out, errOut, err := executeCLI(t, deps, "browser", "screenshot", target, "--json")
+	if err != nil {
+		t.Fatalf("JSON screenshot err=%v stderr=%s", err, errOut)
+	}
+	var metadata browserScreenshotFileResult
+	if err := json.Unmarshal([]byte(out), &metadata); err != nil {
+		t.Fatalf("decode JSON screenshot output: %v; output=%q", err, out)
+	}
+	if metadata.Path != target || metadata.Size != 3 || metadata.Width != 10 || metadata.Height != 20 {
+		t.Fatalf("JSON screenshot metadata = %#v", metadata)
+	}
+	if strings.Contains(out, "cG5n") || len(out) > 256 {
+		t.Fatalf("JSON screenshot output was not compact: %q", out)
+	}
+	data, err := os.ReadFile(target)
+	if err != nil || string(data) != "png" {
+		t.Fatalf("JSON screenshot data=%q err=%v", data, err)
+	}
+	if _, _, err := executeCLI(t, deps, "browser", "screenshot", target, "--json"); err == nil || !strings.Contains(err.Error(), "refusing to overwrite") {
+		t.Fatalf("JSON overwrite error = %v", err)
+	}
+}
+
+func TestBrowserScreenshotBase64RequiresExplicitJSONMode(t *testing.T) {
+	setBrowserIdentity(t)
+	cfg := setConfigEnv(t)
+	capture := &browserRequestCapture{}
+	srv := browserCLIServer(t, capture)
+	writeRunFileFor(t, cfg, srv)
+	deps := Deps{ProcessAlive: func(int) bool { return true }}
+	t.Chdir(t.TempDir())
+
+	out, errOut, err := executeCLI(t, deps, "browser", "screenshot", "--base64", "--json")
+	if err != nil {
+		t.Fatalf("base64 screenshot err=%v stderr=%s", err, errOut)
+	}
+	var response browserCommandResponseDTO
+	if err := json.Unmarshal([]byte(out), &response); err != nil {
+		t.Fatalf("decode base64 screenshot output: %v; output=%q", err, out)
+	}
+	if response.Result["data"] != "cG5n" {
+		t.Fatalf("base64 screenshot result = %#v", response.Result)
+	}
+	entries, err := os.ReadDir(".")
+	if err != nil || len(entries) != 0 {
+		t.Fatalf("base64 screenshot wrote files: entries=%v err=%v", entries, err)
+	}
+	if _, _, err := executeCLI(t, deps, "browser", "screenshot", "--base64"); ExitCode(err) != 2 {
+		t.Fatalf("base64 without JSON error = %v code=%d", err, ExitCode(err))
+	}
+	if _, _, err := executeCLI(t, deps, "browser", "screenshot", "shot.png", "--base64", "--json"); ExitCode(err) != 2 {
+		t.Fatalf("base64 with path error = %v code=%d", err, ExitCode(err))
+	}
+}
+
+func TestBrowserScreenshotHelpExplainsJSONAndBase64Modes(t *testing.T) {
+	out, errOut, err := executeCLI(t, Deps{}, "browser", "screenshot", "--help")
+	if err != nil {
+		t.Fatalf("screenshot help err=%v stderr=%s", err, errOut)
+	}
+	for _, want := range []string{"compact metadata", "--base64", "cannot be used with a path"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("screenshot help missing %q: %s", want, out)
+		}
+	}
+}
+
 func TestBrowserRequiresSessionAndValidWait(t *testing.T) {
 	t.Setenv("AO_SESSION_ID", "")
 	if _, _, err := executeCLI(t, Deps{}, "browser", "status"); ExitCode(err) != 2 {

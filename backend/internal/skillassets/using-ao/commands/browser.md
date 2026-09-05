@@ -92,6 +92,7 @@ ao browser uncheck <ref> [--json]
 ao browser get <property> [ref] [--json]
 ao browser wait (--text <text> | --text-gone <text> | --selector <css> | --selector-gone <css> | --url <substring> | --load | --dom-stable <milliseconds> | --ms <milliseconds>) [--timeout <milliseconds>] [--json]
 ao browser screenshot [path] [--json]
+ao browser screenshot --base64 --json
 ao browser network start [--duration <seconds>] [--json]
 ao browser network status [--json]
 ao browser network list [--json]
@@ -151,7 +152,11 @@ response bodies, credentials, cookies, or query values. `network status` and
 `network list` never enable capture. Use `network stop` as soon as the relevant
 failure is reproduced, and `network clear` to discard retained entries.
 
-Without `--json`, `screenshot` writes a PNG and refuses to overwrite an existing file. With `--json`, it returns the structured response including base64 image data.
+`screenshot` writes a PNG and refuses to overwrite an existing file. With
+`--json`, it still writes the requested (or generated default) path and returns
+only compact metadata: the resolved path, byte size, width, and height. To
+return inline image data instead, omit the path and explicitly combine
+`--base64` with `--json`.
 
 `ao preview` remains available for the passive URL/static-file workflow. Use `ao browser` when the agent needs to inspect or verify the page.
 

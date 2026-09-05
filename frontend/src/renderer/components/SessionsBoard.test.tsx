@@ -38,6 +38,13 @@ vi.mock("@tanstack/react-router", () => ({
 vi.mock("../hooks/useWorkspaceQuery", () => ({
 	workspaceQueryKey: ["workspaces"],
 	useWorkspaceQuery: workspaceQueryMock,
+	useWorkspaceScope: (projectId?: string) => {
+		const query = workspaceQueryMock();
+		return {
+			...query,
+			data: { project: query.data?.find((workspace: WorkspaceSummary) => workspace.id === projectId) },
+		};
+	},
 }));
 
 vi.mock("../hooks/useSessionUsageSummaries", () => ({
@@ -1429,6 +1436,22 @@ describe("SessionsBoard", () => {
 		expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 		expect(await screen.findByRole("alert")).toHaveTextContent("Failed to terminate session (500)");
 		expect(screen.getByRole("button", { name: "Terminate merged worker" })).toBeEnabled();
+	});
+
+	it("shows a folder-missing banner when the project root no longer exists on disk", () => {
+		workspaceQueryMock.mockReturnValue({
+			data: [{ ...workspaceWithSessions([]), folderMissing: true }],
+		});
+		renderBoard("p1");
+		expect(screen.getByText(appI18n.t("home.folderMissing"))).toBeInTheDocument();
+	});
+
+	it("does not show the folder-missing banner when the project folder exists", () => {
+		workspaceQueryMock.mockReturnValue({
+			data: [{ ...workspaceWithSessions([]), folderMissing: false }],
+		});
+		renderBoard("p1");
+		expect(screen.queryByText(appI18n.t("home.folderMissing"))).not.toBeInTheDocument();
 	});
 });
 

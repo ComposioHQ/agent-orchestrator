@@ -1,8 +1,10 @@
-import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render as rtlRender, screen, waitFor, within } from "@testing-library/react";
+import type { ReactElement } from "react";
 import userEvent from "@testing-library/user-event";
 import { Profiler } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { ChatComposer } from "./ChatComposer";
+import { TooltipProvider } from "../ui/tooltip";
 import type { ChatSkill } from "../../types/conversation";
 import {
 	lexicalEditorText,
@@ -10,6 +12,13 @@ import {
 	typeAndPressInLexicalEditor,
 	typeInLexicalEditor,
 } from "../../test/lexical";
+
+// Every button in the composer relies on the shared styled Tooltip, which needs
+// a TooltipProvider ancestor. `wrapper` survives `rerender`, so every render call
+// in this file — direct or through renderComposer/renderSteerable — gets one.
+function render(ui: ReactElement, options?: Parameters<typeof rtlRender>[1]) {
+	return rtlRender(ui, { wrapper: TooltipProvider, ...options });
+}
 
 const SKILLS: ChatSkill[] = [
 	{ name: "code-review", displayName: "code-review", description: "Review the diff", source: "user" },
@@ -115,7 +124,8 @@ describe("send keys", () => {
 		);
 	});
 
-	it("separates secondary message tools from the primary send action", () => {
+	it("separates secondary message tools from the primary send action", async () => {
+		const user = userEvent.setup();
 		render(
 			<ChatComposer
 				onSend={vi.fn()}
@@ -129,12 +139,11 @@ describe("send keys", () => {
 		expect(within(tools).getByRole("button", { name: "Model" })).toBeInTheDocument();
 
 		const actions = screen.getByRole("group", { name: "Send message controls" });
-		// The destination Enter is armed with rides on the send control itself rather
-		// than as a line of prose beside it.
-		expect(within(actions).getByRole("button", { name: "Send message" })).toHaveAttribute(
-			"title",
-			"Enter to send",
-		);
+		// The destination Enter is armed with rides on the send control's tooltip
+		// rather than as a line of prose beside it.
+		const send = within(actions).getByRole("button", { name: "Send message" });
+		await user.hover(send);
+		expect(await screen.findByRole("tooltip")).toHaveTextContent("Enter to send");
 	});
 
 
@@ -208,7 +217,7 @@ describe("send keys", () => {
 		fireEvent.keyDown(field, { key: "Enter" });
 		fireEvent.keyDown(field, { key: "Enter" });
 
-		expect(onSend).toHaveBeenCalledTimes(1);
+		await waitFor(() => expect(onSend).toHaveBeenCalledTimes(1));
 		provider.resolve();
 		await act(async () => {
 			await provider.promise;
@@ -506,14 +515,14 @@ describe("slash commands", () => {
 		expect(selected).toBe(0);
 	});
 
-	it("scrolls the first result back into view when filtering resets selection", async () => {
+	it("does not force-scroll when filtering keeps the visible first result selected", async () => {
 		const scrollIntoView = vi.spyOn(Element.prototype, "scrollIntoView");
 		const { field } = renderComposer({ skills: SKILLS });
 		await typeInComposer(field, "/");
 		scrollIntoView.mockClear();
 		await typeInComposer(field, "r");
 
-		expect(scrollIntoView).toHaveBeenCalledWith({ block: "nearest" });
+		expect(scrollIntoView).not.toHaveBeenCalled();
 		scrollIntoView.mockRestore();
 	});
 

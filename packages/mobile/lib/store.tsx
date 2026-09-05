@@ -23,6 +23,14 @@ import {
 	type SessionMode,
 } from "./api";
 import { isConfigured, loadConfig, type ServerConfig } from "./config";
+import { resolveActiveConfig, runtimeResolveDeps } from "./resolveConfig";
+import { pollIntervalFor } from "./pollInterval";
+import type { Endpoint } from "./endpoints";
+import { activeHost, loadHosts } from "./hosts";
+import { shouldReRace } from "./reRace";
+import { shouldRaceForUpgrade, UPGRADE_RACE_CHECK_MS } from "./upgradeRace";
+import { sameServerConfig } from "./sameConfig";
+import { shouldShowLoading } from "./configLoading";
 import { shouldKeepPolling } from "./connectionError";
 import { primeInstallId } from "./installId";
 import { collectPRs } from "./prView";
@@ -31,7 +39,6 @@ import { mobileTelemetry, trackFeature } from "./telemetry/runtime";
 import { useConversationEventTransport } from "./chat/conversationEvents";
 
 const ACTIVE_PROJECT_KEY = "ao.activeProject";
-const POLL_INTERVAL_MS = 8000;
 
 // Board-level connection state is derived from the REST poll. The session screen
 // tracks its own terminal mux connection separately.
@@ -52,6 +59,9 @@ export type SpawnOptions = {
 type AppState = {
 	config: ServerConfig | null;
 	configured: boolean;
+	/** Every way the active machine says it can be reached, for telling a
+	 *  rotated tunnel hostname apart from being simply out of range. */
+	activeEndpoints: Endpoint[];
 	projects: ProjectInfo[];
 	sessions: DashboardSession[];
 	orchestrators: OrchestratorLink[];
@@ -104,6 +114,10 @@ export function usePRs() {
 
 export function AppProvider({ children }: { children: ReactNode }) {
 	const [config, setConfig] = useState<ServerConfig | null>(null);
+	// Whether resolution has finished at least once. Distinguishes "no config
+	// yet" from "no machine paired" — identical as state, opposite to the user.
+	const [configResolved, setConfigResolved] = useState(false);
+	const [activeEndpoints, setActiveEndpoints] = useState<Endpoint[]>([]);
 	const [projects, setProjects] = useState<ProjectInfo[]>([]);
 	const [sessions, setSessions] = useState<DashboardSession[]>([]);
 	const [orchestrators, setOrchestrators] = useState<OrchestratorLink[]>([]);
@@ -124,6 +138,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
 	// never on every poll tick. openRef tracks the current state; everConnectedRef
 	// tells a fresh launch apart from a later reconnect.
 	const openRef = useRef(false);
+	// Whether the most recent poll reached the daemon. Distinct from openRef,
+	// which latches on first connect and never clears.
+	const lastTickOkRef = useRef(false);
+	// Whether the last failure had no HTTP status — nothing answered at all,
+	// which is what leaving a network looks like.
+	const lastFailUnreachableRef = useRef(false);
 	const everConnectedRef = useRef(false);
 	// Mirrors appActive for code that runs mid-flight, where reading the state
 	// value would see a stale closure. fetchAll consults it between requests so a
@@ -140,6 +160,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
 	useEffect(() => {
 		const sub = RNAppState.addEventListener("change", (s) => {
 			const active = shouldPoll(s);
+			// Coming back to the foreground is the moment the phone is most
+			// likely to be on a different network than when it went away, so
+			// it is worth re-checking the path rather than waiting out a timer.
+			if (active && !pollActiveRef.current) resumedRef.current = true;
 			pollActiveRef.current = active;
 			setAppActive(active);
 		});
@@ -164,15 +188,90 @@ export function AppProvider({ children }: { children: ReactNode }) {
 		});
 	}, []);
 
+	// Tracks a run of failed polls so a dead endpoint can trigger another race.
+	const failStreak = useRef(0);
+	const lastReRaceAt = useRef(0);
+	// Set when the app returns to the foreground, consumed by the upgrade check.
+	const resumedRef = useRef(false);
+
 	const reloadConfig = useCallback(async () => {
-		const c = await loadConfig();
-		cfgRef.current = c;
-		setConfig(c);
+		// Races the active machine's endpoints rather than reading one stored
+		// address, so the app lands on LAN at home and the tunnel from anywhere
+		// else without the user choosing. Always resolves to something: every
+		// failure path inside falls back to the last stored config.
+		// Marked resolved whatever happens below. An unhandled failure here would
+		// otherwise leave the loader up forever, which is a worse failure than
+		// the blank screen this flag exists to prevent.
+		try {
+			const c = (await resolveActiveConfig(runtimeResolveDeps())) ?? (await loadConfig());
+		// Keep the previous object when the endpoint has not actually changed.
+		// Resolution builds a fresh one every time, and the live conversation
+		// stream, the poll loop and the terminal mux all key on this value's
+		// identity — handing them a new object for the same endpoint tears them
+		// down and rebuilds them, which showed up as chat replies arriving only
+		// on the next poll instead of streaming in.
+		// Stamped here so every race counts towards the cooldown, however it was
+		// triggered — otherwise a failure race and an upgrade race can fire back
+		// to back and thrash the connection.
+			lastReRaceAt.current = Date.now();
+			const prev = cfgRef.current;
+			const next = sameServerConfig(prev, c) ? (prev as typeof c) : c;
+			cfgRef.current = next;
+			setConfig(next);
+			// Read alongside the config so a failure can be explained: a stored
+			// tunnel that no longer answers is a rotated hostname, not a machine
+			// that is merely out of range.
+			setActiveEndpoints((await activeHost())?.endpoints ?? []);
+		} finally {
+			setConfigResolved(true);
+		}
 	}, []);
 
 	useEffect(() => {
 		reloadConfig();
 	}, [reloadConfig]);
+
+	// Nothing re-picks a path while the current one answers, so once the app
+	// fell to the tunnel it stayed there even after Wi-Fi came back — observed
+	// on device, holding a Cloudflare connection with a working LAN unused.
+	// This is the only thing that moves the app back up the preference order.
+	useEffect(() => {
+		if (!config || !isConfigured(config) || !appActive) return;
+		let stopped = false;
+		const check = async () => {
+			if (stopped) return;
+			const resumed = resumedRef.current;
+			resumedRef.current = false;
+			let known: Endpoint[] = [];
+			try {
+				// Most-recent-first, so the head is the machine in use.
+				known = (await loadHosts())[0]?.endpoints ?? [];
+			} catch {
+				return; // Storage unavailable: leave the working connection alone.
+			}
+			if (stopped) return;
+			if (
+				shouldRaceForUpgrade({
+					currentKind: config.endpointKind,
+					known,
+					lastRaceAt: lastReRaceAt.current,
+					now: Date.now(),
+					resumed,
+				})
+			) {
+				// Racing is safe even when nothing better answers: reloadConfig
+				// keeps the previous config object when the endpoint is unchanged,
+				// so the streams keyed on it are not torn down for nothing.
+				void reloadConfig();
+			}
+		};
+		void check();
+		const id = setInterval(check, UPGRADE_RACE_CHECK_MS);
+		return () => {
+			stopped = true;
+			clearInterval(id);
+		};
+	}, [config, appActive, reloadConfig]);
 
 	// fetchAll returns false when it hit an auth failure (missing/wrong password
 	// or a 429 lockout). The poll loop uses that to STOP hammering: a phone that
@@ -200,6 +299,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 			setError(null);
 			setErrorStatus(null);
 			setConnection("open");
+			lastTickOkRef.current = true;
 			if (!openRef.current) {
 				openRef.current = true;
 				const trigger = everConnectedRef.current ? "reconnect" : "launch";
@@ -221,6 +321,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 			}
 			return true;
 		} catch (e) {
+			lastTickOkRef.current = false;
 			const msg = e instanceof Error ? e.message : "Failed to load";
 			setError(msg);
 			// Keep the HTTP status alongside the raw message so screens can render
@@ -228,6 +329,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
 			// like "401 - missing or invalid connection password". Null means the
 			// server was never reached (DNS failure, refused, timeout).
 			const status = e instanceof ApiError ? e.status : undefined;
+			// No status means the server was never reached. That is the signal to
+			// race again immediately rather than ride out another poll.
+			lastFailUnreachableRef.current = status === undefined;
 			setErrorStatus(status ?? null);
 			openRef.current = false;
 			setConnection("closed");
@@ -248,7 +352,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
 		openRef.current = false;
 		if (!config || !isConfigured(config)) {
 			setConnection("closed");
-			setLoading(false);
+			// Not simply false: until resolution has finished this is "still
+			// finding a path", and turning the loader off here left the screen
+			// rendering an empty list — a black screen — for the whole race.
+			setLoading(shouldShowLoading({ resolved: configResolved, configured: false }));
 			return;
 		}
 		if (!appActive) return; // backgrounded: stop polling, stop heartbeating
@@ -258,10 +365,39 @@ export function AppProvider({ children }: { children: ReactNode }) {
 		const tick = async () => {
 			if (stopped) return;
 			const keepGoing = await fetchAll();
-			if (!keepGoing) stopped = true;
+			if (!keepGoing) {
+				stopped = true;
+				return;
+			}
+			// fetchAll reports success by opening the connection. A run of
+			// failures means the endpoint we raced onto is gone — the usual cause
+			// is leaving the Wi-Fi network the LAN address belonged to — so race
+			// the candidates again and pick up the tunnel.
+			if (lastTickOkRef.current) {
+				failStreak.current = 0;
+				return;
+			}
+			failStreak.current += 1;
+			const now = Date.now();
+			if (
+				shouldReRace({
+					consecutiveFailures: failStreak.current,
+					lastReRaceAt: lastReRaceAt.current,
+					now,
+					unreachable: lastFailUnreachableRef.current,
+				})
+			) {
+				lastReRaceAt.current = now;
+				failStreak.current = 0;
+				void reloadConfig();
+			}
 		};
 		void tick();
-		const poll = setInterval(() => void tick(), POLL_INTERVAL_MS);
+		// Paced by which endpoint won: the event stream cannot deliver over the
+		// tunnel, so the poll is the only live signal there and has to be quick.
+		// The effect re-runs whenever the config changes, so switching paths
+		// re-paces this without anything extra.
+		const poll = setInterval(() => void tick(), pollIntervalFor(config));
 		return () => {
 			clearInterval(poll);
 			// Clearing the interval does not stop a tick already in flight, and
@@ -271,7 +407,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 			// boundary instead of one whole request-timeout later.
 			stopped = true;
 		};
-	}, [config, fetchAll, appActive]);
+	}, [config, fetchAll, appActive, reloadConfig, configResolved]);
 
 	const setActiveProject = useCallback((id: string) => {
 		setActiveProjectId(id);
@@ -355,6 +491,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 		() => ({
 			config,
 			configured: !!config && isConfigured(config),
+			activeEndpoints,
 			projects,
 			sessions,
 			orchestrators,

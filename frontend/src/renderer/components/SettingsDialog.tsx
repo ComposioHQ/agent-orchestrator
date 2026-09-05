@@ -1,4 +1,4 @@
-import { Bot, CircleHelp, Cloud, GitBranch, Inbox, Keyboard, MonitorCog, RefreshCw, Settings2, Smartphone, TriangleAlert, X } from "lucide-react";
+import { BadgeCheck, Bot, CircleHelp, Cloud, GitBranch, Globe2, Inbox, Keyboard, MonitorCog, RefreshCw, Settings2, Smartphone, TriangleAlert, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useCloudGate } from "../hooks/useCloudGate";
@@ -53,6 +53,9 @@ export function SettingsDialog() {
 
 	const globalSections: Array<{ id: GlobalSettingsSection; label: string; icon: typeof Settings2 }> = [
 		{ id: "general", label: t("settings.general"), icon: Settings2 },
+		{ id: "harness", label: t("settings.harness"), icon: Bot },
+		{ id: "agents", label: t("settings.agents"), icon: BadgeCheck },
+		{ id: "browserProfiles", label: t("settings.browserProfiles"), icon: Globe2 },
 		// Only deployments with the cloud offering get the Cloud page.
 		...(cloudEnabled ? [{ id: "cloud" as const, label: t("settings.cloud"), icon: Cloud }] : []),
 		{ id: "mobile", label: t("settings.mobile"), icon: Smartphone },
@@ -204,11 +207,13 @@ export function SettingsDialog() {
 
 function SettingsNavItem({
 	active,
+	disabled,
 	icon: Icon,
 	label,
 	onClick,
 }: {
 	active: boolean;
+	disabled?: boolean;
 	icon: typeof Settings2;
 	label: string;
 	onClick: () => void;
@@ -217,11 +222,12 @@ function SettingsNavItem({
 		<button
 			aria-current={active ? "page" : undefined}
 			className={cn(
-				"flex h-9 w-full items-center gap-2 rounded-md px-2.5 text-left text-sm font-medium transition-[background-color,color,transform] duration-fast ease-out active:scale-press focus:outline-none focus-visible:outline-none focus-visible:ring-0",
+				"flex h-9 w-full items-center gap-2 rounded-md px-2.5 text-left text-sm font-medium transition-[background-color,color,transform] duration-fast ease-out active:scale-press focus:outline-none focus-visible:outline-none focus-visible:ring-0 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent disabled:hover:text-muted-foreground",
 				active
 					? "bg-interactive-active text-foreground"
 					: "text-muted-foreground hover:bg-interactive-hover hover:text-foreground",
 			)}
+			disabled={disabled}
 			onClick={onClick}
 			type="button"
 		>

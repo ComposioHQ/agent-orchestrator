@@ -356,7 +356,7 @@ func (s *Service) EditMessage(
 	}
 	conversation := source.conversation
 	conversation.ActiveBranchID = branchID
-	replacement := newController(id, conversation, generation, provider, s.store, s.activity, s.log, s.newID, s.now)
+	replacement := newController(id, conversation, generation, source.harness, provider, s.store, s.activity, s.log, s.newID, s.now, s.onAccountChanged, s.onCodexCapacityChanged)
 	if err := s.store.CreateAndActivateConversationBranch(
 		operationCtx, id, branch, generation, s.now(),
 	); err != nil {
@@ -677,10 +677,10 @@ func (s *Service) activateBranchLocked(ctx context.Context, id domain.SessionID,
 	generation := s.newID()
 	conversation := source.conversation
 	conversation.ActiveBranchID = branch.ID
-	replacement := newController(id, conversation, generation, provider, s.store, s.activity, s.log, s.newID, s.now)
+	replacement := newController(id, conversation, generation, source.harness, provider, s.store, s.activity, s.log, s.newID, s.now, s.onAccountChanged, s.onCodexCapacityChanged)
 	if err := s.store.ActivateConversationBranch(operationCtx, id, conversation.ID, branch.ID,
 		branch.ProviderConversationID, generation, s.now()); err != nil {
-		_ = provider.Close()
+		cleanupUnpublishedConversation(provider, true)
 		activateErr := err
 		if restoreErr := s.restoreClosedSourceController(
 			operationCtx, id, source, activeBranch, cfg, driver); restoreErr != nil {
@@ -774,7 +774,7 @@ func (s *Service) restoreClosedSourceController(
 	conversation := source.conversation
 	conversation.ActiveBranchID = branch.ID
 	replacement := newController(
-		id, conversation, generation, provider, s.store, s.activity, s.log, s.newID, s.now)
+		id, conversation, generation, source.harness, provider, s.store, s.activity, s.log, s.newID, s.now, s.onAccountChanged, s.onCodexCapacityChanged)
 	if err := s.store.ActivateConversationBranch(recoveryCtx, id, conversation.ID, branch.ID,
 		providerConversationID, generation, s.now()); err != nil {
 		_ = provider.Close()
@@ -809,7 +809,7 @@ func (s *Service) installStartedBranchController(
 	s.mu.Lock()
 	if s.controllers[id] != source {
 		s.mu.Unlock()
-		_ = replacement.Close(ctx)
+		_ = replacement.Terminate(ctx)
 		if err := s.store.ActivateConversationBranch(ctx, id, source.conversation.ID,
 			sourceBranchID, source.ProviderConversationID(), source.generation, s.now()); err != nil {
 			return fmt.Errorf("restore source branch after controller swap conflict: %w", err)

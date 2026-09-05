@@ -1,4 +1,5 @@
-import { act, fireEvent, render, screen, within } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ComponentProps, ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -25,9 +26,18 @@ const agentSwitchMocks = vi.hoisted(() => ({
 	},
 }));
 
+const visibilityMocks = vi.hoisted(() => ({
+	presentation: vi.fn(),
+	route: vi.fn(),
+}));
+
 const reorderMocks = vi.hoisted(() => ({
 	onReorder: undefined as ((values: string[]) => void) | undefined,
 }));
+
+const renameSessionMock = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
+
+vi.mock("../lib/rename-session", () => ({ renameSession: renameSessionMock }));
 
 vi.mock("motion/react", () => ({
 	Reorder: {
@@ -52,6 +62,11 @@ vi.mock("../hooks/useAgentSwitches", async (importOriginal) => {
 
 vi.mock("../hooks/useSwitchAgent", () => ({
 	useSwitchAgentState: () => agentSwitchMocks.mutation,
+}));
+
+vi.mock("../hooks/useAgentSwitchVisibility", () => ({
+	useAgentSwitchPresentationVisibility: visibilityMocks.presentation,
+	useAgentSwitchRouteVisibility: visibilityMocks.route,
 }));
 
 vi.mock("./TerminalSwitchAgentButton", () => ({
@@ -149,10 +164,14 @@ const defaultSwitchAgentAction = (
 
 function renderCenterPane(props: Partial<ComponentProps<typeof CenterPane>> = {}) {
 	const { topbarActions = defaultSwitchAgentAction, ...rest } = props;
+	const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 	return render(
 		<TooltipProvider>
 			<CenterPane daemonReady theme="dark" topbarActions={topbarActions} {...rest} />
 		</TooltipProvider>,
+		{
+			wrapper: ({ children }) => <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>,
+		},
 	);
 }
 
@@ -167,7 +186,10 @@ beforeEach(() => {
 	agentSwitchMocks.mutation.error = null;
 	agentSwitchMocks.mutation.input = undefined;
 	agentSwitchMocks.mutation.isPending = false;
+	visibilityMocks.presentation.mockReset();
+	visibilityMocks.route.mockReset();
 	reorderMocks.onReorder = undefined;
+	renameSessionMock.mockReset().mockResolvedValue(undefined);
 });
 
 describe("CenterPane toolbar session label", () => {
@@ -188,12 +210,91 @@ describe("CenterPane toolbar session label", () => {
 		expect(screen.queryByTestId("agent-switch-terminal-overlay")).not.toBeInTheDocument();
 	});
 
+	it("renames the owning session from a double-click on its terminal tab", async () => {
+		const user = userEvent.setup();
+		const onSelectSessionTerminal = vi.fn();
+		renderCenterPane({ session: worker, onSelectSessionTerminal });
+
+		await user.dblClick(screen.getByRole("tab", { name: /^do the thing/ }));
+		const input = screen.getByRole("textbox", { name: "Rename do the thing" });
+		await user.clear(input);
+		await user.type(input, "  clearer task  {Enter}");
+
+		await waitFor(() => expect(renameSessionMock).toHaveBeenCalledWith("sess-1", "clearer task"));
+		expect(onSelectSessionTerminal).toHaveBeenCalledOnce();
+	});
+
+	it("starts owning-session rename from its context menu", async () => {
+		const user = userEvent.setup();
+		const onSelectSessionTerminal = vi.fn();
+		renderCenterPane({ session: worker, onSelectSessionTerminal });
+
+		fireEvent.contextMenu(screen.getByRole("tab", { name: /^do the thing/ }));
+		const renameItem = await screen.findByRole("menuitem", { name: "Rename do the thing" });
+		expect(renameItem).toHaveTextContent(/^Rename$/);
+		expect(renameItem.querySelector("svg")).toBeInTheDocument();
+		await user.click(renameItem);
+
+		expect(screen.getByRole("textbox", { name: "Rename do the thing" })).toHaveFocus();
+		expect(onSelectSessionTerminal).not.toHaveBeenCalled();
+	});
+
+	it("cancels owning-session rename with Escape", async () => {
+		const user = userEvent.setup();
+		renderCenterPane({ session: worker });
+
+		const tab = screen.getByRole("tab", { name: /^do the thing/ });
+		tab.focus();
+		await user.keyboard("{F2}");
+		const input = screen.getByRole("textbox", { name: "Rename do the thing" });
+		await user.clear(input);
+		await user.type(input, "discard this{Escape}");
+
+		expect(renameSessionMock).not.toHaveBeenCalled();
+		expect(screen.getByRole("tab", { name: /^do the thing/ })).toBeInTheDocument();
+	});
+
+	it.each(["", "do the thing"])("does not persist the no-op terminal-tab rename %j", async (nextName) => {
+		const user = userEvent.setup();
+		renderCenterPane({ session: worker });
+
+		await user.dblClick(screen.getByRole("tab", { name: /^do the thing/ }));
+		const input = screen.getByRole("textbox", { name: "Rename do the thing" });
+		expect(input).toHaveAttribute("maxlength", "20");
+		await user.clear(input);
+		if (nextName) await user.type(input, nextName);
+		await user.keyboard("{Enter}");
+
+		expect(renameSessionMock).not.toHaveBeenCalled();
+		expect(screen.getByRole("tab", { name: /^do the thing/ })).toBeInTheDocument();
+	});
+
 	it("blocks only the terminal interaction surface while the switch selector is open", () => {
 		renderCenterPane({ session: worker, handoffDialogOpen: true });
 
 		expect(screen.getByTestId("terminal-interaction-surface")).toHaveAttribute("inert");
 		expect(screen.getByText("terminal body")).toHaveAttribute("data-input-disabled", "true");
 		expect(document.body.style.pointerEvents).not.toBe("none");
+	});
+
+	it("does not acknowledge a switch presentation hidden by files or the switch selector", () => {
+		const activeSwitch = switchRecord({ state: "starting_target", updatedAt: "2026-08-28T00:00:00Z" });
+		agentSwitchMocks.switches.push(activeSwitch);
+		const view = renderCenterPane({ session: { ...worker, activeAgentSwitch: activeSwitch }, workspaceFileActive: true });
+
+		expect(visibilityMocks.presentation).toHaveBeenLastCalledWith(expect.objectContaining({ visible: false }));
+
+		view.rerender(
+			<TooltipProvider>
+				<CenterPane
+					daemonReady
+					handoffDialogOpen
+					session={{ ...worker, activeAgentSwitch: activeSwitch }}
+					theme="dark"
+				/>
+			</TooltipProvider>,
+		);
+		expect(visibilityMocks.presentation).toHaveBeenLastCalledWith(expect.objectContaining({ visible: false }));
 	});
 
 	it("uses mutation input only while switch admission is still pending", () => {
@@ -927,7 +1028,36 @@ describe("CenterPane toolbar session label", () => {
 		expect(tabLabels()).toEqual(["do the thing", "agent-orchestrator-0", "Reviewer", "agent-orchestrator-1"]);
 	});
 
-	it("drops a session's remembered terminal order after navigating away", () => {
+	it("appends new terminals after open files and reorders terminals with files", () => {
+		Object.defineProperty(HTMLElement.prototype, "scrollTo", {
+			configurable: true,
+			value: vi.fn(),
+		});
+		const shells = makeShells(2);
+		const fileTab = {
+			key: "file:.gitignore",
+			content: <button role="tab">.gitignore</button>,
+			onSelect: vi.fn(),
+		};
+		const view = renderCenterPane({ session: worker, shellTerminals: [shells[0]], workspaceTabs: [fileTab] });
+		const tabLabels = () =>
+			Array.from(screen.getByRole("tablist", { name: "Open terminals" }).querySelectorAll('[role="tab"]')).map(
+				(tab) => tab.textContent,
+			);
+
+		expect(tabLabels()).toEqual(["do the thing", "agent-orchestrator-0", ".gitignore"]);
+		view.rerender(
+			<TooltipProvider>
+				<CenterPane daemonReady session={worker} shellTerminals={shells} theme="dark" workspaceTabs={[fileTab]} />
+			</TooltipProvider>,
+		);
+		expect(tabLabels()).toEqual(["do the thing", "agent-orchestrator-0", ".gitignore", "agent-orchestrator-1"]);
+
+		act(() => reorderMocks.onReorder?.(["file:.gitignore", "h-1", "h-0"]));
+		expect(tabLabels()).toEqual(["do the thing", ".gitignore", "agent-orchestrator-1", "agent-orchestrator-0"]);
+	});
+
+	it("restores a session's remembered tab order after navigating away", () => {
 		const shells = makeShells(2);
 		const view = renderCenterPane({ session: worker, shellTerminals: shells });
 		const tabLabels = () =>
@@ -949,7 +1079,7 @@ describe("CenterPane toolbar session label", () => {
 			</TooltipProvider>,
 		);
 
-		expect(tabLabels()).toEqual(["do the thing", "agent-orchestrator-0", "agent-orchestrator-1"]);
+		expect(tabLabels()).toEqual(["do the thing", "agent-orchestrator-1", "agent-orchestrator-0"]);
 	});
 
 	it("scrolls the tab strip horizontally with the mouse wheel", () => {

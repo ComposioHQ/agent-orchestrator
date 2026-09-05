@@ -942,6 +942,50 @@ func TestEnsureWorkspaceTrustedCreatesEntry(t *testing.T) {
 	}
 }
 
+func TestEnsureWorkspaceTrustedNormalizesWindowsProjectKey(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, ".claude.json")
+	if err := os.WriteFile(cfgPath, []byte(`{"projects":{}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	const workspacePath = `D:\dev\agent-orchestrator\.ao\worktrees\demo\worker-1`
+	const wantKey = `D:/dev/agent-orchestrator/.ao/worktrees/demo/worker-1`
+	if err := ensureWorkspaceTrustedForOS(cfgPath, workspacePath, "windows"); err != nil {
+		t.Fatalf("ensureWorkspaceTrustedForOS: %v", err)
+	}
+
+	root := readJSON(t, cfgPath)
+	projects := root["projects"].(map[string]any)
+	entry, ok := projects[wantKey].(map[string]any)
+	if !ok || entry["hasTrustDialogAccepted"] != true {
+		t.Fatalf("forward-slash trust entry = %#v, want accepted entry", projects[wantKey])
+	}
+	if _, exists := projects[workspacePath]; exists {
+		t.Fatalf("unexpected backslash-keyed trust entry: %#v", projects[workspacePath])
+	}
+}
+
+func TestEnsureWorkspaceTrustedLeavesNonWindowsProjectKeyUnchanged(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, ".claude.json")
+	if err := os.WriteFile(cfgPath, []byte(`{"projects":{}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	const workspacePath = `/worktrees/project\with-backslash`
+	if err := ensureWorkspaceTrustedForOS(cfgPath, workspacePath, "linux"); err != nil {
+		t.Fatalf("ensureWorkspaceTrustedForOS: %v", err)
+	}
+
+	root := readJSON(t, cfgPath)
+	projects := root["projects"].(map[string]any)
+	entry, ok := projects[workspacePath].(map[string]any)
+	if !ok || entry["hasTrustDialogAccepted"] != true {
+		t.Fatalf("unchanged trust entry = %#v, want accepted entry", projects[workspacePath])
+	}
+}
+
 func TestEnsureWorkspaceTrustedIsIdempotentAndNoWriteWhenAlreadyTrusted(t *testing.T) {
 	dir := t.TempDir()
 	cfgPath := filepath.Join(dir, ".claude.json")

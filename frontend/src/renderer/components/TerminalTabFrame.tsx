@@ -5,6 +5,7 @@ type TerminalTabFrameProps = {
 	active: boolean;
 	action?: ReactNode;
 	actionPosition?: "leading" | "trailing";
+	trailingAction?: ReactNode;
 	buttonRef?: Ref<HTMLButtonElement>;
 	children: ReactNode;
 	className?: string;
@@ -21,6 +22,7 @@ export function TerminalTabFrame({
 	active,
 	action,
 	actionPosition = "trailing",
+	trailingAction,
 	buttonRef,
 	children,
 	className,
@@ -50,7 +52,7 @@ export function TerminalTabFrame({
 						ref={buttonRef}
 						className={cn(
 							"inline-flex h-full min-w-0 flex-1 cursor-pointer items-center px-2 text-left text-control leading-none focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent/50",
-							actionPosition === "trailing" && action && "pr-9",
+							((actionPosition === "trailing" && action) || trailingAction) && "pr-9",
 							buttonClassName,
 						)}
 						{...restButtonProps}
@@ -63,12 +65,20 @@ export function TerminalTabFrame({
 				{action ? (
 					<div
 						className={cn(
-							"absolute inset-y-0 z-10 flex items-center",
+							"absolute inset-y-0 z-20 flex items-center",
 							actionPosition === "leading" ? "left-2" : "right-1",
 						)}
 						data-terminal-tab-action
 					>
 						{action}
+					</div>
+				) : null}
+				{trailingAction ? (
+					<div
+						className="absolute inset-y-0 right-1 z-10 flex items-center"
+						data-terminal-tab-action
+					>
+						{trailingAction}
 					</div>
 				) : null}
 			</span>
