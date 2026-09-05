@@ -1943,7 +1943,7 @@ function CreateProjectFolderDialog({
 									</div>
 								)}
 								{workspaceNeedsInitializedRepo && !error ? <p className="text-[14px] leading-6 text-[var(--color-text-import-muted)]">Initialize at least one child repository with a commit and origin remote before importing this workspace.</p> : null}
-								{workspaceRootIsProject && !error ? <div className="rounded-md border border-[var(--color-border-import-modal)] bg-[var(--color-bg-import-card)] px-3 py-3 text-[12px] leading-5 text-[var(--color-text-import-muted)]">This is a single project, not a collection of projects. Import it as a project instead.</div> : null}
+								{workspaceRootIsProject && !error ? <p className="text-[14px] leading-6 text-[var(--color-text-import-muted)]">This is a single project, not a collection of projects. Import it as a project instead.</p> : null}
 
 							{workspaceRootIsProject ? null : isWorkspace ? <WorkspaceImportRepoList
 								approvedActions={workspaceApprovedActions}
