@@ -649,6 +649,56 @@ describe("Cursor's live Agent/Plan/Ask mode catalog", () => {
 		);
 	});
 
+	it("names the option rather than asserting a posture the provider did not report", () => {
+		render(
+			<TurnSettingsBar
+				harness="cursor"
+				models={[]}
+				settings={{}}
+				configOptions={[{ ...CURSOR_MODES, currentValue: undefined }]}
+				onChangeConfigOption={vi.fn()}
+			/>,
+		);
+
+		const trigger = screen.getByRole("button", { name: "Model mode for the next turn" });
+		expect(trigger).toHaveTextContent("Mode");
+		expect(trigger).not.toHaveTextContent("Agent Mode");
+	});
+
+	it("does not claim a posture when the current value is a permission shown elsewhere", () => {
+		render(
+			<TurnSettingsBar
+				models={[]}
+				settings={{}}
+				configOptions={[
+					{
+						id: "mode",
+						name: "Chat mode",
+						category: "mode",
+						type: "select",
+						// The posture in force is a permission choice, which the right-hand
+						// picker owns; the execution trigger must not speak for it.
+						currentValue: "bypass",
+						choices: [
+							{ value: "agent", name: "Agent" },
+							{ value: "ask", name: "Ask" },
+							{ value: "plan", name: "Plan" },
+							{ value: "bypass", name: "Bypass Permissions" },
+						],
+					},
+				]}
+				onChangeConfigOption={vi.fn()}
+			/>,
+		);
+
+		const trigger = screen.getByRole("button", { name: "Model mode for the next turn" });
+		expect(trigger).toHaveTextContent("Chat mode");
+		expect(trigger).not.toHaveTextContent("Agent Mode");
+		expect(screen.getByRole("button", { name: "Chat mode" })).toHaveTextContent(
+			"Bypass Permissions",
+		);
+	});
+
 	it("offers exactly one execution control and no provider approval picker", () => {
 		render(
 			<TurnSettingsBar

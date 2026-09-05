@@ -857,7 +857,10 @@ function partitionConfigOptions(options: ChatConfigOption[]): {
 				permissionChoices,
 			);
 			if (executionChoices.length > 0) {
-				executionMode = withChoices(option, executionChoices, "Agent Mode");
+				// Keep the provider's own name. It is only ever a fallback label, and
+				// naming it "Agent Mode" would make the trigger assert a posture even
+				// when the option reports none.
+				executionMode = withChoices(option, executionChoices);
 				if (permissionChoices.length > 0) mode = withChoices(option, permissionChoices);
 			} else {
 				mode = option;
@@ -936,10 +939,14 @@ function isPlanBinary(option: ChatConfigOption): boolean {
  * What the trigger says. Plan/Agent keeps AO's established wording; every other
  * provider shows its own name for the choice in force, so Cursor reads "Ask" or
  * "Agent". This is display only — the value on the wire is never derived from it.
+ *
+ * With no posture in force — the provider reported no current value, or reported
+ * a permission value that belongs to the right-hand picker — the trigger falls
+ * back to the option's own name rather than claiming a posture it cannot see.
  */
 function executionModeLabel(option: ChatConfigOption): string {
 	if (isPlanBinary(option)) return isPlanMode(option) ? "Plan Mode" : "Agent Mode";
-	return optionCurrentLabel(option);
+	return option.choices.find((choice) => choice.value === option.currentValue)?.name ?? option.name;
 }
 
 function isPlanMode(option: ChatConfigOption | undefined): boolean {
