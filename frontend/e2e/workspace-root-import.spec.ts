@@ -37,6 +37,10 @@ test("renderer: workspace import preserves the root branch and explains unresolv
 	});
 	await page.goto("/#/");
 	await page.evaluate(() => {
+		// The default fixture has a running orchestrator. This test represents a
+		// failed first spawn, so every later CDC/query refresh must also have none.
+		// Otherwise SessionsBoard correctly clears the startup error on refresh.
+		window.__aoFakeAgent!.removeWorker("local-root-orchestrator");
 		const bridge = (window as unknown as { ao: AoBridge }).ao;
 		bridge.app.chooseDirectory = async () => "/repos/local-root";
 		bridge.app.checkAncestorRepo = async () => undefined;
