@@ -122,20 +122,33 @@ versioned blockmaps only; its macOS manifest lists two versioned ZIPs without
 safety still depends on that absence. Any conductor relaxation is separate
 reviewed work after compatible-client deployment and verification.
 
-The conductor must
-independently suppress blockmaps until a gated client baseline is deployed and
-verified. Deployment alone cannot prove all older clients upgraded: conventional
-sidecars must remain absent wherever those clients can discover them. This repo
-must not generate or publish macOS sidecars. A new client flag cannot protect an
-old binary that still implicitly permits differential downloads.
+First deploy and verify a compatible client baseline per channel with
+`autoUpdater.disableDifferentialDownload = true` set before checks. The future
+conductor contract requires all of: a conductor-owned global switch exactly
+`true`, an explicit channel allowlist, a minimum compatible candidate version,
+a minimum compatible installed baseline, and auditable baseline proof. Missing,
+malformed, partial, below-minimum or unproved inputs deny macOS maps.
 
-The current emergency rollback is manual asset removal, not an existing
-conductor control: remove every `.zip.blockmap` asset from
-the affected Nightly release. MacUpdater then performs a clean full ZIP
-download on its next attempt without a client update. A transfer that already
-fetched its sidecars is not interrupted. Do not remove the ZIP or `nightly-mac.yml`.
-After rollback, confirm the feed still resolves, the full ZIP SHA-512 matches
-the manifest, and updater telemetry reports full transfer or a single fallback.
+Static GitHub feeds cannot filter by the installed client version. Version
+thresholds do not protect legacy clients, and deploying one baseline does not
+prove every older installation upgraded. The independent client kill switch
+therefore remains default-disabled. This PR provides no remote authorization
+transport and makes no conductor mutation.
+
+A separately reviewed conductor change must enforce the contract before
+artifact generation, in `verify-feeds` before upload, and in
+`verify-remote-release` after upload. Prefer an explicit verified asset manifest
+over `dist/*`. Even with full authorization, only versioned macOS ZIP maps may
+be allowed, never aliases. Disabled feeds reject macOS map references and
+`blockMapSize`; an injected draft sidecar must fail remote verification.
+Windows/Linux conductor policies remain unchanged. The detailed supplied
+contract is in `ao-releases` `RUNBOOK.md:542-626`.
+
+Future rollback sets the conductor global switch to `false` and the client
+`disableDifferentialDownload` flag to `true`, omits maps from future releases,
+and preserves historical assets. Never delete release history. These future
+controls must not be assumed to exist in the current conductor. The present
+safe state remains no generated macOS sidecars and an explicitly disabled client.
 
 electron-updater 6.8.9 owns reconstruction, SHA-512 verification and the full
 fallback. The real MacUpdater harness covers those boundaries, including

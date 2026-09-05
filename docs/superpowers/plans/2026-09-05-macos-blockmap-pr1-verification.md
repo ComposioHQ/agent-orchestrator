@@ -48,8 +48,9 @@ rely on missing macOS sidecars. Publishing ordinary Nightly `.zip.blockmap`
 assets can therefore enable older clients regardless of Developer Mode,
 especially after a successful full fallback caches a ZIP and its new blockmap.
 A new client's gate does not protect those installations. Resolve feed isolation
-before publishing sidecars. Manual sidecar removal is the emergency rollback;
-there is no existing conductor kill-switch implementation.
+before publishing sidecars. The future rollback contract is global switch false
+and client disable flag true, omitting future maps while preserving historical
+assets. Never delete history. There is no existing conductor kill-switch implementation.
 
 ## Conductor audit, part 1
 
@@ -162,9 +163,10 @@ across cycles when sidecars are absent, even with a seeded cached ZIP/map. A
 separate counterexample proves that publishing sidecars activates that legacy
 client. It would be false to claim new code can retroactively disable old binaries.
 
-Remote kill-switch source/schema and compatible-client criteria remain pending
-an authoritative decision. The local gate stays false; no remote allow is inferred
-from sidecar presence, local settings, a successful check, or a version string.
+Audit part 3 supplies the future conductor authorization requirements below.
+Remote transport/schema implementation is outside this PR. The local gate stays
+false; no remote allow is inferred from sidecar presence, local settings, a
+successful check, or a version string.
 
 CI on `dd8d074c8` passed renderer smoke and both typechecks. Its full test suite
 reported 3776 passed, 6 skipped and 2 failed: the retained HTTP 416 regression
@@ -179,3 +181,35 @@ and sentinel descriptor integrity. Candidate DifferentialDownloader.js SHA-256:
 The temporary test copy was removed; the installed dependency was unchanged.
 Immediately rerunning stock 6.8.9 produced 13 passed and the HTTP 416 descriptor
 failure. This is Node-transport evidence, not packaged Electron acceptance.
+
+## Future conductor rollout contract, audit part 3
+
+Supplied by orchestrator 250 from `ao-releases` `RUNBOOK.md:542-626`. This is a
+future independently reviewed conductor change, not implemented authorization.
+Preserve the current macOS-forbidden default. First deploy clients with
+`autoUpdater.disableDifferentialDownload = true` before checks and verify the
+compatible installed baseline separately for each channel.
+
+Every future allow requires all of: conductor-owned global switch exactly true,
+explicit channel allowlist, minimum compatible candidate version, minimum
+compatible installed baseline, and auditable baseline proof. Unknown, missing,
+malformed, partial, below-minimum or unproved inputs deny. Static GitHub feeds
+cannot filter installed versions: thresholds cannot protect legacy clients.
+The independent client disable flag defaults true.
+
+The future conductor must enforce this before generation, through `verify-feeds`
+before upload, and through `verify-remote-release` after upload. Prefer an explicit
+verified asset manifest over `dist/*`. Required acceptance coverage:
+
+- Missing, partial, below-minimum or unproved gates reject latest/nightly/prN macOS maps.
+- Full gates allow only versioned macOS ZIP maps, never aliases.
+- Disabled feeds reject macOS map references and `blockMapSize`.
+- Injected draft sidecars fail remote verification.
+- Windows/Linux conductor policies remain unchanged.
+- Legacy electron-updater 6.8.9 remains full-download-only while sidecars are absent.
+
+The current feed and real MacUpdater regressions cover the final two properties
+and macOS suppression, not the future conductor controls. Rollback means global
+switch false plus client disable flag true, omit future maps, and never delete
+historical assets. No conductor policy mutation or rollout is part of #4906.
+The stock HTTP 416 fallback blocker remains open.
