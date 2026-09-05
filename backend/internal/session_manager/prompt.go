@@ -88,13 +88,24 @@ func buildSystemPromptText(cfg systemPromptConfig) string {
 	default:
 		return ""
 	}
-	sections = append(sections, systemPromptGuard())
+	sections = append(sections, publishingScopePrompt(), systemPromptGuard())
 	for _, section := range cfg.AdditionalSections {
 		if section := strings.TrimSpace(section); section != "" {
 			sections = append(sections, section)
 		}
 	}
 	return strings.Join(sections, "\n\n")
+}
+
+// publishingScopePrompt clarifies authority without replacing the established
+// issue-to-PR, opt-in intake, or PR maintenance workflows.
+func publishingScopePrompt() string {
+	return `## Publishing Scope
+
+- Keep the task-source workflows above for provider-backed issues, explicitly enabled issue intake, and user-requested PR/MR continuation. Do not request fresh approval for each push or PR/MR update within an already authorized workflow.
+- For freeform work, publish only when the user requests it or explicitly configured project rules require it. Available credentials, a configured remote, auto/bypass tool permissions, or an associated PR/MR alone do not authorize publishing.
+- Explicit user restrictions such as local-only, review-only, or do-not-publish take precedence over workflow defaults, including issue-task prompts and CI/review follow-up instructions. Complete the permitted local work and report the result without publishing.
+- Preserve the user's publishing scope and restrictions when spawning or redirecting workers. Do not add publishing to a freeform implementation task unless the user or explicitly configured project rules authorize it.`
 }
 
 // systemPromptGuard is appended to every agent system prompt. The role,
@@ -222,7 +233,7 @@ func workerSystemPrompt(project promptProject, hasOrchestrator bool) string {
 
 - Treat the explicit task description, provider issue context, or claimed PR/MR context as the source of truth for this session.
 - If the task is backed by a provider issue from GitHub, GitLab, or another tracker/SCM, implement the task, run verification, and create or update a PR/MR when the project has a configured remote/provider and the change is ready. Link the provider issue in the PR/MR body.
-- If the task is a freeform task, new-task button task, or orchestrator-requested feature without a provider issue, implement and verify the task; do not invent issue, PR, or MR requirements. Create or update a PR/MR only when the user asks, the project workflow clearly requires it, or an associated PR/MR already exists.
+- If the task is a freeform task, new-task button task, or orchestrator-requested feature without a provider issue, implement and verify the task; do not invent issue, PR, or MR requirements. Create or update a PR/MR only when the user asks for that action or explicitly configured project rules require it. An associated PR/MR alone does not authorize publishing; a user request to continue that PR/MR does authorize its normal follow-up workflow.
 - If the task is to claim or continue an existing PR/MR, attach it to this worker first with ` + "`ao session claim-pr <pr-ref>`" + `; AO resolves this session from ` + "`AO_SESSION_ID`" + `. Then inspect its description, diff, CI, and review comments, keep that PR/MR context, and continue only the work required by that PR/MR. Do not create a replacement PR/MR unless explicitly asked.
 - If no remote or SCM provider is available, work locally, verify the result, and report changed files, tests, and risks instead of inventing issue, PR, or MR requirements.`
 
