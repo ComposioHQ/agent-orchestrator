@@ -27,17 +27,18 @@ import (
 var ctx = context.Background()
 
 type fakeStore struct {
-	sessions         map[domain.SessionID]domain.SessionRecord
-	pr               map[domain.SessionID]domain.PRFacts
-	projects         map[string]domain.ProjectRecord
-	workspaceRepo    map[string][]domain.WorkspaceRepoRecord
-	num              int
-	deleteErr        error
-	upsertWTErr      error
-	listAllErr       error
-	getProjectErr    error
-	getSessionErr    error
-	updateSessionErr error
+	sessions                           map[domain.SessionID]domain.SessionRecord
+	pr                                 map[domain.SessionID]domain.PRFacts
+	projects                           map[string]domain.ProjectRecord
+	workspaceRepo                      map[string][]domain.WorkspaceRepoRecord
+	num                                int
+	deleteErr                          error
+	upsertWTErr                        error
+	listAllErr                         error
+	getProjectErr                      error
+	getSessionErr                      error
+	updateSessionErr                   error
+	updateBrowserCapabilityVerifierErr error
 	// agentSwitchStore is wired only by agent-switch tests so fakeLCM can model
 	// Lifecycle Manager's atomic ownership-boundary commands.
 	agentSwitchStore any
@@ -81,8 +82,8 @@ func (f *fakeStore) UpdateSession(_ context.Context, rec domain.SessionRecord) e
 	return nil
 }
 func (f *fakeStore) UpdateBrowserCapabilityVerifier(_ context.Context, id domain.SessionID, expected domain.SessionControllerOwner, verifier string, updatedAt time.Time) (bool, error) {
-	if f.updateSessionErr != nil {
-		return false, f.updateSessionErr
+	if f.updateBrowserCapabilityVerifierErr != nil {
+		return false, f.updateBrowserCapabilityVerifierErr
 	}
 	rec, ok := f.sessions[id]
 	if !ok || rec.ControllerOwner() != expected {
@@ -2018,7 +2019,7 @@ func TestSpawn_AssignsIDAndGoesIdle(t *testing.T) {
 func TestSpawn_ReturnsFinalPromptByteMetrics(t *testing.T) {
 	m, _, _, _ := newManager()
 	cfg := ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Harness: domain.HarnessClaudeCode}
-	wantPrompt, wantSystemPrompt, err := m.buildSpawnTexts(ctx, cfg)
+	wantPrompt, wantSystemPrompt, err := m.buildSpawnTexts(ctx, cfg, "mer-1")
 	if err != nil {
 		t.Fatalf("buildSpawnTexts: %v", err)
 	}
@@ -4381,7 +4382,7 @@ func TestSystemPrompt_AppendsConfidentialityGuard(t *testing.T) {
 			lookPath := func(string) (string, error) { return "/bin/true", nil }
 			m := New(Deps{Runtime: &fakeRuntime{}, Agents: singleAgent{agent: &recordingAgent{}}, Workspace: &fakeWorkspace{}, Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, LookPath: lookPath})
 
-			sp, err := m.buildSystemPrompt(ctx, tc.kind, "mer")
+			sp, err := m.buildSystemPrompt(ctx, tc.kind, "mer", "mer-1")
 			if err != nil {
 				t.Fatalf("buildSystemPrompt: %v", err)
 			}
@@ -4415,6 +4416,34 @@ func TestSystemPrompt_AppendsConfidentialityGuard(t *testing.T) {
 				t.Fatalf("%s: system prompt missing automatic artifact handoff guidance:\n%s", tc.name, sp)
 			}
 		})
+	}
+}
+
+func TestSystemPrompt_AppendsArtifactGuidance(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Path: t.TempDir(), Config: testRoleAgents()}
+	lookPath := func(string) (string, error) { return "/bin/true", nil }
+	m := New(Deps{
+		Runtime:   &fakeRuntime{},
+		Agents:    singleAgent{agent: &recordingAgent{}},
+		Workspace: &fakeWorkspace{},
+		Store:     st,
+		Messenger: &fakeMessenger{},
+		Lifecycle: &fakeLCM{store: st},
+		DataDir:   t.TempDir(),
+		LookPath:  lookPath,
+	})
+
+	sp, err := m.buildSystemPrompt(ctx, domain.KindWorker, "mer", "mer-7")
+	if err != nil {
+		t.Fatalf("buildSystemPrompt: %v", err)
+	}
+	wantDir := filepath.ToSlash(filepath.Join(m.dataDir, "artifacts", "mer-7"))
+	if !strings.Contains(sp, "## Session Artifacts") {
+		t.Fatalf("system prompt missing artifacts section:\n%s", sp)
+	}
+	if !strings.Contains(sp, wantDir) {
+		t.Fatalf("system prompt missing artifact dir %q:\n%s", wantDir, sp)
 	}
 }
 
