@@ -135,7 +135,7 @@ export const ChatComposer = memo(function ChatComposer({
 	 * Deliver this text into the turn already running. Absent means the harness
 	 * cannot steer and the choice is never offered.
 	 */
-	onSteer?: (text: string) => Promise<unknown>;
+	onSteer?: (text: string, attachments?: FileAttachmentPayload[]) => Promise<unknown>;
 	/** Stop the turn already running when there is no draft to send. */
 	onInterrupt?: () => void;
 	/** A turn is actually running, so there is something to steer into. */
@@ -185,6 +185,7 @@ export const ChatComposer = memo(function ChatComposer({
 	const [isComposing, setIsComposing] = useState(false);
 	const [dragging, setDragging] = useState(false);
 	const [sendError, setSendError] = useState<string | null>(null);
+	const [submitting, setSubmitting] = useState(false);
 	const [steerNextRequest, setSteerNextRequest] = useState(0);
 	// The DOM event is the source of truth while React catches up with the draft
 	// transition. This keeps Enter-after-fast-typing from observing stale state.
@@ -201,6 +202,9 @@ export const ChatComposer = memo(function ChatComposer({
 	const filePicker = useRef<HTMLInputElement>(null);
 	const stagedDelivery = useRef<{ signature: string; paths: string[] } | null>(null);
 	const submitInFlight = useRef<Promise<void> | null>(null);
+	// Disabling the active editor can move focus to the document body. Remember
+	// keyboard-origin submissions so focus can return once the editor is enabled.
+	const restoreFocusAfterSubmission = useRef(false);
 	const menuId = useId();
 	const hadQueuedDockRef = useRef(Boolean(queuedDock));
 	const previousTrigger = useRef<ComposerTrigger | undefined>(undefined);
@@ -243,21 +247,24 @@ export const ChatComposer = memo(function ChatComposer({
 	const activeIndex = Math.min(highlighted, suggestions.length - 1);
 
 	const staged = fileAttachments.attachments.length > 0;
+	const controlsDisabled = Boolean(disabled || submitting);
 	const hasDraft = hasText || staged;
 	const savingQueuedEdit = Boolean(editingQueuedTurnId);
 	const canSend =
 		(hasText || staged) &&
-		!disabled &&
+		!controlsDisabled &&
 		!steerPending &&
 		!savingQueuedEditPending &&
 		(savingQueuedEdit || !busy);
-	const canStopTurn = Boolean(willQueue && onInterrupt && !disabled && !hasDraft && !savingQueuedEdit);
+	const canStopTurn = Boolean(
+		willQueue && onInterrupt && !controlsDisabled && !hasDraft && !savingQueuedEdit,
+	);
 	// Cmd/Ctrl+Enter remains an intentionally quiet power-user path for steering
-	// typed text into the running turn. The visible hint stays queue-only.
-	const canSteerDraft = Boolean(canSteer && onSteer) && !staged && !savingQueuedEdit;
+	// the current draft into the running turn. The visible hint stays queue-only.
+	const canSteerDraft = Boolean(canSteer && onSteer) && !savingQueuedEdit;
 	const canSteerNext =
 		Boolean(canSteer && onSteer) &&
-		!disabled &&
+		!controlsDisabled &&
 		!hasDraft &&
 		!savingQueuedEdit &&
 		Boolean(queuedDock);
@@ -409,6 +416,16 @@ export const ChatComposer = memo(function ChatComposer({
 		if (!hasLongerPrefix) pick(exact.name);
 	}, [dismissedKey, isComposing, pick, slashCommands, trigger]);
 
+	useLayoutEffect(() => {
+		if (submitting || !restoreFocusAfterSubmission.current) return;
+		restoreFocusAfterSubmission.current = false;
+		if (typeof document === "undefined") return;
+		const active = document.activeElement;
+		// Restore focus only when disabling the editor caused the blur. Do not steal
+		// focus if the user deliberately moved to another control while awaiting.
+		if (active === document.body || active === null) editor.current?.focus();
+	}, [submitting]);
+
 	const completeFromEditor = useCallback(
 		(snapshot: ComposerEditorSnapshot, key: "Enter" | "Tab"): string | undefined => {
 			const currentTrigger = snapshot.trigger;
@@ -434,10 +451,16 @@ export const ChatComposer = memo(function ChatComposer({
 		// second transport whose local admission rejection would look like a real
 		// provider failure.
 		if (submitInFlight.current) return submitInFlight.current;
+		restoreFocusAfterSubmission.current =
+			typeof document !== "undefined" &&
+			document.activeElement?.getAttribute("aria-label") === "Message the agent";
+		setSubmitting(true);
 		const pending = performSubmit(forceSteer);
 		submitInFlight.current = pending;
 		const release = () => {
-			if (submitInFlight.current === pending) submitInFlight.current = null;
+			if (submitInFlight.current !== pending) return;
+			submitInFlight.current = null;
+			setSubmitting(false);
 		};
 		void pending.then(release, release);
 		return pending;
@@ -475,15 +498,20 @@ export const ChatComposer = memo(function ChatComposer({
 			return;
 		}
 
+		// Paste/drop reads finish asynchronously. Settle them before deciding whether
+		// this submission has attachments, or immediate Enter can steer the text and
+		// leave the image behind when its FileReader completes.
+		const attachmentPayloads = await fileAttachments.toSettledPayload();
+		const hasAttachments = attachmentPayloads.length > 0;
 		const canSubmitNow =
-			(currentText.trim().length > 0 || staged) &&
+			(body.length > 0 || hasAttachments) &&
 			!disabled &&
 			!steerPending &&
 			!savingQueuedEditPending &&
 			(editingQueuedTurnId || !busy);
 		if (!canSubmitNow) {
 			if (
-				(currentText.trim().length > 0 || staged) &&
+				(body.length > 0 || hasAttachments) &&
 				busy &&
 				!disabled &&
 				!steerPending &&
@@ -497,66 +525,70 @@ export const ChatComposer = memo(function ChatComposer({
 		setSendError(null);
 
 		const shouldSteer = forceSteer ?? false;
-
-		// Steering keeps the text in the box until the provider has taken it. The turn
-		// is already running, so a refusal is a real possibility — and a refusal that
-		// had already cleared the composer would lose what the user typed.
-		if (shouldSteer && onSteer && !editingQueuedTurnId) {
-			if (body === "") return;
-			try {
-				await onSteer(body);
-			} catch {
-				// The refusal is the daemon's typed answer and the surface renders it from
-				// `steerRefusal`; keep the draft, but arm the reliable queue path for the
-				// next Enter in case the turn ended while the user was typing.
+		let message = body;
+		let nativePayloads: FileAttachmentPayload[] = [];
+		if (hasAttachments) {
+			if (!onStageAttachments) {
+				setSendError("The files could not be attached. Nothing was sent.");
 				return;
 			}
-			clearEditor();
-			setDismissedKey(null);
-			setHighlighted(0);
-			return;
-		}
-
-		if (staged && onStageAttachments) {
-			// Staged before the send so a failed write is reported instead of a
+			// Staged before delivery so a failed write is reported instead of a
 			// message that claims attachments the agent cannot open.
 			let paths: string[];
-			const signature = fileAttachments.attachments.map((file) => file.id).join(":");
+			const signature = fileAttachments.attachmentSignature();
 			try {
 				if (stagedDelivery.current?.signature === signature) {
 					paths = stagedDelivery.current.paths;
 				} else {
-					paths = await onStageAttachments(fileAttachments.toPayload());
+					paths = await onStageAttachments(attachmentPayloads);
 					stagedDelivery.current = { signature, paths };
 				}
 			} catch {
 				setSendError("The files could not be attached. Nothing was sent.");
 				return;
 			}
+			message = withAttachmentReferences(body, paths);
+			nativePayloads = attachmentPayloads.filter((attachment) =>
+				isSupportedImageAttachment(attachment.mimeType),
+			);
+		}
+
+		// Steering keeps the draft and attachments in the box until the provider has
+		// taken them. The turn is already running, so a refusal is a real possibility —
+		// and clearing early would lose context the user intended to send.
+		if (shouldSteer && onSteer && !editingQueuedTurnId) {
 			try {
-				const message = withAttachmentReferences(body, paths);
-				const nativePayloads = fileAttachments
-					.toPayload()
-					.filter((attachment) => isSupportedImageAttachment(attachment.mimeType));
-				if (nativeImages && nativePayloads.length > 0) await onSend(message, nativePayloads);
-				else await onSend(message);
+				if (nativeImages && nativePayloads.length > 0) await onSteer(message, nativePayloads);
+				else await onSteer(message);
 			} catch {
-				setSendError("Message not sent. Your draft and attachments were kept so you can retry.");
+				// The refusal is the daemon's typed answer and the surface renders it from
+				// `steerRefusal`; keep the draft for an ordinary Enter queue retry.
 				return;
 			}
 			stagedDelivery.current = null;
-			fileAttachments.clear();
-		} else {
-			try {
-				await onSend(body);
-			} catch (error) {
-				setSendError(
-					editingQueuedTurnId
-						? apiErrorMessage(error, "Could not save that queued message edit. Your draft was kept.")
+			if (hasAttachments) fileAttachments.clear();
+			clearEditor();
+			setDismissedKey(null);
+			setHighlighted(0);
+			return;
+		}
+
+		try {
+			if (nativeImages && nativePayloads.length > 0) await onSend(message, nativePayloads);
+			else await onSend(message);
+		} catch (error) {
+			setSendError(
+				editingQueuedTurnId
+					? apiErrorMessage(error, "Could not save that queued message edit. Your draft was kept.")
+					: hasAttachments
+						? "Message not sent. Your draft and attachments were kept so you can retry."
 						: "Message not sent. Your draft was kept so you can retry.",
-				);
-				return;
-			}
+			);
+			return;
+		}
+		if (hasAttachments) {
+			stagedDelivery.current = null;
+			fileAttachments.clear();
 		}
 
 		clearEditor();
@@ -581,7 +613,7 @@ export const ChatComposer = memo(function ChatComposer({
 				return true;
 			}
 
-			if (canSteerNext && !textRef.current.trim()) {
+			if (canSteerNext && !textRef.current.trim() && !fileAttachments.hasPendingReads()) {
 				setSteerNextRequest((request) => request + 1);
 				return true;
 			}
@@ -589,7 +621,7 @@ export const ChatComposer = memo(function ChatComposer({
 			void submit(undefined, wantsSteer);
 			return true;
 		},
-		[canSteerDraft, canSteerNext, onCompact, pick, suggestionsFor],
+		[canSteerDraft, canSteerNext, fileAttachments, onCompact, pick, suggestionsFor],
 	);
 
 	function onKeyDown(event: KeyboardEvent<HTMLDivElement>) {
@@ -629,7 +661,7 @@ export const ChatComposer = memo(function ChatComposer({
 	}
 
 	function onPaste(event: ClipboardEvent<HTMLDivElement>) {
-		if (!canAttach) return;
+		if (!canAttach || submitInFlight.current) return;
 		const clipboard = event.clipboardData;
 		const files = Array.from(clipboard?.files ?? []);
 		if (files.length === 0) return;
@@ -642,7 +674,7 @@ export const ChatComposer = memo(function ChatComposer({
 
 	function onDrop(event: DragEvent<HTMLFormElement>) {
 		setDragging(false);
-		if (!canAttach) return;
+		if (!canAttach || submitInFlight.current) return;
 		const files = Array.from(event.dataTransfer?.files ?? []);
 		if (files.length === 0) return;
 		event.preventDefault();
@@ -708,7 +740,7 @@ export const ChatComposer = memo(function ChatComposer({
 			// Cmd/Ctrl steering remains available as a quiet power-user action.
 			onSubmit={(event) => void submit(event, modifierHeldRef.current && canSteerDraft)}
 				onDragOver={(event) => {
-					if (!canAttach) return;
+					if (!canAttach || submitInFlight.current) return;
 					event.preventDefault();
 					setDragging(true);
 				}}
@@ -720,6 +752,7 @@ export const ChatComposer = memo(function ChatComposer({
 				data-dragging={dragging || undefined}
 				data-attached-top={attachedTop && !queuedDock ? true : undefined}
 				onClick={(e) => {
+					if (controlsDisabled) return;
 					if (
 						e.target === e.currentTarget ||
 						!(e.target as HTMLElement).closest("button, a, [role='option'], ul")
@@ -762,7 +795,10 @@ export const ChatComposer = memo(function ChatComposer({
 								</span>
 								<button
 									type="button"
-									onClick={() => fileAttachments.remove(file.id)}
+									onClick={() => {
+										if (!submitInFlight.current) fileAttachments.remove(file.id);
+									}}
+									disabled={controlsDisabled}
 									aria-label={`Remove ${file.name}`}
 									className="text-muted-foreground hover:text-foreground"
 								>
@@ -775,7 +811,7 @@ export const ChatComposer = memo(function ChatComposer({
 
 				<ComposerEditor
 					ref={editor}
-					disabled={disabled}
+					disabled={controlsDisabled}
 					label="Message the agent"
 					placeholder={
 						disabled
@@ -819,8 +855,11 @@ export const ChatComposer = memo(function ChatComposer({
 									type="file"
 									multiple
 									hidden
+									disabled={controlsDisabled}
 									onChange={(event) => {
-										void fileAttachments.addFiles(Array.from(event.target.files ?? []));
+										if (!submitInFlight.current) {
+											void fileAttachments.addFiles(Array.from(event.target.files ?? []));
+										}
 										// Cleared so picking the same file twice still fires a change.
 										event.target.value = "";
 									}}
@@ -832,7 +871,7 @@ export const ChatComposer = memo(function ChatComposer({
 												type="button"
 												variant="ghost"
 												size="icon-sm"
-												disabled={disabled}
+												disabled={controlsDisabled}
 												onClick={() => filePicker.current?.click()}
 												aria-label="Attach a file"
 												className="size-7 shrink-0 rounded-full p-0 text-muted-foreground hover:bg-white/5! hover:text-foreground"
@@ -868,7 +907,7 @@ export const ChatComposer = memo(function ChatComposer({
 									>
 										{canStopTurn ? (
 											<Square aria-hidden="true" className="size-2.5 fill-current" />
-										) : steerPending || savingQueuedEditPending || sendPending ? (
+										) : submitting || steerPending || savingQueuedEditPending || sendPending ? (
 											<Loader2 aria-hidden="true" className="size-3.5 animate-spin" />
 										) : (
 											<ArrowUp aria-hidden="true" className="size-3.5" />

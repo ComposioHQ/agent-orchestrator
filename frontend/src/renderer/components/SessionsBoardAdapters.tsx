@@ -177,7 +177,7 @@ const DesktopSessionCard = memo(function DesktopSessionCard({
 										: t("shell.terminateNamed", { title: session.title })
 								}
 								className={cn(
-									"absolute right-2 top-1.5 z-10 inline-flex size-control-md items-center justify-center rounded-sm text-passive transition-[color,background-color,opacity] hover:bg-error/10 hover:text-error focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60",
+									"inline-flex size-control-md items-center justify-center rounded-sm text-passive transition-[color,background-color,opacity] hover:bg-error/10 hover:text-error focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60",
 									keepTerminateVisible || termination.isPending
 										? "opacity-100"
 										: "pointer-events-none opacity-0 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100",
@@ -233,7 +233,7 @@ const DesktopSessionCard = memo(function DesktopSessionCard({
 				state: pr.state,
 				url: prBrowserUrl(pr),
 			}))}
-			renderAvatar={(provider) => <AgentAvatar className="mt-0.5" provider={provider} />}
+			renderAvatar={(provider) => <AgentAvatar provider={provider} />}
 			session={toBoardSessionPresentation(session, t)}
 			translate={translate}
 			renderUsage={(usage) => (

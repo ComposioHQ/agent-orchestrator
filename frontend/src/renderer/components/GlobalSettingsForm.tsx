@@ -2,12 +2,15 @@ import { lazy, Suspense } from "react";
 import { useTranslation } from "react-i18next";
 import type { GlobalSettingsSection as GlobalSettingsPage } from "../stores/ui-store";
 import { GeneralSettingsSection } from "./settings/GeneralSettingsSection";
+import { HarnessSettingsSection } from "./settings/HarnessSettingsSection";
 import { CloudCredentialsSection } from "./settings/CloudCredentialsSection";
+import { CodexAccountsSection } from "./settings/CodexAccountsSection";
 import { ConnectMobileContent } from "./settings/ConnectMobileContent";
 import { KeyboardShortcutsContent } from "./settings/KeyboardShortcutsContent";
 import { MobileDevicesSection } from "./settings/MobileDevicesSection";
 import { ReportProblemContent } from "./settings/ReportProblemContent";
 import { SettingsSection } from "./settings/SettingsSection";
+import { BrowserProfilesSection } from "./settings/BrowserProfilesSection";
 
 const UpdatesSection = lazy(async () => {
 	const module = await import("./settings/UpdatesSection");
@@ -41,6 +44,11 @@ export function GlobalSettingsForm({
 		>
 			{(all || section === "general") && <GeneralSettingsSection titleHidden={titleHidden} />}
 
+			{(all || section === "harness") && <HarnessSettingsSection titleHidden={titleHidden} />}
+
+			{(all || section === "agents") && <CodexAccountsSection titleHidden={titleHidden} />}
+
+			{(all || section === "browserProfiles") && <BrowserProfilesSection titleHidden={titleHidden} />}
 			{(all || section === "cloud") && <CloudCredentialsSection titleHidden={titleHidden} />}
 
 			{(all || section === "mobile") && (

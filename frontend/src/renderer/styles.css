@@ -2802,22 +2802,6 @@ html.sidebar-reordering * {
 	flex: 0 0 auto;
 }
 
-.session-topbar-session-chrome[data-compact-session-chrome="true"]
-	.workspace-topbar-actions
-	[data-priority]
-	[data-compact-label] {
-	inline-size: 0;
-	opacity: 0;
-	transform: translateX(-2px);
-}
-
-.session-topbar-session-chrome[data-compact-session-chrome="true"]
-	.workspace-topbar-actions
-	[data-priority].topbar-control {
-	gap: 0;
-	padding-inline: 0;
-}
-
 @container workspace-topbar (max-width: 759px) {
 	.workspace-topbar-actions [data-priority="secondary"] [data-compact-label] {
 		inline-size: 0;
@@ -4252,6 +4236,8 @@ body:has(#root .platform-linux) > .browser-popout-overlay {
 }
 
 .browser-panel__toolbar {
+	container-name: browser-toolbar;
+	container-type: inline-size;
 	display: flex;
 	align-items: center;
 	gap: 2px;
@@ -4275,13 +4261,32 @@ body:has(#root .platform-linux) > .browser-popout-overlay {
 	backdrop-filter: blur(10px);
 }
 
+/* Keep the URL field useful in the narrow inspector. The selected profile name
+   remains available through the button tooltip, accessible label, and native
+   menu; only its inline label collapses at constrained toolbar widths. */
+@container browser-toolbar (max-width: 34rem) {
+	.browser-profile-button {
+		width: var(--size-control-md);
+		max-width: var(--size-control-md);
+		flex-shrink: 0;
+		justify-content: center;
+		gap: 0;
+		padding-inline: 0;
+	}
+
+	.browser-profile-button__label,
+	.browser-profile-button__chevron {
+		display: none;
+	}
+}
+
 .browser-panel__toolbar > :not(.browser-panel__url-wrap):not(button) {
 	transition:
 		opacity 140ms ease,
 		visibility 0s linear;
 }
 
-.browser-panel__toolbar--url-takeover > :not(.browser-panel__url-wrap):not(.browser-panel__navigation-btn) {
+.browser-panel__toolbar--url-takeover > :not(.browser-panel__url-wrap):not(.browser-panel__navigation-btn):not(.browser-panel__navigation-control) {
 	visibility: hidden;
 	opacity: 0;
 	pointer-events: none;
@@ -4459,13 +4464,13 @@ body:has(#root .platform-linux) > .browser-popout-overlay {
 }
 
 @container browser-panel (min-width: 640px) {
-	.browser-panel--popped-out .browser-panel__tab-bar {
+	.browser-panel__tab-bar {
 		display: flex;
 	}
 
-	.browser-panel--popped-out .browser-panel__toolbar-new-tab,
-	.browser-panel--popped-out .browser-panel__toolbar-tabs-trigger,
-	.browser-panel--popped-out .browser-tabs-rail {
+	.browser-panel__toolbar-new-tab,
+	.browser-panel__toolbar-tabs-trigger,
+	.browser-tabs-rail {
 		display: none;
 	}
 }
@@ -4780,6 +4785,14 @@ html[data-native-browser-composition="true"] .browser-popout-backdrop {
 /* Connect Mobile: the pairing QR and the wait before it. The placeholder is a
    real QR carrying decoy data, so it can dissolve into the finished code
    instead of being swapped for it. See PairingQr.tsx. */
+/* The library's SVG includes a generous quiet zone. Enlarge the artwork
+   inside the fixed card so the preview and the finished code share the same
+   visible bounds while the card still supplies the clipping edge. */
+.ao-qr-visual > svg {
+	transform: scale(0.885);
+	transform-origin: center;
+}
+
 /* A triangular ramp occupying half the cycle. With four layers offset by a
    quarter cycle, two are always mid-ramp in opposite directions, so the
    composite dissolves continuously instead of swapping one code for the next. */
@@ -4819,13 +4832,11 @@ html[data-native-browser-composition="true"] .browser-popout-backdrop {
 @keyframes ao-qr-resolve-in {
 	from {
 		opacity: 0;
-		filter: blur(3px);
-		transform: scale(0.985);
+		filter: blur(4px);
 	}
 	to {
 		opacity: 1;
 		filter: blur(0);
-		transform: none;
 	}
 }
 
@@ -4847,7 +4858,7 @@ html[data-native-browser-composition="true"] .browser-popout-backdrop {
 
 /* The real code has arrived: stop cycling and clear away together. */
 .ao-qr-decoy--settling {
-	animation: ao-qr-decoy-settle 900ms ease-out forwards;
+	animation: ao-qr-decoy-settle 260ms ease-out forwards;
 }
 
 .ao-qr-resolved {

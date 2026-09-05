@@ -43,6 +43,16 @@ func (s *stubRuntime) IsAlive(_ context.Context, h ports.RuntimeHandle) (bool, e
 	}
 	return true, nil
 }
+func (s *stubRuntime) ProbeFencedRuntime(ctx context.Context, ref ports.FencedRuntimeRef) ports.FencedProbeResult {
+	alive, err := s.IsAlive(ctx, ref.Handle)
+	if err != nil {
+		return ports.FencedProbeResult{Liveness: ports.FencedUnknown, Reason: ports.FencedReasonProbeFailed}
+	}
+	if alive {
+		return ports.FencedProbeResult{Liveness: ports.FencedAlive, Reason: ports.FencedReasonExactMatch}
+	}
+	return ports.FencedProbeResult{Liveness: ports.FencedDead, Reason: ports.FencedReasonExactAbsent}
+}
 func (s *stubRuntime) GetOutput(_ context.Context, _ ports.RuntimeHandle, _ int) (string, error) {
 	return "", nil
 }

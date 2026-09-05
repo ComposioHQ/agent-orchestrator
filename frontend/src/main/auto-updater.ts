@@ -1,7 +1,8 @@
 import { autoUpdater } from "electron-updater";
+import { CancellationToken } from "builder-util-runtime";
 import { app, BrowserWindow, dialog } from "electron";
-import { accessSync, constants as fsConstants, existsSync } from "node:fs";
-import { readFile } from "node:fs/promises";
+import { accessSync, constants as fsConstants, existsSync, readFileSync } from "node:fs";
+import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import semver from "semver";
 import {
@@ -17,6 +18,7 @@ import { reconcileFeaturePin } from "./feature-builds";
 import { evaluateEscalation } from "./escalation-evaluator";
 import {
   isNetErrorMessage,
+  normalizeReleaseNotes,
   updateFailureOutcome,
   type UpdateOutcome,
   type UpdatePhase,
@@ -88,6 +90,17 @@ let eventsWired = false;
 // re-evaluated every 30 minutes while the update sits uninstalled. stateDir is
 // captured from whichever entry point wired the events (both receive it).
 let stagedVersion: string | undefined;
+// Release notes for the build currently on offer or staged, already
+// sanitized. Held here because only the updater events carry it, and the
+// renderer needs it on every subsequent status too, not just the one event.
+let offeredReleaseNotes: string | undefined;
+// Notes resolved out-of-band for a feed whose provider cannot carry them.
+// Used only as a fallback, so a provider that does supply notes always wins.
+let directFeedReleaseNotes: string | undefined;
+// Which feed channel the staged build came from. A build staged from one
+// channel is already armed with the OS installer, so switching channels has
+// to notice that it no longer belongs (see stagedBuildIsStale).
+let stagedChannel: string | undefined;
 let stagedAtMs: number | undefined;
 let stagedEscalated = false;
 let stagedRequestId: string | undefined;
@@ -134,6 +147,53 @@ let automaticCheckNetFailureCounted = false;
 // broadcast a status, and error statuses carry no version.
 let activeUpdaterPhase: UpdatePhase = "check";
 let pendingUpdateVersion: string | undefined;
+// Stalled-download watchdog. electron-updater keeps its request open when a
+// download stops receiving bytes, so AO kept the last percentage forever, held
+// the updater queue occupied, and offered nothing to retry. Bytes that are
+// genuinely slow still advance the percentage, so inactivity is the signal, not
+// elapsed time.
+const DOWNLOAD_STALL_TIMEOUT_MS = 2 * 60 * 1000;
+let downloadStallTimer: ReturnType<typeof setTimeout> | undefined;
+let activeDownloadCancellation: CancellationToken | undefined;
+let downloadStalled = false;
+
+function clearDownloadStallWatchdog(): void {
+  if (downloadStallTimer !== undefined) {
+    clearTimeout(downloadStallTimer);
+    downloadStallTimer = undefined;
+  }
+  activeDownloadCancellation = undefined;
+}
+
+/**
+ * (Re)arm the watchdog. Called on every progress event, so the deadline only
+ * expires when nothing has advanced for the whole window.
+ */
+function armDownloadStallWatchdog(): void {
+  if (downloadStallTimer !== undefined) clearTimeout(downloadStallTimer);
+  downloadStallTimer = setTimeout(() => {
+    downloadStallTimer = undefined;
+    downloadStalled = true;
+    console.error("update download stalled; cancelling");
+    // Cancel so electron-updater releases its request and the serialized
+    // operation can finish. Without this the queue stays blocked and even a
+    // manual retry would just wait behind the dead download.
+    activeDownloadCancellation?.cancel();
+    activeDownloadCancellation = undefined;
+    emitUpdateOutcome(
+      updateFailureOutcome("download stalled", "download", activeUpdateTrigger(), pendingUpdateVersion),
+    );
+    broadcast(
+      withActiveRequest({
+        state: "error",
+        message: "Download stopped responding. Try again.",
+        ...(pendingUpdateVersion === undefined ? {} : { version: pendingUpdateVersion }),
+      }),
+    );
+  }, DOWNLOAD_STALL_TIMEOUT_MS);
+  downloadStallTimer.unref?.();
+}
+
 // Session-scoped time of the most recent completed feed check. Packaged apps
 // check the selected channel at launch regardless of whether automatic
 // downloading is enabled.
@@ -170,8 +230,18 @@ function broadcast(
     lastCheckedAtMs === undefined || status.checkedAt !== undefined
       ? status
       : { ...status, checkedAt: lastCheckedAtMs };
+  const describesAnOffer =
+    status.state === "available" ||
+    status.state === "downloading" ||
+    status.state === "downloaded";
   const stamped: UpdateStatus = {
     ...statusWithCheckTime,
+    ...stagedStamp(),
+    // Only on statuses that actually describe a build on offer: "not-available"
+    // carrying notes for a build the user already has would read as news.
+    ...(describesAnOffer && offeredReleaseNotes !== undefined && status.releaseNotes === undefined
+      ? { releaseNotes: offeredReleaseNotes }
+      : {}),
     ...(consecutiveAutomaticNetFailures >= STALE_CHECK_NUDGE_THRESHOLD
       ? { staleCheckNudge: true }
       : {}),
@@ -245,6 +315,7 @@ interface GitHubReleaseSummary {
   tag_name: string;
   draft: boolean;
   prerelease: boolean;
+  body?: string | null;
   assets?: Array<{ name?: string }>;
 }
 
@@ -255,10 +326,11 @@ interface GitHubReleaseSummary {
  * This is used only for user-requested checks; failures fall back to the normal
  * provider so API rate limits or an outage never break update checks.
  */
-async function fetchLatestCompletedNightlyTag(
+async function fetchLatestCompletedPrereleaseTag(
   owner: string,
   repo: string,
-): Promise<string | undefined> {
+  channel: string,
+): Promise<{ tag: string; body?: string } | undefined> {
   try {
     const response = await fetch(
       `https://api.github.com/repos/${owner}/${repo}/releases?per_page=100`,
@@ -274,29 +346,40 @@ async function fetchLatestCompletedNightlyTag(
     );
     if (!response.ok) return undefined;
     const releases = (await response.json()) as GitHubReleaseSummary[];
-    const manifestName = `nightly${platformSuffix()}.yml`;
-    return releases
+    const manifestName = `${channel}${platformSuffix()}.yml`;
+    const newest = releases
       .filter((release) => {
         const parsed = semver.valid(release.tag_name);
         return (
           !release.draft &&
           release.prerelease &&
           parsed !== null &&
-          semver.prerelease(parsed)?.[0] === "nightly" &&
+          semver.prerelease(parsed)?.[0] === channel &&
           release.assets?.some((asset) => asset.name === manifestName) === true
         );
       })
-      .sort((left, right) => semver.rcompare(left.tag_name, right.tag_name))[0]
-      ?.tag_name;
+      .sort((left, right) => semver.rcompare(left.tag_name, right.tag_name))[0];
+    if (newest === undefined) return undefined;
+    // The body comes back on the same response, so carrying it costs nothing.
+    // Every channel resolved this way needs it: the direct feed below is
+    // electron-updater's GENERIC provider, which never populates releaseNotes
+    // (only GitHubProvider does), and the channel manifests have no field for
+    // them. Without this the "what's new" section could never say anything on
+    // nightly or on a pinned feature build.
+    return {
+      tag: newest.tag_name,
+      ...(typeof newest.body === "string" ? { body: newest.body } : {}),
+    };
   } catch {
     return undefined;
   }
 }
 
-function usesDirectNightlyFeed(
+function directPrereleaseChannel(
   settings: Pick<UpdateSettings, "channel" | "feature">,
-): boolean {
-  return settings.channel === "nightly" && settings.feature === null;
+): string | undefined {
+  if (settings.feature) return `pr${settings.feature.pr}`;
+  return settings.channel === "nightly" ? "nightly" : undefined;
 }
 
 /**
@@ -310,30 +393,36 @@ function usesDirectNightlyFeed(
  * checks; electron-updater retains the direct provider with the discovered
  * update, so a subsequent Download action still uses the correct asset URLs.
  */
-async function configureDirectNightlyFeed(
+async function configureDirectPrereleaseFeed(
   settings: UpdateSettings,
 ): Promise<(() => void) | undefined> {
-  if (!usesDirectNightlyFeed(settings)) return undefined;
+  const channel = directPrereleaseChannel(settings);
+  if (!channel) return undefined;
   const coordinates = await readAppUpdateYml();
   if (!coordinates) return undefined;
-  const tag = await fetchLatestCompletedNightlyTag(
+  const release = await fetchLatestCompletedPrereleaseTag(
     coordinates.owner,
     coordinates.repo,
+    channel,
   );
-  if (!tag) return undefined;
+  if (!release) return undefined;
+  const { tag } = release;
   const runningVersion = app.getVersion();
   if (
     semver.valid(runningVersion) !== null &&
-    semver.prerelease(runningVersion)?.[0] === "nightly" &&
+    semver.prerelease(runningVersion)?.[0] === channel &&
     semver.lt(tag, runningVersion)
   ) {
     return undefined;
   }
 
+  // Stand in for what the generic provider cannot supply. Overwritten by the
+  // real thing if a later event does carry notes.
+  directFeedReleaseNotes = normalizeReleaseNotes(release.body);
   autoUpdater.setFeedURL({
     provider: "generic",
     url: `https://github.com/${coordinates.owner}/${coordinates.repo}/releases/download/${tag}`,
-    channel: "nightly",
+    channel,
     useMultipleRangeRequest: false,
   });
   return () => {
@@ -383,6 +472,193 @@ async function fetchNightlyImportant(
   } catch {
     return false;
   }
+}
+
+/**
+ * The `staged` stamp every status carries while a build waits to install, so a
+ * transient checking/available/not-available state cannot make the sidebar's
+ * restart row disappear mid-check. Empty when nothing is staged.
+ */
+function stagedStamp(): Pick<UpdateStatus, "staged"> {
+  if (stagedAtMs === undefined) return {};
+  return {
+    staged: {
+      ...(stagedVersion === undefined ? {} : { version: stagedVersion }),
+      stagedAt: stagedAtMs,
+      escalated: stagedEscalated,
+    },
+  };
+}
+
+/**
+ * Staged-build provenance, persisted beside the update settings.
+ *
+ * stagedVersion/stagedChannel are module state, so a relaunch that did NOT
+ * install (a blocked location, a crash, a quit Squirrel could not finish) came
+ * back knowing nothing about the build still sitting armed in the cache. A
+ * channel switch after that restart could not be recognised as stranding
+ * anything, which is the case stagedBuildIsStale exists to catch.
+ */
+const STAGED_UPDATE_FILE_NAME = "staged-update.json";
+
+function stagedUpdateFile(stateDir: string): string {
+  return path.join(stateDir, STAGED_UPDATE_FILE_NAME);
+}
+
+/** Fire-and-forget: losing this file costs provenance, never correctness. */
+function persistStagedBuild(stateDir: string | undefined): void {
+  if (stateDir === undefined || stagedVersion === undefined || stagedAtMs === undefined) return;
+  const payload = `${JSON.stringify({
+    version: stagedVersion,
+    stagedAt: stagedAtMs,
+    channel: stagedChannel,
+  })}\n`;
+  // mkdir first: this can be the earliest write into the state dir on a fresh
+  // install, and writeUpdateSettings is not guaranteed to have run yet.
+  void mkdir(stateDir, { recursive: true, mode: 0o750 })
+    .then(() => writeFile(stagedUpdateFile(stateDir), payload, { mode: 0o600 }))
+    .catch(() => undefined);
+}
+
+function forgetPersistedStagedBuild(stateDir: string | undefined): void {
+  if (stateDir === undefined) return;
+  void unlink(stagedUpdateFile(stateDir)).catch(() => undefined);
+}
+
+/**
+ * Reload provenance for a build staged by an earlier run.
+ *
+ * Discards it when the running version already matches — that build installed,
+ * so nothing is pending — and when anything is unreadable, because inventing
+ * provenance is worse than having none.
+ */
+function restoreStagedBuild(stateDir: string): void {
+  // Synchronous on purpose. Awaiting a real filesystem read here would push the
+  // launch-time update check behind an I/O turn for a file that is a few dozen
+  // bytes and read exactly once per process.
+  let raw: { version?: unknown; stagedAt?: unknown; channel?: unknown };
+  try {
+    raw = JSON.parse(readFileSync(stagedUpdateFile(stateDir), "utf8")) as typeof raw;
+  } catch {
+    return;
+  }
+  if (
+    typeof raw.version !== "string" ||
+    typeof raw.stagedAt !== "number" ||
+    !Number.isFinite(raw.stagedAt) ||
+    raw.version === app.getVersion()
+  ) {
+    forgetPersistedStagedBuild(stateDir);
+    return;
+  }
+  stagedVersion = raw.version;
+  stagedAtMs = raw.stagedAt;
+  stagedChannel = typeof raw.channel === "string" ? raw.channel : undefined;
+  stagedEscalated = false;
+}
+
+/** The feed channel a settings object resolves to. Mirrors configureFeed. */
+function effectiveChannel(
+  settings: Pick<UpdateSettings, "channel" | "feature">,
+): string {
+  return settings.feature ? `pr${settings.feature.pr}` : settings.channel;
+}
+
+/**
+ * True when the staged build belongs to a channel the user is no longer on.
+ *
+ * This matters because staging is not reversible. On macOS a completed download
+ * hands the build to Squirrel (MacUpdater calls nativeUpdater.checkForUpdates()
+ * when autoInstallOnAppQuit is set), and the resulting ShipIt process sits
+ * waiting for the app to exit. Clearing autoInstallOnAppQuit afterwards does not
+ * disarm it: quitting still installs that build. Switching from nightly to
+ * stable therefore used to install the NIGHTLY on the next quit, while Settings
+ * said "Restart to switch to Stable".
+ *
+ * The only reliable way out is to stage the correct build over it, because each
+ * completed download issues a fresh install request that supersedes the last.
+ * So a stale staged build forces a download on the next check regardless of the
+ * automatic-download preference.
+ */
+function stagedBuildIsStale(
+  settings: Pick<UpdateSettings, "channel" | "feature">,
+): boolean {
+  return (
+    stagedAtMs !== undefined &&
+    stagedChannel !== undefined &&
+    stagedChannel !== effectiveChannel(settings)
+  );
+}
+
+/**
+ * Drop our tracking of a staged build that no longer belongs to the selected
+ * channel, so the sidebar stops offering to restart into it. The build itself
+ * stays armed until the replacement finishes downloading; that window is why
+ * the replacement download is forced rather than left to the user's preference.
+ */
+/**
+ * True from the moment a stale staged build is dropped until a replacement is
+ * staged over it.
+ *
+ * Windows and Linux re-read autoInstallOnAppQuit inside the quit handler
+ * (BaseUpdater.addQuitHandler), so clearing it there genuinely stops the
+ * install. macOS cannot: MacUpdater reads the flag once, at download time, to
+ * decide whether to hand the build to Squirrel, and the ShipIt waiting on
+ * process exit is not recallable.
+ *
+ * So on Windows and Linux this closes the gap completely, and on macOS it is a
+ * no-op that costs nothing. Superseding the build with a correct one stays the
+ * only lever that works on all three.
+ */
+let awaitingStagedReplacement = false;
+
+function discardStagedBuild(): void {
+  // Nothing valid is installable until the replacement lands: the only build in
+  // the cache belongs to a channel the user has left.
+  awaitingStagedReplacement = true;
+  forgetPersistedStagedBuild(escalationStateDir);
+  offeredReleaseNotes = undefined;
+  directFeedReleaseNotes = undefined;
+  stagedVersion = undefined;
+  stagedChannel = undefined;
+  stagedAtMs = undefined;
+  stagedEscalated = false;
+  stagedRequestId = undefined;
+  stopEscalationTimer();
+}
+
+/** A build is downloaded and waiting to install, and we know which one. */
+function hasStagedBuild(): boolean {
+  return stagedAtMs !== undefined && stagedVersion !== undefined;
+}
+
+/** The feed is offering something other than what is already staged. */
+function supersedesStagedBuild(version: string | undefined): boolean {
+  return hasStagedBuild() && version !== undefined && version !== stagedVersion;
+}
+
+type UpdateCheckOutcome = Awaited<ReturnType<typeof autoUpdater.checkForUpdates>>;
+
+/**
+ * Land a terminal status when a check resolved without emitting one.
+ *
+ * electron-updater can do exactly that: `checkForUpdates()` called while another
+ * check is in flight returns the in-flight promise, and that check's events were
+ * already consumed under a different operation. Nothing else ever moves the
+ * status off "checking", and the Settings row keys its spinner and its disabled
+ * Check button off that state, so the page wedges with no visible explanation.
+ * Called only on renderer-requested checks, which are the ones a user is waiting on.
+ */
+function settleCheckStatus(result: UpdateCheckOutcome): void {
+  if (lastStatus.state !== "checking") return;
+  const version = result?.updateInfo?.version;
+  if (result?.isUpdateAvailable === true && version !== undefined) {
+    broadcastCompletedCheck({ state: "available", version });
+    return;
+  }
+  broadcastCompletedCheck(
+    hasStagedBuild() ? stagedDownloadedStatus() : { state: "not-available" },
+  );
 }
 
 // stagedDownloadedStatus rebuilds the enriched downloaded status from module
@@ -643,7 +919,11 @@ function wireUpdaterEvents(): void {
       return;
     }
     pendingUpdateVersion = info?.version;
+    offeredReleaseNotes = normalizeReleaseNotes(info?.releaseNotes) ?? directFeedReleaseNotes;
     broadcastCompletedCheck({ state: "available", version: info?.version });
+  });
+  autoUpdater.on("update-cancelled", () => {
+    clearDownloadStallWatchdog();
   });
   autoUpdater.on("update-not-available", () => {
     // A successful check proves the network stack is healthy.
@@ -664,6 +944,7 @@ function wireUpdaterEvents(): void {
     consecutiveAutomaticCheckFailures = 0;
     failingChecksPublished = false;
     activeUpdaterPhase = "download";
+    armDownloadStallWatchdog();
     return broadcastUpdaterStatus({
       state: "downloading",
       version: pendingUpdateVersion,
@@ -671,16 +952,33 @@ function wireUpdaterEvents(): void {
     });
   });
   autoUpdater.on("update-downloaded", (info) => {
+    clearDownloadStallWatchdog();
+    downloadStalled = false;
     emitUpdateOutcome({
       event: "ao.renderer.update_downloaded",
       phase: "download",
       trigger: activeUpdateTrigger(),
       ...(info?.version ? { to_version: info.version } : {}),
     });
+    // Re-staging the SAME build must not restart the staged clock. electron-updater
+    // re-runs its download task whenever a check finds a version it has already
+    // cached, so this event repeats on every automatic check until the user quits.
+    // Resetting stagedAtMs there would mean the latest-channel 48h escalation rule
+    // could never fire, because the clock is only ever minutes old.
+    const restaged = stagedAtMs !== undefined && info?.version === stagedVersion;
     stagedVersion = info?.version;
-    stagedAtMs = Date.now();
-    stagedEscalated = false;
+    stagedChannel = autoUpdater.channel ?? undefined;
+    offeredReleaseNotes =
+      normalizeReleaseNotes(info?.releaseNotes) ?? offeredReleaseNotes ?? directFeedReleaseNotes;
+    if (!restaged) {
+      stagedAtMs = Date.now();
+      stagedEscalated = false;
+    }
     stagedRequestId = activeUpdaterRequestId;
+    // A build is staged again, so install-on-quit has something correct to run.
+    awaitingStagedReplacement = false;
+    applyInstallOnQuitPolicy();
+    persistStagedBuild(escalationStateDir);
     automaticCheckPreviousStatus = undefined;
     // A completed automatic download advances the independent baseline; a
     // renderer-requested download additionally carries its request ownership.
@@ -689,14 +987,28 @@ function wireUpdaterEvents(): void {
     // while the update sits uninstalled. unref so the timer never holds the
     // process open on quit.
     void runEscalationCheck();
-    stopEscalationTimer();
-    escalationTimer = setInterval(
-      () => void runEscalationCheck(),
-      30 * 60 * 1000,
-    );
-    escalationTimer.unref?.();
+    // Re-arming on a re-stage would push the next evaluation out by another 30
+    // minutes every time, and the nightly channel re-stages every 15 — the loop
+    // would never get a turn. Leave the running timer alone in that case.
+    if (!restaged || escalationTimer === undefined) {
+      stopEscalationTimer();
+      escalationTimer = setInterval(
+        () => void runEscalationCheck(),
+        30 * 60 * 1000,
+      );
+      escalationTimer.unref?.();
+    }
   });
   autoUpdater.on("error", (err) => {
+    clearDownloadStallWatchdog();
+    if (downloadStalled) {
+      // Our own cancellation surfacing as an error. The stall status is already
+      // published and is more useful than "cancelled"; replacing it would lose
+      // the retry wording.
+      downloadStalled = false;
+      console.info("update download cancelled after stalling:", err);
+      return;
+    }
     // Never crash on update failure (offline, unsigned macOS, etc.).
     // A one-off automatic failure restores the previous status so the UI does
     // not flash an error the user never asked for. That suppression is a UI
@@ -753,6 +1065,11 @@ export function getUpdateStatus(): UpdateStatus {
   // seeds from this getter (#3526).
   return {
     ...lastStatus,
+    ...stagedStamp(),
+    ...(offeredReleaseNotes !== undefined && lastStatus.releaseNotes === undefined &&
+      (lastStatus.state === "available" || lastStatus.state === "downloading" || lastStatus.state === "downloaded")
+      ? { releaseNotes: offeredReleaseNotes }
+      : {}),
     ...(consecutiveAutomaticNetFailures >= STALE_CHECK_NUDGE_THRESHOLD
       ? { staleCheckNudge: true }
       : {}),
@@ -787,17 +1104,45 @@ async function runAutomaticUpdateCheck(
       // Discovery is always on for the selected release channel. This preference
       // controls only whether electron-updater downloads the discovered build or
       // leaves it in `available` for the sidebar action.
-      autoUpdater.autoDownload = settings.enabled;
+      //
+      // A build that is already staged suspends auto-download for this check.
+      // electron-updater does not treat "already in the cache" as done: a cache
+      // hit still runs the download task's completion path, which on macOS copies
+      // the whole zip to update.zip and hands Squirrel a fresh install request.
+      // With autoDownload on, that repeated for every check for as long as the
+      // user went without quitting — 175 MB of copying and a ShipIt spawn every
+      // 15 minutes on nightly. Anything genuinely newer than the staged build is
+      // still fetched, below.
+      // A staged build from a channel the user has left is already armed with
+      // the OS installer; the replacement must be fetched even when automatic
+      // downloading is off, or quitting installs the build they moved away from.
+      const staleStaged = stagedBuildIsStale(settings);
+      if (staleStaged) discardStagedBuild();
+      autoUpdater.autoDownload =
+        staleStaged || (settings.enabled && !hasStagedBuild());
       applyInstallOnQuitPolicy();
-      // Only nightly resolves a direct feed. Skipping the await entirely on the
-      // other channels keeps this check's event ordering exactly as it was.
-      const restoreFeed = usesDirectNightlyFeed(settings)
-        ? await configureDirectNightlyFeed(settings)
+      // Only prerelease channels resolve a direct feed. Skipping the await on
+      // stable keeps that check's event ordering exactly as it was.
+      const restoreFeed = directPrereleaseChannel(settings)
+        ? await configureDirectPrereleaseFeed(settings)
         : undefined;
       try {
         const result = await autoUpdater.checkForUpdates();
-        if (settings.enabled && result?.downloadPromise) {
-          await result.downloadPromise;
+        if (settings.enabled) {
+          if (result?.downloadPromise) {
+            // The provider owns this download's token; hand it to the watchdog
+            // so a stall can actually be cancelled rather than just reported.
+            activeDownloadCancellation = result.cancellationToken;
+            await result.downloadPromise;
+          } else if (supersedesStagedBuild(result?.updateInfo?.version)) {
+            // autoDownload was suspended for the staged build, but this is a
+            // different version, so it still has to be fetched automatically.
+            activeUpdaterPhase = "download";
+            pendingUpdateVersion = result?.updateInfo?.version;
+            const token = new CancellationToken();
+            activeDownloadCancellation = token;
+            await autoUpdater.downloadUpdate(token);
+          }
         }
       } catch (err) {
         // electron-updater normally also emits "error" (handled in
@@ -877,6 +1222,8 @@ async function requestAutomaticUpdateCheck(
 // downloaded automatically. Both preferences come from update-settings.
 // Caller guards on app.isPackaged.
 export async function startAutoUpdates(stateDir: string): Promise<void> {
+  escalationStateDir = stateDir;
+  restoreStagedBuild(stateDir);
   startRetirementPollTimer(stateDir);
   const intervalMs = await requestAutomaticUpdateCheck(stateDir);
   if (intervalMs !== undefined)
@@ -944,12 +1291,16 @@ export async function checkForUpdatesNow(
         );
         reconcileAutomaticUpdateSchedule(stateDir, settings);
         configureFeed(settings);
-        autoUpdater.autoDownload = false;
+        // Same reason as the automatic path: a channel switch leaves the old
+        // channel's build armed, and only staging the new one over it helps.
+        const staleStaged = stagedBuildIsStale(settings);
+        if (staleStaged) discardStagedBuild();
+        autoUpdater.autoDownload = staleStaged;
         applyInstallOnQuitPolicy();
         broadcastUpdaterStatus({ state: "checking" });
-        const restoreFeed = await configureDirectNightlyFeed(settings);
+        const restoreFeed = await configureDirectPrereleaseFeed(settings);
         try {
-          await autoUpdater.checkForUpdates();
+          settleCheckStatus(await autoUpdater.checkForUpdates());
         } finally {
           restoreFeed?.();
         }
@@ -1013,10 +1364,14 @@ export async function returnToHome(
         const settings = await reconcileAndPersist(stateDir, cleared);
         reconcileAutomaticUpdateSchedule(stateDir, settings);
         configureFeed(settings);
-        autoUpdater.autoDownload = false;
+        // Leaving a pinned PR build is the same class of switch: its build is
+        // armed and has to be superseded, not merely forgotten.
+        const staleStaged = stagedBuildIsStale(settings);
+        if (staleStaged) discardStagedBuild();
+        autoUpdater.autoDownload = staleStaged;
         applyInstallOnQuitPolicy();
         broadcastUpdaterStatus({ state: "checking" });
-        await autoUpdater.checkForUpdates();
+        settleCheckStatus(await autoUpdater.checkForUpdates());
       },
       requestId,
     );
@@ -1050,7 +1405,11 @@ export async function downloadUpdateNow(requestId?: string): Promise<void> {
     await runSerializedUpdaterOperation(
       "manual-download",
       async () => {
-        await autoUpdater.downloadUpdate();
+        // Manual downloads get no provider token, so make one: without it the
+        // watchdog could report a stall but never release the request.
+        const token = new CancellationToken();
+        activeDownloadCancellation = token;
+        await autoUpdater.downloadUpdate(token);
       },
       requestId,
     );
@@ -1132,7 +1491,12 @@ export function getMacInstallBlocker(): string | undefined {
 // the staged build wait for a location it can actually install from.
 function applyInstallOnQuitPolicy(): void {
   const blocker = getMacInstallBlocker();
-  autoUpdater.autoInstallOnAppQuit = blocker === undefined;
+  autoUpdater.autoInstallOnAppQuit = blocker === undefined && !awaitingStagedReplacement;
+  if (awaitingStagedReplacement) {
+    console.info(
+      "install-on-quit disabled until the replacement build is staged; the cached one belongs to a channel the user left",
+    );
+  }
   if (blocker !== undefined) {
     console.warn(
       "install-on-quit disabled; the update cannot be installed from here:",

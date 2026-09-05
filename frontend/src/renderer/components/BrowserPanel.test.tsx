@@ -49,6 +49,7 @@ const hookState = vi.hoisted(() => ({
 	tabNotice: "",
 	agentBrowserActive: false,
 	agentBrowserActivity: null as { active: boolean; action?: string; phase?: "started" | "finished" } | null,
+	profileState: { viewId: "42:sess-1", profileId: null as string | null, temporary: true },
 	previewUrl: undefined as string | undefined,
 	navState: {
 		viewId: "42:sess-1",
@@ -83,6 +84,7 @@ vi.mock("../hooks/useBrowserView", () => ({
 			reopenClosedTab: hookState.reopenClosedTab,
 			agentBrowserActive: hookState.agentBrowserActive,
 			agentBrowserActivity: hookState.agentBrowserActivity,
+			profileState: hookState.profileState,
 			devtoolsState: hookState.devtoolsState,
 			openDevTools: hookState.openDevTools,
 			closeDevTools: hookState.closeDevTools,
@@ -170,6 +172,15 @@ describe("BrowserPanel", () => {
 	let reopenClosedTabListener: ((viewId: string) => void) | undefined;
 	const pageFocusListeners = new Set<(viewId: string) => void>();
 
+	async function openBrowserControls() {
+		await userEvent.click(screen.getByRole("button", { name: "Browser controls" }));
+	}
+
+	async function openDevicePresets() {
+		await openBrowserControls();
+		await userEvent.click(screen.getByRole("menuitem", { name: "Device preset" }));
+	}
+
 	beforeEach(() => {
 		hookState.navigate.mockReset();
 		hookState.goBack.mockReset();
@@ -214,6 +225,9 @@ describe("BrowserPanel", () => {
 				annotationCancelListeners.delete(listener);
 			};
 		});
+		window.ao!.browser.historySuggestions = vi.fn(async () => []);
+		window.ao!.browser.selectProfile = vi.fn(async () => undefined);
+		window.ao!.browserProfiles.list = vi.fn(async () => ({ profiles: [] }));
 		window.ao!.browser.notifyPanelUsed = vi.fn();
 		window.ao!.browser.notifyPanelBlur = vi.fn();
 		window.ao!.browser.onFocusLocation = vi.fn((listener: (viewId: string) => void) => {
@@ -229,6 +243,7 @@ describe("BrowserPanel", () => {
 			};
 		});
 		hookState.previewUrl = undefined;
+		hookState.profileState = { viewId: "42:sess-1", profileId: null, temporary: true };
 		hookState.tabs = [{ id: "t1", url: "", title: "", active: true }];
 		hookState.activeTabId = "t1";
 		hookState.tabNotice = "";
@@ -250,6 +265,76 @@ describe("BrowserPanel", () => {
 		await userEvent.type(input, "localhost:5173{Enter}");
 
 		expect(hookState.navigate).toHaveBeenCalledWith("localhost:5173");
+		expect(input).not.toHaveFocus();
+	});
+
+	it("supports consecutive address-bar navigations after refocusing", async () => {
+		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
+		const input = screen.getByRole("textbox", { name: /browser url/i });
+
+		await userEvent.clear(input);
+		await userEvent.type(input, "first.example{Enter}");
+		await userEvent.click(input);
+		await userEvent.clear(input);
+		await userEvent.type(input, "second.example{Enter}");
+
+		expect(hookState.navigate).toHaveBeenNthCalledWith(1, "first.example");
+		expect(hookState.navigate).toHaveBeenNthCalledWith(2, "second.example");
+		expect(input).not.toHaveFocus();
+	});
+
+	it("shows imported history through native address-bar suggestions without adding an overlay", async () => {
+		hookState.profileState = {
+			viewId: "42:sess-1",
+			profileId: "11111111-1111-4111-8111-111111111111",
+			temporary: false,
+		};
+		window.ao!.browser.historySuggestions = vi.fn(async () => [
+			{ url: "https://github.com/openai", title: "OpenAI" },
+		]);
+		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
+		const input = screen.getByRole("textbox", { name: /browser url/i });
+
+		await userEvent.type(input, "git");
+
+		await waitFor(() => expect(window.ao!.browser.historySuggestions).toHaveBeenCalledWith({
+			viewId: "42:sess-1",
+			query: "git",
+		}), { timeout: 2_000 });
+		await waitFor(() => expect(document.querySelector("datalist option")).not.toBeNull());
+		const option = document.querySelector("datalist option")!;
+		expect(option).toHaveValue("https://github.com/openai");
+		expect(input).toHaveAttribute("list", option.closest("datalist")?.id);
+		expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+
+		fireEvent.change(input, { target: { value: "https://github.com/openai" } });
+		expect(hookState.navigate).toHaveBeenCalledWith("https://github.com/openai");
+		expect(input).not.toHaveFocus();
+		expect(document.querySelector("datalist option")).toBeNull();
+	});
+
+	it("does not search imported history until the address is edited", async () => {
+		hookState.profileState = {
+			viewId: "42:sess-1",
+			profileId: "11111111-1111-4111-8111-111111111111",
+			temporary: false,
+		};
+		hookState.navState = { ...hookState.navState, url: "https://example.com/current" };
+		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
+		const input = screen.getByRole("textbox", { name: /browser url/i });
+
+		fireEvent.focus(input);
+		await new Promise((resolve) => window.setTimeout(resolve, 150));
+		expect(window.ao!.browser.historySuggestions).not.toHaveBeenCalled();
+
+		await userEvent.clear(input);
+		await userEvent.type(input, "exa");
+		await waitFor(() =>
+			expect(window.ao!.browser.historySuggestions).toHaveBeenCalledWith({
+				viewId: "42:sess-1",
+				query: "exa",
+			}),
+		);
 	});
 
 	it("marks browser UI as used and focuses the address bar for a matching shortcut request", async () => {
@@ -305,7 +390,9 @@ describe("BrowserPanel", () => {
 		});
 		expect(toolbar).toHaveClass("browser-panel__toolbar--url-takeover");
 		expect(within(toolbar).getByRole("button", { name: /back/i })).toHaveClass("browser-panel__navigation-btn");
+		expect(within(toolbar).getByRole("button", { name: /back/i }).parentElement).toHaveClass("browser-panel__navigation-control");
 		expect(within(toolbar).getByRole("button", { name: /forward/i })).toHaveClass("browser-panel__navigation-btn");
+		expect(within(toolbar).getByRole("button", { name: /forward/i }).parentElement).toHaveClass("browser-panel__navigation-control");
 		expect(within(toolbar).getByRole("button", { name: /reload/i })).toHaveClass("browser-panel__navigation-btn");
 
 		act(() => {
@@ -333,20 +420,63 @@ describe("BrowserPanel", () => {
 		expect(within(toolbar).getByRole("button", { name: /reload/i })).toBeInTheDocument();
 	});
 
+	it("keeps secondary browser controls compact until device presets are requested", async () => {
+		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
+
+		await openBrowserControls();
+		expect(screen.getByRole("menuitem", { name: "Device preset" })).toBeInTheDocument();
+		expect(screen.getByRole("menuitem", { name: /Browser profile/ })).toBeInTheDocument();
+		expect(screen.getByRole("menuitem", { name: "Open DevTools" })).toBeInTheDocument();
+		expect(screen.queryByRole("menuitem", { name: /iPhone SE/ })).not.toBeInTheDocument();
+
+		await userEvent.click(screen.getByRole("menuitem", { name: "Device preset" }));
+		expect(screen.getByRole("menuitem", { name: /iPhone SE/ })).toBeInTheDocument();
+		expect(screen.getByRole("menuitem", { name: /iPhone SE/ }).parentElement).toHaveClass("board-scrollbar");
+	});
+
+	it("keeps browser profiles inside the AO controls menu", async () => {
+		window.ao!.browserProfiles.list = vi.fn(async () => ({
+			profiles: [
+				{
+					id: "11111111-1111-4111-8111-111111111111",
+					name: "Work",
+					createdAt: "2026-01-01T00:00:00.000Z",
+					updatedAt: "2026-01-01T00:00:00.000Z",
+				},
+			],
+		}));
+		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
+
+		expect(screen.queryByRole("button", { name: /Browser profile:/ })).not.toBeInTheDocument();
+		await openBrowserControls();
+		await userEvent.click(screen.getByRole("menuitem", { name: /Browser profile/ }));
+
+		expect(await screen.findByRole("menuitem", { name: "Temporary" })).toBeInTheDocument();
+		expect(screen.getByRole("menuitem", { name: "Work" })).toBeInTheDocument();
+		expect(screen.getByRole("menuitem", { name: "Manage browser profiles" })).toBeInTheDocument();
+		await userEvent.click(screen.getByRole("menuitem", { name: "Work" }));
+		expect(window.ao!.browser.selectProfile).toHaveBeenCalledWith(
+			expect.objectContaining({
+				viewId: "42:sess-1",
+				profileId: "11111111-1111-4111-8111-111111111111",
+			}),
+		);
+	});
+
 	it("constrains the device frame to a named preset's width, and clears it back to fit", async () => {
 		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
 		const frame = screen.getByTestId("browser-device-frame").parentElement as HTMLElement;
 		expect(frame.style.width).toBe("");
 
-		await userEvent.click(screen.getByRole("button", { name: "Device preset" }));
+		await openDevicePresets();
 		await userEvent.click(screen.getByRole("menuitem", { name: /iPhone SE/ }));
 		expect(frame.style.width).toBe("375px");
 
-		await userEvent.click(screen.getByRole("button", { name: "Device preset" }));
+		await openDevicePresets();
 		await userEvent.click(screen.getByRole("menuitem", { name: /iPad Mini/ }));
 		expect(frame.style.width).toBe("768px");
 
-		await userEvent.click(screen.getByRole("button", { name: "Device preset" }));
+		await openDevicePresets();
 		await userEvent.click(screen.getByRole("menuitem", { name: "Fit panel" }));
 		expect(frame.style.width).toBe("");
 	});
@@ -355,7 +485,7 @@ describe("BrowserPanel", () => {
 		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
 		const frame = screen.getByTestId("browser-device-frame").parentElement as HTMLElement;
 
-		await userEvent.click(screen.getByRole("button", { name: "Device preset" }));
+		await openDevicePresets();
 		const customWidthInput = screen.getByLabelText("Custom width") as HTMLInputElement;
 		await userEvent.clear(customWidthInput);
 		await userEvent.type(customWidthInput, "600");
@@ -371,7 +501,7 @@ describe("BrowserPanel", () => {
 	// hand-picked subset.
 	it("offers Chrome DevTools' own standard device list", async () => {
 		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
-		await userEvent.click(screen.getByRole("button", { name: "Device preset" }));
+		await openDevicePresets();
 
 		for (const name of [
 			"iPhone SE",
@@ -406,7 +536,7 @@ describe("BrowserPanel", () => {
 	it("marks the device-preset dropdown as a browser overlay so it paints above the live page", async () => {
 		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
 
-		await userEvent.click(screen.getByRole("button", { name: "Device preset" }));
+		await openDevicePresets();
 
 		const menu = screen.getByRole("menu");
 		expect(menu.getAttribute("data-browser-native-overlay")).toBe("true");
@@ -566,7 +696,7 @@ describe("BrowserPanel", () => {
 			{ id: "t2", url: "http://localhost:4173/", title: "Second app", active: true },
 		];
 		hookState.activeTabId = "t2";
-		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut session={session} />);
+		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
 
 		const tabList = screen.getByRole("tablist", { name: "Browser tabs" });
 		const firstTab = within(tabList).getByRole("tab", { name: "First app" });
@@ -618,10 +748,10 @@ describe("BrowserPanel", () => {
 		expect(hookState.openTab).toHaveBeenCalledOnce();
 	});
 
-	it("keeps the horizontal tab strip out of docked mode", () => {
+	it("keeps both responsive tab placements available in docked mode", () => {
 		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
 
-		expect(screen.queryByTestId("browser-tab-bar")).not.toBeInTheDocument();
+		expect(screen.getByTestId("browser-tab-bar")).toBeInTheDocument();
 		expect(screen.getByTestId("browser-tabs-rail")).toBeInTheDocument();
 	});
 
@@ -647,42 +777,44 @@ describe("BrowserPanel", () => {
 		expect(screen.queryByText("Agent", { exact: true })).not.toBeInTheDocument();
 	});
 
-	it("opens DevTools from a direct toolbar control", async () => {
+	it("opens DevTools from the compact browser controls menu", async () => {
 		hookState.navState = { ...hookState.navState, url: "http://localhost:3000/" };
 		const { rerender } = render(
 			<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />,
 		);
 		const toolbarButtonCount = screen.getAllByRole("button").length;
 
-		const openButton = screen.getByRole("button", { name: "Open DevTools" });
-		expect(openButton).toHaveAttribute("aria-pressed", "false");
-		await userEvent.click(openButton);
+		const controls = screen.getByRole("button", { name: "Browser controls" });
+		expect(controls).toHaveAttribute("aria-pressed", "false");
+		await openBrowserControls();
+		await userEvent.click(screen.getByRole("menuitem", { name: "Open DevTools" }));
 		expect(hookState.openDevTools).toHaveBeenCalledOnce();
 
 		hookState.devtoolsState = { viewId: "42:sess-1", open: true, activeTabId: "t1" };
 		rerender(<TooltipProvider><BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} /></TooltipProvider>);
 		expect(screen.getAllByRole("button")).toHaveLength(toolbarButtonCount);
-		const closeButton = screen.getByRole("button", { name: "Close DevTools" });
-		expect(closeButton).toHaveAttribute("aria-pressed", "true");
-		expect(closeButton).toHaveClass(
+		expect(controls).toHaveAttribute("aria-pressed", "true");
+		expect(controls).toHaveClass(
 			"bg-accent-strong",
 			"text-accent-foreground",
 			"hover:bg-accent-strong",
 			"dark:hover:bg-accent-strong",
 		);
-		await userEvent.click(closeButton);
+		await openBrowserControls();
+		await userEvent.click(screen.getByRole("menuitem", { name: "Close DevTools" }));
 		expect(hookState.closeDevTools).toHaveBeenCalledOnce();
 	});
 
-	it("disables DevTools until the active tab has a page", () => {
+	it("disables DevTools in the controls menu until the active tab has a page", async () => {
 		const { rerender } = render(
 			<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />,
 		);
-		expect(screen.getByRole("button", { name: "Open DevTools" })).toBeDisabled();
+		await openBrowserControls();
+		expect(screen.getByRole("menuitem", { name: "Open DevTools" })).toHaveAttribute("data-disabled");
 
 		hookState.navState = { ...hookState.navState, url: "http://localhost:3000/" };
 		rerender(<TooltipProvider><BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} /></TooltipProvider>);
-		expect(screen.getByRole("button", { name: "Open DevTools" })).toBeEnabled();
+		expect(screen.getByRole("menuitem", { name: "Open DevTools" })).not.toHaveAttribute("data-disabled");
 	});
 
 	it("marks blank native panels as opaque and loaded panels as live", () => {
