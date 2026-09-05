@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { QueryClient, QueryObserver } from "@tanstack/react-query";
 import { computeSseRetryDelayMs } from "./sse-backoff";
 
 const {
@@ -64,7 +65,8 @@ class EventSourceStub {
 
 function fakeQueryClient() {
 	return {
-		invalidateQueries: vi.fn(),
+		invalidateQueries: vi.fn().mockResolvedValue(undefined),
+		isFetching: vi.fn().mockReturnValue(0),
 		refetchQueries: vi.fn().mockResolvedValue(undefined),
 		setQueryData: vi.fn(),
 	} as unknown as Parameters<typeof createEventTransport>[0];
@@ -198,10 +200,10 @@ describe("createEventTransport", () => {
 			onStatusHandler();
 			expect(queryClient.invalidateQueries).not.toHaveBeenCalled();
 			vi.advanceTimersByTime(200);
-			expect(queryClient.invalidateQueries).toHaveBeenCalledWith({ queryKey: ["workspaces"] });
-			expect(queryClient.invalidateQueries).toHaveBeenCalledWith({ queryKey: ["session-agent-switches"] });
-			expect(queryClient.invalidateQueries).toHaveBeenCalledWith({ queryKey: ["session-scm-summary"] });
-			expect(queryClient.invalidateQueries).toHaveBeenCalledWith({ queryKey: ["session-usage"] });
+			expect(queryClient.invalidateQueries).toHaveBeenCalledWith({ queryKey: ["workspaces"] }, { cancelRefetch: false });
+			expect(queryClient.invalidateQueries).toHaveBeenCalledWith({ queryKey: ["session-agent-switches"] }, { cancelRefetch: false });
+			expect(queryClient.invalidateQueries).toHaveBeenCalledWith({ queryKey: ["session-scm-summary"] }, { cancelRefetch: false });
+			expect(queryClient.invalidateQueries).toHaveBeenCalledWith({ queryKey: ["session-usage"] }, { cancelRefetch: false });
 		} finally {
 			vi.useRealTimers();
 		}
@@ -221,7 +223,7 @@ describe("createEventTransport", () => {
 
 			vi.advanceTimersByTime(200);
 
-			expect(queryClient.invalidateQueries).toHaveBeenCalledWith({ queryKey: ["conversation"] });
+			expect(queryClient.invalidateQueries).toHaveBeenCalledWith({ queryKey: ["conversation"] }, { cancelRefetch: false });
 		} finally {
 			vi.useRealTimers();
 		}
@@ -253,8 +255,8 @@ describe("createEventTransport", () => {
 			vi.advanceTimersByTime(200);
 			expect(queryClient.invalidateQueries).toHaveBeenCalledWith({
 				queryKey: ["conversation", "chat-1"],
-			});
-			expect(queryClient.invalidateQueries).not.toHaveBeenCalledWith({ queryKey: ["workspaces"] });
+			}, { cancelRefetch: false });
+			expect(queryClient.invalidateQueries).not.toHaveBeenCalledWith({ queryKey: ["workspaces"] }, { cancelRefetch: false });
 			expect(queryClient.invalidateQueries).not.toHaveBeenCalledWith({
 				queryKey: ["session-scm-summary"],
 			});
@@ -287,7 +289,7 @@ describe("createEventTransport", () => {
 			vi.advanceTimersByTime(200);
 			expect(queryClient.invalidateQueries).toHaveBeenCalledWith({
 				queryKey: ["session-interface-transition", "session-1"],
-			});
+			}, { cancelRefetch: false });
 		} finally {
 			vi.useRealTimers();
 		}
@@ -312,7 +314,7 @@ describe("createEventTransport", () => {
 
 		expect(cached).toMatchObject({ activeAccountId: "account-1", accountRevision: 2 });
 		expect(cached).toMatchObject({ accounts: [{ id: "account-1", active: true }] });
-		expect(queryClient.invalidateQueries).not.toHaveBeenCalledWith({ queryKey: ["workspaces"] });
+		expect(queryClient.invalidateQueries).not.toHaveBeenCalledWith({ queryKey: ["workspaces"] }, { cancelRefetch: false });
 	});
 
 	it("keeps account stream open and CDC invalidation within their own cache domains", () => {
@@ -322,7 +324,7 @@ describe("createEventTransport", () => {
 			createEventTransport(queryClient).connect();
 			accountSources()[0].onopen?.();
 			expect(queryClient.invalidateQueries).toHaveBeenCalledWith({ queryKey: ["codex-accounts"] });
-			expect(queryClient.invalidateQueries).not.toHaveBeenCalledWith({ queryKey: ["workspaces"] });
+			expect(queryClient.invalidateQueries).not.toHaveBeenCalledWith({ queryKey: ["workspaces"] }, { cancelRefetch: false });
 
 			vi.mocked(queryClient.invalidateQueries).mockClear();
 			cdcSources()[0].emit("session_updated", JSON.stringify({ sessionId: "session-1", payload: {} }));
@@ -450,4 +452,112 @@ describe("createEventTransport", () => {
 		expect(getEventsConnectionState()).toBe("idle");
 		expect(unsubscribeBaseUrlMock).toHaveBeenCalledTimes(1);
 	});
+});
+
+
+describe("bounded live refresh", () => {
+	const emit = (sessionId = "chat-1") => cdcSources()[0].emit("session_updated", JSON.stringify({ sessionId, payload: { conversationId: "conv-1" } }));
+	afterEach(() => vi.useRealTimers());
+
+	it("refreshes throughout continuous 100ms events rather than waiting for silence", async () => {
+		vi.useFakeTimers();
+		const client = fakeQueryClient();
+		const disconnect = createEventTransport(client).connect();
+		for (let elapsed = 0; elapsed < 2_000; elapsed += 100) {
+			emit();
+			await vi.advanceTimersByTimeAsync(100);
+			if (elapsed >= 100) expect(client.invalidateQueries).toHaveBeenCalled();
+		}
+		expect(client.invalidateQueries).toHaveBeenCalledTimes(10);
+		disconnect();
+	});
+
+	it("deduplicates sessions within a window and discards pending work on disposal", async () => {
+		vi.useFakeTimers();
+		const client = fakeQueryClient();
+		const disconnect = createEventTransport(client).connect();
+		emit("a"); emit("a"); emit("b");
+		await vi.advanceTimersByTimeAsync(150);
+		expect(client.invalidateQueries).toHaveBeenCalledTimes(2);
+		emit("c");
+		disconnect();
+		emit("late");
+		await vi.advanceTimersByTimeAsync(500);
+		expect(client.invalidateQueries).toHaveBeenCalledTimes(2);
+	});
+
+	it("lets slow fetches finish and catches up once for events during the fetch", async () => {
+		vi.useFakeTimers();
+		const client = fakeQueryClient();
+		let finish!: () => void;
+		vi.mocked(client.invalidateQueries).mockReturnValueOnce(new Promise<void>((resolve) => { finish = resolve; }));
+		const disconnect = createEventTransport(client).connect();
+		emit();
+		await vi.advanceTimersByTimeAsync(150);
+		for (let i = 0; i < 5; i++) { emit(); await vi.advanceTimersByTimeAsync(150); }
+		expect(client.invalidateQueries).toHaveBeenCalledTimes(1);
+		expect(client.invalidateQueries).toHaveBeenCalledWith({ queryKey: ["conversation", "chat-1"] }, { cancelRefetch: false });
+		finish();
+		await vi.advanceTimersByTimeAsync(0);
+		expect(client.invalidateQueries).toHaveBeenCalledTimes(2);
+		disconnect();
+	});
+
+	it("catches up after a fetch started outside the transport without cancelling it", async () => {
+		vi.useFakeTimers();
+		const client = fakeQueryClient();
+		vi.mocked(client.isFetching).mockReturnValueOnce(1);
+		const disconnect = createEventTransport(client).connect();
+		emit();
+		await vi.advanceTimersByTimeAsync(150);
+		expect(client.invalidateQueries).toHaveBeenCalledTimes(2);
+		disconnect();
+	});
+
+	it("drops a queued catch-up when disposed during a fetch", async () => {
+		vi.useFakeTimers();
+		const client = fakeQueryClient();
+		let finish!: () => void;
+		vi.mocked(client.invalidateQueries).mockReturnValueOnce(new Promise<void>((resolve) => { finish = resolve; }));
+		const disconnect = createEventTransport(client).connect();
+		emit(); await vi.advanceTimersByTimeAsync(150);
+		emit(); await vi.advanceTimersByTimeAsync(150);
+		disconnect(); finish(); await vi.advanceTimersByTimeAsync(0);
+		expect(client.invalidateQueries).toHaveBeenCalledTimes(1);
+	});
+});
+
+
+it("preserves real TanStack requests and fetches the newest snapshot after queued CDC", async () => {
+	vi.useFakeTimers();
+	const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+	const finishes: Array<(value: number) => void> = [];
+	let aborts = 0;
+	const observer = new QueryObserver(client, {
+		queryKey: ["conversation", "slow-chat"],
+		initialData: 0,
+		staleTime: Infinity,
+		queryFn: ({ signal }) => {
+			signal.addEventListener("abort", () => { aborts++; });
+			return new Promise<number>((resolve) => finishes.push(resolve));
+		},
+	});
+	const unsubscribe = observer.subscribe(() => undefined);
+	const disconnect = createEventTransport(client).connect();
+	const emit = () => cdcSources()[0].emit("session_updated", JSON.stringify({ sessionId: "slow-chat", payload: { conversationId: "conv-1" } }));
+	try {
+		emit(); await vi.advanceTimersByTimeAsync(150);
+		expect(finishes).toHaveLength(1);
+		for (let i = 0; i < 5; i++) { emit(); await vi.advanceTimersByTimeAsync(150); }
+		expect(finishes).toHaveLength(1);
+		expect(aborts).toBe(0);
+		finishes[0](1); await vi.advanceTimersByTimeAsync(0);
+		expect(client.getQueryData(["conversation", "slow-chat"])).toBe(1);
+		expect(finishes).toHaveLength(2);
+		finishes[1](2); await vi.advanceTimersByTimeAsync(0);
+		expect(client.getQueryData(["conversation", "slow-chat"])).toBe(2);
+		expect(aborts).toBe(0);
+	} finally {
+		disconnect(); unsubscribe(); client.clear(); vi.useRealTimers();
+	}
 });
