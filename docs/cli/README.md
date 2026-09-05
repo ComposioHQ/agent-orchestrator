@@ -246,8 +246,10 @@ ao project set-config my-project \
 `ao project get my-project --json`, preserve its `project.config` fields, add
 `canonicalRepoURL`, and submit the complete object with `--config-json`. The same
 object is accepted by `PUT /api/v1/projects/{id}/config` as `{"config": {...}}`.
-Use an HTTPS repository URL, without a PR/MR suffix, credentials, query, fragment,
-or port. Self-managed GitLab URLs and nested namespaces are supported.
+Use an HTTPS repository URL, without a PR/MR suffix, credentials, query, or fragment.
+Self-managed GitLab URLs and nested namespaces are supported. Explicit ports
+are preserved and must match too; `gitlab.example.com:8443` is a different
+authority from `gitlab.example.com`.
 
 Both `ao session claim-pr 42` and `ao spawn --claim-pr 42` resolve numbers against
 canonical when configured, otherwise origin. A full PR/MR URL may name either

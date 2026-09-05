@@ -3,14 +3,17 @@ package domain
 import (
 	"errors"
 	"fmt"
+	"net"
 	"net/url"
+	"strconv"
 	"strings"
 )
 
 // RepositoryIdentity identifies a provider repository, including its entire namespace.
 // Git transport remotes never implicitly authorize additional repositories.
 type RepositoryIdentity struct {
-	Provider  string
+	Provider string
+	// Host includes an explicit port, matching the SCM provider authority.
 	Host      string
 	Namespace string
 	Name      string
@@ -19,6 +22,9 @@ type RepositoryIdentity struct {
 // RepositoryProvider follows the SCM dispatcher: recognized GitHub hosts use
 // GitHub; other hosts use GitLab, including self-managed installations.
 func RepositoryProvider(host string) string {
+	if hostname, _, err := net.SplitHostPort(host); err == nil {
+		host = hostname
+	}
 	host = strings.ToLower(host)
 	if host == "github.com" || host == "www.github.com" || host == "api.github.com" || strings.HasSuffix(host, ".github.com") || strings.HasSuffix(host, ".ghe.io") {
 		return "github"
@@ -46,8 +52,14 @@ func ParseRepositoryIdentity(raw string) (RepositoryIdentity, error) {
 	if (u.Scheme != "https" && u.Scheme != "http" && u.Scheme != "ssh") || u.Hostname() == "" || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || u.RawPath != "" || strings.ContainsAny(u.Path, `\`) {
 		return RepositoryIdentity{}, invalid
 	}
-	if u.Scheme != "ssh" && u.Port() != "" {
+	if strings.HasSuffix(u.Host, ":") {
 		return RepositoryIdentity{}, invalid
+	}
+	if u.Port() != "" {
+		port, err := strconv.Atoi(u.Port())
+		if err != nil || port < 1 || port > 65535 {
+			return RepositoryIdentity{}, invalid
+		}
 	}
 	parts := strings.Split(strings.TrimSuffix(strings.TrimPrefix(u.Path, "/"), "/"), "/")
 	if len(parts) < 2 {
@@ -63,7 +75,7 @@ func ParseRepositoryIdentity(raw string) (RepositoryIdentity, error) {
 	if provider == "github" && len(parts) != 2 {
 		return RepositoryIdentity{}, invalid
 	}
-	return RepositoryIdentity{Provider: provider, Host: strings.ToLower(u.Hostname()), Namespace: strings.Join(parts[:len(parts)-1], "/"), Name: parts[len(parts)-1]}, nil
+	return RepositoryIdentity{Provider: provider, Host: strings.ToLower(u.Host), Namespace: strings.Join(parts[:len(parts)-1], "/"), Name: parts[len(parts)-1]}, nil
 }
 
 // ValidateCanonicalRepository keeps an explicitly selected upstream on the
@@ -75,7 +87,7 @@ func (c ProjectConfig) ValidateCanonicalRepository(origin string) error {
 	upstream, err := ParseRepositoryIdentity(c.CanonicalRepoURL)
 	canonicalURL, urlErr := url.Parse(c.CanonicalRepoURL)
 	if err != nil || urlErr != nil || canonicalURL.Scheme != "https" || canonicalURL.User != nil {
-		return fmt.Errorf("canonicalRepoURL: use an HTTPS repository URL without credentials, query, fragment, or port")
+		return fmt.Errorf("canonicalRepoURL: use an HTTPS repository URL without credentials, query, or fragment")
 	}
 	checkout, err := ParseRepositoryIdentity(origin)
 	if err != nil {

@@ -21,6 +21,7 @@ func TestCanonicalRepositoryValidation(t *testing.T) {
 		{"credentials", "https://github.com/alice/repo", "https://user:secret@github.com/acme/repo", false},
 		{"traversal", "https://gitlab.com/alice/repo", "https://gitlab.com/acme/../repo", false},
 		{"encoded namespace", "https://gitlab.com/alice/repo", "https://gitlab.com/acme%2fsub/repo", false},
+		{"custom authority", "https://gitlab.example.com:8443/alice/repo", "https://gitlab.example.com:8443/group/sub/repo", true},
 		{"port", "https://github.com/alice/repo", "https://github.com:8443/acme/repo", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

@@ -415,10 +415,10 @@ func parsePRURL(raw string) (host, owner, name string, number int, err error) {
 	if err != nil {
 		return "", "", "", 0, err
 	}
-	if !strings.EqualFold(u.Scheme, "https") || u.Hostname() == "" || u.User != nil || u.Port() != "" || u.RawPath != "" {
+	if !strings.EqualFold(u.Scheme, "https") || u.Hostname() == "" || u.User != nil || u.RawPath != "" {
 		return "", "", "", 0, ErrInvalidPRRef
 	}
-	host = u.Hostname()
+	host = u.Host
 	parts := strings.Split(strings.Trim(u.Path, "/"), "/")
 
 	// GitHub: /owner/repo/pull/N → 4 parts, parts[2] == "pull"

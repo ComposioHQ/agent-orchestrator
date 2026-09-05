@@ -13,6 +13,7 @@ import (
 func TestClaimCommandsCanonicalRepository(t *testing.T) {
 	for _, provider := range []struct{ name, origin, canonical, pr string }{
 		{"github", "https://github.com/alice/repo", "https://github.com/acme/repo", "https://github.com/acme/repo/pull/7"},
+		{"gitlab custom port", "https://gitlab.example.com:8443/alice/repo", "https://gitlab.example.com:8443/group/sub/repo", "https://gitlab.example.com:8443/group/sub/repo/-/merge_requests/7"},
 		{"gitlab", "https://gitlab.com/alice/team/repo", "https://gitlab.com/group/subgroup/repo", "https://gitlab.com/group/subgroup/repo/-/merge_requests/7"},
 	} {
 		for _, spawn := range []bool{false, true} {

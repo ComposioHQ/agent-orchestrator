@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"net/url"
 	"strconv"
 	"strings"
@@ -64,10 +65,10 @@ func cliParsePRURL(raw string) (host, owner, name string, number int, err error)
 	if err != nil {
 		return "", "", "", 0, err
 	}
-	if !strings.EqualFold(u.Scheme, "https") || u.Hostname() == "" || u.User != nil || u.Port() != "" || u.RawPath != "" {
+	if !strings.EqualFold(u.Scheme, "https") || u.Hostname() == "" || u.User != nil || u.RawPath != "" {
 		return "", "", "", 0, errors.New("not https")
 	}
-	host = u.Hostname()
+	host = u.Host
 	parts := strings.Split(strings.Trim(u.Path, "/"), "/")
 
 	// GitHub: /owner/repo/pull/N → 4 parts, parts[2] == "pull"
@@ -128,7 +129,7 @@ func cliRepoFromURL(raw string) (host, owner, name string, err error) {
 	if err != nil {
 		return "", "", "", err
 	}
-	host = u.Hostname()
+	host = u.Host
 	parts := strings.Split(strings.Trim(u.Path, "/"), "/")
 	if len(parts) < 2 {
 		return "", "", "", errors.New("bad repo")
@@ -144,6 +145,9 @@ func cliRepoFromURL(raw string) (host, owner, name string, err error) {
 }
 
 func isCLIGitHubHost(host string) bool {
+	if hostname, _, err := net.SplitHostPort(host); err == nil {
+		host = hostname
+	}
 	host = strings.ToLower(host)
 	return host == "github.com" || host == "www.github.com" || host == "api.github.com" ||
 		strings.HasSuffix(host, ".github.com") || strings.HasSuffix(host, ".ghe.io")
