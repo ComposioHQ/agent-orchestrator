@@ -1314,7 +1314,7 @@ describe("Sidebar", () => {
 
 		await user.click(screen.getByLabelText("New project"));
 		await user.click(screen.getByRole("button", { name: /^Import a workspace folder$/i }));
-		expect(screen.getByText("Initialize at least one child repository with a commit and origin remote before importing this workspace.")).toBeInTheDocument();
+		expect(screen.getByText("Set up at least one child folder as a Git repository before importing this workspace.")).toBeInTheDocument();
 		expect(screen.queryByText("No repositories detected in this folder.")).not.toBeInTheDocument();
 		expect(screen.queryByText("/repo/workspace")).not.toBeInTheDocument();
 		expect(screen.queryByRole("button", { name: "Continue" })).not.toBeInTheDocument();
@@ -1501,7 +1501,7 @@ describe("Sidebar", () => {
 		await vi.waitFor(() => expect(prepared).toBe(true));
 	});
 
-	it("prepares an approved plain workspace child only after Continue", async () => {
+	it("allows an all-plain workspace after one child is approved for setup", async () => {
 		const user = userEvent.setup();
 		window.ao!.app.chooseDirectory = vi.fn().mockResolvedValue("/repo/workspace");
 		window.ao!.app.checkAncestorRepo = vi.fn().mockResolvedValue(undefined);
@@ -1527,11 +1527,11 @@ describe("Sidebar", () => {
 			return {
 				data: {
 					importKind: "workspace",
-					isValid: true,
-					blockingErrors: [],
+					isValid: false,
+					blockingErrors: ["WORKSPACE_CHILD_REPO_REQUIRED"],
 					root: { repoPath: "/repo/workspace", isRepo: false, hasCommit: false, hasOrigin: false, isEmptyFolder: false, needsGitInit: true, requiredActions: ["git_init", "git_commit", "set_remote"], blockingErrors: [] },
-					childRepos: [{ repoPath: "/repo/workspace/app", isRepo: true, hasCommit: true, hasOrigin: true, isEmptyFolder: false, needsGitInit: false, requiredActions: [], blockingErrors: [] }],
-					nextStep: "continue",
+					childRepos: [],
+					nextStep: "error",
 				},
 				error: undefined,
 			};
@@ -1539,7 +1539,7 @@ describe("Sidebar", () => {
 		window.ao!.app.scanImportFolder = vi.fn().mockResolvedValue({
 			path: "/repo/workspace",
 			repos: [
-				{ name: "app", path: "/repo/workspace/app", relativePath: "app", branch: "main", remote: "https://example.com/app.git", hasRemote: true, isRepo: true, hasCommit: true, status: "ok", needsGitInit: false },
+				{ name: "app", path: "/repo/workspace/app", relativePath: "app", branch: "", remote: "", hasRemote: false, isRepo: false, hasCommit: false, status: "ok", needsGitInit: true },
 				{ name: "docs", path: "/repo/workspace/docs", relativePath: "docs", branch: "", remote: "", hasRemote: false, isRepo: false, hasCommit: false, status: "ok", needsGitInit: true },
 			],
 		});
@@ -1547,11 +1547,12 @@ describe("Sidebar", () => {
 
 		await user.click(screen.getByLabelText("New project"));
 		await user.click(screen.getByRole("button", { name: /^Import a workspace folder$/i }));
-		await user.click(screen.getByRole("button", { name: "Not a Git repo · Set up" }));
-		await user.click(screen.getByRole("checkbox"));
+		expect(screen.queryByRole("button", { name: "Continue" })).not.toBeInTheDocument();
+		await user.click(screen.getAllByRole("button", { name: "Not a Git repo · Set up" })[0]);
+		await user.click(screen.getAllByRole("checkbox")[0]);
 		expect(preparationBody).toBeUndefined();
 		await user.click(screen.getByRole("button", { name: "Continue" }));
-		await vi.waitFor(() => expect(preparationBody).toMatchObject({ repositories: [{ repoPath: "/repo/workspace/docs" }] }));
+		await vi.waitFor(() => expect(preparationBody).toMatchObject({ repositories: [{ repoPath: "/repo/workspace/app" }] }));
 	});
 
 	it("does not rescan folders for non-validation create failures", async () => {

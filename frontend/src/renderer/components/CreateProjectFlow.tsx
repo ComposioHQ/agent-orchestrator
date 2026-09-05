@@ -1896,12 +1896,18 @@ function CreateProjectFolderDialog({
 	const displayRepos = isWorkspace ? mergeWorkspaceImportRepos(scan, validation) : normalizeImportRepos(scan?.repos ?? []);
 	const workspaceNeedsInitializedRepo = isWorkspace && validation?.blockingErrors.includes("WORKSPACE_CHILD_REPO_REQUIRED");
 	const workspaceRootIsProject = isWorkspace && validation?.nextStep === "choose_import_kind" && validation.root.isRepo;
-	const workspaceSetupReady = !isWorkspace || displayRepos.every((repo) => {
+	const selectedSetupRepos = displayRepos.filter((repo) => repo.requiredActions.length > 0 && (workspaceApprovedActions[repo.path]?.length ?? 0) > 0);
+	const selectedSetupReady = selectedSetupRepos.every((repo) =>
+		repo.requiredActions.every((action) => workspaceApprovedActions[repo.path]?.includes(action)) &&
+		(!repo.requiredActions.includes("set_remote") || Boolean(workspaceRemoteUrls[repo.path]?.trim())),
+	);
+	const requiredSetupReady = displayRepos.every((repo) => {
 		if (repo.requiredActions.length === 0) return true;
 		const approved = repo.requiredActions.every((action) => workspaceApprovedActions[repo.path]?.includes(action));
 		if (!repo.isRepo && !approved) return true;
 		return approved && (!repo.requiredActions.includes("set_remote") || Boolean(workspaceRemoteUrls[repo.path]?.trim()));
 	});
+	const workspaceSetupReady = !isWorkspace || (workspaceNeedsInitializedRepo ? selectedSetupRepos.length > 0 && selectedSetupReady : requiredSetupReady && selectedSetupReady);
 	const failedRepos =
 		displayRepos.filter(
 			(repo) =>
@@ -1979,7 +1985,7 @@ function CreateProjectFolderDialog({
 										)}
 									</div>
 								)}
-								{workspaceNeedsInitializedRepo && !error ? <p className="text-[14px] leading-6 text-[var(--color-text-import-muted)]">Initialize at least one child repository with a commit and origin remote before importing this workspace.</p> : null}
+								{workspaceNeedsInitializedRepo && !error ? <p className="text-[14px] leading-6 text-[var(--color-text-import-muted)]">Set up at least one child folder as a Git repository before importing this workspace.</p> : null}
 								{workspaceRootIsProject && !error ? <p className="text-[14px] leading-6 text-[var(--color-text-import-muted)]">This is a single project, not a collection of projects. Import it as a project instead.</p> : null}
 
 							{workspaceRootIsProject ? null : isWorkspace ? <WorkspaceImportRepoList
@@ -2011,7 +2017,7 @@ function CreateProjectFolderDialog({
 								<Button type="button" variant="primary" disabled={disabled} onClick={onContinueAsProject}>
 									Import as project
 								</Button>
-							) : hasScan && failedRepos.length === 0 && !error && !workspaceNeedsInitializedRepo ? (
+							) : hasScan && failedRepos.length === 0 && !error && (!workspaceNeedsInitializedRepo || selectedSetupRepos.length > 0) ? (
 								<Button type="button" variant="primary" disabled={disabled || !workspaceSetupReady} onClick={onContinue}>
 									{isPreparingGit ? <><CircleDashed className="size-4 animate-spin" aria-hidden="true" />{t("createProject.settingUp")}</> : t("createProject.cloneContinue")}
 								</Button>

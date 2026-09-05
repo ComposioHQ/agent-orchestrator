@@ -275,7 +275,11 @@ func (m *Manager) PrepareGit(ctx context.Context, in GitPreparationInput) (GitPr
 	if err != nil {
 		return GitPreparationResult{}, err
 	}
-	if !validation.IsValid {
+	canPrepareFirstWorkspaceRepo := importKind == ImportKindWorkspace &&
+		len(in.Repositories) > 0 &&
+		len(validation.BlockingErrors) == 1 &&
+		slices.Contains(validation.BlockingErrors, "WORKSPACE_CHILD_REPO_REQUIRED")
+	if !validation.IsValid && !canPrepareFirstWorkspaceRepo {
 		return GitPreparationResult{Validation: validation}, nil
 	}
 	targets, err := preparationTargets(ctx, validation, in)

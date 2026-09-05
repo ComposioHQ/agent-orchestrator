@@ -862,7 +862,6 @@ func TestPrepareGitWorkspaceRunsPerRepositoryEvents(t *testing.T) {
 func TestPrepareGitWorkspaceCanInitializeAnApprovedPlainChild(t *testing.T) {
 	ctx := context.Background()
 	root := t.TempDir()
-	gitRepoWithCommitWithOrigin(t, filepath.Join(root, "ready"), "https://example.invalid/ready.git")
 	plain := filepath.Join(root, "plain")
 	if err := os.Mkdir(plain, 0o755); err != nil {
 		t.Fatal(err)
