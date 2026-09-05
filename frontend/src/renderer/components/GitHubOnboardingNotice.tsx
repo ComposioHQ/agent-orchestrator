@@ -64,54 +64,56 @@ export function GitHubOnboardingNotice() {
 	const cliMissing = !gh?.satisfied;
 	const checking = authQuery.isFetching;
 	return (
-		<div className="w-full max-w-[620px] rounded-lg border border-warning/30 bg-warning/10 px-4 py-3" role="status">
-			<div className="flex items-start gap-3">
-				<GitPullRequest className="mt-0.5 size-5 shrink-0 text-warning" aria-hidden="true" />
-				<div className="min-w-0 flex-1">
-					<p className="text-[14px] font-medium text-foreground">{t("startup.githubSetupTitle")}</p>
-					<p className="mt-0.5 text-[12px] leading-5 text-muted-foreground">
-						{t(cliMissing ? "startup.githubSetupMissingCli" : "startup.githubSetupSignedOut")}
-					</p>
-					<div className="mt-2 flex flex-wrap items-center gap-2">
-						<button
-							type="button"
-							className="settings-footer-button settings-footer-button-primary"
-							disabled={!cliMissing && (startLogin.isPending || Boolean(terminal))}
-							onClick={() => cliMissing ? void aoBridge.app.openExternal(GITHUB_CLI_INSTALL_URL) : openLogin()}
-						>
-							{cliMissing ? null : <TerminalSquare className="size-icon-sm" aria-hidden="true" />}
-							{cliMissing
-								? t("startup.openGithubCliDocs")
-								: startLogin.isPending
-									? t("startup.githubLoginStarting")
-									: t("startup.githubLogin")}
-						</button>
-						<button
-							type="button"
-							className="settings-footer-button"
-							disabled={checking}
-							onClick={() => void checkAgain()}
-						>
-							{checking ? t("startup.checkingAgain") : t("startup.checkAgain")}
-						</button>
-					</div>
-					{startLogin.isError ? <p className="mt-2 text-xs text-destructive" role="alert">{startLogin.error.message}</p> : null}
-					{terminal ? (
-						<div className="mt-3 overflow-hidden rounded-md border border-border bg-terminal" data-testid="github-auth-terminal">
-							<div className="flex min-h-9 items-center justify-between gap-3 border-b border-border bg-surface/90 px-3 py-1.5">
-								<div className="min-w-0">
-									<p className="truncate text-xs font-medium text-foreground">{terminal.title}</p>
-									<p className="truncate text-[11px] text-muted-foreground">{t("startup.githubLoginRunning")}</p>
-								</div>
-								<button type="button" aria-label={t("common.close")} className="grid size-7 shrink-0 place-items-center rounded text-muted-foreground hover:bg-interactive-hover hover:text-foreground" onClick={closeLogin}>
-									<X className="size-4" aria-hidden="true" />
-								</button>
-							</div>
-							<div className="h-[240px] min-h-0">
-								<TerminalPane daemonReady={shell ? shell.daemonStatus.state === "ready" : true} fontSize={12} onTerminalStateChange={handleTerminalState} terminalTarget={{ kind: "shell", handleId: terminal.handleId, generation: terminal.createdAt, title: terminal.title }} theme={theme} />
-							</div>
+		<div className="flex w-full justify-center px-3">
+			<div className="w-full max-w-[620px] rounded-lg border border-warning/30 bg-warning/10 px-4 py-3" role="status">
+				<div className="flex items-start gap-3">
+					<GitPullRequest className="mt-0.5 size-5 shrink-0 text-warning" aria-hidden="true" />
+					<div className="min-w-0 flex-1">
+						<p className="text-[14px] font-medium text-foreground">{t("startup.githubSetupTitle")}</p>
+						<p className="mt-0.5 text-[12px] leading-5 text-muted-foreground">
+							{t(cliMissing ? "startup.githubSetupMissingCli" : "startup.githubSetupSignedOut")}
+						</p>
+						<div className="mt-2 flex flex-wrap items-center gap-2">
+							<button
+								type="button"
+								className="settings-footer-button settings-footer-button-primary"
+								disabled={!cliMissing && (startLogin.isPending || Boolean(terminal))}
+								onClick={() => cliMissing ? void aoBridge.app.openExternal(GITHUB_CLI_INSTALL_URL) : openLogin()}
+							>
+								{cliMissing ? null : <TerminalSquare className="size-icon-sm" aria-hidden="true" />}
+								{cliMissing
+									? t("startup.openGithubCliDocs")
+									: startLogin.isPending
+										? t("startup.githubLoginStarting")
+										: t("startup.githubLogin")}
+							</button>
+							<button
+								type="button"
+								className="settings-footer-button"
+								disabled={checking}
+								onClick={() => void checkAgain()}
+							>
+								{checking ? t("startup.checkingAgain") : t("startup.checkAgain")}
+							</button>
 						</div>
-					) : null}
+						{startLogin.isError ? <p className="mt-2 text-xs text-destructive" role="alert">{startLogin.error.message}</p> : null}
+						{terminal ? (
+							<div className="mt-3 overflow-hidden rounded-md border border-border bg-terminal" data-testid="github-auth-terminal">
+								<div className="flex min-h-9 items-center justify-between gap-3 border-b border-border bg-surface/90 px-3 py-1.5">
+									<div className="min-w-0">
+										<p className="truncate text-xs font-medium text-foreground">{terminal.title}</p>
+										<p className="truncate text-[11px] text-muted-foreground">{t("startup.githubLoginRunning")}</p>
+									</div>
+									<button type="button" aria-label={t("common.close")} className="grid size-7 shrink-0 place-items-center rounded text-muted-foreground hover:bg-interactive-hover hover:text-foreground" onClick={closeLogin}>
+										<X className="size-4" aria-hidden="true" />
+									</button>
+								</div>
+								<div className="h-[240px] min-h-0">
+									<TerminalPane daemonReady={shell ? shell.daemonStatus.state === "ready" : true} fontSize={12} onTerminalStateChange={handleTerminalState} terminalTarget={{ kind: "shell", handleId: terminal.handleId, generation: terminal.createdAt, title: terminal.title }} theme={theme} />
+								</div>
+							</div>
+						) : null}
+					</div>
 				</div>
 			</div>
 		</div>

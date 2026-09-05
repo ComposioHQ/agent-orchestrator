@@ -63,11 +63,11 @@ func TestCheck_AllSatisfied(t *testing.T) {
 	catalog := &fakeHarnessCatalog{inventory: agentsvc.Inventory{
 		Installed: []agentsvc.Info{{ID: "claude-code", Label: "Claude Code"}},
 	}}
-	svc := NewWithLookPath(catalog, lookPathFound(map[string]string{
+	svc := NewWithCommandRunner(catalog, executableFinderFunc(lookPathFound(map[string]string{
 		"git":  "/usr/bin/git",
 		"tmux": "/usr/bin/tmux",
 		"gh":   "/usr/bin/gh",
-	}))
+	})), &fakeCommandRunner{})
 
 	report, err := svc.Check(context.Background())
 	if err != nil {
@@ -358,6 +358,18 @@ func TestCheckGitHubAuth_IsAdvisory(t *testing.T) {
 	}
 	if got, want := runner.argv, []string{"/usr/bin/gh", "auth", "token"}; !slices.Equal(got, want) {
 		t.Fatalf("auth probe argv = %#v, want %#v", got, want)
+	}
+}
+
+func TestCheckGitHubAuth_MissingCommandRunnerDoesNotReportAuthenticated(t *testing.T) {
+	svc := NewWithLookPath(&fakeHarnessCatalog{}, lookPathFound(map[string]string{"gh": "/usr/bin/gh"}))
+
+	auth, err := svc.CheckGitHubAuth(context.Background())
+	if err != nil {
+		t.Fatalf("CheckGitHubAuth() error = %v", err)
+	}
+	if auth.Satisfied || auth.Required {
+		t.Fatalf("github-auth = %+v, want unsatisfied advisory", auth)
 	}
 }
 

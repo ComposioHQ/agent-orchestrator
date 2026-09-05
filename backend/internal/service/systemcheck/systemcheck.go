@@ -250,9 +250,9 @@ func (s *Service) checkGitHubAuth(ctx context.Context) Requirement {
 		return Requirement{ID: "github-auth", Label: "GitHub access", Detail: detail}
 	}
 	if s.commands == nil {
-		// Lightweight embedders that provide only executable lookup retain the
-		// previous behavior. Production supplies a command runner.
-		return Requirement{ID: "github-auth", Label: "GitHub access", Satisfied: true, Detail: "Authentication check unavailable."}
+		// An unavailable probe is not proof of authentication. Keep this advisory
+		// unsatisfied so a wiring error cannot silently disable onboarding.
+		return Requirement{ID: "github-auth", Label: "GitHub access", Detail: detail}
 	}
 	probeCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
