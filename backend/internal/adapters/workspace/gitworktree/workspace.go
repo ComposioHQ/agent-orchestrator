@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -355,7 +356,7 @@ func (w *Workspace) CreateWorkspaceProject(ctx context.Context, cfg ports.Worksp
 	}
 	created := make([]workspaceProjectRepo, 0, len(repos))
 	out := ports.WorkspaceProjectInfo{Worktrees: make([]ports.WorkspaceRepoInfo, 0, len(repos))}
-	for _, repo := range repos {
+	for repoIndex, repo := range repos {
 		baseSHA, err := w.createWorkspaceProjectRepo(ctx, repo, branch)
 		if err != nil {
 			for i := len(created) - 1; i >= 0; i-- {
@@ -364,6 +365,14 @@ func (w *Workspace) CreateWorkspaceProject(ctx context.Context, cfg ports.Worksp
 			return ports.WorkspaceProjectInfo{}, err
 		}
 		created = append(created, repo)
+		if repoIndex == 0 {
+			if err := copyWorkspaceAssets(rootRepo, rootPath, cfg.Assets); err != nil {
+				for i := len(created) - 1; i >= 0; i-- {
+					_ = w.forceDestroyPath(ctx, created[i].repoPath, created[i].outputPath)
+				}
+				return ports.WorkspaceProjectInfo{}, err
+			}
+		}
 		info := ports.WorkspaceRepoInfo{
 			RepoName:     repo.name,
 			RepoPath:     repo.repoPath,
@@ -381,6 +390,107 @@ func (w *Workspace) CreateWorkspaceProject(ctx context.Context, cfg ports.Worksp
 		}
 	}
 	return out, nil
+}
+
+func copyWorkspaceAssets(sourceRoot, destinationRoot string, assets []ports.WorkspaceProjectAssetConfig) error {
+	for _, asset := range assets {
+		rel, err := cleanRelativePath(asset.RelativePath)
+		if err != nil || hasWorkspaceManagedComponent(rel) {
+			return fmt.Errorf("gitworktree: workspace asset %q: %w", asset.RelativePath, ErrUnsafePath)
+		}
+		source, err := physicalAbs(asset.SourcePath)
+		if err != nil || !assetPathWithin(sourceRoot, source) {
+			return fmt.Errorf("gitworktree: workspace asset %q source: %w", asset.RelativePath, ErrUnsafePath)
+		}
+		destination := filepath.Join(destinationRoot, filepath.FromSlash(rel))
+		if !assetPathWithin(destinationRoot, destination) {
+			return fmt.Errorf("gitworktree: workspace asset %q destination: %w", asset.RelativePath, ErrUnsafePath)
+		}
+		if err := copyWorkspaceAssetTree(sourceRoot, source, destination); err != nil {
+			return fmt.Errorf("gitworktree: copy workspace asset %q: %w", asset.RelativePath, err)
+		}
+	}
+	return nil
+}
+
+func copyWorkspaceAssetTree(sourceRoot, source, destination string) error {
+	info, err := os.Lstat(source)
+	if err != nil {
+		return err
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		target, err := os.Readlink(source)
+		if err != nil {
+			return err
+		}
+		if filepath.IsAbs(target) {
+			return fmt.Errorf("absolute symlink %q: %w", source, ErrUnsafePath)
+		}
+		resolved := filepath.Clean(filepath.Join(filepath.Dir(source), target))
+		if !assetPathWithin(sourceRoot, resolved) || hasWorkspaceManagedComponent(relativeOrEmpty(sourceRoot, resolved)) {
+			return fmt.Errorf("symlink %q escapes or targets managed data: %w", source, ErrUnsafePath)
+		}
+		physicalTarget, err := filepath.EvalSymlinks(resolved)
+		if err != nil || !assetPathWithin(sourceRoot, physicalTarget) {
+			return fmt.Errorf("symlink %q has an unsafe or unresolved target: %w", source, ErrUnsafePath)
+		}
+		return os.Symlink(target, destination)
+	}
+	if info.IsDir() {
+		if err := os.Mkdir(destination, info.Mode().Perm()); err != nil {
+			return err
+		}
+		entries, err := os.ReadDir(source)
+		if err != nil {
+			return err
+		}
+		for _, entry := range entries {
+			if entry.Name() == ".git" || entry.Name() == ".ao" {
+				continue
+			}
+			if err := copyWorkspaceAssetTree(sourceRoot, filepath.Join(source, entry.Name()), filepath.Join(destination, entry.Name())); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("unsupported file type at %q", source)
+	}
+	in, err := os.Open(source)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	out, err := os.OpenFile(destination, os.O_WRONLY|os.O_CREATE|os.O_EXCL, info.Mode().Perm())
+	if err != nil {
+		return err
+	}
+	_, copyErr := io.Copy(out, in)
+	closeErr := out.Close()
+	if copyErr != nil {
+		return copyErr
+	}
+	return closeErr
+}
+
+func assetPathWithin(root, path string) bool {
+	rel, err := filepath.Rel(filepath.Clean(root), filepath.Clean(path))
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+}
+
+func relativeOrEmpty(root, path string) string {
+	rel, _ := filepath.Rel(root, path)
+	return rel
+}
+
+func hasWorkspaceManagedComponent(path string) bool {
+	for _, component := range strings.Split(filepath.ToSlash(path), "/") {
+		if component == ".git" || component == ".ao" {
+			return true
+		}
+	}
+	return false
 }
 
 // DestroyWorkspaceProject removes every worktree in a workspace project,

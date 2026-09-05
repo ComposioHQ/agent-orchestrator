@@ -730,6 +730,98 @@ func TestWorkspaceIntegrationWorkspaceProjectInfersPerRepoDefaultBranches(t *tes
 	}
 }
 
+func TestWorkspaceIntegrationWorkspaceProjectCopiesAssetsAndCleansSessionCopy(t *testing.T) {
+	git := requireGit(t)
+	tmp := t.TempDir()
+	rootRepo := setupOriginClone(t, git, filepath.Join(tmp, "root"))
+	childRepo := setupOriginClone(t, git, filepath.Join(rootRepo, "api"))
+	asset := filepath.Join(rootRepo, "notes")
+	if err := os.MkdirAll(filepath.Join(asset, "nested"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	sourceFile := filepath.Join(asset, "nested", "context.txt")
+	if err := os.WriteFile(sourceFile, []byte("source context"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(asset, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(asset, ".git", "secret"), []byte("never copy"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("nested/context.txt", filepath.Join(asset, "latest")); err != nil {
+		t.Fatal(err)
+	}
+
+	ws, err := New(Options{Binary: git, ManagedRoot: filepath.Join(tmp, "managed"), RepoResolver: StaticRepoResolver{"proj": rootRepo}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, err := ws.CreateWorkspaceProject(context.Background(), ports.WorkspaceProjectConfig{
+		ProjectID: "proj", SessionID: "sess", Kind: "worker", Branch: "ao/assets",
+		RootRepoPath: rootRepo,
+		Repos:        []ports.WorkspaceProjectRepoConfig{{Name: "api", RelativePath: "api", RepoPath: childRepo}},
+		Assets:       []ports.WorkspaceProjectAssetConfig{{RelativePath: "notes", SourcePath: asset}},
+	})
+	if err != nil {
+		t.Fatalf("create workspace project: %v", err)
+	}
+	copied, err := os.ReadFile(filepath.Join(info.Root.Path, "notes", "nested", "context.txt"))
+	if err != nil || string(copied) != "source context" {
+		t.Fatalf("copied asset = %q, %v", copied, err)
+	}
+	if target, err := os.Readlink(filepath.Join(info.Root.Path, "notes", "latest")); err != nil || target != "nested/context.txt" {
+		t.Fatalf("copied symlink = %q, %v", target, err)
+	}
+	if _, err := os.Stat(filepath.Join(info.Root.Path, "notes", ".git")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("asset .git metadata was copied: %v", err)
+	}
+	if len(info.Worktrees) != 2 || info.Worktrees[1].RepoName != "api" {
+		t.Fatalf("worktrees = %#v, want root and independent api child", info.Worktrees)
+	}
+	if _, err := os.Stat(filepath.Join(info.Root.Path, "api", "README.md")); err != nil {
+		t.Fatalf("child worktree missing: %v", err)
+	}
+	if err := ws.DestroyWorkspaceProject(context.Background(), info); err != nil {
+		t.Fatalf("destroy workspace project: %v", err)
+	}
+	if _, err := os.Stat(info.Root.Path); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("session copy still exists after cleanup: %v", err)
+	}
+	if got, err := os.ReadFile(sourceFile); err != nil || string(got) != "source context" {
+		t.Fatalf("source asset changed during lifecycle: %q, %v", got, err)
+	}
+}
+
+func TestWorkspaceIntegrationWorkspaceProjectAssetCopyFailureRollsBackRoot(t *testing.T) {
+	git := requireGit(t)
+	tmp := t.TempDir()
+	rootRepo := setupOriginClone(t, git, filepath.Join(tmp, "root"))
+	asset := filepath.Join(rootRepo, "notes")
+	if err := os.Mkdir(asset, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	ws, err := New(Options{Binary: git, ManagedRoot: filepath.Join(tmp, "managed"), RepoResolver: StaticRepoResolver{"proj": rootRepo}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = ws.CreateWorkspaceProject(context.Background(), ports.WorkspaceProjectConfig{
+		ProjectID: "proj", SessionID: "sess", Kind: "worker", Branch: "ao/assets-fail",
+		RootRepoPath: rootRepo,
+		Assets: []ports.WorkspaceProjectAssetConfig{
+			{RelativePath: "notes", SourcePath: asset},
+			{RelativePath: "notes", SourcePath: asset},
+		},
+	})
+	if err == nil {
+		t.Fatal("expected duplicate asset destination to fail")
+	}
+	rootPath := filepath.Join(tmp, "managed", "proj", "worker", "sess")
+	if _, statErr := os.Stat(rootPath); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("root worktree was not rolled back: %v", statErr)
+	}
+}
+
 func TestFetchDefaultBranchRefreshesRemoteTrackingRef(t *testing.T) {
 	git := requireGit(t)
 	tmp := t.TempDir()

@@ -3755,10 +3755,18 @@ func TestSpawn_InfersEmptyWorkspaceChildDefaultBeforeFetchAndCreate(t *testing.T
 
 func TestSpawn_SkipsNeedsInitWorkspaceChildrenDuringRefreshAndCreate(t *testing.T) {
 	m, st, _, ws := newManager()
-	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Path: "/repo/mer", Kind: domain.ProjectKindWorkspace, Config: testRoleAgents()}
+	projectPath := t.TempDir()
+	if err := os.Mkdir(filepath.Join(projectPath, "assets"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(projectPath, "unborn", ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Path: projectPath, Kind: domain.ProjectKindWorkspace, Config: testRoleAgents()}
 	st.workspaceRepo["mer"] = []domain.WorkspaceRepoRecord{
 		{Name: "api", RelativePath: "api", DefaultBranch: "main", GitStatus: domain.GitStatusReady},
 		{Name: "unborn", RelativePath: "unborn", GitStatus: domain.GitStatusNeedsInit},
+		{Name: "assets", RelativePath: "assets", GitStatus: domain.GitStatusNeedsInit},
 	}
 
 	if _, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker}); err != nil {
@@ -3773,6 +3781,12 @@ func TestSpawn_SkipsNeedsInitWorkspaceChildrenDuringRefreshAndCreate(t *testing.
 	}
 	if got, want := ws.lastProjectCfg.Repos[0].Name, "api"; got != want {
 		t.Fatalf("materialized child = %q, want %q", got, want)
+	}
+	if got, want := len(ws.lastProjectCfg.Assets), 1; got != want {
+		t.Fatalf("materialized asset configs = %d, want %d", got, want)
+	}
+	if got, want := ws.lastProjectCfg.Assets[0].RelativePath, "assets"; got != want {
+		t.Fatalf("materialized asset = %q, want %q", got, want)
 	}
 }
 
