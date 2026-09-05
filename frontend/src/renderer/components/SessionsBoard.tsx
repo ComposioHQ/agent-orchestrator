@@ -330,7 +330,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 
 	return (
 		<div className="relative flex h-full min-h-0 flex-col bg-background text-foreground" data-testid="board">
-			{!boardActionsInPanel && visibleSpawnError && !showProjectEmpty ? (
+			{!boardActionsInPanel && isLoaded && visibleSpawnError && !showProjectEmpty ? (
 				<p role="alert" className="mx-3 my-3 whitespace-pre-wrap break-words text-sm text-destructive">
 					{visibleSpawnError}
 				</p>
