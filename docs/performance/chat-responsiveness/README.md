@@ -26,7 +26,7 @@ Baseline is commit `a96322315`. The identical fixture files are copied into the 
 
 ## Results
 
-Apple M5, 10 logical CPUs, 24 GiB RAM; macOS arm64; Node 24.20.0; Chromium 148.0.7778.96; 1440 × 1000 viewport. Implementation source was `cc6042e71` (later commits only package evidence). Values are medians with three-run ranges. See [all raw samples](measurements.json).
+Apple M5, 10 logical CPUs, 24 GiB RAM; macOS arm64; Node 24.20.0; Chromium 148.0.7778.96; 1440 × 1000 viewport. Implementation source was `cc6042e71` (later commits package evidence and CI setup). Values are medians with three-run ranges. See [all raw samples](measurements.json).
 
 | Measurement | Baseline | After |
 | --- | ---: | ---: |
@@ -69,11 +69,13 @@ Local validation used Node 24.20.0 on macOS:
 | Production Vite renderer build | Passed; separate 72 KB highlighting worker emitted |
 | Built worker under Electron / `app://` / production CSP | Passed |
 | Before/after controlled browser workloads | 12 runs per checkout; text and mounted-turn integrity checked |
-| Gitleaks v7.4.0 with the workflow config and PR commit list | 8 commits scanned; no leaks |
+| Gitleaks v7.4.0 with the workflow config and PR commit list | 9 commits scanned; no leaks |
+
+The first remote renderer-smoke run exposed a clean-install gap: the benchmark fixture imports real renderer components and shared product-ui source, but that job did not install product-ui dependencies. The workflow now installs them before E2E typechecking. Removing those dependencies locally reproduced the failure; the exact new install step restored passing typechecks, followed by all 52 renderer smoke tests passing.
 
 One initial complete Vitest run missed the unchanged settings form's temporary “Saved” indicator (3,750 passed / 1 failed). The full 40-test settings file passed separately on both baseline and branch, then the complete suite passed on rerun. Early overlapping browser runs timed out at startup under host swapping; the final full browser suite ran serially and passed. Initial native dependency setup also needed the pinned Electron binary and a Node 24 SQLite rebuild; these environment repairs changed no dependency manifest or lockfile.
 
-The requested `npx @redwoodjs/agent-ci run --all` wrapper stopped before dispatch because the release-artifact workflow requires `VITE_WORKOS_CLIENT_ID`. No release/publishing job was executed. Docker became unavailable before the secret scan, so the pinned Gitleaks v7.4.0 source was built locally and run against a normal disposable clone; the scanner reported all eight PR commits scanned. Applicable frontend workflow commands were therefore run directly; the remote Linux checks remain authoritative for their runner (see the PR Checks tab). Backend/API, mobile, and release-platform workflows are outside this frontend-only diff's path triggers.
+The requested `npx @redwoodjs/agent-ci run --all` wrapper stopped before dispatch because the release-artifact workflow requires `VITE_WORKOS_CLIENT_ID`. No release/publishing job was executed. Docker became unavailable before the secret scan, so the pinned Gitleaks v7.4.0 source was built locally and run against a normal disposable clone; the scanner reported all nine PR commits scanned. Applicable frontend workflow commands were therefore run directly; the remote Linux checks remain authoritative for their runner (see the PR Checks tab). Backend/API, mobile, and release-platform workflows are outside this frontend-only diff's path triggers.
 
 
 Native development smoke used an isolated daemon at `127.0.0.1:5322`, renderer at `localhost:5174`, and data/profile/run state under `~/.ao/performance-dev`. The actual Electron window displayed the home screen, and `/api/v1/projects` plus `/api/v1/sessions` returned 200. No existing AO project/session was changed. `ao preview` was attempted but correctly refused because this Codex task has no `AO_SESSION_ID`.
