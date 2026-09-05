@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { EditorHandoffState, OpenSessionTargetInput } from "../../shared/editor-handoff";
 import { TopbarOpenEditorButton } from "./TopbarOpenEditorButton";
+import { TooltipProvider } from "./ui/tooltip";
 
 vi.mock("../lib/telemetry", () => ({ captureRendererEvent: vi.fn() }));
 
@@ -34,7 +35,9 @@ function renderButton() {
 	const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
 	return render(
 		<QueryClientProvider client={client}>
-			<TopbarOpenEditorButton sessionId="sess-1" projectId="proj-1" />
+			<TooltipProvider>
+				<TopbarOpenEditorButton sessionId="sess-1" projectId="proj-1" />
+			</TooltipProvider>
 		</QueryClientProvider>,
 	);
 }
@@ -105,7 +108,10 @@ describe("TopbarOpenEditorButton", () => {
 		const options = screen.getByRole("button", { name: "Open workspace options" });
 		expect(options).toHaveClass("topbar-control--icon", "hover:bg-transparent");
 		expect(button).toHaveClass("hover:bg-transparent");
-		const group = button.parentElement;
+		// The button's tooltip trigger wraps it in a span (disabled buttons don't
+		// fire pointer events, so the hoverable element has to be the wrapper) —
+		// the actual topbar group is one level up.
+		const group = button.parentElement?.parentElement;
 		expect(group).toHaveClass("gap-0", "rounded-md", "hover:bg-interactive-hover", "data-[state=open]:bg-interactive-hover");
 		expect(group).toHaveAttribute("data-state", "closed");
 		await userEvent.click(button);
@@ -115,7 +121,7 @@ describe("TopbarOpenEditorButton", () => {
 	it("keeps the shared editor control highlighted while options are open", async () => {
 		renderButton();
 		const options = await screen.findByRole("button", { name: "Open workspace options" });
-		const group = options.parentElement;
+		const group = options.parentElement?.parentElement;
 
 		await userEvent.click(options);
 

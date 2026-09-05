@@ -88,6 +88,10 @@ func sessionCommandServer(t *testing.T) (*httptest.Server, *sessionRequestLog) {
 			_, _ = io.WriteString(w, `{"ok":true,"sessionId":"demo-1","freed":true}`)
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/sessions/demo-1/restore":
 			_, _ = io.WriteString(w, `{"ok":true,"sessionId":"demo-1","session":`+sessionJSON("demo-1", "demo", "worker", "idle", false)+`}`)
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/sessions/demo-1/exit-agent":
+			_, _ = io.WriteString(w, `{"ok":true,"sessionId":"demo-1","session":`+sessionJSON("demo-1", "demo", "worker", "exited", false)+`}`)
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/sessions/demo-1/resume-agent":
+			_, _ = io.WriteString(w, `{"ok":true,"sessionId":"demo-1","resumeMode":"native","session":`+sessionJSON("demo-1", "demo", "worker", "idle", false)+`}`)
 		case r.Method == http.MethodPatch && r.URL.Path == "/api/v1/sessions/demo-1":
 			var req sessionRenameRequest
 			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -342,6 +346,38 @@ func TestSessionRestore_SuccessWithProjectScope(t *testing.T) {
 	}
 }
 
+func TestSessionExitAndResumeAgentUseProcessOnlyRoutes(t *testing.T) {
+	cfg := setConfigEnv(t)
+	srv, log := sessionCommandServer(t)
+	writeRunFileFor(t, cfg, srv)
+	deps := Deps{ProcessAlive: func(int) bool { return true }}
+
+	out, errOut, err := executeCLI(t, deps, "session", "exit-agent", "demo-1", "--project", "demo")
+	if err != nil {
+		t.Fatalf("session exit-agent failed: %v\nstderr=%s", err, errOut)
+	}
+	if !strings.Contains(out, "agent exited for session demo-1") {
+		t.Fatalf("unexpected exit-agent output:\n%s", out)
+	}
+
+	out, errOut, err = executeCLI(t, deps, "session", "resume-agent", "demo-1")
+	if err != nil {
+		t.Fatalf("session resume-agent failed: %v\nstderr=%s", err, errOut)
+	}
+	if !strings.Contains(out, "agent resumed for session demo-1") || !strings.Contains(out, "mode: native") {
+		t.Fatalf("unexpected resume-agent output:\n%s", out)
+	}
+
+	want := []string{
+		"GET /api/v1/sessions/demo-1",
+		"POST /api/v1/sessions/demo-1/exit-agent",
+		"POST /api/v1/sessions/demo-1/resume-agent",
+	}
+	if got := log.all(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("requests = %#v, want %#v", got, want)
+	}
+}
+
 func TestSessionCleanup_YesSkipsPrompt(t *testing.T) {
 	cfg := setConfigEnv(t)
 	srv, log := sessionCommandServer(t)
@@ -490,7 +526,7 @@ func TestSessionRename_SuccessWithProjectScope(t *testing.T) {
 
 func TestSessionCommands_MissingIDIsUsageError(t *testing.T) {
 	setConfigEnv(t)
-	for _, sub := range []string{"get", "kill", "restore"} {
+	for _, sub := range []string{"get", "kill", "restore", "exit-agent", "resume-agent"} {
 		t.Run(sub, func(t *testing.T) {
 			_, _, err := executeCLI(t, Deps{}, "session", sub)
 			if err == nil {

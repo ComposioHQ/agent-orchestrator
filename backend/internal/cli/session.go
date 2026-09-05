@@ -78,6 +78,19 @@ type restoreSessionResponse struct {
 	Session   sessionDTO `json:"session"`
 }
 
+type exitAgentResponse struct {
+	OK        bool       `json:"ok"`
+	SessionID string     `json:"sessionId"`
+	Session   sessionDTO `json:"session"`
+}
+
+type resumeAgentResponse struct {
+	OK         bool       `json:"ok"`
+	SessionID  string     `json:"sessionId"`
+	ResumeMode string     `json:"resumeMode"`
+	Session    sessionDTO `json:"session"`
+}
+
 type renameSessionResponse struct {
 	SessionID   string `json:"sessionId"`
 	DisplayName string `json:"displayName"`
@@ -147,6 +160,8 @@ func newSessionCommand(ctx *commandContext) *cobra.Command {
 	cmd.AddCommand(newSessionGetCommand(ctx))
 	cmd.AddCommand(newSessionKillCommand(ctx))
 	cmd.AddCommand(newSessionRestoreCommand(ctx))
+	cmd.AddCommand(newSessionExitAgentCommand(ctx))
+	cmd.AddCommand(newSessionResumeAgentCommand(ctx))
 	cmd.AddCommand(newSessionRenameCommand(ctx))
 	cmd.AddCommand(newSessionCleanupCommand(ctx))
 	cmd.AddCommand(newSessionClaimPRCommand(ctx))
@@ -227,6 +242,44 @@ func newSessionRestoreCommand(ctx *commandContext) *cobra.Command {
 		},
 	}
 	addSessionProjectFlag(cmd.Flags(), &opts.project, "Project id to scope the lookup")
+	return cmd
+}
+
+func newSessionExitAgentCommand(ctx *commandContext) *cobra.Command {
+	var opts sessionOptions
+	cmd := &cobra.Command{
+		Use:   "exit-agent <id>",
+		Short: "Exit an agent without terminating its AO session",
+		Args:  oneSessionIDArg,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			id, err := normalizeSessionID(args[0])
+			if err != nil {
+				return err
+			}
+			return ctx.exitSessionAgent(cmd.Context(), cmd, id, opts)
+		},
+	}
+	addSessionProjectFlag(cmd.Flags(), &opts.project, "Project id to scope the lookup")
+	cmd.Flags().BoolVar(&opts.json, "json", false, "Output as JSON")
+	return cmd
+}
+
+func newSessionResumeAgentCommand(ctx *commandContext) *cobra.Command {
+	var opts sessionOptions
+	cmd := &cobra.Command{
+		Use:   "resume-agent <id>",
+		Short: "Resume an exited agent in its existing AO session",
+		Args:  oneSessionIDArg,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			id, err := normalizeSessionID(args[0])
+			if err != nil {
+				return err
+			}
+			return ctx.resumeSessionAgent(cmd.Context(), cmd, id, opts)
+		},
+	}
+	addSessionProjectFlag(cmd.Flags(), &opts.project, "Project id to scope the lookup")
+	cmd.Flags().BoolVar(&opts.json, "json", false, "Output as JSON")
 	return cmd
 }
 
@@ -508,6 +561,46 @@ func (c *commandContext) restoreSession(ctx context.Context, cmd *cobra.Command,
 		if _, err := fmt.Fprintf(out, "  project: %s\n", res.Session.ProjectID); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+func (c *commandContext) exitSessionAgent(ctx context.Context, cmd *cobra.Command, id string, opts sessionOptions) error {
+	if opts.project != "" {
+		if _, err := c.fetchScopedSession(ctx, id, opts.project); err != nil {
+			return err
+		}
+	}
+	var res exitAgentResponse
+	if err := c.postJSON(ctx, "sessions/"+url.PathEscape(id)+"/exit-agent", struct{}{}, &res); err != nil {
+		return err
+	}
+	if opts.json {
+		return writeJSON(cmd.OutOrStdout(), res)
+	}
+	_, err := fmt.Fprintf(cmd.OutOrStdout(), "agent exited for session %s\n", res.SessionID)
+	return err
+}
+
+func (c *commandContext) resumeSessionAgent(ctx context.Context, cmd *cobra.Command, id string, opts sessionOptions) error {
+	if opts.project != "" {
+		if _, err := c.fetchScopedSession(ctx, id, opts.project); err != nil {
+			return err
+		}
+	}
+	var res resumeAgentResponse
+	if err := c.postJSON(ctx, "sessions/"+url.PathEscape(id)+"/resume-agent", struct{}{}, &res); err != nil {
+		return err
+	}
+	if opts.json {
+		return writeJSON(cmd.OutOrStdout(), res)
+	}
+	if _, err := fmt.Fprintf(cmd.OutOrStdout(), "agent resumed for session %s\n", res.SessionID); err != nil {
+		return err
+	}
+	if res.ResumeMode != "" {
+		_, err := fmt.Fprintf(cmd.OutOrStdout(), "  mode: %s\n", res.ResumeMode)
+		return err
 	}
 	return nil
 }

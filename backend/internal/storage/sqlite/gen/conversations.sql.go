@@ -548,6 +548,40 @@ func (q *Queries) FailRolledBackConversationApprovals(ctx context.Context, arg F
 	return err
 }
 
+const finalizeConversationPlanActivity = `-- name: FinalizeConversationPlanActivity :exec
+UPDATE conversation_activities
+SET status = 'completed',
+    summary = ?1,
+    detail_json = ?2,
+    revision = revision + 1,
+    updated_at = ?3
+WHERE conversation_activities.conversation_id = ?4
+  AND turn_id = ?5
+  AND kind = 'plan'
+`
+
+type FinalizeConversationPlanActivityParams struct {
+	Summary        string
+	DetailJson     string
+	UpdatedAt      time.Time
+	ConversationID string
+	TurnID         sql.NullString
+}
+
+// Successful completion is the terminal fact for a plan even when the provider
+// omits its customary final plan notification. Keep the timeline copy identical
+// to the turn copy that SettleTurn finalizes from the same event.
+func (q *Queries) FinalizeConversationPlanActivity(ctx context.Context, arg FinalizeConversationPlanActivityParams) error {
+	_, err := q.db.ExecContext(ctx, finalizeConversationPlanActivity,
+		arg.Summary,
+		arg.DetailJson,
+		arg.UpdatedAt,
+		arg.ConversationID,
+		arg.TurnID,
+	)
+	return err
+}
+
 const hasPendingConversationInteractions = `-- name: HasPendingConversationInteractions :one
 SELECT EXISTS (
     SELECT 1
@@ -2560,6 +2594,44 @@ func (q *Queries) SelectProjectConversation(ctx context.Context, projectID domai
 	return i, err
 }
 
+const selectQueuedConversationTurnOrder = `-- name: SelectQueuedConversationTurnOrder :many
+SELECT id, requested_at
+FROM conversation_turns
+WHERE conversation_id = ?
+  AND state = 'queued'
+  AND promotion_started_at IS NULL
+ORDER BY requested_at, rowid
+`
+
+type SelectQueuedConversationTurnOrderRow struct {
+	ID          string
+	RequestedAt time.Time
+}
+
+// Current queue order for reorder validation and timestamp permutation.
+func (q *Queries) SelectQueuedConversationTurnOrder(ctx context.Context, conversationID string) ([]SelectQueuedConversationTurnOrderRow, error) {
+	rows, err := q.db.QueryContext(ctx, selectQueuedConversationTurnOrder, conversationID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []SelectQueuedConversationTurnOrderRow{}
+	for rows.Next() {
+		var i SelectQueuedConversationTurnOrderRow
+		if err := rows.Scan(&i.ID, &i.RequestedAt); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const selectReservedConversationTurnForPromotion = `-- name: SelectReservedConversationTurnForPromotion :one
 SELECT conversation_turns.id,
        conversation_messages.text,
@@ -3195,6 +3267,30 @@ func (q *Queries) UpdateQueuedConversationMessageText(ctx context.Context, arg U
 		arg.ConversationID,
 		arg.TurnID,
 	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const updateQueuedConversationTurnRequestedAt = `-- name: UpdateQueuedConversationTurnRequestedAt :execrows
+UPDATE conversation_turns
+SET requested_at = ?
+WHERE id = ?
+  AND conversation_id = ?
+  AND state = 'queued'
+  AND promotion_started_at IS NULL
+`
+
+type UpdateQueuedConversationTurnRequestedAtParams struct {
+	RequestedAt    time.Time
+	ID             string
+	ConversationID string
+}
+
+// Reassign one queued turn's dispatch position without changing its state.
+func (q *Queries) UpdateQueuedConversationTurnRequestedAt(ctx context.Context, arg UpdateQueuedConversationTurnRequestedAtParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, updateQueuedConversationTurnRequestedAt, arg.RequestedAt, arg.ID, arg.ConversationID)
 	if err != nil {
 		return 0, err
 	}

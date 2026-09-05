@@ -1,5 +1,5 @@
 import { type QueryClient, useMutation, useMutationState, useQueryClient } from "@tanstack/react-query";
-import type { WorkspaceSession } from "../types/workspace";
+import { toKanbanColumn, type WorkspaceSession, type WorkspaceSummary } from "../types/workspace";
 import { cloudSessionsQueryKey, workspaceQueryKey } from "./useWorkspaceQuery";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
 import { captureRendererEvent } from "../lib/telemetry";
@@ -28,6 +28,21 @@ async function terminateSession(queryClient: QueryClient, session: WorkspaceSess
 		const fallback = response ? `Failed to terminate session (${response.status})` : "Failed to terminate session";
 		throw new Error(apiErrorMessage(error, fallback));
 	}
+}
+
+// A killed session keeps its row and flips to terminated, which is exactly what
+// the next workspace fetch would report. Applying it locally lets the board
+// settle on the click rather than on the refetch.
+function markTerminated(sessionId: string) {
+	return (session: WorkspaceSession): WorkspaceSession =>
+		session.id === sessionId
+			? {
+				...session,
+				isTerminated: true,
+				status: "terminated",
+				kanbanColumn: toKanbanColumn(undefined, "terminated"),
+			}
+			: session;
 }
 
 type TerminateSessionMutationState = {
@@ -79,12 +94,23 @@ export function useTerminateSession(options: TerminateSessionOptions = {}) {
 			void captureRendererEvent("ao.renderer.session_kill_requested", { project_id: session.workspaceId });
 			await terminateSession(queryClient, session);
 		},
-		onSuccess: async (_data, session) => {
+		onSuccess: (_data, session) => {
 			void captureRendererEvent("ao.renderer.session_kill_succeeded", { project_id: session.workspaceId });
-			await Promise.all([
-				queryClient.invalidateQueries({ queryKey: workspaceQueryKey }),
-				session.cloud ? queryClient.invalidateQueries({ queryKey: cloudSessionsQueryKey }) : Promise.resolve(),
-			]);
+			// Write the outcome into the cached board first, then refresh in the
+			// background. A mutation stays `pending` until its onSuccess settles,
+			// so awaiting the refetch here kept the row's spinner up for a whole
+			// extra round trip after the daemon had already finished the kill.
+			queryClient.setQueryData<WorkspaceSummary[]>(workspaceQueryKey, (workspaces) =>
+				workspaces?.map((workspace) =>
+					workspace.id === session.workspaceId
+						? { ...workspace, sessions: workspace.sessions.map(markTerminated(session.id)) }
+						: workspace,
+				),
+			);
+			void queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
+			// A cloud kill also lives in the cloud sessions query, which the board
+			// merges in separately, so refresh it too.
+			if (session.cloud) void queryClient.invalidateQueries({ queryKey: cloudSessionsQueryKey });
 			options.onSuccess?.(session);
 		},
 		onError: (_error, session) => {

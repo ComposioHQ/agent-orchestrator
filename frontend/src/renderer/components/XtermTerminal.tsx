@@ -627,10 +627,14 @@ export function XtermTerminal(props: XtermTerminalProps) {
 				});
 			return true;
 		};
-		const userInputListeners = new Set<(data: string, source: TerminalUserInputSource) => void>();
+		const userInputListeners = new Set<(data: string, source: TerminalUserInputSource) => boolean | void>();
 		const emitUserInput = (data: string, source: TerminalUserInputSource) => {
-			if (data.length === 0) return;
-			userInputListeners.forEach((listener) => listener(data, source));
+			if (data.length === 0) return false;
+			let accepted = false;
+			userInputListeners.forEach((listener) => {
+				if (listener(data, source) === true) accepted = true;
+			});
+			return accepted;
 		};
 		// xterm 5 does not implement the modern terminal color-scheme protocol.
 		// OpenTUI clients use it to receive live light/dark changes after startup.
@@ -1194,11 +1198,16 @@ export function XtermTerminal(props: XtermTerminalProps) {
 			writeln: (line) => term.writeln(line, scheduleScrollbarUpdate),
 			showLatestOutput,
 			prepareForActivation,
+			// Live buffer discriminator for predictive local echo on cloud panes:
+			// predictions run only while the NORMAL buffer is active (alt-screen
+			// TUIs repaint too aggressively to predict into).
+			bufferType: () => term.buffer.active.type,
 			notifyCursorColorScheme: () => {
 				if (callbacksRef.current.supportsCursorColorScheme) {
 					notifyCursorScheme(callbacksRef.current.theme, false, true);
 				}
 			},
+			sendUserInput: (data, source = "shortcut") => emitUserInput(data, source),
 			onUserInput: (listener) => {
 				userInputListeners.add(listener);
 				return { dispose: () => userInputListeners.delete(listener) };
