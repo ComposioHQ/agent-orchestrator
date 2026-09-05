@@ -74,6 +74,12 @@ export function useGitHubAuthTerminal() {
 		queryFn: async () => null,
 		enabled: false,
 		initialData: null,
+		// The notice renders only on the home page and the empty board, so opening
+		// a project drops this query's last observer. A device-code login easily
+		// outlives the default five-minute gcTime, and collecting the handle would
+		// both break reattach and strand the PTY with no way to close it from the
+		// notice. This entry holds a single handle and is cleared explicitly.
+		gcTime: Number.POSITIVE_INFINITY,
 	});
 	const clear = useCallback(() => {
 		queryClient.setQueryData<ShellTerminal | null>(githubAuthTerminalQueryKey, null);
