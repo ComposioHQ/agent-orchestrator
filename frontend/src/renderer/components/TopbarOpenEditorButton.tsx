@@ -12,6 +12,7 @@ import {
 	DropdownMenuSeparator,
 	DropdownMenuTrigger,
 } from "./ui/dropdown-menu";
+import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 import {
 	AndroidStudioIcon,
 	CursorIcon,
@@ -112,27 +113,40 @@ export function TopbarOpenEditorButton({
 				data-state={menuOpen ? "open" : "closed"}
 				style={style}
 			>
-				<TopbarButton
-					aria-label={preferred ? t("editor.openInAria", { name: preferred.name }) : t("editor.chooseEditor")}
-					className="hover:bg-transparent"
-					disabled={mainDisabled}
-					onClick={() => launch()}
-					title={mainTitle}
-					variant="icon"
-				>
-					<TargetIcon target={preferred} className="size-icon-md" />
-				</TopbarButton>
+				<Tooltip>
+					<TooltipTrigger asChild>
+						<span className="inline-flex">
+							<TopbarButton
+								aria-label={preferred ? t("editor.openInAria", { name: preferred.name }) : t("editor.chooseEditor")}
+								className="hover:bg-transparent"
+								disabled={mainDisabled}
+								onClick={() => launch()}
+								variant="icon"
+							>
+								<TargetIcon target={preferred} className="size-icon-md" />
+							</TopbarButton>
+						</span>
+					</TooltipTrigger>
+					<TooltipContent side="bottom">{mainTitle}</TooltipContent>
+				</Tooltip>
 				<DropdownMenu onOpenChange={setMenuOpen}>
-					<DropdownMenuTrigger asChild>
-						<TopbarButton
-							aria-label={t("editor.openOptionsAria")}
-							className="hover:bg-transparent"
-							disabled={menuDisabled}
-							variant="icon"
-						>
-							<ChevronDown className="size-icon-sm" aria-hidden="true" />
-						</TopbarButton>
-					</DropdownMenuTrigger>
+					<Tooltip>
+						<TooltipTrigger asChild>
+							<span className="inline-flex">
+								<DropdownMenuTrigger asChild>
+									<TopbarButton
+										aria-label={t("editor.openOptionsAria")}
+										className="hover:bg-transparent"
+										disabled={menuDisabled}
+										variant="icon"
+									>
+										<ChevronDown className="size-icon-sm" aria-hidden="true" />
+									</TopbarButton>
+								</DropdownMenuTrigger>
+							</span>
+						</TooltipTrigger>
+						<TooltipContent side="bottom">{t("editor.openOptionsAria")}</TooltipContent>
+					</Tooltip>
 					<DropdownMenuContent align="end" className="min-w-52">
 						{safeTargets.map((target) => (
 							<DropdownMenuItem key={target.id} onSelect={() => launch(target.id)}>

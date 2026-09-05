@@ -275,6 +275,8 @@ export interface ChatWorkspaceProps {
 	models?: ChatModel[];
 	/** The AO session this surface renders for. Used to attach the reviewer pane. */
 	session?: WorkspaceSession;
+	/** Refresh the owning workspace cache after the shared primary tab is renamed. */
+	onSessionRenamed?: () => void | Promise<void>;
 	/** The selected reviewer pane. Kept even while its tab is temporarily unavailable. */
 	reviewerTarget?: ReviewerTerminalTarget;
 	/** Switch the active tab back to the chat timeline. */
@@ -350,7 +352,10 @@ export interface ChatWorkspaceProps {
 	 * Claude answers `CHAT_STEER_UNSUPPORTED`, and an affordance that only ever fails
 	 * is worse than none.
 	 */
-	onSteer?: (text: string) => Promise<unknown>;
+	onSteer?: (
+		text: string,
+		attachments?: { mimeType: string; data: string }[],
+	) => Promise<unknown>;
 	sendPending?: boolean;
 	steerPending?: boolean;
 	/** Why the last steer was refused, from the daemon's typed answer. */
@@ -358,6 +363,7 @@ export interface ChatWorkspaceProps {
 	onPromoteQueuedTurn?: (turnId: string) => Promise<unknown>;
 	onEditQueuedTurn?: (turnId: string, text: string) => Promise<unknown>;
 	onCancelQueuedTurn?: (turnId: string) => Promise<unknown>;
+	onReorderQueuedTurns?: (turnIds: string[]) => Promise<unknown>;
 	promoteQueuedTurnPendingTurnId?: string;
 	cancelQueuedTurnPendingTurnId?: string;
 	editQueuedTurnPendingTurnId?: string;
@@ -385,6 +391,7 @@ export function ChatWorkspace({
 	reviewerTerminal,
 	onOpenReviewerTerminal,
 	session,
+	onSessionRenamed,
 	reviewerTarget,
 	onSelectChat,
 	shellTerminals,
@@ -443,6 +450,7 @@ export function ChatWorkspace({
 	onPromoteQueuedTurn,
 	onEditQueuedTurn,
 	onCancelQueuedTurn,
+	onReorderQueuedTurns,
 	promoteQueuedTurnPendingTurnId,
 	cancelQueuedTurnPendingTurnId,
 	editQueuedTurnPendingTurnId,
@@ -613,7 +621,13 @@ export function ChatWorkspace({
 		async (turnId: string) => stablePromoteQueuedTurn(turnId),
 		[stablePromoteQueuedTurn],
 	);
-	const steer = useCallback(async (text: string) => stableSteer(text), [stableSteer]);
+	const steer = useCallback(
+		async (
+			text: string,
+			attachments?: { mimeType: string; data: string }[],
+		) => stableSteer(text, attachments),
+		[stableSteer],
+	);
 	// The turn a confirmation is open for. Undo is not reversible and it changes what
 	// the agent knows, so it is never one click.
 	const [confirming, setConfirming] = useState<string | undefined>(undefined);
@@ -824,6 +838,7 @@ export function ChatWorkspace({
 				<TurnSettingsBar
 					models={models ?? []}
 					settings={stableSettings}
+					harness={snapshot.harness}
 					reroute={stableModelReroute}
 					onChange={newWorkDisabled ? undefined : onChooseSettings}
 					configOptions={configOptions ?? []}
@@ -874,6 +889,7 @@ export function ChatWorkspace({
 						newWorkDisabled || !onEditQueuedTurn ? undefined : beginQueuedEdit
 					}
 					onCancelQueuedTurn={newWorkDisabled ? undefined : handleCancelQueuedTurn}
+					onReorderQueuedTurns={newWorkDisabled ? undefined : onReorderQueuedTurns}
 					promotePendingTurnId={promoteQueuedTurnPendingTurnId}
 					cancelPendingTurnId={cancelQueuedTurnPendingTurnId}
 				/>
@@ -885,6 +901,7 @@ export function ChatWorkspace({
 			handleCancelQueuedTurn,
 			newWorkDisabled,
 			onEditQueuedTurn,
+			onReorderQueuedTurns,
 			promoteQueuedTurn,
 			promoteQueuedTurnPendingTurnId,
 			queueEdit?.turnId,
@@ -986,6 +1003,7 @@ export function ChatWorkspace({
 				onTabsKeyDown={handleChatTabsKeyDown}
 				headerActions={headerActions}
 				session={session}
+				onSessionRenamed={onSessionRenamed}
 				sessionTabAction={sessionTabAction}
 				tabStripAction={tabStripAction}
 				workspaceTabActions={workspaceTabActions}
@@ -1316,6 +1334,7 @@ function ChatHeader({
 	inline,
 	topbarBounds,
 	session,
+	onSessionRenamed,
 }: {
 	snapshot: ConversationSnapshot;
 	sessionTitle?: string;
@@ -1339,6 +1358,7 @@ function ChatHeader({
 	orderedAuxiliaryTabs: ChatAuxiliaryTab[];
 	onReorderAuxiliaryTabs: (keys: string[]) => void;
 	session?: WorkspaceSession;
+	onSessionRenamed?: () => void | Promise<void>;
 	/** Fullscreen content cannot see the normal topbar portal outside its subtree. */
 	inline?: boolean;
 	topbarBounds: TopbarBounds;
@@ -1397,6 +1417,7 @@ function ChatHeader({
 								isActive={timelineActive}
 								label={label}
 								onSelect={timelineActive ? undefined : onSelectChat}
+								onRenamed={onSessionRenamed}
 								session={session}
 								tabAction={sessionTabAction}
 							/>
@@ -2687,7 +2708,7 @@ function TimelineItem({
 	// because that is AO's only durable write that can attach to a turn in flight,
 	// but it is the user speaking and the timeline shows it that way.
 	if (isSteer(item)) {
-		return <SteerMessage activity={item} />;
+		return <SteerMessage activity={item} sessionId={sessionId} apiBaseUrl={apiBaseUrl} />;
 	}
 	// A plan whose turn AO never correlated — one from before this controller
 	// started. The turn-level checklist cannot show it, so the row carries it.

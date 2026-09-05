@@ -44,8 +44,8 @@ func TestLANManagerAuthGatesSharedHandler(t *testing.T) {
 }
 
 // TestLANManagerBlocksLoopbackOnlyControlRoutes proves the LAN listener never
-// serves /shutdown, /internal/*, /api/v1/mobile*, /api/v1/dev*, or
-// /api/v1/browser* — even when the request carries a spoofed Host: 127.0.0.1
+// serves /shutdown, /internal/*, /api/v1/mobile*, /api/v1/dev*,
+// /api/v1/browser*, or /api/v1/agents/codex* — even when the request carries a spoofed Host: 127.0.0.1
 // and valid LAN auth, since gating on Host alone (localControlRequest) is what
 // let a LAN client reach these routes.
 func TestLANManagerBlocksLoopbackOnlyControlRoutes(t *testing.T) {
@@ -64,6 +64,8 @@ func TestLANManagerBlocksLoopbackOnlyControlRoutes(t *testing.T) {
 	blocked := []string{
 		"/shutdown",
 		"/internal/telemetry/cli-invoked",
+		"/internal/agent-switch-observability/prepare-disable",
+		"/internal/agent-switch-observability/apply-policy",
 		"/api/v1/mobile/status",
 		"/api/v1/mobile/devices",
 		"/api/v1/mobile/devices/i1",
@@ -72,6 +74,10 @@ func TestLANManagerBlocksLoopbackOnlyControlRoutes(t *testing.T) {
 		"/api/v1/desktop/sessions/ao-1/workspace",
 		"/api/v1/system/install/tmux",
 		"/api/v1/sessions/ao-1/preview/server",
+		"/api/v1/agents/codex/accounts",
+		"/api/v1/agents/codex/accounts/login-terminal",
+		"/api/v1/agents/codex/accounts/login-operations/op-1/verify",
+		"/api/v1/agents/codex/account-switches",
 	}
 	for _, path := range blocked {
 		req, _ := http.NewRequest(http.MethodGet, fmt.Sprintf("http://127.0.0.1:%d%s", port, path), nil)
@@ -86,16 +92,37 @@ func TestLANManagerBlocksLoopbackOnlyControlRoutes(t *testing.T) {
 		}
 	}
 
+	// Agent install mutations are loopback-only, while the adjacent GET
+	// catalog/status routes remain available to authenticated mobile clients.
+	req, _ := http.NewRequest(http.MethodPost, fmt.Sprintf("http://127.0.0.1:%d/api/v1/agents/cursor/install", port), nil)
+	req.Host = "127.0.0.1"
+	req.Header.Set("Authorization", "Bearer secret12")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("agent install request failed: %v", err)
+	}
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("agent install: got %d want 404", resp.StatusCode)
+	}
+
 	// A normal app route must still be reachable through the LAN listener
 	// (not swallowed by the control-route filter). Auth-gating, not the
 	// control filter, decides its fate.
-	req, _ := http.NewRequest(http.MethodGet, fmt.Sprintf("http://127.0.0.1:%d/api/v1/sessions", port), nil)
-	resp, err := http.DefaultClient.Do(req)
+	req, _ = http.NewRequest(http.MethodGet, fmt.Sprintf("http://127.0.0.1:%d/api/v1/sessions", port), nil)
+	resp, err = http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("sessions: request failed: %v", err)
 	}
 	if resp.StatusCode == http.StatusNotFound {
 		t.Fatalf("/api/v1/sessions: got 404, should not be blocked by the control-route filter")
+	}
+	req, _ = http.NewRequest(http.MethodGet, fmt.Sprintf("http://127.0.0.1:%d/api/v1/agents", port), nil)
+	resp, err = http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("agents: request failed: %v", err)
+	}
+	if resp.StatusCode == http.StatusNotFound {
+		t.Fatalf("/api/v1/agents: got 404, should not be blocked by the control-route filter")
 	}
 
 }

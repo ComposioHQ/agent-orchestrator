@@ -2,37 +2,30 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
-import { agentsQueryKey } from "../hooks/useAgentsQuery";
+import { agentReadinessQueryKey } from "../hooks/useAgentReadinessQuery";
+import { agentReadiness } from "../test/agent-readiness-fixtures";
 import { CreateProjectAgentSheet, defaultAuthorizedAgent, RequiredAgentField } from "./CreateProjectAgentSheet";
+import { TooltipProvider } from "./ui/tooltip";
 
 function renderSheet(onSubmit = vi.fn().mockResolvedValue(undefined), queryClient?: QueryClient) {
 	queryClient ??= new QueryClient({ defaultOptions: { queries: { retry: false } } });
-	if (queryClient.getQueryData(agentsQueryKey) === undefined) {
-		queryClient.setQueryData(agentsQueryKey, {
-			supported: [
-				{ id: "claude-code", label: "claude-code" },
-				{ id: "codex", label: "codex" },
-			],
-			installed: [
-				{ id: "claude-code", label: "claude-code", authStatus: "authorized" },
-				{ id: "codex", label: "codex", authStatus: "authorized" },
-			],
-			authorized: [
-				{ id: "claude-code", label: "claude-code", authStatus: "authorized" },
-				{ id: "codex", label: "codex", authStatus: "authorized" },
-			],
+	if (queryClient.getQueryData(agentReadinessQueryKey) === undefined) {
+		queryClient.setQueryData(agentReadinessQueryKey, {
+			agents: [agentReadiness("claude-code"), agentReadiness("codex")],
 		});
 	}
 	render(
 		<QueryClientProvider client={queryClient}>
-			<CreateProjectAgentSheet
-				isCreating={false}
-				kind="single_repo"
-				onOpenChange={() => undefined}
-				onSubmit={onSubmit}
-				open={true}
-				path="/repo/new-project"
-			/>
+			<TooltipProvider>
+				<CreateProjectAgentSheet
+					isCreating={false}
+					kind="single_repo"
+					onOpenChange={() => undefined}
+					onSubmit={onSubmit}
+					open={true}
+					path="/repo/new-project"
+				/>
+			</TooltipProvider>
 		</QueryClientProvider>,
 	);
 	return onSubmit;
@@ -48,8 +41,8 @@ describe("CreateProjectAgentSheet", () => {
 	it("chooses the highest-priority authorized default agent", () => {
 		expect(
 			defaultAuthorizedAgent([
-				{ id: "opencode", label: "OpenCode", authStatus: "authorized" },
-				{ id: "codex", label: "Codex", authStatus: "authorized" },
+				agentReadiness("opencode", "OpenCode"),
+				agentReadiness("codex", "Codex"),
 			]),
 		).toBe("codex");
 	});
@@ -57,8 +50,8 @@ describe("CreateProjectAgentSheet", () => {
 	it("chooses the most frequently used authorized agent by default", () => {
 		expect(
 			defaultAuthorizedAgent([
-				{ id: "claude-code", label: "Claude Code", authStatus: "authorized", usageCount: 1 },
-				{ id: "codex", label: "Codex", authStatus: "authorized", usageCount: 3 },
+				agentReadiness("claude-code", "Claude Code", { usageCount: 1 }),
+				agentReadiness("codex", "Codex", { usageCount: 3 }),
 			]),
 		).toBe("codex");
 	});
@@ -66,8 +59,8 @@ describe("CreateProjectAgentSheet", () => {
 	it("falls back to the alphabetically first authorized agent when no priority agent is authorized", () => {
 		expect(
 			defaultAuthorizedAgent([
-				{ id: "goose", label: "Goose", authStatus: "authorized" },
-				{ id: "devin", label: "Devin", authStatus: "authorized" },
+				agentReadiness("goose", "Goose"),
+				agentReadiness("devin", "Devin"),
 			]),
 		).toBe("devin");
 	});
@@ -99,6 +92,9 @@ describe("CreateProjectAgentSheet", () => {
 	it("creates without intake when the toggle is left off", async () => {
 		const onSubmit = renderSheet();
 
+		expect(screen.getByRole("dialog")).not.toHaveTextContent("/repo/new-project");
+		expect(screen.queryByRole("button", { name: "Cancel" })).not.toBeInTheDocument();
+
 		await userEvent.click(screen.getByRole("button", { name: "Create and start" }));
 
 		await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
@@ -120,7 +116,7 @@ describe("CreateProjectAgentSheet", () => {
 		await chooseOption(screen.getByLabelText("Worker agent"), "claude-code");
 		await chooseOption(screen.getByLabelText("Orchestrator agent"), "codex");
 
-		await userEvent.click(screen.getByLabelText("Enable issue intake"));
+		await userEvent.click(screen.getByLabelText("Automatically work on assigned issues"));
 		// Enabled with no eligibility rule → submit stays disabled (compact sheet
 		// carries no inline guard prose; gating is the disabled button).
 		expect(screen.getByRole("button", { name: "Create and start" })).toBeDisabled();
@@ -136,13 +132,13 @@ describe("CreateProjectAgentSheet", () => {
 		});
 	});
 
-	it("keeps the create sheet minimal: info tooltip instead of prose, no repo row or credential hint", async () => {
+	it("keeps the create sheet minimal: no repo row or credential hint", async () => {
 		renderSheet();
-		// Info affordance is present even before enabling; the descriptive prose is not.
-		expect(screen.getByLabelText("What does enabling issue intake do?")).toBeInTheDocument();
+		// The compact setup control uses the shared switch styling; descriptive prose is not shown.
+		expect(screen.getByLabelText("Automatically work on assigned issues")).toBeInTheDocument();
 		expect(screen.queryByText(/Auto-spawn worker sessions from matching tracker issues/)).not.toBeInTheDocument();
 
-		await userEvent.click(screen.getByLabelText("Enable issue intake"));
+		await userEvent.click(screen.getByLabelText("Automatically work on assigned issues"));
 		expect(screen.queryByText("Repository")).not.toBeInTheDocument();
 		expect(screen.queryByText(/Reads credentials from/)).not.toBeInTheDocument();
 	});

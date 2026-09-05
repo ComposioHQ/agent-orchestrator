@@ -1,6 +1,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { useCanGoBack, useNavigate, useParams, useRouter, useRouterState } from "@tanstack/react-router";
+import type { TFunction } from "i18next";
+import { useNavigate, useParams, useRouterState } from "@tanstack/react-router";
 import {
 	DndContext,
 	DragOverlay,
@@ -22,8 +23,6 @@ import { SortableContext, useSortable, verticalListSortingStrategy } from "@dnd-
 import { CSS } from "@dnd-kit/utilities";
 import {
 	AlertTriangle,
-	ArrowLeft,
-	ArrowRight,
 	ChevronRight,
 	Download,
 	Folder,
@@ -32,6 +31,7 @@ import {
 	LogOut,
 	MoreVertical,
 	PanelLeft,
+	Pencil,
 	Pin,
 	PinOff,
 	Plus,
@@ -60,6 +60,7 @@ import {
 import { flushSync } from "react-dom";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import type { UpdateStatus } from "../../main/update-settings";
+import { parseNightlyVersion } from "../lib/build-channel";
 import {
 	hasConfiguredOrchestratorAgent,
 	newestActiveOrchestrator,
@@ -76,14 +77,16 @@ import { cloudSessionsQueryKey, workspaceQueryKey } from "../hooks/useWorkspaceQ
 import { usePinSession, useUnpinSession } from "../hooks/usePinSession";
 import { spawnCloudOrchestrator } from "../lib/cloud-orchestrator";
 import { spawnOrchestrator } from "../lib/spawn-orchestrator";
-import { renameSession } from "../lib/rename-session";
 import { formatTimeCompact, formatTimeTerse } from "../lib/format-time";
 import { useTerminateSession } from "../hooks/useTerminateSession";
 import { useResizable } from "../hooks/useResizable";
 import { useCloudGate } from "../hooks/useCloudGate";
+import { useCloudLocalAuth } from "../hooks/useCloudLocalAuth";
+import { useLocalSignInDialogStore } from "../stores/local-signin-dialog-store";
 import { useShellMaybe } from "../lib/shell-context";
 import { useSidebarUpdateDismissal } from "../hooks/useSidebarUpdateDismissal";
 import { useUpdateStatus } from "../hooks/useUpdateStatus";
+import { MAX_SESSION_DISPLAY_NAME_LEN, useSessionRename } from "../hooks/useSessionRename";
 import { effectiveShortcutBindings, shortcutBindingKeys } from "../../shared/shortcuts";
 import {
 	ContextMenu,
@@ -124,15 +127,13 @@ import { useKeybindingsStore } from "../stores/keybindings-store";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { CreateProjectFlow, type CloneProjectInput, type CreateProjectInput } from "./CreateProjectFlow";
 import { ResizeHandle } from "./ResizeHandle";
-import { isLinuxPlatform, isMacPlatform, isWindowsPlatform } from "../lib/platform";
+import { isMacPlatform, isWindowsPlatform } from "../lib/platform";
 import { useCloudSession } from "../lib/cloud-session";
-import { useCanGoForward } from "./TitlebarNav";
 
 // macOS paints framed chrome: the fixed TitlebarNav cluster carries the
 // sidebar toggle + history arrows above this surface. Windows hangs the sidebar
 // under its custom titlebar.
 const isMac = isMacPlatform();
-const isLinux = isLinuxPlatform();
 const isWindows = isWindowsPlatform();
 const noDragStyle = isMac ? ({ WebkitAppRegion: "no-drag" } as React.CSSProperties) : undefined;
 
@@ -160,7 +161,6 @@ const PROJECT_DRAG_OVERLAY_STYLE: CSSProperties = { willChange: "transform" };
 
 // Mirrors the daemon's display-name cap (maxDisplayNameLen) and the spawn
 // `--name` flag, so inline edits never round-trip a value the API would reject.
-const MAX_DISPLAY_NAME_LEN = 20;
 
 // Reorder drags start from the row's primary click surface. The 4px activation
 // distance keeps a plain navigation/disclosure click from starting a drag;
@@ -331,8 +331,6 @@ function readExpandedProjectIds(): ReadonlySet<string> {
 type SidebarProps = {
 	/** Hide the sidebar's right edge stroke on the welcome board inset chrome. */
 	hideEdgeBorder?: boolean;
-	/** Preserve navigation as an icon rail when workspace pressure collapses the expanded sidebar. */
-	autoCompact?: boolean;
 	underTopbar?: boolean;
 	/** Chrome height to clear when underTopbar is set. Defaults to --size-toolbar. */
 	topbarOffset?: "toolbar" | "titlebar" | "trafficLights" | "session";
@@ -410,7 +408,6 @@ function SessionStatusDot({ session }: { session: WorkspaceSession }) {
 // _shell owns the persistent open state. Collapsed sidebars move fully off-canvas.
 export function Sidebar({
 	hideEdgeBorder = false,
-	autoCompact = false,
 	underTopbar = true,
 	topbarOffset = "toolbar",
 	workspaceError,
@@ -425,14 +422,11 @@ export function Sidebar({
 	const { state, setOpen, toggleSidebar } = useSidebar();
 	const isCollapsed = state === "collapsed";
 	const [expandedChromeVisible, setExpandedChromeVisible] = useState(!isCollapsed);
-	const router = useRouter();
-	const canGoBack = useCanGoBack();
-	const canGoForward = useCanGoForward();
-	const showCompactRailHistory = autoCompact && isCollapsed && (isMac || isLinux) && !isWindows;
 	// One IPC subscription for both footer variants of the restart-to-update prompt.
 	const updateStatus = useUpdateStatus();
 	const availableUpdateVersion = updateStatus.state === "available" ? updateStatus.version : undefined;
 	const updateDismissal = useSidebarUpdateDismissal(availableUpdateVersion);
+	const openUpdateInstallPrompt = useUiStore((state) => state.openUpdateInstallPrompt);
 	// Daemon status for the smoke suite's sr-only mirror in the footer. Null when
 	// rendered outside the shell (unit tests) — the mirror simply doesn't render.
 	const daemonStatus = useShellMaybe()?.daemonStatus ?? null;
@@ -639,7 +633,7 @@ export function Sidebar({
 	return (
 		// Pinned sidebars start below shell chrome.
 		<SidebarRoot
-			collapsible={autoCompact ? "icon" : "offcanvas"}
+			collapsible="offcanvas"
 			data-expanded-chrome={expandedChromeVisible ? "visible" : "hidden"}
 			data-topbar-offset={underTopbar ? topbarOffset : undefined}
 			className={cn(
@@ -701,38 +695,6 @@ export function Sidebar({
 						{isCollapsed ? t("shell.expandSidebar") : t("shell.collapseSidebar")}
 					</TooltipContent>
 				</Tooltip>
-				{showCompactRailHistory ? (
-					<div className="flex flex-col items-center gap-1 pb-2">
-						<Tooltip>
-							<TooltipTrigger asChild>
-								<button
-									aria-label={t("titlebar.goBack")}
-									className="grid size-control-board place-items-center rounded-lg text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground disabled:cursor-not-allowed disabled:opacity-55 disabled:hover:bg-transparent disabled:hover:text-muted-foreground [&_svg]:size-icon-base"
-									disabled={!canGoBack}
-									onClick={() => router.history.back()}
-									type="button"
-								>
-									<ArrowLeft aria-hidden="true" />
-								</button>
-							</TooltipTrigger>
-							<TooltipContent side="right">{t("titlebar.goBack")}</TooltipContent>
-						</Tooltip>
-						<Tooltip>
-							<TooltipTrigger asChild>
-								<button
-									aria-label={t("titlebar.goForward")}
-									className="grid size-control-board place-items-center rounded-lg text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground disabled:cursor-not-allowed disabled:opacity-55 disabled:hover:bg-transparent disabled:hover:text-muted-foreground [&_svg]:size-icon-base"
-									disabled={!canGoForward}
-									onClick={() => router.history.forward()}
-									type="button"
-								>
-									<ArrowRight aria-hidden="true" />
-								</button>
-							</TooltipTrigger>
-							<TooltipContent side="right">{t("titlebar.goForward")}</TooltipContent>
-						</Tooltip>
-					</div>
-				) : null}
 			</SidebarHeader>
 
 			{/* Keep Search + section chrome fixed; only the project tree scrolls. */}
@@ -871,6 +833,7 @@ export function Sidebar({
 					<UpdateStatusRow
 						availableDismissed={updateDismissal.dismissed}
 						onDismissAvailable={updateDismissal.dismiss}
+						onRequestInstall={openUpdateInstallPrompt}
 						status={updateStatus}
 						tabIndex={isCollapsed ? -1 : 0}
 					/>
@@ -909,6 +872,7 @@ export function Sidebar({
 				>
 					<UpdateStatusRail
 						availableDismissed={updateDismissal.dismissed}
+						onRequestInstall={openUpdateInstallPrompt}
 						status={updateStatus}
 						tabIndex={isCollapsed ? 0 : -1}
 					/>
@@ -1379,24 +1343,26 @@ const ProjectItemContent = memo(function ProjectItemContent({
 							>
 								<Tooltip>
 									<TooltipTrigger asChild>
-										<button
-											aria-current={orchestratorActive ? "page" : undefined}
-											aria-label={
-												orchestrator
-													? t("shell.openProjectOrchestrator", {
-															name: workspace.name,
-														})
-													: t("shell.spawnProjectOrchestrator", {
-															name: workspace.name,
-														})
-											}
-											className={cn(HOVER_ACTION_CLASS, orchestratorActive && "text-foreground")}
-											disabled={isSpawning || isProjectRestarting}
-											onClick={() => void openOrchestrator()}
-											type="button"
-										>
-											<OrchestratorIcon aria-hidden="true" strokeWidth={orchestratorActive ? 2.5 : 2} />
-										</button>
+										<span className="inline-flex">
+											<button
+												aria-current={orchestratorActive ? "page" : undefined}
+												aria-label={
+													orchestrator
+														? t("shell.openProjectOrchestrator", {
+																name: workspace.name,
+															})
+														: t("shell.spawnProjectOrchestrator", {
+																name: workspace.name,
+															})
+												}
+												className={cn(HOVER_ACTION_CLASS, orchestratorActive && "text-foreground")}
+												disabled={isSpawning || isProjectRestarting}
+												onClick={() => void openOrchestrator()}
+												type="button"
+											>
+												<OrchestratorIcon aria-hidden="true" strokeWidth={orchestratorActive ? 2.5 : 2} />
+											</button>
+										</span>
 									</TooltipTrigger>
 									<TooltipContent>
 										{isProjectRestarting
@@ -1409,17 +1375,26 @@ const ProjectItemContent = memo(function ProjectItemContent({
 									</TooltipContent>
 								</Tooltip>
 								<DropdownMenu>
-									<DropdownMenuTrigger asChild>
-										<button
-											aria-label={t("shell.projectActions", {
+									<Tooltip>
+										<TooltipTrigger asChild>
+											<DropdownMenuTrigger asChild>
+												<button
+													aria-label={t("shell.projectActions", {
+														name: workspace.name,
+													})}
+													className={HOVER_ACTION_CLASS}
+													type="button"
+												>
+													<MoreVertical aria-hidden="true" />
+												</button>
+											</DropdownMenuTrigger>
+										</TooltipTrigger>
+										<TooltipContent>
+											{t("shell.projectActions", {
 												name: workspace.name,
 											})}
-											className={HOVER_ACTION_CLASS}
-											type="button"
-										>
-											<MoreVertical aria-hidden="true" />
-										</button>
-									</DropdownMenuTrigger>
+										</TooltipContent>
+									</Tooltip>
 									<DropdownMenuContent side="right" align="start" className="min-w-44">
 										<DropdownMenuItem disabled={isProjectRestarting} onSelect={() => requestNewTask(workspace.id)}>
 											<Plus aria-hidden="true" />
@@ -1713,40 +1688,28 @@ function SessionRow({
 		: undefined;
 	const switchStatusId = useId();
 	const describedBy = switchLabel ? switchStatusId : undefined;
-	const [isEditing, setIsEditing] = useState(false);
-	const [draft, setDraft] = useState(session.title);
+	const queryClient = useQueryClient();
+	const refreshWorkspaces = useCallback(
+		() => queryClient.invalidateQueries({ queryKey: workspaceQueryKey }),
+		[queryClient],
+	);
+	const rename = useSessionRename(session, refreshWorkspaces);
 	const [sessionPressed, setSessionPressed] = useState(false);
 	const lastTouchAtRef = useRef(0);
 	const suppressTouchOpenRef = useRef(false);
-	// Escape must not be swallowed by the blur-to-save path: the keydown handler
-	// blurs the input, so it flags a cancel here for onBlur to honour.
-	const cancelledRef = useRef(false);
+	const pendingOpenRef = useRef<number | null>(null);
+	const cancelPendingOpen = useCallback(() => {
+		if (pendingOpenRef.current === null) return;
+		window.clearTimeout(pendingOpenRef.current);
+		pendingOpenRef.current = null;
+	}, []);
+	useEffect(() => cancelPendingOpen, [cancelPendingOpen]);
+	const beginRename = useCallback(() => {
+		cancelPendingOpen();
+		rename.begin();
+	}, [cancelPendingOpen, rename.begin]);
 
-	const queryClient = useQueryClient();
-
-	const startEditing = useCallback(() => {
-		setDraft(session.title);
-		setIsEditing(true);
-	}, [session.title]);
-
-	const commit = async () => {
-		if (cancelledRef.current) {
-			cancelledRef.current = false;
-			setIsEditing(false);
-			return;
-		}
-		setIsEditing(false);
-		const name = draft.trim();
-		if (!name || name === session.title) return;
-		try {
-			await renameSession(session.id, name);
-			await queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
-		} catch (err) {
-			console.error("Failed to rename session:", err);
-		}
-	};
-
-	if (isEditing) {
+	if (rename.isEditing) {
 		return (
 			<SidebarMenuSubItem className={cn(indented && "pl-0.5")}>
 				<div
@@ -1765,9 +1728,9 @@ function SessionRow({
 							session.lastUserMessageAt && "pr-[36px]",
 						)}
 						data-session-inline-editor=""
-						maxLength={MAX_DISPLAY_NAME_LEN}
-						onBlur={() => void commit()}
-						onChange={(e) => setDraft(e.target.value)}
+						maxLength={MAX_SESSION_DISPLAY_NAME_LEN}
+						onBlur={() => void rename.commit()}
+						onChange={(e) => rename.setDraft(e.target.value)}
 						onFocus={(e) => e.currentTarget.select()}
 						onKeyDown={(e) => {
 							if (e.key === "Enter") {
@@ -1775,11 +1738,10 @@ function SessionRow({
 								e.currentTarget.blur();
 							} else if (e.key === "Escape") {
 								e.preventDefault();
-								cancelledRef.current = true;
-								e.currentTarget.blur();
+								rename.cancel();
 							}
 						}}
-						value={draft}
+						value={rename.draft}
 					/>
 					<SessionMessageAge session={session} />
 				</div>
@@ -1788,12 +1750,14 @@ function SessionRow({
 	}
 
 	return (
-		<SidebarMenuSubItem
-			className={cn(indented && "pl-0.5", reorder?.isDragging && "z-chrome cursor-grabbing opacity-60")}
-			data-dragging={reorder?.isDragging ? "true" : undefined}
-			ref={reorder?.setNodeRef}
-			style={reorder ? sortableRowStyle(reorder) : undefined}
-		>
+		<ContextMenu>
+			<ContextMenuTrigger asChild>
+				<SidebarMenuSubItem
+					className={cn(indented && "pl-0.5", reorder?.isDragging && "z-chrome cursor-grabbing opacity-60")}
+					data-dragging={reorder?.isDragging ? "true" : undefined}
+					ref={reorder?.setNodeRef}
+					style={reorder ? sortableRowStyle(reorder) : undefined}
+				>
 			<motion.div
 				layout={disableLayout || listIsDragging ? false : "position"}
 				layoutDependency={disableLayout ? undefined : layoutDependency}
@@ -1831,22 +1795,36 @@ function SessionRow({
 							)}
 							{...(reorder?.listeners ?? {})}
 							onClick={(event) => {
-								if (
-									event.detail > 1 &&
-									(event.target as HTMLElement).closest("[data-session-name]")
-								) {
+								if (event.detail === 0) {
+									cancelPendingOpen();
+									onOpen();
+									return;
+								}
+								if (event.detail > 1) {
+									cancelPendingOpen();
 									return;
 								}
 								if (suppressTouchOpenRef.current) {
 									suppressTouchOpenRef.current = false;
 									return;
 								}
-								onOpen();
+								// Wait for the native double-click window before navigating. A
+								// second click cancels this so inline rename has no route side effect.
+								cancelPendingOpen();
+								pendingOpenRef.current = window.setTimeout(() => {
+									pendingOpenRef.current = null;
+									onOpen();
+								}, 500);
 							}}
 							onKeyDown={(event) => {
 								if (event.key !== "F2") return;
 								event.preventDefault();
-								startEditing();
+								beginRename();
+							}}
+							onDoubleClick={(event) => {
+								event.preventDefault();
+								event.stopPropagation();
+								beginRename();
 							}}
 							ref={reorder?.setActivatorNodeRef}
 							type="button"
@@ -1859,17 +1837,12 @@ function SessionRow({
 										active ? "text-foreground" : "text-muted-foreground group-hover/session-row:text-foreground",
 									)}
 									data-session-name=""
-									onDoubleClick={(event) => {
-										event.preventDefault();
-										event.stopPropagation();
-										startEditing();
-									}}
 									onPointerUp={(event) => {
 										if (event.pointerType !== "touch") return;
 										const now = Date.now();
 										if (now - lastTouchAtRef.current <= 500) {
 											suppressTouchOpenRef.current = true;
-											startEditing();
+										beginRename();
 										}
 										lastTouchAtRef.current = now;
 									}}
@@ -1892,7 +1865,15 @@ function SessionRow({
 					/>
 				</div>
 			</motion.div>
-		</SidebarMenuSubItem>
+				</SidebarMenuSubItem>
+			</ContextMenuTrigger>
+			<ContextMenuContent className="min-w-44">
+				<ContextMenuItem aria-label={t("shell.renameSession", { title: session.title })} onSelect={beginRename}>
+					<Pencil aria-hidden="true" />
+					{t("shell.rename")}
+				</ContextMenuItem>
+			</ContextMenuContent>
+		</ContextMenu>
 	);
 }
 
@@ -1974,6 +1955,10 @@ function CloudSignInRow({ tabIndex }: { tabIndex: number }) {
 	const { t } = useTranslation();
 	const { cloudEnabled } = useCloudGate();
 	const { configured, status, signIn } = useCloudSession();
+	// Dev + loopback CP: open the local email/password dialog instead of WorkOS.
+	const { available: localAuthAvailable } = useCloudLocalAuth();
+	const openLocalSignIn = useLocalSignInDialogStore((s) => s.openDialog);
+	const onSignIn = () => (localAuthAvailable ? openLocalSignIn() : signIn());
 	if (!configured || !cloudEnabled || status !== "unauthenticated") return null;
 
 	return (
@@ -1983,7 +1968,7 @@ function CloudSignInRow({ tabIndex }: { tabIndex: number }) {
 				NAV_ROW_CLASS,
 				"flex h-9 w-full items-center text-left [&_svg]:size-icon-md [&_svg]:shrink-0",
 			)}
-			onClick={() => signIn()}
+			onClick={onSignIn}
 			tabIndex={tabIndex}
 			type="button"
 		>
@@ -1998,6 +1983,10 @@ function CloudSignInRailButton({ tabIndex }: { tabIndex: number }) {
 	const { t } = useTranslation();
 	const { cloudEnabled } = useCloudGate();
 	const { configured, status, signIn } = useCloudSession();
+	// Dev + loopback CP: open the local email/password dialog instead of WorkOS.
+	const { available: localAuthAvailable } = useCloudLocalAuth();
+	const openLocalSignIn = useLocalSignInDialogStore((s) => s.openDialog);
+	const onSignIn = () => (localAuthAvailable ? openLocalSignIn() : signIn());
 	if (!configured || !cloudEnabled || status !== "unauthenticated") return null;
 
 	return (
@@ -2006,7 +1995,7 @@ function CloudSignInRailButton({ tabIndex }: { tabIndex: number }) {
 				<button
 					aria-label={t("shell.signInToAOCloud")}
 					className="grid size-control-board place-items-center rounded-lg text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground [&_svg]:size-icon-base"
-					onClick={() => signIn()}
+					onClick={onSignIn}
 					tabIndex={tabIndex}
 					type="button"
 				>
@@ -2087,6 +2076,75 @@ function CloudAccountRailButton({ tabIndex }: { tabIndex: number }) {
 	);
 }
 
+/**
+ * What the sidebar should act on, derived from the live update status.
+ *
+ * `status.state` alone is not enough. It cycles through checking → available →
+ * not-available on every background check while a staged build sits untouched,
+ * which blinked the restart row out of existence every 15 minutes on nightly.
+ * `status.staged` is stamped on every status by the main process for exactly
+ * this reason, so the staged build is read from there rather than from `state`.
+ */
+type SidebarUpdateAction =
+	| { kind: "downloading"; percent: number }
+	| { kind: "download"; version?: string }
+	| { kind: "install"; version?: string; escalated: boolean }
+	| { kind: "retry" }
+	| null;
+
+function sidebarUpdateAction(status: UpdateStatus, availableDismissed: boolean): SidebarUpdateAction {
+	if (status.state === "downloading") {
+		return { kind: "downloading", percent: Math.min(100, Math.max(0, status.percent ?? 0)) };
+	}
+	// `staged` is the stamp the main process puts on every status; the
+	// `downloaded` fallback keeps this correct for any status that predates it
+	// or arrives from a source that does not stamp.
+	const staged =
+		status.staged ??
+		(status.state === "downloaded"
+			? {
+					version: status.version,
+					stagedAt: status.stagedAt ?? 0,
+					escalated: status.escalated === true,
+				}
+			: undefined);
+	// Something newer than what is already staged still deserves the download
+	// action; the main process reports a re-discovered staged build as
+	// "downloaded", so an "available" here is genuinely a different version.
+	if (status.state === "available" && !availableDismissed && status.version !== staged?.version) {
+		return { kind: "download", version: status.version };
+	}
+	if (staged) return { kind: "install", version: staged.version, escalated: staged.escalated };
+	// Ranked below a staged build on purpose: an update ready to install is more
+	// actionable than "checks are failing". Only when there is nothing better to
+	// show does the failure take the row — it used to render nothing at all,
+	// which reads as "up to date" rather than "checks are not getting through".
+	if (status.checksFailing === true) return { kind: "retry" };
+	return null;
+}
+
+/**
+ * Sidebar label for a build. A raw nightly string truncates to noise and two
+ * consecutive nightlies differ only in trailing digits, so nightlies render as
+ * base version plus build date instead.
+ */
+function updateVersionLabel(
+	version: string | undefined,
+	variant: "available" | "ready",
+	t: TFunction,
+	locale: string,
+): string | null {
+	if (!version) return null;
+	const nightly = parseNightlyVersion(version);
+	if (nightly) {
+		return t("shell.nightlyBuild", {
+			version: nightly.base,
+			date: new Intl.DateTimeFormat(locale, { month: "short", day: "numeric" }).format(nightly.builtAt),
+		});
+	}
+	return t(variant === "ready" ? "shell.versionReady" : "shell.versionAvailable", { version });
+}
+
 // UpdateStatusRow makes update activity visible and actionable from the
 // sidebar: an available build downloads on click, progress reports itself, and
 // a staged build becomes the restart action. Idle/checking states stay quiet so
@@ -2094,25 +2152,32 @@ function CloudAccountRailButton({ tabIndex }: { tabIndex: number }) {
 function UpdateStatusRow({
 	availableDismissed,
 	onDismissAvailable,
+	onRequestInstall,
 	status,
 	tabIndex,
 }: {
 	availableDismissed: boolean;
 	onDismissAvailable: () => void;
+	/** Opens the restart confirmation; installing outright would quit the app. */
+	onRequestInstall: () => void;
 	status: UpdateStatus;
 	tabIndex: number;
 }) {
-	const { t } = useTranslation();
-	if (status.state === "available") {
-		if (availableDismissed) return null;
+	const { t, i18n } = useTranslation();
+	const locale = i18n.resolvedLanguage ?? i18n.language;
+	const action = sidebarUpdateAction(status, availableDismissed);
+	if (action === null) return null;
+
+	if (action.kind === "download") {
+		const versionLabel = updateVersionLabel(action.version, "available", t, locale);
 		// A manual check leaves autoDownload off, so without this the row would
 		// announce an update and offer nothing to act on.
 		return (
 			<div className="flex w-full items-center gap-1" data-testid="sidebar-update-available">
 				<button
 					aria-label={
-						status.version
-							? t("shell.downloadUpdateVersion", { version: status.version })
+						action.version
+							? t("shell.downloadUpdateVersion", { version: action.version })
 							: t("shell.downloadUpdate")
 					}
 					className={cn(NAV_ROW_CLASS, "flex min-w-0 flex-1 items-center text-left [&_svg]:size-icon-md [&_svg]:shrink-0")}
@@ -2123,16 +2188,14 @@ function UpdateStatusRow({
 					<Download aria-hidden="true" className="size-icon-lg shrink-0" />
 					<span className="min-w-0 flex-1">
 						<span className="block truncate tracking-tight">{t("shell.updateAvailable")}</span>
-						{status.version && (
-							<span className="block truncate text-caption font-normal text-passive">
-								{t("shell.versionAvailable", { version: status.version })}
-							</span>
+						{versionLabel && (
+							<span className="block truncate text-caption font-normal text-passive">{versionLabel}</span>
 						)}
 					</span>
 				</button>
-				{status.version && (
+				{action.version && (
 					<button
-						aria-label={t("shell.dismissUpdateVersion", { version: status.version })}
+						aria-label={t("shell.dismissUpdateVersion", { version: action.version })}
 						className="grid size-8 shrink-0 place-items-center text-muted-foreground transition-colors hover:text-foreground"
 						onClick={onDismissAvailable}
 						tabIndex={tabIndex}
@@ -2144,8 +2207,8 @@ function UpdateStatusRow({
 			</div>
 		);
 	}
-	if (status.state === "downloading") {
-		const percent = Math.min(100, Math.max(0, status.percent ?? 0));
+
+	if (action.kind === "downloading") {
 		return (
 			<div
 				aria-live="polite"
@@ -2155,17 +2218,13 @@ function UpdateStatusRow({
 			>
 				<Download aria-hidden="true" className="size-icon-lg shrink-0" />
 				<span className="min-w-0 flex-1 truncate tabular-nums">
-					{t("settings.updates.downloading", { percent })}
+					{t("settings.updates.downloading", { percent: action.percent })}
 				</span>
 			</div>
 		);
 	}
-	// Ranked below a staged build on purpose: an update ready to install is more
-	// actionable than "checks are failing". Only when there is nothing better to
-	// show does the failure take the row — it used to render nothing at all,
-	// which reads as "up to date" rather than "checks are not getting through".
-	if (status.state !== "downloaded") {
-		if (status.checksFailing !== true) return null;
+
+	if (action.kind === "retry") {
 		return (
 			<button
 				aria-label={t("shell.retryUpdateCheck")}
@@ -2185,32 +2244,29 @@ function UpdateStatusRow({
 			</button>
 		);
 	}
-	const escalated = status.escalated === true;
+
+	const versionLabel = updateVersionLabel(action.version, "ready", t, locale);
 	return (
 		<button
 			aria-label={
-				status.version
-					? t("shell.restartInstallUpdateVersion", { version: status.version })
+				action.version
+					? t("shell.restartInstallUpdateVersion", { version: action.version })
 					: t("shell.restartInstallUpdate")
 			}
 			className={cn(
 				"flex w-full items-center gap-2.5 rounded-lg border border-primary/35 bg-primary/12 p-2.5 text-left text-control font-medium text-primary transition-colors hover:bg-primary/18 [&_svg]:text-primary",
-				escalated &&
+				action.escalated &&
 					"border-working/35 bg-working/12 text-working hover:bg-working/18 [&_svg]:text-working",
 			)}
 			data-testid="sidebar-update-ready"
-			onClick={() => void aoBridge.updates.install()}
+			onClick={onRequestInstall}
 			tabIndex={tabIndex}
 			type="button"
 		>
 			<RefreshCw aria-hidden="true" className="size-icon-lg shrink-0" />
 			<span className="min-w-0 flex-1">
 				<span className="block truncate tracking-tight">{t("shell.restartToUpdate")}</span>
-				{status.version && (
-					<span className="block truncate text-caption font-normal">
-						{t("shell.versionReady", { version: status.version })}
-					</span>
-				)}
+				{versionLabel && <span className="block truncate text-caption font-normal">{versionLabel}</span>}
 			</span>
 		</button>
 	);
@@ -2220,24 +2276,30 @@ function UpdateStatusRow({
 // and a staged one installs; an in-flight download is informational.
 function UpdateStatusRail({
 	availableDismissed,
+	onRequestInstall,
 	status,
 	tabIndex,
 }: {
 	availableDismissed: boolean;
+	/** Opens the restart confirmation; installing outright would quit the app. */
+	onRequestInstall: () => void;
 	status: UpdateStatus;
 	tabIndex: number;
 }) {
-	const { t } = useTranslation();
-	if (status.state === "available") {
-		if (availableDismissed) return null;
-		const label = t("settings.updates.available", { version: status.version ? ` (v${status.version})` : "" });
+	const { t, i18n } = useTranslation();
+	const locale = i18n.resolvedLanguage ?? i18n.language;
+	const action = sidebarUpdateAction(status, availableDismissed);
+	if (action === null) return null;
+
+	if (action.kind === "download") {
+		const label = t("settings.updates.available", { version: action.version ? ` (v${action.version})` : "" });
 		return (
 			<Tooltip>
 				<TooltipTrigger asChild>
 					<button
 						aria-label={
-							status.version
-								? t("shell.downloadUpdateVersion", { version: status.version })
+							action.version
+								? t("shell.downloadUpdateVersion", { version: action.version })
 								: t("shell.downloadUpdate")
 						}
 						className="grid size-9 place-items-center rounded-lg text-passive transition-colors hover:bg-interactive-hover hover:text-foreground [&_svg]:size-4"
@@ -2252,8 +2314,9 @@ function UpdateStatusRail({
 			</Tooltip>
 		);
 	}
-	if (status.state === "downloading") {
-		const label = t("settings.updates.downloading", { percent: status.percent ?? 0 });
+
+	if (action.kind === "downloading") {
+		const label = t("settings.updates.downloading", { percent: action.percent });
 		return (
 			<Tooltip>
 				<TooltipTrigger asChild>
@@ -2270,9 +2333,8 @@ function UpdateStatusRail({
 			</Tooltip>
 		);
 	}
-	// Same ranking as the expanded row: a staged build outranks the failure.
-	if (status.state !== "downloaded") {
-		if (status.checksFailing !== true) return null;
+
+	if (action.kind === "retry") {
 		return (
 			<Tooltip>
 				<TooltipTrigger asChild>
@@ -2292,25 +2354,24 @@ function UpdateStatusRail({
 			</Tooltip>
 		);
 	}
-	const escalated = status.escalated === true;
+
+	const versionLabel = updateVersionLabel(action.version, "ready", t, locale);
 	return (
 		<Tooltip>
 			<TooltipTrigger asChild>
 				<button
 					aria-label={
-						status.version
-							? t("shell.restartInstallUpdateVersion", {
-									version: status.version,
-								})
+						action.version
+							? t("shell.restartInstallUpdateVersion", { version: action.version })
 							: t("shell.restartInstallUpdate")
 					}
 					className={cn(
 						"grid size-9 place-items-center rounded-lg transition-colors [&_svg]:size-4",
-						escalated
+						action.escalated
 							? "bg-working/12 text-working hover:bg-working/18"
 							: "text-passive hover:bg-interactive-hover hover:text-foreground",
 					)}
-					onClick={() => void aoBridge.updates.install()}
+					onClick={onRequestInstall}
 					tabIndex={tabIndex}
 					type="button"
 				>
@@ -2319,7 +2380,7 @@ function UpdateStatusRail({
 			</TooltipTrigger>
 			<TooltipContent side="right">
 				{t("shell.restartToUpdate")}
-				{status.version ? ` · ${t("shell.versionReady", { version: status.version })}` : ""}
+				{versionLabel ? ` · ${versionLabel}` : ""}
 			</TooltipContent>
 		</Tooltip>
 	);
@@ -2464,18 +2525,20 @@ function CreateProjectButton({
 			{({ disabled, choosePath, label }) => (
 				<Tooltip>
 					<TooltipTrigger asChild>
-						<button
-							aria-label={t("shell.newProject")}
-							className={cn(
-								"grid size-icon-xl shrink-0 place-items-center rounded-sm text-passive transition-colors hover:bg-interactive-hover hover:text-foreground",
-								hideTrigger && "hidden",
-							)}
-							disabled={disabled}
-							onClick={choosePath}
-							type="button"
-						>
-							<Plus className="size-icon-sm" aria-hidden="true" />
-						</button>
+						<span className="inline-flex">
+							<button
+								aria-label={t("shell.newProject")}
+								className={cn(
+									"grid size-icon-xl shrink-0 place-items-center rounded-sm text-passive transition-colors hover:bg-interactive-hover hover:text-foreground",
+									hideTrigger && "hidden",
+								)}
+								disabled={disabled}
+								onClick={choosePath}
+								type="button"
+							>
+								<Plus className="size-icon-sm" aria-hidden="true" />
+							</button>
+						</span>
 					</TooltipTrigger>
 					<TooltipContent>{label}</TooltipContent>
 				</Tooltip>

@@ -39,6 +39,7 @@ import { useCloudCp } from "../hooks/useCloudCp";
 import { createCloudTerminalMux } from "../lib/cloud-terminal-mux";
 import { XtermTerminal } from "./XtermTerminal";
 import { RestoreUnavailableDialog } from "./RestoreUnavailableDialog";
+import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 
 type TerminalPaneProps = {
 	session?: WorkspaceSession;
@@ -55,6 +56,12 @@ type TerminalPaneProps = {
 	inputDisabled?: boolean;
 	/** Focus the terminal when an in-flight controller asks for human input. */
 	focusRequested?: boolean;
+	/** Observe attachment state without taking ownership of the terminal lifecycle. */
+	onTerminalStateChange?: (state: TerminalSessionState) => void;
+	/** One-shot input initiated by an explicit UI action. */
+	inputRequest?: { id: number; data: string };
+	/** Reports whether the active attachment accepted a one-shot input request. */
+	onInputRequestResult?: (id: number, accepted: boolean) => void;
 	/** Provider-owned shared transport lease factory. */
 	createMux?: () => TerminalMux;
 };
@@ -118,6 +125,9 @@ function terminalPropsMatch(left: TerminalPaneProps, right: TerminalPaneProps): 
 		left.onToggleFullscreen === right.onToggleFullscreen &&
 		left.inputDisabled === right.inputDisabled &&
 		left.focusRequested === right.focusRequested &&
+		left.onTerminalStateChange === right.onTerminalStateChange &&
+		left.inputRequest === right.inputRequest &&
+		left.onInputRequestResult === right.onInputRequestResult &&
 		left.createMux === right.createMux &&
 		terminalTargetMatches(left.terminalTarget, right.terminalTarget)
 	);
@@ -146,8 +156,10 @@ function cacheDescriptor(
 	const handleId = session?.terminalHandleId;
 	if (!session?.id || !handleId) return null;
 	const ownerKey = `session:${session.id}:worker`;
+	const generation = session.terminalGeneration ?? "";
 	return {
-		cacheKey: `${ownerKey}|handle:${handleId}`,
+		cacheKey: `${ownerKey}|handle:${handleId}|generation:${generation}`,
+		generation,
 		handleId,
 		kind: "worker",
 		ownerKey,
@@ -481,7 +493,8 @@ export function TerminalCacheProvider({
 			if (
 				entry.kind === "worker" &&
 				session &&
-				session.terminalHandleId !== entry.handleId
+				(session.terminalHandleId !== entry.handleId ||
+					(session.terminalGeneration ?? "") !== (entry.generation ?? ""))
 			) {
 				removeEntry(entry.cacheKey);
 				continue;
@@ -599,6 +612,9 @@ export function TerminalPane({
 	onToggleFullscreen,
 	inputDisabled,
 	focusRequested,
+	onTerminalStateChange,
+	inputRequest,
+	onInputRequestResult,
 }: TerminalPaneProps) {
 	const { t } = useTranslation();
 	const terminalTarget =
@@ -612,7 +628,7 @@ export function TerminalPane({
 	const terminalKey =
 		terminalTarget?.kind === "reviewer" || terminalTarget?.kind === "shell"
 			? terminalTarget.handleId
-			: (session?.terminalHandleId ?? "empty");
+			: `${session?.terminalHandleId ?? "empty"}:${session?.terminalGeneration ?? ""}`;
 
 	if (!window.ao) {
 		// A standalone shell has no agent and no branch, so it previews as a plain
@@ -689,6 +705,9 @@ export function TerminalPane({
 		onToggleFullscreen,
 		inputDisabled,
 		focusRequested,
+		onTerminalStateChange,
+		inputRequest,
+		onInputRequestResult,
 	};
 	const descriptor = cacheDescriptor(session, terminalTarget);
 	if (cache && descriptor) {
@@ -707,6 +726,9 @@ export function TerminalPane({
 			onChangeFontSize={onChangeFontSize}
 			onToggleFullscreen={onToggleFullscreen}
 			focusRequested={focusRequested}
+			onTerminalStateChange={onTerminalStateChange}
+			inputRequest={inputRequest}
+			onInputRequestResult={onInputRequestResult}
 			terminalTarget={terminalTarget}
 		/>
 	);
@@ -866,6 +888,9 @@ function AttachedTerminal({
 	onToggleFullscreen,
 	inputDisabled,
 	focusRequested,
+	onTerminalStateChange,
+	inputRequest,
+	onInputRequestResult,
 	createMux,
 	isVisible = true,
 	onFatal,
@@ -886,6 +911,7 @@ function AttachedTerminal({
 	// cache retains this component across route switches; a replacement handle
 	// gets a new component rather than inheriting stale screen/input state.
 	const [terminal, setTerminal] = useState<AttachableTerminal | null>(null);
+	const lastInputRequestIdRef = useRef<number | null>(null);
 	const [initFailed, setInitFailed] = useState(false);
 	const [isRestoring, setIsRestoring] = useState(false);
 	const [restoreError, setRestoreError] = useState<string | undefined>();
@@ -903,6 +929,16 @@ function AttachedTerminal({
 		isVisible,
 		shellTerminalHandleId,
 	});
+	useEffect(() => {
+		onTerminalStateChange?.(state);
+	}, [onTerminalStateChange, state]);
+	useEffect(() => {
+		if (!terminal || state !== "attached" || !inputRequest) return;
+		if (lastInputRequestIdRef.current === inputRequest.id) return;
+		const accepted = terminal.sendUserInput(inputRequest.data);
+		if (accepted) lastInputRequestIdRef.current = inputRequest.id;
+		onInputRequestResult?.(inputRequest.id, accepted);
+	}, [inputRequest, onInputRequestResult, state, terminal]);
 	// xterm's write callback means the replay has been parsed, not that the
 	// browser has painted its final viewport. Keep the first-load cover mounted
 	// through the same render/paint preparation used when activating a retained
@@ -946,9 +982,10 @@ function AttachedTerminal({
 	useEffect(() => {
 		if (initFailed) {
 			onFatal?.("renderer initialization failed");
+			onTerminalStateChange?.("error");
 			return;
 		}
-	}, [initFailed, onFatal]);
+	}, [initFailed, onFatal, onTerminalStateChange]);
 	const handleLinkOpen = useSessionBrowserLink(session);
 	const restoreSession = useCallback(async () => {
 		if (!session?.id || !canRestoreSession || isRestoring) return;
@@ -1125,16 +1162,22 @@ function TerminalEndedStrip({ canRestore, error, isRestoring, onRestore, variant
 				</div>
 				{error && <div className="max-w-content-max truncate text-xs text-destructive">{error}</div>}
 				{canRestore && (
-					<button
-						type="button"
-						aria-label={t("terminal.restoreSession")}
-						title={t("terminal.restoreSession")}
-						className="inline-flex size-control-form shrink-0 items-center justify-center rounded-md border border-border bg-raised text-foreground transition hover:bg-interactive-hover disabled:cursor-not-allowed disabled:opacity-50"
-						disabled={isRestoring}
-						onClick={onRestore}
-					>
-						<RotateCcw className={cn("size-icon-base", isRestoring && "animate-spin")} aria-hidden="true" />
-					</button>
+					<Tooltip>
+						<TooltipTrigger asChild>
+							<span className="inline-flex">
+								<button
+									type="button"
+									aria-label={t("terminal.restoreSession")}
+									className="inline-flex size-control-form shrink-0 items-center justify-center rounded-md border border-border bg-raised text-foreground transition hover:bg-interactive-hover disabled:cursor-not-allowed disabled:opacity-50"
+									disabled={isRestoring}
+									onClick={onRestore}
+								>
+									<RotateCcw className={cn("size-icon-base", isRestoring && "animate-spin")} aria-hidden="true" />
+								</button>
+							</span>
+						</TooltipTrigger>
+						<TooltipContent side="bottom">{t("terminal.restoreSession")}</TooltipContent>
+					</Tooltip>
 				)}
 			</div>
 		</div>

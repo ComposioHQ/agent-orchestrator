@@ -85,11 +85,6 @@ function decodeQr(value: string): Record<string, unknown> {
 	return JSON.parse(atob(b64 + "=".repeat((4 - (b64.length % 4)) % 4)));
 }
 
-async function selectPlatform(platform: "iOS" | "Android") {
-	await userEvent.click(await screen.findByRole("button", { name: "Get the app" }));
-	await userEvent.click(await screen.findByRole("menuitem", { name: platform }));
-}
-
 async function selectConnectionMethod(mode: "LAN" | "Tailscale") {
 	await userEvent.click(await screen.findByRole("button", { name: "Connection method" }));
 	await userEvent.click(await screen.findByRole("menuitem", { name: mode }));
@@ -134,35 +129,55 @@ test("can turn off the generated mobile connection", async () => {
 	expect(apiClient.POST).toHaveBeenCalledWith("/api/v1/mobile/disable");
 });
 
-test("keeps the mobile setup dropdowns at a shared width", async () => {
+// SKIPPED: drives the connection picker, which is commented out in
+// ConnectMobileContent. Un-skip with it — the behaviour is unchanged, only
+// the way in is gone. TLS coverage does NOT live here any more: it keys off
+// the tailnet address, so those tests run without the picker.
+test.skip("keeps the connection-method dropdown at its fixed width", async () => {
 	renderMobileSettings();
 	await waitFor(() => expect(qrPayload()).not.toBeNull());
 
-	const controls = [
-		screen.getByRole("button", { name: "Get the app" }),
-		screen.getByRole("button", { name: "Connection method" }),
-	];
-	expect(controls[0]).toHaveClass("w-44", "justify-between");
-	expect(controls[1]).toHaveClass("w-44", "justify-between");
+	const control = screen.getByRole("button", { name: "Connection method" });
+	expect(control).toHaveClass("w-44", "justify-between");
 
-	await userEvent.click(controls[0]);
+	await userEvent.click(control);
 	expect(screen.getByRole("menu")).toHaveClass("!w-44", "!min-w-0");
+});
+
+// The QR is withheld until the tunnel is ready, so a scannable code already
+// carries a tunnel endpoint and the phone need not be on this network. The
+// no-connector case is stated separately by remoteAccessUnavailable.
+test("does not tell LAN users to join the same Wi-Fi", async () => {
+	renderMobileSettings();
+	await waitFor(() => expect(qrPayload()).not.toBeNull());
+
+	expect(screen.queryByText(/same Wi-Fi/i)).not.toBeInTheDocument();
+	expect(screen.getByText("Generate and scan the QR from the AO app")).toBeInTheDocument();
+});
+
+// Both stores are listed in step one now. The platform dropdown that used to
+// gate them is gone, so neither link may be behind an interaction.
+test("offers both store links without a platform choice", async () => {
+	renderMobileSettings();
+
+	expect(await screen.findByRole("button", { name: "Open Agent Orchestrator on the App Store" })).toBeInTheDocument();
+	expect(screen.getByRole("button", { name: "Open Agent Orchestrator on Google Play" })).toBeInTheDocument();
+	expect(screen.queryByRole("button", { name: "Get the app" })).not.toBeInTheDocument();
 });
 
 test("shows a square Google Play QR tooltip for Android", async () => {
 	renderMobileSettings();
-	await selectPlatform("Android");
-	await userEvent.hover(screen.getByRole("button", { name: "Open Agent Orchestrator on Google Play" }));
+	await userEvent.hover(await screen.findByRole("button", { name: "Open Agent Orchestrator on Google Play" }));
 
 	expect(await screen.findByTestId("android-play-qr")).toHaveClass("p-2");
 });
 
-test("shows a QR-only TestFlight tooltip", async () => {
+test("shows a QR-only App Store tooltip", async () => {
 	renderMobileSettings();
-	await userEvent.hover(await screen.findByRole("button", { name: "Join the TestFlight beta" }));
+	await userEvent.hover(await screen.findByRole("button", { name: "Open Agent Orchestrator on the App Store" }));
 
-	const tooltip = await screen.findByTestId("testflight-qr");
-	expect(tooltip).not.toHaveTextContent("Scan this QR on TestFlight");
+	const tooltip = await screen.findByTestId("ios-store-qr");
+	expect(tooltip).not.toHaveTextContent("App Store");
 	expect(tooltip.querySelector("svg")).toBeInTheDocument();
 });
 
@@ -171,7 +186,11 @@ test("shows a QR-only TestFlight tooltip", async () => {
 // them, so the mode selector now only changes which address is *displayed* —
 // the code itself is the same either way. Re-encoding per mode would defeat the
 // race by handing the phone a single path again.
-test("keeps one code across modes, carrying every advertised endpoint", async () => {
+// SKIPPED: drives the connection picker, which is commented out in
+// ConnectMobileContent. Un-skip with it — the behaviour is unchanged, only
+// the way in is gone. TLS coverage does NOT live here any more: it keys off
+// the tailnet address, so those tests run without the picker.
+test.skip("keeps one code across modes, carrying every advertised endpoint", async () => {
 	mobileStatus.endpoints = [
 		{ kind: "lan", host: "192.168.1.42", port: 3011, secure: false },
 		{ kind: "tailscale", host: "100.72.46.7", port: 3011, secure: false },
@@ -190,7 +209,11 @@ test("keeps one code across modes, carrying every advertised endpoint", async ()
 	expect(decodeQr(before).endpoints).toEqual(decodeQr(qrPayload()!).endpoints);
 });
 
-test("shows a hint instead of a QR when Tailscale is not running", async () => {
+// SKIPPED: drives the connection picker, which is commented out in
+// ConnectMobileContent. Un-skip with it — the behaviour is unchanged, only
+// the way in is gone. TLS coverage does NOT live here any more: it keys off
+// the tailnet address, so those tests run without the picker.
+test.skip("shows a hint instead of a QR when Tailscale is not running", async () => {
 	mobileStatus.tailscaleHost = "";
 	renderMobileSettings();
 	await waitFor(() => expect(qrPayload()).not.toBeNull());
@@ -211,7 +234,11 @@ test("shows a hint instead of an unscannable QR when there is no LAN address", a
 	expect(qrPayload()).toBeNull();
 });
 
-test("the address line follows the selected mode", async () => {
+// SKIPPED: drives the connection picker, which is commented out in
+// ConnectMobileContent. Un-skip with it — the behaviour is unchanged, only
+// the way in is gone. TLS coverage does NOT live here any more: it keys off
+// the tailnet address, so those tests run without the picker.
+test.skip("the address line follows the selected mode", async () => {
 	renderMobileSettings();
 	const address = await screen.findByTestId("mobile-pairing-address");
 	expect(within(address).getByText("192.168.1.42:3011")).toBeInTheDocument();
@@ -242,7 +269,11 @@ test("encodes secure:true when secure pairing is active", () => {
 // tunnel's publicly trusted certificate is what satisfies iOS ATS now, so this
 // may be intentional obsolescence — but the setting is still offered, and a
 // user who enables it gets a code that does not use it.
-test("does not carry the secure-pairing MagicDNS host in the code", async () => {
+// SKIPPED: drives the connection picker, which is commented out in
+// ConnectMobileContent. Un-skip with it — the behaviour is unchanged, only
+// the way in is gone. TLS coverage does NOT live here any more: it keys off
+// the tailnet address, so those tests run without the picker.
+test.skip("does not carry the secure-pairing MagicDNS host in the code", async () => {
 	mobileStatus.securePairing = {
 		enabled: true, available: true, active: true,
 		host: "prasads-macbook-pro.tail057d04.ts.net", port: 443, reason: "",
@@ -256,7 +287,11 @@ test("does not carry the secure-pairing MagicDNS host in the code", async () => 
 	expect(hosts).not.toContain("prasads-macbook-pro.tail057d04.ts.net");
 });
 
-test("shows setup steps and no QR when certs are not enabled", async () => {
+// SKIPPED: drives the connection picker, which is commented out in
+// ConnectMobileContent. Un-skip with it — the behaviour is unchanged, only
+// the way in is gone. TLS coverage does NOT live here any more: it keys off
+// the tailnet address, so those tests run without the picker.
+test.skip("shows setup steps and no QR when certs are not enabled", async () => {
 	mobileStatus.securePairing = {
 		enabled: true, available: false, active: false,
 		host: "h.tail1.ts.net", port: 0, reason: "no_certs",
@@ -271,21 +306,58 @@ test("shows setup steps and no QR when certs are not enabled", async () => {
 
 // A failing secure-pairing POST must surface an error rather than silently
 // snapping the switch back on the next status refetch with no explanation.
-test("shows an error message when the secure-pairing toggle fails", async () => {
+test("surfaces an error when enabling secure pairing fails", async () => {
+	mobileStatus.securePairing = {
+		enabled: false, available: true, active: false,
+		host: "", port: 0, reason: "",
+	};
 	const { apiClient } = await import("../lib/api-client");
 	vi.mocked(apiClient.POST).mockImplementationOnce(async () => ({
 		data: undefined,
 		error: { message: "secure pairing failed" },
 	}));
 	renderMobileSettings();
-	await waitFor(() => expect(qrPayload()).not.toBeNull());
-	await selectConnectionMethod("Tailscale");
-
-	const secureSwitch = await screen.findByRole("switch", { name: "Secure pairing (TLS)" });
-	await userEvent.click(secureSwitch);
 
 	await waitFor(() => expect(screen.getByText("failed")).toBeInTheDocument());
 });
+
+// TLS is no longer a switch: iOS refuses cleartext to a 100.x address, so a
+// Tailscale pairing with it off works on Android and fails on iPhone with
+// nothing to explain why. Selecting Tailscale turns it on.
+test("turns secure pairing on wherever a tailnet address exists", async () => {
+	mobileStatus.securePairing = {
+		enabled: false, available: true, active: false,
+		host: "", port: 0, reason: "",
+	};
+	const { apiClient } = await import("../lib/api-client");
+	renderMobileSettings();
+
+	await waitFor(() =>
+		expect(apiClient.POST).toHaveBeenCalledWith("/api/v1/mobile/secure-pairing", { body: { enabled: true } }),
+	);
+	expect(screen.queryByRole("switch", { name: "Secure pairing (TLS)" })).not.toBeInTheDocument();
+	// Nothing to report while it works: the panel guarantees TLS, so only a
+	// failure earns space.
+	expect(screen.queryByTestId("secure-pairing-reason")).not.toBeInTheDocument();
+});
+
+// A tailnet with no certificates rejects every attempt. Retrying on each status
+// poll would hammer the daemon; the reason text is what tells the user.
+test("does not retry enabling secure pairing when it is unavailable", async () => {
+	mobileStatus.securePairing = {
+		enabled: false, available: false, active: false,
+		host: "", port: 0, reason: "no_certs",
+	};
+	const { apiClient } = await import("../lib/api-client");
+	// POST is a suite-wide mock; a previous test's secure-pairing call would
+	// otherwise satisfy the negative assertion below.
+	vi.mocked(apiClient.POST).mockClear();
+	renderMobileSettings();
+
+	await waitFor(() => expect(screen.getByTestId("secure-pairing-reason")).toBeInTheDocument());
+	expect(apiClient.POST).not.toHaveBeenCalledWith("/api/v1/mobile/secure-pairing", { body: { enabled: true } });
+});
+
 
 // The QR value is the wire contract with the phone.
 test("emits a v2 deep link carrying every endpoint once the daemon advertises them", () => {
