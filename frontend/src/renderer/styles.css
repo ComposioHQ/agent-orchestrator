@@ -304,7 +304,6 @@
 	--animate-status-pulse: status-pulse 1.8s ease-in-out infinite;
 	--animate-overlay-in: overlay-in 80ms var(--ease-out);
 	--animate-modal-in: modal-in 120ms var(--ease-out);
-	--animate-modal-shake: modal-shake 280ms ease-in-out;
 	--animate-popover-in: popover-in 150ms var(--ease-out);
 	/* Exits are shorter than entries: the system is responding, not deciding. */
 	--animate-overlay-out: overlay-out 60ms ease-in;
@@ -322,8 +321,16 @@
 	backdrop-filter: blur(var(--blur-overlay));
 }
 
-@utility project-import-shake {
-	animation: modal-shake 280ms ease-in-out;
+@utility modal-shake {
+	animation: project-import-shake 280ms ease-in-out;
+}
+
+@utility toast-enter {
+	animation: toast-enter 180ms var(--ease-out);
+}
+
+@utility toast-exit {
+	animation: toast-exit 180ms ease-in forwards;
 }
 
 @utility agent-switch-terminal-scrim {
@@ -1915,10 +1922,20 @@ textarea,
 	}
 }
 
-@keyframes modal-shake {
-	0%, 100% { translate: 0; }
-	25% { translate: -6px 0; }
-	75% { translate: 6px 0; }
+@keyframes project-import-shake {
+	0%, 100% { transform: translate(-50%, -50%); }
+	25% { transform: translate(calc(-50% - 6px), -50%); }
+	75% { transform: translate(calc(-50% + 6px), -50%); }
+}
+
+@keyframes toast-enter {
+	from { opacity: 0; transform: translateY(8px) scale(0.98); }
+	to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@keyframes toast-exit {
+	from { opacity: 1; transform: translateY(0) scale(1); }
+	to { opacity: 0; transform: translateY(8px) scale(0.98); }
 }
 
 @keyframes modal-out {

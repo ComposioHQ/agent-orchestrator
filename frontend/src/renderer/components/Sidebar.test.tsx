@@ -354,9 +354,16 @@ beforeEach(() => {
 	});
 	postMock.mockReset();
 	postMock.mockImplementation(async (path: string, options?: { body?: { importKind?: string; path?: string } }) => {
+		if (path === "/api/v1/projects/clone/prepare") {
+			return {
+				data: { path: "/repo/web-app", remoteUrl: "git@github.com:acme/web-app.git" },
+				error: undefined,
+			};
+		}
 		if (path === "/api/v1/imports/validate") {
 			const selectedPath = options?.body?.path ?? "/repo/workspace";
 			const importKind = options?.body?.importKind ?? "workspace";
+			const isProject = importKind === "project";
 			return {
 				data: {
 					importKind,
@@ -364,16 +371,16 @@ beforeEach(() => {
 					blockingErrors: [],
 					root: {
 						repoPath: selectedPath,
-						isRepo: false,
-						hasCommit: false,
-						hasOrigin: false,
+						isRepo: isProject,
+						hasCommit: isProject,
+						hasOrigin: isProject,
 						isEmptyFolder: false,
 						needsGitInit: false,
 						requiredActions: [],
 						blockingErrors: [],
 					},
 					childRepos: [],
-					nextStep: "continue",
+				nextStep: isProject && selectedPath !== "/repo/web-app" ? "prepare_git" : "continue",
 				},
 				error: undefined,
 			};
@@ -909,8 +916,9 @@ describe("Sidebar", () => {
 	it("clones a Git URL into the selected folder before starting agents", async () => {
 		const user = userEvent.setup();
 		const onCloneProject = vi.fn().mockResolvedValue(undefined) as CloneProjectHandler;
+		const onCreateProject = vi.fn().mockResolvedValue(undefined) as CreateProjectHandler;
 		window.ao!.app.chooseDirectory = vi.fn().mockResolvedValue("/repo");
-		renderSidebar({ onCloneProject });
+		renderSidebar({ onCloneProject, onCreateProject });
 
 		await user.click(screen.getByLabelText("New project"));
 		await user.click(screen.getByRole("button", { name: "Clone from Git" }));
@@ -927,16 +935,12 @@ describe("Sidebar", () => {
 
 		expect(await screen.findByRole("dialog", { name: "Set up project" })).toBeInTheDocument();
 		await user.click(screen.getByRole("button", { name: "Clone" }));
-		await waitFor(() =>
-			expect(onCloneProject).toHaveBeenCalledWith(expect.objectContaining({
-				remoteUrl: "git@github.com:acme/web-app.git",
-				destinationParent: "/repo",
-				workerAgent: "claude-code",
-				orchestratorAgent: "claude-code",
-				trackerIntake: undefined,
-				signal: expect.any(AbortSignal),
-			})),
-		);
+		await waitFor(() => expect(onCreateProject).toHaveBeenCalledWith(expect.objectContaining({
+			path: "/repo/web-app",
+			workerAgent: "claude-code",
+			orchestratorAgent: "claude-code",
+		})));
+		expect(onCloneProject).not.toHaveBeenCalled();
 	});
 
 	it("creates the selected local repository after backing out of a clone", async () => {
@@ -1039,16 +1043,15 @@ describe("Sidebar", () => {
 		);
 	});
 
-	it("explains Git setup before creating a non-git project", async () => {
+	it("opens the agent sheet after project validation", async () => {
 		const onCreateProject = vi.fn().mockResolvedValue(undefined) as CreateProjectHandler;
 		const onInitializeProject = vi.fn().mockResolvedValue(undefined) as InitializeProjectHandler;
 		renderSidebar({ onCreateProject, onInitializeProject });
 		const user = await openCreateProjectDialog("/repo/new-project", { path: "/repo/new-project", repos: [] });
 
-		expect(await screen.findByText(/If this folder needs Git setup/i)).toBeInTheDocument();
+		expect(await screen.findByRole("dialog", { name: "Set up project" })).toBeInTheDocument();
 		expect(onInitializeProject).not.toHaveBeenCalled();
 		await user.click(screen.getByRole("button", { name: "Create and start" }));
-		await waitFor(() => expect(onInitializeProject).toHaveBeenCalledWith("/repo/new-project"));
 		await waitFor(() => expect(onCreateProject).toHaveBeenCalledTimes(1));
 	});
 
@@ -1071,13 +1074,11 @@ describe("Sidebar", () => {
 		await screen.findByText("/repo/parent/universe");
 		await user.click(screen.getByRole("button", { name: "Continue" }));
 		expect(await screen.findByRole("dialog", { name: "Set up project" })).toBeInTheDocument();
-		expect(screen.getByText(/If this folder needs Git setup/i)).toBeInTheDocument();
-		expect(screen.getByText(/inside an existing Git repository at \/repo\/parent/i)).toBeInTheDocument();
+		expect(screen.getByRole("dialog", { name: "Set up project" })).toBeInTheDocument();
 		expect(onInitializeProject).not.toHaveBeenCalled();
 		expect(onCreateProject).not.toHaveBeenCalled();
 
 		await user.click(screen.getByRole("button", { name: "Create and start" }));
-		await waitFor(() => expect(onInitializeProject).toHaveBeenCalledWith("/repo/parent/universe"));
 		await waitFor(() => expect(onCreateProject).toHaveBeenCalledTimes(1));
 	});
 
@@ -1100,9 +1101,8 @@ describe("Sidebar", () => {
 				},
 			],
 		});
-		expect(await screen.findByText(/If this folder needs Git setup/i)).toBeInTheDocument();
+		expect(await screen.findByRole("dialog", { name: "Set up project" })).toBeInTheDocument();
 		await user.click(screen.getByRole("button", { name: "Create and start" }));
-		await waitFor(() => expect(onInitializeProject).toHaveBeenCalledWith("/repo/unborn"));
 		await waitFor(() => expect(onCreateProject).toHaveBeenCalledTimes(1));
 	});
 
@@ -1120,14 +1120,14 @@ describe("Sidebar", () => {
 		expect(screen.queryByRole("dialog", { name: "Set up project" })).not.toBeInTheDocument();
 	});
 
-	it("surfaces repository initialization failures", async () => {
+	it("does not initialize Git a second time after validation", async () => {
 		const onCreateProject = vi.fn().mockResolvedValue(undefined) as CreateProjectHandler;
 		const onInitializeProject = vi.fn().mockRejectedValue(new Error("git init failed")) as InitializeProjectHandler;
 		renderSidebar({ onCreateProject, onInitializeProject });
 		const user = await openCreateProjectDialog("/repo/new-project", { path: "/repo/new-project", repos: [] });
 		await user.click(screen.getByRole("button", { name: "Create and start" }));
-		await waitFor(() => expect(onInitializeProject).toHaveBeenCalledWith("/repo/new-project"));
-		expect(onCreateProject).not.toHaveBeenCalled();
+		await waitFor(() => expect(onCreateProject).toHaveBeenCalledTimes(1));
+		expect(onInitializeProject).not.toHaveBeenCalled();
 	});
 
 	it("can create a workspace project from the project add flow", async () => {
@@ -1310,18 +1310,19 @@ describe("Sidebar", () => {
 			}
 			return { data: undefined, error: undefined };
 		});
-		window.ao!.app.scanImportFolder = vi.fn().mockResolvedValue({
-			path: "/repo/workspace",
-			repos: [
-				{
-					name: "docs",
+			window.ao!.app.scanImportFolder = vi.fn().mockResolvedValue({
+				path: "/repo/workspace",
+				repos: [
+					{
+						name: "docs",
 					path: "/repo/workspace/docs",
 					relativePath: "docs",
 					branch: "",
-					remote: "",
-					hasRemote: false,
-					status: "ok",
-					needsGitInit: true,
+						remote: "",
+						hasRemote: false,
+						status: "error",
+						reason: "Initialize at least one direct child repository before importing this workspace.",
+						needsGitInit: true,
 				},
 			],
 		});
@@ -1331,18 +1332,13 @@ describe("Sidebar", () => {
 		await user.click(screen.getByRole("button", { name: /^Import a workspace folder$/i }));
 		await screen.findByRole("dialog", { name: "Import workspace" });
 
-		expect(
-			await screen.findByText(
-				"Initialize at least one direct child repository with a commit and origin remote before importing this workspace.",
-			),
-		).toBeInTheDocument();
-		expect(screen.queryByText("docs")).not.toBeInTheDocument();
-		expect(screen.queryByText("Needs git init")).not.toBeInTheDocument();
-		expect(screen.queryByRole("button", { name: "Approve and set up" })).not.toBeInTheDocument();
+		expect(await screen.findByText("Initialize at least one direct child repository before importing this workspace.")).toBeInTheDocument();
+		expect(screen.getByText("docs")).toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: "Continue" })).not.toBeInTheDocument();
 		expect(onCreateProject).not.toHaveBeenCalled();
 	});
 
-	it("shows expandable setup panels only for initialized child repositories that need fixes", async () => {
+	it("shows initialized workspace repositories that need fixes", async () => {
 		const user = userEvent.setup();
 		window.ao!.app.chooseDirectory = vi.fn().mockResolvedValue("/repo/workspace");
 		window.ao!.app.checkAncestorRepo = vi.fn().mockResolvedValue(undefined);
@@ -1423,26 +1419,12 @@ describe("Sidebar", () => {
 		await user.click(screen.getByRole("button", { name: /^Import a workspace folder$/i }));
 		await screen.findByRole("dialog", { name: "Import workspace" });
 
-		expect(screen.getByText("api")).toBeInTheDocument();
-		expect(screen.getByText("unborn")).toBeInTheDocument();
-		expect(screen.getByText("no-remote")).toBeInTheDocument();
-		expect(screen.getByText("2 required steps")).toBeInTheDocument();
-		expect(screen.getByText("1 required step")).toBeInTheDocument();
-		const remoteInputs = screen.getAllByLabelText("Origin remote URL");
-		expect(remoteInputs).toHaveLength(2);
-		expect(remoteInputs[0]).toHaveValue("https://github.com/test-user/no-remote.git");
-		expect(remoteInputs[1]).toHaveValue("https://github.com/test-user/unborn.git");
-		expect(
-			screen.getAllByText(
-				"To create sessions and PRs successfully, make sure this repository also exists on github.com and that you can push the default branch to it.",
-			),
-		).toHaveLength(2);
-		expect(screen.queryByText("docs")).not.toBeInTheDocument();
-		expect(screen.queryByText("Needs git init")).not.toBeInTheDocument();
-		expect(screen.getByRole("button", { name: "Approve and set up" })).toBeInTheDocument();
+		expect(screen.getByText("docs")).toBeInTheDocument();
+		expect(screen.getByText("Needs git init")).toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: "Approve and set up" })).not.toBeInTheDocument();
 	});
 
-	it("prefers the GitHub login over a stale saved remote owner when suggesting workspace remotes", async () => {
+	it("does not render remote setup controls in the workspace scan dialog", async () => {
 		const user = userEvent.setup();
 		window.localStorage.setItem("ao.import.lastRemoteUrl", "https://github.com/chauhan/old.git");
 		window.localStorage.setItem("ao.import.lastRemoteOwner", "chauhan");
@@ -1495,7 +1477,8 @@ describe("Sidebar", () => {
 		await user.click(screen.getByRole("button", { name: /^Import a workspace folder$/i }));
 		await screen.findByRole("dialog", { name: "Import workspace" });
 
-		expect(await screen.findByLabelText("Origin remote URL")).toHaveValue("https://github.com/test-user/temp.git");
+		expect(screen.queryByText("temp")).not.toBeInTheDocument();
+		expect(screen.queryByLabelText("Origin remote URL")).not.toBeInTheDocument();
 	});
 
 	it("does not rescan folders for non-validation create failures", async () => {

@@ -27,6 +27,7 @@ export default function CloneRepositoryDialog({
 	onChange,
 	onClose,
 	onContinue,
+	onError,
 	open,
 	existingProjectPaths = [],
 	existingProjectNames = [],
@@ -38,6 +39,7 @@ export default function CloneRepositoryDialog({
 	onChange: (value: CloneRepositoryDetails) => void;
 	onClose: () => void;
 	onContinue: (selection: CloneRepositorySelection) => void;
+	onError?: (message: string) => void;
 	open: boolean;
 	existingProjectPaths?: readonly string[];
 	existingProjectNames?: readonly string[];
@@ -48,6 +50,7 @@ export default function CloneRepositoryDialog({
 	const [repositoryCheck, setRepositoryCheck] = useState<"idle" | "checking" | "valid" | "invalid">("idle");
 	const repositoryCheckRequest = useRef(0);
 	const [choosingDestination, setChoosingDestination] = useState(false);
+	const [shake, setShake] = useState(false);
 	const [destinationPickerError, setDestinationPickerError] = useState<string | null>(null);
 	const repositoryName = repositoryNameFromGitUrl(value.remoteUrl);
 	const repositoryAvatar = repositoryAvatarFromGitUrl(value.remoteUrl);
@@ -72,11 +75,16 @@ export default function CloneRepositoryDialog({
 	const canContinue = Boolean(
 		repositoryName &&
 		repositoryCheck === "valid" &&
-		value.destinationParent &&
 		!projectExists &&
 		!disabled &&
 		!choosingDestination,
 	);
+
+	const triggerShake = () => {
+		setShake(false);
+		window.requestAnimationFrame(() => setShake(true));
+		window.setTimeout(() => setShake(false), 320);
+	};
 
 	useEffect(() => {
 		const requestId = ++repositoryCheckRequest.current;
@@ -109,7 +117,10 @@ export default function CloneRepositoryDialog({
 			}
 			onChange({ ...value, destinationParent: selected });
 		} catch (err) {
-			setDestinationPickerError(err instanceof Error ? err.message : t("createProject.couldNotAdd"));
+			const message = err instanceof Error ? err.message : t("createProject.couldNotAdd");
+			setDestinationPickerError(message);
+			triggerShake();
+			onError?.(message);
 		} finally {
 			setChoosingDestination(false);
 		}
@@ -118,7 +129,14 @@ export default function CloneRepositoryDialog({
 	const submit = (event: FormEvent<HTMLFormElement>) => {
 		event.preventDefault();
 		setSubmitted(true);
-		if (!canContinue) return;
+		if (!canContinue) {
+			if (!value.destinationParent) {
+				const message = t("createProject.cloneDestinationRequired");
+				triggerShake();
+				onError?.(message);
+			}
+			return;
+		}
 		onContinue({
 			...value,
 			remoteUrl: value.remoteUrl.trim(),
@@ -129,7 +147,7 @@ export default function CloneRepositoryDialog({
 	return (
 		<Dialog.Root open={open} onOpenChange={(next) => !next && !disabled && onClose()}>
 			<Dialog.Portal>
-				<Dialog.Content className="fixed left-1/2 top-1/2 z-overlay flex max-h-[min(640px,calc(100svh-24px))] w-[min(560px,calc(100vw-24px))] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-lg border border-border bg-popover p-0 text-popover-foreground shadow-xl data-[state=open]:animate-modal-in data-[state=closed]:animate-modal-out motion-reduce:animate-none">
+				<Dialog.Content className={`fixed left-1/2 top-1/2 z-overlay flex max-h-[min(640px,calc(100svh-24px))] w-[min(560px,calc(100vw-24px))] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-lg border border-border bg-popover p-0 text-popover-foreground shadow-xl data-[state=open]:animate-modal-in data-[state=closed]:animate-modal-out motion-reduce:animate-none ${shake ? "modal-shake" : ""}`}>
 					<div className="relative flex shrink-0 items-center gap-3 px-4 pt-3">
 						<Button
 							type="button"
@@ -241,7 +259,7 @@ export default function CloneRepositoryDialog({
 
 						<div className="flex shrink-0 justify-end gap-2 px-4 pb-4 pt-3">
 							<div className="flex items-center justify-end gap-3">
-								<Button type="submit" variant="primary" disabled={!canContinue}>
+								<Button type="submit" variant="primary" disabled={!repositoryName || repositoryCheck !== "valid" || projectExists || disabled || choosingDestination}>
 									{t("createProject.cloneContinue")}
 								</Button>
 							</div>

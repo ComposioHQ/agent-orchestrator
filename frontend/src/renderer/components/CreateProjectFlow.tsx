@@ -65,7 +65,6 @@ export function CreateProjectFlow({
 	existingProjectPaths = [],
 	idleLabel,
 	mode = "single_repo",
-	onCloneProject,
 	onCreateProject,
 	onInitializeProject,
 	openSignal,
@@ -98,13 +97,13 @@ export function CreateProjectFlow({
 	const [error, setError] = useState<string | null>(null);
 	const [modePickerOpen, setModePickerOpen] = useState(false);
 	const [cloneDialogOpen, setCloneDialogOpen] = useState(false);
-	const [cloneDialogClosing, setCloneDialogClosing] = useState(false);
 	const [cloneDetails, setCloneDetails] = useState<CloneRepositoryDetails>(() => ({
 		remoteUrl: "",
 		destinationParent:
 			typeof window === "undefined" ? "" : (window.localStorage.getItem(LAST_CLONE_DESTINATION_KEY) ?? ""),
 	}));
 	const [cloneSelection, setCloneSelection] = useState<CloneRepositorySelection | null>(null);
+	const [preparedClonePath, setPreparedClonePath] = useState<string | null>(null);
 	const [folderPickerOpen, setFolderPickerOpen] = useState(false);
 	const [childTransitioning, setChildTransitioning] = useState(false);
 	const [selectedKind, setSelectedKind] = useState<ProjectKind>(mode === "workspace" ? "workspace" : "single_repo");
@@ -178,6 +177,7 @@ export function CreateProjectFlow({
 			return;
 		}
 		setCloneSelection(null);
+		setPreparedClonePath(null);
 		// Keep the selector mounted behind the native picker. Closing it first
 		// exposes a blank compositor frame on Windows before Explorer takes focus.
 		void chooseDirectory(source === "workspace" ? "workspace" : "single_repo", presetPath ?? undefined);
@@ -308,13 +308,11 @@ export function CreateProjectFlow({
 		setIsCreating(true);
 		try {
 			if (cloneSelection) {
-				await onCloneProject({
-					remoteUrl: cloneSelection.remoteUrl,
-					destinationParent: cloneSelection.destinationParent,
-					...selection,
-				});
+				if (!preparedClonePath) throw new Error(t("createProject.couldNotAdd"));
+				await onCreateProject({ path: selectedPath, ...selection });
 				setSelectedPath(null);
 				setCloneSelection(null);
+				setPreparedClonePath(null);
 				return;
 			}
 			if (selectedKind === "single_repo" && repositorySetup) {
@@ -362,6 +360,45 @@ export function CreateProjectFlow({
 		} finally {
 			setIsCreating(false);
 			setIsInitializing(false);
+		}
+	};
+
+	const prepareClone = async (next: CloneRepositorySelection) => {
+		setError(null);
+		setIsPreparingGit(true);
+		try {
+			const { data, error: apiError } = await apiClient.POST("/api/v1/projects/clone/prepare", {
+			body: {
+				remoteUrl: next.remoteUrl,
+				destinationParent: next.destinationParent,
+			},
+			});
+			if (apiError || !data) throw new Error(apiErrorMessage(apiError, t("createProject.couldNotAdd")));
+			setCloneSelection(next);
+			setPreparedClonePath(data.path);
+			setSelectedKind("single_repo");
+			setModePickerOpen(false);
+			setCloneDialogOpen(false);
+			const validation = await validateImportFolder(data.path, "project");
+			setProjectValidation(validation);
+			setProjectPrepEvents([]);
+			setProjectApprovedActions(validation.root.requiredActions);
+			setProjectRemoteUrl(validation.root.requiredActions.includes("set_remote") ? next.remoteUrl : "");
+			setProjectSuggestWorkspace(false);
+			if (!validation.isValid || validation.nextStep === "error") {
+				reportProjectError(importValidationMessage(validation));
+				setProjectImportStep("blocked");
+				return;
+			}
+			if (validation.nextStep === "prepare_git") {
+				setProjectImportStep("prepare_git");
+				return;
+			}
+			setSelectedPath(data.path);
+		} catch (err) {
+			reportProjectError(err instanceof Error ? err.message : t("createProject.couldNotAdd"));
+		} finally {
+			setIsPreparingGit(false);
 		}
 	};
 
@@ -511,7 +548,7 @@ export function CreateProjectFlow({
 						}}
 						onSelect={selectSource}
 					/>
-					{cloneDialogOpen || cloneDialogClosing ? (
+					{cloneDialogOpen ? (
 						<CloneRepositoryDialog
 							disabled={isBusy}
 							error={error}
@@ -530,20 +567,8 @@ export function CreateProjectFlow({
 								setCloneDialogOpen(false);
 								setError(null);
 							}}
-							onContinue={(next) => {
-								setCloneSelection(next);
-								setSelectedKind("single_repo");
-								setModePickerOpen(false);
-								setCloneDialogOpen(false);
-								setCloneDialogClosing(true);
-								setChildTransitioning(true);
-								setCloneDialogOpen(false);
-								window.setTimeout(() => {
-									setCloneDialogClosing(false);
-									setSelectedPath(next.targetPath);
-									setChildTransitioning(false);
-								}, 80);
-							}}
+							onContinue={(next) => void prepareClone(next)}
+							onError={reportProjectError}
 							open={cloneDialogOpen}
 							value={cloneDetails}
 						/>
@@ -613,6 +638,7 @@ export function CreateProjectFlow({
 					if (!open) {
 						setSelectedPath(null);
 						setCloneSelection(null);
+						setPreparedClonePath(null);
 						resetProjectImportState();
 						if (!folderPickerOpen) {
 							setError(null);
@@ -1236,7 +1262,7 @@ function ProjectImportDialog({
 		<Dialog.Root open={open} onOpenChange={onOpenChange}>
 			<Dialog.Portal>
 				<Dialog.Content
-					className={cn("fixed left-1/2 top-1/2 z-overlay flex max-h-[min(640px,calc(100svh-24px))] w-[min(560px,calc(100vw-24px))] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-lg border border-border bg-popover p-0 text-popover-foreground shadow-xl data-[state=open]:animate-modal-in data-[state=closed]:animate-modal-out motion-reduce:animate-none", shake && "project-import-shake")}
+					className={cn("fixed left-1/2 top-1/2 z-overlay flex max-h-[min(640px,calc(100svh-24px))] w-[min(560px,calc(100vw-24px))] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-lg border border-border bg-popover p-0 text-popover-foreground shadow-xl data-[state=open]:animate-modal-in data-[state=closed]:animate-modal-out motion-reduce:animate-none", shake && "modal-shake")}
 					onInteractOutside={(event) => event.preventDefault()}
 					onPointerDownOutside={(event) => event.preventDefault()}
 				>

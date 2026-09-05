@@ -29,6 +29,12 @@ type CloneInput struct {
 	Config            *domain.ProjectConfig `json:"config,omitempty"`
 }
 
+// ClonePreparationResult is the checkout returned before project registration.
+type ClonePreparationResult struct {
+	Path      string `json:"path"`
+	RemoteURL string `json:"remoteUrl"`
+}
+
 // InitializeRepositoryInput is the body shape for POST /api/v1/projects/initialize.
 type InitializeRepositoryInput struct {
 	Path string `json:"path"`

@@ -30,42 +30,69 @@ var allowedCloneSchemes = map[string]struct{}{
 // The checkout is staged in a unique sibling directory so a failed or cancelled
 // clone can never leave a half-populated destination behind.
 func (m *Service) Clone(ctx context.Context, in CloneInput) (Project, error) {
+	prepared, err := m.prepareClone(ctx, in)
+	if err != nil {
+		return Project{}, err
+	}
+	if !repoHasCommit(ctx, prepared.Path) {
+		_ = os.RemoveAll(prepared.Path)
+		return Project{}, apierr.Invalid("CLONE_EMPTY_REPOSITORY", "AO needs a repository with at least one commit.", nil)
+	}
+
+	project, err := m.Add(ctx, AddInput{
+		Path:      prepared.Path,
+		ProjectID: in.ProjectID,
+		Name:      in.Name,
+		Config:    in.Config,
+	})
+	if err != nil {
+		_ = os.RemoveAll(prepared.Path)
+		return Project{}, err
+	}
+	return project, nil
+}
+
+func (m *Service) PrepareClone(ctx context.Context, in CloneInput) (ClonePreparationResult, error) {
+	return m.prepareClone(ctx, in)
+}
+
+func (m *Service) prepareClone(ctx context.Context, in CloneInput) (ClonePreparationResult, error) {
 	remoteURL := strings.TrimSpace(in.RemoteURL)
 	repositoryName, err := cloneRepositoryName(remoteURL)
 	if err != nil {
-		return Project{}, err
+		return ClonePreparationResult{}, err
 	}
 	parent, err := normalizePath(in.DestinationParent)
 	if err != nil {
-		return Project{}, err
+		return ClonePreparationResult{}, err
 	}
 	if err := ensureDirectoryPath(parent); err != nil {
-		return Project{}, err
+		return ClonePreparationResult{}, err
 	}
 	if in.Config != nil {
 		if err := in.Config.Validate(); err != nil {
-			return Project{}, apierr.Invalid("INVALID_PROJECT_CONFIG", err.Error(), nil)
+			return ClonePreparationResult{}, apierr.Invalid("INVALID_PROJECT_CONFIG", err.Error(), nil)
 		}
 	}
 	if in.ProjectID != nil {
 		if err := validateProjectID(domain.ProjectID(strings.TrimSpace(*in.ProjectID))); err != nil {
-			return Project{}, err
+			return ClonePreparationResult{}, err
 		}
 	}
 
 	target := filepath.Join(parent, repositoryName)
 	if err := validateRepositorySetupPathSafety(target); err != nil {
-		return Project{}, err
+		return ClonePreparationResult{}, err
 	}
 	if _, err := os.Lstat(target); err == nil {
-		return Project{}, apierr.Conflict("CLONE_DESTINATION_EXISTS", "A folder with this repository name already exists in the selected destination.", map[string]any{"path": target})
+		return ClonePreparationResult{}, apierr.Conflict("CLONE_DESTINATION_EXISTS", "A folder with this repository name already exists in the selected destination.", map[string]any{"path": target})
 	} else if !errors.Is(err, os.ErrNotExist) {
-		return Project{}, apierr.Invalid("CLONE_DESTINATION_UNAVAILABLE", "The clone destination could not be inspected.", map[string]any{"path": target})
+		return ClonePreparationResult{}, apierr.Invalid("CLONE_DESTINATION_UNAVAILABLE", "The clone destination could not be inspected.", map[string]any{"path": target})
 	}
 
 	temporaryPath, err := os.MkdirTemp(parent, ".ao-clone-")
 	if err != nil {
-		return Project{}, apierr.Invalid("CLONE_DESTINATION_UNAVAILABLE", "AO could not prepare the selected clone destination.", nil)
+		return ClonePreparationResult{}, apierr.Invalid("CLONE_DESTINATION_UNAVAILABLE", "AO could not prepare the selected clone destination.", nil)
 	}
 	cleanupPath := temporaryPath
 	defer func() {
@@ -79,32 +106,19 @@ func (m *Service) Clone(ctx context.Context, in CloneInput) (Project, error) {
 	if err := cmd.Run(); err != nil {
 		var executableError *exec.Error
 		if errors.As(err, &executableError) {
-			return Project{}, apierr.Invalid("GIT_NOT_FOUND", "Git is required to clone a repository.", nil)
+			return ClonePreparationResult{}, apierr.Invalid("GIT_NOT_FOUND", "Git is required to clone a repository.", nil)
 		}
 		if ctx.Err() != nil {
-			return Project{}, apierr.Invalid("GIT_CLONE_CANCELLED", "Repository cloning was cancelled.", nil)
+			return ClonePreparationResult{}, apierr.Invalid("GIT_CLONE_CANCELLED", "Repository cloning was cancelled.", nil)
 		}
-		return Project{}, apierr.Invalid("GIT_CLONE_FAILED", "Could not clone this repository. Check the URL, your Git credentials, and your network connection.", nil)
-	}
-	if !repoHasCommit(ctx, temporaryPath) {
-		return Project{}, apierr.Invalid("CLONE_EMPTY_REPOSITORY", "AO needs a repository with at least one commit.", nil)
+		return ClonePreparationResult{}, apierr.Invalid("GIT_CLONE_FAILED", "Could not clone this repository. Check the URL, your Git credentials, and your network connection.", nil)
 	}
 	if err := os.Rename(temporaryPath, target); err != nil {
-		return Project{}, apierr.Conflict("CLONE_DESTINATION_EXISTS", "The clone destination became unavailable before the repository could be created.", map[string]any{"path": target})
+		return ClonePreparationResult{}, apierr.Conflict("CLONE_DESTINATION_EXISTS", "The clone destination became unavailable before the repository could be created.", map[string]any{"path": target})
 	}
 	cleanupPath = target
-
-	project, err := m.Add(ctx, AddInput{
-		Path:      target,
-		ProjectID: in.ProjectID,
-		Name:      in.Name,
-		Config:    in.Config,
-	})
-	if err != nil {
-		return Project{}, err
-	}
 	cleanupPath = ""
-	return project, nil
+	return ClonePreparationResult{Path: target, RemoteURL: remoteURL}, nil
 }
 
 func cloneRepositoryName(raw string) (string, error) {
