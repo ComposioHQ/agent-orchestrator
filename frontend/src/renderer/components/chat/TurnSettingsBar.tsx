@@ -886,9 +886,19 @@ function partitionConfigOptions(options: ChatConfigOption[]): {
  *
  * Returns the provider's own opaque values; nothing downstream re-derives them
  * from a label.
+ *
+ * The known cost of classifying by label: a permission choice that merely
+ * mentions the word — "Agent asks before edits" — would read as a posture, and
+ * would additionally pull this option's ask choices in with it. Nothing observed
+ * from a real harness does that, and the plan/agent matching has always carried
+ * the same exposure, so this stays label-based rather than guessing at a
+ * narrower rule. If such a choice ever surfaces, the fix is for the provider's
+ * category to say which choices are postures — not a longer word list.
  */
 function executionChoiceValues(choices: ChatConfigOption["choices"]): Set<string> {
 	const values = new Set<string>();
+	// Deliberately any match within this option, not an exact label: Cursor sends
+	// "agent" while other harnesses send "Agent Mode".
 	const hasAgent = choices.some((choice) => choiceMatches(choice, "agent"));
 	for (const choice of choices) {
 		if (choiceMatches(choice, "plan") || choiceMatches(choice, "agent")) {
