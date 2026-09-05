@@ -189,7 +189,12 @@ describe("generateFeeds macOS sidecar suppression", () => {
 
 		const yml = readFileSync(join(dir, "nightly-mac.yml"), "utf8");
 		expect(yml).not.toContain("blockMapSize");
-		for (const macZip of macZips) expect(yml).toContain(`url: ${macZip}`);
+		for (const macZip of macZips) {
+			expect(yml).toContain(`url: ${macZip}`);
+			const bytes = readFileSync(join(dir, macZip));
+			expect(yml).toContain(`sha512: ${createHash("sha512").update(bytes).digest("base64")}`);
+			expect(yml).toContain(`size: ${bytes.length}`);
+		}
 
 		rmSync(dir, { recursive: true, force: true });
 	});

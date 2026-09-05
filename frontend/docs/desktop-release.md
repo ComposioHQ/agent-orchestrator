@@ -91,13 +91,15 @@ the HTTP 416 dependency regression and older-client feed isolation are resolved.
 See `docs/superpowers/plans/2026-09-05-macos-blockmap-pr1-verification.md` at the
 repository root for the stop evidence.
 
-The proposed macOS ZIP blockmaps are Nightly-only release assets. Once the
-release gate is safe to open, the client would attempt a differential transfer
-only when all of these conditions hold:
+There is currently no conductor kill switch or compatible-client gate. The local
+JSON flag is a disabled build-time stop, not remote authorization. A future
+Nightly experiment requires an independently reviewed rollout in `ao-releases`
+after compatible-client deployment and verification. Its required allow
+conditions are:
 
 - the host is macOS;
 - the effective update channel is `nightly`;
-- no `pr<N>` feature release is pinned; and
+- no `pr<N>` feature release is pinned;
 - Developer Mode is enabled;
 - the authoritative remote kill switch explicitly allows the attempt; and
 - the client is verified compatible.
@@ -114,7 +116,8 @@ sidecars must remain absent wherever those clients can discover them. This repo
 must not generate or publish macOS sidecars. A new client flag cannot protect an
 old binary that still implicitly permits differential downloads.
 
-The release kill switch is asset-side: remove every `.zip.blockmap` asset from
+The current emergency rollback is manual asset removal, not an existing
+conductor control: remove every `.zip.blockmap` asset from
 the affected Nightly release. MacUpdater then performs a clean full ZIP
 download on its next attempt without a client update. A transfer that already
 fetched its sidecars is not interrupted. Do not remove the ZIP or `nightly-mac.yml`.

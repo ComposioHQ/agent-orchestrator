@@ -4,7 +4,7 @@ PR: https://github.com/Untrivial-ai/agent-orchestrator/pull/4906
 
 ## Current state
 
-The release gate in `frontend/scripts/mac-differential-rollout.json` is false.
+The local build-time stop in `frontend/scripts/mac-differential-rollout.json` is false.
 Production macOS updates stay full-download-only. macOS sidecar
 generation is unconditionally suppressed on every channel. Unsupported platforms,
 including Windows and Linux, explicitly disable differential downloads.
@@ -48,7 +48,29 @@ rely on missing macOS sidecars. Publishing ordinary Nightly `.zip.blockmap`
 assets can therefore enable older clients regardless of Developer Mode,
 especially after a successful full fallback caches a ZIP and its new blockmap.
 A new client's gate does not protect those installations. Resolve feed isolation
-before publishing sidecars. Removing sidecars remains the release kill switch.
+before publishing sidecars. Manual sidecar removal is the emergency rollback;
+there is no existing conductor kill-switch implementation.
+
+## Conductor audit, part 1
+
+Audit supplied by orchestrator 250 on 2026-09-05:
+
+- `ao-releases` HEAD `aa936360`: `_pipeline.yml` creates macOS arm64/x64 ZIPs,
+  generates channel feeds using public `feed.mjs`, verifies, uploads `dist/*`,
+  then publishes. The current macOS safety barrier is absence of sidecars.
+- `agent-orchestrator` main `0244fb8`: `feed.mjs` hashes macOS ZIPs with
+  `hashFile`, emitting URL, SHA-512 and size, with no sidecar or `blockMapSize`.
+  Windows and Linux use `writeBlockmap`.
+- That baseline's `feed.test.mjs` explicitly asserts Nightly macOS has no sidecar.
+- No conductor kill switch or compatible-client gate exists at the audited heads.
+
+This PR retains explicit client default-disable and unconditional macOS sidecar
+suppression. The Nightly feed regression checks both architectures, real full-ZIP
+SHA-512/size metadata, no sidecars and no `blockMapSize`; Windows/Linux feed
+generation remains unchanged. Do not infer a remote control from the local JSON
+stop. A future conductor rollout must be independently reviewed after compatible
+client deployment and verification, with legacy-client isolation established.
+Audit part 2 remains pending.
 
 ## Evidence prerequisites
 
@@ -131,3 +153,11 @@ reported 3776 passed, 6 skipped and 2 failed: the retained HTTP 416 regression
 and a telemetry fixture that supplied only an arm64 ZIP on an x64 runner. The
 fixture now supplies both architectures so it tests transfer telemetry independently
 of the host architecture.
+
+Independent test-only candidate check: helper 273's upstream-source snapshot
+passed all 14 real MacUpdater harness cases on Node 26.7.0, including HTTP 416
+and sentinel descriptor integrity. Candidate DifferentialDownloader.js SHA-256:
+`79d2eaea8f38473a40337e5682e1aa1da5e46305fe9f67556d58f52013353d23`.
+The temporary test copy was removed; the installed dependency was unchanged.
+Immediately rerunning stock 6.8.9 produced 13 passed and the HTTP 416 descriptor
+failure. This is Node-transport evidence, not packaged Electron acceptance.
