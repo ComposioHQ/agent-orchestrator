@@ -85,7 +85,7 @@ export function TurnSettingsBar({
 	onRememberPermissions,
 	rememberPermissionsPending,
 	rememberPermissionsError,
-	permissionsRemembered,
+	rememberedPermissionMode,
 	configOptions,
 	onChangeConfigOption,
 	configPending,
@@ -108,7 +108,7 @@ export function TurnSettingsBar({
 	onRememberPermissions?: (mode: ApprovalMode) => Promise<unknown> | void;
 	rememberPermissionsPending?: boolean;
 	rememberPermissionsError?: string;
-	permissionsRemembered?: boolean;
+	rememberedPermissionMode?: ApprovalMode;
 	/** Controls advertised by an ACP agent for this exact live session. */
 	configOptions?: ChatConfigOption[];
 	onChangeConfigOption?: (
@@ -247,7 +247,7 @@ export function TurnSettingsBar({
 					</div>
 				) : null}
 			</div>
-			{rememberPermissionsPending || permissionsRemembered ? (
+			{rememberPermissionsPending || (rememberedPermissionMode !== undefined && rememberedPermissionMode === rememberMode && !planning && !configPending) ? (
 				<p role="status" className="px-1 text-[11px] text-muted-foreground">
 					{rememberPermissionsPending ? "Saving project default…" : "Permission mode saved for new sessions in this project."}
 				</p>

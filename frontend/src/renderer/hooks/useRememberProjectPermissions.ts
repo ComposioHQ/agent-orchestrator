@@ -28,7 +28,8 @@ export function useRememberProjectPermissions(projectId: string, sourceHarness?:
 	return {
 		remember,
 		pending: belongsToProject && mutation.isPending,
-		saved: belongsToProject && mutation.isSuccess,
+		savedMode: belongsToProject && mutation.isSuccess && mutation.variables?.sourceHarness === sourceHarness
+			? mutation.variables.permissions : undefined,
 		error: belongsToProject && mutation.error
 			? apiErrorMessage(mutation.error, "Could not remember permissions for this project.")
 			: undefined,

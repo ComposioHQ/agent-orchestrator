@@ -385,7 +385,33 @@ describe("remember project permissions", () => {
 		rerender(<TurnSettingsBar {...props} rememberPermissionsError="Could not save project default" />);
 		expect(screen.getByRole("alert")).toHaveTextContent("Could not save project default");
 		expect(screen.getByRole("button", { name: "Approval policy for the next turn" })).toBeEnabled();
-		rerender(<TurnSettingsBar {...props} permissionsRemembered />);
+		rerender(<TurnSettingsBar {...props} rememberedPermissionMode="default" />);
 		expect(screen.getByRole("status")).toHaveTextContent("saved for new sessions in this project");
 	});
+
+	it("shows success only for the exact saved native permission mode", () => {
+		const props = { models: [], onChange: vi.fn(), onRememberPermissions: vi.fn() };
+		const { rerender } = render(<TurnSettingsBar {...props} settings={{ approvalMode: "auto" }} rememberedPermissionMode="auto" />);
+		expect(screen.getByRole("status")).toHaveTextContent("saved for new sessions");
+		rerender(<TurnSettingsBar {...props} settings={{ approvalMode: "default" }} rememberedPermissionMode="auto" />);
+		expect(screen.queryByRole("status")).not.toBeInTheDocument();
+	});
+
+	it("matches saved success against the provider mode instead of stale native settings", () => {
+		const props = { models: [], settings: { approvalMode: "auto" as const }, onChangeConfigOption: vi.fn(), onRememberPermissions: vi.fn() };
+		const option: ChatConfigOption = { ...OPTIONS[2], currentValue: "auto", choices: [
+			{ value: "auto", name: "Auto", permissionMode: "auto" },
+			{ value: "manual", name: "Manual", permissionMode: "default" },
+			{ value: "unknown", name: "Unknown" },
+		] };
+		const { rerender } = render(<TurnSettingsBar {...props} configOptions={[option]} rememberedPermissionMode="auto" />);
+		expect(screen.getByRole("status")).toHaveTextContent("saved for new sessions");
+		rerender(<TurnSettingsBar {...props} configOptions={[option]} rememberedPermissionMode="auto" configPending />);
+		expect(screen.queryByRole("status")).not.toBeInTheDocument();
+		for (const currentValue of ["manual", "unknown"]) {
+			rerender(<TurnSettingsBar {...props} configOptions={[{ ...option, currentValue }]} rememberedPermissionMode="auto" />);
+			expect(screen.queryByRole("status")).not.toBeInTheDocument();
+		}
+	});
+
 });

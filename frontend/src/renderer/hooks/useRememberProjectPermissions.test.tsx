@@ -32,7 +32,7 @@ describe("project permission persistence", () => {
 		});
 		expect(invalidate).toHaveBeenCalledWith({ queryKey: ["project", "project-one"] });
 		expect(invalidate).toHaveBeenCalledWith({ queryKey: workspaceQueryKey });
-		await waitFor(() => expect(result.current.saved).toBe(true));
+		await waitFor(() => expect(result.current.savedMode).toBe("bypass-permissions"));
 	});
 
 	it("reports errors without claiming success and allows an explicit retry", async () => {
@@ -40,10 +40,10 @@ describe("project permission persistence", () => {
 		const { result, invalidate } = setup();
 		await act(async () => { await expect(result.current.remember("auto")).rejects.toEqual({ message: "Project not found" }); });
 		await waitFor(() => expect(result.current.error).toBe("Project not found"));
-		expect(result.current.saved).toBe(false);
+		expect(result.current.savedMode).toBeUndefined();
 		expect(invalidate).not.toHaveBeenCalled();
 		await act(async () => { await result.current.remember("auto"); });
-		await waitFor(() => expect(result.current.saved).toBe(true));
+		await waitFor(() => expect(result.current.savedMode).toBe("auto"));
 		expect(result.current.error).toBeUndefined();
 	});
 });
@@ -56,4 +56,21 @@ it("sends source harness context so the daemon can preserve Full access across p
 	expect(patch).toHaveBeenCalledWith("/api/v1/projects/{id}/permissions", {
 		params: { path: { id: "project-one" } }, body: { permissions: "default", sourceHarness: "codex" },
 	});
+});
+
+it("keeps saved-mode feedback scoped to its project and source harness", async () => {
+	patch.mockResolvedValue({});
+	const client = new QueryClient();
+	const wrapper = ({ children }: { children: ReactNode }) =>
+		<QueryClientProvider client={client}>{children}</QueryClientProvider>;
+	const { result, rerender } = renderHook(
+		({ projectId, harness }) => useRememberProjectPermissions(projectId, harness),
+		{ wrapper, initialProps: { projectId: "project-one", harness: "codex" } },
+	);
+	await act(async () => { await result.current.remember("default"); });
+	await waitFor(() => expect(result.current.savedMode).toBe("default"));
+	rerender({ projectId: "project-two", harness: "codex" });
+	expect(result.current.savedMode).toBeUndefined();
+	rerender({ projectId: "project-one", harness: "claude-code" });
+	expect(result.current.savedMode).toBeUndefined();
 });

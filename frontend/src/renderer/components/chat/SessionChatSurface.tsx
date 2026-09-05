@@ -373,7 +373,7 @@ export function SessionChatSurface({
 					? undefined : projectPermissions.remember}
 				rememberPermissionsPending={projectPermissions.pending}
 				rememberPermissionsError={projectPermissions.error}
-				permissionsRemembered={projectPermissions.saved}
+				rememberedPermissionMode={projectPermissions.savedMode}
 				configOptions={configOptions.options}
 				onChooseConfigOption={configOptions.setOption}
 				configOptionPending={configOptions.pending || commands.choosingSettings}

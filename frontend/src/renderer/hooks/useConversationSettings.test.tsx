@@ -26,6 +26,10 @@ describe("confirmed conversation permissions", () => {
 		await waitFor(() => expect(result.current.choosingSettings).toBe(true));
 		// Navigation during the write must not update the newly opened session.
 		rerender({ id: "session-b" });
+		expect(result.current.choosingSettings).toBe(false);
+		rerender({ id: "session-a" });
+		expect(result.current.choosingSettings).toBe(true);
+		rerender({ id: "session-b" });
 		await act(async () => { finish({ data: { approvalMode: "auto" } }); });
 		await waitFor(() => expect(result.current.choosingSettings).toBe(false));
 		expect(client.getQueryData(conversationQueryKey("session-a"))).toMatchObject({

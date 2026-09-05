@@ -297,7 +297,7 @@ export interface ChatWorkspaceProps {
 	onRememberPermissions?: (mode: ApprovalMode) => Promise<unknown> | void;
 	rememberPermissionsPending?: boolean;
 	rememberPermissionsError?: string;
-	permissionsRemembered?: boolean;
+	rememberedPermissionMode?: ApprovalMode;
 	/** Live provider-owned options, such as ACP model, effort, mode, and fast mode. */
 	configOptions?: ChatConfigOption[];
 	onChooseConfigOption?: (
@@ -427,7 +427,7 @@ export function ChatWorkspace({
 	onRememberPermissions,
 	rememberPermissionsPending,
 	rememberPermissionsError,
-	permissionsRemembered,
+	rememberedPermissionMode,
 	configOptions,
 	onChooseConfigOption,
 	configOptionPending,
@@ -850,7 +850,7 @@ export function ChatWorkspace({
 					onRememberPermissions={onRememberPermissions}
 					rememberPermissionsPending={rememberPermissionsPending}
 					rememberPermissionsError={rememberPermissionsError}
-					permissionsRemembered={permissionsRemembered}
+					rememberedPermissionMode={rememberedPermissionMode}
 					harness={snapshot.harness}
 					reroute={stableModelReroute}
 					onChange={newWorkDisabled ? undefined : onChooseSettings}
@@ -874,7 +874,7 @@ export function ChatWorkspace({
 			onRememberPermissions,
 			rememberPermissionsPending,
 			rememberPermissionsError,
-			permissionsRemembered,
+			rememberedPermissionMode,
 			snapshot.controller.state,
 			stableModelReroute,
 			stableSettings,
