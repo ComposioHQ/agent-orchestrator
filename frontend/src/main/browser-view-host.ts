@@ -1155,7 +1155,17 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		signal?: AbortSignal,
 	): Promise<BrowserTabsState> =>
 		queueNativeOperation(session, async () => {
-			await ensureNativeActiveTab(session, signal);
+			try {
+				await ensureNativeActiveTab(session, signal);
+			} catch (error) {
+				if (!isBrowserTargetMismatch(error)) throw error;
+				throwIfAborted(signal);
+				// Target drift must remain fail-closed for page actions, but closing
+				// this exact AO-owned view cannot dispatch against another native tab.
+				if (session.tabs.has(tabId)) closeTab(session, tabId);
+				session.nativeActiveTabId = undefined;
+				return listTabs(session);
+			}
 			try {
 				const targets = agentBrowserTargets(session);
 				if (signal) {
@@ -1168,7 +1178,10 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 				// Closing the AO-owned WebContentsView by its exact logical ID is safe
 				// even when agent-browser forgot that ID. It cannot fall through to a
 				// different target, unlike a read or page mutation.
-				if (session.tabs.has(tabId)) closeTab(session, tabId);
+				if (session.tabs.has(tabId)) {
+					throwIfAborted(signal);
+					closeTab(session, tabId);
+				}
 			}
 			session.nativeActiveTabId = undefined;
 			return listTabs(session);
@@ -2038,7 +2051,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 			const runNative = async (
 				nativeAction: string,
 				nativeArgs: Record<string, unknown> = {},
-			): Promise<Record<string, unknown>> => {
+			): Promise<Record<string, unknown> & { target: { tabId: string; url: string; origin: string } }> => {
 				if (!options.agentBrowserRuntime) {
 					throw browserError("BROWSER_AUTOMATION_UNAVAILABLE", "Browser automation runtime is unavailable");
 				}
@@ -2085,7 +2098,13 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 				case "open": {
 					const url = stringArg(args, "url", "URL_REQUIRED", "url is required");
 					const result = await runNative(action, { url: normalizeAgentBrowserURL(url) });
-					return { ...agentNavState(pushNavState(options, activeEntry(session))), target: result.target };
+					const targetEntry = session.tabs.get(result.target.tabId);
+					if (!targetEntry) {
+						throw browserError("BROWSER_TARGET_UNAVAILABLE", `Browser target AO tab ${result.target.tabId} is unavailable`);
+					}
+					const navState =
+						targetEntry.tabId === session.activeTabId ? pushNavState(options, targetEntry) : readNavState(targetEntry);
+					return { ...agentNavState(navState), target: result.target };
 				}
 				case "snapshot": {
 					const result = await runNative(action, { interactive: Boolean(args.interactive) });
@@ -2473,6 +2492,10 @@ function isBlankBrowserEntry(entry: BrowserEntry): boolean {
 // fallback should NOT quietly swallow.
 function isAgentBrowserCommandFailure(error: unknown): boolean {
 	return Boolean(error && typeof error === "object" && "code" in error && error.code === "AGENT_BROWSER_COMMAND_FAILED");
+}
+
+function isBrowserTargetMismatch(error: unknown): boolean {
+	return Boolean(error && typeof error === "object" && "code" in error && error.code === "BROWSER_TARGET_MISMATCH");
 }
 
 // The `{ref[, text]}`-shaped action family "act" can resolve a target for and

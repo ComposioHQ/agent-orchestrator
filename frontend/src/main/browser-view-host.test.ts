@@ -1072,20 +1072,20 @@ describe("ensureNativeActiveTab automation-runtime resync", () => {
 	// mark t1 synchronized anyway. The next click then ran on the runtime's stale
 	// t2 target even though AO reported t1 active.
 	it("fails closed after a native target resync fails without mutating the stale tab", async () => {
-		const { activeTargets, host, invoke, runtime } = setupTabHost();
+		const { activeTargets, host, invoke, runtime, views } = setupTabHost();
 		const ensure = (await invoke("browser:ensure", "sess-1")) as { viewId: string };
 		const viewId = ensure.viewId;
 		await invoke("browser:openTab", { viewId }); // t1, t2 — t2 active, natively synced
 
 		const runAction = runtime.runAction as unknown as ReturnType<typeof vi.fn>;
-		const mutations: string[] = [];
-		runAction.mockImplementation(async (sessionId: string, action: string, args: Record<string, unknown>) => {
+		const dispatchedPageActions: string[] = [];
+		runAction.mockImplementation(async (_sessionId: string, action: string, args: Record<string, unknown>) => {
 			if (action === "tab-select" && String(args.tabId) === "t1") {
 				throw Object.assign(new Error("Tab t1 not found; run `agent-browser tab` to list open tabs"), {
 					code: "AGENT_BROWSER_COMMAND_FAILED",
 				});
 			}
-			if (action === "click") mutations.push(activeTargets.get(sessionId) ?? "");
+			if (action === "click" || action === "get") dispatchedPageActions.push(action);
 			return {};
 		});
 
@@ -1096,11 +1096,24 @@ describe("ensureNativeActiveTab automation-runtime resync", () => {
 		await expect(host.execute("sess-1", "click", { ref: "e1" })).rejects.toMatchObject({
 			code: "BROWSER_TARGET_MISMATCH",
 		});
+		await expect(host.execute("sess-1", "get", { property: "url" })).rejects.toMatchObject({
+			code: "BROWSER_TARGET_MISMATCH",
+		});
 
-		expect(mutations).toEqual([]);
+		expect(dispatchedPageActions).toEqual([]);
 		expect(activeTargets.get("sess-1")).toBe("t2");
 		const repeated = (await invoke("browser:selectTab", { viewId, tabId: "t1" }).catch((error) => error)) as Error;
 		expect(repeated.message).not.toContain("agent-browser");
+
+		const closed = (await invoke("browser:closeTab", { viewId, tabId: "t1" })) as {
+			activeTabId: string;
+			tabs: Array<{ id: string }>;
+		};
+		expect(closed.activeTabId).toBe("t2");
+		expect(closed.tabs.map((tab) => tab.id)).toEqual(["t2"]);
+		expect(views[0].webContents.close).toHaveBeenCalledOnce();
+		expect(views[1].webContents.close).not.toHaveBeenCalled();
+		expect(runAction.mock.calls.some(([, action]) => action === "tab-close")).toBe(false);
 	});
 
 	it("synchronizes screenshots and fails before capture when the popup target cannot be selected", async () => {
@@ -1838,6 +1851,47 @@ describe("agent browser runtime", () => {
 		expect(agentOutput).not.toContain("another-secret");
 		expect(agentOutput).not.toContain("password");
 		expect(rendererTabs.tabs[0]).toMatchObject({ url: signed, title: `Title ${signed}` });
+	});
+
+	it("reports open navigation state from its target when a popup becomes active before projection", async () => {
+		const { activeTargets, host, runtime } = setupTabHost();
+		const targetURL = "https://alice:password@example.test/page?token=target-secret#private";
+		const safeTargetURL = "https://example.test/page?token=%5Bredacted%5D";
+		const popupURL = "https://popup.example.test/new?token=popup-secret#private";
+		const runAction = runtime.runAction as unknown as ReturnType<typeof vi.fn>;
+		const originalRunAction = runAction.getMockImplementation()! as (...args: unknown[]) => Promise<unknown>;
+		runAction.mockImplementation(
+			async (
+				sessionId: string,
+				action: string,
+				args: Record<string, unknown>,
+				provider: import("./agent-browser-cdp-bridge").AgentBrowserTargetProvider,
+			) => {
+				if (action !== "open") return originalRunAction(sessionId, action, args, provider);
+				const targets = provider.listTargets();
+				const target = targets.find((entry) => entry.id === activeTargets.get(sessionId)) ?? targets[0];
+				if (!target) throw new Error("Expected an initial browser target");
+				await target.debugger.sendCommand("Page.navigate", { url: args.url });
+				const popup = await provider.createTarget(popupURL);
+				activeTargets.set(sessionId, popup.id);
+				return {};
+			},
+		);
+
+		const opened = (await host.execute("sess-1", "open", { url: targetURL })) as BrowserNavState & {
+			target: { tabId: string; url: string; origin: string };
+		};
+		const tabs = (await host.execute("sess-1", "tabs")) as BrowserTabsState;
+
+		expect(opened).toMatchObject({
+			url: safeTargetURL,
+			title: `Title ${safeTargetURL}`,
+			target: { tabId: "t1", url: safeTargetURL, origin: "https://example.test" },
+		});
+		expect(opened.url).not.toContain("popup.example.test");
+		expect(JSON.stringify(opened)).not.toContain("target-secret");
+		expect(tabs.activeTabId).toBe("t2");
+		expect(tabs.tabs[1]).toMatchObject({ id: "t2", url: "https://popup.example.test/new?token=%5Bredacted%5D" });
 	});
 
 	it("destroys a headless session target through the daemon lifecycle command", async () => {
