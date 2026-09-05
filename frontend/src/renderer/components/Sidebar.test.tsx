@@ -1315,6 +1315,7 @@ describe("Sidebar", () => {
 		await user.click(screen.getByLabelText("New project"));
 		await user.click(screen.getByRole("button", { name: /^Import a workspace folder$/i }));
 		expect(screen.getByText("Initialize at least one child repository with a commit and origin remote before importing this workspace.")).toBeInTheDocument();
+		expect(screen.queryByText("No repositories detected in this folder.")).not.toBeInTheDocument();
 		expect(screen.getByRole("button", { name: "Continue" })).toBeDisabled();
 		expect(onCreateProject).not.toHaveBeenCalled();
 	});
@@ -1397,8 +1398,9 @@ describe("Sidebar", () => {
 		expect(screen.queryByRole("dialog", { name: "Prepare project" })).not.toBeInTheDocument();
 		await user.click(screen.getByRole("button", { name: "Continue" }));
 		await screen.findByRole("dialog", { name: "Prepare project" });
-		expect(screen.getByText("Initial commit")).toBeInTheDocument();
+		expect(screen.getByText(/Initial commit/)).toBeInTheDocument();
 		expect(screen.getByText("/repo/workspace/no-remote")).toBeInTheDocument();
+		expect(screen.getAllByRole("checkbox")).toHaveLength(2);
 	});
 
 	it("renders remote setup controls for workspace repositories that need them", async () => {
@@ -1455,6 +1457,7 @@ describe("Sidebar", () => {
 		expect(screen.getByText("temp")).toBeInTheDocument();
 		await user.click(screen.getByRole("button", { name: "Continue" }));
 		expect(screen.getByPlaceholderText("https://github.com/org/repository.git")).toBeInTheDocument();
+		expect(screen.getAllByRole("checkbox")).toHaveLength(1);
 	});
 
 	it("does not rescan folders for non-validation create failures", async () => {

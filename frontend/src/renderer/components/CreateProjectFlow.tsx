@@ -284,13 +284,15 @@ export function CreateProjectFlow({
 		void chooseDirectory(source === "workspace" ? "workspace" : "single_repo", presetPath ?? undefined);
 	};
 
-	const chooseDirectory = async (kind: ProjectKind, presetPath?: string) => {
-		setError(null);
-		setValidationScan(null);
-		resetProjectImportState();
-		setRepositorySetup(null);
-		setRepositorySetupWarning(null);
-		setSelectedKind(kind);
+	const chooseDirectory = async (kind: ProjectKind, presetPath?: string, preserveCurrentDialog = false) => {
+		if (!preserveCurrentDialog) {
+			setError(null);
+			setValidationScan(null);
+			resetProjectImportState();
+			setRepositorySetup(null);
+			setRepositorySetupWarning(null);
+			setSelectedKind(kind);
+		}
 		setIsChoosingPath(true);
 		try {
 			const path =
@@ -308,27 +310,39 @@ export function CreateProjectFlow({
 					return;
 				}
 				const validation = await validateImportFolder(path, "project");
+				if (preserveCurrentDialog) {
+					setError(null);
+					setValidationScan(null);
+					resetProjectImportState();
+					setRepositorySetup(null);
+					setRepositorySetupWarning(null);
+					setSelectedKind(kind);
+				}
 				setProjectImportKind("project");
 				setProjectValidation(validation);
 				setProjectPrepEvents([]);
 				setProjectApprovedActions(validation.root.requiredActions);
 				setProjectRemoteUrl(validation.root.requiredActions.includes("set_remote") ? suggestedProjectRemoteUrl(validation.root.repoPath) : "");
 				setProjectRepositoryPrep((validation.childRepos ?? []).filter((repo) => repo.requiredActions.length > 0).map((repo) => ({ repoPath: repo.repoPath, approvedActions: repo.requiredActions, remoteUrl: suggestedProjectRemoteUrl(repo.repoPath) })));
-				if (!validation.isValid || validation.nextStep === "error") {
-					reportProjectError(importValidationMessage(validation));
-					setProjectImportStep("blocked");
-					return;
-				}
-				if (validation.nextStep === "choose_import_kind") {
-					setProjectImportStep("blocked");
-					return;
-				}
-				if (validation.nextStep === "prepare_git") {
-					setProjectImportStep("prepare_git");
-					return;
-				}
-				if (validation.warning) {
-					setProjectImportStep("blocked");
+						if (!validation.isValid || validation.nextStep === "error") {
+							reportProjectError(importValidationMessage(validation));
+							setFolderPickerOpen(false);
+							setProjectImportStep("blocked");
+							return;
+						}
+						if (validation.nextStep === "choose_import_kind") {
+							setFolderPickerOpen(false);
+							setProjectImportStep("blocked");
+							return;
+						}
+						if (validation.nextStep === "prepare_git") {
+							setFolderPickerOpen(false);
+							setProjectImportStep("prepare_git");
+							return;
+						}
+						if (validation.warning) {
+							setFolderPickerOpen(false);
+							setProjectImportStep("blocked");
 					return;
 				}
 			}
@@ -840,6 +854,9 @@ export function CreateProjectFlow({
 						onChangeWorkspaceApprovedActions={(repoPath, actions) => setWorkspaceApprovedActions((current) => ({ ...current, [repoPath]: actions }))}
 						onChangeWorkspaceRemoteUrl={(repoPath, remoteUrl) => setWorkspaceRemoteUrls((current) => ({ ...current, [repoPath]: remoteUrl }))}
 						onPrepareWorkspaceRepository={(repoPath) => void prepareWorkspaceRepository(repoPath)}
+						onContinueAsProject={() => {
+							if (projectValidation) void chooseDirectory("single_repo", projectValidation.root.repoPath, true);
+						}}
 						onContinue={() => {
 							if (!validationScan || error) return;
 							if (selectedKind === "workspace") {
@@ -1684,13 +1701,20 @@ function ProjectImportDialog({
 										{repositoryPrep.map((repo) => {
 											const status = validation.childRepos?.find((candidate) => candidate.repoPath === repo.repoPath);
 											if (!status) return null;
+											const allApproved = status.requiredActions.every((action) => repo.approvedActions.includes(action));
 											return <div key={repo.repoPath} className="rounded-md border border-border/70 bg-background/40 p-3">
 												<div className="mb-2 truncate font-mono text-[12px] text-muted-foreground">{displayImportPath(repo.repoPath)}</div>
-												<div className="divide-y divide-border overflow-hidden rounded-md border border-border/70">
-													{status.requiredActions.map((action) => <div key={action} className="flex items-start gap-3 px-3 py-3">
-														<input type="checkbox" className="mt-0.5 size-4" checked={repo.approvedActions.includes(action)} disabled={disabled} onChange={(event) => onChangeRepositoryPrep(repo.repoPath, { approvedActions: event.target.checked ? [...repo.approvedActions, action] : repo.approvedActions.filter((value) => value !== action) })} />
-														<span className="min-w-0 flex-1 text-[13px]">{gitActionLabel(action)}{action === "set_remote" ? <Input className="mt-2 bg-[var(--color-bg-import-card)] text-[13px]" disabled={disabled} placeholder={t("createProject.cloneRepositoryUrlPlaceholder")} value={repo.remoteUrl} onChange={(event) => onChangeRepositoryPrep(repo.repoPath, { remoteUrl: event.target.value })} /> : null}</span>
-													</div>)}
+												<div className="rounded-md border border-border/70 px-3 py-3">
+													<WorkspaceGitSetupFields
+														actions={status.requiredActions}
+														approved={allApproved}
+														disabled={disabled}
+														onApprovalChange={(approved) => onChangeRepositoryPrep(repo.repoPath, { approvedActions: approved ? [...status.requiredActions] : [] })}
+														onRemoteChange={(remoteUrl) => onChangeRepositoryPrep(repo.repoPath, { remoteUrl })}
+														remoteAriaLabel={`Origin remote URL for ${displayImportPath(repo.repoPath)}`}
+														remotePlaceholder={t("createProject.cloneRepositoryUrlPlaceholder")}
+														remoteUrl={repo.remoteUrl}
+													/>
 												</div>
 											</div>;
 										})}
@@ -1805,6 +1829,7 @@ function CreateProjectFolderDialog({
 	onBack,
 	onChooseFolder,
 	onContinue,
+	onContinueAsProject,
 	onOpenChange,
 	open,
 	scan,
@@ -1823,6 +1848,7 @@ function CreateProjectFolderDialog({
 	onBack: () => void;
 	onChooseFolder: () => void;
 	onContinue: () => void;
+	onContinueAsProject: () => void;
 	onOpenChange: (open: boolean) => void;
 	open: boolean;
 	scan: ImportFolderScan | null;
@@ -1839,6 +1865,7 @@ function CreateProjectFolderDialog({
 	const isWorkspace = kind === "workspace";
 	const displayRepos = isWorkspace ? mergeWorkspaceImportRepos(scan, validation) : normalizeImportRepos(scan?.repos ?? []);
 	const workspaceNeedsInitializedRepo = isWorkspace && validation?.blockingErrors.includes("WORKSPACE_CHILD_REPO_REQUIRED");
+	const workspaceRootIsProject = isWorkspace && validation?.nextStep === "choose_import_kind" && validation.root.isRepo;
 	const failedRepos =
 		displayRepos.filter(
 			(repo) =>
@@ -1916,8 +1943,9 @@ function CreateProjectFolderDialog({
 									</div>
 								)}
 								{workspaceNeedsInitializedRepo && !error ? <div className="rounded-md border border-[var(--color-border-import-modal)] bg-[var(--color-bg-import-card)] px-3 py-3 text-[12px] leading-5 text-[var(--color-text-import-muted)]">Initialize at least one child repository with a commit and origin remote before importing this workspace.</div> : null}
+								{workspaceRootIsProject && !error ? <div className="rounded-md border border-[var(--color-border-import-modal)] bg-[var(--color-bg-import-card)] px-3 py-3 text-[12px] leading-5 text-[var(--color-text-import-muted)]">This is a single project, not a collection of projects. Import it as a project instead.</div> : null}
 
-							{isWorkspace ? <WorkspaceImportRepoList
+							{workspaceRootIsProject ? null : isWorkspace ? <WorkspaceImportRepoList
 								approvedActions={workspaceApprovedActions}
 								disabled={disabled}
 								events={workspacePrepEvents}
@@ -1931,7 +1959,7 @@ function CreateProjectFolderDialog({
 								{displayRepos.map((repo) => <ImportRepoRow key={repo.path} repo={repo} />)}
 							</div> : null}
 
-								{displayRepos.length === 0 && (
+								{displayRepos.length === 0 && !workspaceNeedsInitializedRepo && !workspaceRootIsProject && (
 									<div className="rounded-md border border-[var(--color-border-import-modal)] bg-[var(--color-bg-import-card)] p-3 text-[12px] text-[var(--color-text-import-muted)]">
 										{t("createProject.noRepos")}
 									</div>
@@ -1970,11 +1998,15 @@ function CreateProjectFolderDialog({
 							<Button type="button" variant="outline" disabled={disabled} onClick={() => onOpenChange(false)}>
 								{t("createProject.cancel")}
 							</Button>
-			{hasScan && failedRepos.length === 0 && !error && (
-				<Button type="button" variant="primary" disabled={disabled || workspaceNeedsInitializedRepo} onClick={onContinue}>
+							{hasScan && workspaceRootIsProject && !error ? (
+								<Button type="button" variant="primary" disabled={disabled} onClick={onContinueAsProject}>
+									Import as project
+								</Button>
+							) : hasScan && failedRepos.length === 0 && !error ? (
+								<Button type="button" variant="primary" disabled={disabled || workspaceNeedsInitializedRepo} onClick={onContinue}>
 									{t("createProject.cloneContinue")}
 								</Button>
-							)}
+							) : null}
 						</div>
 					</div>
 				</Dialog.Content>
@@ -2054,6 +2086,7 @@ function WorkspaceInlineSetup({ approvedActions, disabled, events, onChangeAppro
 	const [dirty, setDirty] = useState(false);
 	const missingApprovals = repo.requiredActions.some((action) => !approvedActions.includes(action));
 	const missingRemote = repo.requiredActions.includes("set_remote") && remoteUrl.trim() === "";
+	const allApproved = !missingApprovals;
 	useEffect(() => {
 		if (!dirty || disabled || missingApprovals || missingRemote) return;
 		const timer = window.setTimeout(() => {
@@ -2063,17 +2096,46 @@ function WorkspaceInlineSetup({ approvedActions, disabled, events, onChangeAppro
 		return () => window.clearTimeout(timer);
 	}, [dirty, disabled, missingApprovals, missingRemote, onPrepare]);
 	return <div className="origin-top animate-modal-in border-t border-border/50 px-3 pb-3 pt-2 motion-reduce:animate-none"><div className="space-y-2 rounded-md border border-border/60 bg-[var(--color-bg-import-modal)] p-2.5">
-		{repo.requiredActions.map((action) => <div key={action} className="space-y-2"><label className="flex items-center gap-2 text-[12px] text-[var(--color-text-import-title)]"><input checked={approvedActions.includes(action)} disabled={disabled} onChange={(event) => { setDirty(true); onChangeApprovedActions(event.target.checked ? [...approvedActions, action] : approvedActions.filter((item) => item !== action)); }} type="checkbox" /><span className="font-medium">{gitActionLabel(action)}</span><span className="ml-auto font-mono text-[11px] text-[var(--color-text-import-muted)]">{workspaceActionStateLabel(action, events, repo.path, approvedActions.includes(action), remoteUrl)}</span></label>{action === "set_remote" ? <Input aria-label="Origin remote URL" className="h-8 bg-[var(--color-bg-import-card)] font-mono text-[12px]" disabled={disabled} placeholder="https://github.com/owner/repository.git" value={remoteUrl} onChange={(event) => { setDirty(true); onChangeRemoteUrl(event.target.value); }} /> : null}</div>)}
+		<WorkspaceGitSetupFields
+			actions={repo.requiredActions}
+			approved={allApproved}
+			disabled={disabled}
+			onApprovalChange={(approved) => { setDirty(true); onChangeApprovedActions(approved ? [...repo.requiredActions] : []); }}
+			onRemoteChange={(remoteUrl) => { setDirty(true); onChangeRemoteUrl(remoteUrl); }}
+			remoteUrl={remoteUrl}
+			status={workspaceSetupStateLabel(events, repo.path, allApproved, missingRemote)}
+		/>
 	</div></div>;
 }
 
-function workspaceActionStateLabel(action: string, events: GitPreparationEvent[], repoPath: string, checked: boolean, remoteUrl: string): string {
-	const state = [...events].reverse().find((event) => event.repoPath === repoPath && event.action === action)?.state;
-	if (state === "success") return "Done";
-	if (state === "error") return "Failed";
-	if (state === "running") return "Running";
-	if (state === "pending") return "Queued";
-	if (!checked || (action === "set_remote" && remoteUrl.trim() === "")) return "Required";
+function WorkspaceGitSetupFields({ actions, approved, disabled, onApprovalChange, onRemoteChange, remoteAriaLabel = "Origin remote URL", remotePlaceholder = "https://github.com/owner/repository.git", remoteUrl, status }: {
+	actions: string[];
+	approved: boolean;
+	disabled: boolean;
+	onApprovalChange: (approved: boolean) => void;
+	onRemoteChange: (remoteUrl: string) => void;
+	remoteAriaLabel?: string;
+	remotePlaceholder?: string;
+	remoteUrl: string;
+	status?: string;
+}) {
+	return <div className="space-y-2">
+		<label className="flex items-start gap-2 text-[12px] text-[var(--color-text-import-title)]">
+			<input checked={approved} className="mt-0.5 size-4" disabled={disabled} onChange={(event) => onApprovalChange(event.target.checked)} type="checkbox" />
+			<span className="min-w-0 flex-1"><span className="block font-medium">Set up Git for this project</span><span className="block text-[11px] leading-4 text-[var(--color-text-import-muted)]">{actions.map(gitActionLabel).join(", ")}</span></span>
+			{status ? <span className="font-mono text-[11px] text-[var(--color-text-import-muted)]">{status}</span> : null}
+		</label>
+		{actions.includes("set_remote") ? <Input aria-label={remoteAriaLabel} className="h-8 bg-[var(--color-bg-import-card)] font-mono text-[12px]" disabled={disabled} placeholder={remotePlaceholder} value={remoteUrl} onChange={(event) => onRemoteChange(event.target.value)} /> : null}
+	</div>;
+}
+
+function workspaceSetupStateLabel(events: GitPreparationEvent[], repoPath: string, approved: boolean, missingRemote: boolean): string {
+	const states = events.filter((event) => event.repoPath === repoPath).map((event) => event.state);
+	if (states.includes("error")) return "Failed";
+	if (states.includes("running")) return "Running";
+	if (states.includes("pending")) return "Queued";
+	if (states.length > 0 && states.every((state) => state === "success")) return "Done";
+	if (!approved || missingRemote) return "Required";
 	return "";
 }
 

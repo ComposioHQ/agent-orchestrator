@@ -543,6 +543,41 @@ describe("CreateProjectFlow project import validation", () => {
 		});
 	});
 
+	it("offers to import a repository selected as a workspace as a project", async () => {
+		const user = userEvent.setup();
+		bridgeMocks.chooseDirectory.mockResolvedValue("/repo/project");
+		apiMocks.POST
+			.mockResolvedValueOnce({
+				data: projectValidation("/repo/project", {
+					nextStep: "choose_import_kind",
+					warning: "This folder is already a Git project. AO will import it as a project instead of a workspace.",
+				}),
+			})
+			.mockResolvedValueOnce({ data: projectValidation("/repo/project") });
+
+		render(
+			<CreateProjectFlow mode="choose" {...noop}>
+				{({ choosePath }) => <button onClick={choosePath}>New project</button>}
+			</CreateProjectFlow>,
+		);
+
+		await user.click(screen.getByRole("button", { name: "New project" }));
+		await user.click(await screen.findByRole("button", { name: "Import a workspace folder" }));
+
+		expect(await screen.findByText("This is a single project, not a collection of projects. Import it as a project instead.")).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Import as project" })).toBeInTheDocument();
+		expect(screen.queryByText("proj")).not.toBeInTheDocument();
+
+		await user.click(screen.getByRole("button", { name: "Import as project" }));
+
+		const sheet = await screen.findByTestId("agent-sheet");
+		expect(sheet).toHaveAttribute("data-path", "/repo/project");
+		expect(sheet).toHaveAttribute("data-kind", "single_repo");
+		expect(apiMocks.POST).toHaveBeenNthCalledWith(2, "/api/v1/imports/validate", {
+			body: { importKind: "project", path: "/repo/project" },
+		});
+	});
+
 	it("uses one shared backdrop while switching between flow modals", async () => {
 		const user = userEvent.setup();
 		bridgeMocks.chooseDirectory.mockResolvedValue("/repo/project");
