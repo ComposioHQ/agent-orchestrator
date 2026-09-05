@@ -1400,10 +1400,9 @@ describe("Sidebar", () => {
 
 		expect(screen.getByText("unborn")).toBeInTheDocument();
 		expect(screen.queryByRole("dialog", { name: "Prepare project" })).not.toBeInTheDocument();
-		await user.click(screen.getByRole("button", { name: "Continue" }));
-		await screen.findByRole("dialog", { name: "Prepare project" });
+		expect(screen.getByRole("button", { name: "Continue" })).toBeDisabled();
+		await user.click(screen.getByRole("button", { name: "Git setup needed · Set up" }));
 		expect(screen.getByText(/Initial commit/)).toBeInTheDocument();
-		expect(screen.getByText("/repo/workspace/no-remote")).toBeInTheDocument();
 		expect(screen.getAllByRole("checkbox")).toHaveLength(2);
 	});
 
@@ -1413,7 +1412,37 @@ describe("Sidebar", () => {
 		window.localStorage.setItem("ao.import.lastRemoteOwner", "chauhan");
 		window.ao!.app.chooseDirectory = vi.fn().mockResolvedValue("/repo/workspace");
 		window.ao!.app.checkAncestorRepo = vi.fn().mockResolvedValue(undefined);
+		let prepared = false;
 		postMock.mockImplementation(async (path: string, options?: { body?: { importKind?: string; path?: string } }) => {
+			if (path === "/api/v1/imports/prepare-git") {
+				prepared = true;
+				return {
+					data: {
+						events: [
+							{ action: "git_commit", repoPath: "/repo/workspace/temp", state: "success" },
+							{ action: "set_remote", repoPath: "/repo/workspace/temp", state: "success" },
+						],
+						validation: {
+							importKind: "workspace",
+							isValid: true,
+							blockingErrors: [],
+							root: {
+								repoPath: "/repo/workspace",
+								isRepo: false,
+								hasCommit: false,
+								hasOrigin: false,
+								isEmptyFolder: false,
+								needsGitInit: false,
+								requiredActions: [],
+								blockingErrors: [],
+							},
+							childRepos: [],
+							nextStep: "continue",
+						},
+					},
+					error: undefined,
+				};
+			}
 			if (path === "/api/v1/imports/validate") {
 				return {
 					data: {
@@ -1459,9 +1488,14 @@ describe("Sidebar", () => {
 		await user.click(screen.getByRole("button", { name: /^Import a workspace folder$/i }));
 		expect(screen.getByRole("dialog", { name: "Import workspace" })).toBeInTheDocument();
 		expect(screen.getByText("temp")).toBeInTheDocument();
-		await user.click(screen.getByRole("button", { name: "Continue" }));
-		expect(screen.getByPlaceholderText("https://github.com/org/repository.git")).toBeInTheDocument();
+		expect(screen.getByRole("textbox", { name: "Origin remote URL" })).toBeInTheDocument();
 		expect(screen.getAllByRole("checkbox")).toHaveLength(1);
+		expect(screen.queryByRole("button", { name: /Set up|Hide setup/i })).not.toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Continue" })).toBeDisabled();
+
+		await user.click(screen.getByRole("checkbox"));
+		await vi.waitFor(() => expect(prepared).toBe(true), { timeout: 1_000 });
+		await vi.waitFor(() => expect(screen.getByRole("button", { name: "Continue" })).toBeEnabled());
 	});
 
 	it("does not rescan folders for non-validation create failures", async () => {

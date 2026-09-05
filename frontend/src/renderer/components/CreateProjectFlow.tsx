@@ -382,7 +382,7 @@ export function CreateProjectFlow({
 						remoteUrl: suggestedProjectRemoteUrl(repo.repoPath),
 					})));
 					const workspaceRepos = mergeWorkspaceImportRepos(scan, validation);
-					setWorkspaceApprovedActions(Object.fromEntries(workspaceRepos.filter((repo) => repo.requiredActions.length > 0).map((repo) => [repo.path, [...repo.requiredActions]])));
+					setWorkspaceApprovedActions(Object.fromEntries(workspaceRepos.filter((repo) => repo.requiredActions.length > 0).map((repo) => [repo.path, []])));
 					setWorkspaceRemoteUrls(Object.fromEntries(workspaceRepos.filter((repo) => repo.requiredActions.includes("set_remote")).map((repo) => [repo.path, suggestedProjectRemoteUrl(repo.path)])));
 					setWorkspacePrepEvents([]);
 					setProjectImportKind("workspace");
@@ -1887,6 +1887,7 @@ function CreateProjectFolderDialog({
 	const displayRepos = isWorkspace ? mergeWorkspaceImportRepos(scan, validation) : normalizeImportRepos(scan?.repos ?? []);
 	const workspaceNeedsInitializedRepo = isWorkspace && validation?.blockingErrors.includes("WORKSPACE_CHILD_REPO_REQUIRED");
 	const workspaceRootIsProject = isWorkspace && validation?.nextStep === "choose_import_kind" && validation.root.isRepo;
+	const workspaceHasRequiredSetup = isWorkspace && Boolean(validation?.childRepos?.some((repo) => repo.requiredActions.length > 0));
 	const failedRepos =
 		displayRepos.filter(
 			(repo) =>
@@ -1998,7 +1999,7 @@ function CreateProjectFolderDialog({
 									Import as project
 								</Button>
 							) : hasScan && failedRepos.length === 0 && !error && !workspaceNeedsInitializedRepo ? (
-								<Button type="button" variant="primary" disabled={disabled || workspaceNeedsInitializedRepo} onClick={onContinue}>
+								<Button type="button" variant="primary" disabled={disabled || workspaceHasRequiredSetup} onClick={onContinue}>
 									{t("createProject.cloneContinue")}
 								</Button>
 							) : null}
@@ -2023,7 +2024,7 @@ function ImportRepoRow({ failed = false, onSetup, repo, setupExpanded = false }:
 			</div>
 			<div className="min-w-0 flex-1 truncate text-[13px] font-semibold text-[var(--color-text-import-title)]">{repo.name}</div>
 			<div className="flex max-w-[220px] shrink-0 items-center gap-1 truncate text-right text-[11px] text-[var(--color-text-import-muted)]">
-				{needsSetup ? <button type="button" aria-expanded={setupExpanded} className="rounded-sm border border-orange-400/40 bg-orange-500/15 px-2 py-0.5 text-orange-300 hover:bg-orange-500/25" onClick={onSetup}>{setupExpanded ? "Hide setup" : `${workspaceSetupLabel(repo)} · Set up`}</button> : repositoryUrl ? <><GitBranch className="size-3.5 shrink-0" aria-hidden="true" /><a className="truncate underline decoration-border underline-offset-2 hover:text-foreground" href={repositoryUrl} rel="noreferrer" target="_blank">{repo.branch}</a></> : <><span className={cn("truncate", isPlainFolder && "rounded-sm bg-orange-500/15 px-2 py-0.5 text-orange-300")}>{isPlainFolder ? "Needs git init" : failed ? (repo.reason ?? t("createProject.repoCannotImport")) : repo.branch}</span></>}
+				{needsSetup ? onSetup ? <button type="button" aria-expanded={setupExpanded} className="rounded-sm border border-orange-400/40 bg-orange-500/15 px-2 py-0.5 text-orange-300 hover:bg-orange-500/25" onClick={onSetup}>{setupExpanded ? "Hide setup" : `${workspaceSetupLabel(repo)} · Set up`}</button> : <span className="rounded-sm border border-orange-400/40 bg-orange-500/15 px-2 py-0.5 text-orange-300">Setup required</span> : repositoryUrl ? <><GitBranch className="size-3.5 shrink-0" aria-hidden="true" /><a className="truncate underline decoration-border underline-offset-2 hover:text-foreground" href={repositoryUrl} rel="noreferrer" target="_blank">{repo.branch}</a></> : <><span className={cn("truncate", isPlainFolder && "rounded-sm bg-orange-500/15 px-2 py-0.5 text-orange-300")}>{isPlainFolder ? "Needs git init" : failed ? (repo.reason ?? t("createProject.repoCannotImport")) : repo.branch}</span></>}
 			</div>
 		</div>
 	);
@@ -2052,17 +2053,21 @@ function WorkspaceImportRepoList({ approvedActions, disabled, events, isPreparin
 	remoteUrls: WorkspaceRemoteState;
 	repos: DisplayImportRepo[];
 }) {
-	const [expandedPath, setExpandedPath] = useState<string | null>(null);
 	const orderedRepos = [...repos].sort((left, right) => (Number(right.requiredActions.length > 0) - Number(left.requiredActions.length > 0)) || left.name.localeCompare(right.name));
+	const singleRequiredRepo = orderedRepos.length === 1 && orderedRepos[0]?.requiredActions.length > 0 ? orderedRepos[0] : null;
+	const [expandedPath, setExpandedPath] = useState<string | null>(() => singleRequiredRepo?.path ?? null);
+	useEffect(() => {
+		if (singleRequiredRepo) setExpandedPath(singleRequiredRepo.path);
+	}, [singleRequiredRepo?.path]);
 	return <div className="divide-y divide-border/50 overflow-hidden rounded-sm bg-[var(--color-bg-import-card)]">
 		{orderedRepos.map((repo) => {
 			const needsSetup = repo.requiredActions.length > 0;
 			const expanded = expandedPath === repo.path;
 			return <div key={repo.path}>
 				<div className="relative">
-					<ImportRepoRow onSetup={needsSetup ? () => setExpandedPath(expanded ? null : repo.path) : undefined} repo={repo} setupExpanded={expanded} />
+					<ImportRepoRow onSetup={needsSetup && !singleRequiredRepo ? () => setExpandedPath(expanded ? null : repo.path) : undefined} repo={repo} setupExpanded={expanded} />
 				</div>
-				{needsSetup ? <div className={cn("grid transition-[grid-template-rows] duration-200 ease-out motion-reduce:transition-none", expanded ? "grid-rows-[1fr]" : "grid-rows-[0fr]")}><div className="min-h-0 overflow-hidden"><WorkspaceInlineSetup approvedActions={approvedActions[repo.path] ?? repo.requiredActions} disabled={disabled || isPreparingGit} events={events} onChangeApprovedActions={(actions) => onChangeApprovedActions(repo.path, actions)} onChangeRemoteUrl={(remoteUrl) => onChangeRemoteUrl(repo.path, remoteUrl)} onPrepare={() => onPrepareRepository(repo.path)} repo={repo} remoteUrl={remoteUrls[repo.path] ?? ""} /></div></div> : null}
+				{needsSetup ? <div className={cn("grid transition-[grid-template-rows] duration-200 ease-out motion-reduce:transition-none", expanded ? "grid-rows-[1fr]" : "grid-rows-[0fr]")}><div className="min-h-0 overflow-hidden"><WorkspaceInlineSetup approvedActions={approvedActions[repo.path] ?? []} disabled={disabled || isPreparingGit} events={events} onChangeApprovedActions={(actions) => onChangeApprovedActions(repo.path, actions)} onChangeRemoteUrl={(remoteUrl) => onChangeRemoteUrl(repo.path, remoteUrl)} onPrepare={() => onPrepareRepository(repo.path)} repo={repo} remoteUrl={remoteUrls[repo.path] ?? ""} /></div></div> : null}
 			</div>;
 		})}
 	</div>;
