@@ -236,6 +236,12 @@ func TestManager_PrepareClonePreservesEmptyRepositoryForImportSetup(t *testing.T
 	if listed, err := m.List(ctx); err != nil || len(listed) != 0 {
 		t.Fatalf("List after PrepareClone = %#v, %v; preparation must not register", listed, err)
 	}
+	if err := m.CleanupPreparedClone(ctx, project.ClonePreparationCleanupInput{Path: prepared.Path}); err != nil {
+		t.Fatalf("CleanupPreparedClone: %v", err)
+	}
+	if _, err := os.Stat(prepared.Path); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("prepared checkout still exists after cleanup: %v", err)
+	}
 }
 
 func TestManager_CloneRejectsUnsafeURLsAndExistingDestination(t *testing.T) {

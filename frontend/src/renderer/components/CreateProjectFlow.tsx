@@ -150,6 +150,17 @@ export function CreateProjectFlow({
 		setProjectImportShake(false);
 	};
 
+	const abandonPreparedClone = async () => {
+		const path = preparedClonePath;
+		if (!path) return;
+		setPreparedClonePath(null);
+		try {
+			await apiClient.POST("/api/v1/projects/clone/cleanup", { body: { path } });
+		} catch {
+			// Cleanup is best effort. The marker prevents removing user-owned repos.
+		}
+	};
+
 	const reportProjectError = (message: string) => {
 		setError(message);
 		showGlobalToast(t("createProject.setupFailedToastTitle", { defaultValue: "Project setup failed" }), message, "error");
@@ -167,6 +178,7 @@ export function CreateProjectFlow({
 	};
 
 	const selectSource = (source: ProjectSource) => {
+		void abandonPreparedClone();
 		const presetPath = pendingDropPath;
 		setPendingDropPath(null);
 		setError(null);
@@ -366,6 +378,7 @@ export function CreateProjectFlow({
 	const prepareClone = async (next: CloneRepositorySelection) => {
 		setError(null);
 		setIsPreparingGit(true);
+		setCloneDialogOpen(false);
 		try {
 			const { data, error: apiError } = await apiClient.POST("/api/v1/projects/clone/prepare", {
 			body: {
@@ -397,12 +410,15 @@ export function CreateProjectFlow({
 			setSelectedPath(data.path);
 		} catch (err) {
 			reportProjectError(err instanceof Error ? err.message : t("createProject.couldNotAdd"));
+			setCloneDialogOpen(true);
 		} finally {
 			setIsPreparingGit(false);
 		}
 	};
 
 	const reopenSourcePicker = () => {
+		void abandonPreparedClone();
+		setCloneSelection(null);
 		resetProjectImportState();
 		if (hasModePicker) {
 			setModePickerOpen(true);
@@ -615,6 +631,8 @@ export function CreateProjectFlow({
 				onOpenChange={(open) => {
 					if (isBusy) return;
 					if (!open) {
+						void abandonPreparedClone();
+						setCloneSelection(null);
 						resetProjectImportState();
 						setError(null);
 					}
@@ -636,6 +654,7 @@ export function CreateProjectFlow({
 				kind={selectedKind}
 				onOpenChange={(open) => {
 					if (!open) {
+						void abandonPreparedClone();
 						setSelectedPath(null);
 						setCloneSelection(null);
 						setPreparedClonePath(null);
@@ -648,6 +667,9 @@ export function CreateProjectFlow({
 					onBack={
 					cloneSelection
 						? () => {
+								void abandonPreparedClone();
+								setCloneSelection(null);
+								setPreparedClonePath(null);
 								setSelectedPath(null);
 								setCloneDialogOpen(true);
 							}

@@ -929,6 +929,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects/clone/cleanup": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Remove an abandoned clone created for project preparation */
+        post: operations["cleanupPreparedClone"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects/clone/prepare": {
         parameters: {
             query?: never;
@@ -3521,6 +3538,9 @@ export interface components {
             path: string;
             repo: string;
             workspaceRepos?: components["schemas"]["WorkspaceRepo"][];
+        };
+        ProjectClonePreparationCleanupInput: {
+            path: string;
         };
         ProjectConfig: {
             agentConfig?: components["schemas"]["AgentConfig"];
@@ -7167,6 +7187,46 @@ export interface operations {
             };
             /** @description Conflict */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    cleanupPreparedClone: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProjectClonePreparationCleanupInput"];
+            };
+        };
+        responses: {
+            /** @description No Content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Bad Request */
+            400: {
                 headers: {
                     [name: string]: unknown;
                 };

@@ -150,6 +150,10 @@ func (f *fakeProjectManager) PrepareClone(_ context.Context, in projectsvc.Clone
 	return projectsvc.ClonePreparationResult{Path: "/tmp/" + in.RemoteURL, RemoteURL: in.RemoteURL}, nil
 }
 
+func (f *fakeProjectManager) CleanupPreparedClone(context.Context, projectsvc.ClonePreparationCleanupInput) error {
+	return nil
+}
+
 func (f *fakeProjectManager) InitializeRepository(_ context.Context, in projectsvc.InitializeRepositoryInput) (projectsvc.InitializeRepositoryResult, error) {
 	return projectsvc.InitializeRepositoryResult(in), nil
 }

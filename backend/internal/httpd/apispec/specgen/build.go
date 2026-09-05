@@ -1719,6 +1719,16 @@ func projectOperations() []operation {
 			},
 		},
 		{
+			method: http.MethodPost, path: "/api/v1/projects/clone/cleanup", id: "cleanupPreparedClone", tag: "projects",
+			summary: "Remove an abandoned clone created for project preparation",
+			reqBody: projectsvc.ClonePreparationCleanupInput{},
+			resps: []respUnit{
+				{http.StatusNoContent, nil},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+			},
+		},
+		{
 			method: http.MethodPost, path: "/api/v1/projects/initialize", id: "initializeProjectRepository", tag: "projects",
 			summary: "Initialize a selected folder as a Git repository with an initial commit",
 			reqBody: projectsvc.InitializeRepositoryInput{},
