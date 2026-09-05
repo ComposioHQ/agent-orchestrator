@@ -1768,5 +1768,8 @@
 	"settings.project.autoReviewToggle": "Auto review PRs",
 	"settings.project.autoReviewDescription": "When enabled, new worker sessions will automatically review their pull requests. This can still be toggled per session after spawn.",
 	"settings.project.reviewer": "Reviewer",
-	"settings.models.customAgentModelAria": "{{label}} 사용자 지정 모델"
+	"settings.models.customAgentModelAria": "{{label}} 사용자 지정 모델",
+	"session.interfaceSwitchFailed": "인터페이스를 전환할 수 없습니다",
+	"session.dismissInterfaceSwitchError": "인터페이스 전환 오류 닫기",
+	"session.dismissInterfaceSwitchNotice": "닫기"
 }

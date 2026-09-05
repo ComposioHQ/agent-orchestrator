@@ -1792,5 +1792,8 @@
 	"settings.project.autoReviewToggle": "Auto review PRs",
 	"settings.project.autoReviewDescription": "When enabled, new worker sessions will automatically review their pull requests. This can still be toggled per session after spawn.",
 	"settings.project.reviewer": "Reviewer",
-	"settings.models.customAgentModelAria": "Modelo personalizado de {{label}}"
+	"settings.models.customAgentModelAria": "Modelo personalizado de {{label}}",
+	"session.interfaceSwitchFailed": "Não foi possível alternar a interface",
+	"session.dismissInterfaceSwitchError": "Dispensar erro de troca de interface",
+	"session.dismissInterfaceSwitchNotice": "Dispensar"
 }
