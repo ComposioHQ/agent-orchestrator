@@ -512,6 +512,12 @@ export function CreateProjectFlow({
 		setError(null);
 	};
 
+	const tryProjectAsWorkspace = () => {
+		if (!projectValidation) return;
+		setPendingDropPath(null);
+		void chooseDirectory("workspace", projectValidation.root.repoPath);
+	};
+
 	const prepareProjectGit = async () => {
 		if (!projectValidation) return;
 		setError(null);
@@ -652,7 +658,7 @@ export function CreateProjectFlow({
 						onOfferingChange={setOffering}
 						onSignIn={cloudSignIn}
 						open={modePickerOpen}
-						onOpenChange={(open) => {
+					onOpenChange={(open) => {
 							if (isBusy) return;
 							setModePickerOpen(open);
 							// Dismissed without picking a kind — don't let a stale dropped
@@ -764,6 +770,7 @@ export function CreateProjectFlow({
 						setError(null);
 					}
 				}}
+				onTryWorkspace={tryProjectAsWorkspace}
 				open={projectImportOpen}
 				remoteUrl={projectRemoteUrl}
 				step={projectImportStep}
@@ -1390,6 +1397,7 @@ function ProjectImportDialog({
 	onContinueProject,
 	onChangeRepositoryPrep,
 	onOpenChange,
+	onTryWorkspace,
 	open,
 	remoteUrl,
 	repositoryPrep,
@@ -1410,6 +1418,7 @@ function ProjectImportDialog({
 	onContinueProject: () => void;
 	onChangeRepositoryPrep: (repoPath: string, next: Partial<RepositoryPreparationState>) => void;
 	onOpenChange: (open: boolean) => void;
+	onTryWorkspace: () => void;
 	open: boolean;
 	remoteUrl: string;
 	repositoryPrep: RepositoryPreparationState[];
@@ -1481,6 +1490,14 @@ function ProjectImportDialog({
 						{importKind === "project" && hasChildRepos ? (
 							<div className="text-[12px] leading-5 text-foreground">
 								<span>{t("createProject.projectHasChildRepos")}</span>
+								<button
+									type="button"
+									className="ml-2 inline-flex items-center rounded-md border border-border/70 bg-muted/50 px-2 py-0.5 text-[11px] font-medium text-foreground transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-50"
+									disabled={disabled}
+									onClick={onTryWorkspace}
+								>
+									{t("createProject.tryImportWorkspace")}
+								</button>
 							</div>
 						) : null}
 						{validation.warning ? (
