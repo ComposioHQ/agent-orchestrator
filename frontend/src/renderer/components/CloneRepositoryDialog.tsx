@@ -1,7 +1,7 @@
 import * as Dialog from "@radix-ui/react-dialog";
 import { ChevronLeft, Folder, Link2, LoaderCircle, X } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
-import { type FormEvent, useEffect, useRef, useState } from "react";
+import { type FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { aoBridge } from "../lib/bridge";
 import { PathRow } from "./PathRow";
@@ -51,13 +51,18 @@ export default function CloneRepositoryDialog({
 	const [submitted, setSubmitted] = useState(false);
 	const [repositoryCheck, setRepositoryCheck] = useState<"idle" | "checking" | "valid" | "invalid">("idle");
 	const repositoryCheckRequest = useRef(0);
+	const destinationPickerRequest = useRef(0);
+	const shakeFrame = useRef<number | null>(null);
+	const shakeTimer = useRef<number | null>(null);
+	const onErrorRef = useRef(onError);
 	const [choosingDestination, setChoosingDestination] = useState(false);
 	const [shake, setShake] = useState(false);
 	const [destinationPickerError, setDestinationPickerError] = useState<string | null>(null);
 	const repositoryName = repositoryNameFromGitUrl(value.remoteUrl);
 	const repositoryAvatar = repositoryAvatarFromGitUrl(value.remoteUrl);
 	const hasRemoteUrl = value.remoteUrl.trim().length > 0;
-	const targetPath = repositoryName && value.destinationParent
+	const hasDestination = value.destinationParent.trim().length > 0;
+	const targetPath = repositoryName && hasDestination
 		? joinCloneDestination(value.destinationParent, repositoryName)
 		: "";
 	const projectExists = Boolean(
@@ -73,43 +78,97 @@ export default function CloneRepositoryDialog({
 		: null;
 	const duplicateError = repositoryName && projectExists ? t("createProject.cloneProjectExists") : null;
 	const inlineRepositoryError = urlError ?? repositoryAccessError ?? duplicateError;
-	const destinationError = submitted && !value.destinationParent ? t("createProject.cloneDestinationRequired") : null;
+	const destinationError = submitted && !hasDestination ? t("createProject.cloneDestinationRequired") : null;
 	const canContinue = Boolean(
 		repositoryName &&
 		repositoryCheck === "valid" &&
+		hasDestination &&
 		!projectExists &&
 		!disabled &&
 		!choosingDestination,
 	);
 
-	const triggerShake = () => {
+	useEffect(() => {
+		onErrorRef.current = onError;
+	}, [onError]);
+
+	const clearShake = useCallback(() => {
+		if (shakeFrame.current !== null) window.cancelAnimationFrame(shakeFrame.current);
+		if (shakeTimer.current !== null) window.clearTimeout(shakeTimer.current);
+		shakeFrame.current = null;
+		shakeTimer.current = null;
 		setShake(false);
-		window.requestAnimationFrame(() => setShake(true));
-		window.setTimeout(() => setShake(false), 320);
-	};
+	}, []);
+
+	const triggerShake = useCallback(() => {
+		clearShake();
+		setShake(false);
+		shakeFrame.current = window.requestAnimationFrame(() => {
+			setShake(true);
+			shakeFrame.current = null;
+		});
+		shakeTimer.current = window.setTimeout(() => {
+			setShake(false);
+			shakeTimer.current = null;
+		}, 320);
+	}, [clearShake]);
+
+	useEffect(() => {
+		if (open) return;
+		repositoryCheckRequest.current += 1;
+		destinationPickerRequest.current += 1;
+		setSubmitted(false);
+		setRepositoryCheck("idle");
+		setChoosingDestination(false);
+		setDestinationPickerError(null);
+		clearShake();
+	}, [clearShake, open]);
+
+	useEffect(() => () => {
+		repositoryCheckRequest.current += 1;
+		destinationPickerRequest.current += 1;
+		if (shakeFrame.current !== null) window.cancelAnimationFrame(shakeFrame.current);
+		if (shakeTimer.current !== null) window.clearTimeout(shakeTimer.current);
+	}, []);
 
 	useEffect(() => {
 		const requestId = ++repositoryCheckRequest.current;
-		if (!repositoryName) {
+		if (!open || !repositoryName) {
 			setRepositoryCheck("idle");
 			return;
 		}
 		setRepositoryCheck("checking");
 		const timer = window.setTimeout(() => {
 			void aoBridge.app.checkGitRepository(value.remoteUrl.trim()).then((exists) => {
-				if (requestId === repositoryCheckRequest.current) setRepositoryCheck(exists ? "valid" : "invalid");
+				if (requestId !== repositoryCheckRequest.current) return;
+				setRepositoryCheck(exists ? "valid" : "invalid");
+				if (!exists) {
+					const message = t("createProject.cloneRepositoryUnavailable", {
+						defaultValue: "This isn't a repository or you don't have access",
+					});
+					triggerShake();
+					onErrorRef.current?.(message);
+				}
 			}).catch(() => {
-				if (requestId === repositoryCheckRequest.current) setRepositoryCheck("invalid");
+				if (requestId !== repositoryCheckRequest.current) return;
+				setRepositoryCheck("invalid");
+				const message = t("createProject.cloneRepositoryUnavailable", {
+					defaultValue: "This isn't a repository or you don't have access",
+				});
+				triggerShake();
+				onErrorRef.current?.(message);
 			});
 		}, 300);
 		return () => window.clearTimeout(timer);
-	}, [repositoryName, value.remoteUrl]);
+	}, [open, repositoryName, t, triggerShake, value.remoteUrl]);
 
 	const chooseDestination = async () => {
+		const requestId = ++destinationPickerRequest.current;
 		setDestinationPickerError(null);
 		setChoosingDestination(true);
 		try {
 			const selected = await aoBridge.app.chooseDirectory(t("createProject.cloneChooseDestination"));
+			if (requestId !== destinationPickerRequest.current) return;
 			if (!selected) return;
 			try {
 				window.localStorage.setItem(LAST_CLONE_DESTINATION_KEY, selected);
@@ -119,12 +178,13 @@ export default function CloneRepositoryDialog({
 			}
 			onChange({ ...value, destinationParent: selected });
 		} catch (err) {
+			if (requestId !== destinationPickerRequest.current) return;
 			const message = err instanceof Error ? err.message : t("createProject.couldNotAdd");
 			setDestinationPickerError(message);
 			triggerShake();
 			onError?.(message);
 		} finally {
-			setChoosingDestination(false);
+			if (requestId === destinationPickerRequest.current) setChoosingDestination(false);
 		}
 	};
 
@@ -132,7 +192,7 @@ export default function CloneRepositoryDialog({
 		event.preventDefault();
 		setSubmitted(true);
 		if (!canContinue) {
-			if (!value.destinationParent) {
+			if (!hasDestination) {
 				const message = t("createProject.cloneDestinationRequired");
 				triggerShake();
 				onError?.(message);
@@ -196,6 +256,7 @@ export default function CloneRepositoryDialog({
 									<AnimatePresence initial={false}>
 										{inlineRepositoryError ? (
 											<motion.p
+												id="cloneRepositoryUrlError"
 												key={urlError ? "repository-url-error" : repositoryAccessError ? "repository-access-error" : "duplicate-project-error"}
 												initial={{ opacity: 0, filter: "blur(2px)" }}
 												animate={{ opacity: 1, filter: "blur(0px)" }}
@@ -215,7 +276,7 @@ export default function CloneRepositoryDialog({
 										autoFocus
 										autoCapitalize="none"
 										autoComplete="off"
-										aria-describedby="cloneRepositoryUrlHelp"
+										aria-describedby={`cloneRepositoryUrlHelp${inlineRepositoryError ? " cloneRepositoryUrlError" : ""}`}
 										aria-invalid={urlError || repositoryAccessError || duplicateError ? true : undefined}
 										className="bg-[var(--color-bg-import-card)] pl-10 pr-10 font-mono text-[13px]"
 										disabled={disabled}
@@ -261,7 +322,7 @@ export default function CloneRepositoryDialog({
 
 						<div className="flex shrink-0 justify-end gap-2 px-4 pb-4 pt-3">
 							<div className="flex items-center justify-end gap-3">
-								<Button type="submit" variant="primary" disabled={!repositoryName || repositoryCheck !== "valid" || projectExists || disabled || choosingDestination}>
+								<Button type="submit" variant="primary" disabled={!canContinue}>
 									{t("createProject.cloneContinue")}
 								</Button>
 							</div>
@@ -349,7 +410,10 @@ export function repositoryNameFromGitUrl(raw: string): string | null {
 		}
 	}
 	const segments = remotePath.replace(/[\\/]+$/, "").split(/[\\/]/).filter(Boolean);
-	if (segments.length < 2) return null;
+	// The backend derives the checkout name from the final path segment. A
+	// self-hosted remote can validly use a single segment, for example
+	// https://git.example.com/repository.git.
+	if (segments.length < 1) return null;
 	const providerSubpage = segments[2];
 	if (
 		(host === "github.com" &&
