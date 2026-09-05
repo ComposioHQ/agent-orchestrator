@@ -37,7 +37,7 @@ func (m *Service) Clone(ctx context.Context, in CloneInput) (Project, error) {
 		return Project{}, err
 	}
 	if !repoHasCommit(ctx, prepared.Path) {
-		_ = os.RemoveAll(prepared.Path)
+		m.cleanupPreparedCloneAfterFailure(ctx, prepared.Path)
 		return Project{}, apierr.Invalid("CLONE_EMPTY_REPOSITORY", "AO needs a repository with at least one commit.", nil)
 	}
 
@@ -48,7 +48,7 @@ func (m *Service) Clone(ctx context.Context, in CloneInput) (Project, error) {
 		Config:    in.Config,
 	})
 	if err != nil {
-		_ = os.RemoveAll(prepared.Path)
+		m.cleanupPreparedCloneAfterFailure(ctx, prepared.Path)
 		return Project{}, err
 	}
 	return project, nil
@@ -66,16 +66,31 @@ func (m *Service) CleanupPreparedClone(ctx context.Context, in ClonePreparationC
 	if err := validateRepositorySetupPathSafety(path); err != nil {
 		return err
 	}
+	m.addMu.Lock()
+	defer m.addMu.Unlock()
+
 	marker := filepath.Join(path, ".git", clonePreparationMarker)
 	if _, err := os.Stat(marker); errors.Is(err, os.ErrNotExist) {
 		return nil
 	} else if err != nil {
 		return apierr.Invalid("CLONE_CLEANUP_FAILED", "The prepared clone could not be inspected.", map[string]any{"path": path})
 	}
+	if _, registered, err := m.store.FindProjectByPath(ctx, path); err != nil {
+		return apierr.Invalid("CLONE_CLEANUP_FAILED", "The prepared clone registration state could not be inspected.", map[string]any{"path": path})
+	} else if registered {
+		removeClonePreparationMarker(path)
+		return nil
+	}
 	if err := os.RemoveAll(path); err != nil {
 		return apierr.Invalid("CLONE_CLEANUP_FAILED", "The abandoned prepared clone could not be removed.", map[string]any{"path": path})
 	}
 	return nil
+}
+
+func (m *Service) cleanupPreparedCloneAfterFailure(ctx context.Context, path string) {
+	if err := m.CleanupPreparedClone(context.WithoutCancel(ctx), ClonePreparationCleanupInput{Path: path}); err != nil {
+		m.logger.Warn("project: failed to clean up prepared clone", "path", path, "error", err)
+	}
 }
 
 func (m *Service) prepareClone(ctx context.Context, in CloneInput) (ClonePreparationResult, error) {
@@ -135,13 +150,16 @@ func (m *Service) prepareClone(ctx context.Context, in CloneInput) (ClonePrepara
 		}
 		return ClonePreparationResult{}, apierr.Invalid("GIT_CLONE_FAILED", "Could not clone this repository. Check the URL, your Git credentials, and your network connection.", nil)
 	}
+	if ctx.Err() != nil {
+		return ClonePreparationResult{}, apierr.Invalid("GIT_CLONE_CANCELLED", "Repository cloning was cancelled.", nil)
+	}
+	if err := os.WriteFile(filepath.Join(temporaryPath, ".git", clonePreparationMarker), []byte("created by AO clone preparation\n"), 0o600); err != nil {
+		return ClonePreparationResult{}, apierr.Invalid("CLONE_PREPARATION_FAILED", "AO could not mark the prepared clone for cleanup.", nil)
+	}
 	if err := os.Rename(temporaryPath, target); err != nil {
 		return ClonePreparationResult{}, apierr.Conflict("CLONE_DESTINATION_EXISTS", "The clone destination became unavailable before the repository could be created.", map[string]any{"path": target})
 	}
 	cleanupPath = target
-	if err := os.WriteFile(filepath.Join(target, ".git", clonePreparationMarker), []byte("created by AO clone preparation\n"), 0o600); err != nil {
-		return ClonePreparationResult{}, apierr.Invalid("CLONE_PREPARATION_FAILED", "AO could not mark the prepared clone for cleanup.", nil)
-	}
 	cleanupPath = ""
 	return ClonePreparationResult{Path: target, RemoteURL: remoteURL}, nil
 }

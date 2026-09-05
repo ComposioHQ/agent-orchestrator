@@ -186,7 +186,6 @@ func (m *Service) Add(ctx context.Context, in AddInput) (Project, error) {
 	if err != nil {
 		return Project{}, err
 	}
-	removeClonePreparationMarker(path)
 	id := defaultProjectID(path)
 	if in.ProjectID != nil {
 		id = domain.ProjectID(strings.TrimSpace(*in.ProjectID))
@@ -261,6 +260,7 @@ func (m *Service) Add(ctx context.Context, in AddInput) (Project, error) {
 		if err := m.store.UpsertWorkspaceProject(ctx, row, repos); err != nil {
 			return Project{}, apierr.Internal("PROJECT_ADD_FAILED", "Failed to register workspace project")
 		}
+		removeClonePreparationMarker(path)
 		m.emitProjectAdded(ctx, row, projectCountBefore == 0)
 		p := m.projectFromRow(ctx, row)
 		p.WorkspaceRepos = workspaceReposFromRecords(repos)
@@ -279,6 +279,7 @@ func (m *Service) Add(ctx context.Context, in AddInput) (Project, error) {
 	if err := m.store.UpsertProject(ctx, row); err != nil {
 		return Project{}, apierr.Internal("PROJECT_ADD_FAILED", "Failed to register project")
 	}
+	removeClonePreparationMarker(path)
 	m.emitProjectAdded(ctx, row, projectCountBefore == 0)
 	return m.projectFromRow(ctx, row), nil
 }

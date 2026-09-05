@@ -35,6 +35,14 @@ func newManager(t *testing.T) project.Manager {
 	return project.New(store)
 }
 
+type failingProjectUpsertStore struct {
+	project.Store
+}
+
+func (s failingProjectUpsertStore) UpsertProject(context.Context, domain.ProjectRecord) error {
+	return errors.New("forced project upsert failure")
+}
+
 // gitRepo creates a real git repository in a fresh temp dir and returns its
 // path. It pins the initial branch to `main` so default-branch detection is
 // deterministic regardless of the host's init.defaultBranch.
@@ -241,6 +249,120 @@ func TestManager_PrepareClonePreservesEmptyRepositoryForImportSetup(t *testing.T
 	}
 	if _, err := os.Stat(prepared.Path); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("prepared checkout still exists after cleanup: %v", err)
+	}
+}
+
+func TestManager_PreparedCloneCanBeCleanedUpAfterAddFailure(t *testing.T) {
+	ctx := context.Background()
+	source := gitRepo(t)
+	remoteURL := (&url.URL{Scheme: "file", Path: source}).String()
+
+	t.Run("input validation", func(t *testing.T) {
+		m := newManager(t)
+		prepared, err := m.PrepareClone(ctx, project.CloneInput{
+			RemoteURL:         remoteURL,
+			DestinationParent: t.TempDir(),
+		})
+		if err != nil {
+			t.Fatalf("PrepareClone: %v", err)
+		}
+
+		invalidID := "not a valid project id"
+		_, err = m.Add(ctx, project.AddInput{Path: prepared.Path, ProjectID: &invalidID})
+		wantCode(t, err, "INVALID_PROJECT_ID")
+		if err := m.CleanupPreparedClone(ctx, project.ClonePreparationCleanupInput{Path: prepared.Path}); err != nil {
+			t.Fatalf("CleanupPreparedClone: %v", err)
+		}
+		if _, err := os.Stat(prepared.Path); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("prepared checkout still exists after cleanup: %v", err)
+		}
+	})
+
+	t.Run("store failure", func(t *testing.T) {
+		store, err := sqlitetest.Open(t.TempDir())
+		if err != nil {
+			t.Fatalf("open store: %v", err)
+		}
+		t.Cleanup(func() { _ = store.Close() })
+		m := project.New(failingProjectUpsertStore{Store: store})
+		prepared, err := m.PrepareClone(ctx, project.CloneInput{
+			RemoteURL:         remoteURL,
+			DestinationParent: t.TempDir(),
+		})
+		if err != nil {
+			t.Fatalf("PrepareClone: %v", err)
+		}
+
+		_, err = m.Add(ctx, project.AddInput{Path: prepared.Path})
+		wantCode(t, err, "PROJECT_ADD_FAILED")
+		if err := m.CleanupPreparedClone(ctx, project.ClonePreparationCleanupInput{Path: prepared.Path}); err != nil {
+			t.Fatalf("CleanupPreparedClone: %v", err)
+		}
+		if _, err := os.Stat(prepared.Path); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("prepared checkout still exists after cleanup: %v", err)
+		}
+	})
+
+	t.Run("clone registration failure", func(t *testing.T) {
+		store, err := sqlitetest.Open(t.TempDir())
+		if err != nil {
+			t.Fatalf("open store: %v", err)
+		}
+		t.Cleanup(func() { _ = store.Close() })
+		m := project.New(failingProjectUpsertStore{Store: store})
+		destinationParent := t.TempDir()
+
+		_, err = m.Clone(ctx, project.CloneInput{RemoteURL: remoteURL, DestinationParent: destinationParent})
+		wantCode(t, err, "PROJECT_ADD_FAILED")
+		clonePath := filepath.Join(destinationParent, filepath.Base(source))
+		if _, err := os.Stat(clonePath); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("failed clone registration left checkout behind: %v", err)
+		}
+	})
+}
+
+func TestManager_CleanupPreparedClonePreservesRegisteredProject(t *testing.T) {
+	ctx := context.Background()
+	m := newManager(t)
+	source := gitRepo(t)
+	remoteURL := (&url.URL{Scheme: "file", Path: source}).String()
+	destinationParent := t.TempDir()
+
+	cloned, err := m.Clone(ctx, project.CloneInput{RemoteURL: remoteURL, DestinationParent: destinationParent})
+	if err != nil {
+		t.Fatalf("Clone: %v", err)
+	}
+	marker := filepath.Join(cloned.Path, ".git", ".ao-clone-prepared")
+	if err := os.WriteFile(marker, []byte("stale marker"), 0o600); err != nil {
+		t.Fatalf("write stale marker: %v", err)
+	}
+
+	if err := m.CleanupPreparedClone(ctx, project.ClonePreparationCleanupInput{Path: cloned.Path}); err != nil {
+		t.Fatalf("CleanupPreparedClone: %v", err)
+	}
+	if _, err := os.Stat(cloned.Path); err != nil {
+		t.Fatalf("registered project was removed: %v", err)
+	}
+	if _, err := os.Stat(marker); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("stale preparation marker still exists: %v", err)
+	}
+}
+
+func TestManager_PrepareCloneCancellationLeavesNoCheckout(t *testing.T) {
+	m := newManager(t)
+	source := gitRepo(t)
+	remoteURL := (&url.URL{Scheme: "file", Path: source}).String()
+	destinationParent := t.TempDir()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err := m.PrepareClone(ctx, project.CloneInput{RemoteURL: remoteURL, DestinationParent: destinationParent})
+	wantCode(t, err, "GIT_CLONE_CANCELLED")
+	if _, err := os.Stat(filepath.Join(destinationParent, filepath.Base(source))); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("cancelled clone destination exists: %v", err)
+	}
+	if temporary, err := filepath.Glob(filepath.Join(destinationParent, ".ao-clone-*")); err != nil || len(temporary) != 0 {
+		t.Fatalf("temporary clone directories = %#v, %v", temporary, err)
 	}
 }
 
