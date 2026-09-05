@@ -263,6 +263,10 @@ export function CreateProjectFlow({
 			setChildTransitioning(false);
 		}, 80);
 	};
+	const transitionFromFolder = (open: () => void) => {
+		setFolderPickerOpen(false);
+		transitionToChild(open);
+	};
 
 	const selectSource = async (source: ProjectSource) => {
 		if (preparedClonePathRef.current && !(await abandonPreparedClone())) return;
@@ -324,25 +328,25 @@ export function CreateProjectFlow({
 				setProjectApprovedActions(validation.root.requiredActions);
 				setProjectRemoteUrl(validation.root.requiredActions.includes("set_remote") ? suggestedProjectRemoteUrl(validation.root.repoPath) : "");
 				setProjectRepositoryPrep((validation.childRepos ?? []).filter((repo) => repo.requiredActions.length > 0).map((repo) => ({ repoPath: repo.repoPath, approvedActions: repo.requiredActions, remoteUrl: suggestedProjectRemoteUrl(repo.repoPath) })));
-						if (!validation.isValid || validation.nextStep === "error") {
-							reportProjectError(importValidationMessage(validation));
-							setFolderPickerOpen(false);
-							setProjectImportStep("blocked");
-							return;
-						}
-						if (validation.nextStep === "choose_import_kind") {
-							setFolderPickerOpen(false);
-							setProjectImportStep("blocked");
-							return;
-						}
-						if (validation.nextStep === "prepare_git") {
-							setFolderPickerOpen(false);
-							setProjectImportStep("prepare_git");
-							return;
-						}
-						if (validation.warning) {
-							setFolderPickerOpen(false);
-							setProjectImportStep("blocked");
+				if (!validation.isValid || validation.nextStep === "error") {
+					reportProjectError(importValidationMessage(validation));
+					if (preserveCurrentDialog) transitionFromFolder(() => setProjectImportStep("blocked"));
+					else setProjectImportStep("blocked");
+					return;
+				}
+				if (validation.nextStep === "choose_import_kind") {
+					if (preserveCurrentDialog) transitionFromFolder(() => setProjectImportStep("blocked"));
+					else setProjectImportStep("blocked");
+					return;
+				}
+				if (validation.nextStep === "prepare_git") {
+					if (preserveCurrentDialog) transitionFromFolder(() => setProjectImportStep("prepare_git"));
+					else setProjectImportStep("prepare_git");
+					return;
+				}
+				if (validation.warning) {
+					if (preserveCurrentDialog) transitionFromFolder(() => setProjectImportStep("blocked"));
+					else setProjectImportStep("blocked");
 					return;
 				}
 			}
@@ -381,8 +385,11 @@ export function CreateProjectFlow({
 			}
 			if (path) {
 				setModePickerOpen(false);
-				setSelectedPath(path);
-				setFolderPickerOpen(false);
+				if (preserveCurrentDialog) transitionFromFolder(() => setSelectedPath(path));
+				else {
+					setSelectedPath(path);
+					setFolderPickerOpen(false);
+				}
 			}
 		} catch (err) {
 			reportProjectError(err instanceof Error ? err.message : t("createProject.couldNotAdd"));

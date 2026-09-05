@@ -569,10 +569,12 @@ describe("CreateProjectFlow project import validation", () => {
 		expect(screen.queryByText("proj")).not.toBeInTheDocument();
 
 		await user.click(screen.getByRole("button", { name: "Import as project" }));
+		expect(screen.queryByTestId("agent-sheet")).not.toBeInTheDocument();
 
 		const sheet = await screen.findByTestId("agent-sheet");
 		expect(sheet).toHaveAttribute("data-path", "/repo/project");
 		expect(sheet).toHaveAttribute("data-kind", "single_repo");
+		expect(screen.queryByRole("dialog", { name: "Import workspace" })).not.toBeInTheDocument();
 		expect(apiMocks.POST).toHaveBeenNthCalledWith(2, "/api/v1/imports/validate", {
 			body: { importKind: "project", path: "/repo/project" },
 		});
