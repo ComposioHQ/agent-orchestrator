@@ -337,6 +337,40 @@ describe("CreateProjectFlow droppedPath", () => {
 			body: { importKind: "project", path: "/repo/empty-repository" },
 		});
 	});
+
+	it("keeps the clone dialog visible until preparation is ready", async () => {
+		const user = userEvent.setup();
+		let resolveClone!: (value: unknown) => void;
+		let resolveValidation!: (value: unknown) => void;
+		apiMocks.POST.mockImplementation((path: string) => {
+			if (path === "/api/v1/projects/clone/prepare") {
+				return new Promise((resolve) => {
+					resolveClone = resolve;
+				});
+			}
+			return new Promise((resolve) => {
+				resolveValidation = resolve;
+			});
+		});
+
+		render(
+			<CreateProjectFlow mode="choose" {...noop}>
+				{({ choosePath }) => <button onClick={choosePath}>New project</button>}
+			</CreateProjectFlow>,
+		);
+
+		await user.click(screen.getByRole("button", { name: "New project" }));
+		await user.click(await screen.findByRole("button", { name: "Clone from Git" }));
+		fireEvent.click(await screen.findByText("Continue clone"));
+		expect(screen.getByTestId("clone-dialog")).toBeInTheDocument();
+
+		resolveClone({ data: { path: "/repo/empty-repository", remoteUrl: "file:///source/empty-repository.git" } });
+		await waitFor(() => expect(apiMocks.POST).toHaveBeenCalledWith("/api/v1/imports/validate", expect.anything()));
+		expect(screen.getByTestId("clone-dialog")).toBeInTheDocument();
+		resolveValidation({ data: projectValidation("/repo/empty-repository", { nextStep: "prepare_git" }) });
+		expect(await screen.findByText("Prepare project")).toBeInTheDocument();
+		expect(screen.queryByTestId("clone-dialog")).not.toBeInTheDocument();
+	});
 });
 
 describe("CreateProjectFlow project import validation", () => {

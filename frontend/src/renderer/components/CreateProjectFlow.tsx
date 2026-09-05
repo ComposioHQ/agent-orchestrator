@@ -221,7 +221,11 @@ export function CreateProjectFlow({
 					setProjectImportStep("blocked");
 					return;
 				}
-				if (validation.nextStep === "choose_import_kind" || validation.nextStep === "prepare_git") {
+				if (validation.nextStep === "choose_import_kind") {
+					setProjectImportStep("blocked");
+					return;
+				}
+				if (validation.nextStep === "prepare_git") {
 					setProjectImportStep("prepare_git");
 					return;
 				}
@@ -378,7 +382,6 @@ export function CreateProjectFlow({
 	const prepareClone = async (next: CloneRepositorySelection) => {
 		setError(null);
 		setIsPreparingGit(true);
-		setCloneDialogOpen(false);
 		try {
 			const { data, error: apiError } = await apiClient.POST("/api/v1/projects/clone/prepare", {
 			body: {
@@ -387,12 +390,12 @@ export function CreateProjectFlow({
 			},
 			});
 			if (apiError || !data) throw new Error(apiErrorMessage(apiError, t("createProject.couldNotAdd")));
+			const validation = await validateImportFolder(data.path, "project");
+			setCloneDialogOpen(false);
 			setCloneSelection(next);
 			setPreparedClonePath(data.path);
 			setSelectedKind("single_repo");
 			setModePickerOpen(false);
-			setCloneDialogOpen(false);
-			const validation = await validateImportFolder(data.path, "project");
 			setProjectValidation(validation);
 			setProjectPrepEvents([]);
 			setProjectApprovedActions(validation.root.requiredActions);
@@ -586,6 +589,7 @@ export function CreateProjectFlow({
 							onContinue={(next) => void prepareClone(next)}
 							onError={reportProjectError}
 							open={cloneDialogOpen}
+							shake={projectImportShake}
 							value={cloneDetails}
 						/>
 					) : null}
