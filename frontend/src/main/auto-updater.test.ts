@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import semver from "semver";
+import { CancellationToken } from "builder-util-runtime";
 import nodePath from "node:path";
 
 type UpdateSettings = {
@@ -36,6 +37,7 @@ type AutoUpdaterMock = {
   allowDowngrade: boolean;
   autoDownload: boolean;
   autoInstallOnAppQuit: boolean;
+  httpExecutor: { request: ReturnType<typeof vi.fn<(options: object, token?: CancellationToken) => Promise<string | null>>> };
 };
 
 function createAutoUpdaterMock(): AutoUpdaterMock {
@@ -50,6 +52,7 @@ function createAutoUpdaterMock(): AutoUpdaterMock {
     allowDowngrade: false,
     autoDownload: false,
     autoInstallOnAppQuit: false,
+    httpExecutor: { request: vi.fn(async () => null) },
   };
 }
 
@@ -1973,6 +1976,66 @@ describe("startAutoUpdates", () => {
 
     updaterEvents.get("update-downloaded")?.({ version: "2.2.0" });
     expect(setIntervalSpy.mock.calls.length).toBeGreaterThan(afterFirst);
+  });
+
+  it.each([false, true])("settles an automatic check without a terminal event (available %s)", async (available) => {
+    const h = await importAutoUpdater({ enabled: false, channel: "nightly", nightlyAck: true, feature: null });
+    h.autoUpdater.checkForUpdates.mockImplementation(async () => {
+      h.updaterEvents.get("checking-for-update")?.();
+      return { isUpdateAvailable: available, updateInfo: { version: "2.0.0-nightly.1" } };
+    });
+    await h.module.startAutoUpdates(stateDir);
+    expect(h.module.getUpdateStatus().state).toBe(available ? "available" : "not-available");
+  });
+
+  it.each(["manual", "automatic", "return-home"] as const)("aborts a hung %s check before letting a queued retry run", async (kind) => {
+    vi.useFakeTimers();
+    const h = await importAutoUpdater();
+    let requestAborted = false;
+    let finishAborting!: () => void;
+    const originalRequest = h.autoUpdater.httpExecutor.request;
+    originalRequest.mockImplementation(async (_options, token) => {
+      try {
+        return await token!.createPromise<string>(() => {});
+      } finally {
+        requestAborted = true;
+        await new Promise<void>((resolve) => { finishAborting = resolve; });
+      }
+    });
+    h.autoUpdater.checkForUpdates.mockImplementationOnce(async () => {
+      h.updaterEvents.get("checking-for-update")?.();
+      await h.autoUpdater.httpExecutor.request({});
+    }).mockResolvedValue({ isUpdateAvailable: false, updateInfo: { version: "1.0.0" } });
+    const first = kind === "manual" ? h.module.checkForUpdatesNow(stateDir, { requestId: "hung" })
+      : kind === "automatic" ? h.module.startAutoUpdates(stateDir) : h.module.returnToHome(stateDir, "hung");
+    await vi.advanceTimersByTimeAsync(0);
+    const retry = h.module.checkForUpdatesNow(stateDir, { requestId: "retry" });
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(requestAborted).toBe(true);
+    expect(h.module.getUpdateStatus()).toMatchObject({ state: "error", message: expect.stringContaining("timed out") });
+    expect(h.autoUpdater.checkForUpdates).toHaveBeenCalledTimes(1);
+    finishAborting();
+    await first;
+    await retry;
+    expect(h.autoUpdater.httpExecutor.request).toBe(originalRequest);
+    expect(h.autoUpdater.checkForUpdates).toHaveBeenCalledTimes(2);
+    expect(h.module.getUpdateStatus()).toMatchObject({ state: "not-available", requestId: "retry" });
+  });
+
+  it("clears the check deadline before an automatic download continues", async () => {
+    vi.useFakeTimers();
+    const h = await importAutoUpdater();
+    const originalRequest = h.autoUpdater.httpExecutor.request;
+    let finishDownload!: () => void;
+    h.autoUpdater.checkForUpdates.mockResolvedValue({
+      isUpdateAvailable: true, updateInfo: { version: "2.0.0" },
+      downloadPromise: new Promise<void>((resolve) => { finishDownload = resolve; }),
+    });
+    const checking = h.module.startAutoUpdates(stateDir);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(h.autoUpdater.httpExecutor.request).toBe(originalRequest);
+    finishDownload();
+    await checking;
   });
 
   // Regression: electron-updater returns the in-flight promise when a check is

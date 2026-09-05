@@ -5,6 +5,7 @@ import { accessSync, constants as fsConstants, existsSync, readFileSync } from "
 import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import semver from "semver";
+import type { RequestOptions } from "node:http";
 import {
   readUpdateSettings,
   updateUpdateSettings,
@@ -652,6 +653,49 @@ function supersedesStagedBuild(version: string | undefined): boolean {
 
 type UpdateCheckOutcome = Awaited<ReturnType<typeof autoUpdater.checkForUpdates>>;
 
+const UPDATE_CHECK_TIMEOUT_MS = 60_000;
+const UPDATE_CHECK_TIMEOUT_MESSAGE = "Update check timed out. Check your connection and try again.";
+
+// electron-updater owns this executor but omits it from its public declarations.
+// Limit the adapter to metadata requests; downloads retain their own cancellation.
+type UpdateMetadataExecutor = {
+  request(options: RequestOptions, token?: CancellationToken, data?: Record<string, unknown> | null): Promise<string | null>;
+};
+
+async function checkForUpdatesWithDeadline(): Promise<UpdateCheckOutcome> {
+  const executor = (autoUpdater as typeof autoUpdater & { httpExecutor: UpdateMetadataExecutor }).httpExecutor;
+  const request = executor.request;
+  const tokens = new Set<CancellationToken>();
+  let timedOut = false;
+  executor.request = async (options, parent, data) => {
+    const token = new CancellationToken(parent);
+    tokens.add(token);
+    if (timedOut) token.cancel();
+    try {
+      return await request.call(executor, options, token, data);
+    } finally {
+      tokens.delete(token);
+      token.dispose();
+    }
+  };
+  const timer = setTimeout(() => {
+    timedOut = true;
+    broadcast(withActiveRequest({ state: "error", message: UPDATE_CHECK_TIMEOUT_MESSAGE }));
+    // Cancellation aborts the request AND rejects its promise. Do not race the
+    // check: electron-updater must clear its cached promise before AO retries.
+    for (const token of tokens) token.cancel();
+  }, UPDATE_CHECK_TIMEOUT_MS);
+  timer.unref?.();
+  try {
+    return await autoUpdater.checkForUpdates();
+  } catch (err) {
+    throw timedOut ? new Error(UPDATE_CHECK_TIMEOUT_MESSAGE) : err;
+  } finally {
+    clearTimeout(timer);
+    executor.request = request;
+  }
+}
+
 /**
  * Land a terminal status when a check resolved without emitting one.
  *
@@ -660,7 +704,7 @@ type UpdateCheckOutcome = Awaited<ReturnType<typeof autoUpdater.checkForUpdates>
  * already consumed under a different operation. Nothing else ever moves the
  * status off "checking", and the Settings row keys its spinner and its disabled
  * Check button off that state, so the page wedges with no visible explanation.
- * Called only on renderer-requested checks, which are the ones a user is waiting on.
+ * Applied to both background and renderer-requested checks.
  */
 function settleCheckStatus(result: UpdateCheckOutcome): void {
   if (lastStatus.state !== "checking") return;
@@ -1140,7 +1184,8 @@ async function runAutomaticUpdateCheck(
         ? await configureDirectPrereleaseFeed(settings)
         : undefined;
       try {
-        const result = await autoUpdater.checkForUpdates();
+        const result = await checkForUpdatesWithDeadline();
+        settleCheckStatus(result);
         if (settings.enabled) {
           if (result?.downloadPromise) {
             // The provider owns this download's token; hand it to the watchdog
@@ -1316,7 +1361,7 @@ export async function checkForUpdatesNow(
         broadcastUpdaterStatus({ state: "checking" });
         const restoreFeed = await configureDirectPrereleaseFeed(settings);
         try {
-          settleCheckStatus(await autoUpdater.checkForUpdates());
+          settleCheckStatus(await checkForUpdatesWithDeadline());
         } finally {
           restoreFeed?.();
         }
@@ -1387,7 +1432,7 @@ export async function returnToHome(
         autoUpdater.autoDownload = staleStaged;
         applyInstallOnQuitPolicy();
         broadcastUpdaterStatus({ state: "checking" });
-        settleCheckStatus(await autoUpdater.checkForUpdates());
+        settleCheckStatus(await checkForUpdatesWithDeadline());
       },
       requestId,
     );
