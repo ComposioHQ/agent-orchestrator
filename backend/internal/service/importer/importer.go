@@ -462,7 +462,14 @@ func runGitPreparationAction(ctx context.Context, path, action string, in GitRep
 		if resolveImportOriginURL(path) != "" {
 			return nil
 		}
-		if _, err := importGitOutput(ctx, path, "remote", "add", "origin", strings.TrimSpace(in.RemoteURL)); err != nil {
+		remoteURL := strings.TrimSpace(in.RemoteURL)
+		if importRemoteExists(path, "origin") {
+			if _, err := importGitOutput(ctx, path, "remote", "set-url", "origin", remoteURL); err != nil {
+				return fmt.Errorf("set origin remote: %w", err)
+			}
+			return nil
+		}
+		if _, err := importGitOutput(ctx, path, "remote", "add", "origin", remoteURL); err != nil {
 			return fmt.Errorf("add origin remote: %w", err)
 		}
 	default:
@@ -574,15 +581,33 @@ func validImportRemoteURL(raw string) bool {
 		return false
 	}
 	switch parsed.Scheme {
-	case "file", "git", "http", "https", "ssh":
+	case "file":
 		return len(strings.FieldsFunc(parsed.Path, func(r rune) bool { return r == '/' || r == '\\' })) >= 1
+	case "git", "http", "https", "ssh":
+		return parsed.Host != "" && len(strings.FieldsFunc(parsed.Path, func(r rune) bool { return r == '/' || r == '\\' })) >= 1
 	default:
 		return false
 	}
 }
 
+func importRemoteExists(path, name string) bool {
+	out, err := aoprocess.Command("git", "-C", path, "remote").Output()
+	if err != nil {
+		return false
+	}
+	for _, remote := range strings.Fields(string(out)) {
+		if remote == name {
+			return true
+		}
+	}
+	return false
+}
+
 func resolveImportOriginURL(path string) string {
-	out, err := aoprocess.Command("git", "-C", path, "remote", "get-url", "origin").Output()
+	// `git remote get-url origin` falls back to the literal string "origin"
+	// when the remote section exists without a URL. Read the configured value
+	// directly so validation can repair that incomplete state.
+	out, err := aoprocess.Command("git", "-C", path, "config", "--get", "remote.origin.url").Output()
 	if err != nil {
 		return ""
 	}
