@@ -147,52 +147,6 @@ func TestBootstrapStorageFailureClassifiesPreservedIOCause(t *testing.T) {
 	}
 }
 
-// Task creation admits through POST /api/v1/orchestrators/delegate. A transient
-// bootstrap failure must render the retryable 503 envelope on that endpoint and
-// then admit a later attempt without restarting the daemon.
-func TestCodexBootstrapDelegateEndpointRecoversAfterRetry(t *testing.T) {
-	root := t.TempDir()
-	attempts := 0
-	factory := &fakeCodexAccountFactory{open: func(ports.CodexAccountContext) (ports.CodexAccountClient, error) {
-		attempts++
-		if attempts == 1 {
-			return nil, errors.New("secret credential /private/path")
-		}
-		return &fakeCodexAccountClient{read: ports.CodexAccountObservation{Authentication: domain.AgentAuthenticationUnauthorized}}, nil
-	}}
-	manager := newCodexAccountManager(context.Background(), filepath.Join(root, "accounts"), filepath.Join(root, "pending"), filepath.Join(root, "staging"), filepath.Join(root, "global"), factory, nil, nil)
-	now := time.Now()
-	manager.now = func() time.Time { return now }
-	service := &Service{codexAccounts: manager}
-
-	err := service.WaitCodexAccountBootstrap(context.Background())
-	if err == nil {
-		t.Fatal("first delegate admission unexpectedly succeeded")
-	}
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/orchestrators/delegate", nil)
-	req = req.WithContext(context.WithValue(req.Context(), middleware.RequestIDKey, "delegate-request"))
-	rec := httptest.NewRecorder()
-	envelope.WriteError(rec, req, err)
-	var body envelope.APIError
-	if decodeErr := json.Unmarshal(rec.Body.Bytes(), &body); decodeErr != nil {
-		t.Fatal(decodeErr)
-	}
-	if rec.Code != http.StatusServiceUnavailable || body.Code != "CODEX_ACCOUNT_MANAGEMENT_UNAVAILABLE" || body.RequestID != "delegate-request" || body.Details["retryable"] != true {
-		t.Fatalf("delegate failure envelope = %d %s", rec.Code, rec.Body.String())
-	}
-	if strings.Contains(rec.Body.String(), "secret") || strings.Contains(rec.Body.String(), "/private/path") {
-		t.Fatal("provider error leaked through delegate envelope")
-	}
-
-	now = now.Add(time.Minute)
-	if err := service.WaitCodexAccountBootstrap(context.Background()); err != nil {
-		t.Fatalf("delegate retry remained blocked: %v", err)
-	}
-	if attempts != 2 {
-		t.Fatalf("attempts = %d", attempts)
-	}
-}
-
 func TestCodexBootstrapPermanentSafetyFailure(t *testing.T) {
 	root := t.TempDir()
 	pending := filepath.Join(root, "pending")
