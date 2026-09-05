@@ -3,9 +3,17 @@ import type { AoBridge } from "../src/preload";
 import { agentReadiness } from "../src/renderer/test/agent-readiness-fixtures";
 import { installFakeAgent } from "./support/fake-bridge";
 
-test("renderer: workspace import preserves the root branch and explains unresolved startup @T0", async ({ page }) => {
+for (const platform of ["macOS", "Windows", "Linux"] as const) {
+test(`renderer: workspace import preserves the root branch and explains unresolved startup on ${platform} @T0`, async ({ page }) => {
 	test.setTimeout(120_000);
 	await installFakeAgent(page, { projectId: "local-root", workers: [] });
+	await page.addInitScript((platform) => {
+		// AO checks all three signals; changing only navigator.platform on a
+		// Mac still takes the macOS path through navigator.userAgent.
+		Object.defineProperty(navigator, "platform", { configurable: true, value: platform });
+		Object.defineProperty(navigator, "userAgent", { configurable: true, value: `Mozilla/5.0 (${platform === "macOS" ? "Macintosh" : platform})` });
+		Object.defineProperty(navigator, "userAgentData", { configurable: true, value: { platform } });
+	}, platform);
 	let created = false;
 	let started = false;
 	await page.route("http://127.0.0.1:8080/api/v1/**", async (route) => {
@@ -59,5 +67,6 @@ test("renderer: workspace import preserves the root branch and explains unresolv
 	await expect(page.getByText(/Details:.*remote did not advertise a symbolic HEAD/)).toBeVisible();
 	expect(created).toBe(true);
 	expect(started).toBe(true);
-	await page.screenshot({ path: "test-results/workspace-root-startup.png" });
+	await page.screenshot({ path: `test-results/workspace-root-startup-${platform}.png` });
 });
+}
