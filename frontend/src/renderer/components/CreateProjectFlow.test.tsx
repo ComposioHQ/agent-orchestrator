@@ -625,9 +625,13 @@ describe("CreateProjectFlow project import validation", () => {
 		expect(screen.getByRole("button", { name: "Import an existing project" })).toBeInTheDocument();
 	});
 
-	it("continues plain roots with child repositories as projects by default", async () => {
+	it("requires plain roots with child repositories to be imported as workspaces", async () => {
 		const user = userEvent.setup();
 		bridgeMocks.chooseDirectory.mockResolvedValue("/repo/parent");
+		bridgeMocks.scanImportFolder.mockResolvedValue({
+			path: "/repo/parent",
+			repos: [{ name: "web", path: "/repo/parent/web", relativePath: "web", branch: "main", remote: "https://example.com/web.git", hasRemote: true, isRepo: true, hasCommit: true, status: "ok", needsGitInit: false }],
+		});
 		apiMocks.POST.mockResolvedValueOnce({
 			data: projectValidation("/repo/parent", {
 				nextStep: "choose_import_kind",
@@ -653,14 +657,10 @@ describe("CreateProjectFlow project import validation", () => {
 			}),
 		});
 		apiMocks.POST.mockResolvedValueOnce({
-			data: {
-				events: [
-					{ repoPath: "/repo/parent", action: "git_init", state: "success" },
-					{ repoPath: "/repo/parent", action: "git_commit", state: "success" },
-					{ repoPath: "/repo/parent", action: "set_remote", state: "success" },
-				],
-				validation: projectValidation("/repo/parent"),
-			},
+			data: projectValidation("/repo/parent", {
+				root: { isRepo: false, hasCommit: false, hasOrigin: false, needsGitInit: true, requiredActions: ["git_init", "git_commit", "set_remote"] },
+				childRepos: [{ repoPath: "/repo/parent/web", isRepo: true, hasCommit: true, hasOrigin: true, isEmptyFolder: false, needsGitInit: false, requiredActions: [], blockingErrors: [] }],
+			}),
 		});
 
 		render(
@@ -672,12 +672,14 @@ describe("CreateProjectFlow project import validation", () => {
 		await user.click(screen.getByRole("button", { name: "New project" }));
 		await user.click(await screen.findByRole("button", { name: "Import an existing project" }));
 
-		expect(await screen.findByText("This folder contains child Git repos")).toBeInTheDocument();
-		expect(screen.queryByRole("button", { name: "Clone from Git" })).not.toBeInTheDocument();
-		await user.click(await screen.findByRole("button", { name: "Continue" }));
-		expect(await screen.findByRole("dialog", { name: "Prepare project" })).toBeInTheDocument();
-		await user.click(screen.getByRole("button", { name: "Continue" }));
-		expect(await screen.findByTestId("agent-sheet")).toHaveAttribute("data-path", "/repo/parent");
+		expect(await screen.findByText("This folder contains projects and needs to be imported as a workspace.")).toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: "Continue" })).not.toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: "Back" })).not.toBeInTheDocument();
+		await user.click(screen.getByRole("button", { name: "Import as workspace" }));
+		expect(await screen.findByRole("dialog", { name: "Import workspace" })).toBeInTheDocument();
+		expect(apiMocks.POST).toHaveBeenNthCalledWith(2, "/api/v1/imports/validate", {
+			body: { importKind: "workspace", path: "/repo/parent" },
+		});
 	});
 
 	it("shows only the missing Git preparation steps for a project root", async () => {

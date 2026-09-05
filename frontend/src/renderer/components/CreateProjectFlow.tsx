@@ -1651,6 +1651,7 @@ function ProjectImportDialog({
 	if (!validation || !step) return null;
 	const needsRemote = validation.root.requiredActions.includes("set_remote");
 	const hasChildRepos = (validation.childRepos?.length ?? 0) > 0;
+	const mustImportAsWorkspace = importKind === "project" && step === "blocked" && validation.nextStep === "choose_import_kind" && hasChildRepos;
 	const hasFailedStep = events.some((event) => event.state === "error");
 	const latestEvents = latestPreparationEvents(events);
 	const missingApprovals = validation.root.requiredActions.filter((action) => !approvedActions.includes(action));
@@ -1707,18 +1708,10 @@ function ProjectImportDialog({
 								{displayImportPath(validation.root.repoPath)}
 							</PathRow>
 						</div>
-						{importKind === "project" && hasChildRepos ? (
-							<div className="text-[12px] leading-5 text-foreground">
-								<span>{t("createProject.projectHasChildRepos")}</span>
-								<button
-									type="button"
-									className="ml-2 inline-flex items-center rounded-md border border-border/70 bg-muted/50 px-2 py-0.5 text-[11px] font-medium text-foreground transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-50"
-									disabled={disabled}
-									onClick={onTryWorkspace}
-								>
-									{t("createProject.tryImportWorkspace")}
-								</button>
-							</div>
+						{mustImportAsWorkspace ? (
+							<p className="text-[14px] leading-6 text-[var(--color-text-import-muted)]">
+								{t("createProject.projectMustBeWorkspace", { defaultValue: "This folder contains projects and needs to be imported as a workspace." })}
+							</p>
 						) : null}
 						{validation.warning ? (
 							<div className="border-l-2 border-amber-500/60 pl-3 text-[12px] leading-5 text-muted-foreground">
@@ -1836,7 +1829,9 @@ function ProjectImportDialog({
 						) : null}
 					</div>
 					<div className="flex shrink-0 items-center justify-end gap-2 px-4 pb-4 pt-3">
-						{step === "blocked" ? (
+						{mustImportAsWorkspace ? (
+							<Button type="button" variant="primary" disabled={disabled} onClick={onTryWorkspace}>Import as workspace</Button>
+						) : step === "blocked" ? (
 							<>
 								<Button type="button" variant="outline" disabled={disabled} onClick={onBack}>
 									{t("createProject.back")}
