@@ -44,6 +44,7 @@ export type CloneProjectInput = Pick<CloneRepositorySelection, "remoteUrl" | "de
 
 const LAST_CLONE_DESTINATION_KEY = "ao.clone.lastDestinationParent";
 const LAST_IMPORT_REMOTE_URL_KEY = "ao.import.lastRemoteUrl";
+const WORKSPACE_FOLDER_SETUP_ACTIONS = ["git_init", "git_commit", "set_remote"];
 type ImportValidationResult = components["schemas"]["ImportValidationResult"];
 type GitPreparationEvent = components["schemas"]["GitPreparationEvent"];
 type ProjectImportStep = "blocked" | "prepare_git";
@@ -59,6 +60,8 @@ type RepositoryPreparationState = {
 	approvedActions: string[];
 	remoteUrl: string;
 };
+type WorkspaceApprovalState = Record<string, string[]>;
+type WorkspaceRemoteState = Record<string, string>;
 
 type CreateProjectFlowMode = ProjectKind | "choose";
 type ProjectSource = "clone" | "local" | "workspace";
@@ -128,6 +131,9 @@ export function CreateProjectFlow({
 	const [projectApprovedActions, setProjectApprovedActions] = useState<string[]>([]);
 	const [projectRemoteUrl, setProjectRemoteUrl] = useState("");
 	const [projectRepositoryPrep, setProjectRepositoryPrep] = useState<RepositoryPreparationState[]>([]);
+	const [workspaceApprovedActions, setWorkspaceApprovedActions] = useState<WorkspaceApprovalState>({});
+	const [workspaceRemoteUrls, setWorkspaceRemoteUrls] = useState<WorkspaceRemoteState>({});
+	const [workspacePrepEvents, setWorkspacePrepEvents] = useState<GitPreparationEvent[]>([]);
 	const [projectSuggestWorkspace, setProjectSuggestWorkspace] = useState(false);
 	const [projectImportShake, setProjectImportShake] = useState(false);
 	const [isChoosingPath, setIsChoosingPath] = useState(false);
@@ -162,6 +168,9 @@ export function CreateProjectFlow({
 		setProjectApprovedActions([]);
 		setProjectRemoteUrl("");
 		setProjectRepositoryPrep([]);
+		setWorkspaceApprovedActions({});
+		setWorkspaceRemoteUrls({});
+		setWorkspacePrepEvents([]);
 		setProjectSuggestWorkspace(false);
 		setProjectImportShake(false);
 	};
@@ -267,6 +276,10 @@ export function CreateProjectFlow({
 						approvedActions: repo.requiredActions,
 						remoteUrl: suggestedProjectRemoteUrl(repo.repoPath),
 					})));
+					const workspaceRepos = mergeWorkspaceImportRepos(scan, validation);
+					setWorkspaceApprovedActions(Object.fromEntries(workspaceRepos.filter((repo) => repo.requiredActions.length > 0).map((repo) => [repo.path, [...repo.requiredActions]])));
+					setWorkspaceRemoteUrls(Object.fromEntries(workspaceRepos.filter((repo) => repo.requiredActions.includes("set_remote")).map((repo) => [repo.path, suggestedProjectRemoteUrl(repo.path)])));
+					setWorkspacePrepEvents([]);
 					setProjectImportKind("workspace");
 					setProjectSuggestWorkspace(false);
 					setFolderPickerOpen(true);
@@ -515,6 +528,32 @@ export function CreateProjectFlow({
 		}
 	};
 
+	const prepareWorkspaceRepository = async (repoPath: string) => {
+		if (!projectValidation) return;
+		const status = projectValidation.childRepos?.find((repo) => repo.repoPath === repoPath);
+		if (!status || status.requiredActions.length === 0) return;
+		setIsPreparingGit(true);
+		setWorkspacePrepEvents(projectRequestedActionEvents(repoPath, workspaceApprovedActions[repoPath] ?? status.requiredActions));
+		try {
+			const { data, error: apiError } = await apiClient.POST("/api/v1/imports/prepare-git", {
+				body: {
+					importKind: "workspace",
+					path: projectValidation.root.repoPath,
+					repositories: [{ repoPath, approvedActions: workspaceApprovedActions[repoPath] ?? status.requiredActions, remoteUrl: workspaceRemoteUrls[repoPath]?.trim() || undefined }],
+				},
+			});
+			if (apiError || !data) throw new Error(apiErrorMessage(apiError, t("createProject.couldNotAdd")));
+			setWorkspacePrepEvents(data.events);
+			setProjectValidation(data.validation);
+			setProjectRepositoryPrep((data.validation.childRepos ?? []).filter((repo) => repo.requiredActions.length > 0).map((repo) => ({ repoPath: repo.repoPath, approvedActions: repo.requiredActions, remoteUrl: suggestedProjectRemoteUrl(repo.repoPath) })));
+			setWorkspaceApprovedActions(Object.fromEntries((data.validation.childRepos ?? []).filter((repo) => repo.requiredActions.length > 0).map((repo) => [repo.repoPath, [...repo.requiredActions]])));
+		} catch (err) {
+			reportProjectError(err instanceof Error ? err.message : t("createProject.couldNotAdd"));
+		} finally {
+			setIsPreparingGit(false);
+		}
+	};
+
 	const label = isInitializing
 		? hasModePicker
 			? t("createProject.initializing")
@@ -619,6 +658,13 @@ export function CreateProjectFlow({
 						open={folderPickerOpen}
 						scan={validationScan}
 						validation={projectValidation}
+						isPreparingGit={isPreparingGit}
+						workspaceApprovedActions={workspaceApprovedActions}
+						workspaceRemoteUrls={workspaceRemoteUrls}
+						workspacePrepEvents={workspacePrepEvents}
+						onChangeWorkspaceApprovedActions={(repoPath, actions) => setWorkspaceApprovedActions((current) => ({ ...current, [repoPath]: actions }))}
+						onChangeWorkspaceRemoteUrl={(repoPath, remoteUrl) => setWorkspaceRemoteUrls((current) => ({ ...current, [repoPath]: remoteUrl }))}
+						onPrepareWorkspaceRepository={(repoPath) => void prepareWorkspaceRepository(repoPath)}
 						onContinue={() => {
 							if (!validationScan || error) return;
 							if (selectedKind === "workspace") {
@@ -1553,6 +1599,13 @@ function CreateProjectFolderDialog({
 	open,
 	scan,
 	validation,
+	workspaceApprovedActions,
+	workspaceRemoteUrls,
+	workspacePrepEvents,
+	isPreparingGit,
+	onChangeWorkspaceApprovedActions,
+	onChangeWorkspaceRemoteUrl,
+	onPrepareWorkspaceRepository,
 }: {
 	disabled: boolean;
 	error: string | null;
@@ -1564,6 +1617,13 @@ function CreateProjectFolderDialog({
 	open: boolean;
 	scan: ImportFolderScan | null;
 	validation: ImportValidationResult | null;
+	workspaceApprovedActions: WorkspaceApprovalState;
+	workspaceRemoteUrls: WorkspaceRemoteState;
+	workspacePrepEvents: GitPreparationEvent[];
+	isPreparingGit: boolean;
+	onChangeWorkspaceApprovedActions: (repoPath: string, actions: string[]) => void;
+	onChangeWorkspaceRemoteUrl: (repoPath: string, remoteUrl: string) => void;
+	onPrepareWorkspaceRepository: (repoPath: string) => void;
 }) {
 	const { t } = useTranslation();
 	const isWorkspace = kind === "workspace";
@@ -1581,7 +1641,7 @@ function CreateProjectFolderDialog({
 		<Dialog.Root open={open} onOpenChange={onOpenChange}>
 			<Dialog.Portal>
 				<Dialog.Content className="fixed left-1/2 top-1/2 z-overlay flex max-h-[min(640px,calc(100svh-24px))] w-[min(640px,calc(100vw-24px))] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-lg border border-border bg-popover p-0 text-popover-foreground shadow-xl data-[state=open]:animate-modal-in data-[state=closed]:animate-modal-out motion-reduce:animate-none">
-					<div className="relative shrink-0 px-4 pt-3">
+					<div className="relative flex shrink-0 items-start gap-3 px-4 pt-3">
 						<Button
 							type="button"
 							variant="outline"
@@ -1611,7 +1671,7 @@ function CreateProjectFolderDialog({
 							</button>
 						</Dialog.Close>
 					</div>
-					<div className="min-h-0 overflow-y-auto px-4 pb-1 pt-3">
+					<div className="min-h-0 flex-1 overflow-y-auto px-4 pb-1 pt-3">
 						{hasScan ? (
 							<div className="space-y-3">
 								<PathRow
@@ -1647,9 +1707,19 @@ function CreateProjectFolderDialog({
 								)}
 								{workspaceNeedsInitializedRepo && !error ? <div className="rounded-md border border-[var(--color-border-import-modal)] bg-[var(--color-bg-import-card)] px-3 py-3 text-[12px] leading-5 text-[var(--color-text-import-muted)]">Initialize at least one child repository with a commit and origin remote before importing this workspace.</div> : null}
 
-							{displayRepos.length > 0 && <div className="divide-y divide-border/50 overflow-hidden rounded-sm bg-[var(--color-bg-import-card)]">
+							{isWorkspace ? <WorkspaceImportRepoList
+								approvedActions={workspaceApprovedActions}
+								disabled={disabled}
+								events={workspacePrepEvents}
+								isPreparingGit={isPreparingGit}
+								onChangeApprovedActions={onChangeWorkspaceApprovedActions}
+								onChangeRemoteUrl={onChangeWorkspaceRemoteUrl}
+								onPrepareRepository={onPrepareWorkspaceRepository}
+								remoteUrls={workspaceRemoteUrls}
+								repos={displayRepos}
+							/> : displayRepos.length > 0 ? <div className="divide-y divide-border/50 overflow-hidden rounded-sm bg-[var(--color-bg-import-card)]">
 								{displayRepos.map((repo) => <ImportRepoRow key={repo.path} repo={repo} />)}
-							</div>}
+							</div> : null}
 
 								{displayRepos.length === 0 && (
 									<div className="rounded-md border border-[var(--color-border-import-modal)] bg-[var(--color-bg-import-card)] p-3 text-[12px] text-[var(--color-text-import-muted)]">
@@ -1703,7 +1773,7 @@ function CreateProjectFolderDialog({
 	);
 }
 
-function ImportRepoRow({ failed = false, repo }: { failed?: boolean; repo: DisplayImportRepo }) {
+function ImportRepoRow({ failed = false, onSetup, repo, setupExpanded = false }: { failed?: boolean; onSetup?: () => void; repo: DisplayImportRepo; setupExpanded?: boolean }) {
 	const { t } = useTranslation();
 	const repositoryAvatar = repo.hasRemote ? repositoryAvatarFromGitUrl(repo.remote) : null;
 	const needsSetup = repo.requiredActions.length > 0;
@@ -1716,7 +1786,7 @@ function ImportRepoRow({ failed = false, repo }: { failed?: boolean; repo: Displ
 			</div>
 			<div className="min-w-0 flex-1 truncate text-[13px] font-semibold text-[var(--color-text-import-title)]">{repo.name}</div>
 			<div className="flex max-w-[220px] shrink-0 items-center gap-1 truncate text-right text-[11px] text-[var(--color-text-import-muted)]">
-				{needsSetup ? <span className="rounded-sm border border-orange-400/40 bg-orange-500/15 px-2 py-0.5 text-orange-300">{workspaceSetupLabel(repo)} · Set up</span> : repositoryUrl ? <><GitBranch className="size-3.5 shrink-0" aria-hidden="true" /><span className="truncate">{repo.branch}</span></> : <><span className={cn("truncate", isPlainFolder && "rounded-sm bg-orange-500/15 px-2 py-0.5 text-orange-300")}>{isPlainFolder ? "Needs git init" : failed ? (repo.reason ?? t("createProject.repoCannotImport")) : repo.branch}</span></>}
+				{needsSetup ? <button type="button" aria-expanded={setupExpanded} className="rounded-sm border border-orange-400/40 bg-orange-500/15 px-2 py-0.5 text-orange-300 hover:bg-orange-500/25" onClick={onSetup}>{setupExpanded ? "Hide setup" : `${workspaceSetupLabel(repo)} · Set up`}</button> : repositoryUrl ? <><GitBranch className="size-3.5 shrink-0" aria-hidden="true" /><a className="truncate underline decoration-border underline-offset-2 hover:text-foreground" href={repositoryUrl} rel="noreferrer" target="_blank">{repo.branch}</a></> : <><span className={cn("truncate", isPlainFolder && "rounded-sm bg-orange-500/15 px-2 py-0.5 text-orange-300")}>{isPlainFolder ? "Needs git init" : failed ? (repo.reason ?? t("createProject.repoCannotImport")) : repo.branch}</span></>}
 			</div>
 		</div>
 	);
@@ -1732,6 +1802,61 @@ function workspaceSetupLabel(repo: DisplayImportRepo): string {
 
 function normalizeImportRepos(repos: ImportFolderScan["repos"]): DisplayImportRepo[] {
 	return repos.map((repo) => ({ ...repo, requiredActions: [], blockingErrors: [] }));
+}
+
+function WorkspaceImportRepoList({ approvedActions, disabled, events, isPreparingGit, onChangeApprovedActions, onChangeRemoteUrl, onPrepareRepository, remoteUrls, repos }: {
+	approvedActions: WorkspaceApprovalState;
+	disabled: boolean;
+	events: GitPreparationEvent[];
+	isPreparingGit: boolean;
+	onChangeApprovedActions: (repoPath: string, actions: string[]) => void;
+	onChangeRemoteUrl: (repoPath: string, remoteUrl: string) => void;
+	onPrepareRepository: (repoPath: string) => void;
+	remoteUrls: WorkspaceRemoteState;
+	repos: DisplayImportRepo[];
+}) {
+	const [expandedPath, setExpandedPath] = useState<string | null>(null);
+	const orderedRepos = [...repos].sort((left, right) => (Number(right.requiredActions.length > 0) - Number(left.requiredActions.length > 0)) || left.name.localeCompare(right.name));
+	return <div className="divide-y divide-border/50 overflow-hidden rounded-sm bg-[var(--color-bg-import-card)]">
+		{orderedRepos.map((repo) => {
+			const needsSetup = repo.requiredActions.length > 0;
+			const expanded = expandedPath === repo.path;
+			return <div key={repo.path}>
+				<div className="relative">
+					<ImportRepoRow onSetup={needsSetup ? () => setExpandedPath(expanded ? null : repo.path) : undefined} repo={repo} setupExpanded={expanded} />
+				</div>
+				{needsSetup && expanded ? <WorkspaceInlineSetup approvedActions={approvedActions[repo.path] ?? repo.requiredActions} disabled={disabled || isPreparingGit} events={events} onChangeApprovedActions={(actions) => onChangeApprovedActions(repo.path, actions)} onChangeRemoteUrl={(remoteUrl) => onChangeRemoteUrl(repo.path, remoteUrl)} onPrepare={() => onPrepareRepository(repo.path)} repo={repo} remoteUrl={remoteUrls[repo.path] ?? ""} /> : null}
+			</div>;
+		})}
+	</div>;
+}
+
+function WorkspaceInlineSetup({ approvedActions, disabled, events, onChangeApprovedActions, onChangeRemoteUrl, onPrepare, repo, remoteUrl }: {
+	approvedActions: string[];
+	disabled: boolean;
+	events: GitPreparationEvent[];
+	onChangeApprovedActions: (actions: string[]) => void;
+	onChangeRemoteUrl: (remoteUrl: string) => void;
+	onPrepare: () => void;
+	repo: DisplayImportRepo;
+	remoteUrl: string;
+}) {
+	const missingApprovals = repo.requiredActions.some((action) => !approvedActions.includes(action));
+	const missingRemote = repo.requiredActions.includes("set_remote") && remoteUrl.trim() === "";
+	return <div className="border-t border-border/50 px-3 pb-3 pt-2"><div className="space-y-2 rounded-md border border-border/60 bg-[var(--color-bg-import-modal)] p-2.5">
+		{repo.requiredActions.map((action) => <div key={action} className="space-y-2"><label className="flex items-center gap-2 text-[12px] text-[var(--color-text-import-title)]"><input checked={approvedActions.includes(action)} disabled={disabled} onChange={(event) => onChangeApprovedActions(event.target.checked ? [...approvedActions, action] : approvedActions.filter((item) => item !== action))} type="checkbox" /><span className="font-medium">{gitActionLabel(action)}</span><span className="ml-auto font-mono text-[11px] text-[var(--color-text-import-muted)]">{workspaceActionStateLabel(action, events, repo.path, approvedActions.includes(action), remoteUrl)}</span></label>{action === "set_remote" ? <Input aria-label="Origin remote URL" className="h-8 bg-[var(--color-bg-import-card)] font-mono text-[12px]" disabled={disabled} placeholder="https://github.com/owner/repository.git" value={remoteUrl} onChange={(event) => onChangeRemoteUrl(event.target.value)} /> : null}</div>)}
+		<div className="flex justify-end pt-1"><Button type="button" variant="primary" disabled={disabled || missingApprovals || missingRemote} onClick={onPrepare}>{events.some((event) => event.repoPath === repo.path && event.state === "error") ? "Retry setup" : "Apply setup"}</Button></div>
+	</div></div>;
+}
+
+function workspaceActionStateLabel(action: string, events: GitPreparationEvent[], repoPath: string, checked: boolean, remoteUrl: string): string {
+	const state = [...events].reverse().find((event) => event.repoPath === repoPath && event.action === action)?.state;
+	if (state === "success") return "Done";
+	if (state === "error") return "Failed";
+	if (state === "running") return "Running";
+	if (state === "pending") return "Queued";
+	if (!checked || (action === "set_remote" && remoteUrl.trim() === "")) return "Required";
+	return "";
 }
 
 function mergeWorkspaceImportRepos(scan: ImportFolderScan | null, validation: ImportValidationResult | null): DisplayImportRepo[] {
@@ -1750,14 +1875,17 @@ function mergeWorkspaceImportRepos(scan: ImportFolderScan | null, validation: Im
 			hasRemote: repo?.hasRemote ?? Boolean(status?.hasOrigin),
 			status: repo?.status ?? (status?.blockingErrors.length ? "error" : "ok"),
 			reason: repo?.reason ?? status?.blockingErrors[0],
-			needsGitInit: repo?.needsGitInit ?? status?.needsGitInit,
-			requiredActions: status?.requiredActions ?? [],
+							needsGitInit: repo?.needsGitInit ?? status?.needsGitInit,
+							requiredActions: status?.requiredActions ?? [],
 			blockingErrors: status?.blockingErrors ?? [],
 			isRepo: status?.isRepo,
 			hasCommit: status?.hasCommit,
 			hasOrigin: status?.hasOrigin,
 		};
-	}).sort((left, right) => left.name.localeCompare(right.name));
+	}).map((repo) => ({
+		...repo,
+		requiredActions: repo.requiredActions.length > 0 || !repo.needsGitInit ? repo.requiredActions : [...WORKSPACE_FOLDER_SETUP_ACTIONS],
+	})).sort((left, right) => left.name.localeCompare(right.name));
 }
 
 function repositoryAvatarFromGitUrl(remote: string): { owner: string; url: string } | null {
