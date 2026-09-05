@@ -1,7 +1,8 @@
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { components } from "../../api/schema";
-import { apiClient } from "../lib/api-client";
+import { apiClient, apiErrorMessage } from "../lib/api-client";
 import { usesPreviewWorkspaceData } from "../lib/preview-mode";
+import { shellTerminalsQueryKey, type ShellTerminal } from "./useShellTerminals";
 
 export type SystemRequirement = components["schemas"]["SystemRequirement"];
 
@@ -40,6 +41,24 @@ export const githubAuthRequirementQueryOptions = {
  * credential-store access can be slow or interactive on some machines. */
 export function useGitHubAuthRequirement() {
 	return useQuery(githubAuthRequirementQueryOptions);
+}
+
+export function useStartGitHubAuthTerminal() {
+	const queryClient = useQueryClient();
+	return useMutation({
+		mutationFn: async (): Promise<ShellTerminal> => {
+			const { data, error } = await apiClient.POST("/api/v1/system/github-auth/terminal");
+			if (error || !data) throw new Error(apiErrorMessage(error, "Could not start GitHub sign-in."));
+			return data.shellTerminal;
+		},
+		onSuccess: (terminal) => {
+			queryClient.setQueryData<ShellTerminal[]>(shellTerminalsQueryKey, (current = []) => [
+				...current.filter((item) => item.handleId !== terminal.handleId),
+				terminal,
+			]);
+			void queryClient.invalidateQueries({ queryKey: shellTerminalsQueryKey });
+		},
+	});
 }
 
 /** Single source of truth for whether the machine satisfies AO's startup

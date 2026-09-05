@@ -17,8 +17,10 @@ function render(ui: ReactNode) {
 // first-run states, mocking only the HTTP client, the router, and the native
 // folder picker: an empty daemon shows the import chooser (no column shells), a
 // fresh project shows the task invitation, and any session brings the columns back.
-const { getMock, navigateMock, chooseDirectoryMock, clipboardWriteMock, spawnOrchestratorMock } = vi.hoisted(() => ({
+const { getMock, postMock, deleteMock, navigateMock, chooseDirectoryMock, clipboardWriteMock, spawnOrchestratorMock } = vi.hoisted(() => ({
 	getMock: vi.fn(),
+	postMock: vi.fn(),
+	deleteMock: vi.fn(),
 	navigateMock: vi.fn(),
 	chooseDirectoryMock: vi.fn(),
 	clipboardWriteMock: vi.fn(),
@@ -32,9 +34,13 @@ vi.mock("../../lib/spawn-orchestrator", () => ({
 }));
 
 vi.mock("../../lib/api-client", () => ({
-	apiClient: { GET: getMock, POST: vi.fn() },
+	apiClient: { GET: getMock, POST: postMock, DELETE: deleteMock },
 	apiErrorMessage: (e: unknown) => (e instanceof Error ? e.message : "error"),
 	hasTrustedApiBaseUrl: () => true,
+}));
+
+vi.mock("../../components/TerminalPane", () => ({
+	TerminalPane: () => <div data-testid="terminal-pane" />,
 }));
 
 vi.mock("../../lib/bridge", () => ({
@@ -163,6 +169,18 @@ beforeEach(() => {
 	createProjectMock.mockResolvedValue(undefined);
 	initializeProjectRepositoryMock.mockResolvedValue(undefined);
 	clipboardWriteMock.mockResolvedValue(undefined);
+	postMock.mockResolvedValue({
+		data: {
+			shellTerminal: {
+				handleId: "shellterm-github",
+				workingDir: "/tmp/auth",
+				title: "Connect GitHub",
+				createdAt: "2026-07-04T10:00:00Z",
+			},
+		},
+		error: undefined,
+	});
+	deleteMock.mockResolvedValue({ error: undefined });
 	useUiStore.setState({
 		orchestratorReplacementErrors: {},
 		orchestratorStartupErrors: {},
@@ -225,9 +243,10 @@ describe("global board first launch", () => {
 		renderBoard(<SessionsBoard />);
 
 		expect(await screen.findByText("Connect GitHub for pull requests")).toBeInTheDocument();
-		expect(screen.getByText("gh auth login")).toBeInTheDocument();
-		await userEvent.click(screen.getByRole("button", { name: "Copy sign-in command" }));
-		expect(clipboardWriteMock).toHaveBeenCalledWith("gh auth login");
+		await userEvent.click(screen.getByRole("button", { name: "Sign in with GitHub" }));
+		await waitFor(() => expect(postMock).toHaveBeenCalledWith("/api/v1/system/github-auth/terminal"));
+		expect(await screen.findByTestId("github-auth-terminal")).toBeInTheDocument();
+		expect(screen.getByTestId("terminal-pane")).toBeInTheDocument();
 	});
 
 	it("opens the native folder picker from the Project card", async () => {

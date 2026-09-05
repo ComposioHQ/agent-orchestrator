@@ -13,8 +13,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apierr"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	agentsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/agent"
+	"github.com/aoagents/agent-orchestrator/backend/internal/service/shellterm"
 	"github.com/aoagents/agent-orchestrator/backend/internal/tmuxbin"
 )
 
@@ -41,11 +43,24 @@ type HarnessCatalog interface {
 	FindInstalledBinary(ctx context.Context) (agentsvc.Info, bool)
 }
 
+// GitHubAuthTerminalOpener starts the reviewed GitHub CLI login command in a
+// daemon-owned PTY. The renderer never supplies command arguments.
+type GitHubAuthTerminalOpener interface {
+	OpenCommandTerminal(context.Context, shellterm.OpenCommandTerminalInput) (shellterm.ShellTerminal, error)
+}
+
 // Service runs the startup requirements gate.
 type Service struct {
 	harnesses   HarnessCatalog
 	executables ports.ExecutableFinder
 	commands    ports.CommandRunner
+	terminals   GitHubAuthTerminalOpener
+}
+
+// SetGitHubAuthTerminalOpener late-binds the shell terminal service, which is
+// created after startup checks during daemon assembly.
+func (s *Service) SetGitHubAuthTerminalOpener(terminals GitHubAuthTerminalOpener) {
+	s.terminals = terminals
 }
 
 // New returns a Service backed by the supplied host executable adapter and
@@ -94,6 +109,26 @@ func (s *Service) CheckGitHubAuth(ctx context.Context) (Requirement, error) {
 		return Requirement{}, err
 	}
 	return s.checkGitHubAuth(ctx), nil
+}
+
+// OpenGitHubAuthTerminal starts the fixed GitHub CLI login flow. Executable
+// resolution remains daemon-owned so callers cannot choose an arbitrary
+// command or binary.
+func (s *Service) OpenGitHubAuthTerminal(ctx context.Context) (shellterm.ShellTerminal, error) {
+	if err := ctx.Err(); err != nil {
+		return shellterm.ShellTerminal{}, err
+	}
+	path, err := s.executables.LookPath("gh")
+	if err != nil || path == "" {
+		return shellterm.ShellTerminal{}, apierr.Invalid("GITHUB_CLI_UNAVAILABLE", "GitHub CLI was not found on PATH.", nil)
+	}
+	if s.terminals == nil {
+		return shellterm.ShellTerminal{}, apierr.Internal("GITHUB_AUTH_TERMINAL_UNAVAILABLE", "GitHub authentication terminal service is unavailable.")
+	}
+	return s.terminals.OpenCommandTerminal(ctx, shellterm.OpenCommandTerminalInput{
+		Argv:  []string{path, "auth", "login"},
+		Title: "Connect GitHub",
+	})
 }
 
 // Check runs the complete, user-triggered requirements probe, including a

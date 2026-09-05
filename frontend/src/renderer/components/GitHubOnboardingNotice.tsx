@@ -1,11 +1,16 @@
-import { Check, Copy, GitPullRequest } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { GitPullRequest, TerminalSquare, X } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { useGitHubAuthRequirement, useSystemRequirementsGate } from "../hooks/useSystemRequirementsGate";
+import type { TerminalSessionState } from "../hooks/useTerminalSession";
+import { type ShellTerminal, useCloseShellTerminal } from "../hooks/useShellTerminals";
+import { useGitHubAuthRequirement, useStartGitHubAuthTerminal, useSystemRequirementsGate } from "../hooks/useSystemRequirementsGate";
 import { aoBridge } from "../lib/bridge";
+import { useShellMaybe } from "../lib/shell-context";
+import { useResolvedTheme } from "../stores/ui-store";
+import { TerminalPane } from "./TerminalPane";
 
 const GITHUB_CLI_INSTALL_URL = "https://cli.github.com/";
-const GITHUB_LOGIN_COMMAND = "gh auth login";
+const automaticallyChecked = new Set<string>();
 
 /** Onboarding advisory. GitHub is not required for local work, but surfacing
  * missing auth before task creation prevents a late PR-creation failure inside
@@ -14,31 +19,52 @@ export function GitHubOnboardingNotice() {
 	const { t } = useTranslation();
 	const gate = useSystemRequirementsGate();
 	const authQuery = useGitHubAuthRequirement();
+	const startLogin = useStartGitHubAuthTerminal();
+	const { mutate: closeTerminal } = useCloseShellTerminal();
+	const theme = useResolvedTheme();
+	const shell = useShellMaybe();
 	const requirements = gate.requirements ?? [];
-	const [copied, setCopied] = useState(false);
-	const resetTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
+	const [terminal, setTerminal] = useState<ShellTerminal | null>(null);
+	const terminalRef = useRef<ShellTerminal | null>(null);
+	const refetchAuthRef = useRef(authQuery.refetch);
 	const gh = requirements.find((requirement) => requirement.id === "gh");
 	const auth = authQuery.data;
 
-	useEffect(() => () => clearTimeout(resetTimer.current), []);
+	terminalRef.current = terminal;
+	refetchAuthRef.current = authQuery.refetch;
+	const handleTerminalState = useCallback((state: TerminalSessionState) => {
+		const active = terminalRef.current;
+		if (!active || (state !== "exited" && state !== "error")) return;
+		if (automaticallyChecked.has(active.handleId)) return;
+		automaticallyChecked.add(active.handleId);
+		void refetchAuthRef.current();
+	}, []);
+	useEffect(() => () => {
+		const active = terminalRef.current;
+		if (active) closeTerminal(active.handleId);
+	}, [closeTerminal]);
+	useEffect(() => {
+		if (!auth?.satisfied || !terminal) return;
+		closeTerminal(terminal.handleId, { onSettled: () => setTerminal(null) });
+	}, [auth?.satisfied, closeTerminal, terminal]);
 
 	if (!auth || auth.satisfied) return null;
 
-	const copyLoginCommand = async () => {
-		await aoBridge.clipboard.writeText(GITHUB_LOGIN_COMMAND);
-		setCopied(true);
-		clearTimeout(resetTimer.current);
-		resetTimer.current = setTimeout(() => setCopied(false), 1_400);
+	const openLogin = () => {
+		startLogin.mutate(undefined, { onSuccess: setTerminal });
 	};
 
 	const checkAgain = async () => {
 		await authQuery.refetch();
 	};
-
+	const closeLogin = () => {
+		if (!terminal) return;
+		closeTerminal(terminal.handleId, { onSettled: () => setTerminal(null) });
+	};
 	const cliMissing = !gh?.satisfied;
 	const checking = authQuery.isFetching;
 	return (
-		<div className="w-full max-w-[520px] rounded-lg border border-warning/30 bg-warning/10 px-4 py-3" role="status">
+		<div className="w-full max-w-[620px] rounded-lg border border-warning/30 bg-warning/10 px-4 py-3" role="status">
 			<div className="flex items-start gap-3">
 				<GitPullRequest className="mt-0.5 size-5 shrink-0 text-warning" aria-hidden="true" />
 				<div className="min-w-0 flex-1">
@@ -46,27 +72,19 @@ export function GitHubOnboardingNotice() {
 					<p className="mt-0.5 text-[12px] leading-5 text-muted-foreground">
 						{t(cliMissing ? "startup.githubSetupMissingCli" : "startup.githubSetupSignedOut")}
 					</p>
-					{!cliMissing ? (
-						<code className="mt-2 block w-fit rounded border border-border/60 bg-background/50 px-2 py-1 font-mono text-[12px] text-foreground">
-							{GITHUB_LOGIN_COMMAND}
-						</code>
-					) : null}
 					<div className="mt-2 flex flex-wrap items-center gap-2">
 						<button
 							type="button"
 							className="settings-footer-button settings-footer-button-primary"
-							onClick={() =>
-								cliMissing
-									? void aoBridge.app.openExternal(GITHUB_CLI_INSTALL_URL)
-									: void copyLoginCommand()
-							}
+							disabled={!cliMissing && (startLogin.isPending || Boolean(terminal))}
+							onClick={() => cliMissing ? void aoBridge.app.openExternal(GITHUB_CLI_INSTALL_URL) : openLogin()}
 						>
-							{cliMissing ? null : copied ? <Check className="size-icon-sm" aria-hidden="true" /> : <Copy className="size-icon-sm" aria-hidden="true" />}
+							{cliMissing ? null : <TerminalSquare className="size-icon-sm" aria-hidden="true" />}
 							{cliMissing
 								? t("startup.openGithubCliDocs")
-								: copied
-									? t("startup.commandCopied")
-									: t("startup.copyGithubLogin")}
+								: startLogin.isPending
+									? t("startup.githubLoginStarting")
+									: t("startup.githubLogin")}
 						</button>
 						<button
 							type="button"
@@ -77,6 +95,23 @@ export function GitHubOnboardingNotice() {
 							{checking ? t("startup.checkingAgain") : t("startup.checkAgain")}
 						</button>
 					</div>
+					{startLogin.isError ? <p className="mt-2 text-xs text-destructive" role="alert">{startLogin.error.message}</p> : null}
+					{terminal ? (
+						<div className="mt-3 overflow-hidden rounded-md border border-border bg-terminal" data-testid="github-auth-terminal">
+							<div className="flex min-h-9 items-center justify-between gap-3 border-b border-border bg-surface/90 px-3 py-1.5">
+								<div className="min-w-0">
+									<p className="truncate text-xs font-medium text-foreground">{terminal.title}</p>
+									<p className="truncate text-[11px] text-muted-foreground">{t("startup.githubLoginRunning")}</p>
+								</div>
+								<button type="button" aria-label={t("common.close")} className="grid size-7 shrink-0 place-items-center rounded text-muted-foreground hover:bg-interactive-hover hover:text-foreground" onClick={closeLogin}>
+									<X className="size-4" aria-hidden="true" />
+								</button>
+							</div>
+							<div className="h-[240px] min-h-0">
+								<TerminalPane daemonReady={shell ? shell.daemonStatus.state === "ready" : true} fontSize={12} onTerminalStateChange={handleTerminalState} terminalTarget={{ kind: "shell", handleId: terminal.handleId, generation: terminal.createdAt, title: terminal.title }} theme={theme} />
+							</div>
+						</div>
+					) : null}
 				</div>
 			</div>
 		</div>

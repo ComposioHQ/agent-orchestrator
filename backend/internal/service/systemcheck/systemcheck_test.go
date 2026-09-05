@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	agentsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/agent"
+	"github.com/aoagents/agent-orchestrator/backend/internal/service/shellterm"
 )
 
 type fakeHarnessCatalog struct {
@@ -23,6 +24,15 @@ type fakeHarnessCatalog struct {
 type fakeCommandRunner struct {
 	err  error
 	argv []string
+}
+
+type fakeGitHubAuthTerminalOpener struct {
+	input shellterm.OpenCommandTerminalInput
+}
+
+func (f *fakeGitHubAuthTerminalOpener) OpenCommandTerminal(_ context.Context, input shellterm.OpenCommandTerminalInput) (shellterm.ShellTerminal, error) {
+	f.input = input
+	return shellterm.ShellTerminal{HandleID: "shellterm-github"}, nil
 }
 
 func (f *fakeCommandRunner) Run(_ context.Context, argv []string, _, _ io.Writer) error {
@@ -348,6 +358,26 @@ func TestCheckGitHubAuth_IsAdvisory(t *testing.T) {
 	}
 	if got, want := runner.argv, []string{"/usr/bin/gh", "auth", "token"}; !slices.Equal(got, want) {
 		t.Fatalf("auth probe argv = %#v, want %#v", got, want)
+	}
+}
+
+func TestOpenGitHubAuthTerminalUsesTrustedCommand(t *testing.T) {
+	svc := NewWithLookPath(&fakeHarnessCatalog{}, lookPathFound(map[string]string{"gh": "/usr/local/bin/gh"}))
+	opener := &fakeGitHubAuthTerminalOpener{}
+	svc.SetGitHubAuthTerminalOpener(opener)
+
+	terminal, err := svc.OpenGitHubAuthTerminal(context.Background())
+	if err != nil {
+		t.Fatalf("OpenGitHubAuthTerminal() error = %v", err)
+	}
+	if terminal.HandleID != "shellterm-github" {
+		t.Fatalf("terminal handle = %q, want shellterm-github", terminal.HandleID)
+	}
+	if got, want := opener.input.Argv, []string{"/usr/local/bin/gh", "auth", "login"}; !slices.Equal(got, want) {
+		t.Fatalf("terminal argv = %#v, want %#v", got, want)
+	}
+	if opener.input.Title != "Connect GitHub" {
+		t.Fatalf("terminal title = %q, want Connect GitHub", opener.input.Title)
 	}
 }
 
