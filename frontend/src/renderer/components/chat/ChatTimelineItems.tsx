@@ -146,7 +146,6 @@ function useSmoothStreamingText(message: ConversationMessage): string {
 	const messageIdRef = useRef(message.id);
 	const frameRef = useRef<number | undefined>(undefined);
 	const lastFrameAtRef = useRef<number | undefined>(undefined);
-	const drainStartedAtRef = useRef<number | undefined>(undefined);
 	const fractionalCharactersRef = useRef(0);
 	const [reducedMotion, setReducedMotion] = useState(
 		() => typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches,
@@ -165,12 +164,12 @@ function useSmoothStreamingText(message: ConversationMessage): string {
 			frameRef.current = undefined;
 		}
 		lastFrameAtRef.current = undefined;
-		drainStartedAtRef.current = undefined;
 		fractionalCharactersRef.current = 0;
 	}, []);
 
 	const scheduleDrain = useCallback(() => {
 		if (frameRef.current !== undefined) return;
+		const drainStartedAt = performance.now();
 
 		const tick = (now: number) => {
 			frameRef.current = undefined;
@@ -182,10 +181,9 @@ function useSmoothStreamingText(message: ConversationMessage): string {
 				return;
 			}
 
-			drainStartedAtRef.current ??= now;
 			// New snapshots share this drain's deadline. Use real elapsed time so a
-			// background tab catches up on its first frame after resuming.
-			if (now - drainStartedAtRef.current >= STREAM_MAX_DISPLAY_LAG_MS) {
+			// background tab catches up even if it has not received its first frame.
+			if (now - drainStartedAt >= STREAM_MAX_DISPLAY_LAG_MS) {
 				visibleRef.current = targetRef.current;
 				visibleGraphemeCountRef.current = targetGraphemesRef.current.length;
 				setVisibleText(targetRef.current);
@@ -221,7 +219,6 @@ function useSmoothStreamingText(message: ConversationMessage): string {
 		};
 
 		lastFrameAtRef.current = undefined;
-		drainStartedAtRef.current = undefined;
 		fractionalCharactersRef.current = 0;
 		frameRef.current = window.requestAnimationFrame(tick);
 	}, [cancelDrain]);

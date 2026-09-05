@@ -14,6 +14,7 @@ function render(ui: ReactElement) {
 }
 
 let nextFrame = 1;
+let frameTime = 0;
 let frames = new Map<number, FrameRequestCallback>();
 
 function message(overrides: Partial<ConversationMessage> = {}): ConversationMessage {
@@ -35,12 +36,15 @@ function runFrame(now: number) {
 	const [id, callback] = frames.entries().next().value ?? [];
 	if (id === undefined || callback === undefined) throw new Error("No animation frame scheduled");
 	frames.delete(id);
+	frameTime = now;
 	act(() => callback(now));
 }
 
 beforeEach(() => {
 	nextFrame = 1;
+	frameTime = 0;
 	frames = new Map();
+	vi.spyOn(performance, "now").mockImplementation(() => frameTime);
 	vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => {
 		const id = nextFrame++;
 		frames.set(id, callback);
@@ -122,6 +126,17 @@ describe("AssistantMessage streaming", () => {
 		expect(rendered?.textContent).toBe("a".padEnd(2000, "x"));
 	});
 
+	it("flushes on resume when a hidden tab received no initial animation frame", () => {
+		const view = render(<AssistantMessage message={message()} />);
+		const text = "a".padEnd(2000, "x");
+		view.rerender(<AssistantMessage message={message({ text })} />);
+
+		runFrame(5 * 60 * 1000);
+
+		expect(document.querySelector("p")?.textContent).toBe(text);
+		expect(frames.size).toBe(0);
+	});
+
 	it("shows a large received burst within 250ms", () => {
 		const view = render(<AssistantMessage message={message()} />);
 		const text = "a".padEnd(10_000, "x");
@@ -179,8 +194,8 @@ describe("AssistantMessage streaming", () => {
 
 		view.rerender(<AssistantMessage message={message({ text: "a👨‍👩" })} />);
 		expect(document.querySelector("p")?.textContent).toBe("a");
-		runFrame(0);
 		runFrame(1000);
+		runFrame(1200);
 
 		expect(document.querySelector("p")?.textContent).toBe("a👨‍👩");
 	});
