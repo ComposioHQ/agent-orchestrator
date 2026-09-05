@@ -115,10 +115,11 @@ export function TurnSettingsBar({
 	children?: ReactNode;
 }) {
 	const selected = models.find((model) => model.id === settings.model);
-	const fallback = models.find((model) => model.default);
-	// The label says what will actually be used: the provider's default is a real
-	// answer, not an absence, so it is named rather than shown as "none".
-	const chosenLabel = selected?.displayName ?? fallback?.displayName ?? "Provider default";
+	const fallback = settings.model ? undefined : models.find((model) => model.default);
+	// A catalog miss must not relabel an explicit choice or borrow another model's
+	// effort settings. Custom or newly available models may not be listed yet.
+	const chosenLabel =
+		selected?.displayName ?? settings.model ?? fallback?.displayName ?? "Provider default";
 	const rerouted = reroute
 		? models.find((model) => model.id === reroute.toModel)?.displayName ?? reroute.toModel
 		: undefined;
