@@ -1139,9 +1139,7 @@ describe("Sidebar", () => {
 		await user.click(screen.getByLabelText("New project"));
 		await user.click(screen.getByRole("button", { name: /^Import a workspace folder$/i }));
 
-		expect(await screen.findByText("/repo/workspace")).toBeInTheDocument();
 		expect(window.ao!.app.chooseDirectory).toHaveBeenCalledWith("Choose a workspace folder");
-		await user.click(screen.getByRole("button", { name: "Continue" }));
 		expect(screen.getByRole("dialog", { name: "Set up workspace" })).toBeInTheDocument();
 		await chooseOption(screen.getByRole("combobox", { name: "Worker agent" }), "Codex");
 		await chooseOption(screen.getByRole("combobox", { name: "Orchestrator agent" }), "Claude Code");
@@ -1167,12 +1165,10 @@ describe("Sidebar", () => {
 		const onInitializeProject = vi.fn().mockResolvedValue(undefined) as InitializeProjectHandler;
 		window.ao!.app.chooseDirectory = vi.fn().mockResolvedValue("/repo/workspace");
 		window.ao!.app.checkAncestorRepo = vi.fn().mockResolvedValue(undefined);
-		window.ao!.app.scanImportFolder = vi.fn().mockResolvedValue({ path: "/repo/workspace", repos: [] });
 		renderSidebar({ onCreateProject, onInitializeProject });
 
 		await user.click(screen.getByLabelText("New project"));
 		await user.click(screen.getByRole("button", { name: /^Import a workspace folder$/i }));
-		await user.click(await screen.findByRole("button", { name: "Continue" }));
 		await screen.findByRole("dialog", { name: "Set up workspace" });
 		await chooseOption(screen.getByRole("combobox", { name: "Orchestrator agent" }), "Claude Code");
 		await user.click(screen.getByRole("button", { name: "Create workspace and start" }));
@@ -1180,12 +1176,8 @@ describe("Sidebar", () => {
 		await waitFor(() => expect(onCreateProject).toHaveBeenCalledTimes(1));
 		expect(onInitializeProject).not.toHaveBeenCalled();
 		expect(await screen.findByText(/Import failed · workspace not registered/i)).toBeInTheDocument();
-		expect(screen.getByText("Review the error above or choose a different folder")).toBeInTheDocument();
 		expect(window.ao!.app.checkAncestorRepo).toHaveBeenCalledWith("/repo/workspace");
-		expect(window.ao!.app.scanImportFolder).toHaveBeenCalledWith({
-			path: "/repo/workspace",
-			mode: "workspace",
-		});
+		expect(window.ao!.app.scanImportFolder).toHaveBeenCalledTimes(1);
 	});
 
 	it("shows detected repository validation when workspace import fails", async () => {
@@ -1260,24 +1252,14 @@ describe("Sidebar", () => {
 
 		await user.click(screen.getByLabelText("New project"));
 		await user.click(screen.getByRole("button", { name: /^Import a workspace folder$/i }));
-		await screen.findByRole("dialog", { name: "Import workspace" });
-		await user.click(screen.getByRole("button", { name: "Continue" }));
 		await screen.findByRole("dialog", { name: "Set up workspace" });
 		await chooseOption(screen.getByRole("combobox", { name: "Orchestrator agent" }), "Claude Code");
 		await user.click(screen.getByRole("button", { name: "Create workspace and start" }));
 
 		expect(await screen.findByText(/Import failed · workspace not registered/i)).toBeInTheDocument();
 		expect(screen.getByText("workspace not registered")).toBeInTheDocument();
-		expect(screen.getByText("web")).toBeInTheDocument();
-		expect(screen.getByText("Repository name is reserved by AO.")).toBeInTheDocument();
-		expect(screen.getByText("api")).toBeInTheDocument();
-		expect(screen.getByText("main github.com/acme/api")).toBeInTheDocument();
-		expect(screen.getByText("Resolve 1 failed repository to continue")).toBeInTheDocument();
 		expect(window.ao!.app.checkAncestorRepo).toHaveBeenCalledWith("/Users/test/dev/acme");
-		expect(window.ao!.app.scanImportFolder).toHaveBeenCalledWith({
-			path: "/Users/test/dev/acme",
-			mode: "workspace",
-		});
+		expect(window.ao!.app.scanImportFolder).toHaveBeenCalledTimes(1);
 	});
 
 	it("blocks workspace import when no child repository is initialized", async () => {
@@ -1310,31 +1292,12 @@ describe("Sidebar", () => {
 			}
 			return { data: undefined, error: undefined };
 		});
-			window.ao!.app.scanImportFolder = vi.fn().mockResolvedValue({
-				path: "/repo/workspace",
-				repos: [
-					{
-						name: "docs",
-					path: "/repo/workspace/docs",
-					relativePath: "docs",
-					branch: "",
-						remote: "",
-						hasRemote: false,
-						status: "error",
-						reason: "Initialize at least one direct child repository before importing this workspace.",
-						needsGitInit: true,
-				},
-			],
-		});
 		renderSidebar({ onCreateProject });
 
 		await user.click(screen.getByLabelText("New project"));
 		await user.click(screen.getByRole("button", { name: /^Import a workspace folder$/i }));
-		await screen.findByRole("dialog", { name: "Import workspace" });
-
-		expect(await screen.findByText("Initialize at least one direct child repository before importing this workspace.")).toBeInTheDocument();
-		expect(screen.getByText("docs")).toBeInTheDocument();
-		expect(screen.queryByRole("button", { name: "Continue" })).not.toBeInTheDocument();
+		await waitFor(() => expect(useUiStore.getState().globalToast?.body).toBeTruthy());
+		expect(screen.getByRole("button", { name: "Choose another folder" })).toBeInTheDocument();
 		expect(onCreateProject).not.toHaveBeenCalled();
 	});
 
@@ -1398,33 +1361,18 @@ describe("Sidebar", () => {
 			}
 			return { data: undefined, error: undefined };
 		});
-		window.ao!.app.scanImportFolder = vi.fn().mockResolvedValue({
-			path: "/repo/workspace",
-			repos: [
-				{
-					name: "docs",
-					path: "/repo/workspace/docs",
-					relativePath: "docs",
-					branch: "",
-					remote: "",
-					hasRemote: false,
-					status: "ok",
-					needsGitInit: true,
-				},
-			],
-		});
 		renderSidebar({ onCreateProject: vi.fn().mockResolvedValue(undefined) as CreateProjectHandler });
 
 		await user.click(screen.getByLabelText("New project"));
 		await user.click(screen.getByRole("button", { name: /^Import a workspace folder$/i }));
-		await screen.findByRole("dialog", { name: "Import workspace" });
+		await screen.findByRole("dialog", { name: "Prepare project" });
 
-		expect(screen.getByText("docs")).toBeInTheDocument();
-		expect(screen.getByText("Needs git init")).toBeInTheDocument();
-		expect(screen.queryByRole("button", { name: "Approve and set up" })).not.toBeInTheDocument();
+		expect(screen.getByText("/repo/workspace/unborn")).toBeInTheDocument();
+		expect(screen.getByText("Initial commit")).toBeInTheDocument();
+		expect(screen.getByText("/repo/workspace/no-remote")).toBeInTheDocument();
 	});
 
-	it("does not render remote setup controls in the workspace scan dialog", async () => {
+	it("renders remote setup controls for workspace repositories that need them", async () => {
 		const user = userEvent.setup();
 		window.localStorage.setItem("ao.import.lastRemoteUrl", "https://github.com/chauhan/old.git");
 		window.localStorage.setItem("ao.import.lastRemoteOwner", "chauhan");
@@ -1466,19 +1414,12 @@ describe("Sidebar", () => {
 			}
 			return { data: undefined, error: undefined };
 		});
-		window.ao!.app.scanImportFolder = vi.fn().mockResolvedValue({
-			path: "/repo/workspace",
-			repos: [],
-		});
-
 		renderSidebar({ onCreateProject: vi.fn().mockResolvedValue(undefined) as CreateProjectHandler });
 
 		await user.click(screen.getByLabelText("New project"));
 		await user.click(screen.getByRole("button", { name: /^Import a workspace folder$/i }));
-		await screen.findByRole("dialog", { name: "Import workspace" });
-
-		expect(screen.queryByText("temp")).not.toBeInTheDocument();
-		expect(screen.queryByLabelText("Origin remote URL")).not.toBeInTheDocument();
+		expect(screen.getByText("/repo/workspace/temp")).toBeInTheDocument();
+		expect(screen.getByPlaceholderText("https://github.com/org/repository.git")).toBeInTheDocument();
 	});
 
 	it("does not rescan folders for non-validation create failures", async () => {
@@ -1486,12 +1427,10 @@ describe("Sidebar", () => {
 		const onCreateProject = vi.fn().mockRejectedValue(new Error("AO daemon is not ready.")) as CreateProjectHandler;
 		window.ao!.app.chooseDirectory = vi.fn().mockResolvedValue("/repo/workspace");
 		window.ao!.app.checkAncestorRepo = vi.fn().mockResolvedValue(undefined);
-		window.ao!.app.scanImportFolder = vi.fn().mockResolvedValue({ path: "/repo/workspace", repos: [] });
 		renderSidebar({ onCreateProject });
 
 		await user.click(screen.getByLabelText("New project"));
 		await user.click(screen.getByRole("button", { name: /^Import a workspace folder$/i }));
-		await user.click(await screen.findByRole("button", { name: "Continue" }));
 		await screen.findByRole("dialog", { name: "Set up workspace" });
 		await chooseOption(screen.getByRole("combobox", { name: "Orchestrator agent" }), "Claude Code");
 		await user.click(screen.getByRole("button", { name: "Create workspace and start" }));
@@ -1500,7 +1439,7 @@ describe("Sidebar", () => {
 		// The initial folder validation is required by the import step. The
 		// non-validation create failure must not trigger a second scan.
 		expect(window.ao!.app.checkAncestorRepo).toHaveBeenCalledWith("/repo/workspace");
-		expect(window.ao!.app.scanImportFolder).toHaveBeenCalledTimes(1);
+		expect(window.ao!.app.scanImportFolder).not.toHaveBeenCalled();
 	});
 
 	it("shows ancestor repo warning in agent sheet for workspace inside existing repo", async () => {
@@ -1520,7 +1459,6 @@ describe("Sidebar", () => {
 
 		await user.click(screen.getByLabelText("New project"));
 		await user.click(screen.getByRole("button", { name: /^Import a workspace folder$/i }));
-		await user.click(await screen.findByRole("button", { name: "Continue" }));
 		await screen.findByRole("dialog", { name: "Set up workspace" });
 		expect(
 			screen.getByText(

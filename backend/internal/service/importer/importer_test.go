@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
@@ -198,6 +199,27 @@ func TestValidateProjectImportParentWithChildReposChoosesImportKind(t *testing.T
 	}
 }
 
+func TestValidateProjectImportRejectsDetachedHead(t *testing.T) {
+	ctx := context.Background()
+	repo := gitRepoWithOrigin(t)
+	out, err := exec.Command("git", "-C", repo, "rev-parse", "HEAD").Output()
+	if err != nil {
+		t.Fatalf("rev-parse HEAD: %v", err)
+	}
+	if out, err := exec.Command("git", "-C", repo, "checkout", "--detach", strings.TrimSpace(string(out))).CombinedOutput(); err != nil {
+		t.Fatalf("checkout --detach: %v (%s)", err, out)
+	}
+	svc := New(Deps{Store: newFakeStore()})
+
+	result, err := svc.Validate(ctx, ImportValidationInput{ImportKind: ImportKindProject, Path: repo})
+	if err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	if result.IsValid || result.NextStep != ImportNextStepError || len(result.BlockingErrors) != 1 || result.BlockingErrors[0] != "DETACHED_HEAD" {
+		t.Fatalf("result = %#v, want detached-head error", result)
+	}
+}
+
 func TestValidateProjectImportRootWithOriginAndChildReposWarnsProjectImport(t *testing.T) {
 	ctx := context.Background()
 	root := gitRepoWithOrigin(t)
@@ -257,6 +279,23 @@ func TestPrepareGitRequiresApprovalBeforeMutation(t *testing.T) {
 	wantCode(t, err, "IMPORT_ACTION_APPROVAL_REQUIRED")
 	if _, err := os.Stat(filepath.Join(root, ".git")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("PrepareGit mutated without full approval: %v", err)
+	}
+}
+
+func TestPrepareGitRejectsMalformedRemoteBeforeMutation(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	svc := New(Deps{Store: newFakeStore()})
+
+	_, err := svc.PrepareGit(ctx, GitPreparationInput{
+		ImportKind:      ImportKindProject,
+		Path:            root,
+		ApprovedActions: []string{GitPreparationActionInit, GitPreparationActionCommit, GitPreparationActionSetRemote},
+		RemoteURL:       "not a remote",
+	})
+	wantCode(t, err, "INVALID_GIT_URL")
+	if _, err := os.Stat(filepath.Join(root, ".git")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("PrepareGit mutated before validating remote: %v", err)
 	}
 }
 

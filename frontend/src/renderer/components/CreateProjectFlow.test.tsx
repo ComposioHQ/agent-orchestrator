@@ -445,6 +445,9 @@ describe("CreateProjectFlow project import validation", () => {
 				],
 			}),
 		});
+		apiMocks.POST.mockResolvedValueOnce({
+			data: projectValidation("/repo/parent", { nextStep: "continue" }),
+		});
 
 		render(
 			<CreateProjectFlow mode="choose" {...noop}>
@@ -688,7 +691,6 @@ describe("CreateProjectFlow project import validation", () => {
 
 		expect(await screen.findByText("Running project setup. AO is preparing this repository now.")).toBeInTheDocument();
 		expect(screen.queryByText("Running")).not.toBeInTheDocument();
-		expect(screen.queryByText("Queued")).not.toBeInTheDocument();
 		expect(screen.queryByText("Ready")).not.toBeInTheDocument();
 		expect(screen.queryByText("Set URL")).not.toBeInTheDocument();
 
