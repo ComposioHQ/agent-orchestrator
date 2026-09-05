@@ -387,6 +387,8 @@ func TestPrepareGitRejectsCredentialBearingRemoteBeforeMutation(t *testing.T) {
 		{name: "HTTPS username", remoteURL: "https://token@github.com/acme/repository.git"},
 		{name: "HTTPS password", remoteURL: "https://user:secret@github.com/acme/repository.git"},
 		{name: "SSH password", remoteURL: "ssh://git:secret@github.com/acme/repository.git"},
+		{name: "Git userinfo", remoteURL: "git://token@git.example.test/acme/repository.git"},
+		{name: "file userinfo", remoteURL: "file://token@localhost/tmp/acme/repository.git"},
 		{name: "access token query", remoteURL: "https://github.com/acme/repository.git?access_token=secret"},
 		{name: "generic token query", remoteURL: "https://github.com/acme/repository.git?token=secret"},
 	}

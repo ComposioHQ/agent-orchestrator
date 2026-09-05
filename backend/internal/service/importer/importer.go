@@ -590,7 +590,8 @@ func validateImportRemoteURL(raw string) error {
 	if parsed.User != nil {
 		_, hasPassword = parsed.User.Password()
 	}
-	if ((scheme == "http" || scheme == "https") && (parsed.User != nil || parsed.RawQuery != "")) || hasPassword || hasSensitiveImportRemoteQuery(parsed) {
+	hasDisallowedUserinfo := parsed.User != nil && scheme != "ssh"
+	if hasDisallowedUserinfo || ((scheme == "http" || scheme == "https") && parsed.RawQuery != "") || hasPassword || hasSensitiveImportRemoteQuery(parsed) {
 		return apierr.Invalid("GIT_URL_CONTAINS_CREDENTIALS", "Use your configured Git credentials or an SSH URL instead of putting credentials in the repository URL.", nil)
 	}
 	switch scheme {
