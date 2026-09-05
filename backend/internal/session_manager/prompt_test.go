@@ -176,3 +176,35 @@ func TestProjectRelativeFileRejectsTraversal(t *testing.T) {
 		t.Fatal("expected traversal path to be rejected")
 	}
 }
+
+func TestBuildSystemPromptPreservesPublishingScope(t *testing.T) {
+	for _, role := range []sessionPromptRole{sessionPromptRoleWorker, sessionPromptRoleOrchestrator} {
+		for _, repo := range []string{"", "https://github.com/acme/repo"} {
+			t.Run(string(role)+"/"+repo, func(t *testing.T) {
+				got := buildSystemPromptText(systemPromptConfig{Role: role, Project: promptProject{Repo: repo}})
+				for _, want := range []string{
+					"Do not request fresh approval for each push or PR/MR update within an already authorized workflow",
+					"Available credentials, a configured remote, auto/bypass tool permissions, or an associated PR/MR alone do not authorize publishing",
+					"local-only, review-only, or do-not-publish take precedence over workflow defaults",
+					"Preserve the user's publishing scope and restrictions when spawning or redirecting workers",
+				} {
+					if !strings.Contains(got, want) {
+						t.Errorf("prompt missing scope rule %q", want)
+					}
+				}
+				if strings.Contains(got, "the project workflow clearly requires it, or an associated PR/MR already exists") {
+					t.Error("freeform task still treats PR association as publishing authority")
+				}
+			})
+		}
+	}
+}
+
+func TestBuildTaskPromptPreservesExplicitPublishingScope(t *testing.T) {
+	for _, prompt := range []string{"Fix the issue, push the branch, and open a PR.", "Fix the issue locally. Do not push or open a PR."} {
+		got := buildTaskPrompt(taskPromptConfig{Role: sessionPromptRoleWorker, Prompt: prompt, IssueID: "42"})
+		if got != prompt {
+			t.Fatalf("explicit user scope changed: %q", got)
+		}
+	}
+}
