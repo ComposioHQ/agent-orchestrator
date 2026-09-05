@@ -101,6 +101,8 @@ export type ImportRepoScan = {
 	branch: string;
 	remote: string;
 	hasRemote: boolean;
+	isRepo: boolean;
+	hasCommit: boolean;
 	status?: "ok" | "error";
 	reason?: string;
 	needsGitInit?: boolean;
