@@ -149,15 +149,9 @@ func (d *Driver) Probe(ctx context.Context) (ports.ChatCapabilities, error) {
 		return nil, fmt.Errorf("%w: %w", ports.ErrChatDriverUnavailable, err)
 	}
 
-	// An unknown auth result is not proof of failure — the same rule AO already
-	// applies to runtime probes. Only an explicit unauthorized blocks creation.
-	status, err := d.plugin.AuthStatus(ctx)
-	if err == nil && status == ports.AgentAuthStatusUnauthorized {
-		return nil, ports.ErrChatAuthRequired
-	}
-	if err != nil {
-		d.log.Debug("codex auth probe inconclusive; continuing", "error", err)
-	}
+	// Authentication is owned by the daemon's active-account readiness check.
+	// Probing the ambient device home here would reject a valid AO account (or
+	// admit a different device account) before the managed runtime is launched.
 	versionProbe := d.versionProbe
 	if versionProbe == nil {
 		versionProbe = installedCodexVersion
@@ -202,6 +196,25 @@ func (d *Driver) Probe(ctx context.Context) (ports.ChatCapabilities, error) {
 	}
 
 	return capabilities(), nil
+}
+
+// DiscoverModels reads the account's current provider catalog without opening
+// a Codex thread. The caller supplies the same project directory and environment
+// overlay used for a normal launch so project-scoped Codex configuration applies.
+func (d *Driver) DiscoverModels(ctx context.Context, workdir string, env map[string]string) ([]ports.ChatModel, error) {
+	if !filepath.IsAbs(workdir) {
+		var err error
+		workdir, err = os.Getwd()
+		if err != nil || !filepath.IsAbs(workdir) {
+			workdir = os.TempDir()
+		}
+	}
+	conv, err := d.connect(ctx, workdir, env)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = conv.Close() }()
+	return listModels(ctx, conv.conn)
 }
 
 type codexVersion [3]int
@@ -268,9 +281,10 @@ func (d *Driver) Start(ctx context.Context, cfg ports.ChatStartConfig) (ports.Ch
 
 	policy, sandbox := approvalSettings(cfg.Permissions)
 	params := map[string]any{
-		"cwd":            cfg.WorkspacePath,
-		"approvalPolicy": policy,
-		"sandbox":        sandbox,
+		"cwd":               cfg.WorkspacePath,
+		"approvalPolicy":    policy,
+		"approvalsReviewer": approvalReviewer(cfg.Permissions),
+		"sandbox":           sandbox,
 	}
 	if cfg.Model != "" {
 		params["model"] = cfg.Model
@@ -325,13 +339,20 @@ func (d *Driver) Resume(ctx context.Context, cfg ports.ChatResumeConfig) (ports.
 
 	policy, sandbox := approvalSettings(cfg.Permissions)
 	params := map[string]any{
-		"threadId":       cfg.ProviderConversationID,
-		"cwd":            cfg.WorkspacePath,
-		"approvalPolicy": policy,
-		"sandbox":        sandbox,
+		"threadId":          cfg.ProviderConversationID,
+		"cwd":               cfg.WorkspacePath,
+		"approvalPolicy":    policy,
+		"approvalsReviewer": approvalReviewer(cfg.Permissions),
+		"sandbox":           sandbox,
 	}
 	if cfg.Model != "" {
 		params["model"] = cfg.Model
+	}
+	// thread/resume has no top-level effort field. Codex exposes persistent
+	// reasoning effort as a config override, so carry the durable AO choice into
+	// the resumed thread instead of silently falling back to the provider default.
+	if cfg.Effort != "" {
+		params["config"] = map[string]any{"model_reasoning_effort": cfg.Effort}
 	}
 	// Developer instructions are launch context, not durable conversation
 	// history. Reapply AO's current standing role when app-server reconstructs a
@@ -444,15 +465,19 @@ func (d *Driver) connectSession(
 }
 
 func (d *Driver) initialize(ctx context.Context, conv *conversation) error {
+	return initializeConnection(ctx, conv.conn)
+}
+
+func initializeConnection(ctx context.Context, connection *conn) error {
 	initCtx, cancel := context.WithTimeout(ctx, handshakeTimeout)
 	defer cancel()
-	if err := conv.conn.request(initCtx, "initialize", map[string]any{
+	if err := connection.request(initCtx, "initialize", map[string]any{
 		"clientInfo":   map[string]any{"name": clientName, "title": clientTitle, "version": clientVersion},
 		"capabilities": map[string]any{"experimentalApi": true, "optOutNotificationMethods": nil},
 	}, nil); err != nil {
 		return fmt.Errorf("%w: initialize: %w", ports.ErrChatDriverIncompatible, err)
 	}
-	if err := conv.conn.notify("initialized", nil); err != nil {
+	if err := connection.notify("initialized", nil); err != nil {
 		return fmt.Errorf("notify initialized: %w", err)
 	}
 	return nil
@@ -469,18 +494,27 @@ func approvalSettings(mode ports.PermissionMode) (policy, sandbox string) {
 	switch ports.NormalizePermissionMode(mode) {
 	case ports.PermissionModeAcceptEdits, ports.PermissionModeAuto:
 		// on-request lets the provider decide when to ask; workspace-write keeps
-		// edits inside the worktree. approvalsReviewer is deliberately not set:
-		// AO has no tested value for it here, and sending an unknown one would
-		// fail thread/start outright.
+		// edits inside the worktree.
 		return "on-request", "workspace-write"
 	default:
 		return "never", "danger-full-access"
 	}
 }
 
+// approvalReviewer selects whether Codex asks the user directly or first lets
+// its built-in reviewer approve routine safe actions. Explicitly sending "user"
+// also resets a thread that previously used auto review.
+func approvalReviewer(mode ports.PermissionMode) string {
+	if ports.NormalizePermissionMode(mode) == ports.PermissionModeAuto {
+		return "auto_review"
+	}
+	return "user"
+}
+
 // spawnAppServer is the real launcher.
 func spawnAppServer(ctx context.Context, bin, workdir string, env []string) (*process, error) {
-	cmd := aoprocess.Command(bin, "app-server")
+	args := []string{"app-server"}
+	cmd := aoprocess.Command(bin, args...)
 	cmd.Dir = workdir
 	if len(env) > 0 {
 		cmd.Env = env

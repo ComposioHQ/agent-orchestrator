@@ -4,6 +4,7 @@ export * from "./agent-capabilities";
 export * from "./agents";
 export * from "./external-link";
 export * from "./formatting";
+export * from "./overlay-auto-focus";
 export * from "./PRSummaryDisplay";
 export * from "./project-models";
 export * from "./ProjectViews";

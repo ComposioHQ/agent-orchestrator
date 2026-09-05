@@ -1,5 +1,6 @@
-import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render as rtlRender, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import type { ReactElement } from "react";
 import { typeInLexicalEditor } from "../../test/lexical";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ChatWorkspace, promptSpacerHeight, promptTopInset } from "./ChatWorkspace";
@@ -17,6 +18,19 @@ import type { ConversationMessage, ConversationSnapshot } from "../../types/conv
 import { setApiBaseUrl } from "../../lib/api-client";
 import { useUiStore } from "../../stores/ui-store";
 import type { WorkspaceSession } from "../../types/workspace";
+import { TooltipProvider } from "../ui/tooltip";
+
+const renameSessionMock = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
+
+vi.mock("../../lib/rename-session", () => ({ renameSession: renameSessionMock }));
+
+function render(ui: ReactElement) {
+	const result = rtlRender(<TooltipProvider>{ui}</TooltipProvider>);
+	return {
+		...result,
+		rerender: (nextUi: ReactElement) => result.rerender(<TooltipProvider>{nextUi}</TooltipProvider>),
+	};
+}
 
 const writeText = vi.fn(async (_text: string) => undefined);
 const menuAction = vi.fn(async (_action: string) => undefined);
@@ -137,6 +151,7 @@ beforeEach(() => {
 	closeShellTerminalListeners.clear();
 	closeShellTerminalShortcutStates.length = 0;
 	terminalPaneState.props = undefined;
+	renameSessionMock.mockReset().mockResolvedValue(undefined);
 	window.localStorage.clear();
 	setApiBaseUrl("http://127.0.0.1:3001");
 	useUiStore.setState({ isSidebarOpen: true, inspectorSessions: {} });
@@ -384,6 +399,27 @@ describe("ChatWorkspace timeline", () => {
 			/>,
 		);
 		expect(screen.getByRole("tab", { name: "Orchestrator · Codex · Working" })).toBeInTheDocument();
+	});
+
+	it("refreshes the owning workspace after renaming the primary chat tab", async () => {
+		const user = userEvent.setup();
+		const onSessionRenamed = vi.fn().mockResolvedValue(undefined);
+		render(
+			<ChatWorkspace
+				snapshot={chatFixture}
+				session={chatSession}
+				sessionRole="worker"
+				onSessionRenamed={onSessionRenamed}
+			/>,
+		);
+
+		await user.dblClick(screen.getByRole("tab", { name: "Reviewer chat · Codex · Working" }));
+		const input = screen.getByRole("textbox", { name: "Rename Reviewer chat" });
+		await user.clear(input);
+		await user.type(input, "Focused review{Enter}");
+
+		await waitFor(() => expect(renameSessionMock).toHaveBeenCalledWith(chatSession.id, "Focused review"));
+		expect(onSessionRenamed).toHaveBeenCalledOnce();
 	});
 
 	it("clears the fixed titlebar nav when the sidebar is collapsed, like the terminal session", () => {

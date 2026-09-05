@@ -128,7 +128,6 @@ export function SessionInterfaceSwitchButton({
 						className={cn(!supported && "opacity-50", className)}
 						disabled={!supported || pending}
 						onClick={onClick}
-						title={tooltipLabel}
 						type="button"
 						variant="icon"
 					>

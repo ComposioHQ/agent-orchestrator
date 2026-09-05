@@ -272,22 +272,21 @@ export function SessionCardView({
 					type="button"
 				/>
 			) : null}
-			{overlay}
-			{action ? <div className="absolute right-2 top-1.5 z-10">{action}</div> : null}
-			<div className="px-3.5 pb-2.5 pt-3">
-				<div className="flex min-w-0 items-start gap-2.5">
+			<div className="px-3.5 pb-2.5 pt-2.5">
+				<div className="flex min-w-0 items-center gap-2.5">
 					{renderAvatar(session.provider)}
-					<div className="min-w-0 flex-1">
-						<div
-							className={cn(
-								"line-clamp-2 overflow-hidden text-balance text-sm-md font-semibold leading-tight tracking-tight text-foreground",
-								(overlay || action) && "pr-6",
-							)}
-							title={session.title}
-						>
-							{session.title}
-						</div>
+					<div
+						className="min-w-0 flex-1 line-clamp-2 overflow-hidden text-balance text-sm-md font-semibold leading-tight tracking-tight text-foreground"
+						title={session.title}
+					>
+						{session.title}
 					</div>
+					{overlay || action ? (
+						<div className="relative z-10 -mr-1 shrink-0 self-center">
+							{overlay}
+							{action}
+						</div>
+					) : null}
 				</div>
 				{showBranch && (
 					<div className="mt-1.5 flex min-w-0 items-center gap-1.5 font-mono text-2xs text-muted-foreground">

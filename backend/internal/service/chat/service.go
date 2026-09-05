@@ -33,15 +33,17 @@ type SessionReader interface {
 
 // Service owns the live Chat controllers.
 type Service struct {
-	store      Store
-	reader     SnapshotReader
-	pageReader SnapshotPageReader
-	sessions   SessionReader
-	drivers    ports.ChatDriverRegistry
-	activity   ActivityRecorder
-	log        *slog.Logger
-	newID      IDFactory
-	now        Clock
+	store                  Store
+	reader                 SnapshotReader
+	pageReader             SnapshotPageReader
+	sessions               SessionReader
+	drivers                ports.ChatDriverRegistry
+	activity               ActivityRecorder
+	log                    *slog.Logger
+	newID                  IDFactory
+	now                    Clock
+	onAccountChanged       func(domain.SessionID, string, domain.AgentHarness)
+	onCodexCapacityChanged func(domain.SessionID, string, ports.CodexCapacityObservation)
 
 	mu           sync.RWMutex
 	controllers  map[domain.SessionID]*Controller
@@ -81,6 +83,13 @@ type Options struct {
 	Log      *slog.Logger
 	NewID    IDFactory
 	Now      Clock
+	// OnAccountChanged invalidates daemon-owned account readiness for the
+	// harness that emitted an account/updated notification.
+	OnAccountChanged func(domain.SessionID, string, domain.AgentHarness)
+	// OnCodexCapacityChanged attributes a structured provider update to the one
+	// globally active AO Codex account. The callback owns profile-independent
+	// account state; conversation rows are not the authority for Codex capacity.
+	OnCodexCapacityChanged func(domain.SessionID, string, ports.CodexCapacityObservation)
 }
 
 // New builds a Chat service.
@@ -94,19 +103,21 @@ func New(opts Options) *Service {
 		now = func() time.Time { return time.Now().UTC() }
 	}
 	return &Service{
-		store:        opts.Store,
-		reader:       opts.Reader,
-		pageReader:   opts.PageReader,
-		sessions:     opts.Sessions,
-		drivers:      opts.Drivers,
-		activity:     opts.Activity,
-		log:          log,
-		newID:        opts.NewID,
-		now:          now,
-		controllers:  make(map[domain.SessionID]*Controller),
-		startConfigs: make(map[domain.SessionID]StartConfig),
-		gates:        make(map[domain.SessionID]controllerGate),
-		probed:       make(map[domain.AgentHarness]ports.ChatCapabilities),
+		store:                  opts.Store,
+		reader:                 opts.Reader,
+		pageReader:             opts.PageReader,
+		sessions:               opts.Sessions,
+		drivers:                opts.Drivers,
+		activity:               opts.Activity,
+		log:                    log,
+		newID:                  opts.NewID,
+		now:                    now,
+		onAccountChanged:       opts.OnAccountChanged,
+		onCodexCapacityChanged: opts.OnCodexCapacityChanged,
+		controllers:            make(map[domain.SessionID]*Controller),
+		startConfigs:           make(map[domain.SessionID]StartConfig),
+		gates:                  make(map[domain.SessionID]controllerGate),
+		probed:                 make(map[domain.AgentHarness]ports.ChatCapabilities),
 	}
 }
 
@@ -131,6 +142,7 @@ type StartConfig struct {
 	WorkspacePath         string
 	Env                   map[string]string
 	Model                 string
+	Effort                string
 	Permissions           ports.PermissionMode
 	SystemPrompt          string
 	AdditionalDirectories []string
@@ -402,6 +414,15 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 				activeBranch.ProviderConversationID, cfg.ProviderConversationID)
 		}
 	}
+	// Conversation settings are durable user choices. Restore the selected
+	// model when rebuilding a controller after a daemon restart; the caller's
+	// session default must not silently replace it.
+	if cfg.ProviderConversationID != "" && conversation.Settings.Model != "" {
+		cfg.Model = conversation.Settings.Model
+	}
+	if cfg.ProviderConversationID != "" && conversation.Settings.ReasoningEffort != "" {
+		cfg.Effort = conversation.Settings.ReasoningEffort
+	}
 	if cfg.ProviderConversationID != "" && conversation.Settings.ApprovalMode != "" {
 		cfg.Permissions = conversation.Settings.ApprovalMode
 	}
@@ -410,6 +431,7 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 	}
 	if cfg.ProviderConversationID == "" {
 		conversation.Settings.Model = cfg.Model
+		conversation.Settings.ReasoningEffort = cfg.Effort
 		conversation.Settings.ApprovalMode = cfg.Permissions
 		if err := s.store.SetConversationSettings(ctx, conversation.ID, conversation.Settings, s.now()); err != nil {
 			return nil, fmt.Errorf("record initial conversation settings: %w", err)
@@ -433,6 +455,7 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 			WorkspacePath:          cfg.WorkspacePath,
 			Env:                    launchEnv,
 			Model:                  cfg.Model,
+			Effort:                 cfg.Effort,
 			Permissions:            cfg.Permissions,
 			SystemPrompt:           cfg.SystemPrompt,
 			ProviderScopeID:        providerScopeID,
@@ -520,7 +543,7 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 	// A fresh generation per launch, so events from the controller this one
 	// replaced can be told apart from the current one's.
 	controller := newController(
-		cfg.SessionID, conversation, generation, conv, s.store, s.activity, s.log, s.newID, s.now)
+		cfg.SessionID, conversation, generation, cfg.Harness, conv, s.store, s.activity, s.log, s.newID, s.now, s.onAccountChanged, s.onCodexCapacityChanged)
 	var commitProviderHistory func(context.Context) error
 	if liveReconnect {
 		controller.restoreLiveTurnOwnership(liveRows.Turns)
@@ -1160,6 +1183,7 @@ type StartRequest struct {
 	WorkspacePath           string
 	Env                     map[string]string
 	Model                   string
+	Effort                  string
 	Permissions             ports.PermissionMode
 	SystemPrompt            string
 	AdditionalDirectories   []string
@@ -1289,7 +1313,38 @@ func (s *Service) SetConfigOption(
 	if !ok {
 		return nil, ErrConfigOptionsUnsupported
 	}
-	return configurer.SetConfigOption(ctx, configID, value)
+	controller.configMu.Lock()
+	defer controller.configMu.Unlock()
+	options, err := configurer.SetConfigOption(ctx, configID, value)
+	if err != nil {
+		return nil, err
+	}
+	if settings, changed := settingsFromConfigOptions(controller.Settings(), options); changed {
+		if err := controller.SetSettings(ctx, settings); err != nil {
+			return nil, err
+		}
+	}
+	return options, nil
+}
+
+func settingsFromConfigOptions(
+	settings domain.ConversationSettings,
+	options []ports.ChatConfigOption,
+) (domain.ConversationSettings, bool) {
+	next := settings
+	for _, option := range options {
+		switch {
+		case option.ID == "model" || option.Category == "model":
+			if option.Current.Select != "" {
+				next.Model = option.Current.Select
+			}
+		case option.ID == "effort" || option.Category == "thought_level":
+			if option.Current.Select != "" {
+				next.ReasoningEffort = option.Current.Select
+			}
+		}
+	}
+	return next, next != settings
 }
 
 // Compact asks the provider to summarize earlier history and reclaim context.

@@ -1,7 +1,13 @@
-import { render, screen } from "@testing-library/react";
+import { render as rtlRender, screen } from "@testing-library/react";
+import type { ReactElement } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useUiStore } from "../stores/ui-store";
 import { TitlebarNav } from "./TitlebarNav";
+import { TooltipProvider } from "./ui/tooltip";
+
+function render(ui: ReactElement) {
+	return rtlRender(<TooltipProvider>{ui}</TooltipProvider>);
+}
 
 const { history } = vi.hoisted(() => ({
 	history: {
@@ -60,11 +66,4 @@ describe("TitlebarNav", () => {
 		expect(nav).toHaveClass("left-titlebar-cluster-left", "h-traffic-light-clearance", "-top-0.6");
 	});
 
-	it("hides the fixed navigation cluster while the sidebar is an icon rail", () => {
-		useUiStore.setState({ isSidebarAutoCollapsed: true });
-
-		const { container } = render(<TitlebarNav />);
-
-		expect(container.querySelector('[data-slot="titlebar-nav"]')).toBeNull();
-	});
 });

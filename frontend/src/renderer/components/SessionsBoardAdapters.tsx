@@ -158,43 +158,51 @@ const DesktopSessionCard = memo(function DesktopSessionCard({
 	const translate: ProductUITranslator = (key, values) => t(key as MessageKey, values);
 
 	const terminationOverlay = showTerminate ? (
-		<SessionTerminationPopover
-			onConfirm={() => {
-				setConfirmOpen(false);
-				onTerminate();
-			}}
-			onOpenChange={setConfirmOpen}
-			open={confirmOpen}
-			session={session}
-			trigger={
-				<button
-					aria-label={
-						termination.isPending
-							? t("shell.killingNamedAria", { title: session.title })
-							: t("shell.terminateNamed", { title: session.title })
-					}
-					className={cn(
-						"absolute right-2 top-1.5 z-10 inline-flex size-control-md items-center justify-center rounded-sm text-passive transition-[color,background-color,opacity] hover:bg-error/10 hover:text-error focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60",
-						keepTerminateVisible || termination.isPending
-							? "opacity-100"
-							: "pointer-events-none opacity-0 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100",
-					)}
-					onClick={(event) => {
-						event.stopPropagation();
-						clearTerminateSessionState(queryClient, session.id);
-					}}
-					disabled={termination.isPending}
-					title={termination.isPending ? t("shell.killingSession") : t("shell.terminateSession")}
-					type="button"
-				>
-					{termination.isPending ? (
-						<LoaderCircle className="size-icon-sm animate-spin" aria-hidden="true" />
-					) : (
-						<Trash2 className="size-icon-sm" aria-hidden="true" />
-					)}
-				</button>
-			}
-		/>
+		<Tooltip>
+			<TooltipTrigger asChild>
+				<span className="inline-flex">
+					<SessionTerminationPopover
+						onConfirm={() => {
+							setConfirmOpen(false);
+							onTerminate();
+						}}
+						onOpenChange={setConfirmOpen}
+						open={confirmOpen}
+						session={session}
+						trigger={
+							<button
+								aria-label={
+									termination.isPending
+										? t("shell.killingNamedAria", { title: session.title })
+										: t("shell.terminateNamed", { title: session.title })
+								}
+								className={cn(
+									"inline-flex size-control-md items-center justify-center rounded-sm text-passive transition-[color,background-color,opacity] hover:bg-error/10 hover:text-error focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60",
+									keepTerminateVisible || termination.isPending
+										? "opacity-100"
+										: "pointer-events-none opacity-0 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100",
+								)}
+								onClick={(event) => {
+									event.stopPropagation();
+									clearTerminateSessionState(queryClient, session.id);
+								}}
+								disabled={termination.isPending}
+								type="button"
+							>
+								{termination.isPending ? (
+									<LoaderCircle className="size-icon-sm animate-spin" aria-hidden="true" />
+								) : (
+									<Trash2 className="size-icon-sm" aria-hidden="true" />
+								)}
+							</button>
+						}
+					/>
+				</span>
+			</TooltipTrigger>
+			<TooltipContent side="bottom">
+				{termination.isPending ? t("shell.killingSession") : t("shell.terminateSession")}
+			</TooltipContent>
+		</Tooltip>
 	) : undefined;
 
 	return (
@@ -225,7 +233,7 @@ const DesktopSessionCard = memo(function DesktopSessionCard({
 				state: pr.state,
 				url: prBrowserUrl(pr),
 			}))}
-			renderAvatar={(provider) => <AgentAvatar className="mt-0.5" provider={provider} />}
+			renderAvatar={(provider) => <AgentAvatar provider={provider} />}
 			session={toBoardSessionPresentation(session, t)}
 			translate={translate}
 			renderUsage={(usage) => (
@@ -318,15 +326,17 @@ function ArchiveRestoreButton({
 	return (
 		<Tooltip>
 			<TooltipTrigger asChild>
-				<button
-					aria-label={label}
-					className="grid size-control-board-sm shrink-0 place-items-center rounded-md text-passive transition-colors hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50 disabled:cursor-not-allowed disabled:opacity-35"
-					disabled={isDisabled}
-					onClick={onClick}
-					type="button"
-				>
-					<RotateCcw className={cn("size-icon-md", isRestoring && "animate-spin")} aria-hidden="true" />
-				</button>
+				<span className="inline-flex">
+					<button
+						aria-label={label}
+						className="grid size-control-board-sm shrink-0 place-items-center rounded-md text-passive transition-colors hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50 disabled:cursor-not-allowed disabled:opacity-35"
+						disabled={isDisabled}
+						onClick={onClick}
+						type="button"
+					>
+						<RotateCcw className={cn("size-icon-md", isRestoring && "animate-spin")} aria-hidden="true" />
+					</button>
+				</span>
 			</TooltipTrigger>
 			<TooltipContent side="top">
 				{isRestoring ? t("shell.restoringSession") : t("shell.restoreSession")}
@@ -368,18 +378,22 @@ function CopyActionButton({ label, value }: { label: string; value: string }) {
 		}, 1_500);
 	};
 	return (
-		<button
-			aria-label={buttonLabel}
-			className="inline-flex size-4 shrink-0 items-center justify-center rounded-sm text-passive transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-			onClick={(event) => void copyValue(event)}
-			title={buttonLabel}
-			type="button"
-		>
-			{copied ? (
-				<Check className="size-icon-2xs text-success" aria-hidden="true" />
-			) : (
-				<Copy className="size-icon-2xs" aria-hidden="true" />
-			)}
-		</button>
+		<Tooltip>
+			<TooltipTrigger asChild>
+				<button
+					aria-label={buttonLabel}
+					className="inline-flex size-4 shrink-0 items-center justify-center rounded-sm text-passive transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+					onClick={(event) => void copyValue(event)}
+					type="button"
+				>
+					{copied ? (
+						<Check className="size-icon-2xs text-success" aria-hidden="true" />
+					) : (
+						<Copy className="size-icon-2xs" aria-hidden="true" />
+					)}
+				</button>
+			</TooltipTrigger>
+			<TooltipContent side="bottom">{buttonLabel}</TooltipContent>
+		</Tooltip>
 	);
 }
