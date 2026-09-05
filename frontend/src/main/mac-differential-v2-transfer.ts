@@ -9,6 +9,11 @@ import {
   verifyMacV2Envelope, type MacV2File,
 } from "./mac-differential-v2-protocol";
 
+// Cleanup failure must never be converted into a replacement download.
+export class MacV2CleanupError extends AggregateError {
+  constructor(errors: unknown[]) { super(errors, "V2 resource cleanup failed"); }
+}
+
 const CHUNK = 1024 * 1024;
 export interface MacV2TransferOptions {
   enabled: boolean;
@@ -171,8 +176,16 @@ export async function reconstructMacV2(options: MacV2TransferOptions): Promise<v
   } finally {
     // Exactly one owner per handle. No WriteStream, pipe, callback continuation
     // or shared raw descriptor can race this close or the subsequent fallback.
-    try { if (output) await output.close(); }
-    finally { if (baseline) await baseline.close(); }
-    if (!completed && output) await rm(options.destination, { force: true });
+    const cleanupErrors: unknown[] = [];
+    for (const handle of [output, baseline]) {
+      try { if (handle) await handle.close(); }
+      catch (error) { cleanupErrors.push(error); }
+    }
+    if (output && (!completed || options.signal.aborted || cleanupErrors.length)) {
+      try { await rm(options.destination, { force: true }); }
+      catch (error) { cleanupErrors.push(error); }
+    }
+    if (cleanupErrors.length) throw new MacV2CleanupError(cleanupErrors);
   }
+  options.signal.throwIfAborted();
 }

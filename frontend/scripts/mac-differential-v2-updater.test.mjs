@@ -14,7 +14,7 @@ import { MacDifferentialV2Updater } from "../src/main/mac-differential-v2-update
 
 vi.mock("node:fs/promises", async importOriginal => {
   const actual = await importOriginal();
-  return { ...actual, open: vi.fn(actual.open) };
+  return { ...actual, open: vi.fn(actual.open), rm: vi.fn(actual.rm) };
 });
 vi.mock("electron", () => ({ net: { fetch: (...args) => globalThis.fetch(...args) } }));
 const require = createRequire(import.meta.url);
@@ -25,7 +25,7 @@ const { ElectronHttpExecutor } = require("electron-updater/out/electronHttpExecu
 const { HttpExecutor, CancellationToken } = require("builder-util-runtime");
 const semver = require("semver");
 const dirs = [];
-afterEach(() => { vi.restoreAllMocks(); for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }); });
+afterEach(() => { vi.restoreAllMocks(); vi.mocked(fsPromises.open).mockReset(); vi.mocked(fsPromises.rm).mockReset(); for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }); });
 
 // The real dependency full download/digest implementation. Only Electron's
 // network transport and native handoff are substituted with a loopback harness.
@@ -132,7 +132,7 @@ async function runCase(fault = "none", { arch = "arm64", progress = true, disabl
         const timer = setTimeout(() => res.end("x".repeat(20)), 200);
         res.once("close", () => clearTimeout(timer)); return;
       }
-      if (["416", "416-body", "bad-full"].includes(fault) || (fault === "second-416" && rangeCount === 2)) {
+      if (["416", "416-body", "bad-full", "cleanup-output-close", "cleanup-baseline-close", "cleanup-remove"].includes(fault) || (fault === "second-416" && rangeCount === 2)) {
         send(416, fault === "416-body" ? Buffer.from("range rejected") : Buffer.alloc(0)); return;
       }
       const match = /^bytes=(\d+)-(\d+)$/.exec(req.headers.range);
@@ -178,8 +178,9 @@ async function runCase(fault = "none", { arch = "arm64", progress = true, disabl
   const file = { url: new URL(selected.zip.url), info: { url: selected.zip.url, size: target.length, sha512: selected.zip.sha512 } };
   const provider = { resolveFiles: () => [file], isUseMultipleRangeRequest: false,
     getBlockMapFiles: vi.fn(() => [new URL(`${base}${new URL(selected.baseline.zip.url).pathname}.blockmap`), new URL(`${base}${file.url.pathname}.blockmap`)]) };
+  const closeAttempts = [];
   const promote = vi.spyOn(updater.downloadedUpdateHelper, "setDownloadedFile");
-  if (["cancel-final-read", "cancel-output-close", "cancel-baseline-close"].includes(fault)) {
+  if (["cancel-final-read", "cancel-output-close", "cancel-baseline-close", "cleanup-output-close", "cleanup-baseline-close"].includes(fault)) {
     const realOpen = (await vi.importActual("node:fs/promises")).open;
     vi.mocked(fsPromises.open).mockImplementation(async (...args) => {
       const handle = await realOpen(...args);
@@ -193,12 +194,15 @@ async function runCase(fault = "none", { arch = "arm64", progress = true, disabl
         return result;
       };
       handle.close = async () => {
+        closeAttempts.push(output ? "output" : "baseline");
         await close();
+        if ((output && fault === "cleanup-output-close") || (!output && fault === "cleanup-baseline-close")) throw new Error("injected close failure");
         if ((output && fault === "cancel-output-close") || (!output && fault === "cancel-baseline-close")) token.cancel();
       };
       return handle;
     });
   }
+  if (fault === "cleanup-remove") vi.mocked(fsPromises.rm).mockRejectedValue(new Error("injected remove failure"));
   const stockDifferential = vi.spyOn(AppUpdater.prototype, "differentialDownloadInstaller");
   const archProbe = vi.spyOn(require("node:child_process"), "execFileSync").mockImplementation(command => command === "sysctl" ? "sysctl.proc_translated: 0" : arch === "arm64" ? "ARM" : "x86_64");
   const descriptor = Object.getOwnPropertyDescriptor(process, "arch");
@@ -239,7 +243,8 @@ async function runCase(fault = "none", { arch = "arm64", progress = true, disabl
   expect(laterWork).toBe(0);
   const promotions = promote.mock.calls.length;
   promote.mockRestore();
-  return { promotions, requests, handoffs, error, target, sentinelIntact, observations, rangeCount };
+  const removals = vi.mocked(fsPromises.rm).mock.calls.length;
+  return { closeAttempts, removals, promotions, requests, handoffs, error, target, sentinelIntact, observations, rangeCount };
 }
 
 const fullGETs = result => result.requests.filter(req => req.name.endsWith(".zip") && !req.range);
@@ -304,9 +309,19 @@ describe("real MacUpdater with isolated v2 transfer", () => {
   it.each(["cancel-final-read", "cancel-output-close", "cancel-baseline-close"])("keeps %s terminal before cache promotion and handoff", async fault => {
     const result = await runCase(fault);
     expect(result.error?.message).toMatch(/cancel/i);
+    expect(result.removals).toBe(1);
     expect(fullGETs(result)).toHaveLength(0);
     expect(result.promotions).toBe(0);
     expect(result.handoffs).toHaveLength(0);
+  });
+  it.each(["cleanup-output-close", "cleanup-baseline-close", "cleanup-remove"])("stops %s before fallback, promotion or handoff", async fault => {
+    const result = await runCase(fault);
+    expect(result.error?.message).toMatch(/cleanup/i);
+    expect(fullGETs(result)).toHaveLength(0);
+    expect(result.promotions).toBe(0);
+    expect(result.handoffs).toHaveLength(0);
+    expect(result.removals).toBe(1);
+    if (fault !== "cleanup-remove") expect(result.closeAttempts).toEqual(["output", "baseline"]);
   });
   it("cancels without starting a full transfer or handing off", async () => {
     const result = await runCase("cancel");

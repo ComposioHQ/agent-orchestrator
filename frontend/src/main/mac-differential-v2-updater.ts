@@ -3,7 +3,7 @@ import type { DownloadUpdateOptions } from "electron-updater/out/AppUpdater";
 import { CancellationError, type UpdateInfo } from "builder-util-runtime";
 import { net } from "electron";
 import path from "node:path";
-import { reconstructMacV2 } from "./mac-differential-v2-transfer";
+import { MacV2CleanupError, reconstructMacV2 } from "./mac-differential-v2-transfer";
 
 export interface MacV2UpdaterOptions {
   trustedKeys: Readonly<Record<string, string>>;
@@ -50,7 +50,8 @@ export class MacDifferentialV2Updater extends MacUpdater {
       // Cancellation can arrive during the last digest read or handle close.
       controller.signal.throwIfAborted();
       return false;
-    } catch {
+    } catch (error) {
+      if (error instanceof MacV2CleanupError) throw error;
       if (options.cancellationToken.cancelled) throw new CancellationError();
       this._logger.warn("V2 differential transfer failed, fallback to full download");
       // MacUpdater owns the one verified full download after all v2 work settles.

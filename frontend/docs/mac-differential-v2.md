@@ -141,15 +141,20 @@ Reconstruction uses exclusively owned FileHandles, never network pipes or
 WriteStreams. Cached baseline bytes are SHA-512-verified on the same open handle
 used for copies. Each response body is consumed/cancelled and settled before
 moving on. Output is synced, read back and SHA-512-verified before success.
-All handles close before failure returns. Failed output is removed before
-MacUpdater receives the fallback decision. There is no late callback holding a
+Both handle closes and required temporary-output removal are attempted even if
+another cleanup operation fails. Cleanup errors are aggregated and terminal: the
+subclass rethrows them, so no full fallback, cache promotion or handoff can begin
+with unproven file ownership. Failed or cancelled output is removed before
+MacUpdater receives an ordinary fallback or cancellation decision. There is no late callback holding a
 raw descriptor when the full downloader opens its file.
 
 On absence, ineligibility, signature/identity/map error, HTTP 416, timeout, reset,
 bad range, reconstruction failure or hash mismatch, the method returns the
 single fallback decision only after cleanup. MacUpdater then owns exactly one
 full GET, its existing SHA-512 validation and native handoff. Cancellation is
-terminal: it settles v2 work and starts no replacement transfer. A failed full
+terminal: it settles v2 work and starts no replacement transfer. A final signal
+check after awaited reconstruction catches cancellation during digest or handle
+cleanup before returning success to the dependency. A failed full
 ZIP hash produces no handoff. The stock 6.8.9 differential worker remains
 unsafe on 416; this implementation avoids it through the declared extension,
 not by claiming that dependency was fixed.
