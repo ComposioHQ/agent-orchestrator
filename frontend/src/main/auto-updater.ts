@@ -1,4 +1,6 @@
-import { autoUpdater } from "electron-updater";
+import { autoUpdater as stockAutoUpdater } from "electron-updater";
+import { MacDifferentialV2Updater } from "./mac-differential-v2-updater";
+import macV2TrustedKeys from "../../scripts/mac-differential-v2-trust.json";
 import macDifferentialRollout from "../../scripts/mac-differential-rollout.json";
 import { CancellationToken } from "builder-util-runtime";
 import { app, BrowserWindow, dialog } from "electron";
@@ -27,6 +29,12 @@ import {
   type UpdatePhase,
   type UpdateTrigger,
 } from "../shared/update-telemetry";
+
+// Current AO uses the stock full-ZIP path. A future compatible build explicitly
+// selects the v2 subclass; old clients never learn its metadata or map URLs.
+const autoUpdater = process.platform === "darwin" && macDifferentialRollout.enabled === true
+  ? new MacDifferentialV2Updater({ trustedKeys: macV2TrustedKeys })
+  : stockAutoUpdater;
 
 const FAIL_CLOSED_UPDATE_SETTINGS: UpdateSettings = {
   enabled: false,

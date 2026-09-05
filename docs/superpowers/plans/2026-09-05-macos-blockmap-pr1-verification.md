@@ -1,221 +1,142 @@
-# PR1 verification and release stop
+# PR #4906 verification and rollout stop
 
 PR: https://github.com/Untrivial-ai/agent-orchestrator/pull/4906
 
-## Current state
+## Current implementation
 
-The local build-time stop in `frontend/scripts/mac-differential-rollout.json` is false.
-Production macOS updates stay full-download-only. macOS sidecar
-generation is unconditionally suppressed on every channel. Windows and Linux
-updater flags and feed behavior remain unchanged.
+The approved replacement uses isolated v2 metadata and versioned `.aoblockmap`
+assets on the same GitHub release. No bridge release or new server is proposed.
+Current AO explicitly disables macOS differential downloads before checks, keeps
+`scripts/mac-differential-rollout.json` false, and ships an empty v2 trust keyring.
+Windows/Linux flags and feeds remain unchanged. The PR remains draft.
 
-Prepared changes preserve the approved eligibility matrix, fail-closed renderer
-hydration, a serialized Developer Mode mirror, stale-form protection, per-operation
-policy application, progress fields and sanitized telemetry through the renderer
-capture allowlist. The gate must not open merely because these unit tests pass.
+Legacy macOS feeds permanently retain only full ZIP identities. There are no
+macOS `blockMapSize`/map/v2 references or conventional `.zip.blockmap` assets.
+The v2 preparation module is never invoked by feed/build/publish hooks. No
+conductor mutation, release, tag, replacement PR, project or installation was
+created. Exact schema and acceptance contract: `frontend/docs/mac-differential-v2.md`.
 
-## Dependency stop: HTTP 416
+Prepared UI/settings behavior retains fail-closed hydration, serialized Developer
+Mode mirroring, immediate revocation, stale-form protection, per-operation policy,
+progress facts and sanitized telemetry. Current main's cancellation watchdog and
+staged-install behavior remain intact.
 
-The real MacUpdater harness uses electron-updater's production
-`doDownloadUpdate`, `executeDownload`, `differentialDownloadInstaller`, cache
-helper and HTTP digest pipeline. Only the Electron network transport and native
-Squirrel handoff are substituted with local Node HTTP and a handoff recorder.
-No test-side fallback downloader is used.
+## HTTP 416 boundary
 
-On HTTP 416, electron-updater 6.8.9's single-range response callback rejects but
-continues piping the response and scheduling subsequent tasks. This races
-closed file descriptors with the fallback. Local runs on Node 26.7.0 showed hangs, ECONNRESET, and an uncaught
-descriptor-related Node error. The final harness also opens an unrelated sentinel
-file at full-fallback entry: the HTTP 416 path closes that descriptor, failing
-the descriptor-integrity assertion even when the ZIP download completes. Helper 273 also reproduced descriptor errors on
-actual Node 24.20.0. A Homebrew node@24 PATH alias resolved to Node 26 locally;
-runtime claims use `process.version`, not that alias.
+Stock electron-updater 6.8.9 rejects an HTTP range error but continues piping and
+scheduling work. Earlier real MacUpdater runs reproduced hangs and closure of an
+unrelated sentinel descriptor during full fallback. That dependency defect has
+not been relabeled as fixed.
 
-A temporary, uncommitted dependency experiment added `response.resume(); return;`
-immediately after rejecting an HTTP error. The targeted production-path test
-then passed. The installed dependency was restored afterward. This is a root
-cause check, not a shipped fix or evidence that every error path is safe.
+V2 uses MacUpdater's declared protected `differentialDownloadInstaller` extension
+through an explicit subclass. Its own resolver/reconstruction uses sequential,
+bounded requests and exclusively owned FileHandles. Responses settle and handles
+close before returning the single full-fallback decision. Output is synced and
+read back for SHA-512 verification before success. MacUpdater still owns the full
+HTTP download, digest validation, cache promotion and native handoff. V2 tests
+assert the stock differential method and legacy map resolver are never called.
+No installed dependency edits, prototype monkey patch or unsupported in-flight
+cleanup hook is used in product code.
 
-Before enabling, require real production-path verification of no hang, exactly
-one full fallback, no double completion, no descriptor error, and no native
-handoff before successful SHA-512 verification. Include cancellation and
-repeated failure attempts in that verification.
+The old harness now verifies stock 416 is unreachable for the current disabled
+client. Actual 416 faults run through the v2 subclass rather than a test-side
+retry downloader. Coverage includes empty/body/delayed/second-range 416, reset,
+wrong/short/oversized range, timeout, bad metadata/signature/expiry/identity/maps,
+baseline mismatch, reconstructed digest failure, full digest failure, cancellation,
+and three repeated failures on one updater. Tests check one full GET per failed
+attempt, one byte-identical handoff, sentinel survival and no v2 range/progress
+work after fallback. Cancellation starts no replacement transfer.
 
-## Older-client feed isolation stop
+## Local verification
 
-Current main and older clients do not set `disableDifferentialDownload`; they
-rely on missing macOS sidecars. Publishing ordinary Nightly `.zip.blockmap`
-assets can therefore enable older clients regardless of Developer Mode,
-especially after a successful full fallback caches a ZIP and its new blockmap.
-A new client's gate does not protect those installations. Resolve feed isolation
-before publishing sidecars. The future rollback contract is global switch false
-and client disable flag true, omitting future maps while preserving historical
-assets. Never delete history. There is no existing conductor kill-switch implementation.
+The full focused main/feed/preload/shared/reconstruction suite passed 251 tests
+on an actual downloaded Node 24.20.0 runtime. The v2 suites also passed on
+Node 26.7.0. Both run on macOS arm64 with architecture selection simulated for
+arm64/x64; these are not native x64 runs. Project and E2E typechecks passed.
+The existing selected renderer suite previously passed 88 tests.
 
-## Conductor audit, part 1
+The unsigned package command on actual Node 24.20.0 completed packaging and its
+postPackage hook, producing a local macOS app artifact. No app was launched or
+installed. This supersedes the earlier incomplete package-command result; it does
+not establish v2 Electron net, code-signing, notarization or Squirrel acceptance.
 
-Audit supplied by orchestrator 250 on 2026-09-05:
+One standalone Node 26 synthetic v2 run observed:
 
-- `ao-releases` HEAD `aa936360`: `_pipeline.yml` creates macOS arm64/x64 ZIPs,
-  generates channel feeds using public `feed.mjs`, verifies, uploads `dist/*`,
-  then publishes. The current macOS safety barrier is absence of sidecars.
-- `agent-orchestrator` main `0244fb8`: `feed.mjs` hashes macOS ZIPs with
-  `hashFile`, emitting URL, SHA-512 and size, with no sidecar or `blockMapSize`.
-  Windows and Linux use `writeBlockmap`.
-- That baseline's `feed.test.mjs` explicitly asserts Nightly macOS has no sidecar.
-- No conductor kill switch or compatible-client gate exists at the audited heads.
+| Architecture selection | Target bytes | HTTP response bytes | Range requests |
+| --- | ---: | ---: | ---: |
+| arm64 | 512252 | 291466 | 6 |
+| x64 | 512252 | 323035 | 6 |
 
-This PR retains explicit client default-disable and unconditional macOS sidecar
-suppression. The Nightly feed regression checks both architectures, real full-ZIP
-SHA-512/size metadata, no sidecars and no `blockMapSize`; Windows/Linux feed
-generation remains unchanged. Do not infer a remote control from the local JSON
-stop. A future conductor rollout must be independently reviewed after delivery
-isolation and runtime safety are verified. No bridge release is permitted.
-Audit part 2, supplied by orchestrator 250:
-
-- `verify-feeds.mjs` forbids macOS blockmaps across latest, nightly and pr
-  channels, requires Windows sidecars, and rejects macOS `blockMapSize`, macOS
-  sidecar URLs and any stray unreferenced blockmap.
-- `verify-remote-release` checks the exact draft asset inventory, downloads and
-  compares the assets, then reruns feed verification.
-- Audited Nightly `v0.12.11-nightly.202609041654` has Windows/Linux versioned
-  blockmaps only. Its `nightly-mac.yml` lists two versioned ZIPs without
-  `blockMapSize`.
-
-The ordinary conductor cannot currently publish or reference macOS blockmaps
-without deliberate verification policy and test changes. This is stronger than
-feed-generation suppression alone. This PR must not relax that policy or produce
-macOS sidecars. Its scope is explicit client default-disable, guarded capability
-groundwork and real fallback safety. Any future conductor relaxation is a separate
-reviewed change after delivery isolation and runtime safety verification. Legacy
-safety still depends on absent sidecars because the audited public baseline
-has no explicit `disableDifferentialDownload` assignment.
-
-## Evidence prerequisites
-
-The approved brief was read from commit
-`31e191cbd74e19fb0101395b8b0f3382ae0b0169`.
-Helper 273 recovered the experiment from the shared reflog. The brief's SHA
-contains a typo; the correct commit is
-`74fabaa3f5ab2fb0178574391f7b9c735caedc4c`. Its REPORT.md, evidence.json and
-requests.jsonl are retained unchanged under `experiments/macos-blockmap/evidence`.
-The signed ZIP pair itself was not recovered or rerun.
-
-The historical signed-artifact run reconstructed 111,107,214 bytes using
-17,275,830 HTTP bytes, saving 84.45%. Expected and reconstructed SHA-512 were
-`YlMFsT1OarEYY8VNKDdIkFDe2NMEVvnL5MERmFwXBgM/hPaRckInvnJmMP4iNA8TYltKd17fk4Ke9n7+uxVH7Q==`.
-The recorded target and reconstructed copies passed codesign, Gatekeeper and
-staple checks. This is recovered historical evidence, not a new signed-artifact run.
-
-Helper 273 also confirmed the descriptor-ownership defect independently and
-prepared an upstream source-patch proposal. Its dependency-boundary matrix is
-support evidence only; it does not establish Electron net or native MacUpdater
-handoff safety. No dependency patch is installed or included in product code.
-
-The committed synthetic ZIP harness exercises both architecture selection paths.
-It verifies byte identity and SHA-512, not code signing or native installation.
-One local run observed:
-
-| Fixture | Target bytes | HTTP response bytes | SHA-512 (base64) |
-| --- | ---: | ---: | --- |
-| arm64 | 512252 | 288799 | `v/hQNMqc3aypd503hhIu9uPpsy6jcsK1Fjli/cbUHtexTEqvCJ5DcN3sihsin+L4zlsUeBQujq5tfW1jnrq+2w==` |
-| x64 | 512252 | 320374 | `4DfLYFJVpmSvLsJN6hL4bGMyrBUROlTFbrtMHoLKDKox25Bt21NC7JAzbwHOmUVFqjKkiYYEHgZLDCxO25BB9w==` |
-
-## Verification commands
+HTTP counts include metadata and both maps in that run. Fixtures are temporary
+ZIPs generated by the host ZIP utility, not signed release artifacts. Their
+expected bytes are compared directly and by SHA-512 before the handoff recorder.
 
 Run from `frontend`:
 
 ```sh
-npx vitest run --config vite.main.config.ts scripts/blockmap.test.mjs scripts/feed.test.mjs src/main/update-settings.test.ts src/main/auto-updater.test.ts src/preload.test.ts src/shared/update-telemetry.test.ts
-npx vitest run --config vite.main.config.ts scripts/blockmap-reconstruction.test.mjs
-npx vitest run --config vite.renderer.config.ts src/renderer/lib/update-telemetry.test.ts src/renderer/lib/telemetry.test.ts src/renderer/components/GlobalSettingsForm.test.tsx
+node node_modules/vitest/vitest.mjs run --config vite.main.config.ts scripts/blockmap.test.mjs scripts/feed.test.mjs scripts/blockmap-reconstruction.test.mjs scripts/mac-differential-v2.test.mjs scripts/mac-differential-v2-updater.test.mjs src/main/update-settings.test.ts src/main/auto-updater.test.ts src/preload.test.ts src/shared/update-telemetry.test.ts
 npm run typecheck
+npm run typecheck:e2e
 npm run package
 ```
 
-The focused main/feed/preload suite passed 180 tests. The selected renderer
-suite passed 88 tests. Project and E2E typechecks passed. The unsigned package
-command exited 0 after building the Vite bundles, but its log stopped at
-"Finalizing package" and no final app artifact was present. This does not count
-as successful packaged-app acceptance.
-The full synthetic harness finished with 13 passed and 1 failed: HTTP 416
-violated descriptor integrity. Earlier runs also timed out. The regression is
-retained as a failing test, with no skip or test-side fallback workaround. These are preparation
-checks, not approval to enable the feature.
+## Outstanding rollout acceptance
 
-The brief's `npm run build` is not defined in this checkout. `npm run package`
-is the available production bundle/package build. No release, tag, project or
-native installation is created by this work.
+Keep the rollout disabled and draft until a compatible packaged macOS runtime
+proves real Electron net reconstruction/fallback, signed/notarized target identity,
+native handoff and installation, cancellation and repeated failure ownership.
+Standalone Node HTTP and a handoff recorder do not prove those boundaries.
+Production signing keys and independently reviewed conductor v2 authorization,
+exact inventory and remote verification are also not configured by this PR.
+Version thresholds or adoption of an intermediate release are not isolation.
 
-## Rollout-isolation follow-up plan
+## Conductor audit and permanent legacy safety
 
-1. Set the macOS dependency disable flag before hydration; deny every unsupported macOS state while preserving Windows/Linux behavior.
-2. Remove macOS sidecar generation entirely from the release-feed path.
-3. Require explicit remote authorization and compatible-client evidence before any future allow; keep unknown denied while the authoritative contract is unresolved.
-4. Exercise real MacUpdater across cached ZIP/map cycles with sidecars present and policy disabled; record the contrasting legacy-client exposure without claiming old binaries can be patched remotely.
-5. Re-run focused tests and keep the existing PR draft with the HTTP 416 blocker retained.
+Orchestrator 250 supplied these source facts:
 
-The isolation follow-up exercises two successive target versions against the
-same cache directory. With the dependency disable flag set, existing ZIP/map
-cache plus available sidecars still produces one full ZIP request per cycle and
-no sidecar/range request. An implicit-allow legacy client also stays full-only
-across cycles when sidecars are absent, even with a seeded cached ZIP/map. A
-separate counterexample proves that publishing sidecars activates that legacy
-client. It would be false to claim new code can retroactively disable old binaries.
+- `ao-releases` `aa936360`: `_pipeline.yml` creates arm64/x64 ZIPs, calls public
+  `feed.mjs`, verifies, uploads `dist/*`, then publishes.
+- Public main `0244fb8` uses `hashFile` for macOS URL/SHA-512/size with no sidecar
+  or `blockMapSize`. Windows/Linux use `writeBlockmap`; Nightly macOS absence is
+  explicitly covered by `feed.test.mjs`.
+- `verify-feeds.mjs` forbids conventional macOS maps across latest/nightly/pr,
+  rejects macOS references and stray unreferenced maps, and requires Windows maps.
+- `verify-remote-release` exact-inventories and download-compares draft assets,
+  then reruns feed verification.
+- Audited Nightly `v0.12.11-nightly.202609041654` has Windows/Linux versioned maps
+  only and two macOS ZIP entries without `blockMapSize`.
 
-Audit part 3 supplies the future conductor authorization requirements below.
-Remote transport/schema implementation is outside this PR. The local gate stays
-false; no remote allow is inferred from sidecar presence, local settings, a
-successful check, or a version string.
+Ordinary publication cannot expose conventional macOS maps without deliberate
+policy changes. V2 must preserve that prohibition at generation, pre-upload and
+post-upload verification. Its separate signed asset inventory requires independent
+review; the current conductor must not be assumed to implement v2 authorization.
+Future explicit authorization, channel/candidate validation, exact verified
+manifests and remote checks are described in the protocol contract. The earlier
+baseline-first proposal from supplied `ao-releases` `RUNBOOK.md:542-626` is not
+the chosen product design. Rollback preserves historical assets and denies
+future v2 authorization; never delete release history.
 
-CI on `dd8d074c8` passed renderer smoke and both typechecks. Its full test suite
-reported 3776 passed, 6 skipped and 2 failed: the retained HTTP 416 regression
-and a telemetry fixture that supplied only an arm64 ZIP on an x64 runner. The
-fixture now supplies both architectures so it tests transfer telemetry independently
-of the host architecture.
+Legacy clients can save a new conventional map before missing-old-map fallback,
+then promote the map and ZIP to cache. The next conventional map can activate
+them. Tests retain that activation counterexample and full-only cache cycles
+when conventional maps are absent. V2 discovery uses distinct names old providers
+never request, including when both protocols share one release.
 
-Independent test-only candidate check: helper 273's upstream-source snapshot
-passed all 14 real MacUpdater harness cases on Node 26.7.0, including HTTP 416
-and sentinel descriptor integrity. Candidate DifferentialDownloader.js SHA-256:
-`79d2eaea8f38473a40337e5682e1aa1da5e46305fe9f67556d58f52013353d23`.
-The temporary test copy was removed; the installed dependency was unchanged.
-Immediately rerunning stock 6.8.9 produced 13 passed and the HTTP 416 descriptor
-failure. This is Node-transport evidence, not packaged Electron acceptance.
+## Separate historical and dependency evidence
 
-## Current product decision and delivery-isolation investigation
+The initial PR1 brief was read from `31e191cbd74e19fb0101395b8b0f3382ae0b0169`.
+Its experiment SHA had a typo; helper 273 recovered
+`74fabaa3f5ab2fb0178574391f7b9c735caedc4c`. REPORT.md, evidence.json and
+requests.jsonl are retained unchanged under `experiments/macos-blockmap/evidence`.
+The signed ZIP pair was not recovered or rerun. That historical run reconstructed
+111107214 bytes from 17275830 HTTP bytes (84.45% saved), matching SHA-512
+`YlMFsT1OarEYY8VNKDdIkFDe2NMEVvnL5MERmFwXBgM/hPaRckInvnJmMP4iNA8TYltKd17fk4Ke9n7+uxVH7Q==`,
+with recorded codesign, Gatekeeper and staple checks. It is not v2 acceptance.
 
-The user's firm decision supersedes the earlier baseline-first rollout proposal:
-no bridge release, no intermediate-upgrade requirement, and no assumption that
-lagging or skipped-release clients have adopted a compatible baseline. Do not
-propose such a release as a path to enablement.
-
-Keep conventional macOS ZIP sidecars absent on all legacy-reachable feeds and
-keep the independent client disable flag true. The conductor's current macOS-map
-prohibition remains unchanged. Delivery isolation is not solved by version
-thresholds, channel names, local Developer Mode, manifest fields old clients
-ignore, or a successful first full download that can seed their next cache cycle.
-
-The next investigation is a delivery mechanism that incompatible old clients
-cannot discover through their unchanged Provider URL derivation. Candidate
-boundaries to evaluate are an opt-in feed whose artifact URLs never appear in
-legacy feeds, or a distinct sidecar location resolved only by the gated client.
-Neither is approved or implemented. Evidence must include skipped-version and
-cached ZIP/map clients, both architectures, and proof that all conventional
-legacy-visible ZIP URLs remain without maps. It must also establish how remote
-authorization is validated and revoked without treating availability as consent.
-
-Retain these independent constraints from the supplied conductor audit: explicit
-global authorization exactly true, channel allowlist, compatible candidate
-validation, auditable isolation proof, and missing/malformed denial; enforcement
-before generation, before upload and after upload; explicit verified asset
-manifest preferred over `dist/*`; versioned ZIP maps only, never aliases;
-disabled feeds reject macOS references and `blockMapSize`; injected draft maps
-fail remote verification; Windows/Linux conductor policies remain unchanged.
-These are requirements for a separate reviewed change, not existing controls.
-The earlier baseline-deployment sequence from the supplied
-`ao-releases` `RUNBOOK.md:542-626` is not the chosen design.
-
-Rollback preserves history: keep the client disabled, deny any future conductor
-allow, and omit future maps. No conductor mutation, publication or rollout is
-part of #4906. The stock HTTP 416 fallback blocker and packaged Electron/native
-acceptance remain unresolved independently of delivery isolation.
+Helper 273's separate upstream dependency source proposal is experiment evidence,
+not a shipped dependency change: `0fa2949c4fa6904eddfa4d010f352640a9b3a9c1` and
+legacy report `ab34e9a0c4dabbfc6143ffbe8f18012caf6ecd02`. Its 64-case Node matrix
+has its own explicit runtime/transport/coverage limits. An independent test-only
+snapshot run passed the earlier 14-case MacUpdater harness; immediate stock
+rerun still failed 416 descriptor integrity. That result does not establish
+Electron net/native acceptance and is separate from the new v2 implementation.

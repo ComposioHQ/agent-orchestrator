@@ -82,94 +82,34 @@ a ZIP for electron-updater. The ZIP and `latest-mac.yml` must remain available:
 electron-updater cannot install an update from a DMG. Nightly and preview
 channels omit the first-install DMG.
 
-## Guarded macOS Nightly differential updates
+## Isolated macOS differential v2 groundwork
 
-The rollout is currently disabled in `scripts/mac-differential-rollout.json`.
-The client consumes that gate. Feed generation unconditionally suppresses macOS
-sidecars on every channel, independently of the client gate. Keep it disabled until
-the HTTP 416 dependency regression and older-client feed isolation are resolved.
-See `docs/superpowers/plans/2026-09-05-macos-blockmap-pr1-verification.md` at the
-repository root for the stop evidence.
+Current AO uses full-ZIP macOS updates. It explicitly sets
+`disableDifferentialDownload = true` before checks. The local rollout stop is
+false and the v2 signing keyring is empty. Windows/Linux updater and feed
+behavior is unchanged. No bridge release is part of this design.
 
-There is currently no conductor kill switch or compatible-client gate. The local
-JSON flag is a disabled build-time stop, not remote authorization. A future
-Nightly experiment requires an independently reviewed rollout in `ao-releases`
-after delivery isolation and runtime safety are verified. Its required allow
-conditions are:
+Legacy macOS feeds permanently remain free of `blockMapSize`, blockmap or v2
+references, and conventional `.zip.blockmap` assets. Old clients derive that
+conventional suffix regardless of Developer Mode and may seed their next cache
+cycle even after full fallback. Their discovery paths must remain empty.
 
-- the host is macOS;
-- the effective update channel is `nightly`;
-- no `pr<N>` feature release is pinned;
-- Developer Mode is enabled;
-- the authoritative remote kill switch explicitly allows the attempt; and
-- the client is verified compatible.
+The separately gated v2 resolver uses signed `ao-diff-v2-mac.json` and versioned
+`.zip.aoblockmap` assets on the same GitHub release. Those names are never
+requested by legacy clients. No public build/feed/publish hook generates them.
+A future independently reviewed conductor change must verify exact signed
+metadata and asset inventories without relaxing the legacy prohibition.
 
-The macOS updater explicitly disables differential downloads before renderer hydration,
-when settings are missing or malformed, and for every other channel or mode
-combination. Stable and preview feeds must not publish macOS blockmaps.
-Windows and Linux updater flags and feed behavior remain unchanged.
+The v2 MacUpdater subclass uses the dependency's declared protected extension
+and exclusively owned handles. Range failures, including 416, settle before
+MacUpdater starts one full fallback. Stock 6.8.9's unsafe differential worker
+is never invoked. Current AO remains on the stock full-only path.
 
-Absent macOS sidecars are the current global safety barrier. The conductor's
-`verify-feeds.mjs` forbids them on latest, nightly and pr channels, rejects macOS
-`blockMapSize` and sidecar URLs, and rejects stray unreferenced blockmaps.
-`verify-remote-release` verifies the exact draft inventory, downloads and compares
-assets, and reruns feed verification. Ordinary publication cannot bypass these
-checks without deliberate policy changes. Windows sidecars remain required.
-
-The audited Nightly `v0.12.11-nightly.202609041654` contains Windows/Linux
-versioned blockmaps only; its macOS manifest lists two versioned ZIPs without
-`blockMapSize`. Older public clients lack an explicit disable flag, so their
-safety still depends on that absence. Any conductor relaxation is separate
-reviewed work after delivery isolation and runtime safety are verified.
-
-No bridge release is part of this design. Do not require users to pass through
-an intermediate upgrade or rely on adoption of a new baseline to protect older
-installations. Conventional macOS sidecars must remain absent on every URL
-reachable through an unchanged legacy provider.
-
-A safe delivery mechanism is still under investigation. It must make experimental
-ZIP/map URLs undiscoverable by incompatible old clients, including those that
-skip releases or retain cached ZIP/maps. Static GitHub feeds and version thresholds
-cannot establish that isolation. Renaming a release or channel alone is insufficient.
-Any eventual allow still requires explicit conductor authorization, a channel
-allowlist, compatible candidate validation and auditable proof of delivery isolation;
-missing or malformed evidence denies. The independent client kill switch remains
-default-disabled. This PR provides no remote authorization transport and makes
-no conductor mutation.
-
-A separately reviewed conductor change must enforce the contract before
-artifact generation, in `verify-feeds` before upload, and in
-`verify-remote-release` after upload. Prefer an explicit verified asset manifest
-over `dist/*`. Even with full authorization, only versioned macOS ZIP maps may
-be allowed, never aliases. Disabled feeds reject macOS map references and
-`blockMapSize`; an injected draft sidecar must fail remote verification.
-Windows/Linux conductor policies remain unchanged. The detailed supplied
-contract is in `ao-releases` `RUNBOOK.md:542-626`.
-
-Future rollback sets the conductor global switch to `false` and the client
-`disableDifferentialDownload` flag to `true`, omits maps from future releases,
-and preserves historical assets. Never delete release history. These future
-controls must not be assumed to exist in the current conductor. The present
-safe state remains no generated macOS sidecars and an explicitly disabled client.
-
-electron-updater 6.8.9 owns reconstruction, SHA-512 verification and the full
-fallback. The real MacUpdater harness covers those boundaries, including
-corrupt or absent sidecars and digest failures. HTTP 416 currently fails the
-required clean-fallback contract, which blocks enabling this rollout. AO does
-not implement a second downloader.
-
-Structured logs and telemetry record eligibility, attempted differential
-transfer, fallback and target version without dependency URLs or credentials.
-`transferred_bytes` is the latest dependency progress sample for the active
-transfer, not an aggregate HTTP byte count. It excludes blockmap traffic and
-may exclude failed-attempt bytes. Missing progress metrics remain absent.
-The local reconstruction harness separately counts actual HTTP response bytes.
-
-This guarded rollout preserves the safety boundary documented in #3034,
-#3151, #3267, and #3288. It does not enable stable or feature-channel
-differential updates, change ZIP creation, signing, notarization, or claim that
-native Squirrel installation is transactional. Staged A-to-B replacement
-semantics remain separate work.
+See [the v2 protocol and acceptance contract](mac-differential-v2.md) for exact
+schema, naming, signing, generation/verification, rollback and runtime limits.
+The feature stays disabled and PR #4906 stays draft until real packaged macOS
+acceptance proves reconstruction, fallback and native handoff. No conductor
+mutation, publication or native-installation acceptance is claimed here.
 
 ## Incident rule
 

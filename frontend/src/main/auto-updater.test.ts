@@ -334,6 +334,9 @@ async function importAutoUpdater(
   // Most tests exercise the proposed policy. A separate test locks down the
   // actual production release gate, which remains closed.
   vi.doMock("../../scripts/mac-differential-rollout.json", () => ({ default: { enabled: options.rolloutReady ?? true } }));
+  vi.doMock("./mac-differential-v2-updater", () => ({
+    MacDifferentialV2Updater: class { constructor() { return autoUpdater; } },
+  }));
   vi.doMock("electron-updater", () => ({ autoUpdater }));
   vi.doMock("electron", () => ({
     app: {

@@ -234,10 +234,14 @@ describe("MacUpdater reconstruction and full fallback", () => {
 		expect(result.handedOff).toHaveLength(1);
 	});
 
-	// Keep this dependency regression last: 6.8.9 continues processing the 416
-	// response after rejecting, racing closed descriptors against the fallback.
-	it("performs one clean full download after HTTP 416", async () => {
-		const result = await runDownload("arm64", "range-rejected");
+	// Stock 6.8.9 remains unsafe on 416. Current AO cannot enter that worker;
+	// the separate v2 MacUpdater suite tests real range failures through its
+	// declared subclass extension, with no stock differential call.
+	it("keeps stock HTTP 416 unreachable for the current disabled client", async () => {
+		const rollout = JSON.parse(readFileSync(new URL("./mac-differential-rollout.json", import.meta.url), "utf8"));
+		expect(rollout.enabled).toBe(false);
+		const result = await runDownload("arm64", "range-rejected", true);
+		expect(result.requests.some(request => request.range)).toBe(false);
 		expect(result.error, JSON.stringify(result.requests)).toBeUndefined();
 		expect(result.sentinelIntact).toBe(true);
 		expect(result.requests.filter(req => req.path.endsWith(".zip") && !req.range)).toHaveLength(1);

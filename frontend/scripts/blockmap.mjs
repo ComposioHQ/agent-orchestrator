@@ -24,7 +24,9 @@ const { buildBlockMap } = require("app-builder-lib/out/targets/blockmap/blockmap
 //          entirely and the sidecars we write for linux are read by nobody.
 //   mac:   release feeds never call writeBlockmap. Absent sidecars protect
 //          legacy clients on every channel (#3034, #3151, #3267 decision 4).
-export async function writeBlockmap(filePath) {
-	const { sha512, size } = await buildBlockMap(filePath, "gzip", `${filePath}.blockmap`);
+// An explicit destination is used only by the isolated v2 preparation module;
+// legacy feed callers retain their existing default destination.
+export async function writeBlockmap(filePath, destination = `${filePath}.blockmap`) {
+	const { sha512, size } = await buildBlockMap(filePath, "gzip", destination);
 	return { sha512, size };
 }
