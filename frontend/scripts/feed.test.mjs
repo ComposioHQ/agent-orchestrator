@@ -14,6 +14,8 @@ vi.mock("./blockmap.mjs", () => ({
 
 import { selectInstallers, feedFilename, buildYml, hashFile, generateFeeds } from "./feed.mjs";
 import { writeBlockmap } from "./blockmap.mjs";
+import macDifferentialRollout from "./mac-differential-rollout.json";
+vi.mock("./mac-differential-rollout.json", () => ({ default: { enabled: true } }));
 const V = "0.10.4";
 const NAMES = [
 	"Agent.Orchestrator.Setup.0.10.4.exe", // win versioned
@@ -168,6 +170,22 @@ describe("hashFile", () => {
 });
 
 describe("generateFeeds guarded mac blockmap rollout", () => {
+	it("keeps production sidecar generation disabled pending rollout safety", async () => {
+		const production = await vi.importActual("./mac-differential-rollout.json");
+		expect(production.default.enabled).toBe(false);
+		const dir = mkdtempSync(join(tmpdir(), "feed-disabled-"));
+		const zip = "Agent.Orchestrator-darwin-arm64-0.10.4.zip";
+		writeFileSync(join(dir, zip), "zip");
+		macDifferentialRollout.enabled = false;
+		try {
+			await generateFeeds(dir, "0.10.4", "nightly", "2026-06-27T12:00:00.000Z");
+			expect(writeBlockmap).not.toHaveBeenCalled();
+			expect(existsSync(join(dir, `${zip}.blockmap`))).toBe(false);
+		} finally {
+			macDifferentialRollout.enabled = true;
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
 	beforeEach(() => {
 		vi.clearAllMocks();
 	});
@@ -194,9 +212,9 @@ describe("generateFeeds guarded mac blockmap rollout", () => {
 		rmSync(dir, { recursive: true, force: true });
 	});
 
-	it.each(["latest", "pr3288"])("keeps %s mac feeds full-download-only", async (channel) => {
+	it.each(["latest", "pr3288"].flatMap(channel => ["arm64", "x64"].map(arch => [channel, arch])))("keeps %s mac %s feeds full-download-only", async (channel, arch) => {
 		const dir = mkdtempSync(join(tmpdir(), "feed-test-"));
-		const macZip = "Agent.Orchestrator-darwin-arm64-0.10.4.zip";
+		const macZip = `Agent.Orchestrator-darwin-${arch}-0.10.4.zip`;
 		writeFileSync(join(dir, macZip), "fake mac zip");
 
 		await generateFeeds(dir, "0.10.4", channel, "2026-06-27T12:00:00.000Z");

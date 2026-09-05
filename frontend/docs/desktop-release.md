@@ -84,31 +84,45 @@ channels omit the first-install DMG.
 
 ## Guarded macOS Nightly differential updates
 
-macOS ZIP blockmaps are an experimental Nightly-only release asset. The client
-attempts a differential transfer only when all of these conditions hold:
+The rollout is currently disabled in `scripts/mac-differential-rollout.json`.
+Both feed generation and the client consume that gate. Keep it disabled until
+the HTTP 416 dependency regression and older-client feed isolation are resolved.
+See `docs/superpowers/plans/2026-09-05-macos-blockmap-pr1-verification.md` at the
+repository root for the stop evidence.
+
+The proposed macOS ZIP blockmaps are Nightly-only release assets. Once the
+release gate is safe to open, the client would attempt a differential transfer
+only when all of these conditions hold:
 
 - the host is macOS;
 - the effective update channel is `nightly`;
 - no `pr<N>` feature release is pinned; and
 - Developer Mode is enabled.
 
-The updater defaults to full ZIP downloads before renderer hydration, when the
-settings file is missing or malformed, and for every other platform, channel,
-or mode combination. Stable and preview feeds must not publish macOS blockmaps.
+The macOS updater defaults to full ZIP downloads before renderer hydration,
+when settings are missing or malformed, and for every other channel or mode
+combination. Stable and preview feeds must not publish macOS blockmaps.
 Windows and Linux updater behavior is unchanged.
 
 The release kill switch is asset-side: remove every `.zip.blockmap` asset from
 the affected Nightly release. MacUpdater then performs a clean full ZIP
-download without a client update. Do not remove the ZIP or `nightly-mac.yml`.
+download on its next attempt without a client update. A transfer that already
+fetched its sidecars is not interrupted. Do not remove the ZIP or `nightly-mac.yml`.
 After rollback, confirm the feed still resolves, the full ZIP SHA-512 matches
 the manifest, and updater telemetry reports full transfer or a single fallback.
 
-electron-updater 6.8.9 owns reconstruction, SHA-512 verification, and one clean
-full-download fallback when the old blockmap is missing, the sidecar is
-unavailable or corrupt, Range requests fail, reconstruction fails, or the
-target digest does not match. AO does not implement a second downloader.
-Structured updater logs and telemetry record eligibility, transfer mode,
-fallback, byte counts, and target version without signed URLs or credentials.
+electron-updater 6.8.9 owns reconstruction, SHA-512 verification and the full
+fallback. The real MacUpdater harness covers those boundaries, including
+corrupt or absent sidecars and digest failures. HTTP 416 currently fails the
+required clean-fallback contract, which blocks enabling this rollout. AO does
+not implement a second downloader.
+
+Structured logs and telemetry record eligibility, attempted differential
+transfer, fallback and target version without dependency URLs or credentials.
+`transferred_bytes` is the latest dependency progress sample for the active
+transfer, not an aggregate HTTP byte count. It excludes blockmap traffic and
+may exclude failed-attempt bytes. Missing progress metrics remain absent.
+The local reconstruction harness separately counts actual HTTP response bytes.
 
 This guarded rollout preserves the safety boundary documented in #3034,
 #3151, #3267, and #3288. It does not enable stable or feature-channel

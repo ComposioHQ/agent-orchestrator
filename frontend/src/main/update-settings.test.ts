@@ -21,14 +21,14 @@ describe("update-settings", () => {
 	});
 
 	it("returns safe defaults when no file exists", async () => {
-			expect(await readUpdateSettings(dir)).toEqual({
-				enabled: false,
-				channel: "latest",
-				nightlyAck: false,
-				feature: null,
-				macDifferentialUpdates: false,
-			});
+		expect(await readUpdateSettings(dir)).toEqual({
+			enabled: false,
+			channel: "latest",
+			nightlyAck: false,
+			feature: null,
+			macDifferentialUpdates: false,
 		});
+	});
 
 	it.each([
 		["darwin nightly Developer Mode", "darwin", { channel: "nightly", feature: null, macDifferentialUpdates: true }, true],
@@ -61,16 +61,16 @@ describe("update-settings", () => {
 
 	it("falls back to defaults on garbage", async () => {
 		await writeFile(path.join(dir, UPDATE_SETTINGS_FILE_NAME), "{not json", "utf8");
-			expect(await readUpdateSettings(dir)).toEqual({
+		expect(await readUpdateSettings(dir)).toEqual({
 			enabled: false,
 			channel: "latest",
 			nightlyAck: false,
-				feature: null,
-				macDifferentialUpdates: false,
-			});
+			feature: null,
+			macDifferentialUpdates: false,
 		});
+	});
 
-	it("fails closed when macDifferentialUpdates is malformed", async () => {
+	it.each(["true", 1, null, {}, []])("fails closed for malformed mirror %j", async (value) => {
 		await writeFile(
 			path.join(dir, UPDATE_SETTINGS_FILE_NAME),
 			JSON.stringify({
@@ -78,11 +78,18 @@ describe("update-settings", () => {
 				channel: "nightly",
 				nightlyAck: true,
 				feature: null,
-				macDifferentialUpdates: "true",
+				macDifferentialUpdates: value,
 			}),
 			"utf8",
 		);
 		expect((await readUpdateSettings(dir)).macDifferentialUpdates).toBe(false);
+	});
+
+	it.each([{}, "pr3288", { pr: "invalid" }])("disables the mirror with malformed feature data %j", async feature => {
+		await writeFile(path.join(dir, UPDATE_SETTINGS_FILE_NAME), JSON.stringify({
+			channel: "nightly", feature, macDifferentialUpdates: true,
+		}));
+		expect(macDifferentialUpdatesEnabled({ platform: "darwin", settings: await readUpdateSettings(dir) })).toBe(false);
 	});
 
 	it("coerces an unknown channel back to latest", async () => {
@@ -102,6 +109,7 @@ describe("update-settings", () => {
 		);
 		const settings = await readUpdateSettings(dir);
 		expect(settings.feature).toBeNull();
+		expect(settings.macDifferentialUpdates).toBe(false);
 		// channel is preserved as-is
 		expect(settings.channel).toBe("nightly");
 	});

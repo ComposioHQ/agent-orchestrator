@@ -116,6 +116,10 @@ export type UiState = {
 	setThemePreference: (theme: ThemePreference) => void;
 	setThemeStyle: (style: ThemeStyle) => void;
 	setDeveloperMode: (enabled: boolean) => void;
+	/** True while the restart-to-update confirmation is open. */
+	updateInstallPromptOpen: boolean;
+	openUpdateInstallPrompt: () => void;
+	closeUpdateInstallPrompt: () => void;
 	openGlobalSettings: (section?: GlobalSettingsSection) => void;
 	openProjectSettings: (projectId: string) => void;
 	closeSettings: () => void;
@@ -237,6 +241,9 @@ export const useUiStore = create<UiState>((set, get) => ({
 		set({ developerMode });
 		syncDeveloperModeToUpdater(developerMode);
 	},
+	updateInstallPromptOpen: false,
+	openUpdateInstallPrompt: () => set({ updateInstallPromptOpen: true }),
+	closeUpdateInstallPrompt: () => set({ updateInstallPromptOpen: false }),
 	openGlobalSettings: (section) => set({ settingsModal: { scope: "global", section } }),
 	openProjectSettings: (projectId) => set({ settingsModal: { scope: "project", projectId } }),
 	closeSettings: () => set({ settingsModal: null }),

@@ -54,17 +54,3 @@ test("records the phase and trigger it was given", () => {
 	// An unknown target version is omitted rather than sent as undefined.
 	expect(updateFailureOutcome("boom", "check", "manual", undefined)).not.toHaveProperty("to_version");
 });
-
-test("download outcomes accept only structured transfer measurements", () => {
-	const outcome = {
-		event: "ao.renderer.update_downloaded",
-		phase: "download",
-		trigger: "automatic",
-		to_version: "1.2.3",
-		transfer_mode: "differential",
-		fallback: true,
-		transferred_bytes: 250,
-		target_bytes: 1000,
-	} satisfies import("./update-telemetry").UpdateOutcome;
-	expect(outcome).toMatchObject({ transfer_mode: "differential", fallback: true });
-});

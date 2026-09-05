@@ -9,6 +9,7 @@
 // `gh release upload TAG nightly*.yml --clobber`).
 import { readdirSync, writeFileSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
+import macDifferentialRollout from "./mac-differential-rollout.json" with { type: "json" };
 import { createHash } from "node:crypto";
 import { writeBlockmap } from "./blockmap.mjs";
 
@@ -74,8 +75,9 @@ export function buildYml(version, files, releaseDate, important = false) {
 
 // generateFeeds writes the yml + sidecar blockmaps for every platform present in
 // dir. version may carry +build metadata (nightly); strip it for the yml.
-// mac zips produce sidecars only for nightly. Removing those release assets is
-// the rollout kill switch and immediately restores full downloads.
+// mac zips can produce sidecars only for nightly after the shared release gate
+// opens. It is currently closed for dependency and older-client safety. Removing
+// the release sidecars remains the kill switch for future download attempts.
 //
 // The linux sidecars this still writes are dead weight: AppImageUpdater reads
 // its blockmap from the AppImage tail, never from a sidecar, and needs a
@@ -97,7 +99,7 @@ export async function generateFeeds(dir, rawVersion, channel, releaseDate, impor
 		const files = [];
 		for (const name of names) {
 			const { sha512, size } =
-				platform === "mac" && channel !== "nightly"
+				platform === "mac" && (channel !== "nightly" || macDifferentialRollout.enabled !== true)
 					? hashFile(join(dir, name))
 					: await writeBlockmap(join(dir, name));
 			files.push({ url: name, sha512, size });
@@ -131,7 +133,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
 // nightly-to-stable channel switch reproduced the same corruption against a
 // target zip that was already correctly ditto-built with its full AppleDouble
 // set. The defect is in the differential download/patch-apply mechanism itself,
-// not in the zip format (#3267 decision 4). Skipping the sidecar for mac is
+// not in the zip format (#3267 decision 4). Skipping the sidecar for mac
 // therefore remains the default baseline. The only exception is the guarded
 // nightly plus Developer Mode experiment; #3267 decision 4 records the safety
 // boundary for any broader rollout.
