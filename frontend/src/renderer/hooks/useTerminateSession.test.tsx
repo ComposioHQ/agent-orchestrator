@@ -4,11 +4,23 @@ import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { WorkspaceSession, WorkspaceSummary } from "../types/workspace";
 
-const { postMock } = vi.hoisted(() => ({ postMock: vi.fn() }));
+const { cloudState, deleteSessionMock, postMock } = vi.hoisted(() => ({
+	cloudState: { ready: false },
+	deleteSessionMock: vi.fn(),
+	postMock: vi.fn(),
+}));
 
 vi.mock("../lib/api-client", () => ({
 	apiClient: { POST: postMock },
 	apiErrorMessage: () => "request failed",
+}));
+
+vi.mock("./useCloudCp", () => ({
+	useCloudCp: () => ({
+		client: { deleteSession: deleteSessionMock },
+		ready: cloudState.ready,
+		baseUrl: "https://cp.example.com",
+	}),
 }));
 
 import { useTerminateSession } from "./useTerminateSession";
@@ -49,6 +61,8 @@ function newQueryClient() {
 }
 
 beforeEach(() => {
+	cloudState.ready = false;
+	deleteSessionMock.mockReset();
 	postMock.mockReset();
 });
 
@@ -115,6 +129,28 @@ describe("useTerminateSession", () => {
 		result.current.mutate(session);
 
 		await waitFor(() => expect(result.current.isError).toBe(true));
+		const cached = queryClient.getQueryData<WorkspaceSummary[]>(workspaceQueryKey);
+		expect(cached?.[0]?.sessions[0]?.isTerminated).toBeUndefined();
+	});
+
+	it("deletes cloud worker tasks through the control plane", async () => {
+		cloudState.ready = true;
+		deleteSessionMock.mockResolvedValue({});
+		const cloudSession = {
+			...session,
+			cloud: { orgId: "org-1" },
+			workspaceId: "cloud-proj-1",
+		} satisfies WorkspaceSession;
+		const queryClient = newQueryClient();
+		queryClient.setQueryData(["cloud-sessions"], [cloudSession]);
+		const { result } = renderHook(() => useTerminateSession(), { wrapper: wrapper(queryClient) });
+
+		result.current.mutate(cloudSession);
+
+		await waitFor(() => expect(result.current.isSuccess).toBe(true));
+		expect(deleteSessionMock).toHaveBeenCalledWith("org-1", "sess-1");
+		expect(postMock).not.toHaveBeenCalled();
+		expect(queryClient.getQueryState(["cloud-sessions"])?.isInvalidated).toBe(true);
 		const cached = queryClient.getQueryData<WorkspaceSummary[]>(workspaceQueryKey);
 		expect(cached?.[0]?.sessions[0]?.isTerminated).toBeUndefined();
 	});

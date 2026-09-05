@@ -1,6 +1,7 @@
 import { type QueryClient, useMutation, useMutationState, useQueryClient } from "@tanstack/react-query";
 import { toKanbanColumn, type WorkspaceSession, type WorkspaceSummary } from "../types/workspace";
-import { workspaceQueryKey } from "./useWorkspaceQuery";
+import { cloudSessionsQueryKey, workspaceQueryKey } from "./useWorkspaceQuery";
+import { useCloudCp } from "./useCloudCp";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
 import { captureRendererEvent } from "../lib/telemetry";
 
@@ -68,10 +69,16 @@ function summarizeBySession(mutations: TerminateSessionMutationState[]) {
 
 export function useTerminateSession(options: TerminateSessionOptions = {}) {
 	const queryClient = useQueryClient();
+	const { client: cloudClient, ready: cloudReady } = useCloudCp();
 	return useMutation({
 		mutationKey: terminateSessionMutationKey,
 		mutationFn: async (session: WorkspaceSession) => {
 			void captureRendererEvent("ao.renderer.session_kill_requested", { project_id: session.workspaceId });
+			if (session.cloud) {
+				if (!cloudReady) throw new Error("AO Cloud is not ready.");
+				await cloudClient.deleteSession(session.cloud.orgId, session.id);
+				return;
+			}
 			const { error, response } = await apiClient.POST("/api/v1/sessions/{sessionId}/kill", {
 				params: { path: { sessionId: session.id } },
 			});
@@ -82,6 +89,11 @@ export function useTerminateSession(options: TerminateSessionOptions = {}) {
 		},
 		onSuccess: (_data, session) => {
 			void captureRendererEvent("ao.renderer.session_kill_succeeded", { project_id: session.workspaceId });
+			if (session.cloud) {
+				void queryClient.invalidateQueries({ queryKey: cloudSessionsQueryKey });
+				options.onSuccess?.(session);
+				return;
+			}
 			// Write the outcome into the cached board first, then refresh in the
 			// background. A mutation stays `pending` until its onSuccess settles,
 			// so awaiting the refetch here kept the row's spinner up for a whole
