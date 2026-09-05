@@ -26,6 +26,7 @@
 	"browser.blankPage": "Blank page",
 	"browser.cancelAnnotation": "Cancel annotation",
 	"browser.closeDevTools": "Close DevTools",
+	"browser.controls": "Browser controls",
 	"browser.closeTab": "Close tab {{title}}",
 	"browser.deviceCustomWidth": "Custom width",
 	"browser.deviceFit": "Fit panel",
@@ -41,6 +42,7 @@
 	"browser.pinTabs": "Pin tabs list",
 	"browser.popOut": "Pop out",
 	"browser.profile.temporary": "Temporary",
+	"browser.profile.label": "Browser profile",
 	"browser.profile.manage": "Manage browser profiles",
 	"browser.profile.select": "Browser profile: {{profile}}",
 	"browser.profile.switchTitle": "Switch browser profile?",
@@ -1748,5 +1750,8 @@
 	"inspector.usage.processedTokensAria": "{{count}} tokens processed",
 	"inspector.usage.processedTokensUnavailable": "Processed tokens unavailable",
 	"settings.project.reviewer": "Reviewer",
-	"settings.models.customAgentModelAria": "Custom {{label}} model"
+	"settings.models.customAgentModelAria": "Custom {{label}} model",
+	"session.interfaceSwitchFailed": "Could not switch interfaces",
+	"session.dismissInterfaceSwitchError": "Dismiss interface switch error",
+	"session.dismissInterfaceSwitchNotice": "Dismiss"
 }

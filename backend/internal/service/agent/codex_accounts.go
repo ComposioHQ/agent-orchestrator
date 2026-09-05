@@ -18,13 +18,14 @@ import (
 )
 
 const (
-	codexAccountDisplayTTL    = 5 * time.Minute
-	codexAccountLaunchTTL     = 30 * time.Second
-	codexAccountAuthTimeout   = 10 * time.Second
-	codexAccountUsageTTL      = 5 * time.Minute
-	codexResetCreditTimeout   = 15 * time.Second
-	codexAccountLoginLifetime = 15 * time.Minute
-	codexAccountProcessLimit  = 2
+	codexAccountDisplayTTL       = 5 * time.Minute
+	codexAccountLaunchTTL        = 30 * time.Second
+	codexAccountAuthTimeout      = 10 * time.Second
+	codexAccountReconcileTimeout = 45 * time.Second
+	codexAccountUsageTTL         = 5 * time.Minute
+	codexResetCreditTimeout      = 15 * time.Second
+	codexAccountLoginLifetime    = 15 * time.Minute
+	codexAccountProcessLimit     = 2
 )
 
 var defaultCodexAccountBootstrapRetryDelays = []time.Duration{15 * time.Second, time.Minute, 5 * time.Minute}

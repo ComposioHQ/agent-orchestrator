@@ -56,6 +56,7 @@
 	"browser.blankPage": "空白のページ",
 	"browser.cancelAnnotation": "注釈をキャンセル",
 	"browser.closeDevTools": "DevToolsを閉じる",
+	"browser.controls": "ブラウザーコントロール",
 	"browser.closeTab": "タブを閉じる {{title}}",
 	"browser.deviceCustomWidth": "カスタム幅",
 	"browser.deviceFit": "パネルに合わせる",
@@ -71,6 +72,7 @@
 	"browser.pinTabs": "タブ一覧を固定",
 	"browser.popOut": "別ウィンドウで開く",
 	"browser.profile.temporary": "一時的",
+	"browser.profile.label": "ブラウザープロファイル",
 	"browser.profile.manage": "ブラウザプロファイルを管理",
 	"browser.profile.select": "ブラウザプロファイル：{{profile}}",
 	"browser.profile.switchTitle": "ブラウザプロファイルを切り替えますか？",
@@ -1766,5 +1768,8 @@
 	"settings.project.autoReviewToggle": "Auto review PRs",
 	"settings.project.autoReviewDescription": "When enabled, new worker sessions will automatically review their pull requests. This can still be toggled per session after spawn.",
 	"settings.project.reviewer": "Reviewer",
-	"settings.models.customAgentModelAria": "{{label}} のカスタムモデル"
+	"settings.models.customAgentModelAria": "{{label}} のカスタムモデル",
+	"session.interfaceSwitchFailed": "インターフェースを切り替えられませんでした",
+	"session.dismissInterfaceSwitchError": "インターフェース切り替えエラーを閉じる",
+	"session.dismissInterfaceSwitchNotice": "閉じる"
 }

@@ -779,8 +779,10 @@ func TestCodexAccountBootstrapRetriesAfterTransientReadFailure(t *testing.T) {
 	manager := newTestCodexAccountManagerWithContext(daemonCtx, t, factory, nil)
 	manager.bootstrapRetryDelays = []time.Duration{time.Millisecond}
 
-	if err := manager.waitBootstrap(context.Background()); err == nil || codexAccountBootstrapFailureCategory(err) != "account_read_timeout" {
-		t.Fatalf("first bootstrap error = %v, want account_read_timeout", err)
+	err := manager.waitBootstrap(context.Background())
+	var failure *codexBootstrapFailure
+	if !errors.As(err, &failure) || failure.reason != "account_read_inconclusive" || !failure.retryable {
+		t.Fatalf("first bootstrap error = %#v, want retryable account_read_inconclusive", err)
 	}
 	waitForCodexAccountTestCondition(t, func() bool {
 		manager.mu.Lock()
@@ -793,20 +795,6 @@ func TestCodexAccountBootstrapRetriesAfterTransientReadFailure(t *testing.T) {
 	factory.mu.Unlock()
 	if opens != 2 {
 		t.Fatalf("account client opens = %d, want 2", opens)
-	}
-}
-
-func TestCodexAccountBootstrapFailureExposesOnlySafeCategory(t *testing.T) {
-	cause := errors.New("sensitive path /private/device/auth.json")
-	err := newCodexAccountBootstrapFailure("account_client_open", cause)
-	if got := err.Error(); got != "codex account bootstrap failed: account_client_open" {
-		t.Fatalf("safe bootstrap error = %q", got)
-	}
-	if !errors.Is(err, cause) {
-		t.Fatal("bootstrap failure did not preserve its internal cause")
-	}
-	if got := codexAccountBootstrapFailureCategory(err); got != "account_client_open" {
-		t.Fatalf("bootstrap failure category = %q", got)
 	}
 }
 

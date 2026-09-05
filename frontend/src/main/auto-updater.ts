@@ -596,7 +596,26 @@ function stagedBuildIsStale(
  * stays armed until the replacement finishes downloading; that window is why
  * the replacement download is forced rather than left to the user's preference.
  */
+/**
+ * True from the moment a stale staged build is dropped until a replacement is
+ * staged over it.
+ *
+ * Windows and Linux re-read autoInstallOnAppQuit inside the quit handler
+ * (BaseUpdater.addQuitHandler), so clearing it there genuinely stops the
+ * install. macOS cannot: MacUpdater reads the flag once, at download time, to
+ * decide whether to hand the build to Squirrel, and the ShipIt waiting on
+ * process exit is not recallable.
+ *
+ * So on Windows and Linux this closes the gap completely, and on macOS it is a
+ * no-op that costs nothing. Superseding the build with a correct one stays the
+ * only lever that works on all three.
+ */
+let awaitingStagedReplacement = false;
+
 function discardStagedBuild(): void {
+  // Nothing valid is installable until the replacement lands: the only build in
+  // the cache belongs to a channel the user has left.
+  awaitingStagedReplacement = true;
   forgetPersistedStagedBuild(escalationStateDir);
   offeredReleaseNotes = undefined;
   directFeedReleaseNotes = undefined;
@@ -956,6 +975,9 @@ function wireUpdaterEvents(): void {
       stagedEscalated = false;
     }
     stagedRequestId = activeUpdaterRequestId;
+    // A build is staged again, so install-on-quit has something correct to run.
+    awaitingStagedReplacement = false;
+    applyInstallOnQuitPolicy();
     persistStagedBuild(escalationStateDir);
     automaticCheckPreviousStatus = undefined;
     // A completed automatic download advances the independent baseline; a
@@ -1469,7 +1491,12 @@ export function getMacInstallBlocker(): string | undefined {
 // the staged build wait for a location it can actually install from.
 function applyInstallOnQuitPolicy(): void {
   const blocker = getMacInstallBlocker();
-  autoUpdater.autoInstallOnAppQuit = blocker === undefined;
+  autoUpdater.autoInstallOnAppQuit = blocker === undefined && !awaitingStagedReplacement;
+  if (awaitingStagedReplacement) {
+    console.info(
+      "install-on-quit disabled until the replacement build is staged; the cached one belongs to a channel the user left",
+    );
+  }
   if (blocker !== undefined) {
     console.warn(
       "install-on-quit disabled; the update cannot be installed from here:",

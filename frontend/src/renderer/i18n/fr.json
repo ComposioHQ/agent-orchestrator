@@ -56,6 +56,7 @@
 	"browser.blankPage": "Page vide",
 	"browser.cancelAnnotation": "Annuler l'annotation",
 	"browser.closeDevTools": "Fermer les DevTools",
+	"browser.controls": "Commandes du navigateur",
 	"browser.closeTab": "Fermer l'onglet {{title}}",
 	"browser.deviceCustomWidth": "Largeur personnalisée",
 	"browser.deviceFit": "Ajuster au panneau",
@@ -71,6 +72,7 @@
 	"browser.pinTabs": "Épingler la liste des onglets",
 	"browser.popOut": "Ouvrir dans une fenêtre",
 	"browser.profile.temporary": "Temporaire",
+	"browser.profile.label": "Profil du navigateur",
 	"browser.profile.manage": "Gérer les profils du navigateur",
 	"browser.profile.select": "Profil du navigateur : {{profile}}",
 	"browser.profile.switchTitle": "Changer de profil de navigateur ?",
@@ -1790,5 +1792,8 @@
 	"settings.project.autoReviewToggle": "Auto review PRs",
 	"settings.project.autoReviewDescription": "When enabled, new worker sessions will automatically review their pull requests. This can still be toggled per session after spawn.",
 	"settings.project.reviewer": "Reviewer",
-	"settings.models.customAgentModelAria": "Modèle personnalisé de {{label}}"
+	"settings.models.customAgentModelAria": "Modèle personnalisé de {{label}}",
+	"session.interfaceSwitchFailed": "Impossible de changer d’interface",
+	"session.dismissInterfaceSwitchError": "Fermer l’erreur de changement d’interface",
+	"session.dismissInterfaceSwitchNotice": "Fermer"
 }

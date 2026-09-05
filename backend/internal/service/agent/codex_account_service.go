@@ -3,6 +3,7 @@ package agent
 import (
 	"bytes"
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -334,13 +335,17 @@ func (s *Service) WaitCodexAccountBootstrap(ctx context.Context) error {
 	if s.codexAccounts == nil {
 		return apierr.Unavailable("CODEX_ACCOUNT_MANAGEMENT_UNAVAILABLE", "Codex account management is unavailable")
 	}
-	if err := s.codexAccounts.waitBootstrap(ctx); err != nil {
-		if ctx.Err() != nil {
-			return ctx.Err()
-		}
-		return apierr.Unavailable("CODEX_ACCOUNT_MANAGEMENT_UNAVAILABLE", "Codex account setup did not complete")
+	err := s.codexAccounts.waitBootstrap(ctx)
+	if err == nil {
+		return nil
 	}
-	return nil
+	var failure *codexBootstrapFailure
+	if !errors.As(err, &failure) {
+		return err
+	}
+	return apierr.New(apierr.KindUnavailable, "CODEX_ACCOUNT_MANAGEMENT_UNAVAILABLE", "Codex account setup did not complete", map[string]any{
+		"reasonCode": failure.reason, "retryable": failure.retryable,
+	})
 }
 
 // BeginCodexAccountMutation gives Session Manager exclusive ownership of the

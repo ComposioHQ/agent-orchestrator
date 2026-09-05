@@ -56,6 +56,7 @@
 	"browser.blankPage": "Leere Seite",
 	"browser.cancelAnnotation": "Annotation abbrechen",
 	"browser.closeDevTools": "DevTools schließen",
+	"browser.controls": "Browser-Steuerelemente",
 	"browser.closeTab": "Tab {{title}} schließen",
 	"browser.deviceCustomWidth": "Benutzerdefinierte Breite",
 	"browser.deviceFit": "Auf Panel anpassen",
@@ -71,6 +72,7 @@
 	"browser.pinTabs": "Tableiste anheften",
 	"browser.popOut": "Auskoppeln",
 	"browser.profile.temporary": "Temporär",
+	"browser.profile.label": "Browserprofil",
 	"browser.profile.manage": "Browserprofile verwalten",
 	"browser.profile.select": "Browserprofil: {{profile}}",
 	"browser.profile.switchTitle": "Browserprofil wechseln?",
@@ -1766,5 +1768,8 @@
 	"settings.project.autoReviewToggle": "Auto review PRs",
 	"settings.project.autoReviewDescription": "When enabled, new worker sessions will automatically review their pull requests. This can still be toggled per session after spawn.",
 	"settings.project.reviewer": "Reviewer",
-	"settings.models.customAgentModelAria": "Benutzerdefiniertes Modell für {{label}}"
+	"settings.models.customAgentModelAria": "Benutzerdefiniertes Modell für {{label}}",
+	"session.interfaceSwitchFailed": "Oberfläche konnte nicht gewechselt werden",
+	"session.dismissInterfaceSwitchError": "Fehler beim Oberflächenwechsel schließen",
+	"session.dismissInterfaceSwitchNotice": "Schließen"
 }

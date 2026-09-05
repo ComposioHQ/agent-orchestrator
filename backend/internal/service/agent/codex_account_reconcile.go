@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
@@ -14,36 +15,9 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
-type codexAccountBootstrapFailure struct {
-	category string
-	cause    error
-}
-
-func (e *codexAccountBootstrapFailure) Error() string {
-	return "codex account bootstrap failed: " + e.category
-}
-
-func (e *codexAccountBootstrapFailure) Unwrap() error { return e.cause }
-
-func newCodexAccountBootstrapFailure(category string, err error) error {
-	if err == nil {
-		return nil
-	}
-	var classified *codexAccountBootstrapFailure
-	if errors.As(err, &classified) {
-		return err
-	}
-	return &codexAccountBootstrapFailure{category: category, cause: err}
-}
-
-func codexAccountBootstrapFailureCategory(err error) string {
-	var classified *codexAccountBootstrapFailure
-	if errors.As(err, &classified) {
-		return classified.category
-	}
-	return "unknown"
-}
-
+// Bootstrap failures are serialized into one daemon-owned attempt. Retryable
+// failures schedule bounded background recovery, while callers retain the
+// result of the specific attempt they joined.
 func (m *codexAccountManager) startOrJoinBootstrap() (*codexAccountBootstrapCall, error) {
 	if err := m.ctx.Err(); err != nil {
 		return nil, err
@@ -58,11 +32,19 @@ func (m *codexAccountManager) startOrJoinBootstrap() (*codexAccountBootstrapCall
 		m.mu.Unlock()
 		return call, nil
 	}
+	if m.bootstrapLastErr != nil {
+		var failure *codexBootstrapFailure
+		if !errors.As(m.bootstrapLastErr, &failure) || !failure.retryable || (!m.bootstrapNextRetryAt.IsZero() && m.now().Before(m.bootstrapNextRetryAt)) {
+			err := m.bootstrapLastErr
+			m.mu.Unlock()
+			return nil, err
+		}
+	}
 	if !m.bootstrapNextRetryAt.IsZero() && m.now().Before(m.bootstrapNextRetryAt) {
 		err := m.bootstrapLastErr
 		m.mu.Unlock()
 		if err == nil {
-			err = newCodexAccountBootstrapFailure("retry_backoff", errors.New("codex account bootstrap retry is pending"))
+			err = bootstrapFailure("account_bootstrap_unavailable", true)
 		}
 		return nil, err
 	}
@@ -100,7 +82,11 @@ func (m *codexAccountManager) runBootstrap(call *codexAccountBootstrapCall) {
 	startedAt := m.now()
 	err := m.bootstrapInner()
 	finishedAt := m.now()
-	category := codexAccountBootstrapFailureCategory(err)
+	reason, retryable := "unknown", false
+	var failure *codexBootstrapFailure
+	if errors.As(err, &failure) {
+		reason, retryable = failure.reason, failure.retryable
+	}
 	var (
 		retryDelay      time.Duration
 		nextRetryAt     time.Time
@@ -123,7 +109,7 @@ func (m *codexAccountManager) runBootstrap(call *codexAccountBootstrapCall) {
 		m.bootstrapRetryGeneration++
 	} else {
 		m.bootstrapLastErr = err
-		if m.ctx.Err() == nil {
+		if m.ctx.Err() == nil && retryable {
 			m.bootstrapFailures++
 			retryDelay = m.bootstrapRetryDelayLocked()
 			nextRetryAt = finishedAt.Add(retryDelay)
@@ -133,21 +119,23 @@ func (m *codexAccountManager) runBootstrap(call *codexAccountBootstrapCall) {
 			shouldRetry = true
 		}
 	}
-	close(call.done)
 	m.mu.Unlock()
 	m.publish()
 
 	duration := finishedAt.Sub(startedAt)
 	if err == nil {
 		m.logger.Info("Codex account bootstrap completed", "attempt", call.attempt, "duration_ms", duration.Milliseconds())
+		close(call.done)
 		go m.warmAfterBootstrap()
 		return
 	}
 	if !shouldRetry {
-		m.logger.Debug("Codex account bootstrap stopped", "attempt", call.attempt, "duration_ms", duration.Milliseconds(), "failure_category", category)
+		m.logger.Warn("Codex account bootstrap failed", "attempt", call.attempt, "duration_ms", duration.Milliseconds(), "reasonCode", reason, "retryable", retryable)
+		close(call.done)
 		return
 	}
-	m.logger.Warn("Codex account bootstrap failed", "attempt", call.attempt, "duration_ms", duration.Milliseconds(), "failure_category", category, "next_retry_at", nextRetryAt)
+	m.logger.Warn("Codex account bootstrap failed", "attempt", call.attempt, "duration_ms", duration.Milliseconds(), "reasonCode", reason, "retryable", retryable, "nextRetryAt", nextRetryAt)
+	close(call.done)
 	go m.scheduleBootstrapRetry(retryGeneration, retryDelay)
 }
 
@@ -169,7 +157,7 @@ func (m *codexAccountManager) scheduleBootstrapRetry(generation uint64, delay ti
 	}
 
 	m.mu.Lock()
-	valid := m.ctx.Err() == nil && !m.bootstrapped && m.bootstrapCall == nil && m.bootstrapRetryGeneration == generation && !m.bootstrapNextRetryAt.IsZero()
+	valid := m.ctx.Err() == nil && !m.bootstrapped && m.bootstrapCall == nil && m.bootstrapRetryGeneration == generation && !m.bootstrapNextRetryAt.IsZero() && !m.now().Before(m.bootstrapNextRetryAt)
 	if !valid {
 		m.mu.Unlock()
 		return
@@ -179,20 +167,59 @@ func (m *codexAccountManager) scheduleBootstrapRetry(generation uint64, delay ti
 	go m.runBootstrap(call)
 }
 
+// Only allowlisted metadata crosses the API/log boundary. Provider errors can
+// contain credential bytes or paths and must never be rendered there.
+type codexBootstrapFailure struct {
+	reason    string
+	retryable bool
+}
+
+func (e *codexBootstrapFailure) Error() string { return e.reason }
+
+func bootstrapFailure(reason string, retryable bool) error {
+	return &codexBootstrapFailure{reason: reason, retryable: retryable}
+}
+
+func bootstrapStorageFailure(err error) error {
+	// Filesystem validation failures are plain errors, deliberately fail closed.
+	// Only recognizable I/O failures are eligible for another attempt. The
+	// secure-file helpers summarize their cause behind an opaque, path-free
+	// message but preserve the underlying os error through Unwrap, so a transient
+	// disk or I/O fault is not misclassified as unsafe storage and left blocked
+	// until AO restarts.
+	var pathErr *os.PathError
+	var linkErr *os.LinkError
+	isIOFault := errors.As(err, &pathErr) || errors.As(err, &linkErr)
+	retryable := isIOFault && !errors.Is(err, os.ErrPermission) && !errors.Is(err, os.ErrExist) && !errors.Is(err, syscall.ENOTDIR) && !errors.Is(err, syscall.ELOOP)
+	if !retryable {
+		return bootstrapFailure("account_storage_unsafe", false)
+	}
+	return bootstrapFailure("account_storage_unavailable", true)
+}
+
+func bootstrapStateFailure(err error) error {
+	if errors.Is(err, ports.ErrCodexGlobalAccountChanged) {
+		return bootstrapFailure("global_account_changed", false)
+	}
+	return bootstrapFailure("account_state_unavailable", !errors.Is(err, context.Canceled))
+}
+
 func (m *codexAccountManager) bootstrapInner() error {
 	if err := cleanupPendingCredentialHomes(m.pendingRoot); err != nil {
-		return newCodexAccountBootstrapFailure("pending_cleanup", err)
+		return bootstrapStorageFailure(err)
 	}
 	if err := cleanupPendingCredentialHomes(m.switchStagingRoot); err != nil {
-		return newCodexAccountBootstrapFailure("switch_staging_cleanup", err)
+		return bootstrapStorageFailure(err)
 	}
 	if err := m.catalog.refresh(); err != nil {
-		return newCodexAccountBootstrapFailure("catalog_refresh", err)
+		return bootstrapStorageFailure(err)
 	}
 	if m.stateStore != nil {
-		active, ok, err := m.stateStore.GetCodexActiveAccount(m.ctx)
+		ctx, cancel := context.WithTimeout(m.ctx, codexAccountAuthTimeout)
+		defer cancel()
+		active, ok, err := m.stateStore.GetCodexActiveAccount(ctx)
 		if err != nil {
-			return newCodexAccountBootstrapFailure("active_account_read", err)
+			return bootstrapStateFailure(err)
 		}
 		if ok {
 			m.mu.Lock()
@@ -200,7 +227,21 @@ func (m *codexAccountManager) bootstrapInner() error {
 			m.mu.Unlock()
 		}
 	}
-	return newCodexAccountBootstrapFailure("credential_reconcile", m.reconcileGlobal(m.ctx))
+	err := m.reconcileGlobal(m.ctx)
+	if err == nil {
+		return nil
+	}
+	var failure *codexBootstrapFailure
+	if errors.As(err, &failure) {
+		return err
+	}
+	if errors.Is(err, ports.ErrCodexGlobalAccountChanged) {
+		return bootstrapFailure("global_account_changed", false)
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return bootstrapFailure("account_reconciliation_timeout", true)
+	}
+	return bootstrapStorageFailure(err)
 }
 
 func (m *codexAccountManager) reconcileGlobal(ctx context.Context) error {
@@ -221,7 +262,9 @@ func (m *codexAccountManager) reconcileGlobal(ctx context.Context) error {
 }
 
 func (m *codexAccountManager) runGlobalReconciliation(call *accountReconcileCall) {
-	call.err = m.reconcileGlobalInner()
+	ctx, cancel := context.WithTimeout(m.ctx, codexAccountReconcileTimeout)
+	defer cancel()
+	call.err = m.reconcileGlobalInner(ctx)
 	m.mu.Lock()
 	if m.reconcile == call {
 		m.reconcile = nil
@@ -231,56 +274,52 @@ func (m *codexAccountManager) runGlobalReconciliation(call *accountReconcileCall
 	m.publish()
 }
 
-func (m *codexAccountManager) reconcileGlobalInner() error {
-	exclusive, err := m.acquireGlobalMutation(m.ctx)
+func (m *codexAccountManager) reconcileGlobalInner(ctx context.Context) error {
+	exclusive, err := m.acquireGlobalMutation(ctx)
 	if err != nil {
-		return newCodexAccountBootstrapFailure("operation_gate", err)
+		return err
 	}
 	if exclusive != nil {
 		defer exclusive.Release()
 	}
-	release, err := m.acquireAccountMutation(m.ctx)
+	release, err := m.acquireAccountMutation(ctx)
 	if err != nil {
-		return newCodexAccountBootstrapFailure("account_mutation_gate", err)
+		return err
 	}
 	defer release()
 	if m.factory == nil || m.globalHome == "" {
-		return newCodexAccountBootstrapFailure("account_client_open", errors.New("codex global account discovery is unavailable"))
+		return bootstrapFailure("account_discovery_unavailable", false)
 	}
 	select {
 	case m.processes <- struct{}{}:
 		defer func() { <-m.processes }()
-	case <-m.ctx.Done():
-		return newCodexAccountBootstrapFailure("operation_gate", m.ctx.Err())
+	case <-ctx.Done():
+		return ctx.Err()
 	}
-	readCtx, cancel := context.WithTimeout(m.ctx, codexAccountAuthTimeout)
+	readCtx, cancel := context.WithTimeout(ctx, codexAccountAuthTimeout)
 	defer cancel()
 	client, err := m.factory.Open(readCtx, ports.CodexAccountContext{Home: m.globalHome, Managed: false})
 	if err != nil {
 		m.setGlobalAuthenticationFailure(failedAuthentication(m.now(), domain.AgentReadinessReasonAuthCheckFailed, "Authentication check failed."))
 		m.setUnmanagedGlobal("Device Codex account", domain.CodexAuthMethodUnknown, nil, "global_account_unverified", "AO could not verify the device's current Codex account.")
-		return newCodexAccountBootstrapFailure("account_client_open", err)
+		return bootstrapFailure("account_client_unavailable", true)
 	}
 	observation, readErr := client.Read(readCtx, false)
 	_ = client.Close()
 	if readErr != nil || observation.Authentication == domain.AgentAuthenticationUnknown {
 		m.setGlobalAuthenticationFailure(failedAuthentication(m.now(), domain.AgentReadinessReasonAuthCheckInconclusive, "Authentication check was inconclusive."))
 		m.setUnmanagedGlobal("Device Codex account", observation.Method, observation.Email, "global_account_unverified", "AO could not verify the device's current Codex account.")
-		if readErr == nil {
-			readErr = errors.New("global Codex account read was inconclusive")
-		}
-		category := "account_read"
-		if errors.Is(readErr, context.DeadlineExceeded) || errors.Is(readCtx.Err(), context.DeadlineExceeded) {
-			category = "account_read_timeout"
-		}
-		return newCodexAccountBootstrapFailure(category, readErr)
+		return bootstrapFailure("account_read_inconclusive", true)
 	}
 	if observation.Authentication == domain.AgentAuthenticationUnauthorized {
 		m.setGlobalAuthentication(accountAuthenticationObservation(m.now(), observation.Authentication))
 		m.mu.Lock()
 		m.unmanaged = nil
 		m.mu.Unlock()
-		return newCodexAccountBootstrapFailure("active_account_write", m.setActivePointer(m.ctx, ""))
+		if err := m.setActivePointer(ctx, ""); err != nil {
+			return bootstrapStateFailure(err)
+		}
+		return nil
 	}
 	if observation.Authentication != domain.AgentAuthenticationAuthorized && observation.Authentication != domain.AgentAuthenticationNotApplicable {
 		m.setGlobalAuthenticationFailure(failedAuthentication(m.now(), domain.AgentReadinessReasonAuthCheckInconclusive, "Authentication check was inconclusive."))
@@ -293,14 +332,14 @@ func (m *codexAccountManager) reconcileGlobalInner() error {
 		m.setUnmanagedGlobal(accountLabel("device", observation.Method, observation.Email), observation.Method, observation.Email, "global_credential_store_unsupported", "This Codex account is active on the device, but its credential store cannot be switched safely.")
 		return nil
 	}
-	credentialObservation, credentialErr := m.verifyOpaqueGlobalCredential(globalCredential)
+	credentialObservation, credentialErr := m.verifyOpaqueGlobalCredential(ctx, globalCredential)
 	if credentialErr != nil || !codexObservationsMatch(observation, credentialObservation) {
 		m.setUnmanagedGlobal(accountLabel("device", observation.Method, observation.Email), observation.Method, observation.Email, "global_credential_store_unsupported", "This Codex account is active on the device, but its credential store cannot be switched safely.")
 		return nil
 	}
 	observation = credentialObservation
 	if err := m.catalog.refresh(); err != nil {
-		return newCodexAccountBootstrapFailure("catalog_refresh", err)
+		return err
 	}
 	record, found := m.matchGlobalAccount(observation, globalCredential)
 	if !found {
@@ -311,17 +350,17 @@ func (m *codexAccountManager) reconcileGlobalInner() error {
 		pendingID := m.newID()
 		pendingDir, home, createErr := createPendingCredentialHome(m.pendingRoot, pendingID)
 		if createErr != nil {
-			return newCodexAccountBootstrapFailure("credential_reconcile", createErr)
+			return createErr
 		}
 		defer func() { _ = os.RemoveAll(pendingDir) }()
 		if err := writePrivateFileAtomic(filepath.Join(home, codexCredentialFilename), globalCredential); err != nil {
-			return newCodexAccountBootstrapFailure("credential_reconcile", err)
+			return err
 		}
-		verifyCtx, verifyCancel := context.WithTimeout(m.ctx, codexAccountAuthTimeout)
+		verifyCtx, verifyCancel := context.WithTimeout(ctx, codexAccountAuthTimeout)
 		verifiedClient, openErr := m.factory.Open(verifyCtx, ports.CodexAccountContext{Home: home, Managed: true})
 		if openErr != nil {
 			verifyCancel()
-			return newCodexAccountBootstrapFailure("account_client_open", openErr)
+			return bootstrapFailure("account_client_unavailable", true)
 		}
 		checked, checkErr := verifiedClient.Read(verifyCtx, true)
 		_ = verifiedClient.Close()
@@ -332,28 +371,28 @@ func (m *codexAccountManager) reconcileGlobalInner() error {
 		}
 		record, err = m.catalog.commitPending(pendingDir, checked)
 		if err != nil {
-			return newCodexAccountBootstrapFailure("credential_reconcile", err)
+			return err
 		}
 		observation = checked
 	}
 	if err := writePrivateFileAtomic(filepath.Join(record.Home, codexCredentialFilename), globalCredential); err != nil {
-		return newCodexAccountBootstrapFailure("credential_reconcile", err)
+		return err
 	}
 	if err := m.catalog.updateVerifiedDescriptor(record.Snapshot.ID, observation); err != nil {
-		return newCodexAccountBootstrapFailure("credential_reconcile", err)
+		return err
 	}
 	if err := m.catalog.refresh(); err != nil {
-		return newCodexAccountBootstrapFailure("catalog_refresh", err)
+		return err
 	}
 	if latestGlobal, latestErr := readOpaqueCredential(m.globalCredentialPath()); latestErr != nil || !bytes.Equal(latestGlobal, globalCredential) {
 		m.setUnmanagedGlobal(accountLabel("device", observation.Method, observation.Email), observation.Method, observation.Email, "global_account_changed", "The device Codex account changed while AO was reconciling it.")
-		return newCodexAccountBootstrapFailure("global_account_changed", ports.ErrCodexGlobalAccountChanged)
+		return ports.ErrCodexGlobalAccountChanged
 	}
 	m.catalog.updateSnapshot(record.Snapshot.ID, func(snapshot *domain.CodexAccountSnapshot) {
 		snapshot.Authentication = accountAuthenticationObservation(m.now(), observation.Authentication)
 	})
-	if err := m.setActivePointer(m.ctx, record.Snapshot.ID); err != nil {
-		return newCodexAccountBootstrapFailure("active_account_write", err)
+	if err := m.setActivePointer(ctx, record.Snapshot.ID); err != nil {
+		return bootstrapStateFailure(err)
 	}
 	m.mu.Lock()
 	m.unmanaged = nil
@@ -447,7 +486,7 @@ func codexObservationsMatch(left, right ports.CodexAccountObservation) bool {
 	return left.Method == domain.CodexAuthMethodAPIKey
 }
 
-func (m *codexAccountManager) verifyOpaqueGlobalCredential(credential []byte) (ports.CodexAccountObservation, error) {
+func (m *codexAccountManager) verifyOpaqueGlobalCredential(ctx context.Context, credential []byte) (ports.CodexAccountObservation, error) {
 	pendingID := m.newID()
 	pendingDir, home, err := createPendingCredentialHome(m.pendingRoot, pendingID)
 	if err != nil {
@@ -457,7 +496,7 @@ func (m *codexAccountManager) verifyOpaqueGlobalCredential(credential []byte) (p
 	if err := writePrivateFileAtomic(filepath.Join(home, codexCredentialFilename), credential); err != nil {
 		return ports.CodexAccountObservation{}, err
 	}
-	verifyCtx, cancel := context.WithTimeout(m.ctx, codexAccountAuthTimeout)
+	verifyCtx, cancel := context.WithTimeout(ctx, codexAccountAuthTimeout)
 	defer cancel()
 	client, err := m.factory.Open(verifyCtx, ports.CodexAccountContext{Home: home, Managed: true})
 	if err != nil {
