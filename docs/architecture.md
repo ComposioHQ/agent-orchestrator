@@ -1019,6 +1019,40 @@ down Electron disables and discards the capture.
 
 ---
 
+## Orchestration event delivery
+
+AO records normalized lifecycle facts for daemon-owned delivery to the current
+project orchestrator. `worker_turn_settled` means only that the harness has no
+automatic continuation queued. It is never interpreted as task completion.
+Terminal and SCM outcomes use distinct event kinds and stable source revisions.
+
+The SQLite outbox deduplicates `(project, worker, kind, source_revision)` and
+tracks `pending -> leased -> submitted -> acknowledged`. Expired leases are
+reclaimed at daemon startup. Dispatch resolves the current orchestrator on every
+attempt and refuses blocked, waiting-input, exited, terminated, startup-pending,
+and input-gated destinations. Busy Chat controllers durably queue a single
+follow-up; busy TUI controllers defer until settled.
+
+Each machine-authored prompt carries at most 50 AO event identifiers or 32 KiB.
+It includes no provider title, comment, log, branch, transcript, environment, or
+credential and explicitly grants no authorization. Chat uses the batch id as a
+stable client-message id. A TUI submission remains unacknowledged until the
+matching lifecycle admission is observed, so a pane write alone never claims
+delivery.
+
+Transport attempts time out after five seconds and use persisted exponential
+backoff capped at one minute. Eight attempts or fifteen minutes moves a delivery
+to `dead_letter`; recovery is an explicit retry, not an endless timer. Missing
+destinations do not consume the transport budget. The dispatcher uses daemon
+wakeups and cancellable due-time timers, never shell polling, cron, or a desktop
+client stream.
+
+Upgrade from 0.12.10 adds the outbox without changing projects, sessions, or
+notifications. Startup reclaims expired leases before serving dispatch work.
+For rollback, stop the newer daemon before installing an older build; older
+builds ignore the additive table and pending rows resume when the newer build is
+restored. Do not manually drop or edit the outbox database.
+
 ## Load-Bearing Rules
 
 These rules are **load-bearing** — changing them breaks fundamental architectural assumptions:

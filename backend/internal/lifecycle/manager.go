@@ -62,6 +62,10 @@ type controllerEpochStore interface {
 	) (bool, error)
 }
 
+type activityOrchestrationStore interface {
+	CommitActivityAndOrchestrationEvent(context.Context, domain.SessionRecord, domain.OrchestrationEvent) (bool, error)
+}
+
 // chatSpawnStore commits the lifecycle facts and the provider boundary in one
 // transaction. A fresh provider must never become the durable session owner
 // while the conversation head still names the provider it replaced.
@@ -665,7 +669,16 @@ func (m *Manager) ApplyActivitySignal(ctx context.Context, id domain.SessionID, 
 		delete(m.flights, id)
 	}
 	next.UpdatedAt = now
-	applied, err := m.store.UpdateSessionFromActivitySignal(ctx, next)
+	var applied bool
+	if event, emit := normalizedActivityEvent(rec, next); emit {
+		if atomicStore, ok := m.store.(activityOrchestrationStore); ok {
+			applied, err = atomicStore.CommitActivityAndOrchestrationEvent(ctx, next, event)
+		} else {
+			applied, err = m.store.UpdateSessionFromActivitySignal(ctx, next)
+		}
+	} else {
+		applied, err = m.store.UpdateSessionFromActivitySignal(ctx, next)
+	}
 	if err != nil {
 		m.mu.Unlock()
 		return err
@@ -700,6 +713,27 @@ func (m *Manager) ApplyActivitySignal(ctx context.Context, id domain.SessionID, 
 	m.emitNotification(ctx, intent)
 	m.resolveNotifications(ctx, resolutions...)
 	return nil
+}
+
+func normalizedActivityEvent(previous, next domain.SessionRecord) (domain.OrchestrationEvent, bool) {
+	if next.Kind != domain.KindWorker || next.IsTerminated || previous.Activity.State == next.Activity.State {
+		return domain.OrchestrationEvent{}, false
+	}
+	var kind domain.OrchestrationEventKind
+	switch next.Activity.State {
+	case domain.ActivityIdle:
+		kind = domain.OrchestrationWorkerTurnSettled
+	case domain.ActivityBlocked, domain.ActivityWaitingInput:
+		kind = domain.OrchestrationWorkerBlocked
+	default:
+		return domain.OrchestrationEvent{}, false
+	}
+	revision := next.Activity.LastActivityAt.UTC().Format(time.RFC3339Nano)
+	return domain.OrchestrationEvent{
+		ID: fmt.Sprintf("oe:%s:%s:%s", next.ID, kind, revision), ProjectID: next.ProjectID,
+		WorkerID: next.ID, Kind: kind, SourceRevision: revision,
+		EnqueuedAt: next.UpdatedAt.UTC(), NextAttemptAt: next.UpdatedAt.UTC(),
+	}, true
 }
 
 // stagePendingAgentSwitchNativeMetadata persists provider-assigned startup
