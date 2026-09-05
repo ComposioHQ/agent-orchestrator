@@ -312,11 +312,18 @@ func resolveLegacyModelChoice(choices []ports.ChatConfigOptionChoice, requested 
 
 	matched := ""
 	for _, choice := range choices {
-		alias, parameterized := parameterizedModelAlias(choice.Value)
+		aliases, parameterized := parameterizedModelAliases(choice.Value)
 		if !parameterized {
 			continue
 		}
-		if alias != requested {
+		matches := false
+		for _, alias := range aliases {
+			if alias == requested {
+				matches = true
+				break
+			}
+		}
+		if !matches {
 			continue
 		}
 		if matched != "" {
@@ -327,30 +334,40 @@ func resolveLegacyModelChoice(choices []ports.ChatConfigOptionChoice, requested 
 	return matched, matched != ""
 }
 
-func parameterizedModelAlias(value string) (string, bool) {
+func parameterizedModelAliases(value string) ([]string, bool) {
 	open := strings.IndexByte(value, '[')
 	if open <= 0 || !strings.HasSuffix(value, "]") {
-		return "", false
+		return nil, false
 	}
-	alias := value[:open]
+	base := value[:open]
+	body := value[open+1 : len(value)-1]
+	if body == "" {
+		if base == "default" {
+			return []string{"auto"}, true
+		}
+		return nil, false
+	}
+	if strings.HasPrefix(base, "grok-") {
+		base = "cursor-" + base
+	}
 	effort := ""
 	fast := false
 	fastSet := false
 	thinking := false
 	thinkingSet := false
 	parameterized := false
-	params := strings.Split(value[open+1:len(value)-1], ",")
+	params := strings.Split(body, ",")
 	for _, param := range params {
 		key, raw, found := strings.Cut(strings.TrimSpace(param), "=")
 		key = strings.TrimSpace(key)
 		raw = strings.TrimSpace(raw)
 		if !found || key == "" || raw == "" {
-			return "", false
+			return nil, false
 		}
 		switch key {
 		case "reasoning", "effort", "reasoning_effort":
 			if effort != "" && effort != raw {
-				return "", false
+				return nil, false
 			}
 			effort = raw
 			parameterized = true
@@ -361,10 +378,10 @@ func parameterizedModelAlias(value string) (string, bool) {
 				parsed = true
 			case "false":
 			default:
-				return "", false
+				return nil, false
 			}
 			if fastSet && fast != parsed {
-				return "", false
+				return nil, false
 			}
 			fast = parsed
 			fastSet = true
@@ -376,10 +393,10 @@ func parameterizedModelAlias(value string) (string, bool) {
 				parsed = true
 			case "false":
 			default:
-				return "", false
+				return nil, false
 			}
 			if thinkingSet && thinking != parsed {
-				return "", false
+				return nil, false
 			}
 			thinking = parsed
 			thinkingSet = true
@@ -393,25 +410,32 @@ func parameterizedModelAlias(value string) (string, bool) {
 			// Never derive an alias while silently discarding a provider-owned
 			// semantic parameter. New Cursor parameters must be mapped here
 			// deliberately before their opaque values can be selected by alias.
-			return "", false
+			return nil, false
 		}
 	}
 	if !parameterized {
-		return "", false
+		return nil, false
 	}
-	// Cursor's thinking variants currently pair thinking=true with an effort
-	// suffix (for example claude-opus-5-high). Without one, no safe CLI alias
-	// can be derived for the thinking semantic.
-	if thinking && effort == "" {
-		return "", false
-	}
-	if effort != "" {
-		alias += "-" + effort
-	}
+	fastSuffix := ""
 	if fast {
-		alias += "-fast"
+		fastSuffix = "-fast"
 	}
-	return alias, true
+	if !thinking {
+		if effort != "" {
+			base += "-" + effort
+		}
+		return []string{base + fastSuffix}, true
+	}
+	if effort == "" {
+		return []string{base + "-thinking" + fastSuffix}, true
+	}
+	// Cursor has shipped both thinking-effort and effort-thinking alias orders
+	// across Claude model families. Both retain the same advertised semantics;
+	// the caller still rejects any alias shared by multiple advertised choices.
+	return []string{
+		base + "-thinking-" + effort + fastSuffix,
+		base + "-" + effort + "-thinking" + fastSuffix,
+	}, true
 }
 
 func cloneConfigOptions(options []ports.ChatConfigOption) []ports.ChatConfigOption {

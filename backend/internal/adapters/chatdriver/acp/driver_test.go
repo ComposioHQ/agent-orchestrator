@@ -1574,8 +1574,28 @@ func TestResolveLegacyModelChoiceDerivesParameterizedCursorAliases(t *testing.T)
 		},
 		{
 			name:      "thinking with effort",
-			requested: "claude-opus-5-high",
+			requested: "claude-opus-5-thinking-high",
 			choice:    "claude-opus-5[thinking=true,context=300k,effort=high,fast=false]",
+		},
+		{
+			name:      "thinking after effort",
+			requested: "claude-4.6-sonnet-medium-thinking",
+			choice:    "claude-4.6-sonnet[thinking=true,context=1m,effort=medium,fast=false]",
+		},
+		{
+			name:      "thinking without effort",
+			requested: "claude-4.5-sonnet-thinking",
+			choice:    "claude-4.5-sonnet[thinking=true,context=200k]",
+		},
+		{
+			name:      "cursor-prefixed grok",
+			requested: "cursor-grok-4.6-high-fast",
+			choice:    "grok-4.6[effort=high,fast=true]",
+		},
+		{
+			name:      "auto",
+			requested: "auto",
+			choice:    "default[]",
 		},
 	}
 	for _, tt := range tests {
@@ -1596,8 +1616,8 @@ func TestResolveLegacyModelChoiceRejectsDroppedParameterizedSemantics(t *testing
 		choice    string
 	}{
 		{
-			name:      "thinking variant is not plain base",
-			requested: "claude-opus-5",
+			name:      "thinking variant is not non-thinking alias",
+			requested: "claude-opus-5-high",
 			choice:    "claude-opus-5[thinking=true,context=300k,effort=high,fast=false]",
 		},
 		{
@@ -1621,6 +1641,34 @@ func TestResolveLegacyModelChoiceRejectsDroppedParameterizedSemantics(t *testing
 			choices := []ports.ChatConfigOptionChoice{{Value: tt.choice}}
 			if got, ok := resolveLegacyModelChoice(choices, tt.requested); ok {
 				t.Fatalf("resolveLegacyModelChoice(%q) = %q, true; want rejection", tt.requested, got)
+			}
+		})
+	}
+}
+
+func TestResolveLegacyModelChoiceDistinguishesThinkingVariants(t *testing.T) {
+	choices := []ports.ChatConfigOptionChoice{
+		{Value: "claude-opus-5[thinking=false,context=300k,effort=high,fast=false]"},
+		{Value: "claude-opus-5[thinking=true,context=300k,effort=high,fast=false]"},
+	}
+	tests := []struct {
+		requested string
+		want      string
+	}{
+		{
+			requested: "claude-opus-5-high",
+			want:      choices[0].Value,
+		},
+		{
+			requested: "claude-opus-5-thinking-high",
+			want:      choices[1].Value,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.requested, func(t *testing.T) {
+			got, ok := resolveLegacyModelChoice(choices, tt.requested)
+			if !ok || got != tt.want {
+				t.Fatalf("resolveLegacyModelChoice(%q) = %q, %v; want %q, true", tt.requested, got, ok, tt.want)
 			}
 		})
 	}
