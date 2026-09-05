@@ -4,6 +4,7 @@ import { AnimatePresence, motion } from "motion/react";
 import { type FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { aoBridge } from "../lib/bridge";
+import { isWindowsPlatform } from "../lib/platform";
 import { PathRow } from "./PathRow";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
@@ -31,7 +32,6 @@ export default function CloneRepositoryDialog({
 	open,
 	shake: externalShake = false,
 	existingProjectPaths = [],
-	existingProjectNames = [],
 	value,
 }: {
 	disabled: boolean;
@@ -55,6 +55,7 @@ export default function CloneRepositoryDialog({
 	const shakeFrame = useRef<number | null>(null);
 	const shakeTimer = useRef<number | null>(null);
 	const onErrorRef = useRef(onError);
+	const lastReportedRepositoryError = useRef<string | null>(null);
 	const [choosingDestination, setChoosingDestination] = useState(false);
 	const [shake, setShake] = useState(false);
 	const [destinationPickerError, setDestinationPickerError] = useState<string | null>(null);
@@ -66,9 +67,7 @@ export default function CloneRepositoryDialog({
 		? joinCloneDestination(value.destinationParent, repositoryName)
 		: "";
 	const projectExists = Boolean(
-		repositoryName &&
-		(existingProjectNames.some((name) => sameProjectName(name, repositoryName)) ||
-			(targetPath && existingProjectPaths.some((path) => sameProjectPath(path, targetPath)))),
+		targetPath && existingProjectPaths.some((path) => sameProjectPath(path, targetPath)),
 	);
 	const urlError = hasRemoteUrl && !repositoryName ? t("createProject.cloneInvalidUrl") : null;
 	const repositoryAccessError = repositoryName && repositoryCheck === "invalid"
@@ -78,6 +77,7 @@ export default function CloneRepositoryDialog({
 		: null;
 	const duplicateError = repositoryName && projectExists ? t("createProject.cloneProjectExists") : null;
 	const inlineRepositoryError = urlError ?? repositoryAccessError ?? duplicateError;
+	const parentError = error === inlineRepositoryError ? null : error;
 	const destinationError = submitted && !hasDestination ? t("createProject.cloneDestinationRequired") : null;
 	const canContinue = Boolean(
 		repositoryName &&
@@ -121,8 +121,20 @@ export default function CloneRepositoryDialog({
 		setRepositoryCheck("idle");
 		setChoosingDestination(false);
 		setDestinationPickerError(null);
+		lastReportedRepositoryError.current = null;
 		clearShake();
 	}, [clearShake, open]);
+
+	useEffect(() => {
+		if (!open || !inlineRepositoryError) {
+			lastReportedRepositoryError.current = null;
+			return;
+		}
+		if (lastReportedRepositoryError.current === inlineRepositoryError) return;
+		lastReportedRepositoryError.current = inlineRepositoryError;
+		triggerShake();
+		onErrorRef.current?.(inlineRepositoryError);
+	}, [inlineRepositoryError, open, triggerShake]);
 
 	useEffect(() => () => {
 		repositoryCheckRequest.current += 1;
@@ -142,25 +154,13 @@ export default function CloneRepositoryDialog({
 			void aoBridge.app.checkGitRepository(value.remoteUrl.trim()).then((exists) => {
 				if (requestId !== repositoryCheckRequest.current) return;
 				setRepositoryCheck(exists ? "valid" : "invalid");
-				if (!exists) {
-					const message = t("createProject.cloneRepositoryUnavailable", {
-						defaultValue: "This isn't a repository or you don't have access",
-					});
-					triggerShake();
-					onErrorRef.current?.(message);
-				}
 			}).catch(() => {
 				if (requestId !== repositoryCheckRequest.current) return;
 				setRepositoryCheck("invalid");
-				const message = t("createProject.cloneRepositoryUnavailable", {
-					defaultValue: "This isn't a repository or you don't have access",
-				});
-				triggerShake();
-				onErrorRef.current?.(message);
 			});
 		}, 300);
 		return () => window.clearTimeout(timer);
-	}, [open, repositoryName, t, triggerShake, value.remoteUrl]);
+	}, [open, repositoryName, value.remoteUrl]);
 
 	const chooseDestination = async () => {
 		const requestId = ++destinationPickerRequest.current;
@@ -242,9 +242,9 @@ export default function CloneRepositoryDialog({
 
 					<form className="min-h-0 overflow-y-auto" onSubmit={submit}>
 						<div className="space-y-4 px-4 pb-1 pt-4">
-							{error || destinationPickerError ? (
+							{parentError || destinationPickerError ? (
 								<div className="rounded-lg border border-destructive/40 bg-destructive/10 px-4 py-3 text-pretty text-[12px] leading-5 text-destructive" role="alert">
-									{destinationPickerError ?? error}
+									{destinationPickerError ?? parentError}
 								</div>
 							) : null}
 
@@ -501,13 +501,11 @@ export function joinCloneDestination(parent: string, repositoryName: string): st
 	return `${parent.replace(/[\\/]+$/, "")}${separator}${repositoryName}`;
 }
 
-function sameProjectPath(left: string, right: string): boolean {
+export function sameProjectPath(left: string, right: string, caseInsensitive = isWindowsPlatform()): boolean {
 	const normalize = (path: string) => path.replace(/[\\/]+$/, "").replaceAll("\\", "/");
 	const normalizedLeft = normalize(left);
 	const normalizedRight = normalize(right);
-	return normalizedLeft.toLowerCase() === normalizedRight.toLowerCase();
-}
-
-function sameProjectName(left: string, right: string): boolean {
-	return left.trim().toLowerCase() === right.trim().toLowerCase();
+	return caseInsensitive
+		? normalizedLeft.toLowerCase() === normalizedRight.toLowerCase()
+		: normalizedLeft === normalizedRight;
 }

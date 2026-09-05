@@ -1,7 +1,7 @@
 import React from "react";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import CloneRepositoryDialog, { joinCloneDestination, repositoryNameFromGitUrl } from "./CloneRepositoryDialog";
+import CloneRepositoryDialog, { joinCloneDestination, repositoryNameFromGitUrl, sameProjectPath } from "./CloneRepositoryDialog";
 
 function cloneDialogProps(
 	overrides: Partial<React.ComponentProps<typeof CloneRepositoryDialog>> = {},
@@ -56,6 +56,58 @@ describe("clone repository input", () => {
 	it("joins POSIX and Windows destinations", () => {
 		expect(joinCloneDestination("/Users/me/Code/", "web-app")).toBe("/Users/me/Code/web-app");
 		expect(joinCloneDestination("C:\\Code\\", "web-app")).toBe("C:\\Code\\web-app");
+	});
+
+	it("compares paths with the platform's case rules", () => {
+		expect(sameProjectPath("/code/Web-App", "/code/web-app", false)).toBe(false);
+		expect(sameProjectPath("C:\\Code\\Web-App", "C:\\Code\\web-app\\", true)).toBe(true);
+	});
+
+	it("allows the same project name at a different target path", async () => {
+		window.ao!.app.checkGitRepository = vi.fn().mockResolvedValue(true);
+		render(React.createElement(CloneRepositoryDialog, cloneDialogProps({
+			existingProjectNames: ["web-app"],
+			existingProjectPaths: ["/other/web-app"],
+		})));
+
+		await waitFor(() => expect(screen.getByRole("button", { name: "Continue" })).toBeEnabled());
+		expect(screen.queryByText("A project with this name already exists.")).not.toBeInTheDocument();
+	});
+
+	it("reports a duplicate target once and does not repeat it as a parent alert", async () => {
+		window.ao!.app.checkGitRepository = vi.fn().mockResolvedValue(true);
+		const onError = vi.fn();
+		const props = cloneDialogProps({
+			existingProjectPaths: ["/code/web-app/"],
+			onError,
+		});
+		const view = render(React.createElement(CloneRepositoryDialog, props));
+
+		const duplicateMessage = "A project already exists at this location";
+		await waitFor(() => expect(onError).toHaveBeenCalledWith(duplicateMessage));
+		expect(onError).toHaveBeenCalledTimes(1);
+		expect(screen.getAllByRole("alert")).toHaveLength(1);
+		await waitFor(() => expect(screen.getByRole("dialog", { name: "Clone a Git repository" })).toHaveClass("modal-shake"));
+
+		view.rerender(React.createElement(CloneRepositoryDialog, {
+			...props,
+			error: duplicateMessage,
+		}));
+		expect(screen.getAllByRole("alert")).toHaveLength(1);
+		expect(onError).toHaveBeenCalledTimes(1);
+	});
+
+	it("reports a malformed URL once and shakes the dialog", async () => {
+		const onError = vi.fn();
+		render(React.createElement(CloneRepositoryDialog, cloneDialogProps({
+			onError,
+			value: { remoteUrl: "not-a-repository", destinationParent: "/code" },
+		})));
+
+		await waitFor(() => expect(onError).toHaveBeenCalledWith("Enter a valid HTTPS, SSH, Git, or file URL."));
+		expect(onError).toHaveBeenCalledTimes(1);
+		expect(screen.getAllByRole("alert")).toHaveLength(1);
+		await waitFor(() => expect(screen.getByRole("dialog", { name: "Clone a Git repository" })).toHaveClass("modal-shake"));
 	});
 
 	it("keeps Continue disabled until a destination is selected", async () => {
