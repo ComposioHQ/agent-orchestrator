@@ -139,14 +139,23 @@ export function TurnSettingsBar({
 		if (!onChangeConfigOption) return;
 		void Promise.resolve(onChangeConfigOption(optionId, value)).catch(() => {});
 	};
+	const modeOption = grouped.mode;
+	// The Plan/Agent pair is one on/off decision and rides inside the model menu as
+	// a switch, where it has always been. A provider advertising more postures than
+	// that — Cursor's Agent/Plan/Ask — cannot collapse to a switch, and burying a
+	// list that changes whether the agent may edit at all under the model menu hides
+	// the most consequential choice on the bar. It gets its own trigger instead.
+	const inlineExecutionMode =
+		grouped.executionMode && isPlanBinary(grouped.executionMode) ? grouped.executionMode : undefined;
+	const standaloneExecutionMode =
+		grouped.executionMode && !isPlanBinary(grouped.executionMode) ? grouped.executionMode : undefined;
+	const planning = isPlanMode(grouped.executionMode);
 	const nativeModelMenu = Boolean(onChange && models.length > 0 && grouped.model.length === 0);
 	const clubbedLeft =
 		grouped.model.length > 0 ||
 		grouped.effort.length > 0 ||
-		Boolean(grouped.executionMode) ||
+		Boolean(inlineExecutionMode) ||
 		grouped.toggles.length > 0;
-	const modeOption = grouped.mode;
-	const planning = isPlanMode(grouped.executionMode);
 	const showRightDropdown = Boolean(children || (!planning && (onChange || modeOption)));
 
 	return (
@@ -166,7 +175,7 @@ export function TurnSettingsBar({
 							reroute={reroute}
 							rerouted={rerouted}
 							chosenLabel={chosenLabel}
-							executionMode={grouped.executionMode}
+							executionMode={inlineExecutionMode}
 							toggles={grouped.toggles}
 							extraOptions={grouped.extra}
 							onChangeConfigOption={onChangeConfigOption ? applyOption : undefined}
@@ -177,9 +186,17 @@ export function TurnSettingsBar({
 						<ClubbedConfigPicker
 							modelOptions={grouped.model}
 							effortOptions={grouped.effort}
-							executionMode={grouped.executionMode}
+							executionMode={inlineExecutionMode}
 							toggles={grouped.toggles}
 							extraOptions={grouped.extra}
+							disabled={optionDisabled}
+							onChange={applyOption}
+						/>
+					) : null}
+
+					{standaloneExecutionMode && onChangeConfigOption ? (
+						<ExecutionModePicker
+							option={standaloneExecutionMode}
 							disabled={optionDisabled}
 							onChange={applyOption}
 						/>
@@ -422,7 +439,8 @@ function ClubbedConfigPicker({
 	const leftCount =
 		modelOptions.length + effortOptions.length + Number(Boolean(executionMode)) + toggles.length + extraOptions.length;
 	if (leftCount === 1) {
-		if (executionMode) return <ExecutionModePicker option={executionMode} onChange={onChange} />;
+		if (executionMode)
+			return <ExecutionModePicker option={executionMode} disabled={disabled} onChange={onChange} />;
 		const option = primaryModel ?? primaryEffort ?? executionMode ?? toggles[0] ?? extraOptions[0];
 		if (!option) return null;
 		return (
@@ -464,7 +482,11 @@ function ClubbedConfigPicker({
 	);
 }
 
-/** One toggle inside the model menu, not a competing top-level picker. */
+/**
+ * One toggle inside the model menu, not a competing top-level picker. Only ever
+ * given the two-choice Plan/Agent pair; a provider with more postures than that
+ * gets `ExecutionModePicker`'s list instead.
+ */
 function PlanModeToggle({
 	option,
 	onChange,
@@ -535,26 +557,39 @@ function MenuToggle({
 	);
 }
 
+/**
+ * The execution posture as its own trigger, when the provider advertises nothing
+ * else to club it with. The trigger names the choice currently in force, and the
+ * menu lists every posture the provider advertised.
+ */
 function ExecutionModePicker({
 	option,
+	disabled,
 	onChange,
 }: {
 	option: ChatConfigOption;
+	disabled?: boolean;
 	onChange: (optionId: string, value: ChatConfigOptionValue) => void;
 }) {
 	return (
 		<OptionMenu>
 			<OptionMenuTrigger
+				disabled={disabled}
 				aria-label="Model mode for the next turn"
 				title="Model mode for the next turn"
 				className={TRIGGER_CLASS}
 			>
-				<span className="min-w-0 max-w-[16ch] truncate">
-					{isPlanMode(option) ? "Plan Mode" : "Agent Mode"}
-				</span>
+				<span className="min-w-0 max-w-[16ch] truncate">{executionModeLabel(option)}</span>
 			</OptionMenuTrigger>
 			<OptionMenuContent align="start" className={CHAT_MENU_CLASS}>
-				<PlanModeToggle option={option} onChange={onChange} />
+				{isPlanBinary(option) ? (
+					<PlanModeToggle option={option} onChange={onChange} />
+				) : (
+					<ConfigOptionChoices
+						option={option}
+						onChange={(value) => onChange(option.id, value)}
+					/>
+				)}
 			</OptionMenuContent>
 		</OptionMenu>
 	);
@@ -812,9 +847,13 @@ function partitionConfigOptions(options: ChatConfigOption[]): {
 			continue;
 		}
 		if (isModeOption(option) && !mode) {
-			const permissionChoices = option.choices.filter((choice) => !isExecutionModeChoice(choice));
+			// Classify against this one option's advertised choices. A word list applied
+			// globally would read another harness's "Ask for approval" as an execution
+			// posture and quietly move a permission policy into the mode control.
+			const executionValues = executionChoiceValues(option.choices);
+			const permissionChoices = option.choices.filter((choice) => !executionValues.has(choice.value));
 			const executionChoices = addAgentModeChoice(
-				option.choices.filter(isExecutionModeChoice),
+				option.choices.filter((choice) => executionValues.has(choice.value)),
 				permissionChoices,
 			);
 			if (executionChoices.length > 0) {
@@ -831,13 +870,38 @@ function partitionConfigOptions(options: ChatConfigOption[]): {
 }
 
 /**
- * Some ACP harnesses put both execution posture (Plan/Agent) and approval policy
- * in one `mode` option. They are mutually exclusive in the provider, but they
- * are not the same decision for a person composing a turn. Preserve the provider
- * values while presenting those choices under their respective controls.
+ * Some ACP harnesses put both execution posture and approval policy in one `mode`
+ * option. They are mutually exclusive in the provider, but they are not the same
+ * decision for a person composing a turn. Preserve the provider values while
+ * presenting those choices under their respective controls.
+ *
+ * Which choices are execution postures is decided per option, never from a global
+ * word list. Plan and Agent name a posture wherever they appear. Ask does not:
+ * several harnesses use it for a permission policy ("Ask for approval"), so it
+ * only reads as an execution mode when the very same option also advertises
+ * Agent — the pair Cursor uses for its Ask/Agent chat modes.
+ *
+ * Returns the provider's own opaque values; nothing downstream re-derives them
+ * from a label.
  */
-function isExecutionModeChoice(choice: ChatConfigOption["choices"][number]): boolean {
-	return /(?:^|[\s_-])(plan|agent)(?:[\s_-]|$)/i.test(`${choice.name} ${choice.value}`);
+function executionChoiceValues(choices: ChatConfigOption["choices"]): Set<string> {
+	const values = new Set<string>();
+	const hasAgent = choices.some((choice) => choiceMatches(choice, "agent"));
+	for (const choice of choices) {
+		if (choiceMatches(choice, "plan") || choiceMatches(choice, "agent")) {
+			values.add(choice.value);
+			continue;
+		}
+		if (hasAgent && choiceMatches(choice, "ask")) values.add(choice.value);
+	}
+	return values;
+}
+
+function choiceMatches(
+	choice: Pick<ChatConfigOption["choices"][number], "name" | "value">,
+	word: string,
+): boolean {
+	return new RegExp(`(?:^|[\\s_-])(?:${word})(?:[\\s_-]|$)`, "i").test(`${choice.name} ${choice.value}`);
 }
 
 /**
@@ -850,14 +914,32 @@ function addAgentModeChoice(
 	executionChoices: ChatConfigOption["choices"],
 	permissionChoices: ChatConfigOption["choices"],
 ): ChatConfigOption["choices"] {
-	if (executionChoices.some((choice) => /(?:^|[\s_-])agent(?:[\s_-]|$)/i.test(`${choice.name} ${choice.value}`))) {
+	if (executionChoices.some((choice) => choiceMatches(choice, "agent"))) {
 		return executionChoices;
 	}
-	const standard = permissionChoices.find((choice) => /(?:^|[\s_-])manual(?:[\s_-]|$)/i.test(`${choice.name} ${choice.value}`))
-		?? permissionChoices.find((choice) => /(?:^|[\s_-])(default|standard)(?:[\s_-]|$)/i.test(`${choice.name} ${choice.value}`));
+	const standard = permissionChoices.find((choice) => choiceMatches(choice, "manual"))
+		?? permissionChoices.find((choice) => choiceMatches(choice, "default|standard"));
 	return standard
 		? [{ ...standard, name: "Agent Mode", description: "Standard agent execution" }, ...executionChoices]
 		: executionChoices;
+}
+
+/**
+ * The Plan/Agent pair, which is a single on/off decision and keeps its switch.
+ * A provider offering more postures than that cannot be reduced to a switch.
+ */
+function isPlanBinary(option: ChatConfigOption): boolean {
+	return option.choices.length === 2 && option.choices.some(isPlanChoice);
+}
+
+/**
+ * What the trigger says. Plan/Agent keeps AO's established wording; every other
+ * provider shows its own name for the choice in force, so Cursor reads "Ask" or
+ * "Agent". This is display only — the value on the wire is never derived from it.
+ */
+function executionModeLabel(option: ChatConfigOption): string {
+	if (isPlanBinary(option)) return isPlanMode(option) ? "Plan Mode" : "Agent Mode";
+	return optionCurrentLabel(option);
 }
 
 function isPlanMode(option: ChatConfigOption | undefined): boolean {
