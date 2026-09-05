@@ -103,6 +103,7 @@ export function CreateProjectFlow({
 	mode = "single_repo",
 	onCreateProject,
 	onInitializeProject,
+	onOpenExistingProject,
 	openSignal,
 	sourceSignal,
 }: {
@@ -121,6 +122,7 @@ export function CreateProjectFlow({
 	onCloneProject: (input: CloneProjectInput) => Promise<void>;
 	onCreateProject: (input: CreateProjectInput) => Promise<void>;
 	onInitializeProject: (path: string) => Promise<void>;
+	onOpenExistingProject?: (path: string) => void | Promise<void>;
 	// Monotonic counter: each new value opens the flow programmatically (the ⌘N
 	// "no project in scope" fallback). Lets the shortcut reuse the sidebar's own
 	// create-project flow instead of a separate delegating component.
@@ -297,6 +299,13 @@ export function CreateProjectFlow({
 					kind === "workspace" ? t("createProject.chooseWorkspace") : t("createProject.chooseRepo"),
 				));
 			if (path && kind === "single_repo") {
+				const registeredPath = existingProjectPaths.find((candidate) => sameProjectPath(candidate, path));
+				if (registeredPath && onOpenExistingProject) {
+					setModePickerOpen(false);
+					setFolderPickerOpen(false);
+					await onOpenExistingProject(registeredPath);
+					return;
+				}
 				const validation = await validateImportFolder(path, "project");
 				setProjectImportKind("project");
 				setProjectValidation(validation);
@@ -315,6 +324,10 @@ export function CreateProjectFlow({
 				}
 				if (validation.nextStep === "prepare_git") {
 					setProjectImportStep("prepare_git");
+					return;
+				}
+				if (validation.warning) {
+					setProjectImportStep("blocked");
 					return;
 				}
 			}
@@ -465,8 +478,13 @@ export function CreateProjectFlow({
 				setRepositorySetup(code);
 			}
 			if (cloneSelection) reportProjectError(message);
+			else if (selectedKind === "single_repo") reportProjectError(safeProjectCreationError(
+				message,
+				t("createProject.createFailedBody", { defaultValue: "AO could not create this project. Try again." }),
+				code,
+			));
 			else setError(message);
-			if (hasModePicker && !cloneSelection) {
+			if (hasModePicker && !cloneSelection && selectedKind !== "single_repo") {
 				if (shouldScanCreateFailure(message)) {
 					try {
 						const scan = await aoBridge.app.scanImportFolder({
@@ -576,6 +594,24 @@ export function CreateProjectFlow({
 		if (projectImportKind === "workspace" && projectRepositoryPrep.some((repo) => repo.remoteUrl.trim() !== "" && !isValidProjectRemote(repo.remoteUrl.trim()))) {
 			reportProjectError(t("createProject.cloneInvalidUrl"));
 			return;
+		}
+		if (projectImportKind === "project" && projectApprovedActions.includes("set_remote") && remoteUrl !== "") {
+			setIsPreparingGit(true);
+			try {
+				if (!(await aoBridge.app.checkGitRepository(remoteUrl))) {
+					reportProjectError(t("createProject.cloneRepositoryUnavailable", {
+						defaultValue: "This isn't a repository or you don't have access",
+					}));
+					return;
+				}
+			} catch {
+				reportProjectError(t("createProject.cloneRepositoryUnavailable", {
+					defaultValue: "This isn't a repository or you don't have access",
+				}));
+				return;
+			} finally {
+				setIsPreparingGit(false);
+			}
 		}
 		setProjectPrepEvents(
 			projectImportKind === "workspace"
@@ -799,7 +835,13 @@ export function CreateProjectFlow({
 				onContinue={() => void prepareProjectGit()}
 				onContinueProject={() => {
 					setProjectImportKind("project");
-					setProjectImportStep("prepare_git");
+					if (projectValidation?.root.requiredActions.length) {
+						setProjectImportStep("prepare_git");
+					} else if (projectValidation) {
+						setModePickerOpen(false);
+						setProjectImportStep(null);
+						setSelectedPath(projectValidation.root.repoPath);
+					}
 				}}
 				onChangeRepositoryPrep={(repoPath, next) => setProjectRepositoryPrep((current) => current.map((repo) => repo.repoPath === repoPath ? { ...repo, ...next } : repo))}
 				shake={projectImportShake}
@@ -828,6 +870,7 @@ export function CreateProjectFlow({
 				isCreating={isCreating}
 				isInitializing={isInitializing}
 				kind={selectedKind}
+				shake={projectImportShake}
 				onOpenChange={(open) => {
 					if (!open) {
 						void (async () => {
@@ -885,6 +928,28 @@ export function CreateProjectFlow({
 
 function isRepositorySetupRecoveryCode(code: string | undefined): code is "NOT_A_GIT_REPO" | "PROJECT_UNBORN" {
 	return code === "NOT_A_GIT_REPO" || code === "PROJECT_UNBORN";
+}
+
+function sameProjectPath(left: string, right: string): boolean {
+	const normalize = (path: string) => path.trim().replace(/[\\/]+$/, "").replaceAll("\\", "/");
+	return normalize(left) === normalize(right);
+}
+
+function safeProjectCreationError(message: string, fallback: string, code?: string): string {
+	const cleaned = message
+		.replace(/^Setup failed:\s*/i, "")
+		.replace(/\s*\([A-Z][A-Z0-9_]+\)\s*$/, "")
+		.trim();
+	if (
+		code !== undefined ||
+		cleaned === "" ||
+		/\b(?:request[_ -]?id|rpc|stack|stderr|stdout|exit status|internal server error|panic)\b/i.test(cleaned) ||
+		/\bfatal:/i.test(cleaned) ||
+		/\b[A-Z][A-Z0-9_]{3,}\b/.test(cleaned)
+	) {
+		return fallback;
+	}
+	return cleaned;
 }
 
 async function validateImportFolder(path: string, importKind: "project" | "workspace"): Promise<ImportValidationResult> {

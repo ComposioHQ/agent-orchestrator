@@ -8,6 +8,7 @@ import { useUiStore } from "../stores/ui-store";
 
 const bridgeMocks = vi.hoisted(() => ({
 	checkAncestorRepo: vi.fn(),
+	checkGitRepository: vi.fn(),
 	chooseDirectory: vi.fn(),
 	getRepositoryBranch: vi.fn(),
 	scanImportFolder: vi.fn(),
@@ -24,6 +25,7 @@ vi.mock("../lib/bridge", () => ({
 	aoBridge: {
 		app: {
 			checkAncestorRepo: bridgeMocks.checkAncestorRepo,
+			checkGitRepository: bridgeMocks.checkGitRepository,
 			chooseDirectory: bridgeMocks.chooseDirectory,
 			getRepositoryBranch: bridgeMocks.getRepositoryBranch,
 			scanImportFolder: bridgeMocks.scanImportFolder,
@@ -90,18 +92,23 @@ function CloudTestProviders({ children }: { children: ReactNode }) {
 // whether it's open, so a thin stub keeps the suite fast and focused.
 vi.mock("./CreateProjectAgentSheet", () => ({
 	CreateProjectAgentSheet: ({
+		error,
 		kind,
 		onSubmit,
 		open,
 		path,
+		shake,
 	}: {
+		error?: string | null;
 		kind: string;
 		onSubmit: (selection: { workerAgent: string; orchestratorAgent: string }) => Promise<void>;
 		open: boolean;
 		path: string | null;
+		shake?: boolean;
 	}) =>
 		open ? (
-			<div data-kind={kind} data-path={path ?? ""} data-testid="agent-sheet">
+			<div className={shake ? "modal-shake" : undefined} data-kind={kind} data-path={path ?? ""} data-testid="agent-sheet">
+				{error ? <span>{error}</span> : null}
 				<button
 					type="button"
 					onClick={() => void onSubmit({ workerAgent: "codex", orchestratorAgent: "codex" })}
@@ -214,6 +221,7 @@ function projectValidation(
 
 beforeEach(() => {
 	bridgeMocks.checkAncestorRepo.mockReset().mockResolvedValue(undefined);
+	bridgeMocks.checkGitRepository.mockReset().mockResolvedValue(true);
 	bridgeMocks.chooseDirectory.mockReset();
 	bridgeMocks.getRepositoryBranch.mockReset().mockResolvedValue(undefined);
 	bridgeMocks.scanImportFolder.mockReset().mockImplementation(async ({ path }: { path: string }) => okScan(path));
@@ -508,6 +516,30 @@ describe("CreateProjectFlow droppedPath", () => {
 });
 
 describe("CreateProjectFlow project import validation", () => {
+	it("opens a registered project before validation or agent selection", async () => {
+		const user = userEvent.setup();
+		const onOpenExistingProject = vi.fn();
+		bridgeMocks.chooseDirectory.mockResolvedValue("/repo/existing/");
+
+		render(
+			<CreateProjectFlow
+				mode="choose"
+				{...noop}
+				existingProjectPaths={["/repo/existing"]}
+				onOpenExistingProject={onOpenExistingProject}
+			>
+				{({ choosePath }) => <button onClick={choosePath}>New project</button>}
+			</CreateProjectFlow>,
+		);
+
+		await user.click(screen.getByRole("button", { name: "New project" }));
+		await user.click(await screen.findByRole("button", { name: "Import an existing project" }));
+
+		await waitFor(() => expect(onOpenExistingProject).toHaveBeenCalledWith("/repo/existing"));
+		expect(apiMocks.POST).not.toHaveBeenCalled();
+		expect(screen.queryByTestId("agent-sheet")).not.toBeInTheDocument();
+	});
+
 	it("uses one shared backdrop while switching between flow modals", async () => {
 		const user = userEvent.setup();
 		bridgeMocks.chooseDirectory.mockResolvedValue("/repo/project");
@@ -647,6 +679,41 @@ describe("CreateProjectFlow project import validation", () => {
 		expect(screen.queryByText("No origin remote")).not.toBeInTheDocument();
 	});
 
+	it("shows a project-with-child-repos warning before agent selection", async () => {
+		const user = userEvent.setup();
+		bridgeMocks.chooseDirectory.mockResolvedValue("/repo/project");
+		apiMocks.POST.mockResolvedValueOnce({
+			data: projectValidation("/repo/project", {
+				warning: "This folder contains child Git repositories and will be imported as one project.",
+				childRepos: [{
+					repoPath: "/repo/project/child",
+					isRepo: true,
+					hasCommit: true,
+					hasOrigin: true,
+					isEmptyFolder: false,
+					needsGitInit: false,
+					requiredActions: [],
+					blockingErrors: [],
+				}],
+			}),
+		});
+
+		render(
+			<CreateProjectFlow mode="choose" {...noop}>
+				{({ choosePath }) => <button onClick={choosePath}>New project</button>}
+			</CreateProjectFlow>,
+		);
+
+		await user.click(screen.getByRole("button", { name: "New project" }));
+		await user.click(await screen.findByRole("button", { name: "Import an existing project" }));
+
+		expect(await screen.findByText("This folder contains child Git repositories and will be imported as one project.")).toBeInTheDocument();
+		expect(screen.queryByTestId("agent-sheet")).not.toBeInTheDocument();
+		await user.click(screen.getByRole("button", { name: "Continue" }));
+		expect(await screen.findByTestId("agent-sheet")).toHaveAttribute("data-path", "/repo/project");
+		expect(apiMocks.POST).toHaveBeenCalledTimes(1);
+	});
+
 	it("prefills a default GitHub remote URL for the selected project", async () => {
 		const user = userEvent.setup();
 		bridgeMocks.chooseDirectory.mockResolvedValue("/repo/project-no-git");
@@ -765,6 +832,57 @@ describe("CreateProjectFlow project import validation", () => {
 		const sheet = await screen.findByTestId("agent-sheet");
 		expect(sheet).toHaveAttribute("data-path", "/repo/project");
 		expect(screen.queryByText("Prepare project")).not.toBeInTheDocument();
+	});
+
+	it("blocks an inaccessible project remote before Git preparation", async () => {
+		const user = userEvent.setup();
+		bridgeMocks.chooseDirectory.mockResolvedValue("/repo/project");
+		bridgeMocks.checkGitRepository.mockResolvedValue(false);
+		apiMocks.POST.mockResolvedValueOnce({
+			data: projectValidation("/repo/project", {
+				nextStep: "prepare_git",
+				root: { hasOrigin: false, requiredActions: ["set_remote"] },
+			}),
+		});
+
+		render(
+			<CreateProjectFlow mode="choose" {...noop}>
+				{({ choosePath }) => <button onClick={choosePath}>New project</button>}
+			</CreateProjectFlow>,
+		);
+
+		await user.click(screen.getByRole("button", { name: "New project" }));
+		await user.click(await screen.findByRole("button", { name: "Import an existing project" }));
+		await user.click(screen.getByRole("button", { name: "Continue" }));
+
+		await waitFor(() => expect(bridgeMocks.checkGitRepository).toHaveBeenCalledWith("https://github.com/username/project.git"));
+		expect(apiMocks.POST).toHaveBeenCalledTimes(1);
+		expect(useUiStore.getState().globalToast?.body).toBe("This isn't a repository or you don't have access");
+		await waitFor(() => expect(screen.getByRole("dialog", { name: "Prepare project" })).toHaveClass("modal-shake"));
+		expect(screen.queryByTestId("agent-sheet")).not.toBeInTheDocument();
+	});
+
+	it("toasts and shakes the agent sheet when project creation fails", async () => {
+		const user = userEvent.setup();
+		bridgeMocks.chooseDirectory.mockResolvedValue("/repo/project");
+		apiMocks.POST.mockResolvedValueOnce({ data: projectValidation("/repo/project") });
+		const onCreateProject = vi.fn().mockRejectedValue(new Error("rpc failed: request_id=secret INTERNAL_FAILURE"));
+
+		render(
+			<CreateProjectFlow mode="choose" {...noop} onCreateProject={onCreateProject}>
+				{({ choosePath }) => <button onClick={choosePath}>New project</button>}
+			</CreateProjectFlow>,
+		);
+
+		await user.click(screen.getByRole("button", { name: "New project" }));
+		await user.click(await screen.findByRole("button", { name: "Import an existing project" }));
+		await user.click(await screen.findByRole("button", { name: "Submit agents" }));
+
+		await waitFor(() => expect(useUiStore.getState().globalToast?.body).toBe("AO could not create this project. Try again."));
+		const sheet = screen.getByTestId("agent-sheet");
+		expect(sheet).toHaveTextContent("AO could not create this project. Try again.");
+		expect(sheet).not.toHaveTextContent("request_id");
+		await waitFor(() => expect(sheet).toHaveClass("modal-shake"));
 	});
 
 	it("passes the checked-out branch when creating an imported project", async () => {
