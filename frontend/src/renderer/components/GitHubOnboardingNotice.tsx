@@ -1,9 +1,9 @@
 import { GitPullRequest, TerminalSquare, X } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import type { TerminalSessionState } from "../hooks/useTerminalSession";
-import { type ShellTerminal, useCloseShellTerminal } from "../hooks/useShellTerminals";
-import { useGitHubAuthRequirement, useStartGitHubAuthTerminal, useSystemRequirementsGate } from "../hooks/useSystemRequirementsGate";
+import { useCloseShellTerminal } from "../hooks/useShellTerminals";
+import { useGitHubAuthRequirement, useGitHubAuthTerminal, useStartGitHubAuthTerminal, useSystemRequirementsGate } from "../hooks/useSystemRequirementsGate";
 import { aoBridge } from "../lib/bridge";
 import { useShellMaybe } from "../lib/shell-context";
 import { useResolvedTheme } from "../stores/ui-store";
@@ -20,12 +20,13 @@ export function GitHubOnboardingNotice() {
 	const gate = useSystemRequirementsGate();
 	const authQuery = useGitHubAuthRequirement();
 	const startLogin = useStartGitHubAuthTerminal();
+	const terminalQuery = useGitHubAuthTerminal();
 	const { mutate: closeTerminal } = useCloseShellTerminal();
 	const theme = useResolvedTheme();
 	const shell = useShellMaybe();
 	const requirements = gate.requirements ?? [];
-	const [terminal, setTerminal] = useState<ShellTerminal | null>(null);
-	const terminalRef = useRef<ShellTerminal | null>(null);
+	const terminal = terminalQuery.data;
+	const terminalRef = useRef(terminal);
 	const refetchAuthRef = useRef(authQuery.refetch);
 	const gh = requirements.find((requirement) => requirement.id === "gh");
 	const auth = authQuery.data;
@@ -39,19 +40,15 @@ export function GitHubOnboardingNotice() {
 		automaticallyChecked.add(active.handleId);
 		void refetchAuthRef.current();
 	}, []);
-	useEffect(() => () => {
-		const active = terminalRef.current;
-		if (active) closeTerminal(active.handleId);
-	}, [closeTerminal]);
 	useEffect(() => {
 		if (!auth?.satisfied || !terminal) return;
-		closeTerminal(terminal.handleId, { onSettled: () => setTerminal(null) });
-	}, [auth?.satisfied, closeTerminal, terminal]);
+		closeTerminal(terminal.handleId, { onSettled: terminalQuery.clear });
+	}, [auth?.satisfied, closeTerminal, terminal, terminalQuery.clear]);
 
 	if (!auth || auth.satisfied) return null;
 
 	const openLogin = () => {
-		startLogin.mutate(undefined, { onSuccess: setTerminal });
+		startLogin.mutate();
 	};
 
 	const checkAgain = async () => {
@@ -59,9 +56,9 @@ export function GitHubOnboardingNotice() {
 	};
 	const closeLogin = () => {
 		if (!terminal) return;
-		closeTerminal(terminal.handleId, { onSettled: () => setTerminal(null) });
+		closeTerminal(terminal.handleId, { onSettled: terminalQuery.clear });
 	};
-	const cliMissing = !gh?.satisfied;
+	const cliMissing = gh?.satisfied === false;
 	const checking = authQuery.isFetching;
 	return (
 		<div className="flex w-full justify-center px-3">

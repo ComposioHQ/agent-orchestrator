@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useCallback } from "react";
 import type { components } from "../../api/schema";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
 import { usesPreviewWorkspaceData } from "../lib/preview-mode";
@@ -7,6 +8,7 @@ import { shellTerminalsQueryKey, type ShellTerminal } from "./useShellTerminals"
 export type SystemRequirement = components["schemas"]["SystemRequirement"];
 
 export const systemRequirementsQueryKey = ["system-requirements"] as const;
+export const githubAuthTerminalQueryKey = ["github-auth-terminal"] as const;
 
 async function fetchSystemRequirements(): Promise<components["schemas"]["SystemRequirementsResponse"]> {
 	const { data, error } = await apiClient.GET("/api/v1/system/requirements");
@@ -52,6 +54,7 @@ export function useStartGitHubAuthTerminal() {
 			return data.shellTerminal;
 		},
 		onSuccess: (terminal) => {
+			queryClient.setQueryData<ShellTerminal | null>(githubAuthTerminalQueryKey, terminal);
 			queryClient.setQueryData<ShellTerminal[]>(shellTerminalsQueryKey, (current = []) => [
 				...current.filter((item) => item.handleId !== terminal.handleId),
 				terminal,
@@ -59,6 +62,23 @@ export function useStartGitHubAuthTerminal() {
 			void queryClient.invalidateQueries({ queryKey: shellTerminalsQueryKey });
 		},
 	});
+}
+
+/** The login PTY is intentionally app-owned rather than notice-owned. Keeping
+ * its handle in query state lets the inline panel reattach after navigation
+ * while the browser-based device flow is still in progress. */
+export function useGitHubAuthTerminal() {
+	const queryClient = useQueryClient();
+	const query = useQuery<ShellTerminal | null>({
+		queryKey: githubAuthTerminalQueryKey,
+		queryFn: async () => null,
+		enabled: false,
+		initialData: null,
+	});
+	const clear = useCallback(() => {
+		queryClient.setQueryData<ShellTerminal | null>(githubAuthTerminalQueryKey, null);
+	}, [queryClient]);
+	return { ...query, clear };
 }
 
 /** Single source of truth for whether the machine satisfies AO's startup
