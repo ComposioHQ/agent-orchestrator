@@ -14,8 +14,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/go-chi/chi/v5/middleware"
+
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apierr"
+	"github.com/aoagents/agent-orchestrator/backend/internal/observe/ownership"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	sessionmanager "github.com/aoagents/agent-orchestrator/backend/internal/session_manager"
 )
@@ -27,6 +30,36 @@ func (f *fakeTelemetrySink) Emit(_ context.Context, ev ports.TelemetryEvent) {
 }
 func (f *fakeTelemetrySink) Close(context.Context) error { return nil }
 
+type fakeAgentReadiness struct {
+	snapshot                domain.AgentReadinessSnapshot
+	err                     error
+	calls                   int
+	agentID                 string
+	purpose                 domain.AgentReadinessPurpose
+	installationInvalidated []string
+	authInvalidated         []string
+	rechecks                []string
+}
+
+func (f *fakeAgentReadiness) EnsureAgentReadiness(_ context.Context, agentID string, purpose domain.AgentReadinessPurpose) (domain.AgentReadinessSnapshot, error) {
+	f.calls++
+	f.agentID = agentID
+	f.purpose = purpose
+	return f.snapshot, f.err
+}
+
+func (f *fakeAgentReadiness) InvalidateAgentInstallation(agentID string) {
+	f.installationInvalidated = append(f.installationInvalidated, agentID)
+}
+
+func (f *fakeAgentReadiness) InvalidateAgentAuthentication(agentID string) {
+	f.authInvalidated = append(f.authInvalidated, agentID)
+}
+
+func (f *fakeAgentReadiness) RecheckAgent(agentID string) {
+	f.rechecks = append(f.rechecks, agentID)
+}
+
 type fakeStore struct {
 	sessions            map[domain.SessionID]domain.SessionRecord
 	getSessionErr       error
@@ -34,6 +67,7 @@ type fakeStore struct {
 	activeSwitchGetErr  error
 	activeSwitchListErr error
 	pr                  map[domain.SessionID]domain.PRFacts
+	prFacts             map[domain.SessionID][]domain.PRFacts
 	prs                 map[domain.SessionID][]domain.PullRequest
 	projects            map[string]domain.ProjectRecord
 	worktrees           map[domain.SessionID][]domain.SessionWorktreeRecord
@@ -43,6 +77,9 @@ type fakeStore struct {
 	threads             map[string][]domain.PullRequestReviewThread
 	comments            map[string][]domain.PullRequestComment
 	commentsErr         error
+	reviewRuns          map[domain.SessionID][]domain.CurrentHeadReviewRun
+	listPRFactsCalls    int
+	listReviewRunsCalls int
 	num                 int
 }
 
@@ -51,6 +88,7 @@ func newFakeStore() *fakeStore {
 		sessions:       map[domain.SessionID]domain.SessionRecord{},
 		activeSwitches: map[domain.SessionID]domain.AgentSwitch{},
 		pr:             map[domain.SessionID]domain.PRFacts{},
+		prFacts:        map[domain.SessionID][]domain.PRFacts{},
 		prs:            map[domain.SessionID][]domain.PullRequest{},
 		projects:       map[string]domain.ProjectRecord{},
 		worktrees:      map[domain.SessionID][]domain.SessionWorktreeRecord{},
@@ -58,6 +96,31 @@ func newFakeStore() *fakeStore {
 		reviews:        map[string][]domain.PullRequestReview{},
 		threads:        map[string][]domain.PullRequestReviewThread{},
 		comments:       map[string][]domain.PullRequestComment{},
+		reviewRuns:     map[domain.SessionID][]domain.CurrentHeadReviewRun{},
+	}
+}
+
+func TestListBatchesKanbanReads(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer"}
+	st.sessions["mer-2"] = domain.SessionRecord{ID: "mer-2", ProjectID: "mer"}
+	st.pr["mer-1"] = domain.PRFacts{URL: "pr-1", HeadSHA: "head-1"}
+	st.pr["mer-2"] = domain.PRFacts{URL: "pr-2", HeadSHA: "head-2"}
+	st.reviewRuns["mer-1"] = []domain.CurrentHeadReviewRun{{SessionID: "mer-1", PRURL: "pr-1", Status: domain.ReviewRunRunning, ID: "run-1", CreatedAt: time.Now().UTC()}}
+	st.reviewRuns["mer-2"] = []domain.CurrentHeadReviewRun{{SessionID: "mer-2", PRURL: "pr-2", Status: domain.ReviewRunRunning, ID: "run-2", CreatedAt: time.Now().UTC()}}
+
+	list, err := (&Service{store: st}).List(context.Background(), ListFilter{ProjectID: "mer"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 2 {
+		t.Fatalf("len(list) = %d, want 2", len(list))
+	}
+	if st.listPRFactsCalls != 1 {
+		t.Fatalf("ListPRFacts calls = %d, want 1 batched call", st.listPRFactsCalls)
+	}
+	if st.listReviewRunsCalls != 1 {
+		t.Fatalf("ListCurrentHeadReviewRuns calls = %d, want 1 batched call", st.listReviewRunsCalls)
 	}
 }
 
@@ -229,12 +292,13 @@ func (f *fakeStore) SetSessionAutoInjectCI(_ context.Context, id domain.SessionI
 	return true, nil
 }
 
-func (f *fakeStore) SetSessionReviewerHarness(_ context.Context, id domain.SessionID, harness domain.ReviewerHarness, updatedAt time.Time) (bool, error) {
+func (f *fakeStore) SetSessionReviewerConfig(_ context.Context, id domain.SessionID, harness domain.ReviewerHarness, config domain.AgentConfig, updatedAt time.Time) (bool, error) {
 	r, ok := f.sessions[id]
 	if !ok {
 		return false, nil
 	}
 	r.ReviewerHarness = harness
+	r.ReviewerConfig = config
 	r.UpdatedAt = updatedAt
 	f.sessions[id] = r
 	return true, nil
@@ -268,11 +332,47 @@ func (f *fakeStore) ListPRsBySession(_ context.Context, id domain.SessionID) ([]
 }
 
 func (f *fakeStore) ListPRFactsForSession(_ context.Context, id domain.SessionID) ([]domain.PRFacts, error) {
+	f.listPRFactsCalls++
+	if prs, ok := f.prFacts[id]; ok {
+		return append([]domain.PRFacts(nil), prs...), nil
+	}
 	pr, ok := f.pr[id]
 	if !ok {
 		return nil, nil
 	}
 	return []domain.PRFacts{pr}, nil
+}
+
+func (f *fakeStore) ListPRFactsForSessions(_ context.Context, ids []domain.SessionID) (map[domain.SessionID][]domain.PRFacts, error) {
+	f.listPRFactsCalls++
+	out := make(map[domain.SessionID][]domain.PRFacts, len(ids))
+	for _, id := range ids {
+		if prs, ok := f.prFacts[id]; ok {
+			out[id] = append([]domain.PRFacts(nil), prs...)
+			continue
+		}
+		pr, ok := f.pr[id]
+		if ok {
+			out[id] = []domain.PRFacts{pr}
+			continue
+		}
+		out[id] = []domain.PRFacts{}
+	}
+	return out, nil
+}
+
+func (f *fakeStore) ListCurrentHeadReviewRunsForSession(_ context.Context, id domain.SessionID) ([]domain.CurrentHeadReviewRun, error) {
+	f.listReviewRunsCalls++
+	return f.reviewRuns[id], nil
+}
+
+func (f *fakeStore) ListCurrentHeadReviewRunsForSessions(_ context.Context, ids []domain.SessionID) (map[domain.SessionID][]domain.CurrentHeadReviewRun, error) {
+	f.listReviewRunsCalls++
+	out := make(map[domain.SessionID][]domain.CurrentHeadReviewRun, len(ids))
+	for _, id := range ids {
+		out[id] = append([]domain.CurrentHeadReviewRun(nil), f.reviewRuns[id]...)
+	}
+	return out, nil
 }
 
 func (f *fakeStore) ListChecks(_ context.Context, prURL string) ([]domain.PullRequestCheck, error) {
@@ -505,7 +605,7 @@ func TestSessionSetReviewerHarnessPersistsPerSession(t *testing.T) {
 	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", Kind: domain.KindWorker}
 	st.sessions["mer-2"] = domain.SessionRecord{ID: "mer-2", ProjectID: "mer", Kind: domain.KindWorker}
 
-	sess, err := (&Service{store: st}).SetReviewerHarness(context.Background(), "mer-1", domain.ReviewerOpenCode)
+	sess, err := (&Service{store: st}).SetReviewerHarness(context.Background(), "mer-1", domain.ReviewerOpenCode, domain.AgentConfig{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -520,8 +620,24 @@ func TestSessionSetReviewerHarnessPersistsPerSession(t *testing.T) {
 func TestSessionSetReviewerHarnessRejectsUnknownHarness(t *testing.T) {
 	st := newFakeStore()
 	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1"}
-	if _, err := (&Service{store: st}).SetReviewerHarness(context.Background(), "mer-1", "unknown"); err == nil {
+	if _, err := (&Service{store: st}).SetReviewerHarness(context.Background(), "mer-1", "unknown", domain.AgentConfig{}); err == nil {
 		t.Fatal("expected invalid harness error")
+	}
+}
+
+func TestSessionSetReviewerHarnessAllowsConfigWithoutHarness(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1"}
+
+	sess, err := (&Service{store: st}).SetReviewerHarness(context.Background(), "mer-1", "", domain.AgentConfig{Model: "gpt-5"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sess.ReviewerHarness != "" || sess.ReviewerConfig.Model != "gpt-5" {
+		t.Fatalf("session reviewer override = (%q, %+v), want default harness with model override", sess.ReviewerHarness, sess.ReviewerConfig)
+	}
+	if stored := st.sessions["mer-1"]; stored.ReviewerHarness != "" || stored.ReviewerConfig.Model != "gpt-5" {
+		t.Fatalf("stored reviewer override = (%q, %+v), want default harness with model override", stored.ReviewerHarness, stored.ReviewerConfig)
 	}
 }
 
@@ -584,13 +700,38 @@ func TestListWorkspaceFilesReturnsTrackedAndUntrackedStatus(t *testing.T) {
 	}
 }
 
+func TestListWorkspaceFilesRepoUnavailableWrapsSentinel(t *testing.T) {
+	repo := newWorkspaceRepo(t)
+	// Simulate a project whose source repository has been deleted from disk:
+	// the worktree directory still exists, but its git metadata (and so the
+	// owning repo's plumbing) is gone. Every git read against it must fail as
+	// repository-unavailable rather than a raw 500.
+	if err := os.RemoveAll(filepath.Join(repo, ".git")); err != nil {
+		t.Fatal(err)
+	}
+	st := newFakeStore()
+	st.sessions["ao-1"] = domain.SessionRecord{
+		ID:       "ao-1",
+		Metadata: domain.SessionMetadata{WorkspacePath: repo},
+		Activity: domain.Activity{State: domain.ActivityActive},
+	}
+
+	_, err := (&Service{store: st}).ListWorkspaceFiles(context.Background(), "ao-1")
+	if err == nil {
+		t.Fatal("ListWorkspaceFiles succeeded with a missing repository")
+	}
+	if !errors.Is(err, ports.ErrWorkspaceRepoUnavailable) {
+		t.Fatalf("error = %v, want errors.Is(ErrWorkspaceRepoUnavailable)", err)
+	}
+}
+
 func TestGetWorkspaceFileReturnsContentAndDiff(t *testing.T) {
 	repo := newWorkspaceRepo(t)
 	writeWorkspaceFile(t, repo, "README.md", "goodbye\nupdated\n")
 	st := newFakeStore()
 	st.sessions["ao-1"] = domain.SessionRecord{ID: "ao-1", Metadata: domain.SessionMetadata{WorkspacePath: repo}}
 
-	got, err := (&Service{store: st}).GetWorkspaceFile(context.Background(), "ao-1", "README.md")
+	got, err := (&Service{store: st}).GetWorkspaceFile(context.Background(), "ao-1", "README.md", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -620,7 +761,7 @@ func TestGetWorkspaceFileReportsImageMediaType(t *testing.T) {
 	st := newFakeStore()
 	st.sessions["ao-1"] = domain.SessionRecord{ID: "ao-1", Metadata: domain.SessionMetadata{WorkspacePath: repo}}
 
-	got, err := (&Service{store: st}).GetWorkspaceFile(context.Background(), "ao-1", "docs/logo.png")
+	got, err := (&Service{store: st}).GetWorkspaceFile(context.Background(), "ao-1", "docs/logo.png", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -639,7 +780,7 @@ func TestGetWorkspaceFileLeavesTextFilesWithoutImageMediaType(t *testing.T) {
 	st := newFakeStore()
 	st.sessions["ao-1"] = domain.SessionRecord{ID: "ao-1", Metadata: domain.SessionMetadata{WorkspacePath: repo}}
 
-	got, err := (&Service{store: st}).GetWorkspaceFile(context.Background(), "ao-1", "docs/icon.svg")
+	got, err := (&Service{store: st}).GetWorkspaceFile(context.Background(), "ao-1", "docs/icon.svg", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -741,7 +882,7 @@ func TestGetWorkspaceFileBlobHasNoAfterSideForDeletedFile(t *testing.T) {
 	if _, err := svc.GetWorkspaceFileBlob(context.Background(), "ao-1", "docs/logo.png", WorkspaceBlobAfter); err == nil {
 		t.Fatal("after blob for a deleted file: want error, got nil")
 	}
-	detail, err := svc.GetWorkspaceFile(context.Background(), "ao-1", "docs/logo.png")
+	detail, err := svc.GetWorkspaceFile(context.Background(), "ao-1", "docs/logo.png", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -875,7 +1016,7 @@ func TestWorkspaceFilesIncludeCommittedBranchDiffAgainstRecordedBase(t *testing.
 		t.Fatalf("compare metadata = mode:%q sha:%q ref:%q, want base %s main", files.CompareMode, files.CompareBaseSHA, files.CompareBaseRef, base)
 	}
 
-	detail, err := (&Service{store: st}).GetWorkspaceFile(context.Background(), "ao-1", "README.md")
+	detail, err := (&Service{store: st}).GetWorkspaceFile(context.Background(), "ao-1", "README.md", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1432,7 +1573,7 @@ func TestWorkspaceFilesReportCommittedDeletionsAgainstRecordedBase(t *testing.T)
 		t.Fatalf("src/app.go summary = %#v, want deleted", byPath["src/app.go"])
 	}
 
-	detail, err := (&Service{store: st}).GetWorkspaceFile(context.Background(), "ao-1", "src/app.go")
+	detail, err := (&Service{store: st}).GetWorkspaceFile(context.Background(), "ao-1", "src/app.go", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1469,6 +1610,178 @@ func TestWorkspaceFilesKeepBaseStatusWhenCommittedAddedFileIsModified(t *testing
 	}
 }
 
+func workspaceSectionPaths(files []WorkspaceFileSummary) map[string]bool {
+	out := map[string]bool{}
+	for _, file := range files {
+		out[file.Path] = true
+	}
+	return out
+}
+
+func TestWorkspaceFileSectionsSplitByGitState(t *testing.T) {
+	repo := newWorkspaceRepo(t)
+	base := strings.TrimSpace(runGit(t, repo, "rev-parse", "HEAD"))
+	runGit(t, repo, "switch", "-c", "ao/work")
+
+	// Committed since base.
+	writeWorkspaceFile(t, repo, "committed.go", "package main\n")
+	runGit(t, repo, "add", "committed.go")
+	runGit(t, repo, "commit", "-m", "agent: add committed.go")
+
+	// Partially staged: index differs from HEAD, worktree differs from index.
+	writeWorkspaceFile(t, repo, "README.md", "hello\nstaged addition\n")
+	runGit(t, repo, "add", "README.md")
+	writeWorkspaceFile(t, repo, "README.md", "hello\nstaged addition\nunstaged addition\n")
+
+	// Untracked.
+	writeWorkspaceFile(t, repo, "scratch.txt", "untracked note\n")
+
+	st := newFakeStore()
+	st.sessions["ao-1"] = domain.SessionRecord{
+		ID: "ao-1",
+		Metadata: domain.SessionMetadata{
+			Branch:        "ao/work",
+			WorkspacePath: repo,
+			DiffBaseSHA:   base,
+			DiffBaseRef:   "main",
+		},
+	}
+
+	files, err := (&Service{store: st}).ListWorkspaceFiles(context.Background(), "ao-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	staged := workspaceSectionPaths(files.Sections.Staged)
+	if !staged["README.md"] {
+		t.Fatalf("staged section = %v, want README.md", staged)
+	}
+	unstaged := workspaceSectionPaths(files.Sections.Unstaged)
+	if !unstaged["README.md"] {
+		t.Fatalf("unstaged section = %v, want README.md (partially staged file)", unstaged)
+	}
+	untracked := workspaceSectionPaths(files.Sections.Untracked)
+	if !untracked["scratch.txt"] {
+		t.Fatalf("untracked section = %v, want scratch.txt", untracked)
+	}
+	committed := workspaceSectionPaths(files.Sections.Committed)
+	if !committed["committed.go"] {
+		t.Fatalf("committed section = %v, want committed.go", committed)
+	}
+	if len(files.Commits) != 1 || files.Commits[0].Subject != "agent: add committed.go" {
+		t.Fatalf("commits = %+v, want one commit for agent: add committed.go", files.Commits)
+	}
+	if files.Summary.Files == 0 || files.Summary.Additions == 0 {
+		t.Fatalf("summary = %+v, want non-zero files and additions", files.Summary)
+	}
+}
+
+// TestWorkspaceFileDiffScopedToSection covers a partially staged file, where
+// GetWorkspaceFile previously always returned the combined base..worktree
+// diff no matter which section (Staged or Unstaged) the caller opened it
+// from. Each section must resolve to its own diff: staged is index vs HEAD,
+// unstaged is worktree vs index.
+func TestWorkspaceFileDiffScopedToSection(t *testing.T) {
+	repo := newWorkspaceRepo(t)
+
+	// Partially staged: index differs from HEAD, worktree differs from index.
+	writeWorkspaceFile(t, repo, "README.md", "hello\nstaged addition\n")
+	runGit(t, repo, "add", "README.md")
+	writeWorkspaceFile(t, repo, "README.md", "hello\nstaged addition\nunstaged addition\n")
+
+	st := newFakeStore()
+	st.sessions["ao-1"] = domain.SessionRecord{
+		ID:       "ao-1",
+		Metadata: domain.SessionMetadata{WorkspacePath: repo},
+	}
+	svc := &Service{store: st}
+
+	staged, err := svc.GetWorkspaceFile(context.Background(), "ao-1", "README.md", WorkspaceFileSectionStaged)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(staged.Diff, "+staged addition") || strings.Contains(staged.Diff, "+unstaged addition") {
+		t.Fatalf("staged diff = %q, want only the staged hunk", staged.Diff)
+	}
+
+	unstaged, err := svc.GetWorkspaceFile(context.Background(), "ao-1", "README.md", WorkspaceFileSectionUnstaged)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(unstaged.Diff, "+unstaged addition") || strings.Contains(unstaged.Diff, "+staged addition") {
+		t.Fatalf("unstaged diff = %q, want only the unstaged hunk", unstaged.Diff)
+	}
+}
+
+func TestWorkspaceFilesAheadReportsPushCount(t *testing.T) {
+	remote := t.TempDir()
+	runGit(t, remote, "init", "--bare")
+
+	repo := newWorkspaceRepo(t)
+	runGit(t, repo, "remote", "add", "origin", remote)
+	runGit(t, repo, "push", "-u", "origin", "HEAD")
+	writeWorkspaceFile(t, repo, "ahead.go", "package main\n")
+	runGit(t, repo, "add", "ahead.go")
+	runGit(t, repo, "commit", "-m", "local ahead commit")
+
+	st := newFakeStore()
+	st.sessions["ao-1"] = domain.SessionRecord{ID: "ao-1", Metadata: domain.SessionMetadata{WorkspacePath: repo}}
+
+	files, err := (&Service{store: st}).ListWorkspaceFiles(context.Background(), "ao-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if files.Ahead == nil || *files.Ahead != 1 {
+		t.Fatalf("ahead = %v, want 1", files.Ahead)
+	}
+	if files.Behind == nil || *files.Behind != 0 {
+		t.Fatalf("behind = %v, want 0", files.Behind)
+	}
+}
+
+func TestWorkspaceFilesBehindReportsPullCount(t *testing.T) {
+	remote := t.TempDir()
+	runGit(t, remote, "init", "--bare")
+
+	repo := newWorkspaceRepo(t)
+	runGit(t, repo, "remote", "add", "origin", remote)
+	writeWorkspaceFile(t, repo, "upstream.go", "package main\n")
+	runGit(t, repo, "add", "upstream.go")
+	runGit(t, repo, "commit", "-m", "upstream commit")
+	runGit(t, repo, "push", "-u", "origin", "HEAD")
+	// Simulate a session worktree that hasn't picked up the commit its
+	// tracking ref already knows the remote has.
+	runGit(t, repo, "reset", "--hard", "HEAD~1")
+
+	st := newFakeStore()
+	st.sessions["ao-1"] = domain.SessionRecord{ID: "ao-1", Metadata: domain.SessionMetadata{WorkspacePath: repo}}
+
+	files, err := (&Service{store: st}).ListWorkspaceFiles(context.Background(), "ao-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if files.Ahead == nil || *files.Ahead != 0 {
+		t.Fatalf("ahead = %v, want 0", files.Ahead)
+	}
+	if files.Behind == nil || *files.Behind != 1 {
+		t.Fatalf("behind = %v, want 1", files.Behind)
+	}
+}
+
+func TestWorkspaceFilesAheadBehindNilWithoutUpstream(t *testing.T) {
+	repo := newWorkspaceRepo(t)
+	st := newFakeStore()
+	st.sessions["ao-1"] = domain.SessionRecord{ID: "ao-1", Metadata: domain.SessionMetadata{WorkspacePath: repo}}
+
+	files, err := (&Service{store: st}).ListWorkspaceFiles(context.Background(), "ao-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if files.Ahead != nil || files.Behind != nil {
+		t.Fatalf("ahead/behind = %v/%v, want nil/nil without a configured upstream", files.Ahead, files.Behind)
+	}
+}
+
 func TestWorkspaceFilesReportRenamesAgainstRecordedBase(t *testing.T) {
 	repo := newWorkspaceRepo(t)
 	base := strings.TrimSpace(runGit(t, repo, "rev-parse", "HEAD"))
@@ -1501,7 +1814,7 @@ func TestWorkspaceFilesReportRenamesAgainstRecordedBase(t *testing.T) {
 		t.Fatalf("renamed summary = %#v, want R src/app.go -> src/main.go", renamed)
 	}
 
-	detail, err := (&Service{store: st}).GetWorkspaceFile(context.Background(), "ao-1", "src/main.go")
+	detail, err := (&Service{store: st}).GetWorkspaceFile(context.Background(), "ao-1", "src/main.go", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1569,7 +1882,7 @@ func TestWorkspaceFilesIncludeWorkspaceProjectChildRepoDiffs(t *testing.T) {
 		t.Fatal("child .git internals must not be listed through the workspace root")
 	}
 
-	detail, err := svc.GetWorkspaceFile(context.Background(), "ws-1", "api/service.go")
+	detail, err := svc.GetWorkspaceFile(context.Background(), "ws-1", "api/service.go", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1638,7 +1951,7 @@ func TestWorkspaceProjectChildRepoRecomputesBaseAfterRebase(t *testing.T) {
 		t.Fatalf("api/baseonly.go = %#v, want unmodified after recomputing child base", got)
 	}
 
-	detail, err := (&Service{store: st}).GetWorkspaceFile(context.Background(), "ws-1", "api/agent.go")
+	detail, err := (&Service{store: st}).GetWorkspaceFile(context.Background(), "ws-1", "api/agent.go", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1835,7 +2148,7 @@ func TestGetWorkspaceFileScratchReturnsContentWithEmptyDiff(t *testing.T) {
 		Metadata:  domain.SessionMetadata{WorkspacePath: root},
 	}
 
-	got, err := (&Service{store: st}).GetWorkspaceFile(context.Background(), "scratch-1", "README.md")
+	got, err := (&Service{store: st}).GetWorkspaceFile(context.Background(), "scratch-1", "README.md", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1858,7 +2171,7 @@ func TestGetWorkspaceFileRejectsTraversal(t *testing.T) {
 	st := newFakeStore()
 	st.sessions["ao-1"] = domain.SessionRecord{ID: "ao-1", Metadata: domain.SessionMetadata{WorkspacePath: repo}}
 
-	_, err := (&Service{store: st}).GetWorkspaceFile(context.Background(), "ao-1", "../secrets.txt")
+	_, err := (&Service{store: st}).GetWorkspaceFile(context.Background(), "ao-1", "../secrets.txt", "")
 	var e *apierr.Error
 	if !errors.As(err, &e) || e.Kind != apierr.KindInvalid || e.Code != "INVALID_WORKSPACE_PATH" {
 		t.Fatalf("err = %v, want bad request INVALID_WORKSPACE_PATH", err)
@@ -1873,7 +2186,7 @@ func TestGetWorkspaceFileRejectsIntermediateSymlinkEscape(t *testing.T) {
 	st := newFakeStore()
 	st.sessions["ao-1"] = domain.SessionRecord{ID: "ao-1", Metadata: domain.SessionMetadata{WorkspacePath: repo}}
 
-	_, err := (&Service{store: st}).GetWorkspaceFile(context.Background(), "ao-1", "link/secret.txt")
+	_, err := (&Service{store: st}).GetWorkspaceFile(context.Background(), "ao-1", "link/secret.txt", "")
 	var e *apierr.Error
 	if !errors.As(err, &e) || e.Kind != apierr.KindInvalid || e.Code != "INVALID_WORKSPACE_PATH" {
 		t.Fatalf("err = %v, want bad request INVALID_WORKSPACE_PATH", err)
@@ -1895,6 +2208,7 @@ func TestSessionRenameMissingSessionReturnsNotFound(t *testing.T) {
 type fakeCommander struct {
 	killed          []domain.SessionID
 	retired         []domain.SessionID
+	exited          []domain.SessionID
 	resumed         []domain.SessionID
 	ready           []domain.SessionID
 	sent            []domain.SessionID
@@ -1958,6 +2272,15 @@ func (f *fakeCommander) ResumeAgentWithMode(_ context.Context, id domain.Session
 		return sessionmanager.RestoreResult{}, f.restoreErr
 	}
 	return f.restoreResult, nil
+}
+func (f *fakeCommander) ExitAgent(_ context.Context, id domain.SessionID) (domain.SessionRecord, error) {
+	f.exited = append(f.exited, id)
+	if f.restoreErr != nil {
+		return domain.SessionRecord{}, f.restoreErr
+	}
+	rec := f.restoreResult.Session
+	rec.Activity.State = domain.ActivityExited
+	return rec, nil
 }
 func (f *fakeCommander) Kill(_ context.Context, id domain.SessionID) (bool, error) {
 	if f.killErr != nil {
@@ -2194,6 +2517,82 @@ func TestSpawnUnknownProjectReturns404(t *testing.T) {
 	}
 	if fc.spawned {
 		t.Fatal("manager.Spawn must NOT be invoked for an unknown project")
+	}
+}
+
+func TestSpawnBlocksDefinitelyMissingHarnessBeforeManager(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer"}
+	fc := &fakeCommander{}
+	readiness := &fakeAgentReadiness{snapshot: domain.AgentReadinessSnapshot{
+		ID: "codex", Installation: domain.AgentInstallationObservation{State: domain.AgentInstallationNotInstalled},
+		Authentication: domain.AgentAuthenticationObservation{State: domain.AgentAuthenticationUnknown},
+	}}
+	svc := NewWithDeps(Deps{Manager: fc, Store: st, AgentReadiness: readiness})
+
+	_, _, _, err := svc.Spawn(context.Background(), ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Harness: "codex"})
+	var apiError *apierr.Error
+	if !errors.As(err, &apiError) || apiError.Code != "AGENT_BINARY_NOT_FOUND" {
+		t.Fatalf("Spawn error = %v, want AGENT_BINARY_NOT_FOUND", err)
+	}
+	if fc.spawnCalls != 0 {
+		t.Fatal("manager.Spawn ran before a definitely-missing harness was blocked")
+	}
+	if readiness.calls != 1 || readiness.purpose != domain.AgentReadinessPurposeLaunch {
+		t.Fatalf("readiness call = count %d purpose %q", readiness.calls, readiness.purpose)
+	}
+}
+
+func TestSpawnTreatsUnauthorizedReadinessAsAdvisory(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer"}
+	fc := &fakeCommander{}
+	readiness := &fakeAgentReadiness{snapshot: domain.AgentReadinessSnapshot{
+		ID: "codex", Installation: domain.AgentInstallationObservation{State: domain.AgentInstallationInstalled},
+		Authentication: domain.AgentAuthenticationObservation{State: domain.AgentAuthenticationUnauthorized},
+	}}
+	svc := NewWithDeps(Deps{Manager: fc, Store: st, AgentReadiness: readiness})
+
+	if _, _, _, err := svc.Spawn(context.Background(), ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Harness: "codex"}); err != nil {
+		t.Fatalf("Spawn: %v", err)
+	}
+	if fc.spawnCalls != 1 {
+		t.Fatalf("manager.Spawn calls = %d, want unauthorized readiness to remain advisory", fc.spawnCalls)
+	}
+}
+
+func TestSpawnInvalidatesReadinessAfterTypedLaunchFailure(t *testing.T) {
+	tests := []struct {
+		name             string
+		err              error
+		wantInstallation bool
+		wantAuth         bool
+	}{
+		{name: "binary missing", err: ports.ErrAgentBinaryNotFound, wantInstallation: true},
+		{name: "auth required", err: ports.ErrChatAuthRequired, wantAuth: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			st := newFakeStore()
+			st.projects["mer"] = domain.ProjectRecord{ID: "mer"}
+			fc := &fakeCommander{spawnErr: tt.err}
+			readiness := &fakeAgentReadiness{snapshot: domain.AgentReadinessSnapshot{
+				ID: "codex", Installation: domain.AgentInstallationObservation{State: domain.AgentInstallationInstalled},
+				Authentication: domain.AgentAuthenticationObservation{State: domain.AgentAuthenticationAuthorized},
+			}}
+			svc := NewWithDeps(Deps{Manager: fc, Store: st, AgentReadiness: readiness})
+
+			_, _, _, _ = svc.Spawn(context.Background(), ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Harness: "codex"})
+			if got := len(readiness.installationInvalidated) == 1; got != tt.wantInstallation {
+				t.Fatalf("installation invalidated = %v, want %v", got, tt.wantInstallation)
+			}
+			if got := len(readiness.authInvalidated) == 1; got != tt.wantAuth {
+				t.Fatalf("auth invalidated = %v, want %v", got, tt.wantAuth)
+			}
+			if len(readiness.rechecks) != 1 || readiness.rechecks[0] != "codex" {
+				t.Fatalf("rechecks = %#v, want codex", readiness.rechecks)
+			}
+		})
 	}
 }
 
@@ -2656,6 +3055,7 @@ func TestToAPIErrorMapsWorkspaceBranchSentinels(t *testing.T) {
 		{"workspace locked", fmt.Errorf("restore mer-1: %w: \"/tmp/ws\" (branch \"ao/mer-1\") is registered but its directory is missing", ports.ErrWorkspaceLocked), apierr.KindConflict, "WORKSPACE_LOCKED"},
 		{"unknown harness", fmt.Errorf("spawn: %w: %q", sessionmanager.ErrUnknownHarness, "bogus"), apierr.KindInvalid, "UNKNOWN_HARNESS"},
 		{"missing harness", fmt.Errorf("spawn: %w: configure project worker.agent or pass --harness", sessionmanager.ErrMissingHarness), apierr.KindInvalid, "AGENT_REQUIRED"},
+		{"harness install active", fmt.Errorf("spawn: %w", sessionmanager.ErrHarnessInstallActive), apierr.KindConflict, "HARNESS_INSTALL_ACTIVE"},
 		{"awaiting decision", fmt.Errorf("send mer-1: %w", sessionmanager.ErrAwaitingDecision), apierr.KindConflict, "SESSION_AWAITING_DECISION"},
 		{"startup pending", fmt.Errorf("send mer-1: %w", sessionmanager.ErrStartupPending), apierr.KindConflict, "SESSION_STARTUP_PENDING"},
 		{"agent exited", fmt.Errorf("send mer-1: %w", sessionmanager.ErrAgentExited), apierr.KindConflict, "AGENT_EXITED"},
@@ -2806,7 +3206,7 @@ func TestEmitSpawnFailedClassifiesRawStageSentinel(t *testing.T) {
 	})
 
 	raw := fmt.Errorf("spawn mer-1: %w: tmux runtime: create session mer-1: boom", sessionmanager.ErrRuntimeCreate)
-	svc.emitSpawnFailed(ports.SpawnConfig{
+	svc.emitSpawnFailed(context.Background(), ports.SpawnConfig{
 		ProjectID: "mer",
 		Kind:      domain.KindWorker,
 		Harness:   domain.HarnessCodex,
@@ -2854,6 +3254,30 @@ func TestToAPIErrorSwitchDeliveryUnconfirmedMessage(t *testing.T) {
 	const wantMessage = "The target agent started, but AO could not confirm that it accepted the continuation"
 	if apiError.Message != wantMessage {
 		t.Fatalf("message = %q, want %q", apiError.Message, wantMessage)
+	}
+}
+
+func TestToAPIErrorPreservesReportingOwnerAcrossMapping(t *testing.T) {
+	raw := ownership.Own(
+		fmt.Errorf("switch agent mer-1: %w", sessionmanager.ErrSwitchInProgress),
+		ownership.OwnerAgentSwitchSaga,
+	)
+
+	mapped := toAPIError(raw)
+
+	if got := ownership.OwnerOf(mapped); got != ownership.OwnerAgentSwitchSaga {
+		t.Fatalf("OwnerOf(mapped) = %q, want %q", got, ownership.OwnerAgentSwitchSaga)
+	}
+	var apiError *apierr.Error
+	if !errors.As(mapped, &apiError) || apiError.Code != "AGENT_SWITCH_IN_PROGRESS" {
+		t.Fatalf("mapped = %v, want AGENT_SWITCH_IN_PROGRESS", mapped)
+	}
+}
+
+func TestToAPIErrorDefaultsUnownedErrorsToHTTP(t *testing.T) {
+	mapped := toAPIError(errors.New("pre-admission storage unavailable"))
+	if got := ownership.OwnerOf(mapped); got != ownership.OwnerHTTP {
+		t.Fatalf("OwnerOf(mapped) = %q, want %q", got, ownership.OwnerHTTP)
 	}
 }
 
@@ -2944,6 +3368,30 @@ func TestResumeAgentMapsManagerModeToServiceView(t *testing.T) {
 	}
 	if got.Session.ID != "mer-1" || got.Mode != RestoreModeViewNative {
 		t.Fatalf("resume outcome = %+v", got)
+	}
+}
+
+func TestExitAgentPreservesSessionAndMapsExitedReadModel(t *testing.T) {
+	st := newFakeStore()
+	rec := domain.SessionRecord{
+		ID:        "mer-1",
+		ProjectID: "mer",
+		Kind:      domain.KindWorker,
+		Harness:   domain.HarnessCodex,
+		Activity:  domain.Activity{State: domain.ActivityIdle},
+	}
+	fc := &fakeCommander{restoreResult: sessionmanager.RestoreResult{Session: rec}}
+	svc := &Service{manager: fc, store: st}
+
+	got, err := svc.ExitAgent(context.Background(), "mer-1")
+	if err != nil {
+		t.Fatalf("ExitAgent: %v", err)
+	}
+	if got.Session.ID != "mer-1" || got.Session.IsTerminated || got.Session.Activity.State != domain.ActivityExited {
+		t.Fatalf("exit outcome = %+v", got)
+	}
+	if len(fc.exited) != 1 || fc.exited[0] != "mer-1" {
+		t.Fatalf("exit calls = %v", fc.exited)
 	}
 }
 
@@ -4095,28 +4543,146 @@ func TestDeduplicatePRFactsCollapsesTransferredRepoAliasesWithSameHead(t *testin
 	now := time.Date(2026, 7, 31, 10, 0, 0, 0, time.UTC)
 	got := deduplicatePRFacts([]domain.PRFacts{
 		{
-			URL:            "https://github.com/AgentWrapper/agent-orchestrator/pull/3193",
-			Number:         3193,
-			ReviewComments: true,
-			SourceBranch:   "ao/mer-1/fix-sigpipe",
-			TargetBranch:   "main",
-			HeadSHA:        "same-head",
-			UpdatedAt:      now,
+			URL:                      "https://github.com/AgentWrapper/agent-orchestrator/pull/3193",
+			Number:                   3193,
+			ReviewComments:           true,
+			ExternalChangesRequested: true,
+			ExternalComments:         true,
+			SourceBranch:             "ao/mer-1/fix-sigpipe",
+			TargetBranch:             "main",
+			HeadSHA:                  "same-head",
+			UpdatedAt:                now,
 		},
 		{
-			URL:          "https://github.com/Untrivial-ai/agent-orchestrator/pull/3193",
-			Number:       3193,
-			SourceBranch: "ao/mer-1/fix-sigpipe",
-			TargetBranch: "main",
-			HeadSHA:      "same-head",
-			UpdatedAt:    now.Add(time.Minute),
+			URL:              "https://github.com/Untrivial-ai/agent-orchestrator/pull/3193",
+			Number:           3193,
+			ExternalApproved: true,
+			SourceBranch:     "ao/mer-1/fix-sigpipe",
+			TargetBranch:     "main",
+			HeadSHA:          "same-head",
+			UpdatedAt:        now.Add(time.Minute),
 		},
 	})
 	if len(got) != 1 {
 		t.Fatalf("facts = %d, want transferred aliases collapsed: %+v", len(got), got)
 	}
-	if got[0].URL != "https://github.com/Untrivial-ai/agent-orchestrator/pull/3193" || !got[0].ReviewComments {
+	if got[0].URL != "https://github.com/Untrivial-ai/agent-orchestrator/pull/3193" ||
+		!got[0].ReviewComments ||
+		!got[0].ExternalChangesRequested ||
+		!got[0].ExternalComments ||
+		!got[0].ExternalApproved {
 		t.Fatalf("merged facts = %+v, want newest URL and preserved comments", got[0])
+	}
+}
+
+func TestToSessionWithFactsRemapsTransferredAliasReviewRuns(t *testing.T) {
+	st := newFakeStore()
+	rec := domain.SessionRecord{
+		ID:                "mer-1",
+		ProjectID:         "mer",
+		UpdatedAt:         time.Date(2026, 8, 28, 10, 0, 0, 0, time.UTC),
+		AutoReviewEnabled: true,
+		AutoInjectReview:  true,
+	}
+	oldURL := "https://github.com/AgentWrapper/agent-orchestrator/pull/3193"
+	newURL := "https://github.com/Untrivial-ai/agent-orchestrator/pull/3193"
+	st.prFacts[rec.ID] = []domain.PRFacts{
+		{
+			URL:                      oldURL,
+			Number:                   3193,
+			Review:                   domain.ReviewRequired,
+			SourceBranch:             "ao/mer-1/fix-sigpipe",
+			TargetBranch:             "main",
+			HeadSHA:                  "same-head",
+			UpdatedAt:                rec.UpdatedAt,
+			ExternalChangesRequested: false,
+		},
+		{
+			URL:          newURL,
+			Number:       3193,
+			Review:       domain.ReviewRequired,
+			SourceBranch: "ao/mer-1/fix-sigpipe",
+			TargetBranch: "main",
+			HeadSHA:      "same-head",
+			UpdatedAt:    rec.UpdatedAt.Add(time.Minute),
+		},
+	}
+	st.reviewRuns[rec.ID] = []domain.CurrentHeadReviewRun{{
+		SessionID: rec.ID,
+		Harness:   "claude-code",
+		PRURL:     oldURL,
+		Status:    domain.ReviewRunRunning,
+		ID:        "run-old",
+		CreatedAt: rec.UpdatedAt,
+	}}
+
+	sess, err := (&Service{store: st, clock: func() time.Time { return rec.UpdatedAt.Add(2 * time.Minute) }}).toSessionWithFacts(rec, st.prFacts[rec.ID], st.reviewRuns[rec.ID])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sess.KanbanColumn != "validating" {
+		t.Fatalf("column = %q, want validating", sess.KanbanColumn)
+	}
+	if sess.DisplayStatus != "Reviewing" {
+		t.Fatalf("displayStatus = %q, want Reviewing", sess.DisplayStatus)
+	}
+	if len(sess.PRs) != 1 || sess.PRs[0].URL != newURL {
+		t.Fatalf("deduped PRs = %+v, want newest alias only", sess.PRs)
+	}
+}
+
+func TestToSessionWithFactsCanonicalAliasRunSupersedesOlderAliasRun(t *testing.T) {
+	st := newFakeStore()
+	rec := domain.SessionRecord{
+		ID:                "mer-2",
+		ProjectID:         "mer",
+		UpdatedAt:         time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC),
+		AutoReviewEnabled: true,
+		AutoInjectReview:  true,
+	}
+	oldURL := "https://github.com/AgentWrapper/agent-orchestrator/pull/4000"
+	newURL := "https://github.com/Untrivial-ai/agent-orchestrator/pull/4000"
+	st.prFacts[rec.ID] = []domain.PRFacts{
+		{
+			URL:          oldURL,
+			Number:       4000,
+			Review:       domain.ReviewRequired,
+			SourceBranch: "ao/mer-2/fix-review",
+			TargetBranch: "main",
+			HeadSHA:      "same-head",
+			UpdatedAt:    rec.UpdatedAt,
+		},
+		{
+			URL:          newURL,
+			Number:       4000,
+			Review:       domain.ReviewRequired,
+			SourceBranch: "ao/mer-2/fix-review",
+			TargetBranch: "main",
+			HeadSHA:      "same-head",
+			UpdatedAt:    rec.UpdatedAt.Add(time.Minute),
+		},
+	}
+	st.reviewRuns[rec.ID] = []domain.CurrentHeadReviewRun{
+		{
+			SessionID: rec.ID, Harness: "claude-code", PRURL: oldURL,
+			Status: domain.ReviewRunRunning, ID: "run-old", CreatedAt: rec.UpdatedAt,
+		},
+		{
+			SessionID: rec.ID, Harness: "claude-code", PRURL: newURL,
+			Status: domain.ReviewRunComplete, Verdict: domain.VerdictApproved,
+			ID: "run-new", CreatedAt: rec.UpdatedAt.Add(time.Minute),
+		},
+	}
+
+	sess, err := (&Service{store: st, clock: func() time.Time { return rec.UpdatedAt.Add(2 * time.Minute) }}).toSessionWithFacts(rec, st.prFacts[rec.ID], st.reviewRuns[rec.ID])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sess.KanbanColumn != "needs_review" {
+		t.Fatalf("column = %q, want needs_review", sess.KanbanColumn)
+	}
+	if sess.DisplayStatus != "Needs human review" {
+		t.Fatalf("displayStatus = %q, want Needs human review", sess.DisplayStatus)
 	}
 }
 
@@ -4161,4 +4727,57 @@ func sameStrings(got, want []string) bool {
 		}
 	}
 	return true
+}
+
+// TestSpawnTelemetryCarriesRequestID pins the correlation the daemon needs:
+// spawn telemetry detaches from the request context on purpose, so the request
+// id has to be read at the emit site or every session_service row lands with an
+// empty request_id and cannot be joined to the HTTP request that caused it.
+func TestSpawnTelemetryCarriesRequestID(t *testing.T) {
+	requestCtx := context.WithValue(context.Background(), middleware.RequestIDKey, "req-1")
+	cases := []struct {
+		name     string
+		ctx      context.Context
+		spawnErr error
+		want     string
+	}{
+		{name: "request scoped", ctx: requestCtx, want: "req-1"},
+		{
+			name: "spawn failure",
+			ctx:  requestCtx,
+			spawnErr: fmt.Errorf(
+				"spawn mer-1: %w: tmux runtime: create session mer-1: boom",
+				sessionmanager.ErrRuntimeCreate,
+			),
+			want: "req-1",
+		},
+		{name: "background context", ctx: context.Background(), want: ""},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			st := newFakeStore()
+			st.projects["mer"] = domain.ProjectRecord{ID: "mer", RegisteredAt: time.Unix(100, 0).UTC()}
+			sink := &fakeTelemetrySink{}
+			svc := NewWithDeps(Deps{
+				Manager:   &fakeCommander{spawnErr: tc.spawnErr},
+				Store:     st,
+				Telemetry: sink,
+				Clock:     func() time.Time { return time.Unix(102, 0).UTC() },
+			})
+
+			_, _, _, err := svc.Spawn(tc.ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
+			if (err != nil) != (tc.spawnErr != nil) {
+				t.Fatalf("Spawn err = %v, want error: %t", err, tc.spawnErr != nil)
+			}
+			if len(sink.events) == 0 {
+				t.Fatal("no telemetry events emitted")
+			}
+			for _, ev := range sink.events {
+				if ev.RequestID != tc.want {
+					t.Fatalf("%s RequestID = %q, want %q", ev.Name, ev.RequestID, tc.want)
+				}
+			}
+		})
+	}
 }

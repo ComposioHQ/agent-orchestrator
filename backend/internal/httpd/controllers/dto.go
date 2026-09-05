@@ -11,10 +11,13 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/legacyimport"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	agentsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/agent"
+	"github.com/aoagents/agent-orchestrator/backend/internal/service/agentauth"
 	projectsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/project"
 	sessionsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/session"
 	"github.com/aoagents/agent-orchestrator/backend/internal/service/systemcheck"
 	"github.com/aoagents/agent-orchestrator/backend/internal/service/systeminstall"
+
+	"github.com/aoagents/agent-orchestrator/backend/internal/mobilebridge"
 )
 
 // HTTP response envelopes for the projects surface — the SINGLE definition of
@@ -35,6 +38,30 @@ type ProjectIDParam struct {
 // AgentIDParam is the {agent} path parameter for one-agent catalog probes.
 type AgentIDParam struct {
 	Agent string `path:"agent" description:"Agent adapter identifier."`
+}
+
+// ListAgentAuthPlansResponse is the display-safe authentication catalog.
+type ListAgentAuthPlansResponse struct {
+	Plans []agentauth.Plan `json:"plans"`
+}
+
+// StartAgentAuthResponse returns the native terminal opened for authentication.
+type StartAgentAuthResponse struct {
+	AgentID       string                `json:"agentId"`
+	Action        agentauth.Action      `json:"action"`
+	Guidance      string                `json:"guidance,omitempty"`
+	TerminalInput string                `json:"terminalInput,omitempty"`
+	Terminal      ShellTerminalResponse `json:"terminal"`
+}
+
+// CodexAccountIDParam documents a Codex account route identifier.
+type CodexAccountIDParam struct {
+	AccountID string `path:"accountId" description:"AO Codex account identifier."`
+}
+
+// CodexAccountLoginIDParam documents a Codex login operation route identifier.
+type CodexAccountLoginIDParam struct {
+	OperationID string `path:"operationId" description:"In-memory Codex account login operation identifier."`
 }
 
 // ListProjectsResponse is the body of GET /api/v1/projects.
@@ -138,6 +165,12 @@ type CleanupSessionsQuery struct {
 // WorkspaceFileQuery is the query string accepted by GET /api/v1/sessions/{sessionId}/workspace/file.
 type WorkspaceFileQuery struct {
 	Path string `query:"path" description:"Session-worktree-relative file path."`
+	// Section scopes the diff to one git-state section (see WorkspaceFileSections):
+	// staged compares the index against HEAD, unstaged compares the worktree
+	// against the index. A file can carry independent changes in both. Omit (or
+	// pass committed/untracked) to diff the worktree against the compare base,
+	// as before this field existed.
+	Section string `query:"section,omitempty" enum:"committed,staged,unstaged,untracked" description:"Git-state section the file was opened from (see WorkspaceFileSections). staged diffs the index against HEAD; unstaged diffs the worktree against the index; omitted/committed/untracked diff the worktree against the compare base."`
 }
 
 // WorkspaceFileBlobQuery is the query string accepted by GET /api/v1/sessions/{sessionId}/workspace/file/blob.
@@ -150,6 +183,36 @@ type WorkspaceFileBlobQuery struct {
 	V    string `query:"v,omitempty" description:"Cache-busting token. Ignored by the server; the response is never cached."`
 }
 
+// WorkspaceTreeQuery is the query string accepted by GET /api/v1/sessions/{sessionId}/workspace/tree.
+type WorkspaceTreeQuery struct {
+	Path string `query:"path,omitempty" description:"Directory path relative to the session workspace root. Empty or omitted lists the root."`
+}
+
+// ListWorkspaceTreeResponse is the body of GET /api/v1/sessions/{sessionId}/workspace/tree.
+// Unlike ListWorkspaceFilesResponse (every changed file, whole worktree), this
+// is one directory level of the full worktree — tracked and
+// untracked-but-not-ignored — for lazily expanding a file explorer.
+type ListWorkspaceTreeResponse struct {
+	SessionID domain.SessionID     `json:"sessionId"`
+	Path      string               `json:"path"`
+	Entries   []WorkspaceTreeEntry `json:"entries"`
+	Truncated bool                 `json:"truncated"`
+}
+
+// WorkspaceTreeEntry is one immediate child of a listed directory.
+type WorkspaceTreeEntry struct {
+	Name string                            `json:"name"`
+	Path string                            `json:"path"`
+	Type sessionsvc.WorkspaceTreeEntryType `json:"type" enum:"file,dir"`
+	// Status is set for files only; omitted for directories.
+	Status sessionsvc.WorkspaceFileStatus `json:"status,omitempty" enum:"unmodified,modified,added,deleted,renamed"`
+	// HasChanges is set for directories only: true when a descendant file is
+	// non-unmodified, so a collapsed folder can still show it contains changes.
+	HasChanges bool  `json:"hasChanges,omitempty"`
+	Size       int64 `json:"size,omitempty"`
+	Binary     bool  `json:"binary,omitempty"`
+}
+
 // SessionView is the session wire shape: the domain read model plus the
 // display-safe branch name and the session's attributed pull requests in the
 // curated SessionPRFacts shape. One session can own many PRs (e.g. a stack), so
@@ -158,6 +221,10 @@ type WorkspaceFileBlobQuery struct {
 type SessionView struct {
 	domain.Session
 	Branch string `json:"branch,omitempty"`
+	// TerminalGeneration is an opaque renderer fence. A restarted controller
+	// may deliberately reuse its terminal handle; clients must still discard the
+	// old attachment when this value changes.
+	TerminalGeneration string `json:"terminalGeneration,omitempty"`
 	// PreviewURL is the browser preview target the desktop app opens for this
 	// session, set via POST /sessions/{sessionId}/preview. Empty (omitted) when
 	// no preview has been requested. Pulled from the json:"-" domain Metadata.
@@ -169,7 +236,10 @@ type SessionView struct {
 	PreviewRevision int64 `json:"previewRevision,omitempty"`
 	// Model is the agent model this session resolved to at spawn time. Empty
 	// means the agent's default model. Pulled from the json:"-" domain Metadata.
-	Model             string           `json:"model,omitempty"`
+	Model string `json:"model,omitempty"`
+	// LastUserMessageAt is the latest real user-authored task direction time.
+	// Lifecycle and internal automation updates do not advance it.
+	LastUserMessageAt *time.Time       `json:"lastUserMessageAt,omitempty"`
 	PRs               []SessionPRFacts `json:"prs"`
 	ActiveAgentSwitch *AgentSwitchView `json:"activeAgentSwitch,omitempty"`
 }
@@ -310,6 +380,44 @@ type ListWorkspaceFilesResponse struct {
 	CompareMode    sessionsvc.WorkspaceCompareMode `json:"compareMode,omitempty" enum:"base,head_fallback"`
 	Files          []WorkspaceFileSummary          `json:"files"`
 	Truncated      bool                            `json:"truncated"`
+	// Sections groups the same working tree into git-state sections. Only
+	// populated for single-repo sessions; empty for workspace-project
+	// (multi-repo) and scratch sessions.
+	Sections WorkspaceFileSections `json:"sections"`
+	// Commits are the commits between the compare base and HEAD, oldest first.
+	Commits []WorkspaceCommitSummary `json:"commits"`
+	Summary WorkspaceSummary         `json:"summary"`
+	// Ahead and Behind are omitted when no push/pull data is available (no
+	// upstream, detached HEAD).
+	Ahead  *int `json:"ahead,omitempty"`
+	Behind *int `json:"behind,omitempty"`
+}
+
+// WorkspaceFileSections groups a session workspace's changed files by git
+// state: staged (index vs HEAD), unstaged (worktree vs index), untracked, and
+// committed (HEAD vs the compare base). A partially staged file can appear in
+// both staged and unstaged.
+type WorkspaceFileSections struct {
+	Staged    []WorkspaceFileSummary `json:"staged"`
+	Unstaged  []WorkspaceFileSummary `json:"unstaged"`
+	Untracked []WorkspaceFileSummary `json:"untracked"`
+	Committed []WorkspaceFileSummary `json:"committed"`
+}
+
+// WorkspaceCommitSummary is one commit between the compare base and HEAD.
+type WorkspaceCommitSummary struct {
+	SHA       string    `json:"sha"`
+	Subject   string    `json:"subject"`
+	Author    string    `json:"author"`
+	Timestamp time.Time `json:"timestamp"`
+}
+
+// WorkspaceSummary aggregates a session workspace's base..worktree diff into
+// totals for the Files panel header.
+type WorkspaceSummary struct {
+	Files     int `json:"files"`
+	Additions int `json:"additions"`
+	Deletions int `json:"deletions"`
 }
 
 // WorkspaceFileSummary is one file row in the session workspace browser.
@@ -367,7 +475,8 @@ type RenameSessionRequest struct {
 // SetSessionReviewerRequest sets the durable reviewer preference for a session.
 // Empty clears the preference and falls back to project configuration.
 type SetSessionReviewerRequest struct {
-	Harness domain.ReviewerHarness `json:"harness,omitempty" enum:"claude-code,codex,copilot,cursor,kilocode,opencode,kiro,pi,qwen,agy,continue,goose,vibe,devin,droid,kimi,kimchi,muse,amp,aider,grok,crush,auggie,cline,autohand"`
+	Harness     domain.ReviewerHarness `json:"harness,omitempty" enum:"claude-code,codex,copilot,cursor,kilocode,opencode,kiro,pi,qwen,agy,continue,goose,vibe,devin,droid,kimi,kimchi,muse,amp,aider,grok,crush,auggie,cline,autohand"`
+	AgentConfig domain.AgentConfig     `json:"agentConfig,omitempty"`
 }
 
 // SetSessionAutoReviewRequest configures daemon-side review automation.
@@ -490,13 +599,13 @@ type SetSessionAutoInjectReviewResponse struct {
 	Session          SessionView      `json:"session"`
 }
 
-// SetSessionAutoInjectCIRequest updates the default automatic CI delivery
-// policy captured by PRs created after the change.
+// SetSessionAutoInjectCIRequest updates automatic CI delivery for a session
+// and every PR currently owned by it.
 type SetSessionAutoInjectCIRequest struct {
 	AutoInjectCI bool `json:"autoInjectCI"`
 }
 
-// SetSessionAutoInjectCIResponse confirms the persisted session default.
+// SetSessionAutoInjectCIResponse confirms the persisted session policy.
 type SetSessionAutoInjectCIResponse struct {
 	OK           bool             `json:"ok"`
 	SessionID    domain.SessionID `json:"sessionId"`
@@ -510,6 +619,13 @@ type RestoreSessionResponse struct {
 	SessionID   domain.SessionID           `json:"sessionId"`
 	RestoreMode sessionsvc.RestoreModeView `json:"restoreMode" enum:"native,saved_prompt,fresh"`
 	Session     SessionView                `json:"session"`
+}
+
+// ExitAgentResponse is the body of POST /api/v1/sessions/{sessionId}/exit-agent.
+type ExitAgentResponse struct {
+	OK        bool             `json:"ok"`
+	SessionID domain.SessionID `json:"sessionId"`
+	Session   SessionView      `json:"session"`
 }
 
 // ResumeAgentResponse is the body of POST /api/v1/sessions/{sessionId}/resume-agent.
@@ -891,6 +1007,7 @@ type SetActivityRequest struct {
 // response content.
 type UsageHookMetadata struct {
 	Harness                domain.AgentHarness `json:"harness" enum:"claude-code,codex"`
+	ProviderID             string              `json:"providerId,omitempty" description:"Canonical provider routing hint derived by the trusted local Claude hook."`
 	TranscriptPath         string              `json:"transcriptPath,omitempty"`
 	ModelID                string              `json:"modelId,omitempty"`
 	SubagentID             string              `json:"subagentId,omitempty"`
@@ -962,6 +1079,228 @@ type RefreshAgentsResponse = agentsvc.Inventory
 // ProbeAgentResponse is the body of POST /api/v1/agents/{agent}/probe.
 type ProbeAgentResponse = agentsvc.ProbeResult
 
+// AgentReadinessResponse is the normalized cached or ensured harness view.
+type AgentReadinessResponse = agentsvc.Readiness
+
+// EnsureAgentReadinessRequest selects harnesses and the daemon freshness policy.
+// An omitted or empty agentIds list selects all supported harnesses.
+type EnsureAgentReadinessRequest struct {
+	AgentIDs []string                     `json:"agentIds,omitempty"`
+	Purpose  domain.AgentReadinessPurpose `json:"purpose" enum:"display,launch"`
+}
+
+// CodexAccountsResponse is the controller-owned, redacted cached account view.
+type CodexAccountsResponse struct {
+	ActiveAccountID        string                               `json:"activeAccountId,omitempty"`
+	AccountRevision        int64                                `json:"accountRevision"`
+	Accounts               []CodexAccountResponse               `json:"accounts"`
+	Capabilities           CodexAccountCapabilitiesResponse     `json:"capabilities"`
+	UnmanagedGlobalAccount *CodexUnmanagedGlobalAccountResponse `json:"unmanagedGlobalAccount,omitempty"`
+	ActiveLogin            *CodexActiveLoginResponse            `json:"activeLogin,omitempty"`
+	CurrentSwitch          *CodexAccountSwitchResponse          `json:"currentSwitch,omitempty"`
+}
+
+// CodexAccountResponse contains UI account facts without provider or storage identity.
+type CodexAccountResponse struct {
+	ID             string                            `json:"id"`
+	Label          string                            `json:"label"`
+	Status         string                            `json:"status" enum:"valid,signed_out,broken"`
+	ReasonCode     string                            `json:"reasonCode"`
+	Reason         string                            `json:"reason"`
+	Active         bool                              `json:"active"`
+	Authentication CodexAuthenticationResponse       `json:"authentication"`
+	AuthMethod     string                            `json:"authMethod" enum:"chatgpt,api_key,other,unknown"`
+	AccountEmail   *string                           `json:"accountEmail,omitempty"`
+	Capacity       CodexAccountCapacityResponse      `json:"capacity"`
+	UsageSummary   *CodexAccountUsageSummaryResponse `json:"usageSummary,omitempty"`
+	CreatedAt      time.Time                         `json:"createdAt"`
+}
+
+// CodexAuthenticationResponse is the normalized authentication observation.
+type CodexAuthenticationResponse struct {
+	State       string     `json:"state" enum:"authorized,unauthorized,unknown,not_applicable"`
+	Freshness   string     `json:"freshness" enum:"fresh,stale,checking"`
+	CheckedAt   *time.Time `json:"checkedAt"`
+	AttemptedAt *time.Time `json:"attemptedAt"`
+	ReasonCode  string     `json:"reasonCode"`
+	Reason      string     `json:"reason"`
+}
+
+// CodexAccountCapacityResponse is the normalized capacity display projection.
+type CodexAccountCapacityResponse struct {
+	State             string                            `json:"state" enum:"available,near_limit,exhausted,unknown,unsupported"`
+	Freshness         string                            `json:"freshness" enum:"fresh,stale,checking"`
+	Plan              *string                           `json:"plan,omitempty"`
+	UsedPercent       *float64                          `json:"usedPercent,omitempty" minimum:"0" maximum:"100"`
+	RemainingPercent  *float64                          `json:"remainingPercent,omitempty" minimum:"0" maximum:"100"`
+	ResetsAt          *time.Time                        `json:"resetsAt,omitempty"`
+	ObservedAt        *time.Time                        `json:"observedAt,omitempty"`
+	CheckedAt         *time.Time                        `json:"checkedAt,omitempty"`
+	AttemptedAt       *time.Time                        `json:"attemptedAt,omitempty"`
+	ReasonCode        string                            `json:"reasonCode"`
+	Reason            string                            `json:"reason"`
+	Overall           *CodexCapacityBucketResponse      `json:"overall,omitempty"`
+	AdditionalBuckets []CodexCapacityBucketResponse     `json:"additionalBuckets"`
+	ResetCredits      *CodexResetCreditsSummaryResponse `json:"resetCredits,omitempty"`
+}
+
+// CodexCapacityBucketResponse omits the provider limit identifier.
+type CodexCapacityBucketResponse struct {
+	DisplayName *string                      `json:"displayName,omitempty"`
+	Primary     *CodexCapacityWindowResponse `json:"primary,omitempty"`
+	Secondary   *CodexCapacityWindowResponse `json:"secondary,omitempty"`
+	Reached     string                       `json:"reached" enum:"not_reached,reached,unknown"`
+}
+
+// CodexCapacityWindowResponse contains a normalized provider meter window.
+type CodexCapacityWindowResponse struct {
+	UsedPercent           float64    `json:"usedPercent" minimum:"0" maximum:"100"`
+	WindowDurationMinutes *int64     `json:"windowDurationMinutes,omitempty"`
+	ResetsAt              *time.Time `json:"resetsAt,omitempty"`
+}
+
+// CodexResetCreditsSummaryResponse contains no provider reset-credit identity.
+type CodexResetCreditsSummaryResponse struct {
+	AvailableCount   int64      `json:"availableCount" minimum:"0"`
+	NearestExpiresAt *time.Time `json:"nearestExpiresAt,omitempty"`
+}
+
+// CodexAccountUsageSummaryResponse contains normalized aggregate usage metrics.
+type CodexAccountUsageSummaryResponse struct {
+	LatestDayTokens           *int64    `json:"latestDayTokens,omitempty"`
+	LatestDayStartDate        *string   `json:"latestDayStartDate,omitempty"`
+	LifetimeTokens            *int64    `json:"lifetimeTokens,omitempty"`
+	PeakDailyTokens           *int64    `json:"peakDailyTokens,omitempty"`
+	LongestRunningTurnSeconds *int64    `json:"longestRunningTurnSeconds,omitempty"`
+	CurrentStreakDays         *int64    `json:"currentStreakDays,omitempty"`
+	LongestStreakDays         *int64    `json:"longestStreakDays,omitempty"`
+	ObservedAt                time.Time `json:"observedAt"`
+}
+
+// CodexCapabilityObservationResponse is one UI-safe capability result.
+type CodexCapabilityObservationResponse struct {
+	State      string `json:"state" enum:"supported,unsupported,unknown"`
+	ReasonCode string `json:"reasonCode"`
+	Reason     string `json:"reason"`
+}
+
+// CodexAccountCapabilitiesResponse is the renderer-consumed capability view.
+type CodexAccountCapabilitiesResponse struct {
+	NativeLogin        CodexCapabilityObservationResponse `json:"nativeLogin"`
+	ResetCreditConsume CodexCapabilityObservationResponse `json:"resetCreditConsume"`
+	GlobalSwitch       CodexCapabilityObservationResponse `json:"globalSwitch"`
+}
+
+// CodexUnmanagedGlobalAccountResponse explains a device identity AO cannot manage.
+type CodexUnmanagedGlobalAccountResponse struct {
+	Label        string  `json:"label"`
+	AuthMethod   string  `json:"authMethod" enum:"chatgpt,api_key,other,unknown"`
+	AccountEmail *string `json:"accountEmail,omitempty"`
+	ReasonCode   string  `json:"reasonCode"`
+	Reason       string  `json:"reason"`
+}
+
+// EnsureCodexAccountsRequest selects accounts for display reads.
+type EnsureCodexAccountsRequest struct {
+	AccountIDs   []string `json:"accountIds,omitempty"`
+	IncludeUsage bool     `json:"includeUsage,omitempty"`
+}
+
+// ConsumeCodexAccountResetCreditRequest identifies one idempotent provider
+// reset attempt. The provider selects the available reset credit.
+type ConsumeCodexAccountResetCreditRequest struct {
+	IdempotencyKey string `json:"idempotencyKey" minLength:"1" maxLength:"200"`
+}
+
+// OpenCodexAccountLoginTerminalResponse is the standalone terminal opened for
+// one pending account's native Codex login flow.
+type OpenCodexAccountLoginTerminalResponse struct {
+	Operation     CodexAccountLoginResponse         `json:"operation"`
+	ShellTerminal CodexAccountLoginTerminalResponse `json:"shellTerminal"`
+}
+
+// CodexAccountLoginResponse is the redacted login-operation projection.
+type CodexAccountLoginResponse struct {
+	OperationID string                `json:"operationId"`
+	AccountID   string                `json:"accountId,omitempty"`
+	Status      string                `json:"status" enum:"pending,verifying,unauthorized,unverified,completed,cancelled,failed,expired"`
+	ReasonCode  string                `json:"reasonCode"`
+	Reason      string                `json:"reason"`
+	Account     *CodexAccountResponse `json:"account,omitempty"`
+	ExpiresAt   time.Time             `json:"expiresAt"`
+}
+
+// CodexActiveLoginResponse lets a renderer remount reattach to a live login.
+type CodexActiveLoginResponse struct {
+	OperationID   string                            `json:"operationId"`
+	AccountID     string                            `json:"accountId,omitempty"`
+	Status        string                            `json:"status" enum:"pending,verifying,unauthorized,unverified,completed,cancelled,failed,expired"`
+	ReasonCode    string                            `json:"reasonCode"`
+	Reason        string                            `json:"reason"`
+	ExpiresAt     time.Time                         `json:"expiresAt"`
+	ShellTerminal CodexAccountLoginTerminalResponse `json:"shellTerminal"`
+}
+
+// CodexAccountLoginTerminalResponse contains only the mux identity and display
+// fields needed by the inline Settings terminal. Its private credential-home
+// working directory is deliberately excluded from the public API.
+type CodexAccountLoginTerminalResponse struct {
+	HandleID  string    `json:"handleId"`
+	Title     string    `json:"title"`
+	CreatedAt time.Time `json:"createdAt"`
+}
+
+// StartCodexAccountSwitchRequest requests an idempotent global account change.
+type StartCodexAccountSwitchRequest struct {
+	TargetAccountID         string `json:"targetAccountId" minLength:"1"`
+	ExpectedAccountRevision int64  `json:"expectedAccountRevision" minimum:"0"`
+	IdempotencyKey          string `json:"idempotencyKey" minLength:"1"`
+}
+
+// CodexAccountSwitchIDParam describes the durable switch path parameter.
+type CodexAccountSwitchIDParam struct {
+	SwitchID string `path:"switchId" description:"Durable Codex account switch identifier."`
+}
+
+// CodexAccountSwitchPhase is the retained public switch lifecycle.
+type CodexAccountSwitchPhase string
+
+// CodexAccountSwitchResponse contains only safe AO identifiers and progress.
+type CodexAccountSwitchResponse struct {
+	ID                     string                              `json:"id"`
+	SourceAccountID        string                              `json:"sourceAccountId"`
+	TargetAccountID        string                              `json:"targetAccountId"`
+	Phase                  CodexAccountSwitchPhase             `json:"phase" enum:"requested,stopping_sessions,sessions_stopped,checkpointing_source,activating_target,verifying_target,restarting_sessions,rollback_required,recovery_required,completed,failed"`
+	FailureCode            string                              `json:"failureCode,omitempty"`
+	Sessions               []CodexAccountSwitchSessionResponse `json:"sessions"`
+	CanRecover             bool                                `json:"canRecover"`
+	CredentialsCommittedAt *time.Time                          `json:"credentialsCommittedAt,omitempty"`
+	CreatedAt              time.Time                           `json:"createdAt"`
+	UpdatedAt              time.Time                           `json:"updatedAt"`
+	CompletedAt            *time.Time                          `json:"completedAt,omitempty"`
+}
+
+// CodexAccountSwitchSessionResponse is safe AO session progress for a switch.
+type CodexAccountSwitchSessionResponse struct {
+	SessionID     string     `json:"sessionId"`
+	InterfaceMode string     `json:"interfaceMode" enum:"tui,chat"`
+	WasRunning    bool       `json:"wasRunning"`
+	StopState     string     `json:"stopState"`
+	RestartState  string     `json:"restartState"`
+	ErrorCode     string     `json:"errorCode,omitempty"`
+	StoppedAt     *time.Time `json:"stoppedAt,omitempty"`
+	RestartedAt   *time.Time `json:"restartedAt,omitempty"`
+}
+
+// AgentReadinessSnapshot is one normalized harness readiness view.
+type AgentReadinessSnapshot = domain.AgentReadinessSnapshot
+
+// AgentInstallationObservation is the normalized binary-presence observation.
+type AgentInstallationObservation = domain.AgentInstallationObservation
+
+// AgentAuthenticationObservation is the normalized authentication observation.
+type AgentAuthenticationObservation = domain.AgentAuthenticationObservation
+
 // AgentModelsQuery scopes a model catalog to a project where providers may be
 // configured per workspace.
 type AgentModelsQuery struct {
@@ -990,12 +1329,26 @@ type ListUsageSessionsQuery struct {
 	ProjectID domain.ProjectID `query:"projectId,omitempty" description:"Optional project id filter for dashboard cards."`
 }
 
-// CompactSessionUsageResponse is one session card's token-only usage summary.
+// EstimatedCostResponse is a nano-USD estimate reused at every usage summary
+// scope. Coverage stays an API fact for aggregation, catalog backfills, and
+// contextual disclosure; it is never a pricing label or a mathematical
+// qualifier on the presented value.
+type EstimatedCostResponse struct {
+	TotalNanos          int64  `json:"totalNanos" minimum:"0" format:"int64"`
+	InputNanos          *int64 `json:"inputNanos" minimum:"0" format:"int64" description:"Every non-cache-read input charge, cache writes included."`
+	CachedInputNanos    *int64 `json:"cachedInputNanos" minimum:"0" format:"int64"`
+	OutputNanos         *int64 `json:"outputNanos" minimum:"0" format:"int64"`
+	Coverage            string `json:"coverage" enum:"complete,partial"`
+	ProviderAttribution string `json:"providerAttribution" enum:"observed,inferred,mixed" description:"Whether contributing billing providers were detected, inferred from model ownership, or both."`
+}
+
+// CompactSessionUsageResponse is one session card's usage summary.
 type CompactSessionUsageResponse struct {
-	SessionID       domain.SessionID `json:"sessionId"`
-	ProcessedTokens *int64           `json:"processedTokens" minimum:"0" description:"Canonical input plus output. Null when either component is unknown."`
-	TotalTokens     int64            `json:"totalTokens" minimum:"0" description:"Deprecated compatibility alias for processedTokens."`
-	Incomplete      bool             `json:"incomplete"`
+	SessionID       domain.SessionID       `json:"sessionId"`
+	ProcessedTokens *int64                 `json:"processedTokens" minimum:"0" description:"Canonical input plus output. Null when either component is unknown."`
+	TotalTokens     int64                  `json:"totalTokens" minimum:"0" description:"Deprecated compatibility alias for processedTokens."`
+	Incomplete      bool                   `json:"incomplete"`
+	EstimatedCost   *EstimatedCostResponse `json:"estimatedCost"`
 }
 
 // ListCompactSessionUsageResponse is the batch dashboard usage response.
@@ -1003,50 +1356,25 @@ type ListCompactSessionUsageResponse struct {
 	Sessions []CompactSessionUsageResponse `json:"sessions"`
 }
 
-// UsageMetricProvenanceResponse records how each canonical metric was obtained.
-type UsageMetricProvenanceResponse struct {
-	InputTokens         domain.UsageMetricProvenance `json:"inputTokens" enum:"reported,derived,unsupported,unknown"`
-	CachedInputTokens   domain.UsageMetricProvenance `json:"cachedInputTokens" enum:"reported,derived,unsupported,unknown"`
-	UncachedInputTokens domain.UsageMetricProvenance `json:"uncachedInputTokens" enum:"reported,derived,unsupported,unknown"`
-	OutputTokens        domain.UsageMetricProvenance `json:"outputTokens" enum:"reported,derived,unsupported,unknown"`
-}
-
-// OpenAIUsageDetailsResponse exposes namespaced counters outside the shared
-// four-metric vocabulary.
-type OpenAIUsageDetailsResponse struct {
-	OpenAIReasoningOutputTokens *int64 `json:"openaiReasoningOutputTokens" minimum:"0"`
-	OpenAICacheWriteInputTokens *int64 `json:"openaiCacheWriteInputTokens" minimum:"0"`
-}
-
-// AnthropicUsageDetailsResponse exposes namespaced prompt-cache components.
-type AnthropicUsageDetailsResponse struct {
-	AnthropicDirectUncachedInputTokens  *int64 `json:"anthropicDirectUncachedInputTokens" minimum:"0"`
-	AnthropicCacheCreationInputTokens   *int64 `json:"anthropicCacheCreationInputTokens" minimum:"0"`
-	AnthropicCacheCreation5mInputTokens *int64 `json:"anthropicCacheCreation5mInputTokens" minimum:"0"`
-	AnthropicCacheCreation1hInputTokens *int64 `json:"anthropicCacheCreation1hInputTokens" minimum:"0"`
-}
-
-// UsageProviderDetailsResponse groups optional provider-native counters.
-type UsageProviderDetailsResponse struct {
-	OpenAI    *OpenAIUsageDetailsResponse    `json:"openai,omitempty"`
-	Anthropic *AnthropicUsageDetailsResponse `json:"anthropic,omitempty"`
-}
-
 // UsageTotalsResponse is the canonical telemetry aggregate for one scope.
+//
+// Provider-specific counters are no longer projected here: they live verbatim
+// in each event's bounded provider usage object, where a field the provider
+// adds later survives without a schema change on this boundary.
 type UsageTotalsResponse struct {
-	InputTokens         *int64                        `json:"inputTokens" minimum:"0" description:"Total input, including cached and uncached input."`
-	CachedInputTokens   *int64                        `json:"cachedInputTokens" minimum:"0" description:"Input read from an existing provider cache. Cache hit percentage uses cachedInputTokens divided by inclusive inputTokens."`
-	UncachedInputTokens *int64                        `json:"uncachedInputTokens" minimum:"0" description:"Input not read from an existing provider cache."`
-	OutputTokens        *int64                        `json:"outputTokens" minimum:"0" description:"Total output, including provider-specific subsets such as reasoning output."`
-	ProcessedTokens     *int64                        `json:"processedTokens" minimum:"0" description:"Canonical input plus output. Null when either component is unknown."`
-	CacheReadTokens     *int64                        `json:"cacheReadTokens" minimum:"0" description:"Deprecated compatibility alias for cachedInputTokens."`
-	CacheWriteTokens    *int64                        `json:"cacheWriteTokens" minimum:"0" description:"Deprecated compatibility aggregate of provider cache-write input counters."`
-	ReasoningTokens     *int64                        `json:"reasoningTokens" minimum:"0" description:"Deprecated compatibility alias for the OpenAI reasoning-output subset."`
-	Provenance          UsageMetricProvenanceResponse `json:"provenance"`
-	ProviderDetails     UsageProviderDetailsResponse  `json:"providerDetails"`
+	InputTokens         *int64                 `json:"inputTokens" minimum:"0" description:"Total input, including cached and uncached input."`
+	CachedInputTokens   *int64                 `json:"cachedInputTokens" minimum:"0" description:"Input read from an existing provider cache. Cache hit percentage uses cachedInputTokens divided by inclusive inputTokens."`
+	UncachedInputTokens *int64                 `json:"uncachedInputTokens" minimum:"0" description:"Input not read from an existing provider cache. Includes cache writes."`
+	OutputTokens        *int64                 `json:"outputTokens" minimum:"0" description:"Total output, including provider-specific subsets such as reasoning output."`
+	ProcessedTokens     *int64                 `json:"processedTokens" minimum:"0" description:"Canonical input plus output. Null when either component is unknown."`
+	CacheReadTokens     *int64                 `json:"cacheReadTokens" minimum:"0" description:"Deprecated compatibility alias for cachedInputTokens."`
+	EstimatedCost       *EstimatedCostResponse `json:"estimatedCost"`
 }
 
-// UsageModelResponse is telemetry grouped by exact model id.
+// UsageModelResponse is telemetry grouped by model. The billing provider is a
+// pricing input rather than a product distinction: each event was costed
+// against its own provider's rates before reaching this aggregate, so one model
+// stays one row even when more than one provider served it.
 type UsageModelResponse struct {
 	ModelID string              `json:"modelId"`
 	Totals  UsageTotalsResponse `json:"totals"`
@@ -1072,7 +1400,7 @@ type SystemRequirementsResponse = systemcheck.Report
 
 // InstallTargetParam is the {target} path parameter for /system/install routes.
 type InstallTargetParam struct {
-	Target string `path:"target" description:"Install target identifier: tmux, gh, claude, codex, opencode, or copilot."`
+	Target string `path:"target" enum:"tmux,gh,claude,codex,opencode,copilot,cloudflared" description:"Install target identifier: tmux, gh, claude, codex, opencode, copilot, or cloudflared."`
 }
 
 // StartInstallResponse is the body of POST /api/v1/system/install/{target} (202).
@@ -1080,6 +1408,22 @@ type StartInstallResponse = systeminstall.Job
 
 // InstallStatusResponse is the body of GET /api/v1/system/install/{target}.
 type InstallStatusResponse = systeminstall.Job
+
+// AgentInstallResponse is shared by the agent harness start and status routes.
+type AgentInstallResponse = systeminstall.Job
+
+// StartAgentInstallRequest selects one method returned by the installer
+// catalog. The daemon still owns the argv behind the method id.
+type StartAgentInstallRequest struct {
+	Method    string                       `json:"method,omitempty" description:"Server-issued installation method id. Omit to use the recommended viable method."`
+	Operation systeminstall.AgentOperation `json:"operation,omitempty" enum:"install,reinstall" description:"Requested operation. Defaults to install for older clients."`
+}
+
+// AgentInstallJobsResponse hydrates Settings with the latest durable job for
+// every harness that has been installed or verified.
+type AgentInstallJobsResponse struct {
+	Jobs []systeminstall.Job `json:"jobs"`
+}
 
 // ListNotificationsQuery is the query string accepted by GET /api/v1/notifications.
 type ListNotificationsQuery struct {
@@ -1152,6 +1496,7 @@ type ShellTerminalHandleIDParam struct {
 type OpenShellTerminalRequest struct {
 	ProjectID string `json:"projectId,omitempty" description:"Project whose root the shell starts in. Omitted opens the shell in the daemon data dir."`
 	SessionID string `json:"sessionId,omitempty" description:"Agent session the shell is scoped to, so it appears only in that session's tab strip. Omitted makes it a standalone shell."`
+	Shell     string `json:"shell,omitempty" description:"Windows shell selector: auto, git-bash, pwsh, powershell, cmd, or a custom executable path. Ignored on macOS and Linux."`
 }
 
 // UpdateShellTerminalRequest is the body of PATCH /api/v1/shell-terminals/{handleId}.
@@ -1246,12 +1591,38 @@ type ResolveCommentsResponse struct {
 	Resolved int  `json:"resolved"`
 }
 
+// EndpointsResponse is the body of GET /api/v1/endpoints. The phone re-reads
+// it after every successful connect, so a rotated tunnel hostname or a changed
+// LAN address is picked up without re-pairing.
+type EndpointsResponse struct {
+	Endpoints []mobilebridge.Endpoint `json:"endpoints"`
+}
+
+// IdentityResponse is the body of the unauthenticated GET /api/v1/identity
+// probe. It is deliberately minimal: the route is reachable without the
+// connection password, so it must carry nothing but an opaque host id and the
+// mobile contract version.
+type IdentityResponse struct {
+	HostID     string `json:"hostId"`
+	APIVersion int    `json:"apiVersion"`
+}
+
 // MobileStatusResponse is the body of the Connect Mobile status/enable/disable/
 // regenerate endpoints. Password is populated only transiently, on enable and
 // regenerate responses (empty otherwise) — it is never persisted in plaintext.
 type MobileStatusResponse struct {
-	Enabled bool   `json:"enabled"`
-	Host    string `json:"host"`
+	Enabled bool `json:"enabled"`
+	// Endpoints is every way the phone can reach this daemon, in the client's
+	// preference order. The phone races them; Host/TailscaleHost below are the
+	// head of each kind, kept for the existing renderer.
+	Endpoints []mobilebridge.Endpoint `json:"endpoints"`
+	// HostID is this machine's stable identity, echoed into the pairing code.
+	// The phone checks every endpoint it races against this value.
+	HostID string `json:"hostId"`
+	// Tunnel is the managed remote-access connector's state, so the desktop can
+	// show progress during the tens of seconds before it is advertisable.
+	Tunnel mobilebridge.TunnelStatus `json:"tunnel"`
+	Host   string                    `json:"host"`
 	// TailscaleHost is this machine's 100.64.0.0/10 Tailscale address, or "" when
 	// Tailscale is not up. The renderer encodes it into the pairing QR when the
 	// user selects the Tailscale tab, and shows a hint instead when it is empty.
@@ -1374,6 +1745,29 @@ type SendConversationMessageResponse struct {
 	// Duplicate is true when this client message id was already delivered, so a
 	// retrying client can stop instead of assuming a new turn began.
 	Duplicate bool `json:"duplicate"`
+}
+
+// SteerConversationRequest is guidance for a turn that is already running.
+type SteerConversationRequest struct {
+	// Text is the correction to hand the agent mid-turn.
+	Text string `json:"text"`
+	// Attachments are native image prompt blocks delivered with the correction.
+	Attachments []ConversationImageContentRequest `json:"attachments,omitempty"`
+	// ClientMessageID makes a retry idempotent: the same handle updates the recorded
+	// guidance instead of adding a second copy of it, and the provider echoes it back
+	// on the item it replays so a client can recognize its own steer.
+	ClientMessageID string `json:"clientMessageId,omitempty"`
+}
+
+// SteerConversationResponse reports the turn the guidance joined.
+type SteerConversationResponse struct {
+	// ProviderTurnID is the turn that absorbed it. Against Codex this is the turn
+	// that was already running — steering does not open a new one — so a client
+	// matches it against the turn it is already rendering.
+	ProviderTurnID string `json:"providerTurnId"`
+	// ActivityID is the timeline row recording the guidance, so an optimistic bubble
+	// can be reconciled with the durable one rather than shown twice.
+	ActivityID string `json:"activityId,omitempty"`
 }
 
 // EditConversationMessageRequest changes the readable text of one durable human
@@ -1539,7 +1933,7 @@ type CompactConversationResponse struct {
 // ConversationTurnResponse is one request and the work that followed it.
 type ConversationTurnResponse struct {
 	ID             string `json:"id"`
-	State          string `json:"state" enum:"queued,running,completed,recovered,interrupted,failed"`
+	State          string `json:"state" enum:"queued,running,completed,recovered,interrupted,failed,cancelled"`
 	ProviderTurnID string `json:"providerTurnId,omitempty"`
 	// RetryOfTurnID is the failed source whose durable prompt created this turn.
 	RetryOfTurnID string `json:"retryOfTurnId,omitempty"`
@@ -1687,14 +2081,21 @@ type ConversationSnapshotResponse struct {
 	Mode                       string `json:"mode" enum:"chat,tui"`
 	// Controller is reported separately from history so a client can tell "no
 	// messages yet" apart from "the agent is not running".
-	Controller     string                            `json:"controller" enum:"connecting,ready,busy,recovering,stopped"`
-	LatestSequence int64                             `json:"latestSequence"`
-	OldestSequence int64                             `json:"oldestSequence,omitempty"`
-	HasMoreBefore  bool                              `json:"hasMoreBefore"`
-	Turns          []ConversationTurnResponse        `json:"turns"`
-	Messages       []ConversationMessageResponse     `json:"messages"`
-	Activities     []ConversationActivityResponse    `json:"activities"`
-	BranchPoints   []ConversationBranchPointResponse `json:"branchPoints,omitempty"`
+	Controller     string `json:"controller" enum:"connecting,ready,busy,recovering,stopped"`
+	LatestSequence int64  `json:"latestSequence"`
+	OldestSequence int64  `json:"oldestSequence,omitempty"`
+	HasMoreBefore  bool   `json:"hasMoreBefore"`
+	// NativeForkAvailableAfterSequence is the first provider-backed human prompt
+	// in the active provider scope. It keeps edit gating exact across bounded pages.
+	NativeForkAvailableAfterSequence int64                             `json:"nativeForkAvailableAfterSequence"`
+	Turns                            []ConversationTurnResponse        `json:"turns"`
+	Messages                         []ConversationMessageResponse     `json:"messages"`
+	Activities                       []ConversationActivityResponse    `json:"activities"`
+	BranchPoints                     []ConversationBranchPointResponse `json:"branchPoints,omitempty"`
+	// BranchMaterialization says whether the selected provider branch preserved
+	// native history or was rebuilt from AO's bounded text transcript. Omitted for
+	// conversations that have no durable branch metadata yet.
+	BranchMaterialization *ConversationBranchMaterializationResponse `json:"branchMaterialization,omitempty"`
 	// Settings are the provider choices for the next turn. Carried on the snapshot
 	// the client already polls so the composer can label itself without a second
 	// request, and so a choice made on another client shows up here.
@@ -1739,6 +2140,13 @@ type ConversationSnapshotResponse struct {
 	// unstarted session's abilities are not yet known — and a client must treat
 	// absent as "do not offer yet" rather than as "cannot".
 	Capabilities []string `json:"capabilities,omitempty"`
+}
+
+// ConversationBranchMaterializationResponse describes the fidelity of the
+// active branch's provider context without exposing provider-owned identifiers.
+type ConversationBranchMaterializationResponse struct {
+	Strategy        string `json:"strategy" enum:"native,approximate_context"`
+	ReplayTruncated bool   `json:"replayTruncated"`
 }
 
 // ConversationBranchPointResponse describes sibling continuations at one prompt.
@@ -1901,11 +2309,35 @@ type SettingsResponse struct {
 	// ChatHarnesses are the agents that can run in chat mode today. Empty means
 	// chat cannot be used yet, which a client should say plainly.
 	ChatHarnesses []string `json:"chatHarnesses"`
+	// Client is the deployment's client identity (AO_CLIENT); empty when unset.
+	Client string `json:"client"`
+	// LocalEnabled reports whether the local offering is available.
+	LocalEnabled bool `json:"localEnabled"`
+	// CloudOffering is the user's persisted cloud toggle (Settings, Developer
+	// Mode). Distinct from CloudEnabled, which is the effective gate.
+	CloudOffering bool `json:"cloudOffering"`
+	// CloudEnabled reports whether the cloud offering is effectively available:
+	// the user's toggle (or the env override) plus a configured control plane.
+	CloudEnabled bool `json:"cloudEnabled"`
+	// CloudControlPlaneURL is the cloud control plane base URL; empty when no
+	// control plane is configured.
+	CloudControlPlaneURL string `json:"cloudControlPlaneUrl"`
+}
+
+// AgentInstallerCatalogResponse is the body of GET /api/v1/agents/installers.
+type AgentInstallerCatalogResponse struct {
+	Agents []systeminstall.AgentPlan `json:"agents"`
 }
 
 // UpdateSessionInterfaceRequest changes the default interface for new sessions.
 type UpdateSessionInterfaceRequest struct {
 	DefaultSessionMode string `json:"defaultSessionMode" enum:"chat,tui"`
+}
+
+// UpdateCloudOfferingRequest flips the user's cloud toggle.
+type UpdateCloudOfferingRequest struct {
+	// Enabled turns the cloud offering on or off for this machine's user.
+	Enabled *bool `json:"enabled"`
 }
 
 // capabilityNames lists the abilities a provider has, sorted so a client sees a
@@ -1935,7 +2367,8 @@ func capabilityNames(caps ports.ChatCapabilities) []string {
 // it for this pass only, without editing project config, so one session's choice
 // cannot change what another session in the project runs.
 type TriggerReviewRequest struct {
-	Harness domain.ReviewerHarness `json:"harness,omitempty" enum:"claude-code,codex,copilot,cursor,kilocode,opencode,kiro,pi,qwen,agy,continue,goose,vibe,devin,droid,kimi,kimchi,muse,amp,aider,grok,crush,auggie,cline,autohand"`
+	Harness     domain.ReviewerHarness `json:"harness,omitempty" enum:"claude-code,codex,copilot,cursor,kilocode,opencode,kiro,pi,qwen,agy,continue,goose,vibe,devin,droid,kimi,kimchi,muse,amp,aider,grok,crush,auggie,cline,autohand"`
+	AgentConfig domain.AgentConfig     `json:"agentConfig,omitempty"`
 }
 
 // ResolveReviewCommentRequest is the body of POST /api/v1/sessions/{sessionId}/reviews/comments/resolve.

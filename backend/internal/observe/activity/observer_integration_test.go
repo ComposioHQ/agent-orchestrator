@@ -2,9 +2,7 @@ package activity
 
 import (
 	"context"
-	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -72,11 +70,7 @@ func TestObserverIntegrationReconcilesRealTmuxOutputIntoSQLite(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			runtime := tmux.New(tmux.Options{
-				SocketPath: shortPrivateTmuxSocket(t),
-				Timeout:    5 * time.Second,
-				ReapGrace:  100 * time.Millisecond,
-			})
+			runtime := tmux.New(tmux.Options{Timeout: 5 * time.Second, ReapGrace: 100 * time.Millisecond})
 			handle, err := runtime.Create(ctx, ports.RuntimeConfig{
 				SessionID:     session.ID,
 				WorkspacePath: workspace,
@@ -119,16 +113,6 @@ func TestObserverIntegrationReconcilesRealTmuxOutputIntoSQLite(t *testing.T) {
 			}
 		})
 	}
-}
-
-func shortPrivateTmuxSocket(t *testing.T) string {
-	t.Helper()
-	dir, err := os.MkdirTemp("", "ao-tmux-")
-	if err != nil {
-		t.Fatalf("create private tmux socket directory: %v", err)
-	}
-	t.Cleanup(func() { _ = os.RemoveAll(dir) })
-	return filepath.Join(dir, "s")
 }
 
 func waitForTerminalOutput(t *testing.T, runtime *tmux.Runtime, handle ports.RuntimeHandle, want string) {

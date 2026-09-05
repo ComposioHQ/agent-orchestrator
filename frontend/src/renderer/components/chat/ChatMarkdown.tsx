@@ -158,7 +158,7 @@ function CodeBlock({ code, language }: { code: string; language?: string }) {
 					<CopyButton text={code} label="Copy code" />
 				</div>
 			</div>
-			<pre className="overflow-x-auto px-3 py-2.5">
+			<pre className="scrollbar-none overflow-x-auto px-3 py-2.5">
 				<code className="font-mono text-[12px] leading-[1.6] text-foreground">
 					<HighlightedCode code={code} language={grammar} streaming={streaming} />
 				</code>
