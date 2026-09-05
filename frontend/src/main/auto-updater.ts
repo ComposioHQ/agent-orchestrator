@@ -1,7 +1,7 @@
 import { autoUpdater } from "electron-updater";
 import { CancellationToken } from "builder-util-runtime";
-import { app, BrowserWindow, dialog } from "electron";
-import { accessSync, constants as fsConstants, existsSync, readFileSync } from "node:fs";
+import { app, BrowserWindow, dialog, autoUpdater as nativeAutoUpdater } from "electron";
+import { accessSync, constants as fsConstants, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import semver from "semver";
@@ -939,12 +939,110 @@ function isManifest404Error(err: unknown): boolean {
   return msg.includes("HttpError: 404") && /\.yml\b/i.test(msg);
 }
 
+// A staged build that the native installer refused to install, as opposed to
+// anything that goes wrong while checking for or downloading one.
+//
+// On macOS these originate in Squirrel.Mac's ShipIt and reach us verbatim:
+// MacUpdater re-emits every native failure onto electron-updater's own "error"
+// event (`this.nativeUpdater.on("error", it => this.emit("error", it))`), so
+// the report in #4254 —
+//
+//   Code signature at URL file:///.../update.M9ZvE0X/Agent Orchestrator.app/
+//   did not pass validation: code failed to satisfy specified code requirement(s)
+//
+// arrives at the handler below rather than at download time. Matching the
+// phrases instead of the whole string covers the sibling wordings ShipIt uses
+// for the same "the staged copy is not installable" outcome (#3034, #4175).
+const STAGED_INSTALL_REJECTION_PATTERN =
+  /did not pass validation|failed to satisfy specified code requirement|shipit/i;
+
+function isStagedInstallRejection(err: unknown): boolean {
+  return STAGED_INSTALL_REJECTION_PATTERN.test(errorMessage(err));
+}
+
+/**
+ * Drop electron-updater's cached pending download.
+ *
+ * Verified against the published electron-updater@6.8.9 tarball:
+ * DownloadedUpdateHelper.validateDownloadedPath short-circuits on existence
+ * alone once a build has been downloaded by the running instance ("check here
+ * only existence, not checksum"), and nothing in electron-updater clears that
+ * cache when the native install fails. So without this, every later check hands
+ * ShipIt the exact same staged bytes and fails identically until the app is
+ * restarted.
+ *
+ * downloadedUpdateHelper is `protected` on AppUpdater, so it is reached through
+ * a narrowed cast rather than `any`: the cast names the one member being
+ * borrowed, and the optional calls make this a no-op instead of a crash if a
+ * later electron-updater renames or removes it.
+ */
+async function clearPendingUpdateCache(): Promise<void> {
+  const helper = (
+    autoUpdater as unknown as {
+      downloadedUpdateHelper?: { clear?: () => Promise<void> } | null;
+    }
+  ).downloadedUpdateHelper;
+  try {
+    await helper?.clear?.();
+  } catch (err) {
+    console.error("could not clear the cached update download:", err);
+  }
+}
+
+// AO_E2E_UPDATE_SENTINEL is the absolute path the end-to-end mac update test
+// (scripts/e2e-mac-update.mjs) asks the app to write once an update is actually
+// STAGED on disk and ready for the ShipIt swap. Unset in every real build, so
+// this is a complete no-op for users.
+//
+// Do not delete this while tidying: scripts/e2e-mac-update.mjs refuses to run
+// against a bundle whose app.asar does not contain this exact string, so
+// dropping it silently disables the whole macOS update-hop e2e job rather than
+// failing it. That is what happened between #3012 and #4254, and
+// e2e-mac-update.test.mjs now asserts the coupling to keep it from recurring.
+export const E2E_UPDATE_SENTINEL_ENV = "AO_E2E_UPDATE_SENTINEL";
+
+// installE2EUpdateSentinel hangs the sentinel off the NATIVE macOS updater
+// (require("electron").autoUpdater, i.e. Squirrel.Mac), NOT electron-updater's
+// own "update-downloaded".
+//
+// That distinction is load-bearing and was verified against the published
+// electron-updater@6.8.9 tarball. In MacUpdater.updateDownloaded(),
+// dispatchUpdateDownloaded(event) fires FIRST and only then does
+// `if (this.autoInstallOnAppQuit) { this.nativeUpdater.checkForUpdates() }`
+// kick Squirrel into fetching from the local proxy server. So electron-updater
+// announces "downloaded" BEFORE Squirrel has fetched or staged anything: a
+// harness that quits on that signal stages nothing, installs nothing, and
+// reports a false failure or flaps. The native event is the one MacUpdater
+// itself listens to in order to set squirrelDownloadedUpdate = true, and it is
+// the only signal that means "staged, will swap on quit". See #3288.
+//
+// macOS only in practice: NsisUpdater and AppImageUpdater never drive the
+// native updater, so this listener simply never fires off darwin.
+function installE2EUpdateSentinel(): void {
+  const sentinelPath = process.env[E2E_UPDATE_SENTINEL_ENV];
+  if (!sentinelPath) return;
+  nativeAutoUpdater.on("update-downloaded", (_event, _notes, releaseName) => {
+    try {
+      // Written synchronously: the harness quits the app right after seeing
+      // this file, so an async write could lose the race with termination.
+      writeFileSync(
+        sentinelPath,
+        `${JSON.stringify({ stagedAt: Date.now(), releaseName: releaseName ?? null })}\n`,
+      );
+      console.info(`[e2e] native updater staged ${releaseName ?? "an update"}; wrote ${sentinelPath}`);
+    } catch (err) {
+      console.error("[e2e] failed to write update sentinel:", err);
+    }
+  });
+}
+
 // wireUpdaterEvents registers electron-updater listeners once and forwards each
 // to the renderer as an UpdateStatus. Idempotent: safe to call on every entry
 // point (launch auto-check and manual check).
 function wireUpdaterEvents(): void {
   if (eventsWired) return;
   eventsWired = true;
+  installE2EUpdateSentinel();
   // With a build staged, "checking" briefly hides the sidebar restart row; that
   // is acceptable and self-healing: the available / not-available handlers below
   // restore the enriched downloaded status right after.
@@ -1072,6 +1170,38 @@ function wireUpdaterEvents(): void {
     // decision and must not suppress the telemetry: automatic checks are the
     // main way an install goes silently stale.
     emitUpdateFailure(err);
+    // The native installer rejected the build already sitting in the cache
+    // (#4254). This is the one failure class that cannot be left to the
+    // automatic path's suppress-and-retry, because retrying it is exactly what
+    // does not work: electron-updater re-serves the same cached bytes to
+    // Squirrel on every subsequent check for the lifetime of this process, so
+    // the install fails identically forever while the UI keeps offering a
+    // restart that cannot succeed.
+    //
+    // Dropping the cached download turns the next check back into a real
+    // download-and-verify instead of a replay, and disarming the staged state
+    // stops the sidebar promising an install that is no longer possible. The
+    // cost is one re-download when a rejection was transient, which is the
+    // right trade against an install that is otherwise stuck until relaunch.
+    //
+    // Deliberately narrow: the richer in-app remediation for this class (the
+    // direct-download offer after repeated failures) belongs to #3528, and the
+    // pre-v0.11.0-baseline hop that provokes it belongs to #3288's matrix.
+    if (hasStagedBuild() && isStagedInstallRejection(err)) {
+      console.error("staged update rejected at install time; discarding cached download:", err);
+      discardStagedBuild();
+      void clearPendingUpdateCache();
+      broadcast(
+        withActiveRequest({
+          state: "error",
+          message:
+            "Couldn't install the update — the downloaded copy was rejected. " +
+            "AO will download it again on the next check. If it keeps failing, " +
+            "download the latest build manually and install it over this one.",
+        }),
+      );
+      return;
+    }
     if (activeUpdaterOperation === "automatic-check") {
       console.error("auto-update check failed:", err);
       recordAutomaticCheckFailure(err);

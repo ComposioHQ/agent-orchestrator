@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import semver from "semver";
 import { CancellationToken } from "builder-util-runtime";
@@ -38,6 +38,9 @@ type AutoUpdaterMock = {
   autoDownload: boolean;
   autoInstallOnAppQuit: boolean;
   httpExecutor: { request: ReturnType<typeof vi.fn<(options: object, token?: CancellationToken) => Promise<string | null>>> };
+  // electron-updater keeps its cached pending download behind this protected
+  // member; the install-rejection path clears it through the same name.
+  downloadedUpdateHelper: { clear: ReturnType<typeof vi.fn> };
 };
 
 function createAutoUpdaterMock(): AutoUpdaterMock {
@@ -53,6 +56,7 @@ function createAutoUpdaterMock(): AutoUpdaterMock {
     autoDownload: false,
     autoInstallOnAppQuit: false,
     httpExecutor: { request: vi.fn(async () => null) },
+    downloadedUpdateHelper: { clear: vi.fn(() => Promise.resolve()) },
   };
 }
 
@@ -111,6 +115,13 @@ async function importAutoUpdater(
   const statusMessages = () => sent.filter((m) => m.channel === "updates:status");
   const telemetryMessages = () => sent.filter((m) => m.channel === "updates:telemetry");
   vi.doMock("electron-updater", () => ({ autoUpdater }));
+  const nativeUpdaterEvents = new Map<string, UpdaterEventHandler>();
+  const nativeAutoUpdater = {
+    on: vi.fn((event: string, handler: UpdaterEventHandler) => {
+      nativeUpdaterEvents.set(event, handler);
+      return nativeAutoUpdater;
+    }),
+  };
   vi.doMock("electron", () => ({
     app: {
       isPackaged: options.isPackaged ?? true,
@@ -118,6 +129,7 @@ async function importAutoUpdater(
     },
     BrowserWindow,
     dialog,
+    autoUpdater: nativeAutoUpdater,
   }));
   const readUpdateSettings =
     typeof settings === "function"
@@ -156,6 +168,8 @@ async function importAutoUpdater(
     dialog,
     BrowserWindow,
     updaterEvents,
+    nativeAutoUpdater,
+    nativeUpdaterEvents,
     readUpdateSettings,
     writeUpdateSettings,
     updateUpdateSettings,
@@ -2855,5 +2869,127 @@ describe("channel downgrade safety", () => {
     await h.module.ensureUpdatePrefs(stateDir);
     expect(h.dialog.showMessageBox).not.toHaveBeenCalled();
     expect(h.writeUpdateSettings).not.toHaveBeenCalled();
+  });
+});
+
+// #4254: macOS auto-update failed at ShipIt's code-signature validation and
+// then failed identically on every retry. MacUpdater re-emits native Squirrel
+// failures onto electron-updater's "error" event, and
+// DownloadedUpdateHelper.validateDownloadedPath re-serves an
+// already-downloaded file on existence alone for the lifetime of the process,
+// so the retry never re-downloads and never re-verifies.
+describe("staged install rejection", () => {
+  const rejection = new Error(
+    "Code signature at URL file:///Users/x/Library/Caches/dev.agent-orchestrator.desktop.ShipIt/" +
+      "update.M9ZvE0X/Agent%20Orchestrator.app/ did not pass validation: " +
+      "code failed to satisfy specified code requirement(s)",
+  );
+
+  it("clears the cached download and disarms the staged build", async () => {
+    const consoleErrorSpy = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => undefined);
+    const { module, autoUpdater, updaterEvents, statusMessages } =
+      await importAutoUpdater();
+
+    await module.checkForUpdatesNow(stateDir);
+    updaterEvents.get("update-downloaded")?.({ version: "2.1.0" });
+    expect(module.getUpdateStatus().state).toBe("downloaded");
+
+    updaterEvents.get("error")?.(rejection);
+
+    // Without the clear, the next check hands Squirrel the same bytes again.
+    expect(autoUpdater.downloadedUpdateHelper.clear).toHaveBeenCalledTimes(1);
+    // And without the disarm, the sidebar keeps offering a restart-to-install
+    // that cannot succeed.
+    expect(module.getUpdateStatus().staged).toBeUndefined();
+    expect(module.getUpdateStatus().state).toBe("error");
+    expect(statusMessages().at(-1)?.payload).toMatchObject({
+      state: "error",
+      message: expect.stringContaining("download it again on the next check"),
+    });
+    expect(consoleErrorSpy).toHaveBeenCalledWith(
+      "staged update rejected at install time; discarding cached download:",
+      rejection,
+    );
+    consoleErrorSpy.mockRestore();
+  });
+
+  it("surfaces the failure even on an automatic check", async () => {
+    // The automatic path suppresses one-off failures so the UI does not flash
+    // an error nobody asked for. That suppression must not swallow this class:
+    // an install the user cannot retry out of is exactly what has to be shown.
+    const consoleErrorSpy = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => undefined);
+    const { module, autoUpdater, updaterEvents } = await importAutoUpdater();
+
+    await module.checkForUpdatesNow(stateDir);
+    updaterEvents.get("update-downloaded")?.({ version: "2.1.0" });
+
+    autoUpdater.checkForUpdates.mockImplementationOnce(() => {
+      updaterEvents.get("checking-for-update")?.();
+      updaterEvents.get("error")?.(rejection);
+      return Promise.resolve();
+    });
+    await module.startAutoUpdates(stateDir);
+
+    expect(module.getUpdateStatus().state).toBe("error");
+    expect(autoUpdater.downloadedUpdateHelper.clear).toHaveBeenCalledTimes(1);
+    consoleErrorSpy.mockRestore();
+  });
+
+  it("leaves an ordinary download failure alone", async () => {
+    // Same "error" event, nothing staged to reject: the existing suppress-and-
+    // restore behaviour has to survive untouched.
+    const consoleErrorSpy = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => undefined);
+    const { module, autoUpdater, updaterEvents } = await importAutoUpdater();
+
+    await module.checkForUpdatesNow(stateDir);
+    updaterEvents.get("error")?.(new Error("net::ERR_CONNECTION_RESET"));
+
+    expect(autoUpdater.downloadedUpdateHelper.clear).not.toHaveBeenCalled();
+    consoleErrorSpy.mockRestore();
+  });
+});
+
+// #3288 workstream 0: scripts/e2e-mac-update.mjs waits on this listener to know
+// an update actually STAGED. It was deleted by an unrelated refactor in #3012
+// and the macOS update-hop e2e job silently stopped being runnable, which is
+// how #4254 reached users with no update-hop coverage at all.
+describe("e2e staging sentinel", () => {
+  const originalSentinel = process.env.AO_E2E_UPDATE_SENTINEL;
+  afterEach(() => {
+    if (originalSentinel === undefined) delete process.env.AO_E2E_UPDATE_SENTINEL;
+    else process.env.AO_E2E_UPDATE_SENTINEL = originalSentinel;
+  });
+
+  it("writes the sentinel from the NATIVE updater's update-downloaded", async () => {
+    const sentinel = nodePath.join(stateDir, "sentinel.json");
+    process.env.AO_E2E_UPDATE_SENTINEL = sentinel;
+    const { module, nativeUpdaterEvents, updaterEvents } =
+      await importAutoUpdater();
+
+    await module.checkForUpdatesNow(stateDir);
+    // electron-updater's own update-downloaded fires BEFORE Squirrel is told to
+    // fetch, so keying the harness off it would stage nothing. It must not
+    // write the sentinel.
+    updaterEvents.get("update-downloaded")?.({ version: "2.1.0" });
+    expect(existsSync(sentinel)).toBe(false);
+
+    nativeUpdaterEvents.get("update-downloaded")?.({}, "notes", "2.1.0");
+    expect(JSON.parse(readFileSync(sentinel, "utf8"))).toEqual({
+      stagedAt: expect.any(Number),
+      releaseName: "2.1.0",
+    });
+  });
+
+  it("registers nothing when the env var is unset", async () => {
+    delete process.env.AO_E2E_UPDATE_SENTINEL;
+    const { module, nativeAutoUpdater } = await importAutoUpdater();
+    await module.checkForUpdatesNow(stateDir);
+    expect(nativeAutoUpdater.on).not.toHaveBeenCalled();
   });
 });
