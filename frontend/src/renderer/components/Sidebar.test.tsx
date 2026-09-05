@@ -2133,6 +2133,15 @@ describe("Sidebar", () => {
 		expect(screen.queryByLabelText(/Restart to install update/)).not.toBeInTheDocument();
 	});
 
+	it("offers an explicit download for a replacement still awaiting consent", async () => {
+		updateStatusMock.mockResolvedValue({ state: "replacing", version: "2.0.0", stagedCandidate: { version: "1.0.0", channel: "latest", operationId: "a" }, replacementCandidate: { version: "2.0.0", channel: "latest", operationId: "b" }, replacementPhase: "checking" });
+		renderSidebar();
+		const [action] = await screen.findAllByRole("button", { name: /Update to.*2.0.0/i });
+		expect(action).toBeEnabled();
+		await userEvent.click(action);
+		expect(downloadUpdateMock).toHaveBeenCalledOnce();
+	});
+
 	it("offers retry B after replacement failure while retaining A warning", async () => {
 		updateStatusMock.mockResolvedValue({
 			state: "replacement-failed",

@@ -45,4 +45,18 @@ describe("transitionStagedUpdate", () => {
     expect(transitionStagedUpdate(replacing, { type: "reconcile-running-version", version: "0.9.0" })).toMatchObject({ state: "replacing", staged: A, replacement: B, stagedAt: 100, runningVersion: "0.9.0" });
   });
 
+  it("returns to A after B fails before reaching native handoff", () => {
+    const failed: StagedUpdateJournal = { schemaVersion: 1, state: "replacement-failed", staged: A, stagedAt: 100, replacement: B, failedAt: 200, phase: "full-fallback", message: "offline" };
+    expect(transitionStagedUpdate(failed, { type: "replacement-discovered", replacement: A, at: 300 })).toEqual(stagedA);
+  });
+
+  it("retargets A without forgetting B after an uncertain native handoff", () => {
+    const pending: StagedUpdateJournal = { schemaVersion: 1, state: "replacing", staged: A, stagedAt: 100, replacement: B, startedAt: 200, phase: "native-handoff" };
+    const returned = transitionStagedUpdate(pending, { type: "replacement-discovered", replacement: { ...A, operationId: "return-a" }, at: 300 });
+    expect(returned).toMatchObject({ state: "replacing", staged: A, replacement: { version: A.version, operationId: "return-a" }, nativeCandidates: [B] });
+    const failed = transitionStagedUpdate(returned, { type: "replacement-failed", operationId: "return-a", at: 400, message: "offline" });
+    expect(failed).toMatchObject({ nativeCandidates: [B], state: "replacement-failed" });
+    expect(transitionStagedUpdate(failed, { type: "replacement-discovered", replacement: C, at: 500 })).toMatchObject({ nativeCandidates: [B], staged: A, replacement: C });
+  });
+
 });

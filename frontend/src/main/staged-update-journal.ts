@@ -25,6 +25,7 @@ function parseJournal(value: unknown): StagedUpdateJournal {
   const journal = value as Record<string, unknown>;
   if (journal.schemaVersion !== 1 || typeof journal.state !== "string") throw new Error("invalid staged update journal schema");
   if (journal.state === "none") return { schemaVersion: 1, state: "none" };
+  if (journal.nativeCandidates !== undefined && (!Array.isArray(journal.nativeCandidates) || !journal.nativeCandidates.every(isCandidate))) throw new Error("invalid native candidate history");
   if (!isCandidate(journal.staged)) throw new Error("invalid staged update candidate");
   if (journal.state === "native-possibly-staged" && isTimestamp(journal.stagedAt)) return journal as StagedUpdateJournal;
   if ((journal.state === "replacing" || journal.state === "replacement-failed") && isCandidate(journal.replacement) && phases.has(journal.phase as ReplacementPhase)) {
@@ -91,6 +92,9 @@ export class StagedUpdateJournalStore {
       await handle.close();
     }
     await rename(temp, this.file);
+    // Windows cannot flush a directory opened with Node's read-only handle.
+    // The file was flushed before the atomic rename; directory fsync is POSIX-only.
+    if (process.platform === "win32") return;
     const directory = await open(this.stateDir, "r");
     try {
       await directory.sync();

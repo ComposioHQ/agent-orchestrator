@@ -109,7 +109,6 @@ let stagedAtMs: number | undefined;
 let stagedEscalated = false;
 let stagedRequestId: string | undefined;
 let stagedJournal: StagedUpdateJournal = { schemaVersion: 1, state: "none" };
-let durableStagedJournal: StagedUpdateJournal = { schemaVersion: 1, state: "none" };
 let stagedJournalWritesPending = 0;
 let stagedJournalStore: StagedUpdateJournalStore | undefined;
 let stagedJournalDir: string | undefined;
@@ -222,7 +221,6 @@ async function ensureStagedJournal(stateDir: string): Promise<void> {
   try {
     stagedJournal = await stagedJournalStore.read(app.getVersion());
     await stagedJournalStore.write(stagedJournal);
-    durableStagedJournal = stagedJournal;
   } catch (error) {
     console.error("staged update journal could not be restored:", error);
     journalPersistenceError = errorMessage(error);
@@ -250,16 +248,16 @@ function persistJournalTransition(event: StagedUpdateEvent): void {
   stagedJournalWritesPending += 1;
   stagedJournalQueue = stagedJournalQueue.then(async () => {
     await store.write(journal);
-    durableStagedJournal = journal;
-    journalPersistenceError = undefined;
+    // Only the latest snapshot can clear a persistence failure. Earlier queued
+    // successes must not authorize installation of newer, unwritten state.
+    if (journal === stagedJournal && journalPersistenceError) {
+      journalPersistenceError = undefined;
+      broadcast({ ...lastStatus, installDisabledReason: undefined, ...journalToUpdateStatus(stagedJournal) });
+    }
   }).catch((error) => {
     journalPersistenceError = errorMessage(error);
-    stagedJournal = durableStagedJournal;
-    if (durableStagedJournal.state !== "none") {
-      stagedVersion = durableStagedJournal.staged.version;
-      stagedChannel = durableStagedJournal.staged.channel;
-      stagedAtMs = durableStagedJournal.stagedAt;
-    }
+    // Keep the live transition chain intact. Queued snapshots depend on it.
+    // Installation stays blocked by this error until the latest state is saved.
     console.error("staged update journal transition failed:", error);
     broadcast({ state: "error", message: "Update history could not be saved. A previous build may still install on quit." });
   }).finally(() => { stagedJournalWritesPending -= 1; });
@@ -281,6 +279,10 @@ function candidateFromUpdater(info: any): UpdateCandidate | undefined {
     ...(typeof file?.sha512 === "string" ? { sha512: file.sha512 } : {}),
     operationId: activeUpdaterOperationId ?? randomUUID(),
   });
+}
+
+function hasPendingReplacement(): boolean {
+  return stagedJournal.state === "replacing" || stagedJournal.state === "replacement-failed";
 }
 
 function selectedChannelRequiresReplacement(): boolean {
@@ -327,7 +329,7 @@ function broadcast(
     ...statusWithCheckTime,
     ...stagedStamp(),
     ...((stagedJournal.state === "replacing" || stagedJournal.state === "replacement-failed") ? journalToUpdateStatus(stagedJournal, status) : {}),
-    ...(journalPersistenceError || awaitingStagedReplacement ? { installDisabledReason: journalPersistenceError ?? `The selected channel has not finished staging. Quitting may still install ${stagedVersion}.` } : {}),
+    ...(journalPersistenceError || (awaitingStagedReplacement && !hasPendingReplacement()) ? { installDisabledReason: journalPersistenceError ?? `The selected channel has not finished staging. Quitting may still install ${stagedVersion}.` } : {}),
     // Only on statuses that actually describe a build on offer: "not-available"
     // carrying notes for a build the user already has would read as news.
     ...(describesAnOffer && offeredReleaseNotes !== undefined && status.releaseNotes === undefined
@@ -901,6 +903,11 @@ function finishDownloadedUpdate(info: any): void {
       const operationId = stagedJournal.replacement.operationId;
       persistJournalTransition({ type: "replacement-phase", operationId, phase: "native-handoff" });
       broadcast(journalToUpdateStatus(stagedJournal));
+      // MacUpdater resolves when its ZIP response finishes, before Squirrel
+      // validates the replacement. Its native events lack operation identity.
+      // Keep both candidates and the install guard until restart reconciliation
+      // or the verified native boundary supplied by PR3.
+      if (process.platform === "darwin") return;
       persistJournalTransition({ type: "handoff-succeeded", operationId, at: downloadedAt });
     } else if (stagedJournal.state === "none" || stagedJournal.state === "version-mismatch") {
       persistJournalTransition({ type: "initial-handoff-succeeded", candidate: downloaded, at: downloadedAt });
@@ -978,6 +985,12 @@ function wireUpdaterEvents(): void {
     // (autoDownload is off on that path). It is still in cache and installs on
     // quit, so keep the richer downloaded status instead of hiding the row.
     if (stagedAtMs !== undefined && info?.version === stagedVersion && stagedChannel === effectiveUpdateChannel(autoUpdater.channel)) {
+      if (stagedJournal.state === "replacing" || stagedJournal.state === "replacement-failed") {
+        const offered = candidateFromUpdater(info);
+        if (offered) persistJournalTransition({ type: "replacement-discovered", replacement: offered, at: Date.now() });
+        awaitingStagedReplacement = hasPendingReplacement();
+        applyInstallOnQuitPolicy();
+      }
       broadcastCompletedCheck(stagedDownloadedStatus());
       return;
     }
@@ -992,7 +1005,7 @@ function wireUpdaterEvents(): void {
         persistJournalTransition({
           type: "replacement-phase",
           operationId: offered.operationId,
-          phase: typeof offeredFile?.blockMapSize === "number" ? "differential" : "full-fallback",
+          phase: !autoUpdater.autoDownload ? "checking" : typeof offeredFile?.blockMapSize === "number" ? "differential" : "full-fallback",
         });
         broadcastCompletedCheck(journalToUpdateStatus(stagedJournal));
         return;
@@ -1052,7 +1065,7 @@ function wireUpdaterEvents(): void {
     });
     if (activeUpdaterOperation && stagedJournal.state === "replacing") {
       // MacUpdater emits this before starting Squirrel's fetch. Keep A until
-      // the operation's download promise confirms the updater handoff.
+      // the operation completes; on macOS even ZIP delivery is not validation.
       pendingDownloadedInfo = info;
       persistJournalTransition({ type: "replacement-phase", operationId: stagedJournal.replacement.operationId, phase: "verifying" });
       broadcast(journalToUpdateStatus(stagedJournal));
@@ -1195,7 +1208,7 @@ async function runAutomaticUpdateCheck(
         : undefined;
       try {
         const result = await autoUpdater.checkForUpdates();
-        if (settings.enabled || staleStaged || stagedJournal.state === "replacing") {
+        if (settings.enabled || staleStaged) {
           if (result?.downloadPromise) {
             // The provider owns this download's token; hand it to the watchdog
             // so a stall can actually be cancelled rather than just reported.
@@ -1373,7 +1386,7 @@ export async function checkForUpdatesNow(
             activeDownloadCancellation = result.cancellationToken;
             await result.downloadPromise;
           }
-          if (!result?.downloadPromise && stagedJournal.state === "replacing") {
+          if (!result?.downloadPromise && staleStaged && stagedJournal.state === "replacing") {
             const token = new CancellationToken();
             activeDownloadCancellation = token;
             await autoUpdater.downloadUpdate(token);
@@ -1455,7 +1468,7 @@ export async function returnToHome(
           activeDownloadCancellation = result.cancellationToken;
           await result.downloadPromise;
         }
-        if (!result?.downloadPromise && stagedJournal.state === "replacing") {
+        if (!result?.downloadPromise && staleStaged && stagedJournal.state === "replacing") {
           const token = new CancellationToken();
           activeDownloadCancellation = token;
           await autoUpdater.downloadUpdate(token);
@@ -1503,6 +1516,7 @@ export async function downloadUpdateNow(requestId?: string): Promise<void> {
             },
             at: Date.now(),
           });
+          if (stagedJournal.state === "replacing") persistJournalTransition({ type: "replacement-phase", operationId: stagedJournal.replacement.operationId, phase: "full-fallback" });
           broadcast(journalToUpdateStatus(stagedJournal));
         }
         // Manual downloads get no provider token, so make one: without it the

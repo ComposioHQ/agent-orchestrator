@@ -74,6 +74,7 @@ export interface UpdateStatus {
 	netError?: boolean;
 	/** Replacement provenance. Both candidates remain present until handoff succeeds. */
 	stagedCandidate?: UpdateCandidate;
+  nativeCandidates?: UpdateCandidate[];
 	replacementCandidate?: UpdateCandidate;
 	replacementPhase?: ReplacementPhase;
 	/** Why AO's install action is unavailable. */

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { candidateFromUpdateInfo, journalToUpdateStatus } from "./staged-update-adapter";
+import type { UpdateStatus } from "./update-settings";
 import type { StagedUpdateJournal } from "./staged-update-state";
 
 describe("staged update adapter", () => {
@@ -50,4 +51,10 @@ describe("staged update adapter", () => {
     };
     expect(journalToUpdateStatus(journal)).toMatchObject({ state: "replacement-failed", message: "checksum mismatch", version: "2.0.0", stagedCandidate: journal.staged, replacementCandidate: journal.replacement });
   });
+  it("does not let a status-shaped progress input override journal identity", () => {
+    const journal: StagedUpdateJournal = { schemaVersion: 1, state: "replacing", staged: { version: "1", channel: "latest", operationId: "a" }, replacement: { version: "2", channel: "latest", operationId: "b" }, startedAt: 100, phase: "checking" };
+    const progress: UpdateStatus = { state: "downloaded", version: "1", percent: 25 };
+    expect(journalToUpdateStatus(journal, progress)).toMatchObject({ state: "replacing", version: "2", percent: 25 });
+  });
+
 });

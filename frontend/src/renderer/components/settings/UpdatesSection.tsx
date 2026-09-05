@@ -392,7 +392,8 @@ function UpdateActions({
 
 	const manualCheckPending = manualCheckRequestId !== null;
 	const checking = status.state === "checking" || manualCheckPending;
-	const downloading = status.state === "downloading" || status.state === "replacing";
+	const replacementAvailable = status.state === "replacing" && status.replacementPhase === "checking";
+	const downloading = status.state === "downloading" || (status.state === "replacing" && !replacementAvailable);
 	// Only the user's OWN in-flight check blocks the button. A background check
 	// also reports "checking", and gating on that swallowed the first click
 	// whenever Settings was opened during one — every 15 minutes on nightly.
@@ -481,7 +482,17 @@ function UpdateActions({
 				    the primary label used to carry the full nightly stamp and grew
 				    across the heading. The target build is named in the status line. */}
 				<div className="flex w-full shrink-0 flex-wrap items-center gap-2 sm:w-auto sm:justify-end [&>button]:flex-1 sm:[&>button]:flex-none">
-					{status.state === "replacing" && (
+					{replacementAvailable && (
+						<Button type="button" variant="primary" size="sm" onClick={() => void aoBridge.updates.download()}>
+							{t("settings.updates.updateTo", { version: status.replacementCandidate?.version ?? status.version })}
+						</Button>
+					)}
+					{status.state === "replacing" && status.replacementPhase === "native-handoff" && (
+						<Button type="button" variant="primary" size="sm" disabled aria-describedby="update-replacement-install-reason">
+							{t("settings.updates.update")}
+						</Button>
+					)}
+					{status.state === "replacing" && !replacementAvailable && status.replacementPhase !== "native-handoff" && (
 						<Button
 							type="button"
 							variant="primary"
@@ -648,6 +659,7 @@ function UpdateStatusLine({
 	switch (state) {
 		case "replacing": {
 			const from = status.stagedCandidate?.version ?? "?";
+			const quitCandidates = [...new Set([from, ...(status.nativeCandidates ?? []).map((candidate) => candidate.version)])].join(", ");
 			const to = status.replacementCandidate?.version ?? status.version ?? "?";
 			const metrics = status.transferred !== undefined || status.total !== undefined || status.bytesPerSecond !== undefined || status.etaSeconds !== undefined
 				? t("settings.updates.replacementMetrics", {
@@ -660,10 +672,14 @@ function UpdateStatusLine({
 			return (
 				<div className="text-settings-label">
 					<p className="text-pretty text-sm font-medium leading-5">
-						{t("settings.updates.replacingTitle", { from, to })}
+						{status.replacementPhase === "checking"
+							? t("settings.updates.updateTo", { version: to })
+							: status.replacementPhase === "native-handoff"
+								? status.installDisabledReason
+								: t("settings.updates.replacingTitle", { from, to })}
 					</p>
 					<p id="update-replacement-install-reason" role="status" aria-live="polite" className="mt-1 text-xs leading-4 text-warning">
-						{t("settings.updates.replacingWarning", { from, phase: status.replacementPhase })}
+						{t("settings.updates.replacingWarning", { from: quitCandidates, phase: status.replacementPhase })}
 					</p>
 					{metrics && <p className="mt-1 text-xs leading-4 tabular-nums text-settings-muted">{metrics}</p>}
 					<div role="progressbar" aria-live="off" aria-label={t("settings.updates.progressVersion", { version: to })} aria-valuemin={0} aria-valuemax={100} aria-valuenow={status.percent ?? 0} className="sr-only" />
@@ -672,11 +688,12 @@ function UpdateStatusLine({
 		}
 		case "replacement-failed": {
 			const from = status.stagedCandidate?.version ?? "?";
+			const quitCandidates = [...new Set([from, ...(status.nativeCandidates ?? []).map((candidate) => candidate.version)])].join(", ");
 			const to = status.replacementCandidate?.version ?? status.version ?? "?";
 			return (
 				<div className="text-error">
 					<p className="text-pretty text-sm font-medium leading-5">{t("settings.updates.replacementFailed", { to, message: status.message })}</p>
-					<p id="update-replacement-install-reason" role="status" aria-live="polite" className="mt-1 text-xs leading-4 text-warning">{t("settings.updates.replacementFailedWarning", { from, to })}</p>
+					<p id="update-replacement-install-reason" role="status" aria-live="polite" className="mt-1 text-xs leading-4 text-warning">{t("settings.updates.replacementFailedWarning", { from: quitCandidates, to })}</p>
 				</div>
 			);
 		}

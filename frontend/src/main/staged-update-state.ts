@@ -21,8 +21,8 @@ export type ReplacementPhase =
 export type StagedUpdateJournal =
   | { schemaVersion: 1; state: "none" }
   | { schemaVersion: 1; state: "native-possibly-staged"; staged: UpdateCandidate; stagedAt: number }
-  | { schemaVersion: 1; state: "replacing"; stagedAt?: number; runningVersion?: string; staged: UpdateCandidate; replacement: UpdateCandidate; startedAt: number; phase: ReplacementPhase }
-  | { schemaVersion: 1; state: "replacement-failed"; stagedAt?: number; runningVersion?: string; staged: UpdateCandidate; replacement: UpdateCandidate; failedAt: number; phase: ReplacementPhase; message: string }
+  | { schemaVersion: 1; state: "replacing"; nativeCandidates?: UpdateCandidate[]; stagedAt?: number; runningVersion?: string; staged: UpdateCandidate; replacement: UpdateCandidate; startedAt: number; phase: ReplacementPhase }
+  | { schemaVersion: 1; state: "replacement-failed"; nativeCandidates?: UpdateCandidate[]; stagedAt?: number; runningVersion?: string; staged: UpdateCandidate; replacement: UpdateCandidate; failedAt: number; phase: ReplacementPhase; message: string }
   | { schemaVersion: 1; state: "version-mismatch"; stagedAt?: number; staged: UpdateCandidate; runningVersion: string; detectedAt: number };
 
 export type StagedUpdateEvent =
@@ -58,8 +58,21 @@ export function transitionStagedUpdate(
         throw new Error("replacement discovery requires a possibly staged candidate");
       }
       const staged = state.staged;
-      if (event.replacement.version === staged.version && event.replacement.channel === staged.channel && event.replacement.sha512 === staged.sha512 && event.replacement.assetName === staged.assetName) return state;
-      return { schemaVersion: 1, state: "replacing", staged, stagedAt: state.stagedAt, replacement: event.replacement, startedAt: event.at, phase: "checking" };
+      const previous = activeReplacement(state);
+      const nativeCandidates = state.state === "replacing" || state.state === "replacement-failed"
+        ? [...(state.nativeCandidates ?? [])]
+        : [];
+      if (previous && (state.state === "replacing" || state.state === "replacement-failed") &&
+        (state.phase === "verifying" || state.phase === "native-handoff") &&
+        !nativeCandidates.some((candidate) => candidate.operationId === previous.operationId)) {
+        nativeCandidates.push(previous);
+      }
+      const returnsToStaged = event.replacement.version === staged.version && event.replacement.channel === staged.channel && event.replacement.sha512 === staged.sha512 && event.replacement.assetName === staged.assetName;
+      if (returnsToStaged && nativeCandidates.length === 0) {
+        if (!previous) return state;
+        return { schemaVersion: 1, state: "native-possibly-staged", staged, stagedAt: state.stagedAt ?? event.at };
+      }
+      return { schemaVersion: 1, state: "replacing", staged, stagedAt: state.stagedAt, ...(nativeCandidates.length ? { nativeCandidates } : {}), replacement: event.replacement, startedAt: event.at, phase: "checking" };
     }
     case "replacement-phase": {
       const replacement = requireOperation(state, event.operationId);
@@ -69,7 +82,7 @@ export function transitionStagedUpdate(
     case "replacement-failed": {
       const replacement = requireOperation(state, event.operationId);
       if (state.state !== "replacing") throw new Error("replacement failure requires an active replacement");
-      return { schemaVersion: 1, state: "replacement-failed", staged: state.staged, stagedAt: state.stagedAt, replacement, failedAt: event.at, phase: state.phase, message: event.message };
+      return { schemaVersion: 1, state: "replacement-failed", staged: state.staged, stagedAt: state.stagedAt, nativeCandidates: state.nativeCandidates, replacement, failedAt: event.at, phase: state.phase, message: event.message };
     }
     case "handoff-succeeded": {
       const replacement = requireOperation(state, event.operationId);

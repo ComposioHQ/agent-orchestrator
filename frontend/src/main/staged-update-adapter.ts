@@ -36,12 +36,18 @@ export function journalToUpdateStatus(journal: StagedUpdateJournal, progress: Re
     return {
       state: journal.state,
       version: journal.replacement.version,
-      ...(journal.state === "replacement-failed" ? { message: journal.message } : progress),
+      ...(journal.state === "replacement-failed" ? { message: journal.message } : {
+        percent: progress.percent,
+        transferred: progress.transferred,
+        total: progress.total,
+        bytesPerSecond: progress.bytesPerSecond,
+      }),
       ...(etaSeconds === undefined ? {} : { etaSeconds }),
       stagedCandidate: journal.staged,
       replacementCandidate: journal.replacement,
+      nativeCandidates: journal.nativeCandidates,
       replacementPhase: journal.phase,
-      installDisabledReason: `Replacement ${journal.replacement.version} is incomplete. Quitting may still install ${journal.staged.version}.`,
+      installDisabledReason: `Replacement ${journal.replacement.version} is incomplete. Quitting may still install ${journal.staged.version}.${journal.nativeCandidates?.length ? ` Earlier native candidates remain unverified: ${journal.nativeCandidates.map((candidate) => candidate.version).join(", ")}.` : ""}`,
     };
   }
   if (journal.state === "version-mismatch") {

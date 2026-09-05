@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { readFileSync, chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import nodePath from "node:path";
 
@@ -2676,7 +2676,9 @@ describe("install-on-quit policy", () => {
 
 describe("PR 4905 upstream integration", () => {
   afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers(); });
-  it("retains A after B download event until the handoff promise settles", async () => {
+  it("retains A on Windows until the handoff promise settles", async () => {
+    const restore = stubProcess("win32", "/usr/bin/node");
+    try {
     const { module, autoUpdater, updaterEvents } = await importAutoUpdater();
     await module.checkForUpdatesNow(stateDir);
     updaterEvents.get("update-downloaded")?.({ version: "2.1.0" });
@@ -2694,6 +2696,7 @@ describe("PR 4905 upstream integration", () => {
     handoff.resolve();
     await run;
     expect(module.getUpdateStatus()).toMatchObject({ state: "downloaded", version: "2.2.0" });
+    } finally { restore(); }
   });
   it("retains A if macOS resolves B download without performing native handoff", async () => {
     const restore = stubProcess("darwin", "/usr/bin/node");
@@ -2725,4 +2728,178 @@ describe("PR 4905 upstream integration", () => {
     expect(module.getUpdateStatus()).toMatchObject({ state: "replacement-failed", stagedCandidate: { version: "2.1.0" }, replacementCandidate: { version: "2.2.0" } });
     await module.setUpdateSettings(stateDir, { enabled: false, channel: "latest", nightlyAck: false, feature: null });
   });
+});
+
+
+describe("PR 4905 review boundaries", () => {
+let restore: () => void;
+beforeEach(() => { restore = stubProcess("darwin", "/usr/bin/node"); });
+afterEach(() => { restore(); vi.restoreAllMocks(); });
+const settings = { enabled: true, channel: "latest" as const, nightlyAck: false, feature: null };
+async function stageA() {
+  const h = await importAutoUpdater();
+  await h.module.checkForUpdatesNow(stateDir);
+  h.updaterEvents.get("update-downloaded")?.({ version: "2.1.0" });
+  await h.module.setUpdateSettings(stateDir, settings);
+  return h;
+}
+function disk() { return JSON.parse(readFileSync(nodePath.join(stateDir, "staged-update-journal.json"), "utf8")); }
+it("retains A and blocks install after a late native failure", async () => {
+  const h = await stageA();
+  h.autoUpdater.checkForUpdates.mockImplementationOnce(() => {
+    h.updaterEvents.get("update-available")?.({ version: "2.2.0" });
+    h.updaterEvents.get("update-downloaded")?.({ version: "2.2.0" });
+    return Promise.resolve({ downloadPromise: Promise.resolve() });
+  });
+  await h.module.checkForUpdatesNow(stateDir);
+  expect(disk().staged.version).toBe("2.1.0");
+  h.updaterEvents.get("error")?.(new Error("Squirrel signature validation failed"));
+  await h.module.setUpdateSettings(stateDir, settings);
+  expect(disk().staged.version).toBe("2.1.0");
+  expect(h.module.getUpdateStatus()).toMatchObject({state:"replacement-failed",stagedCandidate:{version:"2.1.0"},replacementCandidate:{version:"2.2.0"}});
+  h.module.quitAndInstallUpdate();
+  expect(h.autoUpdater.quitAndInstall).not.toHaveBeenCalled();
+});
+it("keeps queued journal recovery coherent after one failed write", async () => {
+  const h = await stageA();
+  const { StagedUpdateJournalStore } = await import("./staged-update-journal");
+  vi.spyOn(StagedUpdateJournalStore.prototype, "write").mockRejectedValueOnce(new Error("ENOSPC"));
+  h.updaterEvents.get("update-available")?.({ version: "2.2.0" });
+  await h.module.setUpdateSettings(stateDir, settings);
+  expect(disk().state).toBe("replacing");
+  expect(disk().replacement.version).toBe("2.2.0");
+  h.module.quitAndInstallUpdate();
+  expect(h.autoUpdater.quitAndInstall).not.toHaveBeenCalled();
+});
+it("respects download opt-out for same-channel discovery", async () => {
+  const h = await stageA();
+  h.autoUpdater.checkForUpdates.mockImplementationOnce(() => {
+    h.updaterEvents.get("update-available")?.({ version: "2.2.0" });
+    return Promise.resolve({ isUpdateAvailable:true, updateInfo:{ version:"2.2.0" } });
+  });
+  await h.module.checkForUpdatesNow(stateDir, {settings:{...settings, enabled:false}});
+  expect(h.autoUpdater.autoDownload).toBe(false);
+  expect(h.autoUpdater.downloadUpdate).not.toHaveBeenCalled();
+  await h.module.downloadUpdateNow();
+  expect(h.autoUpdater.downloadUpdate).toHaveBeenCalledTimes(1);
+});
+it("abandons B before native handoff when the selected channel returns A", async () => {
+  const h = await stageA();
+  h.autoUpdater.channel = "nightly";
+  h.updaterEvents.get("update-available")?.({version:"2.2.0"});
+  h.updaterEvents.get("error")?.(new Error("offline"));
+  await h.module.setUpdateSettings(stateDir, settings);
+  h.autoUpdater.checkForUpdates.mockImplementationOnce(() => {
+    h.updaterEvents.get("update-available")?.({version:"2.1.0"});
+    return Promise.resolve({isUpdateAvailable:true, updateInfo:{version:"2.1.0"}});
+  });
+  await h.module.checkForUpdatesNow(stateDir);
+  expect(h.module.getUpdateStatus().state).toBe("downloaded");
+  expect(h.module.getUpdateStatus().replacementCandidate).toBeUndefined();
+  expect(disk().state).toBe("native-possibly-staged");
+});
+
+it("keeps A when real MacUpdater delivers its ZIP before native rejection", async () => {
+  const { createRequire } = await import("node:module");
+  const { EventEmitter } = await import("node:events");
+  const { MacUpdater } = createRequire(import.meta.url)("electron-updater/out/MacUpdater.js");
+  const h = await stageA();
+  const zip = nodePath.join(stateDir, "b.zip");
+  writeFileSync(zip, "zip payload");
+  const native = new EventEmitter() as any;
+  const fetched = deferred();
+  native.setFeedURL = (feed:any) => { native.feed = feed; };
+  native.checkForUpdates = () => {
+    void (async () => {
+      const response = await fetch(native.feed.url, {headers:native.feed.headers});
+      const manifest = await response.json() as any;
+      await (await fetch(manifest.url)).arrayBuffer();
+      fetched.resolve();
+    })();
+  };
+  native.on("error", (error:Error) => h.updaterEvents.get("error")?.(error));
+  const updater:any = {nativeUpdater:native, autoInstallOnAppQuit:true, squirrelDownloadedUpdate:true,
+    _logger:{info:()=>{},warn:()=>{}}, debug:()=>{},
+    closeServerIfExists:MacUpdater.prototype.closeServerIfExists,
+    dispatchUpdateDownloaded:(info:any)=>h.updaterEvents.get("update-downloaded")?.(info)};
+  h.autoUpdater.checkForUpdates.mockImplementationOnce(() => {
+    h.updaterEvents.get("update-available")?.({version:"2.2.0"});
+    const promise = MacUpdater.prototype.updateDownloaded.call(updater,
+      {url:new URL("https://example.invalid/b.zip"), info:{size:11}},
+      {version:"2.2.0",downloadedFile:zip});
+    return Promise.resolve({downloadPromise:promise});
+  });
+  try {
+    await h.module.checkForUpdatesNow(stateDir);
+    await fetched.promise;
+    expect(disk().staged.version).toBe("2.1.0");
+    expect(native.listenerCount("error")).toBe(1);
+    native.emit("error", new Error("native validation rejected B after transfer"));
+    expect(disk().staged.version).toBe("2.1.0");
+    h.module.quitAndInstallUpdate();
+    expect(h.autoUpdater.quitAndInstall).not.toHaveBeenCalled();
+  } finally { updater.closeServerIfExists(); }
+});
+
+it("keeps replacing identity through a no-update broadcast", async () => {
+  const h = await stageA();
+  h.updaterEvents.get("update-available")?.({version:"2.2.0"});
+  await h.module.setUpdateSettings(stateDir, settings);
+  expect(disk().state).toBe("replacing");
+  h.updaterEvents.get("update-not-available")?.();
+  expect(h.module.getUpdateStatus()).toMatchObject({state:"replacing",version:"2.2.0",stagedCandidate:{version:"2.1.0"},replacementCandidate:{version:"2.2.0"}});
+  await h.module.setUpdateSettings(stateDir, settings);
+});
+
+it("keeps installation blocked if the latest queued snapshot fails", async () => {
+  const h = await stageA();
+  const { StagedUpdateJournalStore } = await import("./staged-update-journal");
+  const write = StagedUpdateJournalStore.prototype.write;
+  vi.spyOn(StagedUpdateJournalStore.prototype, "write")
+    .mockImplementationOnce(write)
+    .mockRejectedValueOnce(new Error("ENOSPC"));
+  h.updaterEvents.get("update-available")?.({ version: "2.2.0" });
+  await h.module.setUpdateSettings(stateDir, settings);
+  expect(h.module.getUpdateStatus()).toMatchObject({ state: "replacing", installDisabledReason: "ENOSPC" });
+  h.module.quitAndInstallUpdate();
+  expect(h.autoUpdater.quitAndInstall).not.toHaveBeenCalled();
+});
+
+it("keeps automatic same-channel discovery opted out of downloading", async () => {
+  const disabled = { ...settings, enabled: false };
+  const h = await importAutoUpdater(disabled);
+  await h.module.checkForUpdatesNow(stateDir);
+  h.updaterEvents.get("update-downloaded")?.({ version: "2.1.0" });
+  await h.module.setUpdateSettings(stateDir, disabled);
+  h.autoUpdater.checkForUpdates.mockImplementationOnce(() => {
+    h.updaterEvents.get("update-available")?.({ version: "2.2.0" });
+    return Promise.resolve({ updateInfo: { version: "2.2.0" } });
+  });
+  await h.module.startAutoUpdates(stateDir);
+  expect(h.autoUpdater.downloadUpdate).not.toHaveBeenCalled();
+  expect(h.module.getUpdateStatus()).toMatchObject({ state: "replacing", replacementPhase: "checking" });
+});
+
+it("retargets A and retains uncertain native B across channel return and retry", async () => {
+  const h = await stageA();
+  h.autoUpdater.channel = "nightly";
+  h.updaterEvents.get("update-available")?.({ version: "2.2.0" });
+  h.updaterEvents.get("update-downloaded")?.({ version: "2.2.0" });
+  await h.module.setUpdateSettings(stateDir, settings);
+  h.autoUpdater.checkForUpdates.mockImplementationOnce(() => {
+    h.updaterEvents.get("update-available")?.({ version: "2.1.0" });
+    return Promise.resolve({ updateInfo: { version: "2.1.0" } });
+  });
+  await h.module.checkForUpdatesNow(stateDir);
+  expect(disk()).toMatchObject({ state: "replacing", replacement: { version: "2.1.0", channel: "latest" }, nativeCandidates: [{ version: "2.2.0", channel: "nightly" }] });
+  h.autoUpdater.downloadUpdate.mockImplementationOnce(() => {
+    h.updaterEvents.get("update-downloaded")?.({ version: "2.1.0" });
+    return Promise.resolve();
+  });
+  await h.module.downloadUpdateNow();
+  expect(disk()).toMatchObject({ state: "replacing", phase: "native-handoff", replacement: { version: "2.1.0" }, nativeCandidates: [{ version: "2.2.0" }] });
+  h.module.quitAndInstallUpdate();
+  expect(h.autoUpdater.quitAndInstall).not.toHaveBeenCalled();
+});
+
 });
