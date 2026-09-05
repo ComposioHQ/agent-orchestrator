@@ -189,6 +189,11 @@ type sessionLifecycle interface {
 	RecoverCodexAccountSwitch(context.Context, string) (domain.CodexAccountSwitch, error)
 	GetActiveCodexAccountSwitch(context.Context) (domain.CodexAccountSwitch, bool, error)
 	SetCodexAccountSwitchObserver(func())
+	ClaudeCodeAccountSwitchInProgress() bool
+	StartClaudeCodeAccountSwitch(context.Context, ports.ClaudeCodeAccountSwitchConfig) (domain.ClaudeCodeAccountSwitch, error)
+	RecoverClaudeCodeAccountSwitch(context.Context, string) (domain.ClaudeCodeAccountSwitch, error)
+	GetActiveClaudeCodeAccountSwitch(context.Context) (domain.ClaudeCodeAccountSwitch, bool, error)
+	SetClaudeCodeAccountSwitchObserver(func())
 	// SetTerminalInputGate prevents mux input from racing a TUI-to-Chat handoff.
 	SetTerminalInputGate(gate sessionmanager.TerminalInputGate)
 	// SetReviewerTerminator late-binds worker lifecycle teardown to the review
@@ -220,7 +225,7 @@ func (m sessionLifecycleMessenger) Send(ctx context.Context, id domain.SessionID
 // (issue #2685). The returned service is mounted at httpd APIDeps.Sessions.
 // It also returns the manager so the caller can wire Reconcile into the boot
 // sequence.
-func startSession(ctx context.Context, cfg config.Config, runtime runtimeselect.Runtime, store *sqlite.Store, lcm *lifecycle.Manager, messenger ports.AgentMessenger, telemetry ports.EventSink, agents ports.AgentResolver, agentReadiness ports.AgentReadinessProvider, previewLifecycle sessionmanager.PreviewLifecycle, browserLifecycle sessionmanager.BrowserLifecycle, browserCapabilities sessionmanager.BrowserCapabilityIssuer, chat sessionmanager.ChatLauncher, defaults sessionmanager.SessionModeDefaults, reportingPolicy ports.AgentSwitchReportingPolicy, tracker ports.Tracker, codexOperationGate ports.CodexOperationGate, log *slog.Logger) (*sessionsvc.Service, reviewsvc.Manager, sessionLifecycle, error) {
+func startSession(ctx context.Context, cfg config.Config, runtime runtimeselect.Runtime, store *sqlite.Store, lcm *lifecycle.Manager, messenger ports.AgentMessenger, telemetry ports.EventSink, agents ports.AgentResolver, agentReadiness ports.AgentReadinessProvider, previewLifecycle sessionmanager.PreviewLifecycle, browserLifecycle sessionmanager.BrowserLifecycle, browserCapabilities sessionmanager.BrowserCapabilityIssuer, chat sessionmanager.ChatLauncher, defaults sessionmanager.SessionModeDefaults, reportingPolicy ports.AgentSwitchReportingPolicy, tracker ports.Tracker, codexOperationGate ports.CodexOperationGate, claudeCodeOperationGate ports.ClaudeCodeOperationGate, log *slog.Logger) (*sessionsvc.Service, reviewsvc.Manager, sessionLifecycle, error) {
 	gitWS, err := gitworktree.New(gitworktree.Options{
 		// Per-session worktrees live under the data dir, so a single AO_DATA_DIR
 		// override moves all durable per-user state together.
@@ -246,25 +251,26 @@ func startSession(ctx context.Context, cfg config.Config, runtime runtimeselect.
 		Projects: store,
 	})
 	mgr := sessionmanager.New(sessionmanager.Deps{
-		Runtime:             runtime,
-		Agents:              agents,
-		Workspace:           ws,
-		Store:               store,
-		ReportingPolicy:     reportingPolicy,
-		DaemonRunID:         cfg.AppRunID,
-		Messenger:           messenger,
-		Chat:                chat,
-		Defaults:            defaults,
-		Lifecycle:           lcm,
-		Preview:             previewLifecycle,
-		Browser:             browserLifecycle,
-		BrowserCapabilities: browserCapabilities,
-		DataDir:             cfg.DataDir,
-		RunFilePath:         cfg.RunFilePath,
-		BackgroundContext:   ctx,
-		Logger:              log,
-		ReconcileWorkers:    startupReconcileWorkers,
-		CodexOperationGate:  codexOperationGate,
+		Runtime:                 runtime,
+		Agents:                  agents,
+		Workspace:               ws,
+		Store:                   store,
+		ReportingPolicy:         reportingPolicy,
+		DaemonRunID:             cfg.AppRunID,
+		Messenger:               messenger,
+		Chat:                    chat,
+		Defaults:                defaults,
+		Lifecycle:               lcm,
+		Preview:                 previewLifecycle,
+		Browser:                 browserLifecycle,
+		BrowserCapabilities:     browserCapabilities,
+		DataDir:                 cfg.DataDir,
+		RunFilePath:             cfg.RunFilePath,
+		BackgroundContext:       ctx,
+		Logger:                  log,
+		ReconcileWorkers:        startupReconcileWorkers,
+		CodexOperationGate:      codexOperationGate,
+		ClaudeCodeOperationGate: claudeCodeOperationGate,
 	})
 	mgr.SetAgentReadiness(agentReadiness)
 	scmProvider := newMultiSCMProvider(cfg.GitLab, log)
@@ -304,6 +310,7 @@ func startSession(ctx context.Context, cfg config.Config, runtime runtimeselect.
 		reviewsvc.WithLifecycleReducer(lcm),
 		reviewsvc.WithTelemetry(telemetry),
 		reviewsvc.WithCodexAccountOperationGate(codexOperationGate),
+		reviewsvc.WithClaudeCodeAccountOperationGate(claudeCodeOperationGate),
 	}
 	if scmProvider != nil {
 		reviewOpts = append(reviewOpts,

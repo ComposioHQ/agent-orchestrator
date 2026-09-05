@@ -407,18 +407,24 @@ type Manager struct {
 	// executable resolves the daemon's own binary (os.Executable in
 	// production); its directory is prepended to spawned sessions' PATH so the
 	// workspace hook commands resolve back to this daemon. Tests inject a stub.
-	executable                      func() (string, error)
-	newLaunchID                     func() string
-	codexOperationGate              ports.CodexOperationGate
-	codexAccountSwitchMu            sync.Mutex
-	codexAccountSwitchWorkerRunning bool
-	codexAccountSwitchLease         ports.CodexOperationLease
-	codexAccountSwitchObserverMu    sync.Mutex
-	codexAccountSwitchObserver      func()
-	startupBackgroundReconcileDone  chan struct{}
-	startupBackgroundReconcileOnce  sync.Once
-	agentOpMu                       sync.Mutex
-	agentOperations                 map[domain.SessionID]agentOperationKind
+	executable                           func() (string, error)
+	newLaunchID                          func() string
+	codexOperationGate                   ports.CodexOperationGate
+	codexAccountSwitchMu                 sync.Mutex
+	codexAccountSwitchWorkerRunning      bool
+	codexAccountSwitchLease              ports.CodexOperationLease
+	codexAccountSwitchObserverMu         sync.Mutex
+	codexAccountSwitchObserver           func()
+	claudeCodeOperationGate              ports.ClaudeCodeOperationGate
+	claudeCodeAccountSwitchMu            sync.Mutex
+	claudeCodeAccountSwitchWorkerRunning bool
+	claudeCodeAccountSwitchLease         ports.ClaudeCodeOperationLease
+	claudeCodeAccountSwitchObserverMu    sync.Mutex
+	claudeCodeAccountSwitchObserver      func()
+	startupBackgroundReconcileDone       chan struct{}
+	startupBackgroundReconcileOnce       sync.Once
+	agentOpMu                            sync.Mutex
+	agentOperations                      map[domain.SessionID]agentOperationKind
 	// switchDecisionInput opens a narrow human-only terminal lane while the
 	// source is blocked on permission during a mandatory switch.
 	switchDecisionInput map[domain.SessionID]domain.AgentSwitchID
@@ -723,6 +729,9 @@ type Deps struct {
 	// CodexOperationGate is shared with account clients and reviewer launches.
 	// Nil preserves focused-test compatibility by disabling device-global gating.
 	CodexOperationGate ports.CodexOperationGate
+	// ClaudeCodeOperationGate gates only new Claude worker/chat/reviewer
+	// controller admission; existing processes keep running during hot switch.
+	ClaudeCodeOperationGate ports.ClaudeCodeOperationGate
 	// ReconcileWorkers bounds concurrent live-session recovery during daemon
 	// startup. Values below one preserve the serial default for embedders/tests;
 	// production explicitly opts into a small worker pool.
@@ -763,6 +772,7 @@ func New(d Deps) *Manager {
 		executable:                     d.Executable,
 		newLaunchID:                    d.NewLaunchID,
 		codexOperationGate:             defaultCodexOperationGate(d.CodexOperationGate),
+		claudeCodeOperationGate:        defaultClaudeCodeOperationGate(d.ClaudeCodeOperationGate),
 		backgroundContext:              d.BackgroundContext,
 		startupBackgroundReconcileDone: make(chan struct{}),
 		agentOperations:                make(map[domain.SessionID]agentOperationKind),
@@ -2709,6 +2719,9 @@ func (m *Manager) Reconcile(ctx context.Context) error {
 // state that would otherwise lose its in-memory input fence across a daemon
 // restart. This must complete before the API accepts user input.
 func (m *Manager) ReconcileStartupSafety(ctx context.Context) error {
+	if err := m.ReconcileClaudeCodeAccountSwitches(ctx); err != nil {
+		return fmt.Errorf("reconcile: Claude Code account-switch pass: %w", err)
+	}
 	if err := m.ReconcileCodexAccountSwitches(ctx); err != nil {
 		return fmt.Errorf("reconcile: Codex account-switch pass: %w", err)
 	}

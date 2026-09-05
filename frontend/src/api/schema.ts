@@ -141,6 +141,210 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/agents/claude-code/account-switches": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Start a device-global Claude Code account hot switch */
+        post: operations["startClaudeCodeAccountSwitch"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/agents/claude-code/account-switches/{switchId}/recover": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Recover one interrupted Claude Code account switch */
+        post: operations["recoverClaudeCodeAccountSwitch"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/agents/claude-code/accounts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Return cached AO Claude Code accounts and active-account state */
+        get: operations["getClaudeCodeAccounts"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/agents/claude-code/accounts/{accountId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete one inactive Claude Code account */
+        delete: operations["deleteClaudeCodeAccount"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/agents/claude-code/accounts/{accountId}/activate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Activate a saved Claude Code account while the device is signed out */
+        post: operations["activateClaudeCodeAccount"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/agents/claude-code/accounts/{accountId}/login-terminal": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Open isolated native Claude Code sign-in for one retained account */
+        post: operations["openClaudeCodeAccountReauthenticationTerminal"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/agents/claude-code/accounts/{accountId}/logout": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Remove one Claude Code account credential from this device */
+        post: operations["logoutClaudeCodeAccount"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/agents/claude-code/accounts/ensure": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Reconcile the device Claude Code account catalog */
+        post: operations["ensureClaudeCodeAccounts"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/agents/claude-code/accounts/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Stream cached and live Claude Code account state */
+        get: operations["streamClaudeCodeAccounts"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/agents/claude-code/accounts/login-operations/{operationId}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Cancel one isolated Claude Code account login operation */
+        post: operations["cancelClaudeCodeAccountLogin"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/agents/claude-code/accounts/login-operations/{operationId}/verify": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Verify one isolated Claude Code account login operation */
+        post: operations["verifyClaudeCodeAccountLogin"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/agents/claude-code/accounts/login-terminal": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Open isolated native Claude Code login without changing an existing active account */
+        post: operations["openClaudeCodeAccountLoginTerminal"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/agents/codex/account-switches": {
         parameters: {
             query?: never;
@@ -2521,6 +2725,154 @@ export interface components {
             sessionId: string;
             takenOverFrom: string[];
         };
+        ClaudeCodeAccountCapabilitiesResponse: {
+            accountManagement: components["schemas"]["ClaudeCodeCapabilityObservationResponse"];
+            accountRead: components["schemas"]["ClaudeCodeCapabilityObservationResponse"];
+            globalSwitch: components["schemas"]["ClaudeCodeCapabilityObservationResponse"];
+            hotReload: components["schemas"]["ClaudeCodeCapabilityObservationResponse"];
+            nativeLogin: components["schemas"]["ClaudeCodeCapabilityObservationResponse"];
+            sessionExitResume: components["schemas"]["ClaudeCodeCapabilityObservationResponse"];
+        };
+        ClaudeCodeAccountIdentityResponse: {
+            accountCreatedAt?: null | string;
+            accountUuid: string;
+            billingType?: string;
+            displayName?: string;
+            emailAddress?: string;
+            organizationName?: string;
+            organizationUuid?: string;
+            seatTier?: string;
+            subscriptionCreatedAt?: null | string;
+        };
+        ClaudeCodeAccountLoginResponse: {
+            account?: components["schemas"]["ClaudeCodeAccountResponse"];
+            accountId?: string;
+            /** Format: date-time */
+            expiresAt: string;
+            operationId: string;
+            reason: string;
+            reasonCode: string;
+            /** @enum {string} */
+            status: "pending" | "verifying" | "unauthorized" | "unverified" | "completed" | "cancelled" | "failed" | "expired";
+        };
+        ClaudeCodeAccountLoginTerminalResponse: {
+            /** Format: date-time */
+            createdAt: string;
+            handleId: string;
+            title: string;
+        };
+        ClaudeCodeAccountResponse: {
+            accountEmail?: null | string;
+            active: boolean;
+            authentication: components["schemas"]["ClaudeCodeAuthenticationResponse"];
+            /** Format: date-time */
+            createdAt: string;
+            id: string;
+            identity: components["schemas"]["ClaudeCodeAccountIdentityResponse"];
+            label: string;
+            planUsage: components["schemas"]["ClaudeCodePlanUsageResponse"];
+            reason: string;
+            reasonCode: string;
+            /** @enum {string} */
+            status: "valid" | "signed_out" | "broken";
+            /** Format: date-time */
+            updatedAt: string;
+        };
+        ClaudeCodeAccountSwitchResponse: {
+            canRecover: boolean;
+            /** Format: date-time */
+            completedAt?: null | string;
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: date-time */
+            credentialsCommittedAt?: null | string;
+            failureCode?: string;
+            id: string;
+            /** @enum {string} */
+            phase: "requested" | "verifying_target" | "checkpointing_source" | "activating_target" | "updating_identity" | "verifying_global" | "rollback_required" | "recovery_required" | "completed" | "failed";
+            /** Format: date-time */
+            propagationUncertainUntil?: null | string;
+            sourceAccountId: string;
+            /** @enum {string} */
+            switchPolicy: "hot_reload";
+            targetAccountId: string;
+            /** Format: date-time */
+            updatedAt: string;
+        };
+        ClaudeCodeAccountsResponse: {
+            /** Format: int64 */
+            accountRevision: number;
+            accounts: components["schemas"]["ClaudeCodeAccountResponse"][];
+            activeAccountId?: string;
+            activeLogin?: components["schemas"]["ClaudeCodeActiveLoginResponse"];
+            capabilities: components["schemas"]["ClaudeCodeAccountCapabilitiesResponse"];
+            currentSwitch?: components["schemas"]["ClaudeCodeAccountSwitchResponse"];
+            unmanagedGlobalAccount?: components["schemas"]["ClaudeCodeUnmanagedGlobalAccountResponse"];
+        };
+        ClaudeCodeActiveLoginResponse: {
+            accountId?: string;
+            /** Format: date-time */
+            expiresAt: string;
+            operationId: string;
+            reason: string;
+            reasonCode: string;
+            shellTerminal: components["schemas"]["ClaudeCodeAccountLoginTerminalResponse"];
+            /** @enum {string} */
+            status: "pending" | "verifying" | "unauthorized" | "unverified" | "completed" | "cancelled" | "failed" | "expired";
+        };
+        ClaudeCodeAuthenticationResponse: {
+            /** Format: date-time */
+            attemptedAt: null | string;
+            /** Format: date-time */
+            checkedAt: null | string;
+            /** @enum {string} */
+            freshness: "fresh" | "stale" | "checking";
+            reason: string;
+            reasonCode: string;
+            /** @enum {string} */
+            state: "authorized" | "unauthorized" | "unknown" | "not_applicable";
+        };
+        ClaudeCodeCapabilityObservationResponse: {
+            reason: string;
+            reasonCode: string;
+            /** @enum {string} */
+            state: "supported" | "unsupported" | "unknown";
+        };
+        ClaudeCodePlanPromotionResponse: {
+            endsOn: string;
+            percentIncrease: number;
+        };
+        ClaudeCodePlanUsageResponse: {
+            /** Format: date-time */
+            attemptedAt?: null | string;
+            /** Format: date-time */
+            checkedAt?: null | string;
+            /** @enum {string} */
+            freshness: "fresh" | "stale" | "checking";
+            /** Format: date-time */
+            observedAt?: null | string;
+            plan?: null | string;
+            promotion?: components["schemas"]["ClaudeCodePlanPromotionResponse"];
+            reason: string;
+            reasonCode: string;
+            /** @enum {string} */
+            state: "available" | "unknown" | "unsupported";
+            windows: components["schemas"]["ClaudeCodePlanUsageWindowResponse"][];
+        };
+        ClaudeCodePlanUsageWindowResponse: {
+            displayName: string;
+            id: string;
+            /** Format: date-time */
+            resetsAt?: null | string;
+            /** Format: double */
+            usedPercent: number;
+        };
+        ClaudeCodeUnmanagedGlobalAccountResponse: {
+            accountEmail?: null | string;
+            label: string;
+            reason: string;
+            reasonCode: string;
+        };
         CleanupSessionsResponse: {
             cleaned: string[];
             ok: boolean;
@@ -3442,6 +3794,10 @@ export interface components {
             prUrl?: string;
             sessionId: string;
         };
+        OpenClaudeCodeAccountLoginTerminalResponse: {
+            operation: components["schemas"]["ClaudeCodeAccountLoginResponse"];
+            shellTerminal: components["schemas"]["ClaudeCodeAccountLoginTerminalResponse"];
+        };
         OpenCodexAccountLoginTerminalResponse: {
             operation: components["schemas"]["CodexAccountLoginResponse"];
             shellTerminal: components["schemas"]["CodexAccountLoginTerminalResponse"];
@@ -4019,6 +4375,12 @@ export interface components {
              * @enum {string}
              */
             operation?: "install" | "reinstall";
+        };
+        StartClaudeCodeAccountSwitchRequest: {
+            /** Format: int64 */
+            expectedAccountRevision: number;
+            idempotencyKey: string;
+            targetAccountId: string;
         };
         StartCodexAccountSwitchRequest: {
             /** Format: int64 */
@@ -4713,6 +5075,658 @@ export interface operations {
             };
             /** @description Not Implemented */
             501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    startClaudeCodeAccountSwitch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StartClaudeCodeAccountSwitchRequest"];
+            };
+        };
+        responses: {
+            /** @description Accepted */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ClaudeCodeAccountSwitchResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    recoverClaudeCodeAccountSwitch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Durable Claude Code account switch identifier. */
+                switchId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ClaudeCodeAccountSwitchResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    getClaudeCodeAccounts: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ClaudeCodeAccountsResponse"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    deleteClaudeCodeAccount: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Stable Claude Code account UUID. */
+                accountId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ClaudeCodeAccountsResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    activateClaudeCodeAccount: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Stable Claude Code account UUID. */
+                accountId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ClaudeCodeAccountsResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    openClaudeCodeAccountReauthenticationTerminal: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Stable Claude Code account UUID. */
+                accountId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Accepted */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OpenClaudeCodeAccountLoginTerminalResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    logoutClaudeCodeAccount: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Stable Claude Code account UUID. */
+                accountId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ClaudeCodeAccountsResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    ensureClaudeCodeAccounts: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ClaudeCodeAccountsResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    streamClaudeCodeAccounts: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/event-stream": components["schemas"]["ClaudeCodeAccountsResponse"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    cancelClaudeCodeAccountLogin: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Claude Code login operation identifier. */
+                operationId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ClaudeCodeAccountLoginResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    verifyClaudeCodeAccountLogin: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Claude Code login operation identifier. */
+                operationId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ClaudeCodeAccountLoginResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    openClaudeCodeAccountLoginTerminal: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Accepted */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OpenClaudeCodeAccountLoginTerminalResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };

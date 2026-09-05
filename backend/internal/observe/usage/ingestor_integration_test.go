@@ -1082,6 +1082,78 @@ func TestIngestorStopsRetryingConflictingNativeEvent(t *testing.T) {
 	}
 }
 
+// A Claude account hot switch deliberately leaves the AO session, native
+// transcript, usage binding, and source cursor in place. This exercises the
+// resulting ingestion contract: replay is a no-op and only a newly appended
+// provider record contributes cost.
+func TestClaudeAccountHotSwitchUsageContinuityDoesNotDuplicateHistoricalCost(t *testing.T) {
+	ctx := context.Background()
+	dataDir := t.TempDir()
+	store, source, path, now := seedClaudeIngestionSource(t, dataDir, "anthropic")
+	first := `{"type":"assistant","uuid":"before-switch","timestamp":"2026-09-02T10:00:00Z","message":{"id":"msg-before","model":"claude-test","stop_reason":"end_turn","usage":{"input_tokens":8,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":2}}}` + "\n"
+	second := `{"type":"assistant","uuid":"after-switch","timestamp":"2026-09-02T10:01:00Z","message":{"id":"msg-after","model":"claude-test","stop_reason":"end_turn","usage":{"input_tokens":7,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":3}}}` + "\n"
+	mustNoError(t, os.WriteFile(path, []byte(first), 0o600))
+	ingestor := NewIngestor(store, IngestorConfig{Clock: func() time.Time { return now }})
+	if _, err := ingestor.Ingest(ctx, source.ID); err != nil {
+		t.Fatalf("initial ingest: %v", err)
+	}
+	sessionID := sourceSessionID(t, store, source.ID)
+	before, ok, err := store.GetUsageSourceForIngestion(ctx, source.ID)
+	if err != nil || !ok {
+		t.Fatalf("source before switch: ok=%v err=%v", ok, err)
+	}
+	bindingsBefore, err := store.ListUsageBindingsForSession(ctx, sessionID)
+	if err != nil || len(bindingsBefore) != 1 {
+		t.Fatalf("bindings before switch: %+v err=%v", bindingsBefore, err)
+	}
+	assertTokenAggregate(t, store, sessionID, 10)
+	assertUsageEventCount(t, dataDir, source.ID, 1)
+
+	// The account changes outside the usage pipeline. Re-ingesting the same
+	// transcript must preserve both the durable binding and source cursor.
+	if _, err := ingestor.Ingest(ctx, source.ID); err != nil {
+		t.Fatalf("replay after switch: %v", err)
+	}
+	afterReplay, ok, err := store.GetUsageSourceForIngestion(ctx, source.ID)
+	if err != nil || !ok {
+		t.Fatalf("source after replay: ok=%v err=%v", ok, err)
+	}
+	bindingsAfter, err := store.ListUsageBindingsForSession(ctx, sessionID)
+	if err != nil || len(bindingsAfter) != 1 {
+		t.Fatalf("bindings after switch: %+v err=%v", bindingsAfter, err)
+	}
+	if bindingsAfter[0].ID != bindingsBefore[0].ID || afterReplay.Source.ID != before.Source.ID ||
+		afterReplay.Source.ByteOffset != before.Source.ByteOffset || afterReplay.Source.ParserStateJSON != before.Source.ParserStateJSON {
+		t.Fatalf("hot switch changed usage identity/cursor: before=%+v after=%+v bindings=%+v", before.Source, afterReplay.Source, bindingsAfter)
+	}
+	assertTokenAggregate(t, store, sessionID, 10)
+	assertUsageEventCount(t, dataDir, source.ID, 1)
+
+	file, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o600) //nolint:gosec // test-owned transcript.
+	mustNoError(t, err)
+	_, err = file.WriteString(second)
+	mustNoError(t, err)
+	mustNoError(t, file.Close())
+	now = now.Add(time.Minute)
+	if _, err := ingestor.Ingest(ctx, source.ID); err != nil {
+		t.Fatalf("post-switch append ingest: %v", err)
+	}
+	assertTokenAggregate(t, store, sessionID, 20)
+	assertUsageEventCount(t, dataDir, source.ID, 2)
+}
+
+func assertUsageEventCount(t *testing.T, dataDir string, sourceID int64, want int) {
+	t.Helper()
+	db, err := sql.Open("sqlite", "file:"+filepath.Join(dataDir, "ao.db"))
+	mustNoError(t, err)
+	defer func() { _ = db.Close() }()
+	var got int
+	mustNoError(t, db.QueryRowContext(context.Background(), `SELECT COUNT(*) FROM model_usage_events WHERE usage_source_id = ?`, sourceID).Scan(&got))
+	if got != want {
+		t.Fatalf("usage event count = %d, want %d", got, want)
+	}
+}
+
 func TestRetryDelayUsesBoundedBackoff(t *testing.T) {
 	tests := []struct {
 		failure int64

@@ -244,6 +244,9 @@ func (m *Manager) admitAgentSwitch(ctx context.Context, id domain.SessionID, cfg
 	if (rec.Harness == domain.HarnessCodex || cfg.TargetHarness == domain.HarnessCodex) && m.codexAccountSwitchIsActive() {
 		return domain.AgentSwitch{}, nil, fmt.Errorf("switch agent %s: %w", id, ErrCodexAccountSwitchInProgress)
 	}
+	if (rec.Harness == domain.HarnessClaudeCode || cfg.TargetHarness == domain.HarnessClaudeCode) && m.ClaudeCodeAccountSwitchInProgress() {
+		return domain.AgentSwitch{}, nil, fmt.Errorf("switch agent %s: %w", id, ports.ErrClaudeCodeAccountSwitchInProgress)
+	}
 	if rec.IsTerminated {
 		return domain.AgentSwitch{}, nil, fmt.Errorf("switch agent %s: %w", id, ErrTerminated)
 	}

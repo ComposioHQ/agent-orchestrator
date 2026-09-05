@@ -376,6 +376,483 @@ paths:
       summary: Return display-safe native authentication plans for supported agents
       tags:
       - agents
+  /api/v1/agents/claude-code/account-switches:
+    post:
+      operationId: startClaudeCodeAccountSwitch
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StartClaudeCodeAccountSwitchRequest'
+        required: true
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClaudeCodeAccountSwitchResponse'
+          description: Accepted
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Service Unavailable
+      summary: Start a device-global Claude Code account hot switch
+      tags:
+      - agents
+  /api/v1/agents/claude-code/account-switches/{switchId}/recover:
+    post:
+      operationId: recoverClaudeCodeAccountSwitch
+      parameters:
+      - description: Durable Claude Code account switch identifier.
+        in: path
+        name: switchId
+        required: true
+        schema:
+          description: Durable Claude Code account switch identifier.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClaudeCodeAccountSwitchResponse'
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Service Unavailable
+      summary: Recover one interrupted Claude Code account switch
+      tags:
+      - agents
+  /api/v1/agents/claude-code/accounts:
+    get:
+      operationId: getClaudeCodeAccounts
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClaudeCodeAccountsResponse'
+          description: OK
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Service Unavailable
+      summary: Return cached AO Claude Code accounts and active-account state
+      tags:
+      - agents
+  /api/v1/agents/claude-code/accounts/{accountId}:
+    delete:
+      operationId: deleteClaudeCodeAccount
+      parameters:
+      - description: Stable Claude Code account UUID.
+        in: path
+        name: accountId
+        required: true
+        schema:
+          description: Stable Claude Code account UUID.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClaudeCodeAccountsResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Service Unavailable
+      summary: Delete one inactive Claude Code account
+      tags:
+      - agents
+  /api/v1/agents/claude-code/accounts/{accountId}/activate:
+    post:
+      operationId: activateClaudeCodeAccount
+      parameters:
+      - description: Stable Claude Code account UUID.
+        in: path
+        name: accountId
+        required: true
+        schema:
+          description: Stable Claude Code account UUID.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClaudeCodeAccountsResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Service Unavailable
+      summary: Activate a saved Claude Code account while the device is signed out
+      tags:
+      - agents
+  /api/v1/agents/claude-code/accounts/{accountId}/login-terminal:
+    post:
+      operationId: openClaudeCodeAccountReauthenticationTerminal
+      parameters:
+      - description: Stable Claude Code account UUID.
+        in: path
+        name: accountId
+        required: true
+        schema:
+          description: Stable Claude Code account UUID.
+          type: string
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OpenClaudeCodeAccountLoginTerminalResponse'
+          description: Accepted
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Service Unavailable
+      summary: Open isolated native Claude Code sign-in for one retained account
+      tags:
+      - agents
+  /api/v1/agents/claude-code/accounts/{accountId}/logout:
+    post:
+      operationId: logoutClaudeCodeAccount
+      parameters:
+      - description: Stable Claude Code account UUID.
+        in: path
+        name: accountId
+        required: true
+        schema:
+          description: Stable Claude Code account UUID.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClaudeCodeAccountsResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Service Unavailable
+      summary: Remove one Claude Code account credential from this device
+      tags:
+      - agents
+  /api/v1/agents/claude-code/accounts/ensure:
+    post:
+      operationId: ensureClaudeCodeAccounts
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClaudeCodeAccountsResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Service Unavailable
+      summary: Reconcile the device Claude Code account catalog
+      tags:
+      - agents
+  /api/v1/agents/claude-code/accounts/events:
+    get:
+      operationId: streamClaudeCodeAccounts
+      responses:
+        "200":
+          content:
+            text/event-stream:
+              schema:
+                $ref: '#/components/schemas/ClaudeCodeAccountsResponse'
+          description: OK
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Service Unavailable
+      summary: Stream cached and live Claude Code account state
+      tags:
+      - agents
+  /api/v1/agents/claude-code/accounts/login-operations/{operationId}/cancel:
+    post:
+      operationId: cancelClaudeCodeAccountLogin
+      parameters:
+      - description: Claude Code login operation identifier.
+        in: path
+        name: operationId
+        required: true
+        schema:
+          description: Claude Code login operation identifier.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClaudeCodeAccountLoginResponse'
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Service Unavailable
+      summary: Cancel one isolated Claude Code account login operation
+      tags:
+      - agents
+  /api/v1/agents/claude-code/accounts/login-operations/{operationId}/verify:
+    post:
+      operationId: verifyClaudeCodeAccountLogin
+      parameters:
+      - description: Claude Code login operation identifier.
+        in: path
+        name: operationId
+        required: true
+        schema:
+          description: Claude Code login operation identifier.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClaudeCodeAccountLoginResponse'
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Service Unavailable
+      summary: Verify one isolated Claude Code account login operation
+      tags:
+      - agents
+  /api/v1/agents/claude-code/accounts/login-terminal:
+    post:
+      operationId: openClaudeCodeAccountLoginTerminal
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OpenClaudeCodeAccountLoginTerminalResponse'
+          description: Accepted
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Service Unavailable
+      summary: Open isolated native Claude Code login without changing an existing
+        active account
+      tags:
+      - agents
   /api/v1/agents/codex/account-switches:
     post:
       operationId: startCodexAccountSwitch
@@ -7162,6 +7639,420 @@ components:
       - branchChanged
       - takenOverFrom
       type: object
+    ClaudeCodeAccountCapabilitiesResponse:
+      properties:
+        accountManagement:
+          $ref: '#/components/schemas/ClaudeCodeCapabilityObservationResponse'
+        accountRead:
+          $ref: '#/components/schemas/ClaudeCodeCapabilityObservationResponse'
+        globalSwitch:
+          $ref: '#/components/schemas/ClaudeCodeCapabilityObservationResponse'
+        hotReload:
+          $ref: '#/components/schemas/ClaudeCodeCapabilityObservationResponse'
+        nativeLogin:
+          $ref: '#/components/schemas/ClaudeCodeCapabilityObservationResponse'
+        sessionExitResume:
+          $ref: '#/components/schemas/ClaudeCodeCapabilityObservationResponse'
+      required:
+      - accountRead
+      - nativeLogin
+      - accountManagement
+      - globalSwitch
+      - hotReload
+      - sessionExitResume
+      type: object
+    ClaudeCodeAccountIdentityResponse:
+      properties:
+        accountCreatedAt:
+          type:
+          - "null"
+          - string
+        accountUuid:
+          type: string
+        billingType:
+          type: string
+        displayName:
+          type: string
+        emailAddress:
+          type: string
+        organizationName:
+          type: string
+        organizationUuid:
+          type: string
+        seatTier:
+          type: string
+        subscriptionCreatedAt:
+          type:
+          - "null"
+          - string
+      required:
+      - accountUuid
+      type: object
+    ClaudeCodeAccountLoginResponse:
+      properties:
+        account:
+          $ref: '#/components/schemas/ClaudeCodeAccountResponse'
+        accountId:
+          type: string
+        expiresAt:
+          format: date-time
+          type: string
+        operationId:
+          type: string
+        reason:
+          type: string
+        reasonCode:
+          type: string
+        status:
+          enum:
+          - pending
+          - verifying
+          - unauthorized
+          - unverified
+          - completed
+          - cancelled
+          - failed
+          - expired
+          type: string
+      required:
+      - operationId
+      - status
+      - reasonCode
+      - reason
+      - expiresAt
+      type: object
+    ClaudeCodeAccountLoginTerminalResponse:
+      properties:
+        createdAt:
+          format: date-time
+          type: string
+        handleId:
+          type: string
+        title:
+          type: string
+      required:
+      - handleId
+      - title
+      - createdAt
+      type: object
+    ClaudeCodeAccountResponse:
+      properties:
+        accountEmail:
+          type:
+          - "null"
+          - string
+        active:
+          type: boolean
+        authentication:
+          $ref: '#/components/schemas/ClaudeCodeAuthenticationResponse'
+        createdAt:
+          format: date-time
+          type: string
+        id:
+          type: string
+        identity:
+          $ref: '#/components/schemas/ClaudeCodeAccountIdentityResponse'
+        label:
+          type: string
+        planUsage:
+          $ref: '#/components/schemas/ClaudeCodePlanUsageResponse'
+        reason:
+          type: string
+        reasonCode:
+          type: string
+        status:
+          enum:
+          - valid
+          - signed_out
+          - broken
+          type: string
+        updatedAt:
+          format: date-time
+          type: string
+      required:
+      - id
+      - label
+      - status
+      - reasonCode
+      - reason
+      - active
+      - authentication
+      - identity
+      - planUsage
+      - createdAt
+      - updatedAt
+      type: object
+    ClaudeCodeAccountSwitchResponse:
+      properties:
+        canRecover:
+          type: boolean
+        completedAt:
+          format: date-time
+          type:
+          - "null"
+          - string
+        createdAt:
+          format: date-time
+          type: string
+        credentialsCommittedAt:
+          format: date-time
+          type:
+          - "null"
+          - string
+        failureCode:
+          type: string
+        id:
+          type: string
+        phase:
+          enum:
+          - requested
+          - verifying_target
+          - checkpointing_source
+          - activating_target
+          - updating_identity
+          - verifying_global
+          - rollback_required
+          - recovery_required
+          - completed
+          - failed
+          type: string
+        propagationUncertainUntil:
+          format: date-time
+          type:
+          - "null"
+          - string
+        sourceAccountId:
+          type: string
+        switchPolicy:
+          enum:
+          - hot_reload
+          type: string
+        targetAccountId:
+          type: string
+        updatedAt:
+          format: date-time
+          type: string
+      required:
+      - id
+      - sourceAccountId
+      - targetAccountId
+      - switchPolicy
+      - phase
+      - canRecover
+      - createdAt
+      - updatedAt
+      type: object
+    ClaudeCodeAccountsResponse:
+      properties:
+        accountRevision:
+          format: int64
+          type: integer
+        accounts:
+          items:
+            $ref: '#/components/schemas/ClaudeCodeAccountResponse'
+          type: array
+        activeAccountId:
+          type: string
+        activeLogin:
+          $ref: '#/components/schemas/ClaudeCodeActiveLoginResponse'
+        capabilities:
+          $ref: '#/components/schemas/ClaudeCodeAccountCapabilitiesResponse'
+        currentSwitch:
+          $ref: '#/components/schemas/ClaudeCodeAccountSwitchResponse'
+        unmanagedGlobalAccount:
+          $ref: '#/components/schemas/ClaudeCodeUnmanagedGlobalAccountResponse'
+      required:
+      - accountRevision
+      - accounts
+      - capabilities
+      type: object
+    ClaudeCodeActiveLoginResponse:
+      properties:
+        accountId:
+          type: string
+        expiresAt:
+          format: date-time
+          type: string
+        operationId:
+          type: string
+        reason:
+          type: string
+        reasonCode:
+          type: string
+        shellTerminal:
+          $ref: '#/components/schemas/ClaudeCodeAccountLoginTerminalResponse'
+        status:
+          enum:
+          - pending
+          - verifying
+          - unauthorized
+          - unverified
+          - completed
+          - cancelled
+          - failed
+          - expired
+          type: string
+      required:
+      - operationId
+      - status
+      - reasonCode
+      - reason
+      - expiresAt
+      - shellTerminal
+      type: object
+    ClaudeCodeAuthenticationResponse:
+      properties:
+        attemptedAt:
+          format: date-time
+          type:
+          - "null"
+          - string
+        checkedAt:
+          format: date-time
+          type:
+          - "null"
+          - string
+        freshness:
+          enum:
+          - fresh
+          - stale
+          - checking
+          type: string
+        reason:
+          type: string
+        reasonCode:
+          type: string
+        state:
+          enum:
+          - authorized
+          - unauthorized
+          - unknown
+          - not_applicable
+          type: string
+      required:
+      - state
+      - freshness
+      - checkedAt
+      - attemptedAt
+      - reasonCode
+      - reason
+      type: object
+    ClaudeCodeCapabilityObservationResponse:
+      properties:
+        reason:
+          type: string
+        reasonCode:
+          type: string
+        state:
+          enum:
+          - supported
+          - unsupported
+          - unknown
+          type: string
+      required:
+      - state
+      - reasonCode
+      - reason
+      type: object
+    ClaudeCodePlanPromotionResponse:
+      properties:
+        endsOn:
+          type: string
+        percentIncrease:
+          minimum: 1
+          type: integer
+      required:
+      - percentIncrease
+      - endsOn
+      type: object
+    ClaudeCodePlanUsageResponse:
+      properties:
+        attemptedAt:
+          format: date-time
+          type:
+          - "null"
+          - string
+        checkedAt:
+          format: date-time
+          type:
+          - "null"
+          - string
+        freshness:
+          enum:
+          - fresh
+          - stale
+          - checking
+          type: string
+        observedAt:
+          format: date-time
+          type:
+          - "null"
+          - string
+        plan:
+          type:
+          - "null"
+          - string
+        promotion:
+          $ref: '#/components/schemas/ClaudeCodePlanPromotionResponse'
+        reason:
+          type: string
+        reasonCode:
+          type: string
+        state:
+          enum:
+          - available
+          - unknown
+          - unsupported
+          type: string
+        windows:
+          items:
+            $ref: '#/components/schemas/ClaudeCodePlanUsageWindowResponse'
+          type: array
+      required:
+      - state
+      - freshness
+      - windows
+      - reasonCode
+      - reason
+      type: object
+    ClaudeCodePlanUsageWindowResponse:
+      properties:
+        displayName:
+          type: string
+        id:
+          type: string
+        resetsAt:
+          format: date-time
+          type:
+          - "null"
+          - string
+        usedPercent:
+          format: double
+          maximum: 100
+          minimum: 0
+          type: number
+      required:
+      - id
+      - displayName
+      - usedPercent
+      type: object
+    ClaudeCodeUnmanagedGlobalAccountResponse:
+      properties:
+        accountEmail:
+          type:
+          - "null"
+          - string
+        label:
+          type: string
+        reason:
+          type: string
+        reasonCode:
+          type: string
+      required:
+      - label
+      - reasonCode
+      - reason
+      type: object
     CleanupSessionsResponse:
       properties:
         cleaned:
@@ -9719,6 +10610,16 @@ components:
       - kind
       - sessionId
       type: object
+    OpenClaudeCodeAccountLoginTerminalResponse:
+      properties:
+        operation:
+          $ref: '#/components/schemas/ClaudeCodeAccountLoginResponse'
+        shellTerminal:
+          $ref: '#/components/schemas/ClaudeCodeAccountLoginTerminalResponse'
+      required:
+      - operation
+      - shellTerminal
+      type: object
     OpenCodexAccountLoginTerminalResponse:
       properties:
         operation:
@@ -11230,6 +12131,24 @@ components:
           - install
           - reinstall
           type: string
+      type: object
+    StartClaudeCodeAccountSwitchRequest:
+      properties:
+        expectedAccountRevision:
+          format: int64
+          minimum: 1
+          type: integer
+        idempotencyKey:
+          maxLength: 200
+          minLength: 1
+          type: string
+        targetAccountId:
+          minLength: 1
+          type: string
+      required:
+      - targetAccountId
+      - expectedAccountRevision
+      - idempotencyKey
       type: object
     StartCodexAccountSwitchRequest:
       properties:

@@ -30,7 +30,7 @@ func (s *Store) GetCodexActiveAccount(ctx context.Context) (domain.CodexActiveAc
 }
 
 // SetCodexActiveAccount atomically advances the active-account revision.
-func (s *Store) SetCodexActiveAccount(ctx context.Context, accountID string, expectedRevision int64, at time.Time) (domain.CodexActiveAccount, error) {
+func (s *Store) SetCodexActiveAccount(ctx context.Context, accountID string, expectedRevision int64, at time.Time) (domain.CodexActiveAccount, error) { //nolint:dupl // Codex and Claude retain separate durable contracts.
 	if expectedRevision < 0 || (accountID == "" && expectedRevision == 0) {
 		return domain.CodexActiveAccount{}, ports.ErrCodexAccountRevisionConflict
 	}

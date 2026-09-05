@@ -149,6 +149,9 @@ func (m *Manager) StartInterfaceTransition(
 	if rec.Harness == domain.HarnessCodex && m.codexAccountSwitchIsActive() {
 		return domain.SessionInterfaceTransition{}, ErrCodexAccountSwitchInProgress
 	}
+	if rec.Harness == domain.HarnessClaudeCode && m.ClaudeCodeAccountSwitchInProgress() {
+		return domain.SessionInterfaceTransition{}, ports.ErrClaudeCodeAccountSwitchInProgress
+	}
 	if rec.IsTerminated {
 		return domain.SessionInterfaceTransition{}, ErrTerminated
 	}

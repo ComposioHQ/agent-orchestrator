@@ -317,7 +317,7 @@ func TestWiring_StartSessionBuildsSessionService(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildAgentResolver: %v", err)
 	}
-	svc, reviewSvc, lc, err := startSession(context.Background(), cfg, rt, store, lcm, messenger, telemetryadapter.NoopSink{}, agents, nil, nil, nil, nil, nil, nil, nil, nil, nil, log)
+	svc, reviewSvc, lc, err := startSession(context.Background(), cfg, rt, store, lcm, messenger, telemetryadapter.NoopSink{}, agents, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, log)
 	if err != nil {
 		t.Fatalf("startSession: %v", err)
 	}
@@ -378,7 +378,7 @@ func TestWiring_StartSessionSpawnsScratchWithoutGitRepo(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildAgentResolver: %v", err)
 	}
-	svc, _, _, err := startSession(context.Background(), cfg, runtime, store, lcm, messenger, telemetryadapter.NoopSink{}, agents, nil, nil, nil, nil, nil, nil, nil, nil, nil, log)
+	svc, _, _, err := startSession(context.Background(), cfg, runtime, store, lcm, messenger, telemetryadapter.NoopSink{}, agents, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, log)
 	if err != nil {
 		t.Fatalf("startSession: %v", err)
 	}
@@ -435,7 +435,7 @@ func TestStartSession_SpawnDoesNotPanicWhenNoTrackerToken(t *testing.T) {
 	if agentsErr != nil {
 		t.Fatalf("buildAgentResolver: %v", agentsErr)
 	}
-	svc, _, _, err := startSession(context.Background(), cfg, rt, store, lcm, messenger, telemetryadapter.NoopSink{}, agents, nil, nil, nil, nil, nil, nil, nil, nil, nil, log)
+	svc, _, _, err := startSession(context.Background(), cfg, rt, store, lcm, messenger, telemetryadapter.NoopSink{}, agents, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, log)
 	if err != nil {
 		t.Fatalf("startSession: %v", err)
 	}
@@ -494,7 +494,7 @@ func TestStartTrackerIntake_RunsEvenWithoutEnabledProjects(t *testing.T) {
 	if agentsErr != nil {
 		t.Fatalf("buildAgentResolver: %v", agentsErr)
 	}
-	svc, _, _, err := startSession(context.Background(), cfg, rt, store, lcm, messenger, telemetryadapter.NoopSink{}, agents, nil, nil, nil, nil, nil, nil, nil, nil, nil, log)
+	svc, _, _, err := startSession(context.Background(), cfg, rt, store, lcm, messenger, telemetryadapter.NoopSink{}, agents, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, log)
 	if err != nil {
 		t.Fatalf("startSession: %v", err)
 	}
@@ -968,7 +968,18 @@ func (f *fakeSessionLifecycle) RecoverCodexAccountSwitch(context.Context, string
 func (f *fakeSessionLifecycle) GetActiveCodexAccountSwitch(context.Context) (domain.CodexAccountSwitch, bool, error) {
 	return domain.CodexAccountSwitch{}, false, nil
 }
-func (f *fakeSessionLifecycle) SetCodexAccountSwitchObserver(func()) {}
+func (f *fakeSessionLifecycle) SetCodexAccountSwitchObserver(func())    {}
+func (f *fakeSessionLifecycle) ClaudeCodeAccountSwitchInProgress() bool { return false }
+func (f *fakeSessionLifecycle) StartClaudeCodeAccountSwitch(context.Context, ports.ClaudeCodeAccountSwitchConfig) (domain.ClaudeCodeAccountSwitch, error) {
+	return domain.ClaudeCodeAccountSwitch{}, nil
+}
+func (f *fakeSessionLifecycle) RecoverClaudeCodeAccountSwitch(context.Context, string) (domain.ClaudeCodeAccountSwitch, error) {
+	return domain.ClaudeCodeAccountSwitch{}, nil
+}
+func (f *fakeSessionLifecycle) GetActiveClaudeCodeAccountSwitch(context.Context) (domain.ClaudeCodeAccountSwitch, bool, error) {
+	return domain.ClaudeCodeAccountSwitch{}, false, nil
+}
+func (f *fakeSessionLifecycle) SetClaudeCodeAccountSwitchObserver(func()) {}
 
 // TestWiring_SessionLifecycleInterfaceInvokedByDaemon asserts the
 // sessionLifecycle interface is satisfied by *sessionmanager.Manager (compile

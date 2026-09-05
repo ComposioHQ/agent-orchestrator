@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/claudecode"
 	agentregistry "github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/registry"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apierr"
@@ -50,17 +51,27 @@ type modelCatalogCall struct {
 // Service owns normalized harness readiness and the unchanged model catalog.
 // Consumers share coordinator checks instead of probing adapters directly.
 type Service struct {
-	agents        []agentregistry.HarnessAgent
-	readiness     *readinessCoordinator
-	cache         ports.AgentModelCatalogCache
-	discoverer    ports.AgentModelDiscoverer
-	projects      ProjectLookup
-	sessions      SessionUsageLookup
-	resolverMu    map[string]*sync.Mutex
-	modelCallMu   sync.Mutex
-	modelCalls    map[string]*modelCatalogCall
-	codexAccounts *codexAccountManager
-	codexSwitches CodexAccountSwitchCoordinator
+	agents             []agentregistry.HarnessAgent
+	readiness          *readinessCoordinator
+	cache              ports.AgentModelCatalogCache
+	discoverer         ports.AgentModelDiscoverer
+	projects           ProjectLookup
+	sessions           SessionUsageLookup
+	resolverMu         map[string]*sync.Mutex
+	modelCallMu        sync.Mutex
+	modelCalls         map[string]*modelCatalogCall
+	codexAccounts      *codexAccountManager
+	codexSwitches      CodexAccountSwitchCoordinator
+	claudeCodeAccounts *claudeCodeAccountManager
+	claudeCodeSwitches ClaudeCodeAccountSwitchCoordinator
+}
+
+// ClaudeCodeAccountSwitchCoordinator owns global switch execution and recovery.
+type ClaudeCodeAccountSwitchCoordinator interface {
+	ClaudeCodeAccountSwitchInProgress() bool
+	StartClaudeCodeAccountSwitch(context.Context, ports.ClaudeCodeAccountSwitchConfig) (domain.ClaudeCodeAccountSwitch, error)
+	RecoverClaudeCodeAccountSwitch(context.Context, string) (domain.ClaudeCodeAccountSwitch, error)
+	GetActiveClaudeCodeAccountSwitch(context.Context) (domain.ClaudeCodeAccountSwitch, bool, error)
 }
 
 // CodexAccountSwitchCoordinator owns global switch execution and recovery.
@@ -73,19 +84,30 @@ type CodexAccountSwitchCoordinator interface {
 
 // Deps contains optional durable dependencies for the agent catalog service.
 type Deps struct {
-	Cache                  ports.AgentModelCatalogCache
-	Discoverer             ports.AgentModelDiscoverer
-	Projects               ProjectLookup
-	Sessions               SessionUsageLookup
-	Context                context.Context
-	Logger                 *slog.Logger
-	CodexAccountRoot       string
-	CodexPendingRoot       string
-	CodexSwitchStagingRoot string
-	CodexGlobalHome        string
-	CodexAccounts          ports.CodexAccountClientFactory
-	CodexAccountState      CodexAccountStateStore
-	CodexOperationGate     ports.CodexOperationGate
+	Cache                       ports.AgentModelCatalogCache
+	Discoverer                  ports.AgentModelDiscoverer
+	Projects                    ProjectLookup
+	Sessions                    SessionUsageLookup
+	Context                     context.Context
+	Logger                      *slog.Logger
+	CodexAccountRoot            string
+	CodexPendingRoot            string
+	CodexSwitchStagingRoot      string
+	CodexGlobalHome             string
+	CodexAccounts               ports.CodexAccountClientFactory
+	CodexAccountState           CodexAccountStateStore
+	CodexOperationGate          ports.CodexOperationGate
+	ClaudeCodeAccountRoot       string
+	ClaudeCodePendingRoot       string
+	ClaudeCodeSwitchStagingRoot string
+	ClaudeCodeHome              string
+	ClaudeCodeKeychain          claudecode.Keychain
+	ClaudeCodeKeychainAccount   string
+	ClaudeCodeUsageReader       ports.ClaudeCodeUsageReader
+	ClaudeCodeAccountState      ports.ClaudeCodeAccountStateStore
+	ClaudeCodeOperationGate     ports.ClaudeCodeOperationGate
+	ClaudeCodeResolveExecutable func(context.Context) (string, error)
+	ClaudeCodeEnvironment       map[string]string
 }
 
 // ProjectLookup resolves the registered working directory used for model
@@ -112,6 +134,16 @@ func NewWithDeps(deps Deps) *Service {
 	svc := newService(agents, deps.Cache, deps.Projects, deps.Discoverer)
 	if deps.CodexAccountRoot != "" && deps.CodexGlobalHome != "" {
 		svc.codexAccounts = newCodexAccountManager(deps.Context, deps.CodexAccountRoot, deps.CodexPendingRoot, deps.CodexSwitchStagingRoot, deps.CodexGlobalHome, deps.CodexAccounts, deps.CodexAccountState, deps.Logger, deps.CodexOperationGate)
+	}
+	if deps.ClaudeCodeAccountRoot != "" && deps.ClaudeCodeHome != "" {
+		svc.claudeCodeAccounts = newClaudeCodeAccountManager(claudeCodeAccountManagerDeps{
+			Context: deps.Context, AccountRoot: deps.ClaudeCodeAccountRoot, PendingRoot: deps.ClaudeCodePendingRoot,
+			SwitchStagingRoot: deps.ClaudeCodeSwitchStagingRoot, Home: deps.ClaudeCodeHome,
+			Keychain: deps.ClaudeCodeKeychain, KeychainAccount: deps.ClaudeCodeKeychainAccount,
+			UsageReader: deps.ClaudeCodeUsageReader,
+			StateStore:  deps.ClaudeCodeAccountState, OperationGate: deps.ClaudeCodeOperationGate,
+			ResolveExecutable: deps.ClaudeCodeResolveExecutable, Environment: deps.ClaudeCodeEnvironment,
+		})
 	}
 	svc.readiness = newReadinessCoordinator(readinessCoordinatorConfig{
 		Agents: agents, Factory: agentregistry.Harnessed, Context: deps.Context, Logger: deps.Logger,

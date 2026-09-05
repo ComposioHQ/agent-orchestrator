@@ -282,7 +282,7 @@ func (c *CodexAccountsController) cancelLogin(w http.ResponseWriter, r *http.Req
 	envelope.WriteJSON(w, http.StatusOK, newCodexLoginResponse(result))
 }
 
-func (c *CodexAccountsController) events(w http.ResponseWriter, r *http.Request) {
+func (c *CodexAccountsController) events(w http.ResponseWriter, r *http.Request) { //nolint:dupl // Provider-specific event names and DTOs are intentionally explicit.
 	if c.Svc == nil {
 		apispec.NotImplemented(w, r, "GET", "/api/v1/agents/codex/accounts/events")
 		return
