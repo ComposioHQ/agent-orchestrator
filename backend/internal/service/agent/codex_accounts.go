@@ -18,13 +18,14 @@ import (
 )
 
 const (
-	codexAccountDisplayTTL    = 5 * time.Minute
-	codexAccountLaunchTTL     = 30 * time.Second
-	codexAccountAuthTimeout   = 10 * time.Second
-	codexAccountUsageTTL      = 5 * time.Minute
-	codexResetCreditTimeout   = 15 * time.Second
-	codexAccountLoginLifetime = 15 * time.Minute
-	codexAccountProcessLimit  = 2
+	codexAccountDisplayTTL       = 5 * time.Minute
+	codexAccountLaunchTTL        = 30 * time.Second
+	codexAccountAuthTimeout      = 10 * time.Second
+	codexAccountReconcileTimeout = 45 * time.Second
+	codexAccountUsageTTL         = 5 * time.Minute
+	codexResetCreditTimeout      = 15 * time.Second
+	codexAccountLoginLifetime    = 15 * time.Minute
+	codexAccountProcessLimit     = 2
 )
 
 // CodexAccounts is the display-safe account-management view. Credentials and
@@ -124,21 +125,22 @@ type codexAccountManager struct {
 	pendingRoot       string
 	switchStagingRoot string
 
-	mu            sync.Mutex
-	bootstrapOnce sync.Once
-	bootstrapDone chan struct{}
-	bootstrapErr  error
-	auth          map[string]*accountAuthState
-	usage         map[string]*accountUsageState
-	capabilities  domain.CodexAccountCapabilities
-	active        domain.CodexActiveAccount
-	globalAuth    domain.AgentAuthenticationObservation
-	unmanaged     *domain.CodexUnmanagedGlobalAccount
-	login         *accountLoginOperation
-	reconcile     *accountReconcileCall
-	bootstrapped  bool
-	capacity      *codexCapacityCoordinator
-	subscribers   map[chan CodexAccounts]struct{}
+	mu                 sync.Mutex
+	bootstrapCall      *accountReconcileCall
+	bootstrapErr       error
+	bootstrapNextRetry time.Time
+	bootstrapFailures  int
+	auth               map[string]*accountAuthState
+	usage              map[string]*accountUsageState
+	capabilities       domain.CodexAccountCapabilities
+	active             domain.CodexActiveAccount
+	globalAuth         domain.AgentAuthenticationObservation
+	unmanaged          *domain.CodexUnmanagedGlobalAccount
+	login              *accountLoginOperation
+	reconcile          *accountReconcileCall
+	bootstrapped       bool
+	capacity           *codexCapacityCoordinator
+	subscribers        map[chan CodexAccounts]struct{}
 }
 
 func newCodexAccountManager(ctx context.Context, accountRoot, pendingRoot, switchStagingRoot, globalHome string, factory ports.CodexAccountClientFactory, stateStore CodexAccountStateStore, logger *slog.Logger, operationGates ...ports.CodexOperationGate) *codexAccountManager {
@@ -158,7 +160,7 @@ func newCodexAccountManager(ctx context.Context, accountRoot, pendingRoot, switc
 		processes: make(chan struct{}, codexAccountProcessLimit), mutations: make(chan struct{}, 1), executable: os.Executable,
 		globalHome: canonicalPath(globalHome), pendingRoot: canonicalPath(pendingRoot), switchStagingRoot: canonicalPath(switchStagingRoot),
 		auth: map[string]*accountAuthState{}, usage: map[string]*accountUsageState{},
-		capabilities: unavailableCodexCapabilities(), subscribers: map[chan CodexAccounts]struct{}{}, bootstrapDone: make(chan struct{}),
+		capabilities: unavailableCodexCapabilities(), subscribers: map[chan CodexAccounts]struct{}{},
 		globalAuth: uncheckedAuthentication(),
 	}
 	m.mutations <- struct{}{}
