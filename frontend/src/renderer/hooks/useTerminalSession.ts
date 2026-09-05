@@ -68,6 +68,8 @@ export type UseTerminalSessionOptions = {
 	inputDisabled?: boolean;
 	/** Coalesce and cover the initial replay. Disable for non-retained reviewer panes. */
 	coverInitialReplay?: boolean;
+	/** Keep the initial cover up until the terminal emits its first bytes. */
+	waitForInitialOutput?: boolean;
 	/**
 	 * False while a retained terminal is parked off screen. Output and transport
 	 * recovery continue, but hidden panes cannot send user input or PTY resizes.
@@ -591,13 +593,15 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 				// Bound the gate from here: the daemon fires onOpen from setPTY and
 				// starts copyOut immediately after, so the replay is imminent and
 				// the cap now measures the burst rather than the connect handshake.
-				if (r.replayBuffering && !r.replayCapTimer) {
+				if (r.replayBuffering && !optionsRef.current.waitForInitialOutput && !r.replayCapTimer) {
 					r.replayCapTimer = setTimeout(() => flushReplay(true), REPLAY_CAP_MS);
 				}
-				// Same anchor, different job: uncover a pane that turns out to have
-				// nothing to replay (see REPLAY_FIRST_BYTE_MS). Deliberately not a
-				// flush — the gate stays armed so a late burst is still coalesced.
-				if (r.replayBuffering && !r.replayFirstByteTimer) {
+				// Same anchor, different job: local panes may uncover when there is
+				// nothing to replay (see REPLAY_FIRST_BYTE_MS). Cloud agent panes
+				// deliberately wait for their first real TUI bytes: showing xterm
+				// after the worker attaches but before Codex draws created a second
+				// blank screen between “Connecting…” and the agent UI.
+				if (r.replayBuffering && !optionsRef.current.waitForInitialOutput && !r.replayFirstByteTimer) {
 					r.replayFirstByteTimer = setTimeout(() => {
 						r.replayFirstByteTimer = null;
 						if (!isCurrentAttachment(generation, handle, mux)) return;

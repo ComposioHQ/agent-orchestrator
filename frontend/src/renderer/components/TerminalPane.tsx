@@ -941,6 +941,9 @@ function AttachedTerminal({
 	const shellTerminalHandleId = terminalTarget?.kind === "shell" ? terminalTarget.handleId : undefined;
 	const { attach, state, error, replaySettled, hasAttached, syncVisibleSize } = useTerminalSession(attachSession, {
 		coverInitialReplay: terminalTarget?.kind !== "reviewer",
+		// Cloud workers can acknowledge a terminal before the coding agent emits
+		// its first screen. Keep the loading surface visible through that gap.
+		waitForInitialOutput: Boolean(attachSession?.cloud),
 		createMux,
 		daemonReady,
 		inputDisabled,
@@ -1117,7 +1120,7 @@ function AttachedTerminal({
 						</div>
 					</div>
 				)}
-				{showReplayCover && <ReplayCover />}
+				{showReplayCover && <ReplayCover message={attachSession?.cloud ? t("terminal.connecting") : undefined} />}
 				{banner && (
 					<div className="absolute inset-x-3 top-2 rounded-md border border-border bg-surface/95 px-3 py-1.5 font-mono text-caption text-muted-foreground">
 						{banner}
@@ -1138,16 +1141,18 @@ function AttachedTerminal({
 	);
 }
 
-function ReplayCover() {
+function ReplayCover({ message }: { message?: string }) {
 	return (
-		// Keep this cover silent: its only job is to hide the initial replay's
-		// intermediate paints. xterm remains live underneath, and pointer events
-		// pass through so selection and wheel input never wait on attachment.
+		// xterm remains live underneath. Cloud startup has no meaningful output
+		// until the agent TUI draws, so it gets one continuous Connecting surface;
+		// local replay stays deliberately silent to avoid covering settled output.
 		<div
-			aria-hidden="true"
-			className="bg-terminal-opaque pointer-events-none absolute inset-0"
+			aria-hidden={message ? undefined : "true"}
+			className="bg-terminal-opaque pointer-events-none absolute inset-0 grid place-items-center"
 			data-testid="terminal-replay-cover"
-		/>
+		>
+			{message ? <span className="font-mono text-sm text-terminal-dim">{message}</span> : null}
+		</div>
 	);
 }
 

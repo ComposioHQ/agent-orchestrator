@@ -68,18 +68,10 @@ func main() {
 }
 
 func run(logger *slog.Logger) error {
-	startupStartedAt := time.Now()
 	publicURL := strings.TrimRight(strings.TrimSpace(os.Getenv("AO_CLOUD_PUBLIC_URL")), "/")
 	sessionID := strings.TrimSpace(os.Getenv("AO_CLOUD_SESSION_ID"))
 	bootstrapToken := strings.TrimSpace(os.Getenv("AO_WORKER_BOOTSTRAP_TOKEN"))
 	workspace := strings.TrimSpace(os.Getenv("AO_WORKSPACE_DIR"))
-	logStartupStage := func(stage string) {
-		logger.Info("worker startup stage",
-			"session_id", sessionID,
-			"stage", stage,
-			"elapsed_ms", time.Since(startupStartedAt).Milliseconds(),
-		)
-	}
 	if publicURL == "" {
 		return errors.New("AO_CLOUD_PUBLIC_URL is required")
 	}
@@ -108,7 +100,6 @@ func run(logger *slog.Logger) error {
 		http:      &http.Client{Timeout: requestTimeout},
 		tokenFile: filepath.Join(dataDir, "worker-token"),
 	}
-	logStartupStage("worker_process_started")
 
 	bootstrap, err := client.bootstrap(ctx, bootstrapToken)
 	if err != nil {
@@ -131,7 +122,6 @@ func run(logger *slog.Logger) error {
 		"harness", bootstrap.Launch.Harness,
 		"repository_url", bootstrap.Launch.RepositoryURL,
 	)
-	logStartupStage("bootstrap_exchange_completed")
 
 	// The workspace shell is deliberately available before checkout starts. A
 	// developer can inspect the sandbox immediately while repository preparation
@@ -161,8 +151,6 @@ func run(logger *slog.Logger) error {
 		logger.Warn("first heartbeat failed", "error", err)
 	} else if err := client.setToken(renewed); err != nil {
 		return err
-	} else {
-		logStartupStage("first_heartbeat_completed")
 	}
 	pullRequestSocketPath := filepath.Join(dataDir, "ao-pull-request.sock")
 	reviewSocketPath := filepath.Join(dataDir, "ao-review.sock")
@@ -199,7 +187,6 @@ func run(logger *slog.Logger) error {
 		<-results
 		return fmt.Errorf("start workspace transport: %w", err)
 	}
-	logStartupStage("workspace_transport_ready")
 	if err := client.publishEvent(ctx, "worker.ready", map[string]any{
 		"workerId":     bootstrap.WorkerID,
 		"epoch":        bootstrap.Epoch,
@@ -208,10 +195,9 @@ func run(logger *slog.Logger) error {
 	}); err != nil {
 		logger.Warn("publish worker.ready failed", "error", err)
 	}
-	logStartupStage("worker_ready_published")
 	go func() {
 		if err := prepareWorkspace(
-			runCtx, logger, logStartupStage, client, bootstrap, workspace, dataDir, publicURL,
+			runCtx, logger, client, bootstrap, workspace, dataDir, publicURL,
 		); err != nil {
 			if runCtx.Err() == nil {
 				logger.Error("background workspace startup failed", "error", err)
@@ -219,11 +205,10 @@ func run(logger *slog.Logger) error {
 			return
 		}
 		transportSupervisor.MarkWorkspaceReady()
-		logStartupStage("workspace_ready_for_agent_requests")
 	}()
 	go func() {
 		if err := startInteractiveAgent(
-			runCtx, logger, logStartupStage, client, bootstrap, workspace, dataDir,
+			runCtx, logger, client, bootstrap, workspace, dataDir,
 			pullRequestSocketPath, reviewSocketPath, &transportSupervisor,
 		); err != nil && runCtx.Err() == nil {
 			logger.Error("background coding-agent startup failed", "error", err)
@@ -245,20 +230,16 @@ func run(logger *slog.Logger) error {
 func prepareWorkspace(
 	ctx context.Context,
 	logger *slog.Logger,
-	logStartupStage func(string),
 	client *client,
 	bootstrap worker.BootstrapResponse,
 	workspace, dataDir, publicURL string,
 ) error {
 	if worker.IsScratchRepositoryURL(bootstrap.Launch.RepositoryURL) {
-		logStartupStage("scratch_workspace_preparation_started")
 		if err := worker.PrepareScratchWorkspace(ctx, worker.ExecGitRunner{}, workspace); err != nil {
 			return fmt.Errorf("prepare scratch workspace: %w", err)
 		}
 		logger.Info("initialized scratch workspace")
-		logStartupStage("scratch_workspace_preparation_completed")
 	} else {
-		logStartupStage("repository_checkout_started")
 		checkoutGrant, err := client.checkoutGrant(ctx)
 		if err != nil {
 			if !anonymousCheckoutEnabled() {
@@ -277,14 +258,12 @@ func prepareWorkspace(
 		if err := worker.PrepareCheckout(ctx, worker.ExecGitRunner{}, workspace, checkoutGrant); err != nil {
 			return fmt.Errorf("prepare repository checkout: %w", err)
 		}
-		logStartupStage("repository_checkout_completed")
 		if err := worker.ConfigureWorkerGit(
 			ctx, worker.ExecGitRunner{}, workspace, dataDir, publicURL,
 			bootstrap.SessionID, bootstrap.Launch.Branch,
 		); err != nil {
 			return fmt.Errorf("configure repository tooling: %w", err)
 		}
-		logStartupStage("repository_tooling_configured")
 	}
 	return nil
 }
@@ -292,7 +271,6 @@ func prepareWorkspace(
 func startInteractiveAgent(
 	ctx context.Context,
 	logger *slog.Logger,
-	logStartupStage func(string),
 	client *client,
 	bootstrap worker.BootstrapResponse,
 	workspace, dataDir, pullRequestSocketPath, reviewSocketPath string,
@@ -302,20 +280,16 @@ func startInteractiveAgent(
 		logger.Warn("coding-agent harness unavailable", "error", err)
 		return nil
 	}
-	logStartupStage("agent_credential_fetch_started")
 	credential, err := client.Credential(ctx)
 	if err != nil {
 		return fmt.Errorf("load coding-agent credential: %w", err)
 	}
-	logStartupStage("agent_credential_fetch_completed")
-	logStartupStage("agent_harness_setup_started")
 	agentCommand, err := (workerexec.HarnessBuilder{DataDir: dataDir}).BuildInteractive(
 		bootstrap.Launch, credential, workspace,
 	)
 	if err != nil {
 		return fmt.Errorf("build interactive coding-agent command: %w", err)
 	}
-	logStartupStage("agent_harness_setup_completed")
 	agentCommand.Env["AO_CLOUD_WORKER_API_URL"] = client.baseURL
 	agentCommand.Env["AO_CLOUD_WORKER_TOKEN_FILE"] = client.tokenFile
 	agentCommand.Env["AO_SESSION_ID"] = bootstrap.SessionID
@@ -336,11 +310,9 @@ func startInteractiveAgent(
 		agentCommand.Cleanup()
 		return fmt.Errorf("initialize agent terminal: %w", err)
 	}
-	logStartupStage("agent_terminal_registered")
 	if err := transportSupervisor.StartAgent(ctx, agentCommand, agentTerminal.TerminalID); err != nil {
 		return fmt.Errorf("start interactive coding-agent terminal: %w", err)
 	}
-	logStartupStage("agent_terminal_started")
 	if err := client.publishEvent(ctx, "agent.ready", map[string]any{
 		"workerId":     bootstrap.WorkerID,
 		"epoch":        bootstrap.Epoch,

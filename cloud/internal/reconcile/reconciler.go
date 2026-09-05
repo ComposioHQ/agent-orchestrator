@@ -938,7 +938,6 @@ func (r *Reconciler) provision(
 	// running) first. A provider slower than the budget falls back to the
 	// supervise-on-running path unchanged.
 	if bootstrapper, ok := provider.(sandbox.Bootstrapper); ok && len(r.options.WorkerBinary) > 0 {
-		runningWaitStartedAt := time.Now()
 		deadline := time.Now().Add(inlineRunningWait)
 		for environment.State != sandbox.StateRunning && time.Now().Before(deadline) && ctx.Err() == nil {
 			time.Sleep(inlineRunningPoll)
@@ -949,18 +948,11 @@ func (r *Reconciler) provision(
 			environment = refreshed
 		}
 		if environment.State == sandbox.StateRunning {
-			r.log.Info("sandbox provider reported running",
-				"session_id", record.SessionID,
-				"provider", record.Provider,
-				"provider_id", environment.ID,
-				"wait_ms", time.Since(runningWaitStartedAt).Milliseconds(),
-			)
 			r.log.Info("bootstrapping worker in freshly provisioned sandbox",
 				"session_id", record.SessionID,
 				"provider", record.Provider,
 				"provider_id", environment.ID,
 			)
-			bootstrapStartedAt := time.Now()
 			if err := bootstrapper.BootstrapWorker(ctx, environment.ID, sandbox.WorkerBootstrap{
 				Binary:            r.options.WorkerBinary,
 				Destination:       r.options.WorkerDestination,
@@ -971,12 +963,6 @@ func (r *Reconciler) provision(
 			}); err != nil {
 				return r.fail(ctx, record, err)
 			}
-			r.log.Info("sandbox worker bootstrap launched",
-				"session_id", record.SessionID,
-				"provider", record.Provider,
-				"provider_id", environment.ID,
-				"duration_ms", time.Since(bootstrapStartedAt).Milliseconds(),
-			)
 			return r.observe(ctx, record, string(environment.ID),
 				domain.SandboxObservedBootstrapping, "", r.options.Interval)
 		}

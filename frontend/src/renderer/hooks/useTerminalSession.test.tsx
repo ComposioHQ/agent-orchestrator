@@ -156,6 +156,7 @@ function createFakeTerminal(): FakeTerminal {
 
 function setup({
 	coverInitialReplay = true,
+	waitForInitialOutput = false,
 	daemonReady = true,
 	attachedSession = session as WorkspaceSession | undefined,
 	isVisible = true,
@@ -181,6 +182,7 @@ function setup({
 		({ daemonReady: ready, isVisible: visible = true, inputDisabled: blocked = false }: { daemonReady: boolean; isVisible?: boolean; inputDisabled?: boolean }) =>
 			useTerminalSession(attachedSession, {
 				coverInitialReplay,
+				waitForInitialOutput,
 				daemonReady: ready,
 				createMux,
 				inputDisabled: blocked,
@@ -407,6 +409,16 @@ describe("useTerminalSession", () => {
 			expect(view.result.current.replaySettled).toBe(true);
 			act(() => muxes[0].emitData("handle-1", "review output"));
 			expect(terminal.lines).toEqual(["review output"]);
+			expect(view.result.current.replaySettled).toBe(true);
+		});
+
+		it("keeps a cloud-style startup covered until terminal output arrives", () => {
+			const { view, muxes } = setup({ waitForInitialOutput: true });
+			act(() => muxes[0].emitOpened("handle-1"));
+			act(() => void vi.advanceTimersByTime(1_000));
+			expect(view.result.current.replaySettled).toBe(false);
+			act(() => muxes[0].emitData("handle-1", "Codex is ready\\r\\n"));
+			act(() => void vi.advanceTimersByTime(60 + 180));
 			expect(view.result.current.replaySettled).toBe(true);
 		});
 

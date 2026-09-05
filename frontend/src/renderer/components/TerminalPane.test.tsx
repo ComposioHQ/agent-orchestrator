@@ -40,7 +40,7 @@ const {
 		terminalState: { value: "idle" },
 		replaySettled: { value: true },
 		hasAttached: { value: false },
-		terminalSessionOptions: [] as Array<{ coverInitialReplay?: boolean; shellTerminalHandleId?: string }>,
+	terminalSessionOptions: [] as Array<{ coverInitialReplay?: boolean; waitForInitialOutput?: boolean; shellTerminalHandleId?: string }>,
 		xtermMounts: { value: 0 },
 		xtermUnmounts: { value: 0 },
 	}),
@@ -94,7 +94,7 @@ vi.mock("./XtermTerminal", () => ({
 vi.mock("../hooks/useTerminalSession", () => ({
 	useTerminalSession: (
 		_session: WorkspaceSession | undefined,
-		options: { coverInitialReplay?: boolean; shellTerminalHandleId?: string },
+		options: { coverInitialReplay?: boolean; waitForInitialOutput?: boolean; shellTerminalHandleId?: string },
 	) => {
 		terminalSessionOptions.push(options);
 		return {
@@ -409,6 +409,17 @@ describe("TerminalPane replay cover", () => {
 			// xterm keeps rendering underneath — covered, never unmounted, so the
 			// grid it measures stays correct.
 			expect(screen.getByTestId("xterm")).toBeInTheDocument();
+		} finally {
+			view.restore();
+		}
+	});
+
+	it("keeps Cloud startup on Connecting until the agent terminal draws", () => {
+		replaySettled.value = false;
+		const view = renderPane({ ...worker, terminalHandleId: "term-1", cloud: { orgId: "org-1" } });
+		try {
+			expect(screen.getByTestId("terminal-replay-cover")).toHaveTextContent("Connecting…");
+			expect(terminalSessionOptions.at(-1)?.waitForInitialOutput).toBe(true);
 		} finally {
 			view.restore();
 		}
