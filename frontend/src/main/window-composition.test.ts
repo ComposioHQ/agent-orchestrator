@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { createWindowComposition } from "./window-composition";
 
-function setup() {
+function setup(platform: NodeJS.Platform = "win32") {
 	let bounds = { x: 0, y: 0, width: 900, height: 640 };
 	let boundsChanged: (() => void) | undefined;
 	const addChildView = vi.fn();
@@ -33,6 +33,7 @@ function setup() {
 		mainWindow: mainWindow as never,
 		WebContentsView: FakeWebContentsView as never,
 		preload: "/preload.js",
+		platform,
 	});
 	return {
 		addChildView,
@@ -62,6 +63,31 @@ describe("createWindowComposition", () => {
 		expect(addChildView).toHaveBeenLastCalledWith(view);
 		composition.setOverlayOpen(false);
 		expect(addChildView).toHaveBeenLastCalledWith(view, 0);
+	});
+
+	it("does not resize the transparent shell when raising overlays on Windows", () => {
+		const { composition, view } = setup("win32");
+
+		(view.setBounds as ReturnType<typeof vi.fn>).mockClear();
+		composition.setOverlayOpen(true);
+
+		expect(view.setBounds).not.toHaveBeenCalled();
+	});
+
+	it("refreshes the shell surface when raising overlays on macOS", () => {
+		vi.useFakeTimers();
+		try {
+			const { composition, view } = setup("darwin");
+			(view.setBounds as ReturnType<typeof vi.fn>).mockClear();
+
+			composition.setOverlayOpen(true);
+
+			expect(view.setBounds).toHaveBeenCalledWith({ x: 0, y: 0, width: 900, height: 639 });
+			vi.runAllTimers();
+			expect(view.setBounds).toHaveBeenLastCalledWith({ x: 0, y: 0, width: 900, height: 640 });
+		} finally {
+			vi.useRealTimers();
+		}
 	});
 
 	it("resizes and disposes the explicit shell without recreating it", () => {

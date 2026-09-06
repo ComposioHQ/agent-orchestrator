@@ -34,6 +34,7 @@ import {
 	Bug,
 	Check,
 	ChevronRight,
+	ExternalLink,
 	Globe2,
 	Layers3,
 	Maximize2,
@@ -70,6 +71,7 @@ import { appI18n, type MessageKey } from "../i18n";
 import { browserTabLabel } from "../lib/browser-tab-label";
 import { reorderBrowserTabs } from "../lib/browser-tab-order";
 import { handleTabListKeyDown } from "../lib/terminal-tabs";
+import { isWebLink, openLinkInSystemBrowser } from "../lib/external-link-policy";
 
 // One-click viewport width presets for responsive testing — height is shown
 // for reference but not enforced (only width drives CSS breakpoints, and
@@ -384,6 +386,8 @@ export function BrowserPanelView({
 	const [devicePreset, setDevicePreset] = useState<string | null>(null);
 	const [customDeviceWidth, setCustomDeviceWidth] = useState("390");
 	const [controlsView, setControlsView] = useState<"root" | "devices" | "profiles">("root");
+	const [controlsMenuOpen, setControlsMenuOpen] = useState(false);
+	const [controlsTooltipOpen, setControlsTooltipOpen] = useState(false);
 	const [browserProfiles, setBrowserProfiles] = useState<BrowserProfile[]>([]);
 	const [profilesLoading, setProfilesLoading] = useState(false);
 	const openGlobalSettings = useUiStore((state) => state.openGlobalSettings);
@@ -394,8 +398,9 @@ export function BrowserPanelView({
 	const railRef = useRef<BrowserTabsRailHandle>(null);
 	const panelRef = useRef<HTMLDivElement>(null);
 	const urlInputRef = useRef<HTMLInputElement>(null);
+	const controlsHoverRef = useRef(false);
 	const [pinned, setPinned] = useState(() => window.localStorage.getItem(RAIL_PINNED_STORAGE_KEY) === "1");
-	const showTabsTrigger = !poppedOut && !pinned;
+	const showTabsTrigger = !poppedOut && (!pinned || tabs.length === 1);
 	const [draggedTopTabId, setDraggedTopTabId] = useState<string | null>(null);
 	const draggedTopTab = tabs.find((tab) => tab.id === draggedTopTabId);
 
@@ -606,6 +611,11 @@ export function BrowserPanelView({
 			wrapper.style.setProperty("--browser-url-expand-right", `${wrapperRect.right - toolbarRect.right + 4}px`);
 		}
 		setUrlEditing(true);
+	};
+
+	const openCurrentPageExternally = () => {
+		if (!isWebLink(navState.url)) return;
+		void openLinkInSystemBrowser(navState.url);
 	};
 
 	const toggleAnnotationMode = async () => {
@@ -821,7 +831,10 @@ export function BrowserPanelView({
 				<div className="browser-panel__url-wrap relative min-w-0 flex-1">
 					<Input
 						aria-label={t("browser.url")}
-						className="browser-panel__url-input h-browser-url font-mono text-xs"
+						className={cn(
+							"browser-panel__url-input h-browser-url font-mono text-xs",
+							poppedOut ? "pr-9" : !urlEditing && "px-9 text-center",
+						)}
 						list={historySuggestions.length > 0 ? historyListId : undefined}
 						onBlur={endUrlEditing}
 						onChange={(event) => handleURLChange(event.target.value)}
@@ -830,6 +843,25 @@ export function BrowserPanelView({
 						ref={urlInputRef}
 						value={urlEditing || poppedOut ? urlInput : compactBrowserAddress(navState.url)}
 					/>
+					{isWebLink(navState.url) ? (
+						<Tooltip>
+							<TooltipTrigger asChild>
+								<Button
+									aria-label={t("inspector.openInSystemBrowser")}
+									className="browser-panel__url-external"
+									onClick={openCurrentPageExternally}
+									size="icon-sm"
+									type="button"
+									variant="ghost"
+								>
+									<ExternalLink aria-hidden="true" className="size-icon-sm" />
+								</Button>
+							</TooltipTrigger>
+							<TooltipContent data-browser-native-overlay="true" side="bottom">
+								{t("inspector.openInSystemBrowser")}
+							</TooltipContent>
+						</Tooltip>
+					) : null}
 					<datalist id={historyListId}>
 						{historySuggestions.map((suggestion) => (
 							<option key={suggestion.url} value={suggestion.url}>
@@ -883,19 +915,26 @@ export function BrowserPanelView({
 				</Tooltip>
 				<DropdownMenu
 					onOpenChange={(open) => {
+						setControlsMenuOpen(open);
+						setControlsTooltipOpen(false);
 						if (!open) setControlsView("root");
 					}}
 				>
-					<Tooltip>
+					<Tooltip
+						onOpenChange={(open) => setControlsTooltipOpen(open && controlsHoverRef.current && !controlsMenuOpen)}
+						open={controlsTooltipOpen}
+					>
 						<TooltipTrigger asChild>
 							<DropdownMenuTrigger asChild>
 								<Button
 									aria-label={t("browser.controls")}
-									aria-pressed={devicePreset !== null || devtoolsState.open || profileState.profileId !== null}
-									className={cn(
-										(devicePreset !== null || devtoolsState.open || profileState.profileId !== null) &&
-											"bg-accent-strong text-accent-foreground hover:bg-accent-strong dark:hover:bg-accent-strong",
-									)}
+									onPointerEnter={() => {
+										controlsHoverRef.current = true;
+									}}
+									onPointerLeave={() => {
+										controlsHoverRef.current = false;
+										setControlsTooltipOpen(false);
+									}}
 									size="icon-sm"
 									type="button"
 									variant="ghost"
@@ -1084,7 +1123,8 @@ export function BrowserPanelView({
 				{/* Docked mode has no reserved rail column by default (see
 				    BrowserTabsRail.tsx) — this trigger is the only way to reach the tab
 				    list until the user pins the rail, so it remains visible even with a
-				    single tab. Hover/focus
+				    single tab. It also returns when a pinned rail drops to one tab, keeping
+				    recently closed tabs reachable. Hover/focus
 				    drive the rail's flyout imperatively since the two live in separate
 				    DOM subtrees (toolbar row vs. body row) — see BrowserTabsRail.tsx's
 				    BrowserTabsRailHandle for why the close side stays debounced here. */}

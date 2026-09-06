@@ -4575,6 +4575,24 @@ body:has(#root .platform-linux) > .browser-popout-overlay {
 		0 1px 8px color-mix(in srgb, black 9%, transparent);
 }
 
+.browser-panel__url-external {
+	position: absolute;
+	top: 3px;
+	right: 3px;
+	z-index: 3;
+	width: 23px;
+	height: 23px;
+	color: var(--fg-muted);
+	opacity: 0;
+	pointer-events: none;
+}
+
+.browser-panel__url-wrap:hover:not(:has(.browser-panel__url-input:focus)) .browser-panel__url-external,
+.browser-panel__url-external:focus-visible {
+	opacity: 1;
+	pointer-events: auto;
+}
+
 .browser-panel__content {
 	position: relative;
 	flex: 1;

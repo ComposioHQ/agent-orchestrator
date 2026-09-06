@@ -1584,6 +1584,7 @@
 	"settings.browserImport.unavailable": "此版本不支持浏览器导入。",
 	"settings.browserImport.discoveryFailed": "无法检查已安装的浏览器。",
 	"settings.browserImport.failed": "无法导入浏览器数据。",
+	"settings.browserImport.sourceDatabaseUnavailable": "AO 无法访问 {{browser}} 的配置文件数据库。{{browser}} 可能仍在使用该数据库，或者操作系统阻止了访问。请完全关闭 {{browser}}（包括后台进程），然后重试。如果仍然失败，请检查浏览器配置文件是否可访问。加密 Cookie 会单独处理，并不是此错误的原因。",
 	"settings.browserImport.profileCount": "找到 {{count}} 个配置文件",
 	"settings.browserImport.selectProfiles": "选择要导入 AO 的 {{browser}} 配置文件。",
 	"settings.browserImport.defaultProfile": "默认",
