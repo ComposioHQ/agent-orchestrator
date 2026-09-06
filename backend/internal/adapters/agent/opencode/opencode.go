@@ -97,25 +97,25 @@ func (p *Plugin) GetConfigSpec(ctx context.Context) (ports.ConfigSpec, error) {
 // GetLaunchCommand builds the argv to start a new interactive opencode session.
 // Shape:
 //
-//	[env OPENCODE_CONFIG=<ao-config>] opencode [--dangerously-skip-permissions] [--agent <ao-agent>] [--prompt <prompt>]
+//	opencode [--dangerously-skip-permissions] [--model <provider/model>] [--agent <ao-agent>] [--prompt <prompt>]
 //
 // The session runs in the worktree (cwd is set by the runtime, as for Claude
 // Code and Codex). opencode has no CLI flag to set a system prompt, so AO writes
-// an opencode config into the AO prompt artifact directory, points OPENCODE_CONFIG
-// at it, and selects the generated agent with --agent. The initial task prompt
-// is delivered via --prompt (its argument, so a leading "-" is not read as a flag).
+// an opencode config into the AO prompt artifact directory. GetAgentHooks places
+// its path in the runtime environment via OPENCODE_CONFIG, and this command
+// selects the generated agent with --agent. The initial task prompt is delivered
+// via --prompt (its argument, so a leading "-" is not read as a flag).
 func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (cmd []string, err error) {
 	binary, err := p.opencodeBinary(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	envPrefix, agentName, err := opencodeConfigEnvPrefix(cfg.SystemPrompt, cfg.SystemPromptFile, cfg.SessionID)
+	agentName, err := opencodeConfiguredAgent(cfg.SystemPrompt, cfg.SystemPromptFile, cfg.SessionID)
 	if err != nil {
 		return nil, err
 	}
-	cmd = envPrefix
-	cmd = append(cmd, binary)
+	cmd = []string{binary}
 	appendPermissionFlags(&cmd, cfg.Permissions)
 	agentbase.AppendModelFlag(&cmd, cfg.Config, "--model")
 	if agentName != "" {
@@ -128,7 +128,7 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 }
 
 // GetRestoreCommand rebuilds the argv that continues an existing opencode
-// session: `[env OPENCODE_CONFIG=<ao-config>] opencode [--dangerously-skip-permissions] [--agent <ao-agent>] --session <agentSessionId>`.
+// session: `opencode [--dangerously-skip-permissions] [--model <provider/model>] [--agent <ao-agent>] --session <agentSessionId>`.
 // It re-applies the permission flag and the generated AO agent config (resume
 // otherwise reverts to configured defaults). ok is false when the plugin-derived
 // native session id has not landed yet, so callers fall back to fresh launch
@@ -147,12 +147,11 @@ func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig)
 		return nil, false, err
 	}
 
-	envPrefix, agentName, err := opencodeConfigEnvPrefix(cfg.SystemPrompt, cfg.SystemPromptFile, cfg.Session.ID)
+	agentName, err := opencodeConfiguredAgent(cfg.SystemPrompt, cfg.SystemPromptFile, cfg.Session.ID)
 	if err != nil {
 		return nil, false, err
 	}
-	cmd = envPrefix
-	cmd = append(cmd, binary)
+	cmd = []string{binary}
 	appendPermissionFlags(&cmd, cfg.Permissions)
 	agentbase.AppendModelFlag(&cmd, cfg.Config, "--model")
 	if agentName != "" {
@@ -382,14 +381,33 @@ type opencodeAgentSettings struct {
 	Prompt string `json:"prompt,omitempty"`
 }
 
-func opencodeConfigEnvPrefix(inlinePrompt, promptFile, sessionID string) ([]string, string, error) {
+func opencodeConfiguredAgent(inlinePrompt, promptFile, sessionID string) (string, error) {
 	if inlinePrompt == "" && promptFile == "" {
-		return nil, "", nil
+		return "", nil
 	}
 	if promptFile == "" {
-		return nil, "", fmt.Errorf("opencode: system prompt file required to build agent config")
+		return "", fmt.Errorf("opencode: system prompt file required to build agent config")
 	}
-	agentName := opencodeAOAgentName(sessionID)
+	return opencodeAOAgentName(sessionID), nil
+}
+
+// PrepareRuntimeEnv materializes AO's per-session OpenCode agent configuration
+// and adds its path to the runtime environment. Keeping configuration delivery
+// in RuntimeConfig.Env lets native Windows launch opencode directly, without a
+// Unix `env NAME=VALUE` argv prefix or shell interpolation. The overlay contains
+// only an AO-owned config path; provider credentials remain in OpenCode's normal
+// inherited environment and user configuration.
+func PrepareRuntimeEnv(env map[string]string, inlinePrompt, promptFile, sessionID string) error {
+	agentName, err := opencodeConfiguredAgent(inlinePrompt, promptFile, sessionID)
+	if err != nil {
+		return err
+	}
+	if agentName == "" {
+		return nil
+	}
+	if env == nil {
+		return fmt.Errorf("opencode: runtime environment is required to deliver agent config")
+	}
 	prompt := inlinePrompt
 	if prompt == "" {
 		prompt = "{file:./" + filepath.Base(promptFile) + "}"
@@ -407,16 +425,17 @@ func opencodeConfigEnvPrefix(inlinePrompt, promptFile, sessionID string) ([]stri
 	}
 	data, err := json.MarshalIndent(config, "", "  ")
 	if err != nil {
-		return nil, "", err
+		return err
 	}
 	data = append(data, '\n')
 	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return nil, "", fmt.Errorf("opencode: create prompt config dir: %w", err)
+		return fmt.Errorf("opencode: create prompt config dir: %w", err)
 	}
 	if err := hookutil.AtomicWriteFile(configPath, data, 0o600); err != nil {
-		return nil, "", fmt.Errorf("opencode: write prompt config: %w", err)
+		return fmt.Errorf("opencode: write prompt config: %w", err)
 	}
-	return []string{"env", opencodeConfigEnvVar + "=" + configPath}, agentName, nil
+	env[opencodeConfigEnvVar] = configPath
+	return nil
 }
 
 // PrepareACPConfigContent merges AO's standing instructions and any explicit

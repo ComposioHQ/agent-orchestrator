@@ -1485,6 +1485,15 @@ func validateSpawnModel(harness domain.AgentHarness, model string) error {
 		return nil
 	}
 	catalog := modelcatalog.Base(string(harness))
+	// A manual catalog with no choices and no supported custom-entry path is
+	// AO's explicit representation of a harness that cannot honor model
+	// selection. Refuse the override instead of accepting and then silently
+	// launching that harness with its default model.
+	if catalog.Source == "manual" &&
+		catalog.CustomModelEntry == ports.CustomModelEntryNone &&
+		len(catalog.Models) == 0 {
+		return fmt.Errorf("harness %q does not support model overrides", harness)
+	}
 	if catalog.AllowCustom || len(catalog.Models) == 0 {
 		return nil
 	}
@@ -2241,20 +2250,25 @@ func (m *Manager) relaunchSessionWithPolicyAndGeneration(ctx context.Context, op
 		return RestoreResult{}, fmt.Errorf("%s %s: system prompt file: %w", operation, rec.ID, err)
 	}
 
-	// Restore resolves the project model while retaining this session's pinned
-	// permission policy independently of future project defaults.
+	// Restore keeps the model AO resolved for this session independently of
+	// future project defaults. An empty model retains the legacy behavior for
+	// sessions created before model metadata existed.
 	agentConfig := effectiveAgentConfig(rec.Kind, project.Config)
+	if model := strings.TrimSpace(rec.Metadata.Model); model != "" {
+		agentConfig.Model = model
+	}
 	if rec.Metadata.Permissions != "" {
 		agentConfig.Permissions = rec.Metadata.Permissions
 	}
+	adapterConfig := normalizeAgentConfigForHarness(rec.Harness, agentConfig)
 	var env map[string]string
 	rec, env, err = m.prepareWorkerLaunchEnv(ctx, rec, project.Config.Env)
 	if err != nil {
 		return RestoreResult{}, fmt.Errorf("%s %s: browser capability: %w", operation, rec.ID, err)
 	}
 	m.augmentAgentRuntimeEnv(agent, env)
-	pinRuntimePermissionEnv(env, agentConfig.Permissions)
-	if err := m.prepareWorkspace(ctx, agent, rec.ID, ws.Path, systemPrompt, systemPromptFile, agentConfig, env); err != nil {
+	pinRuntimePermissionEnv(env, adapterConfig.Permissions)
+	if err := m.prepareWorkspace(ctx, agent, rec.ID, ws.Path, systemPrompt, systemPromptFile, adapterConfig, env); err != nil {
 		return RestoreResult{}, fmt.Errorf("%s %s: %w", operation, rec.ID, err)
 	}
 	var argv []string
@@ -2262,10 +2276,10 @@ func (m *Manager) relaunchSessionWithPolicyAndGeneration(ctx context.Context, op
 	var mode RestoreMode
 	if forceFresh {
 		argv, delivery, mode, err = freshLaunchArgv(ctx, agent, rec.ID, ws.Path, rec.Metadata,
-			systemPrompt, systemPromptFile, agentConfig, rec.Kind, m.dataDir, true)
+			systemPrompt, systemPromptFile, adapterConfig, rec.Kind, m.dataDir, true)
 	} else {
 		argv, delivery, mode, err = restoreArgv(ctx, agent, rec.ID, ws.Path, rec.Metadata,
-			systemPrompt, systemPromptFile, agentConfig, rec.Kind, rec.Harness, m.dataDir, env)
+			systemPrompt, systemPromptFile, adapterConfig, rec.Kind, rec.Harness, m.dataDir, env)
 	}
 	if err != nil {
 		m.cleanupSystemPromptDir(rec.ID)
@@ -2352,8 +2366,8 @@ func (m *Manager) relaunchSessionWithPolicyAndGeneration(ctx context.Context, op
 			Prompt:           rec.Metadata.Prompt,
 			SystemPrompt:     systemPrompt,
 			SystemPromptFile: systemPromptFile,
-			Config:           agentConfig,
-			Permissions:      agentConfig.Permissions,
+			Config:           adapterConfig,
+			Permissions:      adapterConfig.Permissions,
 		}
 		if err := m.deliverAfterStartPrompt(ctx, agent, launchCfg, handle, rec.ID, rec.Metadata.Prompt); err != nil {
 			_ = m.runtime.Destroy(ctx, handle)

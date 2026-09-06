@@ -113,6 +113,7 @@ func sessionJSON(id, project, kind, status string, terminated bool) string {
 		"projectId":    project,
 		"kind":         kind,
 		"harness":      "codex",
+		"model":        "gpt-5.6-sol",
 		"displayName":  "Current Name",
 		"activity":     map[string]any{"state": "idle", "lastActivityAt": "2026-06-02T12:00:00Z"},
 		"isTerminated": terminated,
@@ -250,7 +251,7 @@ func TestSessionGet_SuccessWithProjectScope(t *testing.T) {
 	if err != nil {
 		t.Fatalf("session get failed: %v\nstderr=%s", err, errOut)
 	}
-	if !strings.Contains(out, "id: demo-1") || !strings.Contains(out, "project: demo") {
+	if !strings.Contains(out, "id: demo-1") || !strings.Contains(out, "project: demo") || !strings.Contains(out, "model: gpt-5.6-sol") {
 		t.Fatalf("unexpected get output:\n%s", out)
 	}
 	want := []string{"GET /api/v1/sessions/demo-1"}
@@ -274,7 +275,7 @@ func TestSessionGet_JSONOutputDecodes(t *testing.T) {
 	if err := json.Unmarshal([]byte(out), &got); err != nil {
 		t.Fatalf("session get --json output is not decodable: %v\noutput=%s", err, out)
 	}
-	if got.Session.ID != "demo-1" || got.Session.ProjectID != "demo" || got.Session.Status != "working" {
+	if got.Session.ID != "demo-1" || got.Session.ProjectID != "demo" || got.Session.Status != "working" || got.Session.Model != "gpt-5.6-sol" {
 		t.Fatalf("unexpected session JSON: %#v", got.Session)
 	}
 }

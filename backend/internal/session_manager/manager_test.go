@@ -1447,6 +1447,25 @@ func TestSpawnModelValidation(t *testing.T) {
 	if _, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "codex-proj", Kind: domain.KindWorker, AgentConfig: ports.AgentConfig{Model: "custom-snapshot-id"}}); err != nil {
 		t.Fatalf("codex spawn with custom model failed: %v", err)
 	}
+
+	// A harness with no catalog and no supported direct/configured entry path
+	// must fail before AO creates durable state rather than silently ignoring the
+	// requested model.
+	st.projects["no-model-proj"] = domain.ProjectRecord{ID: "no-model-proj", Config: domain.ProjectConfig{
+		Worker: domain.RoleOverride{Harness: domain.AgentHarness("no-model-agent")},
+	}}
+	before = len(st.sessions)
+	_, _, _, err = m.Spawn(ctx, ports.SpawnConfig{
+		ProjectID:   "no-model-proj",
+		Kind:        domain.KindWorker,
+		AgentConfig: ports.AgentConfig{Model: "must-not-be-ignored"},
+	})
+	if !errors.Is(err, ErrUnsupportedModel) {
+		t.Fatalf("unsupported harness error = %v, want ErrUnsupportedModel", err)
+	}
+	if len(st.sessions) != before {
+		t.Fatalf("unsupported harness left a session row behind: %d sessions, want %d", len(st.sessions), before)
+	}
 }
 
 // TestSpawnAmpModelOverrideLaunchArgv uses the real Amp adapter to verify that
@@ -1553,6 +1572,7 @@ func TestSpawnModelPersisted(t *testing.T) {
 	ws := &fakeWorkspace{}
 	lookPath := func(string) (string, error) { return "/bin/true", nil }
 	m := New(Deps{Runtime: rt, Agents: singleAgent{agent: agent}, Workspace: ws, Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, LookPath: lookPath})
+	projectBefore := st.projects["mer"]
 
 	rec, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, AgentConfig: ports.AgentConfig{Model: "spawn-model"}})
 	if err != nil {
@@ -1563,6 +1583,9 @@ func TestSpawnModelPersisted(t *testing.T) {
 	}
 	if agent.lastConfig.Model != "spawn-model" {
 		t.Fatalf("launch model = %q, want spawn-model", agent.lastConfig.Model)
+	}
+	if !reflect.DeepEqual(st.projects["mer"], projectBefore) {
+		t.Fatal("per-session model override mutated persistent project configuration")
 	}
 
 	stored, ok, err := st.GetSession(ctx, rec.ID)
@@ -3371,6 +3394,36 @@ func TestRestore_AppliesProjectAgentConfig(t *testing.T) {
 	}
 	if agent.lastConfig.Model != "restore-model" {
 		t.Fatalf("restore config model = %q, want restore-model (config must carry across restore)", agent.lastConfig.Model)
+	}
+}
+
+func TestRestore_PreservesResolvedSessionModelOverCurrentProjectConfig(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: domain.ProjectConfig{
+		AgentConfig: domain.AgentConfig{Model: "project-model-after-spawn"},
+	}}
+	seedTerminal(st, "mer-1", domain.SessionMetadata{
+		WorkspacePath:  "/ws/mer-1",
+		Branch:         "b",
+		AgentSessionID: "agent-x",
+		Model:          "per-session-model",
+	})
+	agent := &recordingAgent{}
+	m := New(Deps{
+		Runtime:   &fakeRuntime{},
+		Agents:    singleAgent{agent: agent},
+		Workspace: &fakeWorkspace{},
+		Store:     st,
+		Messenger: &fakeMessenger{},
+		Lifecycle: &fakeLCM{store: st},
+		LookPath:  func(string) (string, error) { return "/bin/true", nil },
+	})
+
+	if _, err := m.RestoreWithMode(ctx, "mer-1"); err != nil {
+		t.Fatal(err)
+	}
+	if agent.lastConfig.Model != "per-session-model" {
+		t.Fatalf("restore config model = %q, want persisted per-session model", agent.lastConfig.Model)
 	}
 }
 

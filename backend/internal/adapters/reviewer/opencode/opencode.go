@@ -43,6 +43,14 @@ func (r *Reviewer) ReviewCommand(ctx context.Context, inv ports.ReviewInvocation
 	if inv.SystemPromptFile == "" {
 		prompt = strings.TrimSpace(inv.SystemPrompt + "\n\n" + inv.Prompt)
 	}
+	config, err := buildReviewerConfig(inv.TaskPromptRoot)
+	if err != nil {
+		return ports.ReviewCommandSpec{}, err
+	}
+	env := map[string]string{"OPENCODE_CONFIG_CONTENT": config}
+	if err := workeragent.PrepareRuntimeEnv(env, "", inv.SystemPromptFile, inv.ReviewerID); err != nil {
+		return ports.ReviewCommandSpec{}, err
+	}
 	argv, err := r.agent.GetLaunchCommand(ctx, ports.LaunchConfig{
 		Config:           inv.Config,
 		SessionID:        inv.ReviewerID,
@@ -54,13 +62,9 @@ func (r *Reviewer) ReviewCommand(ctx context.Context, inv ports.ReviewInvocation
 	if err != nil {
 		return ports.ReviewCommandSpec{}, err
 	}
-	config, err := buildReviewerConfig(inv.TaskPromptRoot)
-	if err != nil {
-		return ports.ReviewCommandSpec{}, err
-	}
 	return ports.ReviewCommandSpec{
 		Argv: argv,
-		Env:  map[string]string{"OPENCODE_CONFIG_CONTENT": config},
+		Env:  env,
 	}, nil
 }
 
@@ -105,15 +109,19 @@ func (r *Reviewer) ReviewMessage(_ context.Context, inv ports.ReviewInvocation) 
 // ReviewRestoreCommand resumes the reviewer OpenCode conversation captured
 // from hooks, reapplying the same read-only reviewer config as a fresh launch.
 func (r *Reviewer) ReviewRestoreCommand(ctx context.Context, inv ports.ReviewInvocation) (ports.ReviewCommandSpec, bool, error) {
-	cmd, ok, err := agentrestore.Command(ctx, r.agent, inv, agentrestore.Options{Permissions: ports.PermissionModeAuto})
-	if err != nil || !ok {
-		return cmd, ok, err
-	}
 	config, err := buildReviewerConfig(inv.TaskPromptRoot)
 	if err != nil {
 		return ports.ReviewCommandSpec{}, false, err
 	}
-	cmd.Env = map[string]string{"OPENCODE_CONFIG_CONTENT": config}
+	env := map[string]string{"OPENCODE_CONFIG_CONTENT": config}
+	if err := workeragent.PrepareRuntimeEnv(env, inv.SystemPrompt, inv.SystemPromptFile, inv.ReviewerID); err != nil {
+		return ports.ReviewCommandSpec{}, false, err
+	}
+	cmd, ok, err := agentrestore.Command(ctx, r.agent, inv, agentrestore.Options{Permissions: ports.PermissionModeAuto})
+	if err != nil || !ok {
+		return cmd, ok, err
+	}
+	cmd.Env = env
 	return cmd, true, nil
 }
 

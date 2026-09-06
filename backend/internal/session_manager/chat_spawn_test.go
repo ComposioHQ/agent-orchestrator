@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -1227,6 +1228,42 @@ func TestRestoreResumesChatRatherThanRelaunchingATerminal(t *testing.T) {
 	// replayed prompt.
 	if result.Mode != RestoreModeNative {
 		t.Errorf("restore mode = %q, want native", result.Mode)
+	}
+}
+
+func TestRestoreChatPreservesPerSessionModelOverCurrentProjectConfig(t *testing.T) {
+	launcher := &recordingLauncher{}
+	mgr, store, _ := newChatManager(launcher)
+	ctx := context.Background()
+
+	projectBefore := store.projects[string(chatTestProject)]
+	rec, _, _, err := mgr.Spawn(ctx, ports.SpawnConfig{
+		ProjectID:     chatTestProject,
+		Kind:          domain.KindWorker,
+		Harness:       domain.HarnessCodex,
+		RequestedMode: domain.SessionModeChat,
+		AgentConfig:   ports.AgentConfig{Model: "per-session-model"},
+	})
+	if err != nil {
+		t.Fatalf("Spawn: %v", err)
+	}
+	if !reflect.DeepEqual(store.projects[string(chatTestProject)], projectBefore) {
+		t.Fatal("per-session model override mutated persistent project configuration")
+	}
+
+	project := store.projects[string(chatTestProject)]
+	project.Config.AgentConfig.Model = "project-model-after-spawn"
+	store.projects[string(chatTestProject)] = project
+	if _, err := mgr.Kill(ctx, rec.ID); err != nil {
+		t.Fatalf("Kill: %v", err)
+	}
+	if _, err := mgr.RestoreWithMode(ctx, rec.ID); err != nil {
+		t.Fatalf("RestoreWithMode: %v", err)
+	}
+
+	resumed := launcher.started[len(launcher.started)-1]
+	if resumed.Model != "per-session-model" {
+		t.Fatalf("restored Chat model = %q, want persisted per-session model", resumed.Model)
 	}
 }
 

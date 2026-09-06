@@ -91,6 +91,9 @@ func (p *Plugin) GetAgentHooks(ctx context.Context, cfg ports.WorkspaceHookConfi
 	if strings.TrimSpace(cfg.WorkspacePath) == "" {
 		return errors.New("opencode.GetAgentHooks: WorkspacePath is required")
 	}
+	if err := PrepareRuntimeEnv(cfg.Env, cfg.SystemPrompt, cfg.SystemPromptFile, cfg.SessionID); err != nil {
+		return fmt.Errorf("opencode.GetAgentHooks: %w", err)
+	}
 
 	pluginPath := opencodePluginPath(cfg.WorkspacePath)
 	// Guard against clobbering a user file at our path: overwrite only when the

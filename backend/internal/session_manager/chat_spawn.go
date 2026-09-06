@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"strings"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
@@ -382,6 +383,9 @@ func (m *Manager) resumeChatController(
 	}
 
 	agentConfig := effectiveAgentConfig(rec.Kind, project.Config)
+	if model := strings.TrimSpace(rec.Metadata.Model); model != "" {
+		agentConfig.Model = model
+	}
 	if rec.Metadata.Permissions != "" {
 		agentConfig.Permissions = rec.Metadata.Permissions
 	}

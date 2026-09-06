@@ -79,19 +79,20 @@ func TestReviewCommandUsesReadOnlyPermissionPolicy(t *testing.T) {
 func TestReviewCommandKeepsSystemPromptFileOutOfVisiblePrompt(t *testing.T) {
 	agent := &captureAgent{}
 	r := &Reviewer{agent: agent}
+	systemPromptFile := filepath.Join(t.TempDir(), "system.md")
 	taskPromptRoot := filepath.Join("ao", "prompts", "reviewer")
 	taskPromptFile := filepath.Join(taskPromptRoot, "requests", "batch-1", "run-1", "task.md")
 
 	got, err := r.ReviewCommand(context.Background(), ports.ReviewInvocation{
 		Prompt:           "Start the AO review task.",
-		SystemPromptFile: "/ao/prompts/reviewer/system.md",
+		SystemPromptFile: systemPromptFile,
 		TaskPromptFile:   taskPromptFile,
 		TaskPromptRoot:   taskPromptRoot,
 	})
 	if err != nil {
 		t.Fatalf("ReviewCommand: %v", err)
 	}
-	if agent.got.Prompt != "Start the AO review task." || agent.got.SystemPrompt != "" || agent.got.SystemPromptFile != "/ao/prompts/reviewer/system.md" {
+	if agent.got.Prompt != "Start the AO review task." || agent.got.SystemPrompt != "" || agent.got.SystemPromptFile != systemPromptFile {
 		t.Fatalf("launch config = %+v", agent.got)
 	}
 	var config struct {
@@ -111,13 +112,14 @@ func TestReviewCommandKeepsSystemPromptFileOutOfVisiblePrompt(t *testing.T) {
 func TestReviewRestoreCommandUsesNativeSessionIDAndReadOnlyPolicy(t *testing.T) {
 	agent := &captureAgent{}
 	r := &Reviewer{agent: agent}
+	systemPromptFile := filepath.Join(t.TempDir(), "system.md")
 
 	got, ok, err := r.ReviewRestoreCommand(context.Background(), ports.ReviewInvocation{
 		ReviewerID:       "review-w1",
 		AgentSessionID:   "opencode-native-1",
 		WorkspacePath:    "/ws/w1",
 		TaskPromptRoot:   filepath.Join("ao", "prompts", "reviewer"),
-		SystemPromptFile: "/ao/prompts/reviewer/system.md",
+		SystemPromptFile: systemPromptFile,
 	})
 	if err != nil {
 		t.Fatalf("ReviewRestoreCommand: %v", err)
@@ -204,13 +206,18 @@ func TestReviewCommandBuildsBothOpenCodeConfigSources(t *testing.T) {
 	configPath := filepath.Join(promptDir, "opencode.json")
 	joinedArgv := strings.Join(spec.Argv, "\n")
 	for _, want := range []string{
-		"OPENCODE_CONFIG=" + configPath,
 		"--agent\nao-review-w1",
 		"--prompt\nRead the AO review task.",
 	} {
 		if !strings.Contains(joinedArgv, want) {
 			t.Fatalf("argv missing %q: %#v", want, spec.Argv)
 		}
+	}
+	if got := spec.Env["OPENCODE_CONFIG"]; got != configPath {
+		t.Fatalf("OPENCODE_CONFIG = %q, want %q", got, configPath)
+	}
+	if len(spec.Argv) > 0 && filepath.Base(spec.Argv[0]) == "env" {
+		t.Fatalf("review launch still depends on Unix env executable: %#v", spec.Argv)
 	}
 	generated, err := os.ReadFile(configPath)
 	if err != nil {

@@ -405,6 +405,10 @@ func TestResolveOpenCodeBinaryContextCanceled(t *testing.T) {
 func TestGetLaunchCommandBuildsArgv(t *testing.T) {
 	plugin := &Plugin{resolvedBinary: "opencode"}
 	promptFile := filepath.Join(t.TempDir(), "system.md")
+	env := map[string]string{}
+	if err := PrepareRuntimeEnv(env, "follow AO rules", promptFile, "sess/1"); err != nil {
+		t.Fatal(err)
+	}
 
 	cmd, err := plugin.GetLaunchCommand(context.Background(), ports.LaunchConfig{
 		Permissions:      ports.PermissionModeBypassPermissions,
@@ -419,7 +423,6 @@ func TestGetLaunchCommandBuildsArgv(t *testing.T) {
 
 	configPath := filepath.Join(filepath.Dir(promptFile), "opencode.json")
 	want := []string{
-		"env", "OPENCODE_CONFIG=" + configPath,
 		"opencode",
 		"--dangerously-skip-permissions",
 		"--agent", "ao-sess-1",
@@ -427,6 +430,12 @@ func TestGetLaunchCommandBuildsArgv(t *testing.T) {
 	}
 	if !reflect.DeepEqual(cmd, want) {
 		t.Fatalf("unexpected command\nwant: %#v\n got: %#v", want, cmd)
+	}
+	if env[opencodeConfigEnvVar] != configPath {
+		t.Fatalf("%s = %q, want %q", opencodeConfigEnvVar, env[opencodeConfigEnvVar], configPath)
+	}
+	if len(cmd) > 0 && filepath.Base(cmd[0]) == "env" {
+		t.Fatalf("launch still depends on Unix env executable: %#v", cmd)
 	}
 	var config opencodeInlineConfig
 	data, err := os.ReadFile(configPath)
@@ -445,6 +454,10 @@ func TestGetLaunchCommandBuildsArgv(t *testing.T) {
 func TestGetLaunchCommandSystemPromptFileConfig(t *testing.T) {
 	plugin := &Plugin{resolvedBinary: "opencode"}
 	promptFile := filepath.Join(t.TempDir(), "system.md")
+	env := map[string]string{}
+	if err := PrepareRuntimeEnv(env, "", promptFile, "sess-2"); err != nil {
+		t.Fatal(err)
+	}
 
 	cmd, err := plugin.GetLaunchCommand(context.Background(), ports.LaunchConfig{
 		SessionID:        "sess-2",
@@ -455,9 +468,12 @@ func TestGetLaunchCommandSystemPromptFileConfig(t *testing.T) {
 	}
 
 	configPath := filepath.Join(filepath.Dir(promptFile), "opencode.json")
-	want := []string{"env", "OPENCODE_CONFIG=" + configPath, "opencode", "--agent", "ao-sess-2"}
+	want := []string{"opencode", "--agent", "ao-sess-2"}
 	if !reflect.DeepEqual(cmd, want) {
 		t.Fatalf("unexpected command\nwant: %#v\n got: %#v", want, cmd)
+	}
+	if env[opencodeConfigEnvVar] != configPath {
+		t.Fatalf("%s = %q, want %q", opencodeConfigEnvVar, env[opencodeConfigEnvVar], configPath)
 	}
 	var config opencodeInlineConfig
 	data, err := os.ReadFile(configPath)
@@ -651,6 +667,39 @@ func TestGetAgentHooksInstallsPlugin(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(opencodeSkillDir(workspace), "commands", "spawn.md")); err != nil {
 		t.Fatalf("using-ao commands/spawn.md missing after install: %v", err)
+	}
+}
+
+func TestGetAgentHooksDeliversConfigThroughRuntimeEnvironment(t *testing.T) {
+	plugin := &Plugin{resolvedBinary: "opencode"}
+	workspace := t.TempDir()
+	promptFile := filepath.Join(t.TempDir(), "system.md")
+	env := map[string]string{}
+
+	if err := plugin.GetAgentHooks(context.Background(), ports.WorkspaceHookConfig{
+		Env:              env,
+		SessionID:        "sess-windows",
+		SystemPrompt:     "follow AO rules",
+		SystemPromptFile: promptFile,
+		WorkspacePath:    workspace,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	configPath := filepath.Join(filepath.Dir(promptFile), "opencode.json")
+	if got := env[opencodeConfigEnvVar]; got != configPath {
+		t.Fatalf("%s = %q, want %q", opencodeConfigEnvVar, got, configPath)
+	}
+	cmd, err := plugin.GetLaunchCommand(context.Background(), ports.LaunchConfig{
+		SessionID:        "sess-windows",
+		SystemPrompt:     "follow AO rules",
+		SystemPromptFile: promptFile,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cmd) == 0 || cmd[0] != "opencode" {
+		t.Fatalf("launch argv = %#v, want native opencode executable first", cmd)
 	}
 }
 
@@ -863,9 +912,38 @@ func TestGetRestoreCommandReadsAgentSessionID(t *testing.T) {
 	}
 }
 
+func TestGetRestoreCommandForwardsModel(t *testing.T) {
+	plugin := &Plugin{resolvedBinary: "opencode"}
+
+	cmd, ok, err := plugin.GetRestoreCommand(context.Background(), ports.RestoreConfig{
+		Config: ports.AgentConfig{Model: " opencode-go/minimax-m3 "},
+		Session: ports.SessionRef{
+			Metadata: map[string]string{opencodeAgentSessionIDMetadataKey: "ses_abc123"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("err = %v, want nil", err)
+	}
+	if !ok {
+		t.Fatal("ok = false, want true")
+	}
+	want := []string{
+		"opencode",
+		"--model", "opencode-go/minimax-m3",
+		"--session", "ses_abc123",
+	}
+	if !reflect.DeepEqual(cmd, want) {
+		t.Fatalf("restore cmd\nwant: %#v\n got: %#v", want, cmd)
+	}
+}
+
 func TestGetRestoreCommandReappliesSystemPromptConfig(t *testing.T) {
 	plugin := &Plugin{resolvedBinary: "opencode"}
 	promptFile := filepath.Join(t.TempDir(), "system.md")
+	env := map[string]string{}
+	if err := PrepareRuntimeEnv(env, "restore AO rules", promptFile, "sess-1"); err != nil {
+		t.Fatal(err)
+	}
 
 	cmd, ok, err := plugin.GetRestoreCommand(context.Background(), ports.RestoreConfig{
 		SystemPrompt:     "restore AO rules",
@@ -883,13 +961,15 @@ func TestGetRestoreCommandReappliesSystemPromptConfig(t *testing.T) {
 	}
 	configPath := filepath.Join(filepath.Dir(promptFile), "opencode.json")
 	want := []string{
-		"env", "OPENCODE_CONFIG=" + configPath,
 		"opencode",
 		"--agent", "ao-sess-1",
 		"--session", "ses_abc123",
 	}
 	if !reflect.DeepEqual(cmd, want) {
 		t.Fatalf("restore cmd\nwant: %#v\n got: %#v", want, cmd)
+	}
+	if env[opencodeConfigEnvVar] != configPath {
+		t.Fatalf("%s = %q, want %q", opencodeConfigEnvVar, env[opencodeConfigEnvVar], configPath)
 	}
 	var config opencodeInlineConfig
 	data, err := os.ReadFile(configPath)
