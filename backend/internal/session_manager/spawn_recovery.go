@@ -33,24 +33,22 @@ import (
 // controller_ready. handled=false means the session is fully spawned and the
 // caller's ordinary path applies.
 func (m *Manager) recoverInterruptedSpawnIfNeeded(ctx context.Context, rec domain.SessionRecord) (bool, error) {
-	// Belt and braces. An untracked harness never leaves controller_ready, so
-	// this is normally unreachable — but a row hand-edited, restored from an
-	// older backup, or written by a future build must not be relaunched by a
-	// feature its harness never opted into.
-	if !domain.SpawnPhaseTrackingEnabled(rec.Harness) {
+	// Two rows this path must never touch, checked once up front so no branch
+	// below can miss one:
+	//   - an untracked harness, which never leaves controller_ready anyway, but
+	//     could arrive from a hand edit, an older backup, or a future build;
+	//   - a row naming a provider or native conversation, which proves a
+	//     controller did exist whatever the phase column says. The ordinary path
+	//     resumes that conversation instead of opening a second one. See
+	//     recoverWorkspaceReadySpawn for why this matters.
+	if !domain.SpawnPhaseTrackingEnabled(rec.Harness) || spawnCarriesConversationIdentity(rec) {
 		return false, nil
 	}
-	switch domain.NormalizeSpawnPhase(rec.SpawnPhase) {
-	case domain.SpawnPhaseControllerReady:
+	phase := domain.NormalizeSpawnPhase(rec.SpawnPhase)
+	if phase == domain.SpawnPhaseControllerReady {
 		return false, nil
-	case domain.SpawnPhasePreparing:
-		if spawnCarriesConversationIdentity(rec) {
-			// Whatever the phase column says, this row names a provider or native
-			// conversation, so a controller did exist for it. Hand it to the
-			// ordinary path, which resumes that conversation instead of opening a
-			// second one. See recoverWorkspaceReadySpawn for why this matters.
-			return false, nil
-		}
+	}
+	if phase == domain.SpawnPhasePreparing {
 		if rec.Metadata.WorkspacePath == "" {
 			// A seed row and nothing else. No worktree, no runtime, no provider
 			// conversation was ever attributed to it, so removing it destroys
@@ -74,9 +72,6 @@ func (m *Manager) recoverInterruptedSpawnIfNeeded(ctx context.Context, rec domai
 			return true, nil
 		}
 		rec.SpawnPhase = domain.SpawnPhaseWorkspaceReady
-	}
-	if spawnCarriesConversationIdentity(rec) {
-		return false, nil
 	}
 	_, err := m.recoverWorkspaceReadySpawn(ctx, "recover spawn", rec)
 	return true, err

@@ -605,3 +605,48 @@ func TestReconcileLive_UntrackedHarnessKeepsNativeResume(t *testing.T) {
 		t.Fatalf("an untracked harness must resume natively; argv = %v", rt.lastCfg.Argv)
 	}
 }
+
+// The rollback helpers nest, and each is also a direct entry point from Spawn,
+// so each detaches from the request context on its own. Detaching again inside
+// an existing cleanup would hand every nested level a fresh budget, making
+// spawnCleanupTimeout bound one level instead of the whole rollback.
+func TestSpawnCleanupContext_NestedRollbackSharesOneBudget(t *testing.T) {
+	m, _, _, _ := newManager()
+
+	outer, cancelOuter := m.spawnCleanupContext(context.Background())
+	defer cancelOuter()
+	outerDeadline, ok := outer.Deadline()
+	if !ok {
+		t.Fatal("cleanup context has no deadline; the rollback would be unbounded")
+	}
+
+	inner, cancelInner := m.spawnCleanupContext(outer)
+	defer cancelInner()
+	innerDeadline, ok := inner.Deadline()
+	if !ok {
+		t.Fatal("nested cleanup context lost its deadline")
+	}
+	if !innerDeadline.Equal(outerDeadline) {
+		t.Fatalf("nested cleanup extended the budget: outer %v, inner %v", outerDeadline, innerDeadline)
+	}
+
+	// Cancelling the inner scope must not cut the rollback short for its caller.
+	cancelInner()
+	if outer.Err() != nil {
+		t.Fatalf("a nested cancel ended the outer rollback: %v", outer.Err())
+	}
+}
+
+// The detach itself: a cancelled request must still produce a live cleanup
+// context, since that cancellation is frequently why the spawn failed.
+func TestSpawnCleanupContext_SurvivesACancelledRequest(t *testing.T) {
+	m, _, _, _ := newManager()
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	cleanup, done := m.spawnCleanupContext(cancelled)
+	defer done()
+	if cleanup.Err() != nil {
+		t.Fatalf("cleanup inherited the request cancellation: %v", cleanup.Err())
+	}
+}

@@ -56,25 +56,17 @@ func InitialSpawnPhase(harness AgentHarness) SpawnPhase {
 	return SpawnPhaseControllerReady
 }
 
-// Valid reports whether p is one of the known phases.
-func (p SpawnPhase) Valid() bool {
-	switch p {
-	case SpawnPhasePreparing, SpawnPhaseWorkspaceReady, SpawnPhaseControllerReady:
-		return true
-	default:
-		return false
-	}
-}
-
 // NormalizeSpawnPhase maps an empty or unrecognized stored value to
 // SpawnPhaseControllerReady. Rows written before the column existed describe
 // fully launched sessions, and an unknown value from a newer build must not
 // make an established session look half-spawned.
 func NormalizeSpawnPhase(p SpawnPhase) SpawnPhase {
-	if p.Valid() {
+	switch p {
+	case SpawnPhasePreparing, SpawnPhaseWorkspaceReady, SpawnPhaseControllerReady:
 		return p
+	default:
+		return SpawnPhaseControllerReady
 	}
-	return SpawnPhaseControllerReady
 }
 
 // SpawnCheckpointedWorkspace reports whether the session's recorded workspace

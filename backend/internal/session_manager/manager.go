@@ -960,11 +960,11 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 			m.rollbackSeedSpawnWorkspace(ctx, rec, ws, workspaceProject, false)
 			return domain.SessionRecord{}, 0, 0, wrapSpawnStage(id, ErrWorkspaceCreate, err)
 		}
-		rec, err = m.getRecord(ctx, id)
-		if err != nil {
-			m.rollbackSeedSpawnWorkspace(ctx, rec, ws, workspaceProject, false)
-			return domain.SessionRecord{}, 0, 0, wrapSpawnStage(id, ErrWorkspaceCreate, err)
-		}
+		// rec is deliberately NOT re-read here. Nothing below consumes the fields
+		// the checkpoint wrote — the workspace facts come from ws, the prompt from
+		// the local variable, and ControllerOwner() covers none of them — so a
+		// re-read would only add a round trip and a failure mode that could roll
+		// back a perfectly good spawn.
 	}
 
 	// Per-project workspace provisioning: symlink shared files, then run any
@@ -1636,8 +1636,20 @@ const spawnCleanupTimeout = 30 * time.Second
 // keeps the context's values (tracing, request id) while dropping the
 // cancellation, and WithTimeout re-bounds it.
 func (m *Manager) spawnCleanupContext(ctx context.Context) (context.Context, context.CancelFunc) {
-	return context.WithTimeout(context.WithoutCancel(ctx), spawnCleanupTimeout)
+	// Rollback helpers nest (rollbackSeedSpawnWorkspace -> rollbackSpawnSeedRow
+	// -> markSpawnFailedTerminated) and each is also a direct entry point from
+	// Spawn, so each has to detach when called on its own. Detaching again inside
+	// an existing cleanup would hand every nested level a fresh budget and make
+	// spawnCleanupTimeout bound one level rather than the whole rollback.
+	if ctx.Value(spawnCleanupContextKey{}) != nil {
+		return ctx, func() {}
+	}
+	detached := context.WithValue(context.WithoutCancel(ctx), spawnCleanupContextKey{}, struct{}{})
+	return context.WithTimeout(detached, spawnCleanupTimeout)
 }
+
+// spawnCleanupContextKey marks a context that is already a bounded rollback.
+type spawnCleanupContextKey struct{}
 
 // markSpawnFailedTerminated best-effort parks an orphaned spawn as terminated.
 // A phantom half-spawned row is worse than a terminal one; we only delete the
