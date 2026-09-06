@@ -99,6 +99,11 @@ type conversation struct {
 	thoughts          map[string]string
 	nestedMessages    map[string]nestedMessageState
 	tools             map[string]*toolState
+	// turnDiffs accumulates per-path file snapshots for the active turn. ACP
+	// tool calls only carry that call's old/new text; without this map each
+	// emitDiffs would replace the turn card with the latest tool alone.
+	turnDiffs         map[string]*turnFileSnap
+	turnDiffTurnID    string
 	providerFailure   *ports.ChatEvent
 	configOptions     []ports.ChatConfigOption
 	skills            []ports.ChatSkill
@@ -434,6 +439,8 @@ func (c *conversation) StartDeferredTurn(providerTurnID string) error {
 	c.thoughts = make(map[string]string)
 	c.nestedMessages = make(map[string]nestedMessageState)
 	c.tools = make(map[string]*toolState)
+	c.turnDiffs = nil
+	c.turnDiffTurnID = ""
 	c.providerFailure = nil
 	c.mu.Unlock()
 

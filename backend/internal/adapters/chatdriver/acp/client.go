@@ -946,36 +946,42 @@ func toolTerminal(status acpsdk.ToolCallStatus) bool {
 }
 
 func (c *conversation) emitDiffs(turnID string, content []acpsdk.ToolCallContent) {
-	files := make([]ports.ChatDiffFile, 0)
+	c.mu.Lock()
+	if c.turnDiffTurnID != turnID {
+		c.turnDiffs = make(map[string]*turnFileSnap)
+		c.turnDiffTurnID = turnID
+	}
+	changed := false
 	for _, item := range content {
 		if item.Diff == nil {
 			continue
 		}
-		status := "modified"
-		deletions := 0
-		if item.Diff.OldText == nil {
-			status = "added"
-		} else {
-			deletions = lineCount(*item.Diff.OldText)
-			if item.Diff.NewText == "" {
-				status = "deleted"
-			}
+		changed = true
+		path := item.Diff.Path
+		snap := c.turnDiffs[path]
+		if snap == nil {
+			snap = &turnFileSnap{}
+			c.turnDiffs[path] = snap
 		}
+		snap.apply(path, item.Diff.OldText, item.Diff.NewText)
+	}
+	if !changed {
+		c.mu.Unlock()
+		return
+	}
+	files := make([]ports.ChatDiffFile, 0, len(c.turnDiffs))
+	for _, path := range sortedKeys(c.turnDiffs) {
+		snap := c.turnDiffs[path]
+		additions, deletions := snap.additionsDeletions()
 		files = append(files, ports.ChatDiffFile{
-			Path: item.Diff.Path, Status: status,
-			Additions: lineCount(item.Diff.NewText), Deletions: deletions,
+			Path:      snap.path,
+			Status:    snap.status,
+			Additions: additions,
+			Deletions: deletions,
 		})
 	}
-	if len(files) > 0 {
-		c.emit(ports.ChatEvent{Kind: ports.ChatEventTurnDiff, ProviderTurnID: turnID, Diff: &ports.ChatTurnDiff{Files: files}})
-	}
-}
-
-func lineCount(value string) int {
-	if value == "" {
-		return 0
-	}
-	return strings.Count(value, "\n") + 1
+	c.mu.Unlock()
+	c.emit(ports.ChatEvent{Kind: ports.ChatEventTurnDiff, ProviderTurnID: turnID, Diff: &ports.ChatTurnDiff{Files: files}})
 }
 
 func normalizePlan(entries []acpsdk.PlanEntry) *domain.ConversationPlan {
