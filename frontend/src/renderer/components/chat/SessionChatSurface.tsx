@@ -27,6 +27,7 @@ import {
 	useStageAttachments,
 	useWorkspaceFilePaths,
 } from "../../hooks/useConversation";
+import { useRememberProjectPermissions } from "../../hooks/useRememberProjectPermissions";
 import { useSessionBrowserLink } from "../../hooks/useSessionBrowserLink";
 import type { ShellTerminal } from "../../hooks/useShellTerminals";
 import {
@@ -137,6 +138,7 @@ export function SessionChatSurface({
 	// boundary that decides whether switching to Terminal needs user consent.
 	const snapshot = queriedSnapshot?.sessionId === session.id ? queriedSnapshot : undefined;
 	const commands = useConversationCommands(session.id);
+	const projectPermissions = useRememberProjectPermissions(session.workspaceId, snapshot?.harness);
 	const { acknowledgeAcceptedTurn, pendingAcceptedTurnId } = commands;
 	const conversationWorkKnown = Boolean(snapshot);
 	const acceptedLocalTurnObserved = Boolean(
@@ -367,9 +369,14 @@ export function SessionChatSurface({
 				shellError={shellError}
 				models={models}
 				onChooseSettings={hasProviderMode ? undefined : commands.chooseSettings}
+				onRememberPermissions={can(renderSnapshot, "config_options") && !configOptions.loaded
+					? undefined : projectPermissions.remember}
+				rememberPermissionsPending={projectPermissions.pending}
+				rememberPermissionsError={projectPermissions.error}
+				rememberedPermissionMode={projectPermissions.savedMode}
 				configOptions={configOptions.options}
 				onChooseConfigOption={configOptions.setOption}
-				configOptionPending={configOptions.pending}
+				configOptionPending={configOptions.pending || commands.choosingSettings}
 				configOptionError={configOptions.error}
 				onCompact={commands.compact}
 				compacting={commands.compacting}

@@ -912,6 +912,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects/{id}/permissions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Remember project permissions for future sessions */
+        patch: operations["setProjectPermissions"];
+        trace?: never;
+    };
     "/api/v1/projects/clone": {
         parameters: {
             query?: never;
@@ -2232,6 +2249,40 @@ export interface paths {
         patch: operations["renameShellTerminal"];
         trace?: never;
     };
+    "/api/v1/system/github-auth": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Check advisory GitHub CLI authentication without blocking startup */
+        get: operations["getGitHubAuthRequirement"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/system/github-auth/terminal": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Open a trusted terminal running the GitHub CLI login flow */
+        post: operations["openGitHubAuthTerminal"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/system/install/{target}": {
         parameters: {
             query?: never;
@@ -2522,6 +2573,7 @@ export interface components {
             takenOverFrom: string[];
         };
         CleanupSessionsResponse: {
+            alreadyGone: string[];
             cleaned: string[];
             ok: boolean;
             skipped: components["schemas"]["CleanupSkippedSession"][];
@@ -2855,6 +2907,8 @@ export interface components {
             group?: string;
             groupName?: string;
             name: string;
+            /** @enum {string} */
+            permissionMode?: "default" | "accept-edits" | "auto" | "bypass-permissions";
             value: string;
         };
         ConversationConfigOptionResponse: {
@@ -3892,6 +3946,11 @@ export interface components {
         SetProjectConfigInput: {
             config: components["schemas"]["ProjectConfig"];
         };
+        SetProjectPermissionsInput: {
+            /** @enum {string} */
+            permissions: "default" | "accept-edits" | "auto" | "bypass-permissions";
+            sourceHarness?: string;
+        };
         SetReviewActivityRequest: {
             /** @description Native reviewer session identifier used to resume its transcript. */
             agentSessionId?: string;
@@ -4097,7 +4156,7 @@ export interface components {
              * @description Stable requirement identifier.
              * @enum {string}
              */
-            id: "git" | "tmux" | "harness" | "gh";
+            id: "git" | "tmux" | "harness" | "gh" | "github-auth";
             /** @description Human-readable requirement name. */
             label: string;
             /** @description Whether this requirement blocks the overall Ready state. */
@@ -7073,6 +7132,60 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["SetProjectConfigInput"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProjectResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    setProjectPermissions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Project identifier (registry key). */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SetProjectPermissionsInput"];
             };
         };
         responses: {
@@ -12340,6 +12453,91 @@ export interface operations {
             };
             /** @description Not Found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    getGitHubAuthRequirement: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SystemRequirement"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    openGitHubAuthTerminal: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ShellTerminalEnvelope"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
                 headers: {
                     [name: string]: unknown;
                 };

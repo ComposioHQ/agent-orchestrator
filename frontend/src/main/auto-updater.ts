@@ -6,6 +6,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import semver from "semver";
+import type { RequestOptions } from "node:http";
 import {
   readUpdateSettings,
   updateUpdateSettings,
@@ -62,17 +63,20 @@ async function reconcileAndPersist(
 // checkForUpdates.
 //
 // When settings.feature is set, the feed tracks the pr<N> prerelease channel
-// (e.g. "pr2270") with allowPrerelease and allowDowngrade enabled so the user
-// can switch back to stable after testing. Otherwise falls back to the home
+// (e.g. "pr2270") with allowPrerelease enabled. Downgrades require a channel
+// transition, including one saved on an earlier launch. Otherwise falls back to the home
 // channel logic (latest vs nightly).
 export function configureFeed(
   settings: Pick<UpdateSettings, "channel" | "feature">,
 ): void {
+  // A saved channel choice remains intent until the running build reaches it.
+  // Assign after channel: electron-updater's channel setter enables downgrades.
+  const allowDowngrade = isChannelTransition(settings);
   if (settings.feature !== null && settings.feature !== undefined) {
     // Feature build: pin to the pr<N> semver prerelease identifier channel.
     autoUpdater.channel = `pr${settings.feature.pr}`;
     autoUpdater.allowPrerelease = true;
-    autoUpdater.allowDowngrade = true; // allows switching back to stable/nightly
+    autoUpdater.allowDowngrade = allowDowngrade;
     return;
   }
 
@@ -83,7 +87,7 @@ export function configureFeed(
   // release and looks for nightly-mac.yml there, which 404s. Enable prerelease
   // scanning on the nightly channel only; stable must never pull prereleases.
   autoUpdater.allowPrerelease = channel === "nightly";
-  autoUpdater.allowDowngrade = true; // permits a nightly -> stable channel switch
+  autoUpdater.allowDowngrade = allowDowngrade;
 }
 
 let lastStatus: UpdateStatus = { state: "idle" };
@@ -112,6 +116,7 @@ let stagedJournal: StagedUpdateJournal = { schemaVersion: 1, state: "none" };
 let stagedJournalWritesPending = 0;
 let stagedJournalStore: StagedUpdateJournalStore | undefined;
 let stagedJournalDir: string | undefined;
+let stagedJournalReady: Promise<void> | undefined;
 let stagedJournalQueue: Promise<void> = Promise.resolve();
 let journalPersistenceError: string | undefined;
 let activeUpdaterOperationId: string | undefined;
@@ -212,7 +217,13 @@ function armDownloadStallWatchdog(): void {
 // downloading is enabled.
 let lastCheckedAtMs: number | undefined;
 
-async function ensureStagedJournal(stateDir: string): Promise<void> {
+function ensureStagedJournal(stateDir: string): Promise<void> {
+  if (stagedJournalDir === stateDir && stagedJournalReady) return stagedJournalReady;
+  stagedJournalReady = restoreStagedJournal(stateDir);
+  return stagedJournalReady;
+}
+
+async function restoreStagedJournal(stateDir: string): Promise<void> {
   if (stagedJournalStore !== undefined && stagedJournalDir === stateDir) {
     return;
   }
@@ -590,6 +601,16 @@ function effectiveChannel(
   return settings.feature ? `pr${settings.feature.pr}` : settings.channel;
 }
 
+/** Identify the running build independently of a channel choice already saved by Settings. */
+function installedUpdateChannel(): string {
+  const prerelease = semver.prerelease(app.getVersion())?.[0];
+  return typeof prerelease === "string" ? prerelease : "latest";
+}
+
+function isChannelTransition(settings: Pick<UpdateSettings, "channel" | "feature">): boolean {
+  return effectiveChannel(settings) !== installedUpdateChannel();
+}
+
 /**
  * True when the staged build belongs to a channel the user is no longer on.
  *
@@ -630,6 +651,49 @@ function supersedesStagedBuild(version: string | undefined): boolean {
 
 type UpdateCheckOutcome = Awaited<ReturnType<typeof autoUpdater.checkForUpdates>>;
 
+const UPDATE_CHECK_TIMEOUT_MS = 60_000;
+const UPDATE_CHECK_TIMEOUT_MESSAGE = "Update check timed out. Check your connection and try again.";
+
+// electron-updater owns this executor but omits it from its public declarations.
+// Limit the adapter to metadata requests; downloads retain their own cancellation.
+type UpdateMetadataExecutor = {
+  request(options: RequestOptions, token?: CancellationToken, data?: Record<string, unknown> | null): Promise<string | null>;
+};
+
+async function checkForUpdatesWithDeadline(): Promise<UpdateCheckOutcome> {
+  const executor = (autoUpdater as typeof autoUpdater & { httpExecutor: UpdateMetadataExecutor }).httpExecutor;
+  const request = executor.request;
+  const tokens = new Set<CancellationToken>();
+  let timedOut = false;
+  executor.request = async (options, parent, data) => {
+    const token = new CancellationToken(parent);
+    tokens.add(token);
+    if (timedOut) token.cancel();
+    try {
+      return await request.call(executor, options, token, data);
+    } finally {
+      tokens.delete(token);
+      token.dispose();
+    }
+  };
+  const timer = setTimeout(() => {
+    timedOut = true;
+    broadcast(withActiveRequest({ state: "error", message: UPDATE_CHECK_TIMEOUT_MESSAGE }));
+    // Cancellation aborts the request AND rejects its promise. Do not race the
+    // check: electron-updater must clear its cached promise before AO retries.
+    for (const token of tokens) token.cancel();
+  }, UPDATE_CHECK_TIMEOUT_MS);
+  timer.unref?.();
+  try {
+    return await autoUpdater.checkForUpdates();
+  } catch (err) {
+    throw timedOut ? new Error(UPDATE_CHECK_TIMEOUT_MESSAGE) : err;
+  } finally {
+    clearTimeout(timer);
+    executor.request = request;
+  }
+}
+
 /**
  * Land a terminal status when a check resolved without emitting one.
  *
@@ -638,7 +702,7 @@ type UpdateCheckOutcome = Awaited<ReturnType<typeof autoUpdater.checkForUpdates>
  * already consumed under a different operation. Nothing else ever moves the
  * status off "checking", and the Settings row keys its spinner and its disabled
  * Check button off that state, so the page wedges with no visible explanation.
- * Called only on renderer-requested checks, which are the ones a user is waiting on.
+ * Applied to both background and renderer-requested checks.
  */
 function settleCheckStatus(result: UpdateCheckOutcome): void {
   if (lastStatus.state !== "checking") return;
@@ -1207,14 +1271,18 @@ async function runAutomaticUpdateCheck(
         ? await configureDirectPrereleaseFeed(settings)
         : undefined;
       try {
-        const result = await autoUpdater.checkForUpdates();
+        const result = await checkForUpdatesWithDeadline();
+        settleCheckStatus(result);
         if (settings.enabled || staleStaged) {
           if (result?.downloadPromise) {
             // The provider owns this download's token; hand it to the watchdog
             // so a stall can actually be cancelled rather than just reported.
             activeDownloadCancellation = result.cancellationToken;
             await result.downloadPromise;
-          } else if (supersedesStagedBuild(result?.updateInfo?.version)) {
+          } else if (
+            result?.isUpdateAvailable === true &&
+            supersedesStagedBuild(result.updateInfo?.version)
+          ) {
             // autoDownload was suspended for the staged build, but this is a
             // different version, so it still has to be fetched automatically.
             activeUpdaterPhase = "download";
@@ -1381,7 +1449,7 @@ export async function checkForUpdatesNow(
         broadcastUpdaterStatus({ state: "checking" });
         const restoreFeed = await configureDirectPrereleaseFeed(settings);
         try {
-          const result = await autoUpdater.checkForUpdates();
+          const result = await checkForUpdatesWithDeadline();
           if (result?.downloadPromise) {
             activeDownloadCancellation = result.cancellationToken;
             await result.downloadPromise;
@@ -1463,7 +1531,7 @@ export async function returnToHome(
         autoUpdater.autoDownload = staleStaged;
         applyInstallOnQuitPolicy();
         broadcastUpdaterStatus({ state: "checking" });
-        const result = await autoUpdater.checkForUpdates();
+        const result = await checkForUpdatesWithDeadline();
         if (result?.downloadPromise) {
           activeDownloadCancellation = result.cancellationToken;
           await result.downloadPromise;
@@ -1658,6 +1726,7 @@ export function quitAndInstallUpdate(): void {
 export async function ensureUpdatePrefs(stateDir: string): Promise<void> {
   if (existsSync(path.join(stateDir, UPDATE_SETTINGS_FILE_NAME))) return;
 
+  const installedNightly = installedUpdateChannel() === "nightly";
   const optIn = await dialog.showMessageBox({
     type: "question",
     buttons: ["Enable auto-updates", "Not now"],
@@ -1669,8 +1738,8 @@ export async function ensureUpdatePrefs(stateDir: string): Promise<void> {
   if (optIn.response !== 0) {
     await writeUpdateSettings(stateDir, {
       enabled: false,
-      channel: "latest",
-      nightlyAck: false,
+      channel: installedNightly ? "nightly" : "latest",
+      nightlyAck: installedNightly,
       feature: null,
     });
     return;
@@ -1679,8 +1748,8 @@ export async function ensureUpdatePrefs(stateDir: string): Promise<void> {
   const chan = await dialog.showMessageBox({
     type: "question",
     buttons: ["Stable", "Nightly"],
-    defaultId: 0,
-    cancelId: 0,
+    defaultId: installedNightly ? 1 : 0,
+    cancelId: installedNightly ? 1 : 0,
     message: "Which update channel?",
     detail: "Stable is released and tested. Nightly is the newest daily build.",
   });
