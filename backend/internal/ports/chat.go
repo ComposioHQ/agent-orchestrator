@@ -397,11 +397,12 @@ type ChatConfigOptionValue struct {
 // agent's organization without making grouped menus a protocol concern above
 // the adapter.
 type ChatConfigOptionChoice struct {
-	Value       string
-	Name        string
-	Description string
-	Group       string
-	GroupName   string
+	PermissionMode PermissionMode
+	Value          string
+	Name           string
+	Description    string
+	Group          string
+	GroupName      string
 }
 
 // ChatConfigOption is one live provider-owned session control.

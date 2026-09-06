@@ -235,6 +235,7 @@ describe("ProjectSettingsForm", () => {
 			),
 		);
 		expect(ensureAgentReadinessMock).toHaveBeenCalledWith();
+		expect(screen.getByRole("button", { name: "Permission mode" })).toHaveTextContent("Auto (Project default)");
 		expect(screen.queryByRole("button", { name: "Refresh agents" })).not.toBeInTheDocument();
 		expect(screen.queryByRole("button", { name: "Refresh worker model list" })).not.toBeInTheDocument();
 		expect(screen.queryByRole("button", { name: "Refresh orchestrator model list" })).not.toBeInTheDocument();
