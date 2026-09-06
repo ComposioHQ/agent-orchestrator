@@ -13,22 +13,17 @@ vi.mock("../stores/ui-store", () => ({
 		select({ openUpdateInstallPrompt: openPrompt }),
 }));
 
-/** A chat session on a daemon-owned driver mid-turn: the only at-risk shape. */
-function atRiskSession() {
-	return {
-		id: "s1",
-		title: "Session",
-		workspaceName: "repo",
-		provider: "claude-code",
-		mode: "chat",
-		status: "working",
-	};
-}
-
-/** A TUI session survives a quit: its runtime is detached. */
-function safeSession() {
-	return { ...atRiskSession(), id: "s2", mode: "tui" };
-}
+// Which sessions count as at-risk is update-install-risk.test.ts's job (6 cases
+// there). These only need one of each shape to drive the branch below: a chat
+// session mid-turn on a daemon-owned driver is at risk, a TUI session is not.
+const session = (mode: "chat" | "tui") => ({
+	id: mode,
+	title: "Session",
+	workspaceName: "repo",
+	provider: "claude-code",
+	mode,
+	status: "working",
+});
 
 function renderTrigger(seed?: unknown) {
 	const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -55,13 +50,13 @@ describe("useRequestUpdateInstall", () => {
 		// The confirmation existed to warn about lost work. With nothing to warn
 		// about it is a modal on top of the Settings modal saying nothing, and the
 		// build installs on the next quit anyway.
-		renderTrigger([{ sessions: [safeSession()] }])();
+		renderTrigger([{ sessions: [session("tui")] }])();
 		expect(install).toHaveBeenCalledTimes(1);
 		expect(openPrompt).not.toHaveBeenCalled();
 	});
 
 	it("confirms when a session would lose an in-flight turn", () => {
-		renderTrigger([{ sessions: [safeSession(), atRiskSession()] }])();
+		renderTrigger([{ sessions: [session("tui"), session("chat")] }])();
 		expect(openPrompt).toHaveBeenCalledTimes(1);
 		expect(install).not.toHaveBeenCalled();
 	});
@@ -72,11 +67,5 @@ describe("useRequestUpdateInstall", () => {
 		renderTrigger()();
 		expect(openPrompt).toHaveBeenCalledTimes(1);
 		expect(install).not.toHaveBeenCalled();
-	});
-
-	it("installs directly when there are no sessions at all", () => {
-		renderTrigger([])();
-		expect(install).toHaveBeenCalledTimes(1);
-		expect(openPrompt).not.toHaveBeenCalled();
 	});
 });
