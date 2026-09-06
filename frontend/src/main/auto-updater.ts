@@ -566,7 +566,11 @@ function stagedUpdateFile(stateDir: string): string {
   return path.join(stateDir, STAGED_UPDATE_FILE_NAME);
 }
 
-/** Fire-and-forget: losing this file costs provenance, never correctness. */
+// Keep removal behind older writes so a failed staging attempt cannot reappear
+// on relaunch, or delete the provenance of its replacement.
+let stagedPersistenceQueue: Promise<unknown> = Promise.resolve();
+
+/** Persist in event order without blocking updater events. */
 function persistStagedBuild(stateDir: string | undefined): void {
   if (stateDir === undefined || stagedVersion === undefined || stagedAtMs === undefined) return;
   const payload = `${JSON.stringify({
@@ -576,14 +580,17 @@ function persistStagedBuild(stateDir: string | undefined): void {
   })}\n`;
   // mkdir first: this can be the earliest write into the state dir on a fresh
   // install, and writeUpdateSettings is not guaranteed to have run yet.
-  void mkdir(stateDir, { recursive: true, mode: 0o750 })
+  stagedPersistenceQueue = stagedPersistenceQueue
+    .then(() => mkdir(stateDir, { recursive: true, mode: 0o750 }))
     .then(() => writeFile(stagedUpdateFile(stateDir), payload, { mode: 0o600 }))
     .catch(() => undefined);
 }
 
 function forgetPersistedStagedBuild(stateDir: string | undefined): void {
   if (stateDir === undefined) return;
-  void unlink(stagedUpdateFile(stateDir)).catch(() => undefined);
+  stagedPersistenceQueue = stagedPersistenceQueue
+    .then(() => unlink(stagedUpdateFile(stateDir)))
+    .catch(() => undefined);
 }
 
 /**
@@ -699,6 +706,36 @@ function discardStagedBuild(): void {
   stopEscalationTimer();
 }
 
+const MAC_STAGING_FAILURE_MESSAGE =
+  "macOS couldn't prepare the update because files were missing from its temporary installation copy. Check for updates and download it again to retry. If it happens again, install the latest app manually from GitHub Releases.";
+
+function handleMacStagingFailure(err: unknown, requestId = activeUpdaterRequestId): boolean {
+  if (process.platform !== "darwin") return false;
+  const message = err instanceof Error ? err.message : String(err);
+  // Match the installer failure, not an unrelated ENOENT or download error.
+  if (
+    !/ditto:/i.test(message) ||
+    !/\.ShipIt\/update[^/]*\/.*\.app\//i.test(message) ||
+    !/No such file or directory/i.test(message)
+  ) return false;
+  console.error("macOS update staging failed:", err);
+  // AO's download event precedes native extraction. A failure can also arrive
+  // before that stamp exists; neither case proves an installer is ready.
+  discardStagedBuild();
+  downloadStalled = false;
+  applyInstallOnQuitPolicy();
+  automaticCheckPreviousStatus = undefined;
+  broadcast({
+    state: "error",
+    message: MAC_STAGING_FAILURE_MESSAGE,
+    ...(requestId === undefined ? {} : { requestId }),
+  });
+  // Leave the verified ZIP alone. The failed copy is owned by ShipIt; repeating
+  // the download handoff lets the native updater prepare it again. Deleting a
+  // live cache here could race a newer download or an installer still reading it.
+  return true;
+}
+
 /** A build is downloaded and waiting to install, and we know which one. */
 function hasStagedBuild(): boolean {
   return stagedAtMs !== undefined && stagedVersion !== undefined;
@@ -802,6 +839,8 @@ async function runEscalationCheck(): Promise<void> {
   if (escalationStateDir === undefined) return;
   // A newer build is being pulled; let its progress own the status stream.
   if (lastStatus.state === "downloading") return;
+  const evaluatedVersion = stagedVersion;
+  const evaluatedAt = stagedAtMs;
   try {
     const settings = await readUpdateSettings(escalationStateDir);
     let important = false;
@@ -817,6 +856,7 @@ async function runEscalationCheck(): Promise<void> {
           : Promise.resolve(false),
       ]);
     }
+    if (stagedVersion !== evaluatedVersion || stagedAtMs !== evaluatedAt) return;
     stagedEscalated = evaluateEscalation({
       channel: settings.channel,
       stagedAt: stagedAtMs,
@@ -869,6 +909,13 @@ async function runSerializedUpdaterOperation(
       await Promise.race([runOperation(), nativeFailure]);
       if (nativePreparation) await nativePreparation.promise;
       if (nativePreparationBlocked) throw nativePreparationBlocked;
+    } catch (err) {
+      // Recover before releasing the queue. An outer caller catch can run after
+      // the next download starts and would discard that replacement's stamp.
+      if ((operation === "automatic-check" || operation === "manual-check" ||
+        operation === "manual-download" || operation === "return-home") &&
+        handleMacStagingFailure(err, requestId)) return;
+      throw err;
     } finally {
       rejectNativeOperation = undefined;
       activeUpdaterOperation = undefined;
@@ -1147,6 +1194,10 @@ function wireUpdaterEvents(): void {
   });
   autoUpdater.on("error", (err) => {
     clearDownloadStallWatchdog();
+    if (handleMacStagingFailure(err)) {
+      emitUpdateFailure(err);
+      return;
+    }
     if (downloadStalled) {
       // Our own cancellation surfacing as an error. The stall status is already
       // published and is more useful than "cancelled"; replacing it would lose
@@ -1296,6 +1347,7 @@ async function runAutomaticUpdateCheck(
         // pre-check status so the renderer is neither stuck on "checking" nor
         // denied the stale-check nudge once the streak crosses the threshold
         // (#3526). Record before restoring so the restore broadcast is stamped.
+        if (handleMacStagingFailure(err)) return;
         recordAutomaticCheckFailure(err);
         restoreAutomaticCheckPreviousStatus();
         publishFailingChecks();
@@ -1669,6 +1721,9 @@ export function isUpdateRestartRequested(): boolean { return macRestartRequested
 
 export async function quitAndInstallUpdate(): Promise<void> {
   if (!app.isPackaged) return;
+  if (awaitingStagedReplacement) {
+    throw new Error("Check for updates and download an update before restarting to install.");
+  }
   const blocker = getMacInstallBlocker();
   if (blocker !== undefined) {
     throw new Error(blocker);
