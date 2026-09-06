@@ -260,13 +260,36 @@ function armDownloadStallWatchdog(): void {
 // downloading is enabled.
 let lastCheckedAtMs: number | undefined;
 
+// Renderer recipients for updater pushes. AO's main window is a BaseWindow with
+// an explicit shell WebContentsView, so BrowserWindow.getAllWindows() is empty
+// in the packaged app: a bare enumeration reaches nobody, and the live
+// "check for updates" result never arrives until Settings is reopened. main.ts
+// owns the shell registry and wires it here. The BrowserWindow loop is kept as
+// well so existing harnesses that inject a fake window keep working; in the real
+// app that loop is a no-op and only the sink delivers.
+let updaterRecipientSink: ((channel: string, payload: unknown) => void) | undefined;
+
+export function setUpdaterRecipientSink(
+  sink: ((channel: string, payload: unknown) => void) | undefined,
+): void {
+  updaterRecipientSink = sink;
+}
+
+function sendUpdaterMessage(
+  channel: "updates:status" | "updates:telemetry",
+  payload: unknown,
+): void {
+  updaterRecipientSink?.(channel, payload);
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (!win.isDestroyed()) win.webContents.send(channel, payload);
+  }
+}
+
 // emitUpdateOutcome pushes an update outcome to renderers on a channel separate
 // from "updates:status", so suppressing a status for UI reasons (as the
 // automatic path does) never suppresses the telemetry for it.
 function emitUpdateOutcome(outcome: UpdateOutcome): void {
-  for (const win of BrowserWindow.getAllWindows()) {
-    if (!win.isDestroyed()) win.webContents.send("updates:telemetry", outcome);
-  }
+  sendUpdaterMessage("updates:telemetry", outcome);
 }
 
 function activeUpdateTrigger(): UpdateTrigger {
@@ -323,9 +346,7 @@ function broadcast(
     }
   }
   lastStatus = stamped;
-  for (const win of BrowserWindow.getAllWindows()) {
-    if (!win.isDestroyed()) win.webContents.send("updates:status", stamped);
-  }
+  sendUpdaterMessage("updates:status", stamped);
 }
 
 function withActiveRequest(status: UpdateStatus): UpdateStatus {

@@ -27,6 +27,7 @@ import {
 	quitAndInstallUpdate,
 	isUpdateRestartRequested,
 	setUpdateRestartFailureHandler,
+	setUpdaterRecipientSink,
 	getUpdateStatus,
 	setUpdateSettings,
 	returnToHome,
@@ -2382,6 +2383,15 @@ function initAutoUpdates(): void {
 	const runFile = runFilePath();
 	if (!runFile) return;
 	const stateDir = path.dirname(runFile);
+	// Route updater pushes to the shell WebContentsView(s) AO actually renders.
+	// The updater cannot enumerate them itself: under BaseWindow composition
+	// BrowserWindow.getAllWindows() is empty, so without this the live update
+	// status never reaches the Settings panel or the sidebar restart row.
+	setUpdaterRecipientSink((channel, payload) => {
+		for (const contents of trustedShellWebContents.values()) {
+			if (!contents.isDestroyed()) contents.send(channel, payload);
+		}
+	});
 	void ensureUpdatePrefs(stateDir).then(() => startAutoUpdates(stateDir));
 }
 

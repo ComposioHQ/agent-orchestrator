@@ -1248,6 +1248,26 @@ describe("startAutoUpdates", () => {
     });
   });
 
+  it("delivers status to the registered shell sink when no BrowserWindow exists", async () => {
+    // Models the packaged app: under BaseWindow composition
+    // BrowserWindow.getAllWindows() is empty, so the shell sink main.ts
+    // registers is the only recipient. Without it the live check result never
+    // reaches the renderer until Settings is reopened.
+    const { module, BrowserWindow } = await importAutoUpdater();
+    BrowserWindow.getAllWindows.mockReturnValue([]);
+    const sinkMessages: { channel: string; payload: unknown }[] = [];
+    module.setUpdaterRecipientSink((channel, payload) => {
+      sinkMessages.push({ channel, payload });
+    });
+
+    await module.checkForUpdatesNow(stateDir);
+
+    expect(
+      sinkMessages.some((m) => m.channel === "updates:status"),
+    ).toBe(true);
+    module.setUpdaterRecipientSink(undefined);
+  });
+
   it("broadcasts friendly error on manifest 404 event during manual check", async () => {
     vi.spyOn(console, "info").mockImplementation(() => undefined);
     const { module, updaterEvents } = await importAutoUpdater();
