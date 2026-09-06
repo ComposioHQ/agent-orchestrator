@@ -12,6 +12,7 @@ import (
 	"time"
 
 	clouddomain "github.com/aoagents/agent-orchestrator/backend/internal/cloud/domain"
+	cloudpostgres "github.com/aoagents/agent-orchestrator/backend/internal/cloud/postgres"
 	cloudworker "github.com/aoagents/agent-orchestrator/backend/internal/cloud/worker"
 )
 
@@ -29,6 +30,90 @@ func TestProjectShareRoles(t *testing.T) {
 	}
 	if orgRoleAtLeast("editor", "admin") {
 		t.Fatal("project editors must not receive organization admin access")
+	}
+}
+
+func TestSharedProjectAccessPreservesSessionScope(t *testing.T) {
+	projectID := clouddomain.ProjectID("project-one")
+	orgID := clouddomain.OrgID("org-one")
+	sessionA := clouddomain.SessionID("session-a")
+	sessionB := clouddomain.SessionID("session-b")
+
+	access := newSharedProjectAccess([]cloudpostgres.SharedProjectGrant{
+		{
+			OrgID:   orgID,
+			Role:    "viewer",
+			Project: clouddomain.Project{ID: projectID},
+		},
+		{
+			OrgID:   orgID,
+			Role:    "editor",
+			Project: clouddomain.Project{ID: projectID},
+			Session: &clouddomain.Session{ID: sessionA, ProjectID: projectID},
+		},
+		{
+			OrgID:   orgID,
+			Role:    "editor",
+			Project: clouddomain.Project{ID: projectID},
+			Session: &clouddomain.Session{ID: sessionB, ProjectID: projectID},
+		},
+		{
+			OrgID:   "other-org",
+			Role:    "editor",
+			Project: clouddomain.Project{ID: "other-project"},
+		},
+	}, orgID)
+
+	if !access.allowsProject(projectID) {
+		t.Fatal("session-scoped share should expose its project")
+	}
+	if role, ok := access.projectRole(projectID); !ok || role != "viewer" {
+		t.Fatalf("project role = (%q, %t), want (viewer, true) for the project-wide grant", role, ok)
+	}
+	if role, ok := access.sessionRole(projectID, sessionA); !ok || role != "editor" {
+		t.Fatalf("session A role = (%q, %t), want (editor, true)", role, ok)
+	}
+	if role, ok := access.sessionRole(projectID, sessionB); !ok || role != "editor" {
+		t.Fatalf("session B role = (%q, %t), want (editor, true)", role, ok)
+	}
+	if !access.canOperateSession(projectID, sessionA) || !access.canOperateSession(projectID, sessionB) {
+		t.Fatal("session-specific editors must be able to operate their own sessions")
+	}
+	if role, ok := access.sessionRole(projectID, "session-c"); !ok || role != "viewer" {
+		t.Fatalf("project-wide viewer role = (%q, %t), want (viewer, true)", role, ok)
+	}
+	if access.canOperateSession(projectID, "session-c") {
+		t.Fatal("viewer access must not grant terminal or mutation operations")
+	}
+	if access.allowsProject("other-project") {
+		t.Fatal("share from another organization must not grant project access")
+	}
+
+	access = newSharedProjectAccess([]cloudpostgres.SharedProjectGrant{
+		{
+			OrgID:   orgID,
+			Role:    "editor",
+			Project: clouddomain.Project{ID: projectID},
+			Session: &clouddomain.Session{ID: sessionA, ProjectID: projectID},
+		},
+		{
+			OrgID:   orgID,
+			Role:    "viewer",
+			Project: clouddomain.Project{ID: projectID},
+			Session: &clouddomain.Session{ID: sessionA, ProjectID: projectID},
+		},
+	}, orgID)
+	if _, ok := access.projectRole(projectID); ok {
+		t.Fatal("session-only grants must not create project-wide editor access")
+	}
+	if role, ok := access.sessionRole(projectID, sessionA); !ok || role != "viewer" {
+		t.Fatalf("overlapping session grants = (%q, %t), want least-privileged (viewer, true)", role, ok)
+	}
+	if _, ok := access.sessionRole(projectID, sessionB); ok {
+		t.Fatal("session-scoped grants must not expose another session")
+	}
+	if access.canOperateSession(projectID, sessionB) {
+		t.Fatal("session A editor must not operate session B")
 	}
 }
 
