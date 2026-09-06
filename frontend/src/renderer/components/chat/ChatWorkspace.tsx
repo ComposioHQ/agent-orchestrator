@@ -76,7 +76,9 @@ import {
 } from "./ChatTimelineItems";
 import { HumanMessageEditor } from "./HumanMessageEditor";
 import { ChatLinkProvider } from "./ChatMarkdown";
-import { ChatComposer } from "./ChatComposer";
+import { ChatComposer, type StoredComposerAttachment } from "./ChatComposer";
+import { stagedAttachmentParts, attachmentName, attachmentURL, IMAGE_ATTACHMENT_PATH } from "./messageAttachments";
+import type { QueuedMessageEditOptions } from "../../types/conversation";
 import { QueuedMessageDock, type QueuedMessage } from "./QueuedMessageDock";
 import { ActivityRun } from "./ActivityRun";
 import { TurnPlan } from "./TurnPlan";
@@ -366,7 +368,7 @@ export interface ChatWorkspaceProps {
 	/** Why the last steer was refused, from the daemon's typed answer. */
 	steerRefusal?: string;
 	onPromoteQueuedTurn?: (turnId: string) => Promise<unknown>;
-	onEditQueuedTurn?: (turnId: string, text: string) => Promise<unknown>;
+	onEditQueuedTurn?: (turnId: string, text: string, options?: QueuedMessageEditOptions) => Promise<unknown>;
 	onCancelQueuedTurn?: (turnId: string) => Promise<unknown>;
 	onReorderQueuedTurns?: (turnIds: string[]) => Promise<unknown>;
 	promoteQueuedTurnPendingTurnId?: string;
@@ -583,13 +585,9 @@ export function ChatWorkspace({
 	const queuedMessages = useQueuedMessages(snapshot);
 	const stablePromoteQueuedTurn = useStableCallback(onPromoteQueuedTurn);
 	const stableCancelQueuedTurn = useStableCallback(onCancelQueuedTurn);
-	const [queueEdit, setQueueEdit] = useState<{ turnId: string; text: string } | undefined>();
-	useEffect(() => {
-		if (!queueEdit) return;
-		if (!queuedMessages.some((message) => message.turnId === queueEdit.turnId)) {
-			setQueueEdit(undefined);
-		}
-	}, [queueEdit, queuedMessages]);
+	const [queueEdit, setQueueEdit] = useState<{
+		turnId: string; text: string; revision: number; attachments: StoredComposerAttachment[];
+	} | undefined>();
 	const handleCancelQueuedTurn = useCallback(
 		async (turnId: string) => {
 			if (!onCancelQueuedTurn) return;
@@ -599,15 +597,15 @@ export function ChatWorkspace({
 		[stableCancelQueuedTurn],
 	);
 	const handleComposerSend = useCallback(
-		async (text: string, attachments?: Parameters<NonNullable<typeof onSend>>[1]) => {
+		async (text: string, attachments?: Parameters<NonNullable<typeof onSend>>[1], retainedContent?: number[]) => {
 			if (queueEdit) {
-				if (attachments && attachments.length > 0) {
-					throw new Error("Queued message edits cannot include attachments.");
-				}
 				if (!onEditQueuedTurn) {
 					throw new Error("Queued message edits are unavailable right now.");
 				}
-				await onEditQueuedTurn(queueEdit.turnId, text);
+				await onEditQueuedTurn(queueEdit.turnId, text, {
+					...(attachments?.length ? { attachments } : {}),
+					retainedContent, expectedRevision: queueEdit.revision,
+				});
 				setQueueEdit(undefined);
 				return;
 			}
@@ -615,15 +613,35 @@ export function ChatWorkspace({
 		},
 		[onEditQueuedTurn, onSend, queueEdit],
 	);
-	const composerSend = useStableCallback(handleComposerSend);
 	const stableInterrupt = useStableCallback(onInterrupt);
 	const stableSteer = useStableCallback(onSteer);
 	const beginQueuedEdit = useCallback(
 		(turnId: string, text: string) => {
 			if (newWorkDisabled) return;
-			setQueueEdit({ turnId, text });
+			const message = queuedMessages.find((queued) => queued.turnId === turnId)?.message;
+			if (!message) return;
+			const parts = stagedAttachmentParts(text);
+			const content = message.content ?? [];
+			const images = content.flatMap((item, index) => item.type === "image" ? [index] : []);
+			// Pair only an unambiguous set of native images with staged image paths.
+			// Path-only and imported native attachments can otherwise coexist.
+			const pairedImages = parts.attachments.filter((path) => IMAGE_ATTACHMENT_PATH.test(path)).length === images.length;
+			let imageIndex = 0;
+			const attachments: StoredComposerAttachment[] = parts.attachments.map((path) => ({
+				id: path, name: attachmentName(path), path,
+				...(IMAGE_ATTACHMENT_PATH.test(path) ? {
+					dataUrl: attachmentURL(getApiBaseUrl(), snapshot.sessionId, path),
+					contentIndex: pairedImages ? images[imageIndex++] : undefined,
+				} : {}),
+			}));
+			content.forEach((item, index) => {
+				if (attachments.some((attachment) => attachment.contentIndex === index)) return;
+				attachments.push({ id: `content-${index}`, contentIndex: index,
+					name: item.name || (item.type === "image" ? `Image ${index + 1}` : item.uri || "Attachment") });
+			});
+			setQueueEdit({ turnId, text: parts.body, revision: message.revision, attachments });
 		},
-		[newWorkDisabled],
+		[newWorkDisabled, queuedMessages, snapshot.sessionId],
 	);
 	const cancelQueuedEdit = useCallback(() => setQueueEdit(undefined), []);
 	const promoteQueuedTurn = useCallback(
@@ -926,7 +944,7 @@ export function ChatWorkspace({
 		],
 	);
 	const composerDraftSeed = useMemo(
-		() => (queueEdit ? { id: queueEdit.turnId, text: queueEdit.text } : undefined),
+		() => (queueEdit ? { id: queueEdit.turnId, text: queueEdit.text, attachments: queueEdit.attachments } : undefined),
 		[queueEdit],
 	);
 	// Empty chats center the prompt; once a turn or item exists the composer docks
@@ -1147,7 +1165,7 @@ export function ChatWorkspace({
 								<ChatComposer
 									queuedDock={composerQueuedDock}
 									approval={composerApproval}
-									onSend={composerSend}
+									onSend={handleComposerSend}
 									draftSeed={composerDraftSeed}
 									editingQueuedTurnId={queueEdit?.turnId}
 									savingQueuedEditPending={Boolean(

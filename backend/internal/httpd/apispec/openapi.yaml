@@ -8983,6 +8983,20 @@ components:
       type: object
     EditQueuedConversationMessageRequest:
       properties:
+        attachments:
+          items:
+            $ref: '#/components/schemas/ConversationImageContentRequest'
+          type: array
+        expectedRevision:
+          type:
+          - "null"
+          - integer
+        retainedContent:
+          items:
+            type: integer
+          type:
+          - "null"
+          - array
         text:
           type: string
       required:
