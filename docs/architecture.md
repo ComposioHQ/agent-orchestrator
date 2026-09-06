@@ -334,6 +334,7 @@ Boot-time reconciliation reads the phase and takes exactly one action:
 
 | Phase | Durable reality | Recovery |
 | --- | --- | --- |
+| Any phase, names a conversation | A provider conversation id or native agent session id is recorded | Not an interrupted spawn — the ordinary resume path owns it |
 | `preparing`, no workspace | Only a row exists | Delete the seed row |
 | `preparing`, with workspace | A row migrated from an older build | Promote to `workspace_ready`, then recover |
 | `workspace_ready` | The worktree is real; no controller ever committed | Reopen the worktree, reapply hooks and standing instructions, start the provider **fresh**, and replay the checkpointed prompt |
@@ -350,6 +351,21 @@ Two rules keep the recovery from doing damage:
 - **`controller_ready` is never published without a controller identity.** The
   phase advances in the same lifecycle write as the runtime handle/launch id or
   Chat controller generation and the workspace metadata it describes.
+- **A recorded conversation outranks the phase column.** The process handles
+  cannot prove a controller never existed: `CommitSessionControllerEpoch` clears
+  `runtime_handle_id`, `runtime_launch_id`, and `controller_generation` together
+  on a live row while an interface transition is in flight, so a mid-transition
+  session looks exactly like an abandoned seed. A `provider_conversation_id` or
+  `agent_session_id` is therefore treated as proof that a controller did exist —
+  by the migration, by the recovery routing, and by a hard refusal inside the
+  fresh-launch primitive itself, so no caller can start a second conversation
+  over an existing one or deliver the original prompt twice.
+
+Retry routes on the phase only **after** the ordinary exited/liveness
+precondition. Between its checkpoint and `MarkSpawned`, a healthy TUI spawn is
+`workspace_ready` with idle activity — indistinguishable from a failed one — so
+routing on the phase first would let Retry launch a second provider on top of a
+spawn that is still running.
 
 Rollback of a failed spawn runs on `context.WithTimeout(context.WithoutCancel(ctx),
 spawnCleanupTimeout)`. The request context is usually already cancelled — that

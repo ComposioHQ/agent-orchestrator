@@ -2299,13 +2299,6 @@ func (m *Manager) ResumeAgentWithMode(ctx context.Context, id domain.SessionID) 
 	if mode == domain.SessionModeChat && m.chat != nil && m.chat.HasLiveChatController(id) {
 		return RestoreResult{}, fmt.Errorf("resume agent %s: %w", id, ErrAgentNotExited)
 	}
-	// Retrying a spawn that never committed a controller must re-run the
-	// interrupted-spawn recovery, not the native resume path: the session has no
-	// runtime handle and no provider conversation to resume from, and its
-	// original prompt has still never been delivered.
-	if domain.NormalizeSpawnPhase(rec.SpawnPhase) != domain.SpawnPhaseControllerReady {
-		return m.recoverWorkspaceReadySpawn(ctx, "retry agent", rec)
-	}
 	if rec.Activity.State != domain.ActivityExited {
 		// Builds before the controller-stop lifecycle fix can leave a Chat row
 		// idle, active, or blocked even though no controller survived. The live
@@ -2315,6 +2308,20 @@ func (m *Manager) ResumeAgentWithMode(ctx context.Context, id domain.SessionID) 
 		if mode != domain.SessionModeChat || m.chat == nil {
 			return RestoreResult{}, fmt.Errorf("resume agent %s: %w", id, ErrAgentNotExited)
 		}
+	}
+	// Only AFTER the liveness precondition above may the phase decide how to
+	// relaunch. A healthy TUI spawn between its workspace checkpoint and
+	// MarkSpawned is workspace_ready with idle activity — indistinguishable here
+	// from one that failed — so routing on the phase first would let a Retry
+	// reopen the workspace and launch a second provider on top of a spawn that is
+	// still running. The exited guard is what proves the first attempt is over.
+	//
+	// Once it is, retrying a spawn that never committed a controller must re-run
+	// the interrupted-spawn recovery rather than the native resume path: there is
+	// no runtime handle and no provider conversation to resume from, and the
+	// original prompt has still never been delivered.
+	if domain.NormalizeSpawnPhase(rec.SpawnPhase) != domain.SpawnPhaseControllerReady {
+		return m.recoverWorkspaceReadySpawn(ctx, "retry agent", rec)
 	}
 	return m.resumeAgentRecordWithPolicy(ctx, "resume agent", rec, false, false)
 }

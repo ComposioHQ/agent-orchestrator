@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
@@ -36,6 +37,13 @@ func (m *Manager) recoverInterruptedSpawnIfNeeded(ctx context.Context, rec domai
 	case domain.SpawnPhaseControllerReady:
 		return false, nil
 	case domain.SpawnPhasePreparing:
+		if spawnCarriesConversationIdentity(rec) {
+			// Whatever the phase column says, this row names a provider or native
+			// conversation, so a controller did exist for it. Hand it to the
+			// ordinary path, which resumes that conversation instead of opening a
+			// second one. See recoverWorkspaceReadySpawn for why this matters.
+			return false, nil
+		}
 		if rec.Metadata.WorkspacePath == "" {
 			// A seed row and nothing else. No worktree, no runtime, no provider
 			// conversation was ever attributed to it, so removing it destroys
@@ -60,8 +68,25 @@ func (m *Manager) recoverInterruptedSpawnIfNeeded(ctx context.Context, rec domai
 		}
 		rec.SpawnPhase = domain.SpawnPhaseWorkspaceReady
 	}
+	if spawnCarriesConversationIdentity(rec) {
+		return false, nil
+	}
 	_, err := m.recoverWorkspaceReadySpawn(ctx, "recover spawn", rec)
 	return true, err
+}
+
+// spawnCarriesConversationIdentity reports whether the row names a conversation
+// some controller already established — a provider conversation id, or a native
+// agent session id.
+//
+// The process handles (runtime handle, launch id, controller generation) cannot
+// answer this on their own: CommitSessionControllerEpoch clears all three
+// together on a live session while an interface transition is in flight, which
+// makes a mid-transition row look exactly like an abandoned seed. Fresh-starting
+// one would abandon a real conversation and deliver its original prompt twice.
+func spawnCarriesConversationIdentity(rec domain.SessionRecord) bool {
+	return strings.TrimSpace(rec.Metadata.ProviderConversationID) != "" ||
+		strings.TrimSpace(rec.Metadata.AgentSessionID) != ""
 }
 
 // recoverWorkspaceReadySpawn finishes a spawn whose workspace is durable but
@@ -81,6 +106,16 @@ func (m *Manager) recoverWorkspaceReadySpawn(ctx context.Context, operation stri
 	if phase := domain.NormalizeSpawnPhase(rec.SpawnPhase); phase != domain.SpawnPhaseWorkspaceReady {
 		return RestoreResult{}, fmt.Errorf("%s %s: %w: spawn phase %s cannot be recovered by a fresh launch",
 			operation, rec.ID, ErrIncompleteHandle, phase)
+	}
+	// The same rule stated over the durable facts rather than the phase column.
+	// A row that names a conversation had a controller, whatever its phase says,
+	// and fresh-starting it would abandon that conversation and redeliver the
+	// original prompt. Refusing here means no caller — reconcile or Retry — can
+	// reach a fresh launch over an existing conversation.
+	if spawnCarriesConversationIdentity(rec) {
+		return RestoreResult{}, fmt.Errorf(
+			"%s %s: %w: an existing agent conversation cannot be restarted by a fresh launch",
+			operation, rec.ID, ErrIncompleteHandle)
 	}
 	project, err := m.loadProject(ctx, rec.ProjectID)
 	if err != nil {

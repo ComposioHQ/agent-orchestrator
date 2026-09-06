@@ -16,7 +16,7 @@ import (
 // and the single safe action recovery takes from it.
 
 func TestSpawn_CheckpointsWorkspaceBeforeAnythingSlow(t *testing.T) {
-	m, st, _, ws := newManager()
+	m, st, _, _ := newManager()
 	var observed domain.SessionRecord
 	var seen bool
 	// prepareWorkspace runs after provisioning and attachments; hook the agent's
@@ -38,7 +38,7 @@ func TestSpawn_CheckpointsWorkspaceBeforeAnythingSlow(t *testing.T) {
 	if got := domain.NormalizeSpawnPhase(observed.SpawnPhase); got != domain.SpawnPhaseWorkspaceReady {
 		t.Fatalf("spawn phase during launch preparation = %q, want %q", got, domain.SpawnPhaseWorkspaceReady)
 	}
-	if observed.Metadata.WorkspacePath != ws.lastCfg.Branch && observed.Metadata.WorkspacePath == "" {
+	if observed.Metadata.WorkspacePath == "" {
 		t.Fatal("workspace path was not checkpointed before the launch")
 	}
 	if observed.Metadata.Branch == "" {
@@ -186,9 +186,7 @@ func TestReconcileLive_FinishesWorkspaceReadySpawnFreshWithItsPrompt(t *testing.
 		SpawnPhase: domain.SpawnPhaseWorkspaceReady,
 		Metadata: domain.SessionMetadata{
 			Branch: "ao/s1/root", WorkspacePath: "/wt/s1", Prompt: "ship the feature",
-			// A stale native id from a build that wrote one speculatively must not
-			// turn this into a resume: no controller ever committed here.
-			AgentSessionID: "agent-s1",
+			// No native or provider id: nothing ever established a conversation.
 		},
 	}
 	st.sessions[rec.ID] = rec
@@ -305,7 +303,6 @@ func TestResumeAgent_InterruptedSpawnRetriesFresh(t *testing.T) {
 		Activity:   domain.Activity{State: domain.ActivityExited},
 		Metadata: domain.SessionMetadata{
 			Branch: "ao/s1/root", WorkspacePath: "/wt/s1", Prompt: "ship the feature",
-			AgentSessionID: "agent-s1",
 			// No RuntimeHandleID: the ordinary resume path would refuse this row
 			// outright with ErrIncompleteHandle.
 		},
@@ -409,5 +406,124 @@ func TestReconcileLive_ChatControllerReadyResumesWithoutRedeliveringThePrompt(t 
 	}
 	if len(launcher.turns) != 0 {
 		t.Fatalf("delivered turns = %v, want none: the prompt was already delivered", launcher.turns)
+	}
+}
+
+// An interface transition in flight clears the runtime handle, launch id, and
+// controller generation together on a live row, which makes it look exactly
+// like an abandoned seed. It is not one: it names a conversation. Fresh-starting
+// it would abandon that conversation and deliver the original prompt twice.
+func TestReconcileLive_MidTransitionTUIRowResumesItsNativeSession(t *testing.T) {
+	st := newFakeStore()
+	st.projects["p1"] = domain.ProjectRecord{ID: "p1", Config: testRoleAgents()}
+	rt := &fakeRuntime{aliveByHandle: map[string]bool{}}
+	ws := &fakeWorkspace{}
+	m := New(Deps{
+		Runtime: rt, Agents: fakeAgents{}, Workspace: ws, Store: st,
+		Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st},
+		LookPath: func(string) (string, error) { return "/bin/true", nil },
+	})
+	rec := domain.SessionRecord{
+		ID: "s1", ProjectID: "p1", Harness: domain.HarnessClaudeCode,
+		// The phase column says "abandoned seed"; the durable facts disagree.
+		SpawnPhase: domain.SpawnPhaseWorkspaceReady,
+		Metadata: domain.SessionMetadata{
+			Branch: "ao/s1/root", WorkspacePath: "/wt/s1", Prompt: "ship the feature",
+			AgentSessionID: "agent-s1",
+		},
+	}
+	st.sessions[rec.ID] = rec
+
+	if err := m.reconcileLive(context.Background(), rec); err != nil {
+		t.Fatalf("reconcileLive: %v", err)
+	}
+	if rt.created != 1 {
+		t.Fatalf("runtime creates = %d, want 1", rt.created)
+	}
+	if !slices.Contains(rt.lastCfg.Argv, "resume") {
+		t.Fatalf("a row naming a native session must resume it, not start fresh; argv = %v", rt.lastCfg.Argv)
+	}
+}
+
+// The Chat half of the same rule, where re-delivering the prompt would be
+// visible to the user as a duplicated turn.
+func TestReconcileLive_MidTransitionChatRowResumesWithoutRedeliveringThePrompt(t *testing.T) {
+	launcher := &recordingLauncher{}
+	m, st, _ := newChatManager(launcher)
+	rec := domain.SessionRecord{
+		ID: "mer-1", ProjectID: chatTestProject, Kind: domain.KindWorker,
+		Harness: domain.HarnessCodex, Mode: domain.SessionModeChat,
+		SpawnPhase: domain.SpawnPhaseWorkspaceReady,
+		Metadata: domain.SessionMetadata{
+			Branch: "ao/mer-1/root", WorkspacePath: "/ws/mer-1", Prompt: "ship the feature",
+			ProviderConversationID: "thread-1",
+		},
+	}
+	st.sessions[rec.ID] = rec
+
+	if err := m.reconcileLive(context.Background(), rec); err != nil {
+		t.Fatalf("reconcileLive: %v", err)
+	}
+	if len(launcher.started) != 1 || launcher.started[0].ProviderConversationID != "thread-1" {
+		t.Fatalf("chat starts = %+v, want the existing thread resumed", launcher.started)
+	}
+	if len(launcher.turns) != 0 {
+		t.Fatalf("delivered turns = %v, want none: this prompt was already delivered", launcher.turns)
+	}
+}
+
+// The fresh-launch primitive refuses the same case directly, so no caller —
+// reconcile or Retry — can reach a fresh start over an existing conversation.
+func TestRecoverWorkspaceReadySpawn_RefusesToRestartAnExistingConversation(t *testing.T) {
+	m, st, _, _ := newManager()
+	rec := domain.SessionRecord{
+		ID: "s1", ProjectID: "mer", Harness: domain.HarnessClaudeCode,
+		SpawnPhase: domain.SpawnPhaseWorkspaceReady,
+		Metadata: domain.SessionMetadata{
+			Branch: "ao/s1/root", WorkspacePath: "/wt/s1",
+			ProviderConversationID: "thread-1",
+		},
+	}
+	st.sessions[rec.ID] = rec
+
+	_, err := m.recoverWorkspaceReadySpawn(context.Background(), "retry agent", rec)
+	if !errors.Is(err, ErrIncompleteHandle) {
+		t.Fatalf("err = %v, want ErrIncompleteHandle rather than a fresh launch", err)
+	}
+}
+
+// Between the workspace checkpoint and MarkSpawned a healthy TUI spawn is
+// workspace_ready with idle activity. Retry must not reopen the workspace and
+// launch a second provider on top of the spawn that is still running: the
+// exited precondition, not the phase, is what proves the first attempt is over.
+func TestResumeAgent_RefusesToRetryASpawnStillInFlight(t *testing.T) {
+	st := newFakeStore()
+	st.projects["p1"] = domain.ProjectRecord{ID: "p1", Config: testRoleAgents()}
+	rt := &fakeRuntime{}
+	ws := &fakeWorkspace{}
+	m := New(Deps{
+		Runtime: rt, Agents: fakeAgents{}, Workspace: ws, Store: st,
+		Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st},
+		LookPath: func(string) (string, error) { return "/bin/true", nil },
+	})
+	st.sessions["s1"] = domain.SessionRecord{
+		ID: "s1", ProjectID: "p1", Harness: domain.HarnessClaudeCode,
+		SpawnPhase: domain.SpawnPhaseWorkspaceReady,
+		// Exactly what an in-flight spawn looks like just after its checkpoint.
+		Activity: domain.Activity{State: domain.ActivityIdle},
+		Metadata: domain.SessionMetadata{
+			Branch: "ao/s1/root", WorkspacePath: "/wt/s1", Prompt: "ship the feature",
+		},
+	}
+
+	_, err := m.ResumeAgentWithMode(context.Background(), "s1")
+	if !errors.Is(err, ErrAgentNotExited) {
+		t.Fatalf("err = %v, want ErrAgentNotExited", err)
+	}
+	if rt.created != 0 {
+		t.Fatalf("runtime creates = %d, want 0: a running spawn must not be relaunched", rt.created)
+	}
+	if len(ws.restoreConfigs) != 0 {
+		t.Fatalf("Restore configs = %+v, want none for a spawn still in flight", ws.restoreConfigs)
 	}
 }
