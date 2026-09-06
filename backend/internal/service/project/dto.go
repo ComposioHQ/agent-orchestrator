@@ -69,3 +69,9 @@ type RemoveResult struct {
 	ProjectID         domain.ProjectID `json:"projectId"`
 	RemovedStorageDir bool             `json:"removedStorageDir"`
 }
+
+// SetPermissionsInput remembers a project-wide policy for future sessions.
+type SetPermissionsInput struct {
+	SourceHarness domain.AgentHarness   `json:"sourceHarness,omitempty"`
+	Permissions   domain.PermissionMode `json:"permissions" enum:"default,accept-edits,auto,bypass-permissions"`
+}

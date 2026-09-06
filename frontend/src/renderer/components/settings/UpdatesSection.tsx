@@ -1,10 +1,10 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useRef, useState } from "react";
-import { AlertTriangle, Clock3, Loader2, RefreshCw } from "lucide-react";
-import { AnimatePresence, motion } from "motion/react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import { AlertTriangle, CheckCircle2, Clock3, Download, Info, Loader2, RefreshCw } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { aoBridge } from "../../lib/bridge";
 import { cn } from "../../lib/utils";
+import { parseNightlyVersion } from "../../lib/build-channel";
 import { useUiStore } from "../../stores/ui-store";
 import { useUpdateStatus } from "../../hooks/useUpdateStatus";
 import type { UpdateChannel, UpdateSettings, UpdateState, UpdateStatus } from "../../../main/update-settings";
@@ -23,6 +23,12 @@ type PrimaryValue = UpdateChannel | "feature";
 
 const DEFAULT_SETTINGS: UpdateSettings = { enabled: false, channel: "latest", nightlyAck: false, feature: null };
 const MIN_MANUAL_CHECK_VISIBLE_MS = 1_000;
+// Hard ceiling on how long a manual check may hold the button. The IPC call is
+// awaited and normally settles on its own, but if it ever does not, the pending
+// request id disables the Check button for the rest of the session with nothing
+// on screen to explain it. Releasing the button is always safe: the main process
+// serializes updater operations, so a redundant check queues rather than racing.
+const MAX_MANUAL_CHECK_MS = 90_000;
 
 let updateRequestSequence = 0;
 
@@ -51,9 +57,17 @@ export function UpdatesSection({ titleHidden }: { titleHidden?: boolean } = {}) 
 	channelSwitchRef.current = channelSwitch;
 	const manualCheckStartedAtRef = useRef<number | null>(null);
 	const manualCheckFinishTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+	const manualCheckWatchdogRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 	const developerMode = useUiStore((state) => state.developerMode);
 
+	const clearManualCheckWatchdog = () => {
+		if (manualCheckWatchdogRef.current === null) return;
+		clearTimeout(manualCheckWatchdogRef.current);
+		manualCheckWatchdogRef.current = null;
+	};
+
 	const finishManualCheck = (requestId: string) => {
+		clearManualCheckWatchdog();
 		if (manualCheckFinishTimerRef.current !== null) clearTimeout(manualCheckFinishTimerRef.current);
 		const elapsed = manualCheckStartedAtRef.current === null ? MIN_MANUAL_CHECK_VISIBLE_MS : Date.now() - manualCheckStartedAtRef.current;
 		const clear = () => {
@@ -70,8 +84,13 @@ export function UpdatesSection({ titleHidden }: { titleHidden?: boolean } = {}) 
 	};
 
 	const startManualCheck = (requestId: string) => {
+		clearManualCheckWatchdog();
 		manualCheckStartedAtRef.current = Date.now();
 		setManualCheckRequestId(requestId);
+		manualCheckWatchdogRef.current = setTimeout(() => {
+			manualCheckWatchdogRef.current = null;
+			setManualCheckRequestId((pending) => (pending === requestId ? null : pending));
+		}, MAX_MANUAL_CHECK_MS);
 	};
 
 	const status = useUpdateStatus((next) => {
@@ -87,6 +106,7 @@ export function UpdatesSection({ titleHidden }: { titleHidden?: boolean } = {}) 
 	useEffect(
 		() => () => {
 			if (manualCheckFinishTimerRef.current !== null) clearTimeout(manualCheckFinishTimerRef.current);
+			if (manualCheckWatchdogRef.current !== null) clearTimeout(manualCheckWatchdogRef.current);
 		},
 		[],
 	);
@@ -255,7 +275,10 @@ export function UpdatesSection({ titleHidden }: { titleHidden?: boolean } = {}) 
 					</div>
 				)}
 
-				<SettingsRow label={t("settings.updates.automatic")}>
+				<SettingsRow
+					label={t("settings.updates.automatic")}
+					description={t("settings.updates.automaticHelp")}
+				>
 					<Switch
 						aria-label={t("settings.updates.automatic")}
 						checked={form.enabled}
@@ -264,7 +287,10 @@ export function UpdatesSection({ titleHidden }: { titleHidden?: boolean } = {}) 
 					/>
 				</SettingsRow>
 
-				<SettingsRow label={t("settings.updates.channel")}>
+				<SettingsRow
+					label={t("settings.updates.channel")}
+					description={t("settings.updates.channelHelp")}
+				>
 					<SettingsOptionMenu
 						aria-label={t("settings.updates.channel")}
 						value={primaryValue}
@@ -282,8 +308,15 @@ export function UpdatesSection({ titleHidden }: { titleHidden?: boolean } = {}) 
 				)}
 
 				{primaryValue === "nightly" && (
-					<p className="nightly-warning -mt-1 pl-3 pr-(--size-settings-row-padding) pb-(--size-settings-row-padding) text-xs leading-row text-warning">
-						{t("settings.updates.nightlyWarning")}
+					// Helper copy for the row above, not an alert. This is a standing
+					// property of the channel the user chose, not something wrong right
+					// now, and --color-warning is a red-orange one step from
+					// --destructive: rendered in it, a permanent note read as a permanent
+					// failure. Red is kept for states that are actually broken and
+					// actionable — failing checks, a stale network stack, update errors.
+					<p className="nightly-warning -mt-1 flex items-start gap-2 px-(--size-settings-row-padding) pb-(--size-settings-row-padding) text-xs leading-4 text-settings-muted">
+						<Info className="mt-px size-icon-sm shrink-0" aria-hidden="true" />
+						<span className="min-w-0">{t("settings.updates.nightlyWarning")}</span>
 					</p>
 				)}
 
@@ -351,29 +384,43 @@ function UpdateActions({
 	channelSwitch: { channel: UpdateChannel; requestId: string } | null;
 }) {
 	const { t, i18n } = useTranslation();
+	const locale = i18n.resolvedLanguage ?? i18n.language;
 	const version = useQuery({ queryKey: ["app-version"], queryFn: () => aoBridge.app.getVersion() });
+	const openUpdateInstallPrompt = useUiStore((state) => state.openUpdateInstallPrompt);
 	const installedChannel = installedUpdateChannel(version.data);
-	const effectiveStatus = status;
+	const installed = parseNightlyVersion(version.data);
 
 	const manualCheckPending = manualCheckRequestId !== null;
-	const checking = effectiveStatus.state === "checking" || manualCheckPending;
-	const downloading = effectiveStatus.state === "downloading";
-	const busy = checking || downloading;
-	const displayStatus: UpdateStatus = manualCheckPending && effectiveStatus.state !== "checking" ? { ...effectiveStatus, state: "checking" } : effectiveStatus;
-	const checkedAt = effectiveStatus.checkedAt
-		? new Intl.DateTimeFormat(i18n.resolvedLanguage ?? i18n.language, {
-				dateStyle: "medium",
-				timeStyle: "short",
-			}).format(effectiveStatus.checkedAt)
-			: null;
+	const checking = status.state === "checking" || manualCheckPending;
+	const downloading = status.state === "downloading";
+	// Only the user's OWN in-flight check blocks the button. A background check
+	// also reports "checking", and gating on that swallowed the first click
+	// whenever Settings was opened during one — every 15 minutes on nightly.
+	// A click during a background check is fine: the main process serializes
+	// updater operations, so the manual check simply queues behind it.
+	const busy = manualCheckPending || downloading;
+	// The minimum-spinner window keeps "checking" on screen briefly after the
+	// updater has already answered, so the status line and the primary action
+	// read from the live state and only the button's own label follows `checking`.
+	const displayState: UpdateState = checking && status.state !== "downloading" ? "checking" : status.state;
+
+	const checkedAt = status.checkedAt
+		? new Intl.DateTimeFormat(locale, { dateStyle: "medium", timeStyle: "short" }).format(status.checkedAt)
+		: null;
+
 	const channelSwitchInFlight = channelSwitch !== null && (!status.requestId || status.requestId === channelSwitch.requestId);
-	// Use the live updater state, not displayStatus: the manual-check minimum
-	// spinner time forces displayStatus back to "checking" even after a channel
+	// Use the live updater state, not displayState: the manual-check minimum
+	// spinner time forces displayState back to "checking" even after a channel
 	// switch finds an update, which would hide this guidance until the timer fires.
+	// Not shown for "downloaded": the status line already says "Downloaded.
+	// Restart to finish updating." and names the build under it, so adding
+	// "Restart to switch to Nightly." put two restart sentences side by side.
 	const channelSwitchMessage = channelSwitchInFlight &&
-		(effectiveStatus.state === "available" || effectiveStatus.state === "downloading" || effectiveStatus.state === "downloaded")
-		? t(effectiveStatus.state === "downloaded" ? "settings.updates.channelSwitchRestart" : "settings.updates.channelSwitchUpdate", {
-			channel: channelSwitch.channel === "nightly" ? t("settings.updates.channel.nightly") : t("settings.updates.channel.stable"),
+		(status.state === "available" || status.state === "downloading")
+		? t("settings.updates.channelSwitchUpdate", {
+			// Short form: "Restart to switch to Nightly (Pre-release)." reads as a
+			// parenthetical stuck mid-sentence. The suffix belongs in the picker.
+			channel: channelSwitch.channel === "nightly" ? t("settings.updates.channel.nightlyShort") : t("settings.updates.channel.stable"),
 		})
 		: null;
 
@@ -389,94 +436,82 @@ function UpdateActions({
 		}
 	};
 
+	// Deliberately no border or accent fill on this block. --primary is
+	// oklch(0.92 0.004 286.32) in dark and near-black in light: both are
+	// effectively neutral, so tinting drew a grey frame that carried no meaning
+	// and competed with the row backgrounds around it. The primary button and
+	// the status line already carry the emphasis.
 	return (
 		<div className="settings-row-bar update-status-row h-auto flex-col items-stretch gap-4 py-4">
-			<div className="grid min-w-0 gap-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-start">
-				<div className="min-w-0">
-					<div className="flex min-w-0 flex-wrap items-center gap-2">
+			<div className="flex min-w-0 flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+				{/* Identity. The nightly stamp lives on its own monospace line: as one
+				    heading it wrapped mid-token and swallowed the row. */}
+				<div className="min-w-0 flex-1">
+					<p className="text-caption font-medium uppercase tracking-wide text-settings-muted">
+						{t("settings.updates.installedVersion")}
+					</p>
+					<div className="mt-1 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
 						<span
 							aria-label={t("settings.updates.currentVersion", { version: version.data ? `v${version.data}` : "…" })}
-							className="min-w-0 text-2xl font-semibold leading-none tracking-tight tabular-nums text-settings-label"
+							className="text-2xl font-semibold leading-none tracking-tight tabular-nums text-settings-label"
 							data-testid="app-version"
 						>
-							{version.data ? `v${version.data}` : "…"}
+							{version.data ? `v${installed?.base ?? version.data}` : "…"}
 						</span>
-						<Badge data-testid="installed-update-channel" variant={installedChannel === "nightly" ? "warning" : "neutral"}>
-							{installedChannel === "nightly" ? t("settings.updates.channel.nightly") : t("settings.updates.channel.stable")}
+						<Badge data-testid="installed-update-channel" variant="neutral">
+							{installedChannel === "nightly" ? t("settings.updates.channel.nightlyShort") : t("settings.updates.channel.stable")}
 						</Badge>
 					</div>
-
-					<div
-						id="update-status-line"
-						role="status"
-						aria-live="polite"
-						aria-atomic="true"
-						aria-busy={checking}
-						className="mt-2 min-w-0"
-					>
-						{displayStatus.state === "checking" ? (
-							<span className="sr-only">{t("settings.updates.checking")}</span>
-						) : displayStatus.state !== "available" && displayStatus.state !== "idle" && displayStatus.state !== "downloading" ? (
-							<UpdateStatusLine status={displayStatus} />
-						) : null}
-						{channelSwitchMessage && <p className="mt-1 text-xs leading-4 text-settings-muted">{channelSwitchMessage}</p>}
-					</div>
-
-					<div className="relative mt-2 h-5 text-sm font-medium leading-5 text-settings-muted">
-						<AnimatePresence initial={false} mode="wait">
-							{checkedAt ? (
-								<motion.div
-									key={checkedAt}
-									initial={{ opacity: 0, filter: "blur(4px)" }}
-									animate={{ opacity: 1, filter: "blur(0px)" }}
-									exit={{ opacity: 0, filter: "blur(4px)" }}
-									transition={{ duration: 0.22, ease: "easeOut" }}
-									className="absolute inset-0 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1"
-								>
-									<span className="inline-flex items-center gap-1.5 tabular-nums" data-testid="update-checked-at">
-										<Clock3 className="size-3" aria-hidden="true" />
-										{t("settings.updates.lastChecked", { time: checkedAt })}
-									</span>
-								</motion.div>
-							) : displayStatus.state === "idle" ? (
-								<motion.span
-									key="not-checked"
-									initial={{ opacity: 1, filter: "blur(0px)" }}
-									animate={{ opacity: 1, filter: "blur(0px)" }}
-									exit={{ opacity: 0, filter: "blur(4px)" }}
-									className="absolute inset-0"
-								>
-									{t("settings.updates.notChecked")}
-								</motion.span>
-							) : null}
-						</AnimatePresence>
-					</div>
+					{installed && (
+						// Two spans, not one string: the version needs break-all so a long
+						// nightly stamp can never overflow, but break-all applied to the
+						// whole line also snapped the date mid-word ("20/26, 5:21 PM").
+						<p className="mt-1.5 flex min-w-0 flex-wrap items-baseline gap-x-1.5 text-caption leading-4 text-settings-muted">
+							<span className="min-w-0 break-all font-mono">{version.data}</span>
+							<span className="whitespace-nowrap">
+								{t("settings.updates.nightlyBuiltAt", {
+									date: new Intl.DateTimeFormat(locale, { dateStyle: "medium", timeStyle: "short" }).format(installed.builtAt),
+								})}
+							</span>
+						</p>
+					)}
 				</div>
 
-				<div className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:justify-end [&>button]:flex-1 sm:[&>button]:flex-none">
-					{effectiveStatus.state === "downloading" && (
-						<Button type="button" variant="primary" size="sm" disabled>
-							<DownloadProgressIcon percent={effectiveStatus.percent ?? 0} />
-							{t("settings.updates.downloading", { percent: effectiveStatus.percent ?? 0 })}
+				{/* Actions. Fixed to the right and never widened by a version string:
+				    the primary label used to carry the full nightly stamp and grew
+				    across the heading. The target build is named in the status line. */}
+				<div className="flex w-full shrink-0 flex-wrap items-center gap-2 sm:w-auto sm:justify-end [&>button]:flex-1 sm:[&>button]:flex-none">
+					{status.state === "available" && (
+						<Button
+							type="button"
+							variant="primary"
+							size="sm"
+							aria-label={status.version ? t("settings.updates.updateTo", { version: `v${status.version}` }) : t("settings.updates.updateToLatest")}
+							onClick={() => void aoBridge.updates.download()}
+						>
+							<Download className="size-icon-sm" aria-hidden="true" />
+							{t("settings.updates.update")}
 						</Button>
 					)}
-					{!checking && effectiveStatus.state === "available" && (
-						<Button type="button" variant="primary" size="sm" onClick={() => void aoBridge.updates.download()}>
-							{effectiveStatus.version ? t("settings.updates.updateTo", { version: `v${effectiveStatus.version}` }) : t("settings.updates.updateToLatest")}
-						</Button>
-					)}
-					{!checking && effectiveStatus.state === "downloaded" && (
-						<Button type="button" variant="primary" size="sm" onClick={() => void aoBridge.updates.install()}>
+					{status.state === "downloaded" && (
+						// Opens the restart confirmation rather than installing outright:
+						// installing quits the app, which costs a turn on any chat session
+						// running a daemon-owned driver.
+						<Button type="button" variant="primary" size="sm" onClick={openUpdateInstallPrompt}>
+							<RefreshCw className="size-icon-sm" aria-hidden="true" />
 							{t("settings.updates.restartInstall")}
 						</Button>
 					)}
-					{displayStatus.state !== "available" && displayStatus.state !== "downloaded" && displayStatus.state !== "downloading" && <Button
+					{/* Always rendered. Hiding it whenever something was available or
+					    staged left no way to re-check at all: a user sitting on a build
+					    that will not install had a single dead Restart button and no
+					    other action on the page. */}
+					<Button
 						type="button"
 						aria-label={checking ? t("settings.updates.checking") : t("settings.updates.check")}
 						aria-describedby="update-status-line"
 						variant="outline"
 						size="sm"
-						className="min-w-36"
 						onClick={() => void checkNow()}
 						disabled={busy}
 					>
@@ -486,24 +521,59 @@ function UpdateActions({
 							<RefreshCw className="size-icon-sm" aria-hidden="true" />
 						)}
 						{checking ? t("settings.updates.checking") : t("settings.updates.check")}
-					</Button>}
+					</Button>
 				</div>
 			</div>
 
+			{/* One status block, in normal flow. It used to be an absolutely
+			    positioned h-5 strip, so a two-line message overlapped the
+			    last-checked line and the cross-fade left it looking half-rendered. */}
+			<div
+				id="update-status-line"
+				data-testid="update-status-line"
+				role="status"
+				aria-live="polite"
+				aria-atomic="true"
+				aria-busy={checking}
+				className="flex min-w-0 flex-col gap-1"
+			>
+				<UpdateStatusLine
+					state={displayState}
+					status={status}
+					locale={locale}
+				/>
+				{channelSwitchMessage && <p className="text-xs leading-4 text-settings-muted">{channelSwitchMessage}</p>}
+				{checkedAt ? (
+					<p className="flex min-w-0 items-start gap-2 text-xs leading-4 tabular-nums text-settings-muted" data-testid="update-checked-at">
+						<span className="flex h-4 shrink-0 items-center">
+							<Clock3 className="size-icon-sm shrink-0" aria-hidden="true" />
+						</span>
+						{t("settings.updates.lastChecked", { time: checkedAt })}
+					</p>
+				) : null}
+			</div>
+
 			{!status.staleCheckNudge && status.checksFailing && (
-				<p className="flex items-start gap-2 text-xs leading-5 text-warning">
-					<AlertTriangle className="mt-0.5 size-icon-sm shrink-0" aria-hidden="true" />
-					<span>{t("settings.updates.checksFailing")}</span>
-				</p>
+				<UpdateNotice tone="warning" text={t("settings.updates.checksFailing")} />
 			)}
 
-			{status.staleCheckNudge && (
-				<p className="flex items-start gap-2 text-xs leading-5 text-warning">
-					<AlertTriangle className="mt-0.5 size-icon-sm shrink-0" aria-hidden="true" />
-					<span>{t("settings.updates.networkStale")}</span>
-				</p>
-			)}
+			{status.staleCheckNudge && <UpdateNotice tone="warning" text={t("settings.updates.networkStale")} />}
 		</div>
+	);
+}
+
+/** Contained caution/failure note. A bare coloured paragraph read as body copy. */
+function UpdateNotice({ tone, text }: { tone: "warning" | "error"; text: string }) {
+	return (
+		<p
+			className={cn(
+				"flex items-start gap-2 rounded-md border px-3 py-2 text-xs leading-5",
+				tone === "warning" ? "border-warning/30 bg-warning/8 text-warning" : "border-error/30 bg-error/8 text-error",
+			)}
+		>
+			<AlertTriangle className="mt-0.5 size-icon-sm shrink-0" aria-hidden="true" />
+			<span className="min-w-0">{text}</span>
+		</p>
 	);
 }
 
@@ -523,36 +593,73 @@ function installedUpdateChannel(version: string | undefined): UpdateChannel {
 	return /-nightly(?:[.+]|$)/.test(version ?? "") ? "nightly" : "latest";
 }
 
-function UpdateStatusLine({ status }: { status: UpdateStatus }) {
+/**
+ * The single status line for the section. Every state gets a visible line with
+ * a leading state icon: `available` used to be suppressed entirely (the button
+ * was the only clue) and `checking` was rendered `sr-only`, which meant a
+ * check in progress and a wedged check looked identical — an empty panel.
+ */
+function UpdateStatusLine({
+	state,
+	status,
+	locale,
+}: {
+	state: UpdateState;
+	status: UpdateStatus;
+	locale: string;
+}) {
 	const { t } = useTranslation();
 	let className = "text-settings-muted";
+	let icon: ReactNode = null;
 	let label: string;
+	let detail: string | null = null;
 
-	switch (status.state) {
+	const targetBuild = (version: string | undefined): string | null => {
+		if (!version) return null;
+		const nightly = parseNightlyVersion(version);
+		if (!nightly) return `v${version}`;
+		// Same compact form as the sidebar row, so the two never disagree.
+		return t("shell.nightlyBuild", {
+			version: nightly.base,
+			date: new Intl.DateTimeFormat(locale, { month: "short", day: "numeric" }).format(nightly.builtAt),
+		});
+	};
+
+	switch (state) {
 		case "checking":
+			icon = <Loader2 className="size-icon-sm shrink-0 animate-spin motion-reduce:animate-none" aria-hidden="true" />;
 			label = t("settings.updates.checking");
 			break;
 		case "available":
 			className = "text-settings-label";
-			label = t("settings.updates.available", { version: status.version ? ` (v${status.version})` : "" });
+			icon = <Download className="size-icon-sm shrink-0" aria-hidden="true" />;
+			label = t("settings.updates.availableNow");
+			detail = targetBuild(status.version);
 			break;
 		case "downloading":
 			className = "text-settings-label tabular-nums";
+			icon = <DownloadProgressIcon percent={status.percent ?? 0} />;
 			label = t("settings.updates.downloading", { percent: status.percent ?? 0 });
+			detail = targetBuild(status.version);
 			break;
 		case "downloaded":
 			className = "text-success";
+			icon = <CheckCircle2 className="size-icon-sm shrink-0" aria-hidden="true" />;
 			label = t("settings.updates.downloaded");
+			detail = targetBuild(status.version);
 			break;
 		case "not-available":
 			className = "text-success";
+			icon = <CheckCircle2 className="size-icon-sm shrink-0" aria-hidden="true" />;
 			label = t("settings.updates.latest");
 			break;
 		case "unsupported":
+			icon = <Info className="size-icon-sm shrink-0" aria-hidden="true" />;
 			label = status.message ?? t("settings.updates.needInstalledApp");
 			break;
 		case "error":
 			className = "text-error";
+			icon = <AlertTriangle className="size-icon-sm shrink-0" aria-hidden="true" />;
 			label = status.netError
 				? t("settings.updates.netErrorRestartGuidance")
 				: status.message ?? t("settings.updates.updateFailed");
@@ -562,6 +669,14 @@ function UpdateStatusLine({ status }: { status: UpdateStatus }) {
 	}
 
 	return (
-		<p className={cn("text-pretty text-sm font-medium leading-5", className)}>{label}</p>
+		<div className={cn("flex min-w-0 items-start gap-2", className)}>
+			{icon !== null && <span className="flex h-5 shrink-0 items-center">{icon}</span>}
+			<div className="min-w-0">
+				<p className="text-pretty text-sm font-medium leading-5">{label}</p>
+				{detail !== null && (
+					<p className="mt-0.5 truncate text-xs leading-4 font-normal text-settings-muted">{detail}</p>
+				)}
+			</div>
+		</div>
 	);
 }

@@ -1,5 +1,6 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
+import type { TFunction } from "i18next";
 import { useNavigate, useParams, useRouterState } from "@tanstack/react-router";
 import {
 	DndContext,
@@ -59,6 +60,7 @@ import {
 import { flushSync } from "react-dom";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import type { UpdateStatus } from "../../main/update-settings";
+import { parseNightlyVersion } from "../lib/build-channel";
 import {
 	hasConfiguredOrchestratorAgent,
 	newestActiveOrchestrator,
@@ -424,6 +426,7 @@ export function Sidebar({
 	const updateStatus = useUpdateStatus();
 	const availableUpdateVersion = updateStatus.state === "available" ? updateStatus.version : undefined;
 	const updateDismissal = useSidebarUpdateDismissal(availableUpdateVersion);
+	const openUpdateInstallPrompt = useUiStore((state) => state.openUpdateInstallPrompt);
 	// Daemon status for the smoke suite's sr-only mirror in the footer. Null when
 	// rendered outside the shell (unit tests) — the mirror simply doesn't render.
 	const daemonStatus = useShellMaybe()?.daemonStatus ?? null;
@@ -840,6 +843,7 @@ export function Sidebar({
 					<UpdateStatusRow
 						availableDismissed={updateDismissal.dismissed}
 						onDismissAvailable={updateDismissal.dismiss}
+						onRequestInstall={openUpdateInstallPrompt}
 						status={updateStatus}
 						tabIndex={isCollapsed ? -1 : 0}
 					/>
@@ -878,6 +882,7 @@ export function Sidebar({
 				>
 					<UpdateStatusRail
 						availableDismissed={updateDismissal.dismissed}
+						onRequestInstall={openUpdateInstallPrompt}
 						status={updateStatus}
 						tabIndex={isCollapsed ? 0 : -1}
 					/>
@@ -2081,6 +2086,75 @@ function CloudAccountRailButton({ tabIndex }: { tabIndex: number }) {
 	);
 }
 
+/**
+ * What the sidebar should act on, derived from the live update status.
+ *
+ * `status.state` alone is not enough. It cycles through checking → available →
+ * not-available on every background check while a staged build sits untouched,
+ * which blinked the restart row out of existence every 15 minutes on nightly.
+ * `status.staged` is stamped on every status by the main process for exactly
+ * this reason, so the staged build is read from there rather than from `state`.
+ */
+type SidebarUpdateAction =
+	| { kind: "downloading"; percent: number }
+	| { kind: "download"; version?: string }
+	| { kind: "install"; version?: string; escalated: boolean }
+	| { kind: "retry" }
+	| null;
+
+function sidebarUpdateAction(status: UpdateStatus, availableDismissed: boolean): SidebarUpdateAction {
+	if (status.state === "downloading") {
+		return { kind: "downloading", percent: Math.min(100, Math.max(0, status.percent ?? 0)) };
+	}
+	// `staged` is the stamp the main process puts on every status; the
+	// `downloaded` fallback keeps this correct for any status that predates it
+	// or arrives from a source that does not stamp.
+	const staged =
+		status.staged ??
+		(status.state === "downloaded"
+			? {
+					version: status.version,
+					stagedAt: status.stagedAt ?? 0,
+					escalated: status.escalated === true,
+				}
+			: undefined);
+	// Something newer than what is already staged still deserves the download
+	// action; the main process reports a re-discovered staged build as
+	// "downloaded", so an "available" here is genuinely a different version.
+	if (status.state === "available" && !availableDismissed && status.version !== staged?.version) {
+		return { kind: "download", version: status.version };
+	}
+	if (staged) return { kind: "install", version: staged.version, escalated: staged.escalated };
+	// Ranked below a staged build on purpose: an update ready to install is more
+	// actionable than "checks are failing". Only when there is nothing better to
+	// show does the failure take the row — it used to render nothing at all,
+	// which reads as "up to date" rather than "checks are not getting through".
+	if (status.checksFailing === true) return { kind: "retry" };
+	return null;
+}
+
+/**
+ * Sidebar label for a build. A raw nightly string truncates to noise and two
+ * consecutive nightlies differ only in trailing digits, so nightlies render as
+ * base version plus build date instead.
+ */
+function updateVersionLabel(
+	version: string | undefined,
+	variant: "available" | "ready",
+	t: TFunction,
+	locale: string,
+): string | null {
+	if (!version) return null;
+	const nightly = parseNightlyVersion(version);
+	if (nightly) {
+		return t("shell.nightlyBuild", {
+			version: nightly.base,
+			date: new Intl.DateTimeFormat(locale, { month: "short", day: "numeric" }).format(nightly.builtAt),
+		});
+	}
+	return t(variant === "ready" ? "shell.versionReady" : "shell.versionAvailable", { version });
+}
+
 // UpdateStatusRow makes update activity visible and actionable from the
 // sidebar: an available build downloads on click, progress reports itself, and
 // a staged build becomes the restart action. Idle/checking states stay quiet so
@@ -2088,25 +2162,32 @@ function CloudAccountRailButton({ tabIndex }: { tabIndex: number }) {
 function UpdateStatusRow({
 	availableDismissed,
 	onDismissAvailable,
+	onRequestInstall,
 	status,
 	tabIndex,
 }: {
 	availableDismissed: boolean;
 	onDismissAvailable: () => void;
+	/** Opens the restart confirmation; installing outright would quit the app. */
+	onRequestInstall: () => void;
 	status: UpdateStatus;
 	tabIndex: number;
 }) {
-	const { t } = useTranslation();
-	if (status.state === "available") {
-		if (availableDismissed) return null;
+	const { t, i18n } = useTranslation();
+	const locale = i18n.resolvedLanguage ?? i18n.language;
+	const action = sidebarUpdateAction(status, availableDismissed);
+	if (action === null) return null;
+
+	if (action.kind === "download") {
+		const versionLabel = updateVersionLabel(action.version, "available", t, locale);
 		// A manual check leaves autoDownload off, so without this the row would
 		// announce an update and offer nothing to act on.
 		return (
 			<div className="flex w-full items-center gap-1" data-testid="sidebar-update-available">
 				<button
 					aria-label={
-						status.version
-							? t("shell.downloadUpdateVersion", { version: status.version })
+						action.version
+							? t("shell.downloadUpdateVersion", { version: action.version })
 							: t("shell.downloadUpdate")
 					}
 					className={cn(NAV_ROW_CLASS, "flex min-w-0 flex-1 items-center text-left [&_svg]:size-icon-md [&_svg]:shrink-0")}
@@ -2117,16 +2198,14 @@ function UpdateStatusRow({
 					<Download aria-hidden="true" className="size-icon-lg shrink-0" />
 					<span className="min-w-0 flex-1">
 						<span className="block truncate tracking-tight">{t("shell.updateAvailable")}</span>
-						{status.version && (
-							<span className="block truncate text-caption font-normal text-passive">
-								{t("shell.versionAvailable", { version: status.version })}
-							</span>
+						{versionLabel && (
+							<span className="block truncate text-caption font-normal text-passive">{versionLabel}</span>
 						)}
 					</span>
 				</button>
-				{status.version && (
+				{action.version && (
 					<button
-						aria-label={t("shell.dismissUpdateVersion", { version: status.version })}
+						aria-label={t("shell.dismissUpdateVersion", { version: action.version })}
 						className="grid size-8 shrink-0 place-items-center text-muted-foreground transition-colors hover:text-foreground"
 						onClick={onDismissAvailable}
 						tabIndex={tabIndex}
@@ -2138,8 +2217,8 @@ function UpdateStatusRow({
 			</div>
 		);
 	}
-	if (status.state === "downloading") {
-		const percent = Math.min(100, Math.max(0, status.percent ?? 0));
+
+	if (action.kind === "downloading") {
 		return (
 			<div
 				aria-live="polite"
@@ -2149,17 +2228,13 @@ function UpdateStatusRow({
 			>
 				<Download aria-hidden="true" className="size-icon-lg shrink-0" />
 				<span className="min-w-0 flex-1 truncate tabular-nums">
-					{t("settings.updates.downloading", { percent })}
+					{t("settings.updates.downloading", { percent: action.percent })}
 				</span>
 			</div>
 		);
 	}
-	// Ranked below a staged build on purpose: an update ready to install is more
-	// actionable than "checks are failing". Only when there is nothing better to
-	// show does the failure take the row — it used to render nothing at all,
-	// which reads as "up to date" rather than "checks are not getting through".
-	if (status.state !== "downloaded") {
-		if (status.checksFailing !== true) return null;
+
+	if (action.kind === "retry") {
 		return (
 			<button
 				aria-label={t("shell.retryUpdateCheck")}
@@ -2179,32 +2254,29 @@ function UpdateStatusRow({
 			</button>
 		);
 	}
-	const escalated = status.escalated === true;
+
+	const versionLabel = updateVersionLabel(action.version, "ready", t, locale);
 	return (
 		<button
 			aria-label={
-				status.version
-					? t("shell.restartInstallUpdateVersion", { version: status.version })
+				action.version
+					? t("shell.restartInstallUpdateVersion", { version: action.version })
 					: t("shell.restartInstallUpdate")
 			}
 			className={cn(
 				"flex w-full items-center gap-2.5 rounded-lg border border-primary/35 bg-primary/12 p-2.5 text-left text-control font-medium text-primary transition-colors hover:bg-primary/18 [&_svg]:text-primary",
-				escalated &&
+				action.escalated &&
 					"border-working/35 bg-working/12 text-working hover:bg-working/18 [&_svg]:text-working",
 			)}
 			data-testid="sidebar-update-ready"
-			onClick={() => void aoBridge.updates.install()}
+			onClick={onRequestInstall}
 			tabIndex={tabIndex}
 			type="button"
 		>
 			<RefreshCw aria-hidden="true" className="size-icon-lg shrink-0" />
 			<span className="min-w-0 flex-1">
 				<span className="block truncate tracking-tight">{t("shell.restartToUpdate")}</span>
-				{status.version && (
-					<span className="block truncate text-caption font-normal">
-						{t("shell.versionReady", { version: status.version })}
-					</span>
-				)}
+				{versionLabel && <span className="block truncate text-caption font-normal">{versionLabel}</span>}
 			</span>
 		</button>
 	);
@@ -2214,24 +2286,30 @@ function UpdateStatusRow({
 // and a staged one installs; an in-flight download is informational.
 function UpdateStatusRail({
 	availableDismissed,
+	onRequestInstall,
 	status,
 	tabIndex,
 }: {
 	availableDismissed: boolean;
+	/** Opens the restart confirmation; installing outright would quit the app. */
+	onRequestInstall: () => void;
 	status: UpdateStatus;
 	tabIndex: number;
 }) {
-	const { t } = useTranslation();
-	if (status.state === "available") {
-		if (availableDismissed) return null;
-		const label = t("settings.updates.available", { version: status.version ? ` (v${status.version})` : "" });
+	const { t, i18n } = useTranslation();
+	const locale = i18n.resolvedLanguage ?? i18n.language;
+	const action = sidebarUpdateAction(status, availableDismissed);
+	if (action === null) return null;
+
+	if (action.kind === "download") {
+		const label = t("settings.updates.available", { version: action.version ? ` (v${action.version})` : "" });
 		return (
 			<Tooltip>
 				<TooltipTrigger asChild>
 					<button
 						aria-label={
-							status.version
-								? t("shell.downloadUpdateVersion", { version: status.version })
+							action.version
+								? t("shell.downloadUpdateVersion", { version: action.version })
 								: t("shell.downloadUpdate")
 						}
 						className="grid size-9 place-items-center rounded-lg text-passive transition-colors hover:bg-interactive-hover hover:text-foreground [&_svg]:size-4"
@@ -2246,8 +2324,9 @@ function UpdateStatusRail({
 			</Tooltip>
 		);
 	}
-	if (status.state === "downloading") {
-		const label = t("settings.updates.downloading", { percent: status.percent ?? 0 });
+
+	if (action.kind === "downloading") {
+		const label = t("settings.updates.downloading", { percent: action.percent });
 		return (
 			<Tooltip>
 				<TooltipTrigger asChild>
@@ -2264,9 +2343,8 @@ function UpdateStatusRail({
 			</Tooltip>
 		);
 	}
-	// Same ranking as the expanded row: a staged build outranks the failure.
-	if (status.state !== "downloaded") {
-		if (status.checksFailing !== true) return null;
+
+	if (action.kind === "retry") {
 		return (
 			<Tooltip>
 				<TooltipTrigger asChild>
@@ -2286,25 +2364,24 @@ function UpdateStatusRail({
 			</Tooltip>
 		);
 	}
-	const escalated = status.escalated === true;
+
+	const versionLabel = updateVersionLabel(action.version, "ready", t, locale);
 	return (
 		<Tooltip>
 			<TooltipTrigger asChild>
 				<button
 					aria-label={
-						status.version
-							? t("shell.restartInstallUpdateVersion", {
-									version: status.version,
-								})
+						action.version
+							? t("shell.restartInstallUpdateVersion", { version: action.version })
 							: t("shell.restartInstallUpdate")
 					}
 					className={cn(
 						"grid size-9 place-items-center rounded-lg transition-colors [&_svg]:size-4",
-						escalated
+						action.escalated
 							? "bg-working/12 text-working hover:bg-working/18"
 							: "text-passive hover:bg-interactive-hover hover:text-foreground",
 					)}
-					onClick={() => void aoBridge.updates.install()}
+					onClick={onRequestInstall}
 					tabIndex={tabIndex}
 					type="button"
 				>
@@ -2313,7 +2390,7 @@ function UpdateStatusRail({
 			</TooltipTrigger>
 			<TooltipContent side="right">
 				{t("shell.restartToUpdate")}
-				{status.version ? ` · ${t("shell.versionReady", { version: status.version })}` : ""}
+				{versionLabel ? ` · ${versionLabel}` : ""}
 			</TooltipContent>
 		</Tooltip>
 	);

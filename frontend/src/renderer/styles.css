@@ -4369,6 +4369,26 @@ body:has(#root .platform-linux) > .browser-popout-overlay {
 	background: transparent;
 }
 
+.browser-panel__tab--drag-placeholder {
+	opacity: 0;
+	pointer-events: none;
+}
+
+.browser-panel__tab--drag-overlay {
+	width: 100%;
+	min-width: 0;
+	max-width: none;
+	flex: none;
+	color: var(--fg);
+	border-color: color-mix(in srgb, var(--color-border) 72%, transparent);
+	background: var(--surface);
+	box-shadow:
+		inset 0 1px 0 color-mix(in srgb, white 7%, transparent),
+		0 6px 16px color-mix(in srgb, black 22%, transparent);
+	cursor: grabbing;
+	pointer-events: none;
+}
+
 .browser-panel__tab:not(:last-child)::after {
 	position: absolute;
 	top: 8px;
@@ -4385,8 +4405,8 @@ body:has(#root .platform-linux) > .browser-popout-overlay {
 .browser-panel__tab:has(+ .browser-panel__tab--active)::after,
 .browser-panel__tab:hover::after,
 .browser-panel__tab:has(+ .browser-panel__tab:hover)::after,
-.browser-panel__tab--dragging::after,
-.browser-panel__tab:has(+ .browser-panel__tab--dragging)::after {
+.browser-panel__tab--drag-placeholder::after,
+.browser-panel__tab:has(+ .browser-panel__tab--drag-placeholder)::after {
 	opacity: 0;
 }
 
@@ -4481,6 +4501,11 @@ body:has(#root .platform-linux) > .browser-popout-overlay {
 	background: transparent;
 }
 
+.browser-panel__tab-new--dragging {
+	visibility: hidden;
+	pointer-events: none;
+}
+
 .browser-panel__tab-new:not(:disabled):hover {
 	color: var(--fg);
 	background: var(--surface-hover);
@@ -4492,13 +4517,13 @@ body:has(#root .platform-linux) > .browser-popout-overlay {
 }
 
 @container browser-panel (min-width: 640px) {
-	.browser-panel--popped-out .browser-panel__tab-bar {
+	.browser-panel__tab-bar {
 		display: flex;
 	}
 
-	.browser-panel--popped-out .browser-panel__toolbar-new-tab,
-	.browser-panel--popped-out .browser-panel__toolbar-tabs-trigger,
-	.browser-panel--popped-out .browser-tabs-rail {
+	.browser-panel__toolbar-new-tab,
+	.browser-panel__toolbar-tabs-trigger,
+	.browser-tabs-rail {
 		display: none;
 	}
 }
@@ -4576,6 +4601,24 @@ body:has(#root .platform-linux) > .browser-popout-overlay {
 	box-shadow:
 		inset 0 1px 0 color-mix(in srgb, white 6%, transparent),
 		0 1px 8px color-mix(in srgb, black 9%, transparent);
+}
+
+.browser-panel__url-external {
+	position: absolute;
+	top: 3px;
+	right: 3px;
+	z-index: 3;
+	width: 23px;
+	height: 23px;
+	color: var(--fg-muted);
+	opacity: 0;
+	pointer-events: none;
+}
+
+.browser-panel__url-wrap:hover:not(:has(.browser-panel__url-input:focus)) .browser-panel__url-external,
+.browser-panel__url-external:focus-visible {
+	opacity: 1;
+	pointer-events: auto;
 }
 
 .browser-panel__content {

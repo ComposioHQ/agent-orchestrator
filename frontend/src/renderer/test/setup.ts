@@ -242,6 +242,7 @@ if (typeof window !== "undefined") {
 			openTab: async ({ viewId }) => ({ viewId, activeTabId: "", tabs: [] }),
 			getProfile: async (viewId: string) => ({ viewId, profileId: null, temporary: true }),
 			showProfileMenu: async () => undefined,
+			selectProfile: async () => undefined,
 			notifyPanelUsed: () => undefined,
 			notifyPanelBlur: () => undefined,
 			onFocusLocation: () => () => undefined,

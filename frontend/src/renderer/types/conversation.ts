@@ -563,6 +563,8 @@ export interface ChatConfigOption {
 
 /** One value offered by a select config option. */
 export interface ChatConfigChoice {
+	/** Exact AO permission equivalent supplied by the daemon, when supported. */
+	permissionMode?: ApprovalMode;
 	value: string;
 	name: string;
 	description?: string;

@@ -9,6 +9,10 @@ const routeMocks = vi.hoisted(() => ({
 	},
 	navigate: vi.fn(),
 	workspaces: [] as WorkspaceSummary[],
+	requirements: [] as Array<{ id: string; label: string; satisfied: boolean; required: boolean; detail: string }>,
+	authRequirement: undefined as { id: string; label: string; satisfied: boolean; required: boolean; detail: string } | undefined,
+	startGitHubAuth: vi.fn(),
+	closeTerminal: vi.fn(),
 }));
 
 vi.mock("@tanstack/react-router", async (importOriginal) => ({
@@ -21,7 +25,14 @@ vi.mock("../hooks/useWorkspaceQuery", () => ({
 }));
 
 vi.mock("../hooks/useSystemRequirementsGate", () => ({
-	useSystemRequirementsGate: () => ({ blocked: false }),
+	useSystemRequirementsGate: () => ({ blocked: false, requirements: routeMocks.requirements, query: { refetch: vi.fn() } }),
+	useGitHubAuthRequirement: () => ({ data: routeMocks.authRequirement, isFetching: false, refetch: vi.fn() }),
+	useGitHubAuthTerminal: () => ({ data: null, clear: vi.fn() }),
+	useStartGitHubAuthTerminal: () => ({ mutate: routeMocks.startGitHubAuth, isPending: false, isError: false }),
+}));
+
+vi.mock("../hooks/useShellTerminals", () => ({
+	useCloseShellTerminal: () => ({ mutate: routeMocks.closeTerminal }),
 }));
 
 vi.mock("../lib/shell-context", () => ({
@@ -32,6 +43,7 @@ vi.mock("../lib/shell-context", () => ({
 		createProject: vi.fn(),
 		initializeProjectRepository: vi.fn(),
 	}),
+	useShellMaybe: () => ({ daemonStatus: { state: "ready" } }),
 }));
 
 vi.mock("../components/CreateProjectFlow", () => ({
@@ -51,6 +63,10 @@ beforeEach(() => {
 	routeMocks.navigate.mockReset();
 	routeMocks.workspaces = [];
 	routeMocks.createProjectFlowProps = null;
+	routeMocks.requirements = [];
+	routeMocks.authRequirement = undefined;
+	routeMocks.startGitHubAuth.mockReset();
+	routeMocks.closeTerminal.mockReset();
 });
 
 describe("shell index route", () => {
@@ -77,6 +93,21 @@ describe("shell index route", () => {
 
 		expect(screen.getByText("Jump back right in")).toBeInTheDocument();
 		expect(routeMocks.navigate).not.toHaveBeenCalled();
+	});
+
+	it("surfaces missing GitHub authentication on the seeded first-run home page", () => {
+		routeMocks.workspaces = [
+			{ id: "scratch", name: "Scratch", kind: "scratch", path: "/scratch", sessions: [] },
+		];
+		routeMocks.requirements = [
+			{ id: "gh", label: "gh", satisfied: true, required: false, detail: "/usr/bin/gh" },
+		];
+		routeMocks.authRequirement = { id: "github-auth", label: "GitHub access", satisfied: false, required: false, detail: "Sign in." };
+
+		render(<HomePage />);
+
+		expect(screen.getByText("Connect GitHub for pull requests")).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Sign in with GitHub" })).toBeInTheDocument();
 	});
 
 	it("opens a project from the recent-project list", async () => {

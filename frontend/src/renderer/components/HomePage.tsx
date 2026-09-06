@@ -14,6 +14,7 @@ import type { WorkspaceSummary } from "../types/workspace";
 import { BoardWelcome } from "./BoardEmptyStates";
 import { CreateProjectFlow } from "./CreateProjectFlow";
 import { DaemonStartupLoader } from "./DaemonStartupLoader";
+import { GitHubOnboardingNotice } from "./GitHubOnboardingNotice";
 import { TopbarButton } from "./TopbarButton";
 import { Badge } from "./ui/badge";
 
@@ -170,6 +171,8 @@ export function HomePage() {
 							{t("home.starUs")}
 						</TopbarButton>
 					</div>
+
+					<GitHubOnboardingNotice />
 
 					<div className="-mt-3 grid grid-cols-2 gap-3 px-3">
 						<HomeActionCard

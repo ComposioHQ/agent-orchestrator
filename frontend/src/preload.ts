@@ -56,6 +56,7 @@ import type {
 	BrowserProfile,
 	BrowserProfileListState,
 	BrowserProfileMenuInput,
+	BrowserProfileSelectInput,
 	BrowserProfileViewState,
 } from "./shared/browser-profiles";
 import type {
@@ -381,6 +382,8 @@ const api = {
 			ipcRenderer.invoke("browser:profile:get", viewId) as Promise<BrowserProfileViewState>,
 		showProfileMenu: (input: BrowserProfileMenuInput) =>
 			ipcRenderer.invoke("browser:profile:menu", input) as Promise<void>,
+		selectProfile: (input: BrowserProfileSelectInput) =>
+			ipcRenderer.invoke("browser:profile:select", input) as Promise<void>,
 		notifyPanelUsed: (viewId: string) => ipcRenderer.send("browser:panelUsed", viewId),
 		notifyPanelBlur: (viewId: string) => ipcRenderer.send("browser:panelBlur", viewId),
 		onFocusLocation: (listener: (viewId: string) => void) => {

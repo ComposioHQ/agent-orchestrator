@@ -17,6 +17,7 @@ import { KeyboardShortcutsSettingsDialog } from "../components/settings/Keyboard
 import { ShellTopbar } from "../components/ShellTopbar";
 import { SessionTopbarProvider } from "../components/SessionTopbarPortal";
 import { OrchestratorReplacementDialog } from "../components/OrchestratorReplacementDialog";
+import { RestartToUpdateDialog } from "../components/RestartToUpdateDialog";
 import { Sidebar } from "../components/Sidebar";
 import { SidebarProvider } from "../components/ui/sidebar";
 import { TitlebarNav } from "../components/TitlebarNav";
@@ -27,7 +28,7 @@ import { useDaemonStatus } from "../hooks/useDaemonStatus";
 import { useOpenShellTerminal } from "../hooks/useShellTerminals";
 import { useWindowFullScreen } from "../hooks/useWindowFullScreen";
 import { useWorkspaceQuery, workspaceQueryKey, workspaceQueryOptions } from "../hooks/useWorkspaceQuery";
-import { apiClient, apiErrorCode, apiErrorMessage, hasTrustedApiBaseUrl } from "../lib/api-client";
+import { apiClient, apiErrorCode, apiErrorDetails, apiErrorMessage, apiErrorRequestId, hasTrustedApiBaseUrl } from "../lib/api-client";
 import { refreshDaemonStatus } from "../lib/daemon-status";
 import { usesPreviewWorkspaceData } from "../lib/preview-mode";
 import { addRendererExceptionStep, captureRendererEvent, captureRendererException } from "../lib/telemetry";
@@ -475,13 +476,36 @@ function ShellLayout() {
 				},
 			});
 			if (error) {
-				const failure = new Error(apiErrorMessage(error)) as Error & { code?: string };
+				const failure = new Error(apiErrorMessage(error)) as Error & {
+					code?: string;
+					details?: Record<string, unknown>;
+					requestId?: string;
+				};
 				failure.code = apiErrorCode(error);
+				failure.details = apiErrorDetails(error);
+				failure.requestId = apiErrorRequestId(error);
 				if (failure.code === "PATH_ALREADY_REGISTERED") {
-					const registeredWorkspace = findRegisteredWorkspaceByPath(
+					const existingProjectId = failure.details?.existingProjectId;
+					const findRegisteredWorkspace = (items: WorkspaceSummary[]) => {
+						const local = items.filter((workspace) => workspace.kind !== "cloud");
+						// The daemon resolves symlinks/canonical paths. Prefer its identity
+						// over renderer path spelling, but only open a known local project.
+						return typeof existingProjectId === "string" && existingProjectId !== ""
+							? local.find((workspace) => workspace.id === existingProjectId)
+							: findRegisteredWorkspaceByPath(local, input.path);
+					};
+					let registeredWorkspace = findRegisteredWorkspace(
 						queryClient.getQueryData<WorkspaceSummary[]>(workspaceQueryKey) ?? workspacesRef.current,
-						input.path,
 					);
+					if (!registeredWorkspace) {
+						try {
+							registeredWorkspace = findRegisteredWorkspace(await queryClient.fetchQuery({
+								...workspaceQueryOptions, staleTime: 0, retry: false,
+							}));
+						} catch {
+							// Keep the original conflict and selection if refresh is unavailable.
+						}
+					}
 					if (registeredWorkspace) {
 						showGlobalToast("Project already added", "Opened the registered project for this folder.");
 						void navigate({ to: "/projects/$projectId", params: { projectId: registeredWorkspace.id } });
@@ -529,8 +553,14 @@ function ShellLayout() {
 				},
 			});
 			if (error) {
-				const failure = new Error(apiErrorMessage(error)) as Error & { code?: string };
+				const failure = new Error(apiErrorMessage(error)) as Error & {
+					code?: string;
+					details?: Record<string, unknown>;
+					requestId?: string;
+				};
 				failure.code = apiErrorCode(error);
+				failure.details = apiErrorDetails(error);
+				failure.requestId = apiErrorRequestId(error);
 				void captureRendererException(failure, {
 					source: "project-clone",
 					operation: "project_clone",
@@ -881,6 +911,7 @@ function ShellLayout() {
 				<GlobalNewTaskDialog />
 				<GlobalToast />
 				<SettingsDialog />
+				<RestartToUpdateDialog />
 				<KeyboardShortcutsDialog
 					open={isKeyboardShortcutsOpen}
 					onOpenChange={setIsKeyboardShortcutsOpen}

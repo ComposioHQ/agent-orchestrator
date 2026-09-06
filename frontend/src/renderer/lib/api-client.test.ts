@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
 	apiClient,
+	apiErrorDetails,
 	apiErrorMessage,
 	getApiBaseUrl,
 	hasTrustedApiBaseUrl,
@@ -462,4 +463,18 @@ describe("apiErrorMessage", () => {
 			}),
 		).toBe("reviewer has not reviewed this PR");
 	});
+});
+
+
+describe("apiErrorDetails", () => {
+	it("preserves structured daemon recovery metadata", () => {
+		const details = { existingProjectId: "registered-project", suggestedProjectId: "another-project" };
+		expect(apiErrorDetails({ code: "PATH_ALREADY_REGISTERED", details })).toEqual(details);
+	});
+
+	it.each([undefined, null, "error", {}, { details: null }, { details: "project" }, { details: ["project"] }])(
+		"ignores malformed metadata: %j", (error) => {
+			expect(apiErrorDetails(error)).toBeUndefined();
+		},
+	);
 });
