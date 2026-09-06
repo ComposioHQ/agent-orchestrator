@@ -296,11 +296,45 @@ func (s *Store) CreateSession(
 	err := s.withTenant(ctx, principal, orgID, func(tx pgx.Tx) error {
 		var err error
 		session, err = createSessionTx(
-			ctx, tx, orgID, idempotencyKey, maxActiveSandboxes, input, "", principal.UserID,
+			ctx, tx, orgID, idempotencyKey, maxActiveSandboxes, input, input.ParentSessionID, principal.UserID,
 		)
 		return err
 	})
 	return session, err
+}
+
+// ProjectActiveOrchestrator returns the id and sandbox provider of a project's
+// single active orchestrator, if one exists. A top-level worker is auto-linked
+// to it (parent_session_id) and inherits its provider so a project's whole
+// worker tree stays on one provider, matching ao spawn'ed children. found is
+// false when the project has no live orchestrator, in which case the worker
+// stays standalone. Every session has exactly one sandbox row, so the join is
+// total; the one-active-orchestrator-per-project unique index makes the match
+// unambiguous.
+func (s *Store) ProjectActiveOrchestrator(
+	ctx context.Context,
+	orgID, projectID string,
+) (string, string, bool, error) {
+	var orchestratorID, provider string
+	err := s.withOrg(ctx, orgID, func(tx pgx.Tx) error {
+		return tx.QueryRow(
+			ctx,
+			`SELECT se.id::text, sb.provider
+			FROM ao_sessions se
+			JOIN ao_sandboxes sb ON sb.session_id = se.id AND sb.org_id = se.org_id
+			WHERE se.org_id = $1 AND se.project_id = $2
+			  AND se.kind = 'orchestrator' AND se.is_terminated = false
+			LIMIT 1`,
+			orgID, projectID,
+		).Scan(&orchestratorID, &provider)
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", "", false, nil
+	}
+	if err != nil {
+		return "", "", false, err
+	}
+	return orchestratorID, provider, true, nil
 }
 
 func (s *Store) CreateGitHubScratchProject(
