@@ -19,12 +19,14 @@ type fakeStore struct {
 	unreadCount     int64
 	unresolvedCount int64
 
-	markRow      domain.NotificationRecord
-	markOK       bool
-	markAllCount int64
-	markedAll    bool
-	markedIDs    []string
-	err          error
+	markRow       domain.NotificationRecord
+	markOK        bool
+	markAllCount  int64
+	markedAll     bool
+	markedIDs     []string
+	clearedAll    bool
+	clearAllCount int64
+	err           error
 }
 
 func (f *fakeStore) CreateNotification(context.Context, domain.NotificationRecord) (domain.NotificationRecord, bool, error) {
@@ -65,6 +67,11 @@ func (f *fakeStore) MarkAllNotificationsRead(context.Context) (int64, error) {
 func (f *fakeStore) MarkNotificationsRead(_ context.Context, ids []string) (int64, error) {
 	f.markedIDs = ids
 	return int64(len(ids)), f.err
+}
+
+func (f *fakeStore) ClearAllNotifications(context.Context) (int64, error) {
+	f.clearedAll = true
+	return f.clearAllCount, f.err
 }
 
 func TestListAddsTargetsAndReturnsNextCursor(t *testing.T) {
@@ -172,6 +179,25 @@ func TestMarkAllReadWithIDsScopesToThoseNotifications(t *testing.T) {
 
 func TestListUnreadRequiresStore(t *testing.T) {
 	_, err := New(Deps{}).List(context.Background(), ListFilter{})
+	if err == nil {
+		t.Fatal("want missing store error")
+	}
+}
+
+func TestClearAllReturnsClearedCount(t *testing.T) {
+	st := &fakeStore{clearAllCount: 15}
+	mgr := New(Deps{Store: st})
+	got, err := mgr.ClearAll(context.Background())
+	if err != nil {
+		t.Fatalf("ClearAll: %v", err)
+	}
+	if got != 15 || !st.clearedAll {
+		t.Fatalf("cleared count = %d clearedAll=%v, want 15 true", got, st.clearedAll)
+	}
+}
+
+func TestClearAllRequiresStore(t *testing.T) {
+	_, err := New(Deps{}).ClearAll(context.Background())
 	if err == nil {
 		t.Fatal("want missing store error")
 	}

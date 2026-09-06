@@ -1,5 +1,8 @@
 import { useInfiniteQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { aoBridge } from "../lib/bridge";
 import {
+	clearAllCachedNotifications,
+	clearAllNotifications,
 	fetchNotificationsPage,
 	markAllCachedNotificationsRead,
 	markAllNotificationsRead,
@@ -39,3 +42,15 @@ export function useMarkAllNotificationsReadMutation() {
 		},
 	});
 }
+
+export function useClearAllNotificationsMutation() {
+	const queryClient = useQueryClient();
+	return useMutation({
+		mutationFn: clearAllNotifications,
+		onSuccess: () => {
+			clearAllCachedNotifications(queryClient);
+			void aoBridge.notifications.setBadge(0);
+		},
+	});
+}
+

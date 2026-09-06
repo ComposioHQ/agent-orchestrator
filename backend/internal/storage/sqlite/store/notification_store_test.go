@@ -408,3 +408,38 @@ func TestNotificationStore_MarkNotificationsReadOnlyTouchesGivenIDs(t *testing.T
 		t.Fatalf("unread count = %d err=%v, want 1 (ntf_3 must stay reachable)", count, err)
 	}
 }
+
+func TestNotificationStore_ClearAllNotifications(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedProject(t, s, "mer")
+	sess, err := s.CreateSession(ctx, sampleRecord("mer"))
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	now := time.Now().UTC().Truncate(time.Second)
+	for i, id := range []string{"ntf_1", "ntf_2", "ntf_3"} {
+		rec := domain.NotificationRecord{
+			ID: id, SessionID: sess.ID, ProjectID: sess.ProjectID,
+			PRURL: "https://github.com/o/r/pull/" + id,
+			Type:  domain.NotificationPRMerged, Title: id,
+			Status: domain.NotificationUnread, CreatedAt: now.Add(-time.Duration(i) * time.Minute),
+		}
+		if _, inserted, err := s.CreateNotification(ctx, rec); err != nil || !inserted {
+			t.Fatalf("CreateNotification %s inserted=%v err=%v", id, inserted, err)
+		}
+	}
+
+	cleared, err := s.ClearAllNotifications(ctx)
+	if err != nil || cleared != 3 {
+		t.Fatalf("ClearAllNotifications cleared=%d err=%v, want 3", cleared, err)
+	}
+	count, err := s.CountUnreadNotifications(ctx)
+	if err != nil || count != 0 {
+		t.Fatalf("unread count = %d err=%v, want 0", count, err)
+	}
+	rows, err := s.ListNotifications(ctx, domain.NotificationListAll, time.Time{}, "", 10)
+	if err != nil || len(rows) != 0 {
+		t.Fatalf("ListNotifications len=%d err=%v, want 0", len(rows), err)
+	}
+}
