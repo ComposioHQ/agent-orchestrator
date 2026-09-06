@@ -28,7 +28,13 @@ const (
 	codexAccountProcessLimit     = 2
 )
 
-var defaultCodexAccountBootstrapRetryDelays = []time.Duration{15 * time.Second, time.Minute, 5 * time.Minute}
+var defaultCodexAccountBootstrapRetryDelays = []time.Duration{
+	10 * time.Second,
+	20 * time.Second,
+	45 * time.Second,
+	90 * time.Second,
+	3 * time.Minute,
+}
 
 // CodexAccounts is the display-safe account-management view. Credentials and
 // filesystem locations remain daemon-private.

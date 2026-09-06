@@ -854,7 +854,14 @@ func TestCodexAccountBootstrapBackoffProgressionAndCooldown(t *testing.T) {
 	now := time.Date(2026, 9, 5, 12, 0, 0, 0, time.UTC)
 	manager.now = func() time.Time { return now }
 
-	for attempt, wantDelay := range []time.Duration{15 * time.Second, time.Minute, 5 * time.Minute, 5 * time.Minute} {
+	for attempt, wantDelay := range []time.Duration{
+		10 * time.Second,
+		20 * time.Second,
+		45 * time.Second,
+		90 * time.Second,
+		3 * time.Minute,
+		3 * time.Minute,
+	} {
 		if err := manager.waitBootstrap(context.Background()); err == nil {
 			t.Fatalf("attempt %d unexpectedly succeeded", attempt+1)
 		}
