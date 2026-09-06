@@ -354,9 +354,11 @@ export const ChatComposer = memo(function ChatComposer({
 	}, []);
 
 	const previousEditingQueuedTurnIdRef = useRef(editingQueuedTurnId);
+	const previousEditSeedIdRef = useRef(draftSeedId);
 	useLayoutEffect(() => {
 		const previous = previousEditingQueuedTurnIdRef.current;
-		if (previous === editingQueuedTurnId) return;
+		if (previous === editingQueuedTurnId && previousEditSeedIdRef.current === draftSeedId) return;
+		previousEditSeedIdRef.current = draftSeedId;
 		previousEditingQueuedTurnIdRef.current = editingQueuedTurnId;
 		stagedDelivery.current = null;
 		editAttachments.clear();
@@ -371,7 +373,7 @@ export const ChatComposer = memo(function ChatComposer({
 			editor.current?.setText(text);
 			setSendError(null);
 		}
-	}, [draftSeed, editingQueuedTurnId, editAttachments.clear]);
+	}, [draftSeed, draftSeedId, editingQueuedTurnId, editAttachments.clear]);
 
 	useEffect(() => {
 		if (draftSeedText === undefined) return;

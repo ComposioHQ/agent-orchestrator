@@ -944,7 +944,7 @@ export function ChatWorkspace({
 		],
 	);
 	const composerDraftSeed = useMemo(
-		() => (queueEdit ? { id: queueEdit.turnId, text: queueEdit.text, attachments: queueEdit.attachments } : undefined),
+		() => (queueEdit ? { id: `${queueEdit.turnId}:${queueEdit.revision}`, text: queueEdit.text, attachments: queueEdit.attachments } : undefined),
 		[queueEdit],
 	);
 	// Empty chats center the prompt; once a turn or item exists the composer docks

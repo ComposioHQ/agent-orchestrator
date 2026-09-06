@@ -181,4 +181,28 @@ describe("queued message attachments", () => {
 		expect(field).toHaveTextContent("inspect this");
 		expect(screen.getByLabelText("Remove shot.png")).toBeInTheDocument();
 	});
+
+	it("reloads retained attachments when reopening a newer revision of the same queued turn", async () => {
+		const { edit, snapshot, rerenderSnapshot, field } = setup(`inspect this\n\n${suffix}`, [
+			{ type: "image", mimeType: "image/png" },
+		]);
+		await beginEdit();
+		expect(screen.getByLabelText("Remove attachment-shot.png")).toBeInTheDocument();
+		rerenderSnapshot({
+			...snapshot,
+			items: snapshot.items.map((item) =>
+				item.kind === "message" ? { ...item, text: "newer edit", revision: 1, content: [] } : item,
+			),
+		});
+		await beginEdit();
+		await waitFor(() => expect(field).toHaveTextContent("newer edit"));
+		expect(screen.queryByLabelText("Remove attachment-shot.png")).not.toBeInTheDocument();
+		await userEvent.click(screen.getByRole("button", { name: "Send message" }));
+		await waitFor(() =>
+			expect(edit).toHaveBeenCalledWith("q1", "newer edit", {
+				retainedContent: [],
+				expectedRevision: 1,
+			}),
+		);
+	});
 });
