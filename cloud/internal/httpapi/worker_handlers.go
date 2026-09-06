@@ -270,19 +270,19 @@ func (s *Server) workerPushGrant(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, http.StatusForbidden, "PUSH_NOT_AUTHORIZED", "This session does not have an active repository grant.")
 		return
 	}
-	if errors.Is(err, githubapp.ErrorRemoteWriteNotSupported) {
+	if errors.Is(err, githubapp.ErrRemoteWriteNotSupported) {
 		writeError(w, r, http.StatusForbidden, "WRITE_NOT_SUPPORTED",
 			"This environment does not support the write operations for repository authorized through the remote capability broker.")
 		return
 	}
 	if err != nil {
 		s.logger.Error("issue worker push grant",
-		"error", err,
-		"request_id", requestID(r),
-		"org_id", claims.OrgID,
-		"session_id", claims.SessionID,
-		"worker_id", claims.WorkerID,
-	)
+			"error", err,
+			"request_id", requestID(r),
+			"org_id", claims.OrgID,
+			"session_id", claims.SessionID,
+			"worker_id", claims.WorkerID,
+		)
 		writeError(w, r, http.StatusBadGateway, "SCM_BROKER_FAILED", "A repository push grant could not be issued.")
 		return
 	}
@@ -315,19 +315,19 @@ func (s *Server) workerGitHubToken(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, http.StatusForbidden, "PUSH_NOT_AUTHORIZED", "This session does not have an active repository grant.")
 		return
 	}
-	if errors.Is(err, githubapp.ErrorRemoteWriteNotSupported) {
+	if errors.Is(err, githubapp.ErrRemoteWriteNotSupported) {
 		writeError(w, r, http.StatusForbidden, "WRITE_NOT_SUPPORTED",
 			"This environment does not support the write operations for repository authorized through the remote capability broker.")
 		return
 	}
 	if err != nil {
 		s.logger.Error("issue worker GitHub token",
-		"error", err,
-		"request_id", requestID(r),
-		"org_id", claims.OrgID,
-		"session_id", claims.SessionID,
-		"worker_id", claims.WorkerID,
-	)
+			"error", err,
+			"request_id", requestID(r),
+			"org_id", claims.OrgID,
+			"session_id", claims.SessionID,
+			"worker_id", claims.WorkerID,
+		)
 		writeError(w, r, http.StatusBadGateway, "SCM_BROKER_FAILED", "A GitHub credential could not be issued.")
 		return
 	}
@@ -381,19 +381,19 @@ func (s *Server) workerRaisePullRequest(w http.ResponseWriter, r *http.Request) 
 		writeError(w, r, http.StatusBadRequest, "INVALID_PULL_REQUEST", "The pull request could not be opened with the given branches.")
 		return
 	}
-	if errors.Is(err, githubapp.ErrorRemoteWriteNotSupported) {
+	if errors.Is(err, githubapp.ErrRemoteWriteNotSupported) {
 		writeError(w, r, http.StatusForbidden, "WRITE_NOT_SUPPORTED",
 			"This environment does not support the write operations for repository authorized through the remote capability broker.")
 		return
 	}
 	if err != nil {
 		s.logger.Error("raise worker pull request",
-		"error", err,
-		"request_id", requestID(r),
-		"org_id", claims.OrgID,
-		"session_id", claims.SessionID,
-		"worker_id", claims.WorkerID,
-	)
+			"error", err,
+			"request_id", requestID(r),
+			"org_id", claims.OrgID,
+			"session_id", claims.SessionID,
+			"worker_id", claims.WorkerID,
+		)
 		writeError(w, r, http.StatusBadGateway, "PULL_REQUEST_FAILED", "The pull request could not be opened.")
 		return
 	}
@@ -441,19 +441,19 @@ func (s *Server) workerClaimPullRequest(w http.ResponseWriter, r *http.Request) 
 		writeError(w, r, http.StatusBadRequest, "INVALID_PULL_REQUEST", "The pull request reference is invalid for this repository.")
 		return
 	}
-	if errors.Is(err, githubapp.ErrorRemoteWriteNotSupported) {
+	if errors.Is(err, githubapp.ErrRemoteWriteNotSupported) {
 		writeError(w, r, http.StatusForbidden, "WRITE_NOT_SUPPORTED",
 			"This environment does not support the write operations for repository authorized through the remote capability broker.")
 		return
 	}
 	if err != nil {
 		s.logger.Error("claim worker pull request",
-		"error", err,
-		"request_id", requestID(r),
-		"org_id", claims.OrgID,
-		"session_id", claims.SessionID,
-		"worker_id", claims.WorkerID,
-	)
+			"error", err,
+			"request_id", requestID(r),
+			"org_id", claims.OrgID,
+			"session_id", claims.SessionID,
+			"worker_id", claims.WorkerID,
+		)
 		writeError(w, r, http.StatusBadGateway, "PULL_REQUEST_FAILED", "The pull request could not be tracked.")
 		return
 	}
@@ -496,19 +496,19 @@ func (s *Server) workerSubmitReview(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, http.StatusBadRequest, "INVALID_REVIEW", "The review verdict could not be recorded.")
 		return
 	}
-	if errors.Is(err, githubapp.ErrorRemoteWriteNotSupported) {
+	if errors.Is(err, githubapp.ErrRemoteWriteNotSupported) {
 		writeError(w, r, http.StatusForbidden, "WRITE_NOT_SUPPORTED",
 			"This environment does not support the write operations for repository authorized through the remote capability broker.")
 		return
 	}
 	if err != nil {
 		s.logger.Error("submit worker review",
-		"error", err,
-		"request_id", requestID(r),
-		"org_id", claims.OrgID,
-		"session_id", claims.SessionID,
-		"worker_id", claims.WorkerID,
-	)
+			"error", err,
+			"request_id", requestID(r),
+			"org_id", claims.OrgID,
+			"session_id", claims.SessionID,
+			"worker_id", claims.WorkerID,
+		)
 		writeError(w, r, http.StatusBadGateway, "REVIEW_FAILED", "The review could not be delivered.")
 		return
 	}

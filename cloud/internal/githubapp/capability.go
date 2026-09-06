@@ -367,41 +367,40 @@ func (s *Service) RedeemRepositoryCapability(
 }
 
 func (s *Service) RedeemRepositoryCapabilityForWrite(
-    ctx context.Context,
-    capability, targetEnvironment string,
-    githubInstallationID, githubRepositoryID int64,
-    userExternalID string,
+	ctx context.Context,
+	capability, targetEnvironment string,
+	githubInstallationID, githubRepositoryID int64,
+	userExternalID string,
 ) (CheckoutGrant, error) {
-    authority, err := s.ValidateRepositoryCapability(
-        ctx,
-        capability,
-        targetEnvironment,
-        githubInstallationID,
-        githubRepositoryID,
-        userExternalID,
-    )
-    if err != nil {
-        return CheckoutGrant{}, err
-    }
-    access, err := s.client.repositoryWriteToken(
-        ctx,
-        authority.GitHubInstallationID,
-        authority.GitHubRepositoryID,
-    )
-    if err != nil {
-        return CheckoutGrant{}, err
-    }
-    if !access.ExpiresAt.After(time.Now().UTC()) ||
-        access.ExpiresAt.After(time.Now().UTC().Add(2*time.Hour)) {
-        return CheckoutGrant{}, errors.New("GitHub returned an invalid installation token lifetime")
-    }
-    return CheckoutGrant{
-        CloneURL:  authority.Repository.CloneURL,
-        Token:     access.Token,
-        ExpiresAt: access.ExpiresAt,
-    }, nil
+	authority, err := s.ValidateRepositoryCapability(
+		ctx,
+		capability,
+		targetEnvironment,
+		githubInstallationID,
+		githubRepositoryID,
+		userExternalID,
+	)
+	if err != nil {
+		return CheckoutGrant{}, err
+	}
+	access, err := s.client.repositoryWriteToken(
+		ctx,
+		authority.GitHubInstallationID,
+		authority.GitHubRepositoryID,
+	)
+	if err != nil {
+		return CheckoutGrant{}, err
+	}
+	if !access.ExpiresAt.After(time.Now().UTC()) ||
+		access.ExpiresAt.After(time.Now().UTC().Add(2*time.Hour)) {
+		return CheckoutGrant{}, errors.New("GitHub returned an invalid installation token lifetime")
+	}
+	return CheckoutGrant{
+		CloneURL:  authority.Repository.CloneURL,
+		Token:     access.Token,
+		ExpiresAt: access.ExpiresAt,
+	}, nil
 }
-
 
 func (s *Service) RevokeScratchCapability(
 	ctx context.Context,
