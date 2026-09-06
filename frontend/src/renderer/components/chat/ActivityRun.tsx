@@ -11,7 +11,7 @@
  * changed something" without opening anything.
  */
 
-import { useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { ChevronRight, Loader2 } from "lucide-react";
 import { cn } from "../../lib/utils";
@@ -52,6 +52,7 @@ export function ActivityRun({ activities }: { activities: ConversationActivity[]
 	const hierarchy = buildHierarchy(activities);
 	const rootActivities = hierarchy.map((node) => node.activity);
 	const subgroups = groupSimilarActivities(rootActivities);
+	const summary = summarize(activities);
 	if (activities.length === 1 && hierarchy[0]?.children.length === 0) {
 		return <ActivityRow activity={activities[0]!} />;
 	}
@@ -62,7 +63,12 @@ export function ActivityRun({ activities }: { activities: ConversationActivity[]
 	const open = override ?? streamingOutput;
 
 	return (
-		<div className="flex flex-col">
+		<motion.div
+			initial={reducedMotion ? false : { opacity: 0, filter: "blur(2px)" }}
+			animate={{ opacity: 1, filter: "blur(0px)" }}
+			transition={{ duration: reducedMotion ? 0 : 0.2, ease: [0.22, 1, 0.36, 1] }}
+			className="flex flex-col"
+		>
 			<button
 				type="button"
 				onClick={() => setOverride(!open)}
@@ -70,7 +76,7 @@ export function ActivityRun({ activities }: { activities: ConversationActivity[]
 				className={cn(ACTIVITY_SUMMARY_BUTTON_CLASS, "activity-run-toggle")}
 			>
 				<span className="activity-summary-label text-[11.5px] text-muted-foreground">
-					{summarize(activities)}
+					<ActivityLabelTransition value={summary}>{summary}</ActivityLabelTransition>
 				</span>
 				{nonzeroExits > 0 ? (
 					<span className="text-[11px] text-muted-foreground/70">
@@ -138,7 +144,34 @@ export function ActivityRun({ activities }: { activities: ConversationActivity[]
 					</motion.div>
 				) : null}
 			</AnimatePresence>
-		</div>
+		</motion.div>
+	);
+}
+
+function ActivityLabelTransition({ value, children }: { value: string; children: ReactNode }) {
+	const reducedMotion = useReducedMotion();
+	const previousValue = useRef(value);
+	const [settling, setSettling] = useState(false);
+
+	useEffect(() => {
+		if (previousValue.current === value) return;
+		previousValue.current = value;
+		setSettling(true);
+	}, [value]);
+
+	return (
+		<motion.span
+			initial={reducedMotion ? false : { opacity: 0, filter: "blur(2px)" }}
+			animate={
+				reducedMotion || !settling
+					? { opacity: 1, filter: "blur(0px)" }
+					: { opacity: 0.72, filter: "blur(2px)" }
+			}
+			transition={{ duration: reducedMotion ? 0 : 0.2, ease: [0.22, 1, 0.36, 1] }}
+			onAnimationComplete={() => setSettling(false)}
+		>
+			{children}
+		</motion.span>
 	);
 }
 
@@ -201,7 +234,9 @@ function ActivitySubgroup({
 				className={cn(ACTIVITY_SUMMARY_BUTTON_CLASS, "activity-subgroup-toggle")}
 			>
 				<span className="activity-summary-label text-[11px] text-muted-foreground">
-					{summarizeSubgroup(activities)}
+					<ActivityLabelTransition value={summarizeSubgroup(activities)}>
+						{summarizeSubgroup(activities)}
+					</ActivityLabelTransition>
 				</span>
 				<ChevronRight aria-hidden="true" className={cn("size-3 shrink-0 transition-transform", open && "rotate-90")} />
 			</button>

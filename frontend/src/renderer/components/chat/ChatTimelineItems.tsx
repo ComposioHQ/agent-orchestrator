@@ -785,20 +785,11 @@ function DeliveryNote({ state }: { state: DeliveryState }) {
  * would hide work the agent really did.
  */
 export function ActivityRow({ activity }: { activity: ConversationActivity }) {
-	const reducedMotion = useReducedMotion();
-	const previousRevision = useRef(activity.revision);
-	const [settling, setSettling] = useState(true);
 	const toolActivity =
 		activity.activityKind === "command" ||
 		activity.activityKind === "file_change" ||
 		activity.activityKind === "mcp_tool" ||
 		activity.activityKind === "auto_review";
-
-	useEffect(() => {
-		if (previousRevision.current === activity.revision) return;
-		previousRevision.current = activity.revision;
-		setSettling(true);
-	}, [activity.revision]);
 
 	let content: ReactNode;
 	if (activity.activityKind === "mcp_tool") content = <McpToolRow activity={activity} />;
@@ -811,7 +802,34 @@ export function ActivityRow({ activity }: { activity: ConversationActivity }) {
 
 	if (!toolActivity) return content;
 	return (
-		<motion.div
+		<SoftActivityTransition value={`${activity.revision}:${activity.summary}:${activity.status}`}>
+			{content}
+		</SoftActivityTransition>
+	);
+}
+
+function SoftActivityTransition({
+	value,
+	children,
+	inline = false,
+}: {
+	value: string;
+	children: ReactNode;
+	inline?: boolean;
+}) {
+	const reducedMotion = useReducedMotion();
+	const previousValue = useRef(value);
+	const [settling, setSettling] = useState(false);
+
+	useEffect(() => {
+		if (previousValue.current === value) return;
+		previousValue.current = value;
+		setSettling(true);
+	}, [value]);
+
+	const MotionElement = inline ? motion.span : motion.div;
+	return (
+		<MotionElement
 			initial={reducedMotion ? false : { opacity: 0, filter: "blur(2px)" }}
 			animate={
 				reducedMotion || !settling
@@ -821,8 +839,8 @@ export function ActivityRow({ activity }: { activity: ConversationActivity }) {
 			transition={{ duration: reducedMotion ? 0 : 0.2, ease: [0.22, 1, 0.36, 1] }}
 			onAnimationComplete={() => setSettling(false)}
 		>
-			{content}
-		</motion.div>
+			{children}
+		</MotionElement>
 	);
 }
 
