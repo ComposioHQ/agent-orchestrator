@@ -51,7 +51,7 @@ const activityIcon: Record<ActivityKind, typeof SquareTerminal> = {
 import { cn } from "../../lib/utils";
 import { caretNotation, stripAnsi } from "../../lib/ansi";
 import { getApiBaseUrl } from "../../lib/api-client";
-import { ChatMarkdown } from "./ChatMarkdown";
+import { ActivityTitle, ChatMarkdown } from "./ChatMarkdown";
 import { HighlightedCode } from "./HighlightedCode";
 import { CopyButton } from "./CopyButton";
 import { HumanMessageEditor } from "./HumanMessageEditor";
@@ -878,7 +878,7 @@ function GenericActivityRow({ activity }: { activity: ConversationActivity }) {
 						)}
 						title={compactSummary ? undefined : label}
 					>
-						{label}
+						<ActivityTitle text={label} />
 					</strong>
 				)}
 				{path && !singleEdit ? (
@@ -1616,7 +1616,7 @@ function AutoReviewRow({ activity }: { activity: ConversationActivity }) {
 					className="min-w-0 flex-1 truncate font-mono text-[10.5px] text-muted-foreground"
 					title={activity.summary}
 				>
-					{shortenPaths(activity.summary)}
+					<ActivityTitle text={shortenPaths(activity.summary)} />
 				</span>
 				{detail?.riskLevel ? (
 					<span
