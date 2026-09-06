@@ -181,8 +181,10 @@ function resolveTerminalEditor(editorCommand: string, deps: EditorHandoffDeps, i
 	if (deps.platform === "win32") {
 		return {
 			command: deps.env.ComSpec || deps.env.COMSPEC || "cmd.exe",
-			argsForWorkspace: (workspacePath) => {
-				const commandLine = [editorCommand, workspacePath].map(windowsCommandArg).join(" ");
+			argsForWorkspace: () => {
+				// launch() sets cwd to the workspace, so opening "." avoids sending the
+				// workspace path through cmd.exe variable expansion (for example %TEMP%).
+				const commandLine = [editorCommand, "."].map(windowsCommandArg).join(" ");
 				// /s strips the first and last quotes around the command string. The
 				// extra outer pair preserves the quotes around both executable paths.
 				return ["/d", "/s", "/v:off", "/k", `"${commandLine}"`];

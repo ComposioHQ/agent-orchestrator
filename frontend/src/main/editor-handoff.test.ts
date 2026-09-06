@@ -96,8 +96,8 @@ describe("editor handoff", () => {
 		);
 	});
 
-	it("opens Neovim through Command Prompt on Windows", async () => {
-		const workspacePath = "C:\\work trees\\feature & fix";
+	it("opens Neovim through Command Prompt on Windows without expanding workspace percent sequences", async () => {
+		const workspacePath = "C:\\work trees\\%TEMP% & fix";
 		const input = deps({
 			platform: "win32",
 			env: {
@@ -116,7 +116,7 @@ describe("editor handoff", () => {
 
 		expect(input.launch).toHaveBeenCalledWith(
 			"C:\\Windows\\System32\\cmd.exe",
-			["/d", "/s", "/v:off", "/k", `""C:\\bin\\nvim.exe" "${workspacePath}""`],
+			["/d", "/s", "/v:off", "/k", `""C:\\bin\\nvim.exe" ".""`],
 			workspacePath,
 		);
 	});
