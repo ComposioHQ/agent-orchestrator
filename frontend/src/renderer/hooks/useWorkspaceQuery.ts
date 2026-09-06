@@ -1,8 +1,8 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type { TraySessionEntry } from "../../shared/tray";
-import { useMemo } from "react";
+import { useEffect, useMemo } from "react";
 import type { components } from "../../api/schema";
-import { apiClient, hasTrustedApiBaseUrl } from "../lib/api-client";
+import { apiClient, apiErrorCode, hasTrustedApiBaseUrl } from "../lib/api-client";
 import type { CloudCpProject, CloudCpSession } from "../lib/cloud-cp";
 import { useCloudCp } from "./useCloudCp";
 import { useCloudOrg } from "./useCloudOrg";
@@ -54,6 +54,60 @@ function toPullRequestFacts(pr: components["schemas"]["SessionPRFacts"]): PullRe
 	};
 }
 
+function toWorkspaceSession(
+	session: components["schemas"]["ControllersSessionView"],
+	project: Pick<WorkspaceSummary, "id" | "name">,
+): WorkspaceSession {
+	const status = toSessionStatus(session.status, session.isTerminated);
+	const scmStatus = session.scmStatus ? toSessionStatus(session.scmStatus) : undefined;
+	const kanbanColumn = toKanbanColumn(session.kanbanColumn, status);
+	const activity = toSessionActivity(session.activity);
+	if (status === "unknown") reportUnknownSessionField("status", session.status);
+	if (!activity || activity.state === "unknown") {
+		reportUnknownSessionField("activity", session.activity?.state);
+	}
+	return {
+		id: session.id,
+		terminalHandleId: session.terminalHandleId,
+		terminalGeneration: session.terminalGeneration,
+		workspaceId: project.id,
+		workspaceName: project.name,
+		title: session.displayName ?? session.issueId ?? session.id,
+		issueId: session.issueId,
+		provider: toAgentProvider(session.harness),
+		reviewerHarness: toReviewerHarnessId(session.reviewerHarness),
+		reviewerConfig: session.reviewerConfig
+			? {
+				model: session.reviewerConfig.model ?? undefined,
+				mode: session.reviewerConfig.mode ?? undefined,
+				permissions: session.reviewerConfig.permissions ?? undefined,
+			}
+			: undefined,
+		autoReviewEnabled: session.autoReviewEnabled ?? false,
+		kind: session.kind === "orchestrator" ? "orchestrator" : session.kind === "worker" ? "worker" : undefined,
+		mode: session.mode === "chat" ? "chat" : "tui",
+		branch: session.branch || undefined,
+		status,
+		scmStatus,
+		kanbanColumn,
+		displayStatus: session.displayStatus || undefined,
+		isTerminated: session.isTerminated,
+		terminateOnPrMerge: session.terminateOnPrMerge ?? false,
+		autoInjectReview: session.autoInjectReview ?? true,
+		autoInjectCI: session.autoInjectCI ?? true,
+		createdAt: session.createdAt,
+		updatedAt: session.updatedAt,
+		lastUserMessageAt: session.lastUserMessageAt ?? undefined,
+		activity,
+		activeAgentSwitch: session.activeAgentSwitch ? toAgentSwitchSummary(session.activeAgentSwitch) : undefined,
+		previewUrl: session.previewUrl,
+		previewRevision: session.previewRevision,
+		isPinned: session.isPinned ?? false,
+		pinnedAt: session.pinnedAt ?? undefined,
+		prs: (session.prs ?? []).map(toPullRequestFacts),
+	};
+}
+
 export const workspaceQueryKey = ["workspaces"] as const;
 const reportedUnknownSessionFields = new Set<string>();
 
@@ -98,68 +152,15 @@ async function fetchWorkspaces(): Promise<WorkspaceSummary[]> {
 	return (projectsData?.projects ?? []).map((project) => {
 		const kind = toProjectKind(project.kind);
 		return {
-			id: project.id,
-			name: project.name,
-			kind,
-			path: project.path,
-			orchestratorAgent: project.orchestratorAgent ? toAgentProvider(project.orchestratorAgent) : undefined,
+		id: project.id,
+		name: project.name,
+		kind,
+		path: project.path,
+		folderMissing: project.folderMissing,
+		orchestratorAgent: project.orchestratorAgent ? toAgentProvider(project.orchestratorAgent) : undefined,
 			sessions: (sessionsData?.sessions ?? [])
 				.filter((session) => session.projectId === project.id)
-				.map((session) => {
-					const status = toSessionStatus(session.status, session.isTerminated);
-					const scmStatus = session.scmStatus ? toSessionStatus(session.scmStatus) : undefined;
-					const kanbanColumn = toKanbanColumn(session.kanbanColumn, status);
-					const activity = toSessionActivity(session.activity);
-					if (status === "unknown") reportUnknownSessionField("status", session.status);
-					if (!activity || activity.state === "unknown") {
-						reportUnknownSessionField("activity", session.activity?.state);
-					}
-					return {
-						id: session.id,
-						terminalHandleId: session.terminalHandleId,
-						terminalGeneration: session.terminalGeneration,
-						workspaceId: project.id,
-						workspaceName: project.name,
-						title: session.displayName ?? session.issueId ?? session.id,
-						issueId: session.issueId,
-						provider: toAgentProvider(session.harness),
-						reviewerHarness: toReviewerHarnessId(session.reviewerHarness),
-						reviewerConfig: session.reviewerConfig
-							? {
-								model: session.reviewerConfig.model ?? undefined,
-								mode: session.reviewerConfig.mode ?? undefined,
-								permissions: session.reviewerConfig.permissions ?? undefined,
-							}
-							: undefined,
-						autoReviewEnabled: session.autoReviewEnabled ?? false,
-						kind: session.kind === "orchestrator" ? "orchestrator" : session.kind === "worker" ? "worker" : undefined,
-						// Carried through verbatim: the session surface must render from
-						// the mode this session was created with, not from whatever the
-						// current default happens to be.
-						mode: session.mode === "chat" ? "chat" : "tui",
-						branch: session.branch || undefined,
-						status,
-						scmStatus,
-						kanbanColumn,
-						displayStatus: session.displayStatus || undefined,
-						isTerminated: session.isTerminated,
-						terminateOnPrMerge: session.terminateOnPrMerge ?? false,
-						autoInjectReview: session.autoInjectReview ?? true,
-						autoInjectCI: session.autoInjectCI ?? true,
-						createdAt: session.createdAt,
-						updatedAt: session.updatedAt,
-						lastUserMessageAt: session.lastUserMessageAt ?? undefined,
-						activity,
-						activeAgentSwitch: session.activeAgentSwitch
-							? toAgentSwitchSummary(session.activeAgentSwitch)
-							: undefined,
-						previewUrl: session.previewUrl,
-						previewRevision: session.previewRevision,
-						isPinned: session.isPinned ?? false,
-						pinnedAt: session.pinnedAt ?? undefined,
-						prs: (session.prs ?? []).map(toPullRequestFacts),
-					};
-				}),
+				.map((session) => toWorkspaceSession(session, project)),
 		};
 	});
 }
@@ -302,15 +303,41 @@ export function useWorkspaceQuery(options: WorkspaceSubscriptionOptions = {}) {
  * activity update elsewhere no longer redraws the open session workspace.
  */
 export function useWorkspaceSession(sessionId: string) {
+	const queryClient = useQueryClient();
 	const selectLocalSession = useMemo(
 		() => (workspaces: WorkspaceSummary[]) =>
 			workspaces.flatMap((workspace) => workspace.sessions).find((session) => session.id === sessionId),
 		[sessionId],
 	);
 	const local = useQuery({ ...workspaceQueryOptions, select: selectLocalSession });
+	const localWorkspaces = useQuery({ ...workspaceQueryOptions, subscribed: false, enabled: Boolean(sessionId) });
+	const direct = useQuery({
+		queryKey: ["session", sessionId],
+		enabled: Boolean(sessionId) && local.data === undefined,
+		retry: (attempt, error) => apiErrorCode(error) === "SESSION_NOT_FOUND" && attempt < 4,
+		retryDelay: 250,
+		queryFn: async () => {
+			const { data, error } = await apiClient.GET("/api/v1/sessions/{sessionId}", {
+				params: { path: { sessionId } },
+			});
+			if (error) throw error;
+			const session = data?.session;
+			if (!session) return undefined;
+			const project =
+				localWorkspaces.data?.find((workspace) => workspace.id === session.projectId) ??
+				({ id: session.projectId, name: "" } satisfies Pick<WorkspaceSummary, "id" | "name">);
+			return toWorkspaceSession(session, project);
+		},
+	});
 	const cloud = useCloudProjectsQuery();
 	const cloudSessions = useCloudSessionsQuery();
 	const { org, ready } = useCloudOrg();
+	const resolvedDirectSession = useMemo(() => {
+		if (!direct.data) return undefined;
+		const workspace = localWorkspaces.data?.find((candidate) => candidate.id === direct.data?.workspaceId);
+		if (!workspace || direct.data.workspaceName === workspace.name) return direct.data;
+		return { ...direct.data, workspaceName: workspace.name };
+	}, [direct.data, localWorkspaces.data]);
 	const cloudSession = useMemo(() => {
 		if (!ready || !org?.id || !cloud.data || !cloudSessions.data) return undefined;
 		const session = cloudSessions.data.find((candidate) => candidate.id === sessionId);
@@ -318,7 +345,25 @@ export function useWorkspaceSession(sessionId: string) {
 		const project = cloud.data.find((candidate) => candidate.id === session.projectId);
 		return project ? toCloudWorkspaceSession(session, project, org.id) : undefined;
 	}, [cloud.data, cloudSessions.data, org?.id, ready, sessionId]);
-	return { ...local, data: local.data ?? cloudSession };
+	useEffect(() => {
+		if (!resolvedDirectSession) return;
+		queryClient.setQueryData<WorkspaceSummary[]>(workspaceQueryKey, (current) => {
+			if (!current) return current;
+			let changed = false;
+			const next = current.map((workspace) => {
+				if (workspace.id !== resolvedDirectSession.workspaceId) return workspace;
+				if (workspace.sessions.some((session) => session.id === resolvedDirectSession.id)) return workspace;
+				changed = true;
+				return { ...workspace, sessions: [...workspace.sessions, resolvedDirectSession] };
+			});
+			return changed ? next : current;
+		});
+	}, [queryClient, resolvedDirectSession]);
+	return {
+		...local,
+		data: local.data ?? resolvedDirectSession ?? cloudSession,
+		isLoading: local.isLoading || direct.isLoading,
+	};
 }
 
 export type WorkspaceScope = {

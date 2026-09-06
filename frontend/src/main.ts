@@ -138,7 +138,7 @@ import { readMigrationState, updateMigration, writeAppStateMarker, type Migratio
 import { isAllowedAppExternalURL, openAllowedAppExternalURL } from "./main/external-open";
 import { dockBounceType, shouldReplaceBounce, shouldSignalAttention, shouldToast } from "./main/notification-signals";
 import { buildMacAppMenuTemplate, buildWindowsAppMenuTemplate } from "./main/menu";
-import { ancestorRepositorySetupWarning, scanImportFolder } from "./main/import-folder-scan";
+import { ancestorRepositorySetupWarning, resolveCheckedOutBranch, scanImportFolder } from "./main/import-folder-scan";
 import { parseOpenFolderPathArg } from "./main/open-folder-arg";
 import { AGENT_SWITCH_VISIBILITY_IPC_CHANNEL } from "./shared/agent-switch-observability";
 
@@ -191,9 +191,17 @@ if (disableGpu === "1" || disableGpu === "true" || disableGpu === "yes" || disab
 // keeps this directory open, and two Chromium instances sharing one profile
 // corrupt its LevelDB stores. Mirrors how dev already isolates running.json and
 // the daemon data dir into ~/.ao/dev.
+// AO_DEV_ELECTRON_DIR overrides the dev profile location. The default dev path
+// is shared by every checkout, and Chromium puts a singleton lock in a profile,
+// so a second worktree's `npm run dev` loses requestSingleInstanceLock() and
+// exits immediately. That is a real constraint for a tool built around parallel
+// worktree sessions: two sessions could not both run the app. Packaged builds
+// are deliberately NOT overridable — their profile is part of the install.
 app.setPath(
 	"userData",
-	app.isPackaged ? path.join(os.homedir(), ".ao", "electron") : path.join(os.homedir(), ".ao", "dev", "electron"),
+	app.isPackaged
+		? path.join(os.homedir(), ".ao", "electron")
+		: (process.env.AO_DEV_ELECTRON_DIR ?? path.join(os.homedir(), ".ao", "dev", "electron")),
 );
 
 // Resolve once against the launch cwd, before the daemon can chdir. The exact
@@ -2031,6 +2039,10 @@ ipcMain.handle("app:scanImportFolder", async (_event, input: { path: string; mod
 ipcMain.handle("app:checkAncestorRepo", async (_event, path: string) => {
 	await ensureShellEnv();
 	return ancestorRepositorySetupWarning(path, { env: daemonEnv(), homeDir: os.homedir() });
+});
+ipcMain.handle("app:getRepositoryBranch", async (_event, path: string) => {
+	await ensureShellEnv();
+	return resolveCheckedOutBranch(path, { env: daemonEnv(), homeDir: os.homedir() });
 });
 ipcMain.handle("clipboard:writeText", (_event, text: string) => {
 	clipboard.writeText(text, "clipboard");

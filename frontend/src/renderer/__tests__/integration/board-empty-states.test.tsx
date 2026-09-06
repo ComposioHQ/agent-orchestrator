@@ -17,10 +17,13 @@ function render(ui: ReactNode) {
 // first-run states, mocking only the HTTP client, the router, and the native
 // folder picker: an empty daemon shows the import chooser (no column shells), a
 // fresh project shows the task invitation, and any session brings the columns back.
-const { getMock, navigateMock, chooseDirectoryMock, spawnOrchestratorMock } = vi.hoisted(() => ({
+const { getMock, postMock, deleteMock, navigateMock, chooseDirectoryMock, clipboardWriteMock, spawnOrchestratorMock } = vi.hoisted(() => ({
 	getMock: vi.fn(),
+	postMock: vi.fn(),
+	deleteMock: vi.fn(),
 	navigateMock: vi.fn(),
 	chooseDirectoryMock: vi.fn(),
+	clipboardWriteMock: vi.fn(),
 	spawnOrchestratorMock: vi.fn(),
 }));
 
@@ -31,14 +34,19 @@ vi.mock("../../lib/spawn-orchestrator", () => ({
 }));
 
 vi.mock("../../lib/api-client", () => ({
-	apiClient: { GET: getMock, POST: vi.fn() },
+	apiClient: { GET: getMock, POST: postMock, DELETE: deleteMock },
 	apiErrorMessage: (e: unknown) => (e instanceof Error ? e.message : "error"),
 	hasTrustedApiBaseUrl: () => true,
 }));
 
+vi.mock("../../components/TerminalPane", () => ({
+	TerminalPane: () => <div data-testid="terminal-pane" />,
+}));
+
 vi.mock("../../lib/bridge", () => ({
 	aoBridge: {
-		app: { chooseDirectory: chooseDirectoryMock },
+		app: { chooseDirectory: chooseDirectoryMock, openExternal: vi.fn() },
+		clipboard: { writeText: clipboardWriteMock },
 		// CreateProjectFlow reads the cloud session (Local | Cloud gating);
 		// signed-out keeps these tests on the local-only flow.
 		cloud: {
@@ -62,7 +70,12 @@ import { useUiStore } from "../../stores/ui-store";
 type Project = { id: string; name: string; path: string; orchestratorAgent?: string };
 type Session = Record<string, unknown>;
 
-function respondWith(projects: Project[], sessions: Session[]) {
+function respondWith(
+	projects: Project[],
+	sessions: Session[],
+	githubAuthenticated = true,
+	githubCliSatisfied: boolean | undefined = true,
+) {
 	getMock.mockImplementation(async (url: string) => {
 		if (url === "/api/v1/projects") return { data: { projects }, error: undefined };
 		if (url === "/api/v1/sessions") return { data: { sessions }, error: undefined };
@@ -74,8 +87,22 @@ function respondWith(projects: Project[], sessions: Session[]) {
 						{ id: "git", label: "git", satisfied: true, required: true, detail: "/usr/bin/git" },
 						{ id: "tmux", label: "tmux", satisfied: true, required: true, detail: "/usr/bin/tmux" },
 						{ id: "harness", label: "agent harness", satisfied: true, required: true, detail: "Claude Code" },
-						{ id: "gh", label: "gh", satisfied: true, required: false, detail: "/usr/bin/gh" },
+						...(githubCliSatisfied === undefined
+							? []
+							: [{ id: "gh", label: "gh", satisfied: githubCliSatisfied, required: false, detail: githubCliSatisfied ? "/usr/bin/gh" : "Not found" }]),
 					],
+				},
+				error: undefined,
+			};
+		}
+		if (url === "/api/v1/system/github-auth") {
+			return {
+				data: {
+					id: "github-auth",
+					label: "GitHub access",
+					satisfied: githubAuthenticated,
+					required: false,
+					detail: githubAuthenticated ? "GitHub CLI is signed in." : "Sign in with `gh auth login`.",
 				},
 				error: undefined,
 			};
@@ -148,6 +175,19 @@ beforeEach(() => {
 	cloneProjectMock.mockResolvedValue(undefined);
 	createProjectMock.mockResolvedValue(undefined);
 	initializeProjectRepositoryMock.mockResolvedValue(undefined);
+	clipboardWriteMock.mockResolvedValue(undefined);
+	postMock.mockResolvedValue({
+		data: {
+			shellTerminal: {
+				handleId: "shellterm-github",
+				workingDir: "/tmp/auth",
+				title: "Connect GitHub",
+				createdAt: "2026-07-04T10:00:00Z",
+			},
+		},
+		error: undefined,
+	});
+	deleteMock.mockResolvedValue({ error: undefined });
 	useUiStore.setState({
 		orchestratorReplacementErrors: {},
 		orchestratorStartupErrors: {},
@@ -203,6 +243,26 @@ describe("global board first launch", () => {
 		expect(columnCount()).toBe(0);
 		// The welcome carries its own orientation — no dangling "Board" header.
 		expect(screen.queryByText("Board")).not.toBeInTheDocument();
+	});
+
+	it("shows GitHub sign-in guidance during onboarding when gh is signed out", async () => {
+		respondWith([], [], false);
+		renderBoard(<SessionsBoard />);
+
+		expect(await screen.findByText("Connect GitHub for pull requests")).toBeInTheDocument();
+		await userEvent.click(screen.getByRole("button", { name: "Sign in with GitHub" }));
+		await waitFor(() => expect(postMock).toHaveBeenCalledWith("/api/v1/system/github-auth/terminal"));
+		expect(await screen.findByTestId("github-auth-terminal")).toBeInTheDocument();
+		expect(screen.getByTestId("terminal-pane")).toBeInTheDocument();
+	});
+
+	it("keeps sign-in available when GitHub CLI readiness is unknown", async () => {
+		respondWith([], [], false, undefined);
+		renderBoard(<SessionsBoard />);
+
+		expect(await screen.findByText("Connect GitHub for pull requests")).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Sign in with GitHub" })).toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: "Get GitHub CLI" })).not.toBeInTheDocument();
 	});
 
 	it("opens the native folder picker from the Project card", async () => {

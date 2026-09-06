@@ -107,6 +107,7 @@ function setupBridge() {
 		),
 		getProfile: vi.fn(async (viewId: string) => ({ viewId, profileId: null, temporary: true })),
 		showProfileMenu: vi.fn(),
+		selectProfile: vi.fn(),
 		historySuggestions: vi.fn(async () => []),
 		destroy: vi.fn(),
 		setAnnotationMode: vi.fn(async () => undefined),

@@ -482,19 +482,33 @@ export function useConversationCommands(sessionId: string | undefined) {
 	});
 
 	const chooseSettings = useMutation({
-		mutationFn: async (settings: TurnSettings) => {
-			const { error } = await apiClient.PATCH(
+		mutationFn: async ({ targetSessionId, settings }: { targetSessionId: string; settings: TurnSettings }) => {
+			const { data, error } = await apiClient.PATCH(
 				"/api/v1/sessions/{sessionId}/conversation/settings",
 				{
-					params: { path: { sessionId: sessionId as string } },
+					params: { path: { sessionId: targetSessionId } },
 					body: settings,
 				},
 			);
 			if (error) throw error;
+			return data;
 		},
-		// The snapshot carries the selection, so refetching is what confirms it took
-		// rather than the composer trusting its own optimistic state.
-		onSuccess: invalidate,
+		// Confirm from the daemon's response before enabling Remember. A background
+		// snapshot refetch can be slow; it must not expose the previous permission.
+		onSuccess: async (settings, { targetSessionId }) => {
+			const queryKey = conversationQueryKey(targetSessionId);
+			await queryClient.cancelQueries({ queryKey });
+			if (settings) {
+				queryClient.setQueryData<InfiniteData<ConversationSnapshot>>(queryKey, (current) =>
+					current ? {
+						...current,
+						pages: current.pages.map((page, index) => index === 0
+							? { ...page, settings: settings as TurnSettings } : page),
+					} : current,
+				);
+			}
+			refreshSessionInBackground(targetSessionId);
+		},
 	});
 
 	/**
@@ -784,7 +798,8 @@ export function useConversationCommands(sessionId: string | undefined) {
 		resumingAgent: resume.isPending,
 		resumeError: resume.error ? apiErrorMessage(resume.error) : undefined,
 		compact: () => compact.mutateAsync(),
-		chooseSettings: (settings: TurnSettings) => chooseSettings.mutate(settings),
+		choosingSettings: chooseSettings.isPending && chooseSettings.variables?.targetSessionId === sessionId,
+		chooseSettings: (settings: TurnSettings) => chooseSettings.mutate({ targetSessionId: sessionId as string, settings }),
 		/** A compaction is in flight provider-side and takes seconds, so it reads as
 		 *  its own state rather than folding into the generic busy flag, which also
 		 *  gates the composer. */
@@ -1039,10 +1054,11 @@ export function useConversationConfigOptions(sessionId: string | undefined, enab
 
 	return {
 		options: query.data ?? [],
+		loaded: query.isSuccess,
 		setOption: (optionId: string, value: ChatConfigOptionValue) =>
 			mutation.mutateAsync({ optionId, value }),
 		pending: mutation.isPending,
-		error: mutation.error ? apiErrorMessage(mutation.error) : undefined,
+		error: mutation.error || query.error ? apiErrorMessage(mutation.error ?? query.error) : undefined,
 	};
 }
 

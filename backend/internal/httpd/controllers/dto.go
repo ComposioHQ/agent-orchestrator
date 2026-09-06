@@ -1400,6 +1400,9 @@ type SessionUsageResponse struct {
 // SystemRequirementsResponse is the body of GET /api/v1/system/requirements.
 type SystemRequirementsResponse = systemcheck.Report
 
+// GitHubAuthRequirementResponse is the advisory GitHub credential probe.
+type GitHubAuthRequirementResponse = systemcheck.Requirement
+
 // InstallTargetParam is the {target} path parameter for /system/install routes.
 type InstallTargetParam struct {
 	Target string `path:"target" enum:"tmux,gh,claude,codex,opencode,copilot,cloudflared" description:"Install target identifier: tmux, gh, claude, codex, opencode, copilot, or cloudflared."`
@@ -1840,11 +1843,12 @@ type ConversationConfigOptionResponse struct {
 
 // ConversationConfigChoiceResponse is one value in a provider select.
 type ConversationConfigChoiceResponse struct {
-	Value       string `json:"value"`
-	Name        string `json:"name"`
-	Description string `json:"description,omitempty"`
-	Group       string `json:"group,omitempty"`
-	GroupName   string `json:"groupName,omitempty"`
+	PermissionMode domain.PermissionMode `json:"permissionMode,omitempty" enum:"default,accept-edits,auto,bypass-permissions"`
+	Value          string                `json:"value"`
+	Name           string                `json:"name"`
+	Description    string                `json:"description,omitempty"`
+	Group          string                `json:"group,omitempty"`
+	GroupName      string                `json:"groupName,omitempty"`
 }
 
 // SetConversationConfigOptionRequest selects one provider-advertised value.

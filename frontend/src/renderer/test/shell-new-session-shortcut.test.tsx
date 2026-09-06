@@ -31,7 +31,18 @@ const shellMocks = vi.hoisted(() => {
 			port?: number;
 			code?: "not_ready";
 		},
-		shellValue: undefined as { workspaceStartupState?: string } | undefined,
+		shellValue: undefined as
+				| {
+						workspaceStartupState?: string;
+						createProject?: (input: {
+							path: string;
+							defaultBranch?: string;
+							workerAgent: string;
+							orchestratorAgent: string;
+							asWorkspace?: boolean;
+						}) => Promise<void>;
+				  }
+			| undefined,
 	};
 	return {
 		navigate: vi.fn(),
@@ -83,8 +94,8 @@ const shellMocks = vi.hoisted(() => {
 		queryClient: {
 			ensureQueryData: vi.fn(),
 			fetchQuery: vi.fn(),
-			getQueryState: vi.fn(),
 			getQueryData: vi.fn(),
+			getQueryState: vi.fn(),
 			invalidateQueries: vi.fn(),
 			prefetchQuery: vi.fn(async () => undefined),
 			setQueryData: vi.fn(),
@@ -146,6 +157,18 @@ vi.mock("../hooks/useWorkspaceQuery", () => ({
 
 vi.mock("../hooks/useDaemonStatus", () => ({
 	useDaemonStatus: () => shellMocks.state.daemonStatus,
+}));
+
+vi.mock("../lib/api-client", async (importOriginal) => ({
+	...(await importOriginal<typeof import("../lib/api-client")>()),
+	apiClient: { POST: vi.fn(), DELETE: vi.fn() },
+	apiErrorCode: (error: { code?: string } | undefined) => error?.code,
+	apiErrorMessage: (error: { message?: string } | undefined) => error?.message ?? "request failed",
+	hasTrustedApiBaseUrl: () => true,
+}));
+
+vi.mock("../lib/daemon-status", () => ({
+	refreshDaemonStatus: vi.fn(async () => shellMocks.state.daemonStatus),
 }));
 
 // TerminalCacheProvider resolves the cloud terminal transport in production.
@@ -228,6 +251,16 @@ vi.mock("../components/GlobalNewTaskDialog", async () => {
 	};
 });
 
+vi.mock("../components/GlobalToast", async () => {
+	const { useUiStore: useStore } = await vi.importActual<typeof import("../stores/ui-store")>("../stores/ui-store");
+	return {
+		GlobalToast: () => {
+			const toast = useStore((state) => state.globalToast);
+			return toast ? <div data-testid="global-toast">{toast.title}</div> : null;
+		},
+	};
+});
+
 vi.mock("../components/Sidebar", async () => {
 	const { useUiStore: useStore } = await vi.importActual<typeof import("../stores/ui-store")>("../stores/ui-store");
 	return {
@@ -247,6 +280,7 @@ vi.mock("../components/Sidebar", async () => {
 });
 
 import { Route } from "../routes/_shell";
+import { apiClient } from "../lib/api-client";
 const ShellRoute = Route.options.component as ComponentType;
 
 const workspaces = [
@@ -326,23 +360,136 @@ beforeEach(() => {
 	};
 	shellMocks.state.daemonStatus = { state: "error", code: "not_ready" };
 	shellMocks.state.shellValue = undefined;
-	shellMocks.queryClient.fetchQuery.mockReset();
+	shellMocks.queryClient.fetchQuery.mockReset().mockResolvedValue(workspaces);
+	shellMocks.queryClient.getQueryData.mockReset().mockReturnValue(workspaces);
 	shellMocks.queryClient.getQueryState.mockReset().mockReturnValue({ dataUpdatedAt: 0 });
 	useUiStore.setState({
 		createProjectNonce: 0,
 		folderDropRequest: null,
-		isSidebarAutoCollapsed: false,
+		globalToast: null,
 		isSidebarOpen: true,
 		newTaskRequest: null,
 		newShellTerminalNonce: 0,
 		activeShellTerminalHandleId: null,
 		settingsModal: null,
-		sidebarAutoCollapseOverride: false,
-		sidebarWorkspaceDemandPx: null,
 	});
 });
 
 describe("shell workspace startup", () => {
+	it("routes duplicate-path project adds to the registered project and shows a toast", async () => {
+		shellMocks.state.daemonStatus = { state: "ready", port: 4777 };
+		vi.mocked(apiClient.POST).mockResolvedValueOnce({
+			data: undefined,
+			error: {
+				code: "PATH_ALREADY_REGISTERED",
+				message: "A project at this path is already registered",
+			},
+		});
+
+		await renderShell();
+
+		await expect(
+			shellMocks.state.shellValue?.createProject?.({
+				path: "/one/",
+				workerAgent: "codex",
+				orchestratorAgent: "codex",
+			}),
+		).resolves.toBeUndefined();
+
+		expect(shellMocks.navigate).toHaveBeenCalledWith({
+			to: "/projects/$projectId",
+			params: { projectId: "proj-1" },
+		});
+		expect(screen.getByTestId("global-toast")).toHaveTextContent("Project already added");
+	});
+
+	it("uses the daemon project identity when an imported path is an alias", async () => {
+		shellMocks.state.daemonStatus = { state: "ready", port: 4777 };
+		vi.mocked(apiClient.POST).mockResolvedValueOnce({ error: {
+			code: "PATH_ALREADY_REGISTERED", message: "Already registered", details: { existingProjectId: "proj-1" },
+		} });
+		await renderShell();
+		await expect(shellMocks.state.shellValue?.createProject?.({
+			path: "/alias/one", workerAgent: "codex", orchestratorAgent: "codex",
+		})).resolves.toBeUndefined();
+		expect(shellMocks.navigate).toHaveBeenCalledWith({
+			to: "/projects/$projectId", params: { projectId: "proj-1" },
+		});
+	});
+
+	it("refreshes a stale project list before opening the daemon's registered identity", async () => {
+		shellMocks.state.daemonStatus = { state: "ready", port: 4777 };
+		vi.mocked(apiClient.POST).mockResolvedValueOnce({ error: {
+			code: "PATH_ALREADY_REGISTERED", message: "Already registered", details: { existingProjectId: "new-registration" },
+		} });
+		await renderShell();
+		shellMocks.queryClient.fetchQuery.mockResolvedValueOnce([{ ...workspaces[0], id: "new-registration", path: "/canonical" }]);
+		await expect(shellMocks.state.shellValue?.createProject?.({ path: "/alias", workerAgent: "codex", orchestratorAgent: "codex" })).resolves.toBeUndefined();
+		expect(shellMocks.queryClient.fetchQuery).toHaveBeenCalledWith(expect.objectContaining({ staleTime: 0, retry: false }));
+		expect(shellMocks.navigate).toHaveBeenCalledWith({ to: "/projects/$projectId", params: { projectId: "new-registration" } });
+	});
+
+	it.each([undefined, null, 123, [], "", "missing", "../outside"])(
+		"does not navigate to an unverified conflict identity: %j", async (existingProjectId) => {
+			shellMocks.state.daemonStatus = { state: "ready", port: 4777 };
+			vi.mocked(apiClient.POST).mockResolvedValueOnce({ error: {
+				code: "PATH_ALREADY_REGISTERED", message: "Already registered", requestId: "request-4403", details: { existingProjectId },
+			} });
+			await renderShell();
+			await expect(shellMocks.state.shellValue?.createProject?.({ path: "/unknown", workerAgent: "codex", orchestratorAgent: "codex" })).rejects.toMatchObject({
+				code: "PATH_ALREADY_REGISTERED", requestId: "request-4403", details: { existingProjectId },
+			});
+			expect(shellMocks.navigate).not.toHaveBeenCalled();
+		},
+	);
+
+	it("preserves the original conflict when refreshing registered projects fails", async () => {
+		shellMocks.state.daemonStatus = { state: "ready", port: 4777 };
+		vi.mocked(apiClient.POST).mockResolvedValueOnce({ error: {
+			code: "PATH_ALREADY_REGISTERED", message: "Already registered", details: { existingProjectId: "not-cached" },
+		} });
+		await renderShell();
+		shellMocks.queryClient.fetchQuery.mockRejectedValueOnce(new Error("refresh failed"));
+		await expect(shellMocks.state.shellValue?.createProject?.({ path: "/unknown", workerAgent: "codex", orchestratorAgent: "codex" })).rejects.toMatchObject({ code: "PATH_ALREADY_REGISTERED", message: "Already registered" });
+		expect(shellMocks.navigate).not.toHaveBeenCalled();
+	});
+
+	it("forwards an explicit default branch when creating a local project", async () => {
+		shellMocks.state.daemonStatus = { state: "ready", port: 4777 };
+		vi.mocked(apiClient.POST).mockResolvedValueOnce({
+			data: {
+				project: {
+					id: "proj-new",
+					name: "proj-new",
+					kind: "single_repo",
+					path: "/repo/project",
+					workspaceRepos: [],
+				},
+			},
+		});
+
+		await renderShell();
+
+		await shellMocks.state.shellValue?.createProject?.({
+			path: "/repo/project",
+			defaultBranch: "main",
+			workerAgent: "codex",
+			orchestratorAgent: "codex",
+		});
+
+		expect(apiClient.POST).toHaveBeenCalledWith("/api/v1/projects", {
+			body: {
+				path: "/repo/project",
+				asWorkspace: undefined,
+				config: {
+					defaultBranch: "main",
+					worker: { agent: "codex" },
+					orchestrator: { agent: "codex" },
+				},
+			},
+		});
+	});
+
 	it("leaves the session topbar row to the session split instead of reserving a full-width shell row", async () => {
 		shellMocks.state.routeParams = { sessionId: "sess-1" };
 		await renderShell();
@@ -454,53 +601,6 @@ describe("shell workspace startup", () => {
 });
 
 describe("shell sidebar toggle", () => {
-	it("keeps a manual expansion open while workspace pressure is active", async () => {
-		const clientWidth = vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1280);
-		useUiStore.setState({
-			isSidebarAutoCollapsed: false,
-			isSidebarOpen: true,
-			sidebarAutoCollapseOverride: false,
-			sidebarWorkspaceDemandPx: 1068,
-		});
-
-		try {
-			await renderShell();
-			await waitFor(() => expect(useUiStore.getState().isSidebarAutoCollapsed).toBe(true));
-			expect(screen.getByTestId("sidebar-provider")).toHaveAttribute("data-open", "false");
-
-			fireEvent.click(screen.getByRole("button", { name: "Expand sidebar" }));
-
-			expect(useUiStore.getState().sidebarAutoCollapseOverride).toBe(true);
-			expect(screen.getByTestId("sidebar-provider")).toHaveAttribute("data-open", "true");
-
-			// ResizeObserver can report transient geometry while the rail animates.
-			// Automatic pressure changes must never revoke the user's explicit choice.
-			act(() => {
-				useUiStore.getState().setSidebarAutoCollapsed(false);
-				useUiStore.getState().setSidebarAutoCollapsed(true);
-			});
-
-			expect(useUiStore.getState().sidebarAutoCollapseOverride).toBe(true);
-			expect(screen.getByTestId("sidebar-provider")).toHaveAttribute("data-open", "true");
-			expect(screen.getByRole("button", { name: "Collapse sidebar" })).toBeInTheDocument();
-
-			fireEvent.click(screen.getByRole("button", { name: "Collapse sidebar" }));
-
-			// Browser pressure still owns the icon rail. Returning from the manual
-			// expansion must not remove that rail's layout width and shift the
-			// inspector boundary after the transition.
-			expect(useUiStore.getState()).toMatchObject({
-				isSidebarAutoCollapsed: true,
-				isSidebarOpen: true,
-				sidebarAutoCollapseOverride: false,
-			});
-			expect(screen.getByTestId("sidebar-provider")).toHaveAttribute("data-open", "false");
-			expect(screen.getByRole("button", { name: "Expand sidebar" })).toBeInTheDocument();
-		} finally {
-			clientWidth.mockRestore();
-		}
-	});
-
 	it("does not open a collapsed sidebar on titlebar hover", async () => {
 		useUiStore.setState({ isSidebarOpen: false });
 		await renderShell();

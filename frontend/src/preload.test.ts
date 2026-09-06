@@ -65,6 +65,16 @@ describe("preload getPathForFile bridge", () => {
 	});
 });
 
+describe("preload repository branch bridge", () => {
+	it("invokes the main-process branch probe over IPC", async () => {
+		electronMocks.invoke.mockResolvedValueOnce("main");
+
+		await expect(exposedBridge().app.getRepositoryBranch("/repo/project")).resolves.toBe("main");
+
+		expect(electronMocks.invoke).toHaveBeenCalledWith("app:getRepositoryBranch", "/repo/project");
+	});
+});
+
 describe("preload telemetry generation bridge", () => {
 	it("tags captures with the latest broadcast generation without a renderer reload", async () => {
 		telemetryPolicyBroadcastListener?.({}, { eventsEnabled: false, consentGeneration: "generation-off", updatedAt: "2026-08-28T10:15:30.000Z", acknowledged: true, state: "applied", environmentVeto: false, durabilitySupported: true });
@@ -278,6 +288,19 @@ describe("preload browser profile bridge", () => {
 				confirm: "Yes",
 			},
 		});
+		await bridge.browser.selectProfile({
+			viewId: "1:worker-1",
+			profileId: null,
+			labels: {
+				temporary: "Temporary",
+				manage: "Manage",
+				switchTitle: "Switch",
+				switchMessage: "Reload",
+				switchDetail: "Unsaved",
+				cancel: "No",
+				confirm: "Yes",
+			},
+		});
 		await bridge.browser.historySuggestions({ viewId: "1:worker-1", query: "git" });
 		await bridge.browserProfiles.list();
 		await bridge.browserProfiles.create("Work");
@@ -296,14 +319,15 @@ describe("preload browser profile bridge", () => {
 
 		expect(electronMocks.invoke).toHaveBeenNthCalledWith(1, "browser:profile:get", "1:worker-1");
 		expect(electronMocks.invoke).toHaveBeenNthCalledWith(2, "browser:profile:menu", expect.objectContaining({ viewId: "1:worker-1" }));
-		expect(electronMocks.invoke).toHaveBeenNthCalledWith(3, "browser:history:suggest", { viewId: "1:worker-1", query: "git" });
-		expect(electronMocks.invoke).toHaveBeenNthCalledWith(4, "browserProfiles:list");
-		expect(electronMocks.invoke).toHaveBeenNthCalledWith(5, "browserProfiles:create", { name: "Work" });
-		expect(electronMocks.invoke).toHaveBeenNthCalledWith(6, "browserProfiles:rename", { id: "profile-id", name: "Personal" });
-		expect(electronMocks.invoke).toHaveBeenNthCalledWith(7, "browserProfiles:clear", { id: "profile-id" });
-		expect(electronMocks.invoke).toHaveBeenNthCalledWith(8, "browserProfiles:delete", { id: "profile-id" });
-		expect(electronMocks.invoke).toHaveBeenNthCalledWith(9, "browserProfiles:import:discover");
-		expect(electronMocks.invoke).toHaveBeenNthCalledWith(10, "browserProfiles:import:start", expect.objectContaining({ destination: { mode: "merge", name: "Work" } }));
+		expect(electronMocks.invoke).toHaveBeenNthCalledWith(3, "browser:profile:select", expect.objectContaining({ viewId: "1:worker-1", profileId: null }));
+		expect(electronMocks.invoke).toHaveBeenNthCalledWith(4, "browser:history:suggest", { viewId: "1:worker-1", query: "git" });
+		expect(electronMocks.invoke).toHaveBeenNthCalledWith(5, "browserProfiles:list");
+		expect(electronMocks.invoke).toHaveBeenNthCalledWith(6, "browserProfiles:create", { name: "Work" });
+		expect(electronMocks.invoke).toHaveBeenNthCalledWith(7, "browserProfiles:rename", { id: "profile-id", name: "Personal" });
+		expect(electronMocks.invoke).toHaveBeenNthCalledWith(8, "browserProfiles:clear", { id: "profile-id" });
+		expect(electronMocks.invoke).toHaveBeenNthCalledWith(9, "browserProfiles:delete", { id: "profile-id" });
+		expect(electronMocks.invoke).toHaveBeenNthCalledWith(10, "browserProfiles:import:discover");
+		expect(electronMocks.invoke).toHaveBeenNthCalledWith(11, "browserProfiles:import:start", expect.objectContaining({ destination: { mode: "merge", name: "Work" } }));
 	});
 
 	it("validates profile-management event payloads and removes wrapped listeners", () => {

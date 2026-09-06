@@ -56,6 +56,7 @@ import type {
 	BrowserProfile,
 	BrowserProfileListState,
 	BrowserProfileMenuInput,
+	BrowserProfileSelectInput,
 	BrowserProfileViewState,
 } from "./shared/browser-profiles";
 import type {
@@ -164,6 +165,8 @@ const api = {
 			ipcRenderer.invoke("app:scanImportFolder", input) as Promise<ImportFolderScan>,
 		checkAncestorRepo: (path: string) =>
 			ipcRenderer.invoke("app:checkAncestorRepo", path) as Promise<string | undefined>,
+		getRepositoryBranch: (path: string) =>
+			ipcRenderer.invoke("app:getRepositoryBranch", path) as Promise<string | undefined>,
 		// Resolves a dropped File's real filesystem path. Synchronous passthrough
 		// (not ipcRenderer.invoke — a File can't cross that boundary) so it must be
 		// called directly on the File from a drop event, in the same tick, per
@@ -375,6 +378,8 @@ const api = {
 			ipcRenderer.invoke("browser:profile:get", viewId) as Promise<BrowserProfileViewState>,
 		showProfileMenu: (input: BrowserProfileMenuInput) =>
 			ipcRenderer.invoke("browser:profile:menu", input) as Promise<void>,
+		selectProfile: (input: BrowserProfileSelectInput) =>
+			ipcRenderer.invoke("browser:profile:select", input) as Promise<void>,
 		notifyPanelUsed: (viewId: string) => ipcRenderer.send("browser:panelUsed", viewId),
 		notifyPanelBlur: (viewId: string) => ipcRenderer.send("browser:panelBlur", viewId),
 		onFocusLocation: (listener: (viewId: string) => void) => {

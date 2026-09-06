@@ -1064,6 +1064,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	}
 
 	metadata := domain.SessionMetadata{
+		Permissions:               rec.Metadata.Permissions,
 		Branch:                    ws.Branch,
 		WorkspacePath:             ws.Path,
 		WorkspaceRepoPath:         ws.RepoPath,
@@ -1432,6 +1433,9 @@ func applySpawnAgentConfig(base, override ports.AgentConfig) ports.AgentConfig {
 	}
 	if override.Permissions != "" {
 		base.Permissions = override.Permissions
+	}
+	if base.Permissions == "" {
+		base.Permissions = ports.PermissionModeAuto
 	}
 	return base
 }
@@ -2237,9 +2241,12 @@ func (m *Manager) relaunchSessionWithPolicyAndGeneration(ctx context.Context, op
 		return RestoreResult{}, fmt.Errorf("%s %s: system prompt file: %w", operation, rec.ID, err)
 	}
 
-	// Restore re-applies the project's resolved agent config so a configured
-	// model/permissions carry across a restore, matching fresh spawn.
+	// Restore resolves the project model while retaining this session's pinned
+	// permission policy independently of future project defaults.
 	agentConfig := effectiveAgentConfig(rec.Kind, project.Config)
+	if rec.Metadata.Permissions != "" {
+		agentConfig.Permissions = rec.Metadata.Permissions
+	}
 	var env map[string]string
 	rec, env, err = m.prepareWorkerLaunchEnv(ctx, rec, project.Config.Env)
 	if err != nil {
@@ -2311,6 +2318,7 @@ func (m *Manager) relaunchSessionWithPolicyAndGeneration(ctx context.Context, op
 		return RestoreResult{}, fmt.Errorf("%s %s: runtime: %w", operation, rec.ID, err)
 	}
 	metadata := domain.SessionMetadata{
+		Permissions:               rec.Metadata.Permissions,
 		Branch:                    ws.Branch,
 		WorkspacePath:             ws.Path,
 		WorkspaceRepoPath:         ws.RepoPath,
@@ -3728,6 +3736,7 @@ func seedRecord(cfg ports.SpawnConfig, projectConfig domain.ProjectConfig, now t
 		// Resolved before this point and persisted here. There is no UPDATE
 		// statement that can change it afterwards.
 		Mode:              domain.NormalizeSessionMode(cfg.RequestedMode),
+		Metadata:          domain.SessionMetadata{Permissions: applySpawnAgentConfig(effectiveAgentConfig(cfg.Kind, projectConfig), cfg.AgentConfig).Permissions},
 		AutoReviewEnabled: projectConfig.AutoReview,
 		AutoInjectReview:  true,
 		AutoInjectCI:      true,

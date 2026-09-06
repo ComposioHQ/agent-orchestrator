@@ -700,6 +700,31 @@ func TestListWorkspaceFilesReturnsTrackedAndUntrackedStatus(t *testing.T) {
 	}
 }
 
+func TestListWorkspaceFilesRepoUnavailableWrapsSentinel(t *testing.T) {
+	repo := newWorkspaceRepo(t)
+	// Simulate a project whose source repository has been deleted from disk:
+	// the worktree directory still exists, but its git metadata (and so the
+	// owning repo's plumbing) is gone. Every git read against it must fail as
+	// repository-unavailable rather than a raw 500.
+	if err := os.RemoveAll(filepath.Join(repo, ".git")); err != nil {
+		t.Fatal(err)
+	}
+	st := newFakeStore()
+	st.sessions["ao-1"] = domain.SessionRecord{
+		ID:       "ao-1",
+		Metadata: domain.SessionMetadata{WorkspacePath: repo},
+		Activity: domain.Activity{State: domain.ActivityActive},
+	}
+
+	_, err := (&Service{store: st}).ListWorkspaceFiles(context.Background(), "ao-1")
+	if err == nil {
+		t.Fatal("ListWorkspaceFiles succeeded with a missing repository")
+	}
+	if !errors.Is(err, ports.ErrWorkspaceRepoUnavailable) {
+		t.Fatalf("error = %v, want errors.Is(ErrWorkspaceRepoUnavailable)", err)
+	}
+}
+
 func TestGetWorkspaceFileReturnsContentAndDiff(t *testing.T) {
 	repo := newWorkspaceRepo(t)
 	writeWorkspaceFile(t, repo, "README.md", "goodbye\nupdated\n")
@@ -3696,22 +3721,6 @@ func TestClaimRowsFromSCMSnapshotsSessionReviewPolicy(t *testing.T) {
 	}
 }
 
-// noopSCMProvider implements scmProvider but always fails ParseRepository
-// to exercise the scmRepoForClaim fallback path.
-type noopSCMProvider struct{}
-
-func (noopSCMProvider) ParseRepository(string) (ports.SCMRepo, bool) { return ports.SCMRepo{}, false }
-func (noopSCMProvider) FetchPullRequests(_ context.Context, refs []ports.SCMPRRef) ([]ports.SCMObservation, error) {
-	out := make([]ports.SCMObservation, len(refs))
-	for i := range out {
-		out[i].Error = ports.ErrSCMNotFound
-	}
-	return out, nil
-}
-func (noopSCMProvider) FetchReviewThreads(context.Context, ports.SCMPRRef) (ports.SCMReviewObservation, error) {
-	return ports.SCMReviewObservation{}, nil
-}
-
 func (f fakeSCM) ParseRepository(remote string) (ports.SCMRepo, bool) {
 	host, owner, repo, err := repoFromURL(remote)
 	if err != nil {
@@ -4029,7 +4038,7 @@ func TestRequireSameRepoGitLab(t *testing.T) {
 	}{
 		{"matching gitlab", "https://gitlab.com/castai/ctxd/-/merge_requests/9", "https://gitlab.com/castai/ctxd", nil},
 		{"matching github", "https://github.com/owner/repo/pull/42", "https://github.com/owner/repo", nil},
-		{"empty origin allows any", "https://gitlab.com/castai/ctxd/-/merge_requests/9", "", nil},
+		{"empty origin rejects", "https://gitlab.com/castai/ctxd/-/merge_requests/9", "", ErrProjectMismatch},
 		{"mismatch", "https://gitlab.com/castai/ctxd/-/merge_requests/9", "https://github.com/other/repo", ErrProjectMismatch},
 		{"gitlab mismatch repo", "https://gitlab.com/castai/ctxd/-/merge_requests/9", "https://gitlab.com/other/repo", ErrProjectMismatch},
 		// Cross-provider mismatch: same owner/repo name on GitHub and GitLab
@@ -4060,10 +4069,8 @@ func TestRequireSameRepoGitLab(t *testing.T) {
 }
 
 func TestScmRepoForClaimGitLab(t *testing.T) {
-	// When the provider cannot parse the origin, the fallback should detect
-	// GitLab from the PR URL and set Provider="gitlab".
-	var noopProvider noopSCMProvider
-	repo, err := scmRepoForClaim(noopProvider, "", "https://gitlab.com/castai/ctxd/-/merge_requests/9")
+	// The SCM target comes from the claimed URL, including its provider.
+	repo, err := scmRepoForClaim("https://gitlab.com/castai/ctxd/-/merge_requests/9")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

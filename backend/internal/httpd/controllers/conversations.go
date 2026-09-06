@@ -474,11 +474,12 @@ func configOptionsPayload(options []ports.ChatConfigOption) ConversationConfigOp
 		}
 		for _, choice := range option.Choices {
 			item.Choices = append(item.Choices, ConversationConfigChoiceResponse{
-				Value:       choice.Value,
-				Name:        choice.Name,
-				Description: choice.Description,
-				Group:       choice.Group,
-				GroupName:   choice.GroupName,
+				PermissionMode: choice.PermissionMode,
+				Value:          choice.Value,
+				Name:           choice.Name,
+				Description:    choice.Description,
+				Group:          choice.Group,
+				GroupName:      choice.GroupName,
 			})
 		}
 		out.Options = append(out.Options, item)
