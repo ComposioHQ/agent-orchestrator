@@ -966,6 +966,7 @@
 	"update.restart.sessionsTitle_other": "{{count}} Chat-Sitzungen verlieren ihren aktuellen Zug",
 	"update.restart.sessionsBody": "Ein Neustart bricht diese mitten im Zug ab. Terminal-Sitzungen und Codex-Chat-Sitzungen verbinden sich selbst wieder.",
 	"update.restart.confirm": "Neu starten und installieren",
+	"update.restart.installWait": "AO wird während der Installation geschlossen und danach automatisch wieder geöffnet. Das kann einige Minuten dauern. Lassen Sie AO geschlossen, bis es wieder geöffnet wird. Ein vorzeitiges Öffnen kann das Update abbrechen.",
 	"update.restart.installsOnQuit": "Dieser Build wird auch beim nächsten Beenden der App automatisch installiert.",
 	"settings.updates": "Updates",
 	"settings.updates.automatic": "Automatische Updates",

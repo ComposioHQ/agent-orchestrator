@@ -116,7 +116,8 @@ function RestartToUpdateDialogBody() {
 						<p className="mt-1.5 text-sm leading-5 text-settings-muted">{t("update.restart.noNotes")}</p>
 					)}
 
-					<p className="mt-4 text-xs leading-4 text-settings-muted">{t("update.restart.installsOnQuit")}</p>
+					<p className="mt-4 text-sm leading-5 text-settings-label">{t("update.restart.installWait")}</p>
+					<p className="mt-2 text-xs leading-4 text-settings-muted">{t("update.restart.installsOnQuit")}</p>
 				</div>
 
 				<div className={settingsDialogFooterClass}>

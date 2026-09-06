@@ -94,6 +94,10 @@ let eventsWired = false;
 // re-evaluated every 30 minutes while the update sits uninstalled. stateDir is
 // captured from whichever entry point wired the events (both receive it).
 let stagedVersion: string | undefined;
+// A persisted stamp is not an installer handoff in this process. In particular,
+// MacUpdater has no native feed/server after relaunch until it downloads again.
+let stagedInCurrentProcess = false;
+let macRestartPreparation: Promise<void> | undefined;
 // Release notes for the build currently on offer or staged, already
 // sanitized. Held here because only the updater events carry it, and the
 // renderer needs it on every subsequent status too, not just the one event.
@@ -118,6 +122,7 @@ type UpdaterOperation =
   | "automatic-check"
   | "manual-check"
   | "manual-download"
+  | "manual-install"
   | "settings-write"
   | "return-home";
 let activeUpdaterOperation: UpdaterOperation | undefined;
@@ -634,6 +639,7 @@ function discardStagedBuild(): void {
   offeredReleaseNotes = undefined;
   directFeedReleaseNotes = undefined;
   stagedVersion = undefined;
+  stagedInCurrentProcess = false;
   stagedChannel = undefined;
   stagedAtMs = undefined;
   stagedEscalated = false;
@@ -1024,6 +1030,7 @@ function wireUpdaterEvents(): void {
     // could never fire, because the clock is only ever minutes old.
     const restaged = stagedAtMs !== undefined && info?.version === stagedVersion;
     stagedVersion = info?.version;
+    stagedInCurrentProcess = true;
     stagedChannel = autoUpdater.channel ?? undefined;
     offeredReleaseNotes =
       normalizeReleaseNotes(info?.releaseNotes) ?? offeredReleaseNotes ?? directFeedReleaseNotes;
@@ -1568,7 +1575,7 @@ function applyInstallOnQuitPolicy(): void {
 
 // quitAndInstallUpdate installs a downloaded update and relaunches. isSilent
 // false keeps the installer UI on Windows; isForceRunAfter relaunches the app.
-export function quitAndInstallUpdate(): void {
+export async function quitAndInstallUpdate(): Promise<void> {
 	if (!app.isPackaged) return;
   const blocker = getMacInstallBlocker();
   if (blocker !== undefined) {
@@ -1586,7 +1593,56 @@ export function quitAndInstallUpdate(): void {
     });
     return;
   }
+  if (macRestartPreparation) return macRestartPreparation;
+  if (process.platform === "darwin" && hasStagedBuild() && !stagedInCurrentProcess) {
+    // Multiple clicks must share one handoff, rather than closing/replacing the
+    // loopback server while Squirrel is still reading the previous request.
+    macRestartPreparation = prepareRememberedMacUpdate().finally(() => {
+      macRestartPreparation = undefined;
+    });
+    return macRestartPreparation;
+  }
   autoUpdater.quitAndInstall(false, true);
+}
+
+async function prepareRememberedMacUpdate(): Promise<void> {
+  try {
+    await runSerializedUpdaterOperation("manual-install", async () => {
+      if (!escalationStateDir) throw new Error("Check for updates before restarting to install.");
+      const settings = await reconcileAndPersist(escalationStateDir, await readUpdateSettings(escalationStateDir));
+      configureFeed(settings);
+      autoUpdater.autoDownload = false;
+      applyInstallOnQuitPolicy();
+      broadcastUpdaterStatus({ state: "checking" });
+      const restoreFeed = await configureDirectPrereleaseFeed(settings);
+      try {
+        const result = await checkForUpdatesWithDeadline();
+        if (result?.isUpdateAvailable !== true) {
+          throw new Error("The remembered update is no longer available on the selected channel. Check for updates and try again.");
+        }
+        activeUpdaterPhase = "download";
+        pendingUpdateVersion = result.updateInfo.version;
+        const token = new CancellationToken();
+        activeDownloadCancellation = token;
+        // A cache hit still re-establishes MacUpdater's server/native feed. Only
+        // then can quitAndInstall wait for native staging and request relaunch.
+        await autoUpdater.downloadUpdate(token);
+        autoUpdater.quitAndInstall(false, true);
+      } finally {
+        restoreFeed?.();
+      }
+    });
+  } catch (err) {
+    stagedInCurrentProcess = false;
+    console.error("failed to prepare update for restart:", err);
+    broadcast({ state: "error", message: errorMessage(err) });
+    await dialog.showMessageBox({
+      type: "error",
+      message: "The update isn't ready to install",
+      detail: `${errorMessage(err)}\n\nAO has stayed open. Check for updates and try again.`,
+      buttons: ["OK"],
+    });
+  }
 }
 
 // ensureUpdatePrefs prompts once (first run, before any settings file exists)

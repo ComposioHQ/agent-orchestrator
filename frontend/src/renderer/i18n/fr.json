@@ -982,6 +982,7 @@
 	"update.restart.sessionsTitle_other": "{{count}} sessions de chat perdront leur tour en cours",
 	"update.restart.sessionsBody": "Le redémarrage les interrompt en plein tour. Les sessions terminal et les sessions de chat Codex se reconnectent seules.",
 	"update.restart.confirm": "Redémarrer et installer",
+	"update.restart.installWait": "AO se fermera pendant l’installation de la mise à jour, puis se rouvrira automatiquement. Cela peut prendre quelques minutes. Laissez AO fermé jusqu’à sa réouverture ; l’ouvrir trop tôt peut annuler la mise à jour.",
 	"update.restart.installsOnQuit": "Cette compilation s'installe aussi d'elle-même au prochain arrêt de l'application.",
 	"settings.updates": "Mises à jour",
 	"settings.updates.automatic": "Mises à jour automatiques",

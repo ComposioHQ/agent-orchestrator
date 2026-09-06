@@ -2464,6 +2464,50 @@ describe("quitAndInstallUpdate", () => {
     vi.resetModules();
   });
 
+  it("prepares a remembered macOS update again before requesting restart", async () => {
+    const restore = stubProcess("darwin", "/usr/bin/node");
+    try {
+      writeFileSync(nodePath.join(stateDir, "staged-update.json"), JSON.stringify({ version: "2.1.0", stagedAt: Date.now(), channel: "latest" }));
+      const { module, autoUpdater, updaterEvents } = await importAutoUpdater();
+      await module.startAutoUpdates(stateDir);
+      const downloaded = deferred();
+      autoUpdater.checkForUpdates.mockResolvedValue({ isUpdateAvailable: true, updateInfo: { version: "2.1.0" } });
+      autoUpdater.downloadUpdate.mockImplementation(async () => {
+        updaterEvents.get("update-downloaded")?.({ version: "2.1.0" });
+        await downloaded.promise;
+      });
+      const install = module.quitAndInstallUpdate();
+      const duplicate = module.quitAndInstallUpdate();
+      await flushMicrotasks();
+      expect(autoUpdater.downloadUpdate).toHaveBeenCalledTimes(1);
+      const afterDownloadedEvent = module.quitAndInstallUpdate();
+      expect(autoUpdater.quitAndInstall).not.toHaveBeenCalled();
+      downloaded.resolve();
+      await Promise.all([install, duplicate, afterDownloadedEvent]);
+      expect(autoUpdater.quitAndInstall).toHaveBeenCalledTimes(1);
+      expect(autoUpdater.quitAndInstall).toHaveBeenCalledWith(false, true);
+    } finally {
+      restore();
+    }
+  });
+
+  it.each(["no longer available", "download failed"])("keeps AO open when restart preparation is %s", async (failure) => {
+    const restore = stubProcess("darwin", "/usr/bin/node");
+    try {
+      writeFileSync(nodePath.join(stateDir, "staged-update.json"), JSON.stringify({ version: "2.1.0", stagedAt: Date.now(), channel: "latest" }));
+      const { module, autoUpdater, dialog } = await importAutoUpdater();
+      await module.startAutoUpdates(stateDir);
+      autoUpdater.checkForUpdates.mockResolvedValue({ isUpdateAvailable: failure === "download failed", updateInfo: { version: "2.1.0" } });
+      autoUpdater.downloadUpdate.mockRejectedValue(new Error("download failed"));
+      await module.quitAndInstallUpdate();
+      expect(autoUpdater.quitAndInstall).not.toHaveBeenCalled();
+      expect(module.getUpdateStatus().state).toBe("error");
+      expect(dialog.showMessageBox).toHaveBeenCalledWith(expect.objectContaining({ message: "The update isn't ready to install" }));
+    } finally {
+      restore();
+    }
+  });
+
   it("shows an actionable dialog instead of installing when running translocated on macOS", async () => {
     const restore = stubProcess("darwin", TRANSLOCATED_EXEC_PATH);
     try {

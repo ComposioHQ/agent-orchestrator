@@ -2134,9 +2134,7 @@ ipcMain.handle("updates:returnHome", async (_event, requestId?: string) => {
 ipcMain.handle("updates:download", async (_event, requestId?: string) => {
 	await downloadUpdateNow(requestId);
 });
-ipcMain.handle("updates:install", () => {
-	quitAndInstallUpdate();
-});
+ipcMain.handle("updates:install", () => quitAndInstallUpdate());
 
 function cancelDockBounce(): void {
 	if (pendingBounce === null) return;

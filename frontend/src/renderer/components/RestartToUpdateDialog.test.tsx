@@ -65,6 +65,7 @@ it("shows what the build changes", async () => {
 	});
 	expect(await screen.findByText(/Fixed the re-stage loop/)).toBeVisible();
 	expect(screen.getByText("Nightly 0.12.11 · Sep 2")).toBeVisible();
+	expect(screen.getByText(/Leave AO closed until it reopens/)).toBeVisible();
 });
 
 it("names the sessions that would lose a turn and waits for confirmation", async () => {
