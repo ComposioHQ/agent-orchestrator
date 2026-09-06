@@ -80,13 +80,22 @@ func PrepareCheckout(ctx context.Context, runner GitRunner, workspace string, gr
 		}
 		if len(entries) == 0 {
 			statErr = os.ErrNotExist
-		} else if err := validateOrigin(ctx, runner, workspace, expected); err != nil {
-			return err
-		} else {
+		} else if _, gitErr := os.Stat(filepath.Join(workspace, ".git")); gitErr == nil {
+			if err := validateOrigin(ctx, runner, workspace, expected); err != nil {
+				return err
+			}
 			return withGitCredential(grant.Token, func(env map[string]string) error {
 				_, err := runner.Run(ctx, workspace, env, "fetch", "--prune", "--", "origin")
 				return err
 			})
+		} else {
+			// The workspace is non-empty but not a Git checkout. This happens
+			// when the coding agent starts first and writes files (for example
+			// .claude) into the workspace before the checkout runs. Clone into a
+			// staging directory and merge the result in, so a bare git clone into
+			// a non-empty directory does not fail and checkout no longer depends
+			// on agent-vs-checkout startup ordering.
+			return cloneIntoNonEmptyWorkspace(ctx, runner, workspace, grant, expected)
 		}
 	}
 	if !errors.Is(statErr, os.ErrNotExist) {
@@ -103,6 +112,48 @@ func PrepareCheckout(ctx context.Context, runner GitRunner, workspace string, gr
 		return err
 	}
 	return validateOrigin(ctx, runner, workspace, expected)
+}
+
+// cloneIntoNonEmptyWorkspace clones the authorized repository into a staging
+// directory and merges the result into a workspace that already contains files
+// the coding agent wrote (for example .claude) before the checkout ran. Files
+// the clone did not produce are preserved; the clone's .git directory and
+// tracked files are moved in. This removes the ordering dependency between
+// agent startup and repository checkout.
+func cloneIntoNonEmptyWorkspace(ctx context.Context, runner GitRunner, workspace string, grant CheckoutGrantResponse, expected string) error {
+	staging, err := os.MkdirTemp(filepath.Dir(workspace), ".ao-checkout-")
+	if err != nil {
+		return fmt.Errorf("create checkout staging directory: %w", err)
+	}
+	defer os.RemoveAll(staging)
+	clone := filepath.Join(staging, "repository")
+	if err := withGitCredential(grant.Token, func(env map[string]string) error {
+		_, err := runner.Run(ctx, staging, env,
+			"clone", "--origin", "origin", "--no-tags", "--", grant.CloneURL, clone)
+		return err
+	}); err != nil {
+		return err
+	}
+	if err := validateOrigin(ctx, runner, clone, expected); err != nil {
+		return err
+	}
+	entries, err := os.ReadDir(clone)
+	if err != nil {
+		return fmt.Errorf("read cloned repository: %w", err)
+	}
+	for _, entry := range entries {
+		destination := filepath.Join(workspace, entry.Name())
+		if _, statErr := os.Stat(destination); statErr == nil {
+			// A pre-existing file the agent wrote (for example .claude) stays.
+			continue
+		} else if !errors.Is(statErr, os.ErrNotExist) {
+			return fmt.Errorf("inspect workspace entry %s: %w", entry.Name(), statErr)
+		}
+		if err := os.Rename(filepath.Join(clone, entry.Name()), destination); err != nil {
+			return fmt.Errorf("move %s into workspace: %w", entry.Name(), err)
+		}
+	}
+	return nil
 }
 
 // ConfigureWorkerGit prepares the assigned branch and a repo-local credential
