@@ -34,7 +34,10 @@ export function BrowserDownloadsList({
 				const progress = download.totalBytes > 0
 					? Math.min(100, Math.max(0, (download.receivedBytes / download.totalBytes) * 100))
 					: 0;
-				const active = download.status === "progressing" || download.status === "paused";
+				const resumableInterrupted = download.status === "interrupted" && Boolean(download.resumable);
+				const active = download.active ?? (
+					download.status === "progressing" || download.status === "paused" || resumableInterrupted
+				);
 				const terminalStatus = download.status === "completed"
 					? t("browser.downloads.completed")
 					: download.status === "cancelled"
@@ -52,7 +55,9 @@ export function BrowserDownloadsList({
 								<p className="truncate text-xs font-medium text-foreground" title={download.fileName}>{download.fileName}</p>
 								<p className="mt-0.5 text-caption text-muted-foreground">
 									{active
-										? t(download.status === "paused" ? "browser.downloads.paused" : "browser.downloads.progress", {
+										? download.status === "interrupted"
+											? t("browser.downloads.interrupted")
+											: t(download.status === "paused" ? "browser.downloads.paused" : "browser.downloads.progress", {
 											received: formatBytes(download.receivedBytes),
 											total: download.totalBytes > 0 ? formatBytes(download.totalBytes) : t("browser.downloads.unknownSize"),
 										})
@@ -62,7 +67,7 @@ export function BrowserDownloadsList({
 							<div className="flex shrink-0 items-center gap-0.5">
 								{download.status === "progressing" ? (
 									<Button aria-label={t("browser.downloads.pause", { file: download.fileName })} onClick={() => onAction(download.id, "pause")} size="icon-sm" type="button" variant="ghost"><Pause aria-hidden="true" className="size-3.5" /></Button>
-								) : download.status === "paused" ? (
+								) : download.status === "paused" || resumableInterrupted ? (
 									<Button aria-label={t("browser.downloads.resume", { file: download.fileName })} onClick={() => onAction(download.id, "resume")} size="icon-sm" type="button" variant="ghost"><Play aria-hidden="true" className="size-3.5" /></Button>
 								) : download.status === "completed" ? (
 									<>

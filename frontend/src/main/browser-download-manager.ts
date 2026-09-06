@@ -17,12 +17,14 @@ type DownloadItemLike = Pick<
 	| "isPaused"
 	| "on"
 	| "once"
+	| "removeListener"
 	| "pause"
+	| "canResume"
 	| "resume"
 	| "setSavePath"
 >;
 
-type DownloadSessionLike = Pick<Session, "on">;
+type DownloadSessionLike = Pick<Session, "on" | "removeListener">;
 
 type DownloadShell = {
 	openPath: (filePath: string) => Promise<string>;
@@ -86,9 +88,15 @@ function isStoredDownload(value: unknown): value is StoredDownload {
 export type BrowserDownloadManager = ReturnType<typeof createBrowserDownloadManager>;
 
 export function createBrowserDownloadManager(options: BrowserDownloadManagerOptions) {
-	const attachedSessions = new WeakSet<object>();
+	const attachedSessions = new Map<DownloadSessionLike, (event: unknown, item: DownloadItem) => void>();
 	const activeItems = new Map<string, DownloadItemLike>();
+	const activeItemListeners = new Map<string, {
+		item: DownloadItemLike;
+		updated: (event: unknown, state: "progressing" | "interrupted") => void;
+		done: (event: unknown, state: "completed" | "cancelled" | "interrupted") => void;
+	}>();
 	const reservedPaths = new Set<string>();
+	let disposed = false;
 	let downloads: StoredDownload[] = [];
 
 	try {
@@ -101,6 +109,8 @@ export function createBrowserDownloadManager(options: BrowserDownloadManagerOpti
 					...download,
 					fileName: path.basename(download.savePath),
 					status: download.status === "progressing" || download.status === "paused" ? "interrupted" : download.status,
+					active: false,
+					resumable: false,
 				}));
 		}
 	} catch {
@@ -123,7 +133,14 @@ export function createBrowserDownloadManager(options: BrowserDownloadManagerOpti
 			}
 		}
 		const next = state();
-		options.notify(next);
+		if (!disposed) {
+			try {
+				options.notify(next);
+			} catch {
+				// A window can disappear while an Electron download event is being
+				// dispatched. Notification failure must not block other listeners.
+			}
+		}
 		return next;
 	};
 	const updateItem = (id: string, item: DownloadItemLike, status?: StoredDownload["status"]): void => {
@@ -134,6 +151,8 @@ export function createBrowserDownloadManager(options: BrowserDownloadManagerOpti
 						receivedBytes: Math.max(0, item.getReceivedBytes()),
 						totalBytes: Math.max(0, item.getTotalBytes()),
 						status: status ?? (item.isPaused() ? "paused" : "progressing"),
+						active: activeItems.has(id),
+						resumable: status === "interrupted" && activeItems.has(id) && item.canResume(),
 						updatedAt: (options.now ?? Date.now)(),
 					}
 				: download,
@@ -155,28 +174,50 @@ export function createBrowserDownloadManager(options: BrowserDownloadManagerOpti
 			receivedBytes: Math.max(0, item.getReceivedBytes()),
 			totalBytes: Math.max(0, item.getTotalBytes()),
 			status: "progressing",
+			active: true,
+			resumable: false,
 			startedAt: now,
 			updatedAt: now,
 		};
 		downloads = [download, ...downloads].slice(0, MAX_DOWNLOAD_HISTORY);
 		publish(true);
-		item.on("updated", (_event, updateState) => {
+		const updated = (_event: unknown, updateState: "progressing" | "interrupted") => {
 			updateItem(id, item, updateState === "interrupted" ? "interrupted" : undefined);
 			publish();
-		});
-		item.once("done", (_event, doneState) => {
+		};
+		const done = (_event: unknown, doneState: "completed" | "cancelled" | "interrupted") => {
 			activeItems.delete(id);
+			activeItemListeners.delete(id);
 			reservedPaths.delete(savePath.toLowerCase());
 			updateItem(id, item, doneState);
 			publish(true);
-		});
+		};
+		activeItemListeners.set(id, { item, updated, done });
+		item.on("updated", updated);
+		item.once("done", done);
 	};
 
 	return {
 		attach(session: DownloadSessionLike | undefined): void {
-			if (!session || attachedSessions.has(session)) return;
-			attachedSessions.add(session);
-			session.on("will-download", (_event, item) => begin(item));
+			if (!session || disposed || attachedSessions.has(session)) return;
+			const listener = (_event: unknown, item: DownloadItem) => begin(item);
+			attachedSessions.set(session, listener);
+			session.on("will-download", listener);
+		},
+		dispose(): void {
+			if (disposed) return;
+			disposed = true;
+			for (const [session, listener] of attachedSessions) {
+				session.removeListener("will-download", listener);
+			}
+			attachedSessions.clear();
+			for (const { item, updated, done } of activeItemListeners.values()) {
+				item.removeListener("updated", updated);
+				item.removeListener("done", done);
+			}
+			activeItemListeners.clear();
+			activeItems.clear();
+			reservedPaths.clear();
 		},
 		list: state,
 		async action(input: BrowserDownloadActionInput): Promise<BrowserDownloadsState> {

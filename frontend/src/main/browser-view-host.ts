@@ -241,7 +241,7 @@ type BrowserWebContents = Pick<
 	openDevTools?: (options?: Pick<OpenDevToolsOptions, "mode" | "activate">) => void;
 	closeDevTools?: () => void;
 	close?: () => void;
-	session?: Pick<Session, "on" | "setPermissionCheckHandler" | "setPermissionRequestHandler" | "webRequest">;
+	session?: Pick<Session, "on" | "removeListener" | "setPermissionCheckHandler" | "setPermissionRequestHandler" | "webRequest">;
 };
 
 type BrowserElectronSession = NonNullable<BrowserWebContents["session"]>;
@@ -2326,6 +2326,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 			if (disposePromise) return disposePromise;
 			disposePromise = (async () => {
 				ipcDisposers.splice(0).forEach((dispose) => dispose());
+				options.browserDownloadManager?.dispose();
 				for (const viewId of [...entries.keys()]) {
 					destroy(viewId);
 				}

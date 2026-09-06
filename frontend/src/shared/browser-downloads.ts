@@ -11,6 +11,8 @@ export type BrowserDownload = {
 	receivedBytes: number;
 	totalBytes: number;
 	status: BrowserDownloadStatus;
+	active?: boolean;
+	resumable?: boolean;
 	startedAt: number;
 	updatedAt: number;
 };
