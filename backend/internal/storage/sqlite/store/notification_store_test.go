@@ -9,6 +9,29 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
 
+func TestNotificationStoreOrchestrationAttentionDedupesAndResolves(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedProject(t, s, "p")
+	w, err := s.CreateSession(ctx, sampleRecord("p"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	rec := domain.NotificationRecord{ID: "n1", SessionID: w.ID, ProjectID: "p", Type: domain.NotificationOrchestrationAttention, Title: "Orchestration delivery needs attention", Status: domain.NotificationUnread, CreatedAt: now}
+	if _, created, err := s.CreateNotification(ctx, rec); err != nil || !created {
+		t.Fatalf("create=%v err=%v", created, err)
+	}
+	rec.ID = "n2"
+	if _, created, err := s.CreateNotification(ctx, rec); err != nil || created {
+		t.Fatalf("duplicate create=%v err=%v", created, err)
+	}
+	resolved, err := s.ResolveSessionNotifications(ctx, w.ID, domain.NotificationOrchestrationAttention, now.Add(time.Second))
+	if err != nil || len(resolved) != 1 {
+		t.Fatalf("resolved=%v err=%v", resolved, err)
+	}
+}
+
 func TestNotificationStore_InsertListAndDedupe(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()

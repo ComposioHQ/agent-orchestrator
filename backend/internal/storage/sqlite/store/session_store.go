@@ -78,7 +78,37 @@ func (s *Store) UpdateSessionFromActivitySignal(ctx context.Context, rec domain.
 	activity := normalActivity(rec.Activity, rec.UpdatedAt)
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
-	rows, err := s.qw.UpdateSessionFromActivitySignal(ctx, gen.UpdateSessionFromActivitySignalParams{
+	rows, err := s.qw.UpdateSessionFromActivitySignal(ctx, activityUpdateParams(rec, activity))
+	if err != nil {
+		return false, fmt.Errorf("update session %s from activity signal: %w", rec.ID, err)
+	}
+	return rows > 0, nil
+}
+
+// CommitActivityAndOrchestrationEvent is the production atomic boundary for a
+// normalized lifecycle transition and its pending delivery row.
+func (s *Store) CommitActivityAndOrchestrationEvent(ctx context.Context, rec domain.SessionRecord, event domain.OrchestrationEvent) (bool, error) {
+	activity := normalActivity(rec.Activity, rec.UpdatedAt)
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	var applied bool
+	err := s.inTxDB(ctx, "commit activity and orchestration event", func(q *gen.Queries, db gen.DBTX) error {
+		rows, err := q.UpdateSessionFromActivitySignal(ctx, activityUpdateParams(rec, activity))
+		if err != nil || rows == 0 {
+			return err
+		}
+		applied = true
+		_, err = db.ExecContext(ctx, `INSERT INTO orchestration_events
+			(id,project_id,worker_id,kind,source_revision,enqueued_at,next_attempt_at)
+			VALUES (?,?,?,?,?,?,?) ON CONFLICT(project_id,worker_id,kind,source_revision) DO NOTHING`,
+			event.ID, event.ProjectID, event.WorkerID, event.Kind, event.SourceRevision, event.EnqueuedAt, event.NextAttemptAt)
+		return err
+	})
+	return applied, err
+}
+
+func activityUpdateParams(rec domain.SessionRecord, activity domain.Activity) gen.UpdateSessionFromActivitySignalParams {
+	return gen.UpdateSessionFromActivitySignalParams{
 		ActivityState:                activity.State,
 		ActivityLastAt:               activity.LastActivityAt,
 		FirstSignalAt:                timeToNullTime(rec.FirstSignalAt),
@@ -94,11 +124,7 @@ func (s *Store) UpdateSessionFromActivitySignal(ctx context.Context, rec domain.
 		ExpectedSessionMode:          domain.NormalizeSessionMode(rec.Mode),
 		ExpectedRuntimeLaunchID:      rec.Metadata.RuntimeLaunchID,
 		ExpectedControllerGeneration: rec.Metadata.ControllerGeneration,
-	})
-	if err != nil {
-		return false, fmt.Errorf("update session %s from activity signal: %w", rec.ID, err)
 	}
-	return rows > 0, nil
 }
 
 // RecordSessionLatestUserPrompt persists the latest real user direction without

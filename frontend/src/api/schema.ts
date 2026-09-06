@@ -912,6 +912,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects/{id}/orchestration-events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List daemon orchestration delivery state */
+        get: operations["listOrchestrationEvents"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{id}/orchestration-events/{eventId}/retry": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Explicitly retry a dead-letter orchestration event */
+        post: operations["retryOrchestrationEvent"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects/{id}/permissions": {
         parameters: {
             query?: never;
@@ -3350,6 +3384,9 @@ export interface components {
             unreadCount: number;
             unresolvedCount: number;
         };
+        ListOrchestrationEventsResponse: {
+            events: components["schemas"]["OrchestrationEventResponse"][];
+        };
         ListProjectsResponse: {
             projects: components["schemas"]["ProjectSummary"][];
         };
@@ -3488,7 +3525,7 @@ export interface components {
             target: components["schemas"]["NotificationTarget"];
             title: string;
             /** @enum {string} */
-            type: "needs_input" | "ready_to_merge" | "pr_merged" | "pr_closed_unmerged";
+            type: "needs_input" | "ready_to_merge" | "pr_merged" | "pr_closed_unmerged" | "orchestration_attention";
         };
         NotificationTarget: {
             /** @enum {string} */
@@ -3507,6 +3544,29 @@ export interface components {
             sessionId?: string;
             /** @description Windows shell selector: auto, git-bash, pwsh, powershell, cmd, or a custom executable path. Ignored on macOS and Linux. */
             shell?: string;
+        };
+        OrchestrationEventResponse: {
+            /** Format: date-time */
+            acknowledgedAt?: null | string;
+            attemptCount: number;
+            /** Format: date-time */
+            attentionRequiredAt?: null | string;
+            destinationSessionId?: string;
+            /** Format: date-time */
+            enqueuedAt: string;
+            id: string;
+            kind: string;
+            lastError?: string;
+            /** Format: date-time */
+            leaseExpiresAt?: null | string;
+            /** Format: date-time */
+            nextAttemptAt: string;
+            projectId: string;
+            sourceRevision: string;
+            state: string;
+            /** Format: date-time */
+            submittedAt?: null | string;
+            workerId: string;
         };
         OrchestratorResponse: {
             id: string;
@@ -3686,6 +3746,9 @@ export interface components {
             resumeMode: "native" | "saved_prompt" | "fresh";
             session: components["schemas"]["ControllersSessionView"];
             sessionId: string;
+        };
+        RetryOrchestrationEventResponse: {
+            retried: boolean;
         };
         RetryTurnResponse: {
             providerTurnId?: string;
@@ -7164,6 +7227,109 @@ export interface operations {
             };
             /** @description Internal Server Error */
             500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    listOrchestrationEvents: {
+        parameters: {
+            query?: {
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                /** @description Project identifier (registry key). */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ListOrchestrationEventsResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    retryOrchestrationEvent: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Project identifier (registry key). */
+                id: string;
+                eventId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RetryOrchestrationEventResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
                 headers: {
                     [name: string]: unknown;
                 };

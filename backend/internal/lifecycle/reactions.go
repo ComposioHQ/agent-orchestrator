@@ -166,6 +166,14 @@ func (m *Manager) ApplyPRObservation(ctx context.Context, id domain.SessionID, o
 		if err != nil || !ok {
 			return err
 		}
+		if err := m.recordPRStateEvent(ctx, rec, o, domain.OrchestrationWorkerReadyMerge, false); err != nil {
+			return err
+		}
+		if o.Merged {
+			if err := m.recordPRStateEvent(ctx, rec, o, domain.OrchestrationPRMerged, true); err != nil {
+				return err
+			}
+		}
 		if rec.IsTerminated || !rec.TerminateOnPRMerge {
 			return nil
 		}
@@ -180,6 +188,10 @@ func (m *Manager) ApplyPRObservation(ctx context.Context, id domain.SessionID, o
 	}
 	rec, ok, err := m.store.GetSession(ctx, id)
 	if err != nil || !ok {
+		return err
+	}
+	ready := prObservationIsReadyToMerge(o)
+	if err := m.recordPRStateEvent(ctx, rec, o, domain.OrchestrationWorkerReadyMerge, ready); err != nil {
 		return err
 	}
 	// Re-arm the merge-conflict dedup on a definitively-cleared observation
@@ -345,6 +357,29 @@ func (m *Manager) ApplyPRObservation(ctx context.Context, id domain.SessionID, o
 		return blockedCheckErr
 	}
 	return rearmErr
+}
+
+func prObservationIsReadyToMerge(o ports.PRObservation) bool {
+	unresolved := false
+	for _, comment := range o.Comments {
+		if !comment.Resolved && !comment.AutoInjectReview {
+			unresolved = true
+			break
+		}
+	}
+	return domain.MergeReadiness{Draft: o.Draft, Merged: o.Merged, Closed: o.Closed, CI: o.CI, Review: o.Review, Mergeability: o.Mergeability, UnresolvedComments: unresolved}.ReadyToMerge()
+}
+
+func (m *Manager) recordPRStateEvent(ctx context.Context, rec domain.SessionRecord, o ports.PRObservation, kind domain.OrchestrationEventKind, active bool) error {
+	if rec.Kind != domain.KindWorker {
+		return nil
+	}
+	store, ok := m.store.(orchestrationSourceStateStore)
+	if !ok {
+		return nil
+	}
+	_, err := store.RecordOrchestrationSourceState(ctx, rec.ProjectID, rec.ID, kind, o.URL, active, m.clock())
+	return err
 }
 
 func (m *Manager) terminateCompletedSession(ctx context.Context, id domain.SessionID) error {

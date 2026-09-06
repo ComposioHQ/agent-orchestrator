@@ -147,6 +147,9 @@ var (
 	// agent hook callback, so the native startup sequence (including pre-session
 	// approval dialogs) may still be consuming pane input.
 	ErrStartupPending = errors.New("session: agent startup not ready for input")
+	// ErrAutomationUnsupported means a TUI harness cannot echo the exact
+	// accepted prompt through its managed submit hook, so AO cannot safely ack.
+	ErrAutomationUnsupported = errors.New("session: automation acknowledgement unsupported")
 
 	// Spawn-stage sentinels. Each is the existing log word after "spawn" /
 	// "spawn <id>:" so wrapping them does not change daemon-log wording, while
@@ -3335,6 +3338,90 @@ func (m *Manager) Send(ctx context.Context, id domain.SessionID, message string,
 	return m.send(ctx, id, message, "")
 }
 
+// SendAutomation submits an AO-owned message with a stable idempotency key.
+// Chat controllers persist that key; TUI delivery is acknowledged separately
+// by the exact prompt-submit lifecycle hook.
+func (m *Manager) SendAutomation(ctx context.Context, id domain.SessionID, message, clientMessageID string) error {
+	if strings.TrimSpace(clientMessageID) == "" {
+		return errors.New("automation send requires a client message id")
+	}
+	rec, ok, err := m.store.GetSession(ctx, id)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return ErrNotFound
+	}
+	if domain.NormalizeSessionMode(rec.Mode) == domain.SessionModeChat {
+		release, admitted := m.AcquireSessionInput(id)
+		if !admitted {
+			return ErrSwitchInProgress
+		}
+		defer release()
+		rec, ok, err = m.store.GetSession(ctx, id)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return ErrNotFound
+		}
+		switch {
+		case rec.IsTerminated:
+			return ErrTerminated
+		case rec.Activity.State == domain.ActivityExited:
+			return ErrAgentExited
+		case rec.Activity.State.NeedsInput():
+			return ErrAwaitingDecision
+		case rec.FirstSignalAt.IsZero():
+			return ErrStartupPending
+		}
+		return m.send(ctx, id, message, clientMessageID)
+	}
+	message, err = m.prepareOutboundMessage(ctx, id, message)
+	if err != nil {
+		return err
+	}
+	outcome, err := m.messenger.Automation(ctx, id, message, m.harnessAutomationAcknowledges)
+	if err != nil {
+		return err
+	}
+	switch outcome {
+	case sessionguard.Sent:
+		return nil
+	case sessionguard.SuppressedNotFound:
+		return ErrNotFound
+	case sessionguard.SuppressedTerminated:
+		return ErrTerminated
+	case sessionguard.SuppressedExited:
+		return ErrAgentExited
+	case sessionguard.SuppressedAwaitingUser:
+		return ErrAwaitingDecision
+	case sessionguard.SuppressedStartupPending:
+		return ErrStartupPending
+	case sessionguard.SuppressedInputGated, sessionguard.SuppressedBusy:
+		return ErrSwitchInProgress
+	default:
+		return ErrAutomationUnsupported
+	}
+}
+
+func (m *Manager) harnessAutomationAcknowledges(harness domain.AgentHarness) bool {
+	// These managed hooks carry the exact accepted prompt text through
+	// LatestUserPrompt. Other submit signals prove activity only and cannot
+	// acknowledge an automation batch safely.
+	switch harness {
+	case domain.HarnessClaudeCode, domain.HarnessCodex, domain.HarnessContinue, domain.HarnessPi:
+		agent, ok := m.agents.Agent(harness)
+		if !ok {
+			return false
+		}
+		signal, ok := agent.(ports.SubmitActivitySignaler)
+		return ok && signal.EmitsSubmitActivity()
+	default:
+		return false
+	}
+}
+
 // send carries an optional idempotency key used by durable transition-message
 // retries. Ordinary callers leave it empty; the outbox preserves the key across
 // restart, rollback, and even a second overlapping handoff.
@@ -3433,7 +3520,13 @@ func copilotOrchestratorMessage(projectID domain.ProjectID, message string) stri
 	if project == "" {
 		project = "<project>"
 	}
-	return fmt.Sprintf(`AO ORCHESTRATOR DIRECTIVE
+	marker := ""
+	if strings.HasPrefix(message, "[AO AUTOMATION batch_id=") {
+		if end := strings.IndexByte(message, '\n'); end >= 0 {
+			marker, message = message[:end+1], message[end+1:]
+		}
+	}
+	return marker + fmt.Sprintf(`AO ORCHESTRATOR DIRECTIVE
 
 You are acting as the AO orchestrator for project %s. Do not implement code changes, edit files, run implementation tests, or complete the user's task yourself.
 

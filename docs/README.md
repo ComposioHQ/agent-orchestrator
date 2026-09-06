@@ -13,6 +13,7 @@ Start with [architecture.md](architecture.md) for the current backend model and
 | Doc                                                    | What it covers                                                                                                        |
 | ------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------- |
 | [architecture.md](architecture.md)                     | Current backend model, package layout, status derivation, persistence/CDC, and load-bearing rules.                    |
+| [orchestration-events.md](orchestration-events.md)     | Durable normalized lifecycle events, acknowledged orchestrator delivery, retry policy, and rollback.                |
 | [scm-observer.md](scm-observer.md)                     | SCM subsystem: polling pipeline, durable-state invariants, PR identity model, and the rename/transfer design.         |
 | [backend-code-structure.md](backend-code-structure.md) | Package ownership rules for the Go backend: domain, services, ports, adapters, storage, HTTP, CLI, and daemon wiring. |
 | [cli/README.md](cli/README.md)                         | CLI commands and daemon control surface.                                                                              |

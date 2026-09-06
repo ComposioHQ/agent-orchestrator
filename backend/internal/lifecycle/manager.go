@@ -62,6 +62,18 @@ type controllerEpochStore interface {
 	) (bool, error)
 }
 
+type activityOrchestrationStore interface {
+	CommitActivityAndOrchestrationEvent(context.Context, domain.SessionRecord, domain.OrchestrationEvent) (bool, error)
+}
+
+type orchestrationBatchAcknowledgementStore interface {
+	AcknowledgeOrchestrationBatchAccepted(context.Context, domain.SessionID, string, time.Time) (int64, error)
+}
+
+type orchestrationSourceStateStore interface {
+	RecordOrchestrationSourceState(context.Context, domain.ProjectID, domain.SessionID, domain.OrchestrationEventKind, string, bool, time.Time) (bool, error)
+}
+
 // chatSpawnStore commits the lifecycle facts and the provider boundary in one
 // transaction. A fresh provider must never become the durable session owner
 // while the conversation head still names the provider it replaced.
@@ -246,6 +258,16 @@ type Manager struct {
 	// adapter via WithUrgentNudgeGate; the default answers false, so an unknown
 	// harness never takes an urgent write while waiting_input.
 	urgentNudgeWaitingInputSafe func(domain.AgentHarness) bool
+	orchestrationWake           func(domain.ProjectID)
+}
+
+// SetOrchestrationWake connects durable event commits to the daemon dispatcher.
+// Startup recovery remains authoritative, so events committed before wiring
+// are found by the dispatcher's initial database scan.
+func (m *Manager) SetOrchestrationWake(wake func(domain.ProjectID)) {
+	m.mu.Lock()
+	m.orchestrationWake = wake
+	m.mu.Unlock()
 }
 
 // New builds a Lifecycle Manager over the session store it writes and the messenger it uses for agent nudges.
@@ -481,6 +503,13 @@ func (m *Manager) ApplyRuntimeObservation(ctx context.Context, id domain.Session
 		return err
 	}
 	if terminated {
+		if rec, ok, readErr := m.store.GetSession(ctx, id); readErr != nil {
+			return readErr
+		} else if ok {
+			if eventErr := m.recordWorkerTerminalEvent(ctx, rec); eventErr != nil {
+				return eventErr
+			}
+		}
 		// Route reaper-observed death through the same container-reap hook as
 		// every other terminal path (#2652): a crash/SIGKILL detected by the
 		// runtime reaper must not leave the session's Docker containers behind
@@ -665,7 +694,18 @@ func (m *Manager) ApplyActivitySignal(ctx context.Context, id domain.SessionID, 
 		delete(m.flights, id)
 	}
 	next.UpdatedAt = now
-	applied, err := m.store.UpdateSessionFromActivitySignal(ctx, next)
+	var applied bool
+	var orchestrationProject domain.ProjectID
+	if event, emit := normalizedActivityEvent(rec, next); emit {
+		if atomicStore, ok := m.store.(activityOrchestrationStore); ok {
+			applied, err = atomicStore.CommitActivityAndOrchestrationEvent(ctx, next, event)
+		} else {
+			applied, err = m.store.UpdateSessionFromActivitySignal(ctx, next)
+		}
+		orchestrationProject = event.ProjectID
+	} else {
+		applied, err = m.store.UpdateSessionFromActivitySignal(ctx, next)
+	}
 	if err != nil {
 		m.mu.Unlock()
 		return err
@@ -673,6 +713,16 @@ func (m *Manager) ApplyActivitySignal(ctx context.Context, id domain.SessionID, 
 	if !applied {
 		m.mu.Unlock()
 		return nil
+	}
+	if s.Event == "user-prompt-submit" {
+		if token, ok := orchestrationBatchID(s.LatestUserPrompt); ok {
+			if acknowledger, supported := m.store.(orchestrationBatchAcknowledgementStore); supported {
+				if _, ackErr := acknowledger.AcknowledgeOrchestrationBatchAccepted(ctx, id, token, now); ackErr != nil {
+					m.mu.Unlock()
+					return fmt.Errorf("acknowledge orchestration batch: %w", ackErr)
+				}
+			}
+		}
 	}
 	// Transition into the needs-input family (waiting_input or blocked) pings
 	// the user; an in-family escalation (waiting_input -> blocked) does not
@@ -690,7 +740,11 @@ func (m *Manager) ApplyActivitySignal(ctx context.Context, id domain.SessionID, 
 	// that pinged them has nothing left to resolve.
 	resolutions := needsInputResolutions(rec, next, now)
 	waitingEvents := m.waitingInputEvents(next, prevState, prevAt, now)
+	orchestrationWake := m.orchestrationWake
 	m.mu.Unlock()
+	if orchestrationProject != "" && orchestrationWake != nil {
+		orchestrationWake(orchestrationProject)
+	}
 	if err := m.acknowledgeAgentSwitchTarget(ctx, id, s, now); err != nil {
 		return err
 	}
@@ -700,6 +754,46 @@ func (m *Manager) ApplyActivitySignal(ctx context.Context, id domain.SessionID, 
 	m.emitNotification(ctx, intent)
 	m.resolveNotifications(ctx, resolutions...)
 	return nil
+}
+
+func orchestrationBatchID(prompt string) (string, bool) {
+	const prefix = "[AO AUTOMATION batch_id="
+	if !strings.HasPrefix(prompt, prefix) {
+		return "", false
+	}
+	rest := strings.TrimPrefix(prompt, prefix)
+	end := strings.IndexByte(rest, ']')
+	if end < 1 || end > 128 {
+		return "", false
+	}
+	token := rest[:end]
+	for _, r := range token {
+		if r != '-' && r != '_' && (r < '0' || r > '9') && (r < 'a' || r > 'z') && (r < 'A' || r > 'Z') {
+			return "", false
+		}
+	}
+	return token, true
+}
+
+func normalizedActivityEvent(previous, next domain.SessionRecord) (domain.OrchestrationEvent, bool) {
+	if next.Kind != domain.KindWorker || next.IsTerminated || previous.Activity.State == next.Activity.State {
+		return domain.OrchestrationEvent{}, false
+	}
+	var kind domain.OrchestrationEventKind
+	switch next.Activity.State {
+	case domain.ActivityIdle:
+		kind = domain.OrchestrationWorkerTurnSettled
+	case domain.ActivityBlocked, domain.ActivityWaitingInput:
+		kind = domain.OrchestrationWorkerBlocked
+	default:
+		return domain.OrchestrationEvent{}, false
+	}
+	revision := next.Activity.LastActivityAt.UTC().Format(time.RFC3339Nano)
+	return domain.OrchestrationEvent{
+		ID: fmt.Sprintf("oe:%s:%s:%s", next.ID, kind, revision), ProjectID: next.ProjectID,
+		WorkerID: next.ID, Kind: kind, SourceRevision: revision,
+		EnqueuedAt: next.UpdatedAt.UTC(), NextAttemptAt: next.UpdatedAt.UTC(),
+	}, true
 }
 
 // stagePendingAgentSwitchNativeMetadata persists provider-assigned startup
@@ -1350,6 +1444,9 @@ func (m *Manager) MarkTerminated(ctx context.Context, id domain.SessionID) error
 			return err
 		}
 		if rec.IsTerminated {
+			if err := m.recordWorkerTerminalEvent(ctx, rec); err != nil {
+				return err
+			}
 			m.reapSessionContainers(ctx, id)
 			return nil
 		}
@@ -1391,6 +1488,9 @@ func (m *Manager) MarkTerminated(ctx context.Context, id domain.SessionID) error
 		}
 		switch outcome {
 		case terminationApplied, terminationAlreadyApplied:
+			if err := m.recordWorkerTerminalEvent(ctx, rec); err != nil {
+				return err
+			}
 			m.reapSessionContainers(ctx, id)
 			return nil
 		case terminationLaunchChanged:
@@ -1402,6 +1502,25 @@ func (m *Manager) MarkTerminated(ctx context.Context, id domain.SessionID) error
 			continue
 		}
 	}
+}
+
+func (m *Manager) recordWorkerTerminalEvent(ctx context.Context, rec domain.SessionRecord) error {
+	if rec.Kind != domain.KindWorker {
+		return nil
+	}
+	store, ok := m.store.(orchestrationSourceStateStore)
+	if !ok {
+		return nil
+	}
+	source := strings.TrimSpace(rec.Metadata.RuntimeLaunchID)
+	if source == "" {
+		source = strings.TrimSpace(rec.Metadata.ControllerGeneration)
+	}
+	if source == "" {
+		source = rec.UpdatedAt.UTC().Format(time.RFC3339Nano)
+	}
+	_, err := store.RecordOrchestrationSourceState(ctx, rec.ProjectID, rec.ID, domain.OrchestrationWorkerTerminated, source, true, m.clock())
+	return err
 }
 
 // reapSessionContainers is the container leg of #2652 (the container-owning

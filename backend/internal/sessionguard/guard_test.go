@@ -115,6 +115,36 @@ func TestGuard_OutcomeByState(t *testing.T) {
 	}
 }
 
+func TestGuard_AutomationFailsClosedAtJITBoundary(t *testing.T) {
+	ack := func(h domain.AgentHarness) bool { return h == domain.HarnessPi }
+	for _, tc := range []struct {
+		name string
+		rec  domain.SessionRecord
+		want Outcome
+	}{
+		{"idle Pi", record(domain.ActivityIdle, false), Sent},
+		{"active Pi", record(domain.ActivityActive, false), SuppressedBusy},
+		{"waiting Pi", record(domain.ActivityWaitingInput, false), SuppressedAwaitingUser},
+		{"blocked Pi", record(domain.ActivityBlocked, false), SuppressedAwaitingUser},
+		{"exited Pi", record(domain.ActivityExited, false), SuppressedExited},
+		{"terminated Pi", record(domain.ActivityIdle, true), SuppressedTerminated},
+		{"unsupported harness", record(domain.ActivityIdle, false), SuppressedUnknown},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tc.rec.Harness = domain.HarnessPi
+			if tc.name == "unsupported harness" {
+				tc.rec.Harness = domain.HarnessCursor
+			}
+			messenger := &fakeMessenger{}
+			guard := New(&fakeStore{rec: tc.rec, ok: true}, messenger, nil)
+			got, err := guard.Automation(context.Background(), tc.rec.ID, "wake", ack)
+			if err != nil || got != tc.want || (len(messenger.sent) == 1) != (tc.want == Sent) {
+				t.Fatalf("outcome=%v sends=%v err=%v", got, messenger.sent, err)
+			}
+		})
+	}
+}
+
 // TestGuard_NudgeUrgentReachesNeedsInputButNotBlocked pins NudgeUrgent's
 // outcome table directly: it is the only nudge method that may write into a
 // session idle at a needs-input prompt, and it must still refuse blocked (where

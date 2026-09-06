@@ -8749,6 +8749,33 @@ func TestHarnessNudgeSafe(t *testing.T) {
 	}
 }
 
+func TestSendAutomationTUIRechecksStateAndAcknowledgementCapability(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		harness  domain.AgentHarness
+		state    domain.ActivityState
+		wantErr  error
+		wantSend bool
+	}{
+		{"Pi idle", domain.HarnessPi, domain.ActivityIdle, nil, true},
+		{"Pi active", domain.HarnessPi, domain.ActivityActive, ErrSwitchInProgress, false},
+		{"Pi waiting", domain.HarnessPi, domain.ActivityWaitingInput, ErrAwaitingDecision, false},
+		{"Pi blocked", domain.HarnessPi, domain.ActivityBlocked, ErrAwaitingDecision, false},
+		{"unsupported TUI", domain.HarnessCursor, domain.ActivityIdle, ErrAutomationUnsupported, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			st := newFakeStore()
+			st.sessions["s1"] = pastStartupGate(domain.SessionRecord{ID: "s1", Mode: domain.SessionModeTUI, Harness: tc.harness, Activity: domain.Activity{State: tc.state}})
+			messenger := &fakeMessenger{}
+			m := newSendTestManager(t, submitOnlyAgent{}, messenger, st)
+			err := m.SendAutomation(context.Background(), "s1", "[AO AUTOMATION batch_id=b] wake", "b")
+			if !errors.Is(err, tc.wantErr) || (len(messenger.msgs) == 1) != tc.wantSend {
+				t.Fatalf("err=%v sends=%v", err, messenger.msgs)
+			}
+		})
+	}
+}
+
 func TestSwitchTargetsOnlyRetryEnterWhenActivitySignalsMakeItSafe(t *testing.T) {
 	agents := switchTestAgents{
 		domain.HarnessClaudeCode: claudecode.New(),
@@ -8802,6 +8829,16 @@ type flipOnNudgeMessenger struct {
 	sessionID domain.SessionID
 	store     *fakeStore
 	flipped   bool
+}
+
+func TestCopilotOrchestratorMessagePreservesAutomationMarkerAtStart(t *testing.T) {
+	message := copilotOrchestratorMessage("p", "[AO AUTOMATION batch_id=batch-1] machine wake\nworker_terminated worker=w")
+	if !strings.HasPrefix(message, "[AO AUTOMATION batch_id=batch-1]") {
+		t.Fatalf("automation acknowledgement marker moved: %q", message)
+	}
+	if !strings.Contains(message, "AO ORCHESTRATOR DIRECTIVE") {
+		t.Fatalf("orchestrator safety directive missing: %q", message)
+	}
 }
 
 func (m *flipOnNudgeMessenger) Send(_ context.Context, _ domain.SessionID, msg string) error {

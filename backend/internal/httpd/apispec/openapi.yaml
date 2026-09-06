@@ -2152,6 +2152,95 @@ paths:
       summary: Replace a project's per-project config
       tags:
       - projects
+  /api/v1/projects/{id}/orchestration-events:
+    get:
+      operationId: listOrchestrationEvents
+      parameters:
+      - description: Project identifier (registry key).
+        in: path
+        name: id
+        required: true
+        schema:
+          description: Project identifier (registry key).
+          type: string
+      - in: query
+        name: limit
+        schema:
+          maximum: 100
+          minimum: 1
+          type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListOrchestrationEventsResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: List daemon orchestration delivery state
+      tags:
+      - notifications
+  /api/v1/projects/{id}/orchestration-events/{eventId}/retry:
+    post:
+      operationId: retryOrchestrationEvent
+      parameters:
+      - description: Project identifier (registry key).
+        in: path
+        name: id
+        required: true
+        schema:
+          description: Project identifier (registry key).
+          type: string
+      - in: path
+        name: eventId
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RetryOrchestrationEventResponse'
+          description: OK
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Explicitly retry a dead-letter orchestration event
+      tags:
+      - notifications
   /api/v1/projects/{id}/permissions:
     patch:
       operationId: setProjectPermissions
@@ -9454,6 +9543,15 @@ components:
       - unreadCount
       - unresolvedCount
       type: object
+    ListOrchestrationEventsResponse:
+      properties:
+        events:
+          items:
+            $ref: '#/components/schemas/OrchestrationEventResponse'
+          type: array
+      required:
+      - events
+      type: object
     ListProjectsResponse:
       properties:
         projects:
@@ -9804,6 +9902,7 @@ components:
           - ready_to_merge
           - pr_merged
           - pr_closed_unmerged
+          - orchestration_attention
           type: string
       required:
       - id
@@ -9856,6 +9955,63 @@ components:
           description: 'Windows shell selector: auto, git-bash, pwsh, powershell,
             cmd, or a custom executable path. Ignored on macOS and Linux.'
           type: string
+      type: object
+    OrchestrationEventResponse:
+      properties:
+        acknowledgedAt:
+          format: date-time
+          type:
+          - "null"
+          - string
+        attemptCount:
+          type: integer
+        attentionRequiredAt:
+          format: date-time
+          type:
+          - "null"
+          - string
+        destinationSessionId:
+          type: string
+        enqueuedAt:
+          format: date-time
+          type: string
+        id:
+          type: string
+        kind:
+          type: string
+        lastError:
+          type: string
+        leaseExpiresAt:
+          format: date-time
+          type:
+          - "null"
+          - string
+        nextAttemptAt:
+          format: date-time
+          type: string
+        projectId:
+          type: string
+        sourceRevision:
+          type: string
+        state:
+          type: string
+        submittedAt:
+          format: date-time
+          type:
+          - "null"
+          - string
+        workerId:
+          type: string
+      required:
+      - id
+      - projectId
+      - workerId
+      - kind
+      - sourceRevision
+      - state
+      - attemptCount
+      - enqueuedAt
+      - nextAttemptAt
       type: object
     OrchestratorResponse:
       properties:
@@ -10312,6 +10468,13 @@ components:
       - sessionId
       - resumeMode
       - session
+      type: object
+    RetryOrchestrationEventResponse:
+      properties:
+        retried:
+          type: boolean
+      required:
+      - retried
       type: object
     RetryTurnResponse:
       properties:

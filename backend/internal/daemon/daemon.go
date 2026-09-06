@@ -40,6 +40,7 @@ import (
 	agentswitchobs "github.com/aoagents/agent-orchestrator/backend/internal/observe/agentswitch"
 	"github.com/aoagents/agent-orchestrator/backend/internal/observe/sentryobs"
 	usagepipeline "github.com/aoagents/agent-orchestrator/backend/internal/observe/usage"
+	"github.com/aoagents/agent-orchestrator/backend/internal/orchestrationevents"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	"github.com/aoagents/agent-orchestrator/backend/internal/presence"
 	"github.com/aoagents/agent-orchestrator/backend/internal/preview"
@@ -499,6 +500,27 @@ func Run() error {
 		return fmt.Errorf("wire session service: %w", err)
 	}
 	sessMgr = wiredSessMgr
+	orchestrationDispatcher := &orchestrationevents.Dispatcher{
+		Store:     store,
+		Transport: orchestrationTransport{sender: wiredSessMgr},
+		Notifier:  notificationWriter,
+	}
+	orchestrationWake := make(chan domain.ProjectID, 64)
+	lcStack.LCM.SetOrchestrationWake(func(project domain.ProjectID) {
+		select {
+		case orchestrationWake <- project:
+		default:
+		}
+	})
+	if err := orchestrationevents.Recover(ctx, store, orchestrationDispatcher); err != nil {
+		stop()
+		lcStack.Stop()
+		if cdcErr := cdcPipe.Stop(); cdcErr != nil {
+			log.Error("cdc pipeline shutdown", "err", cdcErr)
+		}
+		return fmt.Errorf("recover orchestration events: %w", err)
+	}
+	go orchestrationevents.Run(ctx, store, orchestrationDispatcher, orchestrationWake, log)
 
 	// servers isn't clobbered. See preview_wiring.go (issue #4500).
 	wireManagedPreviewExit(managedPreview, sessionSvc, log)
@@ -739,35 +761,36 @@ func Run() error {
 	bs.HostID = hostIdentity.HostID
 
 	srv, err := httpd.NewWithDeps(cfg, log, termMgr, httpd.APIDeps{
-		Projects:           projectSvc,
-		HostID:             hostIdentity.HostID,
-		Endpoints:          bs,
-		Agents:             agentSvc,
-		CodexAccounts:      agentSvc,
-		SystemChecks:       systemChecks,
-		Installer:          systemInstall,
-		Sessions:           sessionSvc,
-		DesktopWorkspaces:  sessionSvc,
-		PRs:                prActions,
-		Reviews:            reviewSvc,
-		Notifications:      notifier,
-		NotificationStream: notificationHub,
-		Push:               pushRegistry,
-		Presence:           presenceTracker,
-		DeviceRoster:       deviceRoster,
-		DeviceLive:         presenceTracker,
-		Import:             importsvc.New(importsvc.Deps{Store: store}),
-		ShellTerminals:     shellTermSvc,
-		AgentAuth:          agentAuthSvc,
-		Conversations:      chatSvc,
-		Settings:           settingsSvc,
-		CDC:                store,
-		Events:             cdcPipe.Broadcaster,
-		Activity:           lcStack.LCM,
-		UsageHooks:         usageCollector,
-		UsageSummary:       usagesvc.NewSummaryReader(store),
-		Telemetry:          telemetrySink,
-		Mobile:             mc,
+		Projects:            projectSvc,
+		HostID:              hostIdentity.HostID,
+		Endpoints:           bs,
+		Agents:              agentSvc,
+		CodexAccounts:       agentSvc,
+		SystemChecks:        systemChecks,
+		Installer:           systemInstall,
+		Sessions:            sessionSvc,
+		DesktopWorkspaces:   sessionSvc,
+		PRs:                 prActions,
+		Reviews:             reviewSvc,
+		Notifications:       notifier,
+		NotificationStream:  notificationHub,
+		OrchestrationEvents: store,
+		Push:                pushRegistry,
+		Presence:            presenceTracker,
+		DeviceRoster:        deviceRoster,
+		DeviceLive:          presenceTracker,
+		Import:              importsvc.New(importsvc.Deps{Store: store}),
+		ShellTerminals:      shellTermSvc,
+		AgentAuth:           agentAuthSvc,
+		Conversations:       chatSvc,
+		Settings:            settingsSvc,
+		CDC:                 store,
+		Events:              cdcPipe.Broadcaster,
+		Activity:            lcStack.LCM,
+		UsageHooks:          usageCollector,
+		UsageSummary:        usagesvc.NewSummaryReader(store),
+		Telemetry:           telemetrySink,
+		Mobile:              mc,
 		DevImport: devimportsvc.New(devimportsvc.Deps{
 			Store:         store,
 			TargetDataDir: cfg.DataDir,
