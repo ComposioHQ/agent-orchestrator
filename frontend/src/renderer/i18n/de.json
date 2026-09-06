@@ -316,6 +316,7 @@
 	"editor.openWorkspaceInTitle": "Arbeitsbereich dieser Sitzung in {{name}} öffnen",
 	"editor.terminal": "Terminal",
 	"editor.workspaceUnavailable": "Der Sitzungsarbeitsbereich ist nicht verfügbar.",
+	"editor.workspacePreparing": "Arbeitsbereich wird vorbereitet…",
 	"inspector.activity": "Aktivität",
 	"inspector.agent": "Agent",
 	"inspector.aria": "Sitzungs-Inspektor",

@@ -33,6 +33,13 @@ import (
 // controller_ready. handled=false means the session is fully spawned and the
 // caller's ordinary path applies.
 func (m *Manager) recoverInterruptedSpawnIfNeeded(ctx context.Context, rec domain.SessionRecord) (bool, error) {
+	// Belt and braces. An untracked harness never leaves controller_ready, so
+	// this is normally unreachable — but a row hand-edited, restored from an
+	// older backup, or written by a future build must not be relaunched by a
+	// feature its harness never opted into.
+	if !domain.SpawnPhaseTrackingEnabled(rec.Harness) {
+		return false, nil
+	}
 	switch domain.NormalizeSpawnPhase(rec.SpawnPhase) {
 	case domain.SpawnPhaseControllerReady:
 		return false, nil
@@ -103,6 +110,10 @@ func (m *Manager) recoverWorkspaceReadySpawn(ctx context.Context, operation stri
 	// was ever minted, and starting fresh would silently abandon the user's
 	// existing conversation. The ordinary resume path refuses that case with
 	// ErrIncompleteHandle; this assertion keeps the two rules from drifting.
+	if !domain.SpawnPhaseTrackingEnabled(rec.Harness) {
+		return RestoreResult{}, fmt.Errorf("%s %s: %w: spawn recovery is not enabled for harness %q",
+			operation, rec.ID, ErrIncompleteHandle, rec.Harness)
+	}
 	if phase := domain.NormalizeSpawnPhase(rec.SpawnPhase); phase != domain.SpawnPhaseWorkspaceReady {
 		return RestoreResult{}, fmt.Errorf("%s %s: %w: spawn phase %s cannot be recovered by a fresh launch",
 			operation, rec.ID, ErrIncompleteHandle, phase)

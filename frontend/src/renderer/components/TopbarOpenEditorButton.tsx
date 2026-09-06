@@ -67,10 +67,17 @@ export function TopbarOpenEditorButton({
 	sessionId,
 	projectId,
 	style,
+	spawnInProgress,
 }: {
 	sessionId: string;
 	projectId: string;
 	style?: React.CSSProperties;
+	/**
+	 * The session's spawn has not committed a controller yet, so its worktree may
+	 * legitimately not exist. Absence is then an expected stage of startup, not a
+	 * fault to report in red.
+	 */
+	spawnInProgress?: boolean;
 }) {
 	const { t } = useTranslation();
 	const stateQuery = useEditorHandoffState(sessionId);
@@ -93,12 +100,18 @@ export function TopbarOpenEditorButton({
 		open.mutate({ sessionId, projectId, ...(targetId ? { targetId } : {}) });
 	};
 	const launchError = open.error instanceof Error ? open.error.message : null;
-	const guidance = !stateQuery.isPending && !workspaceAvailable
+	// A workspace that does not exist YET is not a broken workspace. While the
+	// spawn is still preparing one, say so plainly instead of reporting the
+	// absence as a failure the user is expected to act on.
+	const preparingWorkspace = Boolean(spawnInProgress) && !workspaceAvailable;
+	const guidance = !stateQuery.isPending && !workspaceAvailable && !preparingWorkspace
 		? state?.unavailableReason ?? t("editor.workspaceUnavailable")
-		: !stateQuery.isPending && editors.length === 0
+		: !stateQuery.isPending && editors.length === 0 && !preparingWorkspace
 			? t("editor.noEditorGuidance", { fileManager: fileManagerName, terminal: terminalName })
 			: null;
+	const status = preparingWorkspace && !stateQuery.isPending ? t("editor.workspacePreparing") : null;
 	const mainTitle = guidance
+		?? status
 		?? (preferred ? t("editor.openWorkspaceInTitle", { name: preferred.name }) : t("editor.chooseEditorTitle"));
 
 	return (
@@ -107,6 +120,15 @@ export function TopbarOpenEditorButton({
 				<TopbarActionError className="max-w-content-max truncate" title={launchError ?? guidance ?? undefined}>
 					{launchError ?? guidance}
 				</TopbarActionError>
+			) : status ? (
+				<span
+					className="max-w-content-max truncate text-xs text-muted-foreground"
+					data-testid="topbar-workspace-preparing"
+					role="status"
+					title={status}
+				>
+					{status}
+				</span>
 			) : null}
 			<div
 				className="inline-flex items-center gap-0 rounded-md transition-colors hover:bg-interactive-hover data-[state=open]:bg-interactive-hover"

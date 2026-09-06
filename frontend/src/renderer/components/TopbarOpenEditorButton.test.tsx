@@ -31,12 +31,12 @@ function setState(state: EditorHandoffState) {
 	window.ao!.editorHandoff.open = openMock;
 }
 
-function renderButton() {
+function renderButton(props?: { spawnInProgress?: boolean }) {
 	const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
 	return render(
 		<QueryClientProvider client={client}>
 			<TooltipProvider>
-				<TopbarOpenEditorButton sessionId="sess-1" projectId="proj-1" />
+				<TopbarOpenEditorButton sessionId="sess-1" projectId="proj-1" {...props} />
 			</TooltipProvider>
 		</QueryClientProvider>,
 	);
@@ -158,6 +158,33 @@ describe("TopbarOpenEditorButton", () => {
 		expect(await screen.findByRole("alert")).toHaveTextContent("Session workspace is not available.");
 		expect(screen.getByRole("button", { name: "Open in Cursor" })).toBeDisabled();
 		expect(screen.getByRole("button", { name: "Open workspace options" })).toBeDisabled();
+	});
+
+	it("reports a workspace that does not exist yet as preparing, not as a fault", async () => {
+		setState({
+			...availableState,
+			workspaceAvailable: false,
+			unavailableReason: "Session workspace is not available.",
+		});
+		renderButton({ spawnInProgress: true });
+
+		// The worktree is missing because the spawn has not created it yet. That is
+		// a stage of startup, not something the user is expected to fix.
+		expect(await screen.findByRole("status")).toHaveTextContent("Preparing workspace…");
+		expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+		// The launch actions still stay disabled: there is genuinely nothing to open.
+		expect(screen.getByRole("button", { name: "Open in Cursor" })).toBeDisabled();
+		expect(screen.getByRole("button", { name: "Open workspace options" })).toBeDisabled();
+	});
+
+	it("still reports a missing workspace as a fault once the spawn has finished", async () => {
+		setState({
+			...availableState,
+			workspaceAvailable: false,
+			unavailableReason: "Session workspace is not available.",
+		});
+		renderButton({ spawnInProgress: false });
+		expect(await screen.findByRole("alert")).toHaveTextContent("Session workspace is not available.");
 	});
 
 	it("opens safe native fallbacks from the menu", async () => {

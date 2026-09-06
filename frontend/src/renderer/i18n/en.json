@@ -316,6 +316,7 @@
 	"editor.openWorkspaceInTitle": "Open this session's workspace in {{name}}",
 	"editor.terminal": "Terminal",
 	"editor.workspaceUnavailable": "Session workspace is not available.",
+	"editor.workspacePreparing": "Preparing workspace…",
 	"inspector.activity": "Activity",
 	"inspector.agent": "Agent",
 	"inspector.aria": "Session inspector",

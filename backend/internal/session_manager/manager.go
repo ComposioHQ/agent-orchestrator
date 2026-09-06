@@ -954,15 +954,17 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	// leaves a seed row the reconciler may delete along with nothing else;
 	// after it, the workspace is durably attributed to this session, so a crash
 	// leaves work the reconciler must reopen rather than discard.
-	if err := m.checkpointSpawnWorkspace(ctx, rec, ws, workspaceProject, prompt,
-		resolvedModelForMetadata(cfg.Harness, agentConfig, adapterConfig), projectKind); err != nil {
-		m.rollbackSeedSpawnWorkspace(ctx, rec, ws, workspaceProject, false)
-		return domain.SessionRecord{}, 0, 0, wrapSpawnStage(id, ErrWorkspaceCreate, err)
-	}
-	rec, err = m.getRecord(ctx, id)
-	if err != nil {
-		m.rollbackSeedSpawnWorkspace(ctx, rec, ws, workspaceProject, false)
-		return domain.SessionRecord{}, 0, 0, wrapSpawnStage(id, ErrWorkspaceCreate, err)
+	if domain.SpawnPhaseTrackingEnabled(cfg.Harness) {
+		if err := m.checkpointSpawnWorkspace(ctx, rec, ws, workspaceProject, prompt,
+			resolvedModelForMetadata(cfg.Harness, agentConfig, adapterConfig), projectKind); err != nil {
+			m.rollbackSeedSpawnWorkspace(ctx, rec, ws, workspaceProject, false)
+			return domain.SessionRecord{}, 0, 0, wrapSpawnStage(id, ErrWorkspaceCreate, err)
+		}
+		rec, err = m.getRecord(ctx, id)
+		if err != nil {
+			m.rollbackSeedSpawnWorkspace(ctx, rec, ws, workspaceProject, false)
+			return domain.SessionRecord{}, 0, 0, wrapSpawnStage(id, ErrWorkspaceCreate, err)
+		}
 	}
 
 	// Per-project workspace provisioning: symlink shared files, then run any
@@ -3914,8 +3916,9 @@ func seedRecord(cfg ports.SpawnConfig, projectConfig domain.ProjectConfig, now t
 		Metadata: domain.SessionMetadata{Permissions: applySpawnAgentConfig(effectiveAgentConfig(cfg.Kind, projectConfig), cfg.AgentConfig).Permissions},
 		// A seed row owns nothing outside itself yet. Until the workspace
 		// checkpoint commits, a crash may delete this row; after it, the worktree
-		// is the user's and must be preserved.
-		SpawnPhase:        domain.SpawnPhasePreparing,
+		// is the user's and must be preserved. Untracked harnesses seed straight
+		// to controller_ready so nothing downstream treats them as recoverable.
+		SpawnPhase:        domain.InitialSpawnPhase(cfg.Harness),
 		AutoReviewEnabled: projectConfig.AutoReview,
 		AutoInjectReview:  true,
 		AutoInjectCI:      true,

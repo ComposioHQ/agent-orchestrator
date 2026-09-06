@@ -316,6 +316,7 @@
 	"editor.openWorkspaceInTitle": "在 {{name}} 中打开此会话的工作区",
 	"editor.terminal": "终端",
 	"editor.workspaceUnavailable": "会话工作区不可用。",
+	"editor.workspacePreparing": "正在准备工作区…",
 	"inspector.activity": "活动",
 	"inspector.agent": "代理",
 	"inspector.aria": "会话检查器",

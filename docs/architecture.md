@@ -40,7 +40,7 @@ The only persistent session state is:
 - `is_terminated` — Whether the session should be treated as over
 - `session_mode` plus its runtime/provider handle and generation — The currently committed controller epoch
 - `session_interface_transitions` — Durable checkpoints for an in-progress or completed TUI↔Chat handoff
-- `spawn_phase` — How far a spawn durably got: `preparing` (seed row only), `workspace_ready` (worktree, branch, and original prompt checkpointed), `controller_ready` (a controller identity is committed). It exists so a crash or a cancelled request between any two spawn side effects leaves an unambiguous recovery instruction; see "Interrupted Spawn Recovery" below
+- `spawn_phase` — (Cursor sessions only, see below) How far a spawn durably got: `preparing` (seed row only), `workspace_ready` (worktree, branch, and original prompt checkpointed), `controller_ready` (a controller identity is committed). It exists so a crash or a cancelled request between any two spawn side effects leaves an unambiguous recovery instruction; see "Interrupted Spawn Recovery" below
 - PR facts — `pr`, `pr_checks`, `pr_comment` tables
 
 ### What is NOT Durable
@@ -321,6 +321,16 @@ flowchart TD
 A spawn is a sequence of side effects, and a daemon crash or a cancelled request
 can land between any two of them. `spawn_phase` is what makes the leftovers
 readable, and the workspace checkpoint is what makes them safe.
+
+**Scope: Cursor only, for now.** `domain.SpawnPhaseTrackingEnabled` is the single
+gate, and it is the only harness check in the feature. The underlying failure is
+*not* Cursor-specific — `resumeAgentRecordWithPolicy` raises
+`ErrIncompleteHandle` (`SESSION_INCOMPLETE_HANDLE`) for every harness — so any
+agent can strand a session with no workspace or runtime handle. The gate limits
+the blast radius of the rollout, not the reach of the bug. Every consumer (the
+spawn checkpoint, boot recovery, Retry routing, the UI) reads the phase alone; an
+untracked harness simply seeds straight to `controller_ready` and behaves exactly
+as it did before. Widening the feature is a change to that one function.
 
 The checkpoint is committed the instant the worktree exists — before per-project
 provisioning, attachment writes, provider startup, or ACP negotiation, all of

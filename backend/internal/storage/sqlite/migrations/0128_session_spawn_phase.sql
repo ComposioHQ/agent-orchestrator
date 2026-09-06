@@ -22,8 +22,14 @@ ALTER TABLE sessions ADD COLUMN spawn_phase TEXT NOT NULL DEFAULT 'controller_re
 -- delivering the original prompt a second time. A native or provider identity is
 -- therefore treated as proof that a controller did exist, and the row stays
 -- controller_ready for the ordinary resume path.
+--
+-- Scoped to Cursor by explicit product decision: the failure is not
+-- Cursor-specific, but the recovery behavior is being rolled out to that harness
+-- first. Every other harness stays controller_ready and keeps its previous
+-- behavior exactly. See domain.SpawnPhaseTrackingEnabled, the single gate.
 UPDATE sessions SET spawn_phase = 'preparing'
 WHERE is_terminated = 0
+  AND harness = 'cursor'
   AND runtime_handle_id = ''
   AND runtime_launch_id = ''
   AND controller_generation = ''

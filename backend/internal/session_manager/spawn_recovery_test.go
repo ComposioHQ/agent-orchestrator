@@ -29,7 +29,7 @@ func TestSpawn_CheckpointsWorkspaceBeforeAnythingSlow(t *testing.T) {
 		},
 	}}
 
-	if _, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Prompt: "do the thing"}); err != nil {
+	if _, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Harness: domain.HarnessCursor, Prompt: "do the thing"}); err != nil {
 		t.Fatalf("Spawn: %v", err)
 	}
 	if !seen {
@@ -74,7 +74,7 @@ func TestSpawn_CheckpointFailureRollsBackWithoutLeavingAWorktree(t *testing.T) {
 	m, st, rt, ws := newManager()
 	st.checkpointSpawnErr = errors.New("disk full")
 
-	_, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Prompt: "task"})
+	_, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Harness: domain.HarnessCursor, Prompt: "task"})
 	if err == nil || !errors.Is(err, ErrWorkspaceCreate) {
 		t.Fatalf("Spawn err = %v, want ErrWorkspaceCreate", err)
 	}
@@ -99,7 +99,7 @@ func TestSpawn_RollbackRunsAfterRequestCancellation(t *testing.T) {
 	cancelled, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	if _, _, _, err := m.Spawn(cancelled, ports.SpawnConfig{ProjectID: "mer"}); err == nil {
+	if _, _, _, err := m.Spawn(cancelled, ports.SpawnConfig{ProjectID: "mer", Harness: domain.HarnessCursor}); err == nil {
 		t.Fatal("Spawn on a cancelled context must fail")
 	}
 	if ws.destroyed != 1 {
@@ -120,7 +120,7 @@ func TestSpawn_DirtyWorkspaceIsPreservedWithItsWorktreeRecord(t *testing.T) {
 	ws.destroyErr = errors.New("worktree contains modified or untracked files")
 	m.runtime = &fakeRuntime{createErr: errors.New("boom")}
 
-	if _, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Prompt: "task"}); err == nil {
+	if _, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Harness: domain.HarnessCursor, Prompt: "task"}); err == nil {
 		t.Fatal("expected the spawn to fail")
 	}
 	if slices.Contains(ws.calls, "ForceDestroy:mer-1") {
@@ -152,7 +152,7 @@ func TestReconcileLive_DropsInterruptedSeedThatOwnsNothing(t *testing.T) {
 		LookPath: func(string) (string, error) { return "/bin/true", nil },
 	})
 	rec := domain.SessionRecord{
-		ID: "s1", ProjectID: "p1", Harness: domain.HarnessClaudeCode,
+		ID: "s1", ProjectID: "p1", Harness: domain.HarnessCursor,
 		SpawnPhase: domain.SpawnPhasePreparing,
 	}
 	st.sessions[rec.ID] = rec
@@ -182,7 +182,7 @@ func TestReconcileLive_FinishesWorkspaceReadySpawnFreshWithItsPrompt(t *testing.
 		LookPath: func(string) (string, error) { return "/bin/true", nil },
 	})
 	rec := domain.SessionRecord{
-		ID: "s1", ProjectID: "p1", Harness: domain.HarnessClaudeCode,
+		ID: "s1", ProjectID: "p1", Harness: domain.HarnessCursor,
 		SpawnPhase: domain.SpawnPhaseWorkspaceReady,
 		Metadata: domain.SessionMetadata{
 			Branch: "ao/s1/root", WorkspacePath: "/wt/s1", Prompt: "ship the feature",
@@ -226,7 +226,7 @@ func TestReconcileLive_KeepsControllerReadySessionOnNativeResume(t *testing.T) {
 		LookPath: func(string) (string, error) { return "/bin/true", nil },
 	})
 	rec := domain.SessionRecord{
-		ID: "s1", ProjectID: "p1", Harness: domain.HarnessClaudeCode,
+		ID: "s1", ProjectID: "p1", Harness: domain.HarnessCursor,
 		SpawnPhase: domain.SpawnPhaseControllerReady,
 		Metadata: domain.SessionMetadata{
 			Branch: "ao/s1/root", WorkspacePath: "/wt/s1",
@@ -255,7 +255,7 @@ func TestReconcileLive_FailedSpawnRecoveryPreservesWorkspaceForRetry(t *testing.
 		LookPath: func(string) (string, error) { return "/bin/true", nil },
 	})
 	rec := domain.SessionRecord{
-		ID: "s1", ProjectID: "p1", Harness: domain.HarnessClaudeCode,
+		ID: "s1", ProjectID: "p1", Harness: domain.HarnessCursor,
 		SpawnPhase: domain.SpawnPhaseWorkspaceReady,
 		Metadata: domain.SessionMetadata{
 			Branch: "ao/s1/root", WorkspacePath: "/wt/s1", Prompt: "ship the feature",
@@ -298,7 +298,7 @@ func TestResumeAgent_InterruptedSpawnRetriesFresh(t *testing.T) {
 		LookPath: func(string) (string, error) { return "/bin/true", nil },
 	})
 	st.sessions["s1"] = domain.SessionRecord{
-		ID: "s1", ProjectID: "p1", Harness: domain.HarnessClaudeCode,
+		ID: "s1", ProjectID: "p1", Harness: domain.HarnessCursor,
 		SpawnPhase: domain.SpawnPhaseWorkspaceReady,
 		Activity:   domain.Activity{State: domain.ActivityExited},
 		Metadata: domain.SessionMetadata{
@@ -328,7 +328,7 @@ func TestResumeAgent_InterruptedSpawnRetriesFresh(t *testing.T) {
 func TestRecoverWorkspaceReadySpawn_RefusesAnyOtherPhase(t *testing.T) {
 	m, st, _, _ := newManager()
 	rec := domain.SessionRecord{
-		ID: "s1", ProjectID: "mer", Harness: domain.HarnessClaudeCode,
+		ID: "s1", ProjectID: "mer", Harness: domain.HarnessCursor,
 		Mode:       domain.SessionModeChat,
 		SpawnPhase: domain.SpawnPhaseControllerReady,
 		Metadata:   domain.SessionMetadata{Branch: "ao/s1/root", WorkspacePath: "/wt/s1"},
@@ -349,7 +349,7 @@ func TestReconcileLive_ChatInterruptedSpawnStartsFreshAndDeliversPromptOnce(t *t
 	m, st, rt := newChatManager(launcher)
 	rec := domain.SessionRecord{
 		ID: "mer-1", ProjectID: chatTestProject, Kind: domain.KindWorker,
-		Harness: domain.HarnessCodex, Mode: domain.SessionModeChat,
+		Harness: domain.HarnessCursor, Mode: domain.SessionModeChat,
 		SpawnPhase: domain.SpawnPhaseWorkspaceReady,
 		Metadata: domain.SessionMetadata{
 			Branch: "ao/mer-1/root", WorkspacePath: "/ws/mer-1", Prompt: "ship the feature",
@@ -389,7 +389,7 @@ func TestReconcileLive_ChatControllerReadyResumesWithoutRedeliveringThePrompt(t 
 	m, st, _ := newChatManager(launcher)
 	rec := domain.SessionRecord{
 		ID: "mer-1", ProjectID: chatTestProject, Kind: domain.KindWorker,
-		Harness: domain.HarnessCodex, Mode: domain.SessionModeChat,
+		Harness: domain.HarnessCursor, Mode: domain.SessionModeChat,
 		SpawnPhase: domain.SpawnPhaseControllerReady,
 		Metadata: domain.SessionMetadata{
 			Branch: "ao/mer-1/root", WorkspacePath: "/ws/mer-1", Prompt: "ship the feature",
@@ -424,7 +424,7 @@ func TestReconcileLive_MidTransitionTUIRowResumesItsNativeSession(t *testing.T) 
 		LookPath: func(string) (string, error) { return "/bin/true", nil },
 	})
 	rec := domain.SessionRecord{
-		ID: "s1", ProjectID: "p1", Harness: domain.HarnessClaudeCode,
+		ID: "s1", ProjectID: "p1", Harness: domain.HarnessCursor,
 		// The phase column says "abandoned seed"; the durable facts disagree.
 		SpawnPhase: domain.SpawnPhaseWorkspaceReady,
 		Metadata: domain.SessionMetadata{
@@ -452,7 +452,7 @@ func TestReconcileLive_MidTransitionChatRowResumesWithoutRedeliveringThePrompt(t
 	m, st, _ := newChatManager(launcher)
 	rec := domain.SessionRecord{
 		ID: "mer-1", ProjectID: chatTestProject, Kind: domain.KindWorker,
-		Harness: domain.HarnessCodex, Mode: domain.SessionModeChat,
+		Harness: domain.HarnessCursor, Mode: domain.SessionModeChat,
 		SpawnPhase: domain.SpawnPhaseWorkspaceReady,
 		Metadata: domain.SessionMetadata{
 			Branch: "ao/mer-1/root", WorkspacePath: "/ws/mer-1", Prompt: "ship the feature",
@@ -477,7 +477,7 @@ func TestReconcileLive_MidTransitionChatRowResumesWithoutRedeliveringThePrompt(t
 func TestRecoverWorkspaceReadySpawn_RefusesToRestartAnExistingConversation(t *testing.T) {
 	m, st, _, _ := newManager()
 	rec := domain.SessionRecord{
-		ID: "s1", ProjectID: "mer", Harness: domain.HarnessClaudeCode,
+		ID: "s1", ProjectID: "mer", Harness: domain.HarnessCursor,
 		SpawnPhase: domain.SpawnPhaseWorkspaceReady,
 		Metadata: domain.SessionMetadata{
 			Branch: "ao/s1/root", WorkspacePath: "/wt/s1",
@@ -507,7 +507,7 @@ func TestResumeAgent_RefusesToRetryASpawnStillInFlight(t *testing.T) {
 		LookPath: func(string) (string, error) { return "/bin/true", nil },
 	})
 	st.sessions["s1"] = domain.SessionRecord{
-		ID: "s1", ProjectID: "p1", Harness: domain.HarnessClaudeCode,
+		ID: "s1", ProjectID: "p1", Harness: domain.HarnessCursor,
 		SpawnPhase: domain.SpawnPhaseWorkspaceReady,
 		// Exactly what an in-flight spawn looks like just after its checkpoint.
 		Activity: domain.Activity{State: domain.ActivityIdle},
@@ -525,5 +525,83 @@ func TestResumeAgent_RefusesToRetryASpawnStillInFlight(t *testing.T) {
 	}
 	if len(ws.restoreConfigs) != 0 {
 		t.Fatalf("Restore configs = %+v, want none for a spawn still in flight", ws.restoreConfigs)
+	}
+}
+
+// The feature is gated to a single harness, so the gate itself needs a test:
+// every other harness must behave exactly as it did before the spawn phase
+// existed — no checkpoint, no worktree row at spawn time, and a seed row that
+// is deleted rather than recovered when the spawn fails.
+func TestSpawn_UntrackedHarnessIsUnaffectedByTheSpawnPhase(t *testing.T) {
+	m, st, _, ws := newManager()
+	m.runtime = &fakeRuntime{createErr: errors.New("boom")}
+
+	if _, _, _, err := m.Spawn(ctx, ports.SpawnConfig{
+		ProjectID: "mer", Harness: domain.HarnessClaudeCode, Prompt: "task",
+	}); err == nil {
+		t.Fatal("expected the spawn to fail")
+	}
+	if ws.destroyed != 1 {
+		t.Fatalf("workspace destroys = %d, want the pre-checkpoint rollback", ws.destroyed)
+	}
+	if rec, present := st.sessions["mer-1"]; present {
+		t.Fatalf("an untracked harness must keep the old delete-the-seed rollback, got %+v", rec)
+	}
+	if rows := st.worktrees["mer-1"]; len(rows) != 0 {
+		t.Fatalf("untracked spawn wrote worktree rows = %+v, want none", rows)
+	}
+}
+
+func TestSpawn_UntrackedHarnessSeedsStraightToControllerReady(t *testing.T) {
+	m, st, _, _ := newManager()
+	var observed domain.SpawnPhase
+	m.agents = singleAgent{agent: &hookObservingAgent{
+		onHooks: func() {
+			rec, _, _ := st.GetSession(context.Background(), "mer-1")
+			observed = domain.NormalizeSpawnPhase(rec.SpawnPhase)
+		},
+	}}
+
+	if _, _, _, err := m.Spawn(ctx, ports.SpawnConfig{
+		ProjectID: "mer", Harness: domain.HarnessClaudeCode, Prompt: "task",
+	}); err != nil {
+		t.Fatalf("Spawn: %v", err)
+	}
+	// Never preparing or workspace_ready, so nothing downstream — reconcile,
+	// Retry routing, or the UI banner — can read it as an interrupted spawn.
+	if observed != domain.SpawnPhaseControllerReady {
+		t.Fatalf("phase during an untracked launch = %q, want controller_ready", observed)
+	}
+}
+
+// A live untracked session that lost its controller must keep the ordinary
+// native-resume path, not fall into interrupted-spawn recovery.
+func TestReconcileLive_UntrackedHarnessKeepsNativeResume(t *testing.T) {
+	st := newFakeStore()
+	st.projects["p1"] = domain.ProjectRecord{ID: "p1", Config: testRoleAgents()}
+	rt := &fakeRuntime{aliveByHandle: map[string]bool{}}
+	ws := &fakeWorkspace{}
+	m := New(Deps{
+		Runtime: rt, Agents: fakeAgents{}, Workspace: ws, Store: st,
+		Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st},
+		LookPath: func(string) (string, error) { return "/bin/true", nil },
+	})
+	rec := domain.SessionRecord{
+		ID: "s1", ProjectID: "p1", Harness: domain.HarnessClaudeCode,
+		// Even if the column somehow said "interrupted spawn", the harness gate
+		// wins: this feature is not enabled for it.
+		SpawnPhase: domain.SpawnPhaseWorkspaceReady,
+		Metadata: domain.SessionMetadata{
+			Branch: "ao/s1/root", WorkspacePath: "/wt/s1",
+			RuntimeHandleID: "dead", AgentSessionID: "agent-s1",
+		},
+	}
+	st.sessions[rec.ID] = rec
+
+	if err := m.reconcileLive(context.Background(), rec); err != nil {
+		t.Fatalf("reconcileLive: %v", err)
+	}
+	if !slices.Contains(rt.lastCfg.Argv, "resume") {
+		t.Fatalf("an untracked harness must resume natively; argv = %v", rt.lastCfg.Argv)
 	}
 }

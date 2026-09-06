@@ -318,6 +318,7 @@
 	"editor.openWorkspaceInTitle": "Abrir el espacio de trabajo de esta sesión en {{name}}",
 	"editor.terminal": "Terminal",
 	"editor.workspaceUnavailable": "El espacio de trabajo de la sesión no está disponible.",
+	"editor.workspacePreparing": "Preparando el espacio de trabajo…",
 	"inspector.activity": "Actividad",
 	"inspector.agent": "Agente",
 	"inspector.aria": "Inspector de sesión",

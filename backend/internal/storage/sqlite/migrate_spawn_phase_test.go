@@ -19,26 +19,29 @@ func TestMigration0128ClassifiesExistingSessionsByControllerIdentity(t *testing.
 		VALUES ('p1', '/tmp/p1', 'proj', ?)`, now); err != nil {
 		t.Fatalf("seed project: %v", err)
 	}
-	seed := func(id string, num int, terminated int, handle, launch, generation, agentSession, providerConv string) {
+	seed := func(id string, num int, harness string, terminated int, handle, launch, generation, agentSession, providerConv string) {
 		t.Helper()
 		if _, err := db.Exec(`INSERT INTO sessions
-			(id, project_id, num, kind, activity_state, activity_last_at, is_terminated,
+			(id, project_id, num, kind, harness, activity_state, activity_last_at, is_terminated,
 			 runtime_handle_id, runtime_launch_id, controller_generation,
 			 agent_session_id, provider_conversation_id, created_at, updated_at)
-			VALUES (?, 'p1', ?, 'worker', 'idle', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			id, num, now, terminated, handle, launch, generation, agentSession, providerConv, now, now); err != nil {
+			VALUES (?, 'p1', ?, 'worker', ?, 'idle', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			id, num, harness, now, terminated, handle, launch, generation, agentSession, providerConv, now, now); err != nil {
 			t.Fatalf("seed session %s: %v", id, err)
 		}
 	}
-	seed("tui-live", 1, 0, "tmux-1", "launch-1", "", "", "")
-	seed("chat-live", 2, 0, "", "", "gen-1", "", "")
-	seed("abandoned", 3, 0, "", "", "", "", "")
-	seed("terminated-handleless", 4, 1, "", "", "", "", "")
+	seed("tui-live", 1, "cursor", 0, "tmux-1", "launch-1", "", "", "")
+	seed("chat-live", 2, "cursor", 0, "", "", "gen-1", "", "")
+	seed("abandoned", 3, "cursor", 0, "", "", "", "", "")
+	seed("terminated-handleless", 4, "cursor", 1, "", "", "", "", "")
 	// CommitSessionControllerEpoch clears all three process handles together on a
 	// live row mid interface transition. These rows look like seeds but name a
 	// conversation, so they must not be classified as abandoned spawns.
-	seed("mid-transition-native", 5, 0, "", "", "", "agent-5", "")
-	seed("mid-transition-provider", 6, 0, "", "", "", "", "thread-6")
+	seed("mid-transition-native", 5, "cursor", 0, "", "", "", "agent-5", "")
+	seed("mid-transition-provider", 6, "cursor", 0, "", "", "", "", "thread-6")
+	// The feature is gated to Cursor, so an identical row on another harness must
+	// keep controller_ready and its previous behavior.
+	seed("untracked-harness-abandoned", 7, "claude-code", 0, "", "", "", "", "")
 
 	upTo(t, db, 128)
 
@@ -50,6 +53,8 @@ func TestMigration0128ClassifiesExistingSessionsByControllerIdentity(t *testing.
 
 		"mid-transition-native":   "controller_ready",
 		"mid-transition-provider": "controller_ready",
+
+		"untracked-harness-abandoned": "controller_ready",
 	}
 	rows, err := db.Query(`SELECT id, spawn_phase FROM sessions ORDER BY id`)
 	if err != nil {

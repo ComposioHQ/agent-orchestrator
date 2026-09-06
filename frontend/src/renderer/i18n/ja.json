@@ -316,6 +316,7 @@
 	"editor.openWorkspaceInTitle": "このセッションのワークスペースを {{name}} で開く",
 	"editor.terminal": "ターミナル",
 	"editor.workspaceUnavailable": "セッションのワークスペースを利用できません。",
+	"editor.workspacePreparing": "ワークスペースを準備しています…",
 	"inspector.activity": "アクティビティ",
 	"inspector.agent": "エージェント",
 	"inspector.aria": "セッションインスペクター",

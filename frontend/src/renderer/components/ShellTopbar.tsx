@@ -10,6 +10,7 @@ import {
 	hasConfiguredOrchestratorAgent,
 	isOrchestratorSession,
 	sessionIsActive,
+	isSpawnInProgress,
 	type WorkspaceSession,
 } from "../types/workspace";
 import { cloudSessionsQueryKey, useWorkspaceScope, workspaceQueryKey } from "../hooks/useWorkspaceQuery";
@@ -371,6 +372,7 @@ export function ShellTopbar({
 								key={`open-workspace-${session.id}`}
 								sessionId={session.id}
 								projectId={session.workspaceId}
+								spawnInProgress={isSpawnInProgress(session.spawnPhase)}
 								style={noDragStyle}
 							/>
 						) : null}

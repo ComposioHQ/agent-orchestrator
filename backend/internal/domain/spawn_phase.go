@@ -26,6 +26,36 @@ const (
 	SpawnPhaseControllerReady SpawnPhase = "controller_ready"
 )
 
+// SpawnPhaseTrackingEnabled reports whether AO records a durable spawn phase for
+// a harness, and therefore whether its spawns are checkpointed and its
+// interrupted spawns recovered.
+//
+// Scoped to Cursor by explicit product decision. The underlying failure is NOT
+// Cursor-specific — resumeAgentRecordWithPolicy raises ErrIncompleteHandle for
+// every harness, so any agent can strand a session with no workspace or runtime
+// handle. This gate exists to limit the blast radius of the change, not because
+// other harnesses are immune.
+//
+// It is deliberately the ONLY harness check in the feature. Every consumer —
+// the spawn checkpoint, boot recovery, Retry routing, and the UI — reads the
+// phase alone, so a session that is not tracked simply stays controller_ready
+// and behaves exactly as it did before. Widening the feature later is a change
+// to this one function.
+func SpawnPhaseTrackingEnabled(harness AgentHarness) bool {
+	return harness == HarnessCursor
+}
+
+// InitialSpawnPhase is the phase a newly seeded session starts in: preparing for
+// a tracked harness, whose spawn will checkpoint its workspace; controller_ready
+// for every other harness, which keeps the pre-checkpoint behavior where the
+// phase carries no information.
+func InitialSpawnPhase(harness AgentHarness) SpawnPhase {
+	if SpawnPhaseTrackingEnabled(harness) {
+		return SpawnPhasePreparing
+	}
+	return SpawnPhaseControllerReady
+}
+
 // Valid reports whether p is one of the known phases.
 func (p SpawnPhase) Valid() bool {
 	switch p {
