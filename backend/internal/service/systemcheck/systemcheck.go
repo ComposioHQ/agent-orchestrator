@@ -126,12 +126,11 @@ func (s *Service) OpenGitHubAuthTerminal(ctx context.Context) (shellterm.ShellTe
 		return shellterm.ShellTerminal{}, apierr.Internal("GITHUB_AUTH_TERMINAL_UNAVAILABLE", "GitHub authentication terminal service is unavailable.")
 	}
 	return s.terminals.OpenCommandTerminal(ctx, shellterm.OpenCommandTerminalInput{
-		Argv: []string{
-			path, "auth", "login",
-			"--hostname", "github.com",
-			"--git-protocol", "https",
-			"--web",
-		},
+		// Keep the native interactive flow so users can choose GitHub.com or
+		// Enterprise, HTTPS or SSH, and any authentication mode supported by their
+		// installed gh version. The renderer forwards the terminal protocol replies
+		// these prompts require.
+		Argv:  []string{path, "auth", "login"},
 		Title: "Connect GitHub",
 	})
 }
