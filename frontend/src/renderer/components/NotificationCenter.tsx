@@ -469,13 +469,11 @@ export function NotificationCenter({ style }: NotificationCenterProps) {
 
 function NotificationEmpty({ icon: Icon, message }: { icon: typeof Bell; message: string }) {
 	return (
-		<div className="grid min-h-40 place-items-center px-4 py-10 text-center">
-			<div>
-				<div className="mx-auto grid size-control-xl place-items-center rounded-full border border-border bg-surface text-passive">
-					<Icon className={cn("size-icon-base", Icon === LoaderCircle && "animate-spin")} aria-hidden="true" />
-				</div>
-				<p className="mt-2.5 text-control text-muted-foreground">{message}</p>
+		<div className="flex flex-col items-center gap-2.5 px-4 py-5 text-center">
+			<div className="grid size-control-xl place-items-center rounded-full border border-border bg-surface text-passive">
+				<Icon className={cn("size-icon-base", Icon === LoaderCircle && "animate-spin")} aria-hidden="true" />
 			</div>
+			<p className="text-control text-muted-foreground">{message}</p>
 		</div>
 	);
 }
