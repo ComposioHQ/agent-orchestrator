@@ -122,8 +122,21 @@ func discoverGitWorkspace(ctx context.Context, root string) gitWorkspace {
 	// subdirectories. Only use the git-derived watch set when the repository
 	// actually has this workspace as its toplevel.
 	topRaw, err := aoprocess.CommandContext(ctx, "git", "-C", root, "rev-parse", "--show-toplevel").Output()
-	if err != nil || !sameWorkspaceDir(filepath.Clean(filepath.FromSlash(strings.TrimSpace(string(topRaw)))), root) {
+	if err != nil {
 		return gitWorkspace{}
+	}
+	// Git prints forward slashes on Windows and canonicalizes the toplevel
+	// through symlinks, so the reported path may differ textually from root
+	// while naming the same directory. Compare the strings first (folding
+	// case on Windows, where the filesystem is case-insensitive), then fall
+	// back to filesystem identity for symlinked roots.
+	toplevel := filepath.Clean(filepath.FromSlash(strings.TrimSpace(string(topRaw))))
+	if toplevel != root && !(runtime.GOOS == "windows" && strings.EqualFold(toplevel, root)) {
+		topInfo, topErr := os.Stat(toplevel)
+		rootInfo, rootErr := os.Stat(root)
+		if topErr != nil || rootErr != nil || !os.SameFile(topInfo, rootInfo) {
+			return gitWorkspace{}
+		}
 	}
 	gitDirRaw, err := aoprocess.CommandContext(ctx, "git", "-C", root, "rev-parse", "--absolute-git-dir").Output()
 	if err != nil {
@@ -287,19 +300,6 @@ func gitIgnored(ctx context.Context, root, target string) bool {
 		return false
 	}
 	return aoprocess.CommandContext(ctx, "git", "-C", root, "check-ignore", "-q", "--", filepath.ToSlash(rel)).Run() == nil
-}
-
-// sameWorkspaceDir reports whether left and right point at the same
-// directory. Git prints forward slashes on Windows and the filesystem may be
-// case-insensitive there, so compare cleaned paths and fold case on Windows.
-func sameWorkspaceDir(left, right string) bool {
-	if left == right {
-		return true
-	}
-	if runtime.GOOS == "windows" {
-		return strings.EqualFold(left, right)
-	}
-	return false
 }
 
 func isWithin(root, target string) bool {
