@@ -261,6 +261,7 @@ describe("global board first launch", () => {
 		await waitFor(() => expect(postMock).toHaveBeenCalledTimes(1));
 		expect(postMock).toHaveBeenCalledWith("/api/v1/system/github-auth/terminal");
 		expect(await screen.findByTestId("github-auth-terminal")).toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: "Check again" })).not.toBeInTheDocument();
 		expect(screen.getByTestId("terminal-pane")).toHaveAttribute("data-focus-requested", "false");
 		act(() => terminalPanePropsMock.mock.lastCall?.[0].onTerminalStateChange?.("attached"));
 		expect(screen.getByTestId("terminal-pane")).toHaveAttribute("data-focus-requested", "true");
@@ -280,6 +281,7 @@ describe("global board first launch", () => {
 
 		expect(await screen.findByText("Connect GitHub for pull requests")).toBeInTheDocument();
 		expect(screen.getByRole("button", { name: "Sign in with GitHub" })).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Check again" })).toBeInTheDocument();
 		expect(screen.queryByRole("button", { name: "Get GitHub CLI" })).not.toBeInTheDocument();
 		expect(postMock).not.toHaveBeenCalledWith("/api/v1/system/github-auth/terminal");
 	});

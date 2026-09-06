@@ -33,6 +33,7 @@ export function GitHubOnboardingNotice() {
 	const automaticLoginStartedRef = useRef(false);
 	const completedTerminalRef = useRef<string | null>(null);
 	const [terminalState, setTerminalState] = useState<TerminalSessionState>("idle");
+	const [manualCheckPending, setManualCheckPending] = useState(false);
 	const gh = requirements.find((requirement) => requirement.id === "gh");
 	const auth = authQuery.data;
 
@@ -75,14 +76,18 @@ export function GitHubOnboardingNotice() {
 	};
 
 	const checkAgain = async () => {
-		await authQuery.refetch();
+		setManualCheckPending(true);
+		try {
+			await authQuery.refetch();
+		} finally {
+			setManualCheckPending(false);
+		}
 	};
 	const closeLogin = () => {
 		if (!terminal) return;
 		closeTerminal(terminal.handleId, { onSettled: terminalQuery.clear });
 	};
 	const cliMissing = gh?.satisfied === false;
-	const checking = authQuery.isFetching;
 	return (
 		<div className="flex w-full justify-center px-3">
 			<div className="w-full max-w-[620px] rounded-welcome-panel border border-[var(--color-border-import-modal)] bg-[var(--color-bg-import-card)] px-4 py-4" role="status">
@@ -108,13 +113,15 @@ export function GitHubOnboardingNotice() {
 										? t("startup.githubLoginStarting")
 										: t("startup.githubLogin")}
 							</TopbarButton>
-							<TopbarButton
-								disabled={checking}
-								onClick={() => void checkAgain()}
-								variant="accent"
-							>
-								{checking ? t("startup.checkingAgain") : t("startup.checkAgain")}
-							</TopbarButton>
+							{terminal ? null : (
+								<TopbarButton
+									disabled={manualCheckPending}
+									onClick={() => void checkAgain()}
+									variant="accent"
+								>
+									{manualCheckPending ? t("startup.checkingAgain") : t("startup.checkAgain")}
+								</TopbarButton>
+							)}
 						</div>
 						{startLogin.isError ? <p className="mt-2 text-xs text-destructive" role="alert">{startLogin.error.message}</p> : null}
 						{terminal ? (
