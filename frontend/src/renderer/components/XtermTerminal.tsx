@@ -369,13 +369,30 @@ export function XtermTerminal(props: XtermTerminalProps) {
 			// A retained terminal can be parked between closing search and this frame.
 		}
 	}, []);
+	const restoreFocusFrameIdsRef = useRef<number[]>([]);
+	const cancelPendingFocusRestore = useCallback(() => {
+		for (const id of restoreFocusFrameIdsRef.current) cancelAnimationFrame(id);
+		restoreFocusFrameIdsRef.current = [];
+	}, []);
 	const restoreTerminalFocus = useCallback(() => {
+		cancelPendingFocusRestore();
 		const activeElement = document.activeElement;
 		if (activeElement instanceof HTMLElement) activeElement.blur();
-		requestAnimationFrame(() => {
-			requestAnimationFrame(() => focusTerminal());
+		const frameA = requestAnimationFrame(() => {
+			const frameB = requestAnimationFrame(() => {
+				restoreFocusFrameIdsRef.current = [];
+				// The terminal may have been hidden or reassigned to another
+				// session during these two frames (e.g. navigation away from
+				// this pane); re-check before stealing focus back from
+				// whatever now legitimately owns it.
+				const host = hostRef.current;
+				if (!host || callbacksRef.current.isVisible === false || !canAutoFocusTerminal(host)) return;
+				focusTerminal();
+			});
+			restoreFocusFrameIdsRef.current = [frameB];
 		});
-	}, [focusTerminal]);
+		restoreFocusFrameIdsRef.current = [frameA];
+	}, [cancelPendingFocusRestore, focusTerminal]);
 	const toggleFullscreenAndRestoreFocus = useCallback(async () => {
 		try {
 			await callbacksRef.current.onToggleFullscreen?.();
@@ -1343,8 +1360,11 @@ export function XtermTerminal(props: XtermTerminalProps) {
 				window.clearTimeout(copiedToastTimerRef.current);
 				copiedToastTimerRef.current = undefined;
 			}
+			cancelPendingFocusRestore();
 		}
-	}, [props.isVisible, setContextMenuOpen]);
+	}, [props.isVisible, setContextMenuOpen, cancelPendingFocusRestore]);
+
+	useEffect(() => cancelPendingFocusRestore, [cancelPendingFocusRestore]);
 
 	const wasVisibleRef = useRef(props.isVisible !== false);
 	useEffect(() => {
