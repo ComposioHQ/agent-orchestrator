@@ -32,13 +32,6 @@ func TestNativeConversationIDUsesTheSameClaudeUUIDAcrossInterfaces(t *testing.T)
 	}
 }
 
-func TestExitDetectionUsesAOProcessSupervisor(t *testing.T) {
-	plugin := &Plugin{}
-	if got := plugin.ExitDetectionMode(); got != ports.AgentExitDetectionSupervisor {
-		t.Fatalf("exit detection mode = %q, want %q", got, ports.AgentExitDetectionSupervisor)
-	}
-}
-
 func TestWindowsNativeClaudeCandidatesForNPMShim(t *testing.T) {
 	shim := filepath.Join("prefix", "claude.cmd")
 	want := []string{

@@ -71,16 +71,9 @@ func (p *Plugin) EmitsSubmitActivity() bool { return true }
 // ports.BlockedActivitySignaler.
 func (p *Plugin) EmitsBlockedActivity() bool { return true }
 
-// ExitDetectionMode opts Claude Code into AO's process supervisor. The
-// SessionEnd hook never runs when SIGINT kills the TUI first.
-func (p *Plugin) ExitDetectionMode() ports.AgentExitDetectionMode {
-	return ports.AgentExitDetectionSupervisor
-}
-
 var _ adapters.Adapter = (*Plugin)(nil)
 var _ ports.Agent = (*Plugin)(nil)
 var _ ports.AgentAuthChecker = (*Plugin)(nil)
-var _ ports.AgentExitDetector = (*Plugin)(nil)
 var _ ports.EmptyComposerDetector = (*Plugin)(nil)
 var _ ports.AgentInterfaceHandoff = (*Plugin)(nil)
 var _ ports.AgentInterfaceHandoffHistoryProbe = (*Plugin)(nil)
