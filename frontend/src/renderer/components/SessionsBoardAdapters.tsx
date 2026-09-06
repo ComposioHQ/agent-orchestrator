@@ -299,7 +299,7 @@ export function toUsagePresentation(
 			compactLabel: (
 				<>
 					{cost}
-					<span className="hidden text-muted-foreground/70 @xs:inline"> · {compactTokens}</span>
+					<span className="text-muted-foreground/70"> · {compactTokens}</span>
 				</>
 			),
 		};

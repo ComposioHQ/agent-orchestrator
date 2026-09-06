@@ -49,6 +49,13 @@ describe("toUsagePresentation", () => {
 
 		const { container } = render(<>{result!.compactLabel}</>);
 		expect(container.textContent).toBe(`${cost} · ${compactTokens}`);
+		expect(container.textContent).toContain(compactTokens);
+
+		// jsdom doesn't apply CSS, so a stray Tailwind `hidden` class wouldn't
+		// fail on textContent alone -- it silently hides the tokens in a real
+		// browser while this test still passes. Assert the class list directly.
+		const tokenSpan = container.querySelector("span");
+		expect(tokenSpan?.className).not.toMatch(/\bhidden\b/);
 	});
 
 	it("shows cost only, with no dangling separator, when tokens are absent", () => {
