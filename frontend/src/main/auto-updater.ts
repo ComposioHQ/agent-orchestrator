@@ -1764,7 +1764,9 @@ export async function quitAndInstallUpdate(): Promise<void> {
       const version = stagedVersion;
       if (!version) throw new Error("The update is no longer ready to install. Check for updates again.");
       await waitForNativePreparation(version);
-      // The helper must acknowledge that its window is visible before AO quits.
+      // The helper must acknowledge it is up (its READY handshake) before AO
+      // quits. It stays hidden on the normal path and only shows a window if the
+      // update stalls or fails.
       progress = await startMacUpdateProgress({
         stateDir: escalationStateDir,
         resourcesPath: process.resourcesPath,
