@@ -131,7 +131,8 @@ func discoverGitWorkspace(ctx context.Context, root string) gitWorkspace {
 	// case on Windows, where the filesystem is case-insensitive), then fall
 	// back to filesystem identity for symlinked roots.
 	toplevel := filepath.Clean(filepath.FromSlash(strings.TrimSpace(string(topRaw))))
-	if toplevel != root && !(runtime.GOOS == "windows" && strings.EqualFold(toplevel, root)) {
+	samePath := toplevel == root || (runtime.GOOS == "windows" && strings.EqualFold(toplevel, root))
+	if !samePath {
 		topInfo, topErr := os.Stat(toplevel)
 		rootInfo, rootErr := os.Stat(root)
 		if topErr != nil || rootErr != nil || !os.SameFile(topInfo, rootInfo) {
