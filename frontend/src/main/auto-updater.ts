@@ -844,6 +844,13 @@ async function runSerializedUpdaterOperation(
     }
     try {
       await runOperation();
+    } catch (err) {
+      // Recover before releasing the queue. An outer caller catch can run after
+      // the next download starts and would discard that replacement's stamp.
+      if ((operation === "automatic-check" || operation === "manual-check" ||
+        operation === "manual-download" || operation === "return-home") &&
+        handleMacStagingFailure(err, requestId)) return;
+      throw err;
     } finally {
       activeUpdaterOperation = undefined;
       activeUpdaterRequestId = undefined;
@@ -1414,7 +1421,6 @@ export async function checkForUpdatesNow(
       options.requestId,
     );
   } catch (err) {
-    if (handleMacStagingFailure(err, options.requestId)) return;
     if (isManifest404Error(err)) {
       console.info("manual update check failed:", err);
       broadcastCompletedCheck({
@@ -1483,7 +1489,6 @@ export async function returnToHome(
       requestId,
     );
   } catch (err) {
-    if (handleMacStagingFailure(err, requestId)) return;
     broadcast({
       state: "error",
       message: (err as Error)?.message ?? "Return failed",
@@ -1522,7 +1527,6 @@ export async function downloadUpdateNow(requestId?: string): Promise<void> {
       requestId,
     );
   } catch (err) {
-    if (handleMacStagingFailure(err, requestId)) return;
     if (isManifest404Error(err)) {
       console.error("update download failed:", err);
       broadcast({

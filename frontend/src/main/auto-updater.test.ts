@@ -326,6 +326,26 @@ describe("startAutoUpdates", () => {
     }
   });
 
+  it.each(["download", "check", "return-home"])("does not discard a queued retry when the previous %s rejects", async (operation) => {
+    const restore = stubProcess("darwin", "/usr/bin/node");
+    try {
+      const { module, autoUpdater, updaterEvents } = await importAutoUpdater();
+      await module.checkForUpdatesNow(stateDir);
+      const failure = new Error("ditto: /cache/app.ShipIt/update.abc/AO.app/Contents/Resources/._app.asar__: No such file or directory");
+      autoUpdater.downloadUpdate.mockImplementation(async () => {
+        updaterEvents.get("update-downloaded")?.({ version: "2.2.0" });
+      });
+      if (operation === "download") autoUpdater.downloadUpdate.mockRejectedValueOnce(failure);
+      else autoUpdater.checkForUpdates.mockRejectedValueOnce(failure);
+      const failed = operation === "download" ? module.downloadUpdateNow("failed")
+        : operation === "check" ? module.checkForUpdatesNow(stateDir, { requestId: "failed" })
+        : module.returnToHome(stateDir, "failed");
+      await Promise.all([failed, module.downloadUpdateNow("retry")]);
+      expect(module.getUpdateStatus().staged?.version).toBe("2.2.0");
+      expect(autoUpdater.autoInstallOnAppQuit).toBe(true);
+    } finally { restore(); }
+  });
+
   it("does not invalidate a staged update for an unrelated missing file", async () => {
     const { module, updaterEvents } = await importAutoUpdater();
     await module.startAutoUpdates(stateDir);
