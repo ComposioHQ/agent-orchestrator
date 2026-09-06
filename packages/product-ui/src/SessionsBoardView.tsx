@@ -85,7 +85,7 @@ export type BoardPullRequestPresentation = {
 
 export type BoardUsagePresentation = {
 	accessibleLabel: string;
-	compactLabel: string;
+	compactLabel: ReactNode;
 };
 
 export type BoardPullRequestLabels = {
@@ -255,7 +255,7 @@ export function SessionCardView({
 			onClick={interactive ? onOpen : undefined}
 			role={interactive ? undefined : "listitem"}
 			className={cn(
-				"group relative w-full rounded-lg border border-border text-left transition-[background-color,box-shadow,transform] duration-[120ms] ease-out",
+				"@container group relative w-full rounded-lg border border-border text-left transition-[background-color,box-shadow,transform] duration-[120ms] ease-out",
 				badge.cardClassName ?? "border-border bg-surface",
 				interactive &&
 					"cursor-pointer hover:bg-interactive-hover focus-within:bg-interactive-hover active:scale-[0.99] has-[.pr-link:active]:scale-100",

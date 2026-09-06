@@ -275,8 +275,6 @@ function reviewerAvatarUrl(pr: SessionPRSummary, reviewerId: string): string | u
 	return undefined;
 }
 
-// Keep the board metric scannable by showing cost only. The full cost/token
-// summary remains available from the hover tooltip and to screen readers.
 function toUsagePresentation(
 	usage: SessionUsageSummary | undefined,
 	t: TFunction,
@@ -286,29 +284,30 @@ function toUsagePresentation(
 		return undefined;
 	}
 	const cost = formatEstimatedCost(usage.estimatedCost);
-	if (!cost) {
-		if (processedTokens === null || processedTokens <= 0) {
-			return undefined;
-		}
-		const compactTokens = formatTokenCount(processedTokens).replace(/ tok$/, "");
-		const accessibleTokens = t("shell.usageTokens", {
-			count: processedTokens.toLocaleString("en-US"),
-		});
+	const hasTokens = processedTokens !== null && processedTokens > 0;
+	if (!cost && !hasTokens) {
+		return undefined;
+	}
+	const accessibleTokens = hasTokens
+		? t("shell.usageTokens", { count: processedTokens.toLocaleString("en-US") })
+		: undefined;
+	const compactTokens = hasTokens ? formatTokenCount(processedTokens).replace(/ tok$/, "") : undefined;
+
+	if (cost && accessibleTokens && compactTokens) {
 		return {
-			accessibleLabel: accessibleTokens,
-			compactLabel: compactTokens,
+			accessibleLabel: `${cost} · ${accessibleTokens}`,
+			compactLabel: (
+				<>
+					{cost}
+					<span className="hidden text-muted-foreground/70 @xs:inline"> · {compactTokens}</span>
+				</>
+			),
 		};
 	}
-	if (processedTokens === null) {
+	if (cost) {
 		return { accessibleLabel: cost, compactLabel: cost };
 	}
-	const accessibleTokens = t("shell.usageTokens", {
-		count: processedTokens.toLocaleString("en-US"),
-	});
-	return {
-		accessibleLabel: `${cost} · ${accessibleTokens}`,
-		compactLabel: cost,
-	};
+	return { accessibleLabel: accessibleTokens ?? "", compactLabel: compactTokens ?? "" };
 }
 
 function ArchiveRestoreButton({
