@@ -249,7 +249,7 @@ describe("global board first launch", () => {
 		expect(screen.queryByText("Board")).not.toBeInTheDocument();
 	});
 
-	it("automatically opens and focuses GitHub sign-in when gh is signed out", async () => {
+	it("automatically opens GitHub sign-in without requesting focus when gh is signed out", async () => {
 		respondWith([], [], false);
 		renderBoard(
 			<StrictMode>
@@ -264,7 +264,7 @@ describe("global board first launch", () => {
 		expect(screen.getByTestId("terminal-pane")).toHaveAttribute("data-focus-requested", "false");
 		act(() => terminalPanePropsMock.mock.lastCall?.[0].onTerminalStateChange?.("attached"));
 		expect(screen.queryByRole("button", { name: "Check again" })).not.toBeInTheDocument();
-		expect(screen.getByTestId("terminal-pane")).toHaveAttribute("data-focus-requested", "true");
+		expect(screen.getByTestId("terminal-pane")).toHaveAttribute("data-focus-requested", "false");
 	});
 
 	it("does not open GitHub sign-in when the initial auth check succeeds", async () => {
@@ -311,6 +311,8 @@ describe("global board first launch", () => {
 			params: { path: { handleId: "shellterm-github" } },
 		}));
 		await waitFor(() => expect(postMock).toHaveBeenCalledTimes(2));
+		act(() => terminalPanePropsMock.mock.lastCall?.[0].onTerminalStateChange?.("attached"));
+		expect(screen.getByTestId("terminal-pane")).toHaveAttribute("data-focus-requested", "true");
 	});
 
 	it("keeps sign-in available when GitHub CLI readiness is unknown", async () => {
@@ -322,6 +324,11 @@ describe("global board first launch", () => {
 		expect(screen.getByRole("button", { name: "Check again" })).toBeInTheDocument();
 		expect(screen.queryByRole("button", { name: "Get GitHub CLI" })).not.toBeInTheDocument();
 		expect(postMock).not.toHaveBeenCalledWith("/api/v1/system/github-auth/terminal");
+
+		await userEvent.click(screen.getByRole("button", { name: "Sign in with GitHub" }));
+		await screen.findByTestId("github-auth-terminal");
+		act(() => terminalPanePropsMock.mock.lastCall?.[0].onTerminalStateChange?.("attached"));
+		expect(screen.getByTestId("terminal-pane")).toHaveAttribute("data-focus-requested", "true");
 	});
 
 	it("opens the native folder picker from the Project card", async () => {

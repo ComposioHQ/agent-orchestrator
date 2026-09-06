@@ -472,7 +472,7 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 			replayBatchBytes = null;
 			replayBatchOffset = 0;
 			replayBatchDone = null;
-			for (const bytes of postReplayWriteQueue) terminal.write(bytes, undefined, "replay");
+			for (const bytes of postReplayWriteQueue) terminal.write(bytes, undefined, "live");
 			postReplayWriteQueue.length = 0;
 			postReplayWriteActive = false;
 			pendingReplayWrites = 0;
@@ -505,7 +505,7 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 				postReplayWriteActive = false;
 				pendingReplayWrites = Math.max(0, pendingReplayWrites - 1);
 				drainPostReplayWrites();
-			}, "replay");
+			}, "live");
 		};
 
 		// End the buffered part of the initial replay: concatenate what arrived so

@@ -265,9 +265,9 @@ func (s *Service) checkGitHubAuth(ctx context.Context) Requirement {
 	var stdout bytes.Buffer
 	if err := s.commands.Run(probeCtx, []string{path, "auth", "status", "--active", "--json", "hosts"}, &stdout, io.Discard); err != nil {
 		// `auth status --json` was added after many still-supported gh releases.
-		// Bare `auth status` preserves compatibility while still validating the
-		// credential instead of merely checking that token text exists.
-		if !s.hasGitHubAuth(probeCtx, path) {
+		// A local token check preserves compatibility and avoids treating
+		// network failures as proof that the user is signed out.
+		if !s.hasGitHubAuth(ctx, path) {
 			return Requirement{ID: "github-auth", Label: "GitHub access", Detail: detail}
 		}
 		return Requirement{ID: "github-auth", Label: "GitHub access", Satisfied: true, Detail: "GitHub CLI is signed in."}
@@ -279,7 +279,7 @@ func (s *Service) checkGitHubAuth(ctx context.Context) Requirement {
 		} `json:"hosts"`
 	}
 	if err := json.Unmarshal(stdout.Bytes(), &status); err != nil {
-		if !s.hasGitHubAuth(probeCtx, path) {
+		if !s.hasGitHubAuth(ctx, path) {
 			return Requirement{ID: "github-auth", Label: "GitHub access", Detail: detail}
 		}
 		return Requirement{ID: "github-auth", Label: "GitHub access", Satisfied: true, Detail: "GitHub CLI is signed in."}
@@ -296,12 +296,17 @@ func (s *Service) checkGitHubAuth(ctx context.Context) Requirement {
 			break
 		}
 	}
-	if !authenticated {
+	// This advisory checks whether credentials are configured. A failed online
+	// validation must not open a login PTY for a user with a local credential.
+	if !authenticated && !s.hasGitHubAuth(ctx, path) {
 		return Requirement{ID: "github-auth", Label: "GitHub access", Detail: detail}
 	}
 	return Requirement{ID: "github-auth", Label: "GitHub access", Satisfied: true, Detail: "GitHub CLI is signed in."}
 }
 
 func (s *Service) hasGitHubAuth(ctx context.Context, path string) bool {
-	return s.commands.Run(ctx, []string{path, "auth", "status"}, io.Discard, io.Discard) == nil
+	// Give the local credential probe its own budget, even when status timed out.
+	probeCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	return s.commands.Run(probeCtx, []string{path, "auth", "token"}, io.Discard, io.Discard) == nil
 }

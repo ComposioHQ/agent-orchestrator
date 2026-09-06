@@ -702,6 +702,7 @@ describe("useTerminalSession", () => {
 			act(() => void vi.runOnlyPendingTimers());
 
 			expect(terminal.lines.join("")).toBe(`${replay}TAIL`);
+			expect(terminal.writeSources).toEqual(["replay", "replay", "live"]);
 		});
 
 		it("queues an unfinished replay before an exit marker and attachment teardown", () => {
@@ -711,6 +712,8 @@ describe("useTerminalSession", () => {
 			act(() => muxes[0].emitData("handle-1", replay));
 			act(() => void vi.advanceTimersByTime(60));
 
+			act(() => muxes[0].emitData("handle-1", "\x1b[6n\x1b[?996n"));
+
 			// Exit lands while the next replay batch is waiting for its event-loop
 			// turn. The unwritten remainder must be submitted before the marker and
 			// before teardown invalidates this attachment's generation.
@@ -718,6 +721,7 @@ describe("useTerminalSession", () => {
 			const output = terminal.lines.join("");
 			expect(output.startsWith(replay)).toBe(true);
 			expect(output).toContain("[process exited]");
+			expect(terminal.writeSources.slice(0, 3)).toEqual(["replay", "replay", "live"]);
 		});
 
 		it("lifts the cover when the attachment is torn down with no reconnect scheduled", () => {

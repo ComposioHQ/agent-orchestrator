@@ -39,6 +39,7 @@ export function GitHubOnboardingNotice() {
 	const refetchAuthRef = useRef(authQuery.refetch);
 	const exitCheckedTerminalRef = useRef<string | null>(null);
 	const completedTerminalRef = useRef<string | null>(null);
+	const [loginFocusRequested, setLoginFocusRequested] = useState(false);
 	const [manualCheckPending, setManualCheckPending] = useState(false);
 	const gh = requirements.find((requirement) => requirement.id === "gh");
 	const auth = authQuery.data;
@@ -78,11 +79,13 @@ export function GitHubOnboardingNotice() {
 	if (!auth || auth.satisfied) return null;
 
 	const openLogin = () => {
+		setLoginFocusRequested(true);
 		autoLogin.markOffered();
 		startLogin.mutate();
 	};
 	const retryLogin = () => {
 		if (!terminal) return;
+		setLoginFocusRequested(true);
 		closeTerminal(terminal.handleId, {
 			onSettled: () => {
 				terminalQuery.clear();
@@ -100,6 +103,7 @@ export function GitHubOnboardingNotice() {
 		}
 	};
 	const closeLogin = () => {
+		setLoginFocusRequested(false);
 		if (!terminal) return;
 		closeTerminal(terminal.handleId, { onSettled: terminalQuery.clear });
 	};
@@ -160,7 +164,7 @@ export function GitHubOnboardingNotice() {
 									</TopbarButton>
 								</div>
 								<div className="h-[240px] min-h-0">
-									<TerminalPane daemonReady={shell ? shell.daemonStatus.state === "ready" : true} focusRequested={terminalState === "attached"} fontSize={12} onTerminalStateChange={handleTerminalState} terminalTarget={{ kind: "shell", handleId: terminal.handleId, generation: terminal.createdAt, title: terminal.title }} theme={theme} />
+									<TerminalPane daemonReady={shell ? shell.daemonStatus.state === "ready" : true} focusRequested={loginFocusRequested && terminalState === "attached"} fontSize={12} onTerminalStateChange={handleTerminalState} terminalTarget={{ kind: "shell", handleId: terminal.handleId, generation: terminal.createdAt, title: terminal.title }} theme={theme} />
 								</div>
 							</div>
 						) : null}
