@@ -1338,15 +1338,14 @@ func TestSpawn_ResolvesProjectConfig(t *testing.T) {
 		t.Fatalf("launch model = %q, want request model override", agent.lastConfig.Model)
 	}
 
-	// A project with no stored config yields a zero AgentConfig (adapter defaults)
-	// when the spawn explicitly names its agent.
+	// A project with no stored config defaults new sessions to Auto permissions.
 	st.projects["bare"] = domain.ProjectRecord{ID: "bare"}
 	agent.lastConfig = ports.AgentConfig{Model: "stale"}
 	if _, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "bare", Kind: domain.KindWorker, Harness: domain.HarnessCodex}); err != nil {
 		t.Fatal(err)
 	}
-	if !agent.lastConfig.IsZero() {
-		t.Fatalf("launch config = %#v, want zero for project without config", agent.lastConfig)
+	if agent.lastConfig != (ports.AgentConfig{Permissions: ports.PermissionModeAuto}) {
+		t.Fatalf("launch config = %#v, want Auto permissions for project without config", agent.lastConfig)
 	}
 	if got := ws.lastCfg.BaseBranch; got != "" {
 		t.Fatalf("automatic workspace base branch = %q, want empty for adapter inference", got)
@@ -8658,4 +8657,35 @@ func (m *flipOnNudgeMessenger) Send(_ context.Context, _ domain.SessionID, msg s
 		m.flipped = true
 	}
 	return nil
+}
+
+func TestRestoreRetainsSpawnPermissionsAfterProjectChange(t *testing.T) {
+	for _, permission := range []domain.PermissionMode{"", domain.PermissionModeDefault} {
+		st := newFakeStore()
+		st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: testRoleAgents()}
+		agent := &recordingAgent{}
+		m := New(Deps{Runtime: &fakeRuntime{}, Agents: singleAgent{agent: agent}, Workspace: &fakeWorkspace{}, Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, LookPath: func(string) (string, error) { return "/bin/true", nil }})
+		rec, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, AgentConfig: ports.AgentConfig{Permissions: permission}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := permission
+		if want == "" {
+			want = domain.PermissionModeAuto
+		}
+		if rec.Metadata.Permissions != want {
+			t.Fatalf("spawn pin=%q want %q", rec.Metadata.Permissions, want)
+		}
+		project := st.projects["mer"]
+		project.Config.AgentConfig.Permissions = domain.PermissionModeBypassPermissions
+		st.projects["mer"] = project
+		rec.Metadata.AgentSessionID = "native-1"
+		seedTerminal(st, rec.ID, rec.Metadata)
+		if _, err := m.RestoreWithMode(ctx, rec.ID); err != nil {
+			t.Fatal(err)
+		}
+		if agent.lastRestore.Permissions != want || agent.lastRestore.Config.Permissions != want {
+			t.Fatalf("restore=%#v want %q", agent.lastRestore, want)
+		}
+	}
 }

@@ -1841,11 +1841,12 @@ type ConversationConfigOptionResponse struct {
 
 // ConversationConfigChoiceResponse is one value in a provider select.
 type ConversationConfigChoiceResponse struct {
-	Value       string `json:"value"`
-	Name        string `json:"name"`
-	Description string `json:"description,omitempty"`
-	Group       string `json:"group,omitempty"`
-	GroupName   string `json:"groupName,omitempty"`
+	PermissionMode domain.PermissionMode `json:"permissionMode,omitempty" enum:"default,accept-edits,auto,bypass-permissions"`
+	Value          string                `json:"value"`
+	Name           string                `json:"name"`
+	Description    string                `json:"description,omitempty"`
+	Group          string                `json:"group,omitempty"`
+	GroupName      string                `json:"groupName,omitempty"`
 }
 
 // SetConversationConfigOptionRequest selects one provider-advertised value.
