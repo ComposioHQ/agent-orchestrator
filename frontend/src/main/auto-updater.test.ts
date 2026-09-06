@@ -2942,9 +2942,13 @@ describe("staged install rejection", () => {
   // The 2026-09-05 v0.12.10 report carries the OTHER Security-framework
   // wording for the same "the staged copy is not installable" outcome. Both
   // reach us through the same SQRLCodeSignature.m prefix, and both have to
-  // clear the cache: reproduced locally, "code object is not signed at all" is
-  // what codesign reports when the staged bundle's main executable is missing
-  // or zero-length, which no retry of the same bytes can fix.
+  // clear the cache. Reproduced locally against the published nightly, driving
+  // SecStaticCodeCheckValidityWithErrors with the flags Electron's patched
+  // Squirrel.Mac actually uses (nested | strict | all-architectures): this
+  // string is errSecCSUnsigned, which a staged bundle reports when its root
+  // executable OR a nested helper-app/framework binary is missing or unsigned.
+  // Seal damage and sealed-resource damage give different codes. No retry of
+  // the same staged bytes can fix any of them.
   it("also handles the 'not signed at all' wording", async () => {
     const consoleErrorSpy = vi
       .spyOn(console, "error")
