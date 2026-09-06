@@ -804,6 +804,35 @@ describe("XtermTerminal", () => {
 		Object.defineProperty(document, "fullscreenElement", { configurable: true, value: null });
 	});
 
+
+	it.each([true, false])("preserves newer focus after deferred fullscreen completion when visible=%s", async (isVisible) => {
+		let complete!: () => void;
+		const onToggleFullscreen = vi.fn(() => new Promise<void>((resolve) => { complete = resolve; }));
+		const frames: FrameRequestCallback[] = [];
+		const frameSpy = vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => {
+			frames.push(callback);
+			return frames.length;
+		});
+		const { container, rerender } = render(<XtermTerminal onToggleFullscreen={onToggleFullscreen} theme="dark" />);
+		const control = document.createElement("button");
+		document.body.appendChild(control);
+		try {
+			fireEvent.contextMenu(container.firstElementChild!);
+			fireEvent.click(await screen.findByText("Fullscreen terminal"));
+			rerender(<XtermTerminal isVisible={isVisible} onToggleFullscreen={onToggleFullscreen} theme="dark" />);
+			control.focus();
+			state.lastTerminal!.focus.mockClear();
+			frames.length = 0;
+			await act(async () => complete());
+			expect(control).toHaveFocus();
+			act(() => { while (frames.length) frames.shift()!(performance.now()); });
+			expect(control).toHaveFocus();
+			expect(state.lastTerminal!.focus).not.toHaveBeenCalled();
+		} finally {
+			control.remove();
+			frameSpy.mockRestore();
+		}
+	});
 	it("returns focus to xterm after entering and exiting fullscreen from the menu", async () => {
 		const onToggleFullscreen = vi.fn(async () => undefined);
 		const frames: FrameRequestCallback[] = [];
@@ -818,7 +847,6 @@ describe("XtermTerminal", () => {
 		);
 		const trigger = document.createElement("button");
 		document.body.appendChild(trigger);
-		trigger.focus();
 		state.lastTerminal!.focus.mockClear();
 		frames.length = 0;
 
@@ -828,7 +856,6 @@ describe("XtermTerminal", () => {
 			await act(async () => undefined);
 
 			expect(onToggleFullscreen).toHaveBeenCalledOnce();
-			expect(trigger).not.toHaveFocus();
 			expect(frames).toHaveLength(1);
 			act(() => frames.shift()?.(performance.now()));
 			expect(frames).toHaveLength(1);

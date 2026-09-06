@@ -376,8 +376,6 @@ export function XtermTerminal(props: XtermTerminalProps) {
 	}, []);
 	const restoreTerminalFocus = useCallback(() => {
 		cancelPendingFocusRestore();
-		const activeElement = document.activeElement;
-		if (activeElement instanceof HTMLElement) activeElement.blur();
 		const frameA = requestAnimationFrame(() => {
 			const frameB = requestAnimationFrame(() => {
 				restoreFocusFrameIdsRef.current = [];
