@@ -131,66 +131,11 @@ func run(logger *slog.Logger) error {
 		"repository_url", bootstrap.Launch.RepositoryURL,
 	)
 
-	// Check in immediately and keep heartbeating from here on: the repository
-	// checkout below can legitimately take minutes (large repository, slow
-	// host), and the control plane treats a bootstrapped-but-never-heartbeating
-	// worker as failed to start — repairing it with a reinstall that would kill
-	// a perfectly healthy clone mid-flight.
-	runCtx, cancel := context.WithCancel(ctx)
-	defer cancel()
-	if renewed, err := client.heartbeat(ctx); err != nil {
-		logger.Warn("first heartbeat failed", "error", err)
-	} else if err := client.setToken(renewed); err != nil {
-		return err
-	}
-	results := make(chan error, 5)
-	go func() { results <- client.heartbeatLoop(runCtx, logger) }()
-
-	if worker.IsScratchRepositoryURL(bootstrap.Launch.RepositoryURL) {
-		if err := worker.PrepareScratchWorkspace(
-			ctx,
-			worker.ExecGitRunner{},
-			workspace,
-		); err != nil {
-			return fmt.Errorf("prepare scratch workspace: %w", err)
-		}
-		logger.Info("initialized scratch workspace")
-	} else {
-		checkoutGrant, err := client.checkoutGrant(ctx)
-		if err != nil {
-			if !anonymousCheckoutEnabled() {
-				if errors.Is(err, errCheckoutForbidden) {
-					// A permanent fault: the session has no repository grant, so
-					// no amount of restarting this worker will make progress.
-					// Surface the cause plainly; the reconciler's startup ceiling
-					// stops the sandbox once repairs stay fruitless.
-					logger.Error("checkout grant refused; session cannot start without a repository grant",
-						"session_id", bootstrap.SessionID,
-						"repository_url", bootstrap.Launch.RepositoryURL,
-						"hint", "connect the repository through the GitHub App, or set AO_CLOUD_ALLOW_ANONYMOUS_GITHUB_CHECKOUT for a public repository",
-					)
-				}
-				return fmt.Errorf("request checkout grant: %w", err)
-			}
-			checkoutGrant = worker.CheckoutGrantResponse{
-				CloneURL: bootstrap.Launch.RepositoryURL,
-			}
-			logger.Info("using anonymous public GitHub checkout")
-		}
-		if err := worker.PrepareCheckout(
-			ctx,
-			worker.ExecGitRunner{},
-			workspace,
-			checkoutGrant,
-		); err != nil {
-			return fmt.Errorf("prepare repository checkout: %w", err)
-		}
-		if err := worker.ConfigureWorkerGit(
-			ctx, worker.ExecGitRunner{}, workspace, dataDir, publicURL,
-			bootstrap.SessionID, bootstrap.Launch.Branch,
-		); err != nil {
-			return fmt.Errorf("configure repository tooling: %w", err)
-		}
+	// The workspace shell is deliberately available before checkout starts. A
+	// developer can inspect the sandbox immediately while repository preparation
+	// and coding-agent authentication continue in the background.
+	if err := os.MkdirAll(workspace, 0o755); err != nil {
+		return fmt.Errorf("create workspace directory: %w", err)
 	}
 	for key, value := range map[string]string{
 		"AO_CLOUD_PUBLIC_URL": publicURL,
@@ -207,58 +152,36 @@ func run(logger *slog.Logger) error {
 			return fmt.Errorf("activate worker tooling: %w", err)
 		}
 	}
-	var agentCommand workerexec.Command
-	agentTerminalID := ""
+	// Heartbeat before waiting out the first interval. Bootstrap registration is
+	// not a check-in, so a repaired worker can otherwise be replaced again
+	// before the control plane ever observes it.
+	if renewed, err := client.heartbeat(ctx); err != nil {
+		logger.Warn("first heartbeat failed", "error", err)
+	} else if err := client.setToken(renewed); err != nil {
+		return err
+	}
 	pullRequestSocketPath := filepath.Join(dataDir, "ao-pull-request.sock")
 	reviewSocketPath := filepath.Join(dataDir, "ao-review.sock")
-	if err := verifyHarnessAvailable(bootstrap.Launch.Harness); err != nil {
-		// Workspace files and shell terminals use the same worker transport as the
-		// coding agent. Keep that transport alive when a rootfs is missing the
-		// selected harness instead of making the whole sandbox unreachable.
-		logger.Warn("coding-agent harness unavailable; continuing with workspace transport", "error", err)
-	} else {
-		credential, err := client.Credential(ctx)
-		if err != nil {
-			return fmt.Errorf("load coding-agent credential: %w", err)
-		}
-		agentCommand, err = (workerexec.HarnessBuilder{
-			DataDir: dataDir,
-		}).BuildInteractive(bootstrap.Launch, credential, workspace)
-		if err != nil {
-			return fmt.Errorf("build interactive coding-agent command: %w", err)
-		}
-		agentCommand.Env["AO_CLOUD_WORKER_API_URL"] = client.baseURL
-		agentCommand.Env["AO_CLOUD_WORKER_TOKEN_FILE"] = client.tokenFile
-		agentCommand.Env["AO_SESSION_ID"] = bootstrap.SessionID
-		agentCommand.Env["AO_PROJECT_ID"] = bootstrap.Launch.ProjectID
-		agentCommand.Env["AO_SESSION_KIND"] = bootstrap.Launch.Kind
-		agentCommand.Env["AO_PULL_REQUEST_SOCKET"] = pullRequestSocketPath
-		agentCommand.Env["AO_PULL_REQUEST_HELP"] = "curl --unix-socket $AO_PULL_REQUEST_SOCKET " +
-			`-X POST http://localhost/pull-request -H 'Content-Type: application/json' ` +
-			`-d '{"branch":"<pushed branch name>","title":"<PR title>","body":"<PR body>"}' ` +
-			"to push the current branch and open a pull request against the repository's default branch."
-		agentCommand.Env["AO_REVIEW_SOCKET"] = reviewSocketPath
-		agentCommand.Env["AO_REVIEW_HELP"] = "curl --unix-socket $AO_REVIEW_SOCKET " +
-			`-X POST http://localhost/review -H 'Content-Type: application/json' ` +
-			`-d '{"reviewRunId":"<review run id from the prompt>","verdict":"approved|changes_requested","body":"<your findings>"}' ` +
-			"to submit an AO-triggered review verdict."
-		agentTerminal, err := client.ensureAgentTerminal(ctx)
-		if err != nil {
-			agentCommand.Cleanup()
-			return fmt.Errorf("initialize agent terminal: %w", err)
-		}
-		agentTerminalID = agentTerminal.TerminalID
-	}
-
+	runCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	started := make(chan error, 1)
 	transportSupervisor := workertransport.Supervisor{
 		Control: client, Workspace: workspace, Logger: logger,
-		AgentCommand: agentCommand, AgentTerminalID: agentTerminalID,
 		Started: started,
 	}
+	// Real-time terminal streaming (duplex predictive echo) rides the same
+	// worker transport; wire it before Run when the sandbox opts in. Preserved
+	// from the terminal-stream feature alongside #4960's workspace-ready gate.
 	if os.Getenv("AO_CLOUD_TERMINAL_STREAM") == "1" {
 		transportSupervisor.Streams = client
 	}
+	// The coding-agent process may connect before checkout completes, but no
+	// user prompt may reach it until the repository is usable. This keeps the
+	// perceived connection path independent from clone latency without letting
+	// a prompt run in an empty workspace.
+	transportSupervisor.HoldAgentInputUntilWorkspaceReady()
+	results := make(chan error, 5)
+	go func() { results <- client.heartbeatLoop(runCtx, logger) }()
 	go func() { results <- transportSupervisor.Run(runCtx) }()
 	go func() {
 		results <- client.checkoutRenewalLoop(runCtx, logger, workspace, bootstrap.Launch.RepositoryURL)
@@ -276,7 +199,7 @@ func run(logger *slog.Logger) error {
 		<-results
 		<-results
 		<-results
-		return fmt.Errorf("start interactive coding-agent terminal: %w", err)
+		return fmt.Errorf("start workspace transport: %w", err)
 	}
 	if err := client.publishEvent(ctx, "worker.ready", map[string]any{
 		"workerId":     bootstrap.WorkerID,
@@ -286,6 +209,25 @@ func run(logger *slog.Logger) error {
 	}); err != nil {
 		logger.Warn("publish worker.ready failed", "error", err)
 	}
+	go func() {
+		if err := prepareWorkspace(
+			runCtx, logger, client, bootstrap, workspace, dataDir, publicURL,
+		); err != nil {
+			if runCtx.Err() == nil {
+				logger.Error("background workspace startup failed", "error", err)
+			}
+			return
+		}
+		transportSupervisor.MarkWorkspaceReady()
+	}()
+	go func() {
+		if err := startInteractiveAgent(
+			runCtx, logger, client, bootstrap, workspace, dataDir,
+			pullRequestSocketPath, reviewSocketPath, &transportSupervisor,
+		); err != nil && runCtx.Err() == nil {
+			logger.Error("background coding-agent startup failed", "error", err)
+		}
+	}()
 	first := <-results
 	cancel()
 	<-results
@@ -297,6 +239,103 @@ func run(logger *slog.Logger) error {
 		return nil
 	}
 	return first
+}
+
+func prepareWorkspace(
+	ctx context.Context,
+	logger *slog.Logger,
+	client *client,
+	bootstrap worker.BootstrapResponse,
+	workspace, dataDir, publicURL string,
+) error {
+	if worker.IsScratchRepositoryURL(bootstrap.Launch.RepositoryURL) {
+		if err := worker.PrepareScratchWorkspace(ctx, worker.ExecGitRunner{}, workspace); err != nil {
+			return fmt.Errorf("prepare scratch workspace: %w", err)
+		}
+		logger.Info("initialized scratch workspace")
+	} else {
+		checkoutGrant, err := client.checkoutGrant(ctx)
+		if err != nil {
+			if !anonymousCheckoutEnabled() {
+				if errors.Is(err, errCheckoutForbidden) {
+					logger.Error("checkout grant refused; session cannot start without a repository grant",
+						"session_id", bootstrap.SessionID,
+						"repository_url", bootstrap.Launch.RepositoryURL,
+						"hint", "connect the repository through the GitHub App, or set AO_CLOUD_ALLOW_ANONYMOUS_GITHUB_CHECKOUT for a public repository",
+					)
+				}
+				return fmt.Errorf("request checkout grant: %w", err)
+			}
+			checkoutGrant = worker.CheckoutGrantResponse{CloneURL: bootstrap.Launch.RepositoryURL}
+			logger.Info("using anonymous public GitHub checkout")
+		}
+		if err := worker.PrepareCheckout(ctx, worker.ExecGitRunner{}, workspace, checkoutGrant); err != nil {
+			return fmt.Errorf("prepare repository checkout: %w", err)
+		}
+		if err := worker.ConfigureWorkerGit(
+			ctx, worker.ExecGitRunner{}, workspace, dataDir, publicURL,
+			bootstrap.SessionID, bootstrap.Launch.Branch,
+		); err != nil {
+			return fmt.Errorf("configure repository tooling: %w", err)
+		}
+	}
+	return nil
+}
+
+func startInteractiveAgent(
+	ctx context.Context,
+	logger *slog.Logger,
+	client *client,
+	bootstrap worker.BootstrapResponse,
+	workspace, dataDir, pullRequestSocketPath, reviewSocketPath string,
+	transportSupervisor *workertransport.Supervisor,
+) error {
+	if err := verifyHarnessAvailable(bootstrap.Launch.Harness); err != nil {
+		logger.Warn("coding-agent harness unavailable", "error", err)
+		return nil
+	}
+	credential, err := client.Credential(ctx)
+	if err != nil {
+		return fmt.Errorf("load coding-agent credential: %w", err)
+	}
+	agentCommand, err := (workerexec.HarnessBuilder{DataDir: dataDir}).BuildInteractive(
+		bootstrap.Launch, credential, workspace,
+	)
+	if err != nil {
+		return fmt.Errorf("build interactive coding-agent command: %w", err)
+	}
+	agentCommand.Env["AO_CLOUD_WORKER_API_URL"] = client.baseURL
+	agentCommand.Env["AO_CLOUD_WORKER_TOKEN_FILE"] = client.tokenFile
+	agentCommand.Env["AO_SESSION_ID"] = bootstrap.SessionID
+	agentCommand.Env["AO_PROJECT_ID"] = bootstrap.Launch.ProjectID
+	agentCommand.Env["AO_SESSION_KIND"] = bootstrap.Launch.Kind
+	agentCommand.Env["AO_PULL_REQUEST_SOCKET"] = pullRequestSocketPath
+	agentCommand.Env["AO_PULL_REQUEST_HELP"] = "curl --unix-socket $AO_PULL_REQUEST_SOCKET " +
+		`-X POST http://localhost/pull-request -H 'Content-Type: application/json' ` +
+		`-d '{"branch":"<pushed branch name>","title":"<PR title>","body":"<PR body>"}' ` +
+		"to push the current branch and open a pull request against the repository's default branch."
+	agentCommand.Env["AO_REVIEW_SOCKET"] = reviewSocketPath
+	agentCommand.Env["AO_REVIEW_HELP"] = "curl --unix-socket $AO_REVIEW_SOCKET " +
+		`-X POST http://localhost/review -H 'Content-Type: application/json' ` +
+		`-d '{"reviewRunId":"<review run id from the prompt>","verdict":"approved|changes_requested","body":"<your findings>"}' ` +
+		"to submit an AO-triggered review verdict."
+	agentTerminal, err := client.ensureAgentTerminal(ctx)
+	if err != nil {
+		agentCommand.Cleanup()
+		return fmt.Errorf("initialize agent terminal: %w", err)
+	}
+	if err := transportSupervisor.StartAgent(ctx, agentCommand, agentTerminal.TerminalID); err != nil {
+		return fmt.Errorf("start interactive coding-agent terminal: %w", err)
+	}
+	if err := client.publishEvent(ctx, "agent.ready", map[string]any{
+		"workerId":     bootstrap.WorkerID,
+		"epoch":        bootstrap.Epoch,
+		"version":      workerVersion,
+		"capabilities": workerCapabilities,
+	}); err != nil {
+		logger.Warn("publish agent.ready failed", "error", err)
+	}
+	return nil
 }
 
 var errStaleWorker = errors.New("worker credential replaced")

@@ -12,6 +12,7 @@ import (
 
 var clientEventTypes = []string{
 	"agent.activity",
+	"agent.ready",
 	"worker.connected",
 	"worker.ready",
 	"sandbox.provisioning",

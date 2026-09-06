@@ -303,6 +303,8 @@ func New(options Options) *Server {
 		router.With(server.authenticate).Get("/me/providers", server.listUserProviderConnections)
 		router.With(server.authenticate).Put("/me/providers/{agent}", server.putUserAgentConnection)
 		router.With(server.authenticate).Delete("/me/providers/{agent}", server.deleteUserAgentConnection)
+		router.With(server.authenticate).Put("/me/github-pat", server.putGitHubPAT)
+		router.With(server.authenticate).Delete("/me/github-pat", server.deleteGitHubPAT)
 		router.With(server.authenticate).Post("/share-links/redeem", server.redeemProjectShareLink)
 		router.With(server.authenticate).Get("/shared/projects", server.listSharedProjects)
 		if server.github != nil {

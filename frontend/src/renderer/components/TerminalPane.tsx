@@ -37,6 +37,7 @@ import { useRestoreSession } from "../hooks/useRestoreSession";
 import { useShellTerminals } from "../hooks/useShellTerminals";
 import { useCloudCp } from "../hooks/useCloudCp";
 import { createCloudTerminalMux } from "../lib/cloud-terminal-mux";
+import { subscribeSessionEventsBridged } from "../lib/cloud-cp/stream-bridge";
 import { XtermTerminal } from "./XtermTerminal";
 import { RestoreUnavailableDialog } from "./RestoreUnavailableDialog";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
@@ -330,12 +331,34 @@ export function TerminalCacheProvider({
 					wsBaseUrl: `${cloudCpRef.current.baseUrl.replace(/^http/i, "ws").replace(/\/+$/, "")}/api/cloud/v1`,
 					kind,
 					cursor,
-					mintTicket: async () => {
+					// #4960: hold the agent pane in "connecting" until the worker's
+					// agent.ready arrives (do not flash the temporary workspace shell).
+					// A workspace/shell terminal attaches to its own kind immediately
+					// and must never be upgraded to the agent terminal, so gate both
+					// the wait and the agent-ready subscription on the agent pane.
+					waitForAgentReady: kind === "agent",
+					mintTicket: async (ticketKind) => {
 						const response = await cloudCpRef.current.client.createTerminalTicket(orgId, sessionId, {
-							kind,
+							kind: ticketKind,
 						});
 						return response.ticket;
 					},
+					subscribeAgentReady:
+						kind === "agent"
+							? (onReady) => {
+									const controller = new AbortController();
+									void subscribeSessionEventsBridged({
+										baseUrl: cloudCpRef.current.baseUrl,
+										orgId,
+										sessionId,
+										signal: controller.signal,
+										onEvent: (event) => {
+											if (event.type === "agent.ready") onReady();
+										},
+									});
+									return () => controller.abort();
+								}
+							: undefined,
 				});
 			cloudMuxFactoriesRef.current.set(factoryKey, factory);
 			return factory;
@@ -938,6 +961,9 @@ function AttachedTerminal({
 	const shellTerminalHandleId = terminalTarget?.kind === "shell" ? terminalTarget.handleId : undefined;
 	const { attach, state, error, replaySettled, hasAttached, syncVisibleSize } = useTerminalSession(attachSession, {
 		coverInitialReplay: terminalTarget?.kind !== "reviewer",
+		// Cloud workers can acknowledge a terminal before the coding agent emits
+		// its first screen. Keep the loading surface visible through that gap.
+		waitForInitialOutput: Boolean(attachSession?.cloud),
 		createMux,
 		daemonReady,
 		inputDisabled,
@@ -1129,7 +1155,7 @@ function AttachedTerminal({
 						</div>
 					</div>
 				)}
-				{showReplayCover && <ReplayCover />}
+				{showReplayCover && <ReplayCover message={attachSession?.cloud ? t("terminal.connecting") : undefined} />}
 				{isCloudConnectError && <CloudConnectError onRetry={handleRetry} />}
 				{banner && (
 					<div className="absolute inset-x-3 top-2 rounded-md border border-border bg-surface/95 px-3 py-1.5 font-mono text-caption text-muted-foreground">
@@ -1176,16 +1202,18 @@ function CloudConnectError({ onRetry }: { onRetry: () => void }) {
 	);
 }
 
-function ReplayCover() {
+function ReplayCover({ message }: { message?: string }) {
 	return (
-		// Keep this cover silent: its only job is to hide the initial replay's
-		// intermediate paints. xterm remains live underneath, and pointer events
-		// pass through so selection and wheel input never wait on attachment.
+		// xterm remains live underneath. Cloud startup has no meaningful output
+		// until the agent TUI draws, so it gets one continuous Connecting surface;
+		// local replay stays deliberately silent to avoid covering settled output.
 		<div
-			aria-hidden="true"
-			className="bg-terminal-opaque pointer-events-none absolute inset-0"
+			aria-hidden={message ? undefined : "true"}
+			className="bg-terminal-opaque pointer-events-none absolute inset-0 grid place-items-center"
 			data-testid="terminal-replay-cover"
-		/>
+		>
+			{message ? <span className="font-mono text-sm text-terminal-dim">{message}</span> : null}
+		</div>
 	);
 }
 

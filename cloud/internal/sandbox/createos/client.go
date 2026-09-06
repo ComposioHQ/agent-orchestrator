@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"sort"
@@ -77,6 +78,7 @@ type Client struct {
 	// sandbox has actually gone away. A field rather than a constant so tests
 	// can drive the poll loop without sleeping.
 	deletePoll time.Duration
+	log        *slog.Logger
 }
 
 var (
@@ -94,6 +96,7 @@ type Config struct {
 	Region       string
 	SSHPubKeys   []string
 	HTTPClient   *http.Client
+	Logger       *slog.Logger
 }
 
 // New creates a CreateOS sandbox provider.
@@ -101,6 +104,10 @@ func New(config Config) *Client {
 	httpClient := config.HTTPClient
 	if httpClient == nil {
 		httpClient = &http.Client{Timeout: defaultTimeout}
+	}
+	logger := config.Logger
+	if logger == nil {
+		logger = slog.Default()
 	}
 	return &Client{
 		baseURL:      strings.TrimRight(strings.TrimSpace(config.BaseURL), "/"),
@@ -111,6 +118,7 @@ func New(config Config) *Client {
 		sshPubKeys:   append([]string(nil), config.SSHPubKeys...),
 		http:         httpClient,
 		deletePoll:   deletePollInterval,
+		log:          logger,
 	}
 }
 
@@ -459,9 +467,16 @@ func (c *Client) launchBakedWorker(
 	script.WriteString("echo AO_BAKED_OK")
 	result, err := c.execCapture(ctx, id, "bash", []string{"-c", script.String()})
 	if err != nil {
+		c.log.Warn("createos baked worker launch check failed; falling back to upload",
+			"provider_id", id, "error", err)
 		return false
 	}
-	return strings.Contains(result.Stdout, "AO_BAKED_OK")
+	if strings.Contains(result.Stdout, "AO_BAKED_OK") {
+		c.log.Info("createos baked worker launch hit", "provider_id", id)
+		return true
+	}
+	c.log.Info("createos baked worker launch miss; falling back to upload", "provider_id", id)
+	return false
 }
 
 // execCapture runs a command and returns its captured result, failing on a

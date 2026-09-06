@@ -420,10 +420,8 @@ func (s *Store) IssueTerminalTicket(
 			  ON worker.org_id = session.org_id
 			 AND worker.session_id = session.id
 			 AND worker.disconnected_at IS NULL
-			 AND worker.ready_at IS NOT NULL
 			WHERE session.org_id = $1 AND session.id = $2
-			  AND sandbox.desired_state = 'running'
-			  AND sandbox.observed_state = 'running'`,
+			  AND sandbox.desired_state = 'running'`,
 			orgID, sessionID,
 		).Scan(&epoch, &mode, &terminated, &deniedCommands)
 		if errors.Is(err, pgx.ErrNoRows) || terminated {

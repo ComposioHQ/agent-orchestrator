@@ -41,28 +41,41 @@ type Supervisor struct {
 	// authoritative whenever a stream is absent or unhealthy.
 	Streams StreamDialer
 
-	mu        sync.Mutex
-	terminals map[string]*terminalProcess
-
-	// agentOutputAt is the unix-nano time of the agent terminal's first output,
-	// 0 until it happens. Queued turns are held until the harness TUI has both
-	// painted something and had a short grace period to become interactive;
-	// injecting a prompt into a PTY that exists but has not drawn yet loses or
-	// garbles the message.
-	agentOutputAt atomic.Int64
+	mu                       sync.Mutex
+	terminals                map[string]*terminalProcess
+	holdAgentInput           bool
+	workspaceReady           bool
+	pendingAgentTerminalData [][]byte
 }
 
-// agentReadyGrace is how long after the agent terminal's first output queued
-// turns stay held. TUIs paint a banner before they accept input; two seconds
-// is far below sandbox provisioning latency and safely above TUI startup.
-const agentReadyGrace = 2 * time.Second
+// HoldAgentInputUntilWorkspaceReady permits the agent PTY to start while the
+// checkout runs, but preserves user input and durable turns until the checkout
+// has completed. Call this before Run.
+func (s *Supervisor) HoldAgentInputUntilWorkspaceReady() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.holdAgentInput = true
+	s.workspaceReady = false
+}
 
-// agentReadyForTurns reports whether the interactive agent can accept injected
-// input. Sessions without an agent terminal never become ready — their turns
-// are claimed and failed loudly in forwardTurn instead of queueing forever.
-func (s *Supervisor) agentReadyForTurns() bool {
-	first := s.agentOutputAt.Load()
-	return first != 0 && time.Since(time.Unix(0, first)) >= agentReadyGrace
+// MarkWorkspaceReady releases prompts collected while the agent was booting
+// against an empty workspace.
+func (s *Supervisor) MarkWorkspaceReady() {
+	s.mu.Lock()
+	s.workspaceReady = true
+	pending := s.pendingAgentTerminalData
+	s.pendingAgentTerminalData = nil
+	terminal := s.terminals[s.AgentTerminalID]
+	s.mu.Unlock()
+	if terminal == nil {
+		return
+	}
+	for _, data := range pending {
+		if _, err := terminal.pty.Write(data); err != nil {
+			s.Logger.Warn("flush queued agent terminal input", "error", err)
+			return
+		}
+	}
 }
 
 type terminalProcess struct {
@@ -147,12 +160,41 @@ func (s *Supervisor) Run(ctx context.Context) error {
 	}
 }
 
+// StartAgent adds the coding-agent PTY after the workspace transport is already
+// serving. This lets a browser attach to a usable workspace shell while a
+// repository checkout and agent credential setup continue in the background.
+func (s *Supervisor) StartAgent(ctx context.Context, command workerexec.Command, terminalID string) error {
+	if terminalID == "" {
+		return errors.New("agent terminal id is required")
+	}
+	s.mu.Lock()
+	if s.AgentTerminalID != "" {
+		s.mu.Unlock()
+		return errors.New("interactive agent terminal is already configured")
+	}
+	s.AgentCommand = command
+	s.mu.Unlock()
+	if err := s.openTerminal(ctx, worker.TerminalCommand{TerminalID: terminalID, Kind: "agent"}); err != nil {
+		s.mu.Lock()
+		s.AgentCommand = workerexec.Command{}
+		s.mu.Unlock()
+		return err
+	}
+	s.mu.Lock()
+	s.AgentTerminalID = terminalID
+	s.mu.Unlock()
+	return nil
+}
+
 func (s *Supervisor) forwardTurn(ctx context.Context) (bool, error) {
-	// Leave queued turns on the control plane until the agent TUI is ready to
-	// receive them; claiming earlier would type the prompt into a terminal that
-	// has not started accepting input. Terminal-less sessions skip the gate so
-	// their turns still fail loudly below rather than queueing forever.
-	if s.AgentTerminalID != "" && !s.agentReadyForTurns() {
+	// Do not claim a queued user turn until the agent PTY is actually live. The
+	// workspace transport starts first, so claiming here would otherwise mark
+	// the initial task failed while the coding agent is still booting.
+	s.mu.Lock()
+	agentTerminalID := s.AgentTerminalID
+	workspaceReady := !s.holdAgentInput || s.workspaceReady
+	s.mu.Unlock()
+	if agentTerminalID == "" || !workspaceReady {
 		return false, nil
 	}
 	turn, err := s.Control.ClaimTurn(ctx)
@@ -162,12 +204,10 @@ func (s *Supervisor) forwardTurn(ctx context.Context) (bool, error) {
 	if turn.CancelRequested {
 		return true, s.Control.CompleteTurn(ctx, turn.ID, turn.Attempt, true)
 	}
-	if s.AgentTerminalID == "" {
-		return true, s.Control.FailTurn(
-			ctx, turn.ID, turn.Attempt, "interactive agent terminal is unavailable",
-		)
-	}
-	if err := s.writeAgentPrompt(s.AgentTerminalID, worker.EncodeTerminalInput(turn.Prompt)); err != nil {
+	if err := s.writeTerminal(worker.TerminalCommand{
+		TerminalID: agentTerminalID,
+		Data:       []byte(turn.Prompt + "\r"),
+	}); err != nil {
 		if failErr := s.Control.FailTurn(
 			ctx, turn.ID, turn.Attempt, err.Error(),
 		); failErr != nil {
@@ -374,9 +414,6 @@ func (s *Supervisor) copyTerminalOutput(
 	for {
 		count, err := terminal.pty.Read(buffer)
 		if count > 0 {
-			if terminalID == s.AgentTerminalID {
-				s.agentOutputAt.CompareAndSwap(0, time.Now().UnixNano())
-			}
 			data := append([]byte(nil), buffer[:count]...)
 			if stream := terminal.stream.Load(); stream != nil && stream.sendOutput(data) {
 				// Persisted (and acked) by the control plane over the stream.
@@ -421,6 +458,11 @@ func (s *Supervisor) writeTerminal(input worker.TerminalCommand) error {
 		return errors.New("invalid terminal input request")
 	}
 	s.mu.Lock()
+	if s.holdAgentInput && !s.workspaceReady && input.TerminalID == s.AgentTerminalID {
+		s.pendingAgentTerminalData = append(s.pendingAgentTerminalData, append([]byte(nil), input.Data...))
+		s.mu.Unlock()
+		return nil
+	}
 	terminal := s.terminals[input.TerminalID]
 	s.mu.Unlock()
 	if terminal == nil {
