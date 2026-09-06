@@ -354,8 +354,6 @@ beforeEach(() => {
 	cloudSessionState.status = "unauthenticated";
 	cloudSessionState.signIn.mockReset();
 	cloudSessionState.signOut.mockReset().mockResolvedValue(undefined);
-	historyBackMock.mockReset();
-	historyForwardMock.mockReset();
 	useUiStore.setState({ isCommandPaletteOpen: false, newTaskRequest: null, settingsModal: null });
 	getMock.mockReset();
 	postMock.mockReset();
@@ -850,6 +848,41 @@ describe("Sidebar", () => {
 
 		expect(screen.getByLabelText("Open standalone task")).toBeInTheDocument();
 		expect(navigateMock).not.toHaveBeenCalled();
+	});
+
+	it("opens a pinned standalone session through the projectless route", async () => {
+		const standaloneSession: WorkspaceSession = {
+			...session,
+			id: "standalone-1",
+			title: "standalone pinned",
+			workspaceId: "",
+			workspaceName: "Standalone agents",
+			isPinned: true,
+			pinnedAt: "2026-09-06T00:00:00Z",
+		};
+		renderSidebar({
+			expandedProjectIds: [],
+			workspaces: [
+				{
+					id: STANDALONE_WORKSPACE_ID,
+					kind: STANDALONE_PROJECT_KIND,
+					name: "Standalone agents",
+					path: "",
+					sessions: [standaloneSession],
+				},
+			],
+		});
+
+		fireEvent.click(screen.getByRole("button", { name: "Open standalone pinned" }), { detail: 1 });
+
+		await waitFor(
+			() =>
+				expect(navigateMock).toHaveBeenCalledWith({
+					to: "/sessions/$sessionId",
+					params: { sessionId: "standalone-1" },
+				}),
+			{ timeout: 1_000 },
+		);
 	});
 
 	it("starts a standalone agent directly from the standalone group action", async () => {

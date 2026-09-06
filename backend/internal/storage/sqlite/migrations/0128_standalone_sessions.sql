@@ -39,18 +39,52 @@ SELECT
     (SELECT COUNT(*) FROM pragma_table_info('conversations') WHERE name = 'project_id' AND "notnull" = 0);
 DROP TABLE standalone_schema_guard;
 
--- Existing first-run Scratch sessions become genuine projectless sessions.
--- Their workspace paths remain unchanged so live/restorable work is preserved.
-UPDATE sessions SET project_id = NULL WHERE project_id = 'scratch';
-UPDATE change_log SET project_id = NULL WHERE project_id = 'scratch';
-UPDATE notifications SET project_id = NULL WHERE project_id = 'scratch';
+-- Only the built-in Scratch project has both this reserved id and kind. A
+-- user-registered repository may legitimately have the id "scratch" and must
+-- remain untouched. Preserve Scratch workers as standalone sessions, but end
+-- the legacy orchestrator: projectless orchestrators are not a supported state
+-- and startup reconciliation would otherwise relaunch it after migration.
+CREATE TEMP TABLE legacy_scratch_workers (
+    session_id TEXT PRIMARY KEY
+);
+INSERT INTO legacy_scratch_workers (session_id)
+SELECT sessions.id
+FROM sessions
+JOIN projects ON projects.id = sessions.project_id
+WHERE projects.id = 'scratch'
+  AND projects.kind = 'scratch'
+  AND sessions.kind = 'worker';
+
+UPDATE sessions
+SET is_terminated = TRUE,
+    activity_state = 'exited',
+    updated_at = datetime('now')
+WHERE project_id = 'scratch'
+  AND kind = 'orchestrator'
+  AND EXISTS (
+      SELECT 1 FROM projects
+      WHERE id = 'scratch' AND kind = 'scratch'
+  );
+
+UPDATE sessions
+SET project_id = NULL
+WHERE id IN (SELECT session_id FROM legacy_scratch_workers);
+UPDATE change_log
+SET project_id = NULL
+WHERE session_id IN (SELECT session_id FROM legacy_scratch_workers);
+UPDATE notifications
+SET project_id = NULL
+WHERE session_id IN (SELECT session_id FROM legacy_scratch_workers);
 UPDATE conversations
 SET project_id = NULL
-WHERE scope = 'session' AND project_id = 'scratch';
+WHERE scope = 'session'
+  AND session_id IN (SELECT session_id FROM legacy_scratch_workers);
 
 UPDATE projects
 SET archived_at = COALESCE(archived_at, datetime('now'))
-WHERE id = 'scratch';
+WHERE id = 'scratch' AND kind = 'scratch';
+
+DROP TABLE legacy_scratch_workers;
 
 PRAGMA foreign_key_check;
 -- +goose StatementEnd

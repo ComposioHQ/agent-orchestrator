@@ -397,9 +397,10 @@ export function useWorkspaceSession(sessionId: string) {
 			if (error) throw error;
 			const session = data?.session;
 			if (!session) return undefined;
-			const project =
-				localWorkspaces.data?.find((workspace) => workspace.id === session.projectId) ??
-				({ id: session.projectId, name: "" } satisfies Pick<WorkspaceSummary, "id" | "name">);
+			const project = session.projectId
+				? localWorkspaces.data?.find((workspace) => workspace.id === session.projectId) ??
+					({ id: session.projectId, name: "" } satisfies Pick<WorkspaceSummary, "id" | "name">)
+				: ({ id: "", name: "Standalone agents" } satisfies Pick<WorkspaceSummary, "id" | "name">);
 			return toWorkspaceSession(session, project);
 		},
 	});

@@ -40,6 +40,7 @@ import { aoBridge } from "../lib/bridge";
 import { handleModifierLinkClick } from "../lib/external-link-policy";
 import { recordProjectOpened } from "../lib/project-history";
 import { spawnOrchestrator } from "../lib/spawn-orchestrator";
+import { sessionNavigateTarget } from "../lib/navigate-to-session";
 import { cn } from "../lib/utils";
 import {
 	isLinuxPlatform,
@@ -284,7 +285,7 @@ function ShellLayout() {
 	// looking at the project, so the picker never shows a loading flash the
 	// first time they actually open the dialog.
 	useEffect(() => {
-		if (!scopedProjectId) return;
+		if (!scopedProjectId || scopedProjectId === STANDALONE_WORKSPACE_ID) return;
 		const projectQueryKey = ["project", scopedProjectId];
 		void queryClient
 			.prefetchQuery({
@@ -350,10 +351,7 @@ function ShellLayout() {
 					: (currentIndex + direction + sessions.length) % sessions.length;
 			const session = sessions[nextIndex];
 			if (!session || session.id === routeParams.sessionId) return;
-			void navigate({
-				to: "/projects/$projectId/sessions/$sessionId",
-				params: { projectId: scopedProjectId, sessionId: session.id },
-			});
+			void navigate(sessionNavigateTarget(scopedProjectId, session.id));
 		},
 		[navigate, routeParams.sessionId, scopedProjectId],
 	);

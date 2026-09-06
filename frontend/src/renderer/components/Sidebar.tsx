@@ -80,6 +80,7 @@ import { cloudSessionsQueryKey, workspaceQueryKey } from "../hooks/useWorkspaceQ
 import { usePinSession, useUnpinSession } from "../hooks/usePinSession";
 import { spawnCloudOrchestrator } from "../lib/cloud-orchestrator";
 import { spawnOrchestrator } from "../lib/spawn-orchestrator";
+import { sessionNavigateTarget } from "../lib/navigate-to-session";
 import { formatTimeCompact, formatTimeTerse } from "../lib/format-time";
 import { useTerminateSession } from "../hooks/useTerminateSession";
 import { useResizable } from "../hooks/useResizable";
@@ -394,14 +395,7 @@ function useSelection() {
 	);
 	const goSession = useCallback(
 		(projectId: string, sessionId: string) => {
-			if (projectId === STANDALONE_WORKSPACE_ID) {
-				void navigate({ to: "/sessions/$sessionId", params: { sessionId } });
-				return;
-			}
-			void navigate({
-				to: "/projects/$projectId/sessions/$sessionId",
-				params: { projectId, sessionId },
-			});
+			void navigate(sessionNavigateTarget(projectId, sessionId));
 		},
 		[navigate],
 	);
