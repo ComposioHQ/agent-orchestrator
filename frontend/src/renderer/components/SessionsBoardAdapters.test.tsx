@@ -1,6 +1,7 @@
 import { render } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import type { TFunction } from "i18next";
+import { SessionCardView, type BoardSessionPresentation } from "@aoagents/product-ui";
 import { formatEstimatedCost } from "../lib/format-cost";
 import { formatTokenCount } from "../lib/format-token-count";
 import type { SessionUsageSummary } from "../hooks/useSessionUsageSummaries";
@@ -83,5 +84,46 @@ describe("toUsagePresentation", () => {
 		expect(toUsagePresentation(makeUsage({ estimatedCost: null, processedTokens: null }), fakeT)).toBeUndefined();
 		expect(toUsagePresentation(makeUsage({ estimatedCost: null, processedTokens: 0 }), fakeT)).toBeUndefined();
 		expect(toUsagePresentation(undefined, fakeT)).toBeUndefined();
+	});
+
+	// Integration-level: mounts the real card component (SessionCardView, the
+	// same one the board renders) with a usage presentation built by the real
+	// toUsagePresentation, so nothing between this function and the DOM --
+	// SessionUsageMetricView, an ancestor className, a CSS regression -- can
+	// silently swallow the token text again without failing this test.
+	it("renders the token count in the actual card DOM, not just the presentation object", () => {
+		const usage = makeUsage({ estimatedCost, processedTokens: 42_300 });
+		const presentation = toUsagePresentation(usage, fakeT);
+		expect(presentation).toBeDefined();
+
+		const session: BoardSessionPresentation = {
+			id: "session-1",
+			kanbanColumn: "building",
+			provider: "codex",
+			status: "idle",
+			title: "portable task",
+			updatedAt: "2026-08-09T10:00:00Z",
+		};
+
+		const { container } = render(
+			<SessionCardView
+				externalLink={(props) => <a {...props} />}
+				labels={{
+					formatTime: () => "5m ago",
+					intakeIssue: (id) => `Issue ${id}`,
+					pr: {
+						short: "PR",
+						states: { closed: "closed", draft: "draft", merged: "merged", open: "open" },
+					},
+					updatedAt: (timestamp) => `Updated ${timestamp}`,
+				}}
+				renderAvatar={() => <span role="img" aria-label="codex">C</span>}
+				session={session}
+				usage={presentation}
+			/>,
+		);
+
+		const compactTokens = formatTokenCount(usage.processedTokens as number).replace(/ tok$/, "");
+		expect(container.textContent).toContain(compactTokens);
 	});
 });
