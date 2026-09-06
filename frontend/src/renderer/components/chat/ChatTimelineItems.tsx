@@ -785,13 +785,45 @@ function DeliveryNote({ state }: { state: DeliveryState }) {
  * would hide work the agent really did.
  */
 export function ActivityRow({ activity }: { activity: ConversationActivity }) {
-	if (activity.activityKind === "mcp_tool") return <McpToolRow activity={activity} />;
-	if (activity.activityKind === "auto_review") return <AutoReviewRow activity={activity} />;
-	if (activity.activityKind === "reasoning") return <ReasoningBlock activity={activity} />;
-	if (activity.activityKind === "error") return <ErrorActivityRow activity={activity} />;
-	if (activity.detail?.event === "model.rerouted") return <RerouteRow activity={activity} />;
-	if (activity.detail?.event === "auth.reauth_required") return <ReauthRow activity={activity} />;
-	return <GenericActivityRow activity={activity} />;
+	const reducedMotion = useReducedMotion();
+	const previousRevision = useRef(activity.revision);
+	const [settling, setSettling] = useState(true);
+	const toolActivity =
+		activity.activityKind === "command" ||
+		activity.activityKind === "file_change" ||
+		activity.activityKind === "mcp_tool" ||
+		activity.activityKind === "auto_review";
+
+	useEffect(() => {
+		if (previousRevision.current === activity.revision) return;
+		previousRevision.current = activity.revision;
+		setSettling(true);
+	}, [activity.revision]);
+
+	let content: ReactNode;
+	if (activity.activityKind === "mcp_tool") content = <McpToolRow activity={activity} />;
+	else if (activity.activityKind === "auto_review") content = <AutoReviewRow activity={activity} />;
+	else if (activity.activityKind === "reasoning") content = <ReasoningBlock activity={activity} />;
+	else if (activity.activityKind === "error") content = <ErrorActivityRow activity={activity} />;
+	else if (activity.detail?.event === "model.rerouted") content = <RerouteRow activity={activity} />;
+	else if (activity.detail?.event === "auth.reauth_required") content = <ReauthRow activity={activity} />;
+	else content = <GenericActivityRow activity={activity} />;
+
+	if (!toolActivity) return content;
+	return (
+		<motion.div
+			initial={reducedMotion ? false : { opacity: 0, filter: "blur(2px)" }}
+			animate={
+				reducedMotion || !settling
+					? { opacity: 1, filter: "blur(0px)" }
+					: { opacity: 0.72, filter: "blur(2px)" }
+			}
+			transition={{ duration: reducedMotion ? 0 : 0.2, ease: [0.22, 1, 0.36, 1] }}
+			onAnimationComplete={() => setSettling(false)}
+		>
+			{content}
+		</motion.div>
+	);
 }
 
 /**
