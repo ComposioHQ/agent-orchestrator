@@ -53,6 +53,13 @@ export type BoardSessionPresentation = {
 	 * send one falls back to the translated {@link status} label.
 	 */
 	displayStatus?: string;
+	/**
+	 * Daemon-confirmed termination fact. `status` can already read "merged"
+	 * while the session is still live (the SCM merged before the session
+	 * exited), so the finished-card PR progress footer requires this in
+	 * addition to `status` before it renders.
+	 */
+	isTerminated?: boolean;
 	provider: string;
 	status: SessionStatus;
 	statusPresentation?: BoardSessionStatusPresentation;
@@ -247,10 +254,15 @@ export function SessionCardView({
 	const renderedStatusLabel =
 		statusPresentation?.label ??
 		(session.displayStatus ? getDisplayStatusLabel(session.displayStatus, translate) : badge.label);
-	// Keep the daemon-derived lifecycle label intact. This line only summarizes the PRs already rendered on the card.
-	// It only appears for sessions already marked merged or terminated by the daemon.
+	// Additive summary footer, not a replacement for renderedStatusLabel: it
+	// only appears once the daemon confirms the session is actually finished
+	// ("terminated", or "merged" with isTerminated true -- a live session can
+	// already read "merged" before it exits and gain more PRs).
+	const isFinishedForPullRequestProgress =
+		session.status === "terminated" ||
+		(session.status === "merged" && session.isTerminated === true);
 	const pullRequestProgressLabel =
-		prs.length > 0 && (session.status === "terminated" || session.status === "merged")
+		prs.length > 0 && isFinishedForPullRequestProgress
 			? labels.pr.progress?.(countBoardPullRequests(prs))
 			: undefined;
 	const showStatusLoader =

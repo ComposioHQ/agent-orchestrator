@@ -468,10 +468,21 @@ describe("SessionsBoardView", () => {
 		expect(mixedProgress).toHaveClass("col-span-2", "truncate");
 
 		rerender(
-			card("merged", [
-				{ number: 10, state: "merged", url: "https://example.com/pull/10" },
-				{ number: 11, state: "merged", url: "https://example.com/pull/11" },
-			]),
+			<SessionCardView
+				externalLink={ExternalLink}
+				labels={{
+					formatTime: () => "5m ago",
+					intakeIssue: (id) => `Issue ${id}`,
+					pr: progressLabels,
+					updatedAt: (timestamp) => `Updated ${timestamp}`,
+				}}
+				prs={[
+					{ number: 10, state: "merged", url: "https://example.com/pull/10" },
+					{ number: 11, state: "merged", url: "https://example.com/pull/11" },
+				]}
+				renderAvatar={(provider) => <span role="img" aria-label={provider}>C</span>}
+				session={{ ...baseSession, status: "merged", isTerminated: true }}
+			/>,
 		);
 		expect(screen.getByText("Merged")).toBeInTheDocument();
 		expect(screen.getByTestId("session-pr-progress")).toHaveTextContent("2 of 2 PRs merged");
@@ -490,6 +501,27 @@ describe("SessionsBoardView", () => {
 		expect(screen.queryByTestId("session-pr-progress")).not.toBeInTheDocument();
 
 		rerender(card("terminated", []));
+		expect(screen.queryByTestId("session-pr-progress")).not.toBeInTheDocument();
+	});
+
+	it("hides PR progress for a live merged session that has not actually terminated", () => {
+		render(
+			<SessionCardView
+				externalLink={ExternalLink}
+				labels={{
+					formatTime: () => "5m ago",
+					intakeIssue: (id) => `Issue ${id}`,
+					pr: progressLabels,
+					updatedAt: (timestamp) => `Updated ${timestamp}`,
+				}}
+				prs={[
+					{ number: 10, state: "merged", url: "https://example.com/pull/10" },
+					{ number: 11, state: "open", url: "https://example.com/pull/11" },
+				]}
+				renderAvatar={(provider) => <span role="img" aria-label={provider}>C</span>}
+				session={{ ...baseSession, status: "merged", isTerminated: false }}
+			/>,
+		);
 		expect(screen.queryByTestId("session-pr-progress")).not.toBeInTheDocument();
 	});
 

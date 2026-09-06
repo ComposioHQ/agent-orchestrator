@@ -838,6 +838,27 @@ describe("SessionsBoard", () => {
 		expect(screen.queryByRole("group", { name: "Archive layout" })).not.toBeInTheDocument();
 	});
 
+	it("hides PR progress for a live merged session that has not actually terminated", () => {
+		const liveMergedSession = terminatedSession({
+			id: "s-live-merged",
+			title: "live merged worker",
+			status: "merged",
+			isTerminated: false,
+			kanbanColumn: "ready",
+		});
+		workspaceQueryMock.mockReturnValue({
+			data: [workspaceWithSessions([liveMergedSession])],
+			isError: false,
+			isSuccess: true,
+		});
+
+		renderBoard("p1");
+
+		const card = screen.getByText("live merged worker").closest<HTMLElement>("[data-testid='board-session-card']");
+		expect(card).not.toBeNull();
+		expect(within(card!).queryByTestId("session-pr-progress")).not.toBeInTheDocument();
+	});
+
 	it("keeps archive cards mounted after collapse so reopen does not remount them", async () => {
 		workspaceQueryMock.mockReturnValue({
 			data: [workspaceWithSessions([terminatedSession()])],
