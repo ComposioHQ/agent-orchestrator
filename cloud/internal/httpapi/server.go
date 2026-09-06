@@ -73,10 +73,12 @@ type Store interface {
 	AppendWorkerTurnOutput(ctx context.Context, orgID, sessionID, workerID, turnID string, epoch int64, attempt int, stream, text string) error
 	FinishWorkerTurn(ctx context.Context, orgID, sessionID, workerID, turnID string, epoch int64, attempt int, outcome, errorMessage string) (bool, error)
 	WorkerAgentCredential(ctx context.Context, orgID, sessionID, workerID string, epoch int64) (domain.WorkerCredential, error)
-	ListOrchestratorChildren(context.Context, string, string, *domain.Cursor, int) ([]domain.Session, bool, error)
+	ListOrchestratorChildren(context.Context, string, string, bool, *domain.Cursor, int) ([]domain.Session, bool, error)
 	CreateOrchestratorChild(context.Context, string, string, string, int, domain.CreateSession) (domain.Session, error)
 	SendOrchestratorChildMessage(context.Context, string, string, string, string, string) (domain.ClientEvent, error)
 	DeleteOrchestratorChild(context.Context, string, string, string) error
+	ReportToOrchestrator(context.Context, string, string, string, string) (domain.ClientEvent, error)
+	ListSessionChildren(context.Context, domain.Principal, string, string, *domain.Cursor, int) ([]domain.Session, bool, error)
 	CreateWorkspaceRequest(context.Context, domain.Principal, string, string, string, json.RawMessage, time.Duration) (domain.WorkerRequest, error)
 	GetWorkspaceRequest(context.Context, domain.Principal, string, string, string) (domain.WorkerRequest, error)
 	CancelWorkspaceRequest(context.Context, domain.Principal, string, string, string) error
@@ -97,6 +99,7 @@ type Store interface {
 	ListPullRequestsBySession(context.Context, domain.Principal, string, string) ([]domain.PullRequest, error)
 	ListReviewRunsBySession(context.Context, domain.Principal, string, string) ([]domain.ReviewRunPullRequest, error)
 	PRFactsBySession(ctx context.Context, orgID string, sessionIDs []string) (map[string][]contract.PRFacts, error)
+	PullRequestsBySessions(ctx context.Context, orgID string, sessionIDs []string) (map[string][]domain.PullRequest, error)
 	CreateProjectShareLink(context.Context, domain.Principal, string, string, domain.CreateShareLink) (domain.ShareLink, string, error)
 	ListProjectShareLinks(context.Context, domain.Principal, string, string) ([]domain.ShareLink, error)
 	ListProjectShareGrants(context.Context, domain.Principal, string, string) ([]domain.SharedProject, error)
@@ -330,6 +333,7 @@ func New(options Options) *Server {
 			router.Post("/worker/children", server.createWorkerChild)
 			router.Post("/worker/children/{sessionId}/messages", server.sendWorkerChildMessage)
 			router.Delete("/worker/children/{sessionId}", server.deleteWorkerChild)
+			router.Post("/worker/parent/messages", server.reportToParent)
 			router.Post("/worker/transport/claim", server.workerClaimTransport)
 			router.Post("/worker/transport/{requestId}/complete", server.workerCompleteTransport)
 			router.Post("/worker/transport/{requestId}/fail", server.workerFailTransport)
@@ -370,6 +374,7 @@ func New(options Options) *Server {
 			router.Post("/sessions", server.createSession)
 			router.Post("/sessions/wake", server.wakePausedSessions)
 			router.Get("/sessions/{sessionId}", server.getSession)
+			router.Get("/sessions/{sessionId}/children", server.listSessionChildren)
 			router.Delete("/sessions/{sessionId}", server.deleteSession)
 			router.Post("/sessions/{sessionId}/messages", server.sendMessage)
 			router.Post("/sessions/{sessionId}/turns/{turnId}/cancel", server.cancelTurn)

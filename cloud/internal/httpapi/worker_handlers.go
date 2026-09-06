@@ -86,12 +86,7 @@ func (s *Server) workerBootstrap(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	scopes := ticket.Scopes
-	if launch.Kind != "orchestrator" {
-		scopes = slices.DeleteFunc(slices.Clone(scopes), func(scope string) bool {
-			return scope == "worker:orchestrate"
-		})
-	}
+	scopes := issuedWorkerScopes(ticket.Scopes, launch)
 	token, err := s.workerTokens.Issue(worker.Claims{
 		OrgID:     ticket.OrgID,
 		SessionID: ticket.SessionID,
@@ -119,20 +114,41 @@ func (s *Server) workerBootstrap(w http.ResponseWriter, r *http.Request) {
 		ExpiresIn:   int(s.workerTokenTTL().Seconds()),
 		SessionID:   ticket.SessionID,
 		Launch: worker.LaunchContext{
-			SessionID:      launch.SessionID,
-			ProjectID:      launch.ProjectID,
-			Kind:           launch.Kind,
-			Harness:        launch.Harness,
-			DisplayName:    launch.DisplayName,
-			Branch:         launch.Branch,
-			Prompt:         launch.Prompt,
-			AgentSessionID: launch.AgentSessionID,
-			Mode:           launch.Mode,
-			DeniedCommands: launch.DeniedCommands,
-			RepositoryURL:  launch.RepositoryURL,
-			DefaultBranch:  launch.DefaultBranch,
+			SessionID:       launch.SessionID,
+			ProjectID:       launch.ProjectID,
+			Kind:            launch.Kind,
+			Harness:         launch.Harness,
+			DisplayName:     launch.DisplayName,
+			Branch:          launch.Branch,
+			Prompt:          launch.Prompt,
+			AgentSessionID:  launch.AgentSessionID,
+			ParentSessionID: launch.ParentSessionID,
+			Mode:            launch.Mode,
+			DeniedCommands:  launch.DeniedCommands,
+			RepositoryURL:   launch.RepositoryURL,
+			DefaultBranch:   launch.DefaultBranch,
 		},
 	})
+}
+
+// issuedWorkerScopes narrows the bootstrap ticket's full scope set to what the
+// session's durable row entitles it to: worker:orchestrate only for
+// orchestrator sessions, worker:report only for sessions an orchestrator
+// spawned. Heartbeat renewal re-issues the presented claims, so a strip here
+// is permanent for the worker's lifetime.
+func issuedWorkerScopes(ticketScopes []string, launch domain.WorkerLaunch) []string {
+	scopes := slices.Clone(ticketScopes)
+	if launch.Kind != "orchestrator" {
+		scopes = slices.DeleteFunc(scopes, func(scope string) bool {
+			return scope == "worker:orchestrate"
+		})
+	}
+	if launch.ParentSessionID == "" {
+		scopes = slices.DeleteFunc(scopes, func(scope string) bool {
+			return scope == "worker:report"
+		})
+	}
+	return scopes
 }
 
 type workerContextKey struct{}

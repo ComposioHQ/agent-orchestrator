@@ -31,6 +31,7 @@ const sandboxColumns = `sandbox.session_id, sandbox.org_id, sandbox.provider,
 	sandbox.desired_state, sandbox.observed_state,
 	sandbox.resource_profile, sandbox.bootstrap_context,
 	sandbox.worker_last_seen_at, sandbox.startup_started_at,
+	sandbox.startup_attempts,
 	sandbox.deletion_requested_at,
 	sandbox.last_error, sandbox.updated_at`
 
@@ -693,6 +694,7 @@ func (s *Store) WorkerLaunchSpec(
 			`SELECT session.id, session.project_id, session.kind, session.harness,
 				session.display_name, session.branch, session.prompt,
 				session.agent_session_id, session.mode, session.denied_commands,
+				COALESCE(session.parent_session_id::text, ''),
 				project.repository_url, project.default_branch
 			FROM ao_sessions session
 			JOIN ao_projects project ON project.id = session.project_id
@@ -710,6 +712,7 @@ func (s *Store) WorkerLaunchSpec(
 			&launch.AgentSessionID,
 			&launch.Mode,
 			&launch.DeniedCommands,
+			&launch.ParentSessionID,
 			&launch.RepositoryURL,
 			&launch.DefaultBranch,
 		)
@@ -812,6 +815,7 @@ func (s *Store) MarkWorkerSeen(
 			`UPDATE ao_sandboxes
 			SET worker_last_seen_at = now(),
 				startup_started_at = NULL,
+				startup_attempts = 0,
 				observed_state = CASE
 					WHEN observed_state IN ('requested', 'provisioning', 'restoring', 'bootstrapping', 'disconnected')
 						THEN 'running'
@@ -1000,6 +1004,34 @@ func encodeCapabilities(capabilities []string) ([]byte, error) {
 	return encoded, nil
 }
 
+// RecordSandboxStartupRepair opens a fresh startup window for a worker the
+// reconciler is about to reinstall and counts the attempt. Resetting
+// startup_started_at is what keeps the next reconcile ticks from re-triggering
+// the repair before the new worker had any chance to check in; the returned
+// attempt count lets the caller stop repairing past a cap.
+func (s *Store) RecordSandboxStartupRepair(
+	ctx context.Context,
+	owner, orgID, sessionID string,
+) (int, error) {
+	var attempts int
+	err := s.withOrg(ctx, orgID, func(tx pgx.Tx) error {
+		return tx.QueryRow(
+			ctx,
+			`UPDATE ao_sandboxes
+			SET startup_attempts = startup_attempts + 1,
+				startup_started_at = now(),
+				updated_at = now()
+			WHERE session_id = $1 AND org_id = $2 AND reconcile_lease_owner = $3
+			RETURNING startup_attempts`,
+			sessionID, orgID, owner,
+		).Scan(&attempts)
+	})
+	if err != nil {
+		return 0, fmt.Errorf("record sandbox startup repair: %w", err)
+	}
+	return attempts, nil
+}
+
 func scanSandbox(row rowScanner) (domain.Sandbox, error) {
 	var record domain.Sandbox
 	var resourceProfile, bootstrapContext []byte
@@ -1015,6 +1047,7 @@ func scanSandbox(row rowScanner) (domain.Sandbox, error) {
 		&bootstrapContext,
 		&record.WorkerLastSeenAt,
 		&record.StartupStartedAt,
+		&record.StartupAttempts,
 		&record.DeletionRequestedAt,
 		&record.LastError,
 		&record.UpdatedAt,

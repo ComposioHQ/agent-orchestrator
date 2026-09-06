@@ -29,6 +29,7 @@ type Store interface {
 	IssueAccessTicket(ctx context.Context, orgID, sessionID, purpose string, scopes []string, ttl time.Duration) (string, error)
 	AppendSessionEvent(ctx context.Context, orgID, sessionID, eventType string, payload json.RawMessage) (domain.ClientEvent, error)
 	MarkSandboxDeletionRequested(ctx context.Context, owner, orgID, sessionID string) error
+	RecordSandboxStartupRepair(ctx context.Context, owner, orgID, sessionID string) (int, error)
 	CompleteSandboxDeletion(ctx context.Context, owner, orgID, sessionID string) error
 	DisconnectSessionWorkers(ctx context.Context, orgID, sessionID string) error
 }
@@ -106,9 +107,14 @@ type Options struct {
 // Reconciler defaults, tuned for a decentralized provider whose provisioning
 // latency is variable by design.
 const (
-	DefaultInterval                = 2 * time.Second
-	DefaultStartupTimeout          = 180 * time.Second
-	DefaultTerminalStartupTimeout  = 10 * time.Minute
+	DefaultInterval               = 2 * time.Second
+	DefaultStartupTimeout         = 180 * time.Second
+	DefaultTerminalStartupTimeout = 10 * time.Minute
+	// maxStartupRepairs bounds how many times a never-checked-in worker is
+	// reinstalled, each with a fresh startup window. Past it the sandbox is
+	// parked (terminate): compute stops, billing stops, and the session shows
+	// the startup-failure message instead of looping forever.
+	maxStartupRepairs              = 3
 	DefaultHeartbeatTimeout        = time.Minute
 	DefaultDeletionDeadline        = 15 * time.Minute
 	DefaultBatchSize               = 20
@@ -490,9 +496,14 @@ func (r *Reconciler) reconcileSandbox(ctx context.Context, record domain.Sandbox
 	// auto-pause timer and billing forever. This is deliberately gated on
 	// "never checked in" so a once-healthy worker that goes silent is still
 	// repaired normally.
+	// Two independent bounds stop the never-checked-in repair loop: the repair
+	// attempt cap (each repair grants a full fresh startup window, so wall
+	// clock alone no longer converges) and the original wall-clock ceiling as
+	// a backstop for a window that never advances at all.
 	if record.DesiredState == domain.SandboxDesiredRunning &&
 		record.WorkerLastSeenAt == nil &&
-		r.terminalStartupDeadlineElapsed(record) {
+		(record.StartupAttempts >= maxStartupRepairs ||
+			r.terminalStartupDeadlineElapsed(record)) {
 		return r.terminate(ctx, record, environment, provider)
 	}
 
@@ -734,11 +745,25 @@ func (r *Reconciler) superviseRunning(
 			if err != nil {
 				return r.fail(ctx, record, err)
 			}
+			attempts := record.StartupAttempts
+			if startupExpired {
+				// A reinstall kills whatever worker is mid-boot, so the fresh
+				// install must get a full startup window of its own; without the
+				// reset every subsequent tick saw an expired window and killed
+				// the replacement before it could possibly check in.
+				attempts, err = r.store.RecordSandboxStartupRepair(
+					ctx, r.owner, record.OrgID, record.SessionID,
+				)
+				if err != nil {
+					return r.fail(ctx, record, err)
+				}
+			}
 			r.log.Info("reinstalling worker in live sandbox",
 				"session_id", record.SessionID,
 				"provider", record.Provider,
 				"provider_id", environment.ID,
 				"reason", repairReason(record, startupExpired, heartbeatExpired),
+				"startup_attempts", attempts,
 			)
 			if err := bootstrapper.BootstrapWorker(
 				ctx, environment.ID, r.workerBootstrap(record, spec, false),
@@ -1056,6 +1081,7 @@ func (r *Reconciler) workerSpec(ctx context.Context, record domain.Sandbox) (san
 			"worker:credential:read",
 			"worker:git",
 			"worker:orchestrate",
+			"worker:report",
 			"worker:transport",
 		},
 		bootstrapTicketTTL,

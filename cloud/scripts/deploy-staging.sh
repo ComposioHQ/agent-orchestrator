@@ -19,7 +19,7 @@ RELEASE="${1:-$HEAD_SHA}"
 IMAGE_TAG="${RELEASE//+/-}-linux-amd64"
 
 # CVE allowlist shared with promote-production.sh. These CRITICAL/HIGH findings
-# are unpatched 2026 CVEs in base OS packages (perl, libssh2, expat) that git
+# are unpatched 2026 CVEs in base OS packages (perl, libssh2, expat, openssl, util-linux) that git
 # pulls into the worker image; no fix exists in Debian 12 or 13 yet. The worker
 # runs inside an ephemeral, single-tenant, isolated provider workspace that
 # already executes untrusted agent code. Keep this list in sync with production

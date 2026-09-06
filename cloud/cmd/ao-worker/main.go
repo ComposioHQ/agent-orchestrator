@@ -29,6 +29,7 @@ import (
 
 	"github.com/coder/websocket"
 
+	"github.com/aoagents/agent-orchestrator/cloud/internal/skillassets"
 	"github.com/aoagents/agent-orchestrator/cloud/internal/worker"
 	"github.com/aoagents/agent-orchestrator/cloud/internal/workerexec"
 	"github.com/aoagents/agent-orchestrator/cloud/internal/workertransport"
@@ -93,6 +94,11 @@ func run(logger *slog.Logger) error {
 	if err := os.MkdirAll(dataDir, 0o700); err != nil {
 		return fmt.Errorf("create worker data directory: %w", err)
 	}
+	// The system prompt points the agent at this path; the skill enhances the
+	// prompts and is not load-bearing, so a failed install only warns.
+	if err := skillassets.Install(dataDir); err != nil {
+		logger.Warn("install using-ao skill assets", "error", err)
+	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -124,6 +130,21 @@ func run(logger *slog.Logger) error {
 		"harness", bootstrap.Launch.Harness,
 		"repository_url", bootstrap.Launch.RepositoryURL,
 	)
+
+	// Check in immediately and keep heartbeating from here on: the repository
+	// checkout below can legitimately take minutes (large repository, slow
+	// host), and the control plane treats a bootstrapped-but-never-heartbeating
+	// worker as failed to start — repairing it with a reinstall that would kill
+	// a perfectly healthy clone mid-flight.
+	runCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	if renewed, err := client.heartbeat(ctx); err != nil {
+		logger.Warn("first heartbeat failed", "error", err)
+	} else if err := client.setToken(renewed); err != nil {
+		return err
+	}
+	results := make(chan error, 5)
+	go func() { results <- client.heartbeatLoop(runCtx, logger) }()
 
 	if worker.IsScratchRepositoryURL(bootstrap.Launch.RepositoryURL) {
 		if err := worker.PrepareScratchWorkspace(
@@ -186,14 +207,6 @@ func run(logger *slog.Logger) error {
 			return fmt.Errorf("activate worker tooling: %w", err)
 		}
 	}
-	// Heartbeat before waiting out the first interval. Bootstrap registration is
-	// not a check-in, so a repaired worker can otherwise be replaced again
-	// before the control plane ever observes it.
-	if renewed, err := client.heartbeat(ctx); err != nil {
-		logger.Warn("first heartbeat failed", "error", err)
-	} else if err := client.setToken(renewed); err != nil {
-		return err
-	}
 	var agentCommand workerexec.Command
 	agentTerminalID := ""
 	pullRequestSocketPath := filepath.Join(dataDir, "ao-pull-request.sock")
@@ -237,8 +250,6 @@ func run(logger *slog.Logger) error {
 		agentTerminalID = agentTerminal.TerminalID
 	}
 
-	runCtx, cancel := context.WithCancel(ctx)
-	defer cancel()
 	started := make(chan error, 1)
 	transportSupervisor := workertransport.Supervisor{
 		Control: client, Workspace: workspace, Logger: logger,
@@ -248,8 +259,6 @@ func run(logger *slog.Logger) error {
 	if os.Getenv("AO_CLOUD_TERMINAL_STREAM") == "1" {
 		transportSupervisor.Streams = client
 	}
-	results := make(chan error, 5)
-	go func() { results <- client.heartbeatLoop(runCtx, logger) }()
 	go func() { results <- transportSupervisor.Run(runCtx) }()
 	go func() {
 		results <- client.checkoutRenewalLoop(runCtx, logger, workspace, bootstrap.Launch.RepositoryURL)

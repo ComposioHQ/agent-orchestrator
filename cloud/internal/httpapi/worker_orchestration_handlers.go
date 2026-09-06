@@ -42,25 +42,20 @@ func (s *Server) listWorkerChildren(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, http.StatusBadRequest, "invalid_cursor", "The pagination cursor is invalid.")
 		return
 	}
+	// Terminated children are noise for day-to-day orchestration, so the
+	// default view hides them; `ao list --all` opts back in for history.
+	includeTerminated := r.URL.Query().Get("includeTerminated") == "true"
 	children, hasMore, err := s.store.ListOrchestratorChildren(
-		r.Context(), claims.OrgID, claims.SessionID, cursor, limit,
+		r.Context(), claims.OrgID, claims.SessionID, includeTerminated, cursor, limit,
 	)
 	if err != nil {
 		s.writeStoreError(w, r, err)
 		return
 	}
-	childIDs := make([]string, len(children))
-	for i, child := range children {
-		childIDs[i] = child.ID
-	}
-	prFacts, err := s.store.PRFactsBySession(r.Context(), claims.OrgID, childIDs)
+	items, err := s.childItems(r, claims.OrgID, children)
 	if err != nil {
 		s.writeStoreError(w, r, err)
 		return
-	}
-	items := make([]sessionResponse, 0, len(children))
-	for _, child := range children {
-		items = append(items, toSessionResponse(child, prFacts[child.ID]))
 	}
 	page := pageInfo{HasMore: hasMore}
 	if hasMore && len(children) > 0 {
@@ -68,6 +63,32 @@ func (s *Server) listWorkerChildren(w http.ResponseWriter, r *http.Request) {
 		page.NextCursor = encodeCursor(last.UpdatedAt, last.ID)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"items": items, "page": page})
+}
+
+// childItems renders child sessions with their PR facts (for status
+// derivation) and full PR rows (for the prs[] payload) in two batch reads.
+func (s *Server) childItems(
+	r *http.Request,
+	orgID string,
+	children []domain.Session,
+) ([]sessionChildResponse, error) {
+	childIDs := make([]string, len(children))
+	for i, child := range children {
+		childIDs[i] = child.ID
+	}
+	prFacts, err := s.store.PRFactsBySession(r.Context(), orgID, childIDs)
+	if err != nil {
+		return nil, err
+	}
+	pullRequests, err := s.store.PullRequestsBySessions(r.Context(), orgID, childIDs)
+	if err != nil {
+		return nil, err
+	}
+	items := make([]sessionChildResponse, 0, len(children))
+	for _, child := range children {
+		items = append(items, toSessionChildResponse(child, prFacts[child.ID], pullRequests[child.ID]))
+	}
+	return items, nil
 }
 
 func (s *Server) createWorkerChild(w http.ResponseWriter, r *http.Request) {
@@ -237,6 +258,40 @@ func (s *Server) deleteWorkerChild(w http.ResponseWriter, r *http.Request) {
 			"id": childID, "desiredState": domain.SandboxDesiredDeleted,
 		},
 	})
+}
+
+// reportToParent delivers a child worker's message into the conversation of
+// the orchestrator that spawned it. The worker:report scope is issued only to
+// sessions with a parent, and the store re-verifies the parent link, so a
+// worker can never message anyone but its own orchestrator.
+func (s *Server) reportToParent(w http.ResponseWriter, r *http.Request) {
+	claims := workerFrom(r)
+	if !worker.HasScope(claims, "worker:report") {
+		writeError(w, r, http.StatusForbidden, "SCOPE_REQUIRED", "The worker:report scope is required.")
+		return
+	}
+	key, err := idempotencyKey(r)
+	if err != nil {
+		writeError(w, r, http.StatusBadRequest, "invalid_request", err.Error())
+		return
+	}
+	var request sendMessageRequest
+	if err := decodeJSON(w, r, &request); err != nil {
+		writeError(w, r, http.StatusBadRequest, "invalid_request", "The request body is invalid.")
+		return
+	}
+	if strings.TrimSpace(request.Text) == "" || len(request.Text) > 65536 {
+		writeError(w, r, http.StatusUnprocessableEntity, "validation_error", "Message text must be between 1 and 65536 bytes.")
+		return
+	}
+	event, err := s.store.ReportToOrchestrator(
+		r.Context(), claims.OrgID, claims.SessionID, key, request.Text,
+	)
+	if err != nil {
+		s.writeStoreError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusAccepted, map[string]any{"event": toClientEventResponse(event)})
 }
 
 func requireOrchestratorScope(w http.ResponseWriter, r *http.Request) (worker.Claims, bool) {

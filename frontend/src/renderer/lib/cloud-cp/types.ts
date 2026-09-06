@@ -211,6 +211,31 @@ export interface CloudCpSessionListResponse {
 	page: CloudCpPageInfo;
 }
 
+/** One pull request on a children listing (GET .../sessions/{id}/children). */
+export interface CloudCpSessionPullRequest {
+	url: string;
+	number: number;
+	state: "draft" | "open" | "merged" | "closed";
+	ci: string;
+	review: string;
+	mergeability: string;
+	/** Always false today: the control plane does not track unresolved comments yet. */
+	reviewComments: boolean;
+	sourceBranch?: string;
+	targetBranch?: string;
+	updatedAt: string;
+}
+
+/** A child session as listed under its orchestrator, with its pull requests. */
+export interface CloudCpSessionChild extends CloudCpSession {
+	prs: CloudCpSessionPullRequest[];
+}
+
+export interface CloudCpSessionChildrenResponse {
+	items: CloudCpSessionChild[];
+	page: CloudCpPageInfo;
+}
+
 export interface CloudCpListSessionsQuery extends CloudCpListQuery {
 	/** Restrict the listing to one project. */
 	projectId?: string;

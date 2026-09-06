@@ -78,6 +78,62 @@ type pageInfo struct {
 	NextCursor string `json:"nextCursor,omitempty"`
 }
 
+// sessionPRFactsResponse is one pull request as rendered on a session's
+// children listing: enough for a human row (number, url, lifecycle) and for an
+// orchestrator to route CI/review feedback without a second lookup.
+type sessionPRFactsResponse struct {
+	URL          string `json:"url"`
+	Number       int    `json:"number"`
+	State        string `json:"state"`
+	CI           string `json:"ci"`
+	Review       string `json:"review"`
+	Mergeability string `json:"mergeability"`
+	// The control plane does not track unresolved review comments yet; the
+	// field exists so the renderer's shared PullRequestFacts shape maps 1:1.
+	ReviewComments bool      `json:"reviewComments"`
+	SourceBranch   string    `json:"sourceBranch,omitempty"`
+	TargetBranch   string    `json:"targetBranch,omitempty"`
+	UpdatedAt      time.Time `json:"updatedAt"`
+}
+
+// sessionChildResponse is the single wire shape for a child session on both
+// the worker-facing /worker/children listing and the user-facing
+// /orgs/{orgId}/sessions/{sessionId}/children listing. Keep them identical so
+// `ao list --json` and the app's Workers view can never drift apart.
+type sessionChildResponse struct {
+	sessionResponse
+	PRs []sessionPRFactsResponse `json:"prs"`
+}
+
+func toSessionChildResponse(
+	session domain.Session,
+	facts []contract.PRFacts,
+	prs []domain.PullRequest,
+) sessionChildResponse {
+	rendered := make([]sessionPRFactsResponse, 0, len(prs))
+	for _, pr := range prs {
+		state := string(pr.State)
+		if pr.Draft && pr.State == contract.PRStateOpen {
+			state = "draft"
+		}
+		rendered = append(rendered, sessionPRFactsResponse{
+			URL:          pr.URL,
+			Number:       pr.Number,
+			State:        state,
+			CI:           string(pr.CIState),
+			Review:       string(pr.ReviewState),
+			Mergeability: string(pr.Mergeability),
+			SourceBranch: pr.SourceBranch,
+			TargetBranch: pr.TargetBranch,
+			UpdatedAt:    pr.UpdatedAt,
+		})
+	}
+	return sessionChildResponse{
+		sessionResponse: toSessionResponse(session, facts),
+		PRs:             rendered,
+	}
+}
+
 func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
 	orgID := chi.URLParam(r, "orgId")
 	if requireUUID(orgID, "orgId") != nil {
@@ -389,6 +445,46 @@ func (s *Server) listSessions(w http.ResponseWriter, r *http.Request) {
 	page := pageInfo{HasMore: hasMore}
 	if hasMore && len(sessions) > 0 {
 		last := sessions[len(sessions)-1]
+		page.NextCursor = encodeCursor(last.UpdatedAt, last.ID)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": items, "page": page})
+}
+
+// listSessionChildren lists the sessions an orchestrator spawned, with their
+// pull requests, for the session inspector's Workers view. Same wire shape as
+// the worker-facing /worker/children listing (sessionChildResponse).
+func (s *Server) listSessionChildren(w http.ResponseWriter, r *http.Request) {
+	orgID := chi.URLParam(r, "orgId")
+	sessionID := chi.URLParam(r, "sessionId")
+	if requireUUID(orgID, "orgId") != nil || requireUUID(sessionID, "sessionId") != nil {
+		writeError(w, r, http.StatusBadRequest, "invalid_request", "orgId and sessionId must be UUIDs.")
+		return
+	}
+	limit, err := parseLimit(r)
+	if err != nil {
+		writeError(w, r, http.StatusBadRequest, "invalid_request", err.Error())
+		return
+	}
+	cursor, err := parseCursor(r.URL.Query().Get("cursor"))
+	if err != nil {
+		writeError(w, r, http.StatusBadRequest, "invalid_cursor", "The pagination cursor is invalid.")
+		return
+	}
+	children, hasMore, err := s.store.ListSessionChildren(
+		r.Context(), principalFrom(r), orgID, sessionID, cursor, limit,
+	)
+	if err != nil {
+		s.writeStoreError(w, r, err)
+		return
+	}
+	items, err := s.childItems(r, orgID, children)
+	if err != nil {
+		s.writeStoreError(w, r, err)
+		return
+	}
+	page := pageInfo{HasMore: hasMore}
+	if hasMore && len(children) > 0 {
+		last := children[len(children)-1]
 		page.NextCursor = encodeCursor(last.UpdatedAt, last.ID)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"items": items, "page": page})

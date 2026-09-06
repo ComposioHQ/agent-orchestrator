@@ -2,6 +2,7 @@ import type { QueryClient } from "@tanstack/react-query";
 import { createRendererCloudCpClient } from "../hooks/useCloudCp";
 import { settingsQueryKey, type Settings } from "../hooks/useSettings";
 import { readSelectedSandboxProvider } from "../stores/sandbox-provider-store";
+import { captureRendererEvent } from "./telemetry";
 
 // A cloud project has no locally-configured orchestrator agent (that config
 // lives in the local daemon's project settings), so the launchers must not
@@ -32,13 +33,19 @@ export async function spawnCloudOrchestrator(queryClient: QueryClient, projectId
 	// more than one); omitted lets the control plane use its default. Read
 	// directly from localStorage since this launcher is deliberately hook-free.
 	const provider = readSelectedSandboxProvider();
-	const { session } = await client.createSession(orgId, {
-		projectId,
-		kind: "orchestrator",
-		harness: "claude-code",
-		displayName: "Orchestrator",
-		prompt: ORCHESTRATOR_KICKOFF_PROMPT,
-		...(provider ? { provider } : {}),
-	});
-	return session.id;
+	try {
+		const { session } = await client.createSession(orgId, {
+			projectId,
+			kind: "orchestrator",
+			harness: "claude-code",
+			displayName: "Orchestrator",
+			prompt: ORCHESTRATOR_KICKOFF_PROMPT,
+			...(provider ? { provider } : {}),
+		});
+		void captureRendererEvent("ao.renderer.cloud_orchestrator_spawn_succeeded", { project_id: projectId });
+		return session.id;
+	} catch (error) {
+		void captureRendererEvent("ao.renderer.cloud_orchestrator_spawn_failed", { project_id: projectId });
+		throw error;
+	}
 }

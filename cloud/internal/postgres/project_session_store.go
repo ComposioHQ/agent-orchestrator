@@ -815,6 +815,59 @@ func (s *Store) ListSessions(
 	return sessions, hasMore, nil
 }
 
+// ListSessionChildren lists the sessions an orchestrator spawned, for the
+// human-facing Workers view. Unlike the worker-auth ListOrchestratorChildren
+// it includes terminated children (history is the point of the view) and does
+// not require the parent to still be alive or an orchestrator — a
+// non-orchestrator or unknown parent simply owns no children, which returns an
+// empty page rather than an error.
+func (s *Store) ListSessionChildren(
+	ctx context.Context,
+	principal domain.Principal,
+	orgID string,
+	parentSessionID string,
+	cursor *domain.Cursor,
+	limit int,
+) ([]domain.Session, bool, error) {
+	var sessions []domain.Session
+	err := s.withTenant(ctx, principal, orgID, func(tx pgx.Tx) error {
+		rows, err := tx.Query(
+			ctx,
+			sessionSelect+`
+			WHERE session.org_id = $1
+			  AND session.parent_session_id = $2::uuid
+			  AND ($3::timestamptz IS NULL OR (session.updated_at, session.id) < ($3, $4::uuid))
+			ORDER BY session.updated_at DESC, session.id DESC
+			LIMIT $5`,
+			orgID,
+			parentSessionID,
+			cursorTime(cursor),
+			cursorID(cursor),
+			limit+1,
+		)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var session domain.Session
+			if err := scanSession(rows, &session); err != nil {
+				return err
+			}
+			sessions = append(sessions, session)
+		}
+		return rows.Err()
+	})
+	if err != nil {
+		return nil, false, err
+	}
+	hasMore := len(sessions) > limit
+	if hasMore {
+		sessions = sessions[:limit]
+	}
+	return sessions, hasMore, nil
+}
+
 func (s *Store) GetSession(
 	ctx context.Context,
 	principal domain.Principal,
