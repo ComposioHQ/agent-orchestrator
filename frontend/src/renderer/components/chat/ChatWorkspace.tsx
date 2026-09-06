@@ -1262,9 +1262,6 @@ function runsOf(items: ConversationItem[]): TimelineRun[] {
 			item.activityKind !== "approval" &&
 			item.activityKind !== "user_input" &&
 			item.activityKind !== "error" &&
-			// An edit is a result, not a mechanic. Burying it in a summary would hide
-			// the one kind of activity that changed the user's worktree.
-			item.activityKind !== "file_change" &&
 			// Reasoning only reaches the timeline when the reader asked for it, so
 			// folding it into "Explored 4 files" would answer that request with the
 			// summary they were trying to get past.
@@ -2018,6 +2015,17 @@ function Timeline({
 		updateScrollbar();
 	}, [syncPromptSpacer, updateScrollbar]);
 
+	// A disclosure animation changes the content box but is not new conversation
+	// content. Re-measure it without re-pinning the viewport to the bottom; doing
+	// that during a height animation makes the whole chat jump under the reader.
+	const syncScrollMetrics = useCallback(() => {
+		anchorGeometry.current = null;
+		// UI-only disclosure resizes must not rewrite the trailing spacer. Doing so
+		// every animation frame changes the scroll range and causes a small jerk when
+		// a panel collapses near the bottom of the viewport.
+		updateScrollbar();
+	}, [updateScrollbar]);
+
 	useEffect(() => {
 		syncScrollLayout();
 	}, [pinned, snapshot.latestSequence, groups.length, messageEdit?.turnId, syncScrollLayout]);
@@ -2040,11 +2048,11 @@ function Timeline({
 	useEffect(() => {
 		syncScrollLayout();
 		if (typeof ResizeObserver === "undefined") return;
-		const observer = new ResizeObserver(syncScrollLayout);
+		const observer = new ResizeObserver(syncScrollMetrics);
 		if (scroller.current) observer.observe(scroller.current);
 		if (scrollContent.current) observer.observe(scrollContent.current);
 		return () => observer.disconnect();
-	}, [groups.length, syncScrollLayout]);
+	}, [groups.length, syncScrollMetrics]);
 
 	function onScroll() {
 		const node = scroller.current;
@@ -2507,12 +2515,11 @@ const TurnGroup = memo(function TurnGroup({
 			    list that grows both change while the reader watches, and at the end of a
 			    turn neither pushes anything the reader is already looking at. */}
 			{group.plan ? <TurnPlan plan={group.plan} live={group.live} /> : null}
-			{/* Above the outcome divider: the changed files are part of what the turn
-			    did, and belong inside it rather than after it closes. */}
-			{group.diff ? (
+			{/* Changed-files review is a settled result, not live activity. Keep it
+			    below the completed assistant response and its bottom action row. */}
+			{group.diff && group.outcome?.state === "completed" && copyableMessageId ? (
 				<TurnChangedFiles
 					diff={group.diff}
-					live={group.live}
 					items={group.items}
 					onReview={onOpenFiles}
 					onOpenFile={onOpenFile}

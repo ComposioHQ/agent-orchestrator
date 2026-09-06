@@ -643,9 +643,37 @@ func (c *conversation) toolEvent(turnID string, tool *toolState, completed bool)
 	if tool.terminalOutput != "" {
 		output = tool.terminalOutput
 	}
+	activityKind := activityKindFromTool(tool.kind)
 	detailMap := map[string]any{
 		"protocol": "acp", "toolKind": tool.kind, "locations": tool.locations,
 		"input": tool.rawInput, "output": output, "content": tool.content,
+	}
+	if activityKind == domain.ActivityKindFileChange {
+		files := make([]map[string]any, 0)
+		for _, item := range tool.content {
+			if item.Diff == nil {
+				continue
+			}
+			status := "modified"
+			deletions := 0
+			if item.Diff.OldText == nil {
+				status = "added"
+			} else {
+				deletions = lineCount(*item.Diff.OldText)
+				if item.Diff.NewText == "" {
+					status = "deleted"
+				}
+			}
+			files = append(files, map[string]any{
+				"path": item.Diff.Path, "status": status,
+				"additions": lineCount(item.Diff.NewText), "deletions": deletions,
+				"patch":   acpFilePatch(item.Diff.Path, item.Diff.OldText, item.Diff.NewText),
+				"oldText": item.Diff.OldText, "newText": item.Diff.NewText,
+			})
+		}
+		if len(files) > 0 {
+			detailMap["files"] = files
+		}
 	}
 	if claude := nestedMap(tool.meta, "claudeCode"); claude != nil {
 		copyDetail(detailMap, claude, "toolName", "providerToolName")
@@ -666,7 +694,7 @@ func (c *conversation) toolEvent(turnID string, tool *toolState, completed bool)
 		copyDetail(detailMap, terminal, "exit_code", "exitCode")
 		copyDetail(detailMap, terminal, "signal", "signal")
 	}
-	if activityKindFromTool(tool.kind) == domain.ActivityKindCommand {
+	if activityKind == domain.ActivityKindCommand {
 		if rawCommand := rawCommandFromInput(tool.rawInput); rawCommand != "" {
 			// The neutral command-detail contract (`detail.command`) is what the
 			// chat timeline renders as the row's subject. rawInput is a
@@ -692,9 +720,29 @@ func (c *conversation) toolEvent(turnID string, tool *toolState, completed bool)
 	}
 	return ports.ChatEvent{
 		Kind: kind, ProviderTurnID: turnID, ProviderItemID: c.providerItemID(tool.id),
-		ActivityKind: activityKindFromTool(tool.kind), ActivityStatus: status,
+		ActivityKind: activityKind, ActivityStatus: status,
 		Summary: summary, Detail: detail,
 	}
+}
+
+// acpFilePatch turns ACP's before/after file text into the small unified patch
+// the chat client renders. ACP gives us complete file contents rather than a
+// git-style patch; keeping the conversion here means every client sees the same
+// durable diff and never falls back to the provider's prose success message.
+func acpFilePatch(path string, oldText *string, newText string) string {
+	oldLines := []string{}
+	if oldText != nil {
+		oldLines = strings.Split(strings.ReplaceAll(*oldText, "\r\n", "\n"), "\n")
+	}
+	newLines := strings.Split(strings.ReplaceAll(newText, "\r\n", "\n"), "\n")
+	lines := []string{"--- " + path, "+++ " + path}
+	for _, line := range oldLines {
+		lines = append(lines, "-"+line)
+	}
+	for _, line := range newLines {
+		lines = append(lines, "+"+line)
+	}
+	return strings.Join(lines, "\n")
 }
 
 // toolOutputText translates ACP's provider-defined rawOutput into AO's neutral

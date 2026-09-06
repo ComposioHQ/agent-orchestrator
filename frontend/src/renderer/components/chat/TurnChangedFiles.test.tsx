@@ -430,7 +430,7 @@ describe("ActivityRow command labels", () => {
 				)}
 			/>,
 		);
-		expect(screen.getByText("Explored 2 files")).toBeInTheDocument();
+		expect(screen.getByText("Read files")).toBeInTheDocument();
 		expect(screen.queryByText(/sed -n/)).not.toBeInTheDocument();
 	});
 
@@ -475,7 +475,7 @@ describe("ActivityRow command labels", () => {
 			/>,
 		);
 		const row = screen.getByRole("button");
-		expect(row).toHaveClass("py-0.5", "gap-1.5", "rounded-sm");
+		expect(row).toHaveClass("py-0.5", "gap-1.5", "select-none");
 		expect(screen.getByText("Checked repository")).toHaveClass(
 			"text-[11.5px]",
 			"font-normal",

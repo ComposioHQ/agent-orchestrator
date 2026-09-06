@@ -2075,6 +2075,39 @@ html.sidebar-reordering * {
 	transform: scale(0.96);
 }
 
+/* Timeline summaries are disclosure controls, not raised buttons. Keeping their
+   footprint fixed prevents the label from shifting when the pointer lands. */
+.cursor-chat-surface .activity-summary-button:not(:disabled):active {
+	transform: none;
+}
+
+.activity-run-toggle {
+	border-bottom: 1px solid color-mix(in oklch, var(--color-border) 48%, transparent);
+	color: var(--color-text-muted);
+}
+
+.activity-run-toggle:hover,
+.activity-subgroup-toggle:hover {
+	color: var(--color-text-primary);
+}
+
+.activity-summary-button:hover > .activity-summary-label {
+	color: var(--color-text-primary);
+}
+
+.activity-row-toggle:hover > .activity-row-label {
+	color: var(--color-text-primary);
+}
+
+.cursor-chat-surface .activity-summary-button:not(:disabled),
+.cursor-chat-surface .activity-row-toggle:not(:disabled) {
+	transition: none;
+}
+
+.activity-subgroup {
+	min-width: 0;
+}
+
 @media (prefers-reduced-motion: reduce) {
 	.cursor-chat-surface button:not(:disabled) {
 		transition: none;
