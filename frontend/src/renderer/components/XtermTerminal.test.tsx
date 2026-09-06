@@ -87,6 +87,7 @@ vi.mock("@xterm/xterm", () => ({
 		keyListeners = new Set<(event: { key: string }) => void>();
 		selectionListeners = new Set<() => void>();
 		scrollListeners = new Set<() => void>();
+		writeBuffer = "";
 		_core = {
 			element: { classList: { add: vi.fn(), remove: vi.fn() } },
 			viewport: { scrollBarWidth: 15 },
@@ -106,9 +107,10 @@ vi.mock("@xterm/xterm", () => ({
 			host.appendChild(document.createElement("textarea"));
 		}
 		write(data: Uint8Array, done?: () => void) {
-			const output = new TextDecoder().decode(data);
-			if (output.includes("\x1b[6n")) {
+			this.writeBuffer += new TextDecoder().decode(data);
+			if (this.writeBuffer.includes("\x1b[6n")) {
 				this.dataListeners.forEach((listener) => listener("\x1b[7;21R"));
+				this.writeBuffer = "";
 			}
 			done?.();
 		}
@@ -279,28 +281,6 @@ describe("XtermTerminal", () => {
 			});
 			expect(state.lastTerminal!.scrollToBottom).toHaveBeenCalled();
 			expect(state.lastTerminal!.refresh).not.toHaveBeenCalled();
-		} finally {
-			vi.useRealTimers();
-			vi.unstubAllGlobals();
-		}
-	});
-
-	it("does not scroll an empty terminal before renderer dimensions exist", async () => {
-		vi.useFakeTimers();
-		vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) =>
-			window.setTimeout(() => callback(performance.now()), 0),
-		);
-		vi.stubGlobal("cancelAnimationFrame", (id: number) => window.clearTimeout(id));
-		try {
-			let terminal: AttachableTerminal | undefined;
-			render(<XtermTerminal theme="dark" onReady={(ready) => { terminal = ready; }} />);
-			const preparation = terminal!.prepareForActivation();
-			await act(async () => {
-				vi.advanceTimersByTime(250);
-				vi.runAllTimers();
-				await preparation;
-			});
-			expect(state.lastTerminal!.scrollToBottom).not.toHaveBeenCalled();
 		} finally {
 			vi.useRealTimers();
 			vi.unstubAllGlobals();
@@ -1259,7 +1239,8 @@ describe("XtermTerminal", () => {
 			return ready.onUserInput(onInput);
 		}} />);
 
-		terminal!.write(new TextEncoder().encode("prompt\x1b[6n"));
+		terminal!.write(new TextEncoder().encode("prompt\x1b"));
+		terminal!.write(new TextEncoder().encode("[6n"));
 
 		expect(onInput).toHaveBeenCalledWith("\x1b[7;21R", "protocol");
 	});

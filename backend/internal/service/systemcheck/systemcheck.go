@@ -72,8 +72,8 @@ func New(harnesses HarnessCatalog, executables ports.ExecutableFinder) *Service 
 }
 
 // NewWithCommandRunner returns a Service that can also verify GitHub CLI
-// authentication. The probe discards token output and records only whether
-// gh could resolve a credential.
+// authentication. The probe discards token output and records only whether an
+// active account passes gh's authentication check.
 func NewWithCommandRunner(harnesses HarnessCatalog, executables ports.ExecutableFinder, commands ports.CommandRunner) *Service {
 	return &Service{harnesses: harnesses, executables: executables, commands: commands}
 }

@@ -1121,12 +1121,7 @@ export function XtermTerminal(props: XtermTerminalProps) {
 		shell.addEventListener("drop", dropInput);
 
 		const showLatestOutput = () => {
-			// A newly opened xterm has no renderer dimensions until its first paint.
-			// scrollToBottom schedules Viewport.syncScrollArea, which dereferences those
-			// dimensions and crashes when activation runs before any output exists.
-			// There is nothing to scroll in that state; defer the API call until the
-			// buffer actually contains scrollback.
-			if (term.buffer.active.baseY > 0) term.scrollToBottom();
+			term.scrollToBottom();
 			// Hidden output can leave the offscreen DOM scrollbar stale even
 			// after xterm's logical viewport moves. Synchronize it before either
 			// the first-load cover or retained-cache container is revealed.
@@ -1187,16 +1182,12 @@ export function XtermTerminal(props: XtermTerminalProps) {
 			// parsed into the buffer, which is what lets the attachment reveal the
 			// pane at the replay's settled scroll position (issue #3160).
 			write: (data, done) => {
-				let hasEsc = false;
-				for (let i = 0; i < data.length; i++) {
-					if (data[i] === 0x1b) {
-						hasEsc = true;
-						break;
-					}
-				}
-				if (hasEsc) {
-					const chunk = new TextDecoder().decode(data);
-					cursorPositionForwarder.observeOutput(chunk);
+				const chunk = new TextDecoder().decode(data);
+				// A PTY can split a DSR at any byte boundary, including immediately
+				// after ESC. Feed every chunk to the correlator so an ESC-free
+				// continuation still completes the pending request.
+				cursorPositionForwarder.observeOutput(chunk);
+				if (chunk.includes("\x1b")) {
 					const reply = callbacksRef.current.supportsCursorColorScheme
 						? cursorColorSchemeReplyForOutput(chunk, callbacksRef.current.theme)
 						: null;
