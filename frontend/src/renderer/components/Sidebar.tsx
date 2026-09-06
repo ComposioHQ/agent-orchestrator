@@ -85,6 +85,7 @@ import { useCloudLocalAuth } from "../hooks/useCloudLocalAuth";
 import { useLocalSignInDialogStore } from "../stores/local-signin-dialog-store";
 import { useShellMaybe } from "../lib/shell-context";
 import { useSidebarUpdateDismissal } from "../hooks/useSidebarUpdateDismissal";
+import { useRequestUpdateInstall } from "../hooks/useRequestUpdateInstall";
 import { useUpdateStatus } from "../hooks/useUpdateStatus";
 import { MAX_SESSION_DISPLAY_NAME_LEN, useSessionRename } from "../hooks/useSessionRename";
 import { effectiveShortcutBindings, shortcutBindingKeys } from "../../shared/shortcuts";
@@ -426,7 +427,7 @@ export function Sidebar({
 	const updateStatus = useUpdateStatus();
 	const availableUpdateVersion = updateStatus.state === "available" ? updateStatus.version : undefined;
 	const updateDismissal = useSidebarUpdateDismissal(availableUpdateVersion);
-	const openUpdateInstallPrompt = useUiStore((state) => state.openUpdateInstallPrompt);
+	const requestUpdateInstall = useRequestUpdateInstall();
 	// Daemon status for the smoke suite's sr-only mirror in the footer. Null when
 	// rendered outside the shell (unit tests) — the mirror simply doesn't render.
 	const daemonStatus = useShellMaybe()?.daemonStatus ?? null;
@@ -833,7 +834,7 @@ export function Sidebar({
 					<UpdateStatusRow
 						availableDismissed={updateDismissal.dismissed}
 						onDismissAvailable={updateDismissal.dismiss}
-						onRequestInstall={openUpdateInstallPrompt}
+						onRequestInstall={requestUpdateInstall}
 						status={updateStatus}
 						tabIndex={isCollapsed ? -1 : 0}
 					/>
@@ -872,7 +873,7 @@ export function Sidebar({
 				>
 					<UpdateStatusRail
 						availableDismissed={updateDismissal.dismissed}
-						onRequestInstall={openUpdateInstallPrompt}
+						onRequestInstall={requestUpdateInstall}
 						status={updateStatus}
 						tabIndex={isCollapsed ? 0 : -1}
 					/>
