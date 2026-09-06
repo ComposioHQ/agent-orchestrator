@@ -948,23 +948,19 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		return domain.SessionRecord{}, 0, 0, wrapSpawnStage(id, ErrWorkspaceCreate, err)
 	}
 
-	// The worktree now exists on disk. Publish that fact BEFORE anything that
-	// can block or fail for minutes — post-create provisioning, attachment
-	// writes, provider startup, ACP negotiation. Until this commits, a crash
-	// leaves a seed row the reconciler may delete along with nothing else;
-	// after it, the workspace is durably attributed to this session, so a crash
-	// leaves work the reconciler must reopen rather than discard.
+	// The worktree now exists. Publish that BEFORE anything that can block for
+	// minutes — provisioning, attachments, provider startup, ACP. Until this
+	// commits a crash leaves only a disposable seed row; after it, the workspace
+	// is durably this session's and a crash leaves work to reopen, not discard.
 	if domain.SpawnPhaseTrackingEnabled(cfg.Harness) {
 		if err := m.checkpointSpawnWorkspace(ctx, rec, ws, workspaceProject, prompt,
 			resolvedModelForMetadata(cfg.Harness, agentConfig, adapterConfig), projectKind); err != nil {
 			m.rollbackSeedSpawnWorkspace(ctx, rec, ws, workspaceProject, false)
 			return domain.SessionRecord{}, 0, 0, wrapSpawnStage(id, ErrWorkspaceCreate, err)
 		}
-		// rec is deliberately NOT re-read here. Nothing below consumes the fields
-		// the checkpoint wrote — the workspace facts come from ws, the prompt from
-		// the local variable, and ControllerOwner() covers none of them — so a
-		// re-read would only add a round trip and a failure mode that could roll
-		// back a perfectly good spawn.
+		// rec is deliberately NOT re-read: nothing below consumes the checkpointed
+		// fields, so a re-read would only add a failure mode that could roll back
+		// a perfectly good spawn.
 	}
 
 	// Per-project workspace provisioning: symlink shared files, then run any
@@ -1311,16 +1307,12 @@ func (m *Manager) createSessionWorkspace(ctx context.Context, project domain.Pro
 	return info.Root, &info, nil
 }
 
-// checkpointSpawnWorkspaceReady is the crash-safety line of the spawn. It
-// commits the workspace path, repo path, branch, original prompt, and resolved
-// model together with spawn_phase = workspace_ready, and — for a single-repo
-// project — records the active session_worktrees row that makes the worktree
-// discoverable by cleanup and restore. Workspace-project spawns already wrote
-// their rows inside createSessionWorkspace.
-//
-// Everything here must be durable before the spawn touches anything slow or
-// external, because a crash between the worktree existing and this write would
-// orphan a real worktree that no session claims.
+// checkpointSpawnWorkspace is the crash-safety line of the spawn: it commits the
+// workspace facts with spawn_phase = workspace_ready and, for a single-repo
+// project, the active session_worktrees row that makes the worktree discoverable
+// by cleanup and restore. Workspace projects already wrote theirs in
+// createSessionWorkspace. A crash before this write would orphan a real worktree
+// that no session claims.
 func (m *Manager) checkpointSpawnWorkspace(
 	ctx context.Context,
 	rec domain.SessionRecord,
@@ -1331,9 +1323,7 @@ func (m *Manager) checkpointSpawnWorkspace(
 	projectKind domain.ProjectKind,
 ) error {
 	if workspaceProject == nil && projectKind == domain.ProjectKindSingleRepo {
-		// The worktree row is written first: an extra row for a session that
-		// fails a moment later is reclaimable, while a worktree with no row is
-		// invisible to every cleanup path.
+		// Row first: a stale row is reclaimable, an unrecorded worktree is not.
 		if err := m.store.UpsertSessionWorktree(ctx, domain.SessionWorktreeRecord{
 			SessionID:    rec.ID,
 			RepoName:     domain.RootWorkspaceRepoName,
@@ -1356,10 +1346,9 @@ func (m *Manager) checkpointSpawnWorkspace(
 		return fmt.Errorf("checkpoint spawn workspace: %w", err)
 	}
 	if !ok {
-		// The row is no longer a live preparing spawn: it was terminated, deleted,
-		// or already advanced by another actor. Failing here is deliberate — the
-		// caller rolls back rather than launching a controller for a session whose
-		// durable state it does not own.
+		// Terminated, deleted, or advanced by another actor. Fail deliberately so
+		// the caller rolls back rather than launching a controller for a session
+		// whose durable state it does not own.
 		return fmt.Errorf("checkpoint spawn workspace: session %s is no longer a preparing spawn", rec.ID)
 	}
 	return nil
@@ -1414,15 +1403,10 @@ func spawnGitSingleLine(ctx context.Context, root string, args ...string) (strin
 }
 
 // destroySpawnWorkspace removes a workspace built by a spawn that then failed.
-//
-// It uses the non-forcing Destroy deliberately: a worktree with uncommitted
-// work is the user's, not the failed spawn's, and force-removing it would
-// silently delete work the agent had already produced. A refusal is reported as
-// false so the caller preserves the session and its worktree instead.
-//
-// The session_worktrees rows are removed only when the workspace is actually
-// gone. Dropping them after a refused destroy would hide a worktree that still
-// exists on disk from every later cleanup and restore path.
+// Non-forcing on purpose: a worktree with uncommitted work is the user's, not
+// the failed spawn's. A refusal reports false so the caller preserves the
+// session, and the worktree rows are dropped only once the workspace is really
+// gone — otherwise a worktree still on disk becomes invisible to cleanup.
 func (m *Manager) destroySpawnWorkspace(ctx context.Context, ws ports.WorkspaceInfo, workspaceProject *ports.WorkspaceProjectInfo) bool {
 	var destroyed bool
 	if workspaceProject != nil {
@@ -1458,10 +1442,9 @@ func (m *Manager) rollbackSeedSpawnWorkspace(ctx context.Context, rec domain.Ses
 		if prepared {
 			m.cleanupAgentWorkspace(ctx, rec, ws.Path)
 		}
-		// The workspace checkpoint is what makes this row un-deletable, and the
-		// workspace it described is now gone. Retract it so the row is a plain
-		// seed again and a failed spawn leaves no terminated phantom in session
-		// lists, exactly as before the checkpoint existed.
+		// The checkpoint is what makes this row un-deletable, and the workspace it
+		// described is gone. Retract it so the row is a plain seed again and a
+		// failed spawn leaves no terminated phantom, exactly as before.
 		m.retractSpawnWorkspaceCheckpoint(ctx, rec.ID)
 		m.rollbackSpawnSeedRow(ctx, rec.ID)
 		return
@@ -1620,21 +1603,15 @@ func sessionPrefix(project domain.ProjectRecord) string {
 	return project.ID[:12]
 }
 
-// spawnCleanupTimeout bounds every rollback path of a failed spawn. Cleanup
-// touches git worktrees, tmux, and provider processes, so it needs a real
-// budget — but it must not run forever either, or a wedged dependency would
-// hold the spawn request open indefinitely.
+// spawnCleanupTimeout bounds every rollback path. Cleanup touches worktrees,
+// tmux, and provider processes, so it needs a real budget — but not an
+// unbounded one, or a wedged dependency holds the request open forever.
 const spawnCleanupTimeout = 30 * time.Second
 
-// spawnCleanupContext detaches rollback from the request context.
-//
-// The request context is usually already cancelled by the time rollback runs —
-// that cancellation is frequently *why* the spawn failed. Reusing it would make
-// every cleanup call fail instantly, which is exactly the case where cleanup
-// matters most: a user who hits Ctrl-C mid-spawn would be left with a live
-// tmux session, an orphaned worktree, and a half-written row. WithoutCancel
-// keeps the context's values (tracing, request id) while dropping the
-// cancellation, and WithTimeout re-bounds it.
+// spawnCleanupContext detaches rollback from the request context, which is
+// usually already cancelled — that cancellation being frequently *why* the spawn
+// failed. Reusing it would make cleanup fail instantly in exactly the case where
+// it matters most, leaving a live tmux session and an orphaned worktree behind.
 func (m *Manager) spawnCleanupContext(ctx context.Context) (context.Context, context.CancelFunc) {
 	// Rollback helpers nest (rollbackSeedSpawnWorkspace -> rollbackSpawnSeedRow
 	// -> markSpawnFailedTerminated) and each is also a direct entry point from
@@ -1681,11 +1658,9 @@ func (m *Manager) markSpawnFailedTerminatedWithoutWorkspace(ctx context.Context,
 	_ = m.store.UpdateSession(ctx, rec)
 }
 
-// retractSpawnWorkspaceCheckpoint returns a row to seed state after its
-// workspace was confirmed destroyed. It is the exact inverse of
-// checkpointSpawnWorkspace and is only ever called once nothing the checkpoint
-// described still exists — otherwise it would hide a live worktree from every
-// cleanup path.
+// retractSpawnWorkspaceCheckpoint is the inverse of checkpointSpawnWorkspace,
+// called only once nothing it described still exists — otherwise it would hide
+// a live worktree from every cleanup path.
 func (m *Manager) retractSpawnWorkspaceCheckpoint(ctx context.Context, id domain.SessionID) {
 	rec, ok, err := m.store.GetSession(ctx, id)
 	if err != nil || !ok {
@@ -2323,17 +2298,11 @@ func (m *Manager) ResumeAgentWithMode(ctx context.Context, id domain.SessionID) 
 			return RestoreResult{}, fmt.Errorf("resume agent %s: %w", id, ErrAgentNotExited)
 		}
 	}
-	// Only AFTER the liveness precondition above may the phase decide how to
-	// relaunch. A healthy TUI spawn between its workspace checkpoint and
-	// MarkSpawned is workspace_ready with idle activity — indistinguishable here
-	// from one that failed — so routing on the phase first would let a Retry
-	// reopen the workspace and launch a second provider on top of a spawn that is
-	// still running. The exited guard is what proves the first attempt is over.
-	//
-	// Once it is, retrying a spawn that never committed a controller must re-run
-	// the interrupted-spawn recovery rather than the native resume path: there is
-	// no runtime handle and no provider conversation to resume from, and the
-	// original prompt has still never been delivered.
+	// Only AFTER the liveness guard above: a healthy TUI spawn mid-flight is also
+	// workspace_ready with idle activity, so routing on the phase first would let
+	// Retry launch a second provider on top of a running spawn. Once the first
+	// attempt is proven over, a spawn that never committed a controller must
+	// re-run recovery rather than resume — there is nothing to resume from.
 	if domain.NormalizeSpawnPhase(rec.SpawnPhase) != domain.SpawnPhaseControllerReady {
 		return m.recoverWorkspaceReadySpawn(ctx, "retry agent", rec)
 	}

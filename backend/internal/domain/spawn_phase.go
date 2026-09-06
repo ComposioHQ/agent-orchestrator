@@ -1,13 +1,8 @@
 package domain
 
-// SpawnPhase is how far a session's spawn got, durably. It exists so a daemon
-// crash (or a cancelled request) at any point between "seed row created" and
-// "controller committed" leaves an unambiguous instruction for the next boot:
-// finish the launch, or clean the attempt up.
-//
-// It is a durable fact, not a derived status. The user-facing status is still
-// derived at read time; this only tells the recovery path and the UI which
-// facts about the session are trustworthy.
+// SpawnPhase is how far a session's spawn got, durably, so a crash between
+// "seed row created" and "controller committed" leaves the next boot an
+// unambiguous instruction: finish the launch, or clean the attempt up.
 type SpawnPhase string
 
 // Spawn phases, in the order a successful spawn passes through them.
@@ -26,29 +21,18 @@ const (
 	SpawnPhaseControllerReady SpawnPhase = "controller_ready"
 )
 
-// SpawnPhaseTrackingEnabled reports whether AO records a durable spawn phase for
-// a harness, and therefore whether its spawns are checkpointed and its
-// interrupted spawns recovered.
-//
-// Scoped to Cursor by explicit product decision. The underlying failure is NOT
-// Cursor-specific — resumeAgentRecordWithPolicy raises ErrIncompleteHandle for
-// every harness, so any agent can strand a session with no workspace or runtime
-// handle. This gate exists to limit the blast radius of the change, not because
-// other harnesses are immune.
-//
-// It is deliberately the ONLY harness check in the feature. Every consumer —
-// the spawn checkpoint, boot recovery, Retry routing, and the UI — reads the
-// phase alone, so a session that is not tracked simply stays controller_ready
-// and behaves exactly as it did before. Widening the feature later is a change
-// to this one function.
+// SpawnPhaseTrackingEnabled gates checkpointing and recovery to Cursor, by
+// product decision. The failure is NOT Cursor-specific — every harness can
+// strand a session on ErrIncompleteHandle — so this limits rollout, not the
+// reach of the bug. It is the only harness check in the feature: every consumer
+// reads the phase alone, so an untracked harness stays controller_ready and
+// behaves as before, and widening is a change to this function.
 func SpawnPhaseTrackingEnabled(harness AgentHarness) bool {
 	return harness == HarnessCursor
 }
 
-// InitialSpawnPhase is the phase a newly seeded session starts in: preparing for
-// a tracked harness, whose spawn will checkpoint its workspace; controller_ready
-// for every other harness, which keeps the pre-checkpoint behavior where the
-// phase carries no information.
+// InitialSpawnPhase seeds a tracked harness at preparing, and every other
+// harness at controller_ready so the phase carries no information for it.
 func InitialSpawnPhase(harness AgentHarness) SpawnPhase {
 	if SpawnPhaseTrackingEnabled(harness) {
 		return SpawnPhasePreparing
@@ -69,10 +53,8 @@ func NormalizeSpawnPhase(p SpawnPhase) SpawnPhase {
 	}
 }
 
-// SpawnCheckpointedWorkspace reports whether the session's recorded workspace
-// facts were durably checkpointed, i.e. the worktree is known to belong to this
-// session. Callers use it before offering worktree-scoped affordances such as
-// opening a shell.
+// SpawnCheckpointedWorkspace reports whether the worktree is durably known to
+// belong to this session, and so is safe to offer a shell into.
 func (r SessionRecord) SpawnCheckpointedWorkspace() bool {
 	if r.Metadata.WorkspacePath == "" {
 		return false
@@ -85,9 +67,8 @@ func (r SessionRecord) SpawnCheckpointedWorkspace() bool {
 	}
 }
 
-// SpawnHasControllerIdentity reports whether a durable controller owner exists
-// for this session: a terminal runtime generation, or a Chat controller
-// generation. controller_ready must never be published without one.
+// SpawnHasControllerIdentity reports whether a durable controller owner exists.
+// controller_ready must never be published without one.
 func (r SessionRecord) SpawnHasControllerIdentity() bool {
 	if NormalizeSessionMode(r.Mode) == SessionModeChat {
 		return r.Metadata.ControllerGeneration != ""
@@ -95,16 +76,14 @@ func (r SessionRecord) SpawnHasControllerIdentity() bool {
 	return r.Metadata.RuntimeLaunchID != "" || r.Metadata.RuntimeHandleID != ""
 }
 
-// SpawnWorkspaceCheckpoint is the set of facts that become durable the instant
-// a spawn's workspace exists. They are written together so a crash can never
-// leave a worktree on disk that the database cannot attribute to a session, nor
-// a session that claims a branch it never created.
+// SpawnWorkspaceCheckpoint is written the instant a spawn's workspace exists,
+// as one unit, so a crash cannot leave a worktree no session claims.
 type SpawnWorkspaceCheckpoint struct {
 	WorkspacePath     string
 	WorkspaceRepoPath string
 	Branch            string
-	// Prompt is the original spawn prompt. Recovery replays it only when the
-	// provider never received it, which is why it must survive the crash.
+	// Prompt is the original spawn prompt, replayed only if no provider ever
+	// received it — which is why it must survive the crash.
 	Prompt string
 	Model  string
 }
