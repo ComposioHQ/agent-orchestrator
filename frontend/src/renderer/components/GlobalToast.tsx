@@ -16,7 +16,15 @@ export function GlobalToast() {
 	if (!toast) return null;
 
 	return (
-		<div className="pointer-events-none fixed right-3 bottom-3 z-overlay w-[min(360px,calc(100vw-24px))]">
+		<div
+			className={
+				toast.placement === "top-center"
+					? "pointer-events-none fixed left-1/2 top-12 z-overlay w-[min(360px,calc(100vw-24px))] -translate-x-1/2"
+					: "pointer-events-none fixed right-3 bottom-3 z-overlay w-[min(360px,calc(100vw-24px))]"
+			}
+			data-browser-native-overlay="true"
+			data-state="open"
+		>
 			<section
 				aria-live="polite"
 				className="rounded-welcome-panel border border-[var(--color-border-import-modal)] bg-[var(--color-bg-import-modal)] px-3.5 py-3 text-xs shadow-[var(--shadow-import-modal)]"

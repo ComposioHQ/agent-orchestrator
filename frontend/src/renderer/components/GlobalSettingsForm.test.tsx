@@ -191,6 +191,13 @@ describe("GlobalSettingsForm", () => {
 		expect(document.querySelector('[data-section="browserProfiles"]')).not.toBeInTheDocument();
 	});
 
+	it("keeps download history inside the Browser settings page", async () => {
+		renderForm("browserProfiles");
+		expect(await screen.findByLabelText("Settings")).toBeInTheDocument();
+		expect(document.querySelector('[data-section="browserProfiles"]')).toBeInTheDocument();
+		expect(document.querySelector('[data-section="downloads"]')).toBeInTheDocument();
+	});
+
 	it("renders the settings sections", async () => {
 		renderForm();
 		expect(await screen.findByLabelText("Settings")).toBeInTheDocument();

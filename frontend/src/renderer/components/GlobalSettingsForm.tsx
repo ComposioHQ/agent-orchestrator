@@ -11,6 +11,7 @@ import { MobileDevicesSection } from "./settings/MobileDevicesSection";
 import { ReportProblemContent } from "./settings/ReportProblemContent";
 import { SettingsSection } from "./settings/SettingsSection";
 import { BrowserProfilesSection } from "./settings/BrowserProfilesSection";
+import { BrowserDownloadsSection } from "./settings/BrowserDownloadsSection";
 
 const UpdatesSection = lazy(async () => {
 	const module = await import("./settings/UpdatesSection");
@@ -48,7 +49,14 @@ export function GlobalSettingsForm({
 
 			{(all || section === "agents") && <CodexAccountsSection titleHidden={titleHidden} />}
 
-			{(all || section === "browserProfiles") && <BrowserProfilesSection titleHidden={titleHidden} />}
+			{(all || section === "browserProfiles") && (
+				<>
+					<BrowserProfilesSection titleHidden={titleHidden} />
+					<div className="border-t border-border/60 pt-5">
+						<BrowserDownloadsSection />
+					</div>
+				</>
+			)}
 			{(all || section === "cloud") && <CloudCredentialsSection titleHidden={titleHidden} />}
 
 			{(all || section === "mobile") && (

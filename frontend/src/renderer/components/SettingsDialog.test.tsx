@@ -80,6 +80,14 @@ describe("SettingsDialog", () => {
 		expect(screen.getByRole("button", { name: "Mobile" })).toHaveAttribute("aria-current", "page");
 	});
 
+	it("does not expose Downloads as a standalone settings page", async () => {
+		useUiStore.getState().openGlobalSettings("browserProfiles");
+		renderSettingsDialog();
+
+		expect(await screen.findByTestId("global-settings-section")).toHaveTextContent("browserProfiles");
+		expect(screen.queryByRole("button", { name: "Downloads" })).not.toBeInTheDocument();
+	});
+
 	it("closes Settings without cancelling daemon-owned account login work", async () => {
 		useUiStore.getState().openGlobalSettings("agents");
 		renderSettingsDialog();
