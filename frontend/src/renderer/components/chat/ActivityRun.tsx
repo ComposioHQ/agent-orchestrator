@@ -11,11 +11,11 @@
  * changed something" without opening anything.
  */
 
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useState } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { ChevronRight, Loader2 } from "lucide-react";
 import { cn } from "../../lib/utils";
-import { ActivityRow } from "./ChatTimelineItems";
+import { ActivityRow, ActivityTransition } from "./ChatTimelineItems";
 import {
 	ACTIVITY_SUMMARY_BUTTON_CLASS,
 	commandCategory,
@@ -76,7 +76,7 @@ export function ActivityRun({ activities }: { activities: ConversationActivity[]
 				className={cn(ACTIVITY_SUMMARY_BUTTON_CLASS, "activity-run-toggle")}
 			>
 				<span className="activity-summary-label text-[11.5px] text-muted-foreground">
-					<ActivityLabelTransition value={summary}>{summary}</ActivityLabelTransition>
+					<ActivityTransition value={summary} inline>{summary}</ActivityTransition>
 				</span>
 				{nonzeroExits > 0 ? (
 					<span className="text-[11px] text-muted-foreground/70">
@@ -148,36 +148,8 @@ export function ActivityRun({ activities }: { activities: ConversationActivity[]
 	);
 }
 
-function ActivityLabelTransition({ value, children }: { value: string; children: ReactNode }) {
-	const reducedMotion = useReducedMotion();
-	const previousValue = useRef(value);
-	const [settling, setSettling] = useState(false);
-
-	useEffect(() => {
-		if (previousValue.current === value) return;
-		previousValue.current = value;
-		setSettling(true);
-	}, [value]);
-
-	return (
-		<motion.span
-			initial={reducedMotion ? false : { opacity: 0 }}
-			animate={
-				reducedMotion || !settling
-					? { opacity: 1 }
-					: { opacity: 0.72 }
-			}
-			transition={{ duration: reducedMotion ? 0 : 0.2, ease: [0.22, 1, 0.36, 1] }}
-			onAnimationComplete={() => setSettling(false)}
-		>
-			{children}
-		</motion.span>
-	);
-}
-
 type ActivitySubgroupData = { key: string; activities: ConversationActivity[] };
 
-/** Keep related mechanics together while the outer run preserves their timeline order. */
 function groupSimilarActivities(activities: ConversationActivity[]): ActivitySubgroupData[] {
 	const groups: ActivitySubgroupData[] = [];
 	for (const activity of activities) {
@@ -234,9 +206,9 @@ function ActivitySubgroup({
 				className={cn(ACTIVITY_SUMMARY_BUTTON_CLASS, "activity-subgroup-toggle")}
 			>
 				<span className="activity-summary-label text-[11px] text-muted-foreground">
-					<ActivityLabelTransition value={summarizeSubgroup(activities)}>
+					<ActivityTransition value={summarizeSubgroup(activities)} inline>
 						{summarizeSubgroup(activities)}
-					</ActivityLabelTransition>
+					</ActivityTransition>
 				</span>
 				<ChevronRight aria-hidden="true" className={cn("size-3 shrink-0 transition-transform", open && "rotate-90")} />
 			</button>
@@ -266,7 +238,6 @@ function ActivitySubgroup({
 	);
 }
 
-/** A subgroup names its shared category so it cannot be mistaken for another batch. */
 function summarizeSubgroup(activities: ConversationActivity[]): string {
 	const first = activities[0];
 	if (!first) return "Related calls";
@@ -377,7 +348,6 @@ function nodeRunning(node: ActivityNode): boolean {
 	return node.activity.status === "running" || node.children.some(nodeRunning);
 }
 
-/** Describe a mixed batch compactly; the expanded children carry the detail. */
 function summarize(activities: ConversationActivity[]): string {
 	let toolCalls = 0;
 	let changedFiles = 0;

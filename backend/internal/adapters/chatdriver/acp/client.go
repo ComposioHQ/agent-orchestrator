@@ -725,10 +725,6 @@ func (c *conversation) toolEvent(turnID string, tool *toolState, completed bool)
 	}
 }
 
-// acpFilePatch turns ACP's before/after file text into the small unified patch
-// the chat client renders. ACP gives us complete file contents rather than a
-// git-style patch; keeping the conversion here means every client sees the same
-// durable diff and never falls back to the provider's prose success message.
 func acpFilePatch(path string, oldText *string, newText string) string {
 	oldLines := []string{}
 	if oldText != nil {

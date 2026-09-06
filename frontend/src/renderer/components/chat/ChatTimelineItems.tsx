@@ -802,13 +802,13 @@ export function ActivityRow({ activity }: { activity: ConversationActivity }) {
 
 	if (!toolActivity) return content;
 	return (
-		<SoftActivityTransition value={`${activity.revision}:${activity.summary}:${activity.status}`}>
+		<ActivityTransition value={`${activity.revision}:${activity.summary}:${activity.status}`}>
 			{content}
-		</SoftActivityTransition>
+		</ActivityTransition>
 	);
 }
 
-function SoftActivityTransition({
+export function ActivityTransition({
 	value,
 	children,
 	inline = false,
@@ -1616,13 +1616,6 @@ function looksLikeUnifiedDiff(text: string): boolean {
 	);
 }
 
-/**
- * Read tools sometimes return a unified patch as their content rather than as a
- * file-change activity. Keep those lines visually identical to the Files diff:
- * one row per line, a fixed marker gutter, and a subtle tint for additions and
- * deletions. In particular, do not let a syntax highlighter turn the whole patch
- * into one wrapped paragraph.
- */
 function ToolDiffCode({ text }: { text: string }) {
 	return (
 		<div className="chat-code max-h-64 overflow-auto rounded-lg border border-border bg-background px-0 py-1 font-mono text-[10.5px] leading-[1.55]">
