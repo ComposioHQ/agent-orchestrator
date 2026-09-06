@@ -72,16 +72,11 @@ func (s *Server) workerBootstrap(w http.ResponseWriter, r *http.Request) {
 		s.writeStoreError(w, r, err)
 		return
 	}
-	var projectConfig struct {
-		AgentRules        string `json:"agentRules"`
-		OrchestratorRules string `json:"orchestratorRules"`
-	}
-	if len(launch.ProjectConfig) > 0 {
-		if err := json.Unmarshal(launch.ProjectConfig, &projectConfig); err != nil {
-			s.logger.Error("decode project role rules", "error", err, "project_id", launch.ProjectID, "request_id", requestID(r))
-			writeError(w, r, http.StatusInternalServerError, "BOOTSTRAP_FAILED", "The project's role instructions are invalid.")
-			return
-		}
+	agentRules, orchestratorRules, err := projectRoleRules(launch.ProjectConfig)
+	if err != nil {
+		s.logger.Error("decode project role rules", "error", err, "project_id", launch.ProjectID, "request_id", requestID(r))
+		writeError(w, r, http.StatusInternalServerError, "BOOTSTRAP_FAILED", "The project's role instructions are invalid.")
+		return
 	}
 	systemPrompt := roleprompt.Build(roleprompt.Config{
 		Role:              launch.Kind,
@@ -90,8 +85,8 @@ func (s *Server) workerBootstrap(w http.ResponseWriter, r *http.Request) {
 		RepositoryURL:     launch.RepositoryURL,
 		DefaultBranch:     launch.DefaultBranch,
 		WorkspacePath:     "/workspace/repository",
-		AgentRules:        projectConfig.AgentRules,
-		OrchestratorRules: projectConfig.OrchestratorRules,
+		AgentRules:        agentRules,
+		OrchestratorRules: orchestratorRules,
 	})
 
 	workerID := worker.NextWorkerID(ticket.SessionID, ticket.WorkerEpoch)
@@ -156,6 +151,27 @@ func (s *Server) workerBootstrap(w http.ResponseWriter, r *http.Request) {
 			SystemPrompt:   systemPrompt,
 		},
 	})
+}
+
+func projectRoleRules(config json.RawMessage) (string, string, error) {
+	if len(config) == 0 {
+		return "", "", nil
+	}
+	var values map[string]json.RawMessage
+	if err := json.Unmarshal(config, &values); err != nil {
+		return "", "", err
+	}
+	decodeString := func(key string) string {
+		var value string
+		if raw := values[key]; len(raw) > 0 {
+			// Cloud project config predates typed role rules and accepts arbitrary
+			// values. Ignore legacy/non-string collisions rather than making a
+			// one-time worker bootstrap ticket permanently unusable.
+			_ = json.Unmarshal(raw, &value)
+		}
+		return value
+	}
+	return decodeString("agentRules"), decodeString("orchestratorRules"), nil
 }
 
 type workerContextKey struct{}
