@@ -13,24 +13,34 @@ import (
 func TestCommandContextWrapsBatchShimWithComSpec(t *testing.T) {
 	dir := t.TempDir()
 	shim := filepath.Join(dir, "agent tool.cmd")
-	if err := os.WriteFile(shim, []byte("@echo off\r\n"), 0o600); err != nil {
+	if err := os.WriteFile(shim, []byte("@echo off\r\necho %~1\r\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("ComSpec", `C:\Windows\System32\cmd.exe`)
+	comSpec := os.Getenv("ComSpec")
+	if comSpec == "" {
+		t.Fatal("ComSpec is not set")
+	}
 
-	cmd, err := commandContext(context.Background(), shim, "--version")
+	cmd, err := commandContext(context.Background(), shim, "argument with spaces")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cmd.Path != `C:\Windows\System32\cmd.exe` {
+	if !strings.EqualFold(cmd.Path, comSpec) {
 		t.Fatalf("Path = %q, want ComSpec", cmd.Path)
 	}
-	if cmd.SysProcAttr == nil || !strings.Contains(cmd.SysProcAttr.CmdLine, `"agent tool.cmd" "--version"`) {
+	if cmd.SysProcAttr == nil || !strings.Contains(cmd.SysProcAttr.CmdLine, `"agent tool.cmd" "argument with spaces"`) {
 		t.Fatalf("CmdLine = %q, want quoted shim and argument", cmd.SysProcAttr.CmdLine)
 	}
 	configureProcessGroup(cmd)
 	if cmd.SysProcAttr.CmdLine == "" {
 		t.Fatal("configureProcessGroup discarded the batch command line")
+	}
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("run batch shim: %v\n%s", err, output)
+	}
+	if got := strings.TrimSpace(string(output)); got != "argument with spaces" {
+		t.Fatalf("output = %q, want batch argument preserved", got)
 	}
 }
 

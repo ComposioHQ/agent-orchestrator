@@ -17,7 +17,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
-func TestResolveClaudeBinaryFindsLocalAppDataNPMInstallOnWindows(t *testing.T) {
+func TestResolveClaudeBinaryFindsLocalAppDataNPMShimOnWindows(t *testing.T) {
 	if runtime.GOOS != "windows" {
 		t.Skip("Windows install location")
 	}
@@ -26,11 +26,11 @@ func TestResolveClaudeBinaryFindsLocalAppDataNPMInstallOnWindows(t *testing.T) {
 	t.Setenv("APPDATA", "")
 	t.Setenv("LOCALAPPDATA", localAppData)
 	t.Setenv("USERPROFILE", t.TempDir())
-	want := filepath.Join(localAppData, "npm", "claude.exe")
+	want := filepath.Join(localAppData, "npm", "claude.cmd")
 	if err := os.MkdirAll(filepath.Dir(want), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(want, nil, 0o600); err != nil {
+	if err := os.WriteFile(want, []byte("@echo off\r\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	got, err := ResolveClaudeBinary(context.Background())
