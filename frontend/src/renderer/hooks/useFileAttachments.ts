@@ -145,8 +145,11 @@ export function useFileAttachments() {
 				break;
 			}
 			if (total + a.bytes > MAX_ATTACHMENTS_BYTES) {
+				// Only this file is refused: the remaining budget cannot absorb it,
+				// but a later file in the same batch still can. Aborting here (break)
+				// would silently drop every smaller file staged after it.
 				errors.add(`Attachments must total under ${mb(MAX_ATTACHMENTS_BYTES)} MB.`);
-				break;
+				continue;
 			}
 			accepted.push(a);
 			total += a.bytes;
@@ -171,18 +174,28 @@ export function useFileAttachments() {
 		setError(null);
 	}, []);
 
-	const toPayload = useCallback(
-		(): FileAttachmentPayload[] =>
-			attachments.map(({ mimeType, data }) => ({ mimeType, data })),
-		[attachments],
-	);
-
 	const toSettledPayload = useCallback(async (): Promise<FileAttachmentPayload[]> => {
 		while (pendingReadsRef.current.size > 0) {
 			await Promise.allSettled(Array.from(pendingReadsRef.current));
 		}
 		return attachmentsRef.current.map(({ mimeType, data }) => ({ mimeType, data }));
 	}, []);
+	// Read from the same ref as toSettledPayload so a submit resumed after FileReader
+	// completion can cache staged paths without waiting for another React render.
+	const attachmentSignature = useCallback(
+		() => attachmentsRef.current.map((attachment) => attachment.id).join(":"),
+		[],
+	);
+	const hasPendingReads = useCallback(() => pendingReadsRef.current.size > 0, []);
 
-	return { attachments, error, addFiles, remove, clear, toPayload, toSettledPayload };
+	return {
+		attachments,
+		error,
+		addFiles,
+		remove,
+		clear,
+		toSettledPayload,
+		attachmentSignature,
+		hasPendingReads,
+	};
 }

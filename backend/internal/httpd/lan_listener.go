@@ -45,12 +45,13 @@ func NewLANManager(handler http.Handler, state *authState, defaultPort int, log 
 // lanControlBlockedPrefixes are the loopback-only daemon-control route
 // prefixes that must never be reachable through the LAN listener: /shutdown,
 // the telemetry routes under /internal/, and the Connect Mobile control
-// surface under /api/v1/mobile, plus developer maintenance routes under
-// /api/v1/dev. Some routes are gated in the shared router by localControlRequest,
-// which trusts the client-supplied Host header (and RealIP, which trusts
-// X-Forwarded-For/X-Real-IP) — both spoofable by any LAN client. The LAN
-// listener is the one thing a caller cannot spoof: it is the physical socket the
-// request arrived on. So the block below is applied only to the LAN-served
+// surface under /api/v1/mobile, developer maintenance routes under /api/v1/dev,
+// host-mutating installer routes under /api/v1/system/install, and personal
+// Codex account-management routes under /api/v1/agents/codex. Some routes
+// are gated in the shared router by localControlRequest, which trusts the
+// client-supplied Host header. That header is spoofable by any LAN client. The
+// LAN listener is the one thing a caller cannot spoof: it is the physical socket
+// the request arrived on. So the block below is applied only to the LAN-served
 // handler, outermost (wrapping authMiddleware), independent of any header.
 var lanControlBlockedPrefixes = []string{
 	"/shutdown",
@@ -58,6 +59,9 @@ var lanControlBlockedPrefixes = []string{
 	"/api/v1/mobile",
 	"/api/v1/dev",
 	"/api/v1/browser",
+	"/api/v1/desktop",
+	"/api/v1/system/install",
+	"/api/v1/agents/codex",
 }
 
 // lanControlBlock returns 404 for any request whose path is, or is nested
@@ -66,12 +70,19 @@ var lanControlBlockedPrefixes = []string{
 // no 403/401 that would confirm the path exists.
 func lanControlBlock(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if isLANControlBlockedPath(r.URL.Path) {
+		if isLANControlBlockedPath(r.URL.Path) || isLANControlBlockedRequest(r.Method, r.URL.Path) {
 			notFoundJSON(w, r)
 			return
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+func isLANControlBlockedRequest(method, path string) bool {
+	trimmed := strings.TrimSuffix(path, "/")
+	return method == http.MethodPost &&
+		strings.HasPrefix(trimmed, "/api/v1/agents/") &&
+		strings.HasSuffix(trimmed, "/install")
 }
 
 // isLANControlBlockedPath reports whether path matches a blocked prefix on an

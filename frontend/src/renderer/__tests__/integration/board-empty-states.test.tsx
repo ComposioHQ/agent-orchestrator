@@ -1,17 +1,29 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render as rtlRender, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ReactNode } from "react";
+import { TooltipProvider } from "../../components/ui/tooltip";
+
+function render(ui: ReactNode) {
+	const result = rtlRender(<TooltipProvider>{ui}</TooltipProvider>);
+	return {
+		...result,
+		rerender: (nextUi: ReactNode) => result.rerender(<TooltipProvider>{nextUi}</TooltipProvider>),
+	};
+}
 
 // Drives the real useWorkspaceQuery + SessionsBoard end to end for the two
 // first-run states, mocking only the HTTP client, the router, and the native
 // folder picker: an empty daemon shows the import chooser (no column shells), a
 // fresh project shows the task invitation, and any session brings the columns back.
-const { getMock, navigateMock, chooseDirectoryMock, spawnOrchestratorMock } = vi.hoisted(() => ({
+const { getMock, postMock, deleteMock, navigateMock, chooseDirectoryMock, clipboardWriteMock, spawnOrchestratorMock } = vi.hoisted(() => ({
 	getMock: vi.fn(),
+	postMock: vi.fn(),
+	deleteMock: vi.fn(),
 	navigateMock: vi.fn(),
 	chooseDirectoryMock: vi.fn(),
+	clipboardWriteMock: vi.fn(),
 	spawnOrchestratorMock: vi.fn(),
 }));
 
@@ -22,13 +34,28 @@ vi.mock("../../lib/spawn-orchestrator", () => ({
 }));
 
 vi.mock("../../lib/api-client", () => ({
-	apiClient: { GET: getMock, POST: vi.fn() },
+	apiClient: { GET: getMock, POST: postMock, DELETE: deleteMock },
 	apiErrorMessage: (e: unknown) => (e instanceof Error ? e.message : "error"),
 	hasTrustedApiBaseUrl: () => true,
 }));
 
+vi.mock("../../components/TerminalPane", () => ({
+	TerminalPane: () => <div data-testid="terminal-pane" />,
+}));
+
 vi.mock("../../lib/bridge", () => ({
-	aoBridge: { app: { chooseDirectory: chooseDirectoryMock } },
+	aoBridge: {
+		app: { chooseDirectory: chooseDirectoryMock, openExternal: vi.fn() },
+		clipboard: { writeText: clipboardWriteMock },
+		// CreateProjectFlow reads the cloud session (Local | Cloud gating);
+		// signed-out keeps these tests on the local-only flow.
+		cloud: {
+			getSession: async () => null,
+			signIn: async () => undefined,
+			signOut: async () => undefined,
+			onSessionChanged: () => () => undefined,
+		},
+	},
 }));
 
 vi.mock("@tanstack/react-router", async (importOriginal) => {
@@ -43,10 +70,43 @@ import { useUiStore } from "../../stores/ui-store";
 type Project = { id: string; name: string; path: string; orchestratorAgent?: string };
 type Session = Record<string, unknown>;
 
-function respondWith(projects: Project[], sessions: Session[]) {
+function respondWith(
+	projects: Project[],
+	sessions: Session[],
+	githubAuthenticated = true,
+	githubCliSatisfied: boolean | undefined = true,
+) {
 	getMock.mockImplementation(async (url: string) => {
 		if (url === "/api/v1/projects") return { data: { projects }, error: undefined };
 		if (url === "/api/v1/sessions") return { data: { sessions }, error: undefined };
+		if (url === "/api/v1/system/requirements") {
+			return {
+				data: {
+					ready: true,
+					requirements: [
+						{ id: "git", label: "git", satisfied: true, required: true, detail: "/usr/bin/git" },
+						{ id: "tmux", label: "tmux", satisfied: true, required: true, detail: "/usr/bin/tmux" },
+						{ id: "harness", label: "agent harness", satisfied: true, required: true, detail: "Claude Code" },
+						...(githubCliSatisfied === undefined
+							? []
+							: [{ id: "gh", label: "gh", satisfied: githubCliSatisfied, required: false, detail: githubCliSatisfied ? "/usr/bin/gh" : "Not found" }]),
+					],
+				},
+				error: undefined,
+			};
+		}
+		if (url === "/api/v1/system/github-auth") {
+			return {
+				data: {
+					id: "github-auth",
+					label: "GitHub access",
+					satisfied: githubAuthenticated,
+					required: false,
+					detail: githubAuthenticated ? "GitHub CLI is signed in." : "Sign in with `gh auth login`.",
+				},
+				error: undefined,
+			};
+		}
 		return { data: undefined, error: undefined };
 	});
 }
@@ -83,6 +143,7 @@ const orchestratorSession: Session = {
 };
 
 const createProjectMock = vi.fn().mockResolvedValue(undefined);
+const cloneProjectMock = vi.fn().mockResolvedValue(undefined);
 const initializeProjectRepositoryMock = vi.fn().mockResolvedValue(undefined);
 
 // Kept from the latest renderBoard call so tests can rerender with the same
@@ -95,6 +156,7 @@ function renderBoard(ui: ReactNode) {
 	lastShell = {
 		daemonStatus: { state: "ready" } as ShellContextValue["daemonStatus"],
 		workspaceStartupState: "ready",
+		cloneProject: cloneProjectMock,
 		createProject: createProjectMock,
 		initializeProjectRepository: initializeProjectRepositoryMock,
 	};
@@ -110,8 +172,22 @@ const columnCount = () => document.querySelectorAll("section").length;
 
 beforeEach(() => {
 	vi.clearAllMocks();
+	cloneProjectMock.mockResolvedValue(undefined);
 	createProjectMock.mockResolvedValue(undefined);
 	initializeProjectRepositoryMock.mockResolvedValue(undefined);
+	clipboardWriteMock.mockResolvedValue(undefined);
+	postMock.mockResolvedValue({
+		data: {
+			shellTerminal: {
+				handleId: "shellterm-github",
+				workingDir: "/tmp/auth",
+				title: "Connect GitHub",
+				createdAt: "2026-07-04T10:00:00Z",
+			},
+		},
+		error: undefined,
+	});
+	deleteMock.mockResolvedValue({ error: undefined });
 	useUiStore.setState({
 		orchestratorReplacementErrors: {},
 		orchestratorStartupErrors: {},
@@ -121,12 +197,25 @@ beforeEach(() => {
 });
 
 describe("global board first launch", () => {
-	it("shows the startup loader instead of import while the daemon is booting", async () => {
+	it("runs the lightweight requirements preflight while loading the board", async () => {
+		respondWith([], []);
+		renderBoard(<SessionsBoard />);
+
+		await waitFor(() => {
+			expect(getMock.mock.calls.some(([url]) => url === "/api/v1/projects")).toBe(true);
+			expect(getMock.mock.calls.some(([url]) => url === "/api/v1/sessions")).toBe(true);
+		});
+		expect(await screen.findByText("Add a project")).toBeInTheDocument();
+		expect(getMock.mock.calls.some(([url]) => url === "/api/v1/system/requirements")).toBe(true);
+	});
+
+	it("renders the board shell while the daemon is booting", async () => {
 		respondWith([], []);
 		lastQueryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 		lastShell = {
 			daemonStatus: { state: "starting" } as ShellContextValue["daemonStatus"],
 			workspaceStartupState: "loading",
+			cloneProject: cloneProjectMock,
 			createProject: createProjectMock,
 			initializeProjectRepository: initializeProjectRepositoryMock,
 		};
@@ -138,25 +227,42 @@ describe("global board first launch", () => {
 			</QueryClientProvider>,
 		);
 
-		expect(await screen.findByTestId("daemon-startup-loader")).toHaveClass("ao-startup-screen");
-		expect(screen.getByRole("status", { name: "Agent Orchestrator is starting" })).toBeInTheDocument();
-		expect(screen.getByText("Agent Orchestrator")).toBeInTheDocument();
-		expect(screen.getByText("Starting local services")).toHaveAttribute("aria-hidden", "true");
-		expect(screen.queryByText("Import to Agent Orchestrator")).not.toBeInTheDocument();
-		expect(columnCount()).toBe(0);
+		expect(await screen.findByTestId("board")).toBeInTheDocument();
+		expect(screen.getByTestId("daemon-startup-loader")).toBeInTheDocument();
 	});
 
 	it("shows the import chooser instead of empty columns when no projects exist", async () => {
 		respondWith([], []);
 		renderBoard(<SessionsBoard />);
 
-		expect(await screen.findByText("Import to Agent Orchestrator")).toBeInTheDocument();
-		expect(screen.getByText("What are you importing?")).toBeInTheDocument();
-		expect(screen.getByRole("button", { name: "Workspace" })).toBeInTheDocument();
-		expect(screen.getByRole("button", { name: "Project" })).toBeInTheDocument();
+		expect(await screen.findByText("Add a project")).toBeInTheDocument();
+		expect(screen.getByText("Choose how you want to add code to Agent Orchestrator")).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Clone from Git" })).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Import a workspace folder" })).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Import an existing project" })).toBeInTheDocument();
 		expect(columnCount()).toBe(0);
 		// The welcome carries its own orientation — no dangling "Board" header.
 		expect(screen.queryByText("Board")).not.toBeInTheDocument();
+	});
+
+	it("shows GitHub sign-in guidance during onboarding when gh is signed out", async () => {
+		respondWith([], [], false);
+		renderBoard(<SessionsBoard />);
+
+		expect(await screen.findByText("Connect GitHub for pull requests")).toBeInTheDocument();
+		await userEvent.click(screen.getByRole("button", { name: "Sign in with GitHub" }));
+		await waitFor(() => expect(postMock).toHaveBeenCalledWith("/api/v1/system/github-auth/terminal"));
+		expect(await screen.findByTestId("github-auth-terminal")).toBeInTheDocument();
+		expect(screen.getByTestId("terminal-pane")).toBeInTheDocument();
+	});
+
+	it("keeps sign-in available when GitHub CLI readiness is unknown", async () => {
+		respondWith([], [], false, undefined);
+		renderBoard(<SessionsBoard />);
+
+		expect(await screen.findByText("Connect GitHub for pull requests")).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Sign in with GitHub" })).toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: "Get GitHub CLI" })).not.toBeInTheDocument();
 	});
 
 	it("opens the native folder picker from the Project card", async () => {
@@ -164,7 +270,7 @@ describe("global board first launch", () => {
 		chooseDirectoryMock.mockResolvedValue(null);
 		renderBoard(<SessionsBoard />);
 
-		await userEvent.click(await screen.findByRole("button", { name: "Project" }));
+		await userEvent.click(await screen.findByRole("button", { name: "Import an existing project" }));
 		expect(chooseDirectoryMock).toHaveBeenCalledTimes(1);
 		expect(chooseDirectoryMock).toHaveBeenCalledWith("Choose a project repository");
 	});
@@ -174,7 +280,7 @@ describe("global board first launch", () => {
 		chooseDirectoryMock.mockResolvedValue(null);
 		renderBoard(<SessionsBoard />);
 
-		await userEvent.click(await screen.findByRole("button", { name: "Workspace" }));
+		await userEvent.click(await screen.findByRole("button", { name: "Import a workspace folder" }));
 		expect(chooseDirectoryMock).toHaveBeenCalledTimes(1);
 		expect(chooseDirectoryMock).toHaveBeenCalledWith("Choose a workspace folder");
 	});
@@ -184,7 +290,7 @@ describe("global board first launch", () => {
 		chooseDirectoryMock.mockRejectedValue(new Error("dialog unavailable"));
 		renderBoard(<SessionsBoard />);
 
-		await userEvent.click(await screen.findByRole("button", { name: "Project" }));
+		await userEvent.click(await screen.findByRole("button", { name: "Import an existing project" }));
 		const messages = await screen.findAllByText("dialog unavailable");
 		expect(messages.some((el) => !el.classList.contains("sr-only"))).toBe(true);
 	});
@@ -194,7 +300,7 @@ describe("global board first launch", () => {
 		renderBoard(<SessionsBoard />);
 
 		expect(await screen.findByText("fix the bug")).toBeInTheDocument();
-		expect(screen.queryByText("Import to Agent Orchestrator")).not.toBeInTheDocument();
+		expect(screen.queryByText("Add a project")).not.toBeInTheDocument();
 		expect(columnCount()).toBe(4);
 	});
 
@@ -204,6 +310,7 @@ describe("global board first launch", () => {
 		lastShell = {
 			daemonStatus: { state: "stopped", code: "exited" } as ShellContextValue["daemonStatus"],
 			workspaceStartupState: "loading",
+			cloneProject: cloneProjectMock,
 			createProject: createProjectMock,
 			initializeProjectRepository: initializeProjectRepositoryMock,
 		};
@@ -230,7 +337,7 @@ describe("project board with no sessions", () => {
 		// Board header + empty state each offer the pair; the orchestrator is primary in both.
 		expect(screen.getAllByRole("button", { name: "Spawn Orchestrator" }).length).toBeGreaterThan(0);
 		expect(screen.getAllByRole("button", { name: "New task" }).length).toBeGreaterThan(0);
-		expect(screen.queryByText("Import to Agent Orchestrator")).not.toBeInTheDocument();
+		expect(screen.queryByText("Add a project")).not.toBeInTheDocument();
 		expect(columnCount()).toBe(0);
 	});
 

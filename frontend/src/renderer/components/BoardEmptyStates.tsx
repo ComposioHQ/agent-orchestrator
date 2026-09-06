@@ -2,6 +2,7 @@ import { Plus } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { useShell } from "../lib/shell-context";
 import { CreateProjectFlow } from "./CreateProjectFlow";
+import { GitHubOnboardingNotice } from "./GitHubOnboardingNotice";
 import { TopbarButton } from "./TopbarButton";
 import { WelcomePanel } from "./WelcomePanel";
 import { OrchestratorIcon } from "./icons";
@@ -9,19 +10,23 @@ import { OrchestratorIcon } from "./icons";
 // Board empty states: first-launch welcome (`BoardWelcome`) and project board
 // with no worker sessions yet (`ProjectBoardEmpty`).
 export function BoardWelcome() {
-	const { createProject, initializeProjectRepository } = useShell();
+	const { cloneProject, createProject, initializeProjectRepository } = useShell();
 	return (
 		<WelcomePanel>
 			<div
 				className="flex h-full min-h-0 items-center justify-center overflow-y-auto px-6 py-8"
 				data-testid="board-welcome"
 			>
-				<CreateProjectFlow
-					embedded
-					mode="choose"
-					onCreateProject={createProject}
-					onInitializeProject={initializeProjectRepository}
-				/>
+				<div className="flex w-full flex-col items-center gap-3">
+					<CreateProjectFlow
+						embedded
+						mode="choose"
+						onCloneProject={cloneProject}
+						onCreateProject={createProject}
+						onInitializeProject={initializeProjectRepository}
+					/>
+					<GitHubOnboardingNotice />
+				</div>
 			</div>
 		</WelcomePanel>
 	);

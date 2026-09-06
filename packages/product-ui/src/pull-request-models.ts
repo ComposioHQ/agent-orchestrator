@@ -42,6 +42,13 @@ export type PRCardStatus = {
 export type PRCardPresentation = {
 	primary: PRCardStatus;
 	supporting: PRCardStatus[];
+	/** Compact, priority-ordered rows used by pull-request cards. */
+	statusRows?: PRCardStatus[];
+	readiness?: {
+		label: string;
+		detail: string;
+		tone: PRDisplayTone;
+	};
 };
 
 export type PRSummaryMetadata = {

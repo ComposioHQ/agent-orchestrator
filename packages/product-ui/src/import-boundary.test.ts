@@ -12,7 +12,7 @@ const bannedImportPatterns = [
 	/(^|\/)hooks?(\/|$)/,
 	/(^|\/)(i18n|stores?|telemetry)(\/|$)/,
 ];
-const allowedExternalImports = new Set(["clsx", "react", "tailwind-merge"]);
+const allowedExternalImports = new Set(["clsx", "motion/react", "react", "tailwind-merge"]);
 
 describe("product-ui import boundary", () => {
 	it("keeps production sources inside the portable package boundary", () => {

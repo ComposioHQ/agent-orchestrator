@@ -113,15 +113,21 @@ async function resolveDefaultBranch(repoPath: string, options: ScanOptions = {})
 		const ref = await gitOutput(repoPath, ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"], options);
 		if (ref) return ref.replace(/^origin\//, "");
 	} catch {
-		// Fall back to the checked-out branch when origin/HEAD is unavailable.
+		// The current checkout may be temporary and is not a repository default.
 	}
+	return "auto";
+}
+
+export async function resolveCheckedOutBranch(repoPath: string, options: ScanOptions = {}): Promise<string | undefined> {
 	try {
-		const branch = await gitOutput(repoPath, ["branch", "--show-current"], options);
-		if (branch) return branch;
+		// Git walks up to an ancestor repository for plain nested folders. AO
+		// initializes those workspace roots separately, so do not inherit its branch.
+		if (await gitOutput(repoPath, ["rev-parse", "--show-prefix"], options)) return undefined;
+		const branch = await gitOutput(repoPath, ["symbolic-ref", "--short", "HEAD"], options);
+		return branch || undefined;
 	} catch {
-		// Detached or unreadable HEAD is represented below.
+		return undefined;
 	}
-	return "HEAD";
 }
 
 async function scanGitRepo(

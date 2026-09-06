@@ -39,7 +39,7 @@ describe("PRSummaryParts", () => {
 			</>,
 		);
 
-		expect(screen.getByRole("link", { name: "@ada" })).toHaveAttribute("href", "https://github.com/ada");
+		expect(screen.getByRole("link", { name: "ada" })).toHaveAttribute("href", "https://github.com/ada");
 		expect(screen.getByRole("link", { name: "Checks passing" })).toHaveAttribute(
 			"href",
 			"https://github.com/acme/repo/pull/7/checks",
@@ -61,7 +61,8 @@ describe("PRSummaryParts", () => {
 			/>,
 		);
 
-		expect(screen.getByText("Review required")).toBeInTheDocument();
+		expect(screen.getByText("Review status")).toBeInTheDocument();
+		expect(screen.getByText("Required review not submitted")).toBeInTheDocument();
 		expect(screen.getByRole("link", { name: "Checks running" })).toHaveAttribute(
 			"href",
 			"https://github.com/acme/repo/pull/7/checks",
@@ -73,8 +74,8 @@ describe("PRSummaryParts", () => {
 		const { container } = render(<PRCardStatusSummary pr={summary()} />);
 
 		const marker = container.querySelector(".size-dot-sm");
-		expect(marker).toHaveClass("mt-1");
-		expect(marker).not.toHaveClass("mt-1.5");
+		expect(marker).toHaveClass("size-dot-sm");
+		expect(marker).not.toHaveClass("mt-1");
 	});
 
 	it("centers a supplied primary action beside the compact status stack", () => {
@@ -84,9 +85,8 @@ describe("PRSummaryParts", () => {
 		const supportingStatus = screen.getByRole("link", { name: "Checks passing" });
 		expect(action.parentElement).toHaveClass("shrink-0", "self-center");
 		expect(action.parentElement?.parentElement).toHaveClass("items-center");
-		expect(action.parentElement?.previousElementSibling).toContainElement(supportingStatus);
-		expect(action.parentElement?.previousElementSibling).toHaveClass("gap-1.5");
-		expect(container.querySelector(".pl-4")).not.toContainElement(action);
+		expect(container.querySelector(".grid")).toContainElement(supportingStatus);
+		expect(screen.getByText("Mergeable")).toBeInTheDocument();
 	});
 
 	it("renders failing check links with visible error contrast", () => {
@@ -104,7 +104,8 @@ describe("PRSummaryParts", () => {
 			/>,
 		);
 
-		expect(screen.getByRole("link", { name: "renderer-smoke" })).toHaveClass("text-error");
+		expect(screen.getByText("Checks failing")).toBeInTheDocument();
+		expect(screen.queryByRole("link", { name: "renderer-smoke" })).not.toBeInTheDocument();
 	});
 
 	it("localizes changed-file plurals instead of rebuilding English nouns", async () => {

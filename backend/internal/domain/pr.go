@@ -24,13 +24,23 @@ type PRFacts struct {
 	TargetBranch   string
 	HeadSHA        string
 	UpdatedAt      time.Time
+	// ExternalApproved and ExternalChangesRequested are the human review
+	// verdicts AO did not author. Review above aggregates AO's own provider
+	// reviews with everyone else's, so it cannot say whose turn the
+	// review-feedback loop is on.
+	ExternalApproved         bool
+	ExternalChangesRequested bool
+	ExternalComments         bool
 }
 
 // PullRequest is the app-level representation of one tracked pull request as
 // persisted by the PR store. It is intentionally separate from the sqlc
 // generated sqlite row type so storage details do not leak outside sqlite.
 type PullRequest struct {
-	URL          string
+	URL string
+	// URLAlias is a transient provider-resolved URL that should point at URL.
+	// It is persisted in the alias table, not in the pr row itself.
+	URLAlias     string
 	SessionID    SessionID
 	Number       int
 	Draft        bool
@@ -48,6 +58,9 @@ type PullRequest struct {
 	Provider string
 	Host     string
 	Repo     string
+	// ProviderID is immutable within a provider and host and survives repository
+	// renames or transfers.
+	ProviderID string
 
 	SourceBranch   string
 	TargetBranch   string
@@ -95,6 +108,7 @@ type PullRequestCheck struct {
 // PullRequestComment is one normalized review comment for a pull request.
 type PullRequestComment struct {
 	ThreadID         string
+	ReviewID         string
 	ID               string
 	Author           string
 	File             string

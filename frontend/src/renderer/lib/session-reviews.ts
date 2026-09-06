@@ -36,11 +36,11 @@ export function sessionReviewsQueryOptions(session: WorkspaceSession, enabled: b
 	});
 }
 
-/** Review states for a session's open (non-draft) PRs, matching ReviewPanel semantics. */
+/** Review states for a session's active PRs. Open and draft PRs can be reviewed; merged/closed PRs cannot. */
 export function openReviewStatesFor(session: WorkspaceSession, reviewStates: PRReviewState[]): PRReviewState[] {
 	const openPRURLs = new Set(
 		sortedPRs(session)
-			.filter((pr) => pr.state === "open")
+			.filter((pr) => pr.state === "open" || pr.state === "draft")
 			.map((pr) => pr.url),
 	);
 	return reviewStates.filter((reviewState) => openPRURLs.has(reviewState.prUrl));
@@ -61,6 +61,9 @@ export function reviewRunDisabled(openReviewStates: PRReviewState[], isTriggerin
 export function reviewSessionRunAction(reviewStates: PRReviewState[], isTriggering: boolean): string {
 	if (isTriggering || reviewStates.some((reviewState) => reviewState.status === "running")) {
 		return appI18n.t("inspector.review.reviewing");
+	}
+	if (reviewStates.some((reviewState) => reviewState.status === "needs_review")) {
+		return appI18n.t("inspector.review.runLatest");
 	}
 	if (reviewStates.some((reviewState) => reviewState.status === "changes_requested" || reviewState.latestRun)) {
 		return appI18n.t("inspector.review.rerun");
@@ -177,6 +180,7 @@ function mockReviewsResponse(session: WorkspaceSession): ReviewsResponse {
 			targetSha: state.targetSha,
 		};
 		return [
+			...(state.latestRun?.body?.trim() ? [state.latestRun] : []),
 			{
 				...base,
 				id: `demo-hist-${state.prNumber}-a`,

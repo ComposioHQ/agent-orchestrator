@@ -53,6 +53,7 @@ export type PullRequestReviewCommentLink = {
 	url?: string;
 	file?: string;
 	line?: number;
+	body?: string;
 	autoInjectReview: boolean;
 };
 
@@ -78,6 +79,7 @@ export type PullRequestReviewSummary = {
 	decision: ReviewDecision;
 	hasUnresolvedHumanComments: boolean;
 	unresolvedBy: PullRequestUnresolvedReviewer[];
+	resolvedBy?: PullRequestUnresolvedReviewer[];
 	reviews: PullRequestSubmittedReview[];
 };
 

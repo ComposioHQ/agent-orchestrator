@@ -1,6 +1,7 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { AgentAvatar } from "./AgentAvatar";
+import { GithubAvatar } from "./GithubAvatar";
 import type { ExternalLinkProps } from "./external-link";
 import { PRCardStatusSummary, PRSummaryMeta, PRSummaryParts } from "./PRSummaryDisplay";
 import type { PRCardPresentation, PRSummaryPart } from "./pull-request-models";
@@ -18,6 +19,15 @@ function ExternalLink({ ariaLabel, children, stopPropagation, ...props }: Extern
 }
 
 describe("portable leaf components", () => {
+	it("renders GitHub avatars from the login and falls back to initials", () => {
+		const { container } = render(<GithubAvatar login="ada-lovelace" />);
+		const image = container.querySelector("img");
+
+		expect(image).toHaveAttribute("src", "https://github.com/ada-lovelace.png?size=64");
+		if (image) fireEvent.error(image);
+		expect(container).toHaveTextContent("AL");
+	});
+
 	it("renders an injected agent logo without owning app assets", () => {
 		render(<AgentAvatar logoSources={{ "claude-code": "/logos/claude.svg" }} provider="claude-code" />);
 
@@ -52,7 +62,8 @@ describe("portable leaf components", () => {
 
 		expect(screen.getByText("feature → main")).toBeInTheDocument();
 		expect(screen.getByText("2 localized-file")).toBeInTheDocument();
-		expect(screen.getByRole("link", { name: "@ada" })).toHaveAttribute("href", "https://github.com/ada");
+		expect(screen.getByRole("link", { name: "ada" })).toHaveAttribute("href", "https://github.com/ada");
+		expect(screen.getByText("feature → main")).toHaveClass("break-words");
 	});
 
 	it("renders precomputed PR presentation without controller dependencies", () => {
@@ -81,6 +92,30 @@ describe("portable leaf components", () => {
 		expect(screen.getByText("Review required")).toBeInTheDocument();
 		expect(screen.getByRole("link", { name: "Checks running" })).toBeInTheDocument();
 		expect(container.querySelector(".animate-status-pulse")).toBeInTheDocument();
+	});
+
+	it("keeps review details compact and inline with the review detail", () => {
+		const reviewDetailsAction = <button type="button">View review details ↗</button>;
+		render(
+			<PRCardStatusSummary
+				externalLink={ExternalLink}
+				presentation={{
+					primary: { key: "ci", label: "Checks passing", tone: "success", links: [] },
+					supporting: [],
+					statusRows: [
+						{ key: "ci", label: "Checks passing", tone: "success", links: [] },
+						{ key: "review", label: "Review status", detail: "Required review not submitted", tone: "review", links: [] },
+					],
+					readiness: { label: "Not mergeable yet", detail: "A required review is pending.", tone: "error" },
+				}}
+				reviewDetailsAction={reviewDetailsAction}
+			/>,
+		);
+
+		const detail = screen.getByText("Required review not submitted");
+		expect(detail.parentElement).toHaveClass("flex", "items-baseline");
+		expect(detail.parentElement).toContainElement(screen.getByRole("button", { name: "View review details ↗" }));
+		expect(detail.closest(".grid")).toHaveClass("grid-cols-1");
 	});
 
 	it("computes overflow against the requested link limit", () => {

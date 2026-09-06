@@ -18,6 +18,17 @@ type AddInput struct {
 	AsWorkspace bool                  `json:"asWorkspace,omitempty"`
 }
 
+// CloneInput is the body shape for POST /api/v1/projects/clone. The daemon
+// derives the checkout directory name from RemoteURL and creates it directly
+// beneath DestinationParent before registering the resulting project.
+type CloneInput struct {
+	RemoteURL         string                `json:"remoteUrl" minLength:"1"`
+	DestinationParent string                `json:"destinationParent" minLength:"1"`
+	ProjectID         *string               `json:"projectId,omitempty"`
+	Name              *string               `json:"name,omitempty"`
+	Config            *domain.ProjectConfig `json:"config,omitempty"`
+}
+
 // InitializeRepositoryInput is the body shape for POST /api/v1/projects/initialize.
 type InitializeRepositoryInput struct {
 	Path string `json:"path"`
@@ -45,4 +56,10 @@ type SetConfigInput struct {
 type RemoveResult struct {
 	ProjectID         domain.ProjectID `json:"projectId"`
 	RemovedStorageDir bool             `json:"removedStorageDir"`
+}
+
+// SetPermissionsInput remembers a project-wide policy for future sessions.
+type SetPermissionsInput struct {
+	SourceHarness domain.AgentHarness   `json:"sourceHarness,omitempty"`
+	Permissions   domain.PermissionMode `json:"permissions" enum:"default,accept-edits,auto,bypass-permissions"`
 }

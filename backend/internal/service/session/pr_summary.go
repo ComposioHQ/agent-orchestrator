@@ -160,28 +160,44 @@ func summarizeReview(pr domain.PullRequest, comments []domain.PullRequestComment
 		return out
 	}
 	byReviewer := map[string]int{}
+	resolvedByReviewer := map[string]int{}
 	order := []string{}
+	resolvedOrder := []string{}
 	links := map[string][]PRReviewCommentLink{}
+	resolvedLinks := map[string][]PRReviewCommentLink{}
 	isBot := map[string]bool{}
+	resolvedIsBot := map[string]bool{}
 	for _, c := range comments {
-		if c.Resolved || c.IsBot {
+		if c.IsBot {
 			continue
 		}
 		reviewer := strings.TrimSpace(c.Author)
 		if reviewer == "" {
 			reviewer = "unknown"
 		}
+		link := PRReviewCommentLink{
+			URL:              c.URL,
+			ReviewID:         c.ReviewID,
+			File:             c.File,
+			Line:             c.Line,
+			Body:             c.Body,
+			AutoInjectReview: c.AutoInjectReview,
+		}
+		if c.Resolved {
+			if _, ok := resolvedByReviewer[reviewer]; !ok {
+				resolvedOrder = append(resolvedOrder, reviewer)
+			}
+			resolvedByReviewer[reviewer]++
+			resolvedIsBot[reviewer] = c.IsBot
+			resolvedLinks[reviewer] = append(resolvedLinks[reviewer], link)
+			continue
+		}
 		if _, ok := byReviewer[reviewer]; !ok {
 			order = append(order, reviewer)
 		}
 		byReviewer[reviewer]++
 		isBot[reviewer] = c.IsBot
-		links[reviewer] = append(links[reviewer], PRReviewCommentLink{
-			URL:              c.URL,
-			File:             c.File,
-			Line:             c.Line,
-			AutoInjectReview: c.AutoInjectReview,
-		})
+		links[reviewer] = append(links[reviewer], link)
 	}
 	latestReviews := latestChangesRequestedReviews(reviews)
 	reviewURLByAuthor := map[string]string{}
@@ -192,11 +208,10 @@ func summarizeReview(pr domain.PullRequest, comments []domain.PullRequestComment
 		reviewURLByAuthor[reviewer] = review.URL
 		isBot[reviewer] = review.IsBot
 	}
-	// Reviews carries every reviewer's latest decisive verdict (approved and
-	// changes_requested alike), not just the changes-requested subset used for
-	// the unresolved-comment grouping above, so an approved review's summary
-	// body is surfaced too.
-	for reviewer, review := range latestDecisiveReviews(reviews) {
+	// Reviews carries every reviewer's latest submitted review, including
+	// non-decisive COMMENTED reviews normalized as ReviewNone. The unresolved
+	// grouping above still uses decisive changes-requested reviews only.
+	for reviewer, review := range latestReviewSummaries(reviews) {
 		out.Reviews = append(out.Reviews, PRReviewEntry{
 			Reviewer:         reviewer,
 			Verdict:          reviewOrNone(review.State),
@@ -218,6 +233,16 @@ func summarizeReview(pr domain.PullRequest, comments []domain.PullRequestComment
 			IsBot:      isBot[reviewer],
 		})
 	}
+	sort.Strings(resolvedOrder)
+	for _, reviewer := range resolvedOrder {
+		out.ResolvedBy = append(out.ResolvedBy, PRUnresolvedReviewer{
+			ReviewerID: reviewer,
+			Count:      resolvedByReviewer[reviewer],
+			Links:      resolvedLinks[reviewer],
+			ReviewURL:  reviewURLByAuthor[reviewer],
+			IsBot:      resolvedIsBot[reviewer],
+		})
+	}
 	for _, reviewer := range out.UnresolvedBy {
 		if reviewer.Count > 0 && !reviewer.IsBot {
 			out.HasUnresolvedHumanComments = true
@@ -225,6 +250,27 @@ func summarizeReview(pr domain.PullRequest, comments []domain.PullRequestComment
 		}
 	}
 	return out
+}
+
+// latestReviewSummaries returns each reviewer's newest submitted review.
+// Providers normalize non-decisive COMMENTED reviews as ReviewNone; a
+// ReviewRequired value is an aggregate PR decision, not a submitted review.
+func latestReviewSummaries(reviews []domain.PullRequestReview) map[string]domain.PullRequestReview {
+	latestByReviewer := map[string]domain.PullRequestReview{}
+	for _, review := range reviews {
+		if review.State == domain.ReviewRequired {
+			continue
+		}
+		reviewer := strings.TrimSpace(review.Author)
+		if reviewer == "" {
+			reviewer = "unknown"
+		}
+		current, ok := latestByReviewer[reviewer]
+		if !ok || reviewAfter(review, current) {
+			latestByReviewer[reviewer] = review
+		}
+	}
+	return latestByReviewer
 }
 
 // latestDecisiveReviews returns each reviewer's most recent decisive review —

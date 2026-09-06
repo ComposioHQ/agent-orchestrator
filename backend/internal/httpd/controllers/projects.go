@@ -26,11 +26,31 @@ type ProjectsController struct {
 func (c *ProjectsController) Register(r chi.Router) {
 	r.Get("/projects", c.list)
 	r.Post("/projects", c.add)
+	r.Post("/projects/clone", c.clone)
 	r.Post("/projects/initialize", c.initialize)
 	r.Get("/projects/{id}", c.get)
 	r.Put("/projects/{id}", c.updateSettings)
 	r.Put("/projects/{id}/config", c.setConfig)
+	r.Patch("/projects/{id}/permissions", c.setPermissions)
 	r.Delete("/projects/{id}", c.remove)
+}
+
+func (c *ProjectsController) clone(w http.ResponseWriter, r *http.Request) {
+	if c.Mgr == nil {
+		apispec.NotImplemented(w, r, "POST", "/api/v1/projects/clone")
+		return
+	}
+	var in projectsvc.CloneInput
+	if err := decodeJSONStrict(r, &in); err != nil {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_JSON", "Invalid JSON body", nil)
+		return
+	}
+	p, err := c.Mgr.Clone(r.Context(), in)
+	if err != nil {
+		envelope.WriteError(w, r, err)
+		return
+	}
+	envelope.WriteJSON(w, http.StatusCreated, ProjectResponse{Project: p})
 }
 
 func (c *ProjectsController) list(w http.ResponseWriter, r *http.Request) {
@@ -166,4 +186,22 @@ func decodeJSONStrict(r *http.Request, out any) error {
 	dec := json.NewDecoder(r.Body)
 	dec.DisallowUnknownFields()
 	return dec.Decode(out)
+}
+
+func (c *ProjectsController) setPermissions(w http.ResponseWriter, r *http.Request) {
+	if c.Mgr == nil {
+		apispec.NotImplemented(w, r, "PATCH", "/api/v1/projects/{id}/permissions")
+		return
+	}
+	var in projectsvc.SetPermissionsInput
+	if err := decodeJSONStrict(r, &in); err != nil {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_JSON", "Invalid JSON body", nil)
+		return
+	}
+	p, err := c.Mgr.SetPermissions(r.Context(), projectID(r), in)
+	if err != nil {
+		envelope.WriteError(w, r, err)
+		return
+	}
+	envelope.WriteJSON(w, http.StatusOK, ProjectResponse{Project: p})
 }
