@@ -298,7 +298,8 @@ func TestDelegateEndpointRetriesCodexBootstrapWithoutDaemonRestart(t *testing.T)
 		t.Fatalf("runtime Create calls after failed bootstrap = %d, want 0", runtime.created)
 	}
 
-	now.Add(2)
+	// Advance beyond the first 10-second bootstrap retry deadline.
+	now.Add(11)
 	status, body = delegate()
 	if status != http.StatusAccepted {
 		t.Fatalf("second delegate = %d, want 202; body=%s", status, body)
