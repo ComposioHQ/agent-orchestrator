@@ -470,7 +470,17 @@ func clearsLaunchFailure(state *accountAuthState, current, observation domain.Ag
 // applyDiscoveryAuthentication records an observation from a non-refresh read.
 // Discovery proves that account material is present, never that the account can
 // launch, so it neither claims launch verification nor clears one.
-func (m *codexAccountManager) applyDiscoveryAuthentication(id string, observation domain.AgentAuthenticationObservation) {
+//
+// credentialChanged reports whether discovery found account material that
+// differs from the saved copy the stored observation was made against. A
+// launch-verified observation answers a strictly stronger question than
+// discovery, so while the material is the same it stands untouched -- including
+// its checkedAt, because reconciliation runs on every ensure and must not
+// restart the freshness window that keeps Settings from re-reading the account
+// on every focus. Replaced material is different evidence: a launch failure
+// recorded against the old credentials no longer describes the account, so it is
+// marked for re-verification instead of being left to expire.
+func (m *codexAccountManager) applyDiscoveryAuthentication(id string, observation domain.AgentAuthenticationObservation, credentialChanged bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	state := m.auth[id]
@@ -478,13 +488,15 @@ func (m *codexAccountManager) applyDiscoveryAuthentication(id string, observatio
 		state = &accountAuthState{invalidated: true}
 		m.auth[id] = state
 	}
-	current, _ := m.catalog.record(id)
-	if clearsLaunchFailure(state, current.Snapshot.Authentication, observation) {
-		state.invalidated = true
+	if state.launchVerified {
+		current, _ := m.catalog.record(id)
+		if credentialChanged && current.Snapshot.Authentication.State == domain.AgentAuthenticationUnauthorized {
+			state.launchVerified = false
+			state.invalidated = true
+		}
 		return
 	}
 	m.catalog.updateSnapshot(id, func(snapshot *domain.CodexAccountSnapshot) { snapshot.Authentication = observation })
-	state.launchVerified = false
 }
 
 func accountAuthenticationObservation(at time.Time, state domain.AgentAuthenticationState) domain.AgentAuthenticationObservation {

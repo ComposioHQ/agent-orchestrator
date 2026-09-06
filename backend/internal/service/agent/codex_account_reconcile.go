@@ -284,6 +284,10 @@ func (m *codexAccountManager) reconcileGlobalInner(ctx context.Context) error {
 		}
 		observation = checked
 	}
+	// Compared before the copy below overwrites it: byte-identical material means
+	// any launch verification AO already holds still describes this account.
+	saved, savedErr := readOpaqueCredential(filepath.Join(record.Home, codexCredentialFilename))
+	credentialChanged := savedErr != nil || !bytes.Equal(saved, globalCredential)
 	if err := writePrivateFileAtomic(filepath.Join(record.Home, codexCredentialFilename), globalCredential); err != nil {
 		return err
 	}
@@ -300,7 +304,7 @@ func (m *codexAccountManager) reconcileGlobalInner(ctx context.Context) error {
 	// Reconciliation identifies the device account with a non-refresh read, so its
 	// result is discovery only and must not present an account the launch path
 	// has already rejected as signed in again.
-	m.applyDiscoveryAuthentication(record.Snapshot.ID, accountAuthenticationObservation(m.now(), observation.Authentication))
+	m.applyDiscoveryAuthentication(record.Snapshot.ID, accountAuthenticationObservation(m.now(), observation.Authentication), credentialChanged)
 	if err := m.setActivePointer(ctx, record.Snapshot.ID); err != nil {
 		return bootstrapStateFailure(err)
 	}
