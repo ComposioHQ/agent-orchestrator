@@ -360,12 +360,13 @@ function summarize(activities: ConversationActivity[]): string {
 			continue;
 		}
 		toolCalls += 1;
+		const category = commandCategory(activity.detail?.command ?? activity.summary);
 		if (activity.activityKind === "file_change") {
 			changedFiles += Math.max(1, fileChangeFiles(activity).length);
 			exploratory = false;
 		} else if (
 			activity.activityKind !== "command" ||
-			!(["read", "search"] as const).includes(commandCategory(activity.detail?.command ?? activity.summary))
+			(category !== "read" && category !== "search")
 		) {
 			exploratory = false;
 		}
