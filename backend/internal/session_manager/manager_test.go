@@ -817,6 +817,10 @@ type fakeWorkspace struct {
 	destroyed  int
 	// destroyReclaim, when set, is the reclaim outcome DestroyReclaim reports.
 	destroyReclaim ports.WorkspaceReclaim
+	// destroyReclaimByPath overrides destroyReclaim for one workspace path, so a
+	// multi-repo test can have one repo still on disk while another is already
+	// gone — the state a partly cleaned workspace project is actually in.
+	destroyReclaimByPath map[string]ports.WorkspaceReclaim
 	// destroyCtxErr records ctx.Err() as seen by Destroy, so a test can prove
 	// teardown does not inherit a caller's cancellation.
 	destroyCtxErr error
@@ -986,10 +990,14 @@ func (w *fakeWorkspace) Destroy(ctx context.Context, info ports.WorkspaceInfo) e
 // keeps them on the "a completed teardown released something" default.
 func (w *fakeWorkspace) DestroyReclaim(ctx context.Context, info ports.WorkspaceInfo) (ports.WorkspaceReclaim, error) {
 	err := w.Destroy(ctx, info)
-	if w.destroyReclaim == "" {
+	reclaim := w.destroyReclaim
+	if override, ok := w.destroyReclaimByPath[info.Path]; ok {
+		reclaim = override
+	}
+	if reclaim == "" {
 		return ports.WorkspaceReclaimRemoved, err
 	}
-	return w.destroyReclaim, err
+	return reclaim, err
 }
 func (w *fakeWorkspace) DestroyWorkspaceProject(context.Context, ports.WorkspaceProjectInfo) error {
 	w.projectDestroyed++
@@ -3611,6 +3619,81 @@ func TestCleanup_WorkspaceProjectDestroysChildrenBeforeRoot(t *testing.T) {
 	want := []string{"Destroy:api", "Destroy:__root__"}
 	if got := ws.calls; strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("destroy order = %v, want %v", got, want)
+	}
+}
+
+// TestCleanup_WorkspaceProjectRepeatRunReportsAlreadyGone is the multi-repo
+// half of the false-count fix. A workspace project's teardown succeeds on every
+// later run — the worktrees are gone, so there is nothing left to fail on — and
+// counting those runs as reclaimed is exactly the report that made a batch
+// cleanup look like it freed disk it never touched. The second run here must
+// land in AlreadyGone.
+func TestCleanup_WorkspaceProjectRepeatRunReportsAlreadyGone(t *testing.T) {
+	m, st, _, ws := newManager()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Path: "/repo/mer", Kind: domain.ProjectKindWorkspace, Config: testRoleAgents()}
+	st.workspaceRepo["mer"] = []domain.WorkspaceRepoRecord{{Name: "api", RelativePath: "api"}}
+	seedTerminal(st, "mer-1", domain.SessionMetadata{WorkspacePath: "/ws/mer-1", Branch: "ao/mer-1"})
+	st.worktrees["mer-1"] = []domain.SessionWorktreeRecord{
+		{SessionID: "mer-1", RepoName: domain.RootWorkspaceRepoName, Branch: "ao/mer-1", WorktreePath: "/ws/mer-1"},
+		{SessionID: "mer-1", RepoName: "api", Branch: "ao/mer-1", WorktreePath: "/ws/mer-1/api"},
+	}
+
+	first, err := m.Cleanup(ctx, "mer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(first.Cleaned) != 1 || first.Cleaned[0] != "mer-1" {
+		t.Fatalf("first run cleaned = %v, want [mer-1]: both worktrees were present", first.Cleaned)
+	}
+	if len(first.AlreadyGone) != 0 {
+		t.Fatalf("first run alreadyGone = %v, want none", first.AlreadyGone)
+	}
+
+	// The first run removed both directories, so every repo is now absent —
+	// which is what the adapter reports on the second run.
+	ws.destroyReclaim = ports.WorkspaceReclaimAlreadyAbsent
+
+	second, err := m.Cleanup(ctx, "mer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(second.Cleaned) != 0 {
+		t.Fatalf("second run cleaned = %v, want none: both worktrees were already gone", second.Cleaned)
+	}
+	if len(second.AlreadyGone) != 1 || second.AlreadyGone[0] != "mer-1" {
+		t.Fatalf("second run alreadyGone = %v, want [mer-1]", second.AlreadyGone)
+	}
+	if len(second.Skipped) != 0 {
+		t.Fatalf("second run skipped = %v, want none: teardown did not fail", second.Skipped)
+	}
+}
+
+// TestCleanup_WorkspaceProjectPartialReclaimCountsAsCleaned pins the aggregate
+// on the other side. Repos of one workspace project can disagree — a child
+// removed by hand, the root still there — and a session that released any disk
+// at all was reclaimed, so only a project where nothing was left may report
+// already gone.
+func TestCleanup_WorkspaceProjectPartialReclaimCountsAsCleaned(t *testing.T) {
+	m, st, _, ws := newManager()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Path: "/repo/mer", Kind: domain.ProjectKindWorkspace, Config: testRoleAgents()}
+	st.workspaceRepo["mer"] = []domain.WorkspaceRepoRecord{{Name: "api", RelativePath: "api"}}
+	seedTerminal(st, "mer-1", domain.SessionMetadata{WorkspacePath: "/ws/mer-1", Branch: "ao/mer-1"})
+	st.worktrees["mer-1"] = []domain.SessionWorktreeRecord{
+		{SessionID: "mer-1", RepoName: domain.RootWorkspaceRepoName, Branch: "ao/mer-1", WorktreePath: "/ws/mer-1"},
+		{SessionID: "mer-1", RepoName: "api", Branch: "ao/mer-1", WorktreePath: "/ws/mer-1/api"},
+	}
+	ws.destroyReclaim = ports.WorkspaceReclaimAlreadyAbsent
+	ws.destroyReclaimByPath = map[string]ports.WorkspaceReclaim{"/ws/mer-1": ports.WorkspaceReclaimRemoved}
+
+	res, err := m.Cleanup(ctx, "mer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Cleaned) != 1 || res.Cleaned[0] != "mer-1" {
+		t.Fatalf("cleaned = %v, want [mer-1]: the root worktree was reclaimed", res.Cleaned)
+	}
+	if len(res.AlreadyGone) != 0 {
+		t.Fatalf("alreadyGone = %v, want none", res.AlreadyGone)
 	}
 }
 

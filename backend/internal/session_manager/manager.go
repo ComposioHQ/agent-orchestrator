@@ -1715,7 +1715,7 @@ func (m *Manager) Kill(ctx context.Context, id domain.SessionID) (bool, error) {
 	}
 	freed := false
 	if workspaceProject {
-		cleaned, err := m.destroyWorkspaceProjectRows(ctx, workspaceProjectRows)
+		_, cleaned, err := m.destroyWorkspaceProjectRows(ctx, workspaceProjectRows)
 		if err != nil {
 			if workspacePreserved(err) {
 				if err := m.lcm.MarkTerminated(ctx, id); err != nil {
@@ -3179,7 +3179,22 @@ func (m *Manager) saveAndTeardownWorkspaceProject(ctx context.Context, rec domai
 	return nil
 }
 
-func (m *Manager) destroyWorkspaceProjectRows(ctx context.Context, rows []ports.WorkspaceRepoInfo) (bool, error) {
+// destroyWorkspaceProjectRows tears down every repo of a multi-repo workspace,
+// children before root. It reports two different things, because they answer
+// two different questions and only coincide when every repo still had a
+// directory on disk:
+//
+//   - reclaim aggregates the per-repo outcomes. A session released disk if any
+//     one of its repos did, so a single removed repo makes the whole session
+//     WorkspaceReclaimRemoved; only when no repo had anything left to release
+//     is it WorkspaceReclaimAlreadyAbsent. Callers that count reclaimed
+//     workspaces need this.
+//   - cleaned reports whether at least one repo tore down without an error,
+//     which is what the kill path uses to decide that the session's registration
+//     is reconciled. A repo whose directory was already gone still tears down,
+//     so cleaned stays true there while reclaim does not.
+func (m *Manager) destroyWorkspaceProjectRows(ctx context.Context, rows []ports.WorkspaceRepoInfo) (ports.WorkspaceReclaim, bool, error) {
+	reclaim := ports.WorkspaceReclaimAlreadyAbsent
 	cleaned := false
 	var firstErr error
 	for i := len(rows) - 1; i >= 0; i-- {
@@ -3187,9 +3202,10 @@ func (m *Manager) destroyWorkspaceProjectRows(ctx context.Context, rows []ports.
 			continue
 		}
 		info := workspaceInfoFromRepoInfo(rows[i])
-		if err := m.workspace.Destroy(ctx, info); err != nil {
+		rowReclaim, err := m.destroyWorkspace(ctx, info)
+		if err != nil {
 			if errors.Is(err, ports.ErrWorkspaceDirty) {
-				return cleaned, err
+				return reclaim, cleaned, err
 			}
 			if stateErr := m.upsertWorkspaceProjectRowState(ctx, rows[i], "retry_remove"); stateErr != nil && firstErr == nil {
 				firstErr = stateErr
@@ -3199,12 +3215,15 @@ func (m *Manager) destroyWorkspaceProjectRows(ctx context.Context, rows []ports.
 			}
 			continue
 		}
+		if rowReclaim == ports.WorkspaceReclaimRemoved {
+			reclaim = ports.WorkspaceReclaimRemoved
+		}
 		if err := m.upsertWorkspaceProjectRowState(ctx, rows[i], "unavailable"); err != nil && firstErr == nil {
 			firstErr = err
 		}
 		cleaned = true
 	}
-	return cleaned, firstErr
+	return reclaim, cleaned, firstErr
 }
 
 func (m *Manager) upsertWorkspaceProjectRowState(ctx context.Context, row ports.WorkspaceRepoInfo, state string) error {
@@ -3697,17 +3716,19 @@ func (m *Manager) cleanupOne(ctx context.Context, rec domain.SessionRecord, ws p
 		m.logger.Warn("cleanup: workspace rows failed", "sessionID", rec.ID, "error", rowErr)
 		return ports.WorkspaceReclaimRemoved, "workspace teardown failed"
 	} else if ok {
-		// A workspace project spans several repos with their own per-row state
-		// machine; it is reported as a real reclaim so that multi-repo teardown
-		// keeps its existing accounting.
-		if _, err := m.destroyWorkspaceProjectRows(ctx, rows); err != nil {
+		// A workspace project spans several repos, so its reclaim outcome is the
+		// aggregate of theirs rather than one directory's: reporting a fixed
+		// "removed" here would put a multi-repo session back on the same false
+		// count this whole change exists to remove.
+		projectReclaim, _, err := m.destroyWorkspaceProjectRows(ctx, rows)
+		if err != nil {
 			if !workspacePreserved(err) {
 				m.logger.Warn("cleanup: workspace teardown failed", "sessionID", rec.ID, "path", ws.Path, "error", err)
 			}
 			return ports.WorkspaceReclaimRemoved, cleanupSkipReason(err)
 		}
 		m.cleanupAgentWorkspace(ctx, rec, ws.Path)
-		return ports.WorkspaceReclaimRemoved, ""
+		return projectReclaim, ""
 	}
 	reclaim, err := m.destroyWorkspace(ctx, ws)
 	if err != nil {
