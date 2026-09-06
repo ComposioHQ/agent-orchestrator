@@ -830,11 +830,11 @@ function SoftActivityTransition({
 	const MotionElement = inline ? motion.span : motion.div;
 	return (
 		<MotionElement
-			initial={reducedMotion ? false : { opacity: 0, filter: "blur(2px)" }}
+			initial={reducedMotion ? false : { opacity: 0 }}
 			animate={
 				reducedMotion || !settling
-					? { opacity: 1, filter: "blur(0px)" }
-					: { opacity: 0.72, filter: "blur(2px)" }
+					? { opacity: 1 }
+					: { opacity: 0.72 }
 			}
 			transition={{ duration: reducedMotion ? 0 : 0.2, ease: [0.22, 1, 0.36, 1] }}
 			onAnimationComplete={() => setSettling(false)}

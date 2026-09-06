@@ -64,8 +64,8 @@ export function ActivityRun({ activities }: { activities: ConversationActivity[]
 
 	return (
 		<motion.div
-			initial={reducedMotion ? false : { opacity: 0, filter: "blur(2px)" }}
-			animate={{ opacity: 1, filter: "blur(0px)" }}
+			initial={reducedMotion ? false : { opacity: 0 }}
+			animate={{ opacity: 1 }}
 			transition={{ duration: reducedMotion ? 0 : 0.2, ease: [0.22, 1, 0.36, 1] }}
 			className="flex flex-col"
 		>
@@ -161,11 +161,11 @@ function ActivityLabelTransition({ value, children }: { value: string; children:
 
 	return (
 		<motion.span
-			initial={reducedMotion ? false : { opacity: 0, filter: "blur(2px)" }}
+			initial={reducedMotion ? false : { opacity: 0 }}
 			animate={
 				reducedMotion || !settling
-					? { opacity: 1, filter: "blur(0px)" }
-					: { opacity: 0.72, filter: "blur(2px)" }
+					? { opacity: 1 }
+					: { opacity: 0.72 }
 			}
 			transition={{ duration: reducedMotion ? 0 : 0.2, ease: [0.22, 1, 0.36, 1] }}
 			onAnimationComplete={() => setSettling(false)}
