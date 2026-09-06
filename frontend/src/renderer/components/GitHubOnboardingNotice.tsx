@@ -6,7 +6,7 @@ import { useCloseShellTerminal } from "../hooks/useShellTerminals";
 import { useGitHubAuthRequirement, useGitHubAuthTerminal, useStartGitHubAuthTerminal, useSystemRequirementsGate } from "../hooks/useSystemRequirementsGate";
 import { aoBridge } from "../lib/bridge";
 import { useShellMaybe } from "../lib/shell-context";
-import { useResolvedTheme } from "../stores/ui-store";
+import { useResolvedTheme, useUiStore } from "../stores/ui-store";
 import { TerminalPane } from "./TerminalPane";
 import { TopbarButton } from "./TopbarButton";
 
@@ -19,10 +19,11 @@ const automaticallyChecked = new Set<string>();
 export function GitHubOnboardingNotice() {
 	const { t } = useTranslation();
 	const gate = useSystemRequirementsGate();
-	const authQuery = useGitHubAuthRequirement();
 	const startLogin = useStartGitHubAuthTerminal();
 	const terminalQuery = useGitHubAuthTerminal();
+	const authQuery = useGitHubAuthRequirement(Boolean(terminalQuery.data));
 	const { mutate: closeTerminal } = useCloseShellTerminal();
+	const showGlobalToast = useUiStore((state) => state.showGlobalToast);
 	const theme = useResolvedTheme();
 	const shell = useShellMaybe();
 	const requirements = gate.requirements ?? [];
@@ -30,6 +31,7 @@ export function GitHubOnboardingNotice() {
 	const terminalRef = useRef(terminal);
 	const refetchAuthRef = useRef(authQuery.refetch);
 	const automaticLoginStartedRef = useRef(false);
+	const completedTerminalRef = useRef<string | null>(null);
 	const [terminalState, setTerminalState] = useState<TerminalSessionState>("idle");
 	const gh = requirements.find((requirement) => requirement.id === "gh");
 	const auth = authQuery.data;
@@ -46,8 +48,11 @@ export function GitHubOnboardingNotice() {
 	}, []);
 	useEffect(() => {
 		if (!auth?.satisfied || !terminal) return;
+		if (completedTerminalRef.current === terminal.handleId) return;
+		completedTerminalRef.current = terminal.handleId;
+		showGlobalToast(t("startup.githubConnected"));
 		closeTerminal(terminal.handleId, { onSettled: terminalQuery.clear });
-	}, [auth?.satisfied, closeTerminal, terminal, terminalQuery.clear]);
+	}, [auth?.satisfied, closeTerminal, showGlobalToast, t, terminal, terminalQuery.clear]);
 	useEffect(() => {
 		if (
 			!auth ||

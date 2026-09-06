@@ -1251,6 +1251,7 @@
 	"startup.detailGhMissing": "No se encontró gh en el PATH. Permite que las sesiones de agente abran pull requests y lean issues, pero AO funciona bien sin él.",
 	"startup.githubLogin": "Iniciar sesión con GitHub",
 	"startup.githubLoginRunning": "Completa el inicio de sesión en esta terminal",
+	"startup.githubConnected": "GitHub conectado",
 	"startup.githubLoginStarting": "Iniciando sesión…",
 	"startup.githubSetupMissingCli": "Instala GitHub CLI e inicia sesión antes de pedir a los agentes que abran pull requests.",
 	"startup.githubSetupSignedOut": "Inicia sesión una vez para que las sesiones de agente puedan abrir pull requests y leer issues sin pedirte un token.",

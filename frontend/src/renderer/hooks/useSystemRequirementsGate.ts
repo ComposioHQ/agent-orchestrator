@@ -41,8 +41,14 @@ export const githubAuthRequirementQueryOptions = {
 
 /** Advisory authentication probe. Kept separate from the startup gate because
  * credential-store access can be slow or interactive on some machines. */
-export function useGitHubAuthRequirement() {
-	return useQuery(githubAuthRequirementQueryOptions);
+export function useGitHubAuthRequirement(loginActive = false) {
+	return useQuery({
+		...githubAuthRequirementQueryOptions,
+		// The browser/device flow can finish before its PTY exit reaches the
+		// renderer. Probe only while AO owns an active login terminal so the card
+		// closes promptly after authorization without permanent background polling.
+		refetchInterval: loginActive ? 750 : false,
+	});
 }
 
 export function useStartGitHubAuthTerminal() {

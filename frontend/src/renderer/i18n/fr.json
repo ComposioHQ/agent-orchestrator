@@ -1251,6 +1251,7 @@
 	"startup.detailGhMissing": "gh est introuvable dans le PATH. Il permet aux sessions d'agent d'ouvrir des pull requests et de lire les issues, mais AO fonctionne très bien sans.",
 	"startup.githubLogin": "Se connecter à GitHub",
 	"startup.githubLoginRunning": "Terminez la connexion dans ce terminal",
+	"startup.githubConnected": "GitHub connecté",
 	"startup.githubLoginStarting": "Démarrage de la connexion…",
 	"startup.githubSetupMissingCli": "Installez GitHub CLI et connectez-vous avant de demander aux agents d'ouvrir des pull requests.",
 	"startup.githubSetupSignedOut": "Connectez-vous une fois pour que les sessions d'agent puissent ouvrir des pull requests et lire les issues sans demander de jeton.",
