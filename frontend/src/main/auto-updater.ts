@@ -1,6 +1,6 @@
 import { autoUpdater } from "electron-updater";
 import { CancellationToken } from "builder-util-runtime";
-import { app, BrowserWindow, dialog, autoUpdater as nativeAutoUpdater } from "electron";
+import { app, dialog, autoUpdater as nativeAutoUpdater } from "electron";
 import { accessSync, constants as fsConstants, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -203,13 +203,40 @@ function armDownloadStallWatchdog(): void {
 // downloading is enabled.
 let lastCheckedAtMs: number | undefined;
 
+/**
+ * Where renderer pushes go.
+ *
+ * NOT BrowserWindow.getAllWindows(). Since #3750 the AO shell is a BaseWindow
+ * hosting the UI in a WebContentsView, and BrowserWindow.getAllWindows() only
+ * ever returns BrowserWindow instances — so enumerating windows here matched
+ * nothing and every "updates:status" and "updates:telemetry" push was dropped
+ * on the floor from 2026-08-09 onward. `invoke` handlers reply to their own
+ * sender regardless of window type, so updates:getStatus kept working and the
+ * breakage looked like a stale-cache bug: Settings showed a correct timestamp
+ * on reopen and never moved while open.
+ *
+ * main.ts owns the shell handle and already pushes daemon status this way
+ * (`getShellWebContents()?.send("daemon:status", …)`), so it injects the same
+ * resolver here rather than this module reaching back into it.
+ */
+type RendererSink = { send: (channel: string, payload: unknown) => void };
+let resolveRendererSink: () => RendererSink | null | undefined = () => undefined;
+
+export function setRendererSink(resolve: () => RendererSink | null | undefined): void {
+  resolveRendererSink = resolve;
+}
+
+// Resolved per send, never cached: the shell WebContents is replaced when the
+// window is recreated, and holding the first one would silently stop delivering.
+function sendToRenderer(channel: string, payload: unknown): void {
+  resolveRendererSink()?.send(channel, payload);
+}
+
 // emitUpdateOutcome pushes an update outcome to renderers on a channel separate
 // from "updates:status", so suppressing a status for UI reasons (as the
 // automatic path does) never suppresses the telemetry for it.
 function emitUpdateOutcome(outcome: UpdateOutcome): void {
-  for (const win of BrowserWindow.getAllWindows()) {
-    if (!win.isDestroyed()) win.webContents.send("updates:telemetry", outcome);
-  }
+  sendToRenderer("updates:telemetry", outcome);
 }
 
 function activeUpdateTrigger(): UpdateTrigger {
@@ -266,9 +293,7 @@ function broadcast(
     }
   }
   lastStatus = stamped;
-  for (const win of BrowserWindow.getAllWindows()) {
-    if (!win.isDestroyed()) win.webContents.send("updates:status", stamped);
-  }
+  sendToRenderer("updates:status", stamped);
 }
 
 function withActiveRequest(status: UpdateStatus): UpdateStatus {

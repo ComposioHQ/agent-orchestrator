@@ -101,16 +101,16 @@ async function importAutoUpdater(
   // status never suppresses its telemetry, and only a per-channel view can tell
   // those two apart.
   const sent: { channel: string; payload: unknown }[] = [];
-  const fakeWindow = {
-    isDestroyed: () => false,
-    webContents: {
-      send: (channel: string, payload: unknown) => {
-        sent.push({ channel, payload });
-      },
-    },
-  };
+  // The renderer is reached through the injected shell sink, never by walking
+  // BrowserWindow.getAllWindows(): the AO shell is a BaseWindow hosting a
+  // WebContentsView (#3750), so that registry is empty in the real app and
+  // enumerating it silently dropped every push. Keeping the mock registry empty
+  // here means every test in this file exercises the real delivery path.
+  const rendererSend = vi.fn((channel: string, payload: unknown) => {
+    sent.push({ channel, payload });
+  });
   const BrowserWindow = {
-    getAllWindows: vi.fn(() => [fakeWindow]),
+    getAllWindows: vi.fn(() => [] as unknown[]),
   };
   const statusMessages = () => sent.filter((m) => m.channel === "updates:status");
   const telemetryMessages = () => sent.filter((m) => m.channel === "updates:telemetry");
@@ -159,8 +159,10 @@ async function importAutoUpdater(
         Promise.resolve({ settings: current, cleared: false })),
   }));
   const module = await import("./auto-updater");
+  module.setRendererSink(() => ({ send: rendererSend }));
   return {
     sent,
+    rendererSend,
     statusMessages,
     telemetryMessages,
     module,
@@ -643,7 +645,7 @@ describe("startAutoUpdates", () => {
     const consoleErrorSpy = vi
       .spyOn(console, "error")
       .mockImplementation(() => undefined);
-    const { module, autoUpdater, dialog, BrowserWindow } =
+    const { module, autoUpdater, dialog, statusMessages } =
       await importAutoUpdater();
     autoUpdater.checkForUpdates
       .mockResolvedValueOnce(undefined)
@@ -660,7 +662,7 @@ describe("startAutoUpdates", () => {
       expect.any(Error),
     );
     expect(dialog.showMessageBox).not.toHaveBeenCalled();
-    expect(BrowserWindow.getAllWindows).not.toHaveBeenCalled();
+    expect(statusMessages()).toHaveLength(0);
 
     await vi.advanceTimersByTimeAsync(delay);
     expect(autoUpdater.checkForUpdates).toHaveBeenCalledTimes(3);
@@ -1089,13 +1091,13 @@ describe("startAutoUpdates", () => {
   });
 
   it("keeps manual updater error events visible to the renderer", async () => {
-    const { module, BrowserWindow, updaterEvents } = await importAutoUpdater();
+    const { module, rendererSend, updaterEvents } = await importAutoUpdater();
     const err = new Error("manual feed failed");
 
     await module.checkForUpdatesNow(stateDir);
     updaterEvents.get("error")?.(err);
 
-    expect(BrowserWindow.getAllWindows).toHaveBeenCalled();
+    expect(rendererSend).toHaveBeenCalledWith("updates:status", expect.anything());
     expect(module.getUpdateStatus()).toEqual({
       state: "error",
       message: "manual feed failed",
@@ -3068,5 +3070,54 @@ describe("e2e staging sentinel", () => {
     const { module, nativeAutoUpdater } = await importAutoUpdater();
     await module.checkForUpdatesNow(stateDir);
     expect(nativeAutoUpdater.on).not.toHaveBeenCalled();
+  });
+});
+
+// The AO shell is a BaseWindow hosting the UI in a WebContentsView (#3750), and
+// BrowserWindow.getAllWindows() only ever returns BrowserWindow instances. The
+// updater walked that registry to push status, so from 2026-08-09 it matched
+// nothing and every push was dropped. `invoke` still answered its own sender, so
+// updates:getStatus kept working and it read as a caching bug: "Last checked"
+// was correct when Settings was reopened and never moved while it was open.
+describe("renderer delivery does not depend on the window registry", () => {
+  it("pushes status and telemetry through the shell sink, never through BrowserWindow", async () => {
+    const { module, autoUpdater, updaterEvents, rendererSend, BrowserWindow, statusMessages, telemetryMessages } =
+      await importAutoUpdater();
+
+    await module.checkForUpdatesNow(stateDir);
+    updaterEvents.get("update-downloaded")?.({ version: "2.1.0" });
+    updaterEvents.get("error")?.(new Error("net::ERR_CONNECTION_RESET"));
+
+    // The registry is empty here exactly as it is in the packaged app, so any
+    // code that reaches for it delivers nothing.
+    expect(BrowserWindow.getAllWindows).not.toHaveBeenCalled();
+    expect(statusMessages().length).toBeGreaterThan(0);
+    expect(telemetryMessages().length).toBeGreaterThan(0);
+    expect(rendererSend).toHaveBeenCalledWith("updates:status", expect.anything());
+    expect(rendererSend).toHaveBeenCalledWith("updates:telemetry", expect.anything());
+    expect(autoUpdater.checkForUpdates).toHaveBeenCalled();
+  });
+
+  it("resolves the sink per send, so a recreated shell still receives pushes", async () => {
+    // Caching the first WebContents would silently stop delivery after the
+    // window is recreated - the same class of failure, one step later.
+    const { module, updaterEvents } = await importAutoUpdater();
+    const first: unknown[] = [];
+    const second: unknown[] = [];
+    let current = first;
+    module.setRendererSink(() => ({ send: (_c: string, p: unknown) => current.push(p) }));
+
+    await module.checkForUpdatesNow(stateDir);
+    expect(first.length).toBeGreaterThan(0);
+
+    current = second;
+    updaterEvents.get("update-downloaded")?.({ version: "2.1.0" });
+    expect(second.length).toBeGreaterThan(0);
+  });
+
+  it("does not throw when no sink is installed yet", async () => {
+    const { module } = await importAutoUpdater();
+    module.setRendererSink(() => null);
+    await expect(module.checkForUpdatesNow(stateDir)).resolves.toBeUndefined();
   });
 });
