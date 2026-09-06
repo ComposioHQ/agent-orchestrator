@@ -151,11 +151,15 @@ export function TurnSettingsBar({
 		grouped.executionMode && !isPlanBinary(grouped.executionMode) ? grouped.executionMode : undefined;
 	const planning = isPlanMode(grouped.executionMode);
 	const nativeModelMenu = Boolean(onChange && models.length > 0 && grouped.model.length === 0);
+	// Extras count on their own. They have no other render path, and once a
+	// non-binary execution mode moved out to its own trigger, an option list of
+	// mode-plus-extra would otherwise leave the extra with nowhere to go.
 	const clubbedLeft =
 		grouped.model.length > 0 ||
 		grouped.effort.length > 0 ||
 		Boolean(inlineExecutionMode) ||
-		grouped.toggles.length > 0;
+		grouped.toggles.length > 0 ||
+		grouped.extra.length > 0;
 	const showRightDropdown = Boolean(children || (!planning && (onChange || modeOption)));
 
 	return (

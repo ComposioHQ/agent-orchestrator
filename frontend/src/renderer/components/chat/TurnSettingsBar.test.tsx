@@ -631,6 +631,14 @@ describe("Cursor's live Agent/Plan/Ask mode catalog", () => {
 		await user.click(screen.getByRole("button", { name: "Model mode for the next turn" }));
 		await user.click(screen.getByRole("menuitem", { name: "Agent" }));
 		expect(onChange).toHaveBeenLastCalledWith("mode", { value: "agent" });
+
+		// The same guarantee on the model side, where Cursor's ids carry brackets
+		// that no label normalization may touch.
+		await user.click(screen.getByRole("button", { name: "Model" }));
+		await user.click(screen.getByRole("menuitem", { name: "grok-4.6" }));
+		expect(onChange).toHaveBeenLastCalledWith("model", {
+			value: "grok-4.6[effort=high,fast=true]",
+		});
 	});
 
 	it("shows Ask on the trigger when Cursor reports Ask as current", () => {
@@ -697,6 +705,65 @@ describe("Cursor's live Agent/Plan/Ask mode catalog", () => {
 		expect(screen.getByRole("button", { name: "Chat mode" })).toHaveTextContent(
 			"Bypass Permissions",
 		);
+	});
+
+	it("keeps an unclassified option reachable when a mode picker is the only other control", async () => {
+		const user = userEvent.setup();
+		render(
+			<TurnSettingsBar
+				harness="cursor"
+				models={[]}
+				settings={{}}
+				configOptions={[
+					CURSOR_MODES,
+					{
+						id: "verbosity",
+						name: "Verbosity",
+						type: "select",
+						currentValue: "high",
+						choices: [
+							{ value: "low", name: "Low" },
+							{ value: "high", name: "High" },
+						],
+					},
+				]}
+				onChangeConfigOption={vi.fn()}
+			/>,
+		);
+
+		// The mode moved out to its own trigger; the extra must still have a home.
+		expect(screen.getByRole("button", { name: "Model mode for the next turn" })).toHaveTextContent(
+			"Agent",
+		);
+		const extra = screen.getByRole("button", { name: "Verbosity" });
+		expect(extra).toHaveTextContent("High");
+		await user.click(extra);
+		expect(screen.getByRole("menuitem", { name: "Low" })).toBeInTheDocument();
+	});
+
+	it("disables the standalone mode trigger and a lone extra while a change is in flight", () => {
+		render(
+			<TurnSettingsBar
+				harness="cursor"
+				models={[]}
+				settings={{}}
+				configOptions={[
+					CURSOR_MODES,
+					{
+						id: "verbosity",
+						name: "Verbosity",
+						type: "select",
+						currentValue: "high",
+						choices: [{ value: "low", name: "Low" }],
+					},
+				]}
+				configPending
+				onChangeConfigOption={vi.fn()}
+			/>,
+		);
+
+		expect(screen.getByRole("button", { name: "Model mode for the next turn" })).toBeDisabled();
+		expect(screen.getByRole("button", { name: "Verbosity" })).toBeDisabled();
 	});
 
 	it("offers exactly one execution control and no provider approval picker", () => {
