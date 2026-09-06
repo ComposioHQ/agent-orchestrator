@@ -33,6 +33,9 @@ func Recover(ctx context.Context, store RecoveryStore, dispatcher *Dispatcher) e
 		return err
 	}
 	for _, p := range projects {
+		if err := dispatcher.ReconcileAttention(ctx, domain.ProjectID(p.ID), time.Now().UTC()); err != nil {
+			return err
+		}
 		if err := dispatcher.DispatchProject(ctx, domain.ProjectID(p.ID)); err != nil {
 			return err
 		}

@@ -284,6 +284,10 @@ func TestOrchestrationMissingDestinationAttentionAndRetentionAreDurableAndDedupl
 	if byID["attention"].State != domain.OrchestrationPending || byID["attention"].AttemptCount != 0 || byID["attention"].AttentionRequiredAt.IsZero() {
 		t.Fatalf("attention=%+v", byID["attention"])
 	}
+	recoverable, err := s.ListOrchestrationEventsRequiringAttention(ctx, "p")
+	if err != nil || len(recoverable) != 2 {
+		t.Fatalf("recoverable attention=%+v err=%v", recoverable, err)
+	}
 }
 
 func TestTerminatedEventReconciliationClosesCrashWindowAndRearmsPerLaunch(t *testing.T) {

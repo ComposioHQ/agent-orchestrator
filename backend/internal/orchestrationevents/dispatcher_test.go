@@ -14,6 +14,7 @@ import (
 type fakeStore struct {
 	sessions                          []domain.SessionRecord
 	events                            []domain.OrchestrationEvent
+	attentionEvents                   []domain.OrchestrationEvent
 	leased, submitted, acked, retried []string
 	destination                       domain.SessionID
 	leaseErr, submitErr, ackErr       error
@@ -25,6 +26,9 @@ func (f *fakeStore) ListSessions(context.Context, domain.ProjectID) ([]domain.Se
 }
 func (f *fakeStore) ListDueOrchestrationEvents(context.Context, domain.ProjectID, time.Time, int) ([]domain.OrchestrationEvent, error) {
 	return f.events, nil
+}
+func (f *fakeStore) ListOrchestrationEventsRequiringAttention(context.Context, domain.ProjectID) ([]domain.OrchestrationEvent, error) {
+	return f.attentionEvents, nil
 }
 func (f *fakeStore) LeaseOrchestrationEvents(_ context.Context, ids []string, _ string, d domain.SessionID, _ time.Time) error {
 	if f.leaseErr != nil {
@@ -98,11 +102,41 @@ func (f *fakeStore) MarkProjectNoDestinationAttention(context.Context, domain.Pr
 	return f.attentionChanged, nil
 }
 
-type fakeNotifier struct{ created, resolved []domain.SessionID }
+type fakeNotifier struct {
+	created, resolved []domain.SessionID
+	err               error
+}
 
 func (f *fakeNotifier) Notify(_ context.Context, intent ports.NotificationIntent) error {
+	if f.err != nil {
+		return f.err
+	}
 	f.created = append(f.created, intent.SessionID)
 	return nil
+}
+
+func TestReconcileAttentionRestoresEveryWorkerAlertAfterNotificationFailure(t *testing.T) {
+	now := time.Now()
+	events := []domain.OrchestrationEvent{
+		{ID: "e1", ProjectID: "p", WorkerID: "w1", AttentionRequiredAt: now},
+		{ID: "e2", ProjectID: "p", WorkerID: "w2", AttentionRequiredAt: now},
+		{ID: "e3", ProjectID: "p", WorkerID: "w1", AttentionRequiredAt: now},
+	}
+	store := &fakeStore{attentionEvents: events}
+	failed := &fakeNotifier{err: errors.New("publisher unavailable")}
+	if err := (&Dispatcher{Store: store, Notifier: failed}).ReconcileAttention(context.Background(), "p", now); err == nil {
+		t.Fatal("ReconcileAttention error=nil, want publisher failure")
+	}
+	restarted := &fakeNotifier{}
+	if err := (&Dispatcher{Store: store, Notifier: restarted}).ReconcileAttention(context.Background(), "p", now.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if len(restarted.created) != 2 {
+		t.Fatalf("created=%v", restarted.created)
+	}
+	if got := strings.Join([]string{string(restarted.created[0]), string(restarted.created[1])}, ","); got != "w1,w2" {
+		t.Fatalf("created=%v", restarted.created)
+	}
 }
 func (f *fakeNotifier) Resolve(_ context.Context, resolution ports.NotificationResolution) error {
 	f.resolved = append(f.resolved, resolution.SessionID)

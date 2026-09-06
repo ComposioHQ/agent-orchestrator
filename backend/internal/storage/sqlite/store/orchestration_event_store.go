@@ -163,6 +163,18 @@ func (s *Store) ListOrchestrationEvents(ctx context.Context, project domain.Proj
 	return scanOrchestrationEvents(rows)
 }
 
+// ListOrchestrationEventsRequiringAttention returns the durable source for
+// reconstructing human-visible alerts after daemon or publisher failure.
+func (s *Store) ListOrchestrationEventsRequiringAttention(ctx context.Context, project domain.ProjectID) ([]domain.OrchestrationEvent, error) {
+	rows, err := s.readDB.QueryContext(ctx, `SELECT `+orchestrationColumns+` FROM orchestration_events
+ WHERE project_id=? AND attention_required_at IS NOT NULL AND state IN ('pending','dead_letter') ORDER BY enqueued_at,id`, project)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanOrchestrationEvents(rows)
+}
+
 func (s *Store) RetryDeadLetterOrchestrationEvent(ctx context.Context, project domain.ProjectID, id string, now time.Time) (bool, error) {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()

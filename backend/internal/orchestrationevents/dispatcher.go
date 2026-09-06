@@ -30,6 +30,7 @@ const (
 type Store interface {
 	ListSessions(context.Context, domain.ProjectID) ([]domain.SessionRecord, error)
 	ListDueOrchestrationEvents(context.Context, domain.ProjectID, time.Time, int) ([]domain.OrchestrationEvent, error)
+	ListOrchestrationEventsRequiringAttention(context.Context, domain.ProjectID) ([]domain.OrchestrationEvent, error)
 	LeaseOrchestrationEvents(context.Context, []string, string, domain.SessionID, time.Time) error
 	MarkOrchestrationEventsSubmitted(context.Context, []string, string, time.Time) error
 	AcknowledgeOrchestrationEvents(context.Context, []string, string, time.Time) error
@@ -85,7 +86,7 @@ func (d *Dispatcher) DispatchProject(ctx context.Context, project domain.Project
 			return markErr
 		}
 		if changed > 0 {
-			return d.notifyAttention(ctx, events[0], now)
+			return d.notifyAttentionForEvents(ctx, events, now)
 		}
 		return nil
 	}
@@ -111,7 +112,7 @@ func (d *Dispatcher) DispatchProject(ctx context.Context, project domain.Project
 			return err
 		}
 		if events[0].AttemptCount+1 >= 8 || now.Sub(events[0].EnqueuedAt) >= 15*time.Minute {
-			return d.notifyAttention(ctx, events[0], now)
+			return d.notifyAttentionForEvents(ctx, events, now)
 		}
 		return nil
 	}
@@ -120,6 +121,32 @@ func (d *Dispatcher) DispatchProject(ctx context.Context, project domain.Project
 		return nil
 	}
 	return d.Store.AcknowledgeOrchestrationEvents(ctx, ids, batchID, now)
+}
+
+// ReconcileAttention recreates the human-visible side of every durable
+// attention marker. Notification insertion is deduplicated, so this closes a
+// daemon crash or publisher failure between the outbox state transition and
+// notification delivery without creating an alert storm.
+func (d *Dispatcher) ReconcileAttention(ctx context.Context, project domain.ProjectID, now time.Time) error {
+	events, err := d.Store.ListOrchestrationEventsRequiringAttention(ctx, project)
+	if err != nil {
+		return err
+	}
+	return d.notifyAttentionForEvents(ctx, events, now)
+}
+
+func (d *Dispatcher) notifyAttentionForEvents(ctx context.Context, events []domain.OrchestrationEvent, now time.Time) error {
+	seen := map[domain.SessionID]bool{}
+	for _, event := range events {
+		if seen[event.WorkerID] {
+			continue
+		}
+		seen[event.WorkerID] = true
+		if err := d.notifyAttention(ctx, event, now); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (d *Dispatcher) notifyAttention(ctx context.Context, event domain.OrchestrationEvent, now time.Time) error {

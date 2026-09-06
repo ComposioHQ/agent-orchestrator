@@ -32,6 +32,14 @@ One turn carries at most 50 events or 32 KiB. Chat provider admission is an
 acknowledgement. A TUI pane write is only `submitted`; the exact matching
 prompt-submit lifecycle hook changes it to `acknowledged`.
 
+TUI automation is supported only for harnesses whose managed lifecycle hook can
+report the exact submitted prompt (`claude-code`, `codex`, `continue`, and
+`pi`). Other TUI harnesses fail closed before any pane write. Their delivery
+uses the bounded retry/dead-letter budget and raises an attention notification.
+This is an intentionally unsupported production path, not a
+claimed delivery mode. Chat controllers use their durable idempotent message
+transport and do not depend on a prompt-submit hook.
+
 Transport calls have a five-second deadline. Failures use persisted exponential
 backoff with bounded jitter and a 60-second maximum. Eight attempts or fifteen
 minutes results in `dead_letter`. An ambiguous TUI submission is retried
@@ -39,7 +47,9 @@ physically at most once. Missing destinations consume no transport attempts and
 set `attentionRequiredAt` after fifteen minutes. Either condition also creates
 one deduplicated `orchestration_attention` notification in Notification Center
 and the live notification stream. A later successful submission resolves it;
-the API timestamp is diagnostic state, not the human alert itself.
+the API timestamp is diagnostic state, not the human alert itself. Startup
+reconstructs any missing notification from that durable timestamp, including
+lease-expiry and retention dead letters, before dispatch recovery.
 
 Pending rows are capped at 30 days and 10,000 per project. Overflow is retained
 as visible dead-letter state rather than deleted. Inspect state with:
@@ -65,9 +75,12 @@ determine whether a destination can safely accept a turn.
 
 ## Upgrade and rollback
 
-Migration 0127 adds orchestration tables without changing projects, sessions,
-notifications, or conversations. Startup reclaims expired leases and scans due
-work independently of UI clients. Existing installations do not infer historic
+Migration 0128 adds orchestration tables without changing existing project,
+session, notification, or conversation rows. Migration 0129 extends the
+notification type constraint for the attention surface while preserving those
+rows and indexes. Startup reconstructs terminal events and attention alerts,
+reclaims expired leases, and scans due work independently of UI clients before
+the HTTP server reports healthy. Existing installations do not infer historic
 idle rows as completed tasks.
 
 For rollback, stop the newer daemon before installing an older build. Older
