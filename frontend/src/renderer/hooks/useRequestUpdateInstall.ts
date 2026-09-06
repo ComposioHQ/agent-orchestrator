@@ -7,25 +7,15 @@ import { workspaceQueryOptions } from "./useWorkspaceQuery";
 import type { WorkspaceSummary } from "../types/workspace";
 
 /**
- * Decide whether restarting into a staged build needs confirming.
+ * Confirm a restart-to-update only when a session would lose an in-flight turn.
  *
- * The confirmation exists because a single click used to quit the app with no
- * warning (#4849). That reason only holds when a session would actually lose an
- * in-flight turn: `update-install-risk.ts` already argues that treating every
- * quit as destructive "would warn on almost every session and teach the user to
- * click through", and a confirmation carrying no warning is that same failure
- * one level up — in Settings it also stacked a modal on top of a modal.
+ * #4849 added the dialog because one click used to quit the app unasked; with
+ * nothing at risk it is a modal over the Settings modal carrying no warning.
  *
- * So confirm exactly when there is something to confirm. With nothing at risk
- * the button says "Restart & install" and does that; the build was going to
- * install on the next quit regardless.
- *
- * Reads the workspace list out of the query cache rather than subscribing with
- * useWorkspaceQuery. Both callers are mounted for the whole shell's lifetime and
- * need this only on click, and that hook pulls in the cloud session/org queries,
- * which would make every test that renders the sidebar or Settings provide cloud
- * bridge mocks it has no reason to know about. Local projects only: a cloud
- * session does not die when this desktop app quits, so it is never at risk here.
+ * Reads the cache instead of calling useWorkspaceQuery on purpose: that hook
+ * pulls in the cloud org/session queries, which makes every test rendering the
+ * sidebar or Settings supply cloud bridge mocks. Local projects only — a cloud
+ * session does not die when this app quits.
  */
 export function useRequestUpdateInstall(): () => void {
 	const openPrompt = useUiStore((state) => state.openUpdateInstallPrompt);
