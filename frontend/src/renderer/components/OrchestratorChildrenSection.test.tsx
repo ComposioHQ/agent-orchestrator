@@ -35,7 +35,7 @@ const childView = (overrides: Partial<OrchestratorChildView>): OrchestratorChild
 	title: "Fix CI",
 	provider: "claude-code",
 	status: "working",
-	activity: { state: "active" },
+	activity: { state: "active", lastActivityAt: "2026-08-30T12:00:00Z" },
 	isTerminated: false,
 	updatedAt: "2026-08-30T12:00:00Z",
 	prs: [],

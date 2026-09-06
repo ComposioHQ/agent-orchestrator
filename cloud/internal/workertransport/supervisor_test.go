@@ -160,15 +160,32 @@ func TestForwardTurnFailsLoudlyWithoutAgentTerminal(t *testing.T) {
 	}
 }
 
+// feedTerminal returns a *terminalProcess whose pty yields data then EOF, so
+// copyTerminalOutput (which now reads from terminal.pty after main's
+// terminal-stream refactor) can be exercised in a test.
+func feedTerminal(t *testing.T, data string) *terminalProcess {
+	t.Helper()
+	read, write, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = read.Close() })
+	go func() {
+		_, _ = io.WriteString(write, data)
+		_ = write.Close()
+	}()
+	return &terminalProcess{pty: read, cancel: func() {}, cleanup: func() {}}
+}
+
 func TestCopyTerminalOutputArmsReadiness(t *testing.T) {
 	s := &Supervisor{Control: &fakeControl{}, AgentTerminalID: "agent-1"}
-	s.copyTerminalOutput(context.Background(), "agent-1", strings.NewReader("banner"))
+	s.copyTerminalOutput(context.Background(), "agent-1", feedTerminal(t, "banner"))
 	if s.agentOutputAt.Load() == 0 {
 		t.Fatal("agent output did not arm the readiness gate")
 	}
 
 	other := &Supervisor{Control: &fakeControl{}, AgentTerminalID: "agent-1"}
-	other.copyTerminalOutput(context.Background(), "workspace-1", strings.NewReader("x"))
+	other.copyTerminalOutput(context.Background(), "workspace-1", feedTerminal(t, "x"))
 	if other.agentOutputAt.Load() != 0 {
 		t.Fatal("workspace terminal output must not arm the agent readiness gate")
 	}
