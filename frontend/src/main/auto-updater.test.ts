@@ -2,6 +2,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
+import semver from "semver";
+import { CancellationToken } from "builder-util-runtime";
 import nodePath from "node:path";
 
 type UpdateSettings = {
@@ -21,6 +23,7 @@ type ImportOptions = {
     settings: UpdateSettings,
   ) => Promise<{ settings: UpdateSettings; cleared: boolean }>;
   isPackaged?: boolean;
+  version?: string;
 };
 
 type AutoUpdaterMock = {
@@ -34,6 +37,7 @@ type AutoUpdaterMock = {
   allowDowngrade: boolean;
   autoDownload: boolean;
   autoInstallOnAppQuit: boolean;
+  httpExecutor: { request: ReturnType<typeof vi.fn<(options: object, token?: CancellationToken) => Promise<string | null>>> };
 };
 
 function createAutoUpdaterMock(): AutoUpdaterMock {
@@ -48,6 +52,7 @@ function createAutoUpdaterMock(): AutoUpdaterMock {
     allowDowngrade: false,
     autoDownload: false,
     autoInstallOnAppQuit: false,
+    httpExecutor: { request: vi.fn(async () => null) },
   };
 }
 
@@ -109,7 +114,7 @@ async function importAutoUpdater(
   vi.doMock("electron", () => ({
     app: {
       isPackaged: options.isPackaged ?? true,
-      getVersion: () => "1.0.0",
+      getVersion: () => options.version ?? "1.0.0",
     },
     BrowserWindow,
     dialog,
@@ -1973,6 +1978,66 @@ describe("startAutoUpdates", () => {
     expect(setIntervalSpy.mock.calls.length).toBeGreaterThan(afterFirst);
   });
 
+  it.each([false, true])("settles an automatic check without a terminal event (available %s)", async (available) => {
+    const h = await importAutoUpdater({ enabled: false, channel: "nightly", nightlyAck: true, feature: null });
+    h.autoUpdater.checkForUpdates.mockImplementation(async () => {
+      h.updaterEvents.get("checking-for-update")?.();
+      return { isUpdateAvailable: available, updateInfo: { version: "2.0.0-nightly.1" } };
+    });
+    await h.module.startAutoUpdates(stateDir);
+    expect(h.module.getUpdateStatus().state).toBe(available ? "available" : "not-available");
+  });
+
+  it.each(["manual", "automatic", "return-home"] as const)("aborts a hung %s check before letting a queued retry run", async (kind) => {
+    vi.useFakeTimers();
+    const h = await importAutoUpdater();
+    let requestAborted = false;
+    let finishAborting!: () => void;
+    const originalRequest = h.autoUpdater.httpExecutor.request;
+    originalRequest.mockImplementation(async (_options, token) => {
+      try {
+        return await token!.createPromise<string>(() => {});
+      } finally {
+        requestAborted = true;
+        await new Promise<void>((resolve) => { finishAborting = resolve; });
+      }
+    });
+    h.autoUpdater.checkForUpdates.mockImplementationOnce(async () => {
+      h.updaterEvents.get("checking-for-update")?.();
+      await h.autoUpdater.httpExecutor.request({});
+    }).mockResolvedValue({ isUpdateAvailable: false, updateInfo: { version: "1.0.0" } });
+    const first = kind === "manual" ? h.module.checkForUpdatesNow(stateDir, { requestId: "hung" })
+      : kind === "automatic" ? h.module.startAutoUpdates(stateDir) : h.module.returnToHome(stateDir, "hung");
+    await vi.advanceTimersByTimeAsync(0);
+    const retry = h.module.checkForUpdatesNow(stateDir, { requestId: "retry" });
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(requestAborted).toBe(true);
+    expect(h.module.getUpdateStatus()).toMatchObject({ state: "error", message: expect.stringContaining("timed out") });
+    expect(h.autoUpdater.checkForUpdates).toHaveBeenCalledTimes(1);
+    finishAborting();
+    await first;
+    await retry;
+    expect(h.autoUpdater.httpExecutor.request).toBe(originalRequest);
+    expect(h.autoUpdater.checkForUpdates).toHaveBeenCalledTimes(2);
+    expect(h.module.getUpdateStatus()).toMatchObject({ state: "not-available", requestId: "retry" });
+  });
+
+  it("clears the check deadline before an automatic download continues", async () => {
+    vi.useFakeTimers();
+    const h = await importAutoUpdater();
+    const originalRequest = h.autoUpdater.httpExecutor.request;
+    let finishDownload!: () => void;
+    h.autoUpdater.checkForUpdates.mockResolvedValue({
+      isUpdateAvailable: true, updateInfo: { version: "2.0.0" },
+      downloadPromise: new Promise<void>((resolve) => { finishDownload = resolve; }),
+    });
+    const checking = h.module.startAutoUpdates(stateDir);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(h.autoUpdater.httpExecutor.request).toBe(originalRequest);
+    finishDownload();
+    await checking;
+  });
+
   // Regression: electron-updater returns the in-flight promise when a check is
   // already running, so a second caller's events were consumed elsewhere and
   // nothing ever moved the status off "checking". Settings keys its spinner and
@@ -2649,5 +2714,146 @@ describe("install-on-quit policy", () => {
       restore();
       rmSync(root, { recursive: true, force: true });
     }
+  });
+});
+
+describe("channel downgrade safety", () => {
+  const nightly = { enabled: false, channel: "nightly", nightlyAck: true, feature: null } as const;
+  const stable = { enabled: false, channel: "latest", nightlyAck: false, feature: null } as const;
+  const running = "0.12.11-nightly.202609051608";
+
+  function serveVersion(harness: Awaited<ReturnType<typeof importAutoUpdater>>, version: string, installed = running) {
+    harness.autoUpdater.checkForUpdates.mockImplementation(async () => {
+      const available = semver.gt(version, installed) ||
+        (harness.autoUpdater.allowDowngrade && semver.lt(version, installed));
+      harness.updaterEvents.get(available ? "update-available" : "update-not-available")?.({ version });
+      return { isUpdateAvailable: available, updateInfo: { version } };
+    });
+  }
+
+  it.each([false, true])("honors saved Stable on startup and later checks (automatic download %s)", async (enabled) => {
+    const h = await importAutoUpdater({ ...stable, enabled }, { version: running });
+    serveVersion(h, "0.12.10");
+    await h.module.startAutoUpdates(stateDir);
+    expect(h.module.getUpdateStatus()).toMatchObject({ state: "available", version: "0.12.10" });
+    expect(h.autoUpdater.autoDownload).toBe(enabled);
+    await h.module.checkForUpdatesNow(stateDir);
+    expect(h.module.getUpdateStatus()).toMatchObject({ state: "available", version: "0.12.10" });
+    expect(h.autoUpdater.allowDowngrade).toBe(true);
+  });
+
+  it("retains a saved channel switch after its first check fails", async () => {
+    const h = await importAutoUpdater(nightly, { version: running });
+    h.writeUpdateSettings.mockImplementation(async (_dir, settings) => {
+      h.readUpdateSettings.mockResolvedValue(settings);
+    });
+    h.autoUpdater.checkForUpdates.mockRejectedValueOnce(new Error("network unavailable"));
+    await h.module.checkForUpdatesNow(stateDir, { settings: stable });
+    expect(h.module.getUpdateStatus().state).toBe("error");
+    serveVersion(h, "0.12.10");
+    await h.module.checkForUpdatesNow(stateDir);
+    expect(h.module.getUpdateStatus()).toMatchObject({ state: "available", version: "0.12.10" });
+    await h.module.startAutoUpdates(stateDir);
+    expect(h.module.getUpdateStatus()).toMatchObject({ state: "available", version: "0.12.10" });
+  });
+
+  it("stops allowing downgrades after relaunching into the selected Stable channel", async () => {
+    const h = await importAutoUpdater(stable, { version: "0.12.10" });
+    serveVersion(h, "0.12.9", "0.12.10");
+    await h.module.startAutoUpdates(stateDir);
+    expect(h.module.getUpdateStatus().state).toBe("not-available");
+    expect(h.autoUpdater.allowDowngrade).toBe(false);
+  });
+
+  it.each([
+    { settings: stable, installed: "0.12.11", offered: "0.12.10" },
+    { settings: { ...stable, feature: { pr: 4900 } }, installed: "0.12.11-pr4900.2", offered: "0.12.11-pr4900.1" },
+  ])("rejects routine older releases on $installed", async ({ settings, installed, offered }) => {
+    const h = await importAutoUpdater(settings, { version: installed });
+    serveVersion(h, offered, installed);
+    await h.module.startAutoUpdates(stateDir);
+    expect(h.module.getUpdateStatus().state).toBe("not-available");
+    await h.module.checkForUpdatesNow(stateDir);
+    expect(h.module.getUpdateStatus().state).toBe("not-available");
+  });
+
+  it("does not redownload a staged candidate after rejecting an older manifest", async () => {
+    const h = await importAutoUpdater({ ...nightly, enabled: true }, { version: running });
+    await h.module.checkForUpdatesNow(stateDir);
+    h.updaterEvents.get("update-downloaded")?.({ version: "0.12.11-nightly.202609061608" });
+    serveVersion(h, "0.12.11-nightly.202609041608");
+    await h.module.startAutoUpdates(stateDir);
+    expect(h.autoUpdater.autoDownload).toBe(false);
+    expect(h.autoUpdater.downloadUpdate).not.toHaveBeenCalled();
+    expect(h.module.getUpdateStatus()).toMatchObject({ state: "downloaded", version: "0.12.11-nightly.202609061608" });
+  });
+
+  it.each([
+    { settings: stable, installed: "0.12.10", offered: "0.12.11" },
+    { settings: nightly, installed: running, offered: "0.12.11-nightly.202609061608" },
+  ])("offers newer releases on $installed without downgrade permission", async ({ settings, installed, offered }) => {
+    const h = await importAutoUpdater(settings, { version: installed });
+    serveVersion(h, offered, installed);
+    await h.module.startAutoUpdates(stateDir);
+    expect(h.module.getUpdateStatus()).toMatchObject({ state: "available", version: offered });
+    await h.module.checkForUpdatesNow(stateDir);
+    expect(h.module.getUpdateStatus()).toMatchObject({ state: "available", version: offered });
+    expect(h.autoUpdater.allowDowngrade).toBe(false);
+  });
+
+  it("allows an explicit channel switch when the preference was saved before checking", async () => {
+    const h = await importAutoUpdater(stable, { version: running });
+    serveVersion(h, "0.12.10");
+    await h.module.setUpdateSettings(stateDir, stable);
+    await h.module.checkForUpdatesNow(stateDir, { settings: stable });
+    expect(h.module.getUpdateStatus()).toMatchObject({ state: "available", version: "0.12.10" });
+  });
+
+  it("returns an installed feature build home after its pin is retired", async () => {
+    const installed = "0.12.11-pr4900.2";
+    const h = await importAutoUpdater(stable, { version: installed });
+    serveVersion(h, "0.12.10", installed);
+    await h.module.startAutoUpdates(stateDir);
+    expect(h.module.getUpdateStatus()).toMatchObject({ state: "available", version: "0.12.10" });
+  });
+
+  it("permits an explicit return home from nightly", async () => {
+    const h = await importAutoUpdater(stable, { version: running });
+    serveVersion(h, "0.12.10");
+    await h.module.returnToHome(stateDir);
+    expect(h.module.getUpdateStatus()).toMatchObject({ state: "available", version: "0.12.10" });
+  });
+
+  it("does not permit a same-channel settings check to downgrade nightly", async () => {
+    const h = await importAutoUpdater(nightly, { version: running });
+    serveVersion(h, "0.12.11-nightly.202609041608");
+    await h.module.checkForUpdatesNow(stateDir, { settings: nightly });
+    expect(h.module.getUpdateStatus().state).toBe("not-available");
+  });
+
+  it("keeps first-run nightly on nightly when automatic downloads are declined", async () => {
+    const h = await importAutoUpdater(stable, { version: running });
+    h.dialog.showMessageBox.mockResolvedValue({ response: 1 });
+    await h.module.ensureUpdatePrefs(stateDir);
+    expect(h.writeUpdateSettings).toHaveBeenCalledWith(stateDir, nightly);
+  });
+
+  it("preselects nightly for the first-run channel choice on a nightly install", async () => {
+    const h = await importAutoUpdater(stable, { version: running });
+    h.dialog.showMessageBox
+      .mockResolvedValueOnce({ response: 0 })
+      .mockResolvedValueOnce({ response: 1 })
+      .mockResolvedValueOnce({ response: 0 });
+    await h.module.ensureUpdatePrefs(stateDir);
+    expect(h.dialog.showMessageBox.mock.calls[1]?.[0]).toMatchObject({ defaultId: 1, cancelId: 1 });
+    expect(h.writeUpdateSettings).toHaveBeenCalledWith(stateDir, { ...nightly, enabled: true });
+  });
+
+  it("preserves existing explicit stable preferences on a nightly install", async () => {
+    const h = await importAutoUpdater(stable, { version: running });
+    writeFileSync(nodePath.join(stateDir, "update-settings.json"), JSON.stringify(stable));
+    await h.module.ensureUpdatePrefs(stateDir);
+    expect(h.dialog.showMessageBox).not.toHaveBeenCalled();
+    expect(h.writeUpdateSettings).not.toHaveBeenCalled();
   });
 });
