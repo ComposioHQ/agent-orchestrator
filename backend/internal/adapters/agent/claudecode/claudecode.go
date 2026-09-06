@@ -186,12 +186,11 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 		Permission:       agentruntime.PermissionPolicy(permissions),
 		AllowedTools:     cfg.AllowedTools,
 		DisallowedTools:  cfg.DisallowedTools,
+		ProviderArgs:     claudeProfileArgs(cfg.Config),
 	})
 	if err != nil {
 		return nil, err
 	}
-	appendMCPFlags(&cmd, cfg.Config.MCP)
-	appendPluginFlags(&cmd, cfg.Config.PluginDirs)
 	return cmd, nil
 }
 
@@ -262,6 +261,7 @@ func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig)
 		Permission:       agentruntime.PermissionPolicy(cfg.Permissions),
 		AllowedTools:     cfg.AllowedTools,
 		DisallowedTools:  cfg.DisallowedTools,
+		ProviderArgs:     claudeProfileArgs(cfg.Config),
 	})
 	if err != nil {
 		return nil, false, err
@@ -269,11 +269,6 @@ func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig)
 	if !ok {
 		return nil, false, nil
 	}
-	// MCP/plugin flags are also rebuilt from flags on resume (they are not part
-	// of the transcript), so re-apply them or a restored worker loses its scoped
-	// MCP set and plugins.
-	appendMCPFlags(&cmd, cfg.Config.MCP)
-	appendPluginFlags(&cmd, cfg.Config.PluginDirs)
 	return cmd, true, nil
 }
 
@@ -499,6 +494,18 @@ func claudeSessionUUID(aoSessionID string) string {
 // used by --session-id and --resume.
 func SessionUUID(aoSessionID string) string {
 	return claudeSessionUUID(aoSessionID)
+}
+
+// claudeProfileArgs renders the MCP and plugin flags a role's config
+// contributes. Placement is agentruntime's job: they travel as ProviderArgs,
+// which the claude argv builders insert before the model, the system prompt,
+// and the --resume target / "--" prompt separator — flags appended after
+// those are either ignored as positionals or reorder the resume argv.
+func claudeProfileArgs(cfg ports.AgentConfig) []string {
+	var args []string
+	appendMCPFlags(&args, cfg.MCP)
+	appendPluginFlags(&args, cfg.PluginDirs)
+	return args
 }
 
 // appendMCPFlags emits claude-code's per-session MCP flags. Each MCPConfig
