@@ -152,6 +152,7 @@ describe("createCursorPositionReportForwarder", () => {
 		const forwarded: string[] = [];
 		const forwarder = createCursorPositionReportForwarder((report) => forwarded.push(report));
 
+		forwarder.observeOutput("\x1b[6n\x1b[?6n");
 		forwarder.push("\x1b[12;34R\x1b[?5;9R");
 
 		expect(forwarded).toEqual(["\x1b[12;34R", "\x1b[?5;9R"]);
@@ -161,6 +162,8 @@ describe("createCursorPositionReportForwarder", () => {
 		const forwarded: string[] = [];
 		const forwarder = createCursorPositionReportForwarder((report) => forwarded.push(report));
 
+		forwarder.observeOutput("\x1b[");
+		forwarder.observeOutput("6n");
 		forwarder.push("\x1b[12;");
 		expect(forwarded).toEqual([]);
 		forwarder.push("34R");
@@ -168,11 +171,11 @@ describe("createCursorPositionReportForwarder", () => {
 		expect(forwarded).toEqual(["\x1b[12;34R"]);
 	});
 
-	it("rejects keyboard and malformed control data", () => {
+	it("rejects unsolicited, keyboard, and malformed control data", () => {
 		const forwarded: string[] = [];
 		const forwarder = createCursorPositionReportForwarder((report) => forwarded.push(report));
 
-		forwarder.push("y\r\x1b[A\x1b[0;2R\x1b[2;3H");
+		forwarder.push("\x1b[12;34Ry\r\x1b[A\x1b[0;2R\x1b[2;3H");
 
 		expect(forwarded).toEqual([]);
 	});

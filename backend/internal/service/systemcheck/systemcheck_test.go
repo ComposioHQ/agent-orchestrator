@@ -22,8 +22,9 @@ type fakeHarnessCatalog struct {
 }
 
 type fakeCommandRunner struct {
-	err  error
-	argv []string
+	err    error
+	stdout string
+	argv   []string
 }
 
 type fakeGitHubAuthTerminalOpener struct {
@@ -35,8 +36,9 @@ func (f *fakeGitHubAuthTerminalOpener) OpenCommandTerminal(_ context.Context, in
 	return shellterm.ShellTerminal{HandleID: "shellterm-github"}, nil
 }
 
-func (f *fakeCommandRunner) Run(_ context.Context, argv []string, _, _ io.Writer) error {
+func (f *fakeCommandRunner) Run(_ context.Context, argv []string, stdout, _ io.Writer) error {
 	f.argv = append([]string(nil), argv...)
+	_, _ = io.WriteString(stdout, f.stdout)
 	return f.err
 }
 
@@ -67,7 +69,7 @@ func TestCheck_AllSatisfied(t *testing.T) {
 		"git":  "/usr/bin/git",
 		"tmux": "/usr/bin/tmux",
 		"gh":   "/usr/bin/gh",
-	})), &fakeCommandRunner{})
+	})), &fakeCommandRunner{stdout: `{"hosts":{"github.com":[{"active":true,"state":"success"}]}}`})
 
 	report, err := svc.Check(context.Background())
 	if err != nil {
@@ -356,8 +358,23 @@ func TestCheckGitHubAuth_IsAdvisory(t *testing.T) {
 	if auth.Satisfied || auth.Required {
 		t.Fatalf("github-auth = %+v, want unsatisfied advisory", auth)
 	}
-	if got, want := runner.argv, []string{"/usr/bin/gh", "auth", "token"}; !slices.Equal(got, want) {
+	if got, want := runner.argv, []string{"/usr/bin/gh", "auth", "status", "--active", "--json", "hosts"}; !slices.Equal(got, want) {
 		t.Fatalf("auth probe argv = %#v, want %#v", got, want)
+	}
+}
+
+func TestCheckGitHubAuth_AcceptsActiveEnterpriseHost(t *testing.T) {
+	runner := &fakeCommandRunner{stdout: `{"hosts":{"github.example.com":[{"active":true,"state":"success"}]}}`}
+	svc := NewWithCommandRunner(&fakeHarnessCatalog{}, executableFinderFunc(lookPathFound(map[string]string{
+		"gh": "/usr/bin/gh",
+	})), runner)
+
+	auth, err := svc.CheckGitHubAuth(context.Background())
+	if err != nil {
+		t.Fatalf("CheckGitHubAuth() error = %v", err)
+	}
+	if !auth.Satisfied {
+		t.Fatalf("github-auth = %+v, want satisfied for active Enterprise host", auth)
 	}
 }
 

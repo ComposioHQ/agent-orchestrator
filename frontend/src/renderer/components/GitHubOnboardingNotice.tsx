@@ -11,7 +11,6 @@ import { TerminalPane } from "./TerminalPane";
 import { TopbarButton } from "./TopbarButton";
 
 const GITHUB_CLI_INSTALL_URL = "https://cli.github.com/";
-const automaticallyChecked = new Set<string>();
 
 /** Onboarding advisory. GitHub is not required for local work, but surfacing
  * missing auth before task creation prevents a late PR-creation failure inside
@@ -21,18 +20,25 @@ export function GitHubOnboardingNotice() {
 	const gate = useSystemRequirementsGate();
 	const startLogin = useStartGitHubAuthTerminal();
 	const terminalQuery = useGitHubAuthTerminal();
-	const authQuery = useGitHubAuthRequirement(Boolean(terminalQuery.data));
+	const terminal = terminalQuery.data;
+	const [terminalStatus, setTerminalStatus] = useState<{ handleId: string | null; state: TerminalSessionState }>({
+		handleId: null,
+		state: "idle",
+	});
+	const terminalState = terminalStatus.handleId === terminal?.handleId ? terminalStatus.state : "idle";
+	const loginRunning = Boolean(terminal && (terminalState === "connecting" || terminalState === "attached" || terminalState === "reattaching"));
+	const loginEnded = Boolean(terminal && (terminalState === "exited" || terminalState === "error"));
+	const authQuery = useGitHubAuthRequirement(loginRunning);
 	const { mutate: closeTerminal } = useCloseShellTerminal();
 	const showGlobalToast = useUiStore((state) => state.showGlobalToast);
 	const theme = useResolvedTheme();
 	const shell = useShellMaybe();
 	const requirements = gate.requirements ?? [];
-	const terminal = terminalQuery.data;
 	const terminalRef = useRef(terminal);
 	const refetchAuthRef = useRef(authQuery.refetch);
 	const automaticLoginStartedRef = useRef(false);
+	const exitCheckedTerminalRef = useRef<string | null>(null);
 	const completedTerminalRef = useRef<string | null>(null);
-	const [terminalState, setTerminalState] = useState<TerminalSessionState>("idle");
 	const [manualCheckPending, setManualCheckPending] = useState(false);
 	const gh = requirements.find((requirement) => requirement.id === "gh");
 	const auth = authQuery.data;
@@ -40,11 +46,11 @@ export function GitHubOnboardingNotice() {
 	terminalRef.current = terminal;
 	refetchAuthRef.current = authQuery.refetch;
 	const handleTerminalState = useCallback((state: TerminalSessionState) => {
-		setTerminalState(state);
 		const active = terminalRef.current;
+		setTerminalStatus({ handleId: active?.handleId ?? null, state });
 		if (!active || (state !== "exited" && state !== "error")) return;
-		if (automaticallyChecked.has(active.handleId)) return;
-		automaticallyChecked.add(active.handleId);
+		if (exitCheckedTerminalRef.current === active.handleId) return;
+		exitCheckedTerminalRef.current = active.handleId;
 		void refetchAuthRef.current();
 	}, []);
 	useEffect(() => {
@@ -74,6 +80,15 @@ export function GitHubOnboardingNotice() {
 	const openLogin = () => {
 		startLogin.mutate();
 	};
+	const retryLogin = () => {
+		if (!terminal) return;
+		closeTerminal(terminal.handleId, {
+			onSettled: () => {
+				terminalQuery.clear();
+				startLogin.mutate();
+			},
+		});
+	};
 
 	const checkAgain = async () => {
 		setManualCheckPending(true);
@@ -102,8 +117,12 @@ export function GitHubOnboardingNotice() {
 						</p>
 						<div className="mt-2 flex flex-wrap items-center gap-2">
 							<TopbarButton
-								disabled={!cliMissing && (startLogin.isPending || Boolean(terminal))}
-								onClick={() => cliMissing ? void aoBridge.app.openExternal(GITHUB_CLI_INSTALL_URL) : openLogin()}
+								disabled={!cliMissing && (startLogin.isPending || Boolean(terminal && !loginEnded))}
+								onClick={() => cliMissing
+									? void aoBridge.app.openExternal(GITHUB_CLI_INSTALL_URL)
+									: loginEnded
+										? retryLogin()
+										: openLogin()}
 								variant="primary"
 							>
 								{cliMissing ? null : <TerminalSquare className="size-icon-sm" aria-hidden="true" />}
@@ -111,9 +130,11 @@ export function GitHubOnboardingNotice() {
 									? t("startup.openGithubCliDocs")
 									: startLogin.isPending
 										? t("startup.githubLoginStarting")
-										: t("startup.githubLogin")}
+										: loginEnded
+											? t("startup.githubLoginTryAgain")
+											: t("startup.githubLogin")}
 							</TopbarButton>
-							{terminal ? null : (
+							{loginRunning ? null : (
 								<TopbarButton
 									disabled={manualCheckPending}
 									onClick={() => void checkAgain()}
@@ -129,7 +150,9 @@ export function GitHubOnboardingNotice() {
 								<div className="flex min-h-9 items-center justify-between gap-3 border-b border-[var(--color-border-import-modal)] bg-[var(--color-bg-import-modal)] px-3 py-1.5">
 									<div className="min-w-0">
 										<p className="truncate text-xs font-medium text-[var(--color-text-import-title)]">{terminal.title}</p>
-										<p className="truncate text-[11px] text-[var(--color-text-import-muted)]">{t("startup.githubLoginRunning")}</p>
+										<p className="truncate text-[11px] text-[var(--color-text-import-muted)]">
+											{t(loginEnded ? "startup.githubLoginStopped" : "startup.githubLoginRunning")}
+										</p>
 									</div>
 									<TopbarButton aria-label={t("common.close")} className="!size-7 shrink-0" onClick={closeLogin} variant="icon">
 										<X className="size-4" aria-hidden="true" />

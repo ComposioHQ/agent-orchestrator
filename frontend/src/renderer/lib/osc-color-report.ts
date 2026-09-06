@@ -18,6 +18,9 @@ const MAX_OSC_BUFFER_LENGTH = 16 * 1024;
 const CURSOR_POSITION_REPORT = /^\u001b\[\??[1-9]\d{0,4};[1-9]\d{0,4}R/;
 const PARTIAL_CURSOR_POSITION_REPORT = /^\u001b(?:\[\??(?:\d{0,5}(?:;\d{0,5})?)?)?$/;
 const MAX_CURSOR_POSITION_REPORT_LENGTH = 16;
+const CURSOR_POSITION_REQUEST = /\u001b\[\??6n/g;
+const CURSOR_POSITION_REQUEST_PREFIXES = ["\x1b", "\x1b[", "\x1b[6", "\x1b[?", "\x1b[?6"];
+const MAX_PENDING_CURSOR_POSITION_REPORTS = 32;
 
 export function isOscColorReport(data: string): boolean {
 	return OSC_COLOR_REPORT.test(data);
@@ -132,12 +135,23 @@ export function createOscColorReportForwarder(emit: (report: string) => void): {
 
 /** Buffer split xterm onData chunks and forward only strict ANSI cursor-position replies. */
 export function createCursorPositionReportForwarder(emit: (report: string) => void): {
+	observeOutput: (data: string) => void;
 	push: (data: string) => void;
 	dispose: () => void;
 } {
 	let buffer = "";
+	let outputBuffer = "";
+	let pendingReports = 0;
 
 	return {
+		observeOutput(data: string) {
+			const output = outputBuffer + data;
+			const requests = output.match(CURSOR_POSITION_REQUEST)?.length ?? 0;
+			pendingReports = Math.min(MAX_PENDING_CURSOR_POSITION_REPORTS, pendingReports + requests);
+			outputBuffer = CURSOR_POSITION_REQUEST_PREFIXES
+				.filter((prefix) => output.endsWith(prefix))
+				.sort((left, right) => right.length - left.length)[0] ?? "";
+		},
 		push(data: string) {
 			buffer += data;
 			for (;;) {
@@ -150,7 +164,10 @@ export function createCursorPositionReportForwarder(emit: (report: string) => vo
 
 				const match = buffer.match(CURSOR_POSITION_REPORT);
 				if (match) {
-					emit(match[0]);
+					if (pendingReports > 0) {
+						pendingReports--;
+						emit(match[0]);
+					}
 					buffer = buffer.slice(match[0].length);
 					continue;
 				}
@@ -161,6 +178,8 @@ export function createCursorPositionReportForwarder(emit: (report: string) => vo
 		},
 		dispose() {
 			buffer = "";
+			outputBuffer = "";
+			pendingReports = 0;
 		},
 	};
 }

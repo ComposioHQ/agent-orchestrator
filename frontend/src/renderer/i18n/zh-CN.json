@@ -1235,6 +1235,8 @@
 	"startup.detailGhMissing": "在 PATH 中未找到 gh。它可让代理会话打开拉取请求并读取议题，但没有它 AO 也能正常运行。",
 	"startup.githubLogin": "登录 GitHub",
 	"startup.githubLoginRunning": "在此终端中完成登录",
+	"startup.githubLoginStopped": "登录在连接 GitHub 前已停止",
+	"startup.githubLoginTryAgain": "重试",
 	"startup.githubConnected": "GitHub 已连接",
 	"startup.githubLoginStarting": "正在开始登录…",
 	"startup.githubSetupMissingCli": "在让代理创建拉取请求之前，请安装 GitHub CLI 并登录。",

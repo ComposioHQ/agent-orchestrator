@@ -26,6 +26,7 @@ const state = vi.hoisted(() => ({
 		scrollToLine: ReturnType<typeof vi.fn>;
 		refresh: ReturnType<typeof vi.fn>;
 		clear: ReturnType<typeof vi.fn>;
+		dispose: ReturnType<typeof vi.fn>;
 		focus: ReturnType<typeof vi.fn>;
 		selectAll: ReturnType<typeof vi.fn>;
 		dataListeners: Set<(data: string) => void>;
@@ -104,9 +105,15 @@ vi.mock("@xterm/xterm", () => ({
 		open(host: HTMLElement) {
 			host.appendChild(document.createElement("textarea"));
 		}
-		write() {}
+		write(data: Uint8Array, done?: () => void) {
+			const output = new TextDecoder().decode(data);
+			if (output.includes("\x1b[6n")) {
+				this.dataListeners.forEach((listener) => listener("\x1b[7;21R"));
+			}
+			done?.();
+		}
 		writeln() {}
-		dispose() {}
+		dispose = vi.fn();
 		onData(listener: (data: string) => void) {
 			this.dataListeners.add(listener);
 			return { dispose: () => this.dataListeners.delete(listener) };
@@ -263,6 +270,7 @@ describe("XtermTerminal", () => {
 		try {
 			let terminal: AttachableTerminal | undefined;
 			render(<XtermTerminal theme="dark" onReady={(ready) => { terminal = ready; }} />);
+			state.lastTerminal!.buffer.active.baseY = 1;
 			const preparation = terminal!.prepareForActivation();
 			await act(async () => {
 				vi.advanceTimersByTime(250);
@@ -274,6 +282,44 @@ describe("XtermTerminal", () => {
 		} finally {
 			vi.useRealTimers();
 			vi.unstubAllGlobals();
+		}
+	});
+
+	it("does not scroll an empty terminal before renderer dimensions exist", async () => {
+		vi.useFakeTimers();
+		vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) =>
+			window.setTimeout(() => callback(performance.now()), 0),
+		);
+		vi.stubGlobal("cancelAnimationFrame", (id: number) => window.clearTimeout(id));
+		try {
+			let terminal: AttachableTerminal | undefined;
+			render(<XtermTerminal theme="dark" onReady={(ready) => { terminal = ready; }} />);
+			const preparation = terminal!.prepareForActivation();
+			await act(async () => {
+				vi.advanceTimersByTime(250);
+				vi.runAllTimers();
+				await preparation;
+			});
+			expect(state.lastTerminal!.scrollToBottom).not.toHaveBeenCalled();
+		} finally {
+			vi.useRealTimers();
+			vi.unstubAllGlobals();
+		}
+	});
+
+	it("defers disposal behind xterm's pending viewport callback", () => {
+		vi.useFakeTimers();
+		try {
+			const { unmount } = render(<XtermTerminal theme="dark" />);
+			const terminal = state.lastTerminal!;
+
+			unmount();
+			expect(terminal.dispose).not.toHaveBeenCalled();
+
+			act(() => vi.runOnlyPendingTimers());
+			expect(terminal.dispose).toHaveBeenCalledOnce();
+		} finally {
+			vi.useRealTimers();
 		}
 	});
 
@@ -1205,13 +1251,26 @@ describe("XtermTerminal", () => {
 		expect(onInput).toHaveBeenCalledWith("\x1b]4;196;rgb:ffff/0000/8000\x07", "protocol");
 	});
 
-	it("forwards validated cursor-position replies for interactive shell prompts", () => {
+	it("forwards the cursor-position reply generated for a PTY request", () => {
+		const onInput = vi.fn();
+		let terminal: AttachableTerminal | undefined;
+		render(<XtermTerminal theme="dark" onReady={(ready) => {
+			terminal = ready;
+			return ready.onUserInput(onInput);
+		}} />);
+
+		terminal!.write(new TextEncoder().encode("prompt\x1b[6n"));
+
+		expect(onInput).toHaveBeenCalledWith("\x1b[7;21R", "protocol");
+	});
+
+	it("does not forward an unsolicited cursor-position-shaped input", () => {
 		const onInput = vi.fn();
 		render(<XtermTerminal theme="dark" onReady={(terminal) => terminal.onUserInput(onInput)} />);
 
 		state.lastTerminal!.dataListeners.forEach((listener) => listener("\x1b[7;21R"));
 
-		expect(onInput).toHaveBeenCalledWith("\x1b[7;21R", "protocol");
+		expect(onInput).not.toHaveBeenCalled();
 	});
 
 	it("updates protocol handling when a retained terminal becomes a Cursor terminal", () => {

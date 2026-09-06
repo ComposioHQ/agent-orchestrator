@@ -1121,7 +1121,12 @@ export function XtermTerminal(props: XtermTerminalProps) {
 		shell.addEventListener("drop", dropInput);
 
 		const showLatestOutput = () => {
-			term.scrollToBottom();
+			// A newly opened xterm has no renderer dimensions until its first paint.
+			// scrollToBottom schedules Viewport.syncScrollArea, which dereferences those
+			// dimensions and crashes when activation runs before any output exists.
+			// There is nothing to scroll in that state; defer the API call until the
+			// buffer actually contains scrollback.
+			if (term.buffer.active.baseY > 0) term.scrollToBottom();
 			// Hidden output can leave the offscreen DOM scrollbar stale even
 			// after xterm's logical viewport moves. Synchronize it before either
 			// the first-load cover or retained-cache container is revealed.
@@ -1191,6 +1196,7 @@ export function XtermTerminal(props: XtermTerminalProps) {
 				}
 				if (hasEsc) {
 					const chunk = new TextDecoder().decode(data);
+					cursorPositionForwarder.observeOutput(chunk);
 					const reply = callbacksRef.current.supportsCursorColorScheme
 						? cursorColorSchemeReplyForOutput(chunk, callbacksRef.current.theme)
 						: null;
@@ -1275,12 +1281,20 @@ export function XtermTerminal(props: XtermTerminalProps) {
 			notifyCursorSchemeRef.current = () => {};
 			announcedCursorSchemeRef.current = null;
 			userInputListeners.clear();
-			try {
-				term.dispose();
-			} catch {
-				// Some renderer addons can throw during dispose in certain GPU
-				// environments; the terminal is being torn down regardless.
-			}
+			// xterm's Viewport constructor queues an untracked zero-delay
+			// syncScrollArea(). React StrictMode immediately runs this cleanup after
+			// the development probe mount; disposing synchronously clears the render
+			// service before that callback reads its dimensions. Queue disposal behind
+			// the already-pending viewport callback so the probe mount cannot surface an
+			// unhandled `dimensions` error.
+			window.setTimeout(() => {
+				try {
+					term.dispose();
+				} catch {
+					// Some renderer addons can throw during dispose in certain GPU
+					// environments; the terminal is being torn down regardless.
+				}
+			}, 0);
 		};
 	}, []);
 

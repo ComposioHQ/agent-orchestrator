@@ -1234,6 +1234,8 @@
 	"startup.detailGhMissing": "gh wurde nicht im PATH gefunden. Damit können Agent-Sitzungen Pull Requests öffnen und Issues lesen, AO funktioniert aber auch ohne.",
 	"startup.githubLogin": "Bei GitHub anmelden",
 	"startup.githubLoginRunning": "Anmeldung in diesem Terminal abschließen",
+	"startup.githubLoginStopped": "Die Anmeldung wurde beendet, bevor GitHub verbunden war",
+	"startup.githubLoginTryAgain": "Erneut versuchen",
 	"startup.githubConnected": "GitHub verbunden",
 	"startup.githubLoginStarting": "Anmeldung wird gestartet…",
 	"startup.githubSetupMissingCli": "Installiere GitHub CLI und melde dich an, bevor Agenten Pull Requests öffnen sollen.",

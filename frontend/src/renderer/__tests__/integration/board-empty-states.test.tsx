@@ -41,7 +41,7 @@ vi.mock("../../lib/api-client", () => ({
 }));
 
 vi.mock("../../components/TerminalPane", () => ({
-	TerminalPane: (props: { focusRequested?: boolean; onTerminalStateChange?: (state: "attached") => void }) => {
+	TerminalPane: (props: { focusRequested?: boolean; onTerminalStateChange?: (state: "attached" | "exited") => void }) => {
 		terminalPanePropsMock(props);
 		return <div data-focus-requested={props.focusRequested ? "true" : "false"} data-testid="terminal-pane" />;
 	},
@@ -261,9 +261,9 @@ describe("global board first launch", () => {
 		await waitFor(() => expect(postMock).toHaveBeenCalledTimes(1));
 		expect(postMock).toHaveBeenCalledWith("/api/v1/system/github-auth/terminal");
 		expect(await screen.findByTestId("github-auth-terminal")).toBeInTheDocument();
-		expect(screen.queryByRole("button", { name: "Check again" })).not.toBeInTheDocument();
 		expect(screen.getByTestId("terminal-pane")).toHaveAttribute("data-focus-requested", "false");
 		act(() => terminalPanePropsMock.mock.lastCall?.[0].onTerminalStateChange?.("attached"));
+		expect(screen.queryByRole("button", { name: "Check again" })).not.toBeInTheDocument();
 		expect(screen.getByTestId("terminal-pane")).toHaveAttribute("data-focus-requested", "true");
 	});
 
@@ -273,6 +273,25 @@ describe("global board first launch", () => {
 
 		expect(await screen.findByText("Add a project")).toBeInTheDocument();
 		expect(postMock).not.toHaveBeenCalledWith("/api/v1/system/github-auth/terminal");
+	});
+
+	it("offers recovery instead of treating an exited login terminal as active", async () => {
+		respondWith([], [], false);
+		renderBoard(<SessionsBoard />);
+		await screen.findByTestId("github-auth-terminal");
+
+		act(() => terminalPanePropsMock.mock.lastCall?.[0].onTerminalStateChange?.("attached"));
+		act(() => terminalPanePropsMock.mock.lastCall?.[0].onTerminalStateChange?.("exited"));
+
+		expect(await screen.findByText("Sign-in stopped before GitHub was connected")).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Try again" })).toBeEnabled();
+		expect(screen.getByRole("button", { name: "Check again" })).toBeEnabled();
+
+		await userEvent.click(screen.getByRole("button", { name: "Try again" }));
+		await waitFor(() => expect(deleteMock).toHaveBeenCalledWith("/api/v1/shell-terminals/{handleId}", {
+			params: { path: { handleId: "shellterm-github" } },
+		}));
+		await waitFor(() => expect(postMock).toHaveBeenCalledTimes(2));
 	});
 
 	it("keeps sign-in available when GitHub CLI readiness is unknown", async () => {

@@ -6,7 +6,9 @@
 package systemcheck
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"io"
 	"os"
 	"runtime"
@@ -260,7 +262,32 @@ func (s *Service) checkGitHubAuth(ctx context.Context) Requirement {
 	}
 	probeCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
-	if err := s.commands.Run(probeCtx, []string{path, "auth", "token"}, io.Discard, io.Discard); err != nil {
+	var stdout bytes.Buffer
+	if err := s.commands.Run(probeCtx, []string{path, "auth", "status", "--active", "--json", "hosts"}, &stdout, io.Discard); err != nil {
+		return Requirement{ID: "github-auth", Label: "GitHub access", Detail: detail}
+	}
+	var status struct {
+		Hosts map[string][]struct {
+			Active bool   `json:"active"`
+			State  string `json:"state"`
+		} `json:"hosts"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &status); err != nil {
+		return Requirement{ID: "github-auth", Label: "GitHub access", Detail: detail}
+	}
+	authenticated := false
+	for _, accounts := range status.Hosts {
+		for _, account := range accounts {
+			if account.Active && account.State == "success" {
+				authenticated = true
+				break
+			}
+		}
+		if authenticated {
+			break
+		}
+	}
+	if !authenticated {
 		return Requirement{ID: "github-auth", Label: "GitHub access", Detail: detail}
 	}
 	return Requirement{ID: "github-auth", Label: "GitHub access", Satisfied: true, Detail: "GitHub CLI is signed in."}
