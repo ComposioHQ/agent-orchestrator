@@ -214,6 +214,127 @@ describe("startAutoUpdates", () => {
     vi.resetModules();
   });
 
+  it("recovers a macOS ShipIt missing-file failure instead of retaining a ready update", async () => {
+    const restore = stubProcess("darwin", "/usr/local/bin/node");
+    try {
+      const { module, autoUpdater, updaterEvents } = await importAutoUpdater();
+      await module.startAutoUpdates(stateDir);
+      updaterEvents.get("update-downloaded")?.({ version: "2.1.0" });
+      await flushMicrotasks();
+      updaterEvents.get("error")?.(new Error(
+        "ditto: Could not lstat /Users/test/Library/Caches/dev.agent-orchestrator.desktop.ShipIt/update.abc/Agent Orchestrator.app/Contents/Resources/acp-runtime/node_modules/.bin/node-which: No such file or directory",
+      ));
+      expect(module.getUpdateStatus()).toMatchObject({ state: "error", message: expect.stringContaining("prepare the update") });
+      expect(module.getUpdateStatus().staged).toBeUndefined();
+      module.quitAndInstallUpdate();
+      expect(autoUpdater.quitAndInstall).not.toHaveBeenCalled();
+      // A check and an explicit download can retry the SAME release, without
+      // touching ShipIt's files or deleting a cache concurrently with a download.
+      autoUpdater.checkForUpdates.mockResolvedValue({ isUpdateAvailable: true, updateInfo: { version: "2.1.0" } });
+      await module.checkForUpdatesNow(stateDir);
+      expect(module.getUpdateStatus().state).toBe("available");
+      autoUpdater.downloadUpdate.mockImplementation(async () => {
+        updaterEvents.get("update-downloaded")?.({ version: "2.1.0" });
+      });
+      await module.downloadUpdateNow();
+      expect(module.getUpdateStatus().staged?.version).toBe("2.1.0");
+      module.quitAndInstallUpdate();
+      expect(autoUpdater.quitAndInstall).toHaveBeenCalledTimes(1);
+    } finally {
+      restore();
+    }
+  });
+
+  it("keeps native preparation failures visible during an automatic check and retries next time", async () => {
+    const restore = stubProcess("darwin", "/usr/local/bin/node");
+    try {
+      const { module, autoUpdater, updaterEvents } = await importAutoUpdater();
+      await module.checkForUpdatesNow(stateDir);
+      updaterEvents.get("update-downloaded")?.({ version: "2.1.0" });
+      const error = new Error("ditto: /cache/app.ShipIt/update.abc/AO.app/Contents/Resources/._app.asar__: No such file or directory");
+      autoUpdater.checkForUpdates.mockImplementationOnce(async () => {
+        updaterEvents.get("checking-for-update")?.();
+        updaterEvents.get("error")?.(error);
+        throw error;
+      });
+      await module.startAutoUpdates(stateDir);
+      expect(module.getUpdateStatus()).toMatchObject({ state: "error", message: expect.stringContaining("prepare the update") });
+      expect(module.getUpdateStatus().staged).toBeUndefined();
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      const second = await importAutoUpdaterKeepingStagedFile();
+      await second.module.startAutoUpdates(stateDir);
+      expect(second.module.getUpdateStatus().staged).toBeUndefined();
+      expect(second.autoUpdater.autoDownload).toBe(true);
+    } finally {
+      restore();
+    }
+  });
+
+  it("handles a reject-only native failure before AO has recorded a staged build", async () => {
+    const restore = stubProcess("darwin", "/usr/local/bin/node");
+    try {
+      const { module, autoUpdater } = await importAutoUpdater();
+      await module.checkForUpdatesNow(stateDir);
+      autoUpdater.downloadUpdate.mockRejectedValue(new Error(
+        "ditto: /cache/app.ShipIt/update.abc/AO.app/Contents/Resources/._app.asar__: No such file or directory",
+      ));
+      await module.downloadUpdateNow("failed-download");
+      expect(module.getUpdateStatus()).toMatchObject({ state: "error", requestId: "failed-download", message: expect.stringContaining("prepare the update") });
+      module.quitAndInstallUpdate();
+      expect(autoUpdater.quitAndInstall).not.toHaveBeenCalled();
+    } finally {
+      restore();
+    }
+  });
+
+  it("does not let an in-flight escalation check restore a failed installation", async () => {
+    const restore = stubProcess("darwin", "/usr/local/bin/node");
+    try {
+      const { module, updaterEvents, readUpdateSettings } = await importAutoUpdater();
+      await module.checkForUpdatesNow(stateDir);
+      const pendingSettings = deferred<UpdateSettings>();
+      readUpdateSettings.mockReturnValueOnce(pendingSettings.promise);
+      updaterEvents.get("update-downloaded")?.({ version: "2.1.0" });
+      updaterEvents.get("error")?.(new Error(
+        "ditto: /cache/app.ShipIt/update.abc/AO.app/Contents/Resources/._app.asar__: No such file or directory",
+      ));
+      pendingSettings.resolve({ enabled: true, channel: "latest", nightlyAck: false, feature: null });
+      await flushMicrotasks();
+      expect(module.getUpdateStatus().state).toBe("error");
+      expect(module.getUpdateStatus().staged).toBeUndefined();
+    } finally {
+      restore();
+    }
+  });
+
+  it("preserves replacement provenance when staging immediately follows a failure", async () => {
+    const restore = stubProcess("darwin", "/usr/local/bin/node");
+    try {
+      const { module, updaterEvents } = await importAutoUpdater();
+      await module.checkForUpdatesNow(stateDir);
+      updaterEvents.get("update-downloaded")?.({ version: "2.1.0" });
+      updaterEvents.get("error")?.(new Error(
+        "ditto: /cache/app.ShipIt/update.abc/AO.app/Contents/Resources/._app.asar__: No such file or directory",
+      ));
+      updaterEvents.get("update-downloaded")?.({ version: "2.2.0" });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      const second = await importAutoUpdaterKeepingStagedFile();
+      await second.module.startAutoUpdates(stateDir);
+      expect(second.module.getUpdateStatus().staged?.version).toBe("2.2.0");
+    } finally {
+      restore();
+    }
+  });
+
+  it("does not invalidate a staged update for an unrelated missing file", async () => {
+    const { module, updaterEvents } = await importAutoUpdater();
+    await module.startAutoUpdates(stateDir);
+    updaterEvents.get("update-downloaded")?.({ version: "2.1.0" });
+    await flushMicrotasks();
+    updaterEvents.get("error")?.(new Error("ENOENT: no such file or directory, open /tmp/download.zip"));
+    expect(module.getUpdateStatus().staged?.version).toBe("2.1.0");
+  });
+
   it("runs the automatic updater check immediately on launch", async () => {
     const { module, autoUpdater } = await importAutoUpdater();
 
