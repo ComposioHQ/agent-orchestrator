@@ -3114,6 +3114,37 @@ func TestKill_WorkspaceProjectDestroysChildrenBeforeRoot(t *testing.T) {
 	}
 }
 
+// TestKill_WorkspaceProjectAlreadyAbsentStaysFreed guards the boundary between
+// the two answers destroyWorkspaceProjectRows returns. Kill's freed flag is not
+// a disk-reclaim count: freed=false means the workspace was preserved, and the
+// CLI prints "workspace preserved" from it. A worktree that was already gone
+// was torn down, not preserved, so collapsing freed onto the reclaim outcome
+// would make kill report a preserved workspace that does not exist.
+func TestKill_WorkspaceProjectAlreadyAbsentStaysFreed(t *testing.T) {
+	m, st, _, ws := newManager()
+	ws.destroyReclaim = ports.WorkspaceReclaimAlreadyAbsent
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Path: "/repo/mer", Kind: domain.ProjectKindWorkspace, Config: testRoleAgents()}
+	st.workspaceRepo["mer"] = []domain.WorkspaceRepoRecord{{Name: "api", RelativePath: "api"}}
+	st.sessions["mer-1"] = domain.SessionRecord{
+		ID:        "mer-1",
+		ProjectID: "mer",
+		Metadata:  domain.SessionMetadata{WorkspacePath: "/ws/mer-1", Branch: "ao/mer-1"},
+		Activity:  domain.Activity{State: domain.ActivityActive},
+	}
+	st.worktrees["mer-1"] = []domain.SessionWorktreeRecord{
+		{SessionID: "mer-1", RepoName: domain.RootWorkspaceRepoName, Branch: "ao/mer-1", WorktreePath: "/ws/mer-1"},
+		{SessionID: "mer-1", RepoName: "api", Branch: "ao/mer-1", WorktreePath: "/ws/mer-1/api"},
+	}
+
+	freed, err := m.Kill(ctx, "mer-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !freed {
+		t.Fatal("freed = false, want true: the worktrees were torn down, not preserved")
+	}
+}
+
 func TestKill_WorkspaceProjectFailsClosedOnUnregisteredChildRows(t *testing.T) {
 	m, st, _, ws := newManager()
 	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Path: "/repo/mer", Kind: domain.ProjectKindWorkspace, Config: testRoleAgents()}
