@@ -22,6 +22,14 @@ test(`renderer: workspace import preserves the root branch and explains unresolv
 			await route.fulfill({ json: { agents: [agentReadiness("codex", "Codex")] } });
 			return;
 		}
+		if (pathname === "/api/v1/imports/validate" && route.request().method() === "POST") {
+			await route.fulfill({ json: {
+				importKind: "workspace", isValid: true, blockingErrors: [], nextStep: "continue",
+				root: { repoPath: "/repos/local-root", isRepo: true, hasCommit: true, hasOrigin: true, isEmptyFolder: false, needsGitInit: false, requiredActions: [], blockingErrors: [] },
+				childRepos: [{ repoPath: "/repos/local-root/api", isRepo: true, hasCommit: true, hasOrigin: true, isEmptyFolder: false, needsGitInit: false, requiredActions: [], blockingErrors: [] }],
+			} });
+			return;
+		}
 		if (pathname === "/api/v1/projects" && route.request().method() === "POST") {
 			expect(route.request().postDataJSON()).toMatchObject({
 				path: "/repos/local-root", asWorkspace: true, config: { defaultBranch: "trunk" },
@@ -32,12 +40,12 @@ test(`renderer: workspace import preserves the root branch and explains unresolv
 			} } });
 			return;
 		}
-		if (pathname === "/api/v1/orchestrators" && route.request().method() === "POST") {
+		if (pathname === "/api/v1/sessions" && route.request().method() === "POST") {
 			started = true;
 			// A separate runtime failure must retain its real cause in the board.
 			await route.fulfill({ status: 422, json: {
 				error: "invalid", code: "DEFAULT_BRANCH_UNRESOLVED",
-				message: 'resolve workspace repo "__root__" base: remote did not advertise a symbolic HEAD',
+				message: 'resolve workspace repo "__root__" base: remote did not advertise a symbolic HEAD (DEFAULT_BRANCH_UNRESOLVED)',
 			} });
 			return;
 		}

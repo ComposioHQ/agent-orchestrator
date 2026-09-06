@@ -1726,7 +1726,7 @@ function ProjectImportDialog({
 					</div>
 					<div className="flex shrink-0 items-center justify-end gap-2 px-4 pb-4 pt-3">
 						{mustImportAsWorkspace ? (
-							<Button type="button" variant="primary" disabled={disabled} onClick={onTryWorkspace}>Import as workspace</Button>
+							<Button type="button" variant="primary" disabled={disabled} onClick={onTryWorkspace}>{t("createProject.importAsWorkspace")}</Button>
 						) : step === "blocked" ? (
 							<>
 								<Button type="button" variant="outline" disabled={disabled} onClick={onBack}>
@@ -1877,8 +1877,8 @@ function CreateProjectFolderDialog({
 										)}
 									</div>
 								)}
-								{workspaceNeedsInitializedRepo && !error ? <p className="text-[14px] leading-6 text-[var(--color-text-import-muted)]">Set up at least one child folder as a Git repository before importing this workspace.</p> : null}
-								{workspaceRootIsProject && !error ? <p className="text-[14px] leading-6 text-[var(--color-text-import-muted)]">This is a single project, not a collection of projects. Import it as a project instead.</p> : null}
+								{workspaceNeedsInitializedRepo && !error ? <p className="text-[14px] leading-6 text-[var(--color-text-import-muted)]">{t("createProject.workspaceNeedsGitRepo")}</p> : null}
+								{workspaceRootIsProject && !error ? <p className="text-[14px] leading-6 text-[var(--color-text-import-muted)]">{t("createProject.workspaceRootIsProject")}</p> : null}
 
 							{workspaceRootIsProject ? null : isWorkspace ? <WorkspaceImportRepoList
 								preparation={workspacePreparation}
@@ -1905,7 +1905,7 @@ function CreateProjectFolderDialog({
 							</Button>
 							{hasScan && workspaceRootIsProject && !error ? (
 								<Button type="button" variant="primary" disabled={disabled} onClick={onContinueAsProject}>
-									Import as project
+									{t("createProject.importAsProject")}
 								</Button>
 							) : hasScan && failedRepos.length === 0 && !error && (!workspaceNeedsInitializedRepo || selectedSetupRepos.length > 0) ? (
 								<Button type="button" variant="primary" disabled={disabled || !workspaceSetupReady} onClick={onContinue}>
@@ -1933,7 +1933,7 @@ function ImportRepoRow({ failed = false, onSetup, repo, setupExpanded = false }:
 			</div>
 			<div className="min-w-0 flex-1 truncate text-[13px] font-semibold text-[var(--color-text-import-title)]">{repo.name}</div>
 			<div className="flex max-w-[220px] shrink-0 items-center gap-1 truncate text-right text-[11px] text-[var(--color-text-import-muted)]">
-				{needsSetup ? onSetup ? <button type="button" aria-expanded={setupExpanded} className="rounded-sm border border-orange-400/40 bg-orange-500/15 px-2 py-0.5 text-orange-300 hover:bg-orange-500/25" onClick={onSetup}>{setupExpanded ? "Hide setup" : `${workspaceSetupLabel(repo)} · Set up`}</button> : <span className="rounded-sm border border-orange-400/40 bg-orange-500/15 px-2 py-0.5 text-orange-300">Setup required</span> : repositoryUrl ? <><GitBranch className="size-3.5 shrink-0" aria-hidden="true" /><a className="truncate underline decoration-border underline-offset-2 hover:text-foreground" href={repositoryUrl} rel="noreferrer" target="_blank">{repo.branch}</a></> : <><span className={cn("truncate", isPlainFolder && "rounded-sm bg-orange-500/15 px-2 py-0.5 text-orange-300")}>{isPlainFolder ? "Needs git init" : failed ? (repo.reason ?? t("createProject.repoCannotImport")) : repo.branch}</span></>}
+				{needsSetup ? onSetup ? <button type="button" aria-expanded={setupExpanded} className="rounded-sm border border-orange-400/40 bg-orange-500/15 px-2 py-0.5 text-orange-300 hover:bg-orange-500/25" onClick={onSetup}>{setupExpanded ? "Hide setup" : `${workspaceSetupLabel(repo)} · Set up`}</button> : <span className="rounded-sm border border-orange-400/40 bg-orange-500/15 px-2 py-0.5 text-orange-300">{t("createProject.setupRequired")}</span> : repositoryUrl ? <><GitBranch className="size-3.5 shrink-0" aria-hidden="true" /><a className="truncate underline decoration-border underline-offset-2 hover:text-foreground" href={repositoryUrl} rel="noreferrer" target="_blank">{repo.branch}</a></> : <><span className={cn("truncate", isPlainFolder && "rounded-sm bg-orange-500/15 px-2 py-0.5 text-orange-300")}>{isPlainFolder ? "Needs git init" : failed ? (repo.reason ?? t("createProject.repoCannotImport")) : repo.branch}</span></>}
 			</div>
 		</div>
 	);
@@ -2010,10 +2010,11 @@ function WorkspaceGitSetupFields({ actions, approved, disabled, onApprovalChange
 	remotePlaceholder?: string;
 	remoteUrl: string;
 }) {
+	const { t } = useTranslation();
 	return <div className="space-y-2">
 		<label className="flex items-start gap-2 text-[12px] text-[var(--color-text-import-title)]">
 			<Checkbox checked={approved} className="mt-0.5" disabled={disabled} onCheckedChange={(checked) => onApprovalChange(checked === true)} />
-			<span className="min-w-0 flex-1"><span className="block font-medium">Set up Git for this project</span><span className="block text-[11px] leading-4 text-[var(--color-text-import-muted)]">{actions.map(gitActionLabel).join(", ")}</span></span>
+			<span className="min-w-0 flex-1"><span className="block font-medium">{t("createProject.setupGitProject")}</span><span className="block text-[11px] leading-4 text-[var(--color-text-import-muted)]">{actions.map(gitActionLabel).join(", ")}</span></span>
 		</label>
 		{actions.includes("set_remote") ? <Input aria-label={remoteAriaLabel} className="h-8 bg-[var(--color-bg-import-card)] font-mono text-[12px]" disabled={disabled} placeholder={remotePlaceholder} value={remoteUrl} onChange={(event) => onRemoteChange(event.target.value)} /> : null}
 	</div>;
