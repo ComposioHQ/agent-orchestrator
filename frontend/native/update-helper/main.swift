@@ -18,6 +18,7 @@ final class ProgressController: NSObject, NSApplicationDelegate, NSWindowDelegat
     var window: NSWindow!
     var timer: Timer?
     var displayedStage: UpdateStage?
+    var windowPresented = false
     let title = NSTextField(labelWithString: "")
     let detail = NSTextField(wrappingLabelWithString: "")
     let spinner = NSProgressIndicator()
@@ -30,7 +31,9 @@ final class ProgressController: NSObject, NSApplicationDelegate, NSWindowDelegat
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        NSApp.setActivationPolicy(.regular)
+        // Start as an accessory: no Dock icon and no window on launch. A normal
+        // update just closes AO and reopens it, with no second window in the way.
+        NSApp.setActivationPolicy(.accessory)
         window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 500, height: 270),
                           styleMask: [.titled, .closable], backing: .buffered, defer: false)
         window.title = "Updating Agent Orchestrator"
@@ -63,10 +66,10 @@ final class ProgressController: NSObject, NSApplicationDelegate, NSWindowDelegat
             stack.centerYAnchor.constraint(equalTo: window.contentView!.centerYAnchor),
         ])
         refresh()
-        window.center()
-        window.makeKeyAndOrderFront(nil)
-        NSApp.activate(ignoringOtherApps: true)
-        // The parent waits for visible native UI before giving Squirrel permission to quit.
+        // READY is what the parent waits for before letting Squirrel quit AO.
+        // It is the process handshake (this stdout line), not any visible UI, so
+        // the window can stay hidden here and still hand off safely. The window
+        // is shown only if the update stalls or fails (see presentWindow).
         DispatchQueue.main.async {
             FileHandle.standardOutput.write(Data("READY\n".utf8))
         }
@@ -98,6 +101,17 @@ final class ProgressController: NSObject, NSApplicationDelegate, NSWindowDelegat
                                     finishedLaunching: app.isFinishedLaunching, visibleWindow: visible)
     }
 
+    // Bring the window on screen. Called only when the update needs attention
+    // (it stalled or failed), never on the normal close-and-reopen path.
+    func presentWindow() {
+        guard !windowPresented else { return }
+        windowPresented = true
+        NSApp.setActivationPolicy(.regular)
+        window.center()
+        window.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
     func refresh() {
         let completion = readJSON(UpdateCompletion.self, at: attempt.appendingPathComponent("complete.json"))
         let failure = readJSON(UpdateFailure.self, at: attempt.appendingPathComponent("error.json"))
@@ -124,12 +138,14 @@ final class ProgressController: NSObject, NSApplicationDelegate, NSWindowDelegat
             recovery.isHidden = true
             spinner.startAnimation(nil)
         case .recovery(let message):
+            presentWindow()
             window.setContentSize(NSSize(width: 500, height: 340))
             title.stringValue = "Still waiting for AO"
             detail.stringValue = String(message.prefix(260))
             recovery.isHidden = false
             spinner.stopAnimation(nil)
         case .reopened:
+            presentWindow()
             title.stringValue = "AO has reopened"
             detail.stringValue = "This version of AO cannot confirm when its window is ready. You can close this progress window."
             recovery.isHidden = false
