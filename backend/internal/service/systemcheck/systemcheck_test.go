@@ -22,9 +22,11 @@ type fakeHarnessCatalog struct {
 }
 
 type fakeCommandRunner struct {
-	err    error
-	stdout string
-	argv   []string
+	err     error
+	errors  []error
+	stdout  string
+	argv    []string
+	argvLog [][]string
 }
 
 type fakeGitHubAuthTerminalOpener struct {
@@ -38,7 +40,11 @@ func (f *fakeGitHubAuthTerminalOpener) OpenCommandTerminal(_ context.Context, in
 
 func (f *fakeCommandRunner) Run(_ context.Context, argv []string, stdout, _ io.Writer) error {
 	f.argv = append([]string(nil), argv...)
+	f.argvLog = append(f.argvLog, append([]string(nil), argv...))
 	_, _ = io.WriteString(stdout, f.stdout)
+	if index := len(f.argvLog) - 1; index < len(f.errors) {
+		return f.errors[index]
+	}
 	return f.err
 }
 
@@ -358,8 +364,62 @@ func TestCheckGitHubAuth_IsAdvisory(t *testing.T) {
 	if auth.Satisfied || auth.Required {
 		t.Fatalf("github-auth = %+v, want unsatisfied advisory", auth)
 	}
-	if got, want := runner.argv, []string{"/usr/bin/gh", "auth", "status", "--active", "--json", "hosts"}; !slices.Equal(got, want) {
-		t.Fatalf("auth probe argv = %#v, want %#v", got, want)
+	wantCalls := [][]string{
+		{"/usr/bin/gh", "auth", "status", "--active", "--json", "hosts"},
+		{"/usr/bin/gh", "auth", "status"},
+	}
+	if len(runner.argvLog) != len(wantCalls) {
+		t.Fatalf("auth probe argv = %#v, want %#v", runner.argvLog, wantCalls)
+	}
+	for i := range wantCalls {
+		if !slices.Equal(runner.argvLog[i], wantCalls[i]) {
+			t.Fatalf("auth probe argv = %#v, want %#v", runner.argvLog, wantCalls)
+		}
+	}
+}
+
+func TestCheckGitHubAuth_FallsBackForOlderGitHubCLI(t *testing.T) {
+	runner := &fakeCommandRunner{errors: []error{errors.New("unknown flag: --json"), nil}}
+	svc := NewWithCommandRunner(&fakeHarnessCatalog{}, executableFinderFunc(lookPathFound(map[string]string{
+		"gh": "/usr/bin/gh",
+	})), runner)
+
+	auth, err := svc.CheckGitHubAuth(context.Background())
+	if err != nil {
+		t.Fatalf("CheckGitHubAuth() error = %v", err)
+	}
+	if !auth.Satisfied {
+		t.Fatalf("github-auth = %+v, want legacy status fallback to satisfy auth", auth)
+	}
+	wantCalls := [][]string{
+		{"/usr/bin/gh", "auth", "status", "--active", "--json", "hosts"},
+		{"/usr/bin/gh", "auth", "status"},
+	}
+	if len(runner.argvLog) != len(wantCalls) {
+		t.Fatalf("auth probe argv = %#v, want %#v", runner.argvLog, wantCalls)
+	}
+	for i := range wantCalls {
+		if !slices.Equal(runner.argvLog[i], wantCalls[i]) {
+			t.Fatalf("auth probe argv = %#v, want %#v", runner.argvLog, wantCalls)
+		}
+	}
+}
+
+func TestCheckGitHubAuth_DoesNotFallbackForReportedAuthFailure(t *testing.T) {
+	runner := &fakeCommandRunner{stdout: `{"hosts":{"github.com":[{"active":true,"state":"failure"}]}}`}
+	svc := NewWithCommandRunner(&fakeHarnessCatalog{}, executableFinderFunc(lookPathFound(map[string]string{
+		"gh": "/usr/bin/gh",
+	})), runner)
+
+	auth, err := svc.CheckGitHubAuth(context.Background())
+	if err != nil {
+		t.Fatalf("CheckGitHubAuth() error = %v", err)
+	}
+	if auth.Satisfied {
+		t.Fatalf("github-auth = %+v, want reported credential failure to remain unsatisfied", auth)
+	}
+	if len(runner.argvLog) != 1 {
+		t.Fatalf("auth probe argv = %#v, want only the JSON status probe", runner.argvLog)
 	}
 }
 

@@ -1245,6 +1245,19 @@ describe("XtermTerminal", () => {
 		expect(onInput).toHaveBeenCalledWith("\x1b[7;21R", "protocol");
 	});
 
+	it("does not forward cursor replies generated while replaying history", () => {
+		const onInput = vi.fn();
+		let terminal: AttachableTerminal | undefined;
+		render(<XtermTerminal theme="dark" onReady={(ready) => {
+			terminal = ready;
+			return ready.onUserInput(onInput);
+		}} />);
+
+		terminal!.write(new TextEncoder().encode("historical prompt\x1b[6n"), undefined, "replay");
+
+		expect(onInput).not.toHaveBeenCalledWith("\x1b[7;21R", "protocol");
+	});
+
 	it("does not forward an unsolicited cursor-position-shaped input", () => {
 		const onInput = vi.fn();
 		render(<XtermTerminal theme="dark" onReady={(terminal) => terminal.onUserInput(onInput)} />);

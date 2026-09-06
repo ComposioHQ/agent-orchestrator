@@ -4,7 +4,7 @@ import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { MuxConnectionState, TerminalMux } from "../lib/terminal-mux";
 import type { WorkspaceSession } from "../types/workspace";
-import { useTerminalSession, type AttachableTerminal } from "./useTerminalSession";
+import { useTerminalSession, type AttachableTerminal, type TerminalWriteSource } from "./useTerminalSession";
 import { workspaceQueryKey } from "./useWorkspaceQuery";
 
 const session: WorkspaceSession = {
@@ -91,6 +91,7 @@ type FakeTerminal = AttachableTerminal & {
 	autoCompleteWrites: boolean;
 	lines: string[];
 	pendingWriteCallbacks: Array<() => void>;
+	writeSources: TerminalWriteSource[];
 	latestOutputRequests: number;
 	typeKeys(data: string): void;
 	paste(data: string): void;
@@ -113,10 +114,12 @@ function createFakeTerminal(): FakeTerminal {
 		autoCompleteWrites: true,
 		lines: [],
 		pendingWriteCallbacks: [],
+		writeSources: [],
 		latestOutputRequests: 0,
 		// Mirrors xterm: the callback fires once the chunk has been parsed.
-		write: (bytes, done) => {
+		write: (bytes, done, source = "live") => {
 			terminal.lines.push(new TextDecoder().decode(bytes));
+			terminal.writeSources.push(source);
 			if (done) {
 				if (terminal.autoCompleteWrites) done();
 				else terminal.pendingWriteCallbacks.push(done);
@@ -465,6 +468,7 @@ describe("useTerminalSession", () => {
 			expect(terminal.lines).toEqual(["replay", "live-1"]);
 			act(() => muxes[0].emitData("handle-1", "live-2"));
 			expect(terminal.lines).toEqual(["replay", "live-1", "live-2"]);
+			expect(terminal.writeSources).toEqual(["replay", "live", "live"]);
 		});
 
 		it("reveals a pane that replays nothing instead of holding the cover to the cap", () => {

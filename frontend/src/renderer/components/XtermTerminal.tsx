@@ -32,6 +32,7 @@ import { terminalFontSizeDelta as shortcutFontSizeDelta } from "../../shared/sho
 import type {
 	AttachableTerminal,
 	TerminalUserInputSource,
+	TerminalWriteSource,
 } from "../hooks/useTerminalSession";
 import { aoBridge } from "../lib/bridge";
 import { TERMINAL_FONT_SIZE_DEFAULT } from "../lib/design-tokens";
@@ -1181,19 +1182,32 @@ export function XtermTerminal(props: XtermTerminalProps) {
 			// Forward xterm's write callback: it fires once THIS chunk has been
 			// parsed into the buffer, which is what lets the attachment reveal the
 			// pane at the replay's settled scroll position (issue #3160).
-			write: (data, done) => {
-				const chunk = new TextDecoder().decode(data);
-				// A PTY can split a DSR at any byte boundary, including immediately
-				// after ESC. Feed every chunk to the correlator so an ESC-free
-				// continuation still completes the pending request.
-				cursorPositionForwarder.observeOutput(chunk);
-				if (chunk.includes("\x1b")) {
-					const reply = callbacksRef.current.supportsCursorColorScheme
-						? cursorColorSchemeReplyForOutput(chunk, callbacksRef.current.theme)
-						: null;
-					if (reply) {
-						announcedCursorSchemeRef.current = null;
-						notifyCursorScheme(callbacksRef.current.theme, true, true);
+			write: (data, done, source: TerminalWriteSource = "live") => {
+				let hasEsc = false;
+				for (let i = 0; i < data.length; i++) {
+					if (data[i] === 0x1b) {
+						hasEsc = true;
+						break;
+					}
+				}
+				if (source === "replay") {
+					// Replayed history is parsed by xterm again and can contain old DSRs.
+					// Clear correlation state so their generated CPRs are discarded rather
+					// than injected into the newly attached live PTY.
+					cursorPositionForwarder.dispose();
+				} else if (hasEsc || cursorPositionForwarder.hasPartialRequest()) {
+					// A DSR can be split immediately after ESC. Decode an ESC-free chunk
+					// only while a request prefix from the preceding chunk is incomplete.
+					const chunk = new TextDecoder().decode(data);
+					cursorPositionForwarder.observeOutput(chunk);
+					if (hasEsc) {
+						const reply = callbacksRef.current.supportsCursorColorScheme
+							? cursorColorSchemeReplyForOutput(chunk, callbacksRef.current.theme)
+							: null;
+						if (reply) {
+							announcedCursorSchemeRef.current = null;
+							notifyCursorScheme(callbacksRef.current.theme, true, true);
+						}
 					}
 				}
 				term.write(data, () => {
@@ -1272,20 +1286,23 @@ export function XtermTerminal(props: XtermTerminalProps) {
 			notifyCursorSchemeRef.current = () => {};
 			announcedCursorSchemeRef.current = null;
 			userInputListeners.clear();
-			// xterm's Viewport constructor queues an untracked zero-delay
-			// syncScrollArea(). React StrictMode immediately runs this cleanup after
-			// the development probe mount; disposing synchronously clears the render
-			// service before that callback reads its dimensions. Queue disposal behind
-			// the already-pending viewport callback so the probe mount cannot surface an
-			// unhandled `dimensions` error.
-			window.setTimeout(() => {
+			const disposeTerminal = () => {
 				try {
 					term.dispose();
 				} catch {
 					// Some renderer addons can throw during dispose in certain GPU
 					// environments; the terminal is being torn down regardless.
 				}
-			}, 0);
+			};
+			if (import.meta.env.DEV) {
+				// xterm's Viewport constructor queues an untracked zero-delay
+				// syncScrollArea(). React StrictMode immediately runs this cleanup after
+				// its development probe mount; queue disposal behind that callback so it
+				// cannot read the already-cleared renderer dimensions.
+				window.setTimeout(disposeTerminal, 0);
+			} else {
+				disposeTerminal();
+			}
 		};
 	}, []);
 

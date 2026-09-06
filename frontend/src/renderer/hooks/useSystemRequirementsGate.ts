@@ -9,6 +9,8 @@ export type SystemRequirement = components["schemas"]["SystemRequirement"];
 
 export const systemRequirementsQueryKey = ["system-requirements"] as const;
 export const githubAuthTerminalQueryKey = ["github-auth-terminal"] as const;
+export const githubAuthAutoLoginOfferedQueryKey = ["github-auth-auto-login-offered"] as const;
+const GITHUB_AUTH_POLL_INTERVAL_MS = 2_500;
 
 async function fetchSystemRequirements(): Promise<components["schemas"]["SystemRequirementsResponse"]> {
 	const { data, error } = await apiClient.GET("/api/v1/system/requirements");
@@ -47,7 +49,7 @@ export function useGitHubAuthRequirement(loginActive = false) {
 		// The browser/device flow can finish before its PTY exit reaches the
 		// renderer. Probe only while AO owns an active login terminal so the card
 		// closes promptly after authorization without permanent background polling.
-		refetchInterval: loginActive ? 750 : false,
+		refetchInterval: loginActive ? GITHUB_AUTH_POLL_INTERVAL_MS : false,
 	});
 }
 
@@ -91,6 +93,23 @@ export function useGitHubAuthTerminal() {
 		queryClient.setQueryData<ShellTerminal | null>(githubAuthTerminalQueryKey, null);
 	}, [queryClient]);
 	return { ...query, clear };
+}
+
+/** Remember an automatic login offer for the lifetime of this renderer so
+ * dismissing its PTY remains respected across home/board remounts. */
+export function useGitHubAuthAutoLoginOffered() {
+	const queryClient = useQueryClient();
+	const query = useQuery<boolean>({
+		queryKey: githubAuthAutoLoginOfferedQueryKey,
+		queryFn: async () => false,
+		enabled: false,
+		initialData: false,
+		gcTime: Number.POSITIVE_INFINITY,
+	});
+	const markOffered = useCallback(() => {
+		queryClient.setQueryData(githubAuthAutoLoginOfferedQueryKey, true);
+	}, [queryClient]);
+	return { offered: query.data, markOffered };
 }
 
 /** Single source of truth for whether the machine satisfies AO's startup

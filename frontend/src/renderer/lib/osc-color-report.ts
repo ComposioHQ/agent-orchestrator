@@ -135,6 +135,7 @@ export function createOscColorReportForwarder(emit: (report: string) => void): {
 
 /** Buffer split xterm onData chunks and forward only strict ANSI cursor-position replies. */
 export function createCursorPositionReportForwarder(emit: (report: string) => void): {
+	hasPartialRequest: () => boolean;
 	observeOutput: (data: string) => void;
 	push: (data: string) => void;
 	dispose: () => void;
@@ -144,6 +145,9 @@ export function createCursorPositionReportForwarder(emit: (report: string) => vo
 	let pendingReports = 0;
 
 	return {
+		hasPartialRequest() {
+			return outputBuffer.length > 0;
+		},
 		observeOutput(data: string) {
 			const output = outputBuffer + data;
 			const requests = output.match(CURSOR_POSITION_REQUEST)?.length ?? 0;

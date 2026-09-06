@@ -264,7 +264,13 @@ func (s *Service) checkGitHubAuth(ctx context.Context) Requirement {
 	defer cancel()
 	var stdout bytes.Buffer
 	if err := s.commands.Run(probeCtx, []string{path, "auth", "status", "--active", "--json", "hosts"}, &stdout, io.Discard); err != nil {
-		return Requirement{ID: "github-auth", Label: "GitHub access", Detail: detail}
+		// `auth status --json` was added after many still-supported gh releases.
+		// Bare `auth status` preserves compatibility while still validating the
+		// credential instead of merely checking that token text exists.
+		if !s.hasGitHubAuth(probeCtx, path) {
+			return Requirement{ID: "github-auth", Label: "GitHub access", Detail: detail}
+		}
+		return Requirement{ID: "github-auth", Label: "GitHub access", Satisfied: true, Detail: "GitHub CLI is signed in."}
 	}
 	var status struct {
 		Hosts map[string][]struct {
@@ -273,7 +279,10 @@ func (s *Service) checkGitHubAuth(ctx context.Context) Requirement {
 		} `json:"hosts"`
 	}
 	if err := json.Unmarshal(stdout.Bytes(), &status); err != nil {
-		return Requirement{ID: "github-auth", Label: "GitHub access", Detail: detail}
+		if !s.hasGitHubAuth(probeCtx, path) {
+			return Requirement{ID: "github-auth", Label: "GitHub access", Detail: detail}
+		}
+		return Requirement{ID: "github-auth", Label: "GitHub access", Satisfied: true, Detail: "GitHub CLI is signed in."}
 	}
 	authenticated := false
 	for _, accounts := range status.Hosts {
@@ -291,4 +300,8 @@ func (s *Service) checkGitHubAuth(ctx context.Context) Requirement {
 		return Requirement{ID: "github-auth", Label: "GitHub access", Detail: detail}
 	}
 	return Requirement{ID: "github-auth", Label: "GitHub access", Satisfied: true, Detail: "GitHub CLI is signed in."}
+}
+
+func (s *Service) hasGitHubAuth(ctx context.Context, path string) bool {
+	return s.commands.Run(ctx, []string{path, "auth", "status"}, io.Discard, io.Discard) == nil
 }

@@ -275,6 +275,25 @@ describe("global board first launch", () => {
 		expect(postMock).not.toHaveBeenCalledWith("/api/v1/system/github-auth/terminal");
 	});
 
+	it("respects a dismissed automatic login after the notice remounts", async () => {
+		respondWith([], [], false);
+		const view = renderBoard(<SessionsBoard />);
+		await screen.findByTestId("github-auth-terminal");
+		await waitFor(() => expect(postMock).toHaveBeenCalledTimes(1));
+
+		await userEvent.click(screen.getByRole("button", { name: "Close" }));
+		await waitFor(() => expect(screen.queryByTestId("github-auth-terminal")).not.toBeInTheDocument());
+		view.unmount();
+		render(
+			<QueryClientProvider client={lastQueryClient!}>
+				<ShellProvider value={lastShell!}><SessionsBoard /></ShellProvider>
+			</QueryClientProvider>,
+		);
+
+		expect(await screen.findByText("Connect GitHub for pull requests")).toBeInTheDocument();
+		expect(postMock).toHaveBeenCalledTimes(1);
+	});
+
 	it("offers recovery instead of treating an exited login terminal as active", async () => {
 		respondWith([], [], false);
 		renderBoard(<SessionsBoard />);

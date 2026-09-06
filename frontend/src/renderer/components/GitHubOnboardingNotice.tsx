@@ -3,7 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { TerminalSessionState } from "../hooks/useTerminalSession";
 import { useCloseShellTerminal } from "../hooks/useShellTerminals";
-import { useGitHubAuthRequirement, useGitHubAuthTerminal, useStartGitHubAuthTerminal, useSystemRequirementsGate } from "../hooks/useSystemRequirementsGate";
+import { useGitHubAuthAutoLoginOffered, useGitHubAuthRequirement, useGitHubAuthTerminal, useStartGitHubAuthTerminal, useSystemRequirementsGate } from "../hooks/useSystemRequirementsGate";
 import { aoBridge } from "../lib/bridge";
 import { useShellMaybe } from "../lib/shell-context";
 import { useResolvedTheme, useUiStore } from "../stores/ui-store";
@@ -19,6 +19,7 @@ export function GitHubOnboardingNotice() {
 	const { t } = useTranslation();
 	const gate = useSystemRequirementsGate();
 	const startLogin = useStartGitHubAuthTerminal();
+	const autoLogin = useGitHubAuthAutoLoginOffered();
 	const terminalQuery = useGitHubAuthTerminal();
 	const terminal = terminalQuery.data;
 	const [terminalStatus, setTerminalStatus] = useState<{ handleId: string | null; state: TerminalSessionState }>({
@@ -36,7 +37,6 @@ export function GitHubOnboardingNotice() {
 	const requirements = gate.requirements ?? [];
 	const terminalRef = useRef(terminal);
 	const refetchAuthRef = useRef(authQuery.refetch);
-	const automaticLoginStartedRef = useRef(false);
 	const exitCheckedTerminalRef = useRef<string | null>(null);
 	const completedTerminalRef = useRef<string | null>(null);
 	const [manualCheckPending, setManualCheckPending] = useState(false);
@@ -67,17 +67,18 @@ export function GitHubOnboardingNotice() {
 			gh?.satisfied !== true ||
 			terminal ||
 			startLogin.isPending ||
-			automaticLoginStartedRef.current
+			autoLogin.offered
 		) {
 			return;
 		}
-		automaticLoginStartedRef.current = true;
+		autoLogin.markOffered();
 		startLogin.mutate();
-	}, [auth, gh?.satisfied, startLogin.isPending, startLogin.mutate, terminal]);
+	}, [auth, autoLogin.markOffered, autoLogin.offered, gh?.satisfied, startLogin.isPending, startLogin.mutate, terminal]);
 
 	if (!auth || auth.satisfied) return null;
 
 	const openLogin = () => {
+		autoLogin.markOffered();
 		startLogin.mutate();
 	};
 	const retryLogin = () => {

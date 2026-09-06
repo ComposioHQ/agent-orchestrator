@@ -26,6 +26,7 @@ import { workspaceQueryKey } from "./useWorkspaceQuery";
  * drive the hook with a tiny fake instead of a real xterm + DOM.
  */
 export type TerminalUserInputSource = "keyboard" | "paste" | "composition" | "shortcut" | "wheel" | "protocol";
+export type TerminalWriteSource = "live" | "replay";
 
 export type AttachableTerminal = {
 	cols: number;
@@ -35,7 +36,7 @@ export type AttachableTerminal = {
 	 * own write callback). The attachment uses it to reveal the pane at the
 	 * replay's final scroll position instead of guessing with a timer.
 	 */
-	write: (data: Uint8Array, done?: () => void) => void;
+	write: (data: Uint8Array, done?: () => void, source?: TerminalWriteSource) => void;
 	writeln: (line: string) => void;
 	/** Move xterm's logical viewport and DOM scrollbar to the latest output. */
 	showLatestOutput: () => void;
@@ -452,7 +453,7 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 						return;
 					}
 					replayBatchTimer = setTimeout(writeNext, 0);
-				});
+				}, "replay");
 			};
 			writeNext();
 		};
@@ -466,12 +467,12 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 			if (replayBatchBytes && replayBatchOffset < replayBatchBytes.length) {
 				// The current batch is already in xterm's queue. Queue the remainder in
 				// one call before dispose so it cannot be overtaken or discarded.
-				terminal.write(replayBatchBytes.subarray(replayBatchOffset));
+				terminal.write(replayBatchBytes.subarray(replayBatchOffset), undefined, "replay");
 			}
 			replayBatchBytes = null;
 			replayBatchOffset = 0;
 			replayBatchDone = null;
-			for (const bytes of postReplayWriteQueue) terminal.write(bytes);
+			for (const bytes of postReplayWriteQueue) terminal.write(bytes, undefined, "replay");
 			postReplayWriteQueue.length = 0;
 			postReplayWriteActive = false;
 			pendingReplayWrites = 0;
@@ -504,7 +505,7 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 				postReplayWriteActive = false;
 				pendingReplayWrites = Math.max(0, pendingReplayWrites - 1);
 				drainPostReplayWrites();
-			});
+			}, "replay");
 		};
 
 		// End the buffered part of the initial replay: concatenate what arrived so
@@ -550,7 +551,7 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 				offset += chunk.length;
 			}
 			if (preserveBeforeTeardown) {
-				terminal.write(replay);
+				terminal.write(replay, undefined, "replay");
 				preservePendingReplayWrites();
 				return;
 			}
