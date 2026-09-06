@@ -2,7 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render as rtlRender, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { ReactNode } from "react";
+import { StrictMode, type ReactNode } from "react";
 import { TooltipProvider } from "../../components/ui/tooltip";
 
 function render(ui: ReactNode) {
@@ -40,7 +40,9 @@ vi.mock("../../lib/api-client", () => ({
 }));
 
 vi.mock("../../components/TerminalPane", () => ({
-	TerminalPane: () => <div data-testid="terminal-pane" />,
+	TerminalPane: ({ focusRequested }: { focusRequested?: boolean }) => (
+		<div data-focus-requested={focusRequested ? "true" : "false"} data-testid="terminal-pane" />
+	),
 }));
 
 vi.mock("../../lib/bridge", () => ({
@@ -74,7 +76,7 @@ function respondWith(
 	projects: Project[],
 	sessions: Session[],
 	githubAuthenticated = true,
-	githubCliSatisfied: boolean | undefined = true,
+	githubCliSatisfied: boolean | null = true,
 ) {
 	getMock.mockImplementation(async (url: string) => {
 		if (url === "/api/v1/projects") return { data: { projects }, error: undefined };
@@ -87,7 +89,7 @@ function respondWith(
 						{ id: "git", label: "git", satisfied: true, required: true, detail: "/usr/bin/git" },
 						{ id: "tmux", label: "tmux", satisfied: true, required: true, detail: "/usr/bin/tmux" },
 						{ id: "harness", label: "agent harness", satisfied: true, required: true, detail: "Claude Code" },
-						...(githubCliSatisfied === undefined
+						...(githubCliSatisfied === null
 							? []
 							: [{ id: "gh", label: "gh", satisfied: githubCliSatisfied, required: false, detail: githubCliSatisfied ? "/usr/bin/gh" : "Not found" }]),
 					],
@@ -245,24 +247,37 @@ describe("global board first launch", () => {
 		expect(screen.queryByText("Board")).not.toBeInTheDocument();
 	});
 
-	it("shows GitHub sign-in guidance during onboarding when gh is signed out", async () => {
+	it("automatically opens and focuses GitHub sign-in when gh is signed out", async () => {
 		respondWith([], [], false);
-		renderBoard(<SessionsBoard />);
+		renderBoard(
+			<StrictMode>
+				<SessionsBoard />
+			</StrictMode>,
+		);
 
 		expect(await screen.findByText("Connect GitHub for pull requests")).toBeInTheDocument();
-		await userEvent.click(screen.getByRole("button", { name: "Sign in with GitHub" }));
-		await waitFor(() => expect(postMock).toHaveBeenCalledWith("/api/v1/system/github-auth/terminal"));
+		await waitFor(() => expect(postMock).toHaveBeenCalledTimes(1));
+		expect(postMock).toHaveBeenCalledWith("/api/v1/system/github-auth/terminal");
 		expect(await screen.findByTestId("github-auth-terminal")).toBeInTheDocument();
-		expect(screen.getByTestId("terminal-pane")).toBeInTheDocument();
+		expect(screen.getByTestId("terminal-pane")).toHaveAttribute("data-focus-requested", "true");
+	});
+
+	it("does not open GitHub sign-in when the initial auth check succeeds", async () => {
+		respondWith([], []);
+		renderBoard(<SessionsBoard />);
+
+		expect(await screen.findByText("Add a project")).toBeInTheDocument();
+		expect(postMock).not.toHaveBeenCalledWith("/api/v1/system/github-auth/terminal");
 	});
 
 	it("keeps sign-in available when GitHub CLI readiness is unknown", async () => {
-		respondWith([], [], false, undefined);
+		respondWith([], [], false, null);
 		renderBoard(<SessionsBoard />);
 
 		expect(await screen.findByText("Connect GitHub for pull requests")).toBeInTheDocument();
 		expect(screen.getByRole("button", { name: "Sign in with GitHub" })).toBeInTheDocument();
 		expect(screen.queryByRole("button", { name: "Get GitHub CLI" })).not.toBeInTheDocument();
+		expect(postMock).not.toHaveBeenCalledWith("/api/v1/system/github-auth/terminal");
 	});
 
 	it("opens the native folder picker from the Project card", async () => {

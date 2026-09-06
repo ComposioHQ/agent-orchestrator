@@ -28,6 +28,7 @@ export function GitHubOnboardingNotice() {
 	const terminal = terminalQuery.data;
 	const terminalRef = useRef(terminal);
 	const refetchAuthRef = useRef(authQuery.refetch);
+	const automaticLoginStartedRef = useRef(false);
 	const gh = requirements.find((requirement) => requirement.id === "gh");
 	const auth = authQuery.data;
 
@@ -44,6 +45,20 @@ export function GitHubOnboardingNotice() {
 		if (!auth?.satisfied || !terminal) return;
 		closeTerminal(terminal.handleId, { onSettled: terminalQuery.clear });
 	}, [auth?.satisfied, closeTerminal, terminal, terminalQuery.clear]);
+	useEffect(() => {
+		if (
+			!auth ||
+			auth.satisfied ||
+			gh?.satisfied !== true ||
+			terminal ||
+			startLogin.isPending ||
+			automaticLoginStartedRef.current
+		) {
+			return;
+		}
+		automaticLoginStartedRef.current = true;
+		startLogin.mutate();
+	}, [auth, gh?.satisfied, startLogin.isPending, startLogin.mutate, terminal]);
 
 	if (!auth || auth.satisfied) return null;
 
@@ -106,7 +121,7 @@ export function GitHubOnboardingNotice() {
 									</button>
 								</div>
 								<div className="h-[240px] min-h-0">
-									<TerminalPane daemonReady={shell ? shell.daemonStatus.state === "ready" : true} fontSize={12} onTerminalStateChange={handleTerminalState} terminalTarget={{ kind: "shell", handleId: terminal.handleId, generation: terminal.createdAt, title: terminal.title }} theme={theme} />
+									<TerminalPane daemonReady={shell ? shell.daemonStatus.state === "ready" : true} focusRequested fontSize={12} onTerminalStateChange={handleTerminalState} terminalTarget={{ kind: "shell", handleId: terminal.handleId, generation: terminal.createdAt, title: terminal.title }} theme={theme} />
 								</div>
 							</div>
 						) : null}
