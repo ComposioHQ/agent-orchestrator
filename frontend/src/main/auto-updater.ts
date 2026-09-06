@@ -942,19 +942,35 @@ function isManifest404Error(err: unknown): boolean {
 // A staged build that the native installer refused to install, as opposed to
 // anything that goes wrong while checking for or downloading one.
 //
-// On macOS these originate in Squirrel.Mac's ShipIt and reach us verbatim:
-// MacUpdater re-emits every native failure onto electron-updater's own "error"
-// event (`this.nativeUpdater.on("error", it => this.emit("error", it))`), so
-// the report in #4254 —
+// Matching on message text is regrettable but forced: electron-updater collapses
+// check failures, download failures and native install failures onto ONE untyped
+// "error" event carrying a plain Error, and MacUpdater re-emits the native
+// failure verbatim (`this.nativeUpdater.on("error", it => this.emit("error", it))`)
+// with no code, domain or phase attached. Listening to the native updater
+// directly would be structural, but it does not help: MacUpdater registers its
+// own native listener in its constructor at import time and `emit` is
+// synchronous, so the handler below has already run to completion before any
+// listener we add later is called. Same reason isManifest404Error and
+// isNetErrorMessage read the text.
 //
-//   Code signature at URL file:///.../update.M9ZvE0X/Agent Orchestrator.app/
-//   did not pass validation: code failed to satisfy specified code requirement(s)
+// So the strings are pinned to the two literals Squirrel actually emits, read
+// off the exact commit Electron bundles (SQRLCodeSignature.m @0e5d146):
 //
-// arrives at the handler below rather than at download time. Matching the
-// phrases instead of the whole string covers the sibling wordings ShipIt uses
-// for the same "the staged copy is not installable" outcome (#3034, #4175).
+//   :134  "Code signature at URL %@ did not pass validation"   -> DidNotPass
+//   :116  "Failed to get static code for bundle %@"            -> CouldNotCreateStaticCode
+//
+// Both are SQRLCodeSignatureErrorDomain and both mean "the staged copy is not
+// installable", so both take the same remedy. Everything after the colon in the
+// first one is the Security-framework detail (`code object is not signed at
+// all`, `code failed to satisfy specified code requirement(s)`, …) and varies
+// with the damage, so it is deliberately not matched.
+//
+// Guardrails, because this is still a text match: it is gated on
+// hasStagedBuild(), so nothing that fails while merely checking or downloading
+// can reach it; a false positive costs one re-download; a false negative is the
+// status quo this fixes.
 const STAGED_INSTALL_REJECTION_PATTERN =
-  /did not pass validation|failed to satisfy specified code requirement|shipit/i;
+  /did not pass validation|failed to get static code for bundle/i;
 
 function isStagedInstallRejection(err: unknown): boolean {
   return STAGED_INSTALL_REJECTION_PATTERN.test(errorMessage(err));

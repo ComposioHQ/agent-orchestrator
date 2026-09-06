@@ -2970,6 +2970,52 @@ describe("staged install rejection", () => {
     consoleErrorSpy.mockRestore();
   });
 
+  // The other failure Squirrel raises for the same outcome
+  // (SQRLCodeSignature.m:116, CouldNotCreateStaticCode): the staged bundle is
+  // damaged badly enough that a code object cannot even be constructed.
+  it("also handles 'failed to get static code for bundle'", async () => {
+    const consoleErrorSpy = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => undefined);
+    const { module, autoUpdater, updaterEvents } = await importAutoUpdater();
+
+    await module.checkForUpdatesNow(stateDir);
+    updaterEvents.get("update-downloaded")?.({ version: "2.1.0" });
+    updaterEvents.get("error")?.(
+      new Error(
+        "Failed to get static code for bundle file:///Users/x/Library/Caches/" +
+          "dev.agent-orchestrator.desktop.ShipIt/update.M9ZvE0X/Agent%20Orchestrator.app/",
+      ),
+    );
+
+    expect(autoUpdater.downloadedUpdateHelper.clear).toHaveBeenCalledTimes(1);
+    expect(module.getUpdateStatus().staged).toBeUndefined();
+    consoleErrorSpy.mockRestore();
+  });
+
+  // Merely mentioning the staging path must NOT trip this. The staging path
+  // literally contains "ShipIt", so a pattern loose enough to match the path
+  // would fire on unrelated failures that a re-download cannot fix.
+  it("ignores an unrelated error that only mentions the ShipIt path", async () => {
+    const consoleErrorSpy = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => undefined);
+    const { module, autoUpdater, updaterEvents } = await importAutoUpdater();
+
+    await module.checkForUpdatesNow(stateDir);
+    updaterEvents.get("update-downloaded")?.({ version: "2.1.0" });
+    updaterEvents.get("error")?.(
+      new Error(
+        "EACCES: permission denied, open '/Users/x/Library/Caches/" +
+          "dev.agent-orchestrator.desktop.ShipIt/ShipItState.plist'",
+      ),
+    );
+
+    expect(autoUpdater.downloadedUpdateHelper.clear).not.toHaveBeenCalled();
+    expect(module.getUpdateStatus().staged).toBeDefined();
+    consoleErrorSpy.mockRestore();
+  });
+
   it("leaves an ordinary download failure alone", async () => {
     // Same "error" event, nothing staged to reject: the existing suppress-and-
     // restore behaviour has to survive untouched.
