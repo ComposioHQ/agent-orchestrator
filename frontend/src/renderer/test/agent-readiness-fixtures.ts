@@ -1,4 +1,5 @@
 import type { components } from "../../api/schema";
+import { agentAuthenticationSignedIn } from "../lib/agent-auth";
 
 export type AgentReadinessSnapshot = components["schemas"]["AgentReadinessSnapshot"];
 
@@ -35,7 +36,7 @@ export function agentReadiness(
 			reason: `${label} authentication test observation.`,
 		},
 		effectiveReadiness:
-			installation === "installed" && (authentication === "authorized" || authentication === "not_applicable")
+			installation === "installed" && agentAuthenticationSignedIn(authentication)
 				? "ready"
 				: installation === "not_installed" || authentication === "unauthorized"
 					? "not_ready"

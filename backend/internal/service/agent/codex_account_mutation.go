@@ -209,7 +209,7 @@ func (m *codexAccountManager) activateFromCredentialLocked(ctx context.Context, 
 	if currentErr != nil || !bytes.Equal(currentCredential, targetCredential) {
 		return domain.CodexActiveAccount{}, ports.ErrCodexGlobalAccountChanged
 	}
-	if err != nil || (observation.Authentication != domain.AgentAuthenticationAuthorized && observation.Authentication != domain.AgentAuthenticationNotApplicable) || !m.observationAndCredentialIdentifyRecord(record, observation, currentCredential) {
+	if err != nil || !observation.Authentication.SignedIn() || !m.observationAndCredentialIdentifyRecord(record, observation, currentCredential) {
 		currentCredential, currentErr := readOpaqueCredential(globalPath)
 		if currentErr != nil || !bytes.Equal(currentCredential, targetCredential) {
 			return domain.CodexActiveAccount{}, ports.ErrCodexGlobalAccountChanged

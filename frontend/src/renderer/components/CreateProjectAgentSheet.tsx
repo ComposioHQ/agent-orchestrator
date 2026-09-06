@@ -9,6 +9,7 @@ import { ChevronLeft, TriangleAlert, X, type LucideIcon } from "lucide-react";
 import { memo, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { components } from "../../api/schema";
 import { useAgentReadinessQuery, useEnsureAgentReadiness } from "../hooks/useAgentReadinessQuery";
+import { agentAuthenticationSignedIn } from "../lib/agent-auth";
 import { AGENT_OPTIONS } from "../lib/agent-options";
 import {
 	agentLabelCompare,
@@ -130,9 +131,7 @@ export function CreateProjectAgentSheet({
 	const agentOptions = useMemo(() => agents?.agents ?? [], [agents]);
 	const authorizedAgents = useMemo(
 		() =>
-			agentOptions.filter((agent) =>
-				["authorized", "not_applicable"].includes(agent.authentication.state),
-			),
+			agentOptions.filter((agent) => agentAuthenticationSignedIn(agent.authentication.state)),
 		[agentOptions],
 	);
 	const isLoadingAgents = agents === undefined && agentsQuery.isFetching;

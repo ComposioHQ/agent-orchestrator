@@ -27,6 +27,35 @@ func TestEffectiveAgentReadiness(t *testing.T) {
 	}
 }
 
+func TestAgentAuthenticationStateSignedIn(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		state AgentAuthenticationState
+		want  bool
+	}{
+		{AgentAuthenticationAuthorized, true},
+		{AgentAuthenticationNotApplicable, true},
+		{AgentAuthenticationUnauthorized, false},
+		{AgentAuthenticationUnknown, false},
+		{AgentAuthenticationState("checking"), false},
+	}
+	for _, tt := range tests {
+		t.Run(string(tt.state), func(t *testing.T) {
+			t.Parallel()
+			if got := tt.state.SignedIn(); got != tt.want {
+				t.Fatalf("%q.SignedIn() = %t, want %t", tt.state, got, tt.want)
+			}
+		})
+	}
+	// Readiness derivation and the predicate must not drift apart.
+	for _, state := range []AgentAuthenticationState{AgentAuthenticationAuthorized, AgentAuthenticationNotApplicable, AgentAuthenticationUnauthorized, AgentAuthenticationUnknown} {
+		ready := EffectiveAgentReadiness(AgentInstallationInstalled, state) == AgentReadinessReady
+		if ready != state.SignedIn() {
+			t.Fatalf("%q: ready=%t but SignedIn=%t", state, ready, state.SignedIn())
+		}
+	}
+}
+
 func TestAgentReadinessPurposeValidation(t *testing.T) {
 	t.Parallel()
 	if !AgentReadinessPurposeDisplay.Valid() || !AgentReadinessPurposeLaunch.Valid() {

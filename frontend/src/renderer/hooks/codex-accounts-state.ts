@@ -1,4 +1,5 @@
 import type { QueryClient } from "@tanstack/react-query";
+import { agentAuthenticationSignedIn } from "../lib/agent-auth";
 import type { CodexAccount, CodexAccountSwitch, CodexAccountsResponse } from "./useCodexAccountsQuery";
 
 export const codexAccountsQueryKey = ["codex-accounts"] as const;
@@ -41,7 +42,7 @@ export function writeCodexAccounts(
  * state here means the next Codex session can start.
  */
 export function codexAccountAuthorized(account: Pick<CodexAccount, "authentication">): boolean {
-	return account.authentication.state === "authorized" || account.authentication.state === "not_applicable";
+	return agentAuthenticationSignedIn(account.authentication.state);
 }
 
 export function codexAccountSignedOut(account: Pick<CodexAccount, "authentication" | "status">): boolean {

@@ -28,6 +28,16 @@ const (
 	AgentAuthenticationNotApplicable AgentAuthenticationState = "not_applicable"
 )
 
+// SignedIn reports whether this state means the user must not be asked to
+// authenticate: the harness was observed as authorized, or it needs no
+// authentication at all. These are the only two states that may present a
+// harness as usable, so callers should ask this rather than compare against
+// AgentAuthenticationAuthorized alone, which silently excludes API-key and
+// no-auth harnesses.
+func (s AgentAuthenticationState) SignedIn() bool {
+	return s == AgentAuthenticationAuthorized || s == AgentAuthenticationNotApplicable
+}
+
 // AgentEffectiveReadiness is derived from installation and authentication.
 type AgentEffectiveReadiness string
 
