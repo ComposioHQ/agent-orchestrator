@@ -275,7 +275,7 @@ function reviewerAvatarUrl(pr: SessionPRSummary, reviewerId: string): string | u
 	return undefined;
 }
 
-function toUsagePresentation(
+export function toUsagePresentation(
 	usage: SessionUsageSummary | undefined,
 	t: TFunction,
 ): BoardUsagePresentation | undefined {
