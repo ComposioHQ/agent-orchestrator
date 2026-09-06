@@ -44,10 +44,11 @@ export async function restartProjectOrchestrator({
 	// focus normally.
 	const activeElement = document.activeElement;
 	setProjectRestarting(projectId, true);
-	setOrchestratorReplacementError(projectId, null);
+	// Keep any replacement-error dialog mounted so Retry retains focus while pending.
 	try {
 		const sessionId = await spawnOrchestrator(projectId, "restart", true, mode);
 		await refreshWorkspaceState(queryClient);
+		setOrchestratorReplacementError(projectId, null);
 		if (activeElement instanceof HTMLElement) activeElement.blur();
 		void navigate({
 			to: "/projects/$projectId/sessions/$sessionId",
