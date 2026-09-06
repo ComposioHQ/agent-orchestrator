@@ -1205,6 +1205,15 @@ describe("XtermTerminal", () => {
 		expect(onInput).toHaveBeenCalledWith("\x1b]4;196;rgb:ffff/0000/8000\x07", "protocol");
 	});
 
+	it("forwards validated cursor-position replies for interactive shell prompts", () => {
+		const onInput = vi.fn();
+		render(<XtermTerminal theme="dark" onReady={(terminal) => terminal.onUserInput(onInput)} />);
+
+		state.lastTerminal!.dataListeners.forEach((listener) => listener("\x1b[7;21R"));
+
+		expect(onInput).toHaveBeenCalledWith("\x1b[7;21R", "protocol");
+	});
+
 	it("updates protocol handling when a retained terminal becomes a Cursor terminal", () => {
 		const onInput = vi.fn();
 		const { rerender } = render(

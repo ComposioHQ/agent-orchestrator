@@ -385,7 +385,12 @@ func TestOpenGitHubAuthTerminalUsesTrustedCommand(t *testing.T) {
 	if terminal.HandleID != "shellterm-github" {
 		t.Fatalf("terminal handle = %q, want shellterm-github", terminal.HandleID)
 	}
-	if got, want := opener.input.Argv, []string{"/usr/local/bin/gh", "auth", "login"}; !slices.Equal(got, want) {
+	if got, want := opener.input.Argv, []string{
+		"/usr/local/bin/gh", "auth", "login",
+		"--hostname", "github.com",
+		"--git-protocol", "https",
+		"--web",
+	}; !slices.Equal(got, want) {
 		t.Fatalf("terminal argv = %#v, want %#v", got, want)
 	}
 	if opener.input.Title != "Connect GitHub" {

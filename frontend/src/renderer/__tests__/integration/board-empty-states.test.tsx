@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render as rtlRender, screen, waitFor } from "@testing-library/react";
+import { act, render as rtlRender, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { StrictMode, type ReactNode } from "react";
@@ -17,7 +17,7 @@ function render(ui: ReactNode) {
 // first-run states, mocking only the HTTP client, the router, and the native
 // folder picker: an empty daemon shows the import chooser (no column shells), a
 // fresh project shows the task invitation, and any session brings the columns back.
-const { getMock, postMock, deleteMock, navigateMock, chooseDirectoryMock, clipboardWriteMock, spawnOrchestratorMock } = vi.hoisted(() => ({
+const { getMock, postMock, deleteMock, navigateMock, chooseDirectoryMock, clipboardWriteMock, spawnOrchestratorMock, terminalPanePropsMock } = vi.hoisted(() => ({
 	getMock: vi.fn(),
 	postMock: vi.fn(),
 	deleteMock: vi.fn(),
@@ -25,6 +25,7 @@ const { getMock, postMock, deleteMock, navigateMock, chooseDirectoryMock, clipbo
 	chooseDirectoryMock: vi.fn(),
 	clipboardWriteMock: vi.fn(),
 	spawnOrchestratorMock: vi.fn(),
+	terminalPanePropsMock: vi.fn(),
 }));
 
 vi.mock("../../lib/spawn-orchestrator", () => ({
@@ -40,9 +41,10 @@ vi.mock("../../lib/api-client", () => ({
 }));
 
 vi.mock("../../components/TerminalPane", () => ({
-	TerminalPane: ({ focusRequested }: { focusRequested?: boolean }) => (
-		<div data-focus-requested={focusRequested ? "true" : "false"} data-testid="terminal-pane" />
-	),
+	TerminalPane: (props: { focusRequested?: boolean; onTerminalStateChange?: (state: "attached") => void }) => {
+		terminalPanePropsMock(props);
+		return <div data-focus-requested={props.focusRequested ? "true" : "false"} data-testid="terminal-pane" />;
+	},
 }));
 
 vi.mock("../../lib/bridge", () => ({
@@ -259,6 +261,8 @@ describe("global board first launch", () => {
 		await waitFor(() => expect(postMock).toHaveBeenCalledTimes(1));
 		expect(postMock).toHaveBeenCalledWith("/api/v1/system/github-auth/terminal");
 		expect(await screen.findByTestId("github-auth-terminal")).toBeInTheDocument();
+		expect(screen.getByTestId("terminal-pane")).toHaveAttribute("data-focus-requested", "false");
+		act(() => terminalPanePropsMock.mock.lastCall?.[0].onTerminalStateChange?.("attached"));
 		expect(screen.getByTestId("terminal-pane")).toHaveAttribute("data-focus-requested", "true");
 	});
 

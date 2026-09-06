@@ -100,6 +100,11 @@ describe("shell index route", () => {
 
 		expect(screen.getByText("Connect GitHub for pull requests")).toBeInTheDocument();
 		expect(screen.getByRole("button", { name: "Sign in with GitHub" })).toBeInTheDocument();
+		expect(
+			screen.getByRole("button", { name: /Scratch/ }).compareDocumentPosition(
+				screen.getByText("Connect GitHub for pull requests"),
+			) & Node.DOCUMENT_POSITION_FOLLOWING,
+		).toBeTruthy();
 	});
 
 	it("opens a project from the recent-project list", async () => {

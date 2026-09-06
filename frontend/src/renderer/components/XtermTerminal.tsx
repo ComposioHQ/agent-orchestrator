@@ -44,6 +44,7 @@ import {
 } from "../lib/cursor-color-scheme";
 import {
 	buildOscColorReports,
+	createCursorPositionReportForwarder,
 	createOscColorReportForwarder,
 	type OscTerminalColors,
 } from "../lib/osc-color-report";
@@ -987,15 +988,23 @@ export function XtermTerminal(props: XtermTerminalProps) {
 		// those bytes through the mux writes dirty input into the real Codex PTY and
 		// corrupts the TUI. Keyboard is the only safe generic text path here; paste,
 		// composition, shortcuts, and wheel reports are emitted explicitly below.
-		// Forward validated OSC 4/10/11/12 color replies only. xterm answers them
-		// on onData; other bytes must not reach the PTY or agent TUIs break.
+		// Forward validated OSC 4/10/11/12 color replies and cursor-position
+		// reports only. Interactive prompts such as `gh auth login` use DSR to ask
+		// xterm for the cursor position and block until the corresponding CPR reaches
+		// the PTY. Other onData bytes must not reach the PTY or agent TUIs break.
 		// Retained terminals can change providers without remounting. Keep the
 		// listener mounted for every provider so standard color replies continue to
 		// reach the PTY after a provider change.
 		const oscColorForwarder = createOscColorReportForwarder((report) => {
 			emitUserInput(report, "protocol");
 		});
-		const oscColorInput = term.onData((data) => oscColorForwarder.push(data));
+		const cursorPositionForwarder = createCursorPositionReportForwarder((report) => {
+			emitUserInput(report, "protocol");
+		});
+		const protocolInput = term.onData((data) => {
+			oscColorForwarder.push(data);
+			cursorPositionForwarder.push(data);
+		});
 		const keyInput = term.onKey(({ key }) => emitUserInput(key, "keyboard"));
 
 		// Translate wheel motion into SGR wheel reports for the pane (see
@@ -1260,7 +1269,8 @@ export function XtermTerminal(props: XtermTerminalProps) {
 			for (const timer of schemeRetryTimers) window.clearTimeout(timer);
 			schemeRetryTimers = [];
 			oscColorForwarder.dispose();
-			oscColorInput.dispose();
+			cursorPositionForwarder.dispose();
+			protocolInput.dispose();
 			keyInput.dispose();
 			notifyCursorSchemeRef.current = () => {};
 			announcedCursorSchemeRef.current = null;

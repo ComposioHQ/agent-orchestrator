@@ -15,6 +15,9 @@ const OSC_COLOR_REPORT = new RegExp(`^\\u001b]${OSC_COLOR_PAYLOAD}(?:\\u0007|\\u
 const COMPLETE_OSC_COLOR_REPORT = new RegExp(`^\\u001b]${OSC_COLOR_PAYLOAD}(?:\\u0007|\\u001b\\\\)`);
 const OSC_COLOR_PROBE = /\u001b\](?:10|11|12);\?/;
 const MAX_OSC_BUFFER_LENGTH = 16 * 1024;
+const CURSOR_POSITION_REPORT = /^\u001b\[\??[1-9]\d{0,4};[1-9]\d{0,4}R/;
+const PARTIAL_CURSOR_POSITION_REPORT = /^\u001b(?:\[\??(?:\d{0,5}(?:;\d{0,5})?)?)?$/;
+const MAX_CURSOR_POSITION_REPORT_LENGTH = 16;
 
 export function isOscColorReport(data: string): boolean {
 	return OSC_COLOR_REPORT.test(data);
@@ -119,6 +122,41 @@ export function createOscColorReportForwarder(emit: (report: string) => void): {
 					continue;
 				}
 				return;
+			}
+		},
+		dispose() {
+			buffer = "";
+		},
+	};
+}
+
+/** Buffer split xterm onData chunks and forward only strict ANSI cursor-position replies. */
+export function createCursorPositionReportForwarder(emit: (report: string) => void): {
+	push: (data: string) => void;
+	dispose: () => void;
+} {
+	let buffer = "";
+
+	return {
+		push(data: string) {
+			buffer += data;
+			for (;;) {
+				const reportStart = buffer.indexOf("\x1b[");
+				if (reportStart === -1) {
+					buffer = buffer.endsWith("\x1b") ? "\x1b" : "";
+					return;
+				}
+				if (reportStart > 0) buffer = buffer.slice(reportStart);
+
+				const match = buffer.match(CURSOR_POSITION_REPORT);
+				if (match) {
+					emit(match[0]);
+					buffer = buffer.slice(match[0].length);
+					continue;
+				}
+				if (buffer.length <= MAX_CURSOR_POSITION_REPORT_LENGTH && PARTIAL_CURSOR_POSITION_REPORT.test(buffer)) return;
+
+				buffer = buffer.slice(1);
 			}
 		},
 		dispose() {

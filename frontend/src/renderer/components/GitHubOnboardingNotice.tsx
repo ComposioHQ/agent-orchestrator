@@ -1,5 +1,5 @@
 import { GitPullRequest, TerminalSquare, X } from "lucide-react";
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { TerminalSessionState } from "../hooks/useTerminalSession";
 import { useCloseShellTerminal } from "../hooks/useShellTerminals";
@@ -8,6 +8,7 @@ import { aoBridge } from "../lib/bridge";
 import { useShellMaybe } from "../lib/shell-context";
 import { useResolvedTheme } from "../stores/ui-store";
 import { TerminalPane } from "./TerminalPane";
+import { TopbarButton } from "./TopbarButton";
 
 const GITHUB_CLI_INSTALL_URL = "https://cli.github.com/";
 const automaticallyChecked = new Set<string>();
@@ -29,12 +30,14 @@ export function GitHubOnboardingNotice() {
 	const terminalRef = useRef(terminal);
 	const refetchAuthRef = useRef(authQuery.refetch);
 	const automaticLoginStartedRef = useRef(false);
+	const [terminalState, setTerminalState] = useState<TerminalSessionState>("idle");
 	const gh = requirements.find((requirement) => requirement.id === "gh");
 	const auth = authQuery.data;
 
 	terminalRef.current = terminal;
 	refetchAuthRef.current = authQuery.refetch;
 	const handleTerminalState = useCallback((state: TerminalSessionState) => {
+		setTerminalState(state);
 		const active = terminalRef.current;
 		if (!active || (state !== "exited" && state !== "error")) return;
 		if (automaticallyChecked.has(active.handleId)) return;
@@ -77,20 +80,21 @@ export function GitHubOnboardingNotice() {
 	const checking = authQuery.isFetching;
 	return (
 		<div className="flex w-full justify-center px-3">
-			<div className="w-full max-w-[620px] rounded-lg border border-warning/30 bg-warning/10 px-4 py-3" role="status">
+			<div className="w-full max-w-[620px] rounded-welcome-panel border border-[var(--color-border-import-modal)] bg-[var(--color-bg-import-card)] px-4 py-4" role="status">
 				<div className="flex items-start gap-3">
-					<GitPullRequest className="mt-0.5 size-5 shrink-0 text-warning" aria-hidden="true" />
+					<span className="grid size-9 shrink-0 place-items-center rounded-lg bg-[var(--color-bg-import-chip)] text-[var(--color-text-import-muted)]">
+						<GitPullRequest className="size-4" aria-hidden="true" />
+					</span>
 					<div className="min-w-0 flex-1">
-						<p className="text-[14px] font-medium text-foreground">{t("startup.githubSetupTitle")}</p>
-						<p className="mt-0.5 text-[12px] leading-5 text-muted-foreground">
+						<p className="text-[14px] font-semibold text-[var(--color-text-import-title)]">{t("startup.githubSetupTitle")}</p>
+						<p className="mt-0.5 text-[12px] leading-5 text-[var(--color-text-import-muted)]">
 							{t(cliMissing ? "startup.githubSetupMissingCli" : "startup.githubSetupSignedOut")}
 						</p>
 						<div className="mt-2 flex flex-wrap items-center gap-2">
-							<button
-								type="button"
-								className="settings-footer-button settings-footer-button-primary"
+							<TopbarButton
 								disabled={!cliMissing && (startLogin.isPending || Boolean(terminal))}
 								onClick={() => cliMissing ? void aoBridge.app.openExternal(GITHUB_CLI_INSTALL_URL) : openLogin()}
+								variant="primary"
 							>
 								{cliMissing ? null : <TerminalSquare className="size-icon-sm" aria-hidden="true" />}
 								{cliMissing
@@ -98,30 +102,29 @@ export function GitHubOnboardingNotice() {
 									: startLogin.isPending
 										? t("startup.githubLoginStarting")
 										: t("startup.githubLogin")}
-							</button>
-							<button
-								type="button"
-								className="settings-footer-button"
+							</TopbarButton>
+							<TopbarButton
 								disabled={checking}
 								onClick={() => void checkAgain()}
+								variant="accent"
 							>
 								{checking ? t("startup.checkingAgain") : t("startup.checkAgain")}
-							</button>
+							</TopbarButton>
 						</div>
 						{startLogin.isError ? <p className="mt-2 text-xs text-destructive" role="alert">{startLogin.error.message}</p> : null}
 						{terminal ? (
-							<div className="mt-3 overflow-hidden rounded-md border border-border bg-terminal" data-testid="github-auth-terminal">
-								<div className="flex min-h-9 items-center justify-between gap-3 border-b border-border bg-surface/90 px-3 py-1.5">
+							<div className="mt-3 overflow-hidden rounded-lg border border-[var(--color-border-import-modal)] bg-terminal" data-testid="github-auth-terminal">
+								<div className="flex min-h-9 items-center justify-between gap-3 border-b border-[var(--color-border-import-modal)] bg-[var(--color-bg-import-modal)] px-3 py-1.5">
 									<div className="min-w-0">
-										<p className="truncate text-xs font-medium text-foreground">{terminal.title}</p>
-										<p className="truncate text-[11px] text-muted-foreground">{t("startup.githubLoginRunning")}</p>
+										<p className="truncate text-xs font-medium text-[var(--color-text-import-title)]">{terminal.title}</p>
+										<p className="truncate text-[11px] text-[var(--color-text-import-muted)]">{t("startup.githubLoginRunning")}</p>
 									</div>
-									<button type="button" aria-label={t("common.close")} className="grid size-7 shrink-0 place-items-center rounded text-muted-foreground hover:bg-interactive-hover hover:text-foreground" onClick={closeLogin}>
+									<TopbarButton aria-label={t("common.close")} className="!size-7 shrink-0" onClick={closeLogin} variant="icon">
 										<X className="size-4" aria-hidden="true" />
-									</button>
+									</TopbarButton>
 								</div>
 								<div className="h-[240px] min-h-0">
-									<TerminalPane daemonReady={shell ? shell.daemonStatus.state === "ready" : true} focusRequested fontSize={12} onTerminalStateChange={handleTerminalState} terminalTarget={{ kind: "shell", handleId: terminal.handleId, generation: terminal.createdAt, title: terminal.title }} theme={theme} />
+									<TerminalPane daemonReady={shell ? shell.daemonStatus.state === "ready" : true} focusRequested={terminalState === "attached"} fontSize={12} onTerminalStateChange={handleTerminalState} terminalTarget={{ kind: "shell", handleId: terminal.handleId, generation: terminal.createdAt, title: terminal.title }} theme={theme} />
 								</div>
 							</div>
 						) : null}

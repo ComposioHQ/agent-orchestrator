@@ -168,9 +168,7 @@ export function HomePage() {
 						</TopbarButton>
 					</div>
 
-					<GitHubOnboardingNotice />
-
-					<div className="-mt-3 grid grid-cols-2 gap-3 px-3">
+					<div className="grid grid-cols-2 gap-3 px-3">
 						<HomeActionCard
 							ariaLabel={t("createProject.cloneFromGit")}
 							icon={<GitFork className="size-4" aria-hidden="true" />}
@@ -209,6 +207,8 @@ export function HomePage() {
 							/>
 						))}
 					</div>
+
+					<GitHubOnboardingNotice />
 				</div>
 
 				<CreateProjectFlow

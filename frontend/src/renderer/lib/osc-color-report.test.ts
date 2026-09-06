@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
 	buildOscColorReports,
+	createCursorPositionReportForwarder,
 	createOscColorReportForwarder,
 	cursorOscProbeRepliesForOutput,
 	hexToOscRgb,
@@ -143,5 +144,36 @@ describe("createOscColorReportForwarder", () => {
 
 		expect(forwarded).toEqual([]);
 		forwarder.dispose();
+	});
+});
+
+describe("createCursorPositionReportForwarder", () => {
+	it("forwards standard and private cursor-position replies", () => {
+		const forwarded: string[] = [];
+		const forwarder = createCursorPositionReportForwarder((report) => forwarded.push(report));
+
+		forwarder.push("\x1b[12;34R\x1b[?5;9R");
+
+		expect(forwarded).toEqual(["\x1b[12;34R", "\x1b[?5;9R"]);
+	});
+
+	it("buffers a split cursor-position reply", () => {
+		const forwarded: string[] = [];
+		const forwarder = createCursorPositionReportForwarder((report) => forwarded.push(report));
+
+		forwarder.push("\x1b[12;");
+		expect(forwarded).toEqual([]);
+		forwarder.push("34R");
+
+		expect(forwarded).toEqual(["\x1b[12;34R"]);
+	});
+
+	it("rejects keyboard and malformed control data", () => {
+		const forwarded: string[] = [];
+		const forwarder = createCursorPositionReportForwarder((report) => forwarded.push(report));
+
+		forwarder.push("y\r\x1b[A\x1b[0;2R\x1b[2;3H");
+
+		expect(forwarded).toEqual([]);
 	});
 });
