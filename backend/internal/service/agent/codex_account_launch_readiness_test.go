@@ -234,3 +234,83 @@ func TestSuccessfulReauthenticationRestoresLaunchReadiness(t *testing.T) {
 		t.Fatalf("launch readiness after reauthentication = %#v (structured=%t)", launch, ok)
 	}
 }
+
+func TestRepeatedSettingsEnsuresReuseTheLaunchVerifiedObservation(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		signedIn bool
+	}{{"unauthorized", false}, {"authorized", true}} {
+		t.Run(tc.name, func(t *testing.T) {
+			fixture := newCodexLaunchReadinessFixture(t)
+			if tc.signedIn {
+				fixture.signIn()
+			}
+
+			first := fixture.ensureSettings()
+			reads := fixture.refreshCapableReads()
+			checkedAt := fixture.account(first, fixture.active.Snapshot.ID).Authentication.CheckedAt
+
+			// Focusing Settings again inside the display window must reuse the
+			// launch-verified observation instead of paying for another
+			// refresh-capable read and the account-mutation lock it takes.
+			second := fixture.ensureSettings()
+
+			if got := fixture.refreshCapableReads(); got != reads {
+				t.Fatalf("refresh-capable reads grew from %d to %d across two ensures inside the display window", reads, got)
+			}
+			active := fixture.account(second, fixture.active.Snapshot.ID)
+			if checkedAt == nil || active.Authentication.CheckedAt == nil || !active.Authentication.CheckedAt.Equal(*checkedAt) {
+				t.Fatalf("observation timestamp moved: %v then %v", checkedAt, active.Authentication.CheckedAt)
+			}
+		})
+	}
+}
+
+func TestRotatedCredentialsDoNotReVerifyAnAuthorizedAccount(t *testing.T) {
+	fixture := newCodexLaunchReadinessFixture(t)
+	fixture.signIn()
+	fixture.ensureSettings()
+	reads := fixture.refreshCapableReads()
+
+	// A refresh-capable read can rotate Codex's device-global refresh token, so
+	// the saved copy stops matching. That is expected token maintenance for an
+	// account already proven launch-ready, not new evidence about it.
+	if err := writeGlobalCredentialAtomic(fixture.manager.globalCredentialPath(), []byte("rotated-opaque-credential")); err != nil {
+		t.Fatal(err)
+	}
+
+	view := fixture.ensureSettings()
+
+	if got := fixture.refreshCapableReads(); got != reads {
+		t.Fatalf("rotated credentials re-verified an authorized account: reads %d then %d", reads, got)
+	}
+	if active := fixture.account(view, fixture.active.Snapshot.ID); active.Authentication.State != domain.AgentAuthenticationAuthorized {
+		t.Fatalf("active account authentication = %#v", active.Authentication)
+	}
+}
+
+func TestReplacedCredentialsReVerifyALaunchFailure(t *testing.T) {
+	fixture := newCodexLaunchReadinessFixture(t)
+	view := fixture.ensureSettings()
+	if active := fixture.account(view, fixture.active.Snapshot.ID); active.Authentication.State != domain.AgentAuthenticationUnauthorized {
+		t.Fatalf("active account authentication = %#v", active.Authentication)
+	}
+	reads := fixture.refreshCapableReads()
+
+	// The user signs in again outside AO. The device-global account material is
+	// replaced, so the recorded failure no longer describes this account and must
+	// not survive the rest of the display window.
+	fixture.signIn()
+	if err := writeGlobalCredentialAtomic(fixture.manager.globalCredentialPath(), []byte("replacement-opaque-credential")); err != nil {
+		t.Fatal(err)
+	}
+
+	view = fixture.ensureSettings()
+
+	if got := fixture.refreshCapableReads(); got <= reads {
+		t.Fatalf("replaced credentials did not re-verify the launch failure: reads %d then %d", reads, got)
+	}
+	if active := fixture.account(view, fixture.active.Snapshot.ID); active.Authentication.State != domain.AgentAuthenticationAuthorized {
+		t.Fatalf("Settings did not recover after an out-of-band sign-in = %#v", active.Authentication)
+	}
+}
