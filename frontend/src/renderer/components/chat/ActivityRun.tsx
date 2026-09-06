@@ -201,7 +201,7 @@ function ActivitySubgroup({
 				className={cn(ACTIVITY_SUMMARY_BUTTON_CLASS, "activity-subgroup-toggle")}
 			>
 				<span className="activity-summary-label text-[11px] text-muted-foreground">
-					{summarize(activities)}
+					{summarizeSubgroup(activities)}
 				</span>
 				<ChevronRight aria-hidden="true" className={cn("size-3 shrink-0 transition-transform", open && "rotate-90")} />
 			</button>
@@ -229,6 +229,29 @@ function ActivitySubgroup({
 			</AnimatePresence>
 		</div>
 	);
+}
+
+/** A subgroup names its shared category so it cannot be mistaken for another batch. */
+function summarizeSubgroup(activities: ConversationActivity[]): string {
+	const first = activities[0];
+	if (!first) return "Related calls";
+	if (first.activityKind === "file_change") {
+		const files = activities.reduce(
+			(count, activity) => count + Math.max(1, fileChangeFiles(activity).length),
+			0,
+		);
+		return `Changed ${files} ${files === 1 ? "file" : "files"}`;
+	}
+	if (first.activityKind === "mcp_tool") {
+		return `Used ${activities.length} ${activities.length === 1 ? "tool call" : "tool calls"}`;
+	}
+	if (first.activityKind === "auto_review") {
+		return `Checked ${activities.length} ${activities.length === 1 ? "decision" : "decisions"}`;
+	}
+	if (first.activityKind === "plan") return "Updated plan";
+	const category = commandCategory(first.detail?.command ?? first.summary);
+	const verb = category === "read" || category === "search" ? "Explored" : "Ran";
+	return `${verb} ${activities.length} ${activities.length === 1 ? "tool call" : "tool calls"}`;
 }
 
 type ActivityNode = { activity: ConversationActivity; children: ActivityNode[] };
