@@ -434,7 +434,7 @@ var schemaNames = map[string]string{ //nolint:gosec // Public OpenAPI type names
 	"ProjectDegraded":                   "DegradedProject",
 	"ProjectAddInput":                   "AddProjectInput",
 	"ProjectCloneInput":                 "CloneProjectInput",
-	"ProjectClonePreparationResult":    "ClonePreparationResult",
+	"ProjectClonePreparationResult":     "ClonePreparationResult",
 	"ProjectInitializeRepositoryInput":  "InitializeRepositoryInput",
 	"ProjectInitializeRepositoryResult": "InitializeRepositoryResult",
 	"ProjectRemoveResult":               "RemoveProjectResult",

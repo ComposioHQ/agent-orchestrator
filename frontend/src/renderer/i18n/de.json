@@ -266,6 +266,7 @@
 	"createProject.projectDesc": "Ein einzelnes Git-Repository — in einer Codebasis verfolgt.",
 	"createProject.projectFolder": "Projektordner",
 	"createProject.projectHasChildRepos": "Enthält untergeordnete Git-Repositories. AO importiert nur dieses Root-Repository.",
+	"createProject.projectMustBeWorkspace": "Dieser Ordner enthält Projekte und muss als Workspace importiert werden.",
 	"createProject.projectImportApproval": "Bestätige, dass AO die fehlenden Git-Schritte für dieses Repository abschließen darf, bevor der Import fortgesetzt wird.",
 	"createProject.projectImportBlocked": "AO hat ein Problem mit diesem Ordner gefunden, bevor der Projektimport fortgesetzt werden kann.",
 	"createProject.prepareProjectTitle": "Projekt vorbereiten",

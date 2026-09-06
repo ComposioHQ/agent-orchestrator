@@ -266,6 +266,7 @@
 	"createProject.projectDesc": "单个 Git 仓库 — 在同一代码库中跟踪。",
 	"createProject.projectFolder": "项目文件夹",
 	"createProject.projectHasChildRepos": "包含子 Git 仓库。AO 只会导入这个根仓库。",
+	"createProject.projectMustBeWorkspace": "此文件夹包含项目，需要作为工作区导入。",
 	"createProject.projectImportApproval": "批准 AO 完成此仓库继续导入前缺少的 Git 设置。",
 	"createProject.projectImportBlocked": "AO 在继续导入此项目之前发现了这个文件夹的问题。",
 	"createProject.prepareProjectTitle": "准备项目",

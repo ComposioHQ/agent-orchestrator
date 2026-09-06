@@ -266,6 +266,7 @@
 	"createProject.projectDesc": "1 つの Git リポジトリ — 単一のコードベースとして追跡します。",
 	"createProject.projectFolder": "プロジェクトフォルダー",
 	"createProject.projectHasChildRepos": "子 Git リポジトリが含まれています。AO はこのルートリポジトリのみをインポートします。",
+	"createProject.projectMustBeWorkspace": "このフォルダーにはプロジェクトが含まれているため、ワークスペースとしてインポートする必要があります。",
 	"createProject.projectImportApproval": "インポートを続ける前に、このリポジトリに不足している Git セットアップを AO が完了できるよう承認してください。",
 	"createProject.projectImportBlocked": "AO はこのプロジェクトのインポートを続ける前に、このフォルダーに問題を見つけました。",
 	"createProject.prepareProjectTitle": "プロジェクトを準備",

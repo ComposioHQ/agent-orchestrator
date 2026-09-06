@@ -268,6 +268,7 @@
 	"createProject.projectDesc": "Um único repositório Git — acompanhado em uma base de código.",
 	"createProject.projectFolder": "Pasta do projeto",
 	"createProject.projectHasChildRepos": "Contém repositórios Git filhos. O AO vai importar apenas este repositório raiz.",
+	"createProject.projectMustBeWorkspace": "Esta pasta contém projetos e precisa ser importada como um workspace.",
 	"createProject.projectImportApproval": "Aprove para que o AO conclua as etapas de Git que faltam neste repositório antes de continuar a importação.",
 	"createProject.projectImportBlocked": "O AO encontrou um problema com esta pasta antes de continuar a importação do projeto.",
 	"createProject.prepareProjectTitle": "Preparar projeto",

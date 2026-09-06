@@ -55,7 +55,8 @@ test(`renderer: workspace import preserves the root branch and explains unresolv
 		bridge.app.getRepositoryBranch = async () => "trunk";
 		bridge.app.scanImportFolder = async () => ({ path: "/repos/local-root", repos: [{
 			name: "api", path: "/repos/local-root/api", relativePath: "api", branch: "dev",
-			hasRemote: true, remote: "https://github.com/example/api.git", status: "ok",
+			hasRemote: true, isRepo: true, hasCommit: true,
+			remote: "https://github.com/example/api.git", status: "ok",
 		}] });
 	});
 	await page.getByRole("button", { name: "New project", exact: true }).first().click();

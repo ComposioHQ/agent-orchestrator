@@ -72,6 +72,7 @@ export async function installFakeBridge(page: Page, opts: FakeBridgeOptions = {}
 					app: {
 						getVersion: async () => version,
 						chooseDirectory: async () => null,
+						checkGitRepository: async () => true,
 						openExternal: async () => undefined,
 						scanImportFolder: async ({ path }: { path: string }) => ({ path, repos: [] }),
 						checkAncestorRepo: async () => undefined,
@@ -599,6 +600,7 @@ export async function installFakeAgent(page: Page, opts: FakeAgentOptions = {}):
 					app: {
 						getVersion: async () => version,
 						chooseDirectory: async () => null,
+						checkGitRepository: async () => true,
 						openExternal: async () => undefined,
 						scanImportFolder: async ({ path }: { path: string }) => ({ path, repos: [] }),
 						checkAncestorRepo: async () => undefined,

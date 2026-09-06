@@ -54,10 +54,12 @@ func (m *Service) Clone(ctx context.Context, in CloneInput) (Project, error) {
 	return project, nil
 }
 
+// PrepareClone checks out a repository without registering it as a project.
 func (m *Service) PrepareClone(ctx context.Context, in CloneInput) (ClonePreparationResult, error) {
 	return m.prepareClone(ctx, in)
 }
 
+// CleanupPreparedClone removes an unregistered checkout created by PrepareClone.
 func (m *Service) CleanupPreparedClone(ctx context.Context, in ClonePreparationCleanupInput) error {
 	path, err := normalizePath(in.Path)
 	if err != nil {
