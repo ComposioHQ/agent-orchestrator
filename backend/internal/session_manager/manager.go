@@ -1719,7 +1719,7 @@ func (m *Manager) Kill(ctx context.Context, id domain.SessionID) (bool, error) {
 	}
 	freed := false
 	if workspaceProject {
-		cleaned, err := m.destroyWorkspaceProjectRows(ctx, workspaceProjectRows)
+		_, cleaned, err := m.destroyWorkspaceProjectRows(ctx, workspaceProjectRows)
 		if err != nil {
 			if workspacePreserved(err) {
 				if err := m.lcm.MarkTerminated(ctx, id); err != nil {
@@ -3187,7 +3187,22 @@ func (m *Manager) saveAndTeardownWorkspaceProject(ctx context.Context, rec domai
 	return nil
 }
 
-func (m *Manager) destroyWorkspaceProjectRows(ctx context.Context, rows []ports.WorkspaceRepoInfo) (bool, error) {
+// destroyWorkspaceProjectRows tears down every repo of a multi-repo workspace,
+// children before root. It reports two different things, because they answer
+// two different questions and only coincide when every repo still had a
+// directory on disk:
+//
+//   - reclaim aggregates the per-repo outcomes. A session released disk if any
+//     one of its repos did, so a single removed repo makes the whole session
+//     WorkspaceReclaimRemoved; only when no repo had anything left to release
+//     is it WorkspaceReclaimAlreadyAbsent. Callers that count reclaimed
+//     workspaces need this.
+//   - cleaned reports whether at least one repo tore down without an error,
+//     which is what the kill path uses to decide that the session's registration
+//     is reconciled. A repo whose directory was already gone still tears down,
+//     so cleaned stays true there while reclaim does not.
+func (m *Manager) destroyWorkspaceProjectRows(ctx context.Context, rows []ports.WorkspaceRepoInfo) (ports.WorkspaceReclaim, bool, error) {
+	reclaim := ports.WorkspaceReclaimAlreadyAbsent
 	cleaned := false
 	var firstErr error
 	for i := len(rows) - 1; i >= 0; i-- {
@@ -3195,9 +3210,10 @@ func (m *Manager) destroyWorkspaceProjectRows(ctx context.Context, rows []ports.
 			continue
 		}
 		info := workspaceInfoFromRepoInfo(rows[i])
-		if err := m.workspace.Destroy(ctx, info); err != nil {
+		rowReclaim, err := m.destroyWorkspace(ctx, info)
+		if err != nil {
 			if errors.Is(err, ports.ErrWorkspaceDirty) {
-				return cleaned, err
+				return reclaim, cleaned, err
 			}
 			if stateErr := m.upsertWorkspaceProjectRowState(ctx, rows[i], "retry_remove"); stateErr != nil && firstErr == nil {
 				firstErr = stateErr
@@ -3207,12 +3223,15 @@ func (m *Manager) destroyWorkspaceProjectRows(ctx context.Context, rows []ports.
 			}
 			continue
 		}
+		if rowReclaim == ports.WorkspaceReclaimRemoved {
+			reclaim = ports.WorkspaceReclaimRemoved
+		}
 		if err := m.upsertWorkspaceProjectRowState(ctx, rows[i], "unavailable"); err != nil && firstErr == nil {
 			firstErr = err
 		}
 		cleaned = true
 	}
-	return cleaned, firstErr
+	return reclaim, cleaned, firstErr
 }
 
 func (m *Manager) upsertWorkspaceProjectRowState(ctx context.Context, row ports.WorkspaceRepoInfo, state string) error {
@@ -3614,8 +3633,15 @@ type CleanupSkip struct {
 
 // CleanupResult reports what Cleanup reclaimed and what it preserved.
 type CleanupResult struct {
+	// Cleaned lists sessions whose workspace was present and has been released
+	// by this run. It is the only bucket that corresponds to reclaimed disk.
 	Cleaned []domain.SessionID
-	Skipped []CleanupSkip
+	// AlreadyGone lists sessions whose workspace directory was missing before
+	// this run started. Their teardown completes (any stale registration is
+	// reconciled) but reclaims nothing, so counting them as Cleaned reports
+	// space that was never freed.
+	AlreadyGone []domain.SessionID
+	Skipped     []CleanupSkip
 }
 
 // Cleanup reclaims the workspaces of terminal sessions in a project. A workspace
@@ -3626,7 +3652,11 @@ func (m *Manager) Cleanup(ctx context.Context, project domain.ProjectID) (Cleanu
 	if err != nil {
 		return CleanupResult{}, fmt.Errorf("cleanup %s: %w", project, err)
 	}
-	result := CleanupResult{Cleaned: make([]domain.SessionID, 0, len(recs)), Skipped: []CleanupSkip{}}
+	result := CleanupResult{
+		Cleaned:     make([]domain.SessionID, 0, len(recs)),
+		AlreadyGone: []domain.SessionID{},
+		Skipped:     []CleanupSkip{},
+	}
 	for _, rec := range recs {
 		if !rec.IsTerminated {
 			continue
@@ -3640,61 +3670,85 @@ func (m *Manager) Cleanup(ctx context.Context, project domain.ProjectID) (Cleanu
 		if h := runtimeHandle(rec.Metadata); h.ID != "" {
 			_ = m.runtime.Destroy(ctx, h) // best effort; usually already gone
 		}
-		if reason := m.cleanupOne(ctx, rec, ws); reason != "" {
+		reclaim, reason := m.cleanupOne(ctx, rec, ws)
+		if reason != "" {
 			result.Skipped = append(result.Skipped, CleanupSkip{SessionID: rec.ID, Reason: reason})
 			continue
 		}
 		m.cleanupSystemPromptDir(rec.ID)
+		if reclaim == ports.WorkspaceReclaimAlreadyAbsent {
+			result.AlreadyGone = append(result.AlreadyGone, rec.ID)
+			continue
+		}
 		result.Cleaned = append(result.Cleaned, rec.ID)
 	}
 	return result, nil
+}
+
+// destroyWorkspace tears down one workspace and reports whether the call
+// actually released anything. Workspace adapters are not required to report
+// that, so a plain Destroy keeps its existing meaning: a nil error is a
+// completed removal.
+func (m *Manager) destroyWorkspace(ctx context.Context, info ports.WorkspaceInfo) (ports.WorkspaceReclaim, error) {
+	if reclaimer, ok := m.workspace.(ports.WorkspaceReclaimer); ok {
+		return reclaimer.DestroyReclaim(ctx, info)
+	}
+	return ports.WorkspaceReclaimRemoved, m.workspace.Destroy(ctx, info)
 }
 
 // cleanupOne reclaims one terminated session's workspace, gating shut any
 // shell terminal scoped to it first (same ordering as Kill). Split out of
 // Cleanup's loop so the release function's defer is scoped to one session's
 // call, not deferred across every iteration until Cleanup itself returns.
-// Returns "" when the workspace was reclaimed; a non-empty reason means it was
-// left alone this run (Cleanup records it in Skipped and can retry on a later
-// call) — most commonly because a scoped shell terminal could not be
-// confirmed closed, so reclaiming would pull the ground out from under it.
-func (m *Manager) cleanupOne(ctx context.Context, rec domain.SessionRecord, ws ports.WorkspaceInfo) (skipReason string) {
+// Returns an empty reason when the workspace was reclaimed; a non-empty reason
+// means it was left alone this run (Cleanup records it in Skipped and can retry
+// on a later call) — most commonly because a scoped shell terminal could not be
+// confirmed closed, so reclaiming would pull the ground out from under it. The
+// reclaim outcome says whether anything was actually released and is only
+// meaningful when the reason is empty.
+func (m *Manager) cleanupOne(ctx context.Context, rec domain.SessionRecord, ws ports.WorkspaceInfo) (reclaim ports.WorkspaceReclaim, skipReason string) {
 	release, closeErr := m.beginShellTerminalTeardown(ctx, rec.ID)
 	if closeErr != nil {
 		m.logger.Warn("cleanup: shell terminal still open", "sessionID", rec.ID, "error", closeErr)
-		return "shell terminal still open"
+		return ports.WorkspaceReclaimRemoved, "shell terminal still open"
 	}
 	if release != nil {
 		defer release()
 	}
 	if err := m.importAttachments(ctx, rec); err != nil {
 		m.logger.Warn("cleanup: attachment preservation failed", "sessionID", rec.ID, "error", err)
-		return "attachment preservation failed"
+		return ports.WorkspaceReclaimRemoved, "attachment preservation failed"
 	}
 
 	if rows, ok, rowErr := m.workspaceProjectRows(ctx, rec); rowErr != nil {
 		m.logger.Warn("cleanup: workspace rows failed", "sessionID", rec.ID, "error", rowErr)
-		return "workspace teardown failed"
+		return ports.WorkspaceReclaimRemoved, "workspace teardown failed"
 	} else if ok {
-		if _, err := m.destroyWorkspaceProjectRows(ctx, rows); err != nil {
+		// A workspace project spans several repos, so its reclaim outcome is the
+		// aggregate of theirs rather than one directory's: reporting a fixed
+		// "removed" here would put a multi-repo session back on the same false
+		// count this whole change exists to remove.
+		projectReclaim, _, err := m.destroyWorkspaceProjectRows(ctx, rows)
+		if err != nil {
 			if !workspacePreserved(err) {
 				m.logger.Warn("cleanup: workspace teardown failed", "sessionID", rec.ID, "path", ws.Path, "error", err)
 			}
-			return cleanupSkipReason(err)
+			return ports.WorkspaceReclaimRemoved, cleanupSkipReason(err)
 		}
 		m.cleanupAgentWorkspace(ctx, rec, ws.Path)
-		return ""
+		return projectReclaim, ""
 	}
-	if err := m.workspace.Destroy(ctx, ws); err != nil {
+	reclaim, err := m.destroyWorkspace(ctx, ws)
+	if err != nil {
 		if !workspacePreserved(err) {
 			// The public reason stays a fixed string (the raw error carries
 			// internal filesystem paths); the full cause lands here.
 			m.logger.Warn("cleanup: workspace teardown failed", "sessionID", rec.ID, "path", ws.Path, "error", err)
 		}
-		return cleanupSkipReason(err)
+		return reclaim, cleanupSkipReason(err)
 	}
 	m.cleanupAgentWorkspace(ctx, rec, ws.Path)
-	return ""
+	return reclaim, ""
 }
 
 // cleanupSkipReason renders a workspace teardown refusal as a short
