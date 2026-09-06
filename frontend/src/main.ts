@@ -1,3 +1,5 @@
+import { finishUpdateQuit } from "./main/update-quit";
+import { acknowledgeMacUpdateRestart } from "./main/mac-update-progress";
 import {
 	app,
 	BaseWindow,
@@ -23,6 +25,8 @@ import {
 	checkForUpdatesNow,
 	downloadUpdateNow,
 	quitAndInstallUpdate,
+	isUpdateRestartRequested,
+	setUpdateRestartFailureHandler,
 	getUpdateStatus,
 	setUpdateSettings,
 	returnToHome,
@@ -2266,6 +2270,17 @@ ipcMain.on(TRAY_SET_ATTENTION_STATE_CHANNEL, (event, state) => trayLifecycle.han
 
 ipcMain.on(TRAY_RENDERER_READY_CHANNEL, (event) => {
 	trayLifecycle.handleRendererReady(event);
+	// This existing handshake comes from TrayRuntime after the React shell has
+	// mounted. Loading the HTML or merely observing a new PID is not success.
+	if (app.isPackaged && process.platform === "darwin" && event.sender === getShellWebContents()) {
+		const runFile = runFilePath();
+		if (runFile) void acknowledgeMacUpdateRestart({
+			stateDir: path.dirname(runFile),
+			appPath: resolveBundlePath(),
+			version: app.getVersion(),
+		});
+	}
+
 	if (pendingFolderPath && event.sender === getShellWebContents()) {
 		event.sender.send(OPEN_FOLDER_PATH_CHANNEL, pendingFolderPath);
 		pendingFolderPath = null;
@@ -2408,6 +2423,7 @@ async function writeAppStateOnLaunch(): Promise<void> {
 	const stateDir = path.dirname(runFile);
 	await writeAppStateMarker({
 		stateDir,
+		updateRestartProtocol: 1,
 		appPath: resolveBundlePath(),
 		version: app.getVersion(),
 		installedVia: parseInstalledVia(process.argv),
@@ -2542,6 +2558,11 @@ app.whenReady().then(async () => {
 // self-stops ~5s after the last client (this process) drops its connection.
 // The supervisorLink fd is NOT explicitly closed on quit; the OS closes it when
 // the process exits for any reason (Cmd+Q, crash, SIGKILL). Sessions survive.
+setUpdateRestartFailureHandler(() => {
+	if (!browserQuitRequested) focusMainWindow();
+});
+
+let updateQuitDeadlineArmed = false;
 app.on("before-quit", (event) => {
 	browserQuitRequested = true;
 	disposeBrowserRuntimeLink();
@@ -2550,13 +2571,24 @@ app.on("before-quit", (event) => {
 	if (!browserCleanupComplete) {
 		event.preventDefault();
 		if (!browserQuitCleanupPromise) {
-			browserQuitCleanupPromise = Promise.all([
+			const cleanup = Promise.all([
 				disposeAllBrowserViewHosts(),
 				telemetryPolicyController?.close() ?? Promise.resolve(),
-			]).then(() => undefined).finally(() => {
+			]);
+			const finishQuit = () => {
 				browserCleanupComplete = true;
 				browserQuitCleanupPromise = null;
 				app.quit();
+			};
+			browserQuitCleanupPromise = cleanup.then(() => undefined).finally(finishQuit);
+		}
+		if (isUpdateRestartRequested() && !updateQuitDeadlineArmed) {
+			updateQuitDeadlineArmed = true;
+			// Also cover a normal quit already waiting on the same cleanup.
+			void finishUpdateQuit(browserQuitCleanupPromise, {
+				quit: () => undefined, // The existing cleanup continuation owns normal quit.
+				exit: () => { if (isUpdateRestartRequested()) app.exit(0); },
+				log: (error) => console.error("update shutdown:", error),
 			});
 		}
 		return;

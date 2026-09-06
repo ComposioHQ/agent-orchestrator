@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState } from "react";
 import { AlertTriangle } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { aoBridge } from "../lib/bridge";
@@ -46,8 +47,31 @@ function RestartToUpdateDialogBody() {
 	// and the dialog must not open a second live workspace stream.
 	const workspace = useWorkspaceQuery({ subscribed: false });
 
-	const staged = status.staged;
-	const version = staged?.version ?? status.version;
+	const [pending, setPending] = useState(false);
+	const [failureDetail, setFailureDetail] = useState<string | null>(null);
+	const installing = useRef(false);
+	const mounted = useRef(true);
+	// Keep the confirmed build details visible when preparation emits a status
+	// without release metadata (for example a download progress event).
+	const [confirmedBuild, setConfirmedBuild] = useState<{
+		version?: string;
+		releaseNotes?: string;
+	} | null>(null);
+	useEffect(() => {
+		mounted.current = true;
+		return () => {
+			mounted.current = false;
+		};
+	}, []);
+
+	const version = confirmedBuild?.version ?? status.staged?.version ?? status.version;
+	const releaseNotes = confirmedBuild?.releaseNotes ?? status.releaseNotes;
+	const percent = status.state === "downloading" && typeof status.percent === "number" && Number.isFinite(status.percent)
+		? Math.min(100, Math.max(0, status.percent))
+		: undefined;
+	const progressLabel = percent === undefined
+		? t("update.restart.preparing")
+		: t("settings.updates.downloading", { percent: Math.round(percent) });
 	const nightly = parseNightlyVersion(version);
 	const buildLabel = nightly
 		? t("shell.nightlyBuild", {
@@ -65,14 +89,43 @@ function RestartToUpdateDialogBody() {
 		(workspace.data ?? []).flatMap((project) => project.sessions),
 	);
 
-	const confirm = () => {
-		close();
-		void aoBridge.updates.install();
+	const confirm = async () => {
+		// A ref guards same-turn clicks before React commits the disabled state.
+		if (installing.current) return;
+		installing.current = true;
+		setConfirmedBuild({ version, releaseNotes });
+		setPending(true);
+		setFailureDetail(null);
+		try {
+			await aoBridge.updates.install();
+			if (mounted.current) close();
+		} catch (error) {
+			if (mounted.current) {
+				// Electron wraps IPC rejections with transport details. Keep the
+				// actionable main-process message, rendered as bounded plain text.
+				setFailureDetail(error instanceof Error
+					? error.message.replace(/^Error invoking remote method ['"][^'"]+['"]: (?:Error: )?/, "").trim().slice(0, 1000)
+					: "");
+			}
+		} finally {
+			installing.current = false;
+			if (mounted.current) setPending(false);
+		}
 	};
 
 	return (
-		<Dialog open onOpenChange={(next) => !next && close()}>
-			<DialogContent className={settingsDialogContentClass} data-testid="restart-to-update-dialog">
+		<Dialog open onOpenChange={(next) => !next && !installing.current && close()}>
+			<DialogContent
+				className={settingsDialogContentClass}
+				data-testid="restart-to-update-dialog"
+				showCloseButton={!pending}
+				onEscapeKeyDown={(event) => {
+					if (installing.current) event.preventDefault();
+				}}
+				onInteractOutside={(event) => {
+					if (installing.current) event.preventDefault();
+				}}
+			>
 				<div className={settingsDialogHeaderClass}>
 					<DialogTitle>{t("update.restart.title")}</DialogTitle>
 					{buildLabel && <DialogDescription>{buildLabel}</DialogDescription>}
@@ -106,25 +159,50 @@ function RestartToUpdateDialogBody() {
 					<p className="text-caption font-medium uppercase tracking-wide text-settings-muted">
 						{t("update.restart.whatsNew")}
 					</p>
-					{status.releaseNotes ? (
+					{releaseNotes ? (
 						// Plain text on purpose. The notes are the remote release body,
 						// sanitized in the main process; nothing here injects markup.
 						<p className="mt-1.5 max-h-56 overflow-y-auto whitespace-pre-line text-pretty text-sm leading-5 text-settings-label">
-							{status.releaseNotes}
+							{releaseNotes}
 						</p>
 					) : (
 						<p className="mt-1.5 text-sm leading-5 text-settings-muted">{t("update.restart.noNotes")}</p>
 					)}
 
-					<p className="mt-4 text-sm leading-5 text-settings-label">{t("update.restart.installWait")}</p>
+					{pending && (
+						<div className="space-y-2">
+							<p role="status" className="text-sm text-settings-label">{progressLabel}</p>
+							<div
+								role="progressbar"
+								aria-label={progressLabel}
+								aria-valuemin={0}
+								aria-valuemax={100}
+								aria-valuenow={percent}
+								className="h-2 overflow-hidden rounded-full bg-muted"
+							>
+								<div
+									className={percent === undefined
+										? "h-full w-full animate-pulse bg-primary/30 motion-reduce:animate-none"
+										: "h-full bg-primary"}
+									style={percent === undefined ? undefined : { width: `${percent}%` }}
+								/>
+							</div>
+						</div>
+					)}
+					{failureDetail !== null && (
+						<div role="alert" className="space-y-1 text-sm text-destructive">
+							<p>{t("update.restart.prepareFailed")}</p>
+							{failureDetail && <p className="whitespace-pre-line break-words">{failureDetail}</p>}
+						</div>
+					)}
 					<p className="mt-2 text-xs leading-4 text-settings-muted">{t("update.restart.installsOnQuit")}</p>
 				</div>
 
 				<div className={settingsDialogFooterClass}>
-					<Button type="button" variant="outline" size="sm" onClick={close}>
+					<Button type="button" variant="outline" size="sm" onClick={close} disabled={pending}>
 						{t("confirm.cancel")}
 					</Button>
-					<Button type="button" variant="primary" size="sm" onClick={confirm}>
+					<Button type="button" variant="primary" size="sm" onClick={confirm} disabled={pending}>
 						{t("update.restart.confirm")}
 					</Button>
 				</div>
