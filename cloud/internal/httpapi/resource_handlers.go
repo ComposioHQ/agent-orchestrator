@@ -318,13 +318,6 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
 	if request.Mode == "" {
 		request.Mode = "trusted"
 	}
-	if request.Provider != "" && !slices.Contains(s.availableSandboxProviders, request.Provider) {
-		writeError(
-			w, r, http.StatusUnprocessableEntity, "provider_unavailable",
-			"The selected sandbox provider is not available on this control plane.",
-		)
-		return
-	}
 	if !validSessionInput(request) {
 		writeError(w, r, http.StatusUnprocessableEntity, "validation_error", "Session project, kind, harness, name, or prompt is invalid.")
 		return
@@ -388,6 +381,18 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
 				request.Provider = orchestratorProvider
 			}
 		}
+	}
+	// Validate the sandbox provider AFTER the auto-link override above: an
+	// auto-linked worker inherits its orchestrator's provider, so the
+	// availability check must run on the final value, not the client-sent one.
+	// Otherwise a UI-created worker whose stale client selection differs from the
+	// orchestrator's provider is rejected before the override can take effect.
+	if request.Provider != "" && !slices.Contains(s.availableSandboxProviders, request.Provider) {
+		writeError(
+			w, r, http.StatusUnprocessableEntity, "provider_unavailable",
+			"The selected sandbox provider is not available on this control plane.",
+		)
+		return
 	}
 	// The plan is resolved once, here, and stamped onto the sandbox row. The
 	// reconciler reads it back from the row rather than from configuration, so
