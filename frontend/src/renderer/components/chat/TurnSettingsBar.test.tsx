@@ -415,3 +415,21 @@ describe("remember project permissions", () => {
 	});
 
 });
+
+describe("native model selection", () => {
+	it("keeps an explicit model visible when the catalog does not contain it", () => {
+		render(
+			<TurnSettingsBar
+				models={[
+					{ id: "astra", displayName: "Astra", default: true, efforts: ["high"], defaultEffort: "high" },
+				]}
+				settings={{ model: "nano" }}
+				onChange={vi.fn()}
+				harness="codex"
+			/>,
+		);
+		expect(
+			screen.getByRole("button", { name: "Model and reasoning effort for the next turn" }),
+		).toHaveTextContent(/^nano$/);
+	});
+});

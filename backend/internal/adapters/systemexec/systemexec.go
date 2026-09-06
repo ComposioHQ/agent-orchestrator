@@ -165,7 +165,10 @@ func pathWritable(ctx context.Context, path string) (bool, error) {
 
 // Run executes argv with ctx and connects its output to the supplied writers.
 func (Adapter) Run(ctx context.Context, argv []string, stdout, stderr io.Writer) error {
-	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...) //nolint:gosec // G204: argv is built from systeminstall's fixed target allowlist.
+	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...) //nolint:gosec // G204: argv is built from fixed system service commands.
+	configureProcessGroup(cmd)
+	cmd.Cancel = func() error { return killProcessTree(cmd) }
+	cmd.WaitDelay = 5 * time.Second
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
 	return cmd.Run()

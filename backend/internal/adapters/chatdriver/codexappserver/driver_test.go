@@ -1117,6 +1117,30 @@ func TestListModelsKeepsCatalogAndUsesThreadEffort(t *testing.T) {
 	}
 }
 
+func TestListModelsUsesConfiguredThreadDefault(t *testing.T) {
+	for _, configured := range []string{"nano", "custom-model"} {
+		t.Run(configured, func(t *testing.T) {
+			d, srv := newTestDriver(t)
+			srv.reply("thread/start", `{"thread":{"id":"thread-1"},"model":"`+configured+`","cwd":"/tmp/ws"}`)
+			srv.reply("model/list", `{"data":[{"id":"astra","isDefault":true},{"id":"nano","isDefault":false}]}`)
+			conv, err := d.Start(context.Background(), ports.ChatStartConfig{WorkspacePath: "/tmp/ws"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() { _ = conv.Close() }()
+			models, err := conv.(ports.ChatModelLister).ListModels(context.Background())
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, model := range models {
+				if model.Default != (model.ID == configured) {
+					t.Errorf("model %q default = %v, configured thread model = %q", model.ID, model.Default, configured)
+				}
+			}
+		})
+	}
+}
+
 func TestDiscoverModelsReadsCatalogWithoutOpeningThread(t *testing.T) {
 	d, srv := newTestDriver(t)
 	srv.reply("model/list", `{"data":[{"id":"gpt-visible","displayName":"GPT Visible","isDefault":true,"hidden":false},{"id":"gpt-hidden","displayName":"GPT Hidden","hidden":true}]}`)

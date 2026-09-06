@@ -602,6 +602,25 @@ func systemOperations() []operation {
 			},
 		},
 		{
+			method: http.MethodGet, path: "/api/v1/system/github-auth", id: "getGitHubAuthRequirement", tag: "system",
+			summary: "Check advisory GitHub CLI authentication without blocking startup",
+			resps: []respUnit{
+				{http.StatusOK, controllers.GitHubAuthRequirementResponse{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPost, path: "/api/v1/system/github-auth/terminal", id: "openGitHubAuthTerminal", tag: "system",
+			summary: "Open a trusted terminal running the GitHub CLI login flow",
+			resps: []respUnit{
+				{http.StatusCreated, controllers.ShellTerminalEnvelope{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
 			method: http.MethodPost, path: "/api/v1/system/install/{target}", id: "startSystemInstall", tag: "system",
 			summary:    "Start (or return the already-running) install job for a fixed system target",
 			pathParams: []any{controllers.InstallTargetParam{}},
