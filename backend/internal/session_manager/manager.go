@@ -147,6 +147,9 @@ var (
 	// agent hook callback, so the native startup sequence (including pre-session
 	// approval dialogs) may still be consuming pane input.
 	ErrStartupPending = errors.New("session: agent startup not ready for input")
+	// ErrAutomationUnsupported means a TUI harness cannot echo the exact
+	// accepted prompt through its managed submit hook, so AO cannot safely ack.
+	ErrAutomationUnsupported = errors.New("session: automation acknowledgement unsupported")
 
 	// Spawn-stage sentinels. Each is the existing log word after "spawn" /
 	// "spawn <id>:" so wrapping them does not change daemon-log wording, while
@@ -3353,8 +3356,51 @@ func (m *Manager) SendAutomation(ctx context.Context, id domain.SessionID, messa
 		case rec.FirstSignalAt.IsZero():
 			return ErrStartupPending
 		}
+		return m.send(ctx, id, message, clientMessageID)
 	}
-	return m.send(ctx, id, message, clientMessageID)
+	message, err = m.prepareOutboundMessage(ctx, id, message)
+	if err != nil {
+		return err
+	}
+	outcome, err := m.messenger.Automation(ctx, id, message, m.harnessAutomationAcknowledges)
+	if err != nil {
+		return err
+	}
+	switch outcome {
+	case sessionguard.Sent:
+		return nil
+	case sessionguard.SuppressedNotFound:
+		return ErrNotFound
+	case sessionguard.SuppressedTerminated:
+		return ErrTerminated
+	case sessionguard.SuppressedExited:
+		return ErrAgentExited
+	case sessionguard.SuppressedAwaitingUser:
+		return ErrAwaitingDecision
+	case sessionguard.SuppressedStartupPending:
+		return ErrStartupPending
+	case sessionguard.SuppressedInputGated, sessionguard.SuppressedBusy:
+		return ErrSwitchInProgress
+	default:
+		return ErrAutomationUnsupported
+	}
+}
+
+func (m *Manager) harnessAutomationAcknowledges(harness domain.AgentHarness) bool {
+	// These managed hooks carry the exact accepted prompt text through
+	// LatestUserPrompt. Other submit signals prove activity only and cannot
+	// acknowledge an automation batch safely.
+	switch harness {
+	case domain.HarnessClaudeCode, domain.HarnessCodex, domain.HarnessContinue, domain.HarnessPi:
+		agent, ok := m.agents.Agent(harness)
+		if !ok {
+			return false
+		}
+		signal, ok := agent.(ports.SubmitActivitySignaler)
+		return ok && signal.EmitsSubmitActivity()
+	default:
+		return false
+	}
 }
 
 // send carries an optional idempotency key used by durable transition-message

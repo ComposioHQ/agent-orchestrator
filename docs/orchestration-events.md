@@ -36,7 +36,10 @@ Transport calls have a five-second deadline. Failures use persisted exponential
 backoff with bounded jitter and a 60-second maximum. Eight attempts or fifteen
 minutes results in `dead_letter`. An ambiguous TUI submission is retried
 physically at most once. Missing destinations consume no transport attempts and
-set `attentionRequiredAt` after fifteen minutes.
+set `attentionRequiredAt` after fifteen minutes. Either condition also creates
+one deduplicated `orchestration_attention` notification in Notification Center
+and the live notification stream. A later successful submission resolves it;
+the API timestamp is diagnostic state, not the human alert itself.
 
 Pending rows are capped at 30 days and 10,000 per project. Overflow is retained
 as visible dead-letter state rather than deleted. Inspect state with:

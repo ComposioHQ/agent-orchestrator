@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
+	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
 func TestNormalizedActivityEventNeverCallsIdleCompletion(t *testing.T) {
@@ -19,6 +20,28 @@ func TestNormalizedActivityEventNeverCallsIdleCompletion(t *testing.T) {
 	}
 	if string(event.Kind) == "task_completed" {
 		t.Fatal("idle was relabeled task_completed")
+	}
+}
+
+func TestPRReadyOrchestrationUsesCanonicalReadiness(t *testing.T) {
+	ready := ports.PRObservation{Fetched: true, URL: "pr", CI: domain.CIPassing, Review: domain.ReviewApproved, Mergeability: domain.MergeMergeable}
+	if !prObservationIsReadyToMerge(ready) {
+		t.Fatal("canonical ready observation rejected")
+	}
+	for _, mutate := range []func(*ports.PRObservation){
+		func(o *ports.PRObservation) { o.Mergeability = domain.MergeUnstable },
+		func(o *ports.PRObservation) { o.Mergeability = domain.MergeUnknown },
+		func(o *ports.PRObservation) {
+			o.Comments = []ports.PRCommentObservation{{ID: "human", Resolved: false}}
+		},
+		func(o *ports.PRObservation) { o.Closed = true },
+		func(o *ports.PRObservation) { o.Merged = true },
+	} {
+		candidate := ready
+		mutate(&candidate)
+		if prObservationIsReadyToMerge(candidate) {
+			t.Fatalf("non-ready observation accepted: %+v", candidate)
+		}
 	}
 }
 

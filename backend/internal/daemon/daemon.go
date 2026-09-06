@@ -503,6 +503,7 @@ func Run() error {
 	orchestrationDispatcher := &orchestrationevents.Dispatcher{
 		Store:     store,
 		Transport: orchestrationTransport{sender: wiredSessMgr},
+		Notifier:  notificationWriter,
 	}
 	orchestrationWake := make(chan domain.ProjectID, 64)
 	lcStack.LCM.SetOrchestrationWake(func(project domain.ProjectID) {

@@ -16,13 +16,14 @@ const (
 	// NotificationPRMerged means a tracked PR was merged.
 	NotificationPRMerged NotificationType = "pr_merged"
 	// NotificationPRClosedUnmerged means a tracked PR closed without merging.
-	NotificationPRClosedUnmerged NotificationType = "pr_closed_unmerged"
+	NotificationPRClosedUnmerged       NotificationType = "pr_closed_unmerged"
+	NotificationOrchestrationAttention NotificationType = "orchestration_attention"
 )
 
 // Valid reports whether t is one of the v1 notification kinds.
 func (t NotificationType) Valid() bool {
 	switch t {
-	case NotificationNeedsInput, NotificationReadyToMerge, NotificationPRMerged, NotificationPRClosedUnmerged:
+	case NotificationNeedsInput, NotificationReadyToMerge, NotificationPRMerged, NotificationPRClosedUnmerged, NotificationOrchestrationAttention:
 		return true
 	default:
 		return false
@@ -34,7 +35,7 @@ func (t NotificationType) Valid() bool {
 // Terminal facts — a PR that merged or closed — describe something that already
 // happened, so they are surfaced once as unseen and never held as unresolved.
 func (t NotificationType) NeedsResolution() bool {
-	return t == NotificationNeedsInput || t == NotificationReadyToMerge
+	return t == NotificationNeedsInput || t == NotificationReadyToMerge || t == NotificationOrchestrationAttention
 }
 
 // NotificationStatus is the seen state for a stored notification. The stored

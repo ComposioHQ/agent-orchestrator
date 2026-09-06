@@ -19,6 +19,36 @@ const orchestrationColumns = `id, project_id, worker_id, kind, source_revision, 
  attempt_count, enqueued_at, next_attempt_at, lease_token, lease_expires_at,
  destination_session_id, submitted_at, acknowledged_at, attention_required_at, last_error`
 
+// ReconcileTerminatedOrchestrationEvents deterministically closes the crash
+// window between any terminal session mutation and its normalized event.
+func (s *Store) ReconcileTerminatedOrchestrationEvents(ctx context.Context, now time.Time) (int, error) {
+	sessions, err := s.ListAllSessions(ctx)
+	if err != nil {
+		return 0, err
+	}
+	created := 0
+	for _, rec := range sessions {
+		if rec.Kind != domain.KindWorker || !rec.IsTerminated {
+			continue
+		}
+		source := strings.TrimSpace(rec.Metadata.RuntimeLaunchID)
+		if source == "" {
+			source = strings.TrimSpace(rec.Metadata.ControllerGeneration)
+		}
+		if source == "" {
+			source = rec.UpdatedAt.UTC().Format(time.RFC3339Nano)
+		}
+		inserted, err := s.RecordOrchestrationSourceState(ctx, rec.ProjectID, rec.ID, domain.OrchestrationWorkerTerminated, source, true, now)
+		if err != nil {
+			return created, err
+		}
+		if inserted {
+			created++
+		}
+	}
+	return created, nil
+}
+
 func (s *Store) EnqueueOrchestrationEvent(ctx context.Context, e domain.OrchestrationEvent) (bool, error) {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
@@ -69,7 +99,8 @@ func (s *Store) RecordOrchestrationSourceState(ctx context.Context, project doma
 		if !created {
 			return nil
 		}
-		revision := strconv.Itoa(generation)
+		sourceHash := sha256.Sum256([]byte(sourceID))
+		revision := hex.EncodeToString(sourceHash[:8]) + ":" + strconv.Itoa(generation)
 		sum := sha256.Sum256([]byte(string(project) + "\x00" + string(worker) + "\x00" + string(kind) + "\x00" + sourceID + "\x00" + revision))
 		id := "oe:" + hex.EncodeToString(sum[:16])
 		_, err = db.ExecContext(ctx, `INSERT INTO orchestration_events(id,project_id,worker_id,kind,source_revision,enqueued_at,next_attempt_at)VALUES(?,?,?,?,?,?,?) ON CONFLICT(project_id,worker_id,kind,source_revision) DO NOTHING`, id, project, worker, kind, revision, now, now)
@@ -151,13 +182,13 @@ func (s *Store) LeaseOrchestrationEvents(ctx context.Context, ids []string, toke
 
 func (s *Store) MarkOrchestrationEventsSubmitted(ctx context.Context, ids []string, token string, at time.Time) error {
 	return s.updateOrchestrationBatch(ctx, "submit orchestration events", ids, func(db gen.DBTX, id string) (sql.Result, error) {
-		return db.ExecContext(ctx, `UPDATE orchestration_events SET state='submitted',submitted_at=? WHERE id=? AND state='leased' AND lease_token=?`, at, id, token)
+		return db.ExecContext(ctx, `UPDATE orchestration_events SET state=CASE WHEN state='leased' THEN 'submitted' ELSE state END,submitted_at=COALESCE(submitted_at,?) WHERE id=? AND state IN ('leased','acknowledged') AND lease_token=?`, at, id, token)
 	})
 }
 
 func (s *Store) AcknowledgeOrchestrationEvents(ctx context.Context, ids []string, token string, at time.Time) error {
 	return s.updateOrchestrationBatch(ctx, "acknowledge orchestration events", ids, func(db gen.DBTX, id string) (sql.Result, error) {
-		return db.ExecContext(ctx, `UPDATE orchestration_events SET state='acknowledged',acknowledged_at=?,lease_token=NULL,lease_expires_at=NULL,last_error='' WHERE id=? AND state IN ('leased','submitted') AND lease_token=?`, at, id, token)
+		return db.ExecContext(ctx, `UPDATE orchestration_events SET state='acknowledged',acknowledged_at=?,lease_expires_at=NULL,last_error='' WHERE id=? AND state IN ('leased','submitted') AND lease_token=?`, at, id, token)
 	})
 }
 
@@ -166,7 +197,7 @@ func (s *Store) AcknowledgeOrchestrationEvents(ctx context.Context, ids []string
 func (s *Store) AcknowledgeOrchestrationBatchAccepted(ctx context.Context, destination domain.SessionID, token string, at time.Time) (int64, error) {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
-	result, err := s.writeDB.ExecContext(ctx, `UPDATE orchestration_events SET state='acknowledged',acknowledged_at=?,lease_token=NULL,lease_expires_at=NULL,last_error=''
+	result, err := s.writeDB.ExecContext(ctx, `UPDATE orchestration_events SET state='acknowledged',acknowledged_at=?,lease_expires_at=NULL,last_error=''
  WHERE destination_session_id=? AND lease_token=? AND state IN ('leased','submitted')`, at, destination, token)
 	if err != nil {
 		return 0, err

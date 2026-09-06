@@ -15,6 +15,10 @@ type recoveryStoreFake struct {
 	err                   error
 }
 
+func (f *recoveryStoreFake) ReconcileTerminatedOrchestrationEvents(context.Context, time.Time) (int, error) {
+	return 0, nil
+}
+
 func (f *recoveryStoreFake) ListProjects(context.Context) ([]domain.ProjectRecord, error) {
 	if f.err != nil {
 		return nil, f.err

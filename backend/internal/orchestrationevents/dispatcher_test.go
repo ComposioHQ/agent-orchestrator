@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
+	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
 type fakeStore struct {
@@ -16,6 +17,7 @@ type fakeStore struct {
 	leased, submitted, acked, retried []string
 	destination                       domain.SessionID
 	leaseErr, submitErr, ackErr       error
+	attentionChanged                  int64
 }
 
 func (f *fakeStore) ListSessions(context.Context, domain.ProjectID) ([]domain.SessionRecord, error) {
@@ -93,7 +95,40 @@ func (f *fakeStore) RetryOrchestrationEvents(_ context.Context, e []domain.Orche
 	return nil
 }
 func (f *fakeStore) MarkProjectNoDestinationAttention(context.Context, domain.ProjectID, time.Time) (int64, error) {
-	return 0, nil
+	return f.attentionChanged, nil
+}
+
+type fakeNotifier struct{ created, resolved []domain.SessionID }
+
+func (f *fakeNotifier) Notify(_ context.Context, intent ports.NotificationIntent) error {
+	f.created = append(f.created, intent.SessionID)
+	return nil
+}
+func (f *fakeNotifier) Resolve(_ context.Context, resolution ports.NotificationResolution) error {
+	f.resolved = append(f.resolved, resolution.SessionID)
+	return nil
+}
+
+func TestAttentionNotificationIsCreatedOnceAndResolvedByDelivery(t *testing.T) {
+	now := time.Now()
+	event := domain.OrchestrationEvent{ID: "e", ProjectID: "p", WorkerID: "w", Kind: domain.OrchestrationWorkerBlocked, SourceRevision: "r", EnqueuedAt: now.Add(-16 * time.Minute)}
+	notifier := &fakeNotifier{}
+	missing := &fakeStore{events: []domain.OrchestrationEvent{event}, attentionChanged: 1}
+	if err := (&Dispatcher{Store: missing, Transport: &fakeTransport{}, Notifier: notifier, Now: func() time.Time { return now }}).DispatchProject(context.Background(), "p"); err != nil {
+		t.Fatal(err)
+	}
+	missing.attentionChanged = 0
+	_ = (&Dispatcher{Store: missing, Transport: &fakeTransport{}, Notifier: notifier, Now: func() time.Time { return now }}).DispatchProject(context.Background(), "p")
+	if len(notifier.created) != 1 {
+		t.Fatalf("created=%v", notifier.created)
+	}
+	deliverable := &fakeStore{events: []domain.OrchestrationEvent{event}, sessions: []domain.SessionRecord{{ID: "o", Kind: domain.KindOrchestrator, Mode: domain.SessionModeChat, Activity: domain.Activity{State: domain.ActivityIdle}, FirstSignalAt: now}}}
+	if err := (&Dispatcher{Store: deliverable, Transport: &fakeTransport{result: Submission{Submitted: true, Acknowledged: true}}, Notifier: notifier}).DispatchProject(context.Background(), "p"); err != nil {
+		t.Fatal(err)
+	}
+	if len(notifier.resolved) != 1 || notifier.resolved[0] != "w" {
+		t.Fatalf("resolved=%v", notifier.resolved)
+	}
 }
 
 type fakeTransport struct {
@@ -178,6 +213,17 @@ func TestTransportFailureRetriesAndSanitizesError(t *testing.T) {
 	}
 	if len(s.retried) != 1 {
 		t.Fatalf("retried=%v", s.retried)
+	}
+}
+
+func TestTransportErrorsPersistOnlyTypedCredentialSafeClass(t *testing.T) {
+	for _, raw := range []string{"Bearer ghp_abcdefghijklmnopqrstuvwxyz", "https://user:pass@example.test/?token=secret", "api_key=sk-live-secret\n\x1b[31m"} {
+		if got := sanitizeError(errors.New(raw)); got != "transport_error" {
+			t.Fatalf("sanitizeError(%q)=%q", raw, got)
+		}
+	}
+	if got := sanitizeError(context.DeadlineExceeded); got != "transport_timeout" {
+		t.Fatalf("deadline class=%q", got)
 	}
 }
 

@@ -456,6 +456,26 @@ func TestHooks_ContinueStopReportsClaudeCompatibleConversationFacts(t *testing.T
 	}
 }
 
+func TestHooks_PiPromptSubmitCarriesExactAutomationBatch(t *testing.T) {
+	t.Setenv("AO_SESSION_ID", "ao-7")
+	cfg := setConfigEnv(t)
+	srv, capture := activityServer(t, http.StatusOK, `{"ok":true}`)
+	writeRunFileFor(t, cfg, srv)
+	prompt := "[AO AUTOMATION batch_id=batch-7] machine wake\nworker_turn_settled worker=w"
+	payload := `{"session_id":"pi-native","prompt":` + mustJSONString(t, prompt) + `}`
+	_, _, err := executeCLI(t, Deps{In: strings.NewReader(payload), ProcessAlive: func(int) bool { return true }}, "hooks", "pi", "user-prompt-submit")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var req setActivityAPIRequest
+	if err := json.Unmarshal([]byte(capture.body), &req); err != nil {
+		t.Fatal(err)
+	}
+	if req.LatestUserPrompt != prompt || req.Event != "user-prompt-submit" || req.State != "active" {
+		t.Fatalf("Pi prompt acknowledgement payload = %#v", req)
+	}
+}
+
 func TestHooks_NonSwitchingHarnessDoesNotReportConversationFacts(t *testing.T) {
 	t.Setenv("AO_SESSION_ID", "ao-7")
 	cfg := setConfigEnv(t)

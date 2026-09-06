@@ -133,6 +133,7 @@ var shippedMigrations = map[int64]string{
 	126: "0126_canonical_repository_identity.sql",
 	127: "0127_session_permissions.sql",
 	128: "0128_orchestration_event_outbox.sql",
+	129: "0129_orchestration_attention_notifications.sql",
 }
 
 // burnedVersion reports version numbers that must never be (re)used: they

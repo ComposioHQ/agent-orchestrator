@@ -6,7 +6,19 @@ import (
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
+	"github.com/aoagents/agent-orchestrator/backend/internal/orchestrationevents"
 )
+
+type synchronousAckTransport struct {
+	store interface {
+		AcknowledgeOrchestrationBatchAccepted(context.Context, domain.SessionID, string, time.Time) (int64, error)
+	}
+}
+
+func (t synchronousAckTransport) Submit(ctx context.Context, target domain.SessionRecord, batch orchestrationevents.Batch) (orchestrationevents.Submission, error) {
+	_, err := t.store.AcknowledgeOrchestrationBatchAccepted(ctx, target.ID, batch.ID, time.Now().UTC())
+	return orchestrationevents.Submission{Submitted: true}, err
+}
 
 func TestOrchestrationEventStoreDedupeRearmLeaseAndAcknowledge(t *testing.T) {
 	s := newTestStore(t)
@@ -125,6 +137,9 @@ func TestOrchestrationEventStoreTUIAcknowledgesOnlyExactDestinationAndBatch(t *t
 	}
 	if n, err := s.AcknowledgeOrchestrationBatchAccepted(ctx, o.ID, "batch", now); err != nil || n != 1 {
 		t.Fatalf("exact acknowledgement n=%d err=%v", n, err)
+	}
+	if err := s.MarkOrchestrationEventsSubmitted(ctx, []string{"e"}, "batch", now); err != nil {
+		t.Fatalf("early acknowledgement must make submitted marking idempotent: %v", err)
 	}
 }
 
@@ -268,5 +283,71 @@ func TestOrchestrationMissingDestinationAttentionAndRetentionAreDurableAndDedupl
 	}
 	if byID["attention"].State != domain.OrchestrationPending || byID["attention"].AttemptCount != 0 || byID["attention"].AttentionRequiredAt.IsZero() {
 		t.Fatalf("attention=%+v", byID["attention"])
+	}
+}
+
+func TestTerminatedEventReconciliationClosesCrashWindowAndRearmsPerLaunch(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedProject(t, s, "p")
+	w := sampleRecord("p")
+	w.Metadata.RuntimeLaunchID = "launch-1"
+	w, err := s.CreateSession(ctx, w)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w.IsTerminated = true
+	w.Activity.State = domain.ActivityExited
+	w.UpdatedAt = time.Now().UTC()
+	if err := s.UpdateSession(ctx, w); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := s.ReconcileTerminatedOrchestrationEvents(ctx, w.UpdatedAt); err != nil || n != 1 {
+		t.Fatalf("first reconciliation=%d err=%v", n, err)
+	}
+	if n, err := s.ReconcileTerminatedOrchestrationEvents(ctx, w.UpdatedAt.Add(time.Second)); err != nil || n != 0 {
+		t.Fatalf("repeat reconciliation=%d err=%v", n, err)
+	}
+	w.IsTerminated = false
+	w.Metadata.RuntimeLaunchID = "launch-2"
+	w.UpdatedAt = w.UpdatedAt.Add(2 * time.Second)
+	if err := s.UpdateSession(ctx, w); err != nil {
+		t.Fatal(err)
+	}
+	w.IsTerminated = true
+	w.UpdatedAt = w.UpdatedAt.Add(time.Second)
+	if err := s.UpdateSession(ctx, w); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := s.ReconcileTerminatedOrchestrationEvents(ctx, w.UpdatedAt); err != nil || n != 1 {
+		t.Fatalf("second launch reconciliation=%d err=%v", n, err)
+	}
+	events, err := s.ListOrchestrationEvents(ctx, "p", 10)
+	if err != nil || len(events) != 2 {
+		t.Fatalf("events=%+v err=%v", events, err)
+	}
+}
+
+func TestDispatcherAcceptsSynchronousTUIHookAcknowledgement(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedProject(t, s, "p")
+	w, _ := s.CreateSession(ctx, sampleRecord("p"))
+	o := sampleRecord("p")
+	o.Kind, o.Mode, o.FirstSignalAt = domain.KindOrchestrator, domain.SessionModeTUI, time.Now().UTC()
+	o.Activity.State = domain.ActivityIdle
+	o, _ = s.CreateSession(ctx, o)
+	now := time.Now().UTC()
+	e := domain.OrchestrationEvent{ID: "e-sync", ProjectID: "p", WorkerID: w.ID, Kind: domain.OrchestrationWorkerBlocked, SourceRevision: "r", EnqueuedAt: now, NextAttemptAt: now}
+	if ok, err := s.EnqueueOrchestrationEvent(ctx, e); err != nil || !ok {
+		t.Fatalf("enqueue=%v err=%v", ok, err)
+	}
+	dispatcher := orchestrationevents.Dispatcher{Store: s, Transport: synchronousAckTransport{store: s}, Now: func() time.Time { return now }, NewID: func() string { return "batch-sync" }}
+	if err := dispatcher.DispatchProject(ctx, "p"); err != nil {
+		t.Fatal(err)
+	}
+	events, err := s.ListOrchestrationEvents(ctx, "p", 10)
+	if err != nil || len(events) != 1 || events[0].State != domain.OrchestrationAcknowledged {
+		t.Fatalf("events=%+v err=%v", events, err)
 	}
 }

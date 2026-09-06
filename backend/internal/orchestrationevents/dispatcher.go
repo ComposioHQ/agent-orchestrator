@@ -6,11 +6,13 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
+	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
 const (
@@ -55,8 +57,12 @@ type Submission struct{ Submitted, Acknowledged bool }
 type Dispatcher struct {
 	Store     Store
 	Transport Transport
-	Now       func() time.Time
-	NewID     func() string
+	Notifier  interface {
+		Notify(context.Context, ports.NotificationIntent) error
+		Resolve(context.Context, ports.NotificationResolution) error
+	}
+	Now   func() time.Time
+	NewID func() string
 }
 
 // DispatchProject performs at most one bounded delivery attempt.
@@ -65,17 +71,23 @@ func (d *Dispatcher) DispatchProject(ctx context.Context, project domain.Project
 	if d.Now != nil {
 		now = d.Now()
 	}
+	events, err := d.Store.ListDueOrchestrationEvents(ctx, project, now, MaxBatchEvents)
+	if err != nil || len(events) == 0 {
+		return err
+	}
 	target, ok, err := d.destination(ctx, project)
 	if err != nil {
 		return err
 	}
 	if !ok {
-		_, err = d.Store.MarkProjectNoDestinationAttention(ctx, project, now)
-		return err
-	}
-	events, err := d.Store.ListDueOrchestrationEvents(ctx, project, now, MaxBatchEvents)
-	if err != nil || len(events) == 0 {
-		return err
+		changed, markErr := d.Store.MarkProjectNoDestinationAttention(ctx, project, now)
+		if markErr != nil {
+			return markErr
+		}
+		if changed > 0 {
+			return d.notifyAttention(ctx, events[0], now)
+		}
+		return nil
 	}
 	batchID := randomID()
 	if d.NewID != nil {
@@ -95,12 +107,40 @@ func (d *Dispatcher) DispatchProject(ctx context.Context, project domain.Project
 		}
 	}
 	if submitErr != nil {
-		return d.Store.RetryOrchestrationEvents(ctx, events, batchID, sanitizeError(submitErr), now)
+		if err := d.Store.RetryOrchestrationEvents(ctx, events, batchID, sanitizeError(submitErr), now); err != nil {
+			return err
+		}
+		if events[0].AttemptCount+1 >= 8 || now.Sub(events[0].EnqueuedAt) >= 15*time.Minute {
+			return d.notifyAttention(ctx, events[0], now)
+		}
+		return nil
 	}
+	d.resolveAttention(ctx, events, now)
 	if !result.Acknowledged {
 		return nil
 	}
 	return d.Store.AcknowledgeOrchestrationEvents(ctx, ids, batchID, now)
+}
+
+func (d *Dispatcher) notifyAttention(ctx context.Context, event domain.OrchestrationEvent, now time.Time) error {
+	if d.Notifier == nil {
+		return nil
+	}
+	return d.Notifier.Notify(ctx, ports.NotificationIntent{Type: domain.NotificationOrchestrationAttention, SessionID: event.WorkerID, ProjectID: event.ProjectID, CreatedAt: now})
+}
+
+func (d *Dispatcher) resolveAttention(ctx context.Context, events []domain.OrchestrationEvent, now time.Time) {
+	if d.Notifier == nil {
+		return
+	}
+	seen := map[domain.SessionID]bool{}
+	for _, event := range events {
+		if seen[event.WorkerID] {
+			continue
+		}
+		seen[event.WorkerID] = true
+		_ = d.Notifier.Resolve(ctx, ports.NotificationResolution{Type: domain.NotificationOrchestrationAttention, SessionID: event.WorkerID, ResolvedAt: now})
+	}
 }
 
 func (d *Dispatcher) destination(ctx context.Context, project domain.ProjectID) (domain.SessionRecord, bool, error) {
@@ -160,14 +200,14 @@ func randomID() string {
 	return "ao-orchestration-" + hex.EncodeToString(raw[:])
 }
 func sanitizeError(err error) string {
-	s := strings.Map(func(r rune) rune {
-		if r < 0x20 || r == 0x7f {
-			return -1
-		}
-		return r
-	}, err.Error())
-	if len(s) > 512 {
-		s = s[:512]
+	switch {
+	case err == nil:
+		return ""
+	case errors.Is(err, context.DeadlineExceeded):
+		return "transport_timeout"
+	case errors.Is(err, context.Canceled):
+		return "transport_cancelled"
+	default:
+		return "transport_error"
 	}
-	return s
 }

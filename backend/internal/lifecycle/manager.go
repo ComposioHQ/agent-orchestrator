@@ -503,6 +503,13 @@ func (m *Manager) ApplyRuntimeObservation(ctx context.Context, id domain.Session
 		return err
 	}
 	if terminated {
+		if rec, ok, readErr := m.store.GetSession(ctx, id); readErr != nil {
+			return readErr
+		} else if ok {
+			if eventErr := m.recordWorkerTerminalEvent(ctx, rec); eventErr != nil {
+				return eventErr
+			}
+		}
 		// Route reaper-observed death through the same container-reap hook as
 		// every other terminal path (#2652): a crash/SIGKILL detected by the
 		// runtime reaper must not leave the session's Docker containers behind
@@ -1505,7 +1512,14 @@ func (m *Manager) recordWorkerTerminalEvent(ctx context.Context, rec domain.Sess
 	if !ok {
 		return nil
 	}
-	_, err := store.RecordOrchestrationSourceState(ctx, rec.ProjectID, rec.ID, domain.OrchestrationWorkerTerminated, "session", true, m.clock())
+	source := strings.TrimSpace(rec.Metadata.RuntimeLaunchID)
+	if source == "" {
+		source = strings.TrimSpace(rec.Metadata.ControllerGeneration)
+	}
+	if source == "" {
+		source = rec.UpdatedAt.UTC().Format(time.RFC3339Nano)
+	}
+	_, err := store.RecordOrchestrationSourceState(ctx, rec.ProjectID, rec.ID, domain.OrchestrationWorkerTerminated, source, true, m.clock())
 	return err
 }
 

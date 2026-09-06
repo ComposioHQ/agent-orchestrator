@@ -19,7 +19,7 @@ func enrich(intent Intent) (domain.NotificationRecord, error) {
 	if !intent.Type.Valid() {
 		return domain.NotificationRecord{}, domain.ErrInvalidNotificationType
 	}
-	if intent.Type != domain.NotificationNeedsInput && rec.PRURL == "" {
+	if intent.Type != domain.NotificationNeedsInput && intent.Type != domain.NotificationOrchestrationAttention && rec.PRURL == "" {
 		return domain.NotificationRecord{}, domain.ErrInvalidNotificationRecord
 	}
 	rec.Title = titleForIntent(intent)
@@ -46,6 +46,8 @@ func titleForIntent(intent Intent) string {
 		return fmt.Sprintf("%s merged", prLabel(intent))
 	case domain.NotificationPRClosedUnmerged:
 		return fmt.Sprintf("%s closed", prLabel(intent))
+	case domain.NotificationOrchestrationAttention:
+		return "Orchestration delivery needs attention"
 	default:
 		return "Notification"
 	}
@@ -74,6 +76,8 @@ func bodyForIntent(intent Intent) string {
 			return fmt.Sprintf("%s was closed without merging. Reopen it if this wasn't intended.", title)
 		}
 		return "Closed without merging. Reopen it if this wasn't intended."
+	case domain.NotificationOrchestrationAttention:
+		return "AO could not safely deliver a pending orchestration event. Inspect the project orchestration event API and retry explicitly after correcting the destination."
 	default:
 		return ""
 	}

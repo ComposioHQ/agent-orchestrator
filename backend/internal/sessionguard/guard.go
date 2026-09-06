@@ -205,6 +205,31 @@ func (g *Guard) DeliverWithPostWrite(ctx context.Context, id domain.SessionID, m
 	return g.sendThen(ctx, id, msg, g.refuseDeliver, after)
 }
 
+// Automation writes a machine-originated turn only at an idle, hook-capable
+// TUI prompt. It re-reads the session under the input lease immediately before
+// the pane write, so a dispatcher-time idle observation cannot race a later
+// active or decision state.
+func (g *Guard) Automation(ctx context.Context, id domain.SessionID, msg string, acknowledges func(domain.AgentHarness) bool) (Outcome, error) {
+	return g.send(ctx, id, msg, func(rec domain.SessionRecord) (Outcome, bool) {
+		if g.tuiAwaitingStartupInput(rec) {
+			return SuppressedStartupPending, true
+		}
+		if acknowledges == nil || !acknowledges(rec.Harness) {
+			return SuppressedUnknown, true
+		}
+		switch rec.Activity.State {
+		case domain.ActivityIdle:
+			return SuppressedUnknown, false
+		case domain.ActivityActive:
+			return SuppressedBusy, true
+		case domain.ActivityBlocked, domain.ActivityWaitingInput:
+			return SuppressedAwaitingUser, true
+		default:
+			return SuppressedUnknown, true
+		}
+	})
+}
+
 // DeliverUnderMutation applies the same just-in-time session safety checks as
 // Deliver but intentionally bypasses input admission. It is only for an AO
 // mutation that already owns the session's exclusive operation fence and must

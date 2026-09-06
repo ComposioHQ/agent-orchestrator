@@ -11,6 +11,7 @@ import (
 // RecoveryStore supplies startup and retention maintenance.
 type RecoveryStore interface {
 	ListProjects(context.Context) ([]domain.ProjectRecord, error)
+	ReconcileTerminatedOrchestrationEvents(context.Context, time.Time) (int, error)
 	ReclaimOrchestrationEventLeases(context.Context, time.Time) (int64, error)
 	MarkOrchestrationRetentionOverflow(context.Context, time.Time) (int64, error)
 }
@@ -18,6 +19,9 @@ type RecoveryStore interface {
 // Recover synchronously reclaims interrupted work and attempts every due
 // project. Daemon startup calls this before exposing a healthy HTTP server.
 func Recover(ctx context.Context, store RecoveryStore, dispatcher *Dispatcher) error {
+	if _, err := store.ReconcileTerminatedOrchestrationEvents(ctx, time.Now().UTC()); err != nil {
+		return err
+	}
 	if _, err := store.ReclaimOrchestrationEventLeases(ctx, time.Now().UTC()); err != nil {
 		return err
 	}
