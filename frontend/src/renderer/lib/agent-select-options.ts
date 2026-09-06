@@ -1,6 +1,8 @@
+import { agentAuthenticationSignedIn, type AgentAuthenticationState } from "./agent-auth";
+
 export type AgentInfo = {
 	authentication: {
-		state: "authorized" | "unauthorized" | "unknown" | "not_applicable";
+		state: AgentAuthenticationState;
 		freshness: "fresh" | "stale" | "checking";
 	};
 	effectiveReadiness: "ready" | "not_ready" | "unknown";
@@ -93,8 +95,7 @@ export function buildRankedAgentOptions({
 		.map((agent) => {
 			const isInstallationUnknown = agent.installation.state === "unknown";
 			const isAuthUnknown = agent.authentication.state === "unknown";
-			const isAuthorized =
-				agent.authentication.state === "authorized" || agent.authentication.state === "not_applicable";
+			const isAuthorized = agentAuthenticationSignedIn(agent.authentication.state);
 			const isDefinitelyUnavailable =
 				agent.installation.state === "not_installed" || agent.authentication.state === "unauthorized";
 			const isSelectable = !isDefinitelyUnavailable;

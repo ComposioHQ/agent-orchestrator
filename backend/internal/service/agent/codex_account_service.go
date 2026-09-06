@@ -35,7 +35,7 @@ func (s *Service) structuredCodexAuthentication(ctx context.Context, agentID str
 		s.codexAccounts.mu.Lock()
 		global := s.codexAccounts.globalAuth
 		s.codexAccounts.mu.Unlock()
-		if global.State == domain.AgentAuthenticationAuthorized || global.State == domain.AgentAuthenticationNotApplicable || global.State == domain.AgentAuthenticationUnknown {
+		if global.State.SignedIn() || global.State == domain.AgentAuthenticationUnknown {
 			return global, true
 		}
 		return successfulAuthentication(s.codexAccounts.now(), domain.AgentAuthenticationUnauthorized, domain.AgentReadinessReasonUnauthorized, "Sign in to Codex or add an account in Settings."), true
@@ -430,7 +430,7 @@ func (s *Service) VerifyCodexAccountForSwitch(ctx context.Context, accountID str
 	_ = client.Close()
 	latestCredential, latest, latestErr := readCodexFileState(credentialPath, false)
 	stableOpaqueIdentity := distinguishableCodexIdentity(observation) || (latestErr == nil && sameCodexFileState(admitted, latest))
-	if err != nil || latestErr != nil || !stableOpaqueIdentity || (observation.Authentication != domain.AgentAuthenticationAuthorized && observation.Authentication != domain.AgentAuthenticationNotApplicable) || !s.codexAccounts.observationAndCredentialIdentifyRecord(record, observation, latestCredential) || (!distinguishableCodexIdentity(observation) && !bytes.Equal(credential, latestCredential)) {
+	if err != nil || latestErr != nil || !stableOpaqueIdentity || !observation.Authentication.SignedIn() || !s.codexAccounts.observationAndCredentialIdentifyRecord(record, observation, latestCredential) || (!distinguishableCodexIdentity(observation) && !bytes.Equal(credential, latestCredential)) {
 		s.codexAccounts.requireReauthentication(record.Snapshot.ID)
 		return apierr.Conflict("CODEX_ACCOUNT_REAUTHENTICATION_REQUIRED", "Sign in again before switching to this Codex account", nil)
 	}
@@ -469,7 +469,7 @@ func (s *Service) VerifyCurrentCodexAccount(ctx context.Context, accountID strin
 	observation, readErr := client.Read(verifyCtx, false)
 	_ = client.Close()
 	latestCredential, latest, latestErr := readCodexFileState(globalPath, false)
-	if readErr != nil || (observation.Authentication != domain.AgentAuthenticationAuthorized && observation.Authentication != domain.AgentAuthenticationNotApplicable) ||
+	if readErr != nil || !observation.Authentication.SignedIn() ||
 		latestErr != nil || !sameCodexFileState(admitted, latest) || !bytes.Equal(globalCredential, latestCredential) ||
 		!s.codexAccounts.observationAndCredentialIdentifyRecord(record, observation, latestCredential) {
 		return apierr.Conflict("CODEX_GLOBAL_ACCOUNT_CHANGED", "The device Codex account changed", nil)
@@ -595,7 +595,7 @@ func (s *Service) RestoreCodexAccountCredential(ctx context.Context, sourceAccou
 	_ = client.Close()
 	latestCredential, latest, latestErr := readCodexFileState(globalPath, false)
 	if readErr != nil ||
-		(observation.Authentication != domain.AgentAuthenticationAuthorized && observation.Authentication != domain.AgentAuthenticationNotApplicable) ||
+		!observation.Authentication.SignedIn() ||
 		latestErr != nil || !sameCodexFileState(admitted, latest) || !bytes.Equal(admittedCredential, latestCredential) ||
 		!s.codexAccounts.observationAndCredentialIdentifyRecord(source, observation, latestCredential) {
 		return apierr.Unavailable("CODEX_ACCOUNT_SWITCH_ACTIVATION_UNCONFIRMED", "The previous Codex account could not be verified")

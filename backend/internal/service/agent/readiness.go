@@ -216,7 +216,7 @@ func projectInventory(snapshots []domain.AgentReadinessSnapshot) Inventory {
 		if snapshot.Installation.State == domain.AgentInstallationInstalled {
 			inventory.Installed = append(inventory.Installed, info)
 		}
-		if snapshot.Authentication.State == domain.AgentAuthenticationAuthorized || snapshot.Authentication.State == domain.AgentAuthenticationNotApplicable {
+		if snapshot.Authentication.State.SignedIn() {
 			inventory.Authorized = append(inventory.Authorized, info)
 		}
 	}

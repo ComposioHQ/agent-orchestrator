@@ -150,7 +150,7 @@ func (m *codexAccountManager) verifyLogin(ctx context.Context, operationID strin
 	if observation.Authentication == domain.AgentAuthenticationUnauthorized {
 		return m.finishLogin(operationID, domain.CodexAccountLoginUnauthorized, domain.CodexAccountLoginReasonUnauthorized, "Codex is still signed out.", nil), nil
 	}
-	if observation.Authentication != domain.AgentAuthenticationAuthorized && observation.Authentication != domain.AgentAuthenticationNotApplicable {
+	if !observation.Authentication.SignedIn() {
 		return m.finishLoginUnverified(operationID, "Codex could not verify this account."), nil
 	}
 	exclusive, exclusiveErr := m.acquireGlobalMutation(ctx)

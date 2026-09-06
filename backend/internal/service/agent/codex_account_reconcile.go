@@ -230,7 +230,7 @@ func (m *codexAccountManager) reconcileGlobalInner(ctx context.Context) error {
 		}
 		return nil
 	}
-	if observation.Authentication != domain.AgentAuthenticationAuthorized && observation.Authentication != domain.AgentAuthenticationNotApplicable {
+	if !observation.Authentication.SignedIn() {
 		m.setGlobalAuthenticationFailure(failedAuthentication(m.now(), domain.AgentReadinessReasonAuthCheckInconclusive, "Authentication check was inconclusive."))
 		m.setUnmanagedGlobal("Device Codex account", observation.Method, observation.Email, "global_account_unverified", "AO could not verify the device's current Codex account.")
 		return nil
@@ -274,7 +274,7 @@ func (m *codexAccountManager) reconcileGlobalInner(ctx context.Context) error {
 		checked, checkErr := verifiedClient.Read(verifyCtx, true)
 		_ = verifiedClient.Close()
 		verifyCancel()
-		if checkErr != nil || (checked.Authentication != domain.AgentAuthenticationAuthorized && checked.Authentication != domain.AgentAuthenticationNotApplicable) {
+		if checkErr != nil || !checked.Authentication.SignedIn() {
 			m.setUnmanagedGlobal(accountLabel("device", observation.Method, observation.Email), observation.Method, observation.Email, "global_account_unverified", "AO could not verify the device's current Codex account for import.")
 			return nil
 		}
@@ -423,7 +423,7 @@ func (m *codexAccountManager) verifyOpaqueGlobalCredential(ctx context.Context, 
 	if readErr != nil {
 		return ports.CodexAccountObservation{}, readErr
 	}
-	if observation.Authentication != domain.AgentAuthenticationAuthorized && observation.Authentication != domain.AgentAuthenticationNotApplicable {
+	if !observation.Authentication.SignedIn() {
 		return ports.CodexAccountObservation{}, errors.New("global Codex credential could not be verified in a file-backed store")
 	}
 	return observation, nil

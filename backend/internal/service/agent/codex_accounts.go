@@ -522,7 +522,7 @@ func (m *codexAccountManager) finishAuthentication(id string, observation domain
 		// saved slot still belongs to the same account, and discarding its label
 		// would both hide who must sign in again and break global reconciliation's
 		// identity match.
-		identified := observation.State == domain.AgentAuthenticationAuthorized || observation.State == domain.AgentAuthenticationNotApplicable
+		identified := observation.State.SignedIn()
 		m.catalog.updateSnapshot(id, func(s *domain.CodexAccountSnapshot) {
 			s.Authentication = observation
 			if identified {
