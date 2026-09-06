@@ -393,9 +393,18 @@ func guardNoGitlinks(ctx context.Context, repo string) error {
 	return nil
 }
 
-func workspaceReposFromRecords(records []domain.WorkspaceRepoRecord) []WorkspaceRepo {
+func workspaceReposFromRecords(parent string, records []domain.WorkspaceRepoRecord) []WorkspaceRepo {
 	out := make([]WorkspaceRepo, 0, len(records))
 	for _, rec := range records {
+		// Plain directories share the durable child registry so the session
+		// manager can materialize them as assets, but they are not repositories
+		// and must not appear in Project Settings' repository list.
+		if rec.GitStatus == domain.GitStatusNeedsInit {
+			gitPath := filepath.Join(parent, filepath.FromSlash(rec.RelativePath), ".git")
+			if _, err := os.Lstat(gitPath); errors.Is(err, os.ErrNotExist) {
+				continue
+			}
+		}
 		out = append(out, WorkspaceRepo{
 			Name:         rec.Name,
 			RelativePath: rec.RelativePath,
