@@ -54,7 +54,6 @@ export default function CloneRepositoryDialog({
 	const destinationPickerRequest = useRef(0);
 	const shakeFrame = useRef<number | null>(null);
 	const shakeTimer = useRef<number | null>(null);
-	const onErrorRef = useRef(onError);
 	const lastReportedRepositoryError = useRef<string | null>(null);
 	const [choosingDestination, setChoosingDestination] = useState(false);
 	const [repositoryFieldTouched, setRepositoryFieldTouched] = useState(false);
@@ -91,10 +90,6 @@ export default function CloneRepositoryDialog({
 		!disabled &&
 		!choosingDestination,
 	);
-
-	useEffect(() => {
-		onErrorRef.current = onError;
-	}, [onError]);
 
 	const clearShake = useCallback(() => {
 		if (shakeFrame.current !== null) window.cancelAnimationFrame(shakeFrame.current);
@@ -138,8 +133,8 @@ export default function CloneRepositoryDialog({
 		if (lastReportedRepositoryError.current === inlineRepositoryError) return;
 		lastReportedRepositoryError.current = inlineRepositoryError;
 		triggerShake();
-		onErrorRef.current?.(inlineRepositoryError);
-	}, [inlineRepositoryError, open, triggerShake]);
+		onError?.(inlineRepositoryError);
+	}, [inlineRepositoryError, onError, open, triggerShake]);
 
 	useEffect(() => () => {
 		repositoryCheckRequest.current += 1;
@@ -425,17 +420,7 @@ export function repositoryNameFromGitUrl(raw: string): string | null {
 	// self-hosted remote can validly use a single segment, for example
 	// https://git.example.com/repository.git.
 	if (segments.length < 1) return null;
-	const providerSubpage = segments[2];
-	if (
-		(host === "github.com" &&
-			["actions", "blob", "commit", "commits", "compare", "issues", "pull", "releases", "settings", "tree", "wiki"].includes(
-				providerSubpage ?? "",
-			)) ||
-		(host === "bitbucket.org" && providerSubpage === "pull-requests") ||
-		(host === "gitlab.com" && segments.includes("merge_requests"))
-	) {
-		return null;
-	}
+	if (isProviderSubpage(host, segments)) return null;
 	const lastSegment = segments[segments.length - 1] ?? "";
 	const name = lastSegment.replace(/\.git$/, "");
 	if (!name || name === "." || name === ".." || /[\\/<>:"|?*]/.test(name)) return null;
@@ -490,21 +475,18 @@ function repositoryRemoteParts(raw: string): RepositoryRemoteParts | null {
 
 	const segments = remotePath.replace(/[\\/]+$/, "").split(/[\\/]/).filter(Boolean);
 	if (segments.length < 2) return null;
-	const providerSubpage = segments[2];
-	if (
-		(host === "github.com" &&
-			["actions", "blob", "commit", "commits", "compare", "issues", "pull", "releases", "settings", "tree", "wiki"].includes(
-				providerSubpage ?? "",
-			)) ||
-		(host === "bitbucket.org" && providerSubpage === "pull-requests") ||
-		(host === "gitlab.com" && segments.includes("merge_requests"))
-	) {
-		return null;
-	}
+	if (isProviderSubpage(host, segments)) return null;
 	const repository = segments[segments.length - 1]?.replace(/\.git$/, "");
 	const owner = segments[0];
 	if (!repository || !owner || repository === "." || repository === ".." || /[\\/<>:"|?*]/.test(repository)) return null;
 	return { host, owner };
+}
+
+function isProviderSubpage(host: string, segments: string[]): boolean {
+	const subpage = segments[2] ?? "";
+	return (host === "github.com" && ["actions", "blob", "commit", "commits", "compare", "issues", "pull", "releases", "settings", "tree", "wiki"].includes(subpage)) ||
+		(host === "bitbucket.org" && subpage === "pull-requests") ||
+		(host === "gitlab.com" && segments.includes("merge_requests"));
 }
 
 export function joinCloneDestination(parent: string, repositoryName: string): string {

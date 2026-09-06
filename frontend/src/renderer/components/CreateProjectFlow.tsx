@@ -30,8 +30,6 @@ import { cn } from "../lib/utils";
 import type { ProjectKind } from "../types/workspace";
 import { CreateProjectAgentSheet, type CreateProjectAgentSelection } from "./CreateProjectAgentSheet";
 import CloneRepositoryDialog, { type CloneRepositoryDetails, type CloneRepositorySelection } from "./CloneRepositoryDialog";
-import CreateProjectProgressDialog from "./CreateProjectProgressDialog";
-import { ModalBackdrop } from "./ModalBackdrop";
 import { PathRow } from "./PathRow";
 import { Button } from "./ui/button";
 import { Checkbox } from "./ui/checkbox";
@@ -45,7 +43,10 @@ export type CloneProjectInput = Pick<CloneRepositorySelection, "remoteUrl" | "de
 
 const LAST_CLONE_DESTINATION_KEY = "ao.clone.lastDestinationParent";
 const LAST_IMPORT_REMOTE_URL_KEY = "ao.import.lastRemoteUrl";
-const WORKSPACE_FOLDER_SETUP_ACTIONS = ["git_init", "git_commit", "set_remote"];
+const GIT_PREPARATION_ACTIONS = ["git_init", "git_commit", "set_remote"] as const;
+const GIT_ACTION_LABELS: Record<string, string> = {
+	git_init: "Git initialization", git_commit: "Initial commit", set_remote: "Remote setup",
+};
 type ImportValidationResult = components["schemas"]["ImportValidationResult"];
 type GitPreparationEvent = components["schemas"]["GitPreparationEvent"];
 type ProjectImportStep = "blocked" | "prepare_git";
@@ -56,13 +57,7 @@ type DisplayImportRepo = ImportFolderScan["repos"][number] & {
 	hasCommit?: boolean;
 	hasOrigin?: boolean;
 };
-type RepositoryPreparationState = {
-	repoPath: string;
-	approvedActions: string[];
-	remoteUrl: string;
-};
-type WorkspaceApprovalState = Record<string, string[]>;
-type WorkspaceRemoteState = Record<string, string>;
+type WorkspacePreparationState = Record<string, { approvedActions: string[]; remoteUrl: string }>;
 
 type CreateProjectFlowMode = ProjectKind | "choose";
 type ProjectSource = "clone" | "local" | "workspace";
@@ -137,7 +132,6 @@ export function CreateProjectFlow({
 	const [cloneDialogOpen, setCloneDialogOpen] = useState(false);
 	const [cloneDetails, setCloneDetails] = useState<CloneRepositoryDetails>(initialCloneDetails);
 	const [cloneSelection, setCloneSelection] = useState<CloneRepositorySelection | null>(null);
-	const [preparedClonePath, setPreparedClonePath] = useState<string | null>(null);
 	const preparedClonePathRef = useRef<string | null>(null);
 	const [folderPickerOpen, setFolderPickerOpen] = useState(false);
 	const [childTransitioning, setChildTransitioning] = useState(false);
@@ -145,21 +139,16 @@ export function CreateProjectFlow({
 	const [selectedPath, setSelectedPath] = useState<string | null>(null);
 	const [validationScan, setValidationScan] = useState<ImportFolderScan | null>(null);
 	const [projectValidation, setProjectValidation] = useState<ImportValidationResult | null>(null);
-	const [projectImportKind, setProjectImportKind] = useState<"project" | "workspace">("project");
 	const [projectImportStep, setProjectImportStep] = useState<ProjectImportStep | null>(null);
 	const [projectPrepEvents, setProjectPrepEvents] = useState<GitPreparationEvent[]>([]);
 	const [projectApprovedActions, setProjectApprovedActions] = useState<string[]>([]);
 	const [projectRemoteUrl, setProjectRemoteUrl] = useState("");
-	const [projectRepositoryPrep, setProjectRepositoryPrep] = useState<RepositoryPreparationState[]>([]);
-	const [workspaceApprovedActions, setWorkspaceApprovedActions] = useState<WorkspaceApprovalState>({});
-	const [workspaceRemoteUrls, setWorkspaceRemoteUrls] = useState<WorkspaceRemoteState>({});
+	const [workspacePreparation, setWorkspacePreparation] = useState<WorkspacePreparationState>({});
 	const [projectImportShake, setProjectImportShake] = useState(false);
 	const [isChoosingPath, setIsChoosingPath] = useState(false);
 	const [isCreating, setIsCreating] = useState(false);
 	const [isInitializing, setIsInitializing] = useState(false);
-	const [createProgressOpen, setCreateProgressOpen] = useState(false);
-	const [createProgress, setCreateProgress] = useState(0);
-	const [createProgressStage, setCreateProgressStage] = useState<CreateProgressStage>("starting");
+	const [createProgress, setCreateProgress] = useState({ open: false, value: 0, stage: "starting" as CreateProgressStage });
 	const [isPreparingGit, setIsPreparingGit] = useState(false);
 	const [isCleaningClone, setIsCleaningClone] = useState(false);
 	const [repositorySetup, setRepositorySetup] = useState<"NOT_A_GIT_REPO" | "PROJECT_UNBORN" | null>(null);
@@ -184,42 +173,34 @@ export function CreateProjectFlow({
 	const isBusy = isChoosingPath || isCreating || isInitializing || isPreparingGit || isCleaningClone;
 
 	useEffect(() => {
-		if (!createProgressOpen) return;
+		if (!createProgress.open) return;
 		const startedAt = Date.now();
 		const updateProgress = () => {
 			const elapsed = Date.now() - startedAt;
 			if (elapsed < 800) {
-				setCreateProgressStage("starting");
-				setCreateProgress(Math.min(12, 4 + elapsed / 100));
+				setCreateProgress({ open: true, stage: "starting", value: Math.min(12, 4 + elapsed / 100) });
 			} else if (elapsed < 1800) {
-				setCreateProgressStage("connecting");
-				setCreateProgress(12 + ((elapsed - 800) / 1000) * 18);
+				setCreateProgress({ open: true, stage: "connecting", value: 12 + ((elapsed - 800) / 1000) * 18 });
 			} else if (elapsed < 5000) {
-				setCreateProgressStage("creating");
-				setCreateProgress(30 + ((elapsed - 1800) / 3200) * 38);
+				setCreateProgress({ open: true, stage: "creating", value: 30 + ((elapsed - 1800) / 3200) * 38 });
 			} else if (elapsed < 7600) {
-				setCreateProgressStage("settingUp");
-				setCreateProgress(68 + ((elapsed - 5000) / 2600) * 17);
+				setCreateProgress({ open: true, stage: "settingUp", value: 68 + ((elapsed - 5000) / 2600) * 17 });
 			} else {
-				setCreateProgressStage("finishing");
-				setCreateProgress(Math.min(90, 85 + (elapsed - 7600) / 1000));
+				setCreateProgress({ open: true, stage: "finishing", value: Math.min(90, 85 + (elapsed - 7600) / 1000) });
 			}
 		};
 		updateProgress();
 		const timer = window.setInterval(updateProgress, 250);
 		return () => window.clearInterval(timer);
-	}, [createProgressOpen]);
+	}, [createProgress.open]);
 	const showGlobalToast = useUiStore((state) => state.showGlobalToast);
 	const resetProjectImportState = () => {
 		setProjectValidation(null);
-		setProjectImportKind("project");
 		setProjectImportStep(null);
 		setProjectPrepEvents([]);
 		setProjectApprovedActions([]);
 		setProjectRemoteUrl("");
-		setProjectRepositoryPrep([]);
-		setWorkspaceApprovedActions({});
-		setWorkspaceRemoteUrls({});
+		setWorkspacePreparation({});
 		setProjectImportShake(false);
 	};
 
@@ -233,7 +214,6 @@ export function CreateProjectFlow({
 
 	const rememberPreparedClone = (path: string | null) => {
 		preparedClonePathRef.current = path;
-		setPreparedClonePath(path);
 	};
 
 	const abandonPreparedClone = async (): Promise<boolean> => {
@@ -320,12 +300,10 @@ export function CreateProjectFlow({
 					setRepositorySetup(null);
 					setRepositorySetupWarning(null);
 					setSelectedKind(kind);
-					setProjectImportKind("project");
 					setProjectValidation(validation);
 					setProjectPrepEvents([]);
 					setProjectApprovedActions(validation.root.requiredActions);
 					setProjectRemoteUrl(validation.root.requiredActions.includes("set_remote") ? suggestedProjectRemoteUrl(validation.root.repoPath) : "");
-					setProjectRepositoryPrep((validation.childRepos ?? []).filter((repo) => repo.requiredActions.length > 0).map((repo) => ({ repoPath: repo.repoPath, approvedActions: repo.requiredActions, remoteUrl: suggestedProjectRemoteUrl(repo.repoPath) })));
 				};
 				if (!preserveCurrentDialog) applyProjectValidation();
 				const openProjectStep = (step: ProjectImportStep) => {
@@ -375,15 +353,13 @@ export function CreateProjectFlow({
 					setProjectPrepEvents([]);
 					setProjectApprovedActions(validation.root.requiredActions);
 					setProjectRemoteUrl("");
-					setProjectRepositoryPrep((validation.childRepos ?? []).filter((repo) => repo.requiredActions.length > 0).map((repo) => ({
-						repoPath: repo.repoPath,
-						approvedActions: repo.requiredActions,
-						remoteUrl: suggestedProjectRemoteUrl(repo.repoPath),
-					})));
 					const workspaceRepos = mergeWorkspaceImportRepos(scan, validation);
-					setWorkspaceApprovedActions(Object.fromEntries(workspaceRepos.filter((repo) => repo.requiredActions.length > 0).map((repo) => [repo.path, []])));
-					setWorkspaceRemoteUrls(Object.fromEntries(workspaceRepos.filter((repo) => repo.requiredActions.includes("set_remote")).map((repo) => [repo.path, suggestedProjectRemoteUrl(repo.path)])));
-					setProjectImportKind("workspace");
+					setWorkspacePreparation(Object.fromEntries(workspaceRepos
+						.filter((repo) => repo.requiredActions.length > 0)
+						.map((repo) => [repo.path, {
+							approvedActions: [],
+							remoteUrl: repo.requiredActions.includes("set_remote") ? suggestedProjectRemoteUrl(repo.path) : "",
+						}])));
 					setFolderPickerOpen(true);
 					return;
 				} catch (err) {
@@ -462,16 +438,13 @@ export function CreateProjectFlow({
 		setIsCreating(true);
 		const showProgress = Boolean(cloneSelection);
 		if (showProgress) {
-			setCreateProgress(0);
-			setCreateProgressStage("starting");
-			setCreateProgressOpen(true);
+			setCreateProgress({ open: true, stage: "starting", value: 0 });
 		}
 		try {
 			if (cloneSelection) {
-				if (!preparedClonePath) throw new Error(t("createProject.couldNotAdd"));
+				if (!preparedClonePathRef.current) throw new Error(t("createProject.couldNotAdd"));
 				await onCreateProject({ path: selectedPath, ...selection });
-				setCreateProgress(100);
-				setCreateProgressStage("complete");
+				setCreateProgress({ open: true, stage: "complete", value: 100 });
 				await new Promise((resolve) => window.setTimeout(resolve, 180));
 				setSelectedPath(null);
 				setCloneSelection(null);
@@ -496,8 +469,7 @@ export function CreateProjectFlow({
 				...selection,
 			});
 			if (showProgress) {
-				setCreateProgress(100);
-				setCreateProgressStage("complete");
+				setCreateProgress({ open: true, stage: "complete", value: 100 });
 				await new Promise((resolve) => window.setTimeout(resolve, 180));
 			}
 			setSelectedPath(null);
@@ -536,7 +508,7 @@ export function CreateProjectFlow({
 				setSelectedPath(null);
 			}
 		} finally {
-			setCreateProgressOpen(false);
+			setCreateProgress((current) => ({ ...current, open: false }));
 			setIsCreating(false);
 			setIsInitializing(false);
 		}
@@ -619,17 +591,11 @@ export function CreateProjectFlow({
 		if (!projectValidation) return;
 		setError(null);
 		const remoteUrl = projectRemoteUrl.trim();
-		if (remoteUrl !== "") {
-			if (!isValidProjectRemote(remoteUrl)) {
-				reportProjectError(t("createProject.cloneInvalidUrl"));
-				return;
-			}
-		}
-		if (projectImportKind === "workspace" && projectRepositoryPrep.some((repo) => repo.remoteUrl.trim() !== "" && !isValidProjectRemote(repo.remoteUrl.trim()))) {
+		if (remoteUrl !== "" && !isValidProjectRemote(remoteUrl)) {
 			reportProjectError(t("createProject.cloneInvalidUrl"));
 			return;
 		}
-		if (projectImportKind === "project" && projectApprovedActions.includes("set_remote") && remoteUrl !== "") {
+		if (projectApprovedActions.includes("set_remote") && remoteUrl !== "") {
 			setIsPreparingGit(true);
 			try {
 				if (!(await aoBridge.app.checkGitRepository(remoteUrl))) {
@@ -647,93 +613,56 @@ export function CreateProjectFlow({
 				setIsPreparingGit(false);
 			}
 		}
-		setProjectPrepEvents((current) => mergePreparationEvents(
-			current,
-			projectImportKind === "workspace"
-				? projectRepositoryPrep.flatMap((repo) => projectRequestedActionEvents(repo.repoPath, repo.approvedActions))
-				: projectRequestedActionEvents(projectValidation.root.repoPath, projectValidation.root.requiredActions),
-		));
+		setProjectPrepEvents((current) => mergePreparationEvents(current, projectRequestedActionEvents(
+			projectValidation.root.repoPath,
+			projectValidation.root.requiredActions,
+		)));
 		setIsPreparingGit(true);
 		try {
-			if (projectImportKind === "project") {
-				let currentValidation = projectValidation;
-				while (currentValidation.nextStep === "prepare_git") {
-					const activeAction = orderedProjectActions(currentValidation.root.requiredActions)[0];
-					if (!activeAction) {
-						throw new Error(t("createProject.couldNotAdd"));
-					}
-					setProjectPrepEvents((current) => mergePreparationEvents(current, [{
-						repoPath: currentValidation.root.repoPath,
-						action: activeAction as GitPreparationEvent["action"],
-						state: "running",
-					}]));
-					const { data, error: apiError } = await apiClient.POST("/api/v1/imports/prepare-git", {
-						body: {
-							importKind: "project",
-							path: currentValidation.root.repoPath,
-							approvedActions: projectApprovedActions,
-							remoteUrl: remoteUrl || undefined,
-							stepwise: true,
-						},
-					});
-					if (apiError || !data) throw new Error(apiErrorMessage(apiError, t("createProject.couldNotAdd")));
-					setProjectPrepEvents((current) => mergePreparationEvents(current, data.events));
-					setProjectValidation(data.validation);
-					setProjectApprovedActions(data.validation.root.requiredActions);
-					const failed = data.events.find((event) => event.state === "error");
-					if (failed) {
-						reportProjectError(projectPreparationFailureMessage(failed));
-						return;
-					}
-					if (!data.validation.isValid || data.validation.nextStep === "error") {
-						reportProjectError(importValidationMessage(data.validation));
-						setProjectImportStep("blocked");
-						return;
-					}
-					if (data.validation.nextStep !== "prepare_git" && data.validation.nextStep !== "continue") {
-						throw new Error(t("createProject.couldNotAdd"));
-					}
-					if (data.validation.nextStep === "prepare_git" && orderedProjectActions(data.validation.root.requiredActions)[0] === activeAction) {
-						throw new Error(t("createProject.couldNotAdd"));
-					}
-					currentValidation = data.validation;
+			let currentValidation = projectValidation;
+			while (currentValidation.nextStep === "prepare_git") {
+				const activeAction = orderedProjectActions(currentValidation.root.requiredActions)[0];
+				if (!activeAction) throw new Error(t("createProject.couldNotAdd"));
+				setProjectPrepEvents((current) => mergePreparationEvents(current, [{
+					repoPath: currentValidation.root.repoPath,
+					action: activeAction as GitPreparationEvent["action"],
+					state: "running",
+				}]));
+				const { data, error: apiError } = await apiClient.POST("/api/v1/imports/prepare-git", {
+					body: {
+						importKind: "project",
+						path: currentValidation.root.repoPath,
+						approvedActions: projectApprovedActions,
+						remoteUrl: remoteUrl || undefined,
+						stepwise: true,
+					},
+				});
+				if (apiError || !data) throw new Error(apiErrorMessage(apiError, t("createProject.couldNotAdd")));
+				setProjectPrepEvents((current) => mergePreparationEvents(current, data.events));
+				setProjectValidation(data.validation);
+				setProjectApprovedActions(data.validation.root.requiredActions);
+				const failed = data.events.find((event) => event.state === "error");
+				if (failed) {
+					reportProjectError(projectPreparationFailureMessage(failed));
+					return;
 				}
-				if (projectRemoteUrl.trim() !== "") persistSuggestedProjectRemoteUrl(projectRemoteUrl);
-				setModePickerOpen(false);
-				setProjectImportStep(null);
-				setSelectedPath(currentValidation.root.repoPath);
-				return;
+				if (!data.validation.isValid || data.validation.nextStep === "error") {
+					reportProjectError(importValidationMessage(data.validation));
+					setProjectImportStep("blocked");
+					return;
+				}
+				if (data.validation.nextStep !== "prepare_git" && data.validation.nextStep !== "continue") {
+					throw new Error(t("createProject.couldNotAdd"));
+				}
+				if (data.validation.nextStep === "prepare_git" && orderedProjectActions(data.validation.root.requiredActions)[0] === activeAction) {
+					throw new Error(t("createProject.couldNotAdd"));
+				}
+				currentValidation = data.validation;
 			}
-			const { data, error: apiError } = await apiClient.POST("/api/v1/imports/prepare-git", {
-				body: {
-					importKind: projectImportKind,
-					path: projectValidation.root.repoPath,
-					...(projectImportKind === "workspace"
-						? { repositories: projectRepositoryPrep.map((repo) => ({ repoPath: repo.repoPath, approvedActions: repo.approvedActions, remoteUrl: repo.remoteUrl.trim() || undefined })) }
-						: { approvedActions: projectApprovedActions, remoteUrl: remoteUrl || undefined }),
-				},
-			});
-			if (apiError || !data) throw new Error(apiErrorMessage(apiError, t("createProject.couldNotAdd")));
-			setProjectPrepEvents(data.events);
-			setProjectValidation(data.validation);
-			setProjectApprovedActions(data.validation.root.requiredActions);
-			setProjectRepositoryPrep((data.validation.childRepos ?? []).filter((repo) => repo.requiredActions.length > 0).map((repo) => ({ repoPath: repo.repoPath, approvedActions: repo.requiredActions, remoteUrl: suggestedProjectRemoteUrl(repo.repoPath) })));
-			if (projectRemoteUrl.trim() !== "") persistSuggestedProjectRemoteUrl(projectRemoteUrl);
-			const failed = data.events.find((event) => event.state === "error");
-			if (failed) {
-				reportProjectError(projectPreparationFailureMessage(failed));
-				return;
-			}
-			if (!data.validation.isValid || data.validation.nextStep === "error") {
-				reportProjectError(importValidationMessage(data.validation));
-				setProjectImportStep("blocked");
-				return;
-			}
-			if (data.validation.nextStep === "continue") {
-				setModePickerOpen(false);
-				setProjectImportStep(null);
-				setSelectedPath(data.validation.root.repoPath);
-			}
+			if (remoteUrl !== "") persistSuggestedProjectRemoteUrl(remoteUrl);
+			setModePickerOpen(false);
+			setProjectImportStep(null);
+			setSelectedPath(currentValidation.root.repoPath);
 		} catch (err) {
 			reportProjectError(err instanceof Error ? err.message : t("createProject.couldNotAdd"));
 		} finally {
@@ -744,11 +673,11 @@ export function CreateProjectFlow({
 	const prepareWorkspaceGit = async () => {
 		if (!projectValidation || !validationScan) return;
 		const repositories = mergeWorkspaceImportRepos(validationScan, projectValidation)
-			.filter((repo) => repo.requiredActions.length > 0 && repo.requiredActions.every((action) => workspaceApprovedActions[repo.path]?.includes(action)))
+			.filter((repo) => repo.requiredActions.length > 0 && repo.requiredActions.every((action) => workspacePreparation[repo.path]?.approvedActions.includes(action)))
 			.map((repo) => ({
 				repoPath: repo.path,
-				approvedActions: workspaceApprovedActions[repo.path] ?? [],
-				remoteUrl: workspaceRemoteUrls[repo.path]?.trim() || undefined,
+				approvedActions: workspacePreparation[repo.path]?.approvedActions ?? [],
+				remoteUrl: workspacePreparation[repo.path]?.remoteUrl.trim() || undefined,
 			}));
 		if (repositories.some((repo) => repo.remoteUrl && !isValidProjectRemote(repo.remoteUrl))) {
 			reportProjectError(t("createProject.cloneInvalidUrl"));
@@ -809,7 +738,7 @@ export function CreateProjectFlow({
 					error,
 					label,
 				})}
-			<CreateProjectFlowBackdrop open={modePickerOpen || cloneDialogOpen || folderDialogOpen || selectedPath !== null || createProgressOpen || childTransitioning || projectImportOpen} />
+			<CreateProjectFlowBackdrop open={modePickerOpen || cloneDialogOpen || folderDialogOpen || selectedPath !== null || createProgress.open || childTransitioning || projectImportOpen} />
 			{hasModePicker && embedded && !modePickerOpen && !cloneDialogOpen && selectedPath === null && (
 				<div className="flex w-full flex-col items-center gap-3">
 					{cloudEnabled && (
@@ -887,10 +816,11 @@ export function CreateProjectFlow({
 						scan={validationScan}
 						validation={projectValidation}
 						isPreparingGit={isPreparingGit}
-						workspaceApprovedActions={workspaceApprovedActions}
-						workspaceRemoteUrls={workspaceRemoteUrls}
-						onChangeWorkspaceApprovedActions={(repoPath, actions) => setWorkspaceApprovedActions((current) => ({ ...current, [repoPath]: actions }))}
-						onChangeWorkspaceRemoteUrl={(repoPath, remoteUrl) => setWorkspaceRemoteUrls((current) => ({ ...current, [repoPath]: remoteUrl }))}
+						workspacePreparation={workspacePreparation}
+						onChangeWorkspacePreparation={(repoPath, next) => setWorkspacePreparation((current) => ({
+							...current,
+							[repoPath]: { ...current[repoPath], ...next },
+						}))}
 						onContinueAsProject={() => {
 							if (projectValidation) void chooseDirectory("single_repo", projectValidation.root.repoPath, true);
 						}}
@@ -898,7 +828,7 @@ export function CreateProjectFlow({
 							if (!validationScan || error) return;
 							if (selectedKind === "workspace") {
 								const hasApprovedSetup = mergeWorkspaceImportRepos(validationScan, projectValidation).some((repo) =>
-									repo.requiredActions.length > 0 && repo.requiredActions.every((action) => workspaceApprovedActions[repo.path]?.includes(action)),
+									repo.requiredActions.length > 0 && repo.requiredActions.every((action) => workspacePreparation[repo.path]?.approvedActions.includes(action)),
 								);
 								if (projectValidation?.nextStep === "prepare_git" || hasApprovedSetup) {
 									void prepareWorkspaceGit();
@@ -934,15 +864,12 @@ export function CreateProjectFlow({
 			<ProjectImportDialog
 				disabled={isBusy}
 				approvedActions={projectApprovedActions}
-				importKind={projectImportKind}
-				repositoryPrep={projectRepositoryPrep}
 				onBack={() => void reopenSourcePicker()}
 				onChangeApprovedActions={setProjectApprovedActions}
 				onChangeFolder={() => void chooseDirectory("single_repo")}
 				onChangeRemote={setProjectRemoteUrl}
 				onContinue={() => void prepareProjectGit()}
 				onContinueProject={() => {
-					setProjectImportKind("project");
 					if (projectValidation?.root.requiredActions.length) {
 						setProjectImportStep("prepare_git");
 					} else if (projectValidation) {
@@ -951,7 +878,6 @@ export function CreateProjectFlow({
 						setSelectedPath(projectValidation.root.repoPath);
 					}
 				}}
-				onChangeRepositoryPrep={(repoPath, next) => setProjectRepositoryPrep((current) => current.map((repo) => repo.repoPath === repoPath ? { ...repo, ...next } : repo))}
 				shake={projectImportShake}
 				onOpenChange={(open) => {
 					if (isBusy) return;
@@ -1004,15 +930,15 @@ export function CreateProjectFlow({
 						: undefined
 				}
 				onSubmit={createProject}
-				open={selectedPath !== null && !createProgressOpen}
+				open={selectedPath !== null && !createProgress.open}
 				path={selectedPath}
 				repositorySetupNeeded={repositorySetup !== null}
 				repositorySetupWarning={repositorySetupWarning}
 			/>
 			<CreateProjectProgressDialog
-				message={createProgressMessage(createProgressStage, selectedKind === "workspace")}
-				open={createProgressOpen}
-				progress={createProgress}
+				message={createProgressMessage(createProgress.stage, selectedKind === "workspace")}
+				open={createProgress.open}
+				progress={createProgress.value}
 			/>
 			{error && !hasModePicker && (
 				<span className="sr-only" role="status">
@@ -1084,25 +1010,15 @@ function importBlockingErrorLabel(code: string): string {
 }
 
 function gitActionLabel(action: string): string {
-	switch (action) {
-		case "git_init":
-			return "Git initialization";
-		case "git_commit":
-			return "Initial commit";
-		case "set_remote":
-			return "Remote setup";
-		default:
-			return "Git setup";
-	}
+	return GIT_ACTION_LABELS[action] ?? "Git setup";
 }
 
 function orderedProjectActions(actions: string[]): string[] {
-	const rank = new Map([
-		["git_init", 0],
-		["git_commit", 1],
-		["set_remote", 2],
-	]);
-	return [...actions].sort((left, right) => (rank.get(left) ?? Number.MAX_SAFE_INTEGER) - (rank.get(right) ?? Number.MAX_SAFE_INTEGER));
+	const rank = (action: string) => {
+		const index = GIT_PREPARATION_ACTIONS.indexOf(action as (typeof GIT_PREPARATION_ACTIONS)[number]);
+		return index < 0 ? GIT_PREPARATION_ACTIONS.length : index;
+	};
+	return [...actions].sort((left, right) => rank(left) - rank(right));
 }
 
 function projectRequestedActionEvents(repoPath: string, actions: string[]): GitPreparationEvent[] {
@@ -1114,14 +1030,10 @@ function projectRequestedActionEvents(repoPath: string, actions: string[]): GitP
 	}));
 }
 
-function latestPreparationEvents(events: GitPreparationEvent[]): GitPreparationEvent[] {
-	const latest = new Map<string, GitPreparationEvent>();
-	for (const event of events) latest.set(`${event.repoPath}:${event.action}`, event);
-	return [...latest.values()];
-}
-
 function mergePreparationEvents(current: GitPreparationEvent[], incoming: GitPreparationEvent[]): GitPreparationEvent[] {
-	return latestPreparationEvents([...current, ...incoming]);
+	const latest = new Map<string, GitPreparationEvent>();
+	for (const event of [...current, ...incoming]) latest.set(`${event.repoPath}:${event.action}`, event);
+	return [...latest.values()];
 }
 
 function suggestedProjectRemoteUrl(repoPath: string): string {
@@ -1179,10 +1091,28 @@ function CreateProjectFlowBackdrop({ open }: { open: boolean }) {
 	return (
 		<Dialog.Root open={open}>
 			<Dialog.Portal>
-				<ModalBackdrop />
+				<Dialog.Overlay className="dialog-overlay z-[calc(var(--z-overlay)-1)] data-[state=open]:animate-overlay-in data-[state=closed]:animate-overlay-out" />
 			</Dialog.Portal>
 		</Dialog.Root>
 	);
+}
+
+function CreateProjectProgressDialog({ message, open, progress }: { message: string; open: boolean; progress: number }) {
+	const { t } = useTranslation();
+	const roundedProgress = Math.round(progress);
+	return <Dialog.Root open={open}><Dialog.Portal><Dialog.Content
+		className="fixed left-1/2 top-1/2 z-overlay w-[min(440px,calc(100vw-24px))] -translate-x-1/2 -translate-y-1/2 overflow-hidden rounded-lg border border-border bg-popover p-0 text-popover-foreground shadow-xl data-[state=open]:animate-modal-in data-[state=closed]:animate-modal-out motion-reduce:animate-none"
+		onEscapeKeyDown={(event) => event.preventDefault()}
+		onInteractOutside={(event) => event.preventDefault()}
+		onPointerDownOutside={(event) => event.preventDefault()}
+	><div className="px-5 pb-5 pt-5">
+		<Dialog.Title className="text-[18px] font-semibold text-[var(--color-text-import-title)]">{t("createProject.cloneProgressTitle", { defaultValue: "Creating the project" })}</Dialog.Title>
+		<Dialog.Description className="sr-only">{t("createProject.cloneProgressDescription", { defaultValue: "Creating the project" })}</Dialog.Description>
+		<div className="mt-6 space-y-3">
+			<div aria-label={`${roundedProgress}%`} aria-valuemax={100} aria-valuemin={0} aria-valuenow={roundedProgress} className="h-2 w-full overflow-hidden rounded-full bg-muted" role="progressbar"><div className="h-full rounded-full bg-primary transition-[width] duration-300 ease-out" style={{ width: `${Math.max(0, Math.min(100, progress))}%` }} /></div>
+			<p className="min-h-5 text-[13px] text-muted-foreground" role="status">{message}</p>
+		</div>
+	</div></Dialog.Content></Dialog.Portal></Dialog.Root>;
 }
 
 function CreateProjectSourceDialog({
@@ -1609,19 +1539,16 @@ function ProjectImportDialog({
 	approvedActions,
 	disabled,
 	events,
-	importKind,
 	onBack,
 	onChangeApprovedActions,
 	onChangeFolder,
 	onChangeRemote,
 	onContinue,
 	onContinueProject,
-	onChangeRepositoryPrep,
 	onOpenChange,
 	onTryWorkspace,
 	open,
 	remoteUrl,
-	repositoryPrep,
 	shake,
 	step,
 	isPreparingGit,
@@ -1630,19 +1557,16 @@ function ProjectImportDialog({
 	approvedActions: string[];
 	disabled: boolean;
 	events: GitPreparationEvent[];
-	importKind: "project" | "workspace";
 	onBack: () => void;
 	onChangeApprovedActions: (actions: string[]) => void;
 	onChangeFolder: () => void;
 	onChangeRemote: (value: string) => void;
 	onContinue: () => void;
 	onContinueProject: () => void;
-	onChangeRepositoryPrep: (repoPath: string, next: Partial<RepositoryPreparationState>) => void;
 	onOpenChange: (open: boolean) => void;
 	onTryWorkspace: () => void;
 	open: boolean;
 	remoteUrl: string;
-	repositoryPrep: RepositoryPreparationState[];
 	shake: boolean;
 	step: ProjectImportStep | null;
 	isPreparingGit: boolean;
@@ -1652,15 +1576,11 @@ function ProjectImportDialog({
 	if (!validation || !step) return null;
 	const needsRemote = validation.root.requiredActions.includes("set_remote");
 	const hasChildRepos = (validation.childRepos?.length ?? 0) > 0;
-	const mustImportAsWorkspace = importKind === "project" && step === "blocked" && validation.nextStep === "choose_import_kind" && hasChildRepos;
+	const mustImportAsWorkspace = step === "blocked" && validation.nextStep === "choose_import_kind" && hasChildRepos;
 	const hasFailedStep = events.some((event) => event.state === "error");
-	const latestEvents = latestPreparationEvents(events);
+	const latestEvents = mergePreparationEvents([], events);
 	const missingApprovals = validation.root.requiredActions.filter((action) => !approvedActions.includes(action));
-	const missingRepositoryApprovals = repositoryPrep.some((repo) => {
-		const status = validation.childRepos?.find((candidate) => candidate.repoPath === repo.repoPath);
-		return status?.requiredActions.some((action) => !repo.approvedActions.includes(action)) || (status?.requiredActions.includes("set_remote") && repo.remoteUrl.trim() === "");
-	});
-	const continueDisabled = disabled || (importKind === "workspace" ? missingRepositoryApprovals : missingApprovals.length > 0 || (needsRemote && remoteUrl.trim() === ""));
+	const continueDisabled = disabled || missingApprovals.length > 0 || (needsRemote && remoteUrl.trim() === "");
 	return (
 		<Dialog.Root open={open} onOpenChange={onOpenChange}>
 			<Dialog.Portal>
@@ -1677,9 +1597,7 @@ function ProjectImportDialog({
 							<Dialog.Title className="text-[18px] font-semibold text-[var(--color-text-import-title)]">
 								{step === "prepare_git"
 									? t("createProject.prepareProjectTitle")
-									: importKind === "workspace"
-										? t("createProject.importWorkspace")
-										: t("createProject.importProject")}
+									: t("createProject.importProject")}
 							</Dialog.Title>
 							<Dialog.Description className="sr-only">
 								{step === "blocked"
@@ -1729,30 +1647,7 @@ function ProjectImportDialog({
 										</span>
 									) : null}
 								</div>
-								{importKind === "workspace" ? (
-									<div className="space-y-3">
-										{repositoryPrep.map((repo) => {
-											const status = validation.childRepos?.find((candidate) => candidate.repoPath === repo.repoPath);
-											if (!status) return null;
-											const allApproved = status.requiredActions.every((action) => repo.approvedActions.includes(action));
-											return <div key={repo.repoPath} className="rounded-md border border-border/70 bg-background/40 p-3">
-												<div className="mb-2 truncate font-mono text-[12px] text-muted-foreground">{displayImportPath(repo.repoPath)}</div>
-												<div className="rounded-md border border-border/70 px-3 py-3">
-													<WorkspaceGitSetupFields
-														actions={status.requiredActions}
-														approved={allApproved}
-														disabled={disabled}
-														onApprovalChange={(approved) => onChangeRepositoryPrep(repo.repoPath, { approvedActions: approved ? [...status.requiredActions] : [] })}
-														onRemoteChange={(remoteUrl) => onChangeRepositoryPrep(repo.repoPath, { remoteUrl })}
-														remoteAriaLabel={`Origin remote URL for ${displayImportPath(repo.repoPath)}`}
-														remotePlaceholder={t("createProject.cloneRepositoryUrlPlaceholder")}
-														remoteUrl={repo.remoteUrl}
-													/>
-												</div>
-											</div>;
-										})}
-									</div>
-								) : <div className="divide-y divide-border overflow-hidden rounded-md border border-border/70 bg-background/40">
+								<div className="divide-y divide-border overflow-hidden rounded-md border border-border/70 bg-background/40">
 									{validation.root.requiredActions.map((action) => {
 											const checked = approvedActions.includes(action);
 											return (
@@ -1808,7 +1703,7 @@ function ProjectImportDialog({
 												</div>
 											);
 										})}
-										</div>}
+										</div>
 									{latestEvents.length > 0 ? (
 										<div className="space-y-1.5 rounded-md border border-border/70 bg-background/30 p-3" aria-live="polite">
 											{latestEvents.map((event) => (
@@ -1868,11 +1763,9 @@ function CreateProjectFolderDialog({
 	open,
 	scan,
 	validation,
-	workspaceApprovedActions,
-	workspaceRemoteUrls,
+	workspacePreparation,
 	isPreparingGit,
-	onChangeWorkspaceApprovedActions,
-	onChangeWorkspaceRemoteUrl,
+	onChangeWorkspacePreparation,
 }: {
 	disabled: boolean;
 	error: string | null;
@@ -1885,27 +1778,25 @@ function CreateProjectFolderDialog({
 	open: boolean;
 	scan: ImportFolderScan | null;
 	validation: ImportValidationResult | null;
-	workspaceApprovedActions: WorkspaceApprovalState;
-	workspaceRemoteUrls: WorkspaceRemoteState;
+	workspacePreparation: WorkspacePreparationState;
 	isPreparingGit: boolean;
-	onChangeWorkspaceApprovedActions: (repoPath: string, actions: string[]) => void;
-	onChangeWorkspaceRemoteUrl: (repoPath: string, remoteUrl: string) => void;
+	onChangeWorkspacePreparation: (repoPath: string, next: Partial<WorkspacePreparationState[string]>) => void;
 }) {
 	const { t } = useTranslation();
 	const isWorkspace = kind === "workspace";
 	const displayRepos = isWorkspace ? mergeWorkspaceImportRepos(scan, validation) : normalizeImportRepos(scan?.repos ?? []);
 	const workspaceNeedsInitializedRepo = isWorkspace && validation?.blockingErrors.includes("WORKSPACE_CHILD_REPO_REQUIRED");
 	const workspaceRootIsProject = isWorkspace && validation?.nextStep === "choose_import_kind" && validation.root.isRepo;
-	const selectedSetupRepos = displayRepos.filter((repo) => repo.requiredActions.length > 0 && (workspaceApprovedActions[repo.path]?.length ?? 0) > 0);
+	const selectedSetupRepos = displayRepos.filter((repo) => repo.requiredActions.length > 0 && (workspacePreparation[repo.path]?.approvedActions.length ?? 0) > 0);
 	const selectedSetupReady = selectedSetupRepos.every((repo) =>
-		repo.requiredActions.every((action) => workspaceApprovedActions[repo.path]?.includes(action)) &&
-		(!repo.requiredActions.includes("set_remote") || Boolean(workspaceRemoteUrls[repo.path]?.trim())),
+		repo.requiredActions.every((action) => workspacePreparation[repo.path]?.approvedActions.includes(action)) &&
+		(!repo.requiredActions.includes("set_remote") || Boolean(workspacePreparation[repo.path]?.remoteUrl.trim())),
 	);
 	const requiredSetupReady = displayRepos.every((repo) => {
 		if (repo.requiredActions.length === 0) return true;
-		const approved = repo.requiredActions.every((action) => workspaceApprovedActions[repo.path]?.includes(action));
+		const approved = repo.requiredActions.every((action) => workspacePreparation[repo.path]?.approvedActions.includes(action));
 		if (!repo.isRepo && !approved) return true;
-		return approved && (!repo.requiredActions.includes("set_remote") || Boolean(workspaceRemoteUrls[repo.path]?.trim()));
+		return approved && (!repo.requiredActions.includes("set_remote") || Boolean(workspacePreparation[repo.path]?.remoteUrl.trim()));
 	});
 	const workspaceSetupReady = !isWorkspace || (workspaceNeedsInitializedRepo ? selectedSetupRepos.length > 0 && selectedSetupReady : requiredSetupReady && selectedSetupReady);
 	const failedRepos =
@@ -1989,12 +1880,10 @@ function CreateProjectFolderDialog({
 								{workspaceRootIsProject && !error ? <p className="text-[14px] leading-6 text-[var(--color-text-import-muted)]">This is a single project, not a collection of projects. Import it as a project instead.</p> : null}
 
 							{workspaceRootIsProject ? null : isWorkspace ? <WorkspaceImportRepoList
-								approvedActions={workspaceApprovedActions}
+								preparation={workspacePreparation}
 								disabled={disabled}
 								isPreparingGit={isPreparingGit}
-								onChangeApprovedActions={onChangeWorkspaceApprovedActions}
-								onChangeRemoteUrl={onChangeWorkspaceRemoteUrl}
-								remoteUrls={workspaceRemoteUrls}
+								onChangePreparation={onChangeWorkspacePreparation}
 								repos={displayRepos}
 							/> : displayRepos.length > 0 ? <div className="divide-y divide-border/50 overflow-hidden rounded-sm bg-[var(--color-bg-import-card)]">
 								{displayRepos.map((repo) => <ImportRepoRow key={repo.path} repo={repo} />)}
@@ -2061,13 +1950,11 @@ function normalizeImportRepos(repos: ImportFolderScan["repos"]): DisplayImportRe
 	return repos.map((repo) => ({ ...repo, requiredActions: [], blockingErrors: [] }));
 }
 
-function WorkspaceImportRepoList({ approvedActions, disabled, isPreparingGit, onChangeApprovedActions, onChangeRemoteUrl, remoteUrls, repos }: {
-	approvedActions: WorkspaceApprovalState;
+function WorkspaceImportRepoList({ disabled, isPreparingGit, onChangePreparation, preparation, repos }: {
 	disabled: boolean;
 	isPreparingGit: boolean;
-	onChangeApprovedActions: (repoPath: string, actions: string[]) => void;
-	onChangeRemoteUrl: (repoPath: string, remoteUrl: string) => void;
-	remoteUrls: WorkspaceRemoteState;
+	onChangePreparation: (repoPath: string, next: Partial<WorkspacePreparationState[string]>) => void;
+	preparation: WorkspacePreparationState;
 	repos: DisplayImportRepo[];
 }) {
 	const orderedRepos = [...repos].sort((left, right) => (Number(right.requiredActions.length > 0) - Number(left.requiredActions.length > 0)) || left.name.localeCompare(right.name));
@@ -2084,7 +1971,7 @@ function WorkspaceImportRepoList({ approvedActions, disabled, isPreparingGit, on
 				<div className="relative">
 					<ImportRepoRow onSetup={needsSetup && !singleRequiredRepo ? () => setExpandedPath(expanded ? null : repo.path) : undefined} repo={repo} setupExpanded={expanded} />
 				</div>
-				{needsSetup ? <div className={cn("grid transition-[grid-template-rows] duration-200 ease-out motion-reduce:transition-none", expanded ? "grid-rows-[1fr]" : "grid-rows-[0fr]")}><div className="min-h-0 overflow-hidden"><WorkspaceInlineSetup approvedActions={approvedActions[repo.path] ?? []} disabled={disabled || isPreparingGit} onChangeApprovedActions={(actions) => onChangeApprovedActions(repo.path, actions)} onChangeRemoteUrl={(remoteUrl) => onChangeRemoteUrl(repo.path, remoteUrl)} repo={repo} remoteUrl={remoteUrls[repo.path] ?? ""} /></div></div> : null}
+				{needsSetup ? <div className={cn("grid transition-[grid-template-rows] duration-200 ease-out motion-reduce:transition-none", expanded ? "grid-rows-[1fr]" : "grid-rows-[0fr]")}><div className="min-h-0 overflow-hidden"><WorkspaceInlineSetup approvedActions={preparation[repo.path]?.approvedActions ?? []} disabled={disabled || isPreparingGit} onChangeApprovedActions={(approvedActions) => onChangePreparation(repo.path, { approvedActions })} onChangeRemoteUrl={(remoteUrl) => onChangePreparation(repo.path, { remoteUrl })} repo={repo} remoteUrl={preparation[repo.path]?.remoteUrl ?? ""} /></div></div> : null}
 			</div>;
 		})}
 	</div>;
@@ -2150,8 +2037,8 @@ function mergeWorkspaceImportRepos(scan: ImportFolderScan | null, validation: Im
 			needsGitInit: status?.needsGitInit ?? repo?.needsGitInit,
 			requiredActions: repo?.isRepo !== undefined ? scanRequiredActions(repo) : status?.requiredActions ?? [],
 			blockingErrors: status?.blockingErrors ?? [],
-			isRepo: status?.isRepo ?? repo?.isRepo,
-			hasCommit: status?.hasCommit ?? repo?.hasCommit,
+			isRepo: status?.isRepo ?? repo?.isRepo ?? false,
+			hasCommit: status?.hasCommit ?? repo?.hasCommit ?? false,
 			hasOrigin: status?.hasOrigin ?? repo?.hasRemote,
 		};
 	}).sort((left, right) => left.name.localeCompare(right.name));
@@ -2159,7 +2046,7 @@ function mergeWorkspaceImportRepos(scan: ImportFolderScan | null, validation: Im
 
 function scanRequiredActions(repo: ImportFolderScan["repos"][number] | undefined): string[] {
 	if (!repo || repo.status === "error") return [];
-	if (!repo.isRepo) return [...WORKSPACE_FOLDER_SETUP_ACTIONS];
+	if (!repo.isRepo) return [...GIT_PREPARATION_ACTIONS];
 	return [...(!repo.hasCommit ? ["git_commit"] : []), ...(!repo.hasRemote ? ["set_remote"] : [])];
 }
 

@@ -342,55 +342,23 @@ func TestPrepareGitRequiresApprovalBeforeMutation(t *testing.T) {
 	}
 }
 
-func TestPrepareGitRejectsMalformedRemoteBeforeMutation(t *testing.T) {
-	ctx := context.Background()
-	root := t.TempDir()
-	svc := New(Deps{Store: newFakeStore()})
-
-	_, err := svc.PrepareGit(ctx, GitPreparationInput{
-		ImportKind:      ImportKindProject,
-		Path:            root,
-		ApprovedActions: []string{GitPreparationActionInit, GitPreparationActionCommit, GitPreparationActionSetRemote},
-		RemoteURL:       "not a remote",
-	})
-	wantCode(t, err, "INVALID_GIT_URL")
-	if _, err := os.Stat(filepath.Join(root, ".git")); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("PrepareGit mutated before validating remote: %v", err)
-	}
-}
-
-func TestPrepareGitRejectsHostlessNetworkRemoteBeforeMutation(t *testing.T) {
-	for _, remoteURL := range []string{"https:///owner/repo.git", "ssh:///owner/repo.git", "git:///owner/repo.git"} {
-		t.Run(remoteURL, func(t *testing.T) {
-			root := t.TempDir()
-			svc := New(Deps{Store: newFakeStore()})
-
-			_, err := svc.PrepareGit(context.Background(), GitPreparationInput{
-				ImportKind:      ImportKindProject,
-				Path:            root,
-				ApprovedActions: []string{GitPreparationActionInit, GitPreparationActionCommit, GitPreparationActionSetRemote},
-				RemoteURL:       remoteURL,
-			})
-			wantCode(t, err, "INVALID_GIT_URL")
-			if _, err := os.Stat(filepath.Join(root, ".git")); !errors.Is(err, os.ErrNotExist) {
-				t.Fatalf("PrepareGit mutated before validating remote: %v", err)
-			}
-		})
-	}
-}
-
-func TestPrepareGitRejectsCredentialBearingRemoteBeforeMutation(t *testing.T) {
+func TestPrepareGitRejectsInvalidRemoteBeforeMutation(t *testing.T) {
 	tests := []struct {
 		name      string
 		remoteURL string
+		code      string
 	}{
-		{name: "HTTPS username", remoteURL: "https://token@github.com/acme/repository.git"},
-		{name: "HTTPS password", remoteURL: "https://user:secret@github.com/acme/repository.git"},
-		{name: "SSH password", remoteURL: "ssh://git:secret@github.com/acme/repository.git"},
-		{name: "Git userinfo", remoteURL: "git://token@git.example.test/acme/repository.git"},
-		{name: "file userinfo", remoteURL: "file://token@localhost/tmp/acme/repository.git"},
-		{name: "access token query", remoteURL: "https://github.com/acme/repository.git?access_token=secret"},
-		{name: "generic token query", remoteURL: "https://github.com/acme/repository.git?token=secret"},
+		{name: "malformed", remoteURL: "not a remote", code: "INVALID_GIT_URL"},
+		{name: "hostless HTTPS", remoteURL: "https:///owner/repo.git", code: "INVALID_GIT_URL"},
+		{name: "hostless SSH", remoteURL: "ssh:///owner/repo.git", code: "INVALID_GIT_URL"},
+		{name: "hostless Git", remoteURL: "git:///owner/repo.git", code: "INVALID_GIT_URL"},
+		{name: "HTTPS username", remoteURL: "https://token@github.com/acme/repository.git", code: "GIT_URL_CONTAINS_CREDENTIALS"},
+		{name: "HTTPS password", remoteURL: "https://user:secret@github.com/acme/repository.git", code: "GIT_URL_CONTAINS_CREDENTIALS"},
+		{name: "SSH password", remoteURL: "ssh://git:secret@github.com/acme/repository.git", code: "GIT_URL_CONTAINS_CREDENTIALS"},
+		{name: "Git userinfo", remoteURL: "git://token@git.example.test/acme/repository.git", code: "GIT_URL_CONTAINS_CREDENTIALS"},
+		{name: "file userinfo", remoteURL: "file://token@localhost/tmp/acme/repository.git", code: "GIT_URL_CONTAINS_CREDENTIALS"},
+		{name: "access token query", remoteURL: "https://github.com/acme/repository.git?access_token=secret", code: "GIT_URL_CONTAINS_CREDENTIALS"},
+		{name: "generic token query", remoteURL: "https://github.com/acme/repository.git?token=secret", code: "GIT_URL_CONTAINS_CREDENTIALS"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -403,9 +371,9 @@ func TestPrepareGitRejectsCredentialBearingRemoteBeforeMutation(t *testing.T) {
 				ApprovedActions: []string{GitPreparationActionInit, GitPreparationActionCommit, GitPreparationActionSetRemote},
 				RemoteURL:       tc.remoteURL,
 			})
-			wantCode(t, err, "GIT_URL_CONTAINS_CREDENTIALS")
+			wantCode(t, err, tc.code)
 			if _, err := os.Stat(filepath.Join(root, ".git")); !errors.Is(err, os.ErrNotExist) {
-				t.Fatalf("PrepareGit mutated before rejecting credential-bearing remote: %v", err)
+				t.Fatalf("PrepareGit mutated before rejecting remote: %v", err)
 			}
 		})
 	}
@@ -465,37 +433,6 @@ func TestPrepareGitRunsApprovedMissingActionsInOrder(t *testing.T) {
 	}
 }
 
-func TestPrepareGitStepwiseExecutesOnlyNextRequiredAction(t *testing.T) {
-	ctx := context.Background()
-	root := t.TempDir()
-	svc := New(Deps{Store: newFakeStore()})
-	request := GitPreparationInput{
-		ImportKind: ImportKindProject,
-		Path:       root,
-		ApprovedActions: []string{
-			GitPreparationActionInit,
-			GitPreparationActionCommit,
-			GitPreparationActionSetRemote,
-		},
-		RemoteURL: "https://example.invalid/repo.git",
-		Stepwise:  true,
-	}
-
-	result, err := svc.PrepareGit(ctx, request)
-	if err != nil {
-		t.Fatalf("PrepareGit: %v", err)
-	}
-	wantEventActions(t, result.Events, []string{
-		GitPreparationActionInit,
-		GitPreparationActionInit,
-		GitPreparationActionInit,
-	})
-	if !result.Validation.Root.IsRepo || result.Validation.Root.HasCommit || result.Validation.Root.HasOrigin {
-		t.Fatalf("validation = %#v, want only git init complete", result.Validation)
-	}
-	wantActions(t, result.Validation.Root.RequiredActions, []string{GitPreparationActionCommit, GitPreparationActionSetRemote})
-}
-
 func TestPrepareGitStepwiseCompletesInThreeCalls(t *testing.T) {
 	ctx := context.Background()
 	root := t.TempDir()
@@ -518,6 +455,12 @@ func TestPrepareGitStepwiseCompletesInThreeCalls(t *testing.T) {
 			t.Fatalf("PrepareGit call %d: %v", index+1, err)
 		}
 		wantEventActions(t, result.Events, []string{wantAction, wantAction, wantAction})
+		if index == 0 {
+			if !result.Validation.Root.IsRepo || result.Validation.Root.HasCommit || result.Validation.Root.HasOrigin {
+				t.Fatalf("first validation = %#v, want only git init complete", result.Validation)
+			}
+			wantActions(t, result.Validation.Root.RequiredActions, []string{GitPreparationActionCommit, GitPreparationActionSetRemote})
+		}
 		if index < 2 && result.Validation.NextStep != ImportNextStepPrepareGit {
 			t.Fatalf("call %d validation = %#v, want prepare_git", index+1, result.Validation)
 		}

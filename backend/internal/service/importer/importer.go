@@ -278,7 +278,7 @@ func (m *Manager) PrepareGit(ctx context.Context, in GitPreparationInput) (GitPr
 	canPrepareFirstWorkspaceRepo := importKind == ImportKindWorkspace &&
 		len(in.Repositories) > 0 &&
 		len(validation.BlockingErrors) == 1 &&
-		slices.Contains(validation.BlockingErrors, "WORKSPACE_CHILD_REPO_REQUIRED")
+		validation.BlockingErrors[0] == "WORKSPACE_CHILD_REPO_REQUIRED"
 	if !validation.IsValid && !canPrepareFirstWorkspaceRepo {
 		return GitPreparationResult{Validation: validation}, nil
 	}
@@ -294,7 +294,7 @@ func (m *Manager) PrepareGit(ctx context.Context, in GitPreparationInput) (GitPr
 		}
 	}
 	events := []GitPreparationEvent{}
-	executedStep := false
+preparation:
 	for _, target := range targets {
 		if !in.Stepwise {
 			if err := validatePreparationTarget(target); err != nil {
@@ -316,13 +316,9 @@ func (m *Manager) PrepareGit(ctx context.Context, in GitPreparationInput) (GitPr
 				return GitPreparationResult{Events: events, Validation: latest}, nil //nolint:nilerr // action failures are reported in-band as progress events for partial recovery
 			}
 			events = append(events, GitPreparationEvent{RepoPath: target.Status.RepoPath, Action: action, State: GitPreparationEventSuccess})
-			executedStep = true
 			if in.Stepwise {
-				break
+				break preparation
 			}
-		}
-		if in.Stepwise && executedStep {
-			break
 		}
 	}
 	latest, err := m.Validate(ctx, ImportValidationInput{ImportKind: importKind, Path: validation.Root.RepoPath})
@@ -611,10 +607,8 @@ func importRepoHasCommit(ctx context.Context, path string) bool {
 }
 
 func importRepoHasDetachedHead(ctx context.Context, path string) bool {
-	if _, err := importGitOutput(ctx, path, "symbolic-ref", "--quiet", "--short", "HEAD"); err != nil {
-		return true
-	}
-	return false
+	_, err := importGitOutput(ctx, path, "symbolic-ref", "--quiet", "--short", "HEAD")
+	return err != nil
 }
 
 var importScpRemotePattern = regexp.MustCompile(`^[^/@:\s]+@[^/:\s]+:(.+)$`)
@@ -680,12 +674,7 @@ func importRemoteExists(path, name string) bool {
 	if err != nil {
 		return false
 	}
-	for _, remote := range strings.Fields(string(out)) {
-		if remote == name {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(strings.Fields(string(out)), name)
 }
 
 func resolveImportOriginURL(path string) string {

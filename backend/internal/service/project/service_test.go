@@ -43,6 +43,27 @@ func (s failingProjectUpsertStore) UpsertProject(context.Context, domain.Project
 	return errors.New("forced project upsert failure")
 }
 
+func prepareClone(t *testing.T, m project.Manager, remoteURL string) project.ClonePreparationResult {
+	t.Helper()
+	prepared, err := m.PrepareClone(context.Background(), project.CloneInput{
+		RemoteURL: remoteURL, DestinationParent: t.TempDir(),
+	})
+	if err != nil {
+		t.Fatalf("PrepareClone: %v", err)
+	}
+	return prepared
+}
+
+func cleanupPreparedClone(t *testing.T, m project.Manager, path string) {
+	t.Helper()
+	if err := m.CleanupPreparedClone(context.Background(), project.ClonePreparationCleanupInput{Path: path}); err != nil {
+		t.Fatalf("CleanupPreparedClone: %v", err)
+	}
+	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("prepared checkout still exists after cleanup: %v", err)
+	}
+}
+
 // gitRepo creates a real git repository in a fresh temp dir and returns its
 // path. It pins the initial branch to `main` so default-branch detection is
 // deterministic regardless of the host's init.defaultBranch.
@@ -259,23 +280,12 @@ func TestManager_PreparedCloneCanBeCleanedUpAfterAddFailure(t *testing.T) {
 
 	t.Run("input validation", func(t *testing.T) {
 		m := newManager(t)
-		prepared, err := m.PrepareClone(ctx, project.CloneInput{
-			RemoteURL:         remoteURL,
-			DestinationParent: t.TempDir(),
-		})
-		if err != nil {
-			t.Fatalf("PrepareClone: %v", err)
-		}
+		prepared := prepareClone(t, m, remoteURL)
 
 		invalidID := "not a valid project id"
-		_, err = m.Add(ctx, project.AddInput{Path: prepared.Path, ProjectID: &invalidID})
+		_, err := m.Add(ctx, project.AddInput{Path: prepared.Path, ProjectID: &invalidID})
 		wantCode(t, err, "INVALID_PROJECT_ID")
-		if err := m.CleanupPreparedClone(ctx, project.ClonePreparationCleanupInput{Path: prepared.Path}); err != nil {
-			t.Fatalf("CleanupPreparedClone: %v", err)
-		}
-		if _, err := os.Stat(prepared.Path); !errors.Is(err, os.ErrNotExist) {
-			t.Fatalf("prepared checkout still exists after cleanup: %v", err)
-		}
+		cleanupPreparedClone(t, m, prepared.Path)
 	})
 
 	t.Run("store failure", func(t *testing.T) {
@@ -285,22 +295,11 @@ func TestManager_PreparedCloneCanBeCleanedUpAfterAddFailure(t *testing.T) {
 		}
 		t.Cleanup(func() { _ = store.Close() })
 		m := project.New(failingProjectUpsertStore{Store: store})
-		prepared, err := m.PrepareClone(ctx, project.CloneInput{
-			RemoteURL:         remoteURL,
-			DestinationParent: t.TempDir(),
-		})
-		if err != nil {
-			t.Fatalf("PrepareClone: %v", err)
-		}
+		prepared := prepareClone(t, m, remoteURL)
 
 		_, err = m.Add(ctx, project.AddInput{Path: prepared.Path})
 		wantCode(t, err, "PROJECT_ADD_FAILED")
-		if err := m.CleanupPreparedClone(ctx, project.ClonePreparationCleanupInput{Path: prepared.Path}); err != nil {
-			t.Fatalf("CleanupPreparedClone: %v", err)
-		}
-		if _, err := os.Stat(prepared.Path); !errors.Is(err, os.ErrNotExist) {
-			t.Fatalf("prepared checkout still exists after cleanup: %v", err)
-		}
+		cleanupPreparedClone(t, m, prepared.Path)
 	})
 
 	t.Run("clone registration failure", func(t *testing.T) {

@@ -14,6 +14,7 @@ vi.mock("motion/react", async (importOriginal) => {
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { components } from "../../api/schema";
 import {
 	Sidebar,
 	SIDEBAR_DEFAULT_WIDTH,
@@ -227,6 +228,35 @@ type CloneProjectHandler = (input: {
 }) => Promise<void>;
 type InitializeProjectHandler = (path: string) => Promise<void>;
 type RemoveProjectHandler = (projectId: string) => Promise<void>;
+type ImportValidationResult = components["schemas"]["ImportValidationResult"];
+type RepoGitStatus = components["schemas"]["RepoGitStatus"];
+
+function repoStatus(repoPath: string, overrides: Partial<RepoGitStatus> = {}): RepoGitStatus {
+	return {
+		repoPath,
+		isRepo: false,
+		hasCommit: false,
+		hasOrigin: false,
+		isEmptyFolder: false,
+		needsGitInit: false,
+		requiredActions: [],
+		blockingErrors: [],
+		...overrides,
+	};
+}
+
+function importValidation(path: string, overrides: Partial<ImportValidationResult> = {}): ImportValidationResult {
+	const importKind = overrides.importKind ?? "workspace";
+	return {
+		importKind,
+		isValid: true,
+		blockingErrors: [],
+		root: repoStatus(path, importKind === "project" ? { isRepo: true, hasCommit: true, hasOrigin: true } : {}),
+		childRepos: [],
+		nextStep: "continue",
+		...overrides,
+	};
+}
 
 function renderSidebar({
 	onCloneProject = vi.fn().mockResolvedValue(undefined) as CloneProjectHandler,
@@ -362,25 +392,8 @@ beforeEach(() => {
 		if (path === "/api/v1/imports/validate") {
 			const selectedPath = options?.body?.path ?? "/repo/workspace";
 			const importKind = options?.body?.importKind ?? "workspace";
-			const isProject = importKind === "project";
 			return {
-				data: {
-					importKind,
-					isValid: true,
-					blockingErrors: [],
-					root: {
-						repoPath: selectedPath,
-						isRepo: isProject,
-						hasCommit: isProject,
-						hasOrigin: isProject,
-						isEmptyFolder: false,
-						needsGitInit: false,
-						requiredActions: [],
-						blockingErrors: [],
-					},
-					childRepos: [],
-					nextStep: "continue",
-				},
+				data: importValidation(selectedPath, { importKind }),
 				error: undefined,
 			};
 		}
@@ -389,23 +402,7 @@ beforeEach(() => {
 			return {
 				data: {
 					events: [],
-					validation: {
-						importKind: "workspace",
-						isValid: true,
-						blockingErrors: [],
-						root: {
-							repoPath: selectedPath,
-							isRepo: false,
-							hasCommit: false,
-							hasOrigin: false,
-							isEmptyFolder: false,
-							needsGitInit: false,
-							requiredActions: [],
-							blockingErrors: [],
-						},
-						childRepos: [],
-						nextStep: "continue",
-					},
+					validation: importValidation(selectedPath),
 				},
 				error: undefined,
 			};
@@ -1205,34 +1202,9 @@ describe("Sidebar", () => {
 		postMock.mockImplementation(async (path: string, options?: { body?: { importKind?: string; path?: string } }) => {
 			if (path === "/api/v1/imports/validate") {
 				return {
-					data: {
-						importKind: options?.body?.importKind ?? "workspace",
-						isValid: true,
-						blockingErrors: [],
-						root: {
-							repoPath: options?.body?.path ?? "/Users/test/dev/acme",
-							isRepo: false,
-							hasCommit: false,
-							hasOrigin: false,
-							isEmptyFolder: false,
-							needsGitInit: false,
-							requiredActions: [],
-							blockingErrors: [],
-						},
-						childRepos: [
-							{
-								repoPath: "/Users/test/dev/acme/api",
-								isRepo: true,
-								hasCommit: true,
-								hasOrigin: true,
-								isEmptyFolder: false,
-								needsGitInit: false,
-								requiredActions: [],
-								blockingErrors: [],
-							},
-						],
-						nextStep: "continue",
-					},
+					data: importValidation(options?.body?.path ?? "/Users/test/dev/acme", {
+						childRepos: [repoStatus("/Users/test/dev/acme/api", { isRepo: true, hasCommit: true, hasOrigin: true })],
+					}),
 					error: undefined,
 				};
 			}
@@ -1288,23 +1260,11 @@ describe("Sidebar", () => {
 		postMock.mockImplementation(async (path: string, options?: { body?: { importKind?: string; path?: string } }) => {
 			if (path === "/api/v1/imports/validate") {
 				return {
-					data: {
-						importKind: options?.body?.importKind ?? "workspace",
+					data: importValidation(options?.body?.path ?? "/repo/workspace", {
 						isValid: false,
 						blockingErrors: ["WORKSPACE_CHILD_REPO_REQUIRED"],
-						root: {
-							repoPath: options?.body?.path ?? "/repo/workspace",
-							isRepo: false,
-							hasCommit: false,
-							hasOrigin: false,
-							isEmptyFolder: false,
-							needsGitInit: false,
-							requiredActions: [],
-							blockingErrors: [],
-						},
-						childRepos: [],
 						nextStep: "error",
-					},
+					}),
 					error: undefined,
 				};
 			}
@@ -1331,54 +1291,14 @@ describe("Sidebar", () => {
 		postMock.mockImplementation(async (path: string, options?: { body?: { importKind?: string; path?: string } }) => {
 			if (path === "/api/v1/imports/validate") {
 				return {
-					data: {
-						importKind: options?.body?.importKind ?? "workspace",
-						isValid: true,
-						blockingErrors: [],
-						root: {
-							repoPath: options?.body?.path ?? "/repo/workspace",
-							isRepo: false,
-							hasCommit: false,
-							hasOrigin: false,
-							isEmptyFolder: false,
-							needsGitInit: false,
-							requiredActions: [],
-							blockingErrors: [],
-						},
+					data: importValidation(options?.body?.path ?? "/repo/workspace", {
 						childRepos: [
-							{
-								repoPath: "/repo/workspace/api",
-								isRepo: true,
-								hasCommit: true,
-								hasOrigin: true,
-								isEmptyFolder: false,
-								needsGitInit: false,
-								requiredActions: [],
-								blockingErrors: [],
-							},
-							{
-								repoPath: "/repo/workspace/unborn",
-								isRepo: true,
-								hasCommit: false,
-								hasOrigin: false,
-								isEmptyFolder: false,
-								needsGitInit: false,
-								requiredActions: ["git_commit", "set_remote"],
-								blockingErrors: [],
-							},
-							{
-								repoPath: "/repo/workspace/no-remote",
-								isRepo: true,
-								hasCommit: true,
-								hasOrigin: false,
-								isEmptyFolder: false,
-								needsGitInit: false,
-								requiredActions: ["set_remote"],
-								blockingErrors: [],
-							},
+							repoStatus("/repo/workspace/api", { isRepo: true, hasCommit: true, hasOrigin: true }),
+							repoStatus("/repo/workspace/unborn", { isRepo: true, requiredActions: ["git_commit", "set_remote"] }),
+							repoStatus("/repo/workspace/no-remote", { isRepo: true, hasCommit: true, requiredActions: ["set_remote"] }),
 						],
 						nextStep: "prepare_git",
-					},
+					}),
 					error: undefined,
 				};
 			}
@@ -1421,57 +1341,17 @@ describe("Sidebar", () => {
 						events: [
 							{ action: "set_remote", repoPath: "/repo/workspace/temp", state: "success" },
 						],
-						validation: {
-							importKind: "workspace",
-							isValid: true,
-							blockingErrors: [],
-							root: {
-								repoPath: "/repo/workspace",
-								isRepo: false,
-								hasCommit: false,
-								hasOrigin: false,
-								isEmptyFolder: false,
-								needsGitInit: false,
-								requiredActions: [],
-								blockingErrors: [],
-							},
-							childRepos: [],
-							nextStep: "continue",
-						},
+						validation: importValidation("/repo/workspace"),
 					},
 					error: undefined,
 				};
 			}
 			if (path === "/api/v1/imports/validate") {
 				return {
-					data: {
-						importKind: options?.body?.importKind ?? "workspace",
-						isValid: true,
-						blockingErrors: [],
-						root: {
-							repoPath: options?.body?.path ?? "/repo/workspace",
-							isRepo: false,
-							hasCommit: false,
-							hasOrigin: false,
-							isEmptyFolder: false,
-							needsGitInit: false,
-							requiredActions: [],
-							blockingErrors: [],
-						},
-						childRepos: [
-							{
-								repoPath: "/repo/workspace/temp",
-								isRepo: true,
-								hasCommit: true,
-								hasOrigin: false,
-								isEmptyFolder: false,
-								needsGitInit: false,
-								requiredActions: ["set_remote"],
-								blockingErrors: [],
-							},
-						],
+					data: importValidation(options?.body?.path ?? "/repo/workspace", {
+						childRepos: [repoStatus("/repo/workspace/temp", { isRepo: true, hasCommit: true, requiredActions: ["set_remote"] })],
 						nextStep: "prepare_git",
-					},
+					}),
 					error: undefined,
 				};
 			}
@@ -1512,27 +1392,20 @@ describe("Sidebar", () => {
 				return {
 					data: {
 						events: [],
-						validation: {
-							importKind: "workspace",
-							isValid: true,
-							blockingErrors: [],
-							root: { repoPath: "/repo/workspace", isRepo: false, hasCommit: false, hasOrigin: false, isEmptyFolder: false, needsGitInit: true, requiredActions: ["git_init", "git_commit", "set_remote"], blockingErrors: [] },
-							childRepos: [],
-							nextStep: "continue",
-						},
+						validation: importValidation("/repo/workspace", {
+							root: repoStatus("/repo/workspace", { needsGitInit: true, requiredActions: ["git_init", "git_commit", "set_remote"] }),
+						}),
 					},
 					error: undefined,
 				};
 			}
 			return {
-				data: {
-					importKind: "workspace",
+				data: importValidation("/repo/workspace", {
 					isValid: false,
 					blockingErrors: ["WORKSPACE_CHILD_REPO_REQUIRED"],
-					root: { repoPath: "/repo/workspace", isRepo: false, hasCommit: false, hasOrigin: false, isEmptyFolder: false, needsGitInit: true, requiredActions: ["git_init", "git_commit", "set_remote"], blockingErrors: [] },
-					childRepos: [],
+					root: repoStatus("/repo/workspace", { needsGitInit: true, requiredActions: ["git_init", "git_commit", "set_remote"] }),
 					nextStep: "error",
-				},
+				}),
 				error: undefined,
 			};
 		});

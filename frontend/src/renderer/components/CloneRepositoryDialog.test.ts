@@ -20,13 +20,20 @@ function cloneDialogProps(
 	};
 }
 
+function renderCloneDialog(
+	overrides: Partial<React.ComponentProps<typeof CloneRepositoryDialog>> = {},
+) {
+	const props = cloneDialogProps(overrides);
+	return { props, view: render(React.createElement(CloneRepositoryDialog, props)) };
+}
+
 afterEach(() => {
 	vi.restoreAllMocks();
 });
 
 describe("clone repository input", () => {
 	it("describes the destination consistently and shows the exact checkout path", () => {
-		render(React.createElement(CloneRepositoryDialog, cloneDialogProps()));
+		renderCloneDialog();
 
 		expect(screen.getByText("Destination folder")).toBeInTheDocument();
 		expect(screen.getByText("Repository will be created at /code/web-app.")).toBeInTheDocument();
@@ -78,10 +85,10 @@ describe("clone repository input", () => {
 
 	it("allows the same project name at a different target path", async () => {
 		window.ao!.app.checkGitRepository = vi.fn().mockResolvedValue(true);
-		render(React.createElement(CloneRepositoryDialog, cloneDialogProps({
+		renderCloneDialog({
 			existingProjectNames: ["web-app"],
 			existingProjectPaths: ["/other/web-app"],
-		})));
+		});
 
 		await waitFor(() => expect(screen.getByRole("button", { name: "Continue" })).toBeEnabled());
 		expect(screen.queryByText("A project with this name already exists.")).not.toBeInTheDocument();
@@ -90,11 +97,10 @@ describe("clone repository input", () => {
 	it("reports a duplicate target once and does not repeat it as a parent alert", async () => {
 		window.ao!.app.checkGitRepository = vi.fn().mockResolvedValue(true);
 		const onError = vi.fn();
-		const props = cloneDialogProps({
+		const { props, view } = renderCloneDialog({
 			existingProjectPaths: ["/code/web-app/"],
 			onError,
 		});
-		const view = render(React.createElement(CloneRepositoryDialog, props));
 
 		const duplicateMessage = "A project already exists at this location";
 		expect(onError).not.toHaveBeenCalled();
@@ -105,21 +111,17 @@ describe("clone repository input", () => {
 		expect(screen.getAllByRole("alert")).toHaveLength(1);
 		await waitFor(() => expect(screen.getByRole("dialog", { name: "Clone a Git repository" })).toHaveClass("modal-shake"));
 
-		view.rerender(React.createElement(CloneRepositoryDialog, {
-			...props,
-			error: duplicateMessage,
-		}));
+		view.rerender(React.createElement(CloneRepositoryDialog, { ...props, error: duplicateMessage }));
 		expect(screen.getAllByRole("alert")).toHaveLength(1);
 		expect(onError).toHaveBeenCalledTimes(1);
 	});
 
 	it("waits until blur to report a malformed URL, then reports it once", async () => {
 		const onError = vi.fn();
-		const props = cloneDialogProps({
+		const { props, view } = renderCloneDialog({
 			onError,
 			value: { remoteUrl: "", destinationParent: "/code" },
 		});
-		const view = render(React.createElement(CloneRepositoryDialog, props));
 		view.rerender(React.createElement(CloneRepositoryDialog, {
 			...props,
 			value: { remoteUrl: "n", destinationParent: "/code" },
@@ -136,10 +138,10 @@ describe("clone repository input", () => {
 
 	it("reports a malformed URL when the form is submitted before blur", async () => {
 		const onError = vi.fn();
-		render(React.createElement(CloneRepositoryDialog, cloneDialogProps({
+		renderCloneDialog({
 			onError,
 			value: { remoteUrl: "not-a-repository", destinationParent: "/code" },
-		})));
+		});
 
 		const input = screen.getByRole("textbox", { name: "Repository URL" });
 		fireEvent.submit(input.closest("form")!);
@@ -150,11 +152,11 @@ describe("clone repository input", () => {
 		window.ao!.app.checkGitRepository = vi.fn().mockResolvedValue(true);
 		const onContinue = vi.fn();
 		const onError = vi.fn();
-		render(React.createElement(CloneRepositoryDialog, cloneDialogProps({
+		renderCloneDialog({
 			onContinue,
 			onError,
 			value: { remoteUrl: "https://github.com/acme/web-app.git", destinationParent: "" },
-		})));
+		});
 
 		await waitFor(() => expect(window.ao!.app.checkGitRepository).toHaveBeenCalledOnce());
 		const continueButton = screen.getByRole("button", { name: "Continue" });
@@ -172,11 +174,10 @@ describe("clone repository input", () => {
 			else resolveSecond = resolve;
 		}));
 		const onError = vi.fn();
-		const firstProps = cloneDialogProps({
+		const { props: firstProps, view } = renderCloneDialog({
 			onError,
 			value: { remoteUrl: "https://git.example.com/first.git", destinationParent: "/code" },
 		});
-		const view = render(React.createElement(CloneRepositoryDialog, firstProps));
 
 		await waitFor(() => expect(window.ao!.app.checkGitRepository).toHaveBeenCalledWith("https://git.example.com/first.git"));
 		view.rerender(React.createElement(CloneRepositoryDialog, {
@@ -195,8 +196,7 @@ describe("clone repository input", () => {
 
 	it("checks the remote again each time the dialog opens", async () => {
 		window.ao!.app.checkGitRepository = vi.fn().mockResolvedValue(true);
-		const props = cloneDialogProps();
-		const view = render(React.createElement(CloneRepositoryDialog, props));
+		const { props, view } = renderCloneDialog();
 
 		await waitFor(() => expect(screen.getByRole("button", { name: "Continue" })).toBeEnabled());
 		view.rerender(React.createElement(CloneRepositoryDialog, { ...props, open: false }));
@@ -210,7 +210,7 @@ describe("clone repository input", () => {
 	it("announces an unavailable repository and shakes the dialog", async () => {
 		window.ao!.app.checkGitRepository = vi.fn().mockResolvedValue(false);
 		const onError = vi.fn();
-		render(React.createElement(CloneRepositoryDialog, cloneDialogProps({ onError })));
+		renderCloneDialog({ onError });
 
 		await waitFor(() => expect(onError).toHaveBeenCalledWith("This isn't a repository or you don't have access"));
 		const input = screen.getByRole("textbox", { name: "Repository URL" });
@@ -226,8 +226,7 @@ describe("clone repository input", () => {
 			resolvePicker = resolve;
 		}));
 		const onChange = vi.fn();
-		const props = cloneDialogProps({ onChange });
-		const view = render(React.createElement(CloneRepositoryDialog, props));
+		const { props, view } = renderCloneDialog({ onChange });
 
 		fireEvent.click(screen.getByRole("button", { name: "Choose" }));
 		await waitFor(() => expect(window.ao!.app.chooseDirectory).toHaveBeenCalledOnce());

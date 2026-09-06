@@ -1,7 +1,7 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import userEvent from "@testing-library/user-event";
-import { useState, type ReactNode } from "react";
+import { useState, type ComponentProps, type ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { CreateProjectFlow, type CloneProjectInput, type CreateProjectInput } from "./CreateProjectFlow";
 import { useUiStore } from "../stores/ui-store";
@@ -169,6 +169,19 @@ const noop = {
 	onCreateProject: async (_input: CreateProjectInput) => undefined,
 	onInitializeProject: async (_path: string) => undefined,
 };
+
+function renderChooseFlow(overrides: Partial<ComponentProps<typeof CreateProjectFlow>> = {}) {
+	return render(
+		<CreateProjectFlow mode="choose" {...noop} {...overrides}>
+			{({ choosePath }) => <button onClick={choosePath}>New project</button>}
+		</CreateProjectFlow>,
+	);
+}
+
+async function openSource(user: ReturnType<typeof userEvent.setup>, name: string) {
+	await user.click(screen.getByRole("button", { name: "New project" }));
+	await user.click(await screen.findByRole("button", { name }));
+}
 
 function projectValidation(
 	path: string,
@@ -343,14 +356,8 @@ describe("CreateProjectFlow droppedPath", () => {
 				}),
 			});
 
-		render(
-			<CreateProjectFlow mode="choose" {...noop}>
-				{({ choosePath }) => <button onClick={choosePath}>New project</button>}
-			</CreateProjectFlow>,
-		);
-
-		await user.click(screen.getByRole("button", { name: "New project" }));
-		await user.click(await screen.findByRole("button", { name: "Clone from Git" }));
+		renderChooseFlow();
+		await openSource(user, "Clone from Git");
 		fireEvent.click(await screen.findByText("Continue clone"));
 
 		expect(await screen.findByText("Prepare project")).toBeInTheDocument();
@@ -375,14 +382,8 @@ describe("CreateProjectFlow droppedPath", () => {
 			});
 		});
 
-		render(
-			<CreateProjectFlow mode="choose" {...noop}>
-				{({ choosePath }) => <button onClick={choosePath}>New project</button>}
-			</CreateProjectFlow>,
-		);
-
-		await user.click(screen.getByRole("button", { name: "New project" }));
-		await user.click(await screen.findByRole("button", { name: "Clone from Git" }));
+		renderChooseFlow();
+		await openSource(user, "Clone from Git");
 		fireEvent.click(await screen.findByText("Continue clone"));
 		expect(screen.getByTestId("clone-dialog")).toBeInTheDocument();
 
@@ -406,14 +407,8 @@ describe("CreateProjectFlow droppedPath", () => {
 			return {};
 		});
 
-		render(
-			<CreateProjectFlow mode="choose" {...noop}>
-				{({ choosePath }) => <button onClick={choosePath}>New project</button>}
-			</CreateProjectFlow>,
-		);
-
-		await user.click(screen.getByRole("button", { name: "New project" }));
-		await user.click(await screen.findByRole("button", { name: "Clone from Git" }));
+		renderChooseFlow();
+		await openSource(user, "Clone from Git");
 		fireEvent.click(await screen.findByText("Continue clone"));
 
 		await waitFor(() => expect(apiMocks.POST).toHaveBeenCalledWith(
@@ -442,14 +437,8 @@ describe("CreateProjectFlow droppedPath", () => {
 			return {};
 		});
 
-		render(
-			<CreateProjectFlow mode="choose" {...noop}>
-				{({ choosePath }) => <button onClick={choosePath}>New project</button>}
-			</CreateProjectFlow>,
-		);
-
-		await user.click(screen.getByRole("button", { name: "New project" }));
-		await user.click(await screen.findByRole("button", { name: "Clone from Git" }));
+		renderChooseFlow();
+		await openSource(user, "Clone from Git");
 		fireEvent.click(await screen.findByText("Continue clone"));
 
 		await waitFor(() => expect(cleanupAttempts).toBe(1));
@@ -466,14 +455,8 @@ describe("CreateProjectFlow droppedPath", () => {
 
 	it("starts clone details fresh each time it opens", async () => {
 		const user = userEvent.setup();
-		render(
-			<CreateProjectFlow mode="choose" {...noop}>
-				{({ choosePath }) => <button onClick={choosePath}>New project</button>}
-			</CreateProjectFlow>,
-		);
-
-		await user.click(screen.getByRole("button", { name: "New project" }));
-		await user.click(await screen.findByRole("button", { name: "Clone from Git" }));
+		renderChooseFlow();
+		await openSource(user, "Clone from Git");
 		fireEvent.change(await screen.findByLabelText("Clone URL"), { target: { value: "https://example.com/old.git" } });
 		fireEvent.click(screen.getByText("Back clone"));
 		fireEvent.click(await screen.findByRole("button", { name: "Clone from Git" }));
@@ -491,14 +474,8 @@ describe("CreateProjectFlow droppedPath", () => {
 			.mockResolvedValueOnce({ data: { path: "/repo/cloned", remoteUrl: "file:///source/cloned.git" } })
 			.mockResolvedValueOnce({ data: projectValidation("/repo/cloned") });
 
-		render(
-			<CreateProjectFlow mode="choose" {...noop} onCreateProject={onCreateProject}>
-				{({ choosePath }) => <button onClick={choosePath}>New project</button>}
-			</CreateProjectFlow>,
-		);
-
-		await user.click(screen.getByRole("button", { name: "New project" }));
-		await user.click(await screen.findByRole("button", { name: "Clone from Git" }));
+		renderChooseFlow({ onCreateProject });
+		await openSource(user, "Clone from Git");
 		fireEvent.click(await screen.findByText("Continue clone"));
 		await user.click(await screen.findByRole("button", { name: "Submit agents" }));
 		expect(await screen.findByRole("dialog", { name: "Creating the project" })).toBeInTheDocument();
@@ -530,8 +507,7 @@ describe("CreateProjectFlow project import validation", () => {
 			</CreateProjectFlow>,
 		);
 
-		await user.click(screen.getByRole("button", { name: "New project" }));
-		await user.click(await screen.findByRole("button", { name: "Import an existing project" }));
+		await openSource(user, "Import an existing project");
 
 		await waitFor(() => expect(onOpenExistingProject).toHaveBeenCalledWith("/repo/existing"));
 		expect(apiMocks.POST).not.toHaveBeenCalled();
@@ -555,14 +531,9 @@ describe("CreateProjectFlow project import validation", () => {
 			})
 			.mockResolvedValueOnce({ data: projectValidation("/repo/project") });
 
-		render(
-			<CreateProjectFlow mode="choose" {...noop}>
-				{({ choosePath }) => <button onClick={choosePath}>New project</button>}
-			</CreateProjectFlow>,
-		);
+		renderChooseFlow();
 
-		await user.click(screen.getByRole("button", { name: "New project" }));
-		await user.click(await screen.findByRole("button", { name: "Import a workspace folder" }));
+		await openSource(user, "Import a workspace folder");
 
 		expect(await screen.findByText("This is a single project, not a collection of projects. Import it as a project instead.")).toBeInTheDocument();
 		expect(screen.getByRole("button", { name: "Import as project" })).toBeInTheDocument();
@@ -586,14 +557,9 @@ describe("CreateProjectFlow project import validation", () => {
 		bridgeMocks.chooseDirectory.mockResolvedValue("/repo/project");
 		apiMocks.POST.mockResolvedValueOnce({ data: projectValidation("/repo/project", { nextStep: "prepare_git" }) });
 
-		render(
-			<CreateProjectFlow mode="choose" {...noop}>
-				{({ choosePath }) => <button onClick={choosePath}>New project</button>}
-			</CreateProjectFlow>,
-		);
+		renderChooseFlow();
 
-		await user.click(screen.getByRole("button", { name: "New project" }));
-		await user.click(await screen.findByRole("button", { name: "Import an existing project" }));
+		await openSource(user, "Import an existing project");
 		await screen.findByText("Prepare project");
 
 		expect(document.querySelectorAll(".dialog-overlay")).toHaveLength(1);
@@ -610,14 +576,9 @@ describe("CreateProjectFlow project import validation", () => {
 			}),
 		});
 
-		render(
-			<CreateProjectFlow mode="choose" {...noop}>
-				{({ choosePath }) => <button onClick={choosePath}>New project</button>}
-			</CreateProjectFlow>,
-		);
+		renderChooseFlow();
 
-		await user.click(screen.getByRole("button", { name: "New project" }));
-		await user.click(await screen.findByRole("button", { name: "Import an existing project" }));
+		await openSource(user, "Import an existing project");
 
 		await waitFor(() => expect(useUiStore.getState().globalToast?.body).toBe("Choose a folder AO can read."));
 		expect(screen.queryByTestId("agent-sheet")).not.toBeInTheDocument();
@@ -663,14 +624,9 @@ describe("CreateProjectFlow project import validation", () => {
 			}),
 		});
 
-		render(
-			<CreateProjectFlow mode="choose" {...noop}>
-				{({ choosePath }) => <button onClick={choosePath}>New project</button>}
-			</CreateProjectFlow>,
-		);
+		renderChooseFlow();
 
-		await user.click(screen.getByRole("button", { name: "New project" }));
-		await user.click(await screen.findByRole("button", { name: "Import an existing project" }));
+		await openSource(user, "Import an existing project");
 
 		expect(await screen.findByText("This folder contains projects and needs to be imported as a workspace.")).toBeInTheDocument();
 		expect(screen.queryByRole("button", { name: "Continue" })).not.toBeInTheDocument();
@@ -696,14 +652,9 @@ describe("CreateProjectFlow project import validation", () => {
 			}),
 		});
 
-		render(
-			<CreateProjectFlow mode="choose" {...noop}>
-				{({ choosePath }) => <button onClick={choosePath}>New project</button>}
-			</CreateProjectFlow>,
-		);
+		renderChooseFlow();
 
-		await user.click(screen.getByRole("button", { name: "New project" }));
-		await user.click(await screen.findByRole("button", { name: "Import an existing project" }));
+		await openSource(user, "Import an existing project");
 
 		expect(await screen.findByText("Prepare project")).toBeInTheDocument();
 		expect(screen.getByText("Project setup")).toBeInTheDocument();
@@ -741,14 +692,9 @@ describe("CreateProjectFlow project import validation", () => {
 			}),
 		});
 
-		render(
-			<CreateProjectFlow mode="choose" {...noop}>
-				{({ choosePath }) => <button onClick={choosePath}>New project</button>}
-			</CreateProjectFlow>,
-		);
+		renderChooseFlow();
 
-		await user.click(screen.getByRole("button", { name: "New project" }));
-		await user.click(await screen.findByRole("button", { name: "Import an existing project" }));
+		await openSource(user, "Import an existing project");
 
 		expect(await screen.findByText("This folder contains child Git repositories and will be imported as one project.")).toBeInTheDocument();
 		expect(screen.queryByTestId("agent-sheet")).not.toBeInTheDocument();
@@ -770,14 +716,9 @@ describe("CreateProjectFlow project import validation", () => {
 			}),
 		});
 
-		render(
-			<CreateProjectFlow mode="choose" {...noop}>
-				{({ choosePath }) => <button onClick={choosePath}>New project</button>}
-			</CreateProjectFlow>,
-		);
+		renderChooseFlow();
 
-		await user.click(screen.getByRole("button", { name: "New project" }));
-		await user.click(await screen.findByRole("button", { name: "Import an existing project" }));
+		await openSource(user, "Import an existing project");
 
 		expect(await screen.findByLabelText("Origin remote URL")).toHaveValue(
 			"https://github.com/username/project-no-git.git",
@@ -797,14 +738,9 @@ describe("CreateProjectFlow project import validation", () => {
 			}),
 		});
 
-		render(
-			<CreateProjectFlow mode="choose" {...noop}>
-				{({ choosePath }) => <button onClick={choosePath}>New project</button>}
-			</CreateProjectFlow>,
-		);
+		renderChooseFlow();
 
-		await user.click(screen.getByRole("button", { name: "New project" }));
-		await user.click(await screen.findByRole("button", { name: "Import an existing project" }));
+		await openSource(user, "Import an existing project");
 
 		const remoteAction = screen.getByRole("checkbox");
 		expect(remoteAction).toBeChecked();
@@ -869,14 +805,9 @@ describe("CreateProjectFlow project import validation", () => {
 				},
 			});
 
-		render(
-			<CreateProjectFlow mode="choose" {...noop}>
-				{({ choosePath }) => <button onClick={choosePath}>New project</button>}
-			</CreateProjectFlow>,
-		);
+		renderChooseFlow();
 
-		await user.click(screen.getByRole("button", { name: "New project" }));
-		await user.click(await screen.findByRole("button", { name: "Import an existing project" }));
+		await openSource(user, "Import an existing project");
 		const remoteInput = await screen.findByLabelText("Origin remote URL");
 		await user.clear(remoteInput);
 		await user.type(remoteInput, "https://github.com/acme/project.git");
@@ -910,14 +841,9 @@ describe("CreateProjectFlow project import validation", () => {
 			}),
 		});
 
-		render(
-			<CreateProjectFlow mode="choose" {...noop}>
-				{({ choosePath }) => <button onClick={choosePath}>New project</button>}
-			</CreateProjectFlow>,
-		);
+		renderChooseFlow();
 
-		await user.click(screen.getByRole("button", { name: "New project" }));
-		await user.click(await screen.findByRole("button", { name: "Import an existing project" }));
+		await openSource(user, "Import an existing project");
 		await user.click(screen.getByRole("button", { name: "Continue" }));
 
 		await waitFor(() => expect(bridgeMocks.checkGitRepository).toHaveBeenCalledWith("https://github.com/username/project.git"));
@@ -939,8 +865,7 @@ describe("CreateProjectFlow project import validation", () => {
 			</CreateProjectFlow>,
 		);
 
-		await user.click(screen.getByRole("button", { name: "New project" }));
-		await user.click(await screen.findByRole("button", { name: "Import an existing project" }));
+		await openSource(user, "Import an existing project");
 		await user.click(await screen.findByRole("button", { name: "Submit agents" }));
 
 		await waitFor(() => expect(useUiStore.getState().globalToast?.body).toBe("AO could not create this project. Try again."));
@@ -963,8 +888,7 @@ describe("CreateProjectFlow project import validation", () => {
 			</CreateProjectFlow>,
 		);
 
-		await user.click(screen.getByRole("button", { name: "New project" }));
-		await user.click(await screen.findByRole("button", { name: "Import an existing project" }));
+		await openSource(user, "Import an existing project");
 		await user.click(await screen.findByRole("button", { name: "Submit agents" }));
 
 		await waitFor(() =>
@@ -1016,8 +940,7 @@ describe("CreateProjectFlow project import validation", () => {
 			</CreateProjectFlow>,
 		);
 
-		await user.click(screen.getByRole("button", { name: "New project" }));
-		await user.click(await screen.findByRole("button", { name: "Import an existing project" }));
+		await openSource(user, "Import an existing project");
 		const remoteInput = await screen.findByLabelText("Origin remote URL");
 		await user.clear(remoteInput);
 		await user.type(remoteInput, "https://github.com/acme/project.git");
@@ -1122,14 +1045,8 @@ describe("CreateProjectFlow project import validation", () => {
 				},
 			});
 
-		render(
-			<CreateProjectFlow mode="choose" {...noop}>
-				{({ choosePath }) => <button onClick={choosePath}>New project</button>}
-			</CreateProjectFlow>,
-		);
-
-		await user.click(screen.getByRole("button", { name: "New project" }));
-		await user.click(await screen.findByRole("button", { name: "Import an existing project" }));
+		renderChooseFlow();
+		await openSource(user, "Import an existing project");
 		const remoteInput = await screen.findByLabelText("Origin remote URL");
 		await user.clear(remoteInput);
 		await user.type(remoteInput, "https://github.com/acme/project.git");
