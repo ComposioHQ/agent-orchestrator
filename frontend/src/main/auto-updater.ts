@@ -1740,6 +1740,16 @@ async function requestAutomaticUpdateCheck(
 // Caller guards on app.isPackaged.
 export async function startAutoUpdates(stateDir: string): Promise<void> {
   escalationStateDir = stateDir;
+  // A package-managed install can never apply what a check would find, so the
+  // check itself is waste: a periodic timer plus a ~180MB download, discarded.
+  // Set before the guard: the escalation paths read it regardless of whether
+  // this process goes on to check. Nothing was ever staged from here either, so
+  // the staged-build restore is skipped along with the check.
+  const blocker = getLinuxInstallBlocker();
+  if (blocker !== undefined) {
+    console.info("auto-updates disabled:", blocker);
+    return;
+  }
   restoreStagedBuild(stateDir);
   startRetirementPollTimer(stateDir);
   const intervalMs = await requestAutomaticUpdateCheck(stateDir);
@@ -2067,6 +2077,38 @@ export function getMacInstallBlocker(): string | undefined {
   return undefined;
 }
 
+// getLinuxInstallBlocker is the Linux install preflight, and the counterpart to
+// the macOS one above. A deb, rpm or Arch install puts the app under root-owned
+// /usr with every file tracked by the package manager, so electron-updater
+// downloads a build it can never write into place — and would fight the package
+// manager for ownership if it could. An AppImage is the opposite case: it is a
+// single user-owned file the updater replaces normally, and APPIMAGE is set
+// only in that case, so it is the discriminator rather than the path.
+//
+// Fails open like the macOS path: only a positively identified blocker
+// suppresses the attempt.
+export function getLinuxInstallBlocker(): string | undefined {
+  if (process.platform !== "linux") return undefined;
+  if (process.env.APPIMAGE) return undefined;
+  const appDir = path.dirname(process.execPath);
+  if (!existsSync(appDir)) return undefined;
+  try {
+    accessSync(appDir, fsConstants.W_OK);
+  } catch {
+    return (
+      "Agent Orchestrator was installed by your system's package manager, so it " +
+      "updates with the rest of your system rather than updating itself. Use " +
+      "your package manager to get the latest version."
+    );
+  }
+  return undefined;
+}
+
+// getInstallBlocker is the platform-dispatching preflight the install paths ask.
+export function getInstallBlocker(): string | undefined {
+  return getMacInstallBlocker() ?? getLinuxInstallBlocker();
+}
+
 // applyInstallOnQuitPolicy keeps autoInstallOnAppQuit honest. Every check path
 // sets it to true, and the "downloaded" status row tells the user the build
 // installs on quit. When the install cannot work from this location that is a
@@ -2074,7 +2116,7 @@ export function getMacInstallBlocker(): string | undefined {
 // did, and #3527's dialog only ever covered the button. Turning it off makes
 // the staged build wait for a location it can actually install from.
 function applyInstallOnQuitPolicy(): void {
-  const blocker = getMacInstallBlocker();
+  const blocker = getInstallBlocker();
   autoUpdater.autoInstallOnAppQuit = blocker === undefined && !awaitingStagedReplacement;
   if (awaitingStagedReplacement) {
     console.info(
@@ -2093,7 +2135,7 @@ function applyInstallOnQuitPolicy(): void {
 // false keeps the installer UI on Windows; isForceRunAfter relaunches the app.
 export function quitAndInstallUpdate(): void {
 	if (!app.isPackaged) return;
-  const blocker = getMacInstallBlocker();
+  const blocker = getInstallBlocker();
   if (blocker !== undefined) {
     console.warn("update install blocked:", blocker);
     // A dialog, not a status broadcast: the click came from the sidebar row,

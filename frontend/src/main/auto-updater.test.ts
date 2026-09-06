@@ -3513,3 +3513,72 @@ it("keeps stalled native preparation non-installable and recovers on real readin
     expect(module.getUpdateStatus().state).toBe("downloaded");
   } finally { restore(); vi.useRealTimers(); }
 });
+describe("getLinuxInstallBlocker", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.resetModules();
+  });
+
+  // A deb/rpm/Arch install lives under root-owned /usr, so electron-updater
+  // would download a build it can never write into place.
+  it("blocks installs from an app directory the user cannot write to", async () => {
+    const root = mkdtempSync(nodePath.join(os.tmpdir(), "ao-updater-pkg-"));
+    const appDir = nodePath.join(root, "agent-orchestrator");
+    mkdirSync(appDir, { recursive: true });
+    chmodSync(appDir, 0o555);
+    const restore = stubProcess("linux", nodePath.join(appDir, "agent-orchestrator"));
+    delete process.env.APPIMAGE;
+    try {
+      const { module } = await importAutoUpdater();
+      expect(module.getLinuxInstallBlocker()).toContain("package manager");
+    } finally {
+      restore();
+      chmodSync(appDir, 0o755);
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  // An AppImage is a single user-owned file the updater replaces normally. It
+  // can sit in a read-only directory and still be updatable, so APPIMAGE — not
+  // the directory mode — is what separates the two cases.
+  it("allows installs under an AppImage even from a read-only directory", async () => {
+    const root = mkdtempSync(nodePath.join(os.tmpdir(), "ao-updater-appimage-"));
+    const appDir = nodePath.join(root, "app");
+    mkdirSync(appDir, { recursive: true });
+    chmodSync(appDir, 0o555);
+    const restore = stubProcess("linux", nodePath.join(appDir, "agent-orchestrator"));
+    process.env.APPIMAGE = "/home/me/Applications/agent-orchestrator.AppImage";
+    try {
+      const { module } = await importAutoUpdater();
+      expect(module.getLinuxInstallBlocker()).toBeUndefined();
+    } finally {
+      restore();
+      delete process.env.APPIMAGE;
+      chmodSync(appDir, 0o755);
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("allows installs from a writable app directory", async () => {
+    const root = mkdtempSync(nodePath.join(os.tmpdir(), "ao-updater-writable-"));
+    const restore = stubProcess("linux", nodePath.join(root, "agent-orchestrator"));
+    delete process.env.APPIMAGE;
+    try {
+      const { module } = await importAutoUpdater();
+      expect(module.getLinuxInstallBlocker()).toBeUndefined();
+    } finally {
+      restore();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("never blocks on other platforms", async () => {
+    const restore = stubProcess("darwin", "/Applications/Agent Orchestrator.app/Contents/MacOS/x");
+    try {
+      const { module } = await importAutoUpdater();
+      expect(module.getLinuxInstallBlocker()).toBeUndefined();
+    } finally {
+      restore();
+    }
+  });
+});
