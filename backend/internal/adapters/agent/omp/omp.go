@@ -54,11 +54,8 @@ func (p *Plugin) GetConfigSpec(ctx context.Context) (ports.ConfigSpec, error) {
 	return agentbase.ModelConfigSpec(ctx, "Model override passed to `omp --model`.")
 }
 
-// ExitDetectionMode opts OMP into AO's process supervisor. OMP's session-end
-// hook fires from its JS extension's session_shutdown handler, which never
-// runs when SIGINT (Ctrl+C) kills the TUI before JS teardown. Without the
-// supervisor the durable activity row stays non-exited while the tmux pane
-// parks on its preserved shell, hiding Resume and stranding the session.
+// ExitDetectionMode opts OMP into AO's process supervisor. OMP's JS
+// extension teardown never runs when SIGINT kills the TUI first.
 func (p *Plugin) ExitDetectionMode() ports.AgentExitDetectionMode {
 	return ports.AgentExitDetectionSupervisor
 }

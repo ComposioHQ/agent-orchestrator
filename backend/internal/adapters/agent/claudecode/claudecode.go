@@ -71,11 +71,8 @@ func (p *Plugin) EmitsSubmitActivity() bool { return true }
 // ports.BlockedActivitySignaler.
 func (p *Plugin) EmitsBlockedActivity() bool { return true }
 
-// ExitDetectionMode opts Claude Code into AO's process supervisor. Claude
-// Code's SessionEnd hook fires from JS teardown, which never runs when
-// SIGINT (Ctrl+C) kills the TUI before teardown completes. Without the
-// supervisor the durable activity row stays non-exited while the tmux pane
-// parks on its preserved shell, hiding Resume and stranding the session.
+// ExitDetectionMode opts Claude Code into AO's process supervisor. The
+// SessionEnd hook never runs when SIGINT kills the TUI first.
 func (p *Plugin) ExitDetectionMode() ports.AgentExitDetectionMode {
 	return ports.AgentExitDetectionSupervisor
 }
