@@ -33,6 +33,8 @@ jobs:
           node-version: 24
       - name: Test native helper build configuration
         run: node --test scripts/build-update-helper.node-test.mjs
+      - name: Test repair installer packaging and guards
+        run: node --test scripts/build-mac-repair-installer.node-test.mjs
       - name: Compile helper for both macOS architectures
         run: |
           node scripts/build-update-helper.mjs --arch x64
