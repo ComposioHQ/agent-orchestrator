@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/url"
@@ -13,6 +14,14 @@ import (
 	"github.com/aoagents/agent-orchestrator/cloud/internal/domain"
 	"github.com/go-chi/chi/v5"
 )
+
+// projectOrchestratorStore finds a project's single active orchestrator so a
+// top-level worker can be auto-linked to it as a child. It mirrors the
+// narrow-interface pattern used elsewhere so the concrete store carries the
+// method without widening Store.
+type projectOrchestratorStore interface {
+	ProjectActiveOrchestrator(ctx context.Context, orgID, projectID string) (orchestratorID, provider string, found bool, err error)
+}
 
 type createProjectRequest struct {
 	DisplayName   string         `json:"displayName"`
@@ -356,6 +365,30 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	// A top-level worker created for a project that already has an active
+	// orchestrator is auto-linked to it: the orchestrator then sees, drives, and
+	// receives reports from it exactly as it would a worker it spawned itself,
+	// because ao list, the Workers view, ao send/kill, and the ao report reverse
+	// channel all key on parent_session_id. The worker also inherits the
+	// orchestrator's provider so the project's whole worker tree stays on one
+	// provider, matching ao spawn'ed children. An orchestrator, or a worker
+	// created before any orchestrator exists, stays unlinked.
+	parentSessionID := ""
+	if request.Kind == "worker" {
+		if orchStore, ok := s.store.(projectOrchestratorStore); ok {
+			orchestratorID, orchestratorProvider, found, lookupErr := orchStore.ProjectActiveOrchestrator(
+				r.Context(), orgID, request.ProjectID,
+			)
+			if lookupErr != nil {
+				s.writeStoreError(w, r, lookupErr)
+				return
+			}
+			if found {
+				parentSessionID = orchestratorID
+				request.Provider = orchestratorProvider
+			}
+		}
+	}
 	// The plan is resolved once, here, and stamped onto the sandbox row. The
 	// reconciler reads it back from the row rather than from configuration, so
 	// a later config change cannot disturb a session already in flight.
@@ -387,6 +420,7 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
 			ResourceProfile:     plan.ResourceProfile,
 			BootstrapContext:    plan.BootstrapContext,
 			Release:             s.release,
+			ParentSessionID:     parentSessionID,
 		},
 	)
 	if err != nil {
