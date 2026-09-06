@@ -62,6 +62,8 @@ vi.mock("../lib/api-client", () => ({
 vi.mock("../lib/telemetry", () => ({ captureRendererEvent: h.capture }));
 
 import { TaskComposer } from "./TaskComposer";
+import { TooltipProvider } from "./ui/tooltip";
+import { OPEN_BROWSER_OVERLAY_SELECTOR } from "../lib/dom-selectors";
 import { agentReadiness } from "../test/agent-readiness-fixtures";
 import { agentReadinessQueryKey } from "../hooks/useAgentReadinessQuery";
 
@@ -69,7 +71,7 @@ function Wrap({ children, queryClient = new QueryClient({ defaultOptions: { quer
 	children: ReactNode;
 	queryClient?: QueryClient;
 }) {
-	return <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>;
+	return <QueryClientProvider client={queryClient}><TooltipProvider>{children}</TooltipProvider></QueryClientProvider>;
 }
 
 const task = () => screen.getByRole("textbox", { name: "Task" });
@@ -841,5 +843,162 @@ describe("TaskComposer", () => {
 				}),
 			),
 		);
+	});
+});
+
+
+describe("immediate chat startup", () => {
+	let host: HTMLDivElement;
+	beforeEach(() => {
+		const originalGet = h.get.getMockImplementation()!;
+		h.get.mockImplementation((path: string, ...args: unknown[]) => path === "/api/v1/settings"
+			? Promise.resolve({ data: { defaultSessionMode: "chat", chatHarnesses: ["codex", "claude-code"] } })
+			: originalGet(path, ...args));
+		host = document.createElement("div");
+		host.id = "task-startup-host";
+		document.body.append(host);
+	});
+	afterEach(() => {
+		host.remove();
+		window.history.replaceState({}, "", "/");
+	});
+
+	it("shows the submitted prompt before delegate resolves and submits only once", async () => {
+		let resolve!: (value: { data: { workerId: string } }) => void;
+		h.post.mockReturnValue(new Promise((done) => { resolve = done; }));
+		const onCreated = vi.fn();
+		render(<Wrap><TaskComposer projectId="proj-1" onCreated={onCreated} /></Wrap>);
+		fireEvent.change(task(), { target: { value: "Build the requested feature" } });
+		const form = task().closest("form")!;
+		act(() => { fireEvent.submit(form); fireEvent.submit(form); });
+		expect(screen.getByRole("region", { name: "Chat" })).toHaveTextContent("Build the requested feature");
+		expect(document.querySelector(OPEN_BROWSER_OVERLAY_SELECTOR)).toBe(screen.getByRole("region", { name: "Chat" }));
+		expect(screen.getByRole("status")).toHaveTextContent("Starting session…");
+		expect(screen.queryByRole("textbox", { name: "Task" })).not.toBeInTheDocument();
+		expect(screen.getByLabelText("Message the agent")).toHaveAttribute("contenteditable", "false");
+		expect(screen.getByText("Waiting for the session to start…")).toBeInTheDocument();
+		await waitFor(() => expect(h.post).toHaveBeenCalledTimes(1));
+		expect(onCreated).not.toHaveBeenCalled();
+		await act(async () => resolve({ data: { workerId: "worker-1" } }));
+		expect(onCreated).toHaveBeenCalledExactlyOnceWith("worker-1");
+		expect(h.post).toHaveBeenCalledTimes(1);
+	});
+
+	it("keeps startup visible after delegate succeeds until workspace refresh and navigation finish", async () => {
+		let finishOpening!: () => void;
+		const onCreated = vi.fn(() => new Promise<void>((resolve) => { finishOpening = resolve; }));
+		h.post.mockResolvedValue({ data: { workerId: "created-worker" } });
+		render(<Wrap><TaskComposer projectId="proj-1" onCreated={onCreated} /></Wrap>);
+		fireEvent.change(task(), { target: { value: "Wait for the destination" } });
+		fireEvent.submit(task().closest("form")!);
+		await waitFor(() => expect(onCreated).toHaveBeenCalledExactlyOnceWith("created-worker"));
+		expect(screen.getByRole("region", { name: "Chat" })).toHaveTextContent("Wait for the destination");
+		expect(screen.getByRole("status")).toHaveTextContent("Starting session…");
+		expect(screen.queryByRole("button", { name: "Start task" })).not.toBeInTheDocument();
+		await act(async () => finishOpening());
+		expect(screen.queryByRole("region", { name: "Chat" })).not.toBeInTheDocument();
+		expect(h.post).toHaveBeenCalledTimes(1);
+	});
+
+	it("retries opening an existing session after refresh failure without another delegate", async () => {
+		const onCreated = vi.fn().mockRejectedValueOnce(new Error("Workspace refresh failed")).mockResolvedValue(undefined);
+		h.post.mockResolvedValue({ data: { workerId: "created-worker" } });
+		render(<Wrap><TaskComposer projectId="proj-1" onCreated={onCreated} /></Wrap>);
+		fireEvent.change(task(), { target: { value: "Create only once" } });
+		fireEvent.submit(task().closest("form")!);
+		expect(await screen.findByRole("alert")).toHaveTextContent("The session was created, but could not be opened.");
+		expect(screen.getByRole("alert")).toHaveTextContent("Workspace refresh failed");
+		expect(screen.queryByRole("button", { name: "Start task" })).not.toBeInTheDocument();
+		fireEvent.click(screen.getByRole("button", { name: "Open session" }));
+		await waitFor(() => expect(onCreated).toHaveBeenCalledTimes(2));
+		expect(onCreated).toHaveBeenNthCalledWith(2, "created-worker");
+		expect(h.post).toHaveBeenCalledTimes(1);
+	});
+
+	it("retains the draft and attachments after failure and waits for an explicit retry", async () => {
+		let reject!: (reason: Error) => void;
+		h.post.mockReturnValueOnce(new Promise((_resolve, fail) => { reject = fail; }));
+		render(<Wrap><TaskComposer projectId="proj-1" onCreated={vi.fn()} /></Wrap>);
+		fireEvent.change(task(), { target: { value: "Keep this draft" } });
+		fireEvent.paste(task(), { clipboardData: { files: [new File(["hello"], "notes.txt", { type: "text/plain" })], getData: () => "" } });
+		fireEvent.submit(task().closest("form")!);
+		await waitFor(() => expect(h.post).toHaveBeenCalledTimes(1));
+		await act(async () => reject(new Error("Connection lost; check sessions before retrying")));
+		expect(task()).toHaveValue("Keep this draft");
+		expect(screen.getByRole("alert")).toHaveTextContent("Connection lost");
+		expect(screen.getAllByText("notes.txt").length).toBeGreaterThan(0);
+		expect(h.post).toHaveBeenCalledTimes(1);
+	});
+
+	it("does not request focus when navigation changes during startup", async () => {
+		let resolve!: (value: { data: { workerId: string } }) => void;
+		h.post.mockReturnValue(new Promise((done) => { resolve = done; }));
+		const onCreated = vi.fn();
+		const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+		const view = render(<Wrap queryClient={queryClient}><TaskComposer projectId="proj-1" navigationKey="/" onCreated={onCreated} /></Wrap>);
+		fireEvent.change(task(), { target: { value: "hi" } });
+		fireEvent.submit(task().closest("form")!);
+		await waitFor(() => expect(h.post).toHaveBeenCalledTimes(1));
+		window.history.pushState({}, "", "/other");
+		view.rerender(<Wrap queryClient={queryClient}><TaskComposer projectId="proj-1" navigationKey="/other" onCreated={onCreated} /></Wrap>);
+		expect(screen.queryByRole("region", { name: "Chat" })).not.toBeInTheDocument();
+		expect(document.querySelector(OPEN_BROWSER_OVERLAY_SELECTOR)).toBeNull();
+		await act(async () => resolve({ data: { workerId: "worker-2" } }));
+		expect(onCreated).toHaveBeenCalledExactlyOnceWith("worker-2", false);
+	});
+
+	it.each(["recover", "discard"] as const)("makes an off-route failure discoverable and allows %s", async (action) => {
+		let reject!: (reason: Error) => void;
+		h.post.mockReturnValue(new Promise((_resolve, fail) => { reject = fail; }));
+		const onCreated = vi.fn();
+		const onDiscard = vi.fn();
+		const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+		const content = (navigationKey: string) => (
+			<Wrap queryClient={queryClient}>
+				<button type="button">Unrelated route action</button>
+				<TaskComposer projectId="proj-1" navigationKey={navigationKey} onCreated={onCreated} onDiscard={onDiscard} />
+			</Wrap>
+		);
+		const view = render(content("/"));
+		fireEvent.change(task(), { target: { value: "Retain this draft" } });
+		fireEvent.paste(task(), { clipboardData: { files: [new File(["hello"], "notes.txt", { type: "text/plain" })], getData: () => "" } });
+		fireEvent.submit(task().closest("form")!);
+		await waitFor(() => expect(h.post).toHaveBeenCalledTimes(1));
+		window.history.pushState({}, "", "/other");
+		view.rerender(content("/other"));
+		const unrelatedAction = screen.getByRole("button", { name: "Unrelated route action" });
+		unrelatedAction.focus();
+		await act(async () => reject(new Error("Could not initialize the agent")));
+		expect(screen.queryByRole("region", { name: "Chat" })).not.toBeInTheDocument();
+		expect(screen.getByRole("alert")).toHaveTextContent("Could not initialize the agent");
+		expect(unrelatedAction).toHaveFocus();
+		expect(window.location.pathname).toBe("/other");
+		if (action === "recover") {
+			fireEvent.click(screen.getByRole("button", { name: "Return to draft" }));
+			expect(screen.getByRole("region", { name: "Chat" })).toBeVisible();
+			expect(task()).toHaveValue("Retain this draft");
+			expect(screen.getByRole("button", { name: "Remove notes.txt" })).toBeInTheDocument();
+			expect(onDiscard).not.toHaveBeenCalled();
+		} else {
+			fireEvent.click(screen.getByRole("button", { name: "Discard draft" }));
+			expect(onDiscard).toHaveBeenCalledExactlyOnceWith();
+			expect(screen.queryByRole("button", { name: "Return to draft" })).not.toBeInTheDocument();
+		}
+		expect(h.post).toHaveBeenCalledTimes(1);
+		expect(onCreated).not.toHaveBeenCalled();
+	});
+
+	it("does not call a stale completion callback after its owner unmounts", async () => {
+		let resolve!: (value: { data: { workerId: string } }) => void;
+		h.post.mockReturnValue(new Promise((done) => { resolve = done; }));
+		const onCreated = vi.fn();
+		const view = render(<Wrap><TaskComposer projectId="proj-1" onCreated={onCreated} /></Wrap>);
+		fireEvent.change(task(), { target: { value: "hi" } });
+		fireEvent.submit(task().closest("form")!);
+		await waitFor(() => expect(h.post).toHaveBeenCalledTimes(1));
+		view.unmount();
+		await act(async () => resolve({ data: { workerId: "worker-3" } }));
+		expect(onCreated).not.toHaveBeenCalled();
+		expect(h.post).toHaveBeenCalledTimes(1);
 	});
 });

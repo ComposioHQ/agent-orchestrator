@@ -15,6 +15,7 @@ import { SettingsDialog } from "../components/SettingsDialog";
 import { KeyboardShortcutsDialog } from "../components/KeyboardShortcutsDialog";
 import { KeyboardShortcutsSettingsDialog } from "../components/settings/KeyboardShortcutsSettingsDialog";
 import { ShellTopbar } from "../components/ShellTopbar";
+import { TaskStartupProvider, TaskStartupRoute } from "../components/TaskStartupContext";
 import { SessionTopbarProvider } from "../components/SessionTopbarPortal";
 import { OrchestratorReplacementDialog } from "../components/OrchestratorReplacementDialog";
 import { RestartToUpdateDialog } from "../components/RestartToUpdateDialog";
@@ -831,6 +832,7 @@ function ShellLayout() {
 		<ShellProvider
 			value={shellContextValue}
 		>
+			<TaskStartupProvider>
 			<SessionTopbarProvider>
 				<NotificationRuntime />
 				<TrayRuntime />
@@ -928,15 +930,16 @@ function ShellLayout() {
 						workspaceError={workspaceQuery.isError ? errorMessage(workspaceQuery.error) : undefined}
 						workspaces={workspaces}
 					/>
-					<main className={cn("flex min-w-0 flex-1 flex-col overflow-x-hidden", !sidebarHasLayout && "sidebar-hidden")}>
-						<div className="min-h-0 flex-1 overflow-x-hidden">
+					<main className={cn("relative flex min-w-0 flex-1 flex-col overflow-x-hidden", !sidebarHasLayout && "sidebar-hidden")}>
+						<div id="task-startup-host" />
+						<TaskStartupRoute>
 							{/* Board/session routes render inside the same inset box the welcome board and settings paint for themselves, so every screen sits within the app's outer boundary. */}
 							<ShellCenter
 								hideShellTopbar={hideShellTopbar}
 								isSessionRoute={Boolean(routeParams.sessionId)}
 								selfFramedCenterPanel={selfFramedCenterPanel}
 							/>
-						</div>
+						</TaskStartupRoute>
 					</main>
 					</div>
 					<DaemonFailureBanner status={daemonStatus} />
@@ -983,6 +986,7 @@ function ShellLayout() {
 				</div>
 				</TerminalCacheProvider>
 			</SessionTopbarProvider>
+			</TaskStartupProvider>
 		</ShellProvider>
 	);
 }

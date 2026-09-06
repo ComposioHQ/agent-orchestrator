@@ -1,5 +1,5 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { useNavigate } from "@tanstack/react-router";
+import { useNavigate, useLocation } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { useUiStore } from "../stores/ui-store";
@@ -13,6 +13,7 @@ import { NewTaskDialog } from "./NewTaskDialog";
 // request for the same project re-open the dialog.
 export function GlobalNewTaskDialog() {
 	const navigate = useNavigate();
+	const location = useLocation();
 	const queryClient = useQueryClient();
 	const newTaskRequest = useUiStore((state) => state.newTaskRequest);
 	const [open, setOpen] = useState(false);
@@ -30,10 +31,12 @@ export function GlobalNewTaskDialog() {
 		setOpen(true);
 	}, [newTaskRequest, open]);
 
-	const handleCreated = async (sessionId: string) => {
+	const handleCreated = async (sessionId: string, focusSession = true) => {
 		if (!projectId) return;
-		await queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
-		void navigate({
+		const origin = window.location.href;
+		await queryClient.invalidateQueries({ queryKey: workspaceQueryKey }, { throwOnError: true });
+		if (!focusSession || window.location.href !== origin) return;
+		await navigate({
 			to: "/projects/$projectId/sessions/$sessionId",
 			params: { projectId, sessionId },
 		});
@@ -43,7 +46,8 @@ export function GlobalNewTaskDialog() {
 		<NewTaskDialog
 			open={open}
 			projectId={projectId}
-			onCreated={(sessionId) => void handleCreated(sessionId)}
+			navigationKey={location.href}
+			onCreated={handleCreated}
 			onOpenChange={setOpen}
 		/>
 	);

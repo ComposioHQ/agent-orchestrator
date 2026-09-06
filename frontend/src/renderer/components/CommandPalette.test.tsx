@@ -93,6 +93,7 @@ const ctx = vi.hoisted(() => {
 
 vi.mock("@tanstack/react-router", () => ({
 	useNavigate: () => navigateMock,
+	useLocation: () => ({ href: "/" }),
 	useParams: () => ctx.params,
 }));
 

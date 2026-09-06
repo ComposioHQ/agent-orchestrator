@@ -10,6 +10,7 @@ const { navigateMock } = vi.hoisted(() => ({ navigateMock: vi.fn() }));
 
 vi.mock("@tanstack/react-router", () => ({
 	useNavigate: () => navigateMock,
+	useLocation: () => ({ href: "/" }),
 }));
 
 // Probe stand-in: surfaces the props the real dialog would receive, preserves a
@@ -23,7 +24,7 @@ vi.mock("./NewTaskDialog", () => ({
 	}: {
 		open: boolean;
 		projectId?: string;
-		onCreated: (id: string) => void;
+		onCreated: (id: string, focusSession?: boolean) => void;
 		onOpenChange: (open: boolean) => void;
 	}) => {
 		const [draft, setDraft] = useState("");
@@ -36,6 +37,7 @@ vi.mock("./NewTaskDialog", () => ({
 				<button type="button" onClick={() => onCreated("sess-9")}>
 					create
 				</button>
+				<button type="button" onClick={() => onCreated("sess-background", false)}>finish in background</button>
 				<button type="button" onClick={() => onOpenChange(false)}>
 					close
 				</button>
@@ -51,6 +53,7 @@ function renderDialog() {
 			<GlobalNewTaskDialog />
 		</QueryClientProvider>,
 	);
+	return queryClient;
 }
 
 beforeEach(() => {
@@ -60,6 +63,7 @@ beforeEach(() => {
 
 afterEach(() => {
 	vi.restoreAllMocks();
+	window.history.replaceState({}, "", "/");
 });
 
 describe("GlobalNewTaskDialog", () => {
@@ -127,5 +131,32 @@ describe("GlobalNewTaskDialog", () => {
 			useUiStore.getState().requestNewTask("proj-8");
 		});
 		expect(await screen.findByTestId("new-task-dialog")).toHaveAttribute("data-project", "proj-8");
+	});
+});
+
+
+it("does not navigate when a completed startup no longer owns focus", async () => {
+	const user = userEvent.setup();
+	renderDialog();
+	act(() => useUiStore.getState().requestNewTask("proj-7"));
+	await user.click(await screen.findByRole("button", { name: "finish in background" }));
+	expect(navigateMock).not.toHaveBeenCalled();
+});
+
+
+it.each([false, true])("awaits workspace refresh and respects intervening navigation (%s)", async (navigateAway) => {
+	const user = userEvent.setup();
+	const queryClient = renderDialog();
+	let finishRefresh!: () => void;
+	vi.spyOn(queryClient, "invalidateQueries").mockReturnValue(new Promise<void>((resolve) => { finishRefresh = resolve; }));
+	act(() => useUiStore.getState().requestNewTask("proj-7"));
+	await user.click(await screen.findByRole("button", { name: "create" }));
+	expect(navigateMock).not.toHaveBeenCalled();
+	if (navigateAway) window.history.pushState({}, "", "/elsewhere");
+	await act(async () => finishRefresh());
+	if (navigateAway) expect(navigateMock).not.toHaveBeenCalled();
+	else expect(navigateMock).toHaveBeenCalledWith({
+		to: "/projects/$projectId/sessions/$sessionId",
+		params: { projectId: "proj-7", sessionId: "sess-9" },
 	});
 });

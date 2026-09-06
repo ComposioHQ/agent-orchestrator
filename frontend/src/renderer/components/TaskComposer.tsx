@@ -5,7 +5,9 @@ import {
 	type TaskComposerModelCatalog,
 	type TaskComposerModelControl,
 } from "@aoagents/product-ui";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
+import { TaskStartupSurface } from "./TaskStartupSurface";
 import { useTranslation } from "react-i18next";
 import { Loader2 } from "lucide-react";
 import { RequiredAgentField } from "./CreateProjectAgentSheet";
@@ -74,7 +76,11 @@ function hasErrorDetail(details: components["schemas"]["APIError"]["details"] | 
 
 export type TaskComposerProps = {
 	projectId?: string;
-	onCreated: (sessionId: string) => void;
+	onCreated: (sessionId: string, focusSession?: boolean) => void | Promise<void>;
+	onStartupChange?: (starting: boolean) => void;
+	onDiscard?: () => void;
+	navigationKey?: string;
+	container?: HTMLElement | null;
 	onDirtyChange?: (dirty: boolean) => void;
 	onSubmittingChange?: (submitting: boolean) => void;
 	autoFocusTitle?: boolean;
@@ -83,6 +89,10 @@ export type TaskComposerProps = {
 export function TaskComposer({
 	projectId,
 	onCreated,
+	onStartupChange,
+	onDiscard,
+	navigationKey,
+	container,
 	onDirtyChange,
 	onSubmittingChange,
 	autoFocusTitle,
@@ -102,7 +112,23 @@ export function TaskComposer({
 	const [agentTouched, setAgentTouched] = useState(false);
 	const [modelTouched, setModelTouched] = useState(false);
 	const [isSubmitting, setIsSubmitting] = useState(false);
+	const submittingRef = useRef(false);
+	const mountedRef = useRef(true);
+	const promptRef = useRef("");
+	const [startup, setStartup] = useState<{ brief: string; createdAt: string; navigationKey?: string }>();
+	const startupHost = document.getElementById("task-startup-host");
+	const startupVisible = Boolean(startup && startup.navigationKey === navigationKey);
+	useEffect(() => {
+		mountedRef.current = true;
+		return () => { mountedRef.current = false; };
+	}, []);
+	useEffect(() => {
+		onStartupChange?.(Boolean(startup));
+	}, [startup, onStartupChange]);
+	useEffect(() => () => onStartupChange?.(false), [onStartupChange]);
 	const [error, setError] = useState<string | undefined>();
+	const [createdSessionId, setCreatedSessionId] = useState<string>();
+	const [completionError, setCompletionError] = useState<string>();
 	const [fallbackAction, setFallbackAction] = useState<FallbackAction>();
 	const {
 		attachments,
@@ -309,6 +335,7 @@ export function TaskComposer({
 
 	const isDirty = isPromptDirty || modelTouched || attachments.length > 0;
 	const handlePromptChange = useCallback((value: string) => {
+		promptRef.current = value;
 		const nextDirty = value.trim() !== "";
 		setIsPromptDirty((wasDirty) => (wasDirty === nextDirty ? wasDirty : nextDirty));
 	}, []);
@@ -323,12 +350,45 @@ export function TaskComposer({
 	useEffect(() => () => onSubmittingChange?.(false), [onSubmittingChange]);
 	useEffect(() => () => clearAttachments(), [clearAttachments]);
 
+	// Once delegate succeeds, cache/navigation failures must never re-enter the
+	// creation path: retry only opening the already-created session.
+	const finishCreatedSession = async (sessionId: string, focusSession: boolean) => {
+		try {
+			if (focusSession) await onCreated(sessionId);
+			else await onCreated(sessionId, false);
+			if (mountedRef.current) {
+				setStartup(undefined);
+				setCreatedSessionId(undefined);
+				setCompletionError(undefined);
+			}
+		} catch (err) {
+			if (mountedRef.current) {
+				setCreatedSessionId(sessionId);
+				setCompletionError(err instanceof Error ? err.message : t("newTask.unableToStart"));
+			}
+		}
+	};
+
+	const retryOpenSession = async () => {
+		if (!createdSessionId || submittingRef.current) return;
+		submittingRef.current = true;
+		setIsSubmitting(true);
+		try {
+			await finishCreatedSession(createdSessionId, true);
+		} finally {
+			submittingRef.current = false;
+			if (mountedRef.current) setIsSubmitting(false);
+		}
+	};
+
 	const submitTask = async (
 		brief: string,
 		interfaceMode?: "tui",
 		approvalMode?: "bypass-permissions",
 	) => {
-		if (!projectId || isSubmitting) return;
+		if (!projectId || submittingRef.current || createdSessionId) return;
+		submittingRef.current = true;
+		const submittedLocation = window.location.href;
 
 		const cleanModel = model.trim();
 		const cleanMode = mode.trim();
@@ -338,6 +398,11 @@ export function TaskComposer({
 				: undefined;
 
 		setIsSubmitting(true);
+		// The owner stays mounted while its presentation moves into the shell.
+		// No temporary session is persisted and the brief is sent only by delegate.
+		if (startupHost && !isCloudProject && interfaceMode !== "tui" && settings?.defaultSessionMode !== "tui") {
+			setStartup({ brief, createdAt: new Date().toISOString(), navigationKey });
+		}
 		setError(undefined);
 		setFallbackAction(undefined);
 		try {
@@ -353,8 +418,11 @@ export function TaskComposer({
 				approvalMode,
 				attachments: attachmentPayloads.length > 0 ? attachmentPayloads : undefined,
 			});
-			onCreated(sessionId);
+			if (mountedRef.current) {
+				await finishCreatedSession(sessionId, window.location.href === submittedLocation);
+			}
 		} catch (err) {
+			if (!mountedRef.current) return;
 			const canBypassApprovals =
 				err instanceof TaskCreateError &&
 				err.code === "SESSION_MODE_UNSUPPORTED" &&
@@ -371,12 +439,30 @@ export function TaskComposer({
 			);
 			setError(err instanceof Error ? err.message : t("newTask.unableToStart"));
 		} finally {
-			setIsSubmitting(false);
+			submittingRef.current = false;
+			if (mountedRef.current) setIsSubmitting(false);
 		}
 	};
 
-	return (
+	const completionRecovery = createdSessionId ? (
+		<div className="p-4 text-sm">
+			{completionError ? (
+				<>
+					<div role="alert" className="mb-3 text-destructive">
+						<p>{t("newTask.createdButNotOpened", { defaultValue: "The session was created, but could not be opened." })}</p>
+						<p>{completionError}</p>
+					</div>
+					<button type="button" onClick={() => void retryOpenSession()} disabled={isSubmitting} className="font-medium underline underline-offset-4">
+						{t("newTask.openSession", { defaultValue: "Open session" })}
+					</button>
+				</>
+			) : null}
+		</div>
+	) : null;
+
+	const composer = (
 		<TaskComposerView
+			initialPrompt={promptRef.current}
 			autoFocusPrompt={autoFocusTitle}
 			canSubmit={Boolean(projectId)}
 			onPromptChange={handlePromptChange}
@@ -451,6 +537,33 @@ export function TaskComposer({
 			renderModelControl={(control) => <TaskModelPicker {...control} onRefresh={refreshSelectedModels} />}
 		/>
 	);
+	if (startup && startupHost) {
+		return createPortal(
+			<TaskStartupSurface
+				brief={startup.brief}
+				createdAt={startup.createdAt}
+				visible={startupVisible}
+				pending={isSubmitting}
+				attachments={attachments}
+				error={completionError ?? error}
+				sessionCreated={Boolean(createdSessionId)}
+				onReturn={() => setStartup({ ...startup, navigationKey })}
+				onDiscard={onDiscard ? () => {
+					if (submittingRef.current) return;
+					setStartup(undefined);
+					onDiscard();
+				} : undefined}
+				onBack={() => {
+					if (!submittingRef.current) setStartup(undefined);
+				}}
+			>
+				{!isSubmitting && startupVisible ? (completionRecovery ?? composer) : null}
+			</TaskStartupSurface>,
+			startupHost,
+		);
+	}
+	const content = completionRecovery ?? composer;
+	return container === undefined ? content : container ? createPortal(content, container) : null;
 }
 
 function DesktopAgentControl(control: TaskComposerAgentControl) {
