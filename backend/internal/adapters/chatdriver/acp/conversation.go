@@ -85,24 +85,24 @@ type conversation struct {
 	log             *slog.Logger
 	providerScopeID string
 
-	mu                sync.Mutex
-	sessionID         string
-	capabilities      ports.ChatCapabilities
-	prepared          *preparedTurn
-	activeTurn        string
-	settlingTurn      string
-	turnCancel        context.CancelFunc
-	interrupt         *interruptAttempt
-	pending           map[string]*parkedPermission
-	pendingInputs     map[string]*parkedInput
-	messages          map[string]string
-	thoughts          map[string]string
-	nestedMessages    map[string]nestedMessageState
-	tools             map[string]*toolState
-	// turnDiffs accumulates per-path file snapshots for the active turn. ACP
-	// tool calls only carry that call's old/new text; without this map each
-	// emitDiffs would replace the turn card with the latest tool alone.
-	turnDiffs         map[string]*turnFileSnap
+	mu             sync.Mutex
+	sessionID      string
+	capabilities   ports.ChatCapabilities
+	prepared       *preparedTurn
+	activeTurn     string
+	settlingTurn   string
+	turnCancel     context.CancelFunc
+	interrupt      *interruptAttempt
+	pending        map[string]*parkedPermission
+	pendingInputs  map[string]*parkedInput
+	messages       map[string]string
+	thoughts       map[string]string
+	nestedMessages map[string]nestedMessageState
+	tools          map[string]*toolState
+	// turnDiffs stores each tool call's latest file contribution for the active
+	// turn. ACP may re-send the same tool with expanded old/new context; those
+	// updates replace that tool's contribution rather than merging snapshots.
+	turnDiffs         *turnDiffAccumulator
 	turnDiffTurnID    string
 	providerFailure   *ports.ChatEvent
 	configOptions     []ports.ChatConfigOption
