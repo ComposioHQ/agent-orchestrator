@@ -639,25 +639,6 @@ func (m *Manager) preflightInterfaceTarget(
 		permissions := effectiveAgentConfig(rec.Kind, project.Config).Permissions
 		return m.chat.PreflightChat(ctx, rec.Harness, permissions)
 	}
-	// The terminal adapters currently cannot express these Chat-only policies.
-	// Never replace the durable choice with the project's potentially bypassing
-	// launch config. This check runs before draining or stopping the Chat source.
-	if transition.SourceMode == domain.SessionModeChat {
-		store, ok := m.store.(interface {
-			ConversationForSession(context.Context, domain.SessionID) (domain.ConversationRecord, error)
-		})
-		if !ok {
-			return fmt.Errorf("cannot verify Chat permissions before terminal handoff")
-		}
-		conversation, err := store.ConversationForSession(ctx, rec.ID)
-		if err != nil {
-			return fmt.Errorf("read Chat permissions before terminal handoff: %w", err)
-		}
-		mode := conversation.Settings.ApprovalMode
-		if mode == domain.PermissionModeManual || mode == domain.PermissionModeDontAsk {
-			return fmt.Errorf("%w: terminal handoff cannot preserve %s; select a supported permission mode in Chat before switching", ports.ErrChatPermissionModeUnsupported, mode)
-		}
-	}
 	agent, ok := m.agents.Agent(rec.Harness)
 	if !ok {
 		return ErrUnknownHarness
@@ -669,6 +650,12 @@ func (m *Manager) preflightInterfaceTarget(
 	systemPrompt, err := m.buildSystemPrompt(ctx, rec.Kind, rec.ProjectID)
 	if err != nil {
 		return err
+	}
+	if transition.SourceMode == domain.SessionModeChat {
+		project, err = m.projectWithChatPermissions(ctx, rec.ID, project)
+		if err != nil {
+			return err
+		}
 	}
 	config := effectiveAgentConfig(rec.Kind, project.Config)
 	var cmd []string
@@ -693,6 +680,32 @@ func (m *Manager) preflightInterfaceTarget(
 		return err
 	}
 	return m.validateAgentBinary(cmd)
+}
+
+// projectWithChatPermissions supplies a value copy for this controller launch;
+// project defaults must not replace the Chat user's durable permission choice.
+func (m *Manager) projectWithChatPermissions(ctx context.Context, id domain.SessionID, project domain.ProjectRecord) (domain.ProjectRecord, error) {
+	store, ok := m.store.(interface {
+		ConversationForSession(context.Context, domain.SessionID) (domain.ConversationRecord, error)
+	})
+	if !ok {
+		return project, fmt.Errorf("cannot verify Chat permissions before terminal handoff")
+	}
+	conversation, err := store.ConversationForSession(ctx, id)
+	if err != nil {
+		return project, fmt.Errorf("read Chat permissions before terminal handoff: %w", err)
+	}
+	mode := conversation.Settings.ApprovalMode
+	if mode == "" {
+		mode = domain.PermissionModeDefault
+	}
+	if mode == domain.PermissionModeManual || mode == domain.PermissionModeDontAsk {
+		return project, fmt.Errorf("%w: terminal handoff cannot preserve %s; select a supported permission mode in Chat before switching", ports.ErrChatPermissionModeUnsupported, mode)
+	}
+	project.Config.AgentConfig.Permissions = mode
+	project.Config.Worker.AgentConfig.Permissions = mode
+	project.Config.Orchestrator.AgentConfig.Permissions = mode
+	return project, nil
 }
 
 func (m *Manager) prepareSourceHandoff(
@@ -992,7 +1005,7 @@ func (m *Manager) stopSourceControllerConclusive(rec domain.SessionRecord) error
 	return fmt.Errorf("could not prove the source controller stopped after retry: %w", errors.Join(failures...))
 }
 
-func (m *Manager) startTransitionTarget(ctx context.Context, id domain.SessionID, fresh, requireNativeHistory bool) error {
+func (m *Manager) startTransitionTarget(ctx context.Context, id domain.SessionID, fresh, forwardHandoff bool) error {
 	ctx, cancel := context.WithTimeout(ctx, interfaceTransitionStepLimit)
 	defer cancel()
 	rec, ok, err := m.store.GetSession(ctx, id)
@@ -1006,13 +1019,19 @@ func (m *Manager) startTransitionTarget(ctx context.Context, id domain.SessionID
 	if err != nil {
 		return err
 	}
+	if forwardHandoff && domain.NormalizeSessionMode(rec.Mode) == domain.SessionModeTUI {
+		project, err = m.projectWithChatPermissions(ctx, rec.ID, project)
+		if err != nil {
+			return err
+		}
+	}
 	ws := workspaceInfo(rec)
 	// A genuinely fresh target has nothing to replay. Every resumed TUI -> Chat
 	// handoff must import native history before activation; rollback and ordinary
 	// daemon restore deliberately use the normal context-resume policy.
 	_, err = m.relaunchSessionWithPolicy(
 		ctx, "switch interface", rec, project, ws, nil,
-		fresh, requireNativeHistory && !fresh,
+		fresh, forwardHandoff && !fresh,
 	)
 	return err
 }

@@ -23,6 +23,7 @@ const interfaceTransitionMock = vi.hoisted(() => ({
 const interfaceTransitionState = vi.hoisted(() => ({
 	starting: false,
 	settling: false,
+	startError: undefined as string | undefined,
 	status: undefined as SessionInterfaceTransitionStatus | undefined,
 }));
 const reviewGetMock = vi.hoisted(() => vi.fn());
@@ -89,7 +90,7 @@ vi.mock("../hooks/useSessionInterfaceTransition", () => ({
 		start: interfaceTransitionMock.start,
 		starting: interfaceTransitionState.starting,
 		settling: interfaceTransitionState.settling,
-		startError: undefined,
+		startError: interfaceTransitionState.startError,
 		resetStartError: interfaceTransitionMock.resetStartError,
 		cancel: interfaceTransitionMock.cancel,
 		cancelling: false,
@@ -658,6 +659,7 @@ describe("SessionView", () => {
 		interfaceTransitionMock.acknowledgeNotice.mockReset();
 		interfaceTransitionState.starting = false;
 		interfaceTransitionState.settling = false;
+		interfaceTransitionState.startError = undefined;
 		interfaceTransitionState.status = undefined;
 		chatSurfaceWorkState.controllerBusy = false;
 		chatSurfaceWorkState.hasRunningTurn = false;
@@ -1112,6 +1114,34 @@ describe("SessionView", () => {
 		await chooseSessionAction("Switch to chat UI");
 
 		expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+	});
+
+	it("shows and dismisses a refused idle switch outside the policy dialog", () => {
+		interfaceTransitionState.status = { supported: true, targetMode: "tui" };
+		interfaceTransitionState.startError = "The agent has not exposed a native conversation (NATIVE_SESSION_MISSING)";
+		const session = workerSession("sess-1");
+		session.mode = "chat";
+		session.status = "idle";
+		render(<SessionView sessionId="sess-1" />);
+		expect(screen.getByRole("alert")).toHaveTextContent("NATIVE_SESSION_MISSING");
+		expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+		fireEvent.click(screen.getByRole("button", { name: "Dismiss interface switch error" }));
+		expect(interfaceTransitionMock.resetStartError).toHaveBeenCalled();
+	});
+
+	it("prioritizes a new refusal over an older transition notice until dismissed", () => {
+		workerSession("sess-1");
+		interfaceTransitionState.status = { supported: true, targetMode: "chat", transition: {
+			id: "old-transition", sessionId: "sess-1", sourceMode: "tui", targetMode: "chat", policy: "drain", phase: "failed",
+			errorDetail: "Previous switch failed", createdAt: "2026-09-05T00:00:00Z", updatedAt: "2026-09-05T00:00:00Z",
+		} };
+		interfaceTransitionState.startError = "Current request refused";
+		const view = render(<SessionView sessionId="sess-1" />);
+		expect(screen.getByRole("alert")).toHaveTextContent("Current request refused");
+		expect(screen.queryByText("Previous switch failed")).not.toBeInTheDocument();
+		interfaceTransitionState.startError = undefined;
+		view.rerender(<SessionView sessionId="sess-1" />);
+		expect(screen.getByText("Previous switch failed")).toBeInTheDocument();
 	});
 
 	it("keeps the policy dialog open when an explicit busy Chat choice fails", async () => {

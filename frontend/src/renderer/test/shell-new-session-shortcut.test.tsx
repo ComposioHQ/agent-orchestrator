@@ -159,7 +159,8 @@ vi.mock("../hooks/useDaemonStatus", () => ({
 	useDaemonStatus: () => shellMocks.state.daemonStatus,
 }));
 
-vi.mock("../lib/api-client", () => ({
+vi.mock("../lib/api-client", async (importOriginal) => ({
+	...(await importOriginal<typeof import("../lib/api-client")>()),
 	apiClient: { POST: vi.fn(), DELETE: vi.fn() },
 	apiErrorCode: (error: { code?: string } | undefined) => error?.code,
 	apiErrorMessage: (error: { message?: string } | undefined) => error?.message ?? "request failed",
@@ -400,6 +401,57 @@ describe("shell workspace startup", () => {
 			params: { projectId: "proj-1" },
 		});
 		expect(screen.getByTestId("global-toast")).toHaveTextContent("Project already added");
+	});
+
+	it("uses the daemon project identity when an imported path is an alias", async () => {
+		shellMocks.state.daemonStatus = { state: "ready", port: 4777 };
+		vi.mocked(apiClient.POST).mockResolvedValueOnce({ error: {
+			code: "PATH_ALREADY_REGISTERED", message: "Already registered", details: { existingProjectId: "proj-1" },
+		} });
+		await renderShell();
+		await expect(shellMocks.state.shellValue?.createProject?.({
+			path: "/alias/one", workerAgent: "codex", orchestratorAgent: "codex",
+		})).resolves.toBeUndefined();
+		expect(shellMocks.navigate).toHaveBeenCalledWith({
+			to: "/projects/$projectId", params: { projectId: "proj-1" },
+		});
+	});
+
+	it("refreshes a stale project list before opening the daemon's registered identity", async () => {
+		shellMocks.state.daemonStatus = { state: "ready", port: 4777 };
+		vi.mocked(apiClient.POST).mockResolvedValueOnce({ error: {
+			code: "PATH_ALREADY_REGISTERED", message: "Already registered", details: { existingProjectId: "new-registration" },
+		} });
+		await renderShell();
+		shellMocks.queryClient.fetchQuery.mockResolvedValueOnce([{ ...workspaces[0], id: "new-registration", path: "/canonical" }]);
+		await expect(shellMocks.state.shellValue?.createProject?.({ path: "/alias", workerAgent: "codex", orchestratorAgent: "codex" })).resolves.toBeUndefined();
+		expect(shellMocks.queryClient.fetchQuery).toHaveBeenCalledWith(expect.objectContaining({ staleTime: 0, retry: false }));
+		expect(shellMocks.navigate).toHaveBeenCalledWith({ to: "/projects/$projectId", params: { projectId: "new-registration" } });
+	});
+
+	it.each([undefined, null, 123, [], "", "missing", "../outside"])(
+		"does not navigate to an unverified conflict identity: %j", async (existingProjectId) => {
+			shellMocks.state.daemonStatus = { state: "ready", port: 4777 };
+			vi.mocked(apiClient.POST).mockResolvedValueOnce({ error: {
+				code: "PATH_ALREADY_REGISTERED", message: "Already registered", requestId: "request-4403", details: { existingProjectId },
+			} });
+			await renderShell();
+			await expect(shellMocks.state.shellValue?.createProject?.({ path: "/unknown", workerAgent: "codex", orchestratorAgent: "codex" })).rejects.toMatchObject({
+				code: "PATH_ALREADY_REGISTERED", requestId: "request-4403", details: { existingProjectId },
+			});
+			expect(shellMocks.navigate).not.toHaveBeenCalled();
+		},
+	);
+
+	it("preserves the original conflict when refreshing registered projects fails", async () => {
+		shellMocks.state.daemonStatus = { state: "ready", port: 4777 };
+		vi.mocked(apiClient.POST).mockResolvedValueOnce({ error: {
+			code: "PATH_ALREADY_REGISTERED", message: "Already registered", details: { existingProjectId: "not-cached" },
+		} });
+		await renderShell();
+		shellMocks.queryClient.fetchQuery.mockRejectedValueOnce(new Error("refresh failed"));
+		await expect(shellMocks.state.shellValue?.createProject?.({ path: "/unknown", workerAgent: "codex", orchestratorAgent: "codex" })).rejects.toMatchObject({ code: "PATH_ALREADY_REGISTERED", message: "Already registered" });
+		expect(shellMocks.navigate).not.toHaveBeenCalled();
 	});
 
 	it("forwards an explicit default branch when creating a local project", async () => {

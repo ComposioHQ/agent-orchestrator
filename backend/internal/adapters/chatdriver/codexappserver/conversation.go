@@ -350,9 +350,14 @@ func (c *conversation) ListModels(ctx context.Context) ([]ports.ChatModel, error
 	}
 	// Thread settings include the user's config; model/list only has generic defaults.
 	for i := range models {
+		// An omitted turn model inherits thread/start (including config.toml),
+		// not model/list's generic catalog default. If the configured model is
+		// absent, leave no catalog default rather than advertise another model.
+		if c.threadModel != "" {
+			models[i].Default = models[i].ID == c.threadModel
+		}
 		if models[i].ID == c.threadModel && c.threadEffort != "" {
 			models[i].DefaultEffort = c.threadEffort
-			break
 		}
 	}
 	return models, nil

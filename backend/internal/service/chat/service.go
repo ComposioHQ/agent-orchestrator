@@ -1327,12 +1327,17 @@ func (s *Service) SetConfigOption(
 	}
 	controller.configMu.Lock()
 	defer controller.configMu.Unlock()
+	controller.sendMu.Lock()
+	defer controller.sendMu.Unlock()
+	if controller.handoffActive() {
+		return nil, ErrControllerHandoff
+	}
 	options, err := configurer.SetConfigOption(ctx, configID, value)
 	if err != nil {
 		return nil, err
 	}
 	if settings, changed := settingsFromConfigOptions(controller.Settings(), options); changed {
-		if err := controller.SetSettings(ctx, settings); err != nil {
+		if err := controller.setSettingsLocked(ctx, settings); err != nil {
 			return nil, err
 		}
 	}

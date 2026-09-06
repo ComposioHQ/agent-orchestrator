@@ -1231,6 +1231,12 @@ func (c *Controller) SetSettings(ctx context.Context, settings domain.Conversati
 	if c.handoffActive() {
 		return ErrControllerHandoff
 	}
+	return c.setSettingsLocked(ctx, settings)
+}
+
+// setSettingsLocked requires sendMu, including when a provider mutation and its
+// durable projection must complete together before handoff can be armed.
+func (c *Controller) setSettingsLocked(ctx context.Context, settings domain.ConversationSettings) error {
 	if err := explicitPermissionModeError(c.harness, settings.ApprovalMode); err != nil {
 		return err
 	}

@@ -195,10 +195,12 @@ func (m *Service) Add(ctx context.Context, in AddInput) (Project, error) {
 	m.addMu.Lock()
 	defer m.addMu.Unlock()
 
-	projectCountBefore, err := m.activeProjectCount(ctx)
+	activeProjects, err := m.store.ListProjects(ctx)
 	if err != nil {
 		return Project{}, apierr.Internal("PROJECT_LOAD_FAILED", "Failed to load project")
 	}
+
+	projectCountBefore := len(activeProjects)
 
 	name := string(id)
 	if in.Name != nil {
@@ -208,14 +210,31 @@ func (m *Service) Add(ctx context.Context, in AddInput) (Project, error) {
 		name = string(id)
 	}
 
-	if existing, ok, err := m.store.FindProjectByPath(ctx, path); err != nil {
+	existing, registered, err := m.store.FindProjectByPath(ctx, path)
+	if err != nil {
 		return Project{}, apierr.Internal("PROJECT_LOAD_FAILED", "Failed to load project")
-	} else if ok {
+	}
+	if !registered {
+		// Existing records retain the user's chosen path. Compare directory
+		// identity as well, so aliases (including macOS /tmp and /private/tmp)
+		// cannot register the same repository under a second project ID.
+		if selectedInfo, statErr := os.Stat(path); statErr == nil && selectedInfo.IsDir() {
+			for _, candidate := range activeProjects {
+				registeredInfo, statErr := os.Stat(candidate.Path)
+				if statErr == nil && os.SameFile(selectedInfo, registeredInfo) {
+					existing, registered = candidate, true
+					break
+				}
+			}
+		}
+	}
+	if registered {
 		return Project{}, apierr.Conflict("PATH_ALREADY_REGISTERED", "A project at this path is already registered", map[string]any{
 			"existingProjectId":  existing.ID,
 			"suggestedProjectId": string(m.suggestID(ctx, id)),
 		})
 	}
+
 	if existing, ok, err := m.store.GetProject(ctx, string(id)); err != nil {
 		return Project{}, apierr.Internal("PROJECT_LOAD_FAILED", "Failed to load project")
 	} else if ok && existing.ArchivedAt.IsZero() && existing.Path != path {
@@ -255,6 +274,9 @@ func (m *Service) Add(ctx context.Context, in AddInput) (Project, error) {
 		}
 		row.Kind = domain.ProjectKindWorkspace
 		row.RepoOriginURL = resolveGitOriginURL(path)
+		if err := row.Config.ValidateCanonicalRepository(row.RepoOriginURL); err != nil {
+			return Project{}, apierr.Invalid("INVALID_PROJECT_CONFIG", err.Error(), nil)
+		}
 		if err := m.store.UpsertWorkspaceProject(ctx, row, repos); err != nil {
 			return Project{}, apierr.Internal("PROJECT_ADD_FAILED", "Failed to register workspace project")
 		}
@@ -273,6 +295,9 @@ func (m *Service) Add(ctx context.Context, in AddInput) (Project, error) {
 		})
 	}
 	row.RepoOriginURL = resolveGitOriginURL(path)
+	if err := row.Config.ValidateCanonicalRepository(row.RepoOriginURL); err != nil {
+		return Project{}, apierr.Invalid("INVALID_PROJECT_CONFIG", err.Error(), nil)
+	}
 	if err := m.store.UpsertProject(ctx, row); err != nil {
 		return Project{}, apierr.Internal("PROJECT_ADD_FAILED", "Failed to register project")
 	}
@@ -499,14 +524,6 @@ func nestedGitRepositoryPaths(root string) ([]string, error) {
 	return nested, nil
 }
 
-func (m *Service) activeProjectCount(ctx context.Context) (int, error) {
-	projects, err := m.store.ListProjects(ctx)
-	if err != nil {
-		return 0, err
-	}
-	return len(projects), nil
-}
-
 func (m *Service) emitProjectAdded(ctx context.Context, row domain.ProjectRecord, firstProject bool) {
 	if m.telemetry == nil {
 		return
@@ -600,6 +617,9 @@ func (m *Service) UpdateSettings(ctx context.Context, id domain.ProjectID, in Up
 			return Project{}, apierr.Invalid("INVALID_PROJECT_CONFIG", err.Error(), nil)
 		}
 	}
+	if err := in.Config.ValidateCanonicalRepository(row.RepoOriginURL); err != nil {
+		return Project{}, apierr.Invalid("INVALID_PROJECT_CONFIG", err.Error(), nil)
+	}
 	updated, err := m.store.UpdateProjectSettings(ctx, string(id), displayName, in.Config)
 	if err != nil {
 		return Project{}, apierr.Internal("PROJECT_SETTINGS_UPDATE_FAILED", "Failed to update project settings")
@@ -684,6 +704,9 @@ func (m *Service) SetConfig(ctx context.Context, id domain.ProjectID, in SetConf
 			return Project{}, apierr.Invalid("INVALID_PROJECT_CONFIG", err.Error(), nil)
 		}
 	}
+	if err := in.Config.ValidateCanonicalRepository(row.RepoOriginURL); err != nil {
+		return Project{}, apierr.Invalid("INVALID_PROJECT_CONFIG", err.Error(), nil)
+	}
 	row.Config = in.Config
 	if err := m.store.UpsertProject(ctx, row); err != nil {
 		return Project{}, apierr.Internal("PROJECT_CONFIG_UPDATE_FAILED", "Failed to update project config")
@@ -692,6 +715,9 @@ func (m *Service) SetConfig(ctx context.Context, id domain.ProjectID, in SetConf
 }
 
 func validateScratchProjectConfig(cfg domain.ProjectConfig) error {
+	if cfg.CanonicalRepoURL != "" {
+		return errors.New("scratch projects do not support canonicalRepoURL")
+	}
 	if strings.TrimSpace(cfg.DefaultBranch) != "" {
 		return errors.New("scratch projects do not support defaultBranch")
 	}

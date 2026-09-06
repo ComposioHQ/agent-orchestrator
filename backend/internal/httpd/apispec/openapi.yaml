@@ -6388,6 +6388,62 @@ paths:
       summary: Rename a standalone shell terminal tab
       tags:
       - shellTerminals
+  /api/v1/system/github-auth:
+    get:
+      operationId: getGitHubAuthRequirement
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SystemRequirement'
+          description: OK
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Check advisory GitHub CLI authentication without blocking startup
+      tags:
+      - system
+  /api/v1/system/github-auth/terminal:
+    post:
+      operationId: openGitHubAuthTerminal
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ShellTerminalEnvelope'
+          description: Created
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Open a trusted terminal running the GitHub CLI login flow
+      tags:
+      - system
   /api/v1/system/install/{target}:
     get:
       operationId: getSystemInstallStatus
@@ -9884,6 +9940,8 @@ components:
           type: string
         autoReview:
           type: boolean
+        canonicalRepoURL:
+          type: string
         containerReap:
           $ref: '#/components/schemas/ContainerReapConfig'
         defaultBranch:
@@ -11390,6 +11448,7 @@ components:
           - tmux
           - harness
           - gh
+          - github-auth
           type: string
         label:
           description: Human-readable requirement name.
