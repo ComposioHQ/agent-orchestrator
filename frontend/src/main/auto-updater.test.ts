@@ -2939,6 +2939,33 @@ describe("staged install rejection", () => {
     consoleErrorSpy.mockRestore();
   });
 
+  // The 2026-09-05 v0.12.10 report carries the OTHER Security-framework
+  // wording for the same "the staged copy is not installable" outcome. Both
+  // reach us through the same SQRLCodeSignature.m prefix, and both have to
+  // clear the cache: reproduced locally, "code object is not signed at all" is
+  // what codesign reports when the staged bundle's main executable is missing
+  // or zero-length, which no retry of the same bytes can fix.
+  it("also handles the 'not signed at all' wording", async () => {
+    const consoleErrorSpy = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => undefined);
+    const { module, autoUpdater, updaterEvents } = await importAutoUpdater();
+
+    await module.checkForUpdatesNow(stateDir);
+    updaterEvents.get("update-downloaded")?.({ version: "2.1.0" });
+    updaterEvents.get("error")?.(
+      new Error(
+        "Code signature at URL file:///Users/graycup/Library/Caches/" +
+          "dev.agent-orchestrator.desktop.ShipIt/update.lmaIGgc/Agent%20Orchestrator.app/ " +
+          "did not pass validation: code object is not signed at all",
+      ),
+    );
+
+    expect(autoUpdater.downloadedUpdateHelper.clear).toHaveBeenCalledTimes(1);
+    expect(module.getUpdateStatus().staged).toBeUndefined();
+    consoleErrorSpy.mockRestore();
+  });
+
   it("leaves an ordinary download failure alone", async () => {
     // Same "error" event, nothing staged to reject: the existing suppress-and-
     // restore behaviour has to survive untouched.
