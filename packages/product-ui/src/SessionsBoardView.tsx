@@ -247,8 +247,8 @@ export function SessionCardView({
 	const renderedStatusLabel =
 		statusPresentation?.label ??
 		(session.displayStatus ? getDisplayStatusLabel(session.displayStatus, translate) : badge.label);
-	// Keep the daemon-derived lifecycle label intact. This line only summarizes
-	// the same PRs already rendered on completed or terminated cards.
+	// Keep the daemon-derived lifecycle label intact. This line only summarizes the PRs already rendered on the card.
+	// It only appears for sessions already marked merged or terminated by the daemon.
 	const pullRequestProgressLabel =
 		prs.length > 0 && (session.status === "terminated" || session.status === "merged")
 			? labels.pr.progress?.(countBoardPullRequests(prs))
