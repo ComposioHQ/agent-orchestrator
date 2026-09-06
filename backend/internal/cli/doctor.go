@@ -65,7 +65,7 @@ type harnessProbe struct {
 }
 
 // doctorHarnesses lists every registered agent adapter whose CLI binary can be
-// probed on PATH. Entries mirror registry.Constructors() order.
+// probed on PATH. Keep this list in sync with backend/internal/adapters/agent/registry.
 //
 // VersionArg is the flag passed to the binary to obtain a version string for
 // display. Leave it empty for adapters whose CLI does not support a stable
@@ -88,7 +88,7 @@ var doctorHarnesses = []harnessProbe{
 	{Name: "devin", BinaryName: "devin", VersionArg: "--version"},
 	{Name: "kimi", BinaryName: "kimi", VersionArg: "--version"},
 	{Name: "kiro", BinaryName: "kiro-cli", VersionArg: "--version"},
-	{Name: "kilocode", BinaryName: "kilo", VersionArg: "--version"},
+	{Name: "kilocode", BinaryName: "kilocode", VersionArg: "--version"},
 	{Name: "omp", BinaryName: "omp", VersionArg: "--version"},
 	// Tier B — binary present, no stable --version; PATH-existence only
 	{Name: "cursor", BinaryName: "cursor-agent"},

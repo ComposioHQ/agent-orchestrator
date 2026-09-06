@@ -14,6 +14,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/registry"
 )
 
 func TestDoctorChecksGitVersion(t *testing.T) {
@@ -473,21 +475,40 @@ func TestDoctorTextOutputIsGrouped(t *testing.T) {
 	}
 }
 
-// TestDoctorAllHarnessesPresent asserts that every entry in doctorHarnesses
-// surfaces a check in the runDoctor report. This guards against a harness
-// silently dropping out of the output when new entries are added to the slice.
+// TestDoctorAllHarnessesPresent asserts that every agent harness in
+// registry.Harnessed() has a corresponding probe in doctorHarnesses and
+// surfaces a check in the runDoctor report. This guards against registry/doctor list drift.
 func TestDoctorAllHarnessesPresent(t *testing.T) {
 	setConfigEnv(t)
+
+	harnesses := registry.Harnessed()
+	if len(harnesses) == 0 {
+		t.Fatal("registry.Harnessed() returned empty list")
+	}
+
+	doctorSet := make(map[string]bool, len(doctorHarnesses))
+	for _, h := range doctorHarnesses {
+		doctorSet[h.Name] = true
+	}
+
+	for _, ha := range harnesses {
+		id := string(ha.Harness)
+		if !doctorSet[id] {
+			t.Errorf("registered harness %q missing from doctorHarnesses probe list", id)
+		}
+	}
+
 	// No harness binaries available — all land as WARN "not found in PATH".
 	c := doctorContext(t, map[string]string{"git": "/bin/git"}, func(context.Context, string, ...string) ([]byte, error) {
 		return []byte("git version 2.43.0\n"), nil
 	})
 
 	checks := c.runDoctor(context.Background())
-	for _, h := range doctorHarnesses {
-		check := findDoctorCheck(t, checks, h.Name)
+	for _, ha := range harnesses {
+		id := string(ha.Harness)
+		check := findDoctorCheck(t, checks, id)
 		if check.Level != doctorWarn || !strings.Contains(check.Message, "not found in PATH") {
-			t.Fatalf("harness %q check = %+v, want WARN not found in PATH", h.Name, check)
+			t.Fatalf("harness %q check = %+v, want WARN not found in PATH", id, check)
 		}
 	}
 }
