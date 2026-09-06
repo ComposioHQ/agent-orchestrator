@@ -265,7 +265,7 @@ type SpawnSessionRequest struct {
 	// switch through the durable interface-transition endpoint. An unsupported
 	// explicit request fails rather than quietly producing the other kind of session.
 	Mode   domain.SessionMode `json:"mode,omitempty" enum:"chat,tui"`
-	Prompt string             `json:"prompt,omitempty" maxLength:"4096"`
+	Prompt string             `json:"prompt,omitempty" maxLength:"16384"`
 	// Model is an optional agent model override scoped to this single spawn. Empty
 	// keeps the resolved project/role default. The daemon validates that the
 	// selected harness can honor the model before launching.
@@ -748,7 +748,7 @@ type SendSessionMessageResponse struct {
 // An omitted agent tells the orchestrator to use the project's worker default.
 type DelegateTaskRequest struct {
 	ProjectID domain.ProjectID    `json:"projectId"`
-	Brief     string              `json:"brief" maxLength:"4096"`
+	Brief     string              `json:"brief" maxLength:"16384"`
 	Agent     domain.AgentHarness `json:"agent,omitempty" enum:"claude-code,codex,aider,opencode,grok,droid,amp,agy,crush,cursor,qwen,copilot,goose,auggie,continue,devin,cline,kimi,muse,kiro,kilocode,vibe,pi,kimchi,omp,prime-agent,autohand,fake"`
 	Model     string              `json:"model,omitempty" maxLength:"256"`
 	// ApprovalMode is an optional per-session override. The UI uses the explicit
