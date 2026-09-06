@@ -365,3 +365,33 @@ describe("ACP session config options", () => {
 		).not.toBeInTheDocument();
 	});
 });
+
+describe("native model selection", () => {
+	it("keeps an explicit model visible when the catalog does not contain it", () => {
+		render(
+			<TurnSettingsBar
+				models={[
+					{ id: "astra", displayName: "Astra", default: true, efforts: ["high"], defaultEffort: "high" },
+				]}
+				settings={{ model: "nano" }}
+				onChange={vi.fn()}
+				harness="codex"
+			/>,
+		);
+		expect(
+			screen.getByRole("button", { name: "Model and reasoning effort for the next turn" }),
+		).toHaveTextContent(/^nano$/);
+	});
+});
+
+
+it("resets a native model and effort without changing approvals", async () => {
+	const user = userEvent.setup();
+	const onChange = vi.fn();
+	render(<TurnSettingsBar models={[{ id: "nano", displayName: "Nano", default: false, efforts: ["high"] }]} settings={{ model: "nano", reasoningEffort: "high", approvalMode: "accept-edits" }} onChange={onChange} />);
+	await user.click(screen.getByRole("button", { name: "Model and reasoning effort for the next turn" }));
+	await user.hover(screen.getByRole("menuitem", { name: /^Model/ }));
+	(await screen.findByRole("menuitem", { name: "Provider default" })).focus();
+	await user.keyboard("{Enter}");
+	expect(onChange).toHaveBeenCalledWith({ model: undefined, reasoningEffort: undefined, approvalMode: "accept-edits" });
+});

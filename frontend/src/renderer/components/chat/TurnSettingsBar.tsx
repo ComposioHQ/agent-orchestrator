@@ -325,6 +325,12 @@ function ModelEffortPicker({
 								className="model-menu-scroll flex max-h-[calc(var(--size-select-menu-max)-var(--space-2)*2)] flex-col overflow-y-auto overscroll-contain"
 								onScroll={updateScrollCue}
 							>
+								<OptionMenuItem
+									active={!settings.model}
+									onSelect={() => onChange({ ...settings, model: undefined, reasoningEffort: undefined })}
+								>
+									Provider default
+								</OptionMenuItem>
 								{settings.model && !models.some((model) => model.id === settings.model) ? (
 									<OptionMenuItem active disabled>{settings.model} (not in catalog)</OptionMenuItem>
 								) : null}

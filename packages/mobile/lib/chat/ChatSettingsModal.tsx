@@ -53,7 +53,7 @@ export function ChatSettingsSheet({
 					{error ? <View accessibilityRole="alert" style={styles.error}><Feather name="alert-circle" size={14} color={t.red} /><Text style={styles.errorText}>{error}</Text></View> : null}
 					{snapshot.modelReroute ? <View style={styles.reroute}><Feather name="shuffle" size={14} color={t.amber} /><View style={{ flex: 1 }}><Text style={styles.rerouteTitle}>Currently answered by {snapshot.modelReroute.toModel}</Text><Text style={styles.rerouteCopy}>{snapshot.modelReroute.fromModel ? `${snapshot.modelReroute.fromModel} was requested. ` : ""}{snapshot.modelReroute.reason || "The provider selected a fallback model for this conversation."}</Text></View></View> : null}
 					{(!usesProviderOptions || !hasProviderModel) && (models.length || snapshot.settings.model) ? <SettingsSection icon="cpu" title="Model">
-						{!snapshot.settings.model ? <Choice label="Provider default" hint="Uses the native provider configuration" selected disabled onPress={() => {}} /> : null}
+						<Choice label="Provider default" hint="Uses the native provider configuration" selected={!snapshot.settings.model} disabled={disabled} onPress={() => onSettings({ ...snapshot.settings, model: undefined, reasoningEffort: undefined })} />
 						{snapshot.settings.model && !selected ? <Choice label={snapshot.settings.model} hint="Not in the provider catalog" selected disabled onPress={() => {}} /> : null}
 						<FamilyChoices models={models.map((model) => ({ id: model.id, label: model.displayName, description: model.description }))} selected={selected?.id} disabled={disabled} onSelect={(id) => onSettings({ ...snapshot.settings, model: id, reasoningEffort: undefined })} />
 					</SettingsSection> : null}
@@ -77,7 +77,7 @@ function FamilyChoices({ models, selected, disabled, onSelect }: { models: Famil
  const styles = useThemedStyles(makeStyles);
  return <>{groupModelFamilies(models).map((family) => <View key={family.key}>
   {family.nested ? <Pressable accessibilityRole="button" accessibilityState={{ expanded: expanded === family.key, disabled }} disabled={disabled} onPress={() => setExpanded(expanded === family.key ? null : family.key)} style={styles.choice}><Text style={styles.choiceLabel}>{family.label}</Text><Text style={styles.choiceHint}>{expanded === family.key ? "−" : "+"}</Text></Pressable> : null}
-  {(!family.nested || expanded === family.key) ? family.models.map((model) => <Choice key={model.id} label={modelVersionLabel(model)} hint={model.id} selected={model.id === selected} disabled={disabled} onPress={() => onSelect(model.id)} />) : null}
+  {(!family.nested || expanded === family.key) ? family.models.map((model) => <Choice key={model.id} label={modelVersionLabel(model)} accessibilityLabel={modelVersionLabel(model)} hint={model.id} selected={model.id === selected} disabled={disabled} onPress={() => onSelect(model.id)} />) : null}
  </View>)}</>;
 }
 
@@ -98,10 +98,10 @@ function SettingsSection({ icon, title, description, children }: { icon: keyof t
 	return <View style={styles.section}><View style={styles.sectionTitle}><Feather name={icon} size={14} color={t.textTertiary} /><Text style={styles.sectionLabel}>{title}</Text></View>{description ? <Text style={styles.sectionDescription}>{description}</Text> : null}<View style={styles.group}>{children}</View></View>;
 }
 
-function Choice({ label, hint, selected, disabled, onPress }: { label: string; hint?: string; selected: boolean; disabled?: boolean; onPress(): void }) {
+function Choice({ label, accessibilityLabel, hint, selected, disabled, onPress }: { label: string; accessibilityLabel?: string; hint?: string; selected: boolean; disabled?: boolean; onPress(): void }) {
 	const t = useTheme();
 	const styles = useThemedStyles(makeStyles);
-	return <Pressable accessibilityRole="radio" accessibilityState={{ selected, disabled }} disabled={disabled} onPress={() => { haptics.select(); onPress(); }} style={({ pressed }) => [styles.choice, pressed && { backgroundColor: t.bgSubtle }]}><View style={{ flex: 1 }}><Text style={[styles.choiceLabel, selected && { color: t.blue }]}>{label}</Text>{hint ? <Text style={styles.choiceHint}>{hint}</Text> : null}</View>{selected ? <Feather name="check" size={16} color={t.blue} /> : null}</Pressable>;
+	return <Pressable accessibilityRole="radio" accessibilityLabel={accessibilityLabel} accessibilityState={{ selected, disabled }} disabled={disabled} onPress={() => { haptics.select(); onPress(); }} style={({ pressed }) => [styles.choice, pressed && { backgroundColor: t.bgSubtle }]}><View style={{ flex: 1 }}><Text style={[styles.choiceLabel, selected && { color: t.blue }]}>{label}</Text>{hint ? <Text style={styles.choiceHint}>{hint}</Text> : null}</View>{selected ? <Feather name="check" size={16} color={t.blue} /> : null}</Pressable>;
 }
 
 function capitalize(value: string): string { return value ? value[0].toUpperCase() + value.slice(1) : value; }

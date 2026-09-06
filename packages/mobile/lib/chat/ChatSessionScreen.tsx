@@ -17,6 +17,7 @@ import {
 	TextInput,
 	View,
 } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { restoreSession, resumeSessionAgent, type DashboardSession, type OrchestratorLink } from "../api";
 import { haptics } from "../haptics";
 import { headerActionStyle } from "../headerAction";
@@ -76,6 +77,9 @@ export function ChatSessionScreen({ session }: { session: MobileChatSession }) {
 	const [openingShell, setOpeningShell] = useState(false);
 	const [resuming, setResuming] = useState(false);
 	const [keyboardHeight, setKeyboardHeight] = useState(0);
+	// Android's keyboard event reports its height with the nav bar subtracted; the
+	// root view draws under that nav bar, so screenKeyboardAvoidance adds it back.
+	const insets = useSafeAreaInsets();
 	const terminated = "projectName" in session ? Boolean(session.isTerminal) : Boolean(session.isTerminated);
 	const interfaceTransitionActive = mobileInterfaceTransitionIsActive(interfaceSwitch.transition);
 	const interfaceTransitionNotice =
@@ -109,7 +113,7 @@ export function ChatSessionScreen({ session }: { session: MobileChatSession }) {
 
 	useEffect(() => {
 		if (Platform.OS !== "android") return;
-		const avoidance = screenKeyboardAvoidance("android", 0);
+		const avoidance = screenKeyboardAvoidance("android", 0, 0);
 		const animate = (duration?: number) => LayoutAnimation.configureNext({
 			duration: duration || 250,
 			update: { type: LayoutAnimation.Types.keyboard },
@@ -262,7 +266,7 @@ export function ChatSessionScreen({ session }: { session: MobileChatSession }) {
 			style={[
 				styles.screen,
 				Platform.OS === "android" && keyboardHeight > 0
-					? { paddingBottom: screenKeyboardAvoidance("android", keyboardHeight).paddingBottom }
+					? { paddingBottom: screenKeyboardAvoidance("android", keyboardHeight, insets.bottom).paddingBottom }
 					: undefined,
 			]}
 			behavior={Platform.OS === "ios" ? "padding" : undefined}

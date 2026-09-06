@@ -670,9 +670,8 @@ func TestBootstrapImportsOpaqueDeviceCredentialWithoutMutatingDeviceHome(t *test
 	index := 0
 	manager.newID = func() string { id := ids[index]; index++; return id }
 	manager.catalog.newID = func() string { return testAccountID }
-	manager.bootstrap()
-	if manager.bootstrapErr != nil {
-		t.Fatal(manager.bootstrapErr)
+	if err := manager.waitBootstrap(context.Background()); err != nil {
+		t.Fatal(err)
 	}
 	if manager.activeAccountID() != testAccountID {
 		t.Fatalf("active account = %q", manager.activeAccountID())
@@ -1125,10 +1124,7 @@ func newAPIKeySwitchFixture(t *testing.T) apiKeySwitchFixture {
 		t.Fatal(err)
 	}
 	manager.active = state.active
-	manager.bootstrapOnce.Do(func() {
-		manager.bootstrapped = true
-		close(manager.bootstrapDone)
-	})
+	manager.bootstrapped = true
 	return apiKeySwitchFixture{manager: manager, service: &Service{codexAccounts: manager, readiness: newReadinessCoordinator(readinessCoordinatorConfig{})}, state: state, source: source, target: target}
 }
 
