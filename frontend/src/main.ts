@@ -20,6 +20,7 @@ import {
 	type OpenDialogOptions,
 } from "electron";
 import {
+	setRendererSink,
 	startAutoUpdates,
 	ensureUpdatePrefs,
 	checkForUpdatesNow,
@@ -27,7 +28,6 @@ import {
 	quitAndInstallUpdate,
 	isUpdateRestartRequested,
 	setUpdateRestartFailureHandler,
-	setUpdaterRecipientSink,
 	getUpdateStatus,
 	setUpdateSettings,
 	returnToHome,
@@ -1909,10 +1909,14 @@ ipcMain.on("shell:focus", () => browserViewHost?.forgetLastFocusedPanel());
 ipcMain.on("browser:overlay", (event, open: unknown) => {
 	if (event.sender !== getShellWebContents() || typeof open !== "boolean") return;
 	windowComposition?.setOverlayOpen(open);
-	// Raising the shell can leave the live page's own compositor surface stale
-	// (the same class of bug window-composition.ts already works around for
-	// the shell itself) — nudge it the same way once the shell is on top.
-	if (open) browserViewHost?.refreshLastFocusedPanelSurface();
+	// Refresh the live page's surface only on macOS: refreshLastFocusedPanelSurface
+	// is a macOS-specific compositor workaround (its own docstring says so). On
+	// Windows, hiding/restoring the native view under the raised shell causes a
+	// brief black flash, and window-composition.ts gates its equivalent nudge to
+	// darwin for the same reason.
+	if (open && process.platform === "darwin") {
+		browserViewHost?.refreshLastFocusedPanelSurface();
+	}
 });
 
 ipcMain.on(SET_CLOSE_SHELL_TERMINAL_SHORTCUT_ENABLED_CHANNEL, (_event, enabled: unknown) => {
@@ -2383,15 +2387,12 @@ function initAutoUpdates(): void {
 	const runFile = runFilePath();
 	if (!runFile) return;
 	const stateDir = path.dirname(runFile);
-	// Route updater pushes to the shell WebContentsView(s) AO actually renders.
-	// The updater cannot enumerate them itself: under BaseWindow composition
-	// BrowserWindow.getAllWindows() is empty, so without this the live update
-	// status never reaches the Settings panel or the sidebar restart row.
-	setUpdaterRecipientSink((channel, payload) => {
-		for (const contents of trustedShellWebContents.values()) {
-			if (!contents.isDestroyed()) contents.send(channel, payload);
-		}
-	});
+	// Route update pushes at the shell WebContents, the same target daemon status
+	// uses. The shell is a BaseWindow + WebContentsView (#3750), which
+	// BrowserWindow.getAllWindows() does not return, so the updater cannot find
+	// the renderer on its own. Resolved lazily so a recreated window still gets
+	// pushes.
+	setRendererSink(() => getShellWebContents());
 	void ensureUpdatePrefs(stateDir).then(() => startAutoUpdates(stateDir));
 }
 

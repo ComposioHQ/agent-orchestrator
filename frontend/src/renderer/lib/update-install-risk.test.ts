@@ -22,6 +22,10 @@ describe("sessionsAtRiskFromInstall", () => {
 		expect(sessionsAtRiskFromInstall([session({ status: "no_signal" })])).toHaveLength(1);
 	});
 
+	it("flags a chat turn paused for approval or input", () => {
+		expect(sessionsAtRiskFromInstall([session({ status: "needs_input" })])).toHaveLength(1);
+	});
+
 	it("spares TUI sessions, whose runtime is detached and re-adopted", () => {
 		expect(sessionsAtRiskFromInstall([session({ mode: "tui" })])).toEqual([]);
 	});
@@ -31,7 +35,7 @@ describe("sessionsAtRiskFromInstall", () => {
 	});
 
 	it("spares sessions with no turn in flight", () => {
-		for (const status of ["idle", "needs_input", "exited", "merged", "pr_open"]) {
+		for (const status of ["idle", "exited", "merged", "pr_open"]) {
 			expect(sessionsAtRiskFromInstall([session({ status })])).toEqual([]);
 		}
 	});
