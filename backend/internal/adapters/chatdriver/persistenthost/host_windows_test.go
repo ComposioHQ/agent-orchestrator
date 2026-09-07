@@ -6,9 +6,11 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"testing"
+	"time"
 )
 
 func TestDetachedHostProviderDoesNotAllocateConsoleWindow(t *testing.T) {
@@ -24,7 +26,18 @@ func TestDetachedHostProviderDoesNotAllocateConsoleWindow(t *testing.T) {
 	}
 	t.Cleanup(func() {
 		_ = transport.Stdin.Close()
-		_ = Shutdown(context.Background(), dataDir, cfg.SessionID)
+		if err := Shutdown(context.Background(), dataDir, cfg.SessionID); err != nil {
+			t.Errorf("Shutdown: %v", err)
+		}
+		path, _ := descriptorPath(dataDir, cfg.SessionID)
+		deadline := time.Now().Add(5 * time.Second)
+		for time.Now().Before(deadline) {
+			if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
+				return
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		t.Error("detached host did not exit after shutdown")
 	})
 
 	if _, err := fmt.Fprintln(transport.Stdin, `{"id":1,"method":"console-window"}`); err != nil {
