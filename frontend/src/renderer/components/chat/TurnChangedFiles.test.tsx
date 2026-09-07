@@ -350,7 +350,7 @@ describe("ActivityRun with a streaming command", () => {
 	}
 
 	it("opens itself so live output inside it is visible", () => {
-		const { container } = render(
+		render(
 			<ActivityRun
 				activities={[
 					commandActivity(
@@ -361,7 +361,28 @@ describe("ActivityRun with a streaming command", () => {
 				]}
 			/>,
 		);
-		expect(container.querySelector("pre")?.textContent).toBe("compiling…\n");
+		expect(screen.getByText("compiling…")).toBeInTheDocument();
+	});
+
+	it("opens the matching subgroup when a grouped command is streaming", () => {
+		const completedCommand = commandActivity({ command: "pwd" }, "completed");
+		completedCommand.id = "act-2";
+		completedCommand.sequence = 2;
+
+		render(
+			<ActivityRun
+				activities={[
+					commandActivity(
+						{ command: "npm run build", output: "compiling…\n", outputSource: "stream", outputMayBePartial: true },
+						"running",
+					),
+					completedCommand,
+					plan("act-3"),
+				]}
+			/>,
+		);
+
+		expect(screen.getByText("compiling…")).toBeInTheDocument();
 	});
 
 	it("stays collapsed when nothing inside it is printing", () => {

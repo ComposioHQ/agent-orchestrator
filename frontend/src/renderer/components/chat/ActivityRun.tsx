@@ -176,8 +176,12 @@ function ActivitySubgroup({
 	activities: ConversationActivity[];
 	hierarchy: ActivityNode[];
 }) {
-	const [open, setOpen] = useState(false);
+	const [override, setOverride] = useState<boolean | null>(null);
 	const reducedMotion = useReducedMotion();
+	const streamingOutput = activities.some((activity) =>
+		activity.status === "running" && Boolean(activity.detail?.output),
+	);
+	const open = override ?? streamingOutput;
 	const hasNestedAgent = activities.some((activity) =>
 		hierarchy.some((node) => node.activity.id === activity.id && node.children.length > 0),
 	);
@@ -201,7 +205,7 @@ function ActivitySubgroup({
 		<div className="activity-subgroup">
 			<button
 				type="button"
-				onClick={() => setOpen((current) => !current)}
+				onClick={() => setOverride(!open)}
 				aria-expanded={open}
 				className={cn(ACTIVITY_SUMMARY_BUTTON_CLASS, "activity-subgroup-toggle")}
 			>
