@@ -29,6 +29,14 @@ func newDriver(plugin nativeacp.Plugin, probe nativeacp.VersionProbe, log *slog.
 		SessionMode:    sessionMode,
 		SessionOptions: sessionOptions,
 		VersionProbe:   probe,
+		Capabilities: ports.ChatCapabilities{
+			// Qwen Code's ACP mode ignores --approval-mode: it auto-executes tool
+			// calls and never sends session/request_permission, so a permission
+			// selector would carry a value the provider silently discards. Declare
+			// approvals unavailable, like piacp, so AO's production floor admits
+			// Qwen Chat only under the explicit bypass-permissions fallback.
+			ports.ChatCapabilityApprovals: false,
+		},
 	}, log)
 }
 

@@ -95,12 +95,15 @@ func TestDriverReusesQwenPluginForProbe(t *testing.T) {
 		t.Fatalf("harness = %q", driver.Harness())
 	}
 	for _, capability := range []ports.ChatCapability{
-		ports.ChatCapabilityStreaming, ports.ChatCapabilityTools, ports.ChatCapabilityApprovals,
+		ports.ChatCapabilityStreaming, ports.ChatCapabilityTools,
 		ports.ChatCapabilityInterrupt, ports.ChatCapabilityResume,
 	} {
 		if !caps.Has(capability) {
 			t.Errorf("missing capability %q", capability)
 		}
+	}
+	if caps.Has(ports.ChatCapabilityApprovals) {
+		t.Error("qwen must not advertise approvals: Qwen ACP ignores --approval-mode and never asks")
 	}
 	if plugin.resolveCalls != 1 || plugin.authCalls != 1 || versionCalls != 1 {
 		t.Fatalf("plugin calls = resolve %d, auth %d, version %d; want one each",
@@ -116,6 +119,31 @@ func TestDriverRejectsUnauthenticatedQwen(t *testing.T) {
 	)
 	if _, err := driver.Probe(context.Background()); !errors.Is(err, ports.ErrChatAuthRequired) {
 		t.Fatalf("Probe error = %v, want ErrChatAuthRequired", err)
+	}
+}
+
+func TestDriverAdmitsChatOnlyUnderBypass(t *testing.T) {
+	driver := newDriver(
+		&fakePlugin{status: ports.AgentAuthStatusAuthorized, binary: "/usr/bin/qwen"},
+		func(context.Context, string) error { return nil },
+		nil,
+	)
+	caps, err := driver.Probe(context.Background())
+	if err != nil {
+		t.Fatalf("Probe: %v", err)
+	}
+	// Qwen ACP ignores --approval-mode, so the only production-floor gap is the
+	// approval channel it never opens.
+	if missing := ports.MissingProductionCapabilities(caps); !reflect.DeepEqual(missing, []ports.ChatCapability{ports.ChatCapabilityApprovals}) {
+		t.Fatalf("production floor gap = %v, want [approvals]", missing)
+	}
+	// A default (ask-me) Chat is refused because that missing channel is required;
+	// bypass-permissions opts out of approvals, so admission is clean.
+	if missing := ports.MissingCapabilitiesForPermissions(caps, ports.PermissionModeDefault); len(missing) == 0 {
+		t.Fatal("default-mode Qwen Chat must be refused for the missing approval channel")
+	}
+	if missing := ports.MissingCapabilitiesForPermissions(caps, ports.PermissionModeBypassPermissions); len(missing) != 0 {
+		t.Fatalf("bypass Qwen Chat should admit cleanly; missing=%v", missing)
 	}
 }
 
