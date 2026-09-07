@@ -360,6 +360,9 @@ export function CreateProjectFlow({
 							approvedActions: [],
 							remoteUrl: repo.requiredActions.includes("set_remote") ? suggestedProjectRemoteUrl(repo.path) : "",
 						}])));
+					if ((!validation.isValid || validation.nextStep === "error") && !validation.blockingErrors.includes("WORKSPACE_CHILD_REPO_REQUIRED")) {
+						reportProjectError(importValidationMessage(validation));
+					}
 					setFolderPickerOpen(true);
 					return;
 				} catch (err) {
@@ -673,6 +676,7 @@ export function CreateProjectFlow({
 
 	const prepareWorkspaceGit = async () => {
 		if (!projectValidation || !validationScan) return;
+		setError(null);
 		const repositories = mergeWorkspaceImportRepos(validationScan, projectValidation)
 			.filter((repo) => repo.requiredActions.length > 0 && repo.requiredActions.every((action) => workspacePreparation[repo.path]?.approvedActions.includes(action)))
 			.map((repo) => ({
@@ -707,6 +711,7 @@ export function CreateProjectFlow({
 			for (const repo of repositories) {
 				if (repo.remoteUrl) persistSuggestedProjectRemoteUrl(repo.remoteUrl);
 			}
+			setSelectedKind("workspace");
 			setFolderPickerOpen(false);
 			setModePickerOpen(false);
 			setSelectedPath(data.validation.root.repoPath);
@@ -817,6 +822,7 @@ export function CreateProjectFlow({
 						scan={validationScan}
 						validation={projectValidation}
 						isPreparingGit={isPreparingGit}
+						shake={projectImportShake}
 						workspacePreparation={workspacePreparation}
 						onChangeWorkspacePreparation={(repoPath, next) => setWorkspacePreparation((current) => ({
 							...current,
@@ -826,7 +832,7 @@ export function CreateProjectFlow({
 							if (projectValidation) void chooseDirectory("single_repo", projectValidation.root.repoPath, true);
 						}}
 						onContinue={() => {
-							if (!validationScan || error) return;
+							if (!validationScan) return;
 							if (selectedKind === "workspace") {
 								const hasApprovedSetup = mergeWorkspaceImportRepos(validationScan, projectValidation).some((repo) =>
 									repo.requiredActions.length > 0 && repo.requiredActions.every((action) => workspacePreparation[repo.path]?.approvedActions.includes(action)),
@@ -1766,6 +1772,7 @@ function CreateProjectFolderDialog({
 	validation,
 	workspacePreparation,
 	isPreparingGit,
+	shake,
 	onChangeWorkspacePreparation,
 }: {
 	disabled: boolean;
@@ -1781,6 +1788,7 @@ function CreateProjectFolderDialog({
 	validation: ImportValidationResult | null;
 	workspacePreparation: WorkspacePreparationState;
 	isPreparingGit: boolean;
+	shake: boolean;
 	onChangeWorkspacePreparation: (repoPath: string, next: Partial<WorkspacePreparationState[string]>) => void;
 }) {
 	const { t } = useTranslation();
@@ -1788,6 +1796,7 @@ function CreateProjectFolderDialog({
 	const displayRepos = isWorkspace ? mergeWorkspaceImportRepos(scan, validation) : normalizeImportRepos(scan?.repos ?? []);
 	const workspaceNeedsInitializedRepo = isWorkspace && validation?.blockingErrors.includes("WORKSPACE_CHILD_REPO_REQUIRED");
 	const workspaceRootIsProject = isWorkspace && validation?.nextStep === "choose_import_kind" && validation.root.isRepo;
+	const workspaceValidationBlocked = isWorkspace && validation !== null && (!validation.isValid || validation.nextStep === "error") && !workspaceNeedsInitializedRepo;
 	const selectedSetupRepos = displayRepos.filter((repo) => repo.requiredActions.length > 0 && (workspacePreparation[repo.path]?.approvedActions.length ?? 0) > 0);
 	const selectedSetupReady = selectedSetupRepos.every((repo) =>
 		repo.requiredActions.every((action) => workspacePreparation[repo.path]?.approvedActions.includes(action)) &&
@@ -1812,7 +1821,7 @@ function CreateProjectFolderDialog({
 	return (
 		<Dialog.Root open={open} onOpenChange={onOpenChange}>
 			<Dialog.Portal>
-				<Dialog.Content className="fixed left-1/2 top-1/2 z-overlay flex max-h-[min(640px,calc(100svh-24px))] w-[min(640px,calc(100vw-24px))] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-lg border border-border bg-popover p-0 text-popover-foreground shadow-xl data-[state=open]:animate-modal-in data-[state=closed]:animate-modal-out motion-reduce:animate-none">
+				<Dialog.Content className={cn("fixed left-1/2 top-1/2 z-overlay flex max-h-[min(640px,calc(100svh-24px))] w-[min(640px,calc(100vw-24px))] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-lg border border-border bg-popover p-0 text-popover-foreground shadow-xl data-[state=open]:animate-modal-in data-[state=closed]:animate-modal-out motion-reduce:animate-none", shake && "modal-shake")}>
 					<div className="relative flex shrink-0 items-start gap-3 px-4 pt-3">
 						<Button
 							type="button"
@@ -1855,7 +1864,7 @@ function CreateProjectFolderDialog({
 									{displayImportPath(scan.path)}
 								</PathRow> : null}
 
-								{error && (
+								{error && !isWorkspace && (
 									<div className="rounded-lg border border-destructive/40 bg-destructive/10">
 										<div className="border-b border-destructive/30 px-3 py-2 font-mono text-[11px] font-semibold uppercase tracking-[0.12em] text-destructive">
 											<span className="mr-2 inline-block size-2 rounded-full bg-destructive" aria-hidden="true" />
@@ -1907,7 +1916,7 @@ function CreateProjectFolderDialog({
 								<Button type="button" variant="primary" disabled={disabled} onClick={onContinueAsProject}>
 									{t("createProject.importAsProject")}
 								</Button>
-							) : hasScan && failedRepos.length === 0 && !error && (!workspaceNeedsInitializedRepo || selectedSetupRepos.length > 0) ? (
+							) : hasScan && !workspaceValidationBlocked && failedRepos.length === 0 && (!error || isWorkspace) && (!workspaceNeedsInitializedRepo || selectedSetupRepos.length > 0) ? (
 								<Button type="button" variant="primary" disabled={disabled || !workspaceSetupReady} onClick={onContinue}>
 									{isPreparingGit ? <><CircleDashed className="size-4 animate-spin" aria-hidden="true" />{t("createProject.settingUp")}</> : t("createProject.cloneContinue")}
 								</Button>

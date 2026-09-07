@@ -1189,7 +1189,8 @@ describe("Sidebar", () => {
 
 		await waitFor(() => expect(onCreateProject).toHaveBeenCalledTimes(1));
 		expect(onInitializeProject).not.toHaveBeenCalled();
-		expect(await screen.findByText(/Import failed · workspace not registered/i)).toBeInTheDocument();
+		await waitFor(() => expect(useUiStore.getState().globalToast?.body).toBe("This folder is not a Git repository."));
+		expect(screen.queryByText(/Import failed · workspace not registered/i)).not.toBeInTheDocument();
 		expect(window.ao!.app.checkAncestorRepo).toHaveBeenCalledWith("/repo/workspace");
 		expect(window.ao!.app.scanImportFolder).toHaveBeenCalledTimes(2);
 	});
@@ -1246,8 +1247,9 @@ describe("Sidebar", () => {
 		await chooseOption(screen.getByRole("combobox", { name: "Orchestrator agent" }), "Claude Code");
 		await user.click(screen.getByRole("button", { name: "Create workspace and start" }));
 
-		expect(await screen.findByText(/Import failed · workspace not registered/i)).toBeInTheDocument();
-		expect(screen.getByText("workspace not registered")).toBeInTheDocument();
+		await waitFor(() => expect(useUiStore.getState().globalToast?.body).toBe("workspace not registered"));
+		expect(screen.queryByText(/Import failed · workspace not registered/i)).not.toBeInTheDocument();
+		expect(screen.queryByText("workspace not registered")).not.toBeInTheDocument();
 		expect(window.ao!.app.checkAncestorRepo).toHaveBeenCalledWith("/Users/test/dev/acme");
 		expect(window.ao!.app.scanImportFolder).toHaveBeenCalledTimes(2);
 	});

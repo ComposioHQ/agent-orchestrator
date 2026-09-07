@@ -570,6 +570,158 @@ describe("CreateProjectFlow project import validation", () => {
 		});
 	});
 
+	it("keeps workspace mode after preparing a child repository", async () => {
+		const user = userEvent.setup();
+		bridgeMocks.chooseDirectory.mockResolvedValue("/repo/workspace");
+		bridgeMocks.scanImportFolder.mockResolvedValue({
+			path: "/repo/workspace",
+			repos: [{
+				name: "app",
+				path: "/repo/workspace/app",
+				relativePath: "app",
+				branch: "main",
+				remote: "",
+				hasRemote: false,
+				isRepo: true,
+				hasCommit: true,
+				status: "ok",
+				needsGitInit: false,
+			}],
+		});
+		const workspaceRoot = {
+			isRepo: false,
+			hasCommit: false,
+			hasOrigin: false,
+			needsGitInit: true,
+			requiredActions: [],
+		};
+		apiMocks.POST
+			.mockResolvedValueOnce({
+				data: {
+					...projectValidation("/repo/workspace", {
+						nextStep: "prepare_git",
+						root: workspaceRoot,
+						childRepos: [{
+							repoPath: "/repo/workspace/app",
+							isRepo: true,
+							hasCommit: true,
+							hasOrigin: false,
+							isEmptyFolder: false,
+							needsGitInit: false,
+							requiredActions: ["set_remote"],
+							blockingErrors: [],
+						}],
+					}),
+					importKind: "workspace",
+				},
+			})
+			.mockResolvedValueOnce({
+				data: {
+					events: [{ repoPath: "/repo/workspace/app", action: "set_remote", state: "success" }],
+					validation: {
+						...projectValidation("/repo/workspace", {
+							root: workspaceRoot,
+							childRepos: [{
+								repoPath: "/repo/workspace/app",
+								isRepo: true,
+								hasCommit: true,
+								hasOrigin: true,
+								isEmptyFolder: false,
+								needsGitInit: false,
+								requiredActions: [],
+								blockingErrors: [],
+							}],
+						}),
+						importKind: "workspace",
+					},
+				},
+			});
+
+		renderChooseFlow();
+		await openSource(user, "Import a workspace folder");
+		await user.click(await screen.findByRole("checkbox"));
+		await user.click(screen.getByRole("button", { name: "Continue" }));
+
+		expect(await screen.findByTestId("agent-sheet")).toHaveAttribute("data-kind", "workspace");
+		expect(screen.getByTestId("agent-sheet")).toHaveAttribute("data-path", "/repo/workspace");
+		expect(screen.queryByRole("dialog", { name: "Prepare project" })).not.toBeInTheDocument();
+		expect(apiMocks.POST).toHaveBeenNthCalledWith(2, "/api/v1/imports/prepare-git", {
+			body: {
+				importKind: "workspace",
+				path: "/repo/workspace",
+				repositories: [{
+					repoPath: "/repo/workspace/app",
+					approvedActions: ["set_remote"],
+					remoteUrl: "https://github.com/username/app.git",
+				}],
+			},
+		});
+	});
+
+	it("blocks invalid workspace validation with a toast and modal shake", async () => {
+		const user = userEvent.setup();
+		bridgeMocks.chooseDirectory.mockResolvedValue("/repo/workspace");
+		bridgeMocks.scanImportFolder.mockResolvedValue({ path: "/repo/workspace", repos: [] });
+		apiMocks.POST.mockResolvedValueOnce({
+			data: {
+				...projectValidation("/repo/workspace", {
+					isValid: false,
+					blockingErrors: ["UNSUPPORTED_GIT_METADATA"],
+					nextStep: "error",
+					root: { blockingErrors: ["UNSUPPORTED_GIT_METADATA"] },
+				}),
+				importKind: "workspace",
+			},
+		});
+
+		renderChooseFlow();
+		await openSource(user, "Import a workspace folder");
+
+		expect(useUiStore.getState().globalToast?.body).toBe("Repair the Git metadata or choose a different folder.");
+		await waitFor(() => expect(screen.getByRole("dialog", { name: "Import workspace" })).toHaveClass("modal-shake"));
+		expect(screen.queryByRole("button", { name: "Continue" })).not.toBeInTheDocument();
+		expect(screen.queryByText("Import failed · workspace not registered")).not.toBeInTheDocument();
+	});
+
+	it("toasts and shakes the workspace modal when child Git preparation fails", async () => {
+		const user = userEvent.setup();
+		bridgeMocks.chooseDirectory.mockResolvedValue("/repo/workspace");
+		bridgeMocks.scanImportFolder.mockResolvedValue({
+			path: "/repo/workspace",
+			repos: [{ name: "app", path: "/repo/workspace/app", relativePath: "app", branch: "main", remote: "", hasRemote: false, isRepo: true, hasCommit: true, status: "ok", needsGitInit: false }],
+		});
+		apiMocks.POST
+			.mockResolvedValueOnce({
+				data: {
+					...projectValidation("/repo/workspace", {
+						nextStep: "prepare_git",
+						root: { isRepo: false, hasCommit: false, hasOrigin: false, needsGitInit: true, requiredActions: [] },
+						childRepos: [{ repoPath: "/repo/workspace/app", isRepo: true, hasCommit: true, hasOrigin: false, isEmptyFolder: false, needsGitInit: false, requiredActions: ["set_remote"], blockingErrors: [] }],
+					}),
+					importKind: "workspace",
+				},
+			})
+			.mockResolvedValueOnce({
+				data: {
+					events: [{ repoPath: "/repo/workspace/app", action: "set_remote", state: "error", error: "rpc INTERNAL_FAILURE request_id=secret" }],
+					validation: {
+						...projectValidation("/repo/workspace", { nextStep: "prepare_git" }),
+						importKind: "workspace",
+					},
+				},
+			});
+
+		renderChooseFlow();
+		await openSource(user, "Import a workspace folder");
+		await user.click(await screen.findByRole("checkbox"));
+		await user.click(screen.getByRole("button", { name: "Continue" }));
+
+		await waitFor(() => expect(screen.getByRole("dialog", { name: "Import workspace" })).toHaveClass("modal-shake"));
+		expect(useUiStore.getState().globalToast?.body).toBe("/repo/workspace/app failed while running Remote setup. Review the step below, then retry or go back.");
+		expect(screen.queryByText(/INTERNAL_FAILURE|request_id/)).not.toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Continue" })).toBeEnabled();
+	});
+
 	it("uses one shared backdrop while switching between flow modals", async () => {
 		const user = userEvent.setup();
 		bridgeMocks.chooseDirectory.mockResolvedValue("/repo/project");
