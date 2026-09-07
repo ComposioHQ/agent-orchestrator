@@ -417,7 +417,7 @@ func TestAuthStatusUnauthorizedFromKiroWhoami(t *testing.T) {
 // must still report the session as authorized.
 func TestAuthStatusHandlesJSONFormatTrailer(t *testing.T) {
 	restore := stubKiroAuthRunner(t, func(_ context.Context, _ string, _ ...string) ([]byte, error) {
-		return []byte(`{"accountType":"IamIdentityCenter","email":"<redacted>","region":"eu-west-1","startUrl":"https://d-9367796492.awsapps.com/start"}
+		return []byte(`{"accountType":"IamIdentityCenter","email":"<redacted>","region":"eu-west-1","startUrl":"https://d-<redacted>.awsapps.com/start"}
 
 Profile:
 KiroProfile-us-east-1
