@@ -327,7 +327,7 @@ describe("queued message attachments", () => {
 		expect(second.send).not.toHaveBeenCalled();
 	});
 
-	it("recovers editing and cancel after a committed draft write cannot be read back", async () => {
+	it.each([false, true])("recovers after failed readback, with a subsequent write failure: %s", async (failFollowingWrite) => {
 		setup();
 		await beginEdit();
 		const storage = window.localStorage;
@@ -335,19 +335,23 @@ describe("queued message attachments", () => {
 		const setItem = storage.setItem.bind(storage);
 		let failRead = false;
 		let failWriteProof = true;
+		let failWrite = false;
 		const read = vi.spyOn(storage, "getItem").mockImplementation((key) => {
 			if (failRead) { failRead = false; throw new Error("read unavailable"); }
 			return getItem(key);
 		});
 		const write = vi.spyOn(storage, "setItem").mockImplementation((key, value) => {
+			if (failWrite) { failWrite = false; throw new Error("write unavailable"); }
 			setItem(key, value);
 			if (failWriteProof && value.includes('"queuedEdit"')) { failRead = true; failWriteProof = false; }
 		});
 		try {
 			await typeInLexicalEditor(screen.getByRole("combobox"), " first");
 			await screen.findByText(/Queued edit could not be saved/);
+			failWrite = failFollowingWrite;
 			await typeInLexicalEditor(screen.getByRole("combobox"), " second");
-			await waitFor(() => expect(readChatSessionDraft(chatFixture.sessionId).queuedEdit?.text).toBe("inspect this first second"));
+			await typeInLexicalEditor(screen.getByRole("combobox"), " third");
+			await waitFor(() => expect(readChatSessionDraft(chatFixture.sessionId).queuedEdit?.text).toBe("inspect this first second third"));
 			await userEvent.click(screen.getByRole("button", { name: "Cancel edit" }));
 			expect(readChatSessionDraft(chatFixture.sessionId).queuedEdit).toBeUndefined();
 		} finally { read.mockRestore(); write.mockRestore(); }

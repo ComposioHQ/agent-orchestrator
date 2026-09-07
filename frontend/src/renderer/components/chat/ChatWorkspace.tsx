@@ -703,7 +703,7 @@ function ChatWorkspaceContent({
 	);
 	const queueEditRef = useRef(queueEdit);
 	const [queueDraftError, setQueueDraftError] = useState<string>();
-	const unprovenQueueWrite = useRef<{ expectedRevision?: string; written: { revision?: string } } | undefined>(undefined);
+	const unprovenQueueWrite = useRef<{ expectedRevision?: string; written: { revisions: (string | undefined)[] } } | undefined>(undefined);
 	const updateQueueDraft = useCallback((edit: Omit<ChatDraftQueuedEdit, "revision"> | undefined, expectedRevision?: string) => {
 		const previous = unprovenQueueWrite.current;
 		const result = writeChatQueuedEdit(draftScope, edit, expectedRevision, undefined,

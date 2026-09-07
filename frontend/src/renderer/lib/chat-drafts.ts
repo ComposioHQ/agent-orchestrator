@@ -1250,11 +1250,11 @@ export function writeChatQueuedEdit(
 	edit: Omit<ChatDraftQueuedEdit, "revision"> | undefined,
 	expectedRevision?: string,
 	storage: DraftStorage | undefined = rendererStorage(),
-	previousUnprovenWrite?: { revision?: string },
-): DraftWriteResult & { attempted?: { revision?: string } } {
+	previousUnprovenWrite?: { revisions: (string | undefined)[] },
+): DraftWriteResult & { attempted?: { revisions: (string | undefined)[] } } {
 	const loaded = loadChatSessionDraft(scope, storage);
 	if (!loaded.ok || (expectedRevision !== undefined && loaded.draft.queuedEdit?.revision !== expectedRevision &&
-		(!previousUnprovenWrite || loaded.draft.queuedEdit?.revision !== previousUnprovenWrite.revision))) {
+		(!previousUnprovenWrite || !previousUnprovenWrite.revisions.includes(loaded.draft.queuedEdit?.revision)))) {
 		return { ok: false, draft: loaded.draft };
 	}
 	const next = { ...loaded.draft };
@@ -1262,8 +1262,9 @@ export function writeChatQueuedEdit(
 	else delete next.queuedEdit;
 	const result = persistDraftProven(next, storage);
 	// A write can commit before its readback fails. Permit a later attempt to
-	// recognize only this exact written revision, never another editor's changes.
-	return { ...result, attempted: { revision: next.queuedEdit?.revision } };
+	// recognize only the loaded or attempted revision, never another editor's
+	// changes. Retain both in case the write itself failed before changing storage.
+	return { ...result, attempted: { revisions: [loaded.draft.queuedEdit?.revision, next.queuedEdit?.revision] } };
 }
 
 export function writeChatInlineEdit(
