@@ -214,6 +214,9 @@ func Run() error {
 		return fmt.Errorf("open store: %w", err)
 	}
 	defer func() { _ = store.Close() }()
+	if _, err := store.RequeueClaimedReports(context.Background()); err != nil {
+		return fmt.Errorf("recover report delivery claims: %w", err)
+	}
 	if err := store.ConfigureAgentSwitchFailureEventEncoder(context.Background(), sentryobs.AgentSwitchEventEncoder{}); err != nil {
 		return fmt.Errorf("configure agent switch failure event encoder: %w", err)
 	}

@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -17,16 +18,20 @@ func TestReportValidation(t *testing.T) {
 		args []string
 	}{
 		{"empty", []string{"report"}},
-		{"structured missing note", []string{"report", "--done"}},
-		{"mutually exclusive", []string{"report", "--done", "--stuck", "--note", "x"}},
+		{"legacy positional status", []string{"report", "working"}},
+		{"state missing note", []string{"report", "--done"}},
+		{"mutually exclusive states", []string{"report", "--done", "--stuck", "--note", "x"}},
 		{"free form with note", []string{"report", "hello", "--note", "x"}},
 		{"free form with empty note flag", []string{"report", "hello", "--note="}},
-		{"free form with flag", []string{"report", "hello", "--done", "--note", "x"}},
+		{"free form with state", []string{"report", "hello", "--done", "--note", "x"}},
+		{"free form with output", []string{"report", "hello", "--artifact", "ref"}},
+		{"note with output only", []string{"report", "--note", "x", "--artifact", "ref"}},
 		{"free form too long", []string{"report", long}},
 		{"note too long", []string{"report", "--checkpoint", "--note", long}},
-		{"invalid pr scheme", []string{"report", "--pr-created", "--note", "git://github.com/o/r/pull/1"}},
-		{"invalid pr host", []string{"report", "--pr-created", "--note", "https://example.com/o/r/pull/1"}},
-		{"invalid pr path", []string{"report", "--pr-created", "--note", "https://github.com/o/r/issues/1"}},
+		{"empty artifact", []string{"report", "--artifact="}},
+		{"invalid created PR", []string{"report", "--pr-created", "git://github.com/o/r/pull/1"}},
+		{"invalid reviewed PR host", []string{"report", "--pr-reviewed", "https://example.com/o/r/pull/1"}},
+		{"invalid PR path", []string{"report", "--pr-created", "https://github.com/o/r/issues/1"}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -40,19 +45,20 @@ func TestReportValidation(t *testing.T) {
 
 func TestReportModesAndBoundaries(t *testing.T) {
 	t.Setenv("AO_SESSION_ID", "worker-1")
+	pr1 := "https://github.com/o/r/pull/12"
+	pr2 := "http://github.com/o/r/pull/13"
 	tests := []struct {
-		name      string
-		args      []string
-		typ, note string
+		name string
+		args []string
+		want reportAPIRequest
 	}{
-		{"free form", []string{"report", "hello", "world"}, "free_form", "hello world"},
-		{"free form boundary", []string{"report", strings.Repeat("界", 1000)}, "free_form", strings.Repeat("界", 1000)},
-		{"pr", []string{"report", "--pr-created", "--note", "https://github.com/o/r/pull/12"}, "pr_created", "https://github.com/o/r/pull/12"},
-		{"artifact", []string{"report", "--artifact", "--note", "opaque://anything"}, "artifact", "opaque://anything"},
-		{"checkpoint", []string{"report", "--checkpoint", "--note", "x"}, "checkpoint", "x"},
-		{"needs input", []string{"report", "--needs-input", "--note", "x"}, "needs_input", "x"},
-		{"stuck", []string{"report", "--stuck", "--note", "x"}, "stuck", "x"},
-		{"done", []string{"report", "--done", "--note", strings.Repeat("x", 1000)}, "done", strings.Repeat("x", 1000)},
+		{name: "free form", args: []string{"report", "hello", "world"}, want: reportAPIRequest{SessionID: "worker-1", Message: "hello world"}},
+		{name: "free form boundary", args: []string{"report", strings.Repeat("界", 1000)}, want: reportAPIRequest{SessionID: "worker-1", Message: strings.Repeat("界", 1000)}},
+		{name: "output only repeated", args: []string{"report", "--artifact", "one", "--artifact", "two", "--pr-created", pr1, "--pr-reviewed", pr2}, want: reportAPIRequest{SessionID: "worker-1", Outputs: []reportAPIOutput{{Kind: "artifact", Reference: "one"}, {Kind: "artifact", Reference: "two"}, {Kind: "pr_created", Reference: pr1}, {Kind: "pr_reviewed", Reference: pr2}}}},
+		{name: "checkpoint with output", args: []string{"report", "--checkpoint", "--note", "x", "--artifact", "opaque://anything"}, want: reportAPIRequest{SessionID: "worker-1", State: "checkpoint", Note: "x", Outputs: []reportAPIOutput{{Kind: "artifact", Reference: "opaque://anything"}}}},
+		{name: "needs input", args: []string{"report", "--needs-input", "--note", "x"}, want: reportAPIRequest{SessionID: "worker-1", State: "needs_input", Note: "x"}},
+		{name: "stuck", args: []string{"report", "--stuck", "--note", "x"}, want: reportAPIRequest{SessionID: "worker-1", State: "stuck", Note: "x"}},
+		{name: "done without output", args: []string{"report", "--done", "--note", strings.Repeat("x", 1000)}, want: reportAPIRequest{SessionID: "worker-1", State: "done", Note: strings.Repeat("x", 1000)}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -71,8 +77,8 @@ func TestReportModesAndBoundaries(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if got.SessionID != "worker-1" || got.Type != tc.typ || got.Note != tc.note {
-				t.Fatalf("request=%+v", got)
+			if !reflect.DeepEqual(got, tc.want) {
+				t.Fatalf("request=%+v want=%+v", got, tc.want)
 			}
 		})
 	}
