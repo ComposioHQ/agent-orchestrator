@@ -4,6 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -48,6 +51,18 @@ func withFreshChatHistory(manager *Manager, store *transitionStore) *freshChatTr
 }
 
 func TestInterfaceTransitionUnpromptedChatToTUI(t *testing.T) {
+	// Keep production argv generation without requiring installed providers.
+	// The fake runtime records these paths but never executes the files.
+	binDir := t.TempDir()
+	for _, name := range []string{"claude", "codex"} {
+		if runtime.GOOS == "windows" {
+			name += ".exe"
+		}
+		if err := os.WriteFile(filepath.Join(binDir, name), []byte("test executable"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("PATH", binDir)
 	for _, tc := range []struct {
 		name         string
 		harness      domain.AgentHarness
