@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -489,12 +491,11 @@ func (m *Manager) runInterfaceTransition(
 }
 
 // nativeConversationID resolves the adapter's native conversation id for the
-// session's current interface. An empty id is only safe to pass through when
-// the adapter supports history probing AND the source has positive untouched
-// terminal or durable Chat evidence. If any conversation metadata is set but
-// the native id is empty, the hooks fired but failed to capture the id — a
-// bug state where fresh-starting would silently discard the conversation, so
-// hard-block with ErrNativeConversationMissing instead.
+// session's current interface. A missing id requires positive untouched-terminal
+// or durable empty-Chat proof. Chat may also reserve a ProviderConversationID
+// before persisting history; persistedNativeConversationID checks whether that
+// id can resume or qualifies for a fresh launch. Conversation activity without
+// a resumable identity must fail closed instead of discarding existing work.
 func (m *Manager) nativeConversationID(
 	ctx context.Context,
 	rec domain.SessionRecord,
@@ -550,13 +551,20 @@ func (m *Manager) nativeConversationNotStarted(
 	rec domain.SessionRecord,
 	agent ports.Agent,
 ) bool {
-	if rec.Metadata.LatestUserPrompt != "" ||
-		rec.Metadata.LatestAssistantUpdate != "" ||
-		rec.Metadata.NativeTranscriptPath != "" {
+	if rec.Metadata.LatestUserPrompt != "" || rec.Metadata.LatestAssistantUpdate != "" {
 		return false
 	}
-	if _, ok := agent.(ports.AgentInterfaceHandoffHistoryProbe); !ok {
-		return false
+	if path := rec.Metadata.NativeTranscriptPath; path != "" {
+		// SessionStart may announce a filename before creating the transcript;
+		// that hint can survive a fresh switch back to Chat. Only a definitely
+		// absent absolute path can accompany the mode-specific freshness proof.
+		// Existing entries (including symlinks) and lookup errors block it.
+		if !filepath.IsAbs(path) {
+			return false
+		}
+		if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
+			return false
+		}
 	}
 	if domain.NormalizeSessionMode(rec.Mode) == domain.SessionModeChat {
 		if rec.Metadata.Prompt != "" {
@@ -582,6 +590,9 @@ func (m *Manager) nativeConversationNotStarted(
 		// a sequence. Include those turns, even if they were later hidden.
 		hasTurns, err := store.HasConversationTurns(ctx, conversation.ID)
 		return err == nil && !hasTurns
+	}
+	if _, ok := agent.(ports.AgentInterfaceHandoffHistoryProbe); !ok {
+		return false
 	}
 	return m.terminalProvesNativeConversationNotStarted(ctx, rec, agent)
 }
@@ -614,7 +625,7 @@ func (m *Manager) terminalProvesNativeConversationNotStarted(
 
 // persistedNativeConversationID verifies that a reserved native id has durable
 // provider history behind it. A failed lookup is not proof of freshness: only
-// positive untouched-composer evidence may produce the explicit fresh sentinel.
+// positive untouched-terminal or durable empty-Chat proof may start fresh.
 func (m *Manager) persistedNativeConversationID(
 	ctx context.Context,
 	rec domain.SessionRecord,
