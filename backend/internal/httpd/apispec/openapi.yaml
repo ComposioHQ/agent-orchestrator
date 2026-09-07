@@ -8058,6 +8058,12 @@ components:
           - mergeable
           - merged
           type: string
+        spawnPhase:
+          enum:
+          - preparing
+          - workspace_ready
+          - controller_ready
+          type: string
         status:
           enum:
           - working
@@ -8084,12 +8090,15 @@ components:
         updatedAt:
           format: date-time
           type: string
+        workspaceAvailable:
+          type: boolean
       required:
       - id
       - projectId
       - kind
       - autoReviewEnabled
       - mode
+      - spawnPhase
       - activity
       - isTerminated
       - terminateOnPrMerge
@@ -8101,6 +8110,7 @@ components:
       - status
       - kanbanColumn
       - displayStatus
+      - workspaceAvailable
       - prs
       type: object
     ControllersSetSecurePairingRequest:

@@ -249,6 +249,10 @@ sql:
             go_type:
               import: "github.com/aoagents/agent-orchestrator/backend/internal/domain"
               type: "SessionMode"
+          - column: "sessions.spawn_phase"
+            go_type:
+              import: "github.com/aoagents/agent-orchestrator/backend/internal/domain"
+              type: "SpawnPhase"
           - column: "session_interface_transitions.session_id"
             go_type:
               import: "github.com/aoagents/agent-orchestrator/backend/internal/domain"

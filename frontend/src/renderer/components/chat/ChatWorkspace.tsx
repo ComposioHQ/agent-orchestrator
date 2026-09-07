@@ -52,6 +52,8 @@ import type { TerminalTarget } from "../../types/terminal";
 import {
 	isOrchestratorSession,
 	type SessionKind,
+	isSpawnInProgress,
+	type SpawnPhase,
 	type WorkspaceSession,
 } from "../../types/workspace";
 import { AgentAvatar } from "../AgentAvatar";
@@ -1094,6 +1096,8 @@ export function ChatWorkspace({
 					<ControllerBanner
 						controller={snapshot.controller}
 						transitioning={controllerTransitioning}
+						spawnPhase={session?.spawnPhase}
+						workspaceAvailable={session?.workspaceAvailable}
 						onResume={newWorkDisabled ? undefined : onResumeAgent}
 						resuming={resumingAgent}
 						resumeError={resumeError}
@@ -1529,12 +1533,115 @@ function ChatHeader({
 }
 
 /**
+ * A spawn that has not finished. Two states, and the difference matters to the
+ * user: the agent is still coming up, or it failed to come up and their work is
+ * still there.
+ *
+ * Neither state offers Resume. Resume reattaches to a provider conversation,
+ * and a spawn that never committed a controller has none — retrying it re-runs
+ * the interrupted spawn from its workspace checkpoint instead. Open shell is
+ * offered only once the worktree is durably checkpointed; before that there is
+ * no directory to open.
+ */
+function SpawnBanner({
+	failed,
+	workspaceAvailable,
+	error,
+	onRetry,
+	retrying,
+	retryError,
+	onOpenShell,
+	openingShell,
+	shellError,
+}: {
+	failed: boolean;
+	workspaceAvailable?: boolean;
+	error?: string;
+	onRetry?: () => void;
+	retrying?: boolean;
+	retryError?: string;
+	onOpenShell?: () => void;
+	openingShell?: boolean;
+	shellError?: string;
+}) {
+	const canOpenShell = Boolean(onOpenShell) && workspaceAvailable === true;
+	return (
+		<div
+			role={failed ? "alert" : "status"}
+			aria-atomic="true"
+			className="flex shrink-0 items-start gap-2.5 border-b border-border bg-surface px-4 py-2.5"
+			data-testid="spawn-banner"
+		>
+			{failed ? (
+				<TriangleAlert aria-hidden="true" className="mt-0.5 size-3.5 shrink-0 text-destructive" />
+			) : (
+				<Loader2
+					aria-hidden="true"
+					className="mt-0.5 size-3.5 shrink-0 animate-spin text-muted-foreground"
+				/>
+			)}
+			<div className="flex min-w-0 flex-1 flex-col gap-0.5">
+				<strong
+					className={cn(
+						"text-xs font-medium",
+						failed ? "text-destructive" : "text-muted-foreground",
+					)}
+				>
+					{failed ? "Agent failed to start" : "Starting agent"}
+				</strong>
+				<span className="text-[11px] leading-snug text-muted-foreground">
+					{failed ? "Your workspace was preserved." : "Preparing workspace"}
+				</span>
+				{error ? (
+					<span className="text-[11px] leading-snug text-muted-foreground">{error}</span>
+				) : null}
+				{failed ? (
+					<>
+						{retryError || shellError ? (
+							<span className="text-[11px] leading-snug text-destructive">
+								{retryError ?? shellError}
+							</span>
+						) : null}
+						<div className="mt-1.5 flex flex-wrap gap-2">
+							{onRetry ? (
+								<Button
+									type="button"
+									size="sm"
+									variant="outline"
+									onClick={onRetry}
+									disabled={retrying}
+								>
+									{retrying ? "Retrying…" : "Retry agent"}
+								</Button>
+							) : null}
+							{canOpenShell ? (
+								<Button
+									type="button"
+									size="sm"
+									variant="ghost"
+									onClick={onOpenShell}
+									disabled={openingShell}
+								>
+									{openingShell ? "Opening shell…" : "Open shell"}
+								</Button>
+							) : null}
+						</div>
+					</>
+				) : null}
+			</div>
+		</div>
+	);
+}
+
+/**
  * Controller health. A stopped or recovering controller is announced, because a
  * silent surface is indistinguishable from an agent that is simply thinking.
  */
 function ControllerBanner({
 	controller,
 	transitioning,
+	spawnPhase,
+	workspaceAvailable,
 	onResume,
 	resuming,
 	resumeError,
@@ -1544,6 +1651,10 @@ function ControllerBanner({
 }: {
 	controller: { state: ControllerState; error?: string };
 	transitioning?: boolean;
+	/** Durable spawn progress. Absent means a fully spawned session. */
+	spawnPhase?: SpawnPhase;
+	/** The worktree is checkpointed, so a shell can be opened into it. */
+	workspaceAvailable?: boolean;
 	onResume?: () => void;
 	resuming?: boolean;
 	resumeError?: string;
@@ -1556,6 +1667,28 @@ function ControllerBanner({
 	// presenting its intermediate snapshot as a crash produces a red false alarm.
 	if (transitioning && controller.state === "stopped") return null;
 	if (controller.state === "ready" || controller.state === "busy") return null;
+
+	// A spawn that has not committed a controller has no controller that could
+	// have stopped, and nothing to resume. Saying "the agent controller stopped"
+	// here would report a crash that never happened, and offering Resume would
+	// point at a provider conversation that does not exist.
+	const starting = isSpawnInProgress(spawnPhase);
+	const startFailed = starting && controller.state === "stopped";
+	if (starting) {
+		return (
+			<SpawnBanner
+				failed={startFailed}
+				workspaceAvailable={workspaceAvailable}
+				error={controller.error}
+				onRetry={onResume}
+				retrying={resuming}
+				retryError={resumeError}
+				onOpenShell={onOpenShell}
+				openingShell={openingShell}
+				shellError={shellError}
+			/>
+		);
+	}
 
 	const copy: Partial<Record<ControllerState, { title: string; tone: string }>> = {
 		connecting: {

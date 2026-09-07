@@ -237,6 +237,11 @@ type SessionView struct {
 	// Model is the agent model this session resolved to at spawn time. Empty
 	// means the agent's default model. Pulled from the json:"-" domain Metadata.
 	Model string `json:"model,omitempty"`
+	// WorkspaceAvailable reports that this session's worktree was durably
+	// checkpointed and is therefore safe to open a shell into. It is false for a
+	// spawn still preparing, which has no worktree the client may assume exists.
+	// The path itself stays out of the read model; clients only need the fact.
+	WorkspaceAvailable bool `json:"workspaceAvailable"`
 	// LastUserMessageAt is the latest real user-authored task direction time.
 	// Lifecycle and internal automation updates do not advance it.
 	LastUserMessageAt *time.Time       `json:"lastUserMessageAt,omitempty"`

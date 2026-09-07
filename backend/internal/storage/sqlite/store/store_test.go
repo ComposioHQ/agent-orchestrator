@@ -1652,6 +1652,7 @@ func TestRememberProjectPermissionsPinsExistingSessions(t *testing.T) {
 			t.Fatal(err)
 		}
 		row.Mode = domain.NormalizeSessionMode(row.Mode)
+		row.SpawnPhase = domain.NormalizeSpawnPhase(row.SpawnPhase)
 		row.Metadata.Permissions = tc.want
 		rows = append(rows, row)
 	}

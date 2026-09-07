@@ -278,6 +278,10 @@ func (m *Manager) stopChatBestEffort(ctx context.Context, id domain.SessionID) {
 	if m.chat == nil {
 		return
 	}
+	// A cancelled request must never be the reason a partially started
+	// controller is left holding the worktree.
+	ctx, cancel := m.spawnCleanupContext(ctx)
+	defer cancel()
 	if err := m.chat.StopChat(ctx, id); err != nil {
 		m.logger.Warn("spawn rollback: close chat controller", "sessionID", id, "error", err)
 	}

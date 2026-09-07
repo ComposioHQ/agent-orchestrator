@@ -1178,6 +1178,16 @@ func (m *Manager) markSpawned(
 			rec.Metadata.RuntimeHandleID = ""
 			rec.Metadata.RuntimeLaunchID = ""
 		}
+		// The spawn phase advances in the same write as the handles, generations,
+		// and workspace metadata it describes, so no reader can ever observe
+		// controller_ready without the controller identity that justifies it. A
+		// launch that somehow reached here without one keeps its earlier phase:
+		// a half-committed controller must stay recoverable, not look finished.
+		if rec.SpawnHasControllerIdentity() {
+			rec.SpawnPhase = domain.SpawnPhaseControllerReady
+		} else {
+			rec.SpawnPhase = domain.NormalizeSpawnPhase(rec.SpawnPhase)
+		}
 		rec.UpdatedAt = now
 		if boundary == nil {
 			if err := m.store.UpdateSession(ctx, rec); err != nil {

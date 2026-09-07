@@ -56,7 +56,7 @@ import { formatEstimatedCost, type EstimatedCost } from "../lib/format-cost";
 import { prBrowserUrl, prCardPresentation, prNounKeys, sessionPRDisplaySummaries } from "../lib/pr-display";
 import { formatTokenCount } from "../lib/format-token-count";
 import type { WorkspaceSession, WorkspaceSummary } from "../types/workspace";
-import { findProjectOrchestrator, sortedPRs } from "../types/workspace";
+import { findProjectOrchestrator, isSpawnInProgress, sortedPRs } from "../types/workspace";
 import { getAgentActivityView, getSessionTimelinePillView } from "../lib/session-presentation";
 import { aoBridge } from "../lib/bridge";
 import { BrowserPanelView, type BrowserAnnotationQueueModel } from "./BrowserPanel";
@@ -1034,6 +1034,10 @@ function ResumeAgentControl({ session }: { session: WorkspaceSession }) {
 
 	if (session.isTerminated === true || session.activity?.state !== "exited" || session.activeAgentSwitch) return null;
 
+	// The same endpoint serves both cases, but a spawn that never committed a
+	// controller is being retried, not resumed: there is no earlier agent run to
+	// return to, only an interrupted launch to finish.
+	const interruptedSpawn = isSpawnInProgress(session.spawnPhase);
 	const error = resume.error instanceof Error ? resume.error.message : null;
 	return (
 		<div className="mt-3 border-t border-(--color-border-settings-input) pt-3">
@@ -1046,7 +1050,9 @@ function ResumeAgentControl({ session }: { session: WorkspaceSession }) {
 				variant="outline"
 			>
 				<Play className="size-icon-sm" aria-hidden="true" />
-				{resume.isPending ? t("inspector.resumingAgent") : t("inspector.resumeAgent")}
+				{resume.isPending
+					? t(interruptedSpawn ? "inspector.retryingAgent" : "inspector.resumingAgent")
+					: t(interruptedSpawn ? "inspector.retryAgent" : "inspector.resumeAgent")}
 			</Button>
 			{error ? (
 				<p className="mt-2 text-2xs leading-normal text-error" role="status">

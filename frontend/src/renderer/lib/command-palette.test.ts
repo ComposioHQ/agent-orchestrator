@@ -635,6 +635,22 @@ describe("buildSessionActions", () => {
 		expect(items.some((i) => i.action?.kind === "resume-session")).toBe(true);
 	});
 
+	it("calls the action Retry for a spawn that never committed a controller", () => {
+		const items = buildSessionActions(
+			workspace,
+			session({ id: "interrupted", status: "terminated", spawnPhase: "workspace_ready" }),
+		);
+		const action = items.find((i) => i.action?.kind === "resume-session");
+		// Same endpoint, different promise: there is no conversation to resume,
+		// only an interrupted spawn to finish.
+		expect(action?.title).toBe("Retry agent");
+		const resumable = buildSessionActions(
+			workspace,
+			session({ id: "stopped", status: "terminated", spawnPhase: "controller_ready" }),
+		);
+		expect(resumable.find((i) => i.action?.kind === "resume-session")?.title).toBe("Resume agent");
+	});
+
 	it("never offers Resume or Copy branch for an orchestrator", () => {
 		const items = buildSessionActions(
 			workspace,

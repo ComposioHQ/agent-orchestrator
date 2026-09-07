@@ -4479,3 +4479,46 @@ func TestEmitTelemetryStampsRequestID(t *testing.T) {
 		})
 	}
 }
+
+// controller_ready is published in the same write as the controller identity it
+// describes, so no reader can ever see a session claim a finished spawn while
+// its handles are still empty.
+func TestMarkSpawnedCommitsControllerReadyWithTheControllerIdentity(t *testing.T) {
+	m, st, _ := newManager()
+	st.sessions["mer-1"] = domain.SessionRecord{
+		ID: "mer-1", ProjectID: "mer",
+		SpawnPhase: domain.SpawnPhaseWorkspaceReady,
+		Metadata:   domain.SessionMetadata{Branch: "b", WorkspacePath: "/ws"},
+	}
+	metadata := domain.SessionMetadata{
+		Branch: "b", WorkspacePath: "/ws",
+		RuntimeHandleID: "h1", RuntimeLaunchID: "launch-1", Prompt: "prompt",
+	}
+	if err := m.MarkSpawned(ctx, "mer-1", metadata); err != nil {
+		t.Fatal(err)
+	}
+	got := st.sessions["mer-1"]
+	if got.SpawnPhase != domain.SpawnPhaseControllerReady {
+		t.Fatalf("spawn phase = %q, want controller_ready", got.SpawnPhase)
+	}
+	if got.Metadata.RuntimeLaunchID != "launch-1" || got.Metadata.WorkspacePath != "/ws" {
+		t.Fatalf("controller_ready committed without its handles and workspace metadata: %+v", got.Metadata)
+	}
+}
+
+func TestMarkSpawnedNeverPublishesControllerReadyWithoutAnIdentity(t *testing.T) {
+	m, st, _ := newManager()
+	st.sessions["mer-1"] = domain.SessionRecord{
+		ID: "mer-1", ProjectID: "mer",
+		SpawnPhase: domain.SpawnPhaseWorkspaceReady,
+		Metadata:   domain.SessionMetadata{Branch: "b", WorkspacePath: "/ws"},
+	}
+	// No runtime handle, no launch id, no controller generation: nothing that
+	// identifies an owner. The phase must stay recoverable.
+	if err := m.MarkSpawned(ctx, "mer-1", domain.SessionMetadata{Branch: "b", WorkspacePath: "/ws"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := st.sessions["mer-1"]; got.SpawnPhase != domain.SpawnPhaseWorkspaceReady {
+		t.Fatalf("spawn phase = %q, want workspace_ready to remain", got.SpawnPhase)
+	}
+}

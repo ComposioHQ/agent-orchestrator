@@ -19,6 +19,8 @@ import {
 	type PRState,
 	type PullRequestFacts,
 	type SessionStatus,
+	isSpawnInProgress,
+	toSpawnPhase,
 	type WorkspaceSession,
 	type WorkspaceSummary,
 } from "./workspace";
@@ -336,5 +338,21 @@ describe("attentionZone", () => {
 	it("prioritizes merge as the highest-ROI zone", () => {
 		// merge is checked before action/pending so an approved PR always surfaces.
 		expect(attentionZone(sessionWith({ status: "approved" }))).toBe("merge");
+	});
+});
+
+describe("spawn phase", () => {
+	it("treats an unknown or missing daemon value as a fully spawned session", () => {
+		// A daemon too old to send the field must not make every session look
+		// half-spawned, and a value from a newer build must not either.
+		expect(toSpawnPhase(undefined)).toBeUndefined();
+		expect(toSpawnPhase("something_new")).toBeUndefined();
+		expect(isSpawnInProgress(undefined)).toBe(false);
+		expect(isSpawnInProgress(toSpawnPhase("controller_ready"))).toBe(false);
+	});
+
+	it("reports the phases before a controller exists as in progress", () => {
+		expect(isSpawnInProgress(toSpawnPhase("preparing"))).toBe(true);
+		expect(isSpawnInProgress(toSpawnPhase("workspace_ready"))).toBe(true);
 	});
 });

@@ -108,8 +108,14 @@ type SessionRecord struct {
 	// durable interface-transition coordinator may change it; the daemon default
 	// never changes an existing session. Rows written before Chat mode existed
 	// read back as SessionModeTUI.
-	Mode     SessionMode `json:"mode" enum:"chat,tui"`
-	Activity Activity    `json:"activity"`
+	Mode SessionMode `json:"mode" enum:"chat,tui"`
+	// SpawnPhase is how far this session's launch durably got. It is a recovery
+	// fact, not a status: it tells the boot-time reconciler whether to finish an
+	// interrupted spawn or clean it up, and tells the UI which of the session's
+	// facts (workspace, controller) can be trusted yet. Rows written before the
+	// column existed read back as SpawnPhaseControllerReady.
+	SpawnPhase SpawnPhase `json:"spawnPhase" enum:"preparing,workspace_ready,controller_ready"`
+	Activity   Activity   `json:"activity"`
 	// FirstSignalAt is when the FIRST agent hook callback arrived for the
 	// current spawn/restore: raw signal receipt, independent of the derived
 	// activity state. Zero means no hook has ever reported, which deriveStatus

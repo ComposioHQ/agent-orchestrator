@@ -27,17 +27,18 @@ import (
 var ctx = context.Background()
 
 type fakeStore struct {
-	sessions         map[domain.SessionID]domain.SessionRecord
-	pr               map[domain.SessionID]domain.PRFacts
-	projects         map[string]domain.ProjectRecord
-	workspaceRepo    map[string][]domain.WorkspaceRepoRecord
-	num              int
-	deleteErr        error
-	upsertWTErr      error
-	listAllErr       error
-	getProjectErr    error
-	getSessionErr    error
-	updateSessionErr error
+	sessions           map[domain.SessionID]domain.SessionRecord
+	pr                 map[domain.SessionID]domain.PRFacts
+	projects           map[string]domain.ProjectRecord
+	workspaceRepo      map[string][]domain.WorkspaceRepoRecord
+	num                int
+	deleteErr          error
+	upsertWTErr        error
+	listAllErr         error
+	getProjectErr      error
+	getSessionErr      error
+	updateSessionErr   error
+	checkpointSpawnErr error
 	// agentSwitchStore is wired only by agent-switch tests so fakeLCM can model
 	// Lifecycle Manager's atomic ownership-boundary commands.
 	agentSwitchStore any
@@ -172,6 +173,45 @@ func (f *fakeStore) UpsertSessionWorktree(_ context.Context, row domain.SessionW
 	f.worktrees[row.SessionID] = append(rows, row)
 	return nil
 }
+
+// CheckpointSpawnWorkspaceReady mirrors the store's SQL guard: it applies only
+// to a live session still in the preparing phase.
+func (f *fakeStore) CheckpointSpawnWorkspaceReady(_ context.Context, id domain.SessionID, checkpoint domain.SpawnWorkspaceCheckpoint, updatedAt time.Time) (bool, error) {
+	if f.checkpointSpawnErr != nil {
+		return false, f.checkpointSpawnErr
+	}
+	rec, ok := f.sessions[id]
+	if !ok || rec.IsTerminated || domain.NormalizeSpawnPhase(rec.SpawnPhase) != domain.SpawnPhasePreparing {
+		return false, nil
+	}
+	rec.Metadata.Branch = checkpoint.Branch
+	rec.Metadata.WorkspacePath = checkpoint.WorkspacePath
+	rec.Metadata.WorkspaceRepoPath = checkpoint.WorkspaceRepoPath
+	rec.Metadata.Prompt = checkpoint.Prompt
+	rec.Metadata.Model = checkpoint.Model
+	rec.SpawnPhase = domain.SpawnPhaseWorkspaceReady
+	rec.UpdatedAt = updatedAt
+	f.sessions[id] = rec
+	if f.sharedLog != nil {
+		*f.sharedLog = append(*f.sharedLog, "CheckpointSpawnWorkspaceReady:"+string(id))
+	}
+	return true, nil
+}
+
+// PromoteSpawnPhaseWorkspaceReady mirrors the store's SQL guard: never promote
+// a row that owns no workspace.
+func (f *fakeStore) PromoteSpawnPhaseWorkspaceReady(_ context.Context, id domain.SessionID, updatedAt time.Time) (bool, error) {
+	rec, ok := f.sessions[id]
+	if !ok || rec.IsTerminated || rec.Metadata.WorkspacePath == "" ||
+		domain.NormalizeSpawnPhase(rec.SpawnPhase) != domain.SpawnPhasePreparing {
+		return false, nil
+	}
+	rec.SpawnPhase = domain.SpawnPhaseWorkspaceReady
+	rec.UpdatedAt = updatedAt
+	f.sessions[id] = rec
+	return true, nil
+}
+
 func (f *fakeStore) ListSessionWorktrees(_ context.Context, id domain.SessionID) ([]domain.SessionWorktreeRecord, error) {
 	return f.worktrees[id], nil
 }
@@ -210,6 +250,13 @@ func (l *fakeLCM) MarkSpawned(_ context.Context, id domain.SessionID, metadata d
 	rec.Activity = domain.Activity{State: domain.ActivityIdle, LastActivityAt: time.Now()}
 	rec.FirstSignalAt = time.Now()
 	rec.Metadata = metadata
+	// Mirror lifecycle.Manager: the phase advances in the same write as the
+	// controller identity, and never without one.
+	if rec.SpawnHasControllerIdentity() {
+		rec.SpawnPhase = domain.SpawnPhaseControllerReady
+	} else {
+		rec.SpawnPhase = domain.NormalizeSpawnPhase(rec.SpawnPhase)
+	}
 	l.store.sessions[id] = rec
 	return nil
 }
