@@ -2038,6 +2038,96 @@ describe("startAutoUpdates", () => {
     await checking;
   });
 
+  // A check that starts a download returns its promise WITHOUT awaiting it
+  // (AppUpdater marks that `noinspection ES6MissingAwait`). Every path that can
+  // force a download therefore has to own it, or the download, the localhost
+  // handoff to Squirrel and the native staging behind it outlive the operation
+  // that started them — and the queue lets the next one run on top.
+  const deferredDownload = () => {
+    let finish!: () => void;
+    const downloadPromise = new Promise<void>((resolve) => { finish = resolve; });
+    return { finish, result: {
+      isUpdateAvailable: true,
+      updateInfo: { version: "2.0.0" },
+      downloadPromise,
+    } };
+  };
+  const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+  it("owns a forced download on the automatic path with auto-download off", async () => {
+    // The gate used to be `if (settings.enabled)`, but a stale staged build
+    // forces a download precisely WHEN the preference is off — it has to be
+    // superseded or quitting installs the channel the user left.
+    const h = await importAutoUpdater({
+      enabled: false, channel: "latest", nightlyAck: false, feature: null,
+    });
+    const { finish, result } = deferredDownload();
+    h.autoUpdater.checkForUpdates.mockResolvedValue(result);
+
+    let settled = false;
+    const checking = h.module.startAutoUpdates(stateDir).then(() => { settled = true; });
+    await settle();
+
+    expect(h.autoUpdater.checkForUpdates).toHaveBeenCalled();
+    expect(settled).toBe(false);
+
+    finish();
+    await checking;
+    expect(settled).toBe(true);
+  });
+
+  it("holds a manual check open until a forced download finishes", async () => {
+    const { module, autoUpdater } = await importAutoUpdater();
+    const { finish, result } = deferredDownload();
+    autoUpdater.checkForUpdates.mockResolvedValue(result);
+
+    let settled = false;
+    const checking = module.checkForUpdatesNow(stateDir).then(() => { settled = true; });
+    await settle();
+    expect(settled).toBe(false);
+
+    finish();
+    await checking;
+    expect(settled).toBe(true);
+  });
+
+  it("holds return-home open until a forced download finishes", async () => {
+    const { module, autoUpdater } = await importAutoUpdater();
+    const { finish, result } = deferredDownload();
+    autoUpdater.checkForUpdates.mockResolvedValue(result);
+
+    let settled = false;
+    const returning = module.returnToHome(stateDir).then(() => { settled = true; });
+    await settle();
+    expect(settled).toBe(false);
+
+    finish();
+    await returning;
+    expect(settled).toBe(true);
+  });
+
+  it("blocks the next queued operation until a forced download finishes", async () => {
+    // The point of owning the download: the queue must not hand the updater to
+    // another operation while a handoff is still in flight.
+    const { module, autoUpdater } = await importAutoUpdater();
+    const { finish, result } = deferredDownload();
+    autoUpdater.checkForUpdates
+      .mockResolvedValueOnce(result)
+      .mockResolvedValue({ isUpdateAvailable: false, updateInfo: { version: "2.0.0" } });
+
+    const first = module.checkForUpdatesNow(stateDir, { requestId: "one" });
+    await settle();
+    expect(autoUpdater.checkForUpdates).toHaveBeenCalledTimes(1);
+
+    const second = module.checkForUpdatesNow(stateDir, { requestId: "two" });
+    await settle();
+    expect(autoUpdater.checkForUpdates).toHaveBeenCalledTimes(1);
+
+    finish();
+    await Promise.all([first, second]);
+    expect(autoUpdater.checkForUpdates).toHaveBeenCalledTimes(2);
+  });
+
   // Regression: electron-updater returns the in-flight promise when a check is
   // already running, so a second caller's events were consumed elsewhere and
   // nothing ever moved the status off "checking". Settings keys its spinner and
