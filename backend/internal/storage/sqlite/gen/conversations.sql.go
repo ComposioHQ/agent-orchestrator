@@ -1078,6 +1078,33 @@ func (q *Queries) ReleaseQueuedConversationTurnPromotion(ctx context.Context, ar
 	return result.RowsAffected()
 }
 
+const releaseUntouchedConversationProvider = `-- name: ReleaseUntouchedConversationProvider :execrows
+UPDATE conversation_branches
+SET provider_conversation_id = '', provider_scope_id = ?1
+WHERE conversation_branches.session_id = ?2 AND parent_branch_id IS NULL
+  AND conversation_branches.id = (
+      SELECT c.active_branch_id FROM conversations AS c
+      WHERE c.session_id = ?2 AND c.current_session_id = ?2
+        AND c.latest_sequence = 0
+        AND NOT EXISTS (
+            SELECT 1 FROM conversation_turns WHERE conversation_id = c.id
+        )
+  )
+`
+
+type ReleaseUntouchedConversationProviderParams struct {
+	ProviderScopeID string
+	SessionID       sql.NullString
+}
+
+func (q *Queries) ReleaseUntouchedConversationProvider(ctx context.Context, arg ReleaseUntouchedConversationProviderParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, releaseUntouchedConversationProvider, arg.ProviderScopeID, arg.SessionID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const reserveQueuedConversationTurnForPromotion = `-- name: ReserveQueuedConversationTurnForPromotion :execrows
 UPDATE conversation_turns
 SET promotion_started_at = ?1
