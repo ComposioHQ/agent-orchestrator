@@ -13,7 +13,7 @@ import { resetHeaderRightForSwap } from "../headerRightSwap";
 import { MinimalBackButton } from "../MinimalBackButton";
 import { MuxClient, type MuxStatus } from "../mux";
 import { Composer } from "./Composer";
-import { dockInset } from "./keyboardInset";
+import { dockInset, rootKeyboardPad } from "./keyboardInset";
 import { KeyRow } from "./KeyRow";
 import {
 	REROUTED_NOTICE,
@@ -668,10 +668,12 @@ export default function TerminalScreen() {
 	// Neither platform shrinks the layout for the keyboard: iOS never has, and on
 	// Android edge-to-edge (edgeToEdgeEnabled) defeats windowSoftInputMode=adjustResize
 	// so the window no longer resizes - the keyboard just draws over our content.
-	// So reserve kbHeight on BOTH platforms and let the screen pad itself above the
-	// keyboard, else the input dock (and its send button) hide behind it. This is
-	// the ONLY place the keyboard height is applied — the dock adds nothing on top
-	// of it (see dockInset), because doing both is what made the bar kick.
+	// So reserve the keyboard on BOTH platforms and let the screen pad itself above
+	// it, else the input dock (and its send button) hide behind it. What the event
+	// reports is not the same quantity on the two platforms — rootKeyboardPad owns
+	// that difference. This is the ONLY place the keyboard height is applied — the
+	// dock adds nothing on top of it (see dockInset), because doing both is what
+	// made the bar kick.
 	useEffect(() => {
 		const isIOS = Platform.OS === "ios";
 		const showEvt = isIOS ? "keyboardWillShow" : "keyboardDidShow";
@@ -1200,12 +1202,15 @@ export default function TerminalScreen() {
 		);
 	}
 
-	// One inset for the whole dock. The root already reserves kbHeight, so the
+	// One inset for the whole dock. The root already reserves the keyboard, so the
 	// dock owes nothing more while the keyboard is up — see dockInset.
 	const bottomPad = dockInset(kbHeight, insets.bottom);
+	// Android's reported kbHeight excludes the nav bar our root view draws under,
+	// so rootKeyboardPad adds it back; on iOS it passes the height through.
+	const rootPad = rootKeyboardPad(Platform.OS === "android" ? "android" : "ios", kbHeight, insets.bottom);
 
 	return (
-		<View style={[styles.screen, kbHeight > 0 && { paddingBottom: kbHeight }]}>
+		<View style={[styles.screen, rootPad > 0 && { paddingBottom: rootPad }]}>
 			<View style={styles.statusBar}>
 				<View style={[styles.statusDot, { backgroundColor: statusColorFor(t)[status] }]} />
 				<Text style={styles.statusText}>{statusLabel[status]}</Text>

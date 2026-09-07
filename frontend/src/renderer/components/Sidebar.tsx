@@ -1697,17 +1697,9 @@ function SessionRow({
 	const [sessionPressed, setSessionPressed] = useState(false);
 	const lastTouchAtRef = useRef(0);
 	const suppressTouchOpenRef = useRef(false);
-	const pendingOpenRef = useRef<number | null>(null);
-	const cancelPendingOpen = useCallback(() => {
-		if (pendingOpenRef.current === null) return;
-		window.clearTimeout(pendingOpenRef.current);
-		pendingOpenRef.current = null;
-	}, []);
-	useEffect(() => cancelPendingOpen, [cancelPendingOpen]);
 	const beginRename = useCallback(() => {
-		cancelPendingOpen();
 		rename.begin();
-	}, [cancelPendingOpen, rename.begin]);
+	}, [rename.begin]);
 
 	if (rename.isEditing) {
 		return (
@@ -1795,26 +1787,12 @@ function SessionRow({
 							)}
 							{...(reorder?.listeners ?? {})}
 							onClick={(event) => {
-								if (event.detail === 0) {
-									cancelPendingOpen();
-									onOpen();
-									return;
-								}
-								if (event.detail > 1) {
-									cancelPendingOpen();
-									return;
-								}
+								if (event.detail > 1) return;
 								if (suppressTouchOpenRef.current) {
 									suppressTouchOpenRef.current = false;
 									return;
 								}
-								// Wait for the native double-click window before navigating. A
-								// second click cancels this so inline rename has no route side effect.
-								cancelPendingOpen();
-								pendingOpenRef.current = window.setTimeout(() => {
-									pendingOpenRef.current = null;
-									onOpen();
-								}, 500);
+								onOpen();
 							}}
 							onKeyDown={(event) => {
 								if (event.key !== "F2") return;

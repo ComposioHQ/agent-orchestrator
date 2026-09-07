@@ -2,7 +2,7 @@ import { act, fireEvent, render as rtlRender, renderHook, screen, waitFor, withi
 import userEvent from "@testing-library/user-event";
 import type { ReactElement } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { BrowserPanel, BrowserPanelView, useBrowserAnnotationQueue } from "./BrowserPanel";
+import { BrowserPanel, BrowserPanelView, BrowserTopTabDragOverlay, useBrowserAnnotationQueue } from "./BrowserPanel";
 import { reorderBrowserTabs } from "../lib/browser-tab-order";
 import { useBrowserView, type BrowserNavState } from "../hooks/useBrowserView";
 import { OPEN_BROWSER_OVERLAY_SELECTOR } from "../lib/dom-selectors";
@@ -370,7 +370,9 @@ describe("BrowserPanel", () => {
 
 		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
 
-		expect(screen.getByRole("textbox", { name: /browser url/i })).toHaveValue("google.com");
+		const input = screen.getByRole("textbox", { name: /browser url/i });
+		expect(input).toHaveValue("google.com");
+		expect(input).toHaveClass("text-center");
 	});
 
 	it("expands the URL input, reveals the full URL, and selects it on focus", async () => {
@@ -388,6 +390,7 @@ describe("BrowserPanel", () => {
 			expect(input.selectionStart).toBe(0);
 			expect(input.selectionEnd).toBe(url.length);
 		});
+		expect(input).not.toHaveClass("text-center");
 		expect(toolbar).toHaveClass("browser-panel__toolbar--url-takeover");
 		expect(within(toolbar).getByRole("button", { name: /back/i })).toHaveClass("browser-panel__navigation-btn");
 		expect(within(toolbar).getByRole("button", { name: /back/i }).parentElement).toHaveClass("browser-panel__navigation-control");
@@ -413,11 +416,24 @@ describe("BrowserPanel", () => {
 		const input = screen.getByRole("textbox", { name: /browser url/i });
 
 		expect(input).toHaveValue(url);
+		expect(input).not.toHaveClass("text-center");
 		await user.click(input);
 
 		expect(toolbar).not.toHaveClass("browser-panel__toolbar--url-takeover");
 		expect(within(toolbar).getByRole("button", { name: /back/i })).toBeInTheDocument();
 		expect(within(toolbar).getByRole("button", { name: /reload/i })).toBeInTheDocument();
+	});
+
+	it("opens the current page in the system browser from the address bar", async () => {
+		const url = "https://www.google.com/search?q=agent+orchestrator";
+		hookState.navState = { ...hookState.navState, url };
+		const openExternal = vi.spyOn(window.ao!.app, "openExternal").mockResolvedValue(undefined);
+		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
+
+		fireEvent.click(screen.getByRole("button", { name: /open in system browser/i }));
+
+		await waitFor(() => expect(openExternal).toHaveBeenCalledWith(url));
+		openExternal.mockRestore();
 	});
 
 	it("keeps secondary browser controls compact until device presets are requested", async () => {
@@ -542,6 +558,30 @@ describe("BrowserPanel", () => {
 		expect(menu.getAttribute("data-browser-native-overlay")).toBe("true");
 	});
 
+	it("does not queue the controls tooltip when the dropdown returns focus to its trigger", async () => {
+		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
+		const trigger = screen.getByRole("button", { name: "Browser controls" });
+
+		await userEvent.click(trigger);
+		expect(screen.getByRole("menuitem", { name: "Device preset" })).toBeInTheDocument();
+		fireEvent.pointerLeave(trigger);
+		fireEvent.pointerDown(document.body);
+		await waitFor(() => expect(screen.queryByRole("menuitem", { name: "Device preset" })).not.toBeInTheDocument());
+		fireEvent.focus(trigger);
+
+		await new Promise((resolve) => setTimeout(resolve, 450));
+		expect(document.querySelector('[data-slot="tooltip-content"]')).toBeNull();
+	});
+
+	it("still shows the controls tooltip from an actual mouse hover", async () => {
+		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
+		const trigger = screen.getByRole("button", { name: "Browser controls" });
+
+		await userEvent.hover(trigger);
+
+		expect(await screen.findByRole("tooltip")).toHaveTextContent("Browser controls");
+	});
+
 	it("keeps the URL input editable while the browser is maximized", async () => {
 		hookState.navState = { ...hookState.navState, url: "http://localhost:5173/" };
 		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut session={session} />);
@@ -640,6 +680,26 @@ describe("BrowserPanel", () => {
 		expect(tooltip.closest('[data-browser-native-overlay="true"]')).not.toBeNull();
 	});
 
+	it("uses the same styled browser overlay tooltip while maximized", async () => {
+		hookState.navState = {
+			viewId: "42:sess-1",
+			url: "http://localhost:5173/",
+			title: "Local app",
+			canGoBack: true,
+			canGoForward: false,
+			isLoading: false,
+		};
+		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut session={session} />);
+
+		const annotateButton = screen.getByRole("button", { name: /annotate page/i });
+		expect(annotateButton.closest("[title]")).toBeNull();
+		fireEvent.focus(annotateButton);
+
+		const tooltip = await screen.findByRole("tooltip");
+		expect(tooltip).toHaveTextContent("Annotate page");
+		expect(tooltip.closest('[data-browser-native-overlay="true"]')).not.toBeNull();
+	});
+
 	it("still opens a tooltip for a disabled toolbar button", async () => {
 		// Disabled buttons never dispatch pointer/focus events natively, so the
 		// hover listener has to live on a wrapping span around the button rather
@@ -706,6 +766,21 @@ describe("BrowserPanel", () => {
 		expect(secondTab).toHaveAttribute("aria-selected", "true");
 		await userEvent.click(firstTab);
 		expect(hookState.selectTab).toHaveBeenCalledWith("t1");
+	});
+
+	it("renders the complete tab chrome in the drag overlay", () => {
+		render(
+			<BrowserTopTabDragOverlay
+				onlyTab={false}
+				tab={{ id: "t1", url: "http://localhost:3000/", title: "First app", active: true }}
+			/>,
+		);
+
+		const overlay = screen.getByTestId("browser-tab-drag-overlay");
+		expect(overlay).toHaveClass("browser-panel__tab--drag-overlay");
+		expect(overlay).toHaveTextContent("First app");
+		expect(overlay.querySelector(".browser-panel__tab-icon")).not.toBeNull();
+		expect(overlay.querySelector(".browser-panel__tab-close")).not.toBeNull();
 	});
 
 	it("moves browser tab focus and selection with arrow keys", async () => {
@@ -785,7 +860,7 @@ describe("BrowserPanel", () => {
 		const toolbarButtonCount = screen.getAllByRole("button").length;
 
 		const controls = screen.getByRole("button", { name: "Browser controls" });
-		expect(controls).toHaveAttribute("aria-pressed", "false");
+		expect(controls).not.toHaveAttribute("aria-pressed");
 		await openBrowserControls();
 		await userEvent.click(screen.getByRole("menuitem", { name: "Open DevTools" }));
 		expect(hookState.openDevTools).toHaveBeenCalledOnce();
@@ -793,16 +868,24 @@ describe("BrowserPanel", () => {
 		hookState.devtoolsState = { viewId: "42:sess-1", open: true, activeTabId: "t1" };
 		rerender(<TooltipProvider><BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} /></TooltipProvider>);
 		expect(screen.getAllByRole("button")).toHaveLength(toolbarButtonCount);
-		expect(controls).toHaveAttribute("aria-pressed", "true");
-		expect(controls).toHaveClass(
-			"bg-accent-strong",
-			"text-accent-foreground",
-			"hover:bg-accent-strong",
-			"dark:hover:bg-accent-strong",
-		);
+		expect(controls).not.toHaveAttribute("aria-pressed");
+		expect(controls).not.toHaveClass("bg-accent-strong", "text-accent-foreground");
 		await openBrowserControls();
 		await userEvent.click(screen.getByRole("menuitem", { name: "Close DevTools" }));
 		expect(hookState.closeDevTools).toHaveBeenCalledOnce();
+	});
+
+	it("does not highlight browser controls when a saved profile is active", () => {
+		hookState.profileState = {
+			viewId: "42:sess-1",
+			profileId: "11111111-1111-4111-8111-111111111111",
+			temporary: false,
+		};
+		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
+
+		const controls = screen.getByRole("button", { name: "Browser controls" });
+		expect(controls).not.toHaveAttribute("aria-pressed");
+		expect(controls).not.toHaveClass("bg-accent-strong", "text-accent-foreground");
 	});
 
 	it("disables DevTools in the controls menu until the active tab has a page", async () => {
@@ -876,6 +959,26 @@ describe("BrowserPanel", () => {
 				vi.advanceTimersByTime(300);
 			});
 			expect(flyout).toHaveAttribute("data-state", "closed");
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it("opens recently closed tabs from the toolbar trigger when only one tab remains", () => {
+		hookState.tabs = [{ id: "t1", url: "http://localhost:3000/", title: "Only app", active: true }];
+		hookState.closedTabs = [{ id: "closed", url: "http://localhost:4173/", title: "Closed app" }];
+		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
+		const trigger = screen.getByRole("button", { name: "1 browser tab" });
+		const flyout = screen.getByTestId("browser-tabs-flyout");
+
+		vi.useFakeTimers();
+		try {
+			fireEvent.pointerEnter(trigger);
+			act(() => vi.advanceTimersByTime(300));
+
+			expect(flyout).toHaveAttribute("data-state", "open");
+			expect(flyout).toHaveTextContent("Recently closed");
+			expect(flyout).toHaveTextContent("Closed app");
 		} finally {
 			vi.useRealTimers();
 		}
@@ -1654,6 +1757,26 @@ describe("BrowserPanel", () => {
 			await userEvent.click(closeButton);
 
 			expect(hookState.closeTab).not.toHaveBeenCalled();
+		});
+
+		it("restores the toolbar trigger when a pinned rail drops to one tab", () => {
+			pinRail();
+			hookState.tabs = [{ id: "t1", url: "http://localhost:3000/", title: "Only app", active: true }];
+			hookState.closedTabs = [{ id: "closed", url: "http://localhost:4173/", title: "Closed app" }];
+			render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
+			const trigger = screen.getByRole("button", { name: "1 browser tab" });
+			const flyout = screen.getByTestId("browser-tabs-flyout");
+
+			vi.useFakeTimers();
+			try {
+				fireEvent.pointerEnter(trigger);
+				act(() => vi.advanceTimersByTime(300));
+
+				expect(flyout).toHaveAttribute("data-state", "open");
+				expect(flyout).toHaveTextContent("Recently closed");
+			} finally {
+				vi.useRealTimers();
+			}
 		});
 
 		it("still opens the flyout on hover while the rail is collapsed", () => {

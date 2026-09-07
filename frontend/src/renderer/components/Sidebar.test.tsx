@@ -1513,15 +1513,15 @@ describe("Sidebar", () => {
 	it("opens the Mobile settings page from the footer", async () => {
 		const user = userEvent.setup();
 		renderSidebar();
-		await user.click((await screen.findAllByRole("button", { name: "Connect Mobile" }))[0]);
+		await user.click((await screen.findAllByRole("button", { name: "Connect mobile" }))[0]);
 		expect(useUiStore.getState().settingsModal).toEqual({ scope: "global", section: "mobile" });
 		expect(navigateMock).not.toHaveBeenCalled();
 	});
 
-	it("always shows Connect Mobile", () => {
+	it("always shows Connect mobile", () => {
 		renderSidebar();
 
-		expect(screen.getByRole("button", { name: "Connect Mobile" })).toBeVisible();
+		expect(screen.getByRole("button", { name: "Connect mobile" })).toBeVisible();
 	});
 
 	it("opens the command palette when Search is clicked", async () => {
@@ -1568,29 +1568,23 @@ describe("Sidebar", () => {
 		renderSidebar({ workspaces: [workspaceWithSession] });
 
 		await user.dblClick(screen.getByRole("button", { name: "Open fix login" }));
-		expect(navigateMock).not.toHaveBeenCalled();
+		expect(navigateMock).toHaveBeenCalledTimes(1);
 		const input = screen.getByLabelText("Rename fix login");
 		await user.clear(input);
 		await user.type(input, "  polish login  {Enter}");
 
 		await waitFor(() => expect(renameSessionMock).toHaveBeenCalledWith("proj-1-1", "polish login"));
-		expect(navigateMock).not.toHaveBeenCalled();
+		expect(navigateMock).toHaveBeenCalledTimes(1);
 	});
 
 	it("still opens a session after an unpaired single click", async () => {
 		renderSidebar({ workspaces: [{ ...workspace, sessions: [session] }] });
 
 		fireEvent.click(screen.getByRole("button", { name: "Open fix login" }), { detail: 1 });
-		expect(navigateMock).not.toHaveBeenCalled();
-
-		await waitFor(
-			() =>
-				expect(navigateMock).toHaveBeenCalledWith({
-					to: "/projects/$projectId/sessions/$sessionId",
-					params: { projectId: "proj-1", sessionId: "proj-1-1" },
-				}),
-			{ timeout: 1_000 },
-		);
+		expect(navigateMock).toHaveBeenCalledWith({
+			to: "/projects/$projectId/sessions/$sessionId",
+			params: { projectId: "proj-1", sessionId: "proj-1-1" },
+		});
 	});
 
 	it("starts the same inline rename from the session context menu", async () => {
