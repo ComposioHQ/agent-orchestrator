@@ -474,19 +474,30 @@ type Project struct {
 }
 
 type Report struct {
-	ID               string
-	SessionID        string
-	ProjectID        string
-	Type             string
-	Note             string
-	CreatedAt        time.Time
-	DeliveryState    string
-	AvailableAt      time.Time
-	ClaimToken       string
-	ClaimedAt        sql.NullTime
-	DeliveryAttempts int64
-	AcknowledgedAt   sql.NullTime
-	LastError        string
+	ID                 string
+	SessionID          string
+	ProjectID          string
+	State              string
+	Note               string
+	Message            string
+	CreatedAt          time.Time
+	DeliveryState      string
+	AvailableAt        time.Time
+	SettlementDeadline sql.NullTime
+	RepeatCount        int64
+	ClaimToken         string
+	ClaimedAt          sql.NullTime
+	DeliveryAttempts   int64
+	AcknowledgedAt     sql.NullTime
+	LastError          string
+}
+
+type ReportOutput struct {
+	ReportID  string
+	Position  int64
+	Kind      string
+	Reference string
+	Label     string
 }
 
 type Review struct {

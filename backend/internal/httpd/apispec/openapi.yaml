@@ -8886,16 +8886,20 @@ components:
       type: object
     CreateReportRequest:
       properties:
+        message:
+          maxLength: 1000
+          type: string
         note:
           maxLength: 1000
           type: string
+        outputs:
+          items:
+            $ref: '#/components/schemas/ReportOutputRequest'
+          type: array
         sessionId:
           type: string
-        type:
+        state:
           enum:
-          - free_form
-          - pr_created
-          - artifact
           - checkpoint
           - needs_input
           - stuck
@@ -8903,8 +8907,6 @@ components:
           type: string
       required:
       - sessionId
-      - type
-      - note
       type: object
     CreateReportResponse:
       properties:
@@ -10401,6 +10403,23 @@ components:
       - needsGitInit
       - requiredActions
       - blockingErrors
+      type: object
+    ReportOutputRequest:
+      properties:
+        kind:
+          enum:
+          - artifact
+          - pr_created
+          - pr_reviewed
+          type: string
+        label:
+          type: string
+        reference:
+          minLength: 1
+          type: string
+      required:
+      - kind
+      - reference
       type: object
     ResolveCommentsResponse:
       properties:

@@ -17,6 +17,15 @@ type Store interface {
 	CreateReport(context.Context, domain.ReportRecord) (domain.ReportRecord, error)
 }
 
+// CreateInput is the validated caller payload before AO-derived ownership and deadlines.
+type CreateInput struct {
+	SessionID domain.SessionID
+	State     domain.ReportState
+	Note      string
+	Message   string
+	Outputs   []domain.ReportOutput
+}
+
 // Service validates and creates durable worker reports.
 type Service struct {
 	store Store
@@ -42,23 +51,19 @@ func New(d Deps) *Service {
 	return &Service{store: d.Store, now: d.Now, newID: d.NewID}
 }
 
-// Create validates ownership and persists one pending report.
-func (s *Service) Create(ctx context.Context, sessionID domain.SessionID, typ domain.ReportType, note string) (domain.ReportRecord, error) {
+// Create validates ownership and persists one pending report. Reports are
+// coordination claims and never mutate authoritative worker lifecycle state.
+func (s *Service) Create(ctx context.Context, input CreateInput) (domain.ReportRecord, error) {
 	if s == nil || s.store == nil {
 		return domain.ReportRecord{}, errors.New("report: store is required")
 	}
-	if sessionID == "" {
+	if input.SessionID == "" {
 		return domain.ReportRecord{}, apierr.Invalid("INVALID_REPORT_SESSION", "Worker session id is required", nil)
 	}
-	if err := domain.ValidateReportNote(typ, note); err != nil {
-		message := "Report type and note are invalid"
-		code := "INVALID_REPORT"
-		if typ == domain.ReportPRCreated {
-			message, code = "PR-created reports require an HTTP(S) GitHub pull-request URL", "INVALID_PR_URL"
-		}
-		return domain.ReportRecord{}, apierr.Invalid(code, message, nil)
+	if err := domain.ValidateReportContent(input.State, input.Note, input.Message, input.Outputs); err != nil {
+		return domain.ReportRecord{}, apierr.Invalid("INVALID_REPORT", "Report state, note, message, or outputs are invalid", nil)
 	}
-	session, ok, err := s.store.GetSession(ctx, sessionID)
+	session, ok, err := s.store.GetSession(ctx, input.SessionID)
 	if err != nil {
 		return domain.ReportRecord{}, err
 	}
@@ -68,7 +73,24 @@ func (s *Service) Create(ctx context.Context, sessionID domain.SessionID, typ do
 	if session.Kind != domain.KindWorker {
 		return domain.ReportRecord{}, apierr.Invalid("REPORT_WORKER_REQUIRED", "Reports can only be created by worker sessions", nil)
 	}
+
 	now := s.now().UTC()
-	rec := domain.ReportRecord{ID: s.newID(), SessionID: session.ID, ProjectID: session.ProjectID, Type: typ, Note: note, CreatedAt: now, DeliveryState: domain.ReportPending, AvailableAt: now}
+	var availableAt time.Time
+	var settlementDeadline time.Time
+	switch input.State {
+	case domain.ReportDone:
+		settlementDeadline = now.Add(domain.ReportSettlementWindow)
+		availableAt = settlementDeadline
+	case domain.ReportNeedsInput, domain.ReportStuck:
+		availableAt = now
+	default:
+		availableAt = now.Add(domain.ReportBatchFallback)
+	}
+	rec := domain.ReportRecord{
+		ID: s.newID(), SessionID: session.ID, ProjectID: session.ProjectID,
+		State: input.State, Note: input.Note, Message: input.Message, Outputs: input.Outputs,
+		CreatedAt: now, DeliveryState: domain.ReportPending, AvailableAt: availableAt,
+		SettlementDeadline: settlementDeadline, RepeatCount: 1,
+	}
 	return s.store.CreateReport(ctx, rec)
 }
