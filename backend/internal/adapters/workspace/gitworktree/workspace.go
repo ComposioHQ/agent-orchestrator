@@ -348,6 +348,16 @@ func (w *Workspace) CreateWorkspaceProject(ctx context.Context, cfg ports.Worksp
 			continue
 		}
 		refs, err := w.resolveWorktreeRefs(ctx, remoteCtx, repos[i].repoPath, branch, repos[i].baseBranch)
+		if err != nil && i == 0 && errors.Is(err, ports.ErrWorkspaceDefaultBranchUnresolved) {
+			// Workspace roots are AO's local composition repositories. Older
+			// registrations may have initialized and committed the root without
+			// recording ao.defaultBranch. Recover from its current symbolic local
+			// branch so this internal bookkeeping never blocks session startup.
+			if localRefs, repairErr := w.repairWorkspaceRootDefault(ctx, repos[i].repoPath); repairErr == nil {
+				refs = localRefs
+				err = nil
+			}
+		}
 		if err != nil {
 			return ports.WorkspaceProjectInfo{}, fmt.Errorf("gitworktree: resolve workspace repo %q base: %w", repos[i].name, err)
 		}
@@ -390,6 +400,35 @@ func (w *Workspace) CreateWorkspaceProject(ctx context.Context, cfg ports.Worksp
 		}
 	}
 	return out, nil
+}
+
+func (w *Workspace) repairWorkspaceRootDefault(ctx context.Context, repo string) (worktreeRefs, error) {
+	out, err := w.run(ctx, w.binary, "-C", repo, "symbolic-ref", "--short", "HEAD")
+	if err != nil {
+		return worktreeRefs{}, err
+	}
+	branch := strings.TrimSpace(string(out))
+	if err := w.validateBranch(ctx, repo, branch); err != nil {
+		return worktreeRefs{}, err
+	}
+	ref := "refs/heads/" + branch
+	exists, err := w.refExists(ctx, repo, ref)
+	if err != nil {
+		return worktreeRefs{}, err
+	}
+	if !exists {
+		return worktreeRefs{}, fmt.Errorf("workspace root local branch %q has no commit", branch)
+	}
+	remotes, err := w.run(ctx, w.binary, "-C", repo, "remote")
+	if err != nil {
+		return worktreeRefs{}, err
+	}
+	if strings.TrimSpace(string(remotes)) == "" {
+		if _, err := w.run(ctx, w.binary, "-C", repo, "config", "--local", gitdefault.ManagedDefaultConfigKey, branch); err != nil {
+			return worktreeRefs{}, err
+		}
+	}
+	return worktreeRefs{seedRef: ref, baseRef: ref}, nil
 }
 
 func copyWorkspaceAssets(sourceRoot, destinationRoot string, assets []ports.WorkspaceProjectAssetConfig) error {

@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
@@ -622,13 +623,9 @@ func TestWorkspaceIntegrationRemotelessRootUsesImportedDefaultBranch(t *testing.
 	cfg := ports.WorkspaceProjectConfig{
 		ProjectID: "proj", SessionID: "orch", Kind: "orchestrator", Branch: "ao/proj-orch",
 		RootRepoPath: rootRepo,
+		BaseBranch:   "trunk",
 		Repos:        []ports.WorkspaceProjectRepoConfig{{Name: "api", RelativePath: "api", RepoPath: childRepo}},
 	}
-	// Reproduce the missing import setting without creating any worktrees.
-	if _, err := ws.CreateWorkspaceProject(context.Background(), cfg); !errors.Is(err, ErrDefaultBranchUnresolved) {
-		t.Fatalf("unset root default: got %v, want unresolved", err)
-	}
-	cfg.BaseBranch = "trunk"
 	info, err := ws.CreateWorkspaceProject(context.Background(), cfg)
 	if err != nil {
 		t.Fatalf("spawn with imported root default: %v", err)
@@ -790,6 +787,48 @@ func TestWorkspaceIntegrationWorkspaceProjectCopiesAssetsAndCleansSessionCopy(t 
 	}
 	if got, err := os.ReadFile(sourceFile); err != nil || string(got) != "source context" {
 		t.Fatalf("source asset changed during lifecycle: %q, %v", got, err)
+	}
+}
+
+func TestWorkspaceIntegrationWorkspaceProjectRepairsRemotelessRootDefault(t *testing.T) {
+	git := requireGit(t)
+	for _, kind := range []domain.SessionKind{domain.KindWorker, domain.KindOrchestrator} {
+		t.Run(string(kind), func(t *testing.T) {
+			tmp := t.TempDir()
+			rootRepo := filepath.Join(tmp, "root")
+			run(t, git, "init", "-b", "trunk", rootRepo)
+			runGit(t, git, rootRepo, "config", "user.email", "ao@example.com")
+			runGit(t, git, rootRepo, "config", "user.name", "AO Test")
+			if err := os.WriteFile(filepath.Join(rootRepo, "README.md"), []byte("root\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			runGit(t, git, rootRepo, "add", "README.md")
+			runGit(t, git, rootRepo, "commit", "-m", "initial")
+			childRepo := setupOriginClone(t, git, filepath.Join(rootRepo, "api"))
+
+			ws, err := New(Options{Binary: git, ManagedRoot: filepath.Join(tmp, "managed"), RepoResolver: StaticRepoResolver{"proj": rootRepo}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			info, err := ws.CreateWorkspaceProject(context.Background(), ports.WorkspaceProjectConfig{
+				ProjectID: "proj", SessionID: domain.SessionID("sess-" + string(kind)), Kind: kind, Branch: "ao/local-root-" + string(kind),
+				RootRepoPath: rootRepo,
+				Repos:        []ports.WorkspaceProjectRepoConfig{{Name: "api", RelativePath: "api", RepoPath: childRepo}},
+			})
+			if err != nil {
+				t.Fatalf("create workspace project: %v", err)
+			}
+			defer func() { _ = ws.DestroyWorkspaceProject(context.Background(), info) }()
+			if info.Root.BaseRef != "refs/heads/trunk" {
+				t.Fatalf("root BaseRef = %q, want local trunk", info.Root.BaseRef)
+			}
+			if got := gitOutput(t, git, rootRepo, "config", "--local", "--get", "ao.defaultBranch"); got != "trunk" {
+				t.Fatalf("recorded root default = %q, want trunk", got)
+			}
+			if len(info.Worktrees) != 2 || info.Worktrees[1].RepoName != "api" {
+				t.Fatalf("worktrees = %#v, want repaired root and api child", info.Worktrees)
+			}
+		})
 	}
 }
 
