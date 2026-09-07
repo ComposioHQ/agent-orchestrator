@@ -26,7 +26,7 @@ function show(input: BrowserPageContextMenuPresentation): void {
 
 	const host = document.createElement("div");
 	host.setAttribute(HOST_ATTRIBUTE, "");
-	host.style.cssText = "position:fixed;inset:0;z-index:2147483647;pointer-events:none;";
+	host.style.cssText = "position:fixed;inset:0;z-index:2147483647;pointer-events:auto;";
 	const root = host.attachShadow({ mode: "closed" });
 	const menu = document.createElement("div");
 	menu.setAttribute("role", "menu");
@@ -111,8 +111,13 @@ function show(input: BrowserPageContextMenuPresentation): void {
 	clamp();
 
 	const buttons = () => Array.from(menu.querySelectorAll<HTMLButtonElement>("button[role=menuitem]"));
-	const onPointerDown = (event: Event) => {
-		if (event.target !== host) close(true);
+	const onMenuPointerDown = (event: Event) => {
+		event.stopPropagation();
+	};
+	const onBackdropPointerDown = (event: Event) => {
+		event.preventDefault();
+		event.stopPropagation();
+		close(true);
 	};
 	const onKeyDown = (event: KeyboardEvent) => {
 		if (event.key === "Escape") {
@@ -130,13 +135,15 @@ function show(input: BrowserPageContextMenuPresentation): void {
 			: (current - 1 + items.length) % items.length;
 		items[index]?.focus();
 	};
-	document.addEventListener("pointerdown", onPointerDown, true);
+	menu.addEventListener("pointerdown", onMenuPointerDown);
+	host.addEventListener("pointerdown", onBackdropPointerDown);
 	document.addEventListener("keydown", onKeyDown, true);
 	active = {
 		host,
 		requestId: input.requestId,
 		removeListeners: () => {
-			document.removeEventListener("pointerdown", onPointerDown, true);
+			menu.removeEventListener("pointerdown", onMenuPointerDown);
+			host.removeEventListener("pointerdown", onBackdropPointerDown);
 			document.removeEventListener("keydown", onKeyDown, true);
 		},
 	};

@@ -14,6 +14,9 @@ export type SaveLinkSource = {
 		off: (event: "will-download", listener: DownloadListener) => unknown;
 	};
 	downloadURL: (url: string) => void;
+	isDestroyed?: () => boolean;
+	on?: (event: "destroyed", listener: () => void) => unknown;
+	off?: (event: "destroyed", listener: () => void) => unknown;
 };
 
 function suggestedFilename(value: string): string {
@@ -29,15 +32,17 @@ function suggestedFilename(value: string): string {
 
 export function createSaveLinkAs(
 	showSaveDialog: (options: { defaultPath: string }) => Promise<SaveDialogResult>,
-): (source: SaveLinkSource, url: string) => Promise<void> {
-	return async (source, url) => {
+): (source: SaveLinkSource, url: string, isValid?: () => boolean) => Promise<void> {
+	return async (source, url, isValid) => {
 		const result = await showSaveDialog({ defaultPath: suggestedFilename(url) });
 		if (result.canceled || !result.filePath) return;
+		if (source.isDestroyed?.() || (isValid && !isValid())) return;
 
 		let timeout: ReturnType<typeof setTimeout> | undefined;
 		const cleanup = () => {
 			if (timeout) clearTimeout(timeout);
 			source.session.off("will-download", onDownload);
+			source.off?.("destroyed", cleanup);
 		};
 		const onDownload: DownloadListener = (_event, item, downloadSource) => {
 			if (downloadSource.id !== source.id || !item.getURLChain().includes(url)) return;
@@ -45,8 +50,13 @@ export function createSaveLinkAs(
 			item.setSavePath(result.filePath!);
 		};
 		source.session.on("will-download", onDownload);
+		source.on?.("destroyed", cleanup);
 		timeout = setTimeout(cleanup, 30_000);
 		timeout.unref?.();
+		if (source.isDestroyed?.() || (isValid && !isValid())) {
+			cleanup();
+			return;
+		}
 		try {
 			source.downloadURL(url);
 		} catch (error) {

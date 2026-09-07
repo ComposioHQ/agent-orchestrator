@@ -237,6 +237,7 @@ type BrowserWebContents = Pick<
 	| "isLoading"
 	| "insertCSS"
 	| "inspectElement"
+	| "isDestroyed"
 	| "loadURL"
 	| "on"
 	| "reload"
@@ -331,7 +332,7 @@ export type BrowserViewHostOptions = {
 	shell: ShellLike;
 	clipboard?: ClipboardLike;
 	contextMenu?: BrowserPageContextMenuPresenter;
-	saveLink?: (webContents: BrowserWebContents, url: string) => Promise<void>;
+	saveLink?: (webContents: BrowserWebContents, url: string, isValid: () => boolean) => Promise<void>;
 	WebContentsView: WebContentsViewConstructor;
 	annotatePreloadPath: string;
 	rendererOrigin: string;
@@ -587,7 +588,9 @@ const MAX_CONTEXT_SELECTION_LENGTH = 100_000;
 
 function contextMenuActions(params: ContextMenuParams, rendererOrigin: string): BrowserPageContextMenuAction[] {
 	const linkURL = params.linkURL.slice(0, MAX_CONTEXT_LINK_LENGTH);
-	const hasOpenableLink = linkURL.length > 0 && isAllowedBrowserURL(linkURL, rendererOrigin);
+	const hasOpenableLink = params.linkURL.length <= MAX_CONTEXT_LINK_LENGTH
+		&& linkURL.length > 0
+		&& isAllowedBrowserURL(linkURL, rendererOrigin);
 	const hasSelection = params.editFlags.canCopy && params.selectionText.trim().length > 0;
 	return [
 		...(hasOpenableLink ? (["open-link-tab", "open-link-external"] as const) : []),
@@ -2014,7 +2017,13 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 				entry.view.webContents.focus();
 				return;
 			case "save-link":
-				await options.saveLink?.(entry.view.webContents, pending.linkURL);
+				await options.saveLink?.(entry.view.webContents, pending.linkURL, () => (
+					entries.get(session.viewId) === session
+					&& session.visible
+					&& session.activeTabId === entry.tabId
+					&& session.tabs.get(entry.tabId) === entry
+					&& !entry.view.webContents.isDestroyed()
+				));
 				return;
 			case "copy-selection":
 				options.clipboard?.writeText(pending.selectionText);

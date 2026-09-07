@@ -456,6 +456,19 @@ describe("browser page context menu", () => {
 		]);
 	});
 
+	it("does not expose privileged actions for an oversized link URL", async () => {
+		const host = setupHost();
+		const { presentation } = await showContextMenu(host, { linkURL: `https://example.test/${"a".repeat(8_192)}` });
+
+		expect(presentation.items.map((item) => item.type === "action" ? item.label : item.type)).toEqual([
+			"Annotate",
+			"separator",
+			"Copy link address",
+			"separator",
+			"Inspect Element",
+		]);
+	});
+
 	it("copies the retained selection once and rejects reuse of the consumed request", async () => {
 		const host = setupHost();
 		const { presentation } = await showContextMenu(host, {
@@ -496,7 +509,11 @@ describe("browser page context menu", () => {
 
 		choose(host, presentation, "Save link as…");
 
-		await vi.waitFor(() => expect(host.saveLink).toHaveBeenCalledWith(host.webContents, "https://docs.example.test/manual.pdf"));
+		await vi.waitFor(() => expect(host.saveLink).toHaveBeenCalledWith(
+			host.webContents,
+			"https://docs.example.test/manual.pdf",
+			expect.any(Function),
+		));
 	});
 
 	it("opens managed DevTools and inspects the retained page point", async () => {

@@ -77,4 +77,17 @@ describe("browser page context menu preload", () => {
 		});
 		expect(document.querySelector("[data-ao-browser-context-menu]")).toBeNull();
 	});
+
+	it("consumes an outside pointerdown instead of clicking through to the page", () => {
+		showMenu();
+		const host = document.querySelector<HTMLElement>("[data-ao-browser-context-menu]");
+		if (!host) throw new Error("menu host was not rendered");
+		const event = new PointerEvent("pointerdown", { bubbles: true, cancelable: true });
+
+		host.dispatchEvent(event);
+
+		expect(event.defaultPrevented).toBe(true);
+		expect(host.style.pointerEvents).toBe("auto");
+		expect(document.querySelector("[data-ao-browser-context-menu]")).toBeNull();
+	});
 });
