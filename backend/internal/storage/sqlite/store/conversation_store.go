@@ -1241,6 +1241,7 @@ func (s *Store) SetConversationSettings(
 	if err := s.qw.UpdateConversationTurnSettings(ctx, gen.UpdateConversationTurnSettingsParams{
 		Model:           nullableString(settings.Model),
 		ReasoningEffort: nullableString(settings.ReasoningEffort),
+		SpeedMode:       nullableString(settings.SpeedMode),
 		ApprovalMode:    nullableString(string(settings.ApprovalMode)),
 		UpdatedAt:       now,
 		ID:              conversationID,
@@ -2921,6 +2922,7 @@ func conversationToDomain(row gen.Conversation) domain.ConversationRecord {
 		Settings: domain.ConversationSettings{
 			Model:           row.Model.String,
 			ReasoningEffort: row.ReasoningEffort.String,
+			SpeedMode:       row.SpeedMode.String,
 			ApprovalMode:    domain.PermissionMode(row.ApprovalMode.String),
 		},
 		ProviderTitle: row.ProviderTitle,

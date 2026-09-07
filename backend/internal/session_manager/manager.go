@@ -382,8 +382,11 @@ type Manager struct {
 	// defaults resolves the daemon-owned default session interface for a spawn
 	// that names no mode. Nil falls back to the compatibility default, so a build
 	// without it behaves exactly as before.
-	defaults                    SessionModeDefaults
-	chat                        ChatLauncher
+	defaults     SessionModeDefaults
+	chat         ChatLauncher
+	modelCatalog interface {
+		Models(context.Context, string, string, bool) (ports.AgentModelCatalog, error)
+	}
 	lcm                         lifecycleRecorder
 	preview                     PreviewLifecycle
 	browser                     BrowserLifecycle
@@ -499,6 +502,13 @@ func (m *Manager) beginHarnessUse(harness domain.AgentHarness) (func(), error) {
 		return nil, ErrHarnessInstallActive
 	}
 	return release, nil
+}
+
+// SetModelCatalog late-binds the catalog service after daemon construction.
+func (m *Manager) SetModelCatalog(catalog interface {
+	Models(context.Context, string, string, bool) (ports.AgentModelCatalog, error)
+}) {
+	m.modelCatalog = catalog
 }
 
 // latestUserPromptRecorder narrows the post-delivery write to the single fact
@@ -896,6 +906,12 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 				"harness", cfg.Harness, "error", err)
 			mode = domain.SessionModeTUI
 		}
+		resolved, err := m.resolveChatAgentConfig(ctx, cfg, project.Config)
+		if err != nil {
+			return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn: %w", err)
+		}
+		cfg.AgentConfig = resolved
+		cfg.AgentConfigResolved = true
 	}
 	cfg.RequestedMode = mode
 
@@ -1107,6 +1123,86 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		return domain.SessionRecord{}, 0, 0, err
 	}
 	return rec, promptBytes, systemPromptBytes, nil
+}
+
+func (m *Manager) resolveChatAgentConfig(ctx context.Context, cfg ports.SpawnConfig, project domain.ProjectConfig) (ports.AgentConfig, error) {
+	base := effectiveAgentConfig(cfg.Kind, project)
+	requested := cfg.AgentConfig
+	resolved := applySpawnAgentConfig(base, requested)
+	if cfg.EffortOverride {
+		resolved.Effort = requested.Effort
+	}
+	if cfg.SpeedModeOverride {
+		resolved.SpeedMode = requested.SpeedMode
+	}
+	if m.modelCatalog == nil {
+		return resolved, nil
+	}
+	catalog, err := m.modelCatalog.Models(ctx, string(cfg.Harness), string(cfg.ProjectID), true)
+	if err != nil {
+		if resolved.Effort != "" || resolved.SpeedMode != "" {
+			return ports.AgentConfig{}, fmt.Errorf("%w: %w", ports.ErrModelCapabilitiesUnavailable, err)
+		}
+		return resolved, nil
+	}
+	modelID := resolved.Model
+	if modelID == "" {
+		for _, item := range catalog.Models {
+			if item.IsDefault {
+				modelID = item.ID
+				break
+			}
+		}
+	}
+	var selected *ports.AgentModelInfo
+	for i := range catalog.Models {
+		if catalog.Models[i].ID == modelID {
+			selected = &catalog.Models[i]
+			break
+		}
+	}
+	if requested.Model != "" && requested.Model != base.Model {
+		if !cfg.EffortOverride && requested.Effort == "" && (selected == nil || !containsString(selected.Efforts, base.Effort)) {
+			resolved.Effort = ""
+		}
+		if !cfg.SpeedModeOverride && requested.SpeedMode == "" && (selected == nil || !containsSpeedMode(selected.SpeedModes, base.SpeedMode)) {
+			resolved.SpeedMode = ""
+		}
+	}
+	if resolved.Effort == "" && resolved.SpeedMode == "" {
+		return resolved, nil
+	}
+	if catalog.Stale || selected == nil {
+		return ports.AgentConfig{}, fmt.Errorf("%w for model %q", ports.ErrModelCapabilitiesUnavailable, modelID)
+	}
+	if resolved.Effort != "" && !containsString(selected.Efforts, resolved.Effort) {
+		return ports.AgentConfig{}, fmt.Errorf("%w %q for model %q", ports.ErrUnsupportedEffort, resolved.Effort, modelID)
+	}
+	if resolved.SpeedMode != "" && !containsSpeedMode(selected.SpeedModes, resolved.SpeedMode) {
+		return ports.AgentConfig{}, fmt.Errorf("%w %q for model %q", ports.ErrUnsupportedSpeedMode, resolved.SpeedMode, modelID)
+	}
+	return resolved, nil
+}
+
+func containsString(values []string, value string) bool {
+	if value == "" {
+		return false
+	}
+	for _, candidate := range values {
+		if candidate == value {
+			return true
+		}
+	}
+	return false
+}
+
+func containsSpeedMode(values []ports.AgentSpeedMode, value string) bool {
+	for _, candidate := range values {
+		if candidate.ID == value && value != "" {
+			return true
+		}
+	}
+	return false
 }
 
 // loadProject loads the project record so spawn can resolve its per-project
@@ -1424,6 +1520,12 @@ func effectiveAgentConfig(kind domain.SessionKind, cfg domain.ProjectConfig) por
 	if override.Model != "" {
 		merged.Model = override.Model
 	}
+	if override.Effort != "" {
+		merged.Effort = override.Effort
+	}
+	if override.SpeedMode != "" {
+		merged.SpeedMode = override.SpeedMode
+	}
 	if override.Mode != "" {
 		merged.Mode = override.Mode
 	}
@@ -1436,6 +1538,12 @@ func effectiveAgentConfig(kind domain.SessionKind, cfg domain.ProjectConfig) por
 func applySpawnAgentConfig(base, override ports.AgentConfig) ports.AgentConfig {
 	if override.Model != "" {
 		base.Model = override.Model
+	}
+	if override.Effort != "" {
+		base.Effort = override.Effort
+	}
+	if override.SpeedMode != "" {
+		base.SpeedMode = override.SpeedMode
 	}
 	if override.Mode != "" {
 		base.Mode = override.Mode

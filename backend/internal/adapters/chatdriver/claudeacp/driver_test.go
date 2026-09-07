@@ -47,9 +47,14 @@ func TestClaudeSessionModeUsesAdapterModeIDs(t *testing.T) {
 	}
 }
 
-func TestClaudeSessionOptionsUseACPConfigIDs(t *testing.T) {
-	got := claudeSessionOptions(ports.ChatTurnSettings{Model: "sonnet", Effort: "high"})
-	want := []acpdriver.SessionOption{{ID: "model", Value: "sonnet"}, {ID: "effort", Value: "high"}}
+func TestClaudeSessionOptionsUseACPConfigIDsInDependencyOrder(t *testing.T) {
+	got := claudeSessionOptions(ports.ChatTurnSettings{Model: "sonnet", Effort: "high", SpeedMode: "fast"})
+	fast := true
+	want := []acpdriver.SessionOption{
+		{ID: "model", Value: "sonnet"},
+		{ID: "effort", Value: "high"},
+		{ID: "fast", Boolean: &fast},
+	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("options = %#v, want %#v", got, want)
 	}

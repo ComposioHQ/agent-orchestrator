@@ -16,15 +16,24 @@ func TestDelegateTaskSpawnsWorkerThenRequestsTitleFromNewestActiveOrchestrator(t
 		name      string
 		agent     domain.AgentHarness
 		model     string
+		effort    string
+		speedMode string
 		mode      domain.SessionMode
 		wantAgent domain.AgentHarness
 	}{
 		{name: "project default"},
-		{name: "requested agent model and mode", agent: domain.HarnessCursor, model: "  sonnet-custom  ", mode: domain.SessionModeChat, wantAgent: domain.HarnessCursor},
+		{name: "requested agent model and mode", agent: domain.HarnessCursor, model: "  sonnet-custom  ", effort: " high ", speedMode: " fast ", mode: domain.SessionModeChat, wantAgent: domain.HarnessCursor},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			var effort, speedMode *string
+			if tt.effort != "" {
+				effort = &tt.effort
+			}
+			if tt.speedMode != "" {
+				speedMode = &tt.speedMode
+			}
 			st := newFakeStore()
 			st.projects["ao"] = domain.ProjectRecord{ID: "ao"}
 			now := time.Now().UTC()
@@ -38,7 +47,7 @@ func TestDelegateTaskSpawnsWorkerThenRequestsTitleFromNewestActiveOrchestrator(t
 
 			brief := "  Fix the renderer\nwithout changing the API.  "
 			out, err := svc.DelegateTask(context.Background(), DelegateTaskInput{
-				ProjectID: "ao", Brief: brief, RequestedAgent: tt.agent, Model: tt.model, RequestedMode: tt.mode,
+				ProjectID: "ao", Brief: brief, RequestedAgent: tt.agent, Model: tt.model, Effort: effort, SpeedMode: speedMode, RequestedMode: tt.mode,
 			})
 			if err != nil {
 				t.Fatalf("DelegateTask: %v", err)
@@ -51,6 +60,12 @@ func TestDelegateTaskSpawnsWorkerThenRequestsTitleFromNewestActiveOrchestrator(t
 			}
 			if cmd.spawnedCfg.AgentConfig.Model != strings.TrimSpace(tt.model) {
 				t.Fatalf("spawn model = %q, want %q", cmd.spawnedCfg.AgentConfig.Model, strings.TrimSpace(tt.model))
+			}
+			if cmd.spawnedCfg.AgentConfig.Effort != strings.TrimSpace(tt.effort) || cmd.spawnedCfg.AgentConfig.SpeedMode != strings.TrimSpace(tt.speedMode) {
+				t.Fatalf("spawn tuning = %#v", cmd.spawnedCfg.AgentConfig)
+			}
+			if cmd.spawnedCfg.EffortOverride != (effort != nil) || cmd.spawnedCfg.SpeedModeOverride != (speedMode != nil) {
+				t.Fatalf("spawn tuning presence = %#v", cmd.spawnedCfg)
 			}
 			if cmd.spawnedCfg.RequestedMode != tt.mode {
 				t.Fatalf("spawn mode = %q, want %q", cmd.spawnedCfg.RequestedMode, tt.mode)

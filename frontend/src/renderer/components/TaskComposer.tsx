@@ -31,6 +31,7 @@ import {
 } from "../hooks/useAgentModelsQuery";
 import { AgentModelCombobox } from "./settings/AgentModelCombobox";
 import { SettingsOptionMenu } from "./settings/SettingsOptionMenu";
+import { ModelTuningControls } from "./settings/ModelTuningControls";
 
 type Project = components["schemas"]["Project"];
 type DelegateAgent = components["schemas"]["DelegateTaskRequest"]["agent"];
@@ -40,6 +41,8 @@ type CreateTaskInput = {
 	brief: string;
 	agent?: DelegateAgent;
 	model?: string;
+	effort?: string;
+	speedMode?: string;
 	mode?: "tui";
 	approvalMode?: "bypass-permissions";
 	attachments?: FileAttachmentPayload[];
@@ -98,9 +101,13 @@ export function TaskComposer({
 	const [isPromptDirty, setIsPromptDirty] = useState(false);
 	const [model, setModel] = useState("");
 	const [mode, setMode] = useState("");
+	const [effort, setEffort] = useState("");
+	const [speedMode, setSpeedMode] = useState("");
 	const [agent, setAgent] = useState("");
 	const [agentTouched, setAgentTouched] = useState(false);
 	const [modelTouched, setModelTouched] = useState(false);
+	const [effortTouched, setEffortTouched] = useState(false);
+	const [speedTouched, setSpeedTouched] = useState(false);
 	const [isSubmitting, setIsSubmitting] = useState(false);
 	const [error, setError] = useState<string | undefined>();
 	const [fallbackAction, setFallbackAction] = useState<FallbackAction>();
@@ -155,11 +162,13 @@ export function TaskComposer({
 			void captureRendererEvent("ao.renderer.task_create_requested", { project_id: input.projectId });
 			try {
 				const { data, error } = await apiClient.POST("/api/v1/orchestrators/delegate", {
-					body: {
-						projectId: input.projectId,
-						brief: input.brief,
-						agent: input.agent,
-						model: input.model,
+				body: {
+					projectId: input.projectId,
+					brief: input.brief,
+					agent: input.agent,
+					...(input.model ? { model: input.model } : {}),
+					...(input.effort !== undefined ? { effort: input.effort } : {}),
+					...(input.speedMode !== undefined ? { speedMode: input.speedMode } : {}),
 						...(input.mode ? { mode: input.mode } : {}),
 						...(input.approvalMode ? { approvalMode: input.approvalMode } : {}),
 						...(input.attachments && input.attachments.length > 0 ? { attachments: input.attachments } : {}),
@@ -235,6 +244,10 @@ export function TaskComposer({
 		projectQuery.data?.config?.worker?.agentConfig?.model ?? projectQuery.data?.config?.agentConfig?.model ?? "";
 	const defaultWorkerMode =
 		projectQuery.data?.config?.worker?.agentConfig?.mode ?? projectQuery.data?.config?.agentConfig?.mode ?? "";
+	const defaultWorkerEffort =
+		projectQuery.data?.config?.worker?.agentConfig?.effort ?? projectQuery.data?.config?.agentConfig?.effort ?? "";
+	const defaultWorkerSpeedMode =
+		projectQuery.data?.config?.worker?.agentConfig?.speedMode ?? projectQuery.data?.config?.agentConfig?.speedMode ?? "";
 	const projectModelForSelectedAgent = selectedAgent === defaultWorkerAgent ? defaultWorkerModel : "";
 	const projectModeForSelectedAgent = selectedAgent === defaultWorkerAgent ? defaultWorkerMode : "";
 	const agentCatalog = agentsQuery.data;
@@ -296,6 +309,11 @@ export function TaskComposer({
 		const refreshed = await refreshAgentModels(selectedAgent, modelsProjectId);
 		queryClient.setQueryData(agentModelsQueryKey(selectedAgent, modelsProjectId), refreshed);
 	}, [modelsProjectId, queryClient, selectedAgent]);
+	const displayedModelWarning = requiresTuiFallback
+		? t("newTask.tuningRequiresChat")
+		: fallbackAction === "tui"
+			? [modelWarning, t("newTask.tuiTuningDefaults")].filter(Boolean).join(" ")
+			: modelWarning;
 
 	useEffect(() => {
 		if (!agentTouched) setAgent(defaultWorkerAgent);
@@ -306,8 +324,12 @@ export function TaskComposer({
 			setMode(defaultModeForSelectedAgent);
 		}
 	}, [defaultModelForSelectedAgent, defaultModeForSelectedAgent, modelTouched]);
+	useEffect(() => {
+		if (!effortTouched) setEffort(selectedAgent === defaultWorkerAgent ? defaultWorkerEffort : "");
+		if (!speedTouched) setSpeedMode(selectedAgent === defaultWorkerAgent ? defaultWorkerSpeedMode : "");
+	}, [defaultWorkerAgent, defaultWorkerEffort, defaultWorkerSpeedMode, effortTouched, selectedAgent, speedTouched]);
 
-	const isDirty = isPromptDirty || modelTouched || attachments.length > 0;
+	const isDirty = isPromptDirty || modelTouched || effortTouched || speedTouched || attachments.length > 0;
 	const handlePromptChange = useCallback((value: string) => {
 		const nextDirty = value.trim() !== "";
 		setIsPromptDirty((wasDirty) => (wasDirty === nextDirty ? wasDirty : nextDirty));
@@ -349,6 +371,8 @@ export function TaskComposer({
 				// or the resolved default, so spawning names it explicitly.
 				agent: selectedAgent ? (selectedAgent as CreateTaskInput["agent"]) : undefined,
 				model: requestedModel,
+				effort: interfaceMode === "tui" || !effortTouched ? undefined : effort,
+				speedMode: interfaceMode === "tui" || !speedTouched ? undefined : speedMode,
 				mode: interfaceMode,
 				approvalMode,
 				attachments: attachmentPayloads.length > 0 ? attachmentPayloads : undefined,
@@ -404,6 +428,10 @@ export function TaskComposer({
 					setModel("");
 					setMode("");
 					setModelTouched(false);
+					setEffort("");
+					setSpeedMode("");
+					setEffortTouched(false);
+					setSpeedTouched(false);
 				},
 			}}
 			model={{
@@ -440,7 +468,7 @@ export function TaskComposer({
 				showFallbackAction: fallbackAction !== undefined,
 				error,
 				isSubmitting,
-				modelWarning,
+				modelWarning: displayedModelWarning,
 				onFallbackAction: (brief) =>
 					void (fallbackAction === "bypass-permissions"
 						? submitTask(brief, undefined, "bypass-permissions")
@@ -448,7 +476,24 @@ export function TaskComposer({
 				onSubmit: (brief) => void submitTask(brief, requiresTuiFallback ? "tui" : undefined),
 			}}
 			renderAgentControl={(control) => <DesktopAgentControl {...control} />}
-			renderModelControl={(control) => <TaskModelPicker {...control} onRefresh={refreshSelectedModels} />}
+			renderModelControl={(control) => (
+				<div className="flex min-w-0 items-center gap-1">
+					<TaskModelPicker {...control} onRefresh={refreshSelectedModels} />
+					{(selectedAgent === "codex" || selectedAgent === "claude-code") && !requiresTuiFallback ? (
+						<ModelTuningControls
+							models={modelCatalogQuery.data?.models}
+							model={model}
+							effort={effort}
+							speedMode={speedMode}
+							onEffortChange={(value) => { setEffort(value); setEffortTouched(true); }}
+							onSpeedModeChange={(value) => { setSpeedMode(value); setSpeedTouched(true); }}
+							onEffortReset={setEffort}
+							onSpeedModeReset={setSpeedMode}
+							variant="composer"
+						/>
+					) : null}
+				</div>
+			)}
 		/>
 	);
 }

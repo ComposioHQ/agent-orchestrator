@@ -574,6 +574,16 @@ func TestResumeUsesPersistedBypassPermissionForCapabilityAdmission(t *testing.T)
 
 func TestServicePassesRecomputedSystemPromptToResume(t *testing.T) {
 	st := openStore(t)
+	existing, err := st.CreateConversation(context.Background(), "conversation-resume",
+		domain.ConversationScopeSession, testProject, testSession, time.Now())
+	if err != nil {
+		t.Fatalf("CreateConversation: %v", err)
+	}
+	if err := st.SetConversationSettings(context.Background(), existing.ID, domain.ConversationSettings{
+		Model: "gpt-test", ReasoningEffort: "high", SpeedMode: "fast",
+	}, time.Now()); err != nil {
+		t.Fatalf("SetConversationSettings: %v", err)
+	}
 	conv := newFakeConversation()
 	var resumed ports.ChatResumeConfig
 	svc := chatsvc.New(chatsvc.Options{
@@ -586,7 +596,7 @@ func TestServicePassesRecomputedSystemPromptToResume(t *testing.T) {
 
 	workspace := t.TempDir()
 	dataDir := t.TempDir()
-	_, err := svc.Start(context.Background(), chatsvc.StartConfig{
+	_, err = svc.Start(context.Background(), chatsvc.StartConfig{
 		SessionID: testSession, ProjectID: testProject, Harness: domain.HarnessCodex,
 		DataDir: dataDir, WorkspacePath: workspace, ProviderConversationID: "thread-1",
 		SystemPrompt: "Recomputed AO orchestrator instructions",
@@ -595,8 +605,50 @@ func TestServicePassesRecomputedSystemPromptToResume(t *testing.T) {
 		t.Fatalf("Start resume: %v", err)
 	}
 	if resumed.ProviderConversationID != "thread-1" || resumed.DataDir != dataDir || resumed.WorkspacePath != workspace ||
-		resumed.SystemPrompt != "Recomputed AO orchestrator instructions" {
+		resumed.SystemPrompt != "Recomputed AO orchestrator instructions" || resumed.Model != "gpt-test" ||
+		resumed.Effort != "high" || resumed.SpeedMode != "fast" {
 		t.Fatalf("resume config = %#v", resumed)
+	}
+	snapshot, err := st.LoadConversationSnapshot(context.Background(), "conversation-resume")
+	if err != nil {
+		t.Fatalf("LoadConversationSnapshot: %v", err)
+	}
+	if snapshot.Conversation.Settings.Model != "gpt-test" || snapshot.Conversation.Settings.ReasoningEffort != "high" || snapshot.Conversation.Settings.SpeedMode != "fast" {
+		t.Fatalf("persisted settings = %#v", snapshot.Conversation.Settings)
+	}
+}
+
+func TestServicePersistsAndPassesInitialModelTuningBeforeProviderStart(t *testing.T) {
+	st := openStore(t)
+	conv := newFakeConversation()
+	var started ports.ChatStartConfig
+	driver := fakeDriver{start: func(cfg ports.ChatStartConfig) (ports.ChatConversation, error) {
+		started = cfg
+		snapshot, err := st.LoadConversationSnapshot(context.Background(), "conversation-start")
+		if err != nil {
+			return nil, err
+		}
+		settings := snapshot.Conversation.Settings
+		if settings.Model != "gpt-test" || settings.ReasoningEffort != "high" || settings.SpeedMode != "fast" {
+			return nil, fmt.Errorf("settings were not durable before provider start: %#v", settings)
+		}
+		return conv, nil
+	}}
+	svc := chatsvc.New(chatsvc.Options{
+		Store: st, Sessions: st, Drivers: fakeRegistry{driver: driver},
+		Log: slog.New(slog.DiscardHandler), NewID: func() string { return "conversation-start" },
+	})
+	t.Cleanup(func() { _ = svc.Stop(context.Background(), testSession) })
+
+	_, err := svc.Start(context.Background(), chatsvc.StartConfig{
+		SessionID: testSession, ProjectID: testProject, Harness: domain.HarnessCodex,
+		WorkspacePath: t.TempDir(), Model: "gpt-test", Effort: "high", SpeedMode: "fast",
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if started.Model != "gpt-test" || started.Effort != "high" || started.SpeedMode != "fast" {
+		t.Fatalf("provider start config = %#v", started)
 	}
 }
 

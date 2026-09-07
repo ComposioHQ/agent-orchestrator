@@ -229,7 +229,7 @@ describe("ProjectSettingsForm", () => {
 			),
 		);
 		expect(ensureAgentReadinessMock).toHaveBeenCalledWith();
-		expect(screen.getByRole("button", { name: "Permission mode" })).toHaveTextContent("Auto (Project default)");
+		expect(screen.getByRole("button", { name: "Worker approval" })).toHaveTextContent("Auto (Project default)");
 		expect(screen.queryByRole("button", { name: "Refresh agents" })).not.toBeInTheDocument();
 		expect(screen.queryByRole("button", { name: "Refresh worker model list" })).not.toBeInTheDocument();
 		expect(screen.queryByRole("button", { name: "Refresh orchestrator model list" })).not.toBeInTheDocument();
@@ -435,7 +435,7 @@ describe("ProjectSettingsForm", () => {
 
 		const workerAgent = screen.getByRole("button", { name: "Default worker agent" });
 		const orchestratorAgent = screen.getByRole("button", { name: "Default orchestrator agent" });
-		const permissionMode = screen.getByRole("button", { name: "Permission mode" });
+		const permissionMode = screen.getByRole("button", { name: "Worker approval" });
 		// The trigger shows the raw harness id until the agent catalog resolves,
 		// then its label ("codex" -> "Codex"). Both prove the configured value;
 		// exactly which one is on screen depends on unrelated query timing.
@@ -463,19 +463,17 @@ describe("ProjectSettingsForm", () => {
 					defaultBranch: "develop",
 					sessionPrefix: "po",
 					env: { FOO: "bar" },
-					reviewers: [{ harness: "claude-code" }],
+					reviewers: [{ harness: "claude-code", agentConfig: { model: "claude-opus-4-5", permissions: "auto" } }],
 					// Agents changes applied
 					worker: {
 						agent: "opencode",
-						agentConfig: { model: "openai/gpt-5.4" },
+						agentConfig: { model: "openai/gpt-5.4", permissions: "bypass-permissions" },
 					},
 					orchestrator: {
 						agent: "goose",
-						agentConfig: { model: "anthropic/claude-sonnet" },
+						agentConfig: { model: "anthropic/claude-sonnet", permissions: "auto" },
 					},
-					agentConfig: {
-						permissions: "bypass-permissions",
-					},
+					agentConfig: undefined,
 				}),
 			},
 		});
@@ -1482,11 +1480,9 @@ describe("ProjectSettingsForm", () => {
 					symlinks: [".env"],
 					postCreate: ["npm install"],
 					agentRules: "keep work small",
-					worker: { agent: "codex", agentConfig: { model: "gpt-5-codex" } },
-					orchestrator: { agent: "claude-code", agentConfig: { model: "gpt-5-codex" } },
-					agentConfig: {
-						permissions: "auto",
-					},
+					worker: { agent: "codex", agentConfig: { model: "gpt-5-codex", permissions: "auto" } },
+					orchestrator: { agent: "claude-code", agentConfig: { model: "gpt-5-codex", permissions: "auto" } },
+					agentConfig: undefined,
 				},
 			},
 		});

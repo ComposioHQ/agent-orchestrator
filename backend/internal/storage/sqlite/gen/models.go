@@ -234,6 +234,7 @@ type Conversation struct {
 	UsageCost                  sql.NullFloat64
 	UsageCurrency              sql.NullString
 	ActiveBranchID             string
+	SpeedMode                  sql.NullString
 }
 
 type ConversationActivity struct {
