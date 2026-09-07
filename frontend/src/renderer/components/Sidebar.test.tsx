@@ -2066,7 +2066,7 @@ describe("Sidebar", () => {
 		// Both footer variants (expanded row and collapsed rail icon) are mounted.
 		const buttons = await screen.findAllByLabelText("Download update v9.9.9");
 		expect(buttons.length).toBeGreaterThan(0);
-		expect(screen.getByText("Update available")).toBeInTheDocument();
+		expect(screen.getByText("Download update")).toBeInTheDocument();
 		const availableRow = screen.getByTestId("sidebar-update-available");
 		expect(within(availableRow).getByText("v9.9.9")).toBeVisible();
 		expect(availableRow.querySelector(".rounded-full")).toBeNull();
@@ -2098,7 +2098,7 @@ describe("Sidebar", () => {
 		renderSidebar();
 
 		await waitFor(() => expect(updateStatusMock).toHaveBeenCalled());
-		expect(screen.getByText("Downloading… 42%")).toBeInTheDocument();
+		expect(screen.getByText("42% downloaded")).toBeInTheDocument();
 		const downloadingRow = screen.getByTestId("sidebar-update-downloading");
 		expect(downloadingRow).not.toHaveClass("border");
 		expect(downloadingRow.querySelector("svg circle")).toBeNull();
@@ -2139,7 +2139,7 @@ describe("Sidebar", () => {
 		// A build ready to install is more actionable than "checks are failing".
 		expect(await screen.findAllByLabelText("Restart to install update v9.9.9")).not.toHaveLength(0);
 		const readyRow = screen.getByTestId("sidebar-update-ready");
-		expect(readyRow).toHaveClass("border", "border-primary/35", "bg-primary/12", "text-primary");
+		expect(readyRow).toHaveClass("border", "border-success/35", "bg-success/12", "text-success");
 		expect(within(readyRow).getByText("v9.9.9 ready")).toBeVisible();
 		expect(readyRow.querySelector(".rounded-full")).toBeNull();
 		expect(screen.queryByLabelText("Retry update check")).not.toBeInTheDocument();
@@ -2185,7 +2185,7 @@ describe("Sidebar", () => {
 		expect(screen.queryByText("Update check failed")).not.toBeInTheDocument();
 	});
 
-	it("renders the restart-to-update row with the working-orange treatment when escalated", async () => {
+	it("renders the restart-to-update row with the green treatment even when escalated", async () => {
 		updateStatusMock.mockResolvedValue({
 			state: "downloaded",
 			version: "9.9.9",
@@ -2198,7 +2198,7 @@ describe("Sidebar", () => {
 		const buttons = await screen.findAllByLabelText("Restart to install update v9.9.9");
 		expect(buttons.length).toBeGreaterThan(0);
 		for (const button of buttons) {
-		expect(button).toHaveClass("text-working");
+		expect(button).toHaveClass("text-success");
 		}
 		expect(screen.getByText("v9.9.9 ready")).toBeInTheDocument();
 	});

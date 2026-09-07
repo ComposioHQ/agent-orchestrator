@@ -97,10 +97,9 @@ describe("MCP tool call", () => {
 
 	it("names the server and the tool, not a shell command", () => {
 		render(<ActivityRow activity={call} />);
-		expect(screen.getByText("github")).toBeInTheDocument();
 		expect(screen.getByText("search_issues")).toBeInTheDocument();
 		// The distinction the kind exists to draw: nothing ran in the worktree.
-		expect(screen.getByText("MCP tool")).toBeInTheDocument();
+		expect(screen.getByText("MCP · github")).toBeInTheDocument();
 	});
 
 	it("shows the arguments and the answer when opened", async () => {

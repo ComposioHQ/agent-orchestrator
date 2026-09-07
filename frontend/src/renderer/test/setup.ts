@@ -234,6 +234,13 @@ if (typeof window !== "undefined") {
 				canGoForward: false,
 				isLoading: false,
 			}),
+			captureScreenshot: async () => undefined,
+			downloads: {
+				list: async () => ({ downloads: [] }),
+				action: async () => ({ downloads: [] }),
+				clear: async () => ({ downloads: [] }),
+				onChanged: () => () => { /* no-op test subscription */ },
+			},
 			getTabs: async (viewId: string) => ({ viewId, activeTabId: "t1", tabs: [] }),
 			selectTab: async ({ viewId, tabId }) => ({ viewId, activeTabId: tabId, tabs: [] }),
 			closeTab: async ({ viewId }) => ({ viewId, activeTabId: "", tabs: [] }),

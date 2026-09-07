@@ -66,6 +66,10 @@ import type {
 	BrowserImportRequest,
 	BrowserImportResult,
 } from "./shared/browser-profile-import";
+import type {
+	BrowserDownloadActionInput,
+	BrowserDownloadsState,
+} from "./shared/browser-downloads";
 
 if (typeof document !== "undefined") {
 	const markNativeBrowserComposition = () => {
@@ -367,6 +371,20 @@ const api = {
 		goForward: (viewId: string) => ipcRenderer.invoke("browser:goForward", viewId) as Promise<BrowserNavState>,
 		reload: (viewId: string) => ipcRenderer.invoke("browser:reload", viewId) as Promise<BrowserNavState>,
 		stop: (viewId: string) => ipcRenderer.invoke("browser:stop", viewId) as Promise<BrowserNavState>,
+		captureScreenshot: (viewId: string) => ipcRenderer.invoke("browser:captureScreenshot", viewId) as Promise<void>,
+		downloads: {
+			list: () => ipcRenderer.invoke("browser:downloads:list") as Promise<BrowserDownloadsState>,
+			action: (input: BrowserDownloadActionInput) =>
+				ipcRenderer.invoke("browser:downloads:action", input) as Promise<BrowserDownloadsState>,
+			clear: () => ipcRenderer.invoke("browser:downloads:clear") as Promise<BrowserDownloadsState>,
+			onChanged: (listener: (state: BrowserDownloadsState) => void) => {
+				const wrapped = (_event: Electron.IpcRendererEvent, state: BrowserDownloadsState) => listener(state);
+				ipcRenderer.on("browser:downloadsChanged", wrapped);
+				return () => {
+					ipcRenderer.off("browser:downloadsChanged", wrapped);
+				};
+			},
+		},
 		getTabs: (viewId: string) => ipcRenderer.invoke("browser:getTabs", viewId) as Promise<BrowserTabsState>,
 		selectTab: (input: { viewId: string; tabId: string }) =>
 			ipcRenderer.invoke("browser:selectTab", input) as Promise<BrowserTabsState>,
