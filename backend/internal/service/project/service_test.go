@@ -1822,6 +1822,33 @@ func TestManager_AddWorkspaceAdoptsExistingParent(t *testing.T) {
 	}
 }
 
+func TestManager_AddWorkspaceAdoptsRemotelessUnbornParent(t *testing.T) {
+	configureCommitter(t)
+	ctx := context.Background()
+	m := newManager(t)
+
+	parent := t.TempDir()
+	if out, err := exec.Command("git", "init", "-b", "trunk", parent).CombinedOutput(); err != nil {
+		t.Fatalf("git init parent: %v (%s)", err, out)
+	}
+	gitRepoWithCommit(t, filepath.Join(parent, "api"))
+
+	proj, err := m.Add(ctx, project.AddInput{Path: parent, ProjectID: ptr("local-root"), AsWorkspace: true})
+	if err != nil {
+		t.Fatalf("Add workspace with remoteless git-init parent: %v", err)
+	}
+	if proj.Repo != "" {
+		t.Fatalf("root Repo = %q, want no remote", proj.Repo)
+	}
+	resolution, err := gitdefault.New("git", nil).Inspect(ctx, parent)
+	if err != nil {
+		t.Fatalf("resolve adopted root default: %v", err)
+	}
+	if resolution.Branch != "trunk" || resolution.Ref != "refs/heads/trunk" || resolution.Remote != "" {
+		t.Fatalf("root resolution = %#v, want local trunk", resolution)
+	}
+}
+
 // TestManager_AddWorkspaceRejectsWorktreeParent verifies that a linked worktree
 // of another repository is rejected as a workspace parent.
 func TestManager_AddWorkspaceRejectsWorktreeParent(t *testing.T) {
@@ -1949,9 +1976,10 @@ func TestManager_AddWorkspaceRejectsReservedChildName(t *testing.T) {
 }
 
 // TestManager_AddWorkspaceNonGitChildWithNestedRepo verifies that a non-git
-// child folder containing a nested git repo is imported as needs_init (not
-// rejected as a gitlink). The child is gitignored in the parent, so the
-// nested repo is never staged by git add -A and guardNoGitlinks never fires.
+// child folder containing a nested git repo is retained internally as an asset
+// but omitted from the repository list. The child is gitignored in the parent,
+// so the nested repo is never staged by git add -A and guardNoGitlinks never
+// fires.
 func TestManager_AddWorkspaceNonGitChildWithNestedRepo(t *testing.T) {
 	configureCommitter(t)
 	ctx := context.Background()
@@ -1973,20 +2001,15 @@ func TestManager_AddWorkspaceNonGitChildWithNestedRepo(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Add workspace with non-git child: %v", err)
 	}
-	if len(proj.WorkspaceRepos) != 2 {
-		t.Fatalf("expected 2 child repos (app + packages), got %d", len(proj.WorkspaceRepos))
+	if len(proj.WorkspaceRepos) != 1 || proj.WorkspaceRepos[0].Name != "app" {
+		t.Fatalf("WorkspaceRepos = %#v, want only the direct git repo", proj.WorkspaceRepos)
 	}
-	var pkgsRepo *project.WorkspaceRepo
-	for i := range proj.WorkspaceRepos {
-		if proj.WorkspaceRepos[i].Name == "packages" {
-			pkgsRepo = &proj.WorkspaceRepos[i]
-		}
+	got, err := m.Get(ctx, "rbt")
+	if err != nil {
+		t.Fatalf("Get workspace: %v", err)
 	}
-	if pkgsRepo == nil {
-		t.Fatalf("packages not in WorkspaceRepos = %#v", proj.WorkspaceRepos)
-	}
-	if pkgsRepo.GitStatus != string(domain.GitStatusNeedsInit) {
-		t.Fatalf("packages GitStatus = %q, want %q", pkgsRepo.GitStatus, domain.GitStatusNeedsInit)
+	if got.Project == nil || len(got.Project.WorkspaceRepos) != 1 || got.Project.WorkspaceRepos[0].Name != "app" {
+		t.Fatalf("Get WorkspaceRepos = %#v, want only the direct git repo", got.Project)
 	}
 
 	// Parent git repo and .gitignore must exist (no rollback).

@@ -171,7 +171,7 @@ func (m *Service) Get(ctx context.Context, id domain.ProjectID) (GetResult, erro
 		if err != nil {
 			return GetResult{}, apierr.Internal("PROJECT_LOAD_FAILED", "Failed to load workspace repositories")
 		}
-		p.WorkspaceRepos = workspaceReposFromRecords(repos)
+		p.WorkspaceRepos = workspaceReposFromRecords(row.Path, repos)
 	}
 	return GetResult{Status: "ok", Project: &p}, nil
 }
@@ -297,7 +297,7 @@ func (m *Service) Add(ctx context.Context, in AddInput) (Project, error) {
 		}
 		m.emitProjectAdded(ctx, row, projectCountBefore == 0)
 		p := m.projectFromRow(ctx, row)
-		p.WorkspaceRepos = workspaceReposFromRecords(repos)
+		p.WorkspaceRepos = workspaceReposFromRecords(row.Path, repos)
 		return p, nil
 	}
 	if !isGitRepo(path) {

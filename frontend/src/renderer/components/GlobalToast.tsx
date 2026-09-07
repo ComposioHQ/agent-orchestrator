@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useUiStore } from "../stores/ui-store";
+import { type GlobalToast as Toast, useUiStore } from "../stores/ui-store";
 
 const TOAST_DISMISS_MS = 3_500;
 
@@ -9,17 +9,29 @@ export function GlobalToast() {
 	if (toasts.length === 0) return null;
 
 	return (
-		<div className="pointer-events-none fixed right-3 bottom-3 z-[calc(var(--z-overlay)+1)] flex w-[min(360px,calc(100vw-24px))] flex-col-reverse items-stretch gap-2">
-			{toasts.slice().reverse().map((toast) => {
-				return (
-					<GlobalToastItem key={toast.nonce} toast={toast} />
-				);
-			})}
+		<>
+			<GlobalToastStack placement="top-center" toasts={toasts.filter((toast) => toast.placement === "top-center")} />
+			<GlobalToastStack placement="bottom-right" toasts={toasts.filter((toast) => toast.placement !== "top-center")} />
+		</>
+	);
+}
+
+function GlobalToastStack({ placement, toasts }: { placement: NonNullable<Toast["placement"]>; toasts: Toast[] }) {
+	if (toasts.length === 0) return null;
+	return (
+		<div
+			className={`pointer-events-none fixed z-[calc(var(--z-overlay)+1)] flex w-[min(360px,calc(100vw-24px))] items-stretch gap-2 ${
+				placement === "top-center" ? "left-1/2 top-12 -translate-x-1/2 flex-col" : "right-3 bottom-3 flex-col-reverse"
+			}`}
+			data-browser-native-overlay="true"
+			data-state="open"
+		>
+			{toasts.slice().reverse().map((toast) => <GlobalToastItem key={toast.nonce} toast={toast} />)}
 		</div>
 	);
 }
 
-function GlobalToastItem({ toast }: { toast: { title: string; body?: string; tone?: "info" | "error"; nonce: number } }) {
+function GlobalToastItem({ toast }: { toast: Toast }) {
 	const [exiting, setExiting] = useState(false);
 	const dismissGlobalToast = useUiStore((state) => state.dismissGlobalToast);
 	const isError = toast.tone === "error";

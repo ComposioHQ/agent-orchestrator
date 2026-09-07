@@ -57,6 +57,7 @@ export type GlobalToast = {
 	title: string;
 	body?: string;
 	tone?: "info" | "error";
+	placement?: "bottom-right" | "top-center";
 	nonce: number;
 };
 
@@ -146,7 +147,7 @@ export type UiState = {
 	setProjectRestarting: (projectId: string, restarting: boolean) => void;
 	setOrchestratorReplacementError: (projectId: string, failure: OrchestratorReplacementFailure | null) => void;
 	setOrchestratorStartupError: (projectId: string, message: string | null) => void;
-	showGlobalToast: (title: string, body?: string, tone?: GlobalToast["tone"]) => void;
+	showGlobalToast: (title: string, body?: string, style?: GlobalToast["tone"] | GlobalToast["placement"]) => void;
 	dismissGlobalToast: (nonce: number) => void;
 	clearGlobalToast: () => void;
 	requestNewTask: (projectId: string) => void;
@@ -380,10 +381,12 @@ export const useUiStore = create<UiState>((set, get) => ({
 			}
 			return { orchestratorStartupErrors };
 		}),
-	showGlobalToast: (title, body, tone = "info") =>
+	showGlobalToast: (title, body, style) =>
 		set((state) => {
 			const nonce = state.globalToastSequence + 1;
-			const toast = { title, body, tone, nonce };
+			const tone = style === "error" || style === "info" ? style : "info";
+			const placement = style === "top-center" || style === "bottom-right" ? style : "bottom-right";
+			const toast = { title, body, tone, placement, nonce };
 			return { globalToast: toast, globalToasts: [...state.globalToasts, toast], globalToastSequence: nonce };
 		}),
 	dismissGlobalToast: (nonce) =>

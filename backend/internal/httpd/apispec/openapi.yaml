@@ -8909,7 +8909,7 @@ components:
             $ref: '#/components/schemas/AttachmentInput'
           type: array
         brief:
-          maxLength: 4096
+          maxLength: 16384
           type: string
         mode:
           enum:
@@ -9062,6 +9062,20 @@ components:
       type: object
     EditQueuedConversationMessageRequest:
       properties:
+        attachments:
+          items:
+            $ref: '#/components/schemas/ConversationImageContentRequest'
+          type: array
+        expectedRevision:
+          type:
+          - "null"
+          - integer
+        retainedContent:
+          items:
+            type: integer
+          type:
+          - "null"
+          - array
         text:
           type: string
       required:
@@ -10866,6 +10880,8 @@ components:
           type: integer
         author:
           type: string
+        authorAvatarUrl:
+          type: string
         changedFiles:
           type: integer
         ci:
@@ -11379,7 +11395,7 @@ components:
         projectId:
           type: string
         prompt:
-          maxLength: 4096
+          maxLength: 16384
           type: string
         trackerProvider:
           enum:

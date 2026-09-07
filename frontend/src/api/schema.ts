@@ -3220,6 +3220,9 @@ export interface components {
             turnId?: string;
         };
         EditQueuedConversationMessageRequest: {
+            attachments?: components["schemas"]["ConversationImageContentRequest"][];
+            expectedRevision?: null | number;
+            retainedContent?: null | number[];
             text: string;
         };
         EndpointsResponse: {
@@ -3897,6 +3900,7 @@ export interface components {
         SessionPRSummary: {
             additions: number;
             author: string;
+            authorAvatarUrl?: string;
             changedFiles: number;
             ci: components["schemas"]["SessionPRCISummary"];
             /** Format: date-time */
