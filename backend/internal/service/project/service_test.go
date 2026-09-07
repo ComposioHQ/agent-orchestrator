@@ -1570,6 +1570,33 @@ func TestManager_AddWorkspaceAdoptsExistingParent(t *testing.T) {
 	}
 }
 
+func TestManager_AddWorkspaceAdoptsRemotelessUnbornParent(t *testing.T) {
+	configureCommitter(t)
+	ctx := context.Background()
+	m := newManager(t)
+
+	parent := t.TempDir()
+	if out, err := exec.Command("git", "init", "-b", "trunk", parent).CombinedOutput(); err != nil {
+		t.Fatalf("git init parent: %v (%s)", err, out)
+	}
+	gitRepoWithCommit(t, filepath.Join(parent, "api"))
+
+	proj, err := m.Add(ctx, project.AddInput{Path: parent, ProjectID: ptr("local-root"), AsWorkspace: true})
+	if err != nil {
+		t.Fatalf("Add workspace with remoteless git-init parent: %v", err)
+	}
+	if proj.Repo != "" {
+		t.Fatalf("root Repo = %q, want no remote", proj.Repo)
+	}
+	resolution, err := gitdefault.New("git", nil).Inspect(ctx, parent)
+	if err != nil {
+		t.Fatalf("resolve adopted root default: %v", err)
+	}
+	if resolution.Branch != "trunk" || resolution.Ref != "refs/heads/trunk" || resolution.Remote != "" {
+		t.Fatalf("root resolution = %#v, want local trunk", resolution)
+	}
+}
+
 // TestManager_AddWorkspaceRejectsWorktreeParent verifies that a linked worktree
 // of another repository is rejected as a workspace parent.
 func TestManager_AddWorkspaceRejectsWorktreeParent(t *testing.T) {

@@ -255,19 +255,45 @@ func adoptWorkspaceParent(ctx context.Context, parent string, repos []domain.Wor
 	if err != nil {
 		return apierr.Invalid("WORKSPACE_PARENT_GITIGNORE_FAILED", "Failed to update workspace parent .gitignore", map[string]any{"error": err.Error()})
 	}
-	if !changed {
-		return nil
+	needsCommit := changed
+	if !needsCommit {
+		_, headErr := gitOutput(ctx, parent, "rev-parse", "--verify", "HEAD")
+		needsCommit = headErr != nil
 	}
-	if _, err := gitOutput(ctx, parent, "add", ".gitignore"); err != nil {
-		return apierr.Invalid("WORKSPACE_PARENT_GITIGNORE_FAILED", "Failed to stage workspace parent .gitignore", map[string]any{"error": err.Error()})
+	if needsCommit {
+		if _, err := gitOutput(ctx, parent, "add", ".gitignore"); err != nil {
+			return apierr.Invalid("WORKSPACE_PARENT_GITIGNORE_FAILED", "Failed to stage workspace parent .gitignore", map[string]any{"error": err.Error()})
+		}
+		if err := guardNoGitlinks(ctx, parent); err != nil {
+			return err
+		}
+		if _, err := gitOutput(ctx, parent, "commit", "-m", "chore: configure AO workspace ignores", "--", ".gitignore"); err != nil {
+			return apierr.Invalid("WORKSPACE_PARENT_COMMIT_FAILED", "Failed to commit workspace parent .gitignore", map[string]any{"error": err.Error()})
+		}
 	}
-	if err := guardNoGitlinks(ctx, parent); err != nil {
-		return err
-	}
-	if _, err := gitOutput(ctx, parent, "commit", "-m", "chore: configure AO workspace ignores", "--", ".gitignore"); err != nil {
-		return apierr.Invalid("WORKSPACE_PARENT_COMMIT_FAILED", "Failed to commit workspace parent .gitignore", map[string]any{"error": err.Error()})
+	if err := recordRemotelessWorkspaceDefault(ctx, parent); err != nil {
+		return apierr.Invalid("WORKSPACE_PARENT_DEFAULT_FAILED", "Failed to record the workspace parent default branch", map[string]any{"error": err.Error()})
 	}
 	return nil
+}
+
+func recordRemotelessWorkspaceDefault(ctx context.Context, parent string) error {
+	remotes, err := gitOutput(ctx, parent, "remote")
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(remotes) != "" {
+		return nil
+	}
+	if configured, err := gitOutput(ctx, parent, "config", "--local", "--get", gitdefault.ManagedDefaultConfigKey); err == nil && strings.TrimSpace(configured) != "" {
+		return nil
+	}
+	branch, err := gitOutput(ctx, parent, "symbolic-ref", "--short", "HEAD")
+	if err != nil {
+		return err
+	}
+	_, err = gitOutput(ctx, parent, "config", "--local", gitdefault.ManagedDefaultConfigKey, strings.TrimSpace(branch))
+	return err
 }
 
 func initWorkspaceParent(ctx context.Context, parent string, repos []domain.WorkspaceRepoRecord) error {
