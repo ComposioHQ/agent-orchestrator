@@ -59,4 +59,10 @@ describe("transitionStagedUpdate", () => {
     expect(transitionStagedUpdate(failed, { type: "replacement-discovered", replacement: C, at: 500 })).toMatchObject({ nativeCandidates: [B], staged: A, replacement: C });
   });
 
+  it("clears a rejected single candidate without clearing uncertain replacement provenance", () => {
+    expect(transitionStagedUpdate(stagedA, { type: "staged-install-rejected" })).toEqual({ schemaVersion: 1, state: "none" });
+    const replacing = transitionStagedUpdate(stagedA, { type: "replacement-discovered", replacement: B, at: 200 });
+    expect(transitionStagedUpdate(replacing, { type: "staged-install-rejected" })).toEqual(replacing);
+  });
+
 });

@@ -31,6 +31,7 @@ export type StagedUpdateEvent =
   | { type: "replacement-failed"; operationId: string; at: number; message: string }
   | { type: "handoff-succeeded"; operationId: string; at: number }
   | { type: "initial-handoff-succeeded"; candidate: UpdateCandidate; at: number }
+  | { type: "staged-install-rejected" }
   | { type: "no-update" }
   | { type: "reconcile-running-version"; version: string; at?: number };
 
@@ -94,6 +95,9 @@ export function transitionStagedUpdate(
     case "initial-handoff-succeeded":
       if (state.state !== "none" && state.state !== "version-mismatch") throw new Error("initial handoff requires no tracked staged candidate");
       return { schemaVersion: 1, state: "native-possibly-staged", staged: event.candidate, stagedAt: event.at };
+    case "staged-install-rejected":
+      if (activeReplacement(state)) return state;
+      return { schemaVersion: 1, state: "none" };
     case "no-update":
       return state;
     case "reconcile-running-version": {

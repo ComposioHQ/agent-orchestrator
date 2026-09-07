@@ -6,6 +6,7 @@ import { aoBridge } from "../../lib/bridge";
 import { cn } from "../../lib/utils";
 import { parseNightlyVersion } from "../../lib/build-channel";
 import { useUiStore } from "../../stores/ui-store";
+import { useRequestUpdateInstall } from "../../hooks/useRequestUpdateInstall";
 import { useUpdateStatus } from "../../hooks/useUpdateStatus";
 import type { UpdateChannel, UpdateSettings, UpdateState, UpdateStatus } from "../../../main/update-settings";
 import { Badge } from "../ui/badge";
@@ -386,7 +387,7 @@ function UpdateActions({
 	const { t, i18n } = useTranslation();
 	const locale = i18n.resolvedLanguage ?? i18n.language;
 	const version = useQuery({ queryKey: ["app-version"], queryFn: () => aoBridge.app.getVersion() });
-	const openUpdateInstallPrompt = useUiStore((state) => state.openUpdateInstallPrompt);
+	const requestUpdateInstall = useRequestUpdateInstall();
 	const installedChannel = installedUpdateChannel(version.data);
 	const installed = parseNightlyVersion(version.data);
 
@@ -530,7 +531,7 @@ function UpdateActions({
 						// Opens the restart confirmation rather than installing outright:
 						// installing quits the app, which costs a turn on any chat session
 						// running a daemon-owned driver.
-						<Button type="button" variant="primary" size="sm" onClick={openUpdateInstallPrompt} disabled={!!status.installDisabledReason} title={status.installDisabledReason}>
+						<Button type="button" variant="primary" size="sm" onClick={requestUpdateInstall} disabled={!!status.installDisabledReason} title={status.installDisabledReason}>
 							<RefreshCw className="size-icon-sm" aria-hidden="true" />
 							{t("settings.updates.restartInstall")}
 						</Button>
@@ -585,6 +586,22 @@ function UpdateActions({
 					</p>
 				) : null}
 			</div>
+
+			{/* Release notes used to live only in the restart confirmation, so
+			    skipping that dialog when nothing is at risk would have hidden them
+			    entirely. The panel has room the dialog never did. Plain text on
+			    purpose: these are the remote release body, sanitized in the main
+			    process, and nothing here injects markup. */}
+			{status.state === "downloaded" && status.releaseNotes ? (
+				<div className="mt-3" data-testid="update-release-notes">
+					<p className="text-caption font-medium uppercase tracking-wide text-settings-muted">
+						{t("update.restart.whatsNew")}
+					</p>
+					<p className="mt-1.5 max-h-40 overflow-y-auto whitespace-pre-line text-pretty text-sm leading-5 text-settings-label">
+						{status.releaseNotes}
+					</p>
+				</div>
+			) : null}
 
 			{!status.staleCheckNudge && status.checksFailing && (
 				<UpdateNotice tone="warning" text={t("settings.updates.checksFailing")} />

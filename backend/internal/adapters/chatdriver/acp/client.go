@@ -539,7 +539,7 @@ func (c *conversation) SessionUpdate(_ context.Context, params acpsdk.SessionNot
 		c.tools[tool.id] = tool
 		c.mu.Unlock()
 		c.emit(c.toolEvent(turnID, tool, toolTerminal(tool.status)))
-		c.emitDiffs(turnID, tool.content)
+		c.emitDiffs(turnID, tool.id, tool.content)
 	case update.ToolCallUpdate != nil:
 		tool := c.mergeToolUpdate(update.ToolCallUpdate)
 		if delta := terminalOutput(update.ToolCallUpdate.Meta); delta != "" {
@@ -547,7 +547,7 @@ func (c *conversation) SessionUpdate(_ context.Context, params acpsdk.SessionNot
 				ProviderItemID: c.providerItemID(tool.id), Delta: delta})
 		}
 		c.emit(c.toolEvent(turnID, tool, toolTerminal(tool.status)))
-		c.emitDiffs(turnID, tool.content)
+		c.emitDiffs(turnID, tool.id, tool.content)
 	case update.Plan != nil:
 		c.emit(ports.ChatEvent{Kind: ports.ChatEventPlanUpdated, ProviderTurnID: turnID, Plan: normalizePlan(update.Plan.Entries)})
 	case update.SessionInfoUpdate != nil:
@@ -945,37 +945,40 @@ func toolTerminal(status acpsdk.ToolCallStatus) bool {
 	return status == acpsdk.ToolCallStatusCompleted || status == acpsdk.ToolCallStatusFailed
 }
 
-func (c *conversation) emitDiffs(turnID string, content []acpsdk.ToolCallContent) {
-	files := make([]ports.ChatDiffFile, 0)
+func (c *conversation) emitDiffs(turnID, toolID string, content []acpsdk.ToolCallContent) {
+	// One tool call contributes at most one entry per path. If the provider
+	// lists the same path more than once in a single content payload, the last
+	// snapshot wins — summing those would reintroduce inflated counts.
+	byPath := make(map[string]ports.ChatDiffFile)
+	var pathOrder []string
 	for _, item := range content {
 		if item.Diff == nil {
 			continue
 		}
-		status := "modified"
-		deletions := 0
-		if item.Diff.OldText == nil {
-			status = "added"
-		} else {
-			deletions = lineCount(*item.Diff.OldText)
-			if item.Diff.NewText == "" {
-				status = "deleted"
-			}
+		path := item.Diff.Path
+		if _, exists := byPath[path]; !exists {
+			pathOrder = append(pathOrder, path)
 		}
-		files = append(files, ports.ChatDiffFile{
-			Path: item.Diff.Path, Status: status,
-			Additions: lineCount(item.Diff.NewText), Deletions: deletions,
-		})
+		byPath[path] = diffFileFromSnapshot(path, item.Diff.OldText, item.Diff.NewText)
 	}
-	if len(files) > 0 {
-		c.emit(ports.ChatEvent{Kind: ports.ChatEventTurnDiff, ProviderTurnID: turnID, Diff: &ports.ChatTurnDiff{Files: files}})
+	if len(byPath) == 0 {
+		return
 	}
-}
+	files := make([]ports.ChatDiffFile, 0, len(pathOrder))
+	for _, path := range pathOrder {
+		files = append(files, byPath[path])
+	}
 
-func lineCount(value string) int {
-	if value == "" {
-		return 0
+	c.mu.Lock()
+	if c.turnDiffTurnID != turnID || c.turnDiffs == nil {
+		c.turnDiffs = &turnDiffAccumulator{}
+		c.turnDiffTurnID = turnID
 	}
-	return strings.Count(value, "\n") + 1
+	c.turnDiffs.replaceTool(toolID, files)
+	aggregated := c.turnDiffs.aggregate()
+	c.mu.Unlock()
+
+	c.emit(ports.ChatEvent{Kind: ports.ChatEventTurnDiff, ProviderTurnID: turnID, Diff: &ports.ChatTurnDiff{Files: aggregated}})
 }
 
 func normalizePlan(entries []acpsdk.PlanEntry) *domain.ConversationPlan {
