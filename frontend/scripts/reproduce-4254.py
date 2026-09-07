@@ -176,14 +176,24 @@ def main():
                 raise RuntimeError('Observed target signature-rejection symptom; preserving evidence without retry')
             statefile = native / 'ShipItState.plist'
             if statefile.exists():
-                info = plistlib.loads(statefile.read_bytes())
+                try:
+                    info = json.loads(subprocess.check_output(['plutil', '-convert', 'json', '-o', '-', str(statefile)], stderr=subprocess.DEVNULL))
+                except (subprocess.CalledProcessError, ValueError, OSError):
+                    # Native state may be observed part-way through a write;
+                    # plutil also handles formats outside plistlib's XML/binary.
+                    time.sleep(0.2)
+                    continue
                 url = info.get('updateBundleURL', '')
                 if url:
                     from urllib.parse import urlparse, unquote
                     candidate = Path(unquote(urlparse(url).path))
                     if candidate.exists():
                         staged = candidate
-                        result['native_staged_version'] = plistlib.loads((candidate / 'Contents/Info.plist').read_bytes())['CFBundleShortVersionString']
+                        try:
+                            result['native_staged_version'] = plistlib.loads((candidate / 'Contents/Info.plist').read_bytes())['CFBundleShortVersionString']
+                        except (OSError, ValueError, plistlib.InvalidFileException):
+                            time.sleep(0.2)
+                            continue
                         event('native-armed', bundle=str(candidate), version=result['native_staged_version'])
                         command(['cp', '-cR', str(candidate), str(snapshots / 'native-armed.app')], 'snapshot.log', check=False)
                         break

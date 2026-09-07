@@ -27,6 +27,17 @@ jobs:
           BASELINE: ${{ matrix.baseline }}
           CHANNEL: ${{ matrix.channel }}
         run: python3 frontend/scripts/reproduce-4254.py "$BASELINE" "$CHANNEL"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: logs-${{ matrix.baseline }}-${{ matrix.channel }}
+          path: |
+            ~/.ao/issue4254/evidence/*.log
+            ~/.ao/issue4254/evidence/*.json
+            ~/.ao/issue4254/evidence/*.jsonl
+            ~/.ao/issue4254/evidence/*.yml
+            ~/.ao/issue4254/evidence/*.plist
+          retention-days: 3
       - name: Package evidence without losing macOS metadata
         if: always()
         run: |
