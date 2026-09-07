@@ -4,7 +4,7 @@ import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { MuxConnectionState, TerminalMux } from "../lib/terminal-mux";
 import type { WorkspaceSession } from "../types/workspace";
-import { useTerminalSession, type AttachableTerminal, type TerminalWriteSource } from "./useTerminalSession";
+import { useTerminalSession, type AttachableTerminal } from "./useTerminalSession";
 import { workspaceQueryKey } from "./useWorkspaceQuery";
 
 const session: WorkspaceSession = {
@@ -91,7 +91,6 @@ type FakeTerminal = AttachableTerminal & {
 	autoCompleteWrites: boolean;
 	lines: string[];
 	pendingWriteCallbacks: Array<() => void>;
-	writeSources: TerminalWriteSource[];
 	latestOutputRequests: number;
 	typeKeys(data: string): void;
 	paste(data: string): void;
@@ -114,12 +113,10 @@ function createFakeTerminal(): FakeTerminal {
 		autoCompleteWrites: true,
 		lines: [],
 		pendingWriteCallbacks: [],
-		writeSources: [],
 		latestOutputRequests: 0,
 		// Mirrors xterm: the callback fires once the chunk has been parsed.
-		write: (bytes, done, source = "live") => {
+		write: (bytes, done) => {
 			terminal.lines.push(new TextDecoder().decode(bytes));
-			terminal.writeSources.push(source);
 			if (done) {
 				if (terminal.autoCompleteWrites) done();
 				else terminal.pendingWriteCallbacks.push(done);
@@ -468,7 +465,6 @@ describe("useTerminalSession", () => {
 			expect(terminal.lines).toEqual(["replay", "live-1"]);
 			act(() => muxes[0].emitData("handle-1", "live-2"));
 			expect(terminal.lines).toEqual(["replay", "live-1", "live-2"]);
-			expect(terminal.writeSources).toEqual(["live", "live", "live"]);
 		});
 
 		it("reveals a pane that replays nothing instead of holding the cover to the cap", () => {
@@ -702,7 +698,6 @@ describe("useTerminalSession", () => {
 			act(() => void vi.runOnlyPendingTimers());
 
 			expect(terminal.lines.join("")).toBe(`${replay}TAIL`);
-			expect(terminal.writeSources).toEqual(["live", "live", "live"]);
 		});
 
 		it("queues an unfinished replay before an exit marker and attachment teardown", () => {
@@ -721,7 +716,6 @@ describe("useTerminalSession", () => {
 			const output = terminal.lines.join("");
 			expect(output.startsWith(replay)).toBe(true);
 			expect(output).toContain("[process exited]");
-			expect(terminal.writeSources.slice(0, 3)).toEqual(["live", "live", "live"]);
 		});
 
 		it("lifts the cover when the attachment is torn down with no reconnect scheduled", () => {

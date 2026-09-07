@@ -32,7 +32,6 @@ import { terminalFontSizeDelta as shortcutFontSizeDelta } from "../../shared/sho
 import type {
 	AttachableTerminal,
 	TerminalUserInputSource,
-	TerminalWriteSource,
 } from "../hooks/useTerminalSession";
 import { aoBridge } from "../lib/bridge";
 import { TERMINAL_FONT_SIZE_DEFAULT } from "../lib/design-tokens";
@@ -1182,7 +1181,7 @@ export function XtermTerminal(props: XtermTerminalProps) {
 			// Forward xterm's write callback: it fires once THIS chunk has been
 			// parsed into the buffer, which is what lets the attachment reveal the
 			// pane at the replay's settled scroll position (issue #3160).
-			write: (data, done, source: TerminalWriteSource = "live") => {
+			write: (data, done) => {
 				let hasEsc = false;
 				for (let i = 0; i < data.length; i++) {
 					if (data[i] === 0x1b) {
@@ -1194,8 +1193,7 @@ export function XtermTerminal(props: XtermTerminalProps) {
 					// A DSR can be split immediately after ESC. Decode an ESC-free chunk
 					// only while a request prefix from the preceding chunk is incomplete.
 					const chunk = new TextDecoder().decode(data);
-					// Historical writes must not erase credits for live writes still in xterm's queue.
-					if (source !== "replay") cursorPositionForwarder.observeOutput(chunk);
+					cursorPositionForwarder.observeOutput(chunk);
 					if (hasEsc) {
 						const reply = callbacksRef.current.supportsCursorColorScheme
 							? cursorColorSchemeReplyForOutput(chunk, callbacksRef.current.theme)

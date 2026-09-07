@@ -59,7 +59,7 @@ export function GitHubOnboardingNotice() {
 		if (completedTerminalRef.current === terminal.handleId) return;
 		completedTerminalRef.current = terminal.handleId;
 		showGlobalToast(t("startup.githubConnected"));
-		closeTerminal(terminal.handleId, { onSettled: terminalQuery.clear });
+		closeTerminal(terminal.handleId, { onSuccess: terminalQuery.clear });
 	}, [auth?.satisfied, closeTerminal, showGlobalToast, t, terminal, terminalQuery.clear]);
 	useEffect(() => {
 		if (
@@ -87,7 +87,7 @@ export function GitHubOnboardingNotice() {
 		if (!terminal) return;
 		setLoginFocusRequested(true);
 		closeTerminal(terminal.handleId, {
-			onSettled: () => {
+			onSuccess: () => {
 				terminalQuery.clear();
 				startLogin.mutate();
 			},
@@ -105,7 +105,7 @@ export function GitHubOnboardingNotice() {
 	const closeLogin = () => {
 		setLoginFocusRequested(false);
 		if (!terminal) return;
-		closeTerminal(terminal.handleId, { onSettled: terminalQuery.clear });
+		closeTerminal(terminal.handleId, { onSuccess: terminalQuery.clear });
 	};
 	const cliMissing = gh?.satisfied === false;
 	return (

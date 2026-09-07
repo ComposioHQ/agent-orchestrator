@@ -1248,32 +1248,7 @@ describe("XtermTerminal", () => {
 		expect(onInput).toHaveBeenCalledWith("\x1b[7;21R", "protocol");
 	});
 
-	it("does not forward cursor replies generated while replaying history", () => {
-		const onInput = vi.fn();
-		let terminal: AttachableTerminal | undefined;
-		render(<XtermTerminal theme="dark" onReady={(ready) => {
-			terminal = ready;
-			return ready.onUserInput(onInput);
-		}} />);
-
-		terminal!.write(new TextEncoder().encode("historical prompt\x1b[6n"), undefined, "replay");
-
-		expect(onInput).not.toHaveBeenCalledWith("\x1b[7;21R", "protocol");
-	});
-
-	it("answers Cursor color-scheme requests during replay", () => {
-		const onInput = vi.fn();
-		let terminal: AttachableTerminal | undefined;
-		render(<XtermTerminal theme="light" supportsCursorColorScheme onReady={(ready) => {
-			terminal = ready;
-			return ready.onUserInput(onInput);
-		}} />);
-		onInput.mockClear();
-		terminal!.write(new TextEncoder().encode("\x1b[?2031h"), undefined, "replay");
-		expect(onInput).toHaveBeenCalledWith(expect.stringContaining("\x1b[?997;2n"), "protocol");
-	});
-
-	it("keeps pending live cursor credits when replay is queued before parsing", () => {
+	it("keeps pending cursor credits when more output is queued before parsing", () => {
 		const onInput = vi.fn();
 		let terminal: AttachableTerminal | undefined;
 		render(<XtermTerminal theme="dark" onReady={(ready) => {
@@ -1282,9 +1257,21 @@ describe("XtermTerminal", () => {
 		}} />);
 		vi.spyOn(state.lastTerminal!, "write").mockImplementation(() => {});
 		terminal!.write(new TextEncoder().encode("\x1b[6n"));
-		terminal!.write(new TextEncoder().encode("tail"), undefined, "replay");
+		terminal!.write(new TextEncoder().encode("tail"));
 		state.lastTerminal!.dataListeners.forEach((listener) => listener("\x1b[7;21R"));
 		expect(onInput).toHaveBeenCalledWith("\x1b[7;21R", "protocol");
+	});
+
+	it("answers Cursor color-scheme output queries", () => {
+		const onInput = vi.fn();
+		let terminal: AttachableTerminal | undefined;
+		render(<XtermTerminal theme="light" supportsCursorColorScheme onReady={(ready) => {
+			terminal = ready;
+			return ready.onUserInput(onInput);
+		}} />);
+		onInput.mockClear();
+		terminal!.write(new TextEncoder().encode("\x1b[?2031h"));
+		expect(onInput).toHaveBeenCalledWith(expect.stringContaining("\x1b[?997;2n"), "protocol");
 	});
 
 	it("returns a CPR to a fresh shell PTY through coverInitialReplay", async () => {

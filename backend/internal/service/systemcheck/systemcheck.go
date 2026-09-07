@@ -72,8 +72,7 @@ func New(harnesses HarnessCatalog, executables ports.ExecutableFinder) *Service 
 }
 
 // NewWithCommandRunner returns a Service that can also verify GitHub CLI
-// authentication. The probe discards token output and records only whether an
-// active account passes gh's authentication check.
+// credential configuration. The probe never captures token output.
 func NewWithCommandRunner(harnesses HarnessCatalog, executables ports.ExecutableFinder, commands ports.CommandRunner) *Service {
 	return &Service{harnesses: harnesses, executables: executables, commands: commands}
 }
@@ -263,46 +262,32 @@ func (s *Service) checkGitHubAuth(ctx context.Context) Requirement {
 	probeCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
 	var stdout bytes.Buffer
-	if err := s.commands.Run(probeCtx, []string{path, "auth", "status", "--active", "--json", "hosts"}, &stdout, io.Discard); err != nil {
-		// `auth status --json` was added after many still-supported gh releases.
-		// A local token check preserves compatibility and avoids treating
-		// network failures as proof that the user is signed out.
-		if !s.hasGitHubAuth(ctx, path) {
-			return Requirement{ID: "github-auth", Label: "GitHub access", Detail: detail}
-		}
-		return Requirement{ID: "github-auth", Label: "GitHub access", Satisfied: true, Detail: "GitHub CLI is signed in."}
-	}
+	err = s.commands.Run(probeCtx, []string{path, "auth", "status", "--active", "--json", "hosts"}, &stdout, io.Discard)
 	var status struct {
 		Hosts map[string][]struct {
 			Active bool   `json:"active"`
 			State  string `json:"state"`
 		} `json:"hosts"`
 	}
-	if err := json.Unmarshal(stdout.Bytes(), &status); err != nil {
-		if !s.hasGitHubAuth(ctx, path) {
+	if err == nil && json.Unmarshal(stdout.Bytes(), &status) == nil {
+		// An empty host map is a definitive sign-out, not a validation failure.
+		if len(status.Hosts) == 0 {
 			return Requirement{ID: "github-auth", Label: "GitHub access", Detail: detail}
 		}
-		return Requirement{ID: "github-auth", Label: "GitHub access", Satisfied: true, Detail: "GitHub CLI is signed in."}
-	}
-	authenticated := false
-	for _, accounts := range status.Hosts {
-		for _, account := range accounts {
-			if account.Active && account.State == "success" {
-				authenticated = true
-				break
+		for _, accounts := range status.Hosts {
+			for _, account := range accounts {
+				if account.Active && account.State == "success" {
+					return Requirement{ID: "github-auth", Label: "GitHub access", Satisfied: true, Detail: "GitHub CLI is signed in."}
+				}
 			}
 		}
-		if authenticated {
-			break
-		}
 	}
-	// This advisory checks whether credentials are configured. A failed online
-	// validation must not open a login PTY for a user with a local credential.
-	// An empty host map is a definitive sign-out, not a validation failure.
-	if !authenticated && (len(status.Hosts) == 0 || !s.hasGitHubAuth(ctx, path)) {
-		return Requirement{ID: "github-auth", Label: "GitHub access", Detail: detail}
+	// Unsupported/malformed JSON or failed validation falls back to the local
+	// credential check so an offline user is not prompted to sign in again.
+	if s.hasGitHubAuth(ctx, path) {
+		return Requirement{ID: "github-auth", Label: "GitHub access", Satisfied: true, Detail: "GitHub CLI is signed in."}
 	}
-	return Requirement{ID: "github-auth", Label: "GitHub access", Satisfied: true, Detail: "GitHub CLI is signed in."}
+	return Requirement{ID: "github-auth", Label: "GitHub access", Detail: detail}
 }
 
 func (s *Service) hasGitHubAuth(ctx context.Context, path string) bool {

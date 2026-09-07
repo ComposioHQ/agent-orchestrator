@@ -36,6 +36,7 @@ vi.mock("../../lib/spawn-orchestrator", () => ({
 
 vi.mock("../../lib/api-client", () => ({
 	apiClient: { GET: getMock, POST: postMock, DELETE: deleteMock },
+	apiErrorCode: () => undefined,
 	apiErrorMessage: (e: unknown) => (e instanceof Error ? e.message : "error"),
 	hasTrustedApiBaseUrl: () => true,
 }));
@@ -317,6 +318,23 @@ describe("global board first launch", () => {
 		);
 
 		expect(await screen.findByText("Connect GitHub for pull requests")).toBeInTheDocument();
+		expect(postMock).toHaveBeenCalledTimes(1);
+	});
+
+	it.each(["Close", "Try again"])("retains the login handle when %s cannot close its PTY", async (action) => {
+		respondWith([], [], false);
+		renderBoard(<SessionsBoard />);
+		await screen.findByTestId("github-auth-terminal");
+		if (action === "Try again") {
+			act(() => terminalPanePropsMock.mock.lastCall?.[0].onTerminalStateChange?.("exited"));
+		}
+		deleteMock.mockResolvedValue({ error: new Error("Close failed") });
+		await userEvent.click(await screen.findByRole("button", { name: action }));
+		await waitFor(() => {
+			expect(deleteMock).toHaveBeenCalledTimes(1);
+			expect(lastQueryClient!.isMutating()).toBe(0);
+		});
+		expect(screen.getByTestId("github-auth-terminal")).toBeInTheDocument();
 		expect(postMock).toHaveBeenCalledTimes(1);
 	});
 
