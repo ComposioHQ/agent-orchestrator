@@ -524,6 +524,14 @@ type WorkspaceProjectConfig struct {
 	BaseBranch string
 	BaseRef    string
 	Repos      []WorkspaceProjectRepoConfig
+	Assets     []WorkspaceProjectAssetConfig
+}
+
+// WorkspaceProjectAssetConfig describes a non-repository child directory that
+// is copied from the canonical workspace into each session workspace.
+type WorkspaceProjectAssetConfig struct {
+	RelativePath string
+	SourcePath   string
 }
 
 // WorkspaceProjectRepoConfig describes one registered child repo in a

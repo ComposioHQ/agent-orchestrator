@@ -131,6 +131,7 @@ import {
 } from "./main/browser-view-host";
 import { createBrowserProfileStore } from "./main/browser-profile-store";
 import { BrowserHistoryStore } from "./main/browser-history-store";
+import { createBrowserDownloadManager } from "./main/browser-download-manager";
 import { BrowserProfileImportService } from "./main/browser-profile-import";
 import {
 	registerBrowserProfileIpc,
@@ -708,7 +709,14 @@ async function createWindowInternal(): Promise<void> {
 		isCloseShellTerminalShortcutEnabled: () => closeShellTerminalShortcutEnabled,
 		browserProfileStore,
 		browserHistoryStore,
+		browserDownloadManager: createBrowserDownloadManager({
+			downloadsDirectory: app.getPath("downloads"),
+			historyPath: path.join(desktopDataDir, "browser-downloads.json"),
+			shell,
+			notify: (state) => shellWebContents.send("browser:downloadsChanged", state),
+		}),
 		clearBrowserProfileData: clearElectronBrowserProfileData,
+		clipboard,
 	});
 	browserProfileImporter = profileImporter;
 	browserProfileIpc = registerBrowserProfileIpc({

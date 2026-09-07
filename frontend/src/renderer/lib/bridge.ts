@@ -148,6 +148,15 @@ export const aoBridge: AoBridge =
 				canGoForward: false,
 				isLoading: false,
 			}),
+			captureScreenshot: async () => {
+				throw new Error("Desktop app is required to take a browser screenshot.");
+			},
+			downloads: {
+				list: async () => ({ downloads: [] }),
+				action: async () => ({ downloads: [] }),
+				clear: async () => ({ downloads: [] }),
+				onChanged: () => () => { /* preview has no native download events */ },
+			},
 			getTabs: async (viewId: string) => ({ viewId, activeTabId: "t1", tabs: [] }),
 			selectTab: async ({ viewId, tabId }) => ({ viewId, activeTabId: tabId, tabs: [] }),
 			closeTab: async ({ viewId }) => ({ viewId, activeTabId: "", tabs: [] }),

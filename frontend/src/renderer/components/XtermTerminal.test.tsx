@@ -316,6 +316,101 @@ describe("XtermTerminal", () => {
 		await waitFor(() => expect(state.lastTerminal!.focus).toHaveBeenCalled());
 	});
 
+	it("does not steal focus from an open dialog or another control", () => {
+		const { rerender } = render(<XtermTerminal theme="dark" />);
+		const dialog = document.createElement("div");
+		dialog.setAttribute("role", "dialog");
+		dialog.dataset.state = "open";
+		const dialogInput = document.createElement("input");
+		dialog.appendChild(dialogInput);
+		document.body.appendChild(dialog);
+		dialogInput.focus();
+		state.lastTerminal!.focus.mockClear();
+
+		rerender(<XtermTerminal focusRequested theme="dark" />);
+
+		expect(state.lastTerminal!.focus).not.toHaveBeenCalled();
+
+		dialog.remove();
+		const control = document.createElement("button");
+		document.body.appendChild(control);
+		control.focus();
+		rerender(<XtermTerminal theme="dark" />);
+		state.lastTerminal!.focus.mockClear();
+		rerender(<XtermTerminal focusRequested theme="dark" />);
+
+		expect(state.lastTerminal!.focus).not.toHaveBeenCalled();
+		control.remove();
+	});
+
+	it("allows the session navigation button to hand focus to the destination TUI", async () => {
+		const { rerender } = render(<XtermTerminal theme="dark" />);
+		const sessionButton = document.createElement("button");
+		sessionButton.setAttribute("aria-current", "page");
+		document.body.appendChild(sessionButton);
+		sessionButton.focus();
+		state.lastTerminal!.focus.mockClear();
+
+		rerender(<XtermTerminal focusRequested theme="dark" />);
+
+		await waitFor(() => expect(state.lastTerminal!.focus).toHaveBeenCalled());
+		sessionButton.remove();
+	});
+
+	it("allows an in-pane terminal tab to hand focus to the destination TUI", async () => {
+		const { rerender } = render(<XtermTerminal theme="dark" />);
+		const topbar = document.createElement("div");
+		topbar.dataset.testid = "session-workspace-topbar";
+		const tab = document.createElement("button");
+		tab.setAttribute("aria-current", "true");
+		tab.setAttribute("role", "tab");
+		topbar.appendChild(tab);
+		document.body.appendChild(topbar);
+		tab.focus();
+		state.lastTerminal!.focus.mockClear();
+
+		rerender(<XtermTerminal focusRequested theme="dark" />);
+
+		await waitFor(() => expect(state.lastTerminal!.focus).toHaveBeenCalled());
+		topbar.remove();
+	});
+
+	it("retries terminal focus after a closing dialog releases focus", async () => {
+		const frames: FrameRequestCallback[] = [];
+		const requestAnimationFrameSpy = vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => {
+			frames.push(callback);
+			return frames.length;
+		});
+		const { rerender } = render(<XtermTerminal theme="dark" />);
+		frames.length = 0;
+		const dialog = document.createElement("div");
+		dialog.setAttribute("role", "dialog");
+		dialog.dataset.state = "open";
+		const dialogInput = document.createElement("input");
+		dialog.appendChild(dialogInput);
+		document.body.appendChild(dialog);
+		dialogInput.focus();
+		state.lastTerminal!.focus.mockClear();
+
+		rerender(<XtermTerminal focusRequested theme="dark" />);
+		dialogInput.blur();
+		dialog.remove();
+		expect(frames).toHaveLength(1);
+		act(() => frames.shift()?.(performance.now()));
+
+		expect(state.lastTerminal!.focus).toHaveBeenCalled();
+		requestAnimationFrameSpy.mockRestore();
+	});
+
+	it("focuses a retained terminal when it becomes visible", async () => {
+		const { rerender } = render(<XtermTerminal focusRequested isVisible={false} theme="dark" />);
+		state.lastTerminal!.focus.mockClear();
+
+		rerender(<XtermTerminal focusRequested isVisible theme="dark" />);
+
+		await waitFor(() => expect(state.lastTerminal!.focus).toHaveBeenCalled());
+	});
+
 	it("updates the live terminal palette when the named color theme changes", () => {
 		const style = document.createElement("style");
 		style.textContent = `
@@ -731,6 +826,89 @@ describe("XtermTerminal", () => {
 		const exitFullscreenItem = await screen.findByText("Exit fullscreen");
 		expect(pane.contains(exitFullscreenItem.closest<HTMLElement>("[role='menu']"))).toBe(true);
 		Object.defineProperty(document, "fullscreenElement", { configurable: true, value: null });
+	});
+
+
+	it.each([true, false])("preserves newer focus after deferred fullscreen completion when visible=%s", async (isVisible) => {
+		let complete!: () => void;
+		const onToggleFullscreen = vi.fn(() => new Promise<void>((resolve) => { complete = resolve; }));
+		const frames: FrameRequestCallback[] = [];
+		const frameSpy = vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => {
+			frames.push(callback);
+			return frames.length;
+		});
+		const { container, rerender } = render(<XtermTerminal onToggleFullscreen={onToggleFullscreen} theme="dark" />);
+		const control = document.createElement("button");
+		document.body.appendChild(control);
+		try {
+			fireEvent.contextMenu(container.firstElementChild!);
+			fireEvent.click(await screen.findByText("Fullscreen terminal"));
+			rerender(<XtermTerminal isVisible={isVisible} onToggleFullscreen={onToggleFullscreen} theme="dark" />);
+			control.focus();
+			state.lastTerminal!.focus.mockClear();
+			frames.length = 0;
+			await act(async () => complete());
+			expect(control).toHaveFocus();
+			act(() => { while (frames.length) frames.shift()!(performance.now()); });
+			expect(control).toHaveFocus();
+			expect(state.lastTerminal!.focus).not.toHaveBeenCalled();
+		} finally {
+			control.remove();
+			frameSpy.mockRestore();
+		}
+	});
+	it("returns focus to xterm after entering and exiting fullscreen from the menu", async () => {
+		const onToggleFullscreen = vi.fn(async () => undefined);
+		const frames: FrameRequestCallback[] = [];
+		const requestAnimationFrameSpy = vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => {
+			frames.push(callback);
+			return frames.length;
+		});
+		const { container, rerender } = render(
+			<div className="terminal-pane-frame">
+				<XtermTerminal onToggleFullscreen={onToggleFullscreen} theme="dark" />
+			</div>,
+		);
+		const trigger = document.createElement("button");
+		document.body.appendChild(trigger);
+		state.lastTerminal!.focus.mockClear();
+		frames.length = 0;
+
+		try {
+			fireEvent.contextMenu(container.querySelector(".terminal-pane-frame")!.firstElementChild!);
+			fireEvent.click(await screen.findByText("Fullscreen terminal"));
+			await act(async () => undefined);
+
+			expect(onToggleFullscreen).toHaveBeenCalledOnce();
+			expect(frames).toHaveLength(1);
+			act(() => frames.shift()?.(performance.now()));
+			expect(frames).toHaveLength(1);
+			act(() => frames.shift()?.(performance.now()));
+			expect(state.lastTerminal!.focus).toHaveBeenCalledOnce();
+
+			const pane = container.querySelector(".terminal-pane-frame")!;
+			Object.defineProperty(document, "fullscreenElement", { configurable: true, value: pane });
+			rerender(
+				<div className="terminal-pane-frame">
+					<XtermTerminal isFullscreen onToggleFullscreen={onToggleFullscreen} theme="dark" />
+				</div>,
+			);
+			frames.length = 0;
+			state.lastTerminal!.focus.mockClear();
+
+			fireEvent.contextMenu(pane.querySelector("div")!);
+			fireEvent.click(await screen.findByText("Exit fullscreen"));
+			await act(async () => undefined);
+			expect(onToggleFullscreen).toHaveBeenCalledTimes(2);
+			expect(frames).toHaveLength(1);
+			act(() => frames.shift()?.(performance.now()));
+			act(() => frames.shift()?.(performance.now()));
+			expect(state.lastTerminal!.focus).toHaveBeenCalledOnce();
+		} finally {
+			Object.defineProperty(document, "fullscreenElement", { configurable: true, value: null });
+			requestAnimationFrameSpy.mockRestore();
+			trigger.remove();
+		}
 	});
 
 	it("runs context menu copy and select all against the xterm instance", async () => {
