@@ -25,6 +25,9 @@ WHERE id = ? AND scope = 'project';
 -- name: SelectConversationByID :one
 SELECT * FROM conversations WHERE id = ? LIMIT 1;
 
+-- name: HasConversationTurns :one
+SELECT EXISTS (SELECT 1 FROM conversation_turns WHERE conversation_id = ?);
+
 -- name: InsertConversationBranch :exec
 INSERT INTO conversation_branches (
     id, conversation_id, session_id, provider_conversation_id,

@@ -582,6 +582,17 @@ func (q *Queries) FinalizeConversationPlanActivity(ctx context.Context, arg Fina
 	return err
 }
 
+const hasConversationTurns = `-- name: HasConversationTurns :one
+SELECT EXISTS (SELECT 1 FROM conversation_turns WHERE conversation_id = ?)
+`
+
+func (q *Queries) HasConversationTurns(ctx context.Context, conversationID string) (bool, error) {
+	row := q.db.QueryRowContext(ctx, hasConversationTurns, conversationID)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
 const hasPendingConversationInteractions = `-- name: HasPendingConversationInteractions :one
 SELECT EXISTS (
     SELECT 1
