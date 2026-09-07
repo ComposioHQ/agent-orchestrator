@@ -688,7 +688,7 @@ func TestWorkspaceIntegrationWorkspaceProjectInfersPerRepoDefaultBranches(t *tes
 		t.Fatalf("worktrees = %d, want root and two children: %#v", len(info.Worktrees), info.Worktrees)
 	}
 	wantRefs := map[string]string{
-		"__root__": "refs/remotes/origin/trunk",
+		"__root__": "refs/heads/trunk",
 		"api":      "refs/remotes/origin/dev",
 		"web":      "refs/remotes/origin/main",
 	}
@@ -740,6 +740,9 @@ func TestWorkspaceIntegrationWorkspaceProjectCopiesAssetsAndCleansSessionCopy(t 
 	if err := os.WriteFile(sourceFile, []byte("source context"), 0o640); err != nil {
 		t.Fatal(err)
 	}
+	runGit(t, git, rootRepo, "add", "notes/nested/context.txt")
+	runGit(t, git, rootRepo, "commit", "-m", "track workspace notes")
+	runGit(t, git, rootRepo, "push", "origin", "main")
 	if err := os.Mkdir(filepath.Join(asset, ".git"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -840,6 +843,10 @@ func TestWorkspaceIntegrationWorkspaceProjectAssetCopyFailureRollsBackRoot(t *te
 	if err := os.Mkdir(asset, 0o755); err != nil {
 		t.Fatal(err)
 	}
+	conflictingFile := filepath.Join(rootRepo, "conflict.txt")
+	if err := os.WriteFile(conflictingFile, []byte("conflict"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	ws, err := New(Options{Binary: git, ManagedRoot: filepath.Join(tmp, "managed"), RepoResolver: StaticRepoResolver{"proj": rootRepo}})
 	if err != nil {
 		t.Fatal(err)
@@ -849,11 +856,11 @@ func TestWorkspaceIntegrationWorkspaceProjectAssetCopyFailureRollsBackRoot(t *te
 		RootRepoPath: rootRepo,
 		Assets: []ports.WorkspaceProjectAssetConfig{
 			{RelativePath: "notes", SourcePath: asset},
-			{RelativePath: "notes", SourcePath: asset},
+			{RelativePath: "notes", SourcePath: conflictingFile},
 		},
 	})
 	if err == nil {
-		t.Fatal("expected duplicate asset destination to fail")
+		t.Fatal("expected conflicting asset destination to fail")
 	}
 	rootPath := filepath.Join(tmp, "managed", "proj", "worker", "sess")
 	if _, statErr := os.Stat(rootPath); !errors.Is(statErr, os.ErrNotExist) {

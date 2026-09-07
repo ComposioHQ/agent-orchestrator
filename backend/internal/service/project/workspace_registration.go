@@ -271,20 +271,13 @@ func adoptWorkspaceParent(ctx context.Context, parent string, repos []domain.Wor
 			return apierr.Invalid("WORKSPACE_PARENT_COMMIT_FAILED", "Failed to commit workspace parent .gitignore", map[string]any{"error": err.Error()})
 		}
 	}
-	if err := recordRemotelessWorkspaceDefault(ctx, parent); err != nil {
+	if err := recordWorkspaceDefault(ctx, parent); err != nil {
 		return apierr.Invalid("WORKSPACE_PARENT_DEFAULT_FAILED", "Failed to record the workspace parent default branch", map[string]any{"error": err.Error()})
 	}
 	return nil
 }
 
-func recordRemotelessWorkspaceDefault(ctx context.Context, parent string) error {
-	remotes, err := gitOutput(ctx, parent, "remote")
-	if err != nil {
-		return err
-	}
-	if strings.TrimSpace(remotes) != "" {
-		return nil
-	}
+func recordWorkspaceDefault(ctx context.Context, parent string) error {
 	if configured, err := gitOutput(ctx, parent, "config", "--local", "--get", gitdefault.ManagedDefaultConfigKey); err == nil && strings.TrimSpace(configured) != "" {
 		return nil
 	}

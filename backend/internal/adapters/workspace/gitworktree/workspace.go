@@ -303,7 +303,6 @@ func (w *Workspace) CreateWorkspaceProject(ctx context.Context, cfg ports.Worksp
 		repoPath:   rootRepo,
 		outputPath: rootPath,
 		baseBranch: cfg.BaseBranch,
-		baseRef:    cfg.BaseRef,
 	})
 	for _, child := range cfg.Repos {
 		repoPath, err := physicalAbs(child.RepoPath)
@@ -337,6 +336,15 @@ func (w *Workspace) CreateWorkspaceProject(ctx context.Context, cfg ports.Worksp
 	remoteCtx, cancelRemote := context.WithTimeout(ctx, defaultBranchResolutionBudget)
 	defer cancelRemote()
 	for i := range repos {
+		if i == 0 {
+			refs, err := w.resolveWorkspaceRootRefs(ctx, repos[i].repoPath, repos[i].baseBranch)
+			if err != nil {
+				return ports.WorkspaceProjectInfo{}, fmt.Errorf("gitworktree: resolve workspace repo %q base: %w", repos[i].name, err)
+			}
+			repos[i].seedRef = refs.seedRef
+			repos[i].baseRef = refs.baseRef
+			continue
+		}
 		if repos[i].baseRef != "" {
 			repos[i].seedRef = repos[i].baseRef
 			requestedRef := "origin/" + branch
@@ -348,16 +356,6 @@ func (w *Workspace) CreateWorkspaceProject(ctx context.Context, cfg ports.Worksp
 			continue
 		}
 		refs, err := w.resolveWorktreeRefs(ctx, remoteCtx, repos[i].repoPath, branch, repos[i].baseBranch)
-		if err != nil && i == 0 && errors.Is(err, ports.ErrWorkspaceDefaultBranchUnresolved) {
-			// Workspace roots are AO's local composition repositories. Older
-			// registrations may have initialized and committed the root without
-			// recording ao.defaultBranch. Recover from its current symbolic local
-			// branch so this internal bookkeeping never blocks session startup.
-			if localRefs, repairErr := w.repairWorkspaceRootDefault(ctx, repos[i].repoPath); repairErr == nil {
-				refs = localRefs
-				err = nil
-			}
-		}
 		if err != nil {
 			return ports.WorkspaceProjectInfo{}, fmt.Errorf("gitworktree: resolve workspace repo %q base: %w", repos[i].name, err)
 		}
@@ -402,6 +400,19 @@ func (w *Workspace) CreateWorkspaceProject(ctx context.Context, cfg ports.Worksp
 	return out, nil
 }
 
+func (w *Workspace) resolveWorkspaceRootRefs(ctx context.Context, repo, configuredBranch string) (worktreeRefs, error) {
+	branch := strings.TrimSpace(configuredBranch)
+	if branch == "" {
+		if out, err := w.run(ctx, w.binary, "-C", repo, "config", "--local", "--get", gitdefault.ManagedDefaultConfigKey); err == nil {
+			branch = strings.TrimSpace(string(out))
+		}
+	}
+	if branch == "" {
+		return w.repairWorkspaceRootDefault(ctx, repo)
+	}
+	return w.resolveWorktreeRefsFromDefault(ctx, repo, "", branch)
+}
+
 func (w *Workspace) repairWorkspaceRootDefault(ctx context.Context, repo string) (worktreeRefs, error) {
 	out, err := w.run(ctx, w.binary, "-C", repo, "symbolic-ref", "--short", "HEAD")
 	if err != nil {
@@ -419,14 +430,8 @@ func (w *Workspace) repairWorkspaceRootDefault(ctx context.Context, repo string)
 	if !exists {
 		return worktreeRefs{}, fmt.Errorf("workspace root local branch %q has no commit", branch)
 	}
-	remotes, err := w.run(ctx, w.binary, "-C", repo, "remote")
-	if err != nil {
+	if _, err := w.run(ctx, w.binary, "-C", repo, "config", "--local", gitdefault.ManagedDefaultConfigKey, branch); err != nil {
 		return worktreeRefs{}, err
-	}
-	if strings.TrimSpace(string(remotes)) == "" {
-		if _, err := w.run(ctx, w.binary, "-C", repo, "config", "--local", gitdefault.ManagedDefaultConfigKey, branch); err != nil {
-			return worktreeRefs{}, err
-		}
 	}
 	return worktreeRefs{seedRef: ref, baseRef: ref}, nil
 }
@@ -473,10 +478,28 @@ func copyWorkspaceAssetTree(sourceRoot, source, destination string) error {
 		if err != nil || !assetPathWithin(sourceRoot, physicalTarget) {
 			return fmt.Errorf("symlink %q has an unsafe or unresolved target: %w", source, ErrUnsafePath)
 		}
+		if existing, err := os.Lstat(destination); err == nil {
+			if existing.IsDir() {
+				return fmt.Errorf("cannot overlay symlink on directory %q", destination)
+			}
+			if err := os.Remove(destination); err != nil {
+				return err
+			}
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
 		return os.Symlink(target, destination)
 	}
 	if info.IsDir() {
-		if err := os.Mkdir(destination, info.Mode().Perm()); err != nil {
+		if existing, err := os.Lstat(destination); err == nil {
+			if !existing.IsDir() || existing.Mode()&os.ModeSymlink != 0 {
+				return fmt.Errorf("cannot overlay directory on non-directory %q", destination)
+			}
+		} else if errors.Is(err, os.ErrNotExist) {
+			if err := os.Mkdir(destination, info.Mode().Perm()); err != nil {
+				return err
+			}
+		} else {
 			return err
 		}
 		entries, err := os.ReadDir(source)
@@ -496,13 +519,24 @@ func copyWorkspaceAssetTree(sourceRoot, source, destination string) error {
 	if !info.Mode().IsRegular() {
 		return fmt.Errorf("unsupported file type at %q", source)
 	}
+	if existing, err := os.Lstat(destination); err == nil {
+		if !existing.Mode().IsRegular() {
+			return fmt.Errorf("cannot overlay file on non-regular path %q", destination)
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
 	in, err := os.Open(source)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = in.Close() }()
-	out, err := os.OpenFile(destination, os.O_WRONLY|os.O_CREATE|os.O_EXCL, info.Mode().Perm())
+	out, err := os.OpenFile(destination, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, info.Mode().Perm())
 	if err != nil {
+		return err
+	}
+	if err := out.Chmod(info.Mode().Perm()); err != nil {
+		_ = out.Close()
 		return err
 	}
 	_, copyErr := io.Copy(out, in)
