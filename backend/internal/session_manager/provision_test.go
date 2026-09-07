@@ -263,3 +263,28 @@ func TestRunPostCreate(t *testing.T) {
 		t.Fatal("expected error from failing post-create command")
 	}
 }
+
+func TestSpawnPermissionPrecedence(t *testing.T) {
+	for _, kind := range []domain.SessionKind{domain.KindWorker, domain.KindOrchestrator} {
+		for _, tc := range []struct {
+			name                    string
+			base, role, spawn, want domain.PermissionMode
+		}{
+			{"unset", "", "", "", domain.PermissionModeAuto},
+			{"project", domain.PermissionModeDefault, "", "", domain.PermissionModeDefault},
+			{"role", domain.PermissionModeAuto, domain.PermissionModeAcceptEdits, "", domain.PermissionModeAcceptEdits},
+			{"spawn", domain.PermissionModeAuto, domain.PermissionModeAcceptEdits, domain.PermissionModeDefault, domain.PermissionModeDefault},
+		} {
+			t.Run(string(kind)+"/"+tc.name, func(t *testing.T) {
+				cfg := domain.ProjectConfig{AgentConfig: domain.AgentConfig{Permissions: tc.base}, Worker: domain.RoleOverride{AgentConfig: domain.AgentConfig{Permissions: tc.role}}, Orchestrator: domain.RoleOverride{AgentConfig: domain.AgentConfig{Permissions: tc.role}}}
+				got := applySpawnAgentConfig(effectiveAgentConfig(kind, cfg), domain.AgentConfig{Permissions: tc.spawn})
+				if got.Permissions != tc.want {
+					t.Fatalf("got %q want %q", got.Permissions, tc.want)
+				}
+			})
+		}
+	}
+	if got := effectiveAgentConfig(domain.KindWorker, domain.ProjectConfig{}); got.Permissions != "" {
+		t.Fatalf("non-spawn resolution changed: %q", got.Permissions)
+	}
+}

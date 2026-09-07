@@ -45,6 +45,7 @@ import {
 import { isLinuxPlatform, isMacPlatform } from "../../lib/platform";
 import { handleTerminalTabListKeyDown } from "../../lib/terminal-tabs";
 import { agentLabel } from "../../lib/agent-options";
+import type { ApprovalMode } from "../../types/conversation";
 import type { ShellTerminal } from "../../hooks/useShellTerminals";
 import { sidebarOccupiesLayout, useUiStore } from "../../stores/ui-store";
 import type { TerminalTarget } from "../../types/terminal";
@@ -136,7 +137,7 @@ function initialTerminalFontSize(): number {
 
 type ReviewerTerminalTarget = Extract<TerminalTarget, { kind: "reviewer" }>;
 type ShellTerminalTarget = Extract<TerminalTarget, { kind: "shell" }>;
-type WorkspaceTab = { key: string; content: ReactNode; onSelect: () => void };
+type WorkspaceTab = { key: string; content: ReactNode; onSelect: () => void; onClose?: () => void };
 type ChatAuxiliaryTab =
 	| { key: string; kind: "reviewer"; terminal: { handleId: string; harness: string } }
 	| { key: string; kind: "shell"; terminal: ShellTerminal }
@@ -293,6 +294,10 @@ export interface ChatWorkspaceProps {
 	/** Resolved color theme for the reviewer terminal pane. */
 	theme?: "light" | "dark";
 	onChooseSettings?: (settings: TurnSettings) => void;
+	onRememberPermissions?: (mode: ApprovalMode) => Promise<unknown> | void;
+	rememberPermissionsPending?: boolean;
+	rememberPermissionsError?: string;
+	rememberedPermissionMode?: ApprovalMode;
 	/** Live provider-owned options, such as ACP model, effort, mode, and fast mode. */
 	configOptions?: ChatConfigOption[];
 	onChooseConfigOption?: (
@@ -419,6 +424,10 @@ export function ChatWorkspace({
 	busy,
 	models,
 	onChooseSettings,
+	onRememberPermissions,
+	rememberPermissionsPending,
+	rememberPermissionsError,
+	rememberedPermissionMode,
 	configOptions,
 	onChooseConfigOption,
 	configOptionPending,
@@ -532,6 +541,9 @@ export function ChatWorkspace({
 		});
 		return [...ordered, ...byKey.values()];
 	}, [auxiliaryTabOrder, auxiliaryTabs, snapshot.sessionId, tabOrderBySession]);
+	const activeWorkspaceTab = workspaceActiveTabKey
+		? workspaceTabs?.find((tab) => tab.key === workspaceActiveTabKey)
+		: undefined;
 	const reorderAuxiliaryTabs = useCallback(
 		(nextKeys: string[]) => {
 			const available = new Set(availableTabKeys);
@@ -786,9 +798,10 @@ export function ChatWorkspace({
 	useEffect(
 		() =>
 			aoBridge.app.onCloseShellTerminalShortcut(() => {
-				if (shellTarget) onCloseShellTerminal?.(shellTarget.handleId);
+				if (activeWorkspaceTab?.onClose) activeWorkspaceTab.onClose();
+				else if (shellTarget) onCloseShellTerminal?.(shellTarget.handleId);
 			}),
-		[onCloseShellTerminal, shellTarget],
+		[activeWorkspaceTab, onCloseShellTerminal, shellTarget],
 	);
 
 	useEffect(() => {
@@ -801,9 +814,11 @@ export function ChatWorkspace({
 	}, [selectAdjacentTab]);
 
 	useEffect(() => {
-		aoBridge.app.setCloseShellTerminalShortcutEnabled(Boolean(shellTarget && onCloseShellTerminal));
+		aoBridge.app.setCloseShellTerminalShortcutEnabled(
+			Boolean(activeWorkspaceTab?.onClose) || Boolean(shellTarget && onCloseShellTerminal),
+		);
 		return () => aoBridge.app.setCloseShellTerminalShortcutEnabled(false);
-	}, [onCloseShellTerminal, shellTarget]);
+	}, [activeWorkspaceTab, onCloseShellTerminal, shellTarget]);
 
 	// Offered only while the agent is idle. The daemon refuses a rollback mid-turn,
 	// and a control that exists to be refused is worse than one that waits.
@@ -838,6 +853,10 @@ export function ChatWorkspace({
 				<TurnSettingsBar
 					models={models ?? []}
 					settings={stableSettings}
+					onRememberPermissions={onRememberPermissions}
+					rememberPermissionsPending={rememberPermissionsPending}
+					rememberPermissionsError={rememberPermissionsError}
+					rememberedPermissionMode={rememberedPermissionMode}
 					harness={snapshot.harness}
 					reroute={stableModelReroute}
 					onChange={newWorkDisabled ? undefined : onChooseSettings}
@@ -858,6 +877,10 @@ export function ChatWorkspace({
 			newWorkDisabled,
 			onChooseConfigOption,
 			onChooseSettings,
+			onRememberPermissions,
+			rememberPermissionsPending,
+			rememberPermissionsError,
+			rememberedPermissionMode,
 			snapshot.controller.state,
 			stableModelReroute,
 			stableSettings,
@@ -1891,6 +1914,11 @@ function Timeline({
 	const navigableGroups = useMemo(() => groups.filter(groupHasHumanPrompt), [groups]);
 	const previews = useMemo(() => navigableGroups.map(groupPreview), [navigableGroups]);
 
+	// Keep the full transcript mounted (selection/find still work), but measure
+	// prompt positions only when content geometry changes, not on every scroll.
+	const anchorGeometry = useRef<{ height: number; width: number; positions: number[] } | null>(null);
+	const contentMutations = useRef<MutationObserver | null>(null);
+
 	const updateScrollbar = useCallback(() => {
 		const node = scroller.current;
 		const track = scrollTrack.current;
@@ -1904,24 +1932,32 @@ function Timeline({
 			: trackHeight;
 		const travel = Math.max(0, trackHeight - height);
 		const fraction = maxScroll > 0 ? Math.min(1, Math.max(0, node.scrollTop / maxScroll)) : 0;
-		const viewportRect = node.getBoundingClientRect();
-		const anchors = Array.from(
-			scrollContent.current?.querySelectorAll<HTMLElement>("[data-chat-scroll-anchor]") ?? [],
-		);
-		// 8px is the Cursor-chat cadence: a 2px dash with a ~6px gap. 18px left
-		// a sparse ladder when the conversation only had a handful of turns.
-		const markerGap =
-			anchors.length > 1 ? Math.min(8, (trackHeight - 12) / (anchors.length - 1)) : 0;
-		const markerStart = (trackHeight - markerGap * Math.max(0, anchors.length - 1)) / 2;
-		const markers = anchors.map((anchor, index) => {
-			const rect = anchor.getBoundingClientRect();
-			const contentY = rect.top - viewportRect.top + node.scrollTop + rect.height / 2;
-			return {
-				top: markerStart + index * markerGap,
-				scrollTop: Math.min(maxScroll, Math.max(0, contentY - node.clientHeight / 2)),
-				visible: contentY >= node.scrollTop && contentY <= node.scrollTop + node.clientHeight,
+		if (contentMutations.current?.takeRecords().length) anchorGeometry.current = null;
+		let geometry = anchorGeometry.current;
+		if (!geometry || geometry.height !== node.scrollHeight || geometry.width !== node.clientWidth) {
+			const viewportRect = node.getBoundingClientRect();
+			const anchors = Array.from(
+				scrollContent.current?.querySelectorAll<HTMLElement>("[data-chat-scroll-anchor]") ?? [],
+			);
+			geometry = {
+				height: node.scrollHeight,
+				width: node.clientWidth,
+				positions: anchors.map((anchor) => {
+					const rect = anchor.getBoundingClientRect();
+					return rect.top - viewportRect.top + node.scrollTop + rect.height / 2;
+				}),
 			};
-		});
+			anchorGeometry.current = geometry;
+		}
+		const positions = geometry.positions;
+		// 8px is the existing 2px dash + 6px gap cadence.
+		const markerGap = positions.length > 1 ? Math.min(8, (trackHeight - 12) / (positions.length - 1)) : 0;
+		const markerStart = (trackHeight - markerGap * Math.max(0, positions.length - 1)) / 2;
+		const markers = positions.map((contentY, index) => ({
+			top: markerStart + index * markerGap,
+			scrollTop: Math.min(maxScroll, Math.max(0, contentY - node.clientHeight / 2)),
+			visible: contentY >= node.scrollTop && contentY <= node.scrollTop + node.clientHeight,
+		}));
 		const next = {
 			visible,
 			top: travel * fraction,
@@ -1979,6 +2015,7 @@ function Timeline({
 	}, []);
 
 	const syncScrollLayout = useCallback(() => {
+		anchorGeometry.current = null;
 		syncPromptSpacer();
 		const node = scroller.current;
 		if (node && pinnedRef.current) {
@@ -1990,6 +2027,21 @@ function Timeline({
 	useEffect(() => {
 		syncScrollLayout();
 	}, [pinned, snapshot.latestSequence, groups.length, messageEdit?.turnId, syncScrollLayout]);
+
+	useEffect(() => {
+		const content = scrollContent.current;
+		const mutations = new MutationObserver(() => { anchorGeometry.current = null; });
+		if (content) mutations.observe(content, {
+			subtree: true, childList: true, characterData: true, attributes: true,
+			attributeFilter: ["class", "style", "hidden", "open", "data-chat-scroll-anchor"],
+		});
+		contentMutations.current = mutations;
+		return () => {
+			mutations.disconnect();
+			contentMutations.current = null;
+			anchorGeometry.current = null;
+		};
+	}, []);
 
 	useEffect(() => {
 		syncScrollLayout();
