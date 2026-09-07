@@ -3280,7 +3280,15 @@ describe("durable queued edits", () => {
 		await userEvent.click(screen.getByRole("button", { name: "Edit queued message" }));
 		const composer = screen.getByLabelText("Message the agent");
 		await typeInLexicalEditor(composer, " keep this");
-		const storage = vi.spyOn(Storage.prototype, "removeItem").mockImplementation(() => { throw new DOMException("blocked", "SecurityError"); });
+		const durableStorage = window.localStorage;
+		const storage = vi.spyOn(window, "localStorage", "get").mockReturnValue({
+			length: durableStorage.length,
+			clear: durableStorage.clear.bind(durableStorage),
+			key: durableStorage.key.bind(durableStorage),
+			getItem: durableStorage.getItem.bind(durableStorage),
+			setItem: () => { throw new DOMException("full", "QuotaExceededError"); },
+			removeItem: () => { throw new DOMException("blocked", "SecurityError"); },
+		});
 		try {
 			fireEvent.keyDown(composer, { key: "Escape" });
 			expect(composer).toHaveTextContent("queued text keep this");
