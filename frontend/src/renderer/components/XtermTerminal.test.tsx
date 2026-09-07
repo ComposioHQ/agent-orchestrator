@@ -1297,6 +1297,40 @@ describe("XtermTerminal", () => {
 		await waitFor(() => expect(sendInput).toHaveBeenCalledWith("fresh-login", "\x1b[7;21R"));
 	});
 
+	it("stops treating covered output as live after a fresh handle reconnects", async () => {
+		const outputs: Array<(data: Uint8Array) => void> = [];
+		const opened: Array<() => void> = [];
+		const connectionChanges: Array<(state: "open" | "closed") => void> = [];
+		const sendInputs = [vi.fn(), vi.fn()];
+		const createMux = vi.fn((): TerminalMux => {
+			const index = outputs.length;
+			return {
+				open: vi.fn(), close: vi.fn(), resize: vi.fn(), dispose: vi.fn(), sendInput: sendInputs[index],
+				onData: (_id, listener) => { outputs[index] = listener; return () => {}; },
+				onOpened: (_id, listener) => { opened[index] = listener; return () => {}; },
+				onExit: () => () => {}, onError: () => () => {},
+				onConnectionChange: (listener) => { connectionChanges[index] = listener; return () => {}; },
+			};
+		});
+		function Shell() {
+			const session = useTerminalSession(undefined, { daemonReady: true, coverInitialReplay: true, shellTerminalHandleId: "fresh-then-reconnected", createMux });
+			return <XtermTerminal theme="dark" onReady={session.attach} />;
+		}
+		render(<QueryClientProvider client={new QueryClient()}><Shell /></QueryClientProvider>);
+		act(() => {
+			opened[0]();
+			connectionChanges[0]("closed");
+		});
+		await waitFor(() => expect(createMux).toHaveBeenCalledTimes(2), { timeout: 2_000 });
+		const xtermWrite = vi.spyOn(state.lastTerminal!, "write");
+		act(() => {
+			opened[1]();
+			outputs[1](new TextEncoder().encode("history\x1b[6n"));
+		});
+		await waitFor(() => expect(xtermWrite).toHaveBeenCalled());
+		expect(sendInputs[1]).not.toHaveBeenCalled();
+	});
+
 	it("does not forward an unsolicited cursor-position-shaped input", () => {
 		const onInput = vi.fn();
 		render(<XtermTerminal theme="dark" onReady={(terminal) => terminal.onUserInput(onInput)} />);

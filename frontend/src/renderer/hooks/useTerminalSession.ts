@@ -26,6 +26,7 @@ import { workspaceQueryKey } from "./useWorkspaceQuery";
  * drive the hook with a tiny fake instead of a real xterm + DOM.
  */
 export type TerminalUserInputSource = "keyboard" | "paste" | "composition" | "shortcut" | "wheel" | "protocol";
+export type TerminalWriteSource = "live" | "replay";
 
 export type AttachableTerminal = {
 	cols: number;
@@ -35,7 +36,7 @@ export type AttachableTerminal = {
 	 * own write callback). The attachment uses it to reveal the pane at the
 	 * replay's final scroll position instead of guessing with a timer.
 	 */
-	write: (data: Uint8Array, done?: () => void) => void;
+	write: (data: Uint8Array, done?: () => void, source?: TerminalWriteSource) => void;
 	writeln: (line: string) => void;
 	/** Move xterm's logical viewport and DOM scrollbar to the latest output. */
 	showLatestOutput: () => void;
@@ -388,6 +389,9 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 		let replayBatchTimer: ReturnType<typeof setTimeout> | null = null;
 		let replayBatchDone: (() => void) | null = null;
 		let replayWritesPreserved = false;
+		// The first attachment may be a brand-new PTY whose covered output is live.
+		// Reconnects replay history, so xterm-generated replies must be discarded.
+		const initialWriteSource: TerminalWriteSource = r.hasAttachedOnce ? "replay" : "live";
 
 		// Reveal only after xterm has parsed the coalesced replay and any late tail
 		// frames have gone quiet. The tail itself streams straight into xterm behind
@@ -427,8 +431,8 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 				r.replayTailCapTimer = setTimeout(revealReplayTail, REPLAY_TAIL_CAP_MS);
 			}
 		};
-		// The mux does not distinguish historical bytes from fresh PTY output.
-		// This cover is visual buffering only; every batch must retain live protocol replies.
+		// The mux does not distinguish historical bytes from fresh PTY output, so
+		// the handle's creation state classifies the entire covered burst.
 		const writeReplayBatches = (bytes: Uint8Array, done: () => void) => {
 			replayBatchBytes = bytes;
 			replayBatchOffset = 0;
@@ -454,7 +458,7 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 						return;
 					}
 					replayBatchTimer = setTimeout(writeNext, 0);
-				});
+				}, initialWriteSource);
 			};
 			writeNext();
 		};
@@ -468,12 +472,12 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 			if (replayBatchBytes && replayBatchOffset < replayBatchBytes.length) {
 				// The current batch is already in xterm's queue. Queue the remainder in
 				// one call before dispose so it cannot be overtaken or discarded.
-				terminal.write(replayBatchBytes.subarray(replayBatchOffset));
+				terminal.write(replayBatchBytes.subarray(replayBatchOffset), undefined, initialWriteSource);
 			}
 			replayBatchBytes = null;
 			replayBatchOffset = 0;
 			replayBatchDone = null;
-			for (const bytes of postReplayWriteQueue) terminal.write(bytes);
+			for (const bytes of postReplayWriteQueue) terminal.write(bytes, undefined, initialWriteSource);
 			postReplayWriteQueue.length = 0;
 			postReplayWriteActive = false;
 			pendingReplayWrites = 0;
@@ -506,7 +510,7 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 				postReplayWriteActive = false;
 				pendingReplayWrites = Math.max(0, pendingReplayWrites - 1);
 				drainPostReplayWrites();
-			});
+			}, initialWriteSource);
 		};
 
 		// End the buffered part of the initial replay: concatenate what arrived so
@@ -552,7 +556,7 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 				offset += chunk.length;
 			}
 			if (preserveBeforeTeardown) {
-				terminal.write(replay);
+				terminal.write(replay, undefined, initialWriteSource);
 				preservePendingReplayWrites();
 				return;
 			}

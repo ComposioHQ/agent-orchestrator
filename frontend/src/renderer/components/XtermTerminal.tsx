@@ -1181,7 +1181,7 @@ export function XtermTerminal(props: XtermTerminalProps) {
 			// Forward xterm's write callback: it fires once THIS chunk has been
 			// parsed into the buffer, which is what lets the attachment reveal the
 			// pane at the replay's settled scroll position (issue #3160).
-			write: (data, done) => {
+			write: (data, done, source = "live") => {
 				let hasEsc = false;
 				for (let i = 0; i < data.length; i++) {
 					if (data[i] === 0x1b) {
@@ -1189,11 +1189,16 @@ export function XtermTerminal(props: XtermTerminalProps) {
 						break;
 					}
 				}
+				if (source === "replay") {
+					// Existing panes replay historical DSRs through xterm. Clear any old
+					// correlation credits so their generated CPRs cannot reach the live PTY.
+					cursorPositionForwarder.dispose();
+				}
 				if (hasEsc || cursorPositionForwarder.hasPartialRequest()) {
 					// A DSR can be split immediately after ESC. Decode an ESC-free chunk
 					// only while a request prefix from the preceding chunk is incomplete.
 					const chunk = new TextDecoder().decode(data);
-					cursorPositionForwarder.observeOutput(chunk);
+					if (source === "live") cursorPositionForwarder.observeOutput(chunk);
 					if (hasEsc) {
 						const reply = callbacksRef.current.supportsCursorColorScheme
 							? cursorColorSchemeReplyForOutput(chunk, callbacksRef.current.theme)
