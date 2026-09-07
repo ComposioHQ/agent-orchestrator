@@ -72,6 +72,7 @@ import { browserTabLabel } from "../lib/browser-tab-label";
 import { reorderBrowserTabs } from "../lib/browser-tab-order";
 import { handleTabListKeyDown } from "../lib/terminal-tabs";
 import { isWebLink, openLinkInSystemBrowser } from "../lib/external-link-policy";
+import { BrowserPageContextMenu } from "./BrowserPageContextMenu";
 
 // One-click viewport width presets for responsive testing — height is shown
 // for reference but not enforced (only width drives CSS breakpoints, and
@@ -371,6 +372,9 @@ export function BrowserPanelView({
 		closeDevTools = async () => undefined,
 		annotationMode,
 		setAnnotationMode,
+		contextMenu = null,
+		runContextMenuAction = async () => undefined,
+		dismissContextMenu = async () => undefined,
 	} = browserView;
 	const [urlInput, setUrlInput] = useState(navState.url);
 	const [historySuggestions, setHistorySuggestions] = useState<Array<{ url: string; title?: string }>>([]);
@@ -637,6 +641,11 @@ export function BrowserPanelView({
 		}
 	};
 
+	const annotateFromContextMenu = () => {
+		void dismissContextMenu(false);
+		void toggleAnnotationMode();
+	};
+
 	// The button lives in the toolbar, not inside the rail, so a fast
 	// hover-rail-then-click-here still needs to force the flyout closed first —
 	// same reason rows inside the rail do it (see BrowserTabsRail.tsx). A blank
@@ -682,9 +691,17 @@ export function BrowserPanelView({
 							: "";
 	const agentStatusLabel = agentActivityLabel(agentBrowserActivity, agentBrowserActive);
 	return (
-		<div
-			className={cn(
-				"browser-panel flex h-full min-h-browser-min flex-col overflow-hidden rounded-lg border border-border bg-background",
+		<>
+			<BrowserPageContextMenu
+				canAnnotate={canAnnotate && status !== "sending"}
+				onAction={(action) => void runContextMenuAction(action)}
+				onAnnotate={annotateFromContextMenu}
+				onDismiss={(restoreFocus) => void dismissContextMenu(restoreFocus)}
+				request={contextMenu}
+			/>
+			<div
+				className={cn(
+					"browser-panel flex h-full min-h-browser-min flex-col overflow-hidden rounded-lg border border-border bg-background",
 				poppedOut && "browser-panel--popped-out",
 				agentStatusLabel && "browser-panel--agent-active",
 			)}
@@ -1242,7 +1259,8 @@ export function BrowserPanelView({
 					tabs={tabs}
 				/>
 			</div>
-		</div>
+			</div>
+		</>
 	);
 }
 

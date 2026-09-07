@@ -660,6 +660,7 @@ async function createWindowInternal(): Promise<void> {
 		shellWebContents,
 		ipcMain,
 		shell,
+		clipboard,
 		WebContentsView,
 		annotatePreloadPath: annotatePreloadPath(),
 		rendererOrigin: new URL(rendererUrl()).origin,

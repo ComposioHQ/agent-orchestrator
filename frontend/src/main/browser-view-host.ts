@@ -7,6 +7,7 @@ import type {
 	View,
 	WebContents,
 	OpenDevToolsOptions,
+	ContextMenuParams,
 } from "electron";
 import { nativeImage } from "electron";
 import { randomUUID } from "node:crypto";
@@ -35,6 +36,12 @@ import type { AgentBrowserTarget, AgentBrowserTargetProvider } from "./agent-bro
 import type { BrowserProfileStore } from "./browser-profile-store";
 import type { BrowserHistoryStore } from "./browser-history-store";
 import { matchInstruction } from "./browser-act-matcher";
+import type {
+	BrowserContextMenuAction,
+	BrowserContextMenuActionInput,
+	BrowserContextMenuDismissInput,
+	BrowserContextMenuRequest,
+} from "../shared/browser-context-menu";
 
 function isValidAnnotationContext(value: unknown): value is BrowserAnnotationContext {
 	if (typeof value !== "object" || value === null) return false;
@@ -227,6 +234,7 @@ type BrowserWebContents = Pick<
 	| "goForward"
 	| "isLoading"
 	| "insertCSS"
+	| "inspectElement"
 	| "loadURL"
 	| "on"
 	| "reload"
@@ -293,6 +301,10 @@ type ShellLike = {
 	openExternal: (url: string) => Promise<void>;
 };
 
+type ClipboardLike = {
+	writeText: (text: string) => void;
+};
+
 type WebContentsViewConstructor = new (options: { webPreferences: Electron.WebPreferences }) => BrowserViewLike;
 
 export type BrowserViewHostOptions = {
@@ -300,6 +312,7 @@ export type BrowserViewHostOptions = {
 	shellWebContents?: WebContents;
 	ipcMain: Pick<IpcMain, "handle" | "on" | "removeHandler" | "off">;
 	shell: ShellLike;
+	clipboard?: ClipboardLike;
 	WebContentsView: WebContentsViewConstructor;
 	annotatePreloadPath: string;
 	rendererOrigin: string;
@@ -384,6 +397,12 @@ type BrowserSessionEntry = {
 	nativeActiveTabId?: string;
 	nativeOperationQueue: Promise<void>;
 	devtoolsPlacement: BrowserDevToolsPlacement;
+	contextMenu?: {
+		request: BrowserContextMenuRequest;
+		pagePoint: { x: number; y: number };
+		linkURL: string;
+		selectionText: string;
+	};
 	// Bounded browser diagnostics exposed only through an explicit errors query.
 	signals: {
 		entries: BrowserSignalEntry[];
@@ -542,6 +561,29 @@ export function scaleBoundsForZoom(rect: BrowserRect, zoomFactor: number): Brows
 	};
 }
 
+const MAX_CONTEXT_LINK_LENGTH = 8_192;
+const MAX_CONTEXT_SELECTION_LENGTH = 100_000;
+
+function contextMenuActions(params: ContextMenuParams, rendererOrigin: string): BrowserContextMenuAction[] {
+	const linkURL = params.linkURL.slice(0, MAX_CONTEXT_LINK_LENGTH);
+	const hasOpenableLink = linkURL.length > 0 && isAllowedBrowserURL(linkURL, rendererOrigin);
+	const hasSelection = params.editFlags.canCopy && params.selectionText.trim().length > 0;
+	return [
+		...(hasOpenableLink ? (["open-link-tab", "open-link-external"] as const) : []),
+		...(linkURL ? (["copy-link"] as const) : []),
+		...(hasSelection ? (["copy-selection"] as const) : []),
+		"inspect",
+	];
+}
+
+function contextMenuPosition(session: BrowserSessionEntry, params: Pick<ContextMenuParams, "x" | "y">) {
+	const zoomFactor = Number.isFinite(session.zoomFactor) && session.zoomFactor > 0 ? session.zoomFactor : 1;
+	return {
+		x: Math.round(session.rendererBounds.x + params.x / zoomFactor),
+		y: Math.round(session.rendererBounds.y + params.y / zoomFactor),
+	};
+}
+
 export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserViewHost {
 	const entries = new Map<string, BrowserSessionEntry>();
 	const signalWatchers = new Map<
@@ -677,6 +719,23 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		tabsByWebContentsId.set(view.webContents.id, entry);
 		const isCurrentEntry = () =>
 			entries.get(session.viewId) === session && session.tabs.get(entry.tabId) === entry;
+		view.webContents.on("context-menu", (_event, params: ContextMenuParams) => {
+			if (!isCurrentEntry() || !session.visible || session.activeTabId !== entry.tabId) return;
+			const request: BrowserContextMenuRequest = {
+				requestId: randomUUID(),
+				viewId: session.viewId,
+				tabId: entry.tabId,
+				position: contextMenuPosition(session, params),
+				actions: contextMenuActions(params, options.rendererOrigin),
+			};
+			session.contextMenu = {
+				request,
+				pagePoint: { x: params.x, y: params.y },
+				linkURL: params.linkURL.slice(0, MAX_CONTEXT_LINK_LENGTH),
+				selectionText: params.selectionText.slice(0, MAX_CONTEXT_SELECTION_LENGTH),
+			};
+			shellWebContents.send("browser:contextMenu", request);
+		});
 		// Native Chromium DevTools can be closed from its own window controls. Keep
 		// the renderer's toggle state in sync with that user action. Programmatic
 		// close/reopen cycles used for retargeting or placement changes are marked
@@ -740,6 +799,9 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 				const profileId = session.profileId;
 				if (!isCurrentEntry() || !profileId || !options.browserHistoryStore) return;
 				void options.browserHistoryStore.record(profileId, url, title, incrementVisit).catch(() => undefined);
+			},
+			() => {
+				if (isCurrentEntry()) session.contextMenu = undefined;
 			},
 		);
 		wireFaviconEvents(view.webContents, entry, () => {
@@ -1071,6 +1133,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		const next = session.tabs.get(tabId);
 		if (!next) throw browserError("TAB_NOT_FOUND", `Browser tab ${tabId} does not exist`);
 		const previous = session.tabs.get(session.activeTabId);
+		if (previous !== next) session.contextMenu = undefined;
 		if (previous && previous !== next) {
 			applyBrowserViewBounds(previous.view, OFFSCREEN_BOUNDS, false);
 		}
@@ -1412,6 +1475,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		const effectiveZoomFactor = Number.isFinite(zoomFactor) && zoomFactor > 0 ? zoomFactor : 1;
 		session.zoomFactor = effectiveZoomFactor;
 		if (!visible) {
+			session.contextMenu = undefined;
 			session.bounds = OFFSCREEN_BOUNDS;
 			session.visible = false;
 			if (!session.profileSwitching && session.tabs.size > 0) applySessionBounds(session, activeEntry(session));
@@ -1445,6 +1509,8 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 	};
 
 	const navigateEntry = async (entry: BrowserEntry, url: string): Promise<BrowserNavState> => {
+		const session = entries.get(entry.state.viewId);
+		if (session?.tabs.get(entry.tabId) === entry) session.contextMenu = undefined;
 		await entry.ready;
 		const normalized = normalizeBrowserURL(url);
 		if (!isAllowedBrowserURL(normalized.href, options.rendererOrigin)) {
@@ -1462,7 +1528,6 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 			shellWebContents.send("browser:navState", entry.state);
 			return entry.state;
 		}
-		const session = entries.get(entry.state.viewId);
 		if (session?.activeTabId === entry.tabId) applySessionBounds(session, entry);
 		return pushNavState(options, entry);
 	};
@@ -1477,6 +1542,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		assertProfileStable(session);
 		return withBrowserOperation(session, async () => {
 			const entry = activeEntry(session);
+			session.contextMenu = undefined;
 			cancelAnnotation(options, entry, "navigation");
 			if (session.devtools) destroyDevTools(session);
 			session.visible = false;
@@ -1654,6 +1720,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		}
 
 		session.profileSwitching = true;
+		session.contextMenu = undefined;
 		session.profileSwitchTargetId = normalizedRequestedProfileId;
 		const previousProfileId = session.profileId;
 		const previousPartition = session.profilePartition;
@@ -1787,6 +1854,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		if (!session) return emptyNavState(viewId);
 		assertProfileStable(session);
 		const entry = activeEntry(session);
+		session.contextMenu = undefined;
 		if (cancelForNavigation) {
 			cancelAnnotation(options, entry, "navigation");
 		}
@@ -1870,6 +1938,63 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 			reason: payload?.reason ?? "cancel",
 		};
 		shellWebContents.send("browser:annotation:canceled", forwarded);
+	};
+
+	const runContextMenuAction = async (event: IpcMainInvokeEvent, input: BrowserContextMenuActionInput): Promise<void> => {
+		if (!input || typeof input !== "object" || typeof input.viewId !== "string") return;
+		const session = entries.get(input.viewId);
+		if (!session || !isRendererOwned(event, input.viewId)) return;
+		const pending = session.contextMenu;
+		if (
+			!pending ||
+			pending.request.requestId !== input.requestId ||
+			pending.request.tabId !== input.tabId ||
+			session.activeTabId !== input.tabId ||
+			!pending.request.actions.includes(input.action)
+		) {
+			return;
+		}
+		const entry = session.tabs.get(input.tabId);
+		if (!entry) return;
+		session.contextMenu = undefined;
+		switch (input.action) {
+			case "open-link-tab":
+				await openUserTab(session, pending.linkURL);
+				return;
+			case "open-link-external":
+				await options.shell.openExternal(pending.linkURL);
+				return;
+			case "copy-link":
+				options.clipboard?.writeText(pending.linkURL);
+				entry.view.webContents.focus();
+				return;
+			case "copy-selection":
+				options.clipboard?.writeText(pending.selectionText);
+				entry.view.webContents.focus();
+				return;
+			case "inspect":
+				await withBrowserOperation(session, async () => {
+					await openDevTools(session);
+					entry.view.webContents.inspectElement(pending.pagePoint.x, pending.pagePoint.y);
+				});
+		}
+	};
+
+	const dismissContextMenu = (event: IpcMainInvokeEvent, input: BrowserContextMenuDismissInput): void => {
+		if (!input || typeof input !== "object" || typeof input.viewId !== "string") return;
+		const session = entries.get(input.viewId);
+		if (!session || !isRendererOwned(event, input.viewId)) return;
+		const pending = session.contextMenu;
+		if (
+			!pending ||
+			pending.request.requestId !== input.requestId ||
+			pending.request.tabId !== input.tabId ||
+			session.activeTabId !== input.tabId
+		) {
+			return;
+		}
+		session.contextMenu = undefined;
+		if (input.restoreFocus === true) session.tabs.get(input.tabId)?.view.webContents.focus();
 	};
 
 	const handle = <Args extends unknown[], Result>(
@@ -2020,6 +2145,8 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		}
 		return openUserTab(session, url);
 	});
+	handle("browser:contextMenu:action", runContextMenuAction);
+	handle("browser:contextMenu:dismiss", dismissContextMenu);
 	handle("browser:annotation:setMode", (event, input: BrowserAnnotationModeInput) => setAnnotationMode(event, input));
 	on("browser:destroy", (event, viewId: string) => {
 		if (isRendererOwned(event, viewId)) destroy(viewId);
@@ -2581,12 +2708,14 @@ function wireNavEvents(
 	syncActiveBounds: () => void,
 	syncTabs: () => void,
 	recordHistory: (url: string, title: string, incrementVisit: boolean) => void,
+	invalidateContextMenu: () => void,
 ): void {
 	const update = () => {
 		syncTabs();
 		if (isActive()) pushNavState(options, entry);
 	};
 	contents.on("did-navigate", (_event, url) => {
+		invalidateContextMenu();
 		if (entry.annotationDraft && !isSameAnnotationPage(annotationDraftURL(entry.annotationDraft), url)) {
 			cancelAnnotation(options, entry, "navigation");
 		}
@@ -2596,11 +2725,13 @@ function wireNavEvents(
 		update();
 	});
 	contents.on("did-navigate-in-page", (_event, url) => {
+		invalidateContextMenu();
 		recordHistory(url, contents.getTitle(), true);
 		update();
 	});
 	contents.on("page-title-updated", update);
 	contents.on("did-start-loading", () => {
+		invalidateContextMenu();
 		update();
 	});
 	contents.on("did-stop-loading", () => {

@@ -126,6 +126,9 @@ function setupHost(agentBrowserRuntime?: import("./agent-browser-runtime").Agent
 	let debuggerAttached = false;
 	const openDevTools = vi.fn();
 	const closeDevTools = vi.fn();
+	const inspectElement = vi.fn();
+	const writeClipboardText = vi.fn();
+	const openExternal = vi.fn(async () => undefined);
 	const insertCSS = vi.fn(async (_css: string, _options?: { cssOrigin?: "author" | "user" }) => "ao-browser-scrollbars");
 	let insertedStyleNumber = 0;
 	insertCSS.mockImplementation(async () => `ao-browser-scrollbars-${++insertedStyleNumber}`);
@@ -183,6 +186,7 @@ function setupHost(agentBrowserRuntime?: import("./agent-browser-runtime").Agent
 		close: vi.fn(),
 		openDevTools,
 		closeDevTools,
+		inspectElement,
 		session: {
 			setPermissionCheckHandler,
 			setPermissionRequestHandler,
@@ -253,7 +257,8 @@ function setupHost(agentBrowserRuntime?: import("./agent-browser-runtime").Agent
 			removeHandler: () => undefined,
 			off: () => undefined,
 		} as never,
-		shell: { openExternal: async () => undefined },
+		shell: { openExternal },
+		clipboard: { writeText: writeClipboardText },
 		WebContentsView: function () {
 			return view;
 		} as never,
@@ -330,6 +335,9 @@ function setupHost(agentBrowserRuntime?: import("./agent-browser-runtime").Agent
 		shellSend,
 		openDevTools,
 		closeDevTools,
+		inspectElement,
+		writeClipboardText,
+		openExternal,
 		insertCSS,
 		removeInsertedCSS,
 		setBrowserZoomFactor: (zoomFactor: number) => {
@@ -342,6 +350,173 @@ function setupHost(agentBrowserRuntime?: import("./agent-browser-runtime").Agent
 		debuggerSendCommand,
 	};
 }
+
+describe("browser page context menu", () => {
+	async function showContextMenu(
+		host: ReturnType<typeof setupHost>,
+		params: Partial<import("electron").ContextMenuParams>,
+	) {
+		const state = await host.invoke("browser:ensure", "sess-1");
+		host.emit("browser:setBounds", 1, {
+			viewId: state.viewId,
+			rect: { x: 10, y: 20, width: 320, height: 240 },
+			visible: true,
+		});
+		await host.invoke("browser:navigate", { viewId: state.viewId, url: "https://example.test/" });
+		host.sent.length = 0;
+		host.webContentsListeners.get("context-menu")?.(
+			{} as never,
+			{
+				x: 11,
+				y: 13,
+				linkURL: "",
+				selectionText: "",
+				editFlags: { canCopy: false },
+				...params,
+			} as never,
+		);
+		return host.sent.find(({ channel }) => channel === "browser:contextMenu")?.payload as {
+			requestId: string;
+			viewId: string;
+			tabId: string;
+			actions: string[];
+		};
+	}
+
+	it("publishes only the actions supported by the clicked target at shell coordinates", async () => {
+		const { emit, invoke, sent, webContentsListeners } = setupHost();
+		const state = await invoke("browser:ensure", "sess-1");
+		emit("browser:setBounds", 2, {
+			viewId: state.viewId,
+			rect: { x: 10, y: 20, width: 320, height: 240 },
+			visible: true,
+		});
+		await invoke("browser:navigate", { viewId: state.viewId, url: "https://example.test/" });
+		sent.length = 0;
+
+		webContentsListeners.get("context-menu")?.(
+			{} as never,
+			{
+				x: 40,
+				y: 60,
+				linkURL: "https://docs.example.test/guide",
+				selectionText: "selected words",
+				editFlags: { canCopy: true },
+			} as never,
+		);
+
+		const request = sent.find(({ channel }) => channel === "browser:contextMenu")?.payload;
+		expect(request).toEqual({
+			requestId: expect.any(String),
+			viewId: state.viewId,
+			tabId: "t1",
+			position: { x: 30, y: 50 },
+			actions: ["open-link-tab", "open-link-external", "copy-link", "copy-selection", "inspect"],
+		});
+	});
+
+	it("keeps unsupported links copyable without offering either open action", async () => {
+		const host = setupHost();
+		const request = await showContextMenu(host, { linkURL: "javascript:alert(1)" });
+
+		expect(request.actions).toEqual(["copy-link", "inspect"]);
+	});
+
+	it("copies the retained selection once and rejects reuse of the consumed request", async () => {
+		const host = setupHost();
+		const request = await showContextMenu(host, {
+			selectionText: "  selected words  ",
+			editFlags: { canCopy: true } as never,
+		});
+		let error: unknown;
+		try {
+			await host.invoke("browser:contextMenu:action", { ...request, action: "copy-selection" });
+		} catch (caught) {
+			error = caught;
+		}
+
+		expect(error).toBeUndefined();
+		expect(host.writeClipboardText).toHaveBeenCalledWith("  selected words  ");
+		await host.invoke("browser:contextMenu:action", { ...request, action: "copy-selection" });
+		expect(host.writeClipboardText).toHaveBeenCalledOnce();
+	});
+
+	it("opens an allowed link externally from the retained page target", async () => {
+		const host = setupHost();
+		const request = await showContextMenu(host, { linkURL: "https://docs.example.test/guide" });
+		let error: unknown;
+		try {
+			await host.invoke("browser:contextMenu:action", { ...request, action: "open-link-external" });
+		} catch (caught) {
+			error = caught;
+		}
+
+		expect(error).toBeUndefined();
+		expect(host.openExternal).toHaveBeenCalledWith("https://docs.example.test/guide");
+	});
+
+	it("opens an allowed link in a new managed AO tab", async () => {
+		const host = setupHost();
+		const request = await showContextMenu(host, { linkURL: "https://docs.example.test/guide" });
+
+		await host.invoke("browser:contextMenu:action", { ...request, action: "open-link-tab" });
+
+		const tabs = (await host.invoke("browser:getTabs", request.viewId)) as unknown as BrowserTabsState;
+		expect(tabs.tabs).toHaveLength(2);
+		expect(tabs.tabs.find((tab) => tab.active)?.url).toBe("https://docs.example.test/guide");
+	});
+
+	it("opens managed DevTools and inspects the retained page point", async () => {
+		const host = setupHost();
+		const request = await showContextMenu(host, {});
+		let error: unknown;
+		try {
+			await host.invoke("browser:contextMenu:action", { ...request, action: "inspect" });
+		} catch (caught) {
+			error = caught;
+		}
+
+		expect(error).toBeUndefined();
+		expect(host.openDevTools).toHaveBeenCalledWith({ mode: "right", activate: true });
+		expect(host.inspectElement).toHaveBeenCalledWith(11, 13);
+	});
+
+	it("dismisses the retained request, optionally restoring focus to the page", async () => {
+		const host = setupHost();
+		const request = await showContextMenu(host, { selectionText: "selected", editFlags: { canCopy: true } as never });
+		host.webContents.focus.mockClear();
+
+		await host.invoke("browser:contextMenu:dismiss", { ...request, restoreFocus: true });
+		await host.invoke("browser:contextMenu:action", { ...request, action: "copy-selection" });
+
+		expect(host.webContents.focus).toHaveBeenCalledOnce();
+		expect(host.writeClipboardText).not.toHaveBeenCalled();
+	});
+
+	it("invalidates a retained request when its page navigates", async () => {
+		const host = setupHost();
+		const request = await showContextMenu(host, { selectionText: "selected", editFlags: { canCopy: true } as never });
+
+		host.webContentsListeners.get("did-navigate")?.({} as never, "https://example.test/next" as never);
+		await host.invoke("browser:contextMenu:action", { ...request, action: "copy-selection" });
+
+		expect(host.writeClipboardText).not.toHaveBeenCalled();
+	});
+
+	it("invalidates a retained request when the browser panel is hidden", async () => {
+		const host = setupHost();
+		const request = await showContextMenu(host, { selectionText: "selected", editFlags: { canCopy: true } as never });
+
+		host.emit("browser:setBounds", 1, {
+			viewId: request.viewId,
+			rect: { x: 0, y: 0, width: 0, height: 0 },
+			visible: false,
+		});
+		await host.invoke("browser:contextMenu:action", { ...request, action: "copy-selection" });
+
+		expect(host.writeClipboardText).not.toHaveBeenCalled();
+	});
+});
 
 describe("browser shortcut matching", () => {
 	it("matches contextual browser shortcuts with platform-native primary modifiers", () => {
