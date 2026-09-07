@@ -18,6 +18,7 @@ import {
 	type OpenDialogOptions,
 } from "electron";
 import {
+	setRendererSink,
 	startAutoUpdates,
 	ensureUpdatePrefs,
 	checkForUpdatesNow,
@@ -2380,6 +2381,12 @@ function initAutoUpdates(): void {
 	const runFile = runFilePath();
 	if (!runFile) return;
 	const stateDir = path.dirname(runFile);
+	// Route update pushes at the shell WebContents, the same target daemon status
+	// uses. The shell is a BaseWindow + WebContentsView (#3750), which
+	// BrowserWindow.getAllWindows() does not return, so the updater cannot find
+	// the renderer on its own. Resolved lazily so a recreated window still gets
+	// pushes.
+	setRendererSink(() => getShellWebContents());
 	void ensureUpdatePrefs(stateDir).then(() => startAutoUpdates(stateDir));
 }
 

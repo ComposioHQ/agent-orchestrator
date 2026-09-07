@@ -85,20 +85,25 @@ type conversation struct {
 	log             *slog.Logger
 	providerScopeID string
 
-	mu                sync.Mutex
-	sessionID         string
-	capabilities      ports.ChatCapabilities
-	prepared          *preparedTurn
-	activeTurn        string
-	settlingTurn      string
-	turnCancel        context.CancelFunc
-	interrupt         *interruptAttempt
-	pending           map[string]*parkedPermission
-	pendingInputs     map[string]*parkedInput
-	messages          map[string]string
-	thoughts          map[string]string
-	nestedMessages    map[string]nestedMessageState
-	tools             map[string]*toolState
+	mu             sync.Mutex
+	sessionID      string
+	capabilities   ports.ChatCapabilities
+	prepared       *preparedTurn
+	activeTurn     string
+	settlingTurn   string
+	turnCancel     context.CancelFunc
+	interrupt      *interruptAttempt
+	pending        map[string]*parkedPermission
+	pendingInputs  map[string]*parkedInput
+	messages       map[string]string
+	thoughts       map[string]string
+	nestedMessages map[string]nestedMessageState
+	tools          map[string]*toolState
+	// turnDiffs stores each tool call's latest file contribution for the active
+	// turn. ACP may re-send the same tool with expanded old/new context; those
+	// updates replace that tool's contribution rather than merging snapshots.
+	turnDiffs         *turnDiffAccumulator
+	turnDiffTurnID    string
 	providerFailure   *ports.ChatEvent
 	configOptions     []ports.ChatConfigOption
 	skills            []ports.ChatSkill
@@ -434,6 +439,8 @@ func (c *conversation) StartDeferredTurn(providerTurnID string) error {
 	c.thoughts = make(map[string]string)
 	c.nestedMessages = make(map[string]nestedMessageState)
 	c.tools = make(map[string]*toolState)
+	c.turnDiffs = nil
+	c.turnDiffTurnID = ""
 	c.providerFailure = nil
 	c.mu.Unlock()
 
