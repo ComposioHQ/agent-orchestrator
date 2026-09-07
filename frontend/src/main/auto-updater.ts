@@ -119,7 +119,10 @@ type UpdaterOperation =
   | "manual-check"
   | "manual-download"
   | "settings-write"
-  | "return-home";
+  | "return-home"
+  // Recovery cleanup. Queued rather than run inline so a download cannot start
+  // into a pending cache directory that is still being emptied.
+  | "cache-clear";
 let activeUpdaterOperation: UpdaterOperation | undefined;
 let activeUpdaterRequestId: string | undefined;
 let automaticCheckPreviousStatus:
@@ -1002,6 +1005,41 @@ function isStagedInstallRejection(err: unknown): boolean {
 }
 
 /**
+ * Consecutive verification failures for one staged version.
+ *
+ * Keyed by version because the question is "has THIS build failed before", not
+ * "how many failures have we seen". A different build resets the count.
+ */
+let installRejections: { version: string | undefined; count: number } | undefined;
+
+/**
+ * The rejection already handled and reported, so the SAME native failure
+ * arriving a second time cannot be re-processed.
+ *
+ * MacUpdater re-emits every native Squirrel error onto electron-updater's own
+ * "error" event synchronously, and the operation promise can reject with that
+ * same error, so one verification failure can be delivered more than once.
+ * Handling it disarms the staged build, which makes hasStagedBuild() false — so
+ * without this record the second delivery misses the branch below, falls through
+ * to generic handling, and replaces the actionable message with the raw Squirrel
+ * signature dump (or, on the automatic path, restores the pre-check status and
+ * shows nothing at all).
+ *
+ * Cleared when a build stages again, so a genuinely new rejection is handled in
+ * full rather than swallowed.
+ */
+let handledInstallRejection: { version: string | undefined } | undefined;
+
+/** Count this rejection and report how many times this build has now failed. */
+function recordInstallRejection(version: string | undefined): number {
+  installRejections =
+    installRejections !== undefined && installRejections.version === version
+      ? { version, count: installRejections.count + 1 }
+      : { version, count: 1 };
+  return installRejections.count;
+}
+
+/**
  * Drop electron-updater's cached pending download.
  *
  * Verified against the published electron-updater@6.8.9 tarball:
@@ -1171,7 +1209,9 @@ function wireUpdaterEvents(): void {
       stagedEscalated = false;
     }
     stagedRequestId = activeUpdaterRequestId;
-    // A build is staged again, so install-on-quit has something correct to run.
+    // A build is staged again, so install-on-quit has something correct to run,
+    // and a later rejection is a NEW one rather than a repeat delivery.
+    handledInstallRejection = undefined;
     awaitingStagedReplacement = false;
     applyInstallOnQuitPolicy();
     persistStagedBuild(escalationStateDir);
@@ -1228,17 +1268,70 @@ function wireUpdaterEvents(): void {
     // Deliberately narrow: the richer in-app remediation for this class (the
     // direct-download offer after repeated failures) belongs to #3528, and the
     // pre-v0.11.0-baseline hop that provokes it belongs to #3288's matrix.
+    if (isStagedInstallRejection(err)) {
+      // A repeat delivery of a rejection already handled: keep the actionable
+      // message that is on screen rather than letting this fall through and
+      // overwrite it. Deliberately not a general "last error" deduplicator —
+      // it matches only this class, and only while no build is staged.
+      if (!hasStagedBuild() && handledInstallRejection !== undefined) {
+        console.debug("ignoring a duplicate delivery of an install rejection:", err);
+        return;
+      }
+    }
+    // NOTE for the readiness work (Prepare phase): this branch is gated on
+    // hasStagedBuild(), which reads stagedAtMs. Moving stagedAtMs to the native
+    // update-downloaded event makes this guard FALSE at exactly the moment a
+    // verification failure arrives, silently reclassifying install rejections as
+    // generic check errors. Re-anchor it to the active native preparation in the
+    // same change that moves the assignment.
     if (hasStagedBuild() && isStagedInstallRejection(err)) {
-      console.error("staged update rejected at install time; discarding cached download:", err);
+      // Squirrel verifies the bundle it just extracted, in this process, before
+      // any ShipIt request exists. So a rejection indicts the EXTRACTED COPY.
+      //
+      // It does not by itself prove the cached archive is bad: electron-updater
+      // checked that archive against the feed's sha512 when it downloaded it,
+      // which establishes agreement with the feed AT THAT TIME — not a correctly
+      // signed release, and not the absence of later damage to the cache. So one
+      // re-preparation is worth attempting before the download is discarded.
+      //
+      // Disarm either way: the copy Squirrel holds cannot install, and leaving
+      // it staged makes the UI promise a restart that fails. Dropping the staged
+      // record re-enables auto-download, so the next check re-stages and
+      // re-prepares from the archive already in the cache.
+      //
+      // Bounding automatic retries (a stop, and a defined reset) belongs with
+      // the attempt-lifecycle work, not here: this only makes the existing
+      // unbounded retry cheaper, it does not introduce it.
+      const failures = recordInstallRejection(stagedVersion);
+      handledInstallRejection = { version: stagedVersion };
       discardStagedBuild();
-      void clearPendingUpdateCache();
+      // Only once a re-preparation has ALSO failed is the archive worth
+      // suspecting. Purging earlier costs a full re-download to fix a copy that
+      // may well prepare cleanly on the next attempt.
+      //
+      // Queued on the operation chain rather than fired and forgotten:
+      // discardStagedBuild() re-enables auto-download, so the next check can
+      // start a download into the very directory this is emptying.
+      if (failures > 1) {
+        void runSerializedUpdaterOperation(
+          "cache-clear",
+          clearPendingUpdateCache,
+        ).catch(() => undefined);
+      }
+      console.error(
+        `staged update rejected at install time (attempt ${failures}${failures > 1 ? ", discarding cached download" : ""}):`,
+        err,
+      );
       broadcast(
         withActiveRequest({
           state: "error",
           message:
-            "Couldn't install the update — the downloaded copy was rejected. " +
-            "AO will download it again on the next check. If it keeps failing, " +
-            "download the latest build manually and install it over this one.",
+            failures > 1
+              ? "Couldn't install the update — the copy failed verification again. " +
+                "AO has discarded the download and will fetch it again. If it keeps " +
+                "failing, download the latest build manually and install it over this one."
+              : "Couldn't install the update — the downloaded copy failed verification. " +
+                "AO will prepare it again on the next check.",
         }),
       );
       return;

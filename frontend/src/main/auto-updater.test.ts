@@ -2887,7 +2887,13 @@ describe("staged install rejection", () => {
       "code failed to satisfy specified code requirement(s)",
   );
 
-  it("clears the cached download and disarms the staged build", async () => {
+  it("keeps the verified download on a first failure and re-stages instead", async () => {
+    // Squirrel verifies the copy it extracted, in-process, before ShipIt exists.
+    // A rejection therefore indicts the EXTRACTION, not the zip — which
+    // electron-updater already checked against the feed sha512. Observed on a
+    // real failure: the cached zip was byte-identical to the feed and the next
+    // attempt extracted it cleanly. Purging here would force a 176 MB
+    // re-download to fix a bad untar.
     const consoleErrorSpy = vi
       .spyOn(console, "error")
       .mockImplementation(() => undefined);
@@ -2896,24 +2902,100 @@ describe("staged install rejection", () => {
 
     await module.checkForUpdatesNow(stateDir);
     updaterEvents.get("update-downloaded")?.({ version: "2.1.0" });
-    expect(module.getUpdateStatus().state).toBe("downloaded");
+    updaterEvents.get("error")?.(rejection);
+
+    expect(autoUpdater.downloadedUpdateHelper.clear).not.toHaveBeenCalled();
+    // Still disarmed: that copy cannot install, and leaving it staged would
+    // promise a restart that fails. This also re-enables auto-download, which
+    // is what drives the re-extraction.
+    expect(module.getUpdateStatus().staged).toBeUndefined();
+    expect(statusMessages().at(-1)?.payload).toMatchObject({
+      state: "error",
+      message: expect.stringContaining("prepare it again"),
+    });
+    consoleErrorSpy.mockRestore();
+  });
+
+  it("discards the download once the same build fails a second time", async () => {
+    // A re-extraction failing too is the first real evidence the bytes are
+    // suspect, so now the zip goes.
+    const consoleErrorSpy = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => undefined);
+    const { module, autoUpdater, updaterEvents, statusMessages } =
+      await importAutoUpdater();
+
+    await module.checkForUpdatesNow(stateDir);
+    updaterEvents.get("update-downloaded")?.({ version: "2.1.0" });
+    updaterEvents.get("error")?.(rejection);
+    updaterEvents.get("update-downloaded")?.({ version: "2.1.0" });
+    updaterEvents.get("error")?.(rejection);
+
+    // Deferred, not fired and forgotten: the clear is queued on the operation
+    // chain, so it has not run at the instant the rejection is handled.
+    expect(autoUpdater.downloadedUpdateHelper.clear).not.toHaveBeenCalled();
+    expect(statusMessages().at(-1)?.payload).toMatchObject({
+      state: "error",
+      message: expect.stringContaining("failed verification again"),
+    });
+
+    // ...and the next operation cannot begin until it has. Awaiting one drains
+    // the queue behind the cleanup, which is the property that stops a download
+    // starting into a pending directory that is still being emptied.
+    await module.checkForUpdatesNow(stateDir);
+    expect(autoUpdater.downloadedUpdateHelper.clear).toHaveBeenCalledTimes(1);
+    consoleErrorSpy.mockRestore();
+  });
+
+  it("keeps the actionable message when one rejection is delivered twice", async () => {
+    // MacUpdater re-emits every native Squirrel error onto electron-updater's
+    // own "error" event, and the operation promise can reject with that same
+    // error. Handling the first delivery disarms the staged build, so without a
+    // dedupe the second misses the branch, falls through to generic handling,
+    // and replaces the actionable message with the raw signature dump.
+    const consoleErrorSpy = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => undefined);
+    const consoleDebugSpy = vi
+      .spyOn(console, "debug")
+      .mockImplementation(() => undefined);
+    const { module, autoUpdater, updaterEvents, statusMessages } =
+      await importAutoUpdater();
+
+    await module.checkForUpdatesNow(stateDir);
+    updaterEvents.get("update-downloaded")?.({ version: "2.1.0" });
+    updaterEvents.get("error")?.(rejection);
+    const afterFirstDelivery = statusMessages().at(-1)?.payload;
 
     updaterEvents.get("error")?.(rejection);
 
-    // Without the clear, the next check hands Squirrel the same bytes again.
-    expect(autoUpdater.downloadedUpdateHelper.clear).toHaveBeenCalledTimes(1);
-    // And without the disarm, the sidebar keeps offering a restart-to-install
-    // that cannot succeed.
-    expect(module.getUpdateStatus().staged).toBeUndefined();
-    expect(module.getUpdateStatus().state).toBe("error");
+    expect(statusMessages().at(-1)?.payload).toEqual(afterFirstDelivery);
     expect(statusMessages().at(-1)?.payload).toMatchObject({
       state: "error",
-      message: expect.stringContaining("download it again on the next check"),
+      message: expect.stringContaining("prepare it again"),
     });
-    expect(consoleErrorSpy).toHaveBeenCalledWith(
-      "staged update rejected at install time; discarding cached download:",
-      rejection,
-    );
+    // The repeat must not be miscounted as a genuine second failure, which
+    // would discard a download that has only actually failed once.
+    expect(autoUpdater.downloadedUpdateHelper.clear).not.toHaveBeenCalled();
+    consoleDebugSpy.mockRestore();
+    consoleErrorSpy.mockRestore();
+  });
+
+  it("does not carry a previous build's failure over to a new one", async () => {
+    // The count answers "has THIS build failed before". A newer build that
+    // fails once must still get its cheap retry.
+    const consoleErrorSpy = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => undefined);
+    const { module, autoUpdater, updaterEvents } = await importAutoUpdater();
+
+    await module.checkForUpdatesNow(stateDir);
+    updaterEvents.get("update-downloaded")?.({ version: "2.1.0" });
+    updaterEvents.get("error")?.(rejection);
+    updaterEvents.get("update-downloaded")?.({ version: "2.2.0" });
+    updaterEvents.get("error")?.(rejection);
+
+    expect(autoUpdater.downloadedUpdateHelper.clear).not.toHaveBeenCalled();
     consoleErrorSpy.mockRestore();
   });
 
@@ -2937,7 +3019,7 @@ describe("staged install rejection", () => {
     await module.startAutoUpdates(stateDir);
 
     expect(module.getUpdateStatus().state).toBe("error");
-    expect(autoUpdater.downloadedUpdateHelper.clear).toHaveBeenCalledTimes(1);
+    expect(module.getUpdateStatus().staged).toBeUndefined();
     consoleErrorSpy.mockRestore();
   });
 
@@ -2955,7 +3037,7 @@ describe("staged install rejection", () => {
     const consoleErrorSpy = vi
       .spyOn(console, "error")
       .mockImplementation(() => undefined);
-    const { module, autoUpdater, updaterEvents } = await importAutoUpdater();
+    const { module, updaterEvents } = await importAutoUpdater();
 
     await module.checkForUpdatesNow(stateDir);
     updaterEvents.get("update-downloaded")?.({ version: "2.1.0" });
@@ -2967,8 +3049,8 @@ describe("staged install rejection", () => {
       ),
     );
 
-    expect(autoUpdater.downloadedUpdateHelper.clear).toHaveBeenCalledTimes(1);
     expect(module.getUpdateStatus().staged).toBeUndefined();
+    expect(module.getUpdateStatus().state).toBe("error");
     consoleErrorSpy.mockRestore();
   });
 
@@ -2979,7 +3061,7 @@ describe("staged install rejection", () => {
     const consoleErrorSpy = vi
       .spyOn(console, "error")
       .mockImplementation(() => undefined);
-    const { module, autoUpdater, updaterEvents } = await importAutoUpdater();
+    const { module, updaterEvents } = await importAutoUpdater();
 
     await module.checkForUpdatesNow(stateDir);
     updaterEvents.get("update-downloaded")?.({ version: "2.1.0" });
@@ -2990,8 +3072,8 @@ describe("staged install rejection", () => {
       ),
     );
 
-    expect(autoUpdater.downloadedUpdateHelper.clear).toHaveBeenCalledTimes(1);
     expect(module.getUpdateStatus().staged).toBeUndefined();
+    expect(module.getUpdateStatus().state).toBe("error");
     consoleErrorSpy.mockRestore();
   });
 
