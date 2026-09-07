@@ -1,0 +1,159 @@
+{
+  "commit": "f13c15f58ca3d427fa4e3f403550b3b095a3ddfe",
+  "environment": "macOS arm64; isolated AO daemon; installed production Claude Code 2.1.263 and Codex 0.153.4",
+  "method": "Real daemon HTTP transitions, rendered terminal reads, provider replies, read-only SQLite history assertions. This is not a desktop screen recording.",
+  "results": [
+    {
+      "id": "48b847b5-d91d-4d56-8089-491001e20b30",
+      "sessionId": "rt5053-0908-1",
+      "sourceMode": "chat",
+      "targetMode": "tui",
+      "policy": "interrupt",
+      "phase": "completed",
+      "createdAt": "2026-09-07T21:11:34.258754Z",
+      "updatedAt": "2026-09-07T21:11:34.365269Z",
+      "completedAt": "2026-09-07T21:11:34.365269Z"
+    },
+    {
+      "sessionId": "rt5053-0908-1",
+      "harness": "claude-code",
+      "stage": "untouched terminal",
+      "transcriptPathReserved": true,
+      "transcriptExists": false
+    },
+    {
+      "id": "7612370b-8488-4f3c-86e7-610f4020aa14",
+      "sessionId": "rt5053-0908-1",
+      "sourceMode": "tui",
+      "targetMode": "chat",
+      "policy": "drain",
+      "phase": "completed",
+      "createdAt": "2026-09-07T21:11:35.281551Z",
+      "updatedAt": "2026-09-07T21:11:37.399137Z",
+      "completedAt": "2026-09-07T21:11:37.399137Z"
+    },
+    {
+      "sessionId": "rt5053-0908-1",
+      "stage": "untouched return",
+      "sequence": 0,
+      "turns": 0,
+      "messages": 0
+    },
+    {
+      "id": "580953dc-503d-403a-bd1c-df468857391b",
+      "sessionId": "rt5053-0908-1",
+      "sourceMode": "chat",
+      "targetMode": "tui",
+      "policy": "interrupt",
+      "phase": "completed",
+      "createdAt": "2026-09-07T21:11:37.807714Z",
+      "updatedAt": "2026-09-07T21:11:37.86638Z",
+      "completedAt": "2026-09-07T21:11:37.86638Z"
+    },
+    {
+      "id": "26aad3cb-a90f-4f23-8fb6-57831379e4aa",
+      "sessionId": "rt5053-0908-1",
+      "sourceMode": "tui",
+      "targetMode": "chat",
+      "policy": "interrupt",
+      "phase": "completed",
+      "createdAt": "2026-09-07T21:17:08.648292Z",
+      "updatedAt": "2026-09-07T21:17:10.996313Z",
+      "completedAt": "2026-09-07T21:17:10.996313Z"
+    },
+    {
+      "sessionId": "rt5053-0908-1",
+      "harness": "claude-code",
+      "stage": "return after terminal message",
+      "policyNote": "Drain refused a visible composer draft; explicit interrupt discarded only the test draft.",
+      "nativeIdentityPreserved": true,
+      "assistantResponseReplayed": true,
+      "messages": [
+        {
+          "role": "user",
+          "text": "Reply with exactly AO5053_CLAUDE_OK. Do not use tools."
+        },
+        {
+          "role": "assistant",
+          "text": "AO5053_CLAUDE_OK"
+        }
+      ]
+    },
+    {
+      "id": "c21e3d81-5b96-4859-8857-cbcb10826b3c",
+      "sessionId": "rt5053-0908-2",
+      "sourceMode": "chat",
+      "targetMode": "tui",
+      "policy": "interrupt",
+      "phase": "completed",
+      "createdAt": "2026-09-07T21:17:27.584743Z",
+      "updatedAt": "2026-09-07T21:17:27.700143Z",
+      "completedAt": "2026-09-07T21:17:27.700143Z"
+    },
+    {
+      "sessionId": "rt5053-0908-2",
+      "harness": "codex",
+      "stage": "untouched terminal",
+      "transcriptPathReserved": false,
+      "transcriptExists": false
+    },
+    {
+      "id": "b4798d92-fd8e-4dd0-ba09-cc7df943c4e5",
+      "sessionId": "rt5053-0908-2",
+      "sourceMode": "tui",
+      "targetMode": "chat",
+      "policy": "drain",
+      "phase": "completed",
+      "createdAt": "2026-09-07T21:18:24.100834Z",
+      "updatedAt": "2026-09-07T21:18:26.456443Z",
+      "completedAt": "2026-09-07T21:18:26.456443Z"
+    },
+    {
+      "sessionId": "rt5053-0908-2",
+      "harness": "codex",
+      "stage": "untouched return",
+      "sequence": 0,
+      "turns": 0,
+      "messages": 0
+    },
+    {
+      "id": "728f9425-5058-4750-9721-dcfb82ac1fb0",
+      "sessionId": "rt5053-0908-2",
+      "sourceMode": "chat",
+      "targetMode": "tui",
+      "policy": "interrupt",
+      "phase": "completed",
+      "createdAt": "2026-09-07T21:18:26.640512Z",
+      "updatedAt": "2026-09-07T21:18:26.67723Z",
+      "completedAt": "2026-09-07T21:18:26.67723Z"
+    },
+    {
+      "id": "eeeef826-b8a3-446f-a7a9-55d998597214",
+      "sessionId": "rt5053-0908-2",
+      "sourceMode": "tui",
+      "targetMode": "chat",
+      "policy": "drain",
+      "phase": "completed",
+      "createdAt": "2026-09-07T21:18:33.000985Z",
+      "updatedAt": "2026-09-07T21:18:33.978742Z",
+      "completedAt": "2026-09-07T21:18:33.978742Z"
+    },
+    {
+      "sessionId": "rt5053-0908-2",
+      "harness": "codex",
+      "stage": "return after terminal message",
+      "nativeIdentityPreserved": true,
+      "assistantResponseReplayed": true,
+      "messages": [
+        {
+          "role": "user",
+          "text": "Reply with exactly AO5053_CODEX_OK. Do not use tools."
+        },
+        {
+          "role": "assistant",
+          "text": "AO5053_CODEX_OK"
+        }
+      ]
+    }
+  ]
+}
