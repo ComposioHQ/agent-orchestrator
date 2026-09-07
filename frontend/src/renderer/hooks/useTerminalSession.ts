@@ -16,6 +16,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { getApiBaseUrl } from "../lib/api-client";
 import { captureRendererEvent } from "../lib/telemetry";
+import { LOCAL_ECHO_ENABLED, withPredictiveLocalEcho } from "../lib/terminal-local-echo";
 import { createTerminalMux, muxUrlFromApiBase, type TerminalMux } from "../lib/terminal-mux";
 import { sessionIsActive, type WorkspaceSession } from "../types/workspace";
 import { workspaceQueryKey } from "./useWorkspaceQuery";
@@ -24,7 +25,7 @@ import { workspaceQueryKey } from "./useWorkspaceQuery";
  * The slice of xterm's Terminal the attachment needs. Structural, so tests can
  * drive the hook with a tiny fake instead of a real xterm + DOM.
  */
-export type TerminalUserInputSource = "keyboard" | "paste" | "composition" | "shortcut" | "wheel";
+export type TerminalUserInputSource = "keyboard" | "paste" | "composition" | "shortcut" | "wheel" | "protocol";
 
 export type AttachableTerminal = {
 	cols: number;
@@ -45,7 +46,17 @@ export type AttachableTerminal = {
 	 * without exposing an intermediate row.
 	 */
 	prepareForActivation: () => Promise<void>;
-	onUserInput: (listener: (data: string, source: TerminalUserInputSource) => void) => { dispose: () => void };
+	/** Tell Cursor Agent the live light/dark scheme (private 997 notification). */
+	notifyCursorColorScheme: () => void;
+	/**
+	 * Which xterm buffer is active. Predictive local echo (cloud panes only)
+	 * predicts on the normal buffer and self-disables on the alternate one;
+	 * fakes may omit it, which reads as "alternate" — never predict.
+	 */
+	bufferType?: () => "normal" | "alternate";
+	/** Send an explicit UI action through the same guarded path as user input. */
+	sendUserInput: (data: string, source?: TerminalUserInputSource) => boolean;
+	onUserInput: (listener: (data: string, source: TerminalUserInputSource) => boolean | void) => { dispose: () => void };
 	onResize: (listener: (size: { cols: number; rows: number }) => void) => { dispose: () => void };
 };
 
@@ -208,6 +219,7 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 		replayTailQuietTimer: null as ReturnType<typeof setTimeout> | null,
 		replayTailCapTimer: null as ReturnType<typeof setTimeout> | null,
 		replayTailPending: false,
+		queuedProtocolInputs: [] as string[],
 		// The current attachment's flush, published so teardown can land buffered
 		// bytes instead of discarding them (the closure lives inside connect).
 		flushReplay: null as ((preserveBeforeTeardown?: boolean) => void) | null,
@@ -262,6 +274,7 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 		r.replayChunks = [];
 		r.replayBytes = 0;
 		r.replayTailPending = false;
+		r.queuedProtocolInputs = [];
 		r.lastPublishedGrid = null;
 		// Nothing is buffering any more, so nothing should stay covered. connect()
 		// re-arms the gate immediately after calling this, in the same tick, so
@@ -351,7 +364,19 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 		r.inputReady = false;
 		teardownMux();
 
-		const mux = (optionsRef.current.createMux ?? defaultCreateMux)();
+		const baseMux = (optionsRef.current.createMux ?? defaultCreateMux)();
+		// Cloud panes ride a real network round trip per keystroke, so wrap their
+		// mux with predictive local echo (see lib/terminal-local-echo.ts): typed
+		// characters render immediately and reconcile against the server echo.
+		// Local panes are loopback PTYs with ~0 latency and stay byte-exact
+		// untouched. Shell panes carry no session, so they are never wrapped —
+		// today the renderer only dials cloud sockets for agent panes anyway.
+		const mux =
+			LOCAL_ECHO_ENABLED && sessionRef.current?.cloud
+				? withPredictiveLocalEcho(baseMux, {
+						bufferType: () => terminal.bufferType?.() ?? "alternate",
+					})
+				: baseMux;
 		r.mux = mux;
 
 		let pendingReplayWrites = 0;
@@ -580,6 +605,8 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 				setError(undefined);
 				setHasAttached(true);
 				transition("attached");
+				terminal.notifyCursorColorScheme();
+				flushQueuedProtocolInputs();
 				// Bound the gate from here: the daemon fires onOpen from setPTY and
 				// starts copyOut immediately after, so the replay is imminent and
 				// the cap now measures the burst rather than the connect handshake.
@@ -646,14 +673,33 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 				}
 			}),
 		);
-		const input = terminal.onUserInput((data) => {
-			if (
-				!isCurrentAttachment(generation, handle, mux) ||
-				!r.inputReady ||
-				optionsRef.current.inputDisabled ||
-				optionsRef.current.isVisible === false
-			) {
-				return;
+		const flushQueuedProtocolInputs = () => {
+			if (!isCurrentAttachment(generation, handle, mux) || !r.inputReady) return;
+			for (const queued of r.queuedProtocolInputs) {
+				mux.sendInput(handle, queued);
+			}
+			r.queuedProtocolInputs = [];
+		};
+		const input = terminal.onUserInput((data, source) => {
+			if (!isCurrentAttachment(generation, handle, mux)) {
+				return false;
+			}
+			// Protocol replies must bypass visibility and ownership gates so hidden panes stay connected.
+			if (source === "protocol") {
+				if (!r.inputReady) {
+					r.queuedProtocolInputs.push(data);
+					return true;
+				}
+				mux.sendInput(handle, data);
+				return true;
+			}
+			if (!r.inputReady) {
+				return false;
+			}
+			// Agent color-scheme bytes are not human input — forwarding them must not
+			// flush the replay gate or reveal the tail (that was the theme-toggle jank).
+			if (optionsRef.current.inputDisabled || optionsRef.current.isVisible === false) {
+				return false;
 			}
 			// Input is accepted from `opened`, which lands before the replay — so a
 			// user can type while the gate still holds the burst, and their echo
@@ -663,6 +709,7 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 			if (r.replayBuffering) flushReplay();
 			else revealReplayTail();
 			mux.sendInput(handle, data);
+			return true;
 		});
 		// xterm only fires onResize when the grid actually changed; the debounce
 		// additionally collapses a drag/fullscreen/layout burst into one PTY
@@ -890,6 +937,11 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 		},
 		[teardownMux],
 	);
+
+	useEffect(() => {
+		if (!replaySettled) return;
+		runtime.current.terminal?.notifyCursorColorScheme();
+	}, [replaySettled]);
 
 	return { attach, state, error, replaySettled, hasAttached, syncVisibleSize };
 }

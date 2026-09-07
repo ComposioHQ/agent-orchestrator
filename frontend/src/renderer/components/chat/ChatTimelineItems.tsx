@@ -51,7 +51,7 @@ const activityIcon: Record<ActivityKind, typeof SquareTerminal> = {
 import { cn } from "../../lib/utils";
 import { caretNotation, stripAnsi } from "../../lib/ansi";
 import { getApiBaseUrl } from "../../lib/api-client";
-import { ChatMarkdown } from "./ChatMarkdown";
+import { ActivityTitle, ChatMarkdown } from "./ChatMarkdown";
 import { HighlightedCode } from "./HighlightedCode";
 import { CopyButton } from "./CopyButton";
 import { HumanMessageEditor } from "./HumanMessageEditor";
@@ -64,7 +64,7 @@ import {
 	exploredFileCount,
 	isNonzeroCommandExit,
 } from "./activity-command";
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "../ui/tooltip";
+import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
 import {
 	DropdownMenu,
 	DropdownMenuContent,
@@ -85,6 +85,7 @@ import {
 	type ConversationItem,
 	type TurnDiff,
 } from "../../types/conversation";
+import { resolveTurnFilePath, turnFileOpenPath, turnPathHints } from "../../lib/turn-file-open-path";
 
 const timeFormatter = new Intl.DateTimeFormat(undefined, {
 	hour: "2-digit",
@@ -114,20 +115,23 @@ const STREAM_BASE_CHARACTERS_PER_SECOND = 58;
 const STREAM_TARGET_BACKLOG_CHARACTERS = 72;
 const STREAM_MAX_CHARACTERS_PER_SECOND = 720;
 const STREAM_MAX_FRAME_DELTA_MS = 100;
+const STREAM_MAX_DISPLAY_LAG_MS = 200;
 const STREAM_GRAPHEME_SEGMENTER = new Intl.Segmenter(undefined, { granularity: "grapheme" });
 
 function streamGraphemes(text: string): string[] {
 	return Array.from(STREAM_GRAPHEME_SEGMENTER.segment(text), ({ segment }) => segment);
 }
 
-function reconciledStreamPrefix(visibleText: string, targetGraphemes: string[]): string {
+function reconciledStreamPrefix(visibleText: string, targetGraphemes: string[]) {
 	let boundary = 0;
+	let count = 0;
 	for (const grapheme of targetGraphemes) {
 		const nextBoundary = boundary + grapheme.length;
 		if (nextBoundary > visibleText.length) break;
 		boundary = nextBoundary;
+		count++;
 	}
-	return visibleText.slice(0, boundary);
+	return { text: visibleText.slice(0, boundary), count };
 }
 
 function useSmoothStreamingText(message: ConversationMessage): string {
@@ -136,8 +140,9 @@ function useSmoothStreamingText(message: ConversationMessage): string {
 	const [visibleText, setVisibleText] = useState(() => message.text);
 	const visibleRef = useRef(visibleText);
 	const targetRef = useRef(message.text);
-	const visibleGraphemesRef = useRef(streamGraphemes(visibleText));
-	const targetGraphemesRef = useRef(streamGraphemes(message.text));
+	const targetGraphemes = useMemo(() => streamGraphemes(message.text), [message.text]);
+	const visibleGraphemeCountRef = useRef(targetGraphemes.length);
+	const targetGraphemesRef = useRef(targetGraphemes);
 	const messageIdRef = useRef(message.id);
 	const frameRef = useRef<number | undefined>(undefined);
 	const lastFrameAtRef = useRef<number | undefined>(undefined);
@@ -164,14 +169,25 @@ function useSmoothStreamingText(message: ConversationMessage): string {
 
 	const scheduleDrain = useCallback(() => {
 		if (frameRef.current !== undefined) return;
+		const drainStartedAt = performance.now();
 
 		const tick = (now: number) => {
 			frameRef.current = undefined;
 			const previousFrameAt = lastFrameAtRef.current ?? now;
 			lastFrameAtRef.current = now;
-			const backlog = targetGraphemesRef.current.length - visibleGraphemesRef.current.length;
+			const backlog = targetGraphemesRef.current.length - visibleGraphemeCountRef.current;
 			if (backlog <= 0) {
 				fractionalCharactersRef.current = 0;
+				return;
+			}
+
+			// New snapshots share this drain's deadline. Use real elapsed time so a
+			// background tab catches up even if it has not received its first frame.
+			if (now - drainStartedAt >= STREAM_MAX_DISPLAY_LAG_MS) {
+				visibleRef.current = targetRef.current;
+				visibleGraphemeCountRef.current = targetGraphemesRef.current.length;
+				setVisibleText(targetRef.current);
+				cancelDrain();
 				return;
 			}
 
@@ -190,15 +206,14 @@ function useSmoothStreamingText(message: ConversationMessage): string {
 				return;
 			}
 			fractionalCharactersRef.current -= count;
-			const current = visibleGraphemesRef.current;
+			const currentCount = visibleGraphemeCountRef.current;
 			const target = targetGraphemesRef.current;
-			if (current.length >= target.length) return;
-			const nextGraphemes = target.slice(current.length, current.length + count);
-			const next = current.concat(nextGraphemes).join("");
+			const nextCount = Math.min(target.length, currentCount + count);
+			const next = visibleRef.current + target.slice(currentCount, nextCount).join("");
 			visibleRef.current = next;
-			visibleGraphemesRef.current = current.concat(nextGraphemes);
+			visibleGraphemeCountRef.current = nextCount;
 			setVisibleText(next);
-			if (visibleGraphemesRef.current.length < targetGraphemesRef.current.length) {
+			if (visibleGraphemeCountRef.current < targetGraphemesRef.current.length) {
 				frameRef.current = window.requestAnimationFrame(tick);
 			}
 		};
@@ -206,35 +221,36 @@ function useSmoothStreamingText(message: ConversationMessage): string {
 		lastFrameAtRef.current = undefined;
 		fractionalCharactersRef.current = 0;
 		frameRef.current = window.requestAnimationFrame(tick);
-	}, []);
+	}, [cancelDrain]);
 
 	useEffect(() => {
 		if (message.id !== messageIdRef.current) {
 			cancelDrain();
 			messageIdRef.current = message.id;
 			targetRef.current = message.text;
-			targetGraphemesRef.current = streamGraphemes(message.text);
+			targetGraphemesRef.current = targetGraphemes;
 			const initial = message.text;
 			visibleRef.current = initial;
-			visibleGraphemesRef.current = streamGraphemes(initial);
+			visibleGraphemeCountRef.current = targetGraphemes.length;
 			setVisibleText(initial);
 			return;
 		}
 
 		targetRef.current = message.text;
-		targetGraphemesRef.current = streamGraphemes(message.text);
+		targetGraphemesRef.current = targetGraphemes;
 		if (!message.streaming || reducedMotion) {
 			cancelDrain();
 			visibleRef.current = message.text;
-			visibleGraphemesRef.current = targetGraphemesRef.current;
+			visibleGraphemeCountRef.current = targetGraphemes.length;
 			setVisibleText(message.text);
 			return;
 		}
 		// A provider correction or rollback can replace the current prefix. In that
 		// case the durable snapshot is authoritative and should be shown immediately.
 		if (!message.text.startsWith(visibleRef.current)) {
+			cancelDrain();
 			visibleRef.current = message.text;
-			visibleGraphemesRef.current = targetGraphemesRef.current;
+			visibleGraphemeCountRef.current = targetGraphemes.length;
 			setVisibleText(message.text);
 			return;
 		}
@@ -242,13 +258,13 @@ function useSmoothStreamingText(message: ConversationMessage): string {
 		// different target grapheme. Reconcile that trailing fragment before using
 		// the old grapheme count, otherwise the drain can skip the merged suffix.
 		const reconciled = reconciledStreamPrefix(visibleRef.current, targetGraphemesRef.current);
-		if (reconciled !== visibleRef.current) {
-			visibleRef.current = reconciled;
-			visibleGraphemesRef.current = streamGraphemes(reconciled);
-			setVisibleText(reconciled);
+		if (reconciled.text !== visibleRef.current) {
+			visibleRef.current = reconciled.text;
+			visibleGraphemeCountRef.current = reconciled.count;
+			setVisibleText(reconciled.text);
 		}
-		if (visibleGraphemesRef.current.length < targetGraphemesRef.current.length) scheduleDrain();
-	}, [cancelDrain, message.id, message.text, message.streaming, reducedMotion, scheduleDrain]);
+		if (visibleGraphemeCountRef.current < targetGraphemesRef.current.length) scheduleDrain();
+	}, [cancelDrain, message.id, message.text, message.streaming, reducedMotion, scheduleDrain, targetGraphemes]);
 
 	useEffect(
 		() => cancelDrain,
@@ -258,7 +274,7 @@ function useSmoothStreamingText(message: ConversationMessage): string {
 	return visibleText;
 }
 
-function humanMessageParts(text: string): { body: string; attachments: string[] } {
+function stagedAttachmentParts(text: string): { body: string; attachments: string[] } {
 	const match = ATTACHMENT_REFERENCE_BLOCK.exec(text);
 	if (!match?.[1]) return { body: text, attachments: [] };
 
@@ -398,6 +414,51 @@ function attachmentURL(apiBaseUrl: string, sessionId: string, path: string): str
 	return apiBaseUrl ? new URL(route, apiBaseUrl).toString() : route;
 }
 
+function StagedAttachmentItems({
+	paths,
+	sessionId,
+	apiBaseUrl,
+	ariaLabel,
+	className,
+}: {
+	paths: string[];
+	sessionId: string;
+	apiBaseUrl: string;
+	ariaLabel: string;
+	className?: string;
+}) {
+	if (paths.length === 0) return null;
+	return (
+		<ul aria-label={ariaLabel} className={cn("flex max-w-full flex-wrap gap-2", className)}>
+			{paths.map((path) => {
+				const name = attachmentName(path);
+				return IMAGE_ATTACHMENT_PATH.test(path) ? (
+					<li
+						key={path}
+						className="max-w-full overflow-hidden rounded-md border border-border bg-background"
+					>
+						<img
+							src={attachmentURL(apiBaseUrl, sessionId, path)}
+							alt={name}
+							loading="lazy"
+							className="block h-auto max-h-80 max-w-full object-contain"
+						/>
+					</li>
+				) : (
+					<li
+						key={path}
+						title={path}
+						className="flex max-w-full items-center gap-1.5 rounded-md border border-border bg-background px-2 py-1.5 text-xs text-muted-foreground"
+					>
+						<FileIcon aria-hidden="true" className="size-3.5 shrink-0" />
+						<span className="truncate">{name}</span>
+					</li>
+				);
+			})}
+		</ul>
+	);
+}
+
 /** Collapse the home directory so a long absolute path does not eat the row. */
 function shortenPaths(text: string): string {
 	return text.replace(/\/(?:Users|home)\/[^/\s]+/g, "~");
@@ -485,7 +546,7 @@ export function HumanMessage({
 	activateBranchPending?: boolean;
 	activateBranchError?: string;
 }) {
-	const { body, attachments } = humanMessageParts(message.text);
+	const { body, attachments } = stagedAttachmentParts(message.text);
 	return (
 		<div className="group/message flex flex-col items-end gap-1">
 			{/* A queued message reads as not-yet-sent rather than as sent-and-ignored:
@@ -520,23 +581,13 @@ export function HumanMessage({
 					)}
 				>
 					{body ? <p className="break-words whitespace-pre-wrap text-pretty">{body}</p> : null}
-					{attachments.length > 0 ? (
-						<ul aria-label="Attached files" className={cn("flex max-w-full flex-wrap gap-2", body && "mt-2")}>
-							{attachments.map((path) => {
-								const name = attachmentName(path);
-								return IMAGE_ATTACHMENT_PATH.test(path) ? (
-									<li key={path} className="max-w-full overflow-hidden rounded-md border border-border bg-background">
-										<img src={attachmentURL(apiBaseUrl, sessionId, path)} alt={name} loading="lazy" className="block h-auto max-h-80 max-w-full object-contain" />
-									</li>
-								) : (
-									<li key={path} title={path} className="flex max-w-full items-center gap-1.5 rounded-md border border-border bg-background px-2 py-1.5 text-xs text-muted-foreground">
-										<FileIcon aria-hidden="true" className="size-3.5 shrink-0" />
-										<span className="truncate">{name}</span>
-									</li>
-								);
-							})}
-						</ul>
-					) : null}
+					<StagedAttachmentItems
+						paths={attachments}
+						sessionId={sessionId}
+						apiBaseUrl={apiBaseUrl}
+						ariaLabel="Attached files"
+						className={cn(body && "mt-2")}
+					/>
 				</div>
 			)}
 			{editing ? null : (
@@ -549,15 +600,19 @@ export function HumanMessage({
 							{formatMessageTimestamp(message.createdAt)}
 						</span>
 						{onEdit && onEditStart && message.turnId ? (
-							<button
-								type="button"
-								onClick={onEditStart}
-								aria-label="Edit user message"
-								title="Edit user message"
-								className="flex size-7 items-center justify-center rounded-md text-muted-foreground transition-[scale,background-color,color] duration-150 ease-out hover:bg-interactive-hover hover:text-foreground active:scale-[0.96] motion-reduce:transition-none motion-reduce:active:scale-100"
-							>
-								<Pencil aria-hidden="true" className="size-3" />
-							</button>
+							<Tooltip>
+								<TooltipTrigger asChild>
+									<button
+										type="button"
+										onClick={onEditStart}
+										aria-label="Edit user message"
+										className="flex size-7 items-center justify-center rounded-md text-muted-foreground transition-[scale,background-color,color] duration-150 ease-out hover:bg-interactive-hover hover:text-foreground active:scale-[0.96] motion-reduce:transition-none motion-reduce:active:scale-100"
+									>
+										<Pencil aria-hidden="true" className="size-3" />
+									</button>
+								</TooltipTrigger>
+								<TooltipContent side="bottom">Edit user message</TooltipContent>
+							</Tooltip>
 						) : null}
 						<CopyButton
 							text={message.text}
@@ -660,9 +715,9 @@ export function AssistantMessage({
 			<ChatMarkdown text={visibleText} streaming={renderingStreaming} />
 			{showActions ? (
 				// One action row for the completed answer, not one after every prose
-				// fragment the provider emitted while working. Reveal the controls only
-				// when the message is being inspected, keeping the answer visually quiet.
-				<div className="mt-1 flex h-7 items-center gap-0.5 opacity-0 transition-opacity duration-150 ease-out group-hover/message:opacity-100 group-focus-within/message:opacity-100 motion-reduce:transition-none">
+				// fragment the provider emitted while working. Copy, rollback, and
+				// duration stay visible; only the wall-clock time reveals on hover.
+				<div className="mt-1 flex h-7 items-center gap-0.5">
 					{showCopy ? (
 						/* The stored markdown, not a re-serialization of what was rendered:
 						   pasting it into an editor has to give back what the agent wrote. */
@@ -674,19 +729,23 @@ export function AssistantMessage({
 						/>
 					) : null}
 					{onRollback ? (
-						<button
-							type="button"
-							onClick={onRollback}
-							aria-label="Roll back to here"
-							title="Roll back to here"
-							className="flex size-7 items-center justify-center rounded-md text-muted-foreground transition-[scale,background-color,color] duration-150 ease-out hover:bg-interactive-hover hover:text-foreground active:scale-[0.96] motion-reduce:transition-none motion-reduce:active:scale-100"
-						>
-							<Undo2 aria-hidden="true" className="size-3" />
-						</button>
+						<Tooltip>
+							<TooltipTrigger asChild>
+								<button
+									type="button"
+									onClick={onRollback}
+									aria-label="Roll back to here"
+									className="flex size-7 items-center justify-center rounded-md text-muted-foreground transition-[scale,background-color,color] duration-150 ease-out hover:bg-interactive-hover hover:text-foreground active:scale-[0.96] motion-reduce:transition-none motion-reduce:active:scale-100"
+								>
+									<Undo2 aria-hidden="true" className="size-3" />
+								</button>
+							</TooltipTrigger>
+							<TooltipContent side="bottom">Roll back to here</TooltipContent>
+						</Tooltip>
 					) : null}
 					{hasDuration ? <TurnDuration durationMs={durationMs} /> : null}
 					<span
-						className="w-auto shrink-0 px-1 text-[11px] tabular-nums text-muted-foreground/75"
+						className="w-auto shrink-0 px-1 text-[11px] tabular-nums text-muted-foreground/75 opacity-0 transition-opacity duration-150 ease-out group-hover/message:opacity-100 group-focus-within/message:opacity-100 motion-reduce:transition-none"
 						aria-label={`Sent ${formatMessageTimestamp(message.createdAt)}`}
 					>
 						{formatMessageTimestamp(message.createdAt)}
@@ -829,7 +888,7 @@ function GenericActivityRow({ activity }: { activity: ConversationActivity }) {
 						)}
 						title={compactSummary ? undefined : label}
 					>
-						{label}
+						<ActivityTitle text={label} />
 					</strong>
 				)}
 				{path && !singleEdit ? (
@@ -876,7 +935,7 @@ function GenericActivityRow({ activity }: { activity: ConversationActivity }) {
 							// Said explicitly rather than implied by the label: "Ran command"
 							// alone never tells the reader what ran, and the collapsed row
 							// deliberately keeps only the category.
-							<pre className="overflow-x-auto rounded-md border border-border bg-background px-2.5 py-1.5 font-mono text-[10.5px] leading-relaxed text-foreground">
+							<pre className="scrollbar-none overflow-x-auto rounded-md border border-border bg-background px-2.5 py-1.5 font-mono text-[10.5px] leading-relaxed text-foreground">
 								{detail.command}
 							</pre>
 						) : null}
@@ -979,7 +1038,7 @@ function TerminalInput({ text, truncated }: { text: string; truncated?: boolean 
 				<Keyboard aria-hidden="true" className="size-3" />
 				Agent typed
 			</span>
-			<pre className="overflow-x-auto rounded-md border border-dashed border-border-strong bg-background px-2.5 py-1.5 font-mono text-[10.5px] leading-relaxed text-accent">
+			<pre className="scrollbar-none overflow-x-auto rounded-md border border-dashed border-border-strong bg-background px-2.5 py-1.5 font-mono text-[10.5px] leading-relaxed text-accent">
 				{shown}
 			</pre>
 			{truncated ? (
@@ -1041,7 +1100,7 @@ function CommandOutput({
 				ref={pre}
 				aria-live={streaming ? "polite" : undefined}
 				className={cn(
-					"max-h-64 overflow-auto font-mono leading-relaxed text-muted-foreground",
+					"scrollbar-none max-h-64 overflow-auto font-mono leading-relaxed text-muted-foreground",
 					embedded
 						? "cursor-chat-explore-output px-3 py-2 text-[11px]"
 						: "rounded-md border border-border bg-background px-2.5 py-2 text-[10.5px]",
@@ -1265,7 +1324,7 @@ function Patch({ patch, truncated }: { patch: string; truncated?: boolean }) {
 		// `chat-code` is what the token colours are scoped to, so a patch without it
 		// tokenizes correctly and renders in one flat colour.
 		<div className="chat-code mb-1 mt-0.5 overflow-hidden rounded-md border border-border bg-background">
-			<pre className="max-h-72 overflow-auto px-2.5 py-2">
+			<pre className="scrollbar-none max-h-72 overflow-auto px-2.5 py-2">
 				<code className="font-mono text-[10.5px] leading-[1.55] text-foreground">
 					<HighlightedCode code={patch} language="diff" />
 				</code>
@@ -1437,7 +1496,7 @@ function McpToolRow({ activity }: { activity: ConversationActivity }) {
 							<span className="text-[10px] uppercase tracking-[0.08em] text-muted-foreground/70">
 								Progress
 							</span>
-							<pre className="max-h-40 overflow-auto rounded-md border border-border bg-background px-2.5 py-1.5 font-mono text-[10.5px] leading-relaxed text-muted-foreground">
+							<pre className="scrollbar-none max-h-40 overflow-auto rounded-md border border-border bg-background px-2.5 py-1.5 font-mono text-[10.5px] leading-relaxed text-muted-foreground">
 								{detail.progress}
 							</pre>
 						</div>
@@ -1567,7 +1626,7 @@ function AutoReviewRow({ activity }: { activity: ConversationActivity }) {
 					className="min-w-0 flex-1 truncate font-mono text-[10.5px] text-muted-foreground"
 					title={activity.summary}
 				>
-					{shortenPaths(activity.summary)}
+					<ActivityTitle text={shortenPaths(activity.summary)} />
 				</span>
 				{detail?.riskLevel ? (
 					<span
@@ -1825,18 +1884,43 @@ function ReauthRow({ activity }: { activity: ConversationActivity }) {
  * back needs to see that this arrived mid-turn, since it explains why the agent
  * changed course without a new exchange starting.
  */
-export function SteerMessage({ activity }: { activity: ConversationActivity }) {
+export function SteerMessage({
+	activity,
+	sessionId,
+	apiBaseUrl = getApiBaseUrl(),
+}: {
+	activity: ConversationActivity;
+	sessionId: string;
+	apiBaseUrl?: string;
+}) {
 	const text = activity.detail?.text ?? activity.summary;
+	const { body, attachments } = stagedAttachmentParts(text);
+	let stagedImagesToMatch = attachments.filter((path) => IMAGE_ATTACHMENT_PATH.test(path)).length;
+	// Composer images are recorded twice: once as durable staged paths and once as
+	// native prompt blocks. Suppress only the corresponding leading native images;
+	// later image blocks may be distinct provider content and must remain visible.
+	const remainingContent = (activity.detail?.content ?? []).filter((item) => {
+		if (item.type !== "image" || stagedImagesToMatch === 0) return true;
+		stagedImagesToMatch -= 1;
+		return false;
+	});
 	return (
 		<div className="flex flex-col items-end gap-1">
 			<div className="w-fit max-w-[min(78%,560px)] break-words whitespace-pre-wrap rounded-[10px] border border-accent-dim bg-raised px-3 py-2.5 text-sm leading-[1.55] text-foreground">
-				{text ? <p>{text}</p> : null}
-				<ConversationContentItems
-					content={activity.detail?.content ?? []}
+				{body ? <p>{body}</p> : null}
+				<StagedAttachmentItems
+					paths={attachments}
+					sessionId={sessionId}
+					apiBaseUrl={apiBaseUrl}
 					ariaLabel="Steered attachments"
+					className={cn(body && "mt-2")}
+				/>
+				<ConversationContentItems
+					content={remainingContent}
+					ariaLabel={attachments.length > 0 ? "Steered content" : "Steered attachments"}
 					imageLabel="Image"
 					imageAlt={(position) => `Steered attachment ${position}`}
-					className={cn(text && "mt-2")}
+					className={cn((body || attachments.length > 0) && "mt-2")}
 				/>
 			</div>
 			<span className="flex items-center gap-1 text-[11px] text-muted-foreground">
@@ -1938,7 +2022,7 @@ export function ApprovalCard({
 					{detail?.reason ?? approvalPrompt(subjectKind)}
 				</p>
 
-				<pre className="mt-2 max-h-32 overflow-auto whitespace-pre-wrap break-words rounded-md border border-border/70 bg-background/45 px-2.5 py-1.5 font-mono text-[12px] leading-[1.45] text-muted-foreground">
+				<pre className="mt-2 scrollbar-none max-h-32 overflow-auto whitespace-pre-wrap break-words rounded-md border border-border/70 bg-background/45 px-2.5 py-1.5 font-mono text-[12px] leading-[1.45] text-muted-foreground">
 					{detail?.rawCommand ?? command}
 				</pre>
 
@@ -2232,20 +2316,19 @@ export function TurnChangedFiles({
 					const tooltipOldPath = file.oldPath
 						? resolveTurnFilePath(file.oldPath, pathHints)
 						: undefined;
+					const openPath = turnFileOpenPath(file.path, pathHints);
+					const location = fileLocationLabel(tooltipPath, tooltipOldPath);
 
 					const body = (
 						<>
 							<span className="sr-only">{status.label}</span>
 							<FileIcon aria-hidden="true" className="size-3.5 shrink-0 text-muted-foreground" />
-							{/* Same path tooltip as mid-turn Edited rows — not a native
-							    ellipsis title of the basename. */}
-							<FileLocationLabel
-								path={file.path}
-								oldPath={file.oldPath}
-								locationPath={tooltipPath}
-								locationOldPath={tooltipOldPath}
+							<span
 								className="min-w-0 flex-1 truncate text-[12px] text-foreground/80"
-							/>
+								title=""
+							>
+								{fileBasename(file.path)}
+							</span>
 							{file.additions > 0 ? (
 								<span className="shrink-0 font-mono text-[11px] tabular-nums text-success">
 									+{file.additions}
@@ -2267,16 +2350,48 @@ export function TurnChangedFiles({
 					return (
 						<li key={`${file.status}-${file.oldPath ?? ""}-${file.path}`}>
 							{onOpenFile ? (
-								<button
-									type="button"
-									onClick={() => onOpenFile(file.path)}
-									aria-label={`Open ${file.path} in Files`}
-									className={rowClass}
-								>
-									{body}
-								</button>
+								<Tooltip>
+									<TooltipTrigger asChild>
+										<button
+											type="button"
+											onClick={() => onOpenFile(openPath)}
+											aria-label={`Open ${openPath} in Files`}
+											className={rowClass}
+										>
+											{body}
+										</button>
+									</TooltipTrigger>
+									<TooltipContent side="top" className="max-w-[min(28rem,90vw)] font-mono text-[11px] font-normal">
+										{location}
+									</TooltipContent>
+								</Tooltip>
 							) : (
-								<div className={rowClass}>{body}</div>
+								<div className={rowClass}>
+									<span className="sr-only">{status.label}</span>
+									<FileIcon aria-hidden="true" className="size-3.5 shrink-0 text-muted-foreground" />
+									<FileLocationLabel
+										path={file.path}
+										oldPath={file.oldPath}
+										locationPath={tooltipPath}
+										locationOldPath={tooltipOldPath}
+										className="min-w-0 flex-1 truncate text-[12px] text-foreground/80"
+									/>
+									{file.additions > 0 ? (
+										<span className="shrink-0 font-mono text-[11px] tabular-nums text-success">
+											+{file.additions}
+										</span>
+									) : null}
+									{file.deletions > 0 ? (
+										<span className="shrink-0 font-mono text-[11px] tabular-nums text-destructive">
+											&minus;{file.deletions}
+										</span>
+									) : null}
+									{file.additions === 0 && file.deletions === 0 ? (
+										<span className="shrink-0 font-mono text-[11px] tabular-nums text-muted-foreground/50">
+											0
+										</span>
+									) : null}
+								</div>
 							)}
 						</li>
 					);
@@ -2325,85 +2440,29 @@ function FileLocationLabel({
 	const location = fileLocationLabel(locationPath ?? path, locationOldPath ?? oldPath);
 
 	return (
-		<TooltipProvider delayDuration={200}>
-			<Tooltip>
-				<TooltipTrigger asChild>
-					{/* `title=""` blocks Chromium's native ellipsis tooltip so only the
-					    path tooltip below appears — otherwise hover shows the basename. */}
-					<span
-						className={cn(
-							"min-w-0 truncate text-[11.5px] text-foreground/65 outline-none",
-							className,
-						)}
-						title=""
-					>
-						{fileBasename(path)}
-					</span>
-				</TooltipTrigger>
-				<TooltipContent
-					side="top"
-					className="max-w-[min(28rem,90vw)] border-border bg-popover px-2.5 py-1.5 font-mono text-[11px] font-normal text-muted-foreground shadow-none"
+		<Tooltip>
+			<TooltipTrigger asChild>
+				{/* `title=""` blocks Chromium's native ellipsis tooltip so only the
+				    path tooltip below appears — otherwise hover shows the basename. */}
+				<span
+					className={cn(
+						"min-w-0 truncate text-[11.5px] text-foreground/65 outline-none",
+						className,
+					)}
+					title=""
 				>
-					{location}
-				</TooltipContent>
-			</Tooltip>
-		</TooltipProvider>
+					{fileBasename(path)}
+				</span>
+			</TooltipTrigger>
+			<TooltipContent side="top" className="max-w-[min(28rem,90vw)] font-mono text-[11px] font-normal">
+				{location}
+			</TooltipContent>
+		</Tooltip>
 	);
 }
 
 function fileLocationLabel(path: string, oldPath?: string): string {
 	return oldPath ? `${shortenPaths(oldPath)} → ${shortenPaths(path)}` : shortenPaths(path);
-}
-
-/**
- * Absolute paths and a worktree cwd gathered from the same turn's activities, so a
- * turn-diff basename can be shown like the Edited tooltip.
- */
-type TurnPathHints = {
-	byBase: Map<string, string | undefined>;
-	cwd?: string;
-};
-
-function rememberTurnPathHint(byBase: Map<string, string | undefined>, absolutePath: string) {
-	const base = fileBasename(absolutePath);
-	if (!byBase.has(base)) {
-		byBase.set(base, absolutePath);
-		return;
-	}
-	if (byBase.get(base) !== absolutePath) byBase.set(base, undefined);
-}
-
-function turnPathHints(items: ConversationItem[] | undefined): TurnPathHints {
-	const byBase = new Map<string, string | undefined>();
-	let cwd: string | undefined;
-	if (!items?.length) return { byBase, cwd };
-
-	for (const item of items) {
-		if (item.kind !== "activity") continue;
-		if (!cwd && item.detail?.cwd) cwd = item.detail.cwd;
-		if (item.activityKind !== "file_change") continue;
-		for (const file of fileChangeFiles(item)) {
-			if (looksAbsolutePath(file.path)) rememberTurnPathHint(byBase, file.path);
-			if (file.oldPath && looksAbsolutePath(file.oldPath)) rememberTurnPathHint(byBase, file.oldPath);
-		}
-	}
-	return { byBase, cwd };
-}
-
-function looksAbsolutePath(path: string): boolean {
-	return path.startsWith("/") || path.startsWith("~") || /^[A-Za-z]:[\\/]/.test(path);
-}
-
-/** Prefer an absolute path from the turn; otherwise join the worktree cwd. */
-function resolveTurnFilePath(path: string, hints: TurnPathHints): string {
-	if (looksAbsolutePath(path)) return path;
-	const fromBasename = hints.byBase.get(fileBasename(path));
-	if (fromBasename) return fromBasename;
-	if (hints.cwd) {
-		const rel = path.replace(/^\.\//, "");
-		return `${hints.cwd.replace(/\/$/, "")}/${rel}`;
-	}
-	return path;
 }
 
 /** Basename only — the row is too narrow for a full path; the tooltip carries that. */

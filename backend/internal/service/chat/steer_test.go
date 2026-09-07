@@ -802,3 +802,45 @@ func TestPromoteQueuedTurnAmbiguousProviderFailureSettlesUncertainWithoutRedeliv
 		t.Fatalf("provider received %d steer attempts, want one", len(calls))
 	}
 }
+
+func TestRecoverImageSteerWithoutControllerNeverRedispatches(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		providerError error
+		wantError     error
+	}{
+		{name: "accepted"},
+		{name: "rejected", providerError: ports.ErrChatNoSteerableTurn, wantError: chatsvc.ErrNoActiveTurn},
+		{name: "uncertain", providerError: errors.New("response lost"), wantError: chatsvc.ErrSteerDeliveryUncertain},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h, provider := steerHarness(t)
+			provider.failWith(tc.providerError)
+			ctx := context.Background()
+			original, err := h.svc.Steer(ctx, testSession, ports.ChatUserMessage{
+				Text: "use this image", ClientMessageID: "image-steer",
+				Content: []ports.ChatContent{{Type: "image", MIMEType: "image/png", Data: "aW1hZ2U="}},
+			})
+			if !errors.Is(err, tc.wantError) {
+				t.Fatalf("steer error = %v, want %v", err, tc.wantError)
+			}
+			if err := h.svc.Stop(ctx, testSession); err != nil {
+				t.Fatal(err)
+			}
+			for range 2 {
+				recovered, err := h.svc.RecoverSteer(ctx, testSession, "image-steer")
+				if !errors.Is(err, tc.wantError) || recovered != original {
+					t.Fatalf("recovery = %+v, %v; want %+v, %v", recovered, err, original, tc.wantError)
+				}
+			}
+			for _, id := range []string{"", "never-reserved"} {
+				if _, err := h.svc.RecoverSteer(ctx, testSession, id); !errors.Is(err, chatsvc.ErrSteerDeliveryUncertain) {
+					t.Fatalf("missing receipt: %v", err)
+				}
+			}
+			if len(provider.steers()) != 1 {
+				t.Fatal("recovery redispatched guidance")
+			}
+		})
+	}
+}

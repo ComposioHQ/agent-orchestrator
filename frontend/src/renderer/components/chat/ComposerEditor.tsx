@@ -329,7 +329,11 @@ const EditorBridge = forwardRef<
 		};
 		const removeEnter = editor.registerCommand(
 			KEY_ENTER_COMMAND,
-			(event) => complete(event, "Enter"),
+			(event) => {
+				if (event?.isComposing || event?.shiftKey || editor.isComposing()) return false;
+				if (complete(event, "Enter")) return true;
+				return false;
+			},
 			COMMAND_PRIORITY_HIGH,
 		);
 		const removeTab = editor.registerCommand(

@@ -105,6 +105,26 @@ func (s *Service) Steer(
 	return controller.Steer(ctx, msg)
 }
 
+// RecoverSteer reads only the durable receipt. A missing controller or a changed
+// interface cannot turn an earlier accepted/uncertain delivery into a rejection.
+func (s *Service) RecoverSteer(ctx context.Context, id domain.SessionID, clientMessageID string) (SteerResult, error) {
+	if clientMessageID == "" {
+		return SteerResult{}, ErrSteerDeliveryUncertain
+	}
+	conversation, err := s.store.ConversationForSession(ctx, id)
+	if err != nil {
+		return SteerResult{}, fmt.Errorf("%w: load conversation: %w", ErrSteerDeliveryUncertain, err)
+	}
+	delivery, found, err := s.store.SteerDelivery(ctx, conversation.ID, clientMessageID)
+	if err != nil {
+		return SteerResult{}, fmt.Errorf("%w: load receipt: %w", ErrSteerDeliveryUncertain, err)
+	}
+	if !found {
+		return SteerResult{}, ErrSteerDeliveryUncertain
+	}
+	return replaySteerDelivery(delivery, delivery.RequestJSON)
+}
+
 // PromoteQueuedTurn delivers one already queued turn into the active turn. The
 // daemon reads the queued content; callers identify it but cannot replace it.
 func (s *Service) PromoteQueuedTurn(

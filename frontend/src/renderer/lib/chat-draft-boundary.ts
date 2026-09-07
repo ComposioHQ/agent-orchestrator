@@ -9,7 +9,7 @@ export {
 	type ChatDraftBoundaryKind,
 } from "../../shared/chat-draft-risk";
 
-export type ChatDraftBoundarySource = "composer" | "inline-edit";
+export type ChatDraftBoundarySource = "composer" | "inline-edit" | "queued-edit";
 
 const EMPTY_BOUNDARIES: readonly ChatDraftBoundaryKind[] = Object.freeze([]);
 const boundaries = new Map<

@@ -121,8 +121,20 @@ var shippedMigrations = map[int64]string{
 	114: "0114_usage_cost_candidate_canonical_index.sql",
 	115: "0115_usage_measurement_and_provider_usage.sql",
 	116: "0116_usage_billing_provider_source.sql",
-	118: "0118_conversation_steer_delivery.sql",
-	119: "0119_conversation_edit_delivery.sql",
+	117: "0117_allow_kimi_usage.sql",
+	118: "0118_cancelled_conversation_turns.sql",
+	119: "0119_finalize_completed_conversation_plans.sql",
+	120: "0120_normalize_activity_last_at.sql",
+	121: "0121_session_reviewer_agent_config.sql",
+	122: "0122_drop_agent_inventory_cache.sql",
+	123: "0123_agent_install_jobs.sql",
+	124: "0124_codex_account_management.sql",
+	125: "0125_agent_switch_failure_observability.sql",
+	126: "0126_canonical_repository_identity.sql",
+	127: "0127_session_permissions.sql",
+	128: "0128_pr_author_avatar_url.sql",
+	129: "0129_conversation_steer_delivery.sql",
+	130: "0130_conversation_edit_delivery.sql",
 }
 
 // burnedVersion reports version numbers that must never be (re)used: they

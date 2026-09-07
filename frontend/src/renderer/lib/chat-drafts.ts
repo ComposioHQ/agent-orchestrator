@@ -55,6 +55,14 @@ export interface ChatDraftInlineEdit {
 	reconstructedContext?: boolean;
 }
 
+export interface ChatDraftQueuedEdit {
+	revision: string;
+	turnId: string;
+	text: string;
+	/** The daemon may have saved this exact edit before the response was lost. */
+	saving?: boolean;
+}
+
 export type ChatDraftDeliveryState = "dispatching" | "accepted";
 
 export interface ChatComposerDelivery {
@@ -92,6 +100,7 @@ export interface ChatSessionDraft {
 		/** Durable delivery journal. Present until acceptance is durably cleared. */
 		delivery?: ChatComposerDelivery;
 	};
+	queuedEdit?: ChatDraftQueuedEdit;
 	inlineEdit?: ChatDraftInlineEdit;
 	/** Durable delivery journal for an inline branch edit. */
 	inlineEditDelivery?: ChatInlineEditDelivery;
@@ -718,6 +727,12 @@ function isChatSessionDraft(value: unknown, scope: ChatDraftScope): value is Cha
 		Array.isArray(composer.attachments) &&
 		composer.attachments.every(isAttachment) &&
 		(composer.delivery === undefined || isComposerDelivery(composer.delivery)) &&
+		(draft.queuedEdit === undefined || (draft.queuedEdit !== null &&
+			typeof draft.queuedEdit.revision === "string" && draft.queuedEdit.revision.length > 0 &&
+			typeof draft.queuedEdit.turnId === "string" && draft.queuedEdit.turnId.length > 0 &&
+			typeof draft.queuedEdit.text === "string" &&
+			(draft.queuedEdit.saving === undefined || typeof draft.queuedEdit.saving === "boolean")
+		)) &&
 		(draft.inlineEdit === undefined || isInlineEdit(draft.inlineEdit)) &&
 		(draft.inlineEditDelivery === undefined || isInlineEditDelivery(draft.inlineEditDelivery))
 	);
@@ -777,6 +792,7 @@ function hasContent(draft: ChatSessionDraft): boolean {
 		draft.composer.text !== "" ||
 		draft.composer.attachments.length > 0 ||
 		Boolean(draft.composer.delivery) ||
+		Boolean(draft.queuedEdit) ||
 		Boolean(draft.inlineEdit) ||
 		Boolean(draft.inlineEditDelivery)
 	);
@@ -1203,6 +1219,23 @@ export function writeChatAttachments(
 	);
 	if (result.ok) invalidateAcceptedDraftMutation(scope, "composer");
 	return result;
+}
+
+/** Queue edits are independent from both the ordinary prompt and history edits. */
+export function writeChatQueuedEdit(
+	scope: ChatDraftScopeInput,
+	edit: Omit<ChatDraftQueuedEdit, "revision"> | undefined,
+	expectedRevision?: string,
+	storage: DraftStorage | undefined = rendererStorage(),
+): DraftWriteResult {
+	const loaded = loadChatSessionDraft(scope, storage);
+	if (!loaded.ok || (expectedRevision !== undefined && loaded.draft.queuedEdit?.revision !== expectedRevision)) {
+		return { ok: false, draft: loaded.draft };
+	}
+	const next = { ...loaded.draft };
+	if (edit) next.queuedEdit = { ...edit, revision: inlineEditRevision() };
+	else delete next.queuedEdit;
+	return persistDraftProven(next, storage);
 }
 
 export function writeChatInlineEdit(

@@ -534,6 +534,13 @@ export function useFileAttachments(options: FileAttachmentOptions = {}) {
 			data ? [{ mimeType, data }] : [],
 		);
 	}, []);
+	// Read from the same ref as toSettledPayload so a submit resumed after FileReader
+	// completion can cache staged paths without waiting for another React render.
+	const attachmentSignature = useCallback(
+		() => attachmentsRef.current.map((attachment) => attachment.id).join(":"),
+		[],
+	);
+	const hasPendingReads = useCallback(() => pendingReadsRef.current.size > 0, []);
 
 	return {
 		attachments,
@@ -543,7 +550,10 @@ export function useFileAttachments(options: FileAttachmentOptions = {}) {
 		remove,
 		clear,
 		reconcilePersistedAttachments,
+		getAttachments: () => attachmentsRef.current,
 		toPayload,
 		toSettledPayload,
+		attachmentSignature,
+		hasPendingReads,
 	};
 }

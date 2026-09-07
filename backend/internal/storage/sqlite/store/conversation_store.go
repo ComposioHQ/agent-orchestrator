@@ -1017,6 +1017,14 @@ func (s *Store) SettleTurn(
 	}); err != nil {
 		return fmt.Errorf("settle turn %s: %w", turn.ID, err)
 	}
+	if err := q.SettleStreamingConversationMessagesForTurn(ctx,
+		gen.SettleStreamingConversationMessagesForTurnParams{
+			UpdatedAt:      now,
+			ConversationID: conversationID,
+			TurnID:         sql.NullString{String: turn.ID, Valid: true},
+		}); err != nil {
+		return fmt.Errorf("settle streaming messages for turn %s: %w", turn.ID, err)
+	}
 	if err := q.SettleRunningConversationActivitiesForTurn(ctx,
 		gen.SettleRunningConversationActivitiesForTurnParams{
 			Status:         terminalActivityStatus(state),
@@ -1025,6 +1033,70 @@ func (s *Store) SettleTurn(
 			TurnID:         sql.NullString{String: turn.ID, Valid: true},
 		}); err != nil {
 		return fmt.Errorf("settle running activities for turn %s: %w", turn.ID, err)
+	}
+	if state == domain.TurnStateCompleted {
+		if err := finalizeCompletedTurnPlan(ctx, q, turn, now); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// finalizeCompletedTurnPlan reconciles the two durable plan projections when a
+// provider completes a turn without sending a final plan notification. The raw
+// provider event remains unchanged; this only records AO's terminal inference.
+func finalizeCompletedTurnPlan(
+	ctx context.Context,
+	q *gen.Queries,
+	turn gen.ConversationTurn,
+	now time.Time,
+) error {
+	if turn.PlanJson == "" {
+		return nil
+	}
+	var plan domain.ConversationPlan
+	if err := json.Unmarshal([]byte(turn.PlanJson), &plan); err != nil {
+		return fmt.Errorf("decode plan for completed turn %s: %w", turn.ID, err)
+	}
+	changed := false
+	for i := range plan.Steps {
+		if plan.Steps[i].Status != domain.PlanStepCompleted {
+			plan.Steps[i].Status = domain.PlanStepCompleted
+			changed = true
+		}
+	}
+	if !changed {
+		return nil
+	}
+
+	encodedPlan, err := json.Marshal(plan)
+	if err != nil {
+		return fmt.Errorf("encode finalized plan for turn %s: %w", turn.ID, err)
+	}
+	if _, err := q.UpdateConversationTurnPlan(ctx, gen.UpdateConversationTurnPlanParams{
+		PlanJson:       string(encodedPlan),
+		ConversationID: turn.ConversationID,
+		ProviderTurnID: turn.ProviderTurnID,
+	}); err != nil {
+		return fmt.Errorf("finalize turn plan %s: %w", turn.ID, err)
+	}
+
+	detail := map[string]any{"event": "plan", "steps": plan.Steps}
+	if plan.Explanation != "" {
+		detail["explanation"] = plan.Explanation
+	}
+	encodedDetail, err := json.Marshal(detail)
+	if err != nil {
+		return fmt.Errorf("encode finalized plan activity for turn %s: %w", turn.ID, err)
+	}
+	if err := q.FinalizeConversationPlanActivity(ctx, gen.FinalizeConversationPlanActivityParams{
+		Summary:        fmt.Sprintf("Plan %d/%d steps done", len(plan.Steps), len(plan.Steps)),
+		DetailJson:     string(encodedDetail),
+		UpdatedAt:      now,
+		ConversationID: turn.ConversationID,
+		TurnID:         sql.NullString{String: turn.ID, Valid: true},
+	}); err != nil {
+		return fmt.Errorf("finalize plan activity for turn %s: %w", turn.ID, err)
 	}
 	return nil
 }
@@ -1907,6 +1979,130 @@ func (s *Store) CancelAllQueuedTurns(
 	return nil
 }
 
+// CancelQueuedTurnByID removes one undispatched queue item without disturbing
+// later queue items or the running turn.
+func (s *Store) CancelQueuedTurnByID(
+	ctx context.Context,
+	conversationID, turnID string,
+	now time.Time,
+) error {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	rows, err := s.qw.CancelQueuedConversationTurnByID(ctx,
+		gen.CancelQueuedConversationTurnByIDParams{
+			CompletedAt:    sql.NullTime{Time: now, Valid: true},
+			ID:             turnID,
+			ConversationID: conversationID,
+		})
+	if err != nil {
+		return fmt.Errorf("cancel queued turn %s: %w", turnID, err)
+	}
+	if rows == 0 {
+		return fmt.Errorf("%w: %s", ErrQueuedTurnNotAvailable, turnID)
+	}
+	return nil
+}
+
+// ErrInvalidQueuedTurnOrder means the requested queue order does not match the
+// current undispatched queue exactly.
+var ErrInvalidQueuedTurnOrder = errors.New("invalid queued turn order")
+
+// ReorderQueuedTurns permutes the durable queue order by reassigning existing
+// requested_at values. The caller must pass every currently queued turn id in
+// the desired FIFO order.
+func (s *Store) ReorderQueuedTurns(
+	ctx context.Context,
+	conversationID string,
+	turnIDs []string,
+) error {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+
+	current, err := s.qr.SelectQueuedConversationTurnOrder(ctx, conversationID)
+	if err != nil {
+		return fmt.Errorf("list queued turns for reorder: %w", err)
+	}
+	if len(current) != len(turnIDs) {
+		return fmt.Errorf("%w: got %d ids for %d queued turns", ErrInvalidQueuedTurnOrder, len(turnIDs), len(current))
+	}
+	if len(current) == 0 {
+		return nil
+	}
+
+	currentByID := make(map[string]time.Time, len(current))
+	for _, row := range current {
+		currentByID[row.ID] = row.RequestedAt
+	}
+	seen := make(map[string]struct{}, len(turnIDs))
+	for _, turnID := range turnIDs {
+		if _, ok := currentByID[turnID]; !ok {
+			return fmt.Errorf("%w: unknown turn %s", ErrInvalidQueuedTurnOrder, turnID)
+		}
+		if _, dup := seen[turnID]; dup {
+			return fmt.Errorf("%w: duplicate turn %s", ErrInvalidQueuedTurnOrder, turnID)
+		}
+		seen[turnID] = struct{}{}
+	}
+
+	requestedAts := make([]time.Time, len(current))
+	for i, row := range current {
+		requestedAts[i] = row.RequestedAt
+	}
+	sort.Slice(requestedAts, func(i, j int) bool {
+		return requestedAts[i].Before(requestedAts[j])
+	})
+
+	tx, err := s.writeDB.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin queued turn reorder: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	q := s.qw.WithTx(tx)
+	for i, turnID := range turnIDs {
+		rows, err := q.UpdateQueuedConversationTurnRequestedAt(ctx,
+			gen.UpdateQueuedConversationTurnRequestedAtParams{
+				RequestedAt:    requestedAts[i],
+				ID:             turnID,
+				ConversationID: conversationID,
+			})
+		if err != nil {
+			return fmt.Errorf("reorder queued turn %s: %w", turnID, err)
+		}
+		if rows == 0 {
+			return fmt.Errorf("%w: %s", ErrQueuedTurnNotAvailable, turnID)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit queued turn reorder: %w", err)
+	}
+	return nil
+}
+
+// UpdateQueuedTurnMessage rewrites the durable human prompt for a turn that has
+// not yet dispatched. Attachments are cleared because the edit path is text-only.
+func (s *Store) UpdateQueuedTurnMessage(
+	ctx context.Context,
+	conversationID, turnID, text string,
+	now time.Time,
+) error {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	rows, err := s.qw.UpdateQueuedConversationMessageText(ctx,
+		gen.UpdateQueuedConversationMessageTextParams{
+			Text:           text,
+			UpdatedAt:      now,
+			ConversationID: conversationID,
+			TurnID:         sql.NullString{String: turnID, Valid: true},
+		})
+	if err != nil {
+		return fmt.Errorf("update queued turn message %s: %w", turnID, err)
+	}
+	if rows == 0 {
+		return fmt.Errorf("%w: %s", ErrQueuedTurnNotAvailable, turnID)
+	}
+	return nil
+}
+
 // SettleTurnByID records a terminal state for a turn AO can name directly.
 //
 // Needed for a turn that never reached the provider: it has no provider turn id,
@@ -2215,6 +2411,16 @@ func (s *Store) ResolveApproval(
 		return fmt.Errorf("resolve approval %s: %w", requestID, err)
 	}
 	return nil
+}
+
+// HasPendingConversationInteractions reports whether the durable conversation
+// still contains an actionable approval or structured-input request.
+func (s *Store) HasPendingConversationInteractions(ctx context.Context, conversationID string) (bool, error) {
+	pending, err := s.qr.HasPendingConversationInteractions(ctx, conversationID)
+	if err != nil {
+		return false, fmt.Errorf("check pending interactions for %s: %w", conversationID, err)
+	}
+	return pending, nil
 }
 
 // FailPendingApprovals closes out anything the user can no longer answer, because

@@ -10,8 +10,8 @@
 //     never disagree with the timeline derived from it;
 //   - an event carrying a stale controller generation is dropped, so a controller
 //     that is dying cannot mutate the session that replaced it;
-//   - a turn left in flight when a controller ends settles as failed, because a
-//     controller that stopped running a turn is not evidence the work finished.
+//   - a turn left in flight when its provider ends settles as failed. Deliberate
+//     daemon detach from a persistent provider is not provider termination.
 package chat
 
 import (
@@ -32,6 +32,7 @@ import (
 const (
 	nativeHistorySettlePoll  = 100 * time.Millisecond
 	nativeHistorySettleLimit = 45 * time.Second
+	branchHandoffReportLimit = 5 * time.Second
 	retryClientMessagePrefix = "retry-attempt/"
 )
 
@@ -83,6 +84,9 @@ type Store interface {
 	RejectEditDelivery(ctx context.Context, conversationID, clientMessageID string, kind domain.ConversationEditRejectionKind, message string, now time.Time) error
 	CancelQueuedTurns(ctx context.Context, conversationID string, cutoff, now time.Time) error
 	CancelAllQueuedTurns(ctx context.Context, conversationID string, now time.Time) error
+	CancelQueuedTurnByID(ctx context.Context, conversationID, turnID string, now time.Time) error
+	UpdateQueuedTurnMessage(ctx context.Context, conversationID, turnID, text string, now time.Time) error
+	ReorderQueuedTurns(ctx context.Context, conversationID string, turnIDs []string) error
 
 	RetryPrompt(ctx context.Context, conversationID, turnID string) (domain.RetryPrompt, error)
 	RetryTurnIDForSource(ctx context.Context, conversationID, sourceTurnID string) (string, bool, error)
@@ -117,6 +121,7 @@ type Store interface {
 	UpsertActivity(ctx context.Context, conversationID, providerTurnID string, activity domain.ConversationActivity, now time.Time) error
 	MarkCompacted(ctx context.Context, conversationID string, at time.Time) error
 	ResolveApproval(ctx context.Context, conversationID, requestID, detailJSON string, now time.Time) error
+	HasPendingConversationInteractions(ctx context.Context, conversationID string) (bool, error)
 	FailPendingApprovals(ctx context.Context, conversationID string, now time.Time) error
 	FailPendingInputs(ctx context.Context, conversationID string, now time.Time) error
 
@@ -163,19 +168,30 @@ type Controller struct {
 	sessionID    domain.SessionID
 	conversation domain.ConversationRecord
 	generation   string
+	harness      domain.AgentHarness
 
-	conv     ports.ChatConversation
-	store    Store
-	activity ActivityRecorder
-	log      *slog.Logger
-	newID    IDFactory
-	now      Clock
+	conv                   ports.ChatConversation
+	store                  Store
+	activity               ActivityRecorder
+	log                    *slog.Logger
+	newID                  IDFactory
+	now                    Clock
+	onAccountChanged       func(domain.SessionID, string, domain.AgentHarness)
+	onCodexCapacityChanged func(domain.SessionID, string, ports.CodexCapacityObservation)
 
 	// sendMu serializes command dispatch so only one operation mutates the
 	// provider conversation at a time.
 	sendMu sync.Mutex
+	// configMu serializes live provider setting changes. Each response replaces
+	// the complete option catalog and updates durable next-turn settings, so
+	// concurrent writes could otherwise persist an older catalog last.
+	configMu sync.Mutex
 
 	mu sync.Mutex
+	// suppressStoppedActivity marks a deliberate branch-controller retirement.
+	// The replacement generation owns lifecycle state; publishing an exited fact
+	// from the source would make that replacement unable to report active work.
+	suppressStoppedActivity bool
 	// activeTurn maps a provider turn id to AO's turn id for the turn currently
 	// in flight, so a completion can be attributed without a round trip.
 	pendingTurnID string
@@ -200,7 +216,12 @@ type Controller struct {
 	// Interface drain keeps dispatching accepted rows; interface interrupt and an
 	// idle branch mutation stop dispatch entirely. The target controller is not
 	// started until this controller reports quiescent and is closed.
-	handoff controllerHandoff
+	handoff           controllerHandoff
+	branchHandoffDone chan struct{}
+	// preserveProviderOnStop is set before deliberate daemon detach. It prevents
+	// the closing controller from projecting a false provider exit or failing work
+	// that the detached host continues to run.
+	preserveProviderOnStop bool
 
 	// account, threadState and mcpServers are merged here before being written,
 	// because the provider reports each of them in pieces: account/updated carries
@@ -264,27 +285,33 @@ func newController(
 	sessionID domain.SessionID,
 	conversation domain.ConversationRecord,
 	generation string,
+	harness domain.AgentHarness,
 	conv ports.ChatConversation,
 	store Store,
 	activity ActivityRecorder,
 	log *slog.Logger,
 	newID IDFactory,
 	now Clock,
+	onAccountChanged func(domain.SessionID, string, domain.AgentHarness),
+	onCodexCapacityChanged func(domain.SessionID, string, ports.CodexCapacityObservation),
 ) *Controller {
 	c := &Controller{
-		sessionID:    sessionID,
-		conversation: conversation,
-		generation:   generation,
-		conv:         conv,
-		store:        store,
-		activity:     activity,
-		log:          log,
-		newID:        newID,
-		now:          now,
-		state:        ports.ChatControllerReady,
-		settings:     conversation.Settings,
-		mcpServers:   map[string]domain.ConversationMCPServer{},
-		stopped:      make(chan struct{}),
+		sessionID:              sessionID,
+		conversation:           conversation,
+		generation:             generation,
+		harness:                harness,
+		conv:                   conv,
+		store:                  store,
+		activity:               activity,
+		log:                    log,
+		newID:                  newID,
+		now:                    now,
+		onAccountChanged:       onAccountChanged,
+		onCodexCapacityChanged: onCodexCapacityChanged,
+		state:                  ports.ChatControllerReady,
+		settings:               conversation.Settings,
+		mcpServers:             map[string]domain.ConversationMCPServer{},
+		stopped:                make(chan struct{}),
 	}
 	// Seeded from the durable row so a reconnect merges onto what is already known
 	// rather than starting from blank and reporting a conversation as having no
@@ -307,12 +334,37 @@ func newController(
 	return c
 }
 
+// restoreLiveTurnOwnership rebuilds the volatile busy gate from durable facts
+// before a replacement daemon publishes a reconnected controller. The provider
+// kept running while AO was detached, so forgetting this turn would let a new
+// Send start a second root turn on the same native conversation.
+func (c *Controller) restoreLiveTurnOwnership(turns []domain.ConversationTurn) {
+	var latest *domain.ConversationTurn
+	for i := range turns {
+		turn := &turns[i]
+		if turn.State != domain.TurnStateRunning || turn.ProviderTurnID == "" || turn.RolledBackAt != nil {
+			continue
+		}
+		if latest == nil || turn.RequestedAt.After(latest.RequestedAt) {
+			latest = turn
+		}
+	}
+	if latest == nil {
+		return
+	}
+	c.pendingTurnID = latest.ProviderTurnID
+	c.ackedTurnID = latest.ProviderTurnID
+	c.state = ports.ChatControllerBusy
+}
+
 // start begins live provider consumption after any durable native history has
 // been imported. Keeping construction and consumption separate prevents a resume
 // notification from racing ahead of the older turns it follows.
 func (c *Controller) start() {
 	go c.project()
-	go c.readRateLimits()
+	if c.harness != domain.HarnessCodex {
+		go c.readRateLimits()
+	}
 }
 
 type nativeHistoryHighWater struct {
@@ -1550,6 +1602,7 @@ func (c *Controller) BeginIdleBranchHandoff(ctx context.Context) error {
 		return fmt.Errorf("check queue before branch handoff: %w", err)
 	}
 	c.handoff = controllerHandoffIdleBranch
+	c.branchHandoffDone = make(chan struct{})
 	return nil
 }
 
@@ -1559,10 +1612,40 @@ func (c *Controller) AbortHandoff() {
 	c.mu.Lock()
 	resumeDispatch := c.handoff == controllerHandoffInterfaceDrain ||
 		c.handoff == controllerHandoffInterfaceInterrupt
+	branchHandoffDone := c.branchHandoffDone
+	c.branchHandoffDone = nil
 	c.handoff = controllerHandoffNone
 	c.mu.Unlock()
+	if branchHandoffDone != nil {
+		close(branchHandoffDone)
+	}
 	if resumeDispatch {
 		go c.drain(context.WithoutCancel(context.Background()))
+	}
+}
+
+// completeBranchHandoff releases stopped-controller registry cleanup without
+// reopening the obsolete source's intake. Commands may already hold a pointer
+// captured before the registry swap, so the fence must remain closed forever.
+func (c *Controller) completeBranchHandoff() {
+	c.mu.Lock()
+	branchHandoffDone := c.branchHandoffDone
+	c.branchHandoffDone = nil
+	c.mu.Unlock()
+	if branchHandoffDone != nil {
+		close(branchHandoffDone)
+	}
+}
+
+// waitForBranchHandoff keeps the registry's stopped-controller cleanup from
+// deleting a deliberately closed source while its forked replacement is being
+// resumed and installed. Ordinary stops have no latch and return immediately.
+func (c *Controller) waitForBranchHandoff() {
+	c.mu.Lock()
+	done := c.branchHandoffDone
+	c.mu.Unlock()
+	if done != nil {
+		<-done
 	}
 }
 
@@ -1577,6 +1660,7 @@ func (c *Controller) Resolve(ctx context.Context, requestID string, decision por
 		ctx, c.conversation.ID, requestID, string(detail), c.now()); err != nil {
 		return fmt.Errorf("record approval %s: %w", requestID, err)
 	}
+	c.reportInteractionResolved(ctx, "chat.approval.resolved", c.now())
 	return nil
 }
 
@@ -1603,6 +1687,7 @@ func (c *Controller) ResolveInput(
 		ctx, c.conversation.ID, requestID, string(detail), c.now()); err != nil {
 		return fmt.Errorf("record input %s: %w", requestID, err)
 	}
+	c.reportInteractionResolved(ctx, "chat.input.resolved", c.now())
 	return nil
 }
 
@@ -1952,12 +2037,17 @@ func (c *Controller) Rollback(ctx context.Context, turnID string) (int, error) {
 	return discarded, nil
 }
 
-// Close releases the controller. Settling in-flight work is not done here: it
-// happens when the event stream ends, which covers a provider that died on its
-// own as well as a shutdown AO initiated. Close only has to make the stream end
-// and wait for that to finish.
+// Close detaches this daemon's controller. Persistent provider hosts keep the
+// native connection and any in-flight turn alive; non-persistent drivers retain
+// their historical process-close behavior. The persistent host replays detached
+// output and unresolved provider requests to the replacement controller.
 func (c *Controller) Close(ctx context.Context) error {
 	c.once.Do(func() {
+		if preserver, ok := c.conv.(ports.ChatProviderPreserver); ok && preserver.PreservesProviderOnClose() {
+			c.mu.Lock()
+			c.preserveProviderOnStop = true
+			c.mu.Unlock()
+		}
 		c.closeErr = c.conv.Close()
 	})
 	select {
@@ -1971,11 +2061,64 @@ func (c *Controller) Close(ctx context.Context) error {
 	}
 }
 
+// Terminate closes the controller and explicitly destroys a persistent provider
+// host. Daemon shutdown uses Close so the host survives; user/session teardown
+// and controller replacement use Terminate.
+func (c *Controller) Terminate(ctx context.Context) error {
+	c.once.Do(func() {
+		if terminator, ok := c.conv.(ports.ChatProviderTerminator); ok {
+			c.closeErr = terminator.Terminate()
+		} else {
+			c.closeErr = c.conv.Close()
+		}
+	})
+	select {
+	case <-c.stopped:
+		return c.closeErr
+	case <-ctx.Done():
+		if c.closeErr != nil {
+			return errors.Join(c.closeErr, ctx.Err())
+		}
+		return ctx.Err()
+	}
+}
+
+// closeForBranchHandoff retires and terminates a source controller without
+// publishing a session-level exit. Branch replacement is an in-place writer
+// handoff, not the end of the session; the replacement generation continues the
+// lifecycle, but the old persistent host must release exclusive ownership.
+func (c *Controller) closeForBranchHandoff(ctx context.Context) error {
+	c.prepareBranchHandoffStop()
+	return c.Terminate(ctx)
+}
+
+func (c *Controller) prepareBranchHandoffStop() {
+	c.mu.Lock()
+	c.suppressStoppedActivity = true
+	c.mu.Unlock()
+}
+
+func (c *Controller) reportFailedBranchHandoff(ctx context.Context) {
+	c.mu.Lock()
+	c.suppressStoppedActivity = false
+	stopped := c.state == ports.ChatControllerStopped
+	c.mu.Unlock()
+	if !stopped {
+		// project will publish the ordinary stop boundary when the stream ends.
+		return
+	}
+	reportCtx, cancel := context.WithTimeout(
+		context.WithoutCancel(ctx), branchHandoffReportLimit)
+	defer cancel()
+	c.reportActivity(reportCtx, domain.ActivityExited, "chat.controller.stopped", c.now())
+}
+
 // Wait blocks until the controller's event stream has ended.
 func (c *Controller) Wait() { <-c.stopped }
 
 // project consumes the driver's normalized events and writes them down. It runs
-// until the driver's stream closes, which happens when the provider process ends.
+// until this controller's stream closes. That can mean provider termination or a
+// deliberate detach from a provider that remains alive in a persistent host.
 func (c *Controller) project() {
 	defer close(c.stopped)
 
@@ -1984,6 +2127,12 @@ func (c *Controller) project() {
 	ctx := context.WithoutCancel(context.Background())
 
 	for event := range c.conv.Events() {
+		c.mu.Lock()
+		preserveProvider := c.preserveProviderOnStop
+		c.mu.Unlock()
+		if preserveProvider && event.Kind == ports.ChatEventControllerState && event.ControllerState == ports.ChatControllerStopped {
+			continue
+		}
 		// A lifecycle event and a concurrent Send must agree on whether the root
 		// conversation is busy. Holding the same lock Send/dispatch use closes the
 		// window between the durable projection and the in-memory ownership update.
@@ -2008,7 +2157,12 @@ func (c *Controller) project() {
 
 	c.mu.Lock()
 	c.state = ports.ChatControllerStopped
+	suppressStoppedActivity := c.suppressStoppedActivity
+	preserveProvider := c.preserveProviderOnStop
 	c.mu.Unlock()
+	if preserveProvider {
+		return
+	}
 
 	// The stream has ended, so nothing more can arrive for this controller. This
 	// is the only place that reliably knows that — a provider process can die on
@@ -2025,7 +2179,9 @@ func (c *Controller) project() {
 	// transport cannot. Report the same lifecycle boundary here so the session
 	// does not remain durably active, idle, or blocked after its controller died.
 	// ControllerGeneration fences this write from a replacement controller.
-	c.reportActivity(ctx, domain.ActivityExited, "chat.controller.stopped", now)
+	if !suppressStoppedActivity {
+		c.reportActivity(ctx, domain.ActivityExited, "chat.controller.stopped", now)
+	}
 	if _, err := c.store.CleanupOwnedControllerWork(
 		ctx, c.sessionID, c.conversation.ID, c.generation, now,
 	); err != nil {
@@ -2062,6 +2218,18 @@ func (c *Controller) projectEvent(ctx context.Context, event ports.ChatEvent) (b
 		"account":                event.Account,
 		"threadState":            event.ThreadState,
 		"mcpServers":             event.MCPServers,
+	}
+	if c.harness == domain.HarnessCodex {
+		// Codex account identity and subscription capacity are daemon-memory
+		// account state. Conversation provider archives must not become a second
+		// persistence path for email, plan, percentages, reset times, or raw
+		// account payloads.
+		if event.Kind == ports.ChatEventAccountChanged {
+			record["account"] = nil
+		}
+		if event.Kind == ports.ChatEventRateLimits {
+			record["rateLimits"] = nil
+		}
 	}
 	record["diff"] = event.Diff
 	if event.Input != nil {
@@ -2354,7 +2522,13 @@ func (c *Controller) apply(ctx context.Context, event ports.ChatEvent) error {
 		if event.Account == nil {
 			return nil
 		}
-		return c.applyAccount(ctx, *event.Account, now)
+		if err := c.applyAccount(ctx, *event.Account, now); err != nil {
+			return err
+		}
+		if c.onAccountChanged != nil {
+			c.onAccountChanged(c.sessionID, c.generation, c.harness)
+		}
+		return nil
 
 	case ports.ChatEventThreadState:
 		if event.ThreadState == nil {
@@ -2456,6 +2630,12 @@ func (c *Controller) apply(ctx context.Context, event ports.ChatEvent) error {
 		if event.RateLimits == nil {
 			return nil
 		}
+		if c.harness == domain.HarnessCodex {
+			if c.onCodexCapacityChanged != nil && event.RateLimits.CodexCapacity != nil {
+				c.onCodexCapacityChanged(c.sessionID, c.generation, *event.RateLimits.CodexCapacity)
+			}
+			return nil
+		}
 		return c.store.RecordRateLimits(ctx, c.conversation.ID, domain.ConversationRateLimits{
 			PrimaryUsedPercent:       event.RateLimits.PrimaryUsedPercent,
 			SecondaryUsedPercent:     event.RateLimits.SecondaryUsedPercent,
@@ -2513,16 +2693,21 @@ func (c *Controller) afterProject(ctx context.Context, event ports.ChatEvent, pr
 		c.drainLocked(ctx)
 	case ports.ChatEventApprovalRequested:
 		c.reportActivity(ctx, domain.ActivityWaitingInput, "chat.approval.requested", now)
+	case ports.ChatEventApprovalResolved:
+		c.reportInteractionResolved(ctx, "chat.approval.resolved", now)
 	case ports.ChatEventInputRequested:
 		c.reportActivity(ctx, domain.ActivityWaitingInput, "chat.input.requested", now)
+	case ports.ChatEventInputResolved:
+		c.reportInteractionResolved(ctx, "chat.input.resolved", now)
 	case ports.ChatEventControllerState:
 		// Volatile state moves only after the provider event and all of its durable
 		// cleanup committed. Otherwise a rollback can say "stopped" in memory while
 		// SQLite still contains live work.
 		c.mu.Lock()
 		c.state = event.ControllerState
+		suppressStoppedActivity := c.suppressStoppedActivity
 		c.mu.Unlock()
-		if event.ControllerState == ports.ChatControllerStopped {
+		if event.ControllerState == ports.ChatControllerStopped && !suppressStoppedActivity {
 			c.reportActivity(ctx, domain.ActivityExited, "chat.controller.stopped", now)
 		}
 	case ports.ChatEventAccountChanged:
@@ -2530,6 +2715,19 @@ func (c *Controller) afterProject(ctx context.Context, event ports.ChatEvent, pr
 			c.reportActivity(ctx, domain.ActivityWaitingInput, "chat.account.reauth", now)
 		}
 	}
+}
+
+func (c *Controller) reportInteractionResolved(ctx context.Context, event string, now time.Time) {
+	pending, err := c.store.HasPendingConversationInteractions(ctx, c.conversation.ID)
+	if err != nil {
+		c.log.Debug("chat pending-interaction check failed",
+			"session", c.sessionID, "event", event, "error", err)
+		return
+	}
+	if pending {
+		return
+	}
+	c.reportActivity(ctx, domain.ActivityActive, event, now)
 }
 
 // applyThreadTitle records a title the provider reports for the thread and, when

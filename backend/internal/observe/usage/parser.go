@@ -44,6 +44,8 @@ func parseRecordsWithState(
 	case domain.UsageSourceCodexRollout:
 		parseCodex(source, records, state.Codex, &result)
 		result.pendingCodexSpawnCalls = len(state.Codex.PendingSpawnCallIDs)
+	case domain.UsageSourceKimiWire:
+		parseKimi(source, records, &result)
 	default:
 		result.Cursor.AnomalyCount++
 		result.Cursor.LastErrorCode = domain.UsageErrorUnsupportedSourceFormat
@@ -197,6 +199,10 @@ func decodeParserState(source domain.UsageSourceRecord) (*parserStateEnvelope, e
 		if err := validateCodexDirectParent(source, state.Codex); err != nil {
 			return nil, err
 		}
+	case domain.UsageSourceKimiWire:
+		if state.Claude != nil || state.Codex != nil {
+			return nil, errors.New("append-only state has invalid parser payload")
+		}
 	default:
 		return nil, fmt.Errorf("unsupported source kind %q", source.Kind)
 	}
@@ -216,6 +222,9 @@ func newParserState(kind domain.UsageSourceKind) (*parserStateEnvelope, error) {
 			PendingSpawnCallIDs: []string{},
 			DiscoveredChildIDs:  []string{},
 		}
+	case domain.UsageSourceKimiWire:
+		// Kimi records carry stable native IDs, so no provider-specific
+		// cumulative baseline is required.
 	default:
 		return nil, fmt.Errorf("unsupported source kind %q", kind)
 	}

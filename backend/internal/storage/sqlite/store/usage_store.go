@@ -228,8 +228,8 @@ func (s *Store) ListWatchableUsageSources(ctx context.Context) ([]domain.UsageSo
 }
 
 // HasPendingUsageDiscovery reports whether a live binding has a durable reason
-// to retry source discovery. It excludes healthy active bindings, so retries do
-// not degrade into global transcript polling.
+// to retry source discovery. Healthy active bindings are excluded unless their
+// provider has a dynamic child inventory, such as Kimi agents.
 func (s *Store) HasPendingUsageDiscovery(ctx context.Context) (bool, error) {
 	pending, err := s.qr.HasPendingUsageDiscovery(ctx)
 	if err != nil {
