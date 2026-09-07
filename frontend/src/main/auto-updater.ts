@@ -1000,6 +1000,49 @@ function isManifest404Error(err: unknown): boolean {
 const STAGED_INSTALL_REJECTION_PATTERN =
   /did not pass validation|failed to get static code for bundle/i;
 
+/**
+ * A redundant native staging request that Squirrel refused — not a failure.
+ *
+ * SQRLUpdater.checkForUpdatesCommand is a RACCommand built with
+ * `initWithEnabled:` and never sets `allowsConcurrentExecution`, which defaults
+ * to NO. RACCommand computes `moreExecutionsAllowed` as
+ * `allowsConcurrentExecution ? YES : !executing`, so calling `-execute:` while a
+ * staging run is in flight does not queue: it returns `[RACSignal error:]` with
+ * domain RACCommandErrorDomain and code RACCommandErrorNotEnabled (1), carrying
+ * the message "The command is disabled and cannot be executed".
+ *
+ * MacUpdater asks the native updater to fetch on every completed download, so a
+ * download finishing while the previous build is still being staged produces
+ * exactly this. It arrives twice — re-emitted onto electron-updater's own error
+ * event, and as a rejection of the download promise (MacUpdater registers
+ * `nativeUpdater.once("error", reject)` before kicking the native check off).
+ * Untreated, that raw string reached the user as an update failure.
+ *
+ * Matched STRUCTURALLY, unlike the install-rejection pattern below: Electron's
+ * three-argument AutoUpdater::OnError sets `code` and `domain` on the JS Error
+ * (electron_api_auto_updater.cc), so there is no need to match on text here.
+ * Verified against Electron 33.4.11, which pins Squirrel.Mac 0e5d146 and
+ * ReactiveObjC 74ab5ba.
+ *
+ * The redundant handoff itself is a symptom of nothing owning an attempt through
+ * native staging; this only stops it being reported as a failure.
+ */
+function isNativeStagingBusyError(err: unknown): boolean {
+  const e = err as { code?: unknown; domain?: unknown };
+  return e?.domain === "RACCommandErrorDomain" && e?.code === 1;
+}
+
+/**
+ * Leave the UI on a truthful terminal status after something that was not a
+ * failure. A manual path broadcasts "checking" before it starts, so simply
+ * swallowing the error would wedge the Settings spinner.
+ */
+function settleWithoutFailure(): void {
+  broadcastCompletedCheck(
+    hasStagedBuild() ? stagedDownloadedStatus() : { state: "not-available" },
+  );
+}
+
 function isStagedInstallRejection(err: unknown): boolean {
   return STAGED_INSTALL_REJECTION_PATTERN.test(errorMessage(err));
 }
@@ -1289,6 +1332,13 @@ function wireUpdaterEvents(): void {
       // the retry wording.
       downloadStalled = false;
       console.info("update download cancelled after stalling:", err);
+      return;
+    }
+    if (isNativeStagingBusyError(err)) {
+      // Squirrel is already staging a build; this request was refused, nothing
+      // failed. Reporting it would replace a true status with a native string
+      // the user cannot act on.
+      console.info("native staging already in progress; request refused:", err);
       return;
     }
     // Never crash on update failure (offline, unsigned macOS, etc.).
@@ -1685,6 +1735,11 @@ export async function checkForUpdatesNow(
       options.requestId,
     );
   } catch (err) {
+    if (isNativeStagingBusyError(err)) {
+      console.info("manual check refused: native staging already in progress:", err);
+      settleWithoutFailure();
+      return;
+    }
     if (isManifest404Error(err)) {
       console.info("manual update check failed:", err);
       broadcastCompletedCheck({
@@ -1753,6 +1808,11 @@ export async function returnToHome(
       requestId,
     );
   } catch (err) {
+    if (isNativeStagingBusyError(err)) {
+      console.info("return home refused: native staging already in progress:", err);
+      settleWithoutFailure();
+      return;
+    }
     broadcast({
       state: "error",
       message: (err as Error)?.message ?? "Return failed",
@@ -1792,6 +1852,11 @@ export async function downloadUpdateNow(requestId?: string): Promise<void> {
       requestId,
     );
   } catch (err) {
+    if (isNativeStagingBusyError(err)) {
+      console.info("download refused: native staging already in progress:", err);
+      settleWithoutFailure();
+      return;
+    }
     if (isManifest404Error(err)) {
       console.error("update download failed:", err);
       broadcast({

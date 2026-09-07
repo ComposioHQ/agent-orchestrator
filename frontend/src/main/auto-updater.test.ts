@@ -2993,6 +2993,49 @@ describe("staged install rejection", () => {
     consoleErrorSpy.mockRestore();
   });
 
+  // Squirrel's checkForUpdatesCommand is a RACCommand that does not allow
+  // concurrent execution, so a second native handoff while one is staging is
+  // REFUSED with RACCommandErrorDomain/1 rather than queued — and Electron puts
+  // that code and domain on the JS Error. It is not an update failure, and its
+  // native wording ("The command is disabled and cannot be executed") is
+  // meaningless to a user.
+  const nativeBusyError = Object.assign(
+    new Error("The command is disabled and cannot be executed"),
+    { code: 1, domain: "RACCommandErrorDomain" },
+  );
+
+  it("does not report a refused native handoff as an update failure", async () => {
+    const consoleInfoSpy = vi
+      .spyOn(console, "info")
+      .mockImplementation(() => undefined);
+    const { module, updaterEvents, statusMessages } = await importAutoUpdater();
+
+    await module.checkForUpdatesNow(stateDir);
+    updaterEvents.get("update-downloaded")?.({ version: "2.1.0" });
+    const beforeRefusal = statusMessages().at(-1)?.payload;
+
+    updaterEvents.get("error")?.(nativeBusyError);
+
+    expect(statusMessages().at(-1)?.payload).toEqual(beforeRefusal);
+    expect(module.getUpdateStatus().state).not.toBe("error");
+    consoleInfoSpy.mockRestore();
+  });
+
+  it("settles a manual check whose native handoff was refused", async () => {
+    // The manual path broadcasts "checking" before it starts, so swallowing the
+    // rejection outright would wedge the Settings spinner.
+    const consoleInfoSpy = vi
+      .spyOn(console, "info")
+      .mockImplementation(() => undefined);
+    const { module, autoUpdater } = await importAutoUpdater();
+    autoUpdater.checkForUpdates.mockRejectedValue(nativeBusyError);
+
+    await module.checkForUpdatesNow(stateDir, { requestId: "manual-1" });
+
+    expect(module.getUpdateStatus().state).toBe("not-available");
+    consoleInfoSpy.mockRestore();
+  });
+
   it("restores the budget when the user checks again", async () => {
     // The exhausted message tells the user to check for updates again, so that
     // has to actually do something.
