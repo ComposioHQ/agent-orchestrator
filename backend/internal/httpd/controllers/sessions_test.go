@@ -2603,8 +2603,6 @@ func TestSessionsAPI_DelegateTask(t *testing.T) {
 func TestSessionsAPI_DelegateTaskAcceptsLongBrief(t *testing.T) {
 	svc := newFakeSessionService()
 	srv := newSessionTestServer(t, svc)
-	// The original controller rejected the first byte past 4 KiB even though
-	// valid task briefs commonly include longer pasted reference documents.
 	brief := strings.Repeat("a", 4097)
 	payload, err := json.Marshal(map[string]string{
 		"projectId": "ao",

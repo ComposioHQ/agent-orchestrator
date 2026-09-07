@@ -36,9 +36,6 @@ import (
 )
 
 const (
-	// Initial task prompts are passed to some TUI agents in their launch argv.
-	// Keep this below Windows' command-line ceiling while allowing substantial
-	// task briefs such as pasted setup guides and reference documents.
 	maxPromptLen      = 16 << 10
 	maxMessageLen     = 4096
 	maxModelLen       = 256
