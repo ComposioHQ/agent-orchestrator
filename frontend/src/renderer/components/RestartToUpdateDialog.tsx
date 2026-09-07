@@ -66,12 +66,6 @@ function RestartToUpdateDialogBody() {
 
 	const version = confirmedBuild?.version ?? status.staged?.version ?? status.version;
 	const releaseNotes = confirmedBuild?.releaseNotes ?? status.releaseNotes;
-	const percent = status.state === "downloading" && typeof status.percent === "number" && Number.isFinite(status.percent)
-		? Math.min(100, Math.max(0, status.percent))
-		: undefined;
-	const progressLabel = percent === undefined
-		? t("update.restart.preparing")
-		: t("settings.updates.downloading", { percent: Math.round(percent) });
 	const nightly = parseNightlyVersion(version);
 	const buildLabel = nightly
 		? t("shell.nightlyBuild", {
@@ -169,26 +163,6 @@ function RestartToUpdateDialogBody() {
 						<p className="mt-1.5 text-sm leading-5 text-settings-muted">{t("update.restart.noNotes")}</p>
 					)}
 
-					{pending && (
-						<div className="space-y-2">
-							<p role="status" className="text-sm text-settings-label">{progressLabel}</p>
-							<div
-								role="progressbar"
-								aria-label={progressLabel}
-								aria-valuemin={0}
-								aria-valuemax={100}
-								aria-valuenow={percent}
-								className="h-2 overflow-hidden rounded-full bg-muted"
-							>
-								<div
-									className={percent === undefined
-										? "h-full w-full animate-pulse bg-primary/30 motion-reduce:animate-none"
-										: "h-full bg-primary"}
-									style={percent === undefined ? undefined : { width: `${percent}%` }}
-								/>
-							</div>
-						</div>
-					)}
 					{failureDetail !== null && (
 						<div role="alert" className="space-y-1 text-sm text-destructive">
 							<p>{t("update.restart.prepareFailed")}</p>
@@ -203,7 +177,7 @@ function RestartToUpdateDialogBody() {
 						{t("confirm.cancel")}
 					</Button>
 					<Button type="button" variant="primary" size="sm" onClick={confirm} disabled={pending}>
-						{t("update.restart.confirm")}
+						{pending ? t("update.restart.preparing") : t("update.restart.confirm")}
 					</Button>
 				</div>
 			</DialogContent>

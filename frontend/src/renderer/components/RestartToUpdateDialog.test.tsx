@@ -111,7 +111,7 @@ function deferredInstall() {
 	return { resolve, reject };
 }
 
-it("keeps notes and session risks visible, blocks duplicate submits and dismissal, and shows real progress", async () => {
+it("keeps notes and session risks visible, blocks duplicate submits and dismissal, shows a minimal preparing state, and closes on success", async () => {
 	const install = deferredInstall();
 	workspaceData.current = [{ sessions: [session()] }];
 	useUiStore.setState({ updateInstallPromptOpen: true });
@@ -120,11 +120,12 @@ it("keeps notes and session risks visible, blocks duplicate submits and dismissa
 	const confirm = screen.getByRole("button", { name: "Restart & install" });
 	act(() => { fireEvent.click(confirm); fireEvent.click(confirm); });
 	expect(updInstall).toHaveBeenCalledTimes(1);
+	// Minimal working state: the button relabels and disables; no progress bar.
 	expect(confirm).toBeDisabled();
+	expect(confirm).toHaveTextContent("Preparing update…");
 	expect(screen.getByRole("button", { name: "Cancel" })).toBeDisabled();
 	expect(screen.queryByRole("button", { name: "Close" })).toBeNull();
-	expect(screen.getByRole("status")).toHaveTextContent("Preparing update…");
-	expect(screen.getByRole("progressbar")).not.toHaveAttribute("aria-valuenow");
+	expect(screen.queryByRole("progressbar")).toBeNull();
 	fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
 	await userEvent.keyboard("{Escape}");
 	const overlay = document.querySelector('[data-slot="dialog-overlay"]')!;
@@ -132,14 +133,11 @@ it("keeps notes and session risks visible, blocks duplicate submits and dismissa
 	fireEvent.click(overlay);
 	expect(useUiStore.getState().updateInstallPromptOpen).toBe(true);
 	expect(screen.getByTestId("restart-sessions-warning")).toBeVisible();
+	// Notes and version stay visible through a status change, still no progress bar.
 	act(() => updOnStatus.mock.calls[0][0]({ state: "downloading", percent: 42.5 }));
-	expect(screen.getByRole("status")).toHaveTextContent("Downloading… 43%");
-	expect(screen.getByRole("progressbar")).toHaveAttribute("aria-valuenow", "42.5");
+	expect(screen.queryByRole("progressbar")).toBeNull();
 	expect(screen.getByText("Safer updates")).toBeVisible();
 	expect(screen.getByText("v1.2.3")).toBeVisible();
-	act(() => updOnStatus.mock.calls[0][0]({ state: "downloaded" }));
-	expect(screen.getByRole("status")).toHaveTextContent("Preparing update…");
-	expect(screen.getByRole("progressbar")).not.toHaveAttribute("aria-valuenow");
 	await act(async () => install.resolve());
 	expect(screen.queryByTestId("restart-to-update-dialog")).toBeNull();
 });
