@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -1806,4 +1807,108 @@ func TestManager_AddWorkspaceRejectsBareParent(t *testing.T) {
 
 	_, err := m.Add(ctx, project.AddInput{Path: bareParent, ProjectID: ptr("bare"), AsWorkspace: true})
 	wantCode(t, err, "WORKSPACE_PARENT_BARE")
+}
+
+func TestManager_CanonicalRepositoryConfigPersistence(t *testing.T) {
+	ctx := context.Background()
+	m := newManager(t)
+	repo := gitRepo(t)
+	if out, err := exec.Command("git", "-C", repo, "remote", "add", "origin", "https://gitlab.com/alice/repo").CombinedOutput(); err != nil {
+		t.Fatalf("origin: %v %s", err, out)
+	}
+	// An unrelated remote must never enter durable claim trust automatically.
+	if out, err := exec.Command("git", "-C", repo, "remote", "add", "upstream", "https://gitlab.com/unrelated/repo").CombinedOutput(); err != nil {
+		t.Fatalf("upstream: %v %s", err, out)
+	}
+	added, err := m.Add(ctx, project.AddInput{Path: repo, ProjectID: ptr("fork")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if added.Config != nil && added.Config.CanonicalRepoURL != "" {
+		t.Fatal("remote inferred as trusted upstream")
+	}
+	cfg := domain.ProjectConfig{CanonicalRepoURL: "https://gitlab.com/group/subgroup/repo", DefaultBranch: "main"}
+	if _, err := m.SetConfig(ctx, "fork", project.SetConfigInput{Config: cfg}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := m.Get(ctx, "fork")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Project.Config == nil || got.Project.Config.CanonicalRepoURL != cfg.CanonicalRepoURL {
+		t.Fatalf("stored config = %+v", got.Project.Config)
+	}
+	for _, target := range []string{"https://github.com/group/repo", "https://gitlab.example.com/group/subgroup/repo"} {
+		bad := domain.ProjectConfig{CanonicalRepoURL: target}
+		if _, err := m.SetConfig(ctx, "fork", project.SetConfigInput{Config: bad}); err == nil {
+			t.Fatalf("SetConfig accepted %s", target)
+		}
+		if _, err := m.UpdateSettings(ctx, "fork", project.UpdateSettingsInput{DisplayName: "Fork", Config: bad}); err == nil {
+			t.Fatalf("UpdateSettings accepted %s", target)
+		}
+	}
+	got, err = m.Get(ctx, "fork")
+	if err != nil || got.Project.Config == nil || got.Project.Config.CanonicalRepoURL != cfg.CanonicalRepoURL {
+		t.Fatalf("invalid write changed config: %+v %v", got.Project.Config, err)
+	}
+	if _, err := m.SetConfig(ctx, "fork", project.SetConfigInput{}); err != nil {
+		t.Fatal(err)
+	}
+	got, err = m.Get(ctx, "fork")
+	if err != nil || (got.Project.Config != nil && got.Project.Config.CanonicalRepoURL != "") {
+		t.Fatalf("clear: %+v %v", got.Project.Config, err)
+	}
+}
+
+func TestManager_SetPermissionsPreservesConfig(t *testing.T) {
+	ctx := context.Background()
+	m := newManager(t)
+	if _, err := m.Add(ctx, project.AddInput{Path: gitRepo(t), ProjectID: ptr("ao")}); err != nil {
+		t.Fatal(err)
+	}
+	cfg := domain.ProjectConfig{DefaultBranch: "develop", Env: map[string]string{"KEEP": "yes"}, AgentRules: "keep rules", AgentConfig: domain.AgentConfig{Model: "base", Permissions: domain.PermissionModeDefault}, Worker: domain.RoleOverride{AgentConfig: domain.AgentConfig{Model: "worker", Permissions: domain.PermissionModeAcceptEdits}}, Orchestrator: domain.RoleOverride{AgentConfig: domain.AgentConfig{Model: "orchestrator", Permissions: domain.PermissionModeBypassPermissions}}}
+	if _, err := m.UpdateSettings(ctx, "ao", project.UpdateSettingsInput{DisplayName: "Keep name", Config: cfg}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := m.SetPermissions(ctx, "ao", project.SetPermissionsInput{Permissions: domain.PermissionModeAuto})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.AgentConfig.Permissions = domain.PermissionModeAuto
+	cfg.Worker.AgentConfig.Permissions = ""
+	cfg.Orchestrator.AgentConfig.Permissions = ""
+	if got.Name != "Keep name" || got.Config == nil || !reflect.DeepEqual(*got.Config, cfg) {
+		t.Fatalf("unexpected result: %#v config %#v", got, got.Config)
+	}
+	for _, tc := range []struct {
+		id   string
+		mode domain.PermissionMode
+	}{{"missing", domain.PermissionModeAuto}, {"../bad", domain.PermissionModeAuto}, {"ao", ""}, {"ao", "invalid"}} {
+		if _, err := m.SetPermissions(ctx, domain.ProjectID(tc.id), project.SetPermissionsInput{Permissions: tc.mode}); err == nil {
+			t.Fatalf("accepted %#v", tc)
+		}
+	}
+}
+
+func TestManager_RememberPortablePermissions(t *testing.T) {
+	m := newManager(t)
+	ctx := context.Background()
+	if _, err := m.Add(ctx, project.AddInput{Path: gitRepo(t), ProjectID: ptr("portable")}); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		source domain.AgentHarness
+		want   domain.PermissionMode
+	}{{domain.HarnessCodex, domain.PermissionModeBypassPermissions}, {domain.HarnessClaudeCode, domain.PermissionModeDefault}, {"", domain.PermissionModeDefault}} {
+		got, err := m.SetPermissions(ctx, "portable", project.SetPermissionsInput{SourceHarness: tc.source, Permissions: domain.PermissionModeDefault})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.Config.AgentConfig.Permissions != tc.want {
+			t.Fatalf("%s: got %q want %q", tc.source, got.Config.AgentConfig.Permissions, tc.want)
+		}
+	}
+	if _, err := m.SetPermissions(ctx, "portable", project.SetPermissionsInput{SourceHarness: "unknown", Permissions: domain.PermissionModeAuto}); err == nil {
+		t.Fatal("accepted unknown harness")
+	}
 }

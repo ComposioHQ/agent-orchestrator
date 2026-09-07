@@ -94,6 +94,7 @@ export type CenterPaneWorkspaceTab = {
 	key: string;
 	content: ReactNode;
 	onSelect: () => void;
+	onClose?: () => void;
 };
 
 type AuxiliaryTab =
@@ -302,6 +303,9 @@ export function CenterPane({
 	);
 	const displayedSuccessNotice = presentation ? undefined : transientSuccessNotice;
 	const target = terminalTarget ?? { kind: "worker" };
+	const activeWorkspaceTab = workspaceActiveTabKey
+		? workspaceTabs?.find((tab) => tab.key === workspaceActiveTabKey)
+		: undefined;
 	const switchLocksWorkerInput = Boolean(
 		presentation?.lockAgentTerminal && !presentation.allowSourceInput,
 	);
@@ -460,9 +464,10 @@ export function CenterPane({
 	useEffect(
 		() =>
 			aoBridge.app.onCloseShellTerminalShortcut(() => {
-				if (target.kind === "shell") onCloseShellTerminal?.(target.handleId);
+				if (activeWorkspaceTab?.onClose) activeWorkspaceTab.onClose();
+				else if (target.kind === "shell") onCloseShellTerminal?.(target.handleId);
 			}),
-		[target, onCloseShellTerminal],
+		[activeWorkspaceTab, target, onCloseShellTerminal],
 	);
 
 	useEffect(() => {
@@ -476,10 +481,10 @@ export function CenterPane({
 
 	useEffect(() => {
 		aoBridge.app.setCloseShellTerminalShortcutEnabled(
-			target.kind === "shell" && Boolean(onCloseShellTerminal),
+			Boolean(activeWorkspaceTab?.onClose) || (target.kind === "shell" && Boolean(onCloseShellTerminal)),
 		);
 		return () => aoBridge.app.setCloseShellTerminalShortcutEnabled(false);
-	}, [target.kind, onCloseShellTerminal]);
+	}, [activeWorkspaceTab, target.kind, onCloseShellTerminal]);
 
 	useEffect(() => {
 		const element = tabsOverflowRef.current;

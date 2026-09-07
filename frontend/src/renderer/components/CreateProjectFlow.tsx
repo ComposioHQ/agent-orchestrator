@@ -315,8 +315,9 @@ export function CreateProjectFlow({
 				setIsInitializing(false);
 				setIsCreating(true);
 			}
-			const defaultBranch =
-				selectedKind === "single_repo" ? await aoBridge.app.getRepositoryBranch(selectedPath) : undefined;
+			// Workspace imports can adopt an existing local Git root too. Preserve
+			// its branch just as for a single repository; child defaults stay separate.
+			const defaultBranch = await aoBridge.app.getRepositoryBranch(selectedPath);
 			await onCreateProject({
 				path: selectedPath,
 				asWorkspace: selectedKind === "workspace",
