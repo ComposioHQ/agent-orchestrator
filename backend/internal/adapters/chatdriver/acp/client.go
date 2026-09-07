@@ -981,6 +981,9 @@ func toolTerminal(status acpsdk.ToolCallStatus) bool {
 }
 
 func (c *conversation) emitDiffs(turnID, toolID string, content []acpsdk.ToolCallContent) {
+	// One tool call contributes at most one entry per path. If the provider
+	// lists the same path more than once in a single content payload, the last
+	// snapshot wins — summing those would reintroduce inflated counts.
 	byPath := make(map[string]ports.ChatDiffFile)
 	var pathOrder []string
 	for _, item := range content {
