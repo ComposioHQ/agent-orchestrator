@@ -2,6 +2,7 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { TerminalMux } from "../lib/terminal-mux";
+import { markTerminalHandleFresh } from "../lib/fresh-terminal-handles";
 import { useTerminalSession, type AttachableTerminal } from "../hooks/useTerminalSession";
 import { useUiStore } from "../stores/ui-store";
 import { safeTerminalFind } from "./TerminalSearch";
@@ -1275,6 +1276,7 @@ describe("XtermTerminal", () => {
 	});
 
 	it("returns a CPR to a fresh shell PTY through coverInitialReplay", async () => {
+		markTerminalHandleFresh("fresh-login");
 		let output: (data: Uint8Array) => void = () => {};
 		let opened: () => void = () => {};
 		const sendInput = vi.fn();
@@ -1298,6 +1300,7 @@ describe("XtermTerminal", () => {
 	});
 
 	it("stops treating covered output as live after a fresh handle reconnects", async () => {
+		markTerminalHandleFresh("fresh-then-reconnected");
 		const outputs: Array<(data: Uint8Array) => void> = [];
 		const opened: Array<() => void> = [];
 		const connectionChanges: Array<(state: "open" | "closed") => void> = [];
@@ -1329,6 +1332,41 @@ describe("XtermTerminal", () => {
 		});
 		await waitFor(() => expect(xtermWrite).toHaveBeenCalled());
 		expect(sendInputs[1]).not.toHaveBeenCalled();
+	});
+
+	it.each(["remount", "existing"])("discards historical CPRs on %s pane mount", async (scenario) => {
+		const outputs: Array<(data: Uint8Array) => void> = [];
+		const opened: Array<() => void> = [];
+		const sendInputs = [vi.fn(), vi.fn()];
+		const createMux = vi.fn((): TerminalMux => {
+			const index = outputs.length;
+			return {
+				open: vi.fn(), close: vi.fn(), resize: vi.fn(), dispose: vi.fn(), sendInput: sendInputs[index],
+				onData: (_id, listener) => { outputs[index] = listener; return () => {}; },
+				onOpened: (_id, listener) => { opened[index] = listener; return () => {}; },
+				onExit: () => () => {}, onError: () => () => {},
+				onConnectionChange: () => () => {},
+			};
+		});
+		function Shell() {
+			const session = useTerminalSession(undefined, { daemonReady: true, coverInitialReplay: true, shellTerminalHandleId: "mounted-existing", createMux });
+			return <XtermTerminal theme="dark" onReady={session.attach} />;
+		}
+		if (scenario === "remount") {
+			markTerminalHandleFresh("mounted-existing");
+			const first = render(<QueryClientProvider client={new QueryClient()}><Shell /></QueryClientProvider>);
+			act(() => opened[0]());
+			first.unmount();
+		}
+		render(<QueryClientProvider client={new QueryClient()}><Shell /></QueryClientProvider>);
+		const index = outputs.length - 1;
+		const xtermWrite = vi.spyOn(state.lastTerminal!, "write");
+		act(() => {
+			opened[index]();
+			outputs[index](new TextEncoder().encode("history\x1b[6n"));
+		});
+		await waitFor(() => expect(xtermWrite).toHaveBeenCalled());
+		expect(sendInputs[index]).not.toHaveBeenCalled();
 	});
 
 	it("does not forward an unsolicited cursor-position-shaped input", () => {

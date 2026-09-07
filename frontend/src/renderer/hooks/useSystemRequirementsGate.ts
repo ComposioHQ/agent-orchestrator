@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback } from "react";
+import { markTerminalHandleFresh } from "../lib/fresh-terminal-handles";
 import type { components } from "../../api/schema";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
 import { usesPreviewWorkspaceData } from "../lib/preview-mode";
@@ -64,6 +65,7 @@ export function useStartGitHubAuthTerminal() {
 			if (existing) return existing;
 			const { data, error } = await apiClient.POST("/api/v1/system/github-auth/terminal");
 			if (error || !data) throw new Error(apiErrorMessage(error, "Could not start GitHub sign-in."));
+			markTerminalHandleFresh(data.shellTerminal.handleId);
 			return data.shellTerminal;
 		},
 		onSuccess: (terminal) => {
