@@ -1733,6 +1733,17 @@ type ConversationImageContentRequest struct {
 	Data     string `json:"data"`
 }
 
+// EditQueuedConversationMessageRequest changes an undispatched prompt. Omitted
+// retainedContent preserves the stored blocks; an empty list removes attachments.
+type EditQueuedConversationMessageRequest struct {
+	Text        string                            `json:"text"`
+	Attachments []ConversationImageContentRequest `json:"attachments,omitempty"`
+	// Indices in the message's public content summary, in their original order.
+	RetainedContent *[]int `json:"retainedContent,omitempty"`
+	// Reject a stale editor before interpreting attachment indices.
+	ExpectedRevision *int64 `json:"expectedRevision,omitempty"`
+}
+
 // ConversationResourceContentRequest is a resource link, or embedded text when
 // Text is present and the provider negotiated embedded context.
 type ConversationResourceContentRequest struct {

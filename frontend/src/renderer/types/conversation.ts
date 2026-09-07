@@ -142,6 +142,12 @@ export interface ConversationContentSummary {
 	name?: string;
 }
 
+export interface QueuedMessageEditOptions {
+	attachments?: { mimeType: string; data: string }[];
+	retainedContent?: number[];
+	expectedRevision?: number;
+}
+
 export interface ConversationMessage {
 	kind: "message";
 	id: string;
