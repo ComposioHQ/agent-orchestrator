@@ -40,6 +40,7 @@ export type BrowserAnnotationContext = {
 export type BrowserAnnotationModeInput = {
 	viewId: string;
 	enabled: boolean;
+	targetPoint?: { x: number; y: number };
 };
 
 export type BrowserAnnotationSelection =
@@ -61,6 +62,7 @@ export type BrowserAnnotationDraft = BrowserAnnotationPageSubmitPayload;
 export type BrowserAnnotationPageMode = {
 	enabled: boolean;
 	draft?: BrowserAnnotationDraft;
+	targetPoint?: { x: number; y: number };
 };
 
 export type BrowserAnnotationSubmitPayload = BrowserAnnotationPageSubmitPayload & {

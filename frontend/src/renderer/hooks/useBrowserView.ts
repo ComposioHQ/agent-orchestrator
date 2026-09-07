@@ -9,10 +9,6 @@ import type {
 	BrowserTabsState,
 } from "../../main/browser-view-host";
 import type { BrowserAnnotationCancelPayload, BrowserAnnotationSubmitPayload } from "../../shared/browser-annotations";
-import type {
-	BrowserContextMenuAction,
-	BrowserContextMenuRequest,
-} from "../../shared/browser-context-menu";
 import type { BrowserProfileViewState } from "../../shared/browser-profiles";
 import { OPEN_BROWSER_OVERLAY_SELECTOR } from "../lib/dom-selectors";
 
@@ -87,9 +83,6 @@ export type BrowserViewModel = {
 	destroy: () => void;
 	annotationMode: boolean;
 	setAnnotationMode: (enabled: boolean) => Promise<void>;
-	contextMenu: BrowserContextMenuRequest | null;
-	runContextMenuAction: (action: BrowserContextMenuAction) => Promise<void>;
-	dismissContextMenu: (restoreFocus?: boolean) => Promise<void>;
 };
 
 const EMPTY_NAV_STATE: BrowserNavState = {
@@ -206,7 +199,6 @@ export function useBrowserView({
 	const [viewId, setViewId] = useState("");
 	const [navState, setNavState] = useState<BrowserNavState>(EMPTY_NAV_STATE);
 	const [annotationMode, setAnnotationModeState] = useState(false);
-	const [contextMenu, setContextMenu] = useState<BrowserContextMenuRequest | null>(null);
 	const [tabsState, setTabsState] = useState<BrowserTabsState>(EMPTY_TABS_STATE);
 	// Display-only tab order (drag-to-reorder). Re-projected onto every incoming
 	// tabsState push below, since the main process's own tab order is not
@@ -379,7 +371,6 @@ export function useBrowserView({
 		setClosedTabs(closedTabsBySession.get(sessionId) ?? []);
 		setAgentBrowserActive(false);
 		setAgentBrowserActivity(null);
-		setContextMenu(null);
 		if (tabNoticeTimerRef.current !== null) {
 			window.clearTimeout(tabNoticeTimerRef.current);
 			tabNoticeTimerRef.current = null;
@@ -442,22 +433,13 @@ export function useBrowserView({
 	useEffect(() => {
 		return window.ao?.browser.onNavState((state) => {
 			if (state.viewId !== viewIdRef.current) return;
-			setContextMenu(null);
 			setNavState(state);
-		});
-	}, []);
-
-	useEffect(() => {
-		return window.ao?.browser.onContextMenu((request) => {
-			if (request.viewId !== viewIdRef.current) return;
-			setContextMenu(request);
 		});
 	}, []);
 
 	useEffect(() => {
 		return window.ao?.browser.onTabsState((state) => {
 			if (state.viewId !== viewIdRef.current) return;
-			setContextMenu(null);
 			setTabsState(state);
 			const change = state.change;
 			if (change?.kind === "popup") {
@@ -493,30 +475,6 @@ export function useBrowserView({
 
 	const reorderTabs = useCallback((orderedIds: string[]) => setTabOrder(orderedIds), []);
 
-	const runContextMenuAction = useCallback(async (action: BrowserContextMenuAction) => {
-		const request = contextMenu;
-		if (!request || !request.actions.includes(action)) return;
-		setContextMenu(null);
-		await window.ao?.browser.runContextMenuAction({
-			requestId: request.requestId,
-			viewId: request.viewId,
-			tabId: request.tabId,
-			action,
-		});
-	}, [contextMenu]);
-
-	const dismissContextMenu = useCallback(async (restoreFocus = true) => {
-		const request = contextMenu;
-		if (!request) return;
-		setContextMenu(null);
-		await window.ao?.browser.dismissContextMenu({
-			requestId: request.requestId,
-			viewId: request.viewId,
-			tabId: request.tabId,
-			restoreFocus,
-		});
-	}, [contextMenu]);
-
 	useEffect(() => {
 		return window.ao?.browser.onDevToolsState((state) => {
 			if (state.viewId !== viewIdRef.current) return;
@@ -550,7 +508,6 @@ export function useBrowserView({
 		if (active) {
 			scheduleSettleMeasure();
 		} else {
-			setContextMenu(null);
 			sendHiddenBounds();
 		}
 	}, [active, navState.url, poppedOut, scheduleSettleMeasure, sendHiddenBounds]);
@@ -888,8 +845,5 @@ export function useBrowserView({
 		destroy,
 		annotationMode,
 		setAnnotationMode,
-		contextMenu: stateBelongsToSession ? contextMenu : null,
-		runContextMenuAction,
-		dismissContextMenu,
 	};
 }

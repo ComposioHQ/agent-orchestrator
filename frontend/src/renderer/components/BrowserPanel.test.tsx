@@ -44,9 +44,6 @@ const hookState = vi.hoisted(() => ({
 	closeDevTools: vi.fn(),
 	devtoolsState: { viewId: "42:sess-1", open: false, activeTabId: "t1" },
 	setAnnotationMode: vi.fn(),
-	contextMenu: null as import("../../shared/browser-context-menu").BrowserContextMenuRequest | null,
-	runContextMenuAction: vi.fn(),
-	dismissContextMenu: vi.fn(),
 	tabs: [{ id: "t1", url: "", title: "", active: true }],
 	activeTabId: "t1",
 	tabNotice: "",
@@ -93,9 +90,6 @@ vi.mock("../hooks/useBrowserView", () => ({
 			closeDevTools: hookState.closeDevTools,
 			annotationMode: false,
 			setAnnotationMode: hookState.setAnnotationMode,
-			contextMenu: hookState.contextMenu,
-			runContextMenuAction: hookState.runContextMenuAction,
-			dismissContextMenu: hookState.dismissContextMenu,
 		};
 	},
 }));
@@ -210,11 +204,6 @@ describe("BrowserPanel", () => {
 		};
 		hookState.setAnnotationMode.mockReset();
 		hookState.setAnnotationMode.mockResolvedValue(undefined);
-		hookState.contextMenu = null;
-		hookState.runContextMenuAction.mockReset();
-		hookState.runContextMenuAction.mockResolvedValue(undefined);
-		hookState.dismissContextMenu.mockReset();
-		hookState.dismissContextMenu.mockResolvedValue(undefined);
 		postMock.mockReset();
 		postMock.mockResolvedValue({ data: {} });
 		annotationSubmitListeners.clear();
@@ -445,79 +434,6 @@ describe("BrowserPanel", () => {
 
 		await waitFor(() => expect(openExternal).toHaveBeenCalledWith(url));
 		openExternal.mockRestore();
-	});
-
-	it("shows an AO-styled target-aware menu at the browser-page click position", () => {
-		hookState.navState = { ...hookState.navState, url: "https://example.test/" };
-		hookState.contextMenu = {
-			requestId: "menu-1",
-			viewId: "42:sess-1",
-			tabId: "t1",
-			position: { x: 80, y: 120 },
-			actions: ["open-link-tab", "open-link-external", "copy-link", "copy-selection", "inspect"],
-		};
-		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
-
-		expect(screen.getByRole("menu")).toHaveAttribute("data-browser-native-overlay", "true");
-		expect(screen.getAllByRole("menuitem").map((item) => item.textContent)).toEqual([
-			"Annotate",
-			"Open link in new tab",
-			"Open in external browser",
-			"Copy link address",
-			"Copy",
-			"Inspect Element",
-		]);
-		const anchor = screen.getByTestId("browser-context-menu-anchor");
-		expect(anchor).toHaveStyle({ left: "80px", top: "120px" });
-	});
-
-	it("starts the existing annotation flow from the browser-page menu", async () => {
-		hookState.navState = { ...hookState.navState, url: "https://example.test/" };
-		hookState.contextMenu = {
-			requestId: "menu-1",
-			viewId: "42:sess-1",
-			tabId: "t1",
-			position: { x: 80, y: 120 },
-			actions: ["inspect"],
-		};
-		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
-
-		await userEvent.click(screen.getByRole("menuitem", { name: "Annotate" }));
-
-		expect(hookState.setAnnotationMode).toHaveBeenCalledWith(true);
-		expect(hookState.dismissContextMenu).toHaveBeenCalledWith(false);
-	});
-
-	it("routes a browser-page menu action through the retained context request", async () => {
-		hookState.navState = { ...hookState.navState, url: "https://example.test/" };
-		hookState.contextMenu = {
-			requestId: "menu-1",
-			viewId: "42:sess-1",
-			tabId: "t1",
-			position: { x: 80, y: 120 },
-			actions: ["copy-selection", "inspect"],
-		};
-		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
-
-		await userEvent.click(screen.getByRole("menuitem", { name: "Copy" }));
-
-		expect(hookState.runContextMenuAction).toHaveBeenCalledWith("copy-selection");
-	});
-
-	it("dismisses the browser-page menu on Escape and restores page focus", async () => {
-		hookState.navState = { ...hookState.navState, url: "https://example.test/" };
-		hookState.contextMenu = {
-			requestId: "menu-1",
-			viewId: "42:sess-1",
-			tabId: "t1",
-			position: { x: 80, y: 120 },
-			actions: ["inspect"],
-		};
-		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
-
-		await userEvent.keyboard("{Escape}");
-
-		expect(hookState.dismissContextMenu).toHaveBeenCalledWith(true);
 	});
 
 	it("keeps secondary browser controls compact until device presets are requested", async () => {

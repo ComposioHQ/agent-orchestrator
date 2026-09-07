@@ -32,7 +32,7 @@ const MARKDOWN_ANNOTATION_TARGETS =
 	"h1, h2, h3, h4, h5, h6, p, ul, ol, li, blockquote, pre, table, th, td, figure, figcaption, img, hr, details, summary";
 
 ipcRenderer.on("browser:annotation:setMode", (_event, input: BrowserAnnotationPageMode) => {
-	setEnabled(Boolean(input?.enabled), "disabled", input?.draft);
+	setEnabled(Boolean(input?.enabled), "disabled", input?.draft, input?.targetPoint);
 });
 
 window.addEventListener("beforeunload", () => {
@@ -40,14 +40,20 @@ window.addEventListener("beforeunload", () => {
 	enabled = false;
 });
 
-function setEnabled(next: boolean, cancelReason: BrowserAnnotationCancelReason, draft?: BrowserAnnotationDraft): void {
+function setEnabled(
+	next: boolean,
+	cancelReason: BrowserAnnotationCancelReason,
+	draft?: BrowserAnnotationDraft,
+	targetPoint?: { x: number; y: number },
+): void {
 	if (enabled === next) {
-		if (next && draft) {
+		if (next && (draft || targetPoint)) {
 			resetSelectionState();
 			cleanupOverlay();
 			ensureOverlay();
 			renderHint();
-			restoreDraft(draft);
+			if (draft) restoreDraft(draft);
+			else if (targetPoint) selectTargetAtPoint(targetPoint);
 		}
 		return;
 	}
@@ -59,11 +65,25 @@ function setEnabled(next: boolean, cancelReason: BrowserAnnotationCancelReason, 
 		installListeners();
 		renderHint();
 		if (draft) restoreDraft(draft);
+		else if (targetPoint) selectTargetAtPoint(targetPoint);
 	} else {
 		removeListeners();
 		cleanupOverlay();
 		if (cancelReason !== "disabled") sendCancel(cancelReason);
 	}
+}
+
+function selectTargetAtPoint(point: { x: number; y: number }): void {
+	const target = annotationTarget(document.elementFromPoint(point.x, point.y));
+	if (!target) return;
+	selectedElement = target;
+	selectedContext = createBrowserAnnotationContext(target);
+	const draft: BrowserAnnotationDraft = {
+		instruction: "",
+		selection: { kind: "element", context: selectedContext },
+	};
+	sendDraft(draft);
+	renderPrompt(target, selectedContext);
 }
 
 function resetSelectionState(): void {

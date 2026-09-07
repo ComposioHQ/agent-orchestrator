@@ -13,7 +13,6 @@ type TabsListener = (state: import("../../main/browser-view-host").BrowserTabsSt
 type DevToolsListener = (state: import("../../main/browser-view-host").BrowserDevToolsState) => void;
 type ActivityListener = (state: import("../../main/browser-view-host").BrowserAgentActivityState) => void;
 type ProfileListener = (state: import("../../shared/browser-profiles").BrowserProfileViewState) => void;
-type ContextMenuListener = (request: import("../../shared/browser-context-menu").BrowserContextMenuRequest) => void;
 
 function createSlot(rect: Partial<DOMRect> = {}) {
 	const slot = document.createElement("div");
@@ -39,7 +38,6 @@ function setupBridge() {
 	const devtoolsListeners = new Set<DevToolsListener>();
 	const activityListeners = new Set<ActivityListener>();
 	const profileListeners = new Set<ProfileListener>();
-	const contextMenuListeners = new Set<ContextMenuListener>();
 	const bridge = {
 		nativeCompositionEnabled: false,
 		stateFor(viewId: string): BrowserNavState {
@@ -110,8 +108,6 @@ function setupBridge() {
 		getProfile: vi.fn(async (viewId: string) => ({ viewId, profileId: null, temporary: true })),
 		showProfileMenu: vi.fn(),
 		selectProfile: vi.fn(),
-		runContextMenuAction: vi.fn(async () => undefined),
-		dismissContextMenu: vi.fn(async () => undefined),
 		historySuggestions: vi.fn(async () => []),
 		destroy: vi.fn(),
 		setAnnotationMode: vi.fn(async () => undefined),
@@ -139,10 +135,6 @@ function setupBridge() {
 		onProfileManage: vi.fn(() => () => undefined),
 		onAnnotationSubmit: vi.fn(() => () => undefined),
 		onAnnotationCancel: vi.fn(() => () => undefined),
-		onContextMenu: vi.fn((listener: ContextMenuListener) => {
-			contextMenuListeners.add(listener);
-			return () => contextMenuListeners.delete(listener);
-		}),
 		emit(state: BrowserNavState) {
 			listeners.forEach((listener) => listener(state));
 		},
@@ -157,9 +149,6 @@ function setupBridge() {
 		},
 		emitProfile(state: Parameters<ProfileListener>[0]) {
 			profileListeners.forEach((listener) => listener(state));
-		},
-		emitContextMenu(request: Parameters<ContextMenuListener>[0]) {
-			contextMenuListeners.forEach((listener) => listener(request));
 		},
 	};
 	window.ao = { ...window.ao!, browser: bridge };
@@ -256,91 +245,6 @@ describe("useBrowserView", () => {
 		expect(bridge.selectTab).toHaveBeenCalledWith({ viewId: "42:sess-1", tabId: "t1" });
 		await act(() => result.current.closeTab("t2"));
 		expect(bridge.closeTab).toHaveBeenCalledWith({ viewId: "42:sess-1", tabId: "t2" });
-	});
-
-	it("tracks context-menu requests for the current view and routes actions", async () => {
-		const bridge = setupBridge();
-		const { result } = renderHook(() => useBrowserView({ sessionId: "sess-1", active: true, poppedOut: false }));
-		await waitFor(() => expect(result.current.viewId).toBe("42:sess-1"));
-		const request: import("../../shared/browser-context-menu").BrowserContextMenuRequest = {
-			requestId: "menu-1",
-			viewId: "42:sess-1",
-			tabId: "t1",
-			position: { x: 80, y: 120 },
-			actions: ["copy-selection", "inspect"],
-		};
-
-		act(() => bridge.emitContextMenu(request));
-		expect(result.current.contextMenu).toEqual(request);
-		await act(() => result.current.runContextMenuAction("copy-selection"));
-		expect(bridge.runContextMenuAction).toHaveBeenCalledWith({
-			requestId: "menu-1",
-			viewId: "42:sess-1",
-			tabId: "t1",
-			action: "copy-selection",
-		});
-		expect(result.current.contextMenu).toBeNull();
-	});
-
-	it("ignores context menus from another browser view and dismisses the current one on navigation", async () => {
-		const bridge = setupBridge();
-		const { result } = renderHook(() => useBrowserView({ sessionId: "sess-1", active: true, poppedOut: false }));
-		await waitFor(() => expect(result.current.viewId).toBe("42:sess-1"));
-
-		act(() =>
-			bridge.emitContextMenu({
-				requestId: "other",
-				viewId: "42:other",
-				tabId: "t1",
-				position: { x: 1, y: 2 },
-				actions: ["inspect"],
-			}),
-		);
-		expect(result.current.contextMenu).toBeNull();
-
-		act(() =>
-			bridge.emitContextMenu({
-				requestId: "menu-1",
-				viewId: "42:sess-1",
-				tabId: "t1",
-				position: { x: 1, y: 2 },
-				actions: ["inspect"],
-			}),
-		);
-		act(() =>
-			bridge.emit({
-				viewId: "42:sess-1",
-				url: "https://example.test/next",
-				title: "Next",
-				canGoBack: true,
-				canGoForward: false,
-				isLoading: false,
-			}),
-		);
-		expect(result.current.contextMenu).toBeNull();
-	});
-
-	it("dismisses the local context menu when the browser panel becomes inactive", async () => {
-		const bridge = setupBridge();
-		const { result, rerender } = renderHook(
-			({ active }) => useBrowserView({ sessionId: "sess-1", active, poppedOut: false }),
-			{ initialProps: { active: true } },
-		);
-		await waitFor(() => expect(result.current.viewId).toBe("42:sess-1"));
-		act(() =>
-			bridge.emitContextMenu({
-				requestId: "menu-1",
-				viewId: "42:sess-1",
-				tabId: "t1",
-				position: { x: 1, y: 2 },
-				actions: ["inspect"],
-			}),
-		);
-		expect(result.current.contextMenu).not.toBeNull();
-
-		rerender({ active: false });
-
-		expect(result.current.contextMenu).toBeNull();
 	});
 
 	it("remembers a closed tab so it can be reopened, and forgets it once reopened", async () => {

@@ -55,10 +55,14 @@ type Bounds = {
 	height: number;
 };
 
-function setAnnotationMode(enabled: boolean, draft?: BrowserAnnotationDraft): void {
+function setAnnotationMode(
+	enabled: boolean,
+	draft?: BrowserAnnotationDraft,
+	targetPoint?: { x: number; y: number },
+): void {
 	const listener = electronMocks.listeners.get("browser:annotation:setMode");
 	if (!listener) throw new Error("annotation mode listener was not registered");
-	listener({}, { enabled, ...(draft ? { draft } : {}) });
+	listener({}, { enabled, ...(draft ? { draft } : {}), ...(targetPoint ? { targetPoint } : {}) });
 }
 
 function elementWithBounds(id: string, bounds: Bounds): HTMLButtonElement {
@@ -168,6 +172,31 @@ describe("annotate preload", () => {
 		expect(highlightStyle().top).toBe("24px");
 		expect(highlightStyle().width).toBe("120px");
 		expect(highlightStyle().height).toBe("40px");
+	});
+
+	it("starts with the element at a retained browser context-menu point already selected", () => {
+		setAnnotationMode(false);
+		const target = elementWithBounds("target", { left: 12, top: 24, width: 120, height: 40 });
+		Object.defineProperty(document, "elementFromPoint", {
+			configurable: true,
+			value: vi.fn(() => target),
+		});
+
+		setAnnotationMode(true, undefined, { x: 24, y: 32 });
+
+		expect(highlightStyle().left).toBe("12px");
+		expect(highlightStyle().top).toBe("24px");
+		expect(promptForm()).not.toBeNull();
+		expect(electronMocks.send).toHaveBeenCalledWith(
+			"browser:annotation:draft",
+			expect.objectContaining({
+				selection: expect.objectContaining({
+					kind: "element",
+					context: expect.objectContaining({ selector: "button#target" }),
+				}),
+			}),
+		);
+		Reflect.deleteProperty(document, "elementFromPoint");
 	});
 
 	it("ignores underlying page clicks while the prompt is open", () => {

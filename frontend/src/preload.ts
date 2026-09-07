@@ -53,11 +53,6 @@ import type {
 	BrowserAnnotationSubmitPayload,
 } from "./shared/browser-annotations";
 import type {
-	BrowserContextMenuActionInput,
-	BrowserContextMenuDismissInput,
-	BrowserContextMenuRequest,
-} from "./shared/browser-context-menu";
-import type {
 	BrowserProfile,
 	BrowserProfileListState,
 	BrowserProfileMenuInput,
@@ -379,17 +374,6 @@ const api = {
 			ipcRenderer.invoke("browser:closeTab", input) as Promise<BrowserTabsState>,
 		openTab: (input: { viewId: string; url?: string }) =>
 			ipcRenderer.invoke("browser:openTab", input) as Promise<BrowserTabsState>,
-		runContextMenuAction: (input: BrowserContextMenuActionInput) =>
-			ipcRenderer.invoke("browser:contextMenu:action", input) as Promise<void>,
-		dismissContextMenu: (input: BrowserContextMenuDismissInput) =>
-			ipcRenderer.invoke("browser:contextMenu:dismiss", input) as Promise<void>,
-		onContextMenu: (listener: (request: BrowserContextMenuRequest) => void) => {
-			const wrapped = (_event: Electron.IpcRendererEvent, request: BrowserContextMenuRequest) => listener(request);
-			ipcRenderer.on("browser:contextMenu", wrapped);
-			return () => {
-				ipcRenderer.off("browser:contextMenu", wrapped);
-			};
-		},
 		getProfile: (viewId: string) =>
 			ipcRenderer.invoke("browser:profile:get", viewId) as Promise<BrowserProfileViewState>,
 		showProfileMenu: (input: BrowserProfileMenuInput) =>
