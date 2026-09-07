@@ -7021,7 +7021,9 @@ components:
           type: string
         retryAt:
           format: date-time
-          type: string
+          type:
+          - "null"
+          - string
         selectionMode:
           enum:
           - catalog
