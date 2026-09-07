@@ -2075,6 +2075,39 @@ html.sidebar-reordering * {
 	transform: scale(0.96);
 }
 
+/* Timeline summaries are disclosure controls, not raised buttons. Keeping their
+   footprint fixed prevents the label from shifting when the pointer lands. */
+.cursor-chat-surface .activity-summary-button:not(:disabled):active {
+	transform: none;
+}
+
+.activity-run-toggle {
+	border-bottom: 1px solid color-mix(in oklch, var(--color-border) 48%, transparent);
+	color: var(--color-text-muted);
+}
+
+.activity-run-toggle:hover,
+.activity-subgroup-toggle:hover {
+	color: var(--color-text-primary);
+}
+
+.activity-summary-button:hover > .activity-summary-label {
+	color: var(--color-text-primary);
+}
+
+.activity-row-toggle:hover > .activity-row-label {
+	color: var(--color-text-primary);
+}
+
+.cursor-chat-surface .activity-summary-button:not(:disabled),
+.cursor-chat-surface .activity-row-toggle:not(:disabled) {
+	transition: none;
+}
+
+.activity-subgroup {
+	min-width: 0;
+}
+
 @media (prefers-reduced-motion: reduce) {
 	.cursor-chat-surface button:not(:disabled) {
 		transition: none;
@@ -4756,6 +4789,16 @@ html[data-native-browser-composition="true"] .browser-popout-overlay {
 }
 
 html[data-native-browser-composition="true"] .browser-popout-backdrop {
+	background: transparent;
+}
+
+/* The popped-out frame is the direct wrapper of the maximized browser panel
+ * (SessionView.tsx's portal) and paints its own opaque `background: var(--bg)`
+ * plate. It is NOT covered by the `:has(.browser-popout-overlay)` shell clears
+ * above — those target ancestors under #root — and leaving it opaque blanked
+ * the live page to black on Windows whenever an overlay (tooltip, menu) raised
+ * the transparent shell over the native view in a maximized window. */
+html[data-native-browser-composition="true"] .browser-popout-frame {
 	background: transparent;
 }
 

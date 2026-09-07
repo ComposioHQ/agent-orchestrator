@@ -56,6 +56,7 @@ export type InspectorSessionState = {
 export type GlobalToast = {
 	title: string;
 	body?: string;
+	placement?: "bottom-right" | "top-center";
 	nonce: number;
 };
 
@@ -143,7 +144,7 @@ export type UiState = {
 	setProjectRestarting: (projectId: string, restarting: boolean) => void;
 	setOrchestratorReplacementError: (projectId: string, failure: OrchestratorReplacementFailure | null) => void;
 	setOrchestratorStartupError: (projectId: string, message: string | null) => void;
-	showGlobalToast: (title: string, body?: string) => void;
+	showGlobalToast: (title: string, body?: string, placement?: GlobalToast["placement"]) => void;
 	clearGlobalToast: () => void;
 	requestNewTask: (projectId: string) => void;
 	requestCreateProject: () => void;
@@ -374,9 +375,9 @@ export const useUiStore = create<UiState>((set, get) => ({
 			}
 			return { orchestratorStartupErrors };
 		}),
-	showGlobalToast: (title, body) =>
+	showGlobalToast: (title, body, placement) =>
 		set((state) => ({
-			globalToast: { title, body, nonce: (state.globalToast?.nonce ?? 0) + 1 },
+			globalToast: { title, body, placement, nonce: (state.globalToast?.nonce ?? 0) + 1 },
 		})),
 	clearGlobalToast: () => set({ globalToast: null }),
 	requestNewTask: (projectId) =>

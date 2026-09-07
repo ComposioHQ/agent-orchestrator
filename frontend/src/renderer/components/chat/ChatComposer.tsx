@@ -60,6 +60,7 @@ import { moveHighlight, rankFiles, rankSkills, type Suggestion } from "./compose
 import {
 	isSupportedImageAttachment,
 	useFileAttachments,
+	MAX_ATTACHMENTS,
 	type FileAttachmentPayload,
 } from "../../hooks/useFileAttachments";
 import { File } from "lucide-react";
@@ -75,6 +76,16 @@ function withAttachmentReferences(text: string, paths: string[]): string {
 	const lead = text.trim() === "" ? "" : `${text}\n\n`;
 	return `${lead}Attached files (read these files in the workspace):\n${paths.map((path) => `- ${path}`).join("\n")}`;
 }
+
+/** A retained server-owned attachment; image bytes stay in durable storage. */
+export type StoredComposerAttachment = {
+	id: string;
+	name: string;
+	path?: string;
+	dataUrl?: string;
+	contentIndex?: number;
+	contentType?: string;
+};
 
 export const ChatComposer = memo(function ChatComposer({
 	onSend,
@@ -108,7 +119,7 @@ export const ChatComposer = memo(function ChatComposer({
 	autoFocusKey,
 	autoFocus = true,
 }: {
-	onSend: (text: string, attachments?: FileAttachmentPayload[]) => void | Promise<unknown>;
+	onSend: (text: string, attachments?: FileAttachmentPayload[], retainedContent?: number[]) => void | Promise<unknown>;
 	settings?: ReactNode;
 	/** A provider decision that temporarily replaces ordinary message entry. */
 	approval?: ReactNode;
@@ -146,7 +157,7 @@ export const ChatComposer = memo(function ChatComposer({
 	/** Why the last steer was refused. */
 	steerRefusal?: string;
 	/** A selected history message to load into the composer as a new draft. */
-	draftSeed?: { id: string; text: string };
+	draftSeed?: { id: string; text: string; attachments?: StoredComposerAttachment[] };
 	/** A queued turn being edited in the composer instead of the dock. */
 	editingQueuedTurnId?: string;
 	onCancelQueuedEdit?: () => void;
@@ -210,7 +221,12 @@ export const ChatComposer = memo(function ChatComposer({
 	const previousTrigger = useRef<ComposerTrigger | undefined>(undefined);
 	const triggerRef = useRef<ComposerTrigger | undefined>(undefined);
 
-	const fileAttachments = useFileAttachments();
+	const ordinaryAttachments = useFileAttachments();
+	const editAttachments = useFileAttachments();
+	const fileAttachments = editingQueuedTurnId ? editAttachments : ordinaryAttachments;
+	const [retainedAttachments, setRetainedAttachments] = useState<StoredComposerAttachment[]>(draftSeed?.attachments ?? []);
+	const visibleRetainedAttachments = editingQueuedTurnId ? retainedAttachments : [];
+	const ordinaryDraftRef = useRef("");
 	const canAttach = Boolean(onStageAttachments);
 
 	const slashCommands = useMemo<ChatSkill[]>(() => {
@@ -246,7 +262,7 @@ export const ChatComposer = memo(function ChatComposer({
 	// index from the previous list can point past the end of this one.
 	const activeIndex = Math.min(highlighted, suggestions.length - 1);
 
-	const staged = fileAttachments.attachments.length > 0;
+	const staged = fileAttachments.attachments.length > 0 || visibleRetainedAttachments.length > 0;
 	const controlsDisabled = Boolean(disabled || submitting);
 	const hasDraft = hasText || staged;
 	const savingQueuedEdit = Boolean(editingQueuedTurnId);
@@ -282,8 +298,9 @@ export const ChatComposer = memo(function ChatComposer({
 				queuedDock as ReactElement<{
 					canSteerNext?: boolean;
 					steerNextRequest?: number;
+					disabled?: boolean;
 				}>,
-				{ canSteerNext, steerNextRequest },
+				{ canSteerNext, steerNextRequest, disabled: submitting },
 			)
 		: queuedDock;
 
@@ -337,6 +354,28 @@ export const ChatComposer = memo(function ChatComposer({
 		editor.current?.clear();
 	}, []);
 
+	const previousEditingQueuedTurnIdRef = useRef(editingQueuedTurnId);
+	const previousEditSeedIdRef = useRef(draftSeedId);
+	useLayoutEffect(() => {
+		const previous = previousEditingQueuedTurnIdRef.current;
+		if (previous === editingQueuedTurnId && previousEditSeedIdRef.current === draftSeedId) return;
+		previousEditSeedIdRef.current = draftSeedId;
+		previousEditingQueuedTurnIdRef.current = editingQueuedTurnId;
+		stagedDelivery.current = null;
+		editAttachments.clear();
+		setRetainedAttachments(draftSeed?.attachments ?? []);
+		if (!previous && editingQueuedTurnId) {
+			ordinaryDraftRef.current = textRef.current;
+		} else if (previous && !editingQueuedTurnId) {
+			const text = ordinaryDraftRef.current;
+			textRef.current = text;
+			hasTextRef.current = text.trim().length > 0;
+			setHasText(hasTextRef.current);
+			editor.current?.setText(text);
+			setSendError(null);
+		}
+	}, [draftSeed, draftSeedId, editingQueuedTurnId, editAttachments.clear]);
+
 	useEffect(() => {
 		if (draftSeedText === undefined) return;
 		textRef.current = draftSeedText;
@@ -349,15 +388,6 @@ export const ChatComposer = memo(function ChatComposer({
 		setHighlighted(0);
 		setSendError(null);
 	}, [draftSeedId, draftSeedText]);
-
-	const previousEditingQueuedTurnIdRef = useRef(editingQueuedTurnId);
-	useEffect(() => {
-		const previous = previousEditingQueuedTurnIdRef.current;
-		previousEditingQueuedTurnIdRef.current = editingQueuedTurnId;
-		if (previous && !editingQueuedTurnId) {
-			clearEditor();
-		}
-	}, [clearEditor, editingQueuedTurnId]);
 
 	const onEditorChange = useCallback((snapshot: ComposerEditorSnapshot) => {
 		textRef.current = snapshot.text;
@@ -472,7 +502,7 @@ export const ChatComposer = memo(function ChatComposer({
 
 		// `/compact` is a local AO command. It must refuse while a turn is running
 		// without being blocked by the ordinary busy send gate.
-		if (body === "/compact" && onCompact) {
+		if (body === "/compact" && onCompact && !editingQueuedTurnId) {
 			setSendError(null);
 			if (compactBlocked) {
 				setSendError("Stop the current turn before compacting.");
@@ -503,8 +533,14 @@ export const ChatComposer = memo(function ChatComposer({
 		// leave the image behind when its FileReader completes.
 		const attachmentPayloads = await fileAttachments.toSettledPayload();
 		const hasAttachments = attachmentPayloads.length > 0;
+		const imageCount = visibleRetainedAttachments.filter((attachment) => attachment.contentType === "image").length
+			+ (nativeImages ? attachmentPayloads.filter((attachment) => isSupportedImageAttachment(attachment.mimeType)).length : 0);
+		if (imageCount > MAX_ATTACHMENTS) {
+			setSendError(`You can attach up to ${MAX_ATTACHMENTS} images.`);
+			return;
+		}
 		const canSubmitNow =
-			(body.length > 0 || hasAttachments) &&
+			(body.length > 0 || hasAttachments || visibleRetainedAttachments.length > 0) &&
 			!disabled &&
 			!steerPending &&
 			!savingQueuedEditPending &&
@@ -525,7 +561,8 @@ export const ChatComposer = memo(function ChatComposer({
 		setSendError(null);
 
 		const shouldSteer = forceSteer ?? false;
-		let message = body;
+		const retainedPaths = visibleRetainedAttachments.flatMap((attachment) => attachment.path ? [attachment.path] : []);
+		let message = withAttachmentReferences(body, retainedPaths);
 		let nativePayloads: FileAttachmentPayload[] = [];
 		if (hasAttachments) {
 			if (!onStageAttachments) {
@@ -547,7 +584,7 @@ export const ChatComposer = memo(function ChatComposer({
 				setSendError("The files could not be attached. Nothing was sent.");
 				return;
 			}
-			message = withAttachmentReferences(body, paths);
+			message = withAttachmentReferences(body, [...retainedPaths, ...paths]);
 			nativePayloads = attachmentPayloads.filter((attachment) =>
 				isSupportedImageAttachment(attachment.mimeType),
 			);
@@ -574,6 +611,15 @@ export const ChatComposer = memo(function ChatComposer({
 		}
 
 		try {
+			if (editingQueuedTurnId) {
+				const retainedContent = visibleRetainedAttachments.flatMap((attachment) =>
+					attachment.contentIndex === undefined ? [] : [attachment.contentIndex],
+				).sort((a, b) => a - b);
+				await onSend(message, nativeImages && nativePayloads.length ? nativePayloads : undefined, retainedContent);
+				// Exiting edit mode restores the separate ordinary draft. Do not clear it
+				// from this submission's continuation after the parent changes modes.
+				return;
+			}
 			if (nativeImages && nativePayloads.length > 0) await onSend(message, nativePayloads);
 			else await onSend(message);
 		} catch (error) {
@@ -653,9 +699,8 @@ export const ChatComposer = memo(function ChatComposer({
 			}
 		}
 
-		if (event.key === "Escape" && editingQueuedTurnId && onCancelQueuedEdit) {
+		if (event.key === "Escape" && editingQueuedTurnId && onCancelQueuedEdit && !submitInFlight.current) {
 			event.preventDefault();
-			clearEditor();
 			onCancelQueuedEdit();
 		}
 	}
@@ -773,9 +818,22 @@ export const ChatComposer = memo(function ChatComposer({
 					/>
 				) : null}
 
+				{editingQueuedTurnId ? (
+					<div className="flex items-center justify-between text-xs text-muted-foreground">
+						<span>Editing queued message</span>
+						<button
+							type="button"
+							disabled={controlsDisabled}
+							onClick={onCancelQueuedEdit}
+							className="rounded px-1.5 py-0.5 hover:text-foreground focus-visible:outline focus-visible:outline-ring"
+						>
+							Cancel edit
+						</button>
+					</div>
+				) : null}
 				{staged ? (
 					<ul className="flex flex-wrap gap-1.5" aria-label="Attached files">
-						{fileAttachments.attachments.map((file) => (
+						{[...visibleRetainedAttachments, ...fileAttachments.attachments].map((file) => (
 							<li
 								key={file.id}
 								className="flex items-center gap-1.5 rounded border border-border bg-background py-0.5 pl-0.5 pr-1"
@@ -796,7 +854,10 @@ export const ChatComposer = memo(function ChatComposer({
 								<button
 									type="button"
 									onClick={() => {
-										if (!submitInFlight.current) fileAttachments.remove(file.id);
+									if (submitInFlight.current) return;
+									if (visibleRetainedAttachments.some((attachment) => attachment.id === file.id)) {
+										setRetainedAttachments((current) => current.filter((attachment) => attachment.id !== file.id));
+									} else fileAttachments.remove(file.id);
 									}}
 									disabled={controlsDisabled}
 									aria-label={`Remove ${file.name}`}

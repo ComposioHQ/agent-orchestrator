@@ -2401,4 +2401,26 @@ describe("ChatWorkspace shell tabs", () => {
 		);
 		expect(closeShellTerminalShortcutStates.at(-1)).toBe(false);
 	});
+
+	it("enables the close shortcut and closes the active workspace file tab", () => {
+		const onClose = vi.fn();
+		render(
+			<ChatWorkspace
+				snapshot={idleSnapshot()}
+				workspaceActiveTabKey="file:README.md"
+				workspaceTabs={[
+					{
+						key: "file:README.md",
+						content: <button role="tab">README.md</button>,
+						onSelect: vi.fn(),
+						onClose,
+					},
+				]}
+			/>,
+		);
+
+		expect(closeShellTerminalShortcutStates.at(-1)).toBe(true);
+		act(() => [...closeShellTerminalListeners][0]?.());
+		expect(onClose).toHaveBeenCalledOnce();
+	});
 });

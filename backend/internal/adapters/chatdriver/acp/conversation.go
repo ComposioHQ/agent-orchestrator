@@ -99,6 +99,8 @@ type conversation struct {
 	thoughts          map[string]string
 	nestedMessages    map[string]nestedMessageState
 	tools             map[string]*toolState
+	turnDiffs         *turnDiffAccumulator
+	turnDiffTurnID    string
 	providerFailure   *ports.ChatEvent
 	configOptions     []ports.ChatConfigOption
 	skills            []ports.ChatSkill
@@ -434,6 +436,8 @@ func (c *conversation) StartDeferredTurn(providerTurnID string) error {
 	c.thoughts = make(map[string]string)
 	c.nestedMessages = make(map[string]nestedMessageState)
 	c.tools = make(map[string]*toolState)
+	c.turnDiffs = nil
+	c.turnDiffTurnID = ""
 	c.providerFailure = nil
 	c.mu.Unlock()
 
