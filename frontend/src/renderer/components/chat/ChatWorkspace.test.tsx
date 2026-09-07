@@ -3282,9 +3282,9 @@ describe("durable queued edits", () => {
 		await typeInLexicalEditor(composer, " keep this");
 		const durableStorage = window.localStorage;
 		const storage = vi.spyOn(window, "localStorage", "get").mockReturnValue({
-			length: durableStorage.length,
+			length: 0,
 			clear: durableStorage.clear.bind(durableStorage),
-			key: durableStorage.key.bind(durableStorage),
+			key: () => null,
 			getItem: durableStorage.getItem.bind(durableStorage),
 			setItem: () => { throw new DOMException("full", "QuotaExceededError"); },
 			removeItem: () => { throw new DOMException("blocked", "SecurityError"); },
