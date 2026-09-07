@@ -3164,10 +3164,12 @@ export interface components {
             totalTokens: number;
         };
         CreateReportRequest: {
-            note: string;
+            message?: string;
+            note?: string;
+            outputs?: components["schemas"]["ReportOutputRequest"][];
             sessionId: string;
             /** @enum {string} */
-            type: "free_form" | "pr_created" | "artifact" | "checkpoint" | "needs_input" | "stuck" | "done";
+            state?: "checkpoint" | "needs_input" | "stuck" | "done";
         };
         CreateReportResponse: {
             id: string;
@@ -3733,6 +3735,12 @@ export interface components {
             needsGitInit: boolean;
             repoPath: string;
             requiredActions: string[];
+        };
+        ReportOutputRequest: {
+            /** @enum {string} */
+            kind: "artifact" | "pr_created" | "pr_reviewed";
+            label?: string;
+            reference: string;
         };
         ResolveCommentsResponse: {
             ok: boolean;

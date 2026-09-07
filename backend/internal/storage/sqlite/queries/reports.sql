@@ -1,10 +1,20 @@
 -- name: CreateReport :one
-INSERT INTO reports (id, session_id, project_id, type, note, created_at, available_at)
-VALUES (?, ?, ?, ?, ?, ?, ?)
+INSERT INTO reports (
+    id, session_id, project_id, state, note, message, created_at, available_at,
+    settlement_deadline, repeat_count
+)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 RETURNING *;
+
+-- name: CreateReportOutput :exec
+INSERT INTO report_outputs (report_id, position, kind, reference, label)
+VALUES (?, ?, ?, ?, ?);
 
 -- name: GetReport :one
 SELECT * FROM reports WHERE id = ?;
+
+-- name: ListReportOutputs :many
+SELECT * FROM report_outputs WHERE report_id = ? ORDER BY position;
 
 -- name: ListReportsBySession :many
 SELECT * FROM reports WHERE session_id = ? ORDER BY created_at, id;
@@ -35,3 +45,9 @@ SET delivery_state = 'pending', available_at = sqlc.arg(available_at),
     claim_token = '', claimed_at = NULL, last_error = sqlc.arg(last_error)
 WHERE id = sqlc.arg(id) AND delivery_state = 'claimed' AND claim_token = sqlc.arg(claim_token)
 RETURNING *;
+
+-- name: RequeueClaimedReports :execrows
+UPDATE reports
+SET delivery_state = 'pending', claim_token = '', claimed_at = NULL,
+    last_error = 'delivery claim recovered after daemon restart'
+WHERE delivery_state = 'claimed';
