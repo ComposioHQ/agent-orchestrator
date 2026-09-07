@@ -543,7 +543,9 @@ describe("CreateProjectFlow project import validation", () => {
 		apiMocks.POST
 			.mockResolvedValueOnce({
 				data: projectValidation("/repo/project", {
-					nextStep: "choose_import_kind",
+					// Root repository classification is authoritative even if an older
+					// daemon omits the explicit choose-import-kind transition.
+					nextStep: "continue",
 					warning: "This folder is already a Git project. AO will import it as a project instead of a workspace.",
 				}),
 			})
