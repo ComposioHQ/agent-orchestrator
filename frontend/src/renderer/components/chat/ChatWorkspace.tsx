@@ -50,6 +50,8 @@ import {
 	writeChatInlineEdit,
 	writeChatQueuedEdit,
 	type ChatDraftQueuedEdit,
+	type ChatDraftAttachment,
+	type ChatDraftRetainedAttachment,
 	type DraftClearResult,
 	type ChatDraftInlineEdit,
 	type ChatDraftScope,
@@ -101,7 +103,9 @@ import {
 } from "./ChatTimelineItems";
 import { HumanMessageEditor } from "./HumanMessageEditor";
 import { ChatLinkProvider } from "./ChatMarkdown";
-import { ChatComposer } from "./ChatComposer";
+import { ChatComposer, type StoredComposerAttachment } from "./ChatComposer";
+import { stagedAttachmentParts, attachmentName } from "./messageAttachments";
+import type { QueuedMessageEditOptions } from "../../types/conversation";
 import { QueuedMessageDock, type QueuedMessage } from "./QueuedMessageDock";
 import { ActivityRun } from "./ActivityRun";
 import { TurnPlan } from "./TurnPlan";
@@ -394,7 +398,7 @@ export interface ChatWorkspaceProps {
 	/** Why the last steer was refused, from the daemon's typed answer. */
 	steerRefusal?: string;
 	onPromoteQueuedTurn?: (turnId: string) => Promise<unknown>;
-	onEditQueuedTurn?: (turnId: string, text: string) => Promise<unknown>;
+	onEditQueuedTurn?: (turnId: string, text: string, options?: QueuedMessageEditOptions) => Promise<unknown>;
 	onCancelQueuedTurn?: (turnId: string) => Promise<unknown>;
 	onReorderQueuedTurns?: (turnIds: string[]) => Promise<unknown>;
 	promoteQueuedTurnPendingTurnId?: string;
@@ -699,12 +703,18 @@ function ChatWorkspaceContent({
 	);
 	const queueEditRef = useRef(queueEdit);
 	const [queueDraftError, setQueueDraftError] = useState<string>();
+	const unprovenQueueWrite = useRef<{ expectedRevision?: string; written: { revision?: string } } | undefined>(undefined);
 	const updateQueueDraft = useCallback((edit: Omit<ChatDraftQueuedEdit, "revision"> | undefined, expectedRevision?: string) => {
-		const result = writeChatQueuedEdit(draftScope, edit, expectedRevision);
+		const previous = unprovenQueueWrite.current;
+		const result = writeChatQueuedEdit(draftScope, edit, expectedRevision, undefined,
+			previous?.expectedRevision === expectedRevision ? previous?.written : undefined);
 		setQueueDraftError(result.ok ? undefined : "Queued edit could not be saved. Keep this chat open or copy it before leaving.");
 		if (result.ok) {
+			unprovenQueueWrite.current = undefined;
 			queueEditRef.current = result.draft.queuedEdit;
 			setQueueEdit(result.draft.queuedEdit);
+		} else if (result.attempted) {
+			unprovenQueueWrite.current = { expectedRevision, written: result.attempted };
 		}
 		return result;
 	}, [draftScope]);
@@ -712,23 +722,34 @@ function ChatWorkspaceContent({
 		setChatDraftBoundary(snapshot.sessionId, "queued-edit", queueDraftError ? "persistence-failed" : undefined);
 		return () => setChatDraftBoundary(snapshot.sessionId, "queued-edit", undefined);
 	}, [queueDraftError, snapshot.sessionId]);
-	// A lost save response can be reconciled from the durable message even after
-	// the queue dispatched it. Never turn an unavailable edit target into a send.
-	useEffect(() => {
-		if (!queueEdit?.saving) return;
-		const saved = snapshot.items.some((item) => item.kind === "message" && item.role === "user" &&
-			item.turnId === queueEdit.turnId && item.text === queueEdit.text);
-		if (saved) updateQueueDraft(undefined, queueEdit.revision);
-	}, [queueEdit, snapshot.items, updateQueueDraft]);
+	// Text equality cannot prove an attachment-only edit was accepted. Keep an
+	// uncertain edit and its original daemon revision until a save is acknowledged.
 	const changeQueuedDraft = useCallback((text: string) => {
 		const current = queueEditRef.current;
-		if (!current || current.turnId !== queueEdit?.turnId || current.text === text) return;
-		const result = updateQueueDraft({ turnId: current.turnId, text }, current.revision);
+		if (!current || current.turnId !== queueEdit?.turnId || current.ownerId !== queueEdit.ownerId || current.text === text) return;
+		const result = updateQueueDraft({ ...current, text, saving: undefined }, current.revision);
 		if (!result.ok) {
 			queueEditRef.current = { ...current, text };
 			setQueueEdit(queueEditRef.current);
 		}
-	}, [queueEdit?.turnId, updateQueueDraft]);
+	}, [queueEdit?.turnId, queueEdit?.ownerId, updateQueueDraft]);
+	const changeQueuedAttachments = useCallback((field: "attachments" | "stagedAttachments", attachments: ChatDraftRetainedAttachment[] | ChatDraftAttachment[]) => {
+		const current = queueEditRef.current;
+		if (!current || current.turnId !== queueEdit?.turnId || current.ownerId !== queueEdit.ownerId) return;
+		if (JSON.stringify(current[field] ?? []) === JSON.stringify(attachments)) return;
+		const next = { ...current, [field]: attachments, saving: undefined };
+		const result = updateQueueDraft(next, current.revision);
+		if (!result.ok) {
+			queueEditRef.current = next;
+			setQueueEdit(next);
+		}
+	}, [queueEdit?.turnId, queueEdit?.ownerId, updateQueueDraft]);
+	const changeQueuedStagedAttachments = useCallback((attachments: ChatDraftAttachment[]) => {
+		changeQueuedAttachments("stagedAttachments", attachments);
+	}, [changeQueuedAttachments]);
+	const changeQueuedRetainedAttachments = useCallback((attachments: ChatDraftRetainedAttachment[]) => {
+		changeQueuedAttachments("attachments", attachments);
+	}, [changeQueuedAttachments]);
 	const handleCancelQueuedTurn = useCallback(
 		async (turnId: string) => {
 			if (!onCancelQueuedTurn) return;
@@ -737,24 +758,30 @@ function ChatWorkspaceContent({
 		},
 		[queueEdit, stableCancelQueuedTurn, updateQueueDraft],
 	);
+	// Keep the dispatch target with this composer instance while attachment staging
+	// awaits. A newer queue editor must not redirect an older ordinary send.
 	const handleComposerSend = useCallback(
-		async (text: string, attachments?: Parameters<NonNullable<typeof onSend>>[1], clientMessageId?: string) => {
+		async (text: string, attachments?: Parameters<NonNullable<typeof onSend>>[1], clientMessageId?: string, retainedContent?: number[]) => {
 			if (queueEdit) {
-				if (attachments && attachments.length > 0) {
-					throw new Error("Queued message edits cannot include attachments.");
-				}
 				if (!onEditQueuedTurn) {
 					throw new Error("Queued message edits are unavailable right now.");
 				}
 				if (!queuedMessages.some((entry) => entry.turnId === queueEdit.turnId)) {
 					throw new Error("This message is no longer queued. Copy or cancel this edit to continue.");
 				}
-				const prepared = updateQueueDraft({ turnId: queueEdit.turnId, text, saving: true }, queueEdit.revision);
+				const currentEdit = queueEditRef.current;
+				if (!currentEdit || currentEdit.turnId !== queueEdit.turnId || currentEdit.ownerId !== queueEdit.ownerId) {
+					throw new Error("This queued edit was replaced. Nothing was sent.");
+				}
+				const prepared = updateQueueDraft({ ...currentEdit, saving: true }, currentEdit.revision);
 				if (!prepared.ok || !prepared.draft.queuedEdit) throw new Error("Queued edit could not be saved locally. Nothing was sent.");
-				await onEditQueuedTurn(queueEdit.turnId, text);
-				const current = readChatSessionDraft(draftScope).queuedEdit;
-				if (current?.revision === prepared.draft.queuedEdit.revision) {
-					if (!updateQueueDraft(undefined, current.revision).ok) throw new Error("The edit was saved, but its local draft could not be cleared.");
+				await onEditQueuedTurn(queueEdit.turnId, text, {
+					...(attachments?.length ? { attachments } : {}),
+					retainedContent: queueEdit.attachments === undefined ? undefined : retainedContent,
+					expectedRevision: queueEdit.expectedRevision,
+				});
+				if (queueEditRef.current?.ownerId === queueEdit.ownerId) {
+					if (!updateQueueDraft(undefined, prepared.draft.queuedEdit.revision).ok) throw new Error("The edit was saved, but its local draft could not be cleared.");
 				}
 				return;
 			}
@@ -762,17 +789,25 @@ function ChatWorkspaceContent({
 		},
 		[draftScope, onEditQueuedTurn, onSend, queueEdit, queuedMessages, updateQueueDraft],
 	);
-	// Keep the dispatch target with this composer instance while attachment staging
-	// awaits. A newer queue editor must not redirect an older ordinary send.
-	const composerSend = handleComposerSend;
 	const stableInterrupt = useStableCallback(onInterrupt);
 	const stableSteer = useStableCallback(onSteer);
 	const beginQueuedEdit = useCallback(
 		(turnId: string, text: string) => {
 			if (newWorkDisabled) return;
-			updateQueueDraft({ turnId, text });
+			const message = queuedMessages.find((queued) => queued.turnId === turnId)?.message;
+			if (!message) return;
+			const parts = stagedAttachmentParts(text);
+			// Paths and native blocks have no shared persisted identity.
+			const attachments: StoredComposerAttachment[] = parts.attachments.map((path) => ({
+				id: path, name: attachmentName(path), path,
+			}));
+			(message.content ?? []).forEach((item, index) => {
+				attachments.push({ id: `content-${index}`, contentIndex: index, contentType: item.type,
+					name: item.name || (item.type === "image" ? `Image ${index + 1}` : item.uri || "Attachment") });
+			});
+			updateQueueDraft({ turnId, ownerId: crypto.randomUUID(), text: parts.body, expectedRevision: message.revision, attachments, stagedAttachments: [] });
 		},
-		[newWorkDisabled, updateQueueDraft],
+		[newWorkDisabled, queuedMessages, updateQueueDraft],
 	);
 	const cancelQueuedEdit = useCallback(() => {
 		if (queueEdit) updateQueueDraft(undefined, queueEdit.revision);
@@ -1096,7 +1131,7 @@ function ChatWorkspaceContent({
 		],
 	);
 	const composerDraftSeed = useMemo(
-		() => (queueEdit ? { id: queueEdit.turnId, text: queueEdit.text } : undefined),
+		() => (queueEdit ? { id: `${queueEdit.turnId}:${queueEdit.ownerId ?? queueEdit.expectedRevision ?? "legacy"}`, text: queueEdit.text, attachments: queueEdit.attachments, stagedAttachments: queueEdit.stagedAttachments } : undefined),
 		[queueEdit],
 	);
 	// Empty chats center the prompt; once a turn or item exists the composer docks
@@ -1321,10 +1356,10 @@ function ChatWorkspaceContent({
 							>
 								{discarded > 0 ? <RolledBackNotice count={discarded} /> : null}
 								<ChatComposer
-									key={`${draftScopeKey}:${queueEdit?.turnId ?? "composer"}`}
+									key={`${draftScopeKey}:${queueEdit ? `${queueEdit.turnId}:${queueEdit.ownerId ?? queueEdit.expectedRevision ?? "legacy"}` : "composer"}`}
 									queuedDock={composerQueuedDock}
 									approval={composerApproval}
-									onSend={composerSend}
+									onSend={handleComposerSend}
 									draftSeed={composerDraftSeed}
 									editingQueuedTurnId={queueEdit?.turnId}
 									savingQueuedEditPending={Boolean(
@@ -1333,6 +1368,9 @@ function ChatWorkspaceContent({
 									)}
 									onCancelQueuedEdit={cancelQueuedEdit}
 									onQueuedDraftChange={queueEdit ? changeQueuedDraft : undefined}
+									queuedDraftScope={queueEdit ? draftScope : undefined}
+									onQueuedAttachmentsChange={changeQueuedStagedAttachments}
+									onQueuedRetainedAttachmentsChange={changeQueuedRetainedAttachments}
 									onInterrupt={turn && !newWorkDisabled ? stableInterrupt : undefined}
 									commandError={queueDraftError ?? (queueEdit && !queuedMessages.some((entry) => entry.turnId === queueEdit.turnId) ? "This message is no longer queued. Copy or cancel this edit to continue." : commandError)}
 									settings={composerSettings}
@@ -1342,7 +1380,7 @@ function ChatWorkspaceContent({
 									skills={skills}
 									filePaths={filePaths}
 									filePathsTruncated={filePathsTruncated}
-									onStageAttachments={newWorkDisabled || queueEdit ? undefined : onStageAttachments}
+									onStageAttachments={newWorkDisabled ? undefined : onStageAttachments}
 									nativeImages={nativeImages}
 									autoFocus={!reviewerActive}
 									autoFocusKey={snapshot.sessionId}

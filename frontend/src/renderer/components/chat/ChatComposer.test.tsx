@@ -611,7 +611,7 @@ describe("queued message edit", () => {
 		);
 		await waitFor(() => expect(screen.getByLabelText("Message the agent")).toHaveTextContent("hi"));
 		await userEvent.keyboard("{Enter}");
-		await waitFor(() => expect(onSend).toHaveBeenCalledWith("hi"));
+			await waitFor(() => expect(onSend).toHaveBeenCalledWith("hi", undefined, undefined, []));
 	});
 });
 

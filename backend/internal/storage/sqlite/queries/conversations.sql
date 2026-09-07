@@ -943,16 +943,29 @@ WHERE id = ?
   AND state = 'queued'
   AND promotion_started_at IS NULL;
 
--- Rewrite the durable human prompt for a turn that has not yet dispatched.
+-- Read only an undispatched human prompt for editing.
+-- name: SelectQueuedConversationMessage :one
+SELECT conversation_messages.*
+FROM conversation_messages
+JOIN conversation_turns ON conversation_turns.id = conversation_messages.turn_id
+WHERE conversation_messages.conversation_id = ?
+  AND conversation_messages.turn_id = ?
+  AND conversation_messages.role = 'user'
+  AND conversation_messages.origin = 'human'
+  AND conversation_turns.state = 'queued'
+  AND conversation_turns.promotion_started_at IS NULL;
+
+-- Rewrite text and content together, only if the edited revision is current.
 -- name: UpdateQueuedConversationMessageText :execrows
 UPDATE conversation_messages
 SET text = ?,
     revision = revision + 1,
-    delivery_content_json = '',
+    delivery_content_json = ?,
     updated_at = ?
 WHERE conversation_messages.conversation_id = ?
   AND conversation_messages.turn_id = ?
   AND conversation_messages.role = 'user'
+  AND conversation_messages.revision = ?
   AND EXISTS (
       SELECT 1
       FROM conversation_turns

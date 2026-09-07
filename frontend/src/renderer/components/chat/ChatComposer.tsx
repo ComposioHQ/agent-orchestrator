@@ -49,7 +49,7 @@ import { ArrowUp, Loader2, Plus, Square, X } from "lucide-react";
 import { Button } from "../ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
 import { cn } from "../../lib/utils";
-import { apiErrorMessage } from "../../lib/api-client";
+import { apiErrorMessage, getApiBaseUrl } from "../../lib/api-client";
 import { ComposerSuggestMenu } from "./ComposerSuggestMenu";
 import {
 	ComposerEditor,
@@ -62,6 +62,7 @@ import {
 	isSupportedImageAttachment,
 	useFileAttachments,
 	type FileAttachment,
+	MAX_ATTACHMENTS,
 	type FileAttachmentPayload,
 } from "../../hooks/useFileAttachments";
 import { File } from "lucide-react";
@@ -85,8 +86,11 @@ import {
 	type ChatDraftMutationToken,
 	type ChatComposerDelivery,
 	type ChatDraftScope,
+	type ChatDraftAttachment,
+	type ChatDraftRetainedAttachment,
 	type DraftClearResult,
 } from "../../lib/chat-drafts";
+import { attachmentURL, IMAGE_ATTACHMENT_PATH } from "./messageAttachments";
 import { setChatDraftBoundary } from "../../lib/chat-draft-boundary";
 
 /**
@@ -109,6 +113,8 @@ function restoredDeliveryNotice(delivery: ChatComposerDelivery | undefined): str
 		? "AO can’t determine whether the agent may already have received this guidance before Chat restarted. Retry safely with the same delivery ID, or abandon recovery to edit it. Sending it again after abandonment may duplicate it."
 		: "Message delivery wasn’t confirmed before Chat restarted. Retry safely to reuse the same delivery ID.";
 }
+/** A retained server-owned attachment; image bytes stay in durable storage. */
+export type StoredComposerAttachment = ChatDraftRetainedAttachment & { dataUrl?: string };
 
 export const ChatComposer = memo(function ChatComposer({
 	onSend,
@@ -132,6 +138,9 @@ export const ChatComposer = memo(function ChatComposer({
 	editingQueuedTurnId,
 	onCancelQueuedEdit,
 	onQueuedDraftChange,
+	queuedDraftScope,
+	onQueuedAttachmentsChange,
+	onQueuedRetainedAttachmentsChange,
 	savingQueuedEditPending,
 	commandError,
 	attachedTop = false,
@@ -150,6 +159,7 @@ export const ChatComposer = memo(function ChatComposer({
 		text: string,
 		attachments?: FileAttachmentPayload[],
 		clientMessageId?: string,
+		retainedContent?: number[],
 	) => void | Promise<unknown>;
 	settings?: ReactNode;
 	/** A provider decision that temporarily replaces ordinary message entry. */
@@ -188,11 +198,14 @@ export const ChatComposer = memo(function ChatComposer({
 	/** Why the last steer was refused. */
 	steerRefusal?: string;
 	/** A selected history message to load into the composer as a new draft. */
-	draftSeed?: { id: string; text: string };
+	draftSeed?: { id: string; text: string; attachments?: StoredComposerAttachment[]; stagedAttachments?: ChatDraftAttachment[] };
 	/** A queued turn being edited in the composer instead of the dock. */
 	editingQueuedTurnId?: string;
 	onCancelQueuedEdit?: () => void;
 	onQueuedDraftChange?: (text: string) => void;
+	queuedDraftScope?: ChatDraftScope;
+	onQueuedAttachmentsChange?: (attachments: ChatDraftAttachment[]) => void;
+	onQueuedRetainedAttachmentsChange?: (attachments: ChatDraftRetainedAttachment[]) => void;
 	/** The queued edit mutation is in flight for the turn being edited. */
 	savingQueuedEditPending?: boolean;
 	/** A failed send, approval, interrupt, or settings mutation. */
@@ -231,6 +244,12 @@ export const ChatComposer = memo(function ChatComposer({
 		[draftSessionId, draftSessionIncarnation],
 	);
 	const draftScopeKey = draftScope ? chatDraftScopeKey(draftScope) : undefined;
+	const attachmentScopeKey = queuedDraftScope
+		? JSON.stringify([queuedDraftScope.sessionId, queuedDraftScope.incarnation, `queue:${draftSeed?.id}`])
+		: draftScopeKey;
+	const boundarySessionId = draftSessionId ?? queuedDraftScope?.sessionId;
+	const [retainedAttachments, setRetainedAttachments] = useState<StoredComposerAttachment[]>(draftSeed?.attachments ?? []);
+	const visibleRetainedAttachments = editingQueuedTurnId ? retainedAttachments : [];
 	const [hasText, setHasText] = useState(false);
 	const hasTextRef = useRef(false);
 	const [trigger, setTrigger] = useState<ComposerTrigger>();
@@ -309,32 +328,25 @@ export const ChatComposer = memo(function ChatComposer({
 	const synchronouslyClearedDeliveryRevision = useRef<number | undefined>(undefined);
 	const restoredAttachments = useMemo<FileAttachment[]>(
 		() =>
-			persistedDraft?.composer.attachments.map((attachment) => ({
+			(persistedDraft?.composer.attachments ?? draftSeed?.stagedAttachments)?.map((attachment) => ({
 				id: attachment.id,
 				name: attachment.name,
 				mimeType: attachment.mimeType,
 				bytes: attachment.bytes,
 				stagedPath: attachment.path,
 			})) ?? [],
-		[persistedDraft],
+		[persistedDraft, draftSeed?.stagedAttachments],
 	);
 	const persistAttachments = useCallback(
 		(attachments: FileAttachment[]) => {
-			if (!draftScope) return;
-			const result = writeChatAttachments(
-				draftScope,
-				attachments.flatMap((attachment) =>
-					attachment.stagedPath
-						? [{
-								id: attachment.id,
-								path: attachment.stagedPath,
-								name: attachment.name,
-								mimeType: attachment.mimeType,
-								bytes: attachment.bytes,
-							}]
-						: [],
-				),
-			);
+			const descriptors = attachments.flatMap((attachment) => attachment.stagedPath
+				? [{ id: attachment.id, path: attachment.stagedPath, name: attachment.name, mimeType: attachment.mimeType, bytes: attachment.bytes }]
+				: []);
+			if (!draftScope) {
+				onQueuedAttachmentsChange?.(descriptors);
+				return;
+			}
+			const result = writeChatAttachments(draftScope, descriptors);
 			composerRevision.current = result.draft.composer.revision;
 			setAttachmentDraftPersistenceError(
 				result.ok
@@ -342,7 +354,7 @@ export const ChatComposer = memo(function ChatComposer({
 					: "Draft couldn’t be saved. Keep this chat open or copy it before leaving.",
 			);
 		},
-		[draftScope],
+		[draftScope, onQueuedAttachmentsChange],
 	);
 	const prepareAttachments = useCallback(
 		async (attachments: FileAttachment[]): Promise<FileAttachment[]> => {
@@ -378,7 +390,7 @@ export const ChatComposer = memo(function ChatComposer({
 	}, [draftScope, draftScopeKey]);
 	const fileAttachments = useFileAttachments({
 		initialAttachments: restoredAttachments,
-		initialKey: draftScopeKey,
+		initialKey: attachmentScopeKey,
 		prepareAttachments: onStageAttachments ? prepareAttachments : undefined,
 		onAttachmentsChange: persistAttachments,
 	});
@@ -417,7 +429,7 @@ export const ChatComposer = memo(function ChatComposer({
 	// index from the previous list can point past the end of this one.
 	const activeIndex = Math.min(highlighted, suggestions.length - 1);
 
-	const staged = fileAttachments.attachments.length > 0;
+	const staged = fileAttachments.attachments.length > 0 || visibleRetainedAttachments.length > 0;
 	const controlsDisabled = Boolean(disabled || submitting);
 	const hasDraft = hasText || staged;
 	const savingQueuedEdit = Boolean(editingQueuedTurnId);
@@ -486,13 +498,13 @@ export const ChatComposer = memo(function ChatComposer({
 		textDraftPersistenceError ?? attachmentDraftPersistenceError;
 
 	useEffect(() => {
-		if (!draftSessionId) return;
+		if (!boundarySessionId) return;
 		const deliveryWasSynchronouslyCleared = Boolean(
 			durableDelivery &&
 				synchronouslyClearedDeliveryRevision.current === durableDelivery.revision,
 		);
 		setChatDraftBoundary(
-			draftSessionId,
+			boundarySessionId,
 			"composer",
 			[
 				...(draftPersistenceError && !deliveryWasSynchronouslyCleared
@@ -504,21 +516,22 @@ export const ChatComposer = memo(function ChatComposer({
 				...(fileAttachments.preparing ? (["pending-attachments"] as const) : []),
 			],
 		);
-	}, [draftPersistenceError, draftSessionId, durableDelivery, fileAttachments.preparing]);
+	}, [draftPersistenceError, boundarySessionId, durableDelivery, fileAttachments.preparing]);
 
 	useEffect(
 		() => () => {
-			if (draftSessionId) setChatDraftBoundary(draftSessionId, "composer", undefined);
+			if (boundarySessionId) setChatDraftBoundary(boundarySessionId, "composer", undefined);
 		},
-		[draftSessionId],
+		[boundarySessionId],
 	);
 	const queuedDockWithSteer = isValidElement(queuedDock)
 		? cloneElement(
 				queuedDock as ReactElement<{
 					canSteerNext?: boolean;
 					steerNextRequest?: number;
+					disabled?: boolean;
 				}>,
-				{ canSteerNext, steerNextRequest },
+				{ canSteerNext, steerNextRequest, disabled: submitting },
 			)
 		: queuedDock;
 
@@ -953,7 +966,7 @@ export const ChatComposer = memo(function ChatComposer({
 		const settledAttachments = fileAttachments.getAttachments();
 		const settledPaths = settledAttachments.flatMap((attachment) =>
 			attachment.stagedPath ? [attachment.stagedPath] : []);
-		const hasAttachments = settledAttachments.length > 0;
+		const hasAttachments = settledAttachments.length > 0 || visibleRetainedAttachments.length > 0;
 		const canSubmitNow =
 			(body.length > 0 || hasAttachments || Boolean(recoveringDelivery)) &&
 			(!busy || savingQueuedEdit || recoveringDelivery?.state === "accepted") &&
@@ -973,11 +986,46 @@ export const ChatComposer = memo(function ChatComposer({
 			return;
 		}
 		const shouldSteer = Boolean(forceSteer && !savingQueuedEdit);
-		const message = withAttachmentReferences(body, settledPaths);
+		const message = withAttachmentReferences(body, [
+			...visibleRetainedAttachments.flatMap((attachment) => attachment.path ? [attachment.path] : []),
+			...settledPaths,
+		]);
+		// A restored queued upload has durable bytes but no in-memory payload. Load
+		// those same bytes before submitting; never turn it into a retained index.
+		if (queuedDraftScope && nativeImages) {
+			attachmentPayloads.length = 0;
+			try {
+				for (const attachment of settledAttachments) {
+					if (!isSupportedImageAttachment(attachment.mimeType)) continue;
+					if (attachment.data) {
+						attachmentPayloads.push({ mimeType: attachment.mimeType, data: attachment.data });
+						continue;
+					}
+					if (!attachment.stagedPath) throw new Error("Missing staged attachment");
+					const response = await fetch(attachmentURL(getApiBaseUrl(), queuedDraftScope.sessionId, attachment.stagedPath));
+					if (!response.ok) throw new Error("Could not read staged attachment");
+					const blob = await response.blob();
+					const data = await new Promise<string>((resolve, reject) => {
+						const reader = new FileReader();
+						reader.onload = () => resolve(String(reader.result).split(",")[1] ?? "");
+						reader.onerror = () => reject(new Error("Could not read staged attachment"));
+						reader.readAsDataURL(blob);
+					});
+					attachmentPayloads.push({ mimeType: attachment.mimeType, data });
+				}
+			} catch {
+				setSendError("The saved attachment could not be read. Your queued edit was kept.");
+				return;
+			}
+		}
 		const nativePayloads = nativeImages
 			? attachmentPayloads.filter((attachment) => isSupportedImageAttachment(attachment.mimeType))
 			: [];
 
+		if (savingQueuedEdit && nativePayloads.length + visibleRetainedAttachments.filter((item) => item.contentType === "image").length > MAX_ATTACHMENTS) {
+			setSendError(`You can attach up to ${MAX_ATTACHMENTS} images.`);
+			return;
+		}
 		if (!draftScope || savingQueuedEdit) {
 			setSubmitting(true);
 			try {
@@ -989,6 +1037,11 @@ export const ChatComposer = memo(function ChatComposer({
 						setSteerOutcomeNotice(outcome.reason);
 						return;
 					}
+				} else if (savingQueuedEdit) {
+					await onSend(message, nativePayloads.length ? nativePayloads : undefined, undefined,
+						visibleRetainedAttachments.flatMap((item) => item.contentIndex === undefined ? [] : [item.contentIndex]));
+					// The parent leaves this editor only after proving durable cleanup.
+					return;
 				} else if (nativePayloads.length > 0) {
 					await onSend(message, nativePayloads);
 				} else {
@@ -1173,7 +1226,7 @@ export const ChatComposer = memo(function ChatComposer({
 			}
 		}
 
-		if (event.key === "Escape" && editingQueuedTurnId && onCancelQueuedEdit) {
+		if (event.key === "Escape" && editingQueuedTurnId && onCancelQueuedEdit && !submitInFlight.current) {
 			event.preventDefault();
 			onCancelQueuedEdit();
 		}
@@ -1297,15 +1350,28 @@ export const ChatComposer = memo(function ChatComposer({
 					/>
 				) : null}
 
+				{editingQueuedTurnId ? (
+					<div className="flex items-center justify-between text-xs text-muted-foreground">
+						<span>Editing queued message</span>
+						<button
+							type="button"
+							disabled={controlsDisabled}
+							onClick={onCancelQueuedEdit}
+							className="rounded px-1.5 py-0.5 hover:text-foreground focus-visible:outline focus-visible:outline-ring"
+						>
+							Cancel edit
+						</button>
+					</div>
+				) : null}
 				{staged ? (
 					<ul className="flex flex-wrap gap-1.5" aria-label="Attached files">
-						{fileAttachments.attachments.map((file) => (
+						{[...visibleRetainedAttachments, ...fileAttachments.attachments].map((file) => (
 							<li
 								key={file.id}
 								className="flex items-center gap-1.5 rounded border border-border bg-background py-0.5 pl-0.5 pr-1"
 							>
-								{file.dataUrl ? (
-									<img src={file.dataUrl} alt="" className="size-6 rounded-sm object-cover" />
+								{file.dataUrl || ("path" in file && file.path && IMAGE_ATTACHMENT_PATH.test(file.path)) ? (
+									<img src={file.dataUrl ?? ("path" in file && file.path ? attachmentURL(getApiBaseUrl(), boundarySessionId ?? "", file.path) : undefined)} alt="" className="size-6 rounded-sm object-cover" />
 								) : (
 									<div className="flex size-6 items-center justify-center rounded-sm bg-surface">
 										<File aria-hidden="true" className="size-3.5 text-muted-foreground" />
@@ -1320,7 +1386,12 @@ export const ChatComposer = memo(function ChatComposer({
 								<button
 									type="button"
 									onClick={() => {
-										if (!submitInFlight.current) fileAttachments.remove(file.id);
+									if (submitInFlight.current) return;
+									if (visibleRetainedAttachments.some((attachment) => attachment.id === file.id)) {
+										const next = retainedAttachments.filter((attachment) => attachment.id !== file.id);
+										setRetainedAttachments(next);
+										onQueuedRetainedAttachmentsChange?.(next);
+									} else fileAttachments.remove(file.id);
 									}}
 									disabled={controlsDisabled || draftMutationPending || fileAttachments.preparing}
 									aria-label={`Remove ${file.name}`}

@@ -3244,7 +3244,7 @@ describe("durable queued edits", () => {
 		const second = render(<ChatWorkspace {...props} />);
 		expect(screen.getByLabelText("Message the agent")).toHaveTextContent("queued text updated");
 		await userEvent.click(screen.getByRole("button", { name: "Send message" }));
-		await waitFor(() => expect(save).toHaveBeenCalledWith("queued", "queued text updated"));
+		await waitFor(() => expect(save).toHaveBeenCalledWith("queued", "queued text updated", { expectedRevision: 0, retainedContent: [] }));
 		await waitFor(() => expect(readChatSessionDraft(snapshot.sessionId).queuedEdit).toBeUndefined());
 		expect(send).not.toHaveBeenCalled();
 		expect(screen.getByLabelText("Message the agent")).toHaveTextContent("independent prompt");
@@ -3253,7 +3253,7 @@ describe("durable queued edits", () => {
 		expect(screen.getByLabelText("Message the agent")).toHaveTextContent("independent prompt");
 	});
 
-	it("keeps an ordinary send bound to its original operation while switching to a queued editor", async () => {
+	it("finishes an ordinary send before allowing a queued editor to replace it", async () => {
 		const snapshot = queuedSnapshot();
 		let settle!: (paths: string[]) => void;
 		const stage = vi.fn(() => new Promise<string[]>((resolve) => { settle = resolve; }));
@@ -3265,10 +3265,12 @@ describe("durable queued edits", () => {
 		fireEvent.paste(composer, { clipboardData: { files: [new File(["file"], "note.txt", { type: "text/plain" })], items: [] } });
 		await waitFor(() => expect(stage).toHaveBeenCalledOnce());
 		fireEvent.keyDown(composer, { key: "Enter" });
-		await userEvent.click(screen.getByRole("button", { name: "Edit queued message" }));
+		expect(screen.getByRole("button", { name: "Edit queued message" })).toBeDisabled();
 		await act(async () => settle([".ao/attachments/note.txt"]));
 		await waitFor(() => expect(send).toHaveBeenCalledOnce());
 		expect(send.mock.calls[0]?.[0]).toContain("ordinary prompt");
+		await waitFor(() => expect(screen.getByRole("button", { name: "Edit queued message" })).toBeEnabled());
+		await userEvent.click(screen.getByRole("button", { name: "Edit queued message" }));
 		expect(save).not.toHaveBeenCalled();
 		expect(readChatSessionDraft(snapshot.sessionId).queuedEdit?.text).toBe("queued text");
 		expect(readChatSessionDraft(snapshot.sessionId).composer.text).toBe("");

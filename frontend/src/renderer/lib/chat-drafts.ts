@@ -56,11 +56,26 @@ export interface ChatDraftInlineEdit {
 }
 
 export interface ChatDraftQueuedEdit {
+	/** Stable for one editing attempt, including remounts and staged reads. */
+	ownerId?: string;
 	revision: string;
 	turnId: string;
 	text: string;
+	/** Daemon message revision, held fixed across retries of this edit. */
+	expectedRevision?: number;
+	attachments?: ChatDraftRetainedAttachment[];
+	stagedAttachments?: ChatDraftAttachment[];
 	/** The daemon may have saved this exact edit before the response was lost. */
 	saving?: boolean;
+}
+
+/** Server-owned content selected for retention; never stores attachment bytes. */
+export interface ChatDraftRetainedAttachment {
+	id: string;
+	name: string;
+	path?: string;
+	contentIndex?: number;
+	contentType?: string;
 }
 
 export type ChatDraftDeliveryState = "dispatching" | "accepted";
@@ -172,7 +187,7 @@ export function chatDraftScopeSessionId(key: string): string | undefined {
 	try {
 		const parsed: unknown = JSON.parse(key);
 		return Array.isArray(parsed) &&
-			parsed.length === 2 &&
+			(parsed.length === 2 || (parsed.length === 3 && typeof parsed[2] === "string" && parsed[2].startsWith("queue:"))) &&
 			typeof parsed[0] === "string" &&
 			typeof parsed[1] === "string"
 			? parsed[0]
@@ -731,6 +746,14 @@ function isChatSessionDraft(value: unknown, scope: ChatDraftScope): value is Cha
 			typeof draft.queuedEdit.revision === "string" && draft.queuedEdit.revision.length > 0 &&
 			typeof draft.queuedEdit.turnId === "string" && draft.queuedEdit.turnId.length > 0 &&
 			typeof draft.queuedEdit.text === "string" &&
+			(draft.queuedEdit.ownerId === undefined || typeof draft.queuedEdit.ownerId === "string") &&
+			(draft.queuedEdit.expectedRevision === undefined || (Number.isSafeInteger(draft.queuedEdit.expectedRevision) && draft.queuedEdit.expectedRevision >= 0)) &&
+			(draft.queuedEdit.stagedAttachments === undefined || (Array.isArray(draft.queuedEdit.stagedAttachments) && draft.queuedEdit.stagedAttachments.every(isAttachment))) &&
+			(draft.queuedEdit.attachments === undefined || (Array.isArray(draft.queuedEdit.attachments) && draft.queuedEdit.attachments.every((item) =>
+				item !== null && typeof item === "object" && typeof item.id === "string" && typeof item.name === "string" &&
+				(item.path === undefined || typeof item.path === "string") &&
+				(item.contentIndex === undefined || (Number.isSafeInteger(item.contentIndex) && item.contentIndex >= 0)) &&
+				(item.contentType === undefined || typeof item.contentType === "string")))) &&
 			(draft.queuedEdit.saving === undefined || typeof draft.queuedEdit.saving === "boolean")
 		)) &&
 		(draft.inlineEdit === undefined || isInlineEdit(draft.inlineEdit)) &&
@@ -1227,15 +1250,20 @@ export function writeChatQueuedEdit(
 	edit: Omit<ChatDraftQueuedEdit, "revision"> | undefined,
 	expectedRevision?: string,
 	storage: DraftStorage | undefined = rendererStorage(),
-): DraftWriteResult {
+	previousUnprovenWrite?: { revision?: string },
+): DraftWriteResult & { attempted?: { revision?: string } } {
 	const loaded = loadChatSessionDraft(scope, storage);
-	if (!loaded.ok || (expectedRevision !== undefined && loaded.draft.queuedEdit?.revision !== expectedRevision)) {
+	if (!loaded.ok || (expectedRevision !== undefined && loaded.draft.queuedEdit?.revision !== expectedRevision &&
+		(!previousUnprovenWrite || loaded.draft.queuedEdit?.revision !== previousUnprovenWrite.revision))) {
 		return { ok: false, draft: loaded.draft };
 	}
 	const next = { ...loaded.draft };
 	if (edit) next.queuedEdit = { ...edit, revision: inlineEditRevision() };
 	else delete next.queuedEdit;
-	return persistDraftProven(next, storage);
+	const result = persistDraftProven(next, storage);
+	// A write can commit before its readback fails. Permit a later attempt to
+	// recognize only this exact written revision, never another editor's changes.
+	return { ...result, attempted: { revision: next.queuedEdit?.revision } };
 }
 
 export function writeChatInlineEdit(

@@ -43,6 +43,7 @@ import type {
 	ChatSteerOutcome,
 	PlanStep,
 	PlanStepStatus,
+	QueuedMessageEditOptions,
 	SessionMode,
 	ThreadStatus,
 	TurnSettings,
@@ -580,14 +581,14 @@ export function useConversationCommands(sessionId: string | undefined) {
 	});
 
 	const editQueuedTurn = useMutation({
-		mutationFn: async ({ turnId, text }: { turnId: string; text: string }) => {
+		mutationFn: async ({ turnId, text, ...options }: { turnId: string; text: string } & QueuedMessageEditOptions) => {
 			const { error } = await apiClient.POST(
 				"/api/v1/sessions/{sessionId}/conversation/turns/{turnId}/queue/edit",
 				{
 					params: {
 						path: { sessionId: sessionId as string, turnId },
 					},
-					body: { text },
+					body: { text, ...options },
 				},
 			);
 			if (error) throw new Error(apiErrorMessage(error, "Could not save queued message edit"));
@@ -891,9 +892,9 @@ export function useConversationCommands(sessionId: string | undefined) {
 		},
 		promoteQueuedTurn: (turnId: string) => promoteQueuedTurn.mutateAsync(turnId),
 		cancelQueuedTurn: (turnId: string) => cancelQueuedTurn.mutateAsync(turnId),
-		editQueuedTurn: (turnId: string, text: string) => {
+		editQueuedTurn: (turnId: string, text: string, options?: QueuedMessageEditOptions) => {
 			if (!sessionId) return Promise.reject(new Error("No conversation session is selected."));
-			return editQueuedTurn.mutateAsync({ turnId, text });
+			return editQueuedTurn.mutateAsync({ turnId, text, ...options });
 		},
 		reorderQueuedTurns: (turnIds: string[]) => {
 			if (!sessionId) return Promise.reject(new Error("No conversation session is selected."));
