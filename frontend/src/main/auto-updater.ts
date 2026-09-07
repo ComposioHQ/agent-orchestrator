@@ -1142,6 +1142,35 @@ function automaticUpdateCheckInterval(settings: UpdateSettings): number {
     : STABLE_AUTOMATIC_UPDATE_CHECK_INTERVAL_MS;
 }
 
+/**
+ * Own a download that the check itself started.
+ *
+ * With `autoDownload` set, `doCheckForUpdates()` kicks the download off and
+ * returns its promise WITHOUT awaiting it — deliberately, marked
+ * `noinspection ES6MissingAwait` in AppUpdater. If the serialized operation
+ * returns without awaiting that promise, the download, the localhost handoff to
+ * Squirrel and the native staging behind it all continue after the operation has
+ * settled: the queue lets the next check or download start on top of them, and a
+ * `finally` that restores the feed runs while the download is still using it.
+ *
+ * Awaited regardless of the auto-update preference. The preference governs
+ * whether a download is STARTED, not whether one already running is owned — and
+ * a stale staged build forces a download precisely when the preference is off,
+ * to supersede a build the user has moved away from.
+ *
+ * Sets the download phase so a failure here is attributed to the download rather
+ * than to the check that started it.
+ */
+async function awaitStartedDownload(result: UpdateCheckOutcome): Promise<void> {
+  if (!result?.downloadPromise) return;
+  activeUpdaterPhase = "download";
+  pendingUpdateVersion = result.updateInfo?.version;
+  // The provider owns this download's token; hand it to the watchdog so a stall
+  // can actually be cancelled rather than just reported.
+  activeDownloadCancellation = result.cancellationToken;
+  await result.downloadPromise;
+}
+
 async function runAutomaticUpdateCheck(
   stateDir: string,
 ): Promise<number> {
@@ -1186,13 +1215,10 @@ async function runAutomaticUpdateCheck(
       try {
         const result = await checkForUpdatesWithDeadline();
         settleCheckStatus(result);
-        if (settings.enabled) {
-          if (result?.downloadPromise) {
-            // The provider owns this download's token; hand it to the watchdog
-            // so a stall can actually be cancelled rather than just reported.
-            activeDownloadCancellation = result.cancellationToken;
-            await result.downloadPromise;
-          } else if (
+        if (result?.downloadPromise) {
+          await awaitStartedDownload(result);
+        } else if (settings.enabled) {
+          if (
             result?.isUpdateAvailable === true &&
             supersedesStagedBuild(result.updateInfo?.version)
           ) {
@@ -1340,6 +1366,12 @@ export async function checkForUpdatesNow(
     });
     return;
   }
+  // Which phase a failure came from. The queue clears global operation state in
+  // its own `finally` before this function's catch runs, and a queued operation
+  // can reset the module-level phase, so the distinction is captured locally
+  // while the operation is still on the stack. Boxed because the assignment
+  // happens inside the operation closure.
+  const failed: { phase: UpdatePhase } = { phase: "check" };
   try {
     await runSerializedUpdaterOperation(
       "manual-check",
@@ -1361,7 +1393,13 @@ export async function checkForUpdatesNow(
         broadcastUpdaterStatus({ state: "checking" });
         const restoreFeed = await configureDirectPrereleaseFeed(settings);
         try {
-          settleCheckStatus(await checkForUpdatesWithDeadline());
+          const result = await checkForUpdatesWithDeadline();
+          settleCheckStatus(result);
+          // A stale staged build forces a download above; own it here so the
+          // feed is not restored, and the next operation not started, while it
+          // is still running.
+          if (result?.downloadPromise) failed.phase = "download";
+          await awaitStartedDownload(result);
         } finally {
           restoreFeed?.();
         }
@@ -1370,11 +1408,13 @@ export async function checkForUpdatesNow(
     );
   } catch (err) {
     if (isManifest404Error(err)) {
-      console.info("manual update check failed:", err);
+      console.info(`manual update ${failed.phase} failed:`, err);
       broadcastCompletedCheck({
         state: "error",
         message:
-          "Couldn't check for updates — the update information was not found on the server.",
+          failed.phase === "download"
+            ? "Download failed — the update file was not found on the server."
+            : "Couldn't check for updates — the update information was not found on the server.",
         ...(options.requestId === undefined ? {} : { requestId: options.requestId }),
       });
       if (stagedAtMs !== undefined) broadcast(stagedDownloadedStatus());
@@ -1415,6 +1455,8 @@ export async function returnToHome(
     });
     return;
   }
+  // See checkForUpdatesNow: boxed so the closure assignment is visible here.
+  const failed: { phase: UpdatePhase } = { phase: "check" };
   try {
     await runSerializedUpdaterOperation(
       "return-home",
@@ -1432,14 +1474,21 @@ export async function returnToHome(
         autoUpdater.autoDownload = staleStaged;
         applyInstallOnQuitPolicy();
         broadcastUpdaterStatus({ state: "checking" });
-        settleCheckStatus(await checkForUpdatesWithDeadline());
+        const result = await checkForUpdatesWithDeadline();
+        settleCheckStatus(result);
+        // Same ownership rule as the other two paths: leaving a pinned build is
+        // a channel switch, so the replacement download is forced here too.
+        if (result?.downloadPromise) failed.phase = "download";
+        await awaitStartedDownload(result);
       },
       requestId,
     );
   } catch (err) {
     broadcast({
       state: "error",
-      message: (err as Error)?.message ?? "Return failed",
+      message:
+        (err as Error)?.message ??
+        (failed.phase === "download" ? "Download failed" : "Return failed"),
       ...(requestId === undefined ? {} : { requestId }),
     });
   }
