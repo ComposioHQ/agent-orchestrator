@@ -117,4 +117,3 @@ LIMIT 1;
 
 -- name: ClearAllNotifications :execrows
 DELETE FROM notifications;
-

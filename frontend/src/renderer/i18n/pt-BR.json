@@ -556,7 +556,6 @@
 	"notify.clearAll": "Limpar tudo",
 	"notify.couldNotClearAll": "Não foi possível limpar as notificações",
 	"notify.couldNotMarkAllRead": "Não foi possível marcar as notificações como lidas",
-
 	"notify.couldNotMarkRead": "Não foi possível marcar a notificação como lida",
 	"notify.earlierLoadFailed": "Não foi possível carregar notificações anteriores.",
 	"notify.emptyAll": "Nenhuma notificação ainda.",
