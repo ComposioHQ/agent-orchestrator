@@ -87,6 +87,7 @@ function createFakeMux(): FakeMux {
 }
 
 type FakeTerminal = AttachableTerminal & {
+	activeBufferType: "normal" | "alternate";
 	autoCompleteWrites: boolean;
 	lines: string[];
 	pendingWriteCallbacks: Array<() => void>;
@@ -107,6 +108,8 @@ function createFakeTerminal(): FakeTerminal {
 	const terminal: FakeTerminal = {
 		cols: 80,
 		rows: 24,
+		activeBufferType: "normal",
+		bufferType: () => terminal.activeBufferType,
 		autoCompleteWrites: true,
 		lines: [],
 		pendingWriteCallbacks: [],
@@ -1002,5 +1005,45 @@ describe("useTerminalSession", () => {
 		act(() => muxes[0].emitConnection("closed"));
 		act(() => void vi.advanceTimersByTime(60_000));
 		expect(muxes).toHaveLength(1);
+	});
+
+	describe("predictive local echo (cloud sessions)", () => {
+		const cloudSession: WorkspaceSession = { ...session, cloud: { orgId: "org-1" } };
+
+		it("renders a predicted keystroke immediately and strips the server echo", () => {
+			const { terminal, muxes } = setup({ attachedSession: cloudSession });
+			act(() => muxes[0].emitConnection("open"));
+			act(() => muxes[0].emitOpened("handle-1"));
+			terminal.typeKeys("a");
+			// The prediction landed locally before any server round trip…
+			expect(terminal.lines).toEqual(["a"]);
+			// …while the wire got the raw keystroke.
+			expect(muxes[0].inputs).toEqual([["handle-1", "a"]]);
+			// The authoritative echo of what is already on screen renders nothing.
+			act(() => muxes[0].emitData("handle-1", "a"));
+			expect(terminal.lines).toEqual(["a"]);
+			// Output beyond the echo flows through verbatim.
+			act(() => muxes[0].emitData("handle-1", "$ "));
+			expect(terminal.lines).toEqual(["a", "$ "]);
+		});
+
+		it("never predicts while the pane is on the alternate buffer", () => {
+			const { terminal, muxes } = setup({ attachedSession: cloudSession });
+			terminal.activeBufferType = "alternate";
+			act(() => muxes[0].emitConnection("open"));
+			act(() => muxes[0].emitOpened("handle-1"));
+			terminal.typeKeys("a");
+			expect(terminal.lines).toEqual([]);
+			expect(muxes[0].inputs).toEqual([["handle-1", "a"]]);
+		});
+
+		it("does not locally echo keystrokes on local sessions", () => {
+			const { terminal, muxes } = setup();
+			act(() => muxes[0].emitConnection("open"));
+			act(() => muxes[0].emitOpened("handle-1"));
+			terminal.typeKeys("a");
+			expect(terminal.lines).toEqual([]);
+			expect(muxes[0].inputs).toEqual([["handle-1", "a"]]);
+		});
 	});
 });

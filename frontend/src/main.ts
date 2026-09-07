@@ -577,6 +577,7 @@ async function createWindowInternal(): Promise<void> {
 		mainWindow,
 		WebContentsView,
 		preload: preloadPath(),
+		platform: process.platform,
 	});
 	windowComposition = composition;
 	syncNativeWindowBackground();
@@ -1903,10 +1904,14 @@ ipcMain.on("shell:focus", () => browserViewHost?.forgetLastFocusedPanel());
 ipcMain.on("browser:overlay", (event, open: unknown) => {
 	if (event.sender !== getShellWebContents() || typeof open !== "boolean") return;
 	windowComposition?.setOverlayOpen(open);
-	// Raising the shell can leave the live page's own compositor surface stale
-	// (the same class of bug window-composition.ts already works around for
-	// the shell itself) — nudge it the same way once the shell is on top.
-	if (open) browserViewHost?.refreshLastFocusedPanelSurface();
+	// Refresh the live page's surface only on macOS: refreshLastFocusedPanelSurface
+	// is a macOS-specific compositor workaround (its own docstring says so). On
+	// Windows, hiding/restoring the native view under the raised shell causes a
+	// brief black flash, and window-composition.ts gates its equivalent nudge to
+	// darwin for the same reason.
+	if (open && process.platform === "darwin") {
+		browserViewHost?.refreshLastFocusedPanelSurface();
+	}
 });
 
 ipcMain.on(SET_CLOSE_SHELL_TERMINAL_SHORTCUT_ENABLED_CHANNEL, (_event, enabled: unknown) => {

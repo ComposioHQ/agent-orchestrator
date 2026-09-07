@@ -2941,6 +2941,13 @@ func TestSessionsAPI_ClaimPRErrors(t *testing.T) {
 			srv := newSessionTestServer(t, svc)
 			body, status, _ := doRequest(t, srv, "POST", "/api/v1/sessions/ao-1/pr/claim", tc.body)
 			assertErrorCode(t, body, status, tc.code, tc.want)
+			if tc.want == "PR_PROJECT_MISMATCH" {
+				for _, hint := range []string{"canonicalRepoURL", "--canonical-repo-url", "--config-json", "Git remotes"} {
+					if !strings.Contains(string(body), hint) {
+						t.Fatalf("mismatch missing %q guidance: %s", hint, body)
+					}
+				}
+			}
 		})
 	}
 }
