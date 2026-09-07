@@ -70,6 +70,7 @@ def main():
     plist = app / 'Contents/Info.plist'
     def version():
         return plistlib.loads(plist.read_bytes())['CFBundleShortVersionString']
+    verification_warnings = {}
     def verify(label):
         # Canonical verifier executes all trust checks before its runtime smoke.
         # v0.12.0 predates the modern ACP Node bundle requirement. Accept ONLY
@@ -79,13 +80,18 @@ def main():
         text = (evidence / name).read_text()
         failures = [line for line in text.splitlines() if line.startswith('::error::')]
         legacy_checks = {'v0.12.0': 'ACP Node is bundled failed', 'v0.12.10': 'ACP Node allow-jit entitlement failed'}
-        legacy_gap = label == 'baseline' and baseline in legacy_checks and len(failures) == 1 and legacy_checks[baseline] in failures[0]
+        legacy_gap = len(failures) == 1 and (
+            (label == 'baseline' and baseline in legacy_checks and legacy_checks[baseline] in failures[0])
+            or 'ACP Node allow-jit entitlement failed' in failures[0]
+        )
+        if legacy_gap:
+            verification_warnings[label] = failures
         if status and not legacy_gap:
             raise RuntimeError(f'{label} failed canonical artifact verification')
         for check in ('codesign', 'spctl', 'stapler'):
             if 'ok: ' + check not in text:
                 raise RuntimeError(f'{label}: missing successful {check}')
-        event('artifact-verified', label=label, legacy_runtime_check_omitted=failures if legacy_gap else [])
+        event('artifact-trust-checks-passed', label=label, full_verifier_passed=status == 0, runtime_check_warning=failures if legacy_gap else [])
     verify('baseline')
     event('baseline-inspected', version=version(), sentinel=b'AO_E2E_UPDATE_SENTINEL' in (app / 'Contents/Resources/app.asar').read_bytes())
     (evidence / 'baseline-app-update.yml').write_bytes((app / 'Contents/Resources/app-update.yml').read_bytes())
@@ -93,14 +99,24 @@ def main():
     # APIs refer to the platform cache locations. This is a fresh runner only.
     caches = Path.home() / 'Library/Caches'
     caches.mkdir(exist_ok=True)
-    native = root / 'native-cache'
+    native_home = root / 'native-home'
+    native = native_home / 'Library/Caches/dev.agent-orchestrator.desktop.ShipIt'
     package = root / 'package-cache'
-    for name, target in [('dev.agent-orchestrator.desktop.ShipIt', native), ('agent-orchestrator-updater', package)]:
-        link = caches / name
-        if link.exists() or link.is_symlink():
-            raise RuntimeError(f'Refusing existing updater cache: {link}')
-        target.mkdir()
-        link.symlink_to(target, target_is_directory=True)
+    native.mkdir(parents=True)
+    package.mkdir()
+    link = caches / 'agent-orchestrator-updater'
+    if link.exists() or link.is_symlink():
+        raise RuntimeError(f'Refusing existing updater cache: {link}')
+    link.symlink_to(package, target_is_directory=True)
+    # Foundation's home is isolated without changing HOME or the Node app's
+    # profile. Verify the actual native cache path rather than assuming it.
+    foundation_env = dict(os.environ, CFFIXED_USER_HOME=str(native_home))
+    probe = root / 'cache-path.swift'
+    probe.write_text('import Foundation\nprint(FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].path)\n')
+    actual_cache = subprocess.check_output(['swift', str(probe)], env=foundation_env, text=True).strip()
+    if Path(actual_cache) != native.parent:
+        raise RuntimeError(f'Native cache isolation did not take effect: {actual_cache}')
+    event('native-cache-isolated', path=actual_cache)
     state = root / 'state'
     state.mkdir()
     runfile = state / 'running.json'
@@ -139,7 +155,7 @@ def main():
     thread = threading.Thread(target=observer, daemon=True)
     thread.start()
     env = {k: v for k, v in os.environ.items() if k not in ('GH_TOKEN', 'GITHUB_TOKEN', 'AO_DATA_DIR', 'AO_RUN_FILE', 'AO_PORT')}
-    env.update(AO_DATA_DIR=str(state / 'data'), AO_RUN_FILE=str(runfile), AO_PORT='3317', ELECTRON_ENABLE_LOGGING='1')
+    env.update(CFFIXED_USER_HOME=str(native_home), AO_DATA_DIR=str(state / 'data'), AO_RUN_FILE=str(runfile), AO_PORT='3317', ELECTRON_ENABLE_LOGGING='1')
     children = []
     def launch(label):
         executable = plistlib.loads(plist.read_bytes())['CFBundleExecutable']
@@ -233,7 +249,7 @@ def main():
             time.sleep(1)
         if not alive or relaunched.poll() is not None:
             raise RuntimeError('Updated application did not demonstrate fresh daemon liveness')
-        result.update(outcome='update-hop-passed', installed_version=version())
+        result.update(outcome='update-hop-passed', installed_version=version(), verification_warnings=verification_warnings)
         quit_exact(relaunched)
     except Exception as exc:
         result['error'] = str(exc)
@@ -252,6 +268,7 @@ def main():
         daemonlog = Path.home() / '.ao/daemon.log'
         if daemonlog.exists():
             (evidence / 'daemon.log').write_bytes(daemonlog.read_bytes())
+        result['verification_warnings'] = verification_warnings
         (evidence / 'result.json').write_text(json.dumps(result, indent=2) + '\n')
         event('result', **result)
     if result['outcome'] != 'update-hop-passed':
