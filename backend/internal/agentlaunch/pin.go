@@ -3,11 +3,13 @@ package agentlaunch
 import (
 	"crypto/sha256"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
+	"time"
 )
 
 var pinMu sync.Mutex
@@ -108,6 +110,10 @@ func pinDirectory(exe, dataDir string) (string, error) {
 }
 
 func ensureWindowsAOExecutable(shimDir, executable string) error {
+	return ensureWindowsAOExecutableWithLink(shimDir, executable, os.Link)
+}
+
+func ensureWindowsAOExecutableWithLink(shimDir, executable string, link func(string, string) error) error {
 	target := filepath.Join(shimDir, "ao.exe")
 	sourceInfo, err := os.Stat(executable)
 	if err != nil {
@@ -115,10 +121,51 @@ func ensureWindowsAOExecutable(shimDir, executable string) error {
 	}
 	if targetInfo, targetErr := os.Stat(target); targetErr == nil && os.SameFile(sourceInfo, targetInfo) {
 		return nil
+	} else if targetErr == nil && targetInfo.Size() == sourceInfo.Size() && targetInfo.ModTime().Equal(sourceInfo.ModTime()) {
+		return nil
 	}
-	_ = os.Remove(target)
-	if err := os.Link(executable, target); err != nil {
-		return fmt.Errorf("link AO executable into shim directory: %w", err)
+	temp, err := os.CreateTemp(shimDir, ".ao-exe-*")
+	if err != nil {
+		return fmt.Errorf("create AO executable shim: %w", err)
+	}
+	tempPath := temp.Name()
+	if err := temp.Close(); err != nil {
+		return err
+	}
+	defer func() { _ = os.Remove(tempPath) }()
+	if err := os.Remove(tempPath); err != nil {
+		return err
+	}
+	if err := link(executable, tempPath); err != nil {
+		if err := copyExecutable(executable, tempPath, sourceInfo.ModTime()); err != nil {
+			return fmt.Errorf("copy AO executable after link failed: %w", err)
+		}
+	}
+	if err := os.Remove(target); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("replace AO executable shim: %w", err)
+	}
+	if err := os.Rename(tempPath, target); err != nil {
+		return fmt.Errorf("install AO executable shim: %w", err)
 	}
 	return nil
+}
+
+func copyExecutable(source, target string, modTime time.Time) error {
+	in, err := os.Open(source)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = in.Close() }()
+	out, err := os.OpenFile(target, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o700) //nolint:gosec // executable AO shim
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(out, in); err != nil {
+		_ = out.Close()
+		return err
+	}
+	if err := out.Close(); err != nil {
+		return err
+	}
+	return os.Chtimes(target, modTime, modTime)
 }
