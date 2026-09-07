@@ -63,6 +63,7 @@
 	"browser.contextMenu.inspect": "Inspecionar elemento",
 	"browser.contextMenu.openExternal": "Abrir no navegador externo",
 	"browser.contextMenu.openLinkTab": "Abrir link em uma nova aba",
+	"browser.contextMenu.saveLink": "Salvar link como…",
 	"browser.closeTab": "Fechar aba {{title}}",
 	"browser.deviceCustomWidth": "Largura personalizada",
 	"browser.deviceFit": "Ajustar ao painel",

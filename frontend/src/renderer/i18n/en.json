@@ -33,6 +33,7 @@
 	"browser.contextMenu.inspect": "Inspect Element",
 	"browser.contextMenu.openExternal": "Open in external browser",
 	"browser.contextMenu.openLinkTab": "Open link in new tab",
+	"browser.contextMenu.saveLink": "Save link as…",
 	"browser.closeTab": "Close tab {{title}}",
 	"browser.deviceCustomWidth": "Custom width",
 	"browser.deviceFit": "Fit panel",

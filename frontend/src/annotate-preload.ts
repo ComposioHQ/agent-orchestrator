@@ -1,4 +1,5 @@
 import { ipcRenderer } from "electron";
+import "./browser-page-context-menu-preload";
 import geistLatinWoff2 from "@fontsource-variable/geist/files/geist-latin-wght-normal.woff2?inline";
 import geistMonoLatinWoff2 from "@fontsource-variable/geist-mono/files/geist-mono-latin-wght-normal.woff2?inline";
 import {

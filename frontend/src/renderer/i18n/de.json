@@ -63,6 +63,7 @@
 	"browser.contextMenu.inspect": "Element untersuchen",
 	"browser.contextMenu.openExternal": "In externem Browser öffnen",
 	"browser.contextMenu.openLinkTab": "Link in neuem Tab öffnen",
+	"browser.contextMenu.saveLink": "Link speichern unter…",
 	"browser.closeTab": "Tab {{title}} schließen",
 	"browser.deviceCustomWidth": "Benutzerdefinierte Breite",
 	"browser.deviceFit": "Auf Panel anpassen",

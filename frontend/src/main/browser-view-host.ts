@@ -36,6 +36,13 @@ import type { AgentBrowserTarget, AgentBrowserTargetProvider } from "./agent-bro
 import type { BrowserProfileStore } from "./browser-profile-store";
 import type { BrowserHistoryStore } from "./browser-history-store";
 import { matchInstruction } from "./browser-act-matcher";
+import type {
+	BrowserPageContextMenuAction,
+	BrowserPageContextMenuActionInput,
+	BrowserPageContextMenuDismissInput,
+	BrowserPageContextMenuItem,
+	BrowserPageContextMenuPresentation,
+} from "../shared/browser-page-context-menu";
 
 function isValidAnnotationContext(value: unknown): value is BrowserAnnotationContext {
 	if (typeof value !== "object" || value === null) return false;
@@ -218,6 +225,7 @@ type BrowserWebContents = Pick<
 	| "capturePage"
 	| "clearHistory"
 	| "debugger"
+	| "downloadURL"
 	| "executeJavaScript"
 	| "focus"
 	| "mainFrame"
@@ -234,6 +242,7 @@ type BrowserWebContents = Pick<
 	| "reload"
 	| "removeInsertedCSS"
 	| "send"
+	| "session"
 	| "setWindowOpenHandler"
 	| "stop"
 > & {
@@ -306,17 +315,11 @@ export type BrowserPageContextMenuLabels = {
 	inspect: string;
 	openExternal: string;
 	openLinkTab: string;
-};
-
-export type BrowserPageContextMenuItem = {
-	label?: string;
-	type?: "separator";
-	click?: () => void;
+	saveLink: string;
 };
 
 type BrowserPageContextMenuPresenter = {
 	getLabels: () => BrowserPageContextMenuLabels;
-	show: (items: BrowserPageContextMenuItem[], onClosed: () => void) => void;
 };
 
 type WebContentsViewConstructor = new (options: { webPreferences: Electron.WebPreferences }) => BrowserViewLike;
@@ -328,6 +331,7 @@ export type BrowserViewHostOptions = {
 	shell: ShellLike;
 	clipboard?: ClipboardLike;
 	contextMenu?: BrowserPageContextMenuPresenter;
+	saveLink?: (webContents: BrowserWebContents, url: string) => Promise<void>;
 	WebContentsView: WebContentsViewConstructor;
 	annotatePreloadPath: string;
 	rendererOrigin: string;
@@ -413,8 +417,9 @@ type BrowserSessionEntry = {
 	nativeOperationQueue: Promise<void>;
 	devtoolsPlacement: BrowserDevToolsPlacement;
 	contextMenu?: {
+		requestId: string;
 		tabId: string;
-		actions: BrowserContextMenuAction[];
+		actions: BrowserPageContextMenuAction[];
 		pagePoint: { x: number; y: number };
 		linkURL: string;
 		selectionText: string;
@@ -580,20 +585,14 @@ export function scaleBoundsForZoom(rect: BrowserRect, zoomFactor: number): Brows
 const MAX_CONTEXT_LINK_LENGTH = 8_192;
 const MAX_CONTEXT_SELECTION_LENGTH = 100_000;
 
-type BrowserContextMenuAction =
-	| "open-link-tab"
-	| "open-link-external"
-	| "copy-link"
-	| "copy-selection"
-	| "inspect";
-
-function contextMenuActions(params: ContextMenuParams, rendererOrigin: string): BrowserContextMenuAction[] {
+function contextMenuActions(params: ContextMenuParams, rendererOrigin: string): BrowserPageContextMenuAction[] {
 	const linkURL = params.linkURL.slice(0, MAX_CONTEXT_LINK_LENGTH);
 	const hasOpenableLink = linkURL.length > 0 && isAllowedBrowserURL(linkURL, rendererOrigin);
 	const hasSelection = params.editFlags.canCopy && params.selectionText.trim().length > 0;
 	return [
 		...(hasOpenableLink ? (["open-link-tab", "open-link-external"] as const) : []),
 		...(linkURL ? (["copy-link"] as const) : []),
+		...(hasOpenableLink ? (["save-link"] as const) : []),
 		...(hasSelection ? (["copy-selection"] as const) : []),
 		"inspect",
 	];
@@ -612,6 +611,12 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 	const tabsByWebContentsId = new Map<number, BrowserEntry>();
 	const ipcDisposers: Array<() => void> = [];
 	let disposePromise: Promise<void> | null = null;
+	const clearPageContextMenu = (session: BrowserSessionEntry): void => {
+		const pending = session.contextMenu;
+		if (!pending) return;
+		session.contextMenu = undefined;
+		session.tabs.get(pending.tabId)?.view.webContents.send("browser:pageContextMenu:hide", undefined);
+	};
 	// viewId of the panel that most recently held focus; cleared when it is hidden or destroyed.
 	let lastFocusedViewId: string | null = null;
 	// Separate from native focus: the address bar and tab strip live in the shell
@@ -737,6 +742,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		view.webContents.on("context-menu", (_event, params: ContextMenuParams) => {
 			if (!isCurrentEntry() || !session.visible || session.activeTabId !== entry.tabId) return;
 			const pending: NonNullable<BrowserSessionEntry["contextMenu"]> = {
+				requestId: randomUUID(),
 				tabId: entry.tabId,
 				actions: contextMenuActions(params, options.rendererOrigin),
 				pagePoint: { x: params.x, y: params.y },
@@ -744,7 +750,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 				selectionText: params.selectionText.slice(0, MAX_CONTEXT_SELECTION_LENGTH),
 			};
 			session.contextMenu = pending;
-			showNativeContextMenu(session, pending);
+			showPageContextMenu(entry, pending);
 		});
 		// Native Chromium DevTools can be closed from its own window controls. Keep
 		// the renderer's toggle state in sync with that user action. Programmatic
@@ -811,7 +817,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 				void options.browserHistoryStore.record(profileId, url, title, incrementVisit).catch(() => undefined);
 			},
 			() => {
-				if (isCurrentEntry()) session.contextMenu = undefined;
+				if (isCurrentEntry()) clearPageContextMenu(session);
 			},
 		);
 		wireFaviconEvents(view.webContents, entry, () => {
@@ -1143,7 +1149,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		const next = session.tabs.get(tabId);
 		if (!next) throw browserError("TAB_NOT_FOUND", `Browser tab ${tabId} does not exist`);
 		const previous = session.tabs.get(session.activeTabId);
-		if (previous !== next) session.contextMenu = undefined;
+		if (previous !== next) clearPageContextMenu(session);
 		if (previous && previous !== next) {
 			applyBrowserViewBounds(previous.view, OFFSCREEN_BOUNDS, false);
 		}
@@ -1485,7 +1491,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		const effectiveZoomFactor = Number.isFinite(zoomFactor) && zoomFactor > 0 ? zoomFactor : 1;
 		session.zoomFactor = effectiveZoomFactor;
 		if (!visible) {
-			session.contextMenu = undefined;
+			clearPageContextMenu(session);
 			session.bounds = OFFSCREEN_BOUNDS;
 			session.visible = false;
 			if (!session.profileSwitching && session.tabs.size > 0) applySessionBounds(session, activeEntry(session));
@@ -1520,7 +1526,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 
 	const navigateEntry = async (entry: BrowserEntry, url: string): Promise<BrowserNavState> => {
 		const session = entries.get(entry.state.viewId);
-		if (session?.tabs.get(entry.tabId) === entry) session.contextMenu = undefined;
+		if (session?.tabs.get(entry.tabId) === entry) clearPageContextMenu(session);
 		await entry.ready;
 		const normalized = normalizeBrowserURL(url);
 		if (!isAllowedBrowserURL(normalized.href, options.rendererOrigin)) {
@@ -1552,7 +1558,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		assertProfileStable(session);
 		return withBrowserOperation(session, async () => {
 			const entry = activeEntry(session);
-			session.contextMenu = undefined;
+			clearPageContextMenu(session);
 			cancelAnnotation(options, entry, "navigation");
 			if (session.devtools) destroyDevTools(session);
 			session.visible = false;
@@ -1730,7 +1736,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		}
 
 		session.profileSwitching = true;
-		session.contextMenu = undefined;
+		clearPageContextMenu(session);
 		session.profileSwitchTargetId = normalizedRequestedProfileId;
 		const previousProfileId = session.profileId;
 		const previousPartition = session.profilePartition;
@@ -1864,7 +1870,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		if (!session) return emptyNavState(viewId);
 		assertProfileStable(session);
 		const entry = activeEntry(session);
-		session.contextMenu = undefined;
+		clearPageContextMenu(session);
 		if (cancelForNavigation) {
 			cancelAnnotation(options, entry, "navigation");
 		}
@@ -1963,12 +1969,29 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		shellWebContents.send("browser:annotation:canceled", forwarded);
 	};
 
-	type NativeContextMenuAction = BrowserContextMenuAction | "annotate";
+	const runPageContextMenuAction = async (
+		event: IpcMainEvent,
+		input: BrowserPageContextMenuActionInput,
+	): Promise<void> => {
+		const entry = tabsByWebContentsId.get(event.sender.id);
+		if (!entry) return;
+		const session = entries.get(entry.state.viewId);
+		if (!session) return;
+		const pending = session.contextMenu;
+		if (
+			!pending ||
+			input?.requestId !== pending.requestId ||
+			session.activeTabId !== pending.tabId ||
+			pending.tabId !== entry.tabId ||
+			!session.visible
+		) return;
+		await executePageContextMenuAction(session, pending, input.action);
+	};
 
-	const runNativeContextMenuAction = async (
+	const executePageContextMenuAction = async (
 		session: BrowserSessionEntry,
 		pending: NonNullable<BrowserSessionEntry["contextMenu"]>,
-		action: NativeContextMenuAction,
+		action: BrowserPageContextMenuAction,
 	): Promise<void> => {
 		if (session.contextMenu !== pending || session.activeTabId !== pending.tabId) return;
 		const entry = session.tabs.get(pending.tabId);
@@ -1990,6 +2013,9 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 				options.clipboard?.writeText(pending.linkURL);
 				entry.view.webContents.focus();
 				return;
+			case "save-link":
+				await options.saveLink?.(entry.view.webContents, pending.linkURL);
+				return;
 			case "copy-selection":
 				options.clipboard?.writeText(pending.selectionText);
 				entry.view.webContents.focus();
@@ -2002,47 +2028,61 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		}
 	};
 
-	function showNativeContextMenu(
-		session: BrowserSessionEntry,
+	function showPageContextMenu(
+		entry: BrowserEntry,
 		pending: NonNullable<BrowserSessionEntry["contextMenu"]>,
 	): void {
 		const presenter = options.contextMenu;
 		if (!presenter) return;
 		const labels = presenter.getLabels();
 		const actions = pending.actions;
-		const run = (action: NativeContextMenuAction) => () => {
-			void runNativeContextMenuAction(session, pending, action).catch(() => undefined);
-		};
 		const linkActions = actions.filter((action) =>
-			["open-link-tab", "open-link-external", "copy-link"].includes(action),
+			["open-link-tab", "open-link-external", "copy-link", "save-link"].includes(action),
 		);
+		const item = (action: BrowserPageContextMenuAction, label: string): BrowserPageContextMenuItem => ({
+			type: "action",
+			action,
+			label,
+		});
 		const items: BrowserPageContextMenuItem[] = [
-			{ label: labels.annotate, click: run("annotate") },
+			item("annotate", labels.annotate),
 			...(linkActions.length > 0 ? [{ type: "separator" as const }] : []),
 			...(actions.includes("open-link-tab")
-				? [{ label: labels.openLinkTab, click: run("open-link-tab") }]
+				? [item("open-link-tab", labels.openLinkTab)]
 				: []),
 			...(actions.includes("open-link-external")
-				? [{ label: labels.openExternal, click: run("open-link-external") }]
+				? [item("open-link-external", labels.openExternal)]
 				: []),
 			...(actions.includes("copy-link")
-				? [{ label: labels.copyLink, click: run("copy-link") }]
+				? [item("copy-link", labels.copyLink)]
+				: []),
+			...(actions.includes("save-link")
+				? [item("save-link", labels.saveLink)]
 				: []),
 			...(actions.includes("copy-selection") ? [{ type: "separator" as const }] : []),
 			...(actions.includes("copy-selection")
-				? [{ label: labels.copy, click: run("copy-selection") }]
+				? [item("copy-selection", labels.copy)]
 				: []),
 			{ type: "separator" },
-			{ label: labels.inspect, click: run("inspect") },
+			item("inspect", labels.inspect),
 		];
-		presenter.show(items, () => {
-			if (session.contextMenu !== pending) return;
-			session.contextMenu = undefined;
-			if (session.activeTabId === pending.tabId) {
-				session.tabs.get(pending.tabId)?.view.webContents.focus();
-			}
-		});
+		const presentation: BrowserPageContextMenuPresentation = {
+			requestId: pending.requestId,
+			position: pending.pagePoint,
+			items,
+		};
+		entry.view.webContents.send("browser:pageContextMenu:show", presentation);
 	}
+
+	const dismissPageContextMenu = (event: IpcMainEvent, input: BrowserPageContextMenuDismissInput): void => {
+		const entry = tabsByWebContentsId.get(event.sender.id);
+		if (!entry) return;
+		const session = entries.get(entry.state.viewId);
+		const pending = session?.contextMenu;
+		if (!session || !pending || input?.requestId !== pending.requestId || pending.tabId !== entry.tabId) return;
+		session.contextMenu = undefined;
+		entry.view.webContents.focus();
+	};
 
 	const handle = <Args extends unknown[], Result>(
 		channel: string,
@@ -2193,6 +2233,10 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		return openUserTab(session, url);
 	});
 	handle("browser:annotation:setMode", (event, input: BrowserAnnotationModeInput) => setAnnotationMode(event, input));
+	on("browser:pageContextMenu:action", (event, input: BrowserPageContextMenuActionInput) => {
+		void runPageContextMenuAction(event, input).catch(() => undefined);
+	});
+	on("browser:pageContextMenu:dismiss", dismissPageContextMenu);
 	on("browser:destroy", (event, viewId: string) => {
 		if (isRendererOwned(event, viewId)) destroy(viewId);
 	});

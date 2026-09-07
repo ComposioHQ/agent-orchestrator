@@ -33,6 +33,7 @@ import { listFeatureBuilds, getActiveFeatureBuild } from "./main/feature-builds"
 import { initMainSentry, sanitizeRendererCapture } from "./main/sentry-main";
 import { TelemetryPolicyAuthority, resolveDesktopDataDir } from "./main/telemetry-policy-file";
 import { DaemonTelemetryPolicyClient } from "./main/daemon-telemetry-policy-client";
+import { createSaveLinkAs } from "./main/save-link-as";
 import { DesktopTelemetryController } from "./main/desktop-telemetry-controller";
 import { AgentSwitchVisibilityController } from "./main/agent-switch-observability";
 import { readUpdateSettings, type UpdateSettings, type UpdateStatus } from "./main/update-settings";
@@ -673,12 +674,11 @@ async function createWindowInternal(): Promise<void> {
 					inspect: messages["browser.contextMenu.inspect"],
 					openExternal: messages["browser.contextMenu.openExternal"],
 					openLinkTab: messages["browser.contextMenu.openLinkTab"],
+					saveLink: messages["browser.contextMenu.saveLink"],
 				};
 			},
-			show: (items, onClosed) => {
-				Menu.buildFromTemplate(items).popup({ window: mainWindow ?? undefined, callback: onClosed });
-			},
 		},
+		saveLink: createSaveLinkAs((options) => dialog.showSaveDialog(options)),
 		WebContentsView,
 		annotatePreloadPath: annotatePreloadPath(),
 		rendererOrigin: new URL(rendererUrl()).origin,
