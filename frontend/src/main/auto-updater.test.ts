@@ -2936,7 +2936,7 @@ describe("staged install rejection", () => {
     expect(autoUpdater.downloadedUpdateHelper.clear).not.toHaveBeenCalled();
     expect(statusMessages().at(-1)?.payload).toMatchObject({
       state: "error",
-      message: expect.stringContaining("failed verification again"),
+      message: expect.stringContaining("stopped retrying on its own"),
     });
 
     // ...and the next operation cannot begin until it has. Awaiting one drains
@@ -2944,6 +2944,70 @@ describe("staged install rejection", () => {
     // starting into a pending directory that is still being emptied.
     await module.checkForUpdatesNow(stateDir);
     expect(autoUpdater.downloadedUpdateHelper.clear).toHaveBeenCalledTimes(1);
+    consoleErrorSpy.mockRestore();
+  });
+
+  // Disarming a rejected build re-enables auto-download, which is what buys the
+  // cheap re-preparation. Unbounded, that is also a loop: fetch 176 MB, fail
+  // verification, discard, fetch again, on every check for as long as the app
+  // runs. These three cover the bound and both of its resets.
+  const failTwice = (
+    updaterEvents: Map<string, (...args: unknown[]) => unknown>,
+  ) => {
+    updaterEvents.get("update-downloaded")?.({ version: "2.1.0" });
+    updaterEvents.get("error")?.(rejection);
+    updaterEvents.get("update-downloaded")?.({ version: "2.1.0" });
+    updaterEvents.get("error")?.(rejection);
+  };
+
+  it("stops automatically re-downloading a build that failed twice", async () => {
+    const consoleErrorSpy = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => undefined);
+    const { module, autoUpdater, updaterEvents } = await importAutoUpdater();
+
+    await module.checkForUpdatesNow(stateDir);
+    failTwice(updaterEvents);
+
+    await module.startAutoUpdates(stateDir);
+
+    expect(autoUpdater.autoDownload).toBe(false);
+    consoleErrorSpy.mockRestore();
+  });
+
+  it("gives a different build its own recovery attempts", async () => {
+    // The budget answers "has THIS target exhausted its retries". Something
+    // newer must not inherit the previous build's exhaustion.
+    const consoleErrorSpy = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => undefined);
+    const { module, autoUpdater, updaterEvents } = await importAutoUpdater();
+
+    await module.checkForUpdatesNow(stateDir);
+    failTwice(updaterEvents);
+    updaterEvents.get("update-available")?.({ version: "2.2.0" });
+
+    await module.startAutoUpdates(stateDir);
+
+    expect(autoUpdater.autoDownload).toBe(true);
+    consoleErrorSpy.mockRestore();
+  });
+
+  it("restores the budget when the user checks again", async () => {
+    // The exhausted message tells the user to check for updates again, so that
+    // has to actually do something.
+    const consoleErrorSpy = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => undefined);
+    const { module, autoUpdater, updaterEvents } = await importAutoUpdater();
+
+    await module.checkForUpdatesNow(stateDir);
+    failTwice(updaterEvents);
+    await module.checkForUpdatesNow(stateDir);
+
+    await module.startAutoUpdates(stateDir);
+
+    expect(autoUpdater.autoDownload).toBe(true);
     consoleErrorSpy.mockRestore();
   });
 

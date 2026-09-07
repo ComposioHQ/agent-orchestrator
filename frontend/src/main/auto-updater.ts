@@ -1030,6 +1030,44 @@ let installRejections: { version: string | undefined; count: number } | undefine
  */
 let handledInstallRejection: { version: string | undefined } | undefined;
 
+/**
+ * How many times one build may fail verification before AO stops re-preparing
+ * it on every check.
+ *
+ * Two: the first failure buys a re-preparation from the archive already in the
+ * cache, the second discards that archive. A third automatic attempt would just
+ * re-download the same bytes on every check forever, which is the loop this
+ * bound exists to stop.
+ */
+const MAX_AUTOMATIC_INSTALL_ATTEMPTS = 2;
+
+/**
+ * True once a build has used up its automatic recovery attempts.
+ *
+ * Checked before an automatic check arms auto-download, which is the only place
+ * the loop can be broken: the download is started by checkForUpdates() itself,
+ * before the offered version is known, so this cannot discriminate by version at
+ * that point. It is deliberately cleared as soon as the feed offers something
+ * else, or the user asks explicitly — see forgetInstallRejections.
+ */
+function automaticRecoveryExhausted(): boolean {
+  return (
+    installRejections !== undefined &&
+    installRejections.count >= MAX_AUTOMATIC_INSTALL_ATTEMPTS
+  );
+}
+
+/**
+ * Reset the budget.
+ *
+ * Called when the feed offers a different build (a new target gets its own
+ * attempts) and on an explicit manual check or download (the user asking again
+ * is the "explicit retry" route the exhausted message points at).
+ */
+function forgetInstallRejections(): void {
+  installRejections = undefined;
+}
+
 /** Count this rejection and report how many times this build has now failed. */
 function recordInstallRejection(version: string | undefined): number {
   installRejections =
@@ -1152,6 +1190,14 @@ function wireUpdaterEvents(): void {
       broadcastCompletedCheck(stagedDownloadedStatus());
       return;
     }
+    // A different build is a different target, so it starts with a full budget
+    // even if the previous one exhausted its own.
+    if (
+      installRejections !== undefined &&
+      info?.version !== installRejections.version
+    ) {
+      forgetInstallRejections();
+    }
     pendingUpdateVersion = info?.version;
     offeredReleaseNotes = normalizeReleaseNotes(info?.releaseNotes) ?? directFeedReleaseNotes;
     broadcastCompletedCheck({ state: "available", version: info?.version });
@@ -1255,9 +1301,9 @@ function wireUpdaterEvents(): void {
     // (#4254). This is the one failure class that cannot be left to the
     // automatic path's suppress-and-retry, because retrying it is exactly what
     // does not work: electron-updater re-serves the same cached bytes to
-    // Squirrel on every subsequent check for the lifetime of this process, so
-    // the install fails identically forever while the UI keeps offering a
-    // restart that cannot succeed.
+    // Squirrel on every subsequent check for the lifetime of this process,
+    // rather than a fresh download — while the UI keeps offering a restart that
+    // nothing has re-verified.
     //
     // Dropping the cached download turns the next check back into a real
     // download-and-verify instead of a replay, and disarming the staged state
@@ -1299,10 +1345,8 @@ function wireUpdaterEvents(): void {
       // record re-enables auto-download, so the next check re-stages and
       // re-prepares from the archive already in the cache.
       //
-      // Bounding automatic retries (a stop, and a defined reset) belongs with
-      // the attempt-lifecycle work, not here: this only makes the existing
-      // unbounded retry cheaper, it does not introduce it.
       const failures = recordInstallRejection(stagedVersion);
+      const exhausted = failures >= MAX_AUTOMATIC_INSTALL_ATTEMPTS;
       handledInstallRejection = { version: stagedVersion };
       discardStagedBuild();
       // Only once a re-preparation has ALSO failed is the archive worth
@@ -1312,24 +1356,25 @@ function wireUpdaterEvents(): void {
       // Queued on the operation chain rather than fired and forgotten:
       // discardStagedBuild() re-enables auto-download, so the next check can
       // start a download into the very directory this is emptying.
-      if (failures > 1) {
+      if (exhausted) {
         void runSerializedUpdaterOperation(
           "cache-clear",
           clearPendingUpdateCache,
         ).catch(() => undefined);
       }
       console.error(
-        `staged update rejected at install time (attempt ${failures}${failures > 1 ? ", discarding cached download" : ""}):`,
+        `staged update rejected at install time (attempt ${failures}${exhausted ? ", discarding cached download and stopping automatic retries" : ""}):`,
         err,
       );
       broadcast(
         withActiveRequest({
           state: "error",
           message:
-            failures > 1
-              ? "Couldn't install the update — the copy failed verification again. " +
-                "AO has discarded the download and will fetch it again. If it keeps " +
-                "failing, download the latest build manually and install it over this one."
+            exhausted
+              ? "Couldn't install the update — the copy failed verification twice. " +
+                "AO has discarded the download and stopped retrying on its own. Check " +
+                "for updates again to start a fresh one, or download the latest build " +
+                "manually and install it over this one."
               : "Couldn't install the update — the downloaded copy failed verification. " +
                 "AO will prepare it again on the next check.",
         }),
@@ -1439,8 +1484,13 @@ async function runAutomaticUpdateCheck(
       // downloading is off, or quitting installs the build they moved away from.
       const staleStaged = stagedBuildIsStale(settings);
       if (staleStaged) discardStagedBuild();
+      // automaticRecoveryExhausted() breaks the re-download loop: without it a
+      // build that keeps failing verification is fetched and re-prepared on
+      // every check, forever. A stale staged build still overrides, because
+      // leaving THAT one armed installs a channel the user has left.
       autoUpdater.autoDownload =
-        staleStaged || (settings.enabled && !hasStagedBuild());
+        staleStaged ||
+        (settings.enabled && !hasStagedBuild() && !automaticRecoveryExhausted());
       applyInstallOnQuitPolicy();
       // Only prerelease channels resolve a direct feed. Skipping the await on
       // stable keeps that check's event ordering exactly as it was.
@@ -1590,6 +1640,8 @@ export async function checkForUpdatesNow(
 ): Promise<void> {
   escalationStateDir = stateDir;
   wireUpdaterEvents();
+  // Asking again IS the explicit retry the exhausted message points at.
+  forgetInstallRejections();
 	if (!app.isPackaged) {
     emitUpdateOutcome({
       event: "ao.renderer.update_unsupported",
@@ -1712,6 +1764,7 @@ export async function returnToHome(
 // downloadUpdateNow starts downloading the update found by checkForUpdatesNow.
 export async function downloadUpdateNow(requestId?: string): Promise<void> {
   wireUpdaterEvents();
+  forgetInstallRejections();
 	if (!app.isPackaged) {
     emitUpdateOutcome({
       event: "ao.renderer.update_unsupported",
