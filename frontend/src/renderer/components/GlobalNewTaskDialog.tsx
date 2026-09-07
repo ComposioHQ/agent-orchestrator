@@ -2,6 +2,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
+import { sessionNavigateTarget } from "../lib/navigate-to-session";
 import { useUiStore } from "../stores/ui-store";
 import { NewTaskDialog } from "./NewTaskDialog";
 
@@ -33,10 +34,7 @@ export function GlobalNewTaskDialog() {
 	const handleCreated = async (sessionId: string) => {
 		if (!projectId) return;
 		await queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
-		void navigate({
-			to: "/projects/$projectId/sessions/$sessionId",
-			params: { projectId, sessionId },
-		});
+		void navigate(sessionNavigateTarget(projectId, sessionId));
 	};
 
 	return (

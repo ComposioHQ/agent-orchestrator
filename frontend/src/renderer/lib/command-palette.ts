@@ -19,11 +19,13 @@ import {
 	type PRReviewState,
 } from "./session-reviews";
 import { appI18n, type MessageKey } from "../i18n";
+import { sessionNavigateTarget } from "./navigate-to-session";
 
 export type CommandGroupId = "current" | "attention" | "projects" | "sessions" | "prs" | "global";
 
 export type NavigateTarget =
 	| { to: "/settings" }
+	| { to: "/sessions/$sessionId"; params: { sessionId: string } }
 	| { to: "/projects/$projectId"; params: { projectId: string } }
 	| { to: "/projects/$projectId/settings"; params: { projectId: string } }
 	| { to: "/projects/$projectId/sessions/$sessionId"; params: { projectId: string; sessionId: string } };
@@ -116,10 +118,7 @@ export type WorkspaceSessionContext = {
 };
 
 function jumpTarget(workspace: WorkspaceSummary, session: WorkspaceSession): NavigateTarget {
-	return {
-		to: "/projects/$projectId/sessions/$sessionId",
-		params: { projectId: workspace.id, sessionId: session.id },
-	};
+	return sessionNavigateTarget(workspace.id, session.id);
 }
 
 function sessionCommand(
@@ -311,10 +310,7 @@ export function buildCommands(ctx: CommandPaletteContext, t: TFunction = appI18n
 					keywords: prKeywords,
 					action: {
 						kind: "navigate",
-						target: {
-							to: "/projects/$projectId/sessions/$sessionId",
-							params: { projectId: workspace.id, sessionId: session.id },
-						},
+						target: jumpTarget(workspace, session),
 					},
 				});
 				items.push({

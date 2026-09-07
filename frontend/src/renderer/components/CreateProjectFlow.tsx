@@ -2,6 +2,7 @@ import * as Dialog from "@radix-ui/react-dialog";
 import { useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import {
+	Bot,
 	CheckCircle2,
 	CircleDashed,
 	ChevronRight,
@@ -63,6 +64,7 @@ export function CreateProjectFlow({
 	onCloneProject,
 	onCreateProject,
 	onInitializeProject,
+	onCreateStandaloneAgent,
 	openSignal,
 	sourceSignal,
 }: {
@@ -79,6 +81,9 @@ export function CreateProjectFlow({
 	onCloneProject: (input: CloneProjectInput) => Promise<void>;
 	onCreateProject: (input: CreateProjectInput) => Promise<void>;
 	onInitializeProject: (path: string) => Promise<void>;
+	// Optional because the embedded onboarding surface already owns its
+	// standalone-agent entry point. The sidebar's project picker supplies this.
+	onCreateStandaloneAgent?: () => void;
 	// Monotonic counter: each new value opens the flow programmatically (the ⌘N
 	// "no project in scope" fallback). Lets the shortcut reuse the sidebar's own
 	// create-project flow instead of a separate delegating component.
@@ -264,6 +269,17 @@ export function CreateProjectFlow({
 		setModePickerOpen(false);
 		setOffering("local");
 	};
+
+	const createStandaloneAgent = onCreateStandaloneAgent
+		? () => {
+				setModePickerOpen(false);
+				setPendingDropPath(null);
+				setOffering("local");
+				// Let Radix finish closing the project picker before mounting the
+				// standalone task dialog, so focus is handed to the new surface.
+				window.requestAnimationFrame(onCreateStandaloneAgent);
+			}
+		: undefined;
 
 	// Seed with the current value so we never open on mount; open when it changes.
 	const lastOpenSignal = useRef(openSignal);
@@ -477,6 +493,7 @@ export function CreateProjectFlow({
 						onOfferingChange={setOffering}
 						onSignIn={cloudSignIn}
 						open={modePickerOpen}
+						onCreateStandaloneAgent={createStandaloneAgent}
 						onOpenChange={(open) => {
 							if (isBusy) return;
 							setModePickerOpen(open);
@@ -767,6 +784,7 @@ function CreateProjectSourceDialog({
 	onOfferingChange,
 	onSignIn,
 	onOpenChange,
+	onCreateStandaloneAgent,
 	onSelect,
 	open,
 }: {
@@ -779,6 +797,7 @@ function CreateProjectSourceDialog({
 	onOfferingChange: (offering: ProjectOffering) => void;
 	onSignIn: () => void;
 	onOpenChange: (open: boolean) => void;
+	onCreateStandaloneAgent?: () => void;
 	onSelect: (source: ProjectSource) => void;
 	open: boolean;
 }) {
@@ -808,7 +827,13 @@ function CreateProjectSourceDialog({
 								<CloudSignInPanel dialog disabled={disabled} onSignIn={onSignIn} />
 							)
 						) : (
-							<ImportSourcePicker disabled={disabled} onClose={() => onOpenChange(false)} onSelect={onSelect} dialog />
+							<ImportSourcePicker
+								disabled={disabled}
+								onClose={() => onOpenChange(false)}
+								onCreateStandaloneAgent={onCreateStandaloneAgent}
+								onSelect={onSelect}
+								dialog
+							/>
 						)}
 					</div>
 				</Dialog.Content>
@@ -1096,11 +1121,13 @@ function ImportSourcePicker({
 	dialog = false,
 	disabled,
 	onClose,
+	onCreateStandaloneAgent,
 	onSelect,
 }: {
 	dialog?: boolean;
 	disabled: boolean;
 	onClose?: () => void;
+	onCreateStandaloneAgent?: () => void;
 	onSelect: (source: ProjectSource) => void;
 }) {
 	const { t } = useTranslation();
@@ -1142,24 +1169,45 @@ function ImportSourcePicker({
 			)}
 			<div className="mx-4 mb-4 overflow-hidden rounded-md border border-border/50 bg-[var(--color-bg-import-modal)]">
 				<div className="flex flex-col divide-y divide-border/50">
-				{sources.map(({ source, icon, label, description }) => (
-					<button
-						key={source}
-						type="button"
-						className="group flex min-h-[76px] items-center gap-3 px-3.5 py-3 text-left hover:bg-accent/50 active:bg-accent disabled:pointer-events-none disabled:opacity-50"
-						aria-label={label}
-						disabled={disabled}
-						onClick={() => onSelect(source)}
-					>
-						<span className="grid w-9 shrink-0 place-items-center text-muted-foreground group-hover:text-foreground">
-							{icon}
-						</span>
-						<span className="min-w-0">
-							<span className="block text-[14px] font-medium text-foreground">{label}</span>
-							<span className="mt-0.5 block text-[12px] leading-5 text-muted-foreground">{description}</span>
-						</span>
-					</button>
-				))}
+					{sources.map(({ source, icon, label, description }) => (
+						<button
+							key={source}
+							type="button"
+							className="group flex min-h-[76px] items-center gap-3 px-3.5 py-3 text-left hover:bg-accent/50 active:bg-accent disabled:pointer-events-none disabled:opacity-50"
+							aria-label={label}
+							disabled={disabled}
+							onClick={() => onSelect(source)}
+						>
+							<span className="grid w-9 shrink-0 place-items-center text-muted-foreground group-hover:text-foreground">
+								{icon}
+							</span>
+							<span className="min-w-0">
+								<span className="block text-[14px] font-medium text-foreground">{label}</span>
+								<span className="mt-0.5 block text-[12px] leading-5 text-muted-foreground">{description}</span>
+							</span>
+						</button>
+					))}
+					{onCreateStandaloneAgent ? (
+						<button
+							type="button"
+							className="group flex min-h-[76px] items-center gap-3 px-3.5 py-3 text-left hover:bg-accent/50 active:bg-accent disabled:pointer-events-none disabled:opacity-50"
+							aria-label={t("home.newStandaloneAgent")}
+							disabled={disabled}
+							onClick={onCreateStandaloneAgent}
+						>
+							<span className="grid w-9 shrink-0 place-items-center text-muted-foreground group-hover:text-foreground">
+								<Bot className="size-5" aria-hidden="true" strokeWidth={1.8} />
+							</span>
+							<span className="min-w-0">
+								<span className="block text-[14px] font-medium text-foreground">
+									{t("home.newStandaloneAgent")}
+								</span>
+								<span className="mt-0.5 block text-[12px] leading-5 text-muted-foreground">
+									{t("createProject.standaloneDesc")}
+								</span>
+							</span>
+						</button>
+					) : null}
 				</div>
 			</div>
 			{dialog && onClose ? (

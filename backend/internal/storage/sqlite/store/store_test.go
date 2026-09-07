@@ -514,6 +514,112 @@ func TestSessionCreateAssignsPerProjectID(t *testing.T) {
 	}
 }
 
+func TestSessionCreateAssignsStandaloneIDsWithoutProject(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	first, err := s.CreateSession(ctx, sampleRecord(""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := s.CreateSession(ctx, sampleRecord(""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.ID != "standalone-1" || second.ID != "standalone-2" {
+		t.Fatalf("standalone ids = %q, %q", first.ID, second.ID)
+	}
+	if first.ProjectID != "" || !first.IsStandalone() {
+		t.Fatalf("standalone project = %q", first.ProjectID)
+	}
+	conversation, err := s.CreateConversation(
+		ctx,
+		"conversation-standalone-1",
+		domain.ConversationScopeSession,
+		"",
+		first.ID,
+		time.Now().UTC(),
+	)
+	if err != nil {
+		t.Fatalf("create standalone conversation: %v", err)
+	}
+	if conversation.ProjectID != "" {
+		t.Fatalf("standalone conversation project = %q", conversation.ProjectID)
+	}
+	notification, inserted, err := s.CreateNotification(ctx, domain.NotificationRecord{
+		ID:        "notification-standalone-1",
+		SessionID: first.ID,
+		Type:      domain.NotificationNeedsInput,
+		Title:     "Input needed",
+		Status:    domain.NotificationUnread,
+		CreatedAt: time.Now().UTC(),
+	})
+	if err != nil || !inserted {
+		t.Fatalf("create standalone notification: inserted=%v err=%v", inserted, err)
+	}
+	if notification.ProjectID != "" {
+		t.Fatalf("standalone notification project = %q", notification.ProjectID)
+	}
+	events, err := s.EventsAfter(ctx, 0, 10)
+	if err != nil {
+		t.Fatalf("read standalone change log: %v", err)
+	}
+	if len(events) < 2 {
+		t.Fatalf("standalone change log has %d events, want session creates", len(events))
+	}
+	for _, event := range events {
+		if event.ProjectID != "" {
+			t.Fatalf("standalone change event project = %q", event.ProjectID)
+		}
+	}
+	rows, err := s.ListSessions(ctx, "")
+	if err != nil || len(rows) != 2 {
+		t.Fatalf("ListSessions(empty) = %d rows, err=%v", len(rows), err)
+	}
+}
+
+func TestSessionCreateAvoidsStandaloneProjectIDCollisions(t *testing.T) {
+	for _, tc := range []struct {
+		name            string
+		standaloneFirst bool
+	}{
+		{name: "project session first"},
+		{name: "standalone session first", standaloneFirst: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := newTestStore(t)
+			ctx := context.Background()
+			seedProject(t, s, "standalone")
+
+			var projectSession, standaloneSession domain.SessionRecord
+			var err error
+			if tc.standaloneFirst {
+				standaloneSession, err = s.CreateSession(ctx, sampleRecord(""))
+				if err == nil {
+					projectSession, err = s.CreateSession(ctx, sampleRecord("standalone"))
+				}
+			} else {
+				projectSession, err = s.CreateSession(ctx, sampleRecord("standalone"))
+				if err == nil {
+					standaloneSession, err = s.CreateSession(ctx, sampleRecord(""))
+				}
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if projectSession.ID == standaloneSession.ID {
+				t.Fatalf("project and standalone sessions share id %q", projectSession.ID)
+			}
+			if _, ok, err := s.GetSession(ctx, projectSession.ID); err != nil || !ok {
+				t.Fatalf("project session %q missing: ok=%v err=%v", projectSession.ID, ok, err)
+			}
+			if _, ok, err := s.GetSession(ctx, standaloneSession.ID); err != nil || !ok {
+				t.Fatalf("standalone session %q missing: ok=%v err=%v", standaloneSession.ID, ok, err)
+			}
+		})
+	}
+}
+
 // TestDeleteSessionOnlyRemovesSeedRows covers Bug 4's storage-layer guarantee:
 // DeleteSession removes a session row only when the row is still in seed state
 // (no workspace, no runtime handle, no agent session id, no prompt, not
