@@ -44,9 +44,8 @@ type Supervisor struct {
 	pendingAgentTerminalData [][]byte
 }
 
-// HoldAgentInputUntilWorkspaceReady permits the agent PTY to start while the
-// checkout runs, but preserves user input and durable turns until the checkout
-// has completed. Call this before Run.
+// HoldAgentInputUntilWorkspaceReady keeps repository-mutating transport and
+// agent input blocked until checkout has completed. Call this before Run.
 func (s *Supervisor) HoldAgentInputUntilWorkspaceReady() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -54,8 +53,8 @@ func (s *Supervisor) HoldAgentInputUntilWorkspaceReady() {
 	s.workspaceReady = false
 }
 
-// MarkWorkspaceReady releases prompts collected while the agent was booting
-// against an empty workspace.
+// MarkWorkspaceReady releases transport and prompts after checkout has
+// prepared the repository.
 func (s *Supervisor) MarkWorkspaceReady() {
 	s.mu.Lock()
 	s.workspaceReady = true
@@ -156,8 +155,7 @@ func (s *Supervisor) Run(ctx context.Context) error {
 }
 
 // StartAgent adds the coding-agent PTY after the workspace transport is already
-// serving. This lets a browser attach to a usable workspace shell while a
-// repository checkout and agent credential setup continue in the background.
+// serving.
 func (s *Supervisor) StartAgent(ctx context.Context, command workerexec.Command, terminalID string) error {
 	if terminalID == "" {
 		return errors.New("agent terminal id is required")
@@ -234,10 +232,14 @@ func (s *Supervisor) handle(
 			response, err = workspace.Read(input)
 		}
 	case "workspace.write":
-		var input worker.WorkspaceWriteRequest
-		err = decodePayload(request.Payload, &input)
-		if err == nil {
-			response, err = workspace.Write(input)
+		if !s.isWorkspaceReady() {
+			err = errors.New("workspace is still preparing")
+		} else {
+			var input worker.WorkspaceWriteRequest
+			err = decodePayload(request.Payload, &input)
+			if err == nil {
+				response, err = workspace.Write(input)
+			}
 		}
 	case "workspace.diff":
 		response, err = workspace.Diff(ctx)
@@ -250,7 +252,9 @@ func (s *Supervisor) handle(
 	case "terminal.open":
 		var input worker.TerminalCommand
 		err = decodePayload(request.Payload, &input)
-		if err == nil {
+		if err == nil && input.Kind == "workspace" && !s.isWorkspaceReady() {
+			err = errors.New("workspace is still preparing")
+		} else if err == nil {
 			err = s.openTerminal(ctx, input)
 			response = map[string]bool{"open": err == nil}
 		}
@@ -292,6 +296,12 @@ func (s *Supervisor) handle(
 	); failErr != nil {
 		s.Logger.Warn("fail worker transport request", "error", failErr, "kind", request.Kind)
 	}
+}
+
+func (s *Supervisor) isWorkspaceReady() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return !s.holdAgentInput || s.workspaceReady
 }
 
 func (s *Supervisor) openTerminal(ctx context.Context, input worker.TerminalCommand) error {

@@ -123,9 +123,8 @@ func run(logger *slog.Logger) error {
 		"repository_url", bootstrap.Launch.RepositoryURL,
 	)
 
-	// The workspace shell is deliberately available before checkout starts. A
-	// developer can inspect the sandbox immediately while repository preparation
-	// and coding-agent authentication continue in the background.
+	// Create the workspace directory before transport starts, but reserve it for
+	// checkout until the repository is prepared.
 	if err := os.MkdirAll(workspace, 0o755); err != nil {
 		return fmt.Errorf("create workspace directory: %w", err)
 	}
@@ -161,10 +160,10 @@ func run(logger *slog.Logger) error {
 		Control: client, Workspace: workspace, Logger: logger,
 		Started: started,
 	}
-	// The coding-agent process may connect before checkout completes, but no
-	// user prompt may reach it until the repository is usable. This keeps the
-	// perceived connection path independent from clone latency without letting
-	// a prompt run in an empty workspace.
+	// Do not claim agent input until checkout has prepared the workspace and the
+	// agent PTY exists. In particular, the harness must not start in workspace
+	// before PrepareCheckout has populated it: several harnesses write project
+	// local state during startup, which makes git clone reject the destination.
 	transportSupervisor.HoldAgentInputUntilWorkspaceReady()
 	results := make(chan error, 5)
 	go func() { results <- client.heartbeatLoop(runCtx, logger) }()
@@ -195,26 +194,29 @@ func run(logger *slog.Logger) error {
 	}); err != nil {
 		logger.Warn("publish worker.ready failed", "error", err)
 	}
+	startupFailure := make(chan error, 1)
 	go func() {
 		if err := prepareWorkspace(
 			runCtx, logger, client, bootstrap, workspace, dataDir, publicURL,
 		); err != nil {
 			if runCtx.Err() == nil {
-				logger.Error("background workspace startup failed", "error", err)
+				startupFailure <- fmt.Errorf("prepare workspace: %w", err)
 			}
 			return
 		}
 		transportSupervisor.MarkWorkspaceReady()
-	}()
-	go func() {
 		if err := startInteractiveAgent(
 			runCtx, logger, client, bootstrap, workspace, dataDir,
 			pullRequestSocketPath, reviewSocketPath, &transportSupervisor,
 		); err != nil && runCtx.Err() == nil {
-			logger.Error("background coding-agent startup failed", "error", err)
+			startupFailure <- fmt.Errorf("start interactive agent: %w", err)
 		}
 	}()
-	first := <-results
+	var first error
+	select {
+	case first = <-results:
+	case first = <-startupFailure:
+	}
 	cancel()
 	<-results
 	<-results
