@@ -50,6 +50,7 @@ export function ActivityRun({ activities }: { activities: ConversationActivity[]
 	// A single call is its own best summary — collapsing one row into a count of
 	// one would be worse than just showing it.
 	const hierarchy = buildHierarchy(activities);
+	const nodesByActivityID = new Map(hierarchy.map((node) => [node.activity.id, node]));
 	const rootActivities = hierarchy.map((node) => node.activity);
 	const subgroups = groupSimilarActivities(rootActivities);
 	const summary = summarize(activities);
@@ -130,7 +131,7 @@ export function ActivityRun({ activities }: { activities: ConversationActivity[]
 						<div className="flex flex-col gap-1 pt-1">
 							{subgroups.length === 1
 								? subgroups[0]!.activities.map((activity) => {
-										const node = hierarchy.find((candidate) => candidate.activity.id === activity.id);
+										const node = nodesByActivityID.get(activity.id);
 										return node ? (
 											<ActivityTree key={activity.id} node={node} />
 										) : (
@@ -138,7 +139,7 @@ export function ActivityRun({ activities }: { activities: ConversationActivity[]
 										);
 								  })
 								: subgroups.map((group) => (
-										<ActivitySubgroup key={group.key} activities={group.activities} hierarchy={hierarchy} />
+										<ActivitySubgroup key={group.key} activities={group.activities} nodesByActivityID={nodesByActivityID} />
 								  ))}
 						</div>
 					</motion.div>
@@ -171,10 +172,10 @@ function activityGroupKey(activity: ConversationActivity): string {
 
 function ActivitySubgroup({
 	activities,
-	hierarchy,
+	nodesByActivityID,
 }: {
 	activities: ConversationActivity[];
-	hierarchy: ActivityNode[];
+	nodesByActivityID: ReadonlyMap<string, ActivityNode>;
 }) {
 	const [override, setOverride] = useState<boolean | null>(null);
 	const reducedMotion = useReducedMotion();
@@ -183,14 +184,14 @@ function ActivitySubgroup({
 	);
 	const open = override ?? streamingOutput;
 	const hasNestedAgent = activities.some((activity) =>
-		hierarchy.some((node) => node.activity.id === activity.id && node.children.length > 0),
+		nodesByActivityID.get(activity.id)?.children.length,
 	);
 	const isStructural = activities.some((activity) => Boolean(activity.detail?.parentProviderItemId));
 	if (activities.length === 1 || hasNestedAgent || isStructural) {
 		return (
 			<>
 				{activities.map((activity) => {
-					const node = hierarchy.find((candidate) => candidate.activity.id === activity.id);
+					const node = nodesByActivityID.get(activity.id);
 					return node ? (
 						<ActivityTree key={activity.id} node={node} />
 					) : (
@@ -227,7 +228,7 @@ function ActivitySubgroup({
 					>
 						<div className="flex flex-col gap-1">
 							{activities.map((activity) => {
-								const node = hierarchy.find((candidate) => candidate.activity.id === activity.id);
+								const node = nodesByActivityID.get(activity.id);
 								return node ? (
 									<ActivityTree key={activity.id} node={node} />
 								) : (
