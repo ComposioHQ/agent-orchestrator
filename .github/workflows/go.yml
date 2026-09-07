@@ -80,6 +80,9 @@ jobs:
       - name: Test workspace teardown and session kill
         run: go test -race -v -run 'Destroy|Discard|Sweep|Kill' ./internal/adapters/workspace/... ./internal/session_manager/
 
+      - name: Test persistent provider host console isolation
+        run: go test -race -v -run '^TestDetachedHostProviderDoesNotAllocateConsoleWindow$' ./internal/adapters/chatdriver/persistenthost
+
   lint:
     runs-on: ubuntu-latest
     steps:
