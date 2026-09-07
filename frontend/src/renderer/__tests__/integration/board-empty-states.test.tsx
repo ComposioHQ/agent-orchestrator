@@ -267,6 +267,32 @@ describe("global board first launch", () => {
 		expect(screen.getByTestId("terminal-pane")).toHaveAttribute("data-focus-requested", "false");
 	});
 
+	it("adopts a daemon-owned login after renderer state is lost", async () => {
+		respondWith([], [], false);
+		const originalGet = getMock.getMockImplementation()!;
+		getMock.mockImplementation(async (url: string) => url === "/api/v1/shell-terminals"
+			? { data: { shellTerminals: [{ handleId: "surviving-login", title: "Connect GitHub", workingDir: "/tmp/auth", createdAt: "2026-07-04T10:00:00Z" }] } }
+			: originalGet(url));
+		const first = renderBoard(<SessionsBoard />);
+		await waitFor(() => expect(terminalPanePropsMock).toHaveBeenCalledWith(expect.objectContaining({ terminalTarget: expect.objectContaining({ handleId: "surviving-login" }) })));
+		first.unmount();
+		terminalPanePropsMock.mockClear();
+		renderBoard(<SessionsBoard />);
+		await waitFor(() => expect(terminalPanePropsMock).toHaveBeenCalledWith(expect.objectContaining({ terminalTarget: expect.objectContaining({ handleId: "surviving-login" }) })));
+		expect(postMock).not.toHaveBeenCalled();
+	});
+
+	it("does not spawn when daemon terminal reconciliation fails", async () => {
+		respondWith([], [], false);
+		const originalGet = getMock.getMockImplementation()!;
+		getMock.mockImplementation(async (url: string) => url === "/api/v1/shell-terminals"
+			? { error: new Error("Terminal list unavailable") }
+			: originalGet(url));
+		renderBoard(<SessionsBoard />);
+		expect(await screen.findByRole("alert", {}, { timeout: 5000 })).toHaveTextContent("Terminal list unavailable");
+		expect(postMock).not.toHaveBeenCalled();
+	});
+
 	it("does not open GitHub sign-in when the initial auth check succeeds", async () => {
 		respondWith([], []);
 		renderBoard(<SessionsBoard />);

@@ -3,7 +3,7 @@ import { useCallback } from "react";
 import type { components } from "../../api/schema";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
 import { usesPreviewWorkspaceData } from "../lib/preview-mode";
-import { shellTerminalsQueryKey, type ShellTerminal } from "./useShellTerminals";
+import { shellTerminalsQueryKey, shellTerminalsQueryOptions, type ShellTerminal } from "./useShellTerminals";
 
 export type SystemRequirement = components["schemas"]["SystemRequirement"];
 
@@ -57,6 +57,11 @@ export function useStartGitHubAuthTerminal() {
 	const queryClient = useQueryClient();
 	return useMutation({
 		mutationFn: async (): Promise<ShellTerminal> => {
+			// Renderer state is lost on reload, while daemon-owned login PTYs survive.
+			// Reconcile before every start and fail without spawning if the list fails.
+			const terminals = await queryClient.fetchQuery({ ...shellTerminalsQueryOptions, staleTime: 0 });
+			const existing = terminals.find((terminal) => terminal.title === "Connect GitHub" && !terminal.sessionId && !terminal.projectId);
+			if (existing) return existing;
 			const { data, error } = await apiClient.POST("/api/v1/system/github-auth/terminal");
 			if (error || !data) throw new Error(apiErrorMessage(error, "Could not start GitHub sign-in."));
 			return data.shellTerminal;

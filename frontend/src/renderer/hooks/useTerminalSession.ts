@@ -428,6 +428,8 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 				r.replayTailCapTimer = setTimeout(revealReplayTail, REPLAY_TAIL_CAP_MS);
 			}
 		};
+		// The mux does not distinguish historical bytes from fresh PTY output.
+		// This cover is visual buffering only; every batch must retain live protocol replies.
 		const writeReplayBatches = (bytes: Uint8Array, done: () => void) => {
 			replayBatchBytes = bytes;
 			replayBatchOffset = 0;
@@ -453,7 +455,7 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 						return;
 					}
 					replayBatchTimer = setTimeout(writeNext, 0);
-				}, "replay");
+				}, "live");
 			};
 			writeNext();
 		};
@@ -467,7 +469,7 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 			if (replayBatchBytes && replayBatchOffset < replayBatchBytes.length) {
 				// The current batch is already in xterm's queue. Queue the remainder in
 				// one call before dispose so it cannot be overtaken or discarded.
-				terminal.write(replayBatchBytes.subarray(replayBatchOffset), undefined, "replay");
+				terminal.write(replayBatchBytes.subarray(replayBatchOffset), undefined, "live");
 			}
 			replayBatchBytes = null;
 			replayBatchOffset = 0;
@@ -551,7 +553,7 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 				offset += chunk.length;
 			}
 			if (preserveBeforeTeardown) {
-				terminal.write(replay, undefined, "replay");
+				terminal.write(replay, undefined, "live");
 				preservePendingReplayWrites();
 				return;
 			}

@@ -1190,16 +1190,12 @@ export function XtermTerminal(props: XtermTerminalProps) {
 						break;
 					}
 				}
-				if (source === "replay") {
-					// Replayed history is parsed by xterm again and can contain old DSRs.
-					// Clear correlation state so their generated CPRs are discarded rather
-					// than injected into the newly attached live PTY.
-					cursorPositionForwarder.dispose();
-				} else if (hasEsc || cursorPositionForwarder.hasPartialRequest()) {
+				if (hasEsc || cursorPositionForwarder.hasPartialRequest()) {
 					// A DSR can be split immediately after ESC. Decode an ESC-free chunk
 					// only while a request prefix from the preceding chunk is incomplete.
 					const chunk = new TextDecoder().decode(data);
-					cursorPositionForwarder.observeOutput(chunk);
+					// Historical writes must not erase credits for live writes still in xterm's queue.
+					if (source !== "replay") cursorPositionForwarder.observeOutput(chunk);
 					if (hasEsc) {
 						const reply = callbacksRef.current.supportsCursorColorScheme
 							? cursorColorSchemeReplyForOutput(chunk, callbacksRef.current.theme)

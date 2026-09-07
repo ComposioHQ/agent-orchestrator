@@ -530,3 +530,15 @@ func TestCheckGitHubAuth_FallbackHasFreshDeadline(t *testing.T) {
 		t.Fatalf("auth = %+v, err = %v, calls = %d", auth, err, calls)
 	}
 }
+
+func TestCheckGitHubAuth_EmptyHostsIsSignedOut(t *testing.T) {
+	runner := &fakeCommandRunner{stdout: `{"hosts":{}}`}
+	svc := NewWithCommandRunner(&fakeHarnessCatalog{}, executableFinderFunc(lookPathFound(map[string]string{"gh": "/usr/bin/gh"})), runner)
+	auth, err := svc.CheckGitHubAuth(context.Background())
+	if err != nil || auth.Satisfied {
+		t.Fatalf("auth = %+v, err = %v", auth, err)
+	}
+	if len(runner.argvLog) != 1 {
+		t.Fatalf("unexpected token fallback: %v", runner.argvLog)
+	}
+}

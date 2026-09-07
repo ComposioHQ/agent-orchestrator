@@ -468,7 +468,7 @@ describe("useTerminalSession", () => {
 			expect(terminal.lines).toEqual(["replay", "live-1"]);
 			act(() => muxes[0].emitData("handle-1", "live-2"));
 			expect(terminal.lines).toEqual(["replay", "live-1", "live-2"]);
-			expect(terminal.writeSources).toEqual(["replay", "live", "live"]);
+			expect(terminal.writeSources).toEqual(["live", "live", "live"]);
 		});
 
 		it("reveals a pane that replays nothing instead of holding the cover to the cap", () => {
@@ -702,7 +702,7 @@ describe("useTerminalSession", () => {
 			act(() => void vi.runOnlyPendingTimers());
 
 			expect(terminal.lines.join("")).toBe(`${replay}TAIL`);
-			expect(terminal.writeSources).toEqual(["replay", "replay", "live"]);
+			expect(terminal.writeSources).toEqual(["live", "live", "live"]);
 		});
 
 		it("queues an unfinished replay before an exit marker and attachment teardown", () => {
@@ -721,7 +721,7 @@ describe("useTerminalSession", () => {
 			const output = terminal.lines.join("");
 			expect(output.startsWith(replay)).toBe(true);
 			expect(output).toContain("[process exited]");
-			expect(terminal.writeSources.slice(0, 3)).toEqual(["replay", "replay", "live"]);
+			expect(terminal.writeSources.slice(0, 3)).toEqual(["live", "live", "live"]);
 		});
 
 		it("lifts the cover when the attachment is torn down with no reconnect scheduled", () => {

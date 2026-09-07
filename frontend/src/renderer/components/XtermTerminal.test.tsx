@@ -1,6 +1,8 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { AttachableTerminal } from "../hooks/useTerminalSession";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import type { TerminalMux } from "../lib/terminal-mux";
+import { useTerminalSession, type AttachableTerminal } from "../hooks/useTerminalSession";
 import { useUiStore } from "../stores/ui-store";
 import { safeTerminalFind } from "./TerminalSearch";
 import { XtermTerminal } from "./XtermTerminal";
@@ -1256,6 +1258,55 @@ describe("XtermTerminal", () => {
 		terminal!.write(new TextEncoder().encode("historical prompt\x1b[6n"), undefined, "replay");
 
 		expect(onInput).not.toHaveBeenCalledWith("\x1b[7;21R", "protocol");
+	});
+
+	it("answers Cursor color-scheme requests during replay", () => {
+		const onInput = vi.fn();
+		let terminal: AttachableTerminal | undefined;
+		render(<XtermTerminal theme="light" supportsCursorColorScheme onReady={(ready) => {
+			terminal = ready;
+			return ready.onUserInput(onInput);
+		}} />);
+		onInput.mockClear();
+		terminal!.write(new TextEncoder().encode("\x1b[?2031h"), undefined, "replay");
+		expect(onInput).toHaveBeenCalledWith(expect.stringContaining("\x1b[?997;2n"), "protocol");
+	});
+
+	it("keeps pending live cursor credits when replay is queued before parsing", () => {
+		const onInput = vi.fn();
+		let terminal: AttachableTerminal | undefined;
+		render(<XtermTerminal theme="dark" onReady={(ready) => {
+			terminal = ready;
+			return ready.onUserInput(onInput);
+		}} />);
+		vi.spyOn(state.lastTerminal!, "write").mockImplementation(() => {});
+		terminal!.write(new TextEncoder().encode("\x1b[6n"));
+		terminal!.write(new TextEncoder().encode("tail"), undefined, "replay");
+		state.lastTerminal!.dataListeners.forEach((listener) => listener("\x1b[7;21R"));
+		expect(onInput).toHaveBeenCalledWith("\x1b[7;21R", "protocol");
+	});
+
+	it("returns a CPR to a fresh shell PTY through coverInitialReplay", async () => {
+		let output: (data: Uint8Array) => void = () => {};
+		let opened: () => void = () => {};
+		const sendInput = vi.fn();
+		const mux: TerminalMux = {
+			open: vi.fn(), close: vi.fn(), resize: vi.fn(), dispose: vi.fn(), sendInput,
+			onData: (_id, listener) => { output = listener; return () => {}; },
+			onOpened: (_id, listener) => { opened = listener; return () => {}; },
+			onExit: () => () => {}, onError: () => () => {}, onConnectionChange: () => () => {},
+		};
+		function Shell() {
+			const session = useTerminalSession(undefined, { daemonReady: true, coverInitialReplay: true, shellTerminalHandleId: "fresh-login", createMux: () => mux });
+			return <XtermTerminal theme="dark" onReady={session.attach} />;
+		}
+		render(<QueryClientProvider client={new QueryClient()}><Shell /></QueryClientProvider>);
+		act(() => {
+			opened();
+			output(new TextEncoder().encode("prompt\x1b"));
+			output(new TextEncoder().encode("[6n"));
+		});
+		await waitFor(() => expect(sendInput).toHaveBeenCalledWith("fresh-login", "\x1b[7;21R"));
 	});
 
 	it("does not forward an unsolicited cursor-position-shaped input", () => {

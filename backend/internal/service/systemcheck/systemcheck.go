@@ -298,7 +298,8 @@ func (s *Service) checkGitHubAuth(ctx context.Context) Requirement {
 	}
 	// This advisory checks whether credentials are configured. A failed online
 	// validation must not open a login PTY for a user with a local credential.
-	if !authenticated && !s.hasGitHubAuth(ctx, path) {
+	// An empty host map is a definitive sign-out, not a validation failure.
+	if !authenticated && (len(status.Hosts) == 0 || !s.hasGitHubAuth(ctx, path)) {
 		return Requirement{ID: "github-auth", Label: "GitHub access", Detail: detail}
 	}
 	return Requirement{ID: "github-auth", Label: "GitHub access", Satisfied: true, Detail: "GitHub CLI is signed in."}
