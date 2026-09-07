@@ -330,6 +330,11 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 
 	return (
 		<div className="relative flex h-full min-h-0 flex-col bg-background text-foreground" data-testid="board">
+			{!boardActionsInPanel && isLoaded && visibleSpawnError && !showProjectEmpty ? (
+				<p role="alert" className="mx-3 my-3 whitespace-pre-wrap break-words text-sm text-destructive">
+					{visibleSpawnError}
+				</p>
+			) : null}
 			{/* macOS: shell topbar is hidden on board routes, so the project/"Board"
 			    crumb + New task / Orchestrator / bell live in this in-panel row.
 			    Win/Linux keep the crumb and actions in the framed ShellTopbar.

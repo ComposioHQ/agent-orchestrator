@@ -3721,22 +3721,6 @@ func TestClaimRowsFromSCMSnapshotsSessionReviewPolicy(t *testing.T) {
 	}
 }
 
-// noopSCMProvider implements scmProvider but always fails ParseRepository
-// to exercise the scmRepoForClaim fallback path.
-type noopSCMProvider struct{}
-
-func (noopSCMProvider) ParseRepository(string) (ports.SCMRepo, bool) { return ports.SCMRepo{}, false }
-func (noopSCMProvider) FetchPullRequests(_ context.Context, refs []ports.SCMPRRef) ([]ports.SCMObservation, error) {
-	out := make([]ports.SCMObservation, len(refs))
-	for i := range out {
-		out[i].Error = ports.ErrSCMNotFound
-	}
-	return out, nil
-}
-func (noopSCMProvider) FetchReviewThreads(context.Context, ports.SCMPRRef) (ports.SCMReviewObservation, error) {
-	return ports.SCMReviewObservation{}, nil
-}
-
 func (f fakeSCM) ParseRepository(remote string) (ports.SCMRepo, bool) {
 	host, owner, repo, err := repoFromURL(remote)
 	if err != nil {
@@ -4054,7 +4038,7 @@ func TestRequireSameRepoGitLab(t *testing.T) {
 	}{
 		{"matching gitlab", "https://gitlab.com/castai/ctxd/-/merge_requests/9", "https://gitlab.com/castai/ctxd", nil},
 		{"matching github", "https://github.com/owner/repo/pull/42", "https://github.com/owner/repo", nil},
-		{"empty origin allows any", "https://gitlab.com/castai/ctxd/-/merge_requests/9", "", nil},
+		{"empty origin rejects", "https://gitlab.com/castai/ctxd/-/merge_requests/9", "", ErrProjectMismatch},
 		{"mismatch", "https://gitlab.com/castai/ctxd/-/merge_requests/9", "https://github.com/other/repo", ErrProjectMismatch},
 		{"gitlab mismatch repo", "https://gitlab.com/castai/ctxd/-/merge_requests/9", "https://gitlab.com/other/repo", ErrProjectMismatch},
 		// Cross-provider mismatch: same owner/repo name on GitHub and GitLab
@@ -4085,10 +4069,8 @@ func TestRequireSameRepoGitLab(t *testing.T) {
 }
 
 func TestScmRepoForClaimGitLab(t *testing.T) {
-	// When the provider cannot parse the origin, the fallback should detect
-	// GitLab from the PR URL and set Provider="gitlab".
-	var noopProvider noopSCMProvider
-	repo, err := scmRepoForClaim(noopProvider, "", "https://gitlab.com/castai/ctxd/-/merge_requests/9")
+	// The SCM target comes from the claimed URL, including its provider.
+	repo, err := scmRepoForClaim("https://gitlab.com/castai/ctxd/-/merge_requests/9")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

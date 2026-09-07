@@ -16,11 +16,13 @@ import type { AgentProvider } from "../types/workspace";
  *
  * Only the last group is at risk, and only while a turn could be in flight.
  * `working` is the obvious case; `no_signal` is a live session whose agent has
- * not reported in, so AO cannot rule out a turn and must assume one.
+ * not reported in, so AO cannot rule out a turn and must assume one. A
+ * `needs_input` session can be paused inside a turn for tool approval or a user
+ * answer, so it also needs protection.
  */
 export const PERSISTENT_CHAT_PROVIDERS: ReadonlySet<AgentProvider> = new Set<AgentProvider>(["codex"]);
 
-const TURN_MAY_BE_IN_FLIGHT: ReadonlySet<string> = new Set(["working", "no_signal"]);
+const TURN_MAY_BE_IN_FLIGHT: ReadonlySet<string> = new Set(["working", "no_signal", "needs_input"]);
 
 export type UpdateRiskSession = {
 	id: string;

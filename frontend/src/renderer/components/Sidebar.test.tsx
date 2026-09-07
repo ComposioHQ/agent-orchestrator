@@ -1513,15 +1513,15 @@ describe("Sidebar", () => {
 	it("opens the Mobile settings page from the footer", async () => {
 		const user = userEvent.setup();
 		renderSidebar();
-		await user.click((await screen.findAllByRole("button", { name: "Connect Mobile" }))[0]);
+		await user.click((await screen.findAllByRole("button", { name: "Connect mobile" }))[0]);
 		expect(useUiStore.getState().settingsModal).toEqual({ scope: "global", section: "mobile" });
 		expect(navigateMock).not.toHaveBeenCalled();
 	});
 
-	it("always shows Connect Mobile", () => {
+	it("always shows Connect mobile", () => {
 		renderSidebar();
 
-		expect(screen.getByRole("button", { name: "Connect Mobile" })).toBeVisible();
+		expect(screen.getByRole("button", { name: "Connect mobile" })).toBeVisible();
 	});
 
 	it("opens the command palette when Search is clicked", async () => {
@@ -1568,29 +1568,23 @@ describe("Sidebar", () => {
 		renderSidebar({ workspaces: [workspaceWithSession] });
 
 		await user.dblClick(screen.getByRole("button", { name: "Open fix login" }));
-		expect(navigateMock).not.toHaveBeenCalled();
+		expect(navigateMock).toHaveBeenCalledTimes(1);
 		const input = screen.getByLabelText("Rename fix login");
 		await user.clear(input);
 		await user.type(input, "  polish login  {Enter}");
 
 		await waitFor(() => expect(renameSessionMock).toHaveBeenCalledWith("proj-1-1", "polish login"));
-		expect(navigateMock).not.toHaveBeenCalled();
+		expect(navigateMock).toHaveBeenCalledTimes(1);
 	});
 
 	it("still opens a session after an unpaired single click", async () => {
 		renderSidebar({ workspaces: [{ ...workspace, sessions: [session] }] });
 
 		fireEvent.click(screen.getByRole("button", { name: "Open fix login" }), { detail: 1 });
-		expect(navigateMock).not.toHaveBeenCalled();
-
-		await waitFor(
-			() =>
-				expect(navigateMock).toHaveBeenCalledWith({
-					to: "/projects/$projectId/sessions/$sessionId",
-					params: { projectId: "proj-1", sessionId: "proj-1-1" },
-				}),
-			{ timeout: 1_000 },
-		);
+		expect(navigateMock).toHaveBeenCalledWith({
+			to: "/projects/$projectId/sessions/$sessionId",
+			params: { projectId: "proj-1", sessionId: "proj-1-1" },
+		});
 	});
 
 	it("starts the same inline rename from the session context menu", async () => {
@@ -2072,7 +2066,7 @@ describe("Sidebar", () => {
 		// Both footer variants (expanded row and collapsed rail icon) are mounted.
 		const buttons = await screen.findAllByLabelText("Download update v9.9.9");
 		expect(buttons.length).toBeGreaterThan(0);
-		expect(screen.getByText("Update available")).toBeInTheDocument();
+		expect(screen.getByText("Download update")).toBeInTheDocument();
 		const availableRow = screen.getByTestId("sidebar-update-available");
 		expect(within(availableRow).getByText("v9.9.9")).toBeVisible();
 		expect(availableRow.querySelector(".rounded-full")).toBeNull();
@@ -2104,7 +2098,7 @@ describe("Sidebar", () => {
 		renderSidebar();
 
 		await waitFor(() => expect(updateStatusMock).toHaveBeenCalled());
-		expect(screen.getByText("Downloading… 42%")).toBeInTheDocument();
+		expect(screen.getByText("42% downloaded")).toBeInTheDocument();
 		const downloadingRow = screen.getByTestId("sidebar-update-downloading");
 		expect(downloadingRow).not.toHaveClass("border");
 		expect(downloadingRow.querySelector("svg circle")).toBeNull();
@@ -2145,7 +2139,7 @@ describe("Sidebar", () => {
 		// A build ready to install is more actionable than "checks are failing".
 		expect(await screen.findAllByLabelText("Restart to install update v9.9.9")).not.toHaveLength(0);
 		const readyRow = screen.getByTestId("sidebar-update-ready");
-		expect(readyRow).toHaveClass("border", "border-primary/35", "bg-primary/12", "text-primary");
+		expect(readyRow).toHaveClass("border", "border-success/35", "bg-success/12", "text-success");
 		expect(within(readyRow).getByText("v9.9.9 ready")).toBeVisible();
 		expect(readyRow.querySelector(".rounded-full")).toBeNull();
 		expect(screen.queryByLabelText("Retry update check")).not.toBeInTheDocument();
@@ -2191,7 +2185,7 @@ describe("Sidebar", () => {
 		expect(screen.queryByText("Update check failed")).not.toBeInTheDocument();
 	});
 
-	it("renders the restart-to-update row with the working-orange treatment when escalated", async () => {
+	it("renders the restart-to-update row with the green treatment even when escalated", async () => {
 		updateStatusMock.mockResolvedValue({
 			state: "downloaded",
 			version: "9.9.9",
@@ -2204,7 +2198,7 @@ describe("Sidebar", () => {
 		const buttons = await screen.findAllByLabelText("Restart to install update v9.9.9");
 		expect(buttons.length).toBeGreaterThan(0);
 		for (const button of buttons) {
-		expect(button).toHaveClass("text-working");
+		expect(button).toHaveClass("text-success");
 		}
 		expect(screen.getByText("v9.9.9 ready")).toBeInTheDocument();
 	});
