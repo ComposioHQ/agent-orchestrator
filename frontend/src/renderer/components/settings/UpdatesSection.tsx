@@ -544,8 +544,10 @@ function UpdateActions({
 				/>
 				{channelSwitchMessage && <p className="text-xs leading-4 text-settings-muted">{channelSwitchMessage}</p>}
 				{checkedAt ? (
-					<p className="flex min-w-0 items-center gap-1.5 text-xs leading-4 tabular-nums text-settings-muted" data-testid="update-checked-at">
-						<Clock3 className="size-3 shrink-0" aria-hidden="true" />
+					<p className="flex min-w-0 items-start gap-2 text-xs leading-4 tabular-nums text-settings-muted" data-testid="update-checked-at">
+						<span className="flex h-4 shrink-0 items-center">
+							<Clock3 className="size-icon-sm shrink-0" aria-hidden="true" />
+						</span>
 						{t("settings.updates.lastChecked", { time: checkedAt })}
 					</p>
 				) : null}
@@ -668,7 +670,7 @@ function UpdateStatusLine({
 
 	return (
 		<div className={cn("flex min-w-0 items-start gap-2", className)}>
-			{icon !== null && <span className="mt-px shrink-0">{icon}</span>}
+			{icon !== null && <span className="flex h-5 shrink-0 items-center">{icon}</span>}
 			<div className="min-w-0">
 				<p className="text-pretty text-sm font-medium leading-5">{label}</p>
 				{detail !== null && (
