@@ -62,10 +62,11 @@ def main():
         raise RuntimeError('Baseline archive does not match release manifest')
     (evidence / 'baseline-manifest.yml').write_text(manifest)
     event('baseline-hash', sha512=digest(archive), size=archive.stat().st_size, tag=baseline)
-    installed = root / 'installed'
-    installed.mkdir()
+    installed = Path('/Applications')
+    app = installed / 'Agent Orchestrator.app'
+    if app.exists():
+        raise RuntimeError('Refusing to replace an existing app, even on this disposable runner')
     command(['ditto', '-x', '-k', str(archive), str(installed)], 'extract.log')
-    app, = installed.glob('*.app')
     plist = app / 'Contents/Info.plist'
     def version():
         return plistlib.loads(plist.read_bytes())['CFBundleShortVersionString']
@@ -77,13 +78,14 @@ def main():
         status = command(['bash', 'frontend/scripts/verify-mac-artifact.sh', str(app)], name, check=False)
         text = (evidence / name).read_text()
         failures = [line for line in text.splitlines() if line.startswith('::error::')]
-        legacy_gap = baseline == 'v0.12.0' and label == 'baseline' and len(failures) == 1 and 'ACP Node is bundled failed' in failures[0]
+        legacy_checks = {'v0.12.0': 'ACP Node is bundled failed', 'v0.12.10': 'ACP Node allow-jit entitlement failed'}
+        legacy_gap = label == 'baseline' and baseline in legacy_checks and len(failures) == 1 and legacy_checks[baseline] in failures[0]
         if status and not legacy_gap:
             raise RuntimeError(f'{label} failed canonical artifact verification')
         for check in ('codesign', 'spctl', 'stapler'):
             if 'ok: ' + check not in text:
                 raise RuntimeError(f'{label}: missing successful {check}')
-        event('artifact-verified', label=label, legacy_runtime_check_omitted=legacy_gap)
+        event('artifact-verified', label=label, legacy_runtime_check_omitted=failures if legacy_gap else [])
     verify('baseline')
     event('baseline-inspected', version=version(), sentinel=b'AO_E2E_UPDATE_SENTINEL' in (app / 'Contents/Resources/app.asar').read_bytes())
     (evidence / 'baseline-app-update.yml').write_bytes((app / 'Contents/Resources/app-update.yml').read_bytes())
