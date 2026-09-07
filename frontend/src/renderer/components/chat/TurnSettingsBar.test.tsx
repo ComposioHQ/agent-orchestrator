@@ -53,6 +53,31 @@ const OPTIONS: ChatConfigOption[] = [
 ];
 
 describe("ACP session config options", () => {
+	it.each(["ao-plan-project-1", "agents/plan-reviewer", "my_plan_agent"])(
+		"does not treat custom agent %s as native Plan Mode",
+		async (custom) => {
+			const user = userEvent.setup();
+			const onChange = vi.fn();
+			const view = (currentValue: string) => (
+				<TurnSettingsBar models={[]} settings={{}} onChangeConfigOption={onChange}
+					configOptions={[OPTIONS[0], { ...OPTIONS[2], currentValue, choices: [
+						{ value: custom, name: custom },
+						{ value: "build", name: "Build" },
+						{ value: "plan", name: "Plan" },
+					] }]} />
+			);
+			const { rerender } = render(view(custom));
+			await user.click(screen.getByRole("button", { name: "Model and reasoning effort for the next turn" }));
+			expect(screen.getByRole("switch", { name: "Plan Mode" })).not.toBeChecked();
+			await user.click(screen.getByRole("switch", { name: "Plan Mode" }));
+			expect(onChange).toHaveBeenLastCalledWith("mode", { value: "plan" });
+			rerender(view("plan"));
+			expect(screen.getByRole("switch", { name: "Plan Mode" })).toBeChecked();
+			await user.click(screen.getByRole("switch", { name: "Plan Mode" }));
+			expect(onChange).toHaveBeenLastCalledWith("mode", { value: "build" });
+		},
+	);
+
 	it("keeps OpenCode Plan Mode reversible through its Build mode", async () => {
 		const user = userEvent.setup();
 		const onChange = vi.fn();
