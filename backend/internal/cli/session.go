@@ -161,6 +161,8 @@ func newSessionCommand(ctx *commandContext) *cobra.Command {
 	}
 	cmd.AddCommand(newSessionListCommand(ctx))
 	cmd.AddCommand(newSessionGetCommand(ctx))
+	cmd.AddCommand(newSessionConversationCommand(ctx))
+	cmd.AddCommand(newSessionResultCommand(ctx))
 	cmd.AddCommand(newSessionKillCommand(ctx))
 	cmd.AddCommand(newSessionRestoreCommand(ctx))
 	cmd.AddCommand(newSessionExitAgentCommand(ctx))
