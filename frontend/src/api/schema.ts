@@ -3181,6 +3181,7 @@ export interface components {
         };
         EditQueuedConversationMessageRequest: {
             attachments?: components["schemas"]["ConversationImageContentRequest"][];
+            clientMessageId?: string;
             expectedRevision?: null | number;
             retainedContent?: null | number[];
             text: string;

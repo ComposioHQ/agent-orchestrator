@@ -225,12 +225,13 @@ describe("preload application shortcut bridges", () => {
 	});
 
 	it("reports whether the active Chat draft has an unsafe unload boundary", () => {
-		exposedBridge().app.setChatDraftRisk(["persistence-failed", "pending-attachments"]);
+		const copy = { title: "Brouillon", message: "Non enregistré", detail: "Copiez le brouillon", stay: "Rester", leave: "Quitter" };
+		exposedBridge().app.setChatDraftRisk(["persistence-failed", "pending-attachments"], copy);
 
 		expect(electronMocks.send).toHaveBeenCalledWith(SET_CHAT_DRAFT_RISK_CHANNEL, [
 			"persistence-failed",
 			"pending-attachments",
-		]);
+		], copy);
 	});
 
 	it.each([

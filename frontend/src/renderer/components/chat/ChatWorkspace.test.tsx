@@ -2096,7 +2096,7 @@ describe("ChatWorkspace message actions", () => {
 		expect(await screen.findByRole("alert")).toHaveTextContent(
 			"earlier edit may already have been delivered before Chat restarted",
 		);
-		await waitFor(() => expect(getChatDraftBoundary(snapshot.sessionId)).toBe("pending-delivery"));
+		await waitFor(() => expect(getChatDraftBoundary(snapshot.sessionId)).toBeUndefined());
 	});
 
 	it("reconciles an accepted inline delivery without clearing or blocking a later edit", async () => {
@@ -2259,7 +2259,6 @@ describe("ChatWorkspace message actions", () => {
 			expect(await screen.findByRole("alert")).toHaveTextContent("couldn’t be cleared");
 			expect(getChatDraftBoundaries(snapshot.sessionId)).toEqual([
 				"persistence-failed",
-				"pending-delivery",
 			]);
 
 			fireEvent.keyDown(editor, { key: "Enter", ctrlKey: true });
@@ -2621,7 +2620,7 @@ describe("ChatWorkspace message actions", () => {
 		expect(screen.getByRole("button", { name: "Retry edit safely" })).toBeInTheDocument();
 		expect(screen.getByRole("button", { name: "Abandon edit recovery" })).toBeInTheDocument();
 		await waitFor(() =>
-			expect(getChatDraftBoundary(approximateSnapshot.sessionId)).toBe("pending-delivery"),
+			expect(getChatDraftBoundary(approximateSnapshot.sessionId)).toBeUndefined(),
 		);
 	});
 
@@ -3244,7 +3243,7 @@ describe("durable queued edits", () => {
 		const second = render(<ChatWorkspace {...props} />);
 		expect(screen.getByLabelText("Message the agent")).toHaveTextContent("queued text updated");
 		await userEvent.click(screen.getByRole("button", { name: "Send message" }));
-		await waitFor(() => expect(save).toHaveBeenCalledWith("queued", "queued text updated", { expectedRevision: 0, retainedContent: [] }));
+		await waitFor(() => expect(save).toHaveBeenCalledWith("queued", "queued text updated", { clientMessageId: expect.any(String), expectedRevision: 0, retainedContent: [] }));
 		await waitFor(() => expect(readChatSessionDraft(snapshot.sessionId).queuedEdit).toBeUndefined());
 		expect(send).not.toHaveBeenCalled();
 		expect(screen.getByLabelText("Message the agent")).toHaveTextContent("independent prompt");
@@ -3311,9 +3310,10 @@ describe("durable queued edits", () => {
 		first.unmount();
 		render(<ChatWorkspace snapshot={{ ...snapshot, turns: [] }} onSend={send} onEditQueuedTurn={save} />);
 		expect(screen.getByLabelText("Message the agent")).toHaveTextContent("queued text uncertain");
-		expect(screen.getByRole("alert")).toHaveTextContent("no longer queued");
-		await userEvent.click(screen.getByRole("button", { name: "Send message" }));
-		expect(save).toHaveBeenCalledOnce();
+		expect(screen.getByLabelText("Message the agent")).toHaveAttribute("contenteditable", "false");
+		await userEvent.click(screen.getByRole("button", { name: "Retry edit safely" }));
+		await waitFor(() => expect(save).toHaveBeenCalledTimes(2));
+		expect(save.mock.calls[1]).toEqual(save.mock.calls[0]);
 		expect(send).not.toHaveBeenCalled();
 		fireEvent.keyDown(screen.getByLabelText("Message the agent"), { key: "Escape" });
 		await waitFor(() => expect(readChatSessionDraft(snapshot.sessionId).queuedEdit).toBeUndefined());

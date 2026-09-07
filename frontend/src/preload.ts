@@ -3,6 +3,7 @@ import { CLOSE_SHELL_TERMINAL_SHORTCUT_CHANNEL, FOCUS_TERMINAL_SHORTCUT_CHANNEL,
 import {
 	SET_CHAT_DRAFT_RISK_CHANNEL,
 	type ChatDraftBoundaryKind,
+	type ChatDraftDialogCopy,
 } from "./shared/chat-draft-risk";
 import type {
 	BrowserAgentActivityState,
@@ -228,8 +229,8 @@ const api = {
 		setCloseShellTerminalShortcutEnabled: (enabled: boolean) => {
 			ipcRenderer.send(SET_CLOSE_SHELL_TERMINAL_SHORTCUT_ENABLED_CHANNEL, enabled);
 		},
-		setChatDraftRisk: (risks: readonly ChatDraftBoundaryKind[]) => {
-			ipcRenderer.send(SET_CHAT_DRAFT_RISK_CHANNEL, risks);
+		setChatDraftRisk: (risks: readonly ChatDraftBoundaryKind[], copy?: ChatDraftDialogCopy) => {
+			ipcRenderer.send(SET_CHAT_DRAFT_RISK_CHANNEL, risks, copy);
 		},
 		onOpenSettingsShortcut: (listener: () => void) => {
 			const wrapped = () => listener();

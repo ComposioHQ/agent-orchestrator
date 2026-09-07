@@ -155,6 +155,7 @@ export interface ConversationContentSummary {
 }
 
 export interface QueuedMessageEditOptions {
+	clientMessageId?: string;
 	attachments?: { mimeType: string; data: string }[];
 	retainedContent?: number[];
 	expectedRevision?: number;

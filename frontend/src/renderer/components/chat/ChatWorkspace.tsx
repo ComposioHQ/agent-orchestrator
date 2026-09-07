@@ -1,3 +1,4 @@
+import { useChatDraftTranslation } from "../../lib/chat-draft-messages";
 /**
  * The Chat surface for a session whose persisted mode is `chat`.
  *
@@ -421,6 +422,7 @@ type ChatWorkspaceActivation =
  * then only fail closed against the successor lease.
  */
 export function ChatWorkspace(props: ChatWorkspaceProps) {
+	const translateDraft = useChatDraftTranslation();
 	const { snapshot, session } = props;
 	const draftScope = useMemo<ChatDraftScope>(
 		() => ({
@@ -467,7 +469,7 @@ export function ChatWorkspace(props: ChatWorkspaceProps) {
 						<p className="text-sm text-foreground" role="alert">
 							{failure === "obsolete"
 								? "This Chat view belongs to an older session incarnation. Reopen the current session to continue."
-								: "Chat draft storage could not be activated. Restore access to local storage, then retry before chatting."}
+								: translateDraft("chat.draft.storageUnavailable")}
 						</p>
 						{failure === "storage" ? (
 							<Button
@@ -708,7 +710,7 @@ function ChatWorkspaceContent({
 		const previous = unprovenQueueWrite.current;
 		const result = writeChatQueuedEdit(draftScope, edit, expectedRevision, undefined,
 			previous?.expectedRevision === expectedRevision ? previous?.written : undefined);
-		setQueueDraftError(result.ok ? undefined : "Queued edit could not be saved. Keep this chat open or copy it before leaving.");
+		setQueueDraftError(result.ok ? undefined : "chat.draft.queueSaveLocalFailed");
 		if (result.ok) {
 			unprovenQueueWrite.current = undefined;
 			queueEditRef.current = result.draft.queuedEdit;
@@ -726,8 +728,8 @@ function ChatWorkspaceContent({
 	// uncertain edit and its original daemon revision until a save is acknowledged.
 	const changeQueuedDraft = useCallback((text: string) => {
 		const current = queueEditRef.current;
-		if (!current || current.turnId !== queueEdit?.turnId || current.ownerId !== queueEdit.ownerId || current.text === text) return;
-		const result = updateQueueDraft({ ...current, text, saving: undefined }, current.revision);
+		if (!current || current.clientMessageId || current.turnId !== queueEdit?.turnId || current.ownerId !== queueEdit.ownerId || current.text === text) return;
+		const result = updateQueueDraft({ ...current, text, saving: undefined, clientMessageId: undefined }, current.revision);
 		if (!result.ok) {
 			queueEditRef.current = { ...current, text };
 			setQueueEdit(queueEditRef.current);
@@ -735,9 +737,9 @@ function ChatWorkspaceContent({
 	}, [queueEdit?.turnId, queueEdit?.ownerId, updateQueueDraft]);
 	const changeQueuedAttachments = useCallback((field: "attachments" | "stagedAttachments", attachments: ChatDraftRetainedAttachment[] | ChatDraftAttachment[]) => {
 		const current = queueEditRef.current;
-		if (!current || current.turnId !== queueEdit?.turnId || current.ownerId !== queueEdit.ownerId) return;
+		if (!current || current.clientMessageId || current.turnId !== queueEdit?.turnId || current.ownerId !== queueEdit.ownerId) return;
 		if (JSON.stringify(current[field] ?? []) === JSON.stringify(attachments)) return;
-		const next = { ...current, [field]: attachments, saving: undefined };
+		const next = { ...current, [field]: attachments, saving: undefined, clientMessageId: undefined };
 		const result = updateQueueDraft(next, current.revision);
 		if (!result.ok) {
 			queueEditRef.current = next;
@@ -764,30 +766,36 @@ function ChatWorkspaceContent({
 		async (text: string, attachments?: Parameters<NonNullable<typeof onSend>>[1], clientMessageId?: string, retainedContent?: number[]) => {
 			if (queueEdit) {
 				if (!onEditQueuedTurn) {
-					throw new Error("Queued message edits are unavailable right now.");
+					throw new Error("chat.draft.queueUnavailable");
 				}
-				if (!queuedMessages.some((entry) => entry.turnId === queueEdit.turnId)) {
-					throw new Error("This message is no longer queued. Copy or cancel this edit to continue.");
+				if (!queueEdit.clientMessageId && !queuedMessages.some((entry) => entry.turnId === queueEdit.turnId)) {
+					throw new Error("chat.draft.queueMissing");
 				}
 				const currentEdit = queueEditRef.current;
 				if (!currentEdit || currentEdit.turnId !== queueEdit.turnId || currentEdit.ownerId !== queueEdit.ownerId) {
-					throw new Error("This queued edit was replaced. Nothing was sent.");
+					throw new Error("chat.draft.queueReplaced");
 				}
-				const prepared = updateQueueDraft({ ...currentEdit, saving: true }, currentEdit.revision);
-				if (!prepared.ok || !prepared.draft.queuedEdit) throw new Error("Queued edit could not be saved locally. Nothing was sent.");
+				const prepared = updateQueueDraft({
+					...currentEdit,
+					saving: true,
+					clientMessageId: currentEdit.clientMessageId ?? crypto.randomUUID(),
+					nativeImages: currentEdit.nativeImages ?? Boolean(nativeImages),
+				}, currentEdit.revision);
+				if (!prepared.ok || !prepared.draft.queuedEdit) throw new Error("chat.draft.queuePrepareFailed");
 				await onEditQueuedTurn(queueEdit.turnId, text, {
+					clientMessageId: prepared.draft.queuedEdit.clientMessageId,
 					...(attachments?.length ? { attachments } : {}),
 					retainedContent: queueEdit.attachments === undefined ? undefined : retainedContent,
 					expectedRevision: queueEdit.expectedRevision,
 				});
 				if (queueEditRef.current?.ownerId === queueEdit.ownerId) {
-					if (!updateQueueDraft(undefined, prepared.draft.queuedEdit.revision).ok) throw new Error("The edit was saved, but its local draft could not be cleared.");
+					if (!updateQueueDraft(undefined, prepared.draft.queuedEdit.revision).ok) throw new Error("chat.draft.queueClearFailed");
 				}
 				return;
 			}
 			return onSend?.(text, attachments, clientMessageId);
 		},
-		[draftScope, onEditQueuedTurn, onSend, queueEdit, queuedMessages, updateQueueDraft],
+		[draftScope, onEditQueuedTurn, onSend, nativeImages, queueEdit, queuedMessages, updateQueueDraft],
 	);
 	const stableInterrupt = useStableCallback(onInterrupt);
 	const stableSteer = useStableCallback(onSteer);
@@ -1362,6 +1370,7 @@ function ChatWorkspaceContent({
 									onSend={handleComposerSend}
 									draftSeed={composerDraftSeed}
 									editingQueuedTurnId={queueEdit?.turnId}
+									queuedEditRecovery={Boolean(queueEdit?.clientMessageId)}
 									savingQueuedEditPending={Boolean(
 										queueEdit?.turnId &&
 											editQueuedTurnPendingTurnId === queueEdit.turnId,
@@ -1372,16 +1381,16 @@ function ChatWorkspaceContent({
 									onQueuedAttachmentsChange={changeQueuedStagedAttachments}
 									onQueuedRetainedAttachmentsChange={changeQueuedRetainedAttachments}
 									onInterrupt={turn && !newWorkDisabled ? stableInterrupt : undefined}
-									commandError={queueDraftError ?? (queueEdit && !queuedMessages.some((entry) => entry.turnId === queueEdit.turnId) ? "This message is no longer queued. Copy or cancel this edit to continue." : commandError)}
+									commandError={queueDraftError ?? (queueEdit && !queueEdit.clientMessageId && !queuedMessages.some((entry) => entry.turnId === queueEdit.turnId) ? "chat.draft.queueMissing" : commandError)}
 									settings={composerSettings}
 									busy={busy}
 									willQueue={Boolean(turn)}
-									disabled={snapshot.controller.state === "stopped" || newWorkDisabled}
+									disabled={(snapshot.controller.state === "stopped" || newWorkDisabled) && !queueEdit?.clientMessageId}
 									skills={skills}
 									filePaths={filePaths}
 									filePathsTruncated={filePathsTruncated}
 									onStageAttachments={newWorkDisabled ? undefined : onStageAttachments}
-									nativeImages={nativeImages}
+									nativeImages={queueEdit?.clientMessageId ? queueEdit.nativeImages ?? nativeImages : nativeImages}
 									autoFocus={!reviewerActive}
 									autoFocusKey={snapshot.sessionId}
 									// Steering is only meaningful into a turn that is running. A queued turn
@@ -1911,6 +1920,7 @@ function Timeline({
 	activateBranchError?: string;
 	newWorkDisabled?: boolean;
 }) {
+	const translateDraft = useChatDraftTranslation();
 	const scroller = useRef<HTMLDivElement>(null);
 	const scrollContent = useRef<HTMLDivElement>(null);
 	const promptSpacer = useRef<HTMLDivElement>(null);
@@ -1963,8 +1973,8 @@ function Timeline({
 		inlineEditPending || (acceptedEditClearFailed && !durableInlineEditDelivery);
 	const inlineEditRecoveryLabel = durableInlineEditDelivery
 		? durableInlineEditDelivery.state === "accepted"
-			? "Finish clearing accepted edit"
-			: "Retry edit safely"
+			? "chat.draft.clearEdit"
+			: "chat.draft.retryEdit"
 		: undefined;
 	const canAbandonInlineEditRecovery = Boolean(
 		inlineEditUncertain && durableInlineEditDelivery?.state === "dispatching",
@@ -1975,10 +1985,9 @@ function Timeline({
 			"inline-edit",
 			[
 				...(draftPersistenceError ? (["persistence-failed"] as const) : []),
-				...(durableInlineEditDelivery ? (["pending-delivery"] as const) : []),
 			],
 		);
-	}, [draftPersistenceError, durableInlineEditDelivery, snapshot.sessionId]);
+	}, [draftPersistenceError, snapshot.sessionId]);
 	useEffect(
 		() => () => setChatDraftBoundary(snapshot.sessionId, "inline-edit", undefined),
 		[snapshot.sessionId],
@@ -2127,8 +2136,8 @@ function Timeline({
 		setInlineEditRecoveryNotice(
 			restored.inlineEditDelivery
 				? restored.inlineEditDelivery.state === "accepted"
-					? "Edited message was accepted, but its local draft still needs to be cleared."
-					: "AO can’t determine whether the earlier edit may already have been delivered before Chat restarted. Retry safely with the same delivery ID, or abandon recovery to edit it. Sending it again after abandonment may duplicate it."
+					? "chat.draft.acceptedEdit"
+					: "chat.draft.editRestart"
 				: undefined,
 		);
 		setAppliedEditAcceptanceSequence(0);
@@ -2140,10 +2149,10 @@ function Timeline({
 		setDurableInlineEditDelivery(result.draft.inlineEditDelivery);
 		if (!result.ok) {
 			setInlineEditRecoveryNotice(
-				"Edited message was accepted, but its local draft still needs to be cleared.",
+				"chat.draft.acceptedEdit",
 			);
 			setDraftPersistenceError(
-				"Edited message was accepted, but its local draft couldn’t be cleared. Retry clearing before leaving; AO will not branch it again.",
+				"chat.draft.clearEditFailed",
 			);
 			return;
 		}
@@ -2167,7 +2176,7 @@ function Timeline({
 				}
 				setDurableInlineEditDelivery(delivery);
 				setDraftPersistenceError(
-					"Edited-message acceptance couldn’t be recorded locally. Retry safely to reconcile it with the same delivery ID.",
+					"chat.draft.recordEditFailed",
 				);
 				return false;
 			}
@@ -2200,7 +2209,7 @@ function Timeline({
 		setDurableInlineEditDelivery(result.draft.inlineEditDelivery);
 		if (!result.ok) {
 			setDraftPersistenceError(
-				"Edit recovery couldn’t be abandoned because its local record could not be cleared. Nothing will be resent automatically.",
+				"chat.draft.abandonEditFailed",
 			);
 			return;
 		}
@@ -2208,7 +2217,7 @@ function Timeline({
 		setDraftPersistenceError(undefined);
 		setInlineEditRecoveryNotice(undefined);
 		setInlineEditOutcomeNotice(
-			"Recovery was abandoned. The earlier edit may already have been delivered; sending this edit again may duplicate it.",
+			"chat.draft.abandonedEdit",
 		);
 	}, [draftScope, durableInlineEditDelivery]);
 
@@ -2252,7 +2261,7 @@ function Timeline({
 		setDraftPersistenceError(
 			result.ok
 				? undefined
-				: "Inline edit couldn’t be saved. Keep this chat open or copy it before leaving.",
+				: "chat.draft.editSaveFailed",
 		);
 	}, [draftScope, inlineEditLocked, reconstructedTurns]);
 	const updateMessageEdit = useCallback((text: string) => {
@@ -2274,7 +2283,7 @@ function Timeline({
 		setDraftPersistenceError(
 			result.ok
 				? undefined
-				: "Inline edit couldn’t be saved. Keep this chat open or copy it before leaving.",
+				: "chat.draft.editSaveFailed",
 		);
 	}, [draftScope, inlineEditLocked]);
 	const cancelMessageEdit = useCallback(() => {
@@ -2282,7 +2291,7 @@ function Timeline({
 		const result = writeChatInlineEdit(draftScope, undefined);
 		if (!result.ok) {
 			setDraftPersistenceError(
-				"Inline edit couldn’t be discarded. Keep this chat open and try again.",
+				"chat.draft.editDiscardFailed",
 			);
 			return;
 		}
@@ -2312,7 +2321,7 @@ function Timeline({
 			});
 			if (!prepared.ok) {
 				setDraftPersistenceError(
-					"This exact inline edit and its recovery ID couldn’t be saved locally. Nothing was sent. Restore local storage and try again.",
+					"chat.draft.prepareEditFailed",
 				);
 				return;
 			}
@@ -2322,7 +2331,7 @@ function Timeline({
 			setDraftPersistenceError(undefined);
 			setInlineEditRecoveryNotice(
 				delivery.state === "accepted"
-					? "Edited message was accepted, but its local draft still needs to be cleared."
+					? "chat.draft.acceptedEdit"
 					: undefined,
 			);
 			if (delivery.state === "accepted") {
@@ -2351,7 +2360,7 @@ function Timeline({
 							setInlineEditOutcomeNotice(outcome.reason);
 						} else {
 						setDraftPersistenceError(
-							"The edit was rejected, but its local recovery record couldn’t be cleared. Nothing will be resent automatically.",
+							"chat.draft.clearRefusedEditFailed",
 						);
 					}
 					return;
@@ -2361,7 +2370,7 @@ function Timeline({
 			} catch {
 				setInlineEditUncertain(true);
 				setInlineEditRecoveryNotice(
-					"AO can’t determine whether the earlier edit may already have been delivered. Retry safely with the same delivery ID, or abandon recovery to edit it. Sending it again after abandonment may duplicate it.",
+					"chat.draft.editUncertain",
 				);
 			} finally {
 				if (!mutationFinished) {
@@ -2756,14 +2765,12 @@ function Timeline({
 									onSubmitMessageEdit={submitMessageEdit}
 									editPending={inlineEditPending}
 									editSendBlocked={inlineEditSendBlocked}
-									editRecoveryLabel={inlineEditRecoveryLabel}
+									editRecoveryLabel={translateDraft(inlineEditRecoveryLabel)}
 									editBusy={Boolean(editBusy || newWorkDisabled)}
-									editError={
-										editError ??
+									editError={translateDraft(editError ??
 										draftPersistenceError ??
 										inlineEditRecoveryNotice ??
-										inlineEditOutcomeNotice
-									}
+										inlineEditOutcomeNotice)}
 									branchPoints={branchPoints}
 									editableTurns={editableTurns}
 									newHumanMessageIds={newHumanMessageIds}
@@ -2790,15 +2797,13 @@ function Timeline({
 								content={messageEdit.content}
 								pending={inlineEditPending}
 								locked={Boolean(inlineEditRecoveryLabel)}
-								recoveryLabel={inlineEditRecoveryLabel}
+								recoveryLabel={translateDraft(inlineEditRecoveryLabel)}
 								sendBlocked={inlineEditSendBlocked}
 								busy={Boolean(editBusy || newWorkDisabled)}
-								error={
-									editError ??
+								error={translateDraft(editError ??
 									draftPersistenceError ??
 									inlineEditRecoveryNotice ??
-									inlineEditOutcomeNotice
-								}
+									inlineEditOutcomeNotice)}
 								reconstructedContext={messageEdit.reconstructedContext}
 								onDraftChange={updateMessageEdit}
 								onCancel={cancelMessageEdit}

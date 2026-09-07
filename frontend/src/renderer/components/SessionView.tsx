@@ -78,6 +78,7 @@ import {
 } from "../hooks/useFileAttachments";
 import {
 	chatDraftDiscardWarning,
+	chatDraftDialogCopy,
 	getChatDraftBoundaries,
 	subscribeChatDraftBoundaries,
 	type ChatDraftBoundaryKind,
@@ -500,8 +501,8 @@ export function SessionView({ sessionId }: SessionViewProps) {
 		},
 	});
 	useEffect(() => {
-		aoBridge.app.setChatDraftRisk?.(chatDraftBoundaries);
-	}, [chatDraftBoundaries]);
+		aoBridge.app.setChatDraftRisk?.(chatDraftBoundaries, chatDraftDialogCopy(chatDraftBoundaries));
+	}, [chatDraftBoundaries, t]);
 	useEffect(
 		() => () => aoBridge.app.setChatDraftRisk?.([]),
 		[sessionId],

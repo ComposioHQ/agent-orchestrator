@@ -1346,11 +1346,11 @@ describe("SessionView", () => {
 	it("publishes the full stable native risk set and clears it only on unmount", async () => {
 		const publishRisk = vi.spyOn(window.ao!.app, "setChatDraftRisk");
 		const view = render(<SessionView sessionId="sess-1" />);
-		await waitFor(() => expect(publishRisk).toHaveBeenLastCalledWith([]));
+		await waitFor(() => expect(publishRisk).toHaveBeenLastCalledWith([], expect.objectContaining({ stay: "Stay" })));
 
 		act(() => setChatDraftBoundary("sess-1", "composer", "persistence-failed"));
 		await waitFor(() =>
-			expect(publishRisk).toHaveBeenLastCalledWith(["persistence-failed"]),
+			expect(publishRisk).toHaveBeenLastCalledWith(["persistence-failed"], expect.objectContaining({ detail: expect.stringContaining("could not be saved locally") })),
 		);
 		publishRisk.mockClear();
 
@@ -1364,7 +1364,7 @@ describe("SessionView", () => {
 			expect(publishRisk).toHaveBeenCalledWith([
 				"persistence-failed",
 				"pending-attachments",
-			]),
+			], expect.objectContaining({ detail: expect.stringContaining("Attachments are still being saved") })),
 		);
 		expect(publishRisk).not.toHaveBeenCalledWith([]);
 
@@ -1853,8 +1853,8 @@ describe("SessionView", () => {
 		await waitFor(() => expect(finishStaging).toBeTypeOf("function"));
 		act(() => {
 			// Inline edit registers first, so the legacy single-kind snapshot hides
-			// the composer's pending attachment work behind delivery recovery.
-			setChatDraftBoundary(session.id, "inline-edit", "pending-delivery");
+			// the composer's pending attachment work behind a failed draft save.
+			setChatDraftBoundary(session.id, "inline-edit", "persistence-failed");
 			setChatDraftBoundary(session.id, "composer", "pending-attachments");
 		});
 		const view = render(<SessionView sessionId={session.id} />);
@@ -1863,7 +1863,7 @@ describe("SessionView", () => {
 		await userEvent.click(screen.getByRole("button", { name: /^Stop now and switch/ }));
 		const dialog = await unsafeChatLeaveDialog();
 		const warning = dialog.textContent ?? "";
-		expect(warning).toContain("delivery recovery is still pending");
+		expect(warning).toContain("could not be saved locally");
 		expect(warning).toContain("Attachments are still being saved");
 		fireEvent.click(within(dialog).getByRole("button", { name: "Leave chat" }));
 		await waitFor(() => expect(interfaceTransitionMock.start).toHaveBeenCalledTimes(1));

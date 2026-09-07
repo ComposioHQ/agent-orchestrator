@@ -921,6 +921,29 @@ func (q *Queries) InsertConversationProviderEvent(ctx context.Context, arg Inser
 	return result.RowsAffected()
 }
 
+const insertConversationQueuedEditDelivery = `-- name: InsertConversationQueuedEditDelivery :exec
+INSERT INTO conversation_queued_edit_deliveries
+(conversation_id, client_message_id, request_hash, created_at)
+VALUES (?, ?, ?, ?)
+`
+
+type InsertConversationQueuedEditDeliveryParams struct {
+	ConversationID  string
+	ClientMessageID string
+	RequestHash     string
+	CreatedAt       time.Time
+}
+
+func (q *Queries) InsertConversationQueuedEditDelivery(ctx context.Context, arg InsertConversationQueuedEditDeliveryParams) error {
+	_, err := q.db.ExecContext(ctx, insertConversationQueuedEditDelivery,
+		arg.ConversationID,
+		arg.ClientMessageID,
+		arg.RequestHash,
+		arg.CreatedAt,
+	)
+	return err
+}
+
 const insertConversationSteerDeliveryReservation = `-- name: InsertConversationSteerDeliveryReservation :execrows
 INSERT OR IGNORE INTO conversation_steer_deliveries (
     conversation_id, client_message_id, request_json, state, created_at
@@ -2377,6 +2400,23 @@ func (q *Queries) SelectConversationProviderEvents(ctx context.Context, arg Sele
 		return nil, err
 	}
 	return items, nil
+}
+
+const selectConversationQueuedEditDelivery = `-- name: SelectConversationQueuedEditDelivery :one
+SELECT request_hash FROM conversation_queued_edit_deliveries
+WHERE conversation_id = ? AND client_message_id = ?
+`
+
+type SelectConversationQueuedEditDeliveryParams struct {
+	ConversationID  string
+	ClientMessageID string
+}
+
+func (q *Queries) SelectConversationQueuedEditDelivery(ctx context.Context, arg SelectConversationQueuedEditDeliveryParams) (string, error) {
+	row := q.db.QueryRowContext(ctx, selectConversationQueuedEditDelivery, arg.ConversationID, arg.ClientMessageID)
+	var request_hash string
+	err := row.Scan(&request_hash)
+	return request_hash, err
 }
 
 const selectConversationRetriedSourceTurnIDs = `-- name: SelectConversationRetriedSourceTurnIDs :many

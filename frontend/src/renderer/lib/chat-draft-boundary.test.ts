@@ -1,7 +1,9 @@
+import { appI18n } from "../i18n/instance";
 import { describe, expect, it, vi } from "vitest";
 
 import {
-	CHAT_DRAFT_BOUNDARY_COPY,
+	chatDraftBoundaryCopy,
+	chatDraftDialogCopy,
 	chatDraftDiscardWarning,
 	confirmDiscardChatDraft,
 	confirmDiscardChatDrafts,
@@ -29,13 +31,11 @@ describe("Chat draft destructive-boundary state", () => {
 	it("preserves every active risk kind for mixed boundary decisions", () => {
 		setChatDraftBoundary("session-mixed", "inline-edit", "pending-attachments");
 		setChatDraftBoundary("session-mixed", "composer", [
-			"pending-delivery",
 			"persistence-failed",
 		]);
 
 		expect(getChatDraftBoundaries("session-mixed")).toEqual([
 			"persistence-failed",
-			"pending-delivery",
 			"pending-attachments",
 		]);
 
@@ -89,26 +89,38 @@ describe("Chat draft destructive-boundary state", () => {
 	it("asks for explicit discard using precise copy", () => {
 		const confirm = vi.fn(() => false);
 		expect(confirmDiscardChatDraft("pending-attachments", confirm)).toBe(false);
-		expect(confirm).toHaveBeenCalledWith(expect.stringContaining(CHAT_DRAFT_BOUNDARY_COPY["pending-attachments"]));
+		expect(confirm).toHaveBeenCalledWith(expect.stringContaining(chatDraftBoundaryCopy("pending-attachments")));
 		expect(confirm).toHaveBeenCalledWith(expect.stringContaining("Leave this chat anyway?"));
 	});
 
 	it("describes every active risk before a mixed discard", () => {
 		const confirm = vi.fn((_message: string) => true);
 		expect(
-			confirmDiscardChatDrafts(["pending-delivery", "pending-attachments"], confirm),
+			confirmDiscardChatDrafts(["persistence-failed", "pending-attachments"], confirm),
 		).toBe(true);
 		const warning = confirm.mock.calls[0]?.[0];
-		expect(warning).toContain(CHAT_DRAFT_BOUNDARY_COPY["pending-delivery"]);
-		expect(warning).toContain(CHAT_DRAFT_BOUNDARY_COPY["pending-attachments"]);
+		expect(warning).toContain(chatDraftBoundaryCopy("persistence-failed"));
+		expect(warning).toContain(chatDraftBoundaryCopy("pending-attachments"));
 	});
 
 	it("builds reusable app-rendered warning copy without duplicate risks", () => {
 		expect(chatDraftDiscardWarning([])).toBeUndefined();
 		expect(
-			chatDraftDiscardWarning(["pending-delivery", "pending-delivery"]),
+			chatDraftDiscardWarning(["persistence-failed", "persistence-failed"]),
 		).toBe(
-			`${CHAT_DRAFT_BOUNDARY_COPY["pending-delivery"]}\n\nLeave this chat anyway?`,
+			`${chatDraftBoundaryCopy("persistence-failed")}\n\nLeave this chat anyway?`,
 		);
 	});
+});
+
+it("uses the selected locale for renderer and native leave warnings", async () => {
+	await appI18n.changeLanguage("fr");
+	try {
+		const copy = chatDraftDialogCopy(["persistence-failed", "pending-attachments"]);
+		expect(copy).toMatchObject({ title: "Brouillon de conversation non enregistré", stay: "Rester", leave: "Quitter quand même" });
+		expect(copy.detail).toContain("Les pièces jointes sont en cours d’enregistrement");
+		expect(chatDraftDiscardWarning(["persistence-failed"])).toContain("Quitter quand même cette conversation ?");
+	} finally {
+		await appI18n.changeLanguage("en");
+	}
 });

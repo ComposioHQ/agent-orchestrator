@@ -17,7 +17,7 @@ beforeEach(() => {
 const path = ".ao/attachments/attachment-shot.png";
 const suffix = `Attached files (read these files in the workspace):\n- ${path}`;
 
-function setup(text = "inspect this", content: ConversationContentSummary[] = []) {
+function setup(text = "inspect this", content: ConversationContentSummary[] = [], nativeImages = true) {
 	const edit = vi.fn().mockResolvedValue(undefined);
 	const send = vi.fn().mockResolvedValue(undefined);
 	const stage = vi.fn().mockResolvedValue([path]);
@@ -47,7 +47,7 @@ function setup(text = "inspect this", content: ConversationContentSummary[] = []
 				onSend={send}
 				onEditQueuedTurn={edit}
 				onStageAttachments={stage}
-				nativeImages
+				nativeImages={nativeImages}
 			/>
 		</TooltipProvider>,
 	);
@@ -66,7 +66,7 @@ function setup(text = "inspect this", content: ConversationContentSummary[] = []
 						onSend={send}
 						onEditQueuedTurn={edit}
 						onStageAttachments={stage}
-						nativeImages
+						nativeImages={nativeImages}
 					/>
 				</TooltipProvider>,
 			),
@@ -99,7 +99,7 @@ describe("queued message attachments", () => {
 			expect(edit).toHaveBeenCalledWith("q1", `inspect this\n\n${suffix}`, {
 				attachments: [{ mimeType: "image/png", data: expect.any(String) }],
 				retainedContent: [],
-				expectedRevision: 0,
+				clientMessageId: expect.any(String), expectedRevision: 0,
 			}),
 		);
 		expect(stage).toHaveBeenCalledOnce();
@@ -117,7 +117,7 @@ describe("queued message attachments", () => {
 		await waitFor(() =>
 			expect(edit).toHaveBeenCalledWith("q1", `inspect this carefully\n\n${suffix}`, {
 				retainedContent: [0],
-				expectedRevision: 0,
+				clientMessageId: expect.any(String), expectedRevision: 0,
 			}),
 		);
 	});
@@ -130,7 +130,7 @@ describe("queued message attachments", () => {
 		await waitFor(() =>
 			expect(edit).toHaveBeenCalledWith("q1", selected === "path" ? "inspect this" : `inspect this\n\n${suffix}`, {
 				retainedContent: selected === "path" ? [0] : [],
-				expectedRevision: 0,
+				clientMessageId: expect.any(String), expectedRevision: 0,
 			}),
 		);
 	});
@@ -147,7 +147,7 @@ describe("queued message attachments", () => {
 		await waitFor(() => expect(edit).toHaveBeenCalledWith(
 			"q1", count === 8 ? `inspect this carefully\n\n${suffix}` : "inspect this carefully",
 			{
-				retainedContent: resources.map((_, index) => index), expectedRevision: 0,
+				retainedContent: resources.map((_, index) => index), clientMessageId: expect.any(String), expectedRevision: 0,
 				...(count === 8 ? { attachments: [{ mimeType: "image/png", data: expect.any(String) }] } : {}),
 			},
 		));
@@ -165,7 +165,7 @@ describe("queued message attachments", () => {
 			expect(edit).not.toHaveBeenCalled();
 		} else {
 			await waitFor(() => expect(edit).toHaveBeenCalledWith("q1", "inspect this\n\nAttached files (read these files in the workspace):\n- .ao/attachments/attachment-context.txt", {
-				retainedContent: [0, 1, 2, 3, 4, 5, 6, 7], expectedRevision: 0,
+				retainedContent: [0, 1, 2, 3, 4, 5, 6, 7], clientMessageId: expect.any(String), expectedRevision: 0,
 			}));
 		}
 	});
@@ -197,7 +197,7 @@ describe("queued message attachments", () => {
 		await screen.findByText("Could not save queued message edit");
 		expect(screen.getByRole("combobox")).toHaveTextContent("inspect this");
 		expect(screen.getByLabelText("Remove shot.png")).toBeInTheDocument();
-		await userEvent.click(screen.getByRole("button", { name: "Send message" }));
+		await userEvent.click(screen.getByRole("button", { name: "Retry edit safely" }));
 		await waitFor(() => expect(edit).toHaveBeenCalledTimes(2));
 		expect(edit.mock.calls[1]).toEqual(edit.mock.calls[0]);
 		expect(stage).toHaveBeenCalledOnce();
@@ -240,7 +240,7 @@ describe("queued message attachments", () => {
 		await waitFor(() =>
 			expect(edit).toHaveBeenCalledWith("q1", "newer edit", {
 				retainedContent: [],
-				expectedRevision: 1,
+				clientMessageId: expect.any(String), expectedRevision: 1,
 			}),
 		);
 	});
@@ -276,7 +276,7 @@ describe("queued message attachments", () => {
 		await waitFor(() => expect(stage).toHaveBeenCalledOnce());
 		fireEvent.keyDown(screen.getByRole("combobox"), { key: "Enter" });
 		await act(async () => settle([path]));
-		await waitFor(() => expect(edit).toHaveBeenCalledWith("q1", `inspect this\n\n${suffix}`, { retainedContent: [], expectedRevision: 0 }));
+		await waitFor(() => expect(edit).toHaveBeenCalledWith("q1", `inspect this\n\n${suffix}`, { retainedContent: [], clientMessageId: expect.any(String), expectedRevision: 0 }));
 		expect(send).not.toHaveBeenCalled();
 	});
 
@@ -302,28 +302,70 @@ describe("queued message attachments", () => {
 			await userEvent.click(screen.getByRole("button", { name: "Send message" }));
 			await waitFor(() => expect(second.edit).toHaveBeenCalledOnce());
 			expect(second.edit.mock.calls[0]?.[2]).toEqual({
-				retainedContent: [], expectedRevision: 0,
+				retainedContent: [], clientMessageId: expect.any(String), expectedRevision: 0,
 				attachments: [{ mimeType: "image/png", data: btoa("restored-first") }, { mimeType: "image/png", data: "iVBORw==" }],
 			});
 			expect(fetch).toHaveBeenCalledOnce();
 		} finally { fetch.mockRestore(); }
 	});
 
-	it("retains an uncertain attachment-only save despite matching snapshot text", async () => {
-		const original = [{ type: "image", mimeType: "image/png" }];
-		const first = setup("inspect this", original);
-		first.edit.mockRejectedValue(new Error("response lost"));
+	it("retries queued native attachments with their original payload after capabilities disappear", async () => {
+		const first = setup();
+		first.edit.mockRejectedValueOnce(new Error("response lost"));
+		await beginEdit();
+		await pasteImage(screen.getByRole("combobox"));
+		await userEvent.click(screen.getByRole("button", { name: "Send message" }));
+		await screen.findByText("response lost");
+		const request = first.edit.mock.calls[0];
+		expect(request?.[2].attachments).toEqual([{ mimeType: "image/png", data: "iVBORw==" }]);
+		first.unmount();
+		purgeFileAttachmentsForSession(chatFixture.sessionId);
+		const second = setup("inspect this", [], false);
+		second.rerenderSnapshot({ ...second.snapshot, controller: { ...second.snapshot.controller, state: "stopped" }, turns: [] });
+		const response = new Response();
+		vi.spyOn(response, "blob").mockResolvedValue(new Blob([new Uint8Array([137, 80, 78, 71])], { type: "image/png" }));
+		const fetch = vi.spyOn(globalThis, "fetch").mockResolvedValue(response);
+		try {
+			await userEvent.click(screen.getByRole("button", { name: "Retry edit safely" }));
+			await waitFor(() => expect(second.edit).toHaveBeenCalledOnce());
+			expect(second.edit.mock.calls[0]).toEqual(request);
+			await waitFor(() => expect(readChatSessionDraft(chatFixture.sessionId).queuedEdit).toBeUndefined());
+		} finally { fetch.mockRestore(); }
+	});
+
+	it.each([false, true])("reconciles a committed attachment-only edit after a lost response (dispatched: %s)", async (dispatched) => {
+		const first = setup("inspect this", [{ type: "image", mimeType: "image/png" }]);
+		let serverRevision = 0;
+		let committedRequest: unknown[] | undefined;
+		first.edit.mockImplementation(async (...request) => {
+			serverRevision++;
+			committedRequest = request;
+			throw new Error("response lost");
+		});
 		await beginEdit();
 		await userEvent.click(screen.getByLabelText("Remove Image 1"));
 		await userEvent.click(screen.getByRole("button", { name: "Send message" }));
 		await screen.findByText("response lost");
+		expect(serverRevision).toBe(1);
 		first.unmount();
-		const second = setup("inspect this", original);
-		expect(screen.getByText("Editing queued message")).toBeInTheDocument();
-		expect(screen.queryByLabelText("Remove Image 1")).not.toBeInTheDocument();
-		expect(readChatSessionDraft(chatFixture.sessionId).queuedEdit).toMatchObject({ saving: true, expectedRevision: 0, attachments: [] });
-		await userEvent.click(screen.getByRole("button", { name: "Send message" }));
-		await waitFor(() => expect(second.edit).toHaveBeenCalledWith("q1", "inspect this", { retainedContent: [], expectedRevision: 0 }));
+		const second = setup("inspect this", []);
+		second.rerenderSnapshot({
+			...second.snapshot,
+			controller: dispatched ? { ...second.snapshot.controller, state: "stopped" } : second.snapshot.controller,
+			turns: dispatched ? [] : second.snapshot.turns,
+			items: second.snapshot.items.map((item) => item.kind === "message" ? { ...item, revision: serverRevision } : item),
+		});
+		second.edit.mockImplementation(async (...request) => {
+			// Receipt lookup precedes revision validation on the daemon; the real
+			// SQLite behavior is covered by TestQueuedEditRetryAfterCommittedResponseIsLost.
+			expect(request).toEqual(committedRequest);
+		});
+		expect(screen.getByRole("combobox")).toHaveAttribute("contenteditable", "false");
+		expect(readChatSessionDraft(chatFixture.sessionId).queuedEdit).toMatchObject({ saving: true, expectedRevision: 0, attachments: [], clientMessageId: expect.any(String) });
+		await userEvent.click(screen.getByRole("button", { name: "Retry edit safely" }));
+		await waitFor(() => expect(second.edit).toHaveBeenCalledOnce());
+		await waitFor(() => expect(readChatSessionDraft(chatFixture.sessionId).queuedEdit).toBeUndefined());
+		expect(serverRevision).toBe(1);
 		expect(second.send).not.toHaveBeenCalled();
 	});
 

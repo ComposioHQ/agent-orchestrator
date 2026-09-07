@@ -81,6 +81,8 @@ import {
 } from "./shared/tray";
 import {
 	parseChatDraftBoundaryKinds,
+	parseChatDraftDialogCopy,
+	type ChatDraftDialogCopy,
 	SET_CHAT_DRAFT_RISK_CHANNEL,
 	type ChatDraftBoundaryKind,
 } from "./shared/chat-draft-risk";
@@ -296,6 +298,7 @@ let keybindingRecordingActive = false;
 let closeShellTerminalShortcutEnabled = false;
 let terminalFocused = false;
 let chatDraftRisks: ChatDraftBoundaryKind[] = [];
+let chatDraftDialog: ChatDraftDialogCopy | undefined;
 let chatDraftQuitConfirmed = false;
 let chatDraftWindowCloseConfirmed = false;
 // Held for the app lifetime. Dropping it (on any exit) triggers daemon self-stop.
@@ -652,7 +655,7 @@ async function createWindowInternal(): Promise<void> {
 		if (
 			chatDraftQuitConfirmed ||
 			chatDraftWindowCloseConfirmed ||
-			confirmUnsafeChatDraftLeave(chatDraftRisks, (options) => dialog.showMessageBoxSync(options))
+			confirmUnsafeChatDraftLeave(chatDraftRisks, (options) => dialog.showMessageBoxSync(options), chatDraftDialog)
 		) {
 			// Electron uses preventDefault here to ignore beforeunload and continue
 			// leaving. Doing nothing honors the renderer's request to stay.
@@ -665,6 +668,7 @@ async function createWindowInternal(): Promise<void> {
 			chatDraftRisks,
 			chatDraftQuitConfirmed || chatDraftWindowCloseConfirmed,
 			(options) => dialog.showMessageBoxSync(options),
+			chatDraftDialog,
 		);
 		if (preventClose) {
 			event.preventDefault();
@@ -783,6 +787,7 @@ async function createWindowInternal(): Promise<void> {
 
 	mainWindow.on("closed", () => {
 		chatDraftRisks = [];
+		chatDraftDialog = undefined;
 		chatDraftQuitConfirmed = false;
 		chatDraftWindowCloseConfirmed = false;
 		disposeBrowserRuntimeLink();
@@ -1973,15 +1978,18 @@ ipcMain.on(SET_TERMINAL_FOCUSED_CHANNEL, (event, focused: unknown) => {
 	terminalFocused = focused;
 });
 
-ipcMain.on(SET_CHAT_DRAFT_RISK_CHANNEL, (event, risks: unknown) => {
+ipcMain.on(SET_CHAT_DRAFT_RISK_CHANNEL, (event, risks: unknown, dialogCopy: unknown) => {
 	if (event.sender !== getShellWebContents()) return;
 	const parsed = parseChatDraftBoundaryKinds(risks);
-	if (!parsed) return;
+	const parsedCopy = parseChatDraftDialogCopy(dialogCopy);
+	if (!parsed || (parsed.length > 0 && !parsedCopy)) return;
 	if (
 		chatDraftRisks.length === parsed.length &&
-		chatDraftRisks.every((risk, index) => risk === parsed[index])
+		chatDraftRisks.every((risk, index) => risk === parsed[index]) &&
+		JSON.stringify(chatDraftDialog) === JSON.stringify(parsedCopy)
 	) return;
 	chatDraftRisks = [...parsed];
+	chatDraftDialog = parsedCopy;
 	chatDraftQuitConfirmed = false;
 	chatDraftWindowCloseConfirmed = false;
 });
@@ -2623,6 +2631,7 @@ app.on("before-quit", (event) => {
 		if (confirmUnsafeChatDraftLeave(
 			chatDraftRisks,
 			(options) => dialog.showMessageBoxSync(options),
+			chatDraftDialog,
 		)) {
 			chatDraftQuitConfirmed = true;
 			app.quit();

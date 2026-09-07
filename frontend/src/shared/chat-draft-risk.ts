@@ -2,20 +2,30 @@ export const SET_CHAT_DRAFT_RISK_CHANNEL = "chat-draft:set-risk";
 
 export const CHAT_DRAFT_BOUNDARY_KINDS = [
 	"persistence-failed",
-	"pending-delivery",
 	"pending-attachments",
 ] as const;
 
 export type ChatDraftBoundaryKind = (typeof CHAT_DRAFT_BOUNDARY_KINDS)[number];
 
-export const CHAT_DRAFT_BOUNDARY_COPY: Record<ChatDraftBoundaryKind, string> = {
-	"pending-attachments":
-		"Attachments are still being saved. Leaving now will discard any files AO has not finished writing to the worktree. Wait for saving to finish.",
-	"pending-delivery":
-		"A Chat delivery recovery is still pending. Its recovery ID is saved, but finish or explicitly retry recovery before leaving this chat.",
-	"persistence-failed":
-		"This Chat draft could not be saved locally. Leaving now will discard the unsaved changes. Copy the draft before leaving.",
+/** Resolved renderer translations, also used by Electron's native confirmation. */
+export type ChatDraftDialogCopy = {
+	title: string;
+	message: string;
+	detail: string;
+	stay: string;
+	leave: string;
 };
+
+export function parseChatDraftDialogCopy(value: unknown): ChatDraftDialogCopy | undefined {
+	if (!value || typeof value !== "object") return undefined;
+	const copy = value as Record<string, unknown>;
+	if (
+		typeof copy.title !== "string" || typeof copy.message !== "string" ||
+		typeof copy.detail !== "string" || typeof copy.stay !== "string" ||
+		typeof copy.leave !== "string"
+	) return undefined;
+	return { title: copy.title, message: copy.message, detail: copy.detail, stay: copy.stay, leave: copy.leave };
+}
 
 export function isChatDraftBoundaryKind(value: unknown): value is ChatDraftBoundaryKind {
 	return typeof value === "string" && CHAT_DRAFT_BOUNDARY_KINDS.includes(value as ChatDraftBoundaryKind);

@@ -321,6 +321,13 @@ type ConversationProviderEvent struct {
 	BranchID        string
 }
 
+type ConversationQueuedEditDelivery struct {
+	ConversationID  string
+	ClientMessageID string
+	RequestHash     string
+	CreatedAt       time.Time
+}
+
 type ConversationSteerDelivery struct {
 	ConversationID   string
 	ClientMessageID  string

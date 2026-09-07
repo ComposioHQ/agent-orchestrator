@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { parseChatDraftBoundaryKinds } from "./chat-draft-risk";
+import { parseChatDraftBoundaryKinds, parseChatDraftDialogCopy } from "./chat-draft-risk";
 
 describe("Chat draft risk IPC payloads", () => {
 	it("deduplicates and orders every known risk deterministically", () => {
@@ -19,4 +19,12 @@ describe("Chat draft risk IPC payloads", () => {
 			expect(parseChatDraftBoundaryKinds(payload)).toBeUndefined();
 		},
 	);
+});
+
+it("validates translated dialog fields before native use", () => {
+	const copy = { title: "Brouillon", message: "Non enregistré", detail: "Copiez le brouillon", stay: "Rester", leave: "Quitter" };
+	expect(parseChatDraftDialogCopy(copy)).toEqual(copy);
+	for (const invalid of [null, [], { ...copy, detail: 42 }, { ...copy, leave: undefined }]) {
+		expect(parseChatDraftDialogCopy(invalid)).toBeUndefined();
+	}
 });

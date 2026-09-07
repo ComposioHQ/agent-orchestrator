@@ -1,11 +1,11 @@
+import { appI18n } from "../i18n/instance";
 import {
-	CHAT_DRAFT_BOUNDARY_COPY,
 	parseChatDraftBoundaryKinds,
 	type ChatDraftBoundaryKind,
+	type ChatDraftDialogCopy,
 } from "../../shared/chat-draft-risk";
 
 export {
-	CHAT_DRAFT_BOUNDARY_COPY,
 	type ChatDraftBoundaryKind,
 } from "../../shared/chat-draft-risk";
 
@@ -102,9 +102,9 @@ export function confirmDiscardChatDraft(
 export function chatDraftDiscardWarning(
 	kinds: Iterable<ChatDraftBoundaryKind>,
 ): string | undefined {
-	const warnings = [...new Set(kinds)].map((kind) => CHAT_DRAFT_BOUNDARY_COPY[kind]);
+	const warnings = [...new Set(kinds)].map(chatDraftBoundaryCopy);
 	if (warnings.length === 0) return undefined;
-	return `${warnings.join("\n\n")}\n\nLeave this chat anyway?`;
+	return `${warnings.join("\n\n")}\n\n${appI18n.t("chat.draftDiscard.question")}`;
 }
 
 export function confirmDiscardChatDrafts(
@@ -113,4 +113,18 @@ export function confirmDiscardChatDrafts(
 ): boolean {
 	const warning = chatDraftDiscardWarning(kinds);
 	return warning ? confirm(warning) : true;
+}
+
+export function chatDraftBoundaryCopy(kind: ChatDraftBoundaryKind): string {
+	return appI18n.t(kind === "persistence-failed" ? "chat.draftDiscard.persistenceFailed" : "chat.draftDiscard.pendingAttachments");
+}
+
+export function chatDraftDialogCopy(kinds: Iterable<ChatDraftBoundaryKind>): ChatDraftDialogCopy {
+	return {
+		title: appI18n.t("chat.draftDiscard.nativeTitle"),
+		message: appI18n.t("chat.draftDiscard.nativeMessage"),
+		detail: [...new Set(kinds)].map(chatDraftBoundaryCopy).join("\n\n"),
+		stay: appI18n.t("chat.draftDiscard.stay"),
+		leave: appI18n.t("chat.draftDiscard.leaveAnyway"),
+	};
 }

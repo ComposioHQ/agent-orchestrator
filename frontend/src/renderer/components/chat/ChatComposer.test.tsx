@@ -1,3 +1,5 @@
+import { appI18n } from "../../i18n/instance";
+import { purgeFileAttachmentsForSession } from "../../hooks/useFileAttachments";
 import { act, fireEvent, render as rtlRender, screen, waitFor, within } from "@testing-library/react";
 import type { ReactElement } from "react";
 import userEvent from "@testing-library/user-event";
@@ -10,6 +12,7 @@ import {
 	prepareChatComposerDelivery,
 	readChatSessionDraft,
 	writeChatComposerText,
+	writeChatAttachments,
 } from "../../lib/chat-drafts";
 import {
 	getChatDraftBoundaries,
@@ -346,7 +349,6 @@ describe("send keys", () => {
 			expect(field).toHaveAttribute("contenteditable", "false");
 			expect(getChatDraftBoundaries(sessionId)).toEqual([
 				"persistence-failed",
-				"pending-delivery",
 			]);
 
 			fireEvent.keyDown(field, { key: "Enter" });
@@ -376,7 +378,7 @@ describe("send keys", () => {
 		}
 	});
 
-	it("reports a restored delivery as pending recovery without claiming persistence failed", async () => {
+	it("keeps a restored delivery recoverable without blocking navigation", async () => {
 		const sessionId = "composer-restored-delivery-boundary";
 		prepareChatComposerDelivery(sessionId, {
 			kind: "send",
@@ -391,7 +393,7 @@ describe("send keys", () => {
 		expect(await screen.findByRole("alert")).toHaveTextContent(
 			"Message delivery wasn’t confirmed before Chat restarted",
 		);
-		await waitFor(() => expect(getChatDraftBoundaries(sessionId)).toEqual(["pending-delivery"]));
+		await waitFor(() => expect(getChatDraftBoundaries(sessionId)).toEqual([]));
 	});
 
 	it("reconciles an accepted delivery without clearing or blocking a later draft revision", async () => {
@@ -1285,6 +1287,45 @@ describe("attachments", () => {
 		);
 	});
 
+	it.each([false, true])("retries an ordinary send with the same ID and native bytes after a lost response (restart: %s)", async (restart) => {
+		const sessionId = `composer-native-retry-${restart}`;
+		const stage = vi.fn().mockResolvedValue([".ao/attachments/native-retry.png"]);
+		const onSend = vi.fn().mockRejectedValueOnce(new Error("network request never arrived")).mockResolvedValue(undefined);
+		let view = render(<ChatComposer onSend={onSend} draftSessionId={sessionId} nativeImages onStageAttachments={stage} />);
+		let field = screen.getByLabelText("Message the agent");
+		fireEvent.paste(field, { clipboardData: clipboardData([png("native-retry.png")]) });
+		await screen.findByLabelText("Remove native-retry.png");
+		await typeInComposer(field, "inspect this image");
+		fireEvent.keyDown(field, { key: "Enter" });
+		await screen.findByRole("button", { name: "Retry message safely" });
+		await waitFor(() => expect(onSend).toHaveBeenCalledTimes(1));
+		const first = onSend.mock.calls[0];
+		expect(first?.[1]).toEqual([{ mimeType: "image/png", data: "iVBORw==" }]);
+		expect(first?.[2]).toEqual(expect.any(String));
+		expect(getChatDraftBoundaries(sessionId)).toEqual([]);
+
+		const response = new Response();
+		vi.spyOn(response, "blob").mockResolvedValue(new Blob([new Uint8Array([137, 80, 78, 71])], { type: "image/png" }));
+		const fetch = vi.spyOn(globalThis, "fetch").mockResolvedValue(response);
+		try {
+			if (restart) {
+				view.unmount();
+				purgeFileAttachmentsForSession(sessionId);
+				view = render(<ChatComposer onSend={onSend} draftSessionId={sessionId} nativeImages={false} onStageAttachments={stage} />);
+				field = screen.getByLabelText("Message the agent");
+			}
+			await userEvent.click(screen.getByRole("button", { name: "Retry message safely" }));
+			await waitFor(() => expect(onSend).toHaveBeenCalledTimes(2));
+			expect(onSend.mock.calls[1]).toEqual(first);
+			await waitFor(() => expect(field.textContent).toBe(""));
+			expect(stage).toHaveBeenCalledTimes(1);
+			if (restart) expect(fetch).toHaveBeenCalledWith(expect.stringContaining("native-retry.png"));
+		} finally {
+			view.unmount();
+			fetch.mockRestore();
+		}
+	});
+
 	it("also sends native image bytes when the provider negotiated image prompts", async () => {
 		const stage = vi.fn().mockResolvedValue([".ao/attachments/attachment-native.png"]);
 		const { onSend, field } = renderComposer({ onStageAttachments: stage, nativeImages: true });
@@ -1420,7 +1461,7 @@ describe("attachments", () => {
 		await typeInComposer(field, "accepted message");
 		await userEvent.click(screen.getByRole("button", { name: "Send message" }));
 		await waitFor(() => expect(onSend).toHaveBeenCalledTimes(1));
-		await waitFor(() => expect(getChatDraftBoundaries(sessionId)).toEqual(["pending-delivery"]));
+		await waitFor(() => expect(getChatDraftBoundaries(sessionId)).toEqual([]));
 
 		let boundariesWhenCleared: readonly string[] | undefined;
 		const observer = new MutationObserver(() => {
@@ -1744,4 +1785,50 @@ describe("unavailable states", () => {
 		expect(onSend).not.toHaveBeenCalled();
 		expect(screen.getByRole("alert")).toHaveTextContent(/still sending the previous message/i);
 	});
+});
+
+it("shows restored composer recovery notices and actions in the selected language", async () => {
+	const sessionId = "composer-localized-recovery";
+	prepareChatComposerDelivery(sessionId, { kind: "send", composerText: "bonjour", attachments: [], requestText: "bonjour", clientMessageId: "fr-recovery" });
+	const view = render(<ChatComposer draftSessionId={sessionId} onSend={vi.fn()} />);
+	try {
+		expect(await screen.findByRole("alert")).toHaveTextContent("Message delivery wasn’t confirmed");
+		await act(async () => { await appI18n.changeLanguage("fr"); });
+		expect(await screen.findByRole("alert")).toHaveTextContent("La livraison du message n’a pas été confirmée");
+		expect(screen.getByRole("button", { name: "Réessayer sans risque de doublon" })).toBeEnabled();
+		expect(getChatDraftBoundaries(sessionId)).toEqual([]);
+	} finally {
+		view.unmount();
+		await appI18n.changeLanguage("en");
+	}
+});
+
+it("reserves a restored image draft before asynchronous native-byte reads", async () => {
+	const sessionId = "composer-reserve-before-native-read";
+	writeChatComposerText(sessionId, "inspect restored image");
+	writeChatAttachments(sessionId, [{ id: "restored-image", name: "restored.png", mimeType: "image/png", bytes: 4, path: ".ao/attachments/restored.png" }]);
+	const pending = deferred<Response>();
+	const fetch = vi.spyOn(globalThis, "fetch").mockReturnValue(pending.promise);
+	const onSend = vi.fn().mockResolvedValue(undefined);
+	let view = render(<ChatComposer onSend={onSend} draftSessionId={sessionId} nativeImages />);
+	try {
+		await userEvent.click(screen.getByRole("button", { name: "Send message" }));
+		await waitFor(() => expect(fetch).toHaveBeenCalledOnce());
+		const delivery = readChatSessionDraft(sessionId).composer.delivery;
+		expect(delivery).toMatchObject({ state: "dispatching", nativeImages: true, clientMessageId: expect.any(String) });
+		view.unmount();
+		view = render(<ChatComposer onSend={onSend} draftSessionId={sessionId} nativeImages />);
+		expect(screen.getByLabelText("Message the agent")).toHaveAttribute("contenteditable", "false");
+		expect(getChatDraftBoundaries(sessionId)).toEqual([]);
+		const response = new Response();
+		vi.spyOn(response, "blob").mockResolvedValue(new Blob([new Uint8Array([137, 80, 78, 71])], { type: "image/png" }));
+		await act(async () => { pending.resolve(response); });
+		await waitFor(() => expect(onSend).toHaveBeenCalledOnce());
+		expect(onSend.mock.calls[0]?.[2]).toBe(delivery?.clientMessageId);
+		expect(onSend.mock.calls[0]?.[1]).toEqual([{ mimeType: "image/png", data: "iVBORw==" }]);
+		await waitFor(() => expect(screen.getByLabelText("Message the agent").textContent).toBe(""));
+	} finally {
+		view.unmount();
+		fetch.mockRestore();
+	}
 });

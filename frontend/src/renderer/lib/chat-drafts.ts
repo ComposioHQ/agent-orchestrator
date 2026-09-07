@@ -56,6 +56,10 @@ export interface ChatDraftInlineEdit {
 }
 
 export interface ChatDraftQueuedEdit {
+	/** Original request mode, independent of current controller capabilities. */
+	nativeImages?: boolean;
+	/** Stable daemon receipt key for the exact pending save. */
+	clientMessageId?: string;
 	/** Stable for one editing attempt, including remounts and staged reads. */
 	ownerId?: string;
 	revision: string;
@@ -81,6 +85,8 @@ export interface ChatDraftRetainedAttachment {
 export type ChatDraftDeliveryState = "dispatching" | "accepted";
 
 export interface ChatComposerDelivery {
+	/** Original request mode, kept across capability changes during recovery. */
+	nativeImages?: boolean;
 	kind: "send" | "steer";
 	state: ChatDraftDeliveryState;
 	/** Exact composer revision this delivery was created from. */
@@ -134,6 +140,7 @@ export type DraftDeliveryResult<Mutation> =
 	| { ok: false; recovered: boolean; draft: ChatSessionDraft; mutation?: Mutation };
 
 export interface PrepareChatComposerDeliveryInput {
+	nativeImages?: boolean;
 	kind: ChatComposerDelivery["kind"];
 	composerText: string;
 	attachments: ChatDraftAttachment[];
@@ -701,7 +708,8 @@ function isComposerDelivery(value: unknown): value is ChatComposerDelivery {
 		delivery.revision >= 0 &&
 		typeof delivery.clientMessageId === "string" &&
 		delivery.clientMessageId.length > 0 &&
-		typeof delivery.requestText === "string"
+		typeof delivery.requestText === "string" &&
+		(!("nativeImages" in delivery) || typeof delivery.nativeImages === "boolean")
 	);
 }
 
@@ -746,6 +754,8 @@ function isChatSessionDraft(value: unknown, scope: ChatDraftScope): value is Cha
 			typeof draft.queuedEdit.revision === "string" && draft.queuedEdit.revision.length > 0 &&
 			typeof draft.queuedEdit.turnId === "string" && draft.queuedEdit.turnId.length > 0 &&
 			typeof draft.queuedEdit.text === "string" &&
+			(draft.queuedEdit.nativeImages === undefined || typeof draft.queuedEdit.nativeImages === "boolean") &&
+			(draft.queuedEdit.clientMessageId === undefined || typeof draft.queuedEdit.clientMessageId === "string") &&
 			(draft.queuedEdit.ownerId === undefined || typeof draft.queuedEdit.ownerId === "string") &&
 			(draft.queuedEdit.expectedRevision === undefined || (Number.isSafeInteger(draft.queuedEdit.expectedRevision) && draft.queuedEdit.expectedRevision >= 0)) &&
 			(draft.queuedEdit.stagedAttachments === undefined || (Array.isArray(draft.queuedEdit.stagedAttachments) && draft.queuedEdit.stagedAttachments.every(isAttachment))) &&
@@ -936,6 +946,7 @@ export function prepareChatComposerDelivery(
 		? loaded.draft.composer.revision
 		: loaded.draft.composer.revision + 1;
 	const mutation: ChatComposerDelivery = {
+		...(input.nativeImages === undefined ? {} : { nativeImages: input.nativeImages }),
 		kind: input.kind,
 		state: "dispatching",
 		revision,
