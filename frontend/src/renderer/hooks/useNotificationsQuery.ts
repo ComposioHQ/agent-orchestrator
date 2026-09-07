@@ -7,7 +7,6 @@ import {
 	markAllCachedNotificationsRead,
 	markAllNotificationsRead,
 	notificationsQueryKey,
-	recentNotificationsQueryKey,
 	type NotificationListStatus,
 	unreadNotificationsQueryKey,
 } from "../lib/notifications";
@@ -48,16 +47,18 @@ export function useClearAllNotificationsMutation() {
 	const queryClient = useQueryClient();
 	return useMutation({
 		mutationFn: clearAllNotifications,
-		// A fetch already in flight when the user clicks Clear all can resolve
-		// after the mutation and repopulate the cache with stale rows. Cancel
-		// both query keys first so no late response can win that race.
+		// Cancelling only here narrows the window but does not close it: the SSE
+		// stream reconnecting, a daemon base-URL change, or the panel re-opening
+		// can all start a fresh GET after this point, while the DELETE is still
+		// pending. That GET can then resolve after clearAllCachedNotifications
+		// runs and repopulate the cache with rows that were just cleared.
 		onMutate: async () => {
-			await Promise.all([
-				queryClient.cancelQueries({ queryKey: unreadNotificationsQueryKey }),
-				queryClient.cancelQueries({ queryKey: recentNotificationsQueryKey }),
-			]);
+			await queryClient.cancelQueries({ queryKey: ["notifications", "history"] });
 		},
-		onSuccess: () => {
+		// Cancel again right before clearing the cache so anything that started
+		// during the pending DELETE cannot win the race and overwrite the reset.
+		onSuccess: async () => {
+			await queryClient.cancelQueries({ queryKey: ["notifications", "history"] });
 			clearAllCachedNotifications(queryClient);
 			void aoBridge.notifications.setBadge(0);
 		},
