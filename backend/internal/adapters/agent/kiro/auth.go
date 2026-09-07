@@ -26,9 +26,6 @@ func (p *Plugin) AuthStatus(ctx context.Context) (ports.AgentAuthStatus, error) 
 	return kiroWhoamiAuthStatus(ctx, binary)
 }
 
-// kiroWhoamiIdentity is the leading JSON object `kiro-cli whoami --format
-// json` prints for a signed-in identity. kiro-cli follows it with a
-// plain-text "Profile:" trailer, so stdout as a whole is not valid JSON.
 type kiroWhoamiIdentity struct {
 	AccountType string `json:"accountType"`
 	Email       string `json:"email"`
@@ -61,10 +58,7 @@ func kiroWhoamiAuthStatus(ctx context.Context, binary string) (ports.AgentAuthSt
 		return ports.AgentAuthStatusUnknown, nil
 	}
 
-	// `--format json` prints a JSON object followed by a plain-text "Profile:"
-	// trailer, which is not valid JSON as a whole. Decode only the first JSON
-	// value and ignore what follows it. Presence of any identity field is
-	// treated as evidence of a signed-in session.
+	// kiro-cli appends a plain-text "Profile:" trailer after the JSON object.
 	var identity kiroWhoamiIdentity
 	if decErr := json.NewDecoder(bytes.NewReader(out)).Decode(&identity); decErr == nil {
 		if identity.AccountType != "" || identity.Email != "" || identity.StartURL != "" {
