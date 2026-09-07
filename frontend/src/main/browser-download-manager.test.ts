@@ -62,6 +62,32 @@ class FakeDownloadItem extends EventEmitter {
 }
 
 describe("browser download manager", () => {
+	it("contains destination setup failures and reports them without exposing the path", () => {
+		const root = mkdtempSync(path.join(os.tmpdir(), "ao-browser-download-failure-"));
+		temporaryDirectories.push(root);
+		const blockingFile = path.join(root, "not-a-directory");
+		writeFileSync(blockingFile, "blocker");
+		const notify = vi.fn();
+		const manager = createBrowserDownloadManager({
+			downloadsDirectory: path.join(blockingFile, "Downloads"),
+			historyPath: path.join(root, "data", "browser-downloads.json"),
+			shell: { openPath: vi.fn(async () => ""), showItemInFolder: vi.fn() },
+			notify,
+		});
+		const session = new EventEmitter();
+		manager.attach(session as never);
+		const item = new FakeDownloadItem();
+
+		expect(() => session.emit("will-download", {}, item)).not.toThrow();
+		expect(item.cancel).toHaveBeenCalledOnce();
+		expect(manager.list()).toEqual({
+			downloads: [],
+			error: "Could not prepare the Downloads folder.",
+		});
+		expect(notify).toHaveBeenCalledWith(manager.list());
+		expect(JSON.stringify(manager.list())).not.toContain(blockingFile);
+	});
+
 	it("tracks progress, supports controls, and reveals a completed system download", async () => {
 		const test = setup();
 		mkdirSync(test.downloadsDirectory, { recursive: true });

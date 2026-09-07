@@ -43,6 +43,7 @@ type BrowserDownloadManagerOptions = {
 };
 
 const MAX_DOWNLOAD_HISTORY = 200;
+const DOWNLOAD_DESTINATION_ERROR = "Could not prepare the Downloads folder.";
 
 function publicDownload(download: StoredDownload): BrowserDownload {
 	const { savePath: _savePath, ...safe } = download;
@@ -98,6 +99,7 @@ export function createBrowserDownloadManager(options: BrowserDownloadManagerOpti
 	const reservedPaths = new Set<string>();
 	let disposed = false;
 	let downloads: StoredDownload[] = [];
+	let error = "";
 
 	try {
 		const parsed = JSON.parse(readFileSync(options.historyPath, "utf8")) as unknown;
@@ -117,7 +119,10 @@ export function createBrowserDownloadManager(options: BrowserDownloadManagerOpti
 		// A missing or malformed optional history file starts with an empty list.
 	}
 
-	const state = (): BrowserDownloadsState => ({ downloads: downloads.map(publicDownload) });
+	const state = (): BrowserDownloadsState => ({
+		downloads: downloads.map(publicDownload),
+		...(error ? { error } : {}),
+	});
 	const persist = (): void => {
 		mkdirSync(path.dirname(options.historyPath), { recursive: true });
 		const temporaryPath = `${options.historyPath}.tmp`;
@@ -160,11 +165,24 @@ export function createBrowserDownloadManager(options: BrowserDownloadManagerOpti
 	};
 
 	const begin = (item: DownloadItemLike): void => {
-		mkdirSync(options.downloadsDirectory, { recursive: true });
-		const savePath = collisionSafePath(options.downloadsDirectory, safeFilename(item.getFilename()), reservedPaths);
+		let savePath: string;
+		try {
+			mkdirSync(options.downloadsDirectory, { recursive: true });
+			savePath = collisionSafePath(options.downloadsDirectory, safeFilename(item.getFilename()), reservedPaths);
+			item.setSavePath(savePath);
+		} catch {
+			try {
+				item.cancel();
+			} catch {
+				// The destination failure remains the useful error for the user.
+			}
+			error = DOWNLOAD_DESTINATION_ERROR;
+			publish();
+			return;
+		}
+		error = "";
 		const id = (options.createId ?? randomUUID)();
 		const now = (options.now ?? Date.now)();
-		item.setSavePath(savePath);
 		reservedPaths.add(savePath.toLowerCase());
 		activeItems.set(id, item);
 		const download: StoredDownload = {

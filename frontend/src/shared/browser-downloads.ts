@@ -19,6 +19,7 @@ export type BrowserDownload = {
 
 export type BrowserDownloadsState = {
 	downloads: BrowserDownload[];
+	error?: string;
 };
 
 export type BrowserDownloadAction = "pause" | "resume" | "cancel" | "open" | "show" | "remove";

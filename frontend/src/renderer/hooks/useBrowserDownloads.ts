@@ -13,12 +13,16 @@ export function useBrowserDownloads() {
 			return;
 		}
 		let active = true;
-		void bridge.list().then((state) => active && setDownloads(state.downloads)).catch((reason) => {
+		void bridge.list().then((state) => {
+			if (!active) return;
+			setDownloads(state.downloads);
+			setError(state.error ?? "");
+		}).catch((reason) => {
 			if (active) setError(reason instanceof Error ? reason.message : String(reason));
 		});
 		const unsubscribe = bridge.onChanged((state) => {
 			setDownloads(state.downloads);
-			setError("");
+			setError(state.error ?? "");
 		});
 		return () => {
 			active = false;
@@ -31,7 +35,7 @@ export function useBrowserDownloads() {
 		try {
 			const state = await bridge.action({ id, action: nextAction });
 			setDownloads(state.downloads);
-			setError("");
+			setError(state.error ?? "");
 		} catch (reason) {
 			setError(reason instanceof Error ? reason.message : String(reason));
 		}
@@ -42,7 +46,7 @@ export function useBrowserDownloads() {
 		try {
 			const state = await bridge.clear();
 			setDownloads(state.downloads);
-			setError("");
+			setError(state.error ?? "");
 		} catch (reason) {
 			setError(reason instanceof Error ? reason.message : String(reason));
 		}

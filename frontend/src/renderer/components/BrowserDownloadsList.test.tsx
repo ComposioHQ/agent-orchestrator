@@ -4,6 +4,18 @@ import { describe, expect, it, vi } from "vitest";
 import { BrowserDownloadsList } from "./BrowserDownloadsList";
 
 describe("BrowserDownloadsList", () => {
+	it("shows a nonfatal destination error even when there is no history", () => {
+		render(
+			<BrowserDownloadsList
+				downloads={[]}
+				error="Could not prepare the Downloads folder."
+				onAction={() => undefined}
+			/>,
+		);
+
+		expect(screen.getByRole("alert")).toHaveTextContent("Could not prepare the Downloads folder.");
+	});
+
 	it("keeps resume and cancel controls for a resumable interruption", async () => {
 		const onAction = vi.fn();
 		render(

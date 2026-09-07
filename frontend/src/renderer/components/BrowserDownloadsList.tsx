@@ -25,7 +25,12 @@ export function BrowserDownloadsList({
 }) {
 	const { t } = useTranslation();
 	if (downloads.length === 0) {
-		return <p className="px-3 py-6 text-center text-xs text-muted-foreground">{t("browser.downloads.empty")}</p>;
+		return (
+			<>
+				<p className="px-3 py-6 text-center text-xs text-muted-foreground">{t("browser.downloads.empty")}</p>
+				{error ? <p className="px-3 py-2 text-xs text-destructive" role="alert">{error}</p> : null}
+			</>
+		);
 	}
 
 	return (
