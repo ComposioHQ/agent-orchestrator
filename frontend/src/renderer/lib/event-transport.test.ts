@@ -289,6 +289,26 @@ describe("createEventTransport", () => {
 		}
 	});
 
+	it("invalidates only the changed model-catalog scope for catalog CDC", () => {
+		vi.useFakeTimers();
+		try {
+			const queryClient = fakeQueryClient();
+			createEventTransport(queryClient).connect();
+			cdcSources()[0].emit("session_updated", JSON.stringify({
+				seq: 44,
+				projectId: "proj-1",
+				type: "session_updated",
+				payload: { kind: "model_catalog", agentId: "codex", projectId: "proj-1" },
+				createdAt: "2026-09-07T08:00:00Z",
+			}));
+			vi.advanceTimersByTime(200);
+			expect(queryClient.invalidateQueries).toHaveBeenCalledWith({ queryKey: ["agent-models", "codex", "proj-1"] }, { cancelRefetch: false });
+			expect(queryClient.invalidateQueries).not.toHaveBeenCalledWith({ queryKey: ["workspaces"] }, { cancelRefetch: false });
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
 	it("invalidates the named interface transition status for transition CDC", () => {
 		vi.useFakeTimers();
 		try {
