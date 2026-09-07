@@ -10773,6 +10773,8 @@ components:
           type: integer
         author:
           type: string
+        authorAvatarUrl:
+          type: string
         changedFiles:
           type: integer
         ci:
