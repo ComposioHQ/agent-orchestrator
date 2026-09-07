@@ -551,8 +551,6 @@ describe("Cursor Ask and Agent chat modes", () => {
 			/>,
 		);
 
-		// The ACP `agent` option stays out of the composer entirely; only the
-		// Ask/Agent execution posture is offered here.
 		expect(screen.queryByRole("button", { name: "Agent" })).not.toBeInTheDocument();
 		expect(screen.queryByText("Code reviewer")).not.toBeInTheDocument();
 		const trigger = screen.getByRole("button", { name: "Model mode for the next turn" });
@@ -632,8 +630,6 @@ describe("Cursor's live Agent/Plan/Ask mode catalog", () => {
 		await user.click(screen.getByRole("menuitem", { name: "Agent" }));
 		expect(onChange).toHaveBeenLastCalledWith("mode", { value: "agent" });
 
-		// The same guarantee on the model side, where Cursor's ids carry brackets
-		// that no label normalization may touch.
 		await user.click(screen.getByRole("button", { name: "Model" }));
 		await user.click(screen.getByRole("menuitem", { name: "grok-4.6" }));
 		expect(onChange).toHaveBeenLastCalledWith("model", {
@@ -684,8 +680,6 @@ describe("Cursor's live Agent/Plan/Ask mode catalog", () => {
 						name: "Chat mode",
 						category: "mode",
 						type: "select",
-						// The posture in force is a permission choice, which the right-hand
-						// picker owns; the execution trigger must not speak for it.
 						currentValue: "bypass",
 						choices: [
 							{ value: "agent", name: "Agent" },
@@ -731,7 +725,6 @@ describe("Cursor's live Agent/Plan/Ask mode catalog", () => {
 			/>,
 		);
 
-		// The mode moved out to its own trigger; the extra must still have a home.
 		expect(screen.getByRole("button", { name: "Model mode for the next turn" })).toHaveTextContent(
 			"Agent",
 		);
@@ -778,7 +771,6 @@ describe("Cursor's live Agent/Plan/Ask mode catalog", () => {
 		);
 
 		expect(screen.getAllByRole("button", { name: "Model mode for the next turn" })).toHaveLength(1);
-		// Cursor's approval policy is a Project Settings concern, not a composer one.
 		expect(screen.queryByRole("button", { name: "Mode" })).not.toBeInTheDocument();
 		expect(screen.queryByRole("switch", { name: "Plan Mode" })).not.toBeInTheDocument();
 	});
