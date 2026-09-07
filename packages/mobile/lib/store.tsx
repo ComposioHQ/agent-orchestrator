@@ -34,6 +34,7 @@ import { shouldShowLoading } from "./configLoading";
 import { shouldKeepPolling } from "./connectionError";
 import { primeInstallId } from "./installId";
 import { collectPRs } from "./prView";
+import { ALL_PROJECTS, resolveActiveProject } from "./projectFilter";
 import { MOBILE_EVENTS } from "./telemetry/events";
 import { mobileTelemetry, trackFeature } from "./telemetry/runtime";
 import { useConversationEventTransport } from "./chat/conversationEvents";
@@ -100,7 +101,7 @@ export function useApp(): AppState {
 export function useVisibleSessions(): DashboardSession[] {
 	const { sessions, activeProjectId } = useApp();
 	return useMemo(
-		() => (activeProjectId === "all" ? sessions : sessions.filter((s) => s.projectId === activeProjectId)),
+		() => (activeProjectId === ALL_PROJECTS ? sessions : sessions.filter((s) => s.projectId === activeProjectId)),
 		[sessions, activeProjectId],
 	);
 }
@@ -123,7 +124,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
 	const [orchestrators, setOrchestrators] = useState<OrchestratorLink[]>([]);
 	const [orchestratorId, setOrchestratorId] = useState<string | null>(null);
 	const [stats, setStats] = useState<DashboardStats>({});
-	const [activeProjectId, setActiveProjectId] = useState<string>("all");
+	// The filter as chosen — from storage at launch, then from the picker. What
+	// consumers see is `activeProjectId` below: this checked against the list.
+	const [chosenProjectId, setChosenProjectId] = useState<string>(ALL_PROJECTS);
 	const [connection, setConnection] = useState<ConnStatus>("closed");
 	const [notificationsUnread, setNotificationsUnread] = useState(0);
 	const [loading, setLoading] = useState(true);
@@ -184,7 +187,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 	// Load persisted active project once.
 	useEffect(() => {
 		AsyncStorage.getItem(ACTIVE_PROJECT_KEY).then((v) => {
-			if (v) setActiveProjectId(v);
+			if (v) setChosenProjectId(v);
 		});
 	}, []);
 
@@ -410,13 +413,21 @@ export function AppProvider({ children }: { children: ReactNode }) {
 	}, [config, fetchAll, appActive, reloadConfig, configResolved]);
 
 	const setActiveProject = useCallback((id: string) => {
-		setActiveProjectId(id);
+		setChosenProjectId(id);
 		AsyncStorage.setItem(ACTIVE_PROJECT_KEY, id).catch(() => {});
 	}, []);
 
+	// A filter whose project the daemon no longer lists applies as "all" (#4843).
+	// Derived on every list rather than reset and written back: the project can
+	// disappear while the app is open and the stored value can land after the
+	// first list does, storage is then only ever written by a tap, a late
+	// response from a machine the user just left cannot discard the filter they
+	// picked on the new one, and the choice comes back if the project does.
+	const activeProjectId = useMemo(() => resolveActiveProject(chosenProjectId, projects), [chosenProjectId, projects]);
+
 	// Pick a sensible project for actions that need one (spawn / conductor).
 	const targetProject = useCallback((): string | null => {
-		if (activeProjectId !== "all") return activeProjectId;
+		if (activeProjectId !== ALL_PROJECTS) return activeProjectId;
 		if (projects.length === 1) return projects[0].id;
 		return null;
 	}, [activeProjectId, projects]);

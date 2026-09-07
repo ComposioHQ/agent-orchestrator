@@ -7,7 +7,8 @@ import { attentionOf, type DashboardSession } from "../../lib/api";
 import { classifyConnectionFailure, describeConnectionFailure } from "../../lib/connectionError";
 import { tunnelMayHaveRotated } from "../../lib/staleTunnel";
 import { haptics } from "../../lib/haptics";
-import { groupSessions, type BoardSection, type BoardZone } from "../../lib/agentsView";
+import { groupSessions, isArchived, type BoardSection, type BoardZone } from "../../lib/agentsView";
+import { ALL_PROJECTS, activeProjectLabel, filteredEmptyCopy } from "../../lib/projectFilter";
 import { ProjectSwitcher } from "../../lib/ProjectSwitcher";
 import { SessionCard } from "../../lib/SessionCard";
 import { useApp, useVisibleSessions } from "../../lib/store";
@@ -26,9 +27,39 @@ export default function FleetScreen() {
 	const styles = useThemedStyles(makeStyles);
 	const router = useRouter();
 	const insets = useSafeAreaInsets();
-	const { configured, loading, error, errorStatus, connection, config, refresh, activeProjectId, notificationsUnread, activeEndpoints } =
-		useApp();
+	const {
+		configured,
+		loading,
+		error,
+		errorStatus,
+		connection,
+		config,
+		refresh,
+		activeProjectId,
+		setActiveProject,
+		projects,
+		sessions: allSessions,
+		notificationsUnread,
+		activeEndpoints,
+	} = useApp();
 	const sessions = useVisibleSessions();
+	// Read only by ListEmptyComponent, i.e. when nothing is visible — so every
+	// session the daemon returned is hidden by the filter. The empty state then
+	// says so instead of "No active agents", which had the reporter clearing app
+	// storage: Settings can clear a filter too, but nothing there said the board
+	// had one, and the switcher above hides below two projects. Live and
+	// archived are counted apart because the copy promises what "Show all
+	// projects" puts on the board, and the archive is collapsed there.
+	const hidden = useMemo(() => {
+		if (activeProjectId === ALL_PROJECTS) return null;
+		let live = 0;
+		let archived = 0;
+		for (const s of allSessions) {
+			if (isArchived(s)) archived += 1;
+			else live += 1;
+		}
+		return { live, archived };
+	}, [activeProjectId, allSessions]);
 	const [refreshing, setRefreshing] = useState(false);
 	// Collapsed by default, like desktop's archive strip: it is history, and on a
 	// long-running project it is most of the sessions.
@@ -174,12 +205,23 @@ export default function FleetScreen() {
 								title={failure.title}
 								message={failure.message}
 								action={
-									<View style={styles.errorActions}>
+									<View style={styles.emptyActions}>
 										<Button title="Retry" icon="refresh-cw" variant="ghost" onPress={onRefresh} />
 										{/* Re-scanning is the only fix for a rotated password, and the
 										    fastest one for a moved/renamed host — so it belongs beside
 										    Retry rather than three taps away in Settings. */}
 										<Button title="Scan" icon="maximize" onPress={() => router.push("/pair")} />
+									</View>
+								}
+							/>
+						) : hidden && hidden.live + hidden.archived > 0 ? (
+							<EmptyState
+								icon="filter"
+								{...filteredEmptyCopy(activeProjectLabel(activeProjectId, projects), hidden)}
+								action={
+									<View style={styles.emptyActions}>
+										<Button title="Show all projects" icon="layers" variant="ghost" onPress={() => setActiveProject(ALL_PROJECTS)} />
+										<Button title="New agent" icon="plus" onPress={() => router.push("/spawn")} />
 									</View>
 								}
 							/>
@@ -263,7 +305,7 @@ const makeStyles = (t: Theme) =>
 	StyleSheet.create({
 		screen: { flex: 1, backgroundColor: t.bgBase },
 		center: { flex: 1, alignItems: "center", justifyContent: "center", paddingVertical: 60 },
-		errorActions: { flexDirection: "row", gap: 10, alignItems: "center" },
+		emptyActions: { flexDirection: "row", gap: 10, alignItems: "center" },
 		stats: {
 			flexDirection: "row",
 			gap: 10,

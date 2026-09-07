@@ -24,6 +24,7 @@ import { chatErrorCopy, isChatPreflightError } from "../lib/chatError";
 import { haptics } from "../lib/haptics";
 import { agentSheetRoute, modelSheetRoute, projectSheetRoute } from "../lib/sheetResult";
 import { screenKeyboardAvoidance } from "../lib/session/keyboardInset";
+import { ALL_PROJECTS, resolveActiveProject } from "../lib/projectFilter";
 import { modelOverride, resolveSpawnAgent, resolveSpawnModel, spawnModelSourceChanged } from "../lib/spawnModel";
 import { useApp } from "../lib/store";
 import type { Theme } from "../lib/theme";
@@ -86,8 +87,16 @@ export default function SpawnModal() {
 	// `targetProject()`; kept here because the screen needs it as UI state to
 	// drive the picker's value and the button's disabled state.
 	useEffect(() => {
-		if (projectId) return;
-		if (activeProjectId !== "all") setProjectId(activeProjectId);
+		if (projectId) {
+			// The seed can outlive its project: the list lands after the sheet
+			// opened, or the project was removed while it was open. Drop it so the
+			// branch below re-seeds from what the store now reports, instead of
+			// posting a dead id the daemon answers with 404 (#4843). A pick from the
+			// picker is always on the list, so this never overrides one.
+			if (resolveActiveProject(projectId, projects) !== projectId) setProjectId(null);
+			return;
+		}
+		if (activeProjectId !== ALL_PROJECTS) setProjectId(activeProjectId);
 		else if (projects.length === 1) setProjectId(projects[0].id);
 	}, [activeProjectId, projects, projectId]);
 

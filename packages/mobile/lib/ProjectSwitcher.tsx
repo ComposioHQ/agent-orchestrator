@@ -3,6 +3,7 @@ import { useRouter } from "expo-router";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import type { Theme } from "./theme";
 import { haptics } from "./haptics";
+import { activeProjectLabel } from "./projectFilter";
 import { projectSheetRoute } from "./sheetResult";
 import { useApp } from "./store";
 import { useTheme, useThemedStyles } from "./ThemeProvider";
@@ -42,7 +43,7 @@ export function ProjectSwitcher() {
 					accessibilityLabel="Change active project"
 				>
 					<Text style={[styles.value, active && { color: t.blue }]} numberOfLines={1}>
-						{active?.name ?? "All projects"}
+						{activeProjectLabel(activeProjectId, projects)}
 					</Text>
 					{/* A chevron, not an overflow "…": this changes a value rather than
 					    revealing a menu of actions. */}

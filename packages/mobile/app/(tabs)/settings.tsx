@@ -25,6 +25,7 @@ import { VERSION_FLOOR } from "../../lib/versionFloor";
 import { useTabScrollToTop } from "../../lib/useTabScrollToTop";
 import { Dot, ScreenHeader, SettingsGroup, SettingsRow, SettingsToggle } from "../../lib/ui";
 import { useTheme, useThemedStyles, useThemeState } from "../../lib/ThemeProvider";
+import { activeProjectLabel } from "../../lib/projectFilter";
 
 const ISSUES_URL = "https://github.com/AgentWrapper/agent-orchestrator/issues/new";
 
@@ -61,7 +62,6 @@ export default function SettingsScreen() {
 	}
 
 	const paired = isConfigured(cfg);
-	const activeProject = projects.find((p) => p.id === activeProjectId);
 
 	return (
 		<View style={styles.screen}>
@@ -78,7 +78,7 @@ export default function SettingsScreen() {
 					<SettingsRow
 						icon="folder"
 						label="Active project"
-						value={activeProject?.name ?? "All projects"}
+						value={activeProjectLabel(activeProjectId, projects)}
 						onPress={() =>
 							router.push(
 								projectSheetRoute({
