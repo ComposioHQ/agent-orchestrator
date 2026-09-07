@@ -93,9 +93,9 @@ func pinDirectory(exe string) (string, error) {
 	if err := temp.Close(); err != nil {
 		return "", err
 	}
-	if err := os.Chmod(tempPath, 0o700); err != nil {
+	if err := os.Chmod(tempPath, 0o700); err != nil { //nolint:gosec // executable AO shim
 		return "", err
-	} //nolint:gosec // executable AO shim
+	}
 	if err := os.Rename(tempPath, target); err != nil {
 		return "", err
 	}
