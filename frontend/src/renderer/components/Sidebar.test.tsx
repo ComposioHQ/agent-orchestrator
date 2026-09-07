@@ -1681,6 +1681,7 @@ describe("Sidebar", () => {
 
 		expect(screen.getByRole("textbox", { name: "Rename fix login" })).toHaveFocus();
 		expect(navigateMock).not.toHaveBeenCalled();
+	});
 
 	it("caps the inline rename input at 20 characters", async () => {
 		const user = userEvent.setup();
