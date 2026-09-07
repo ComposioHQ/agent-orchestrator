@@ -33,7 +33,7 @@ func validateVersionOutput(output string) error {
 	}
 	minimum, _ := parseVersion(minimumQwenVersion)
 	if installed.less(minimum) {
-		return fmt.Errorf("Qwen Code %s is older than AO's tested minimum %s",
+		return fmt.Errorf("installed Qwen Code %s is older than AO's tested minimum %s",
 			installed, minimumQwenVersion)
 	}
 	return nil
