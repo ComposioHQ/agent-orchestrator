@@ -148,7 +148,11 @@ func (c *Controller) EditQueuedTurn(ctx context.Context, turnID string, edit Que
 			continue
 		}
 		images++
-		imageBytes += base64.StdEncoding.DecodedLen(len(block.Data))
+		data, err := base64.StdEncoding.DecodeString(strings.TrimSpace(block.Data))
+		if err != nil {
+			return ErrQueuedContentInvalid
+		}
+		imageBytes += len(data)
 	}
 	if images > 8 || imageBytes > 25*1024*1024 {
 		return ErrQueuedContentInvalid

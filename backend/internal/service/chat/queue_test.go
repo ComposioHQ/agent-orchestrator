@@ -2,6 +2,7 @@ package chat_test
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"testing"
 
@@ -13,8 +14,15 @@ import (
 func TestQueuedEditAttachmentChanges(t *testing.T) {
 	zero := int64(0)
 	one := int64(1)
+	tenMiB := ports.ChatContent{Type: "image", MIMEType: "image/png", Data: base64.StdEncoding.EncodeToString(make([]byte, 10<<20))}
+	fiveMiB := ports.ChatContent{Type: "image", MIMEType: "image/png", Data: base64.StdEncoding.EncodeToString(make([]byte, 5<<20))}
+	overFiveMiB := ports.ChatContent{Type: "image", MIMEType: "image/png", Data: base64.StdEncoding.EncodeToString(make([]byte, (5<<20)+1))}
+	atLimit := []ports.ChatContent{tenMiB, tenMiB, fiveMiB}
+	atLimitData := []string{tenMiB.Data, tenMiB.Data, fiveMiB.Data}
 	for _, tc := range []struct {
 		name     string
+		unedited bool
+		initial  []ports.ChatContent
 		text     string
 		retained *[]int
 		revision *int64
@@ -22,6 +30,7 @@ func TestQueuedEditAttachmentChanges(t *testing.T) {
 		wantData []string
 		wantErr  error
 	}{
+		{name: "without edit", unedited: true, text: "original", wantData: []string{"aGVsbG8="}},
 		{name: "preserve omitted", text: "updated", wantData: []string{"aGVsbG8="}},
 		{name: "preserve explicit", text: "updated", retained: &[]int{0}, revision: &zero, wantData: []string{"aGVsbG8="}},
 		{name: "remove", text: "updated", retained: &[]int{}, revision: &zero},
@@ -34,18 +43,27 @@ func TestQueuedEditAttachmentChanges(t *testing.T) {
 		{name: "invalid index", text: "updated", retained: &[]int{1}, revision: &zero, wantErr: chatsvc.ErrQueuedContentInvalid},
 		{name: "duplicate index", text: "updated", retained: &[]int{0, 0}, revision: &zero, wantErr: chatsvc.ErrQueuedContentInvalid},
 		{name: "negative index", text: "updated", retained: &[]int{-1}, revision: &zero, wantErr: chatsvc.ErrQueuedContentInvalid},
+		{name: "preserve at size limit", text: "updated", initial: atLimit, wantData: atLimitData},
+		{name: "append at size limit", text: "updated", initial: atLimit[:2], add: atLimit[2:], wantData: atLimitData},
+		{name: "append over size limit", text: "updated", initial: atLimit[:2], add: []ports.ChatContent{overFiveMiB}, wantErr: chatsvc.ErrQueuedContentInvalid},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			h, provider := steerHarness(t)
 			ctx := context.Background()
+			initial := tc.initial
+			if initial == nil {
+				initial = []ports.ChatContent{{Type: "image", MIMEType: "image/png", Data: "aGVsbG8="}}
+			}
 			turn, err := h.svc.Send(ctx, testSession, ports.ChatUserMessage{Text: "original", ClientMessageID: "queued-edit",
-				Origin: domain.MessageOriginHuman, Content: []ports.ChatContent{{Type: "image", MIMEType: "image/png", Data: "aGVsbG8="}}})
+				Origin: domain.MessageOriginHuman, Content: initial})
 			if err != nil {
 				t.Fatal(err)
 			}
-			err = h.svc.EditQueuedTurn(ctx, testSession, turn.ID, chatsvc.QueuedMessageEdit{
-				Text: tc.text, Content: tc.add, RetainedContent: tc.retained, ExpectedRevision: tc.revision,
-			})
+			if !tc.unedited {
+				err = h.svc.EditQueuedTurn(ctx, testSession, turn.ID, chatsvc.QueuedMessageEdit{
+					Text: tc.text, Content: tc.add, RetainedContent: tc.retained, ExpectedRevision: tc.revision,
+				})
+			}
 			if !errors.Is(err, tc.wantErr) {
 				t.Fatalf("edit = %v, want %v", err, tc.wantErr)
 			}
@@ -58,7 +76,10 @@ func TestQueuedEditAttachmentChanges(t *testing.T) {
 			}
 			wantText, wantData := tc.text, tc.wantData
 			if tc.wantErr != nil {
-				wantText, wantData = "original", []string{"aGVsbG8="}
+				wantText, wantData = "original", nil
+				for _, block := range initial {
+					wantData = append(wantData, block.Data)
+				}
 			}
 			if calls[0].msg.Text != wantText || len(calls[0].msg.Content) != len(wantData) {
 				t.Fatalf("provider got text %q and %d attachments; want %q and %d", calls[0].msg.Text, len(calls[0].msg.Content), wantText, len(wantData))
@@ -67,42 +88,6 @@ func TestQueuedEditAttachmentChanges(t *testing.T) {
 				if calls[0].msg.Content[i].Data != data {
 					t.Fatalf("attachment %d changed", i)
 				}
-			}
-		})
-	}
-}
-
-func TestQueuedTextEditPreservesImageDelivery(t *testing.T) {
-	for _, edit := range []bool{false, true} {
-		name := "without_edit"
-		if edit {
-			name = "with_text_edit"
-		}
-		t.Run(name, func(t *testing.T) {
-			h, provider := steerHarness(t)
-			ctx := context.Background()
-			turn, err := h.svc.Send(ctx, testSession, ports.ChatUserMessage{
-				Text:            "inspect this\n\nAttached files (read these files in the workspace):\n- .ao/attachments/image.png",
-				ClientMessageID: "queued-image-analysis", Origin: domain.MessageOriginHuman,
-				Content: []ports.ChatContent{{Type: "image", Data: "aGVsbG8=", MIMEType: "image/png"}},
-			})
-			if err != nil {
-				t.Fatal(err)
-			}
-			if edit {
-				if err := h.svc.EditQueuedTurn(ctx, testSession, turn.ID, chatsvc.QueuedMessageEdit{Text: "inspect carefully\n\nAttached files (read these files in the workspace):\n- .ao/attachments/image.png"}); err != nil {
-					t.Fatal(err)
-				}
-			}
-			if _, err := h.svc.PromoteQueuedTurn(ctx, testSession, turn.ID); err != nil {
-				t.Fatal(err)
-			}
-			calls := provider.steers()
-			if len(calls) != 1 {
-				t.Fatalf("provider calls = %d, want 1", len(calls))
-			}
-			if len(calls[0].msg.Content) != 1 {
-				t.Fatalf("provider image blocks = %d, want 1; text = %q", len(calls[0].msg.Content), calls[0].msg.Text)
 			}
 		})
 	}
