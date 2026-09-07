@@ -58,12 +58,16 @@ func TestSharedInstallKeepsAgentNodeAndCanonicalAO(t *testing.T) {
 
 func TestSharedInstallRequiresResolvedAbsoluteDataDir(t *testing.T) {
 	shared := t.TempDir()
-	for _, name := range []string{"ao", "node"} {
+	names := []string{"ao", "node"}
+	if runtime.GOOS == "windows" {
+		names = []string{"ao.exe", "node.exe"}
+	}
+	for _, name := range names {
 		if err := os.WriteFile(filepath.Join(shared, name), []byte("#!/bin/sh\n"), 0o700); err != nil {
 			t.Fatal(err)
 		}
 	}
-	executable := func() (string, error) { return filepath.Join(shared, "ao"), nil }
+	executable := func() (string, error) { return filepath.Join(shared, names[0]), nil }
 	if _, err := PinnedPATH(executable, os.Getenv, nil, "data"); err == nil || !strings.Contains(err.Error(), "must be absolute") {
 		t.Fatalf("PinnedPATH error = %v, want absolute data-directory error", err)
 	}
