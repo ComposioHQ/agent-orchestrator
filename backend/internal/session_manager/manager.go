@@ -1236,8 +1236,16 @@ func (m *Manager) createSessionWorkspace(ctx context.Context, project domain.Pro
 		return ports.WorkspaceInfo{}, nil, err
 	}
 	childRepos := make([]ports.WorkspaceProjectRepoConfig, 0, len(repos))
+	assets := make([]ports.WorkspaceProjectAssetConfig, 0, len(repos))
 	for _, repo := range repos {
 		if repo.GitStatus == domain.GitStatusNeedsInit {
+			sourcePath := filepath.Join(project.Path, filepath.FromSlash(repo.RelativePath))
+			if _, err := os.Lstat(filepath.Join(sourcePath, ".git")); errors.Is(err, os.ErrNotExist) {
+				assets = append(assets, ports.WorkspaceProjectAssetConfig{
+					RelativePath: repo.RelativePath,
+					SourcePath:   sourcePath,
+				})
+			}
 			continue
 		}
 		repoPath := filepath.Join(project.Path, filepath.FromSlash(repo.RelativePath))
@@ -1262,6 +1270,7 @@ func (m *Manager) createSessionWorkspace(ctx context.Context, project domain.Pro
 		BaseBranch:    project.Config.WorktreeBaseBranch(),
 		BaseRef:       baseRefs[filepath.Clean(project.Path)],
 		Repos:         childRepos,
+		Assets:        assets,
 	})
 	if err != nil {
 		return ports.WorkspaceInfo{}, nil, err
