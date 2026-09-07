@@ -4,6 +4,26 @@ import { describe, expect, it, vi } from "vitest";
 import { BrowserDownloadsList } from "./BrowserDownloadsList";
 
 describe("BrowserDownloadsList", () => {
+	it("uses folder icons for opening a completed download and revealing it in Explorer", () => {
+		render(
+			<BrowserDownloadsList
+				downloads={[{
+					id: "download-1",
+					fileName: "report.txt",
+					receivedBytes: 100,
+					totalBytes: 100,
+					status: "completed",
+					startedAt: 1,
+					updatedAt: 2,
+				}]}
+				onAction={() => undefined}
+			/>,
+		);
+
+		expect(screen.getByRole("button", { name: "Open report.txt" }).querySelector(".lucide-folder")).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Show report.txt in File Explorer" }).querySelector(".lucide-folder-open")).toBeInTheDocument();
+	});
+
 	it("shows a nonfatal destination error even when there is no history", () => {
 		render(
 			<BrowserDownloadsList

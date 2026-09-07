@@ -1,5 +1,5 @@
 import { EventEmitter } from "node:events";
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -19,10 +19,13 @@ function setup() {
 	const notify = vi.fn();
 	const openPath = vi.fn(async () => "");
 	const showItemInFolder = vi.fn();
+	const trashItem = vi.fn(async (filePath: string) => {
+		rmSync(filePath);
+	});
 	const manager = createBrowserDownloadManager({
 		downloadsDirectory,
 		historyPath,
-		shell: { openPath, showItemInFolder },
+		shell: { openPath, showItemInFolder, trashItem },
 		notify,
 		now: () => 42,
 		createId: () => "download-1",
@@ -41,6 +44,7 @@ function setup() {
 		session,
 		sessionOn,
 		showItemInFolder,
+		trashItem,
 		start: (item: FakeDownloadItem) => session.emit("will-download", {}, item),
 	};
 }
@@ -71,7 +75,7 @@ describe("browser download manager", () => {
 		const manager = createBrowserDownloadManager({
 			downloadsDirectory: path.join(blockingFile, "Downloads"),
 			historyPath: path.join(root, "data", "browser-downloads.json"),
-			shell: { openPath: vi.fn(async () => ""), showItemInFolder: vi.fn() },
+			shell: { openPath: vi.fn(async () => ""), showItemInFolder: vi.fn(), trashItem: vi.fn(async () => undefined) },
 			notify,
 		});
 		const session = new EventEmitter();
@@ -120,6 +124,37 @@ describe("browser download manager", () => {
 		expect(test.manager.list().downloads).toEqual([]);
 	});
 
+	it("moves a downloaded file to the recycle bin before removing its history", async () => {
+		const test = setup();
+		const item = new FakeDownloadItem();
+		test.start(item);
+		item.emit("done", {}, "completed");
+		const savePath = path.join(test.downloadsDirectory, "report.txt");
+		writeFileSync(savePath, "downloaded");
+
+		await test.manager.action({ id: "download-1", action: "remove" });
+
+		expect(test.trashItem).toHaveBeenCalledWith(savePath);
+		expect(existsSync(savePath)).toBe(false);
+		expect(test.manager.list().downloads).toEqual([]);
+		expect(JSON.parse(readFileSync(test.historyPath, "utf8"))).toEqual([]);
+	});
+
+	it("keeps download history when moving the local file to the recycle bin fails", async () => {
+		const test = setup();
+		const item = new FakeDownloadItem();
+		test.start(item);
+		item.emit("done", {}, "completed");
+		const savePath = path.join(test.downloadsDirectory, "report.txt");
+		writeFileSync(savePath, "downloaded");
+		test.trashItem.mockRejectedValueOnce(new Error("Recycle bin unavailable"));
+
+		await expect(test.manager.action({ id: "download-1", action: "remove" })).rejects.toThrow("Could not delete the downloaded file.");
+
+		expect(existsSync(savePath)).toBe(true);
+		expect(test.manager.list().downloads).toHaveLength(1);
+	});
+
 	it("attaches once per Electron session and restores unfinished history as interrupted", () => {
 		const test = setup();
 		test.manager.attach(test.session as never);
@@ -130,7 +165,7 @@ describe("browser download manager", () => {
 		const restored = createBrowserDownloadManager({
 			downloadsDirectory: test.downloadsDirectory,
 			historyPath: test.historyPath,
-			shell: { openPath: vi.fn(async () => ""), showItemInFolder: vi.fn() },
+			shell: { openPath: vi.fn(async () => ""), showItemInFolder: vi.fn(), trashItem: vi.fn(async () => undefined) },
 			notify: vi.fn(),
 		});
 		expect(restored.list().downloads[0]?.status).toBe("interrupted");
@@ -149,7 +184,7 @@ describe("browser download manager", () => {
 		const replacement = createBrowserDownloadManager({
 			downloadsDirectory: first.downloadsDirectory,
 			historyPath: first.historyPath,
-			shell: { openPath: vi.fn(async () => ""), showItemInFolder: vi.fn() },
+			shell: { openPath: vi.fn(async () => ""), showItemInFolder: vi.fn(), trashItem: vi.fn(async () => undefined) },
 			notify: replacementNotify,
 			createId: () => "download-2",
 		});

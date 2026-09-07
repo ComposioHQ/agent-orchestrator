@@ -82,7 +82,7 @@
 	"browser.downloads.cancel": "Cancelar {{file}}",
 	"browser.downloads.open": "Abrir {{file}}",
 	"browser.downloads.show": "Mostrar {{file}} no Explorador de Arquivos",
-	"browser.downloads.remove": "Remover {{file}} da lista",
+	"browser.downloads.remove": "Excluir {{file}} do computador",
 	"browser.downloads.progressLabel": "Progresso do download de {{file}}",
 	"browser.downloads.showAll": "Mostrar tudo",
 	"browser.downloads.search": "Pesquisar histórico de downloads",

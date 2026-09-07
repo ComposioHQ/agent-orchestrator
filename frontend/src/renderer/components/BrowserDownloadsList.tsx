@@ -1,4 +1,4 @@
-import { Ban, FolderOpen, Pause, Play, Trash2, X } from "lucide-react";
+import { Ban, Folder, FolderOpen, Pause, Play, Trash2, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import type { BrowserDownload, BrowserDownloadAction } from "../../shared/browser-downloads";
 import { Button } from "./ui/button";
@@ -76,7 +76,7 @@ export function BrowserDownloadsList({
 									<Button aria-label={t("browser.downloads.resume", { file: download.fileName })} onClick={() => onAction(download.id, "resume")} size="icon-sm" type="button" variant="ghost"><Play aria-hidden="true" className="size-3.5" /></Button>
 								) : download.status === "completed" ? (
 									<>
-										<Button aria-label={t("browser.downloads.open", { file: download.fileName })} onClick={() => onAction(download.id, "open")} size="icon-sm" type="button" variant="ghost"><Play aria-hidden="true" className="size-3.5" /></Button>
+										<Button aria-label={t("browser.downloads.open", { file: download.fileName })} onClick={() => onAction(download.id, "open")} size="icon-sm" type="button" variant="ghost"><Folder aria-hidden="true" className="size-3.5" /></Button>
 										<Button aria-label={t("browser.downloads.show", { file: download.fileName })} onClick={() => onAction(download.id, "show")} size="icon-sm" type="button" variant="ghost"><FolderOpen aria-hidden="true" className="size-3.5" /></Button>
 									</>
 								) : null}

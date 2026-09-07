@@ -1,6 +1,6 @@
 import type { DownloadItem, Session } from "electron";
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import type {
 	BrowserDownload,
@@ -29,6 +29,7 @@ type DownloadSessionLike = Pick<Session, "on" | "removeListener">;
 type DownloadShell = {
 	openPath: (filePath: string) => Promise<string>;
 	showItemInFolder: (filePath: string) => void;
+	trashItem: (filePath: string) => Promise<void>;
 };
 
 type StoredDownload = BrowserDownload & { savePath: string };
@@ -44,6 +45,7 @@ type BrowserDownloadManagerOptions = {
 
 const MAX_DOWNLOAD_HISTORY = 200;
 const DOWNLOAD_DESTINATION_ERROR = "Could not prepare the Downloads folder.";
+const DOWNLOAD_DELETE_ERROR = "Could not delete the downloaded file.";
 
 function publicDownload(download: StoredDownload): BrowserDownload {
 	const { savePath: _savePath, ...safe } = download;
@@ -268,10 +270,23 @@ export function createBrowserDownloadManager(options: BrowserDownloadManagerOpti
 					if (download.status !== "completed" || !existsSync(download.savePath)) throw new Error("Downloaded file is unavailable");
 					options.shell.showItemInFolder(download.savePath);
 					return state();
-				case "remove":
+				case "remove": {
 					if (item) throw new Error("Active downloads cannot be removed");
+					try {
+						if (existsSync(download.savePath)) {
+							if (!isInsideDirectory(options.downloadsDirectory, download.savePath)) {
+								throw new Error(DOWNLOAD_DELETE_ERROR);
+							}
+							const file = lstatSync(download.savePath);
+							if (!file.isFile() && !file.isSymbolicLink()) throw new Error(DOWNLOAD_DELETE_ERROR);
+							await options.shell.trashItem(download.savePath);
+						}
+					} catch {
+						throw new Error(DOWNLOAD_DELETE_ERROR);
+					}
 					downloads = downloads.filter((candidate) => candidate.id !== input.id);
 					return publish(true);
+				}
 				default:
 					throw new Error("Unsupported download action");
 			}

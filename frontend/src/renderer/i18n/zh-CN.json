@@ -82,7 +82,7 @@
 	"browser.downloads.cancel": "取消 {{file}}",
 	"browser.downloads.open": "打开 {{file}}",
 	"browser.downloads.show": "在文件资源管理器中显示 {{file}}",
-	"browser.downloads.remove": "从列表中移除 {{file}}",
+	"browser.downloads.remove": "从计算机中删除 {{file}}",
 	"browser.downloads.progressLabel": "{{file}} 的下载进度",
 	"browser.downloads.showAll": "显示全部",
 	"browser.downloads.search": "搜索下载记录",
