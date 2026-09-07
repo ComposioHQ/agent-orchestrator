@@ -86,7 +86,7 @@ import { useLocalSignInDialogStore } from "../stores/local-signin-dialog-store";
 import { useShellMaybe } from "../lib/shell-context";
 import { useSidebarUpdateDismissal } from "../hooks/useSidebarUpdateDismissal";
 import { useRequestUpdateInstall } from "../hooks/useRequestUpdateInstall";
-import { useUpdateStatus } from "../hooks/useUpdateStatus";
+import { useUpdateStatus, requestUpdateDownload } from "../hooks/useUpdateStatus";
 import { MAX_SESSION_DISPLAY_NAME_LEN, useSessionRename } from "../hooks/useSessionRename";
 import { effectiveShortcutBindings, shortcutBindingKeys } from "../../shared/shortcuts";
 import {
@@ -2065,15 +2065,16 @@ function CloudAccountRailButton({ tabIndex }: { tabIndex: number }) {
  * this reason, so the staged build is read from there rather than from `state`.
  */
 type SidebarUpdateAction =
-	| { kind: "downloading"; percent: number }
+	| { kind: "downloading"; percent?: number; preparing: boolean }
 	| { kind: "download"; version?: string }
 	| { kind: "install"; version?: string; escalated: boolean }
 	| { kind: "retry" }
 	| null;
 
 function sidebarUpdateAction(status: UpdateStatus, availableDismissed: boolean): SidebarUpdateAction {
-	if (status.state === "downloading") {
-		return { kind: "downloading", percent: Math.min(100, Math.max(0, status.percent ?? 0)) };
+	if (status.state === "error" && status.staged?.ready !== true) return { kind: "retry" };
+	if (status.state === "downloading" || status.state === "preparing" || status.staged?.ready === false) {
+		return { kind: "downloading", percent: status.percent, preparing: status.state === "preparing" || status.staged?.ready === false };
 	}
 	// `staged` is the stamp the main process puts on every status; the
 	// `downloaded` fallback keeps this correct for any status that predates it
@@ -2098,7 +2099,7 @@ function sidebarUpdateAction(status: UpdateStatus, availableDismissed: boolean):
 	// actionable than "checks are failing". Only when there is nothing better to
 	// show does the failure take the row — it used to render nothing at all,
 	// which reads as "up to date" rather than "checks are not getting through".
-	if (status.checksFailing === true) return { kind: "retry" };
+	if (status.state === "error" || status.checkError || status.checksFailing === true) return { kind: "retry" };
 	return null;
 }
 
@@ -2160,13 +2161,13 @@ function UpdateStatusRow({
 							: t("shell.downloadUpdate")
 					}
 					className={cn(NAV_ROW_CLASS, "flex min-w-0 flex-1 items-center text-left [&_svg]:size-icon-md [&_svg]:shrink-0")}
-					onClick={() => void aoBridge.updates.download()}
+					onClick={() => void requestUpdateDownload()}
 					tabIndex={tabIndex}
 					type="button"
 				>
 					<Download aria-hidden="true" className="size-icon-lg shrink-0" />
 					<span className="min-w-0 flex-1">
-						<span className="block truncate tracking-tight">{t("shell.updateAvailable")}</span>
+						<span className="block truncate tracking-tight">{t("shell.downloadUpdate")}</span>
 						{versionLabel && (
 							<span className="block truncate text-caption font-normal text-passive">{versionLabel}</span>
 						)}
@@ -2197,7 +2198,8 @@ function UpdateStatusRow({
 			>
 				<Download aria-hidden="true" className="size-icon-lg shrink-0" />
 				<span className="min-w-0 flex-1 truncate tabular-nums">
-					{t("settings.updates.downloading", { percent: action.percent })}
+					{action.preparing ? t("settings.updates.preparing", { defaultValue: "Preparing update…" }) : action.percent === undefined ? t("settings.updates.startingDownload", { defaultValue: "Starting download…" }) : t("settings.updates.downloading", { percent: action.percent })}
+					{!action.preparing && action.percent !== undefined && <progress aria-label={t("settings.updates.progress")} max={100} value={action.percent} className="block h-1 w-full mt-1" />}
 				</span>
 			</div>
 		);
@@ -2215,7 +2217,7 @@ function UpdateStatusRow({
 			>
 				<AlertTriangle aria-hidden="true" className="size-icon-lg shrink-0" />
 				<span className="min-w-0 flex-1">
-					<span className="block truncate tracking-tight">{t("shell.updateCheckFailed")}</span>
+					<span className="block truncate tracking-tight">{status.message ?? status.checkError ?? t("shell.updateCheckFailed")}</span>
 					<span className="block truncate text-caption font-normal text-warning">
 						{t("shell.retryUpdateCheck")}
 					</span>
@@ -2233,9 +2235,7 @@ function UpdateStatusRow({
 					: t("shell.restartInstallUpdate")
 			}
 			className={cn(
-				"flex w-full items-center gap-2.5 rounded-lg border border-primary/35 bg-primary/12 p-2.5 text-left text-control font-medium text-primary transition-colors hover:bg-primary/18 [&_svg]:text-primary",
-				action.escalated &&
-					"border-working/35 bg-working/12 text-working hover:bg-working/18 [&_svg]:text-working",
+				"flex w-full items-center gap-2.5 rounded-lg border border-success/35 bg-success/12 p-2.5 text-left text-control font-medium text-success transition-colors hover:bg-success/18 [&_svg]:text-success",
 			)}
 			data-testid="sidebar-update-ready"
 			onClick={onRequestInstall}
@@ -2282,7 +2282,7 @@ function UpdateStatusRail({
 								: t("shell.downloadUpdate")
 						}
 						className="grid size-9 place-items-center rounded-lg text-passive transition-colors hover:bg-interactive-hover hover:text-foreground [&_svg]:size-4"
-						onClick={() => void aoBridge.updates.download()}
+						onClick={() => void requestUpdateDownload()}
 						tabIndex={tabIndex}
 						type="button"
 					>
@@ -2295,7 +2295,7 @@ function UpdateStatusRail({
 	}
 
 	if (action.kind === "downloading") {
-		const label = t("settings.updates.downloading", { percent: action.percent });
+		const label = action.preparing ? t("settings.updates.preparing", { defaultValue: "Preparing update…" }) : action.percent === undefined ? t("settings.updates.startingDownload", { defaultValue: "Starting download…" }) : t("settings.updates.downloading", { percent: action.percent });
 		return (
 			<Tooltip>
 				<TooltipTrigger asChild>
@@ -2346,9 +2346,7 @@ function UpdateStatusRail({
 					}
 					className={cn(
 						"grid size-9 place-items-center rounded-lg transition-colors [&_svg]:size-4",
-						action.escalated
-							? "bg-working/12 text-working hover:bg-working/18"
-							: "text-passive hover:bg-interactive-hover hover:text-foreground",
+						"bg-success/12 text-success hover:bg-success/18",
 					)}
 					onClick={onRequestInstall}
 					tabIndex={tabIndex}

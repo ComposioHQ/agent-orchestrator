@@ -41,10 +41,8 @@ export function RestartToUpdateDialog() {
 function RestartToUpdateDialogBody() {
 	const { t, i18n } = useTranslation();
 	const close = useUiStore((state) => state.closeUpdateInstallPrompt);
-	const status = useUpdateStatus();
-	// Subscription off: this only ever reads the already-cached workspace list,
-	// and the dialog must not open a second live workspace stream.
-	const workspace = useWorkspaceQuery({ subscribed: false });
+	const status = useUpdateStatus(undefined, true);
+	const workspace = useWorkspaceQuery();
 
 	const staged = status.staged;
 	const version = staged?.version ?? status.version;
@@ -79,6 +77,7 @@ function RestartToUpdateDialogBody() {
 				</div>
 
 				<div className={settingsDialogBodyClass}>
+					{(workspace.isError || workspace.isFetching || !workspace.data) && <p role="status">{t("update.restart.unknownWorkers", { defaultValue: "Current worker state could not be confirmed. Installing restarts AO and may interrupt current tasks." })}</p>}
 					{atRisk.length > 0 && (
 						<div
 							className="mb-4 rounded-md border border-warning/30 bg-warning/8 px-3 py-2.5"
@@ -123,7 +122,7 @@ function RestartToUpdateDialogBody() {
 					<Button type="button" variant="outline" size="sm" onClick={close}>
 						{t("confirm.cancel")}
 					</Button>
-					<Button type="button" variant="primary" size="sm" onClick={confirm}>
+					<Button type="button" variant="primary" size="sm" onClick={confirm} disabled={status.state !== "downloaded" && (!status.staged || status.staged.ready === false)}>
 						{t("update.restart.confirm")}
 					</Button>
 				</div>
