@@ -48,6 +48,7 @@ function RestartToUpdateDialogBody() {
 	const workspace = useWorkspaceQuery({ subscribed: false });
 
 	const [pending, setPending] = useState(false);
+	const [targetChanged, setTargetChanged] = useState(false);
 	const [failureDetail, setFailureDetail] = useState<string | null>(null);
 	const installing = useRef(false);
 	const mounted = useRef(true);
@@ -65,7 +66,7 @@ function RestartToUpdateDialogBody() {
 	}, []);
 
 	const version = confirmedBuild?.version ?? status.staged?.version ?? status.version;
-	const releaseNotes = confirmedBuild?.releaseNotes ?? status.releaseNotes;
+	const releaseNotes = confirmedBuild ? confirmedBuild.releaseNotes : status.releaseNotes;
 	const nightly = parseNightlyVersion(version);
 	const buildLabel = nightly
 		? t("shell.nightlyBuild", {
@@ -85,13 +86,20 @@ function RestartToUpdateDialogBody() {
 
 	const confirm = async () => {
 		// A ref guards same-turn clicks before React commits the disabled state.
-		if (installing.current) return;
+		if (installing.current || !version) return;
 		installing.current = true;
 		setConfirmedBuild({ version, releaseNotes });
 		setPending(true);
 		setFailureDetail(null);
 		try {
-			await aoBridge.updates.install();
+			const result = await aoBridge.updates.install(version);
+			if (result?.state === "confirmation-required") {
+				if (mounted.current) {
+					setConfirmedBuild({ version: result.version, releaseNotes: result.releaseNotes });
+					setTargetChanged(true);
+				}
+				return;
+			}
 			if (mounted.current) close();
 		} catch (error) {
 			if (mounted.current) {
@@ -163,6 +171,11 @@ function RestartToUpdateDialogBody() {
 						<p className="mt-1.5 text-sm leading-5 text-settings-muted">{t("update.restart.noNotes")}</p>
 					)}
 
+					{targetChanged && (
+						<p role="status" className="mt-3 text-sm text-settings-label">
+							{t("update.restart.targetChanged")}
+						</p>
+					)}
 					{failureDetail !== null && (
 						<div role="alert" className="space-y-1 text-sm text-destructive">
 							<p>{t("update.restart.prepareFailed")}</p>
@@ -176,7 +189,7 @@ function RestartToUpdateDialogBody() {
 					<Button type="button" variant="outline" size="sm" onClick={close} disabled={pending}>
 						{t("confirm.cancel")}
 					</Button>
-					<Button type="button" variant="primary" size="sm" onClick={confirm} disabled={pending}>
+					<Button type="button" variant="primary" size="sm" onClick={confirm} disabled={pending || !version}>
 						{pending ? t("update.restart.preparing") : t("update.restart.confirm")}
 					</Button>
 				</div>

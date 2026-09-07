@@ -15,6 +15,7 @@ import {
   type UpdateChannel,
   type UpdateSettings,
   type UpdateStatus,
+  type UpdateInstallResult,
 } from "./update-settings";
 import { reconcileFeaturePin } from "./feature-builds";
 import { evaluateEscalation } from "./escalation-evaluator";
@@ -98,7 +99,7 @@ let stagedVersion: string | undefined;
 // A persisted stamp is not an installer handoff in this process. In particular,
 // MacUpdater has no native feed/server after relaunch until it downloads again.
 let stagedInCurrentProcess = false;
-let macRestartPreparation: Promise<void> | undefined;
+let macRestartPreparation: Promise<UpdateInstallResult> | undefined;
 let macRestartRequested = false;
 let restartFailureHandler: (() => void) | undefined;
 let macRestartProgress: Awaited<ReturnType<typeof startMacUpdateProgress>> | undefined;
@@ -2146,7 +2147,10 @@ export function setUpdateRestartFailureHandler(handler: () => void): void { rest
 
 export function isUpdateRestartRequested(): boolean { return macRestartRequested; }
 
-export async function quitAndInstallUpdate(): Promise<void> {
+export async function quitAndInstallUpdate(confirmedVersion?: string): Promise<UpdateInstallResult> {
+  if (confirmedVersion !== undefined && (typeof confirmedVersion !== "string" || !confirmedVersion.trim())) {
+    throw new Error("A valid confirmed update version is required.");
+  }
   if (!app.isPackaged) return;
   if (awaitingStagedReplacement) {
     throw new Error("Check for updates and download an update before restarting to install.");
@@ -2156,17 +2160,30 @@ export async function quitAndInstallUpdate(): Promise<void> {
     throw new Error(blocker);
   }
   if (process.platform !== "darwin") {
+    if (confirmedVersion !== undefined && stagedVersion && confirmedVersion !== stagedVersion) {
+      return { state: "confirmation-required", version: stagedVersion,
+        releaseNotes: lastStatus.state === "downloaded" && lastStatus.version === stagedVersion ? lastStatus.releaseNotes : undefined };
+    }
     autoUpdater.quitAndInstall(false, true);
     return;
   }
   if (macRestartPreparation) return macRestartPreparation;
+  let confirmation: UpdateInstallResult;
   macRestartPreparation = runSerializedUpdaterOperation("manual-install", async () => {
     let progress: Awaited<ReturnType<typeof startMacUpdateProgress>> | undefined;
     try {
       if (!escalationStateDir || !hasStagedBuild()) {
         throw new Error("Check for updates and download an update before restarting to install.");
       }
-      if (!stagedInCurrentProcess) await prepareRememberedMacUpdate();
+      if (!stagedInCurrentProcess) {
+        confirmation = await prepareRememberedMacUpdate(confirmedVersion);
+        if (confirmation) return;
+      }
+      if (confirmedVersion !== undefined && stagedVersion && confirmedVersion !== stagedVersion) {
+        confirmation = { state: "confirmation-required", version: stagedVersion,
+          releaseNotes: lastStatus.state === "downloaded" && lastStatus.version === stagedVersion ? lastStatus.releaseNotes : undefined };
+        return;
+      }
       const version = stagedVersion;
       if (!version) throw new Error("The update is no longer ready to install. Check for updates again.");
       await waitForNativePreparation(version);
@@ -2193,7 +2210,7 @@ export async function quitAndInstallUpdate(): Promise<void> {
       broadcast({ state: "error", message: errorMessage(err) });
       throw err;
     }
-  }).finally(() => { if (!macRestartRequested) macRestartPreparation = undefined; });
+  }).then(() => confirmation).finally(() => { if (!macRestartRequested) macRestartPreparation = undefined; });
   return macRestartPreparation;
 }
 
@@ -2206,7 +2223,7 @@ async function waitForNativePreparation(version: string): Promise<void> {
   }
 }
 
-async function prepareRememberedMacUpdate(): Promise<void> {
+async function prepareRememberedMacUpdate(confirmedVersion?: string): Promise<UpdateInstallResult> {
   if (!escalationStateDir) throw new Error("Check for updates before restarting to install.");
   const settings = await reconcileAndPersist(escalationStateDir, await readUpdateSettings(escalationStateDir));
   configureFeed(settings);
@@ -2218,6 +2235,16 @@ async function prepareRememberedMacUpdate(): Promise<void> {
     const result = await checkForUpdatesWithDeadline();
     if (result?.isUpdateAvailable !== true) {
       throw new Error("The remembered update is no longer available on the selected channel. Check for updates and try again.");
+    }
+    // A remembered stamp is not permission to install a different release.
+    // Stop before downloading/arming it so cancelling the new confirmation
+    // cannot install the unconfirmed target on a later ordinary quit.
+    if (confirmedVersion !== undefined && result.updateInfo.version !== confirmedVersion) {
+      return {
+        state: "confirmation-required",
+        version: result.updateInfo.version,
+        releaseNotes: normalizeReleaseNotes(result.updateInfo.releaseNotes) ?? directFeedReleaseNotes,
+      };
     }
     activeUpdaterPhase = "download";
     pendingUpdateVersion = result.updateInfo.version;

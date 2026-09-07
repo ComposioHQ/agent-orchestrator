@@ -206,3 +206,34 @@ it("renders bounded recovery details as plain text", async () => {
 	expect(alert.querySelector("strong")).toBeNull();
 	expect(alert.lastElementChild?.textContent).toHaveLength(1000);
 });
+
+it("shows the replacement build and requires another explicit confirmation", async () => {
+	useUiStore.setState({ updateInstallPromptOpen: true });
+	updInstall.mockResolvedValueOnce({ state: "confirmation-required", version: "2.2.0", releaseNotes: "New release B" });
+	renderDialog({ state: "downloaded", version: "2.1.0", releaseNotes: "Old release A" });
+	await screen.findByText("Old release A");
+	await userEvent.click(screen.getByRole("button", { name: "Restart & install" }));
+	expect(updInstall).toHaveBeenCalledWith("2.1.0");
+	expect(await screen.findByText("New release B")).toBeVisible();
+	expect(screen.getByText("v2.2.0")).toBeVisible();
+	expect(screen.queryByText("Old release A")).toBeNull();
+	expect(useUiStore.getState().updateInstallPromptOpen).toBe(true);
+	expect(updInstall).toHaveBeenCalledTimes(1);
+	await userEvent.click(screen.getByRole("button", { name: "Restart & install" }));
+	expect(updInstall).toHaveBeenLastCalledWith("2.2.0");
+	expect(useUiStore.getState().updateInstallPromptOpen).toBe(false);
+});
+
+it("does not reuse old release notes when a replacement has none and allows cancelling", async () => {
+	useUiStore.setState({ updateInstallPromptOpen: true });
+	updInstall.mockResolvedValueOnce({ state: "confirmation-required", version: "2.2.0" });
+	renderDialog({ state: "downloaded", version: "2.1.0", releaseNotes: "Old release A" });
+	await screen.findByText("Old release A");
+	await userEvent.click(screen.getByRole("button", { name: "Restart & install" }));
+	expect(await screen.findByText("v2.2.0")).toBeVisible();
+	expect(screen.queryByText("Old release A")).toBeNull();
+	expect(screen.getByRole("status")).toHaveTextContent("confirm again");
+	await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
+	expect(updInstall).toHaveBeenCalledTimes(1);
+	expect(useUiStore.getState().updateInstallPromptOpen).toBe(false);
+});

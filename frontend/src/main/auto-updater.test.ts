@@ -2732,6 +2732,58 @@ describe("quitAndInstallUpdate", () => {
     vi.resetModules();
   });
 
+  it("requires new confirmation before downloading a changed remembered target", async () => {
+    const restore = stubProcess("darwin", "/usr/bin/node");
+    try {
+      writeFileSync(nodePath.join(stateDir, "staged-update.json"), JSON.stringify({ version: "2.1.0", stagedAt: Date.now(), channel: "latest" }));
+      const { module, autoUpdater, updaterEvents, startMacUpdateProgress } = await importAutoUpdater({ enabled: false, channel: "latest", nightlyAck: false, feature: null });
+      await module.startAutoUpdates(stateDir);
+      autoUpdater.checkForUpdates.mockResolvedValue({ isUpdateAvailable: true, updateInfo: { version: "2.2.0", releaseNotes: "New release B" } });
+      autoUpdater.downloadUpdate.mockImplementation(async () => {
+        updaterEvents.get("update-downloaded")?.({ version: "2.2.0" });
+        return [];
+      });
+      await expect(module.quitAndInstallUpdate("2.1.0")).resolves.toEqual({
+        state: "confirmation-required", version: "2.2.0", releaseNotes: "New release B",
+      });
+      expect(autoUpdater.downloadUpdate).not.toHaveBeenCalled();
+      expect(startMacUpdateProgress).not.toHaveBeenCalled();
+      expect(autoUpdater.quitAndInstall).not.toHaveBeenCalled();
+      await module.quitAndInstallUpdate("2.2.0");
+      expect(autoUpdater.downloadUpdate).toHaveBeenCalledTimes(1);
+      expect(autoUpdater.quitAndInstall).toHaveBeenCalledTimes(1);
+    } finally { restore(); }
+  });
+
+  it("does not install a newer build already staged after the dialog opened", async () => {
+    const restore = stubProcess("darwin", "/usr/bin/node");
+    try {
+      const { module, autoUpdater, updaterEvents, startMacUpdateProgress } = await importAutoUpdater();
+      await module.startAutoUpdates(stateDir);
+      updaterEvents.get("update-downloaded")?.({ version: "2.2.0", releaseNotes: "Staged release B" });
+      await expect(module.quitAndInstallUpdate("2.1.0")).resolves.toMatchObject({ state: "confirmation-required", version: "2.2.0", releaseNotes: "Staged release B" });
+      expect(startMacUpdateProgress).not.toHaveBeenCalled();
+      expect(autoUpdater.quitAndInstall).not.toHaveBeenCalled();
+      await module.quitAndInstallUpdate("2.2.0");
+      expect(autoUpdater.quitAndInstall).toHaveBeenCalledTimes(1);
+    } finally { restore(); }
+  });
+
+  it("requires confirmation again if the feed changes a second time", async () => {
+    const restore = stubProcess("darwin", "/usr/bin/node");
+    try {
+      writeFileSync(nodePath.join(stateDir, "staged-update.json"), JSON.stringify({ version: "2.1.0", stagedAt: Date.now(), channel: "latest" }));
+      const { module, autoUpdater } = await importAutoUpdater({ enabled: false, channel: "latest", nightlyAck: false, feature: null });
+      await module.startAutoUpdates(stateDir);
+      for (const [confirmed, offered] of [["2.1.0", "2.2.0"], ["2.2.0", "2.3.0"]]) {
+        autoUpdater.checkForUpdates.mockResolvedValue({ isUpdateAvailable: true, updateInfo: { version: offered } });
+        await expect(module.quitAndInstallUpdate(confirmed)).resolves.toMatchObject({ state: "confirmation-required", version: offered });
+      }
+      expect(autoUpdater.downloadUpdate).not.toHaveBeenCalled();
+      expect(autoUpdater.quitAndInstall).not.toHaveBeenCalled();
+    } finally { restore(); }
+  });
+
   it("prepares a remembered macOS update again before requesting restart", async () => {
     const restore = stubProcess("darwin", "/usr/bin/node");
     try {

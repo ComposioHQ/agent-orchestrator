@@ -1087,6 +1087,7 @@
 	"update.restart.sessionsBody": "Restarting stops these mid-turn. Terminal sessions and Codex chat sessions reconnect on their own.",
 	"update.restart.confirm": "Restart & install",
 	"update.restart.preparing": "Preparing update…",
+	"update.restart.targetChanged": "A different update is now available. Review its version and release notes, then confirm again.",
 	"update.restart.prepareFailed": "AO could not prepare the update. Please try again.",
 	"update.restart.installsOnQuit": "This build also installs on its own the next time you quit the app.",
 	"settings.updates": "Updates",
