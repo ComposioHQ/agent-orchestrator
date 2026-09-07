@@ -15,12 +15,13 @@ import {
 	X,
 	XCircle,
 } from "lucide-react";
-import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
+import { useEffect, useReducer, useRef, useState, type FormEvent, type ReactNode } from "react";
 import type { components } from "../../api/schema";
 import type { ImportFolderScan } from "../../preload";
 import { useCloudCp } from "../hooks/useCloudCp";
 import { useCloudGate } from "../hooks/useCloudGate";
 import { useCloudOrg } from "../hooks/useCloudOrg";
+import { usePreparedClone } from "../hooks/usePreparedClone";
 import { cloudProjectsQueryKey } from "../hooks/useWorkspaceQuery";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
 import { aoBridge } from "../lib/bridge";
@@ -37,7 +38,12 @@ import { Input } from "./ui/input";
 import { Label } from "./ui/label";
 import { Tabs, TabsList, TabsTrigger } from "./ui/tabs";
 
-export type CreateProjectInput = { path: string; asWorkspace?: boolean; defaultBranch?: string } & CreateProjectAgentSelection;
+export type CreateProjectInput = {
+	path: string;
+	asWorkspace?: boolean;
+	defaultBranch?: string;
+	clonePreparationId?: string;
+} & CreateProjectAgentSelection;
 export type CloneProjectInput = Pick<CloneRepositorySelection, "remoteUrl" | "destinationParent"> &
 	CreateProjectAgentSelection;
 
@@ -50,6 +56,11 @@ const GIT_ACTION_LABELS: Record<string, string> = {
 type ImportValidationResult = components["schemas"]["ImportValidationResult"];
 type GitPreparationEvent = components["schemas"]["GitPreparationEvent"];
 type ProjectImportStep = "blocked" | "prepare_git";
+type CreateProjectView = "source" | "clone" | "folder" | ProjectImportStep | null;
+type CreateProjectViewAction =
+	| { type: "open"; view: Exclude<CreateProjectView, null> }
+	| { type: "close"; view: Exclude<CreateProjectView, null> }
+	| { type: "closeProjectImport" };
 type DisplayImportRepo = ImportFolderScan["repos"][number] & {
 	requiredActions: string[];
 	blockingErrors: string[];
@@ -72,6 +83,12 @@ function initialCloneDetails(): CloneRepositoryDetails {
 		destinationParent:
 			typeof window === "undefined" ? "" : (window.localStorage.getItem(LAST_CLONE_DESTINATION_KEY) ?? ""),
 	};
+}
+
+function createProjectViewReducer(state: CreateProjectView, action: CreateProjectViewAction): CreateProjectView {
+	if (action.type === "open") return action.view;
+	if (action.type === "closeProjectImport") return state === "blocked" || state === "prepare_git" ? null : state;
+	return state === action.view ? null : state;
 }
 
 function createProgressMessage(stage: CreateProgressStage, workspace: boolean): string {
@@ -128,18 +145,19 @@ export function CreateProjectFlow({
 	const { t } = useTranslation();
 	const resolvedIdleLabel = idleLabel ?? t("createProject.newProject");
 	const [error, setError] = useState<string | null>(null);
-	const [modePickerOpen, setModePickerOpen] = useState(false);
-	const [cloneDialogOpen, setCloneDialogOpen] = useState(false);
+	const [activeView, dispatchView] = useReducer(createProjectViewReducer, null);
+	const modePickerOpen = activeView === "source";
+	const cloneDialogOpen = activeView === "clone";
 	const [cloneDetails, setCloneDetails] = useState<CloneRepositoryDetails>(initialCloneDetails);
 	const [cloneSelection, setCloneSelection] = useState<CloneRepositorySelection | null>(null);
-	const preparedClonePathRef = useRef<string | null>(null);
-	const [folderPickerOpen, setFolderPickerOpen] = useState(false);
+	const preparedClone = usePreparedClone();
+	const folderPickerOpen = activeView === "folder";
 	const [childTransitioning, setChildTransitioning] = useState(false);
 	const [selectedKind, setSelectedKind] = useState<ProjectKind>(mode === "workspace" ? "workspace" : "single_repo");
 	const [selectedPath, setSelectedPath] = useState<string | null>(null);
 	const [validationScan, setValidationScan] = useState<ImportFolderScan | null>(null);
 	const [projectValidation, setProjectValidation] = useState<ImportValidationResult | null>(null);
-	const [projectImportStep, setProjectImportStep] = useState<ProjectImportStep | null>(null);
+	const projectImportStep = activeView === "blocked" || activeView === "prepare_git" ? activeView : null;
 	const [projectPrepEvents, setProjectPrepEvents] = useState<GitPreparationEvent[]>([]);
 	const [projectApprovedActions, setProjectApprovedActions] = useState<string[]>([]);
 	const [projectRemoteUrl, setProjectRemoteUrl] = useState("");
@@ -150,7 +168,6 @@ export function CreateProjectFlow({
 	const [isInitializing, setIsInitializing] = useState(false);
 	const [createProgress, setCreateProgress] = useState({ open: false, value: 0, stage: "starting" as CreateProgressStage });
 	const [isPreparingGit, setIsPreparingGit] = useState(false);
-	const [isCleaningClone, setIsCleaningClone] = useState(false);
 	const [repositorySetup, setRepositorySetup] = useState<"NOT_A_GIT_REPO" | "PROJECT_UNBORN" | null>(null);
 	const [repositorySetupWarning, setRepositorySetupWarning] = useState<string | null>(null);
 	// A path that arrived via droppedPath, staged until the user confirms
@@ -170,7 +187,11 @@ export function CreateProjectFlow({
 	const hasModePicker = mode === "choose";
 	const projectImportOpen = projectImportStep !== null && projectValidation !== null;
 	const folderDialogOpen = folderPickerOpen && validationScan !== null;
-	const isBusy = isChoosingPath || isCreating || isInitializing || isPreparingGit || isCleaningClone;
+	const isBusy = isChoosingPath || isCreating || isInitializing || isPreparingGit || preparedClone.isCleaning;
+	const setModePickerOpen = (open: boolean) => dispatchView(open ? { type: "open", view: "source" } : { type: "close", view: "source" });
+	const setCloneDialogOpen = (open: boolean) => dispatchView(open ? { type: "open", view: "clone" } : { type: "close", view: "clone" });
+	const setFolderPickerOpen = (open: boolean) => dispatchView(open ? { type: "open", view: "folder" } : { type: "close", view: "folder" });
+	const setProjectImportStep = (step: ProjectImportStep | null) => dispatchView(step ? { type: "open", view: step } : { type: "closeProjectImport" });
 
 	useEffect(() => {
 		if (!createProgress.open) return;
@@ -212,26 +233,15 @@ export function CreateProjectFlow({
 		window.setTimeout(() => setProjectImportShake(false), 320);
 	};
 
-	const rememberPreparedClone = (path: string | null) => {
-		preparedClonePathRef.current = path;
-	};
-
 	const abandonPreparedClone = async (): Promise<boolean> => {
-		const path = preparedClonePathRef.current;
-		if (!path) return true;
-		setIsCleaningClone(true);
 		try {
-			const { error: cleanupError } = await apiClient.POST("/api/v1/projects/clone/cleanup", { body: { path } });
-			if (cleanupError) throw new Error("clone cleanup failed");
-			rememberPreparedClone(null);
+			await preparedClone.cleanup();
 			return true;
 		} catch {
 			reportProjectError(t("createProject.cloneCleanupFailed", {
 				defaultValue: "AO could not remove the incomplete checkout. Try again before leaving this flow.",
 			}));
 			return false;
-		} finally {
-			setIsCleaningClone(false);
 		}
 	};
 
@@ -248,7 +258,7 @@ export function CreateProjectFlow({
 	};
 
 	const selectSource = async (source: ProjectSource) => {
-		if (preparedClonePathRef.current && !(await abandonPreparedClone())) return;
+		if (preparedClone.current() && !(await abandonPreparedClone())) return;
 		const presetPath = pendingDropPath;
 		setPendingDropPath(null);
 		setError(null);
@@ -261,7 +271,7 @@ export function CreateProjectFlow({
 			return;
 		}
 		setCloneSelection(null);
-		rememberPreparedClone(null);
+		preparedClone.complete();
 		// Keep the selector mounted behind the native picker. Closing it first
 		// exposes a blank compositor frame on Windows before Explorer takes focus.
 		void chooseDirectory(source === "workspace" ? "workspace" : "single_repo", presetPath ?? undefined);
@@ -445,13 +455,14 @@ export function CreateProjectFlow({
 		}
 		try {
 			if (cloneSelection) {
-				if (!preparedClonePathRef.current) throw new Error(t("createProject.couldNotAdd"));
-				await onCreateProject({ path: selectedPath, ...selection });
+				const prepared = preparedClone.current();
+				if (!prepared) throw new Error(t("createProject.couldNotAdd"));
+				await onCreateProject({ path: selectedPath, clonePreparationId: prepared.preparationId, ...selection });
 				setCreateProgress({ open: true, stage: "complete", value: 100 });
 				await new Promise((resolve) => window.setTimeout(resolve, 180));
 				setSelectedPath(null);
 				setCloneSelection(null);
-				rememberPreparedClone(null);
+				preparedClone.complete();
 				return;
 			}
 			if (selectedKind === "single_repo" && repositorySetup) {
@@ -519,20 +530,13 @@ export function CreateProjectFlow({
 	};
 
 	const prepareClone = async (next: CloneRepositorySelection) => {
-		if (preparedClonePathRef.current && !(await abandonPreparedClone())) return;
+		if (preparedClone.current() && !(await abandonPreparedClone())) return;
 		setError(null);
 		setIsPreparingGit(true);
 		let clonedPath: string | null = null;
 		try {
-			const { data, error: apiError } = await apiClient.POST("/api/v1/projects/clone/prepare", {
-			body: {
-				remoteUrl: next.remoteUrl,
-				destinationParent: next.destinationParent,
-			},
-			});
-			if (apiError || !data) throw new Error(apiErrorMessage(apiError, t("createProject.couldNotAdd")));
+			const data = await preparedClone.prepare(next.remoteUrl, next.destinationParent);
 			clonedPath = data.path;
-			rememberPreparedClone(data.path);
 			const validation = await validateImportFolder(data.path, "project");
 			setCloneDialogOpen(false);
 			setCloneSelection(next);
@@ -853,7 +857,8 @@ export function CreateProjectFlow({
 						onBack={() => {
 							setError(null);
 							setValidationScan(null);
-							setFolderPickerOpen(false);
+							if (hasModePicker) setModePickerOpen(true);
+							else setFolderPickerOpen(false);
 						}}
 						onChooseFolder={() => void chooseDirectory(selectedKind)}
 						onOpenChange={(open) => {

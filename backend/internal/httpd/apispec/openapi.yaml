@@ -6796,6 +6796,8 @@ components:
       properties:
         asWorkspace:
           type: boolean
+        clonePreparationId:
+          type: string
         config:
           $ref: '#/components/schemas/ProjectConfig'
         name:
@@ -7363,11 +7365,14 @@ components:
       properties:
         path:
           type: string
+        preparationId:
+          type: string
         remoteUrl:
           type: string
       required:
       - path
       - remoteUrl
+      - preparationId
       type: object
     CloneProjectInput:
       properties:
@@ -10066,8 +10071,12 @@ components:
         path:
           minLength: 1
           type: string
+        preparationId:
+          minLength: 1
+          type: string
       required:
       - path
+      - preparationId
       type: object
     ProjectConfig:
       properties:

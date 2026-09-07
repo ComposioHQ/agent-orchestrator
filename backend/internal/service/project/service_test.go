@@ -56,12 +56,14 @@ func prepareClone(t *testing.T, m project.Manager, remoteURL string) project.Clo
 	return prepared
 }
 
-func cleanupPreparedClone(t *testing.T, m project.Manager, path string) {
+func cleanupPreparedClone(t *testing.T, m project.Manager, prepared project.ClonePreparationResult) {
 	t.Helper()
-	if err := m.CleanupPreparedClone(context.Background(), project.ClonePreparationCleanupInput{Path: path}); err != nil {
+	if err := m.CleanupPreparedClone(context.Background(), project.ClonePreparationCleanupInput{
+		Path: prepared.Path, PreparationID: prepared.PreparationID,
+	}); err != nil {
 		t.Fatalf("CleanupPreparedClone: %v", err)
 	}
-	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+	if _, err := os.Stat(prepared.Path); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("prepared checkout still exists after cleanup: %v", err)
 	}
 }
@@ -261,13 +263,18 @@ func TestManager_PrepareClonePreservesEmptyRepositoryForImportSetup(t *testing.T
 	if prepared.RemoteURL != emptyURL {
 		t.Fatalf("PrepareClone remote URL = %q, want %q", prepared.RemoteURL, emptyURL)
 	}
+	if prepared.PreparationID == "" {
+		t.Fatal("PrepareClone preparation ID is empty")
+	}
 	if _, err := os.Stat(filepath.Join(prepared.Path, ".git")); err != nil {
 		t.Fatalf("prepared checkout missing .git: %v", err)
 	}
 	if listed, err := m.List(ctx); err != nil || len(listed) != 0 {
 		t.Fatalf("List after PrepareClone = %#v, %v; preparation must not register", listed, err)
 	}
-	if err := m.CleanupPreparedClone(ctx, project.ClonePreparationCleanupInput{Path: prepared.Path}); err != nil {
+	if err := m.CleanupPreparedClone(ctx, project.ClonePreparationCleanupInput{
+		Path: prepared.Path, PreparationID: prepared.PreparationID,
+	}); err != nil {
 		t.Fatalf("CleanupPreparedClone: %v", err)
 	}
 	if _, err := os.Stat(prepared.Path); !errors.Is(err, os.ErrNotExist) {
@@ -287,7 +294,7 @@ func TestManager_PreparedCloneCanBeCleanedUpAfterAddFailure(t *testing.T) {
 		invalidID := "not a valid project id"
 		_, err := m.Add(ctx, project.AddInput{Path: prepared.Path, ProjectID: &invalidID})
 		wantCode(t, err, "INVALID_PROJECT_ID")
-		cleanupPreparedClone(t, m, prepared.Path)
+		cleanupPreparedClone(t, m, prepared)
 	})
 
 	t.Run("store failure", func(t *testing.T) {
@@ -301,7 +308,7 @@ func TestManager_PreparedCloneCanBeCleanedUpAfterAddFailure(t *testing.T) {
 
 		_, err = m.Add(ctx, project.AddInput{Path: prepared.Path})
 		wantCode(t, err, "PROJECT_ADD_FAILED")
-		cleanupPreparedClone(t, m, prepared.Path)
+		cleanupPreparedClone(t, m, prepared)
 	})
 
 	t.Run("clone registration failure", func(t *testing.T) {
@@ -322,6 +329,38 @@ func TestManager_PreparedCloneCanBeCleanedUpAfterAddFailure(t *testing.T) {
 	})
 }
 
+func TestManager_CleanupPreparedCloneRejectsStalePreparationID(t *testing.T) {
+	ctx := context.Background()
+	m := newManager(t)
+	source := gitRepo(t)
+	prepared := prepareClone(t, m, (&url.URL{Scheme: "file", Path: source}).String())
+
+	err := m.CleanupPreparedClone(ctx, project.ClonePreparationCleanupInput{
+		Path: prepared.Path, PreparationID: "stale-preparation",
+	})
+	wantCode(t, err, "CLONE_PREPARATION_MISMATCH")
+	if _, err := os.Stat(prepared.Path); err != nil {
+		t.Fatalf("stale cleanup removed prepared checkout: %v", err)
+	}
+	cleanupPreparedClone(t, m, prepared)
+}
+
+func TestManager_AddPreparedCloneRejectsStalePreparationID(t *testing.T) {
+	ctx := context.Background()
+	m := newManager(t)
+	source := gitRepo(t)
+	prepared := prepareClone(t, m, (&url.URL{Scheme: "file", Path: source}).String())
+
+	_, err := m.Add(ctx, project.AddInput{
+		Path: prepared.Path, ClonePreparationID: "stale-preparation",
+	})
+	wantCode(t, err, "CLONE_PREPARATION_MISMATCH")
+	if listed, listErr := m.List(ctx); listErr != nil || len(listed) != 0 {
+		t.Fatalf("List after rejected preparation = %#v, %v; want no registration", listed, listErr)
+	}
+	cleanupPreparedClone(t, m, prepared)
+}
+
 func TestManager_CleanupPreparedClonePreservesRegisteredProject(t *testing.T) {
 	ctx := context.Background()
 	m := newManager(t)
@@ -329,16 +368,25 @@ func TestManager_CleanupPreparedClonePreservesRegisteredProject(t *testing.T) {
 	remoteURL := (&url.URL{Scheme: "file", Path: source}).String()
 	destinationParent := t.TempDir()
 
-	cloned, err := m.Clone(ctx, project.CloneInput{RemoteURL: remoteURL, DestinationParent: destinationParent})
+	prepared, err := m.PrepareClone(ctx, project.CloneInput{RemoteURL: remoteURL, DestinationParent: destinationParent})
 	if err != nil {
-		t.Fatalf("Clone: %v", err)
+		t.Fatalf("PrepareClone: %v", err)
+	}
+	cloned, err := m.Add(ctx, project.AddInput{Path: prepared.Path, ClonePreparationID: prepared.PreparationID})
+	if err != nil {
+		t.Fatalf("Add: %v", err)
 	}
 	marker := filepath.Join(cloned.Path, ".git", ".ao-clone-prepared")
-	if err := os.WriteFile(marker, []byte("stale marker"), 0o600); err != nil {
+	if _, err := os.Stat(marker); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("successful registration retained preparation marker: %v", err)
+	}
+	if err := os.WriteFile(marker, []byte(prepared.PreparationID), 0o600); err != nil {
 		t.Fatalf("write stale marker: %v", err)
 	}
 
-	if err := m.CleanupPreparedClone(ctx, project.ClonePreparationCleanupInput{Path: cloned.Path}); err != nil {
+	if err := m.CleanupPreparedClone(ctx, project.ClonePreparationCleanupInput{
+		Path: cloned.Path, PreparationID: prepared.PreparationID,
+	}); err != nil {
 		t.Fatalf("CleanupPreparedClone: %v", err)
 	}
 	if _, err := os.Stat(cloned.Path); err != nil {

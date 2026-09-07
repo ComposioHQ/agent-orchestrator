@@ -366,7 +366,7 @@ describe("CreateProjectFlow droppedPath", () => {
 	it("routes an empty clone through Prepare project", async () => {
 		const user = userEvent.setup();
 		apiMocks.POST
-			.mockResolvedValueOnce({ data: { path: "/repo/empty-repository", remoteUrl: "file:///source/empty-repository.git" } })
+			.mockResolvedValueOnce({ data: { path: "/repo/empty-repository", remoteUrl: "file:///source/empty-repository.git", preparationId: "prep-empty" } })
 			.mockResolvedValueOnce({
 				data: projectValidation("/repo/empty-repository", {
 					nextStep: "prepare_git",
@@ -405,7 +405,7 @@ describe("CreateProjectFlow droppedPath", () => {
 		fireEvent.click(await screen.findByText("Continue clone"));
 		expect(screen.getByTestId("clone-dialog")).toBeInTheDocument();
 
-		resolveClone({ data: { path: "/repo/empty-repository", remoteUrl: "file:///source/empty-repository.git" } });
+		resolveClone({ data: { path: "/repo/empty-repository", remoteUrl: "file:///source/empty-repository.git", preparationId: "prep-empty" } });
 		await waitFor(() => expect(apiMocks.POST).toHaveBeenCalledWith("/api/v1/imports/validate", expect.anything()));
 		expect(screen.getByTestId("clone-dialog")).toBeInTheDocument();
 		resolveValidation({ data: projectValidation("/repo/empty-repository", { nextStep: "prepare_git" }) });
@@ -417,7 +417,7 @@ describe("CreateProjectFlow droppedPath", () => {
 		const user = userEvent.setup();
 		apiMocks.POST.mockImplementation(async (path: string) => {
 			if (path === "/api/v1/projects/clone/prepare") {
-				return { data: { path: "/repo/incomplete", remoteUrl: "file:///source/incomplete.git" } };
+				return { data: { path: "/repo/incomplete", remoteUrl: "file:///source/incomplete.git", preparationId: "prep-incomplete" } };
 			}
 			if (path === "/api/v1/imports/validate") {
 				return { error: { message: "rpc failed: request_id=secret" } };
@@ -431,7 +431,7 @@ describe("CreateProjectFlow droppedPath", () => {
 
 		await waitFor(() => expect(apiMocks.POST).toHaveBeenCalledWith(
 			"/api/v1/projects/clone/cleanup",
-			{ body: { path: "/repo/incomplete" } },
+			{ body: { path: "/repo/incomplete", preparationId: "prep-incomplete" } },
 		));
 		expect(screen.getByTestId("clone-dialog")).toBeInTheDocument();
 		expect(useUiStore.getState().globalToast?.body).toBe(
@@ -445,7 +445,7 @@ describe("CreateProjectFlow droppedPath", () => {
 		let cleanupAttempts = 0;
 		apiMocks.POST.mockImplementation(async (path: string) => {
 			if (path === "/api/v1/projects/clone/prepare") {
-				return { data: { path: "/repo/incomplete", remoteUrl: "file:///source/incomplete.git" } };
+				return { data: { path: "/repo/incomplete", remoteUrl: "file:///source/incomplete.git", preparationId: "prep-incomplete" } };
 			}
 			if (path === "/api/v1/imports/validate") return { error: { message: "validation unavailable" } };
 			if (path === "/api/v1/projects/clone/cleanup") {
@@ -489,13 +489,17 @@ describe("CreateProjectFlow droppedPath", () => {
 			finishCreate = resolve;
 		}));
 		apiMocks.POST
-			.mockResolvedValueOnce({ data: { path: "/repo/cloned", remoteUrl: "file:///source/cloned.git" } })
+			.mockResolvedValueOnce({ data: { path: "/repo/cloned", remoteUrl: "file:///source/cloned.git", preparationId: "prep-cloned" } })
 			.mockResolvedValueOnce({ data: projectValidation("/repo/cloned") });
 
 		renderChooseFlow({ onCreateProject });
 		await openSource(user, "Clone from Git");
 		fireEvent.click(await screen.findByText("Continue clone"));
 		await user.click(await screen.findByRole("button", { name: "Submit agents" }));
+		expect(onCreateProject).toHaveBeenCalledWith(expect.objectContaining({
+			path: "/repo/cloned",
+			clonePreparationId: "prep-cloned",
+		}));
 		expect(await screen.findByRole("dialog", { name: "Creating the project" })).toBeInTheDocument();
 
 		expect(screen.queryByRole("button", { name: "Cancel" })).not.toBeInTheDocument();

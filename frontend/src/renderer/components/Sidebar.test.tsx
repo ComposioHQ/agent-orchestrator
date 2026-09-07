@@ -385,7 +385,7 @@ beforeEach(() => {
 	postMock.mockImplementation(async (path: string, options?: { body?: { importKind?: string; path?: string } }) => {
 		if (path === "/api/v1/projects/clone/prepare") {
 			return {
-				data: { path: "/repo/web-app", remoteUrl: "git@github.com:acme/web-app.git" },
+				data: { path: "/repo/web-app", remoteUrl: "git@github.com:acme/web-app.git", preparationId: "prep-web-app" },
 				error: undefined,
 			};
 		}
@@ -954,6 +954,7 @@ describe("Sidebar", () => {
 		await user.click(screen.getByRole("button", { name: "Clone" }));
 		await waitFor(() => expect(onCreateProject).toHaveBeenCalledWith(expect.objectContaining({
 			path: "/repo/web-app",
+			clonePreparationId: "prep-web-app",
 			workerAgent: "claude-code",
 			orchestratorAgent: "claude-code",
 		})));

@@ -2411,6 +2411,7 @@ export interface components {
         };
         AddProjectInput: {
             asWorkspace?: boolean;
+            clonePreparationId?: string;
             config?: components["schemas"]["ProjectConfig"];
             name?: null | string;
             path: string;
@@ -2618,6 +2619,7 @@ export interface components {
         };
         ClonePreparationResult: {
             path: string;
+            preparationId: string;
             remoteUrl: string;
         };
         CloneProjectInput: {
@@ -3596,6 +3598,7 @@ export interface components {
         };
         ProjectClonePreparationCleanupInput: {
             path: string;
+            preparationId: string;
         };
         ProjectConfig: {
             agentConfig?: components["schemas"]["AgentConfig"];

@@ -11,11 +11,12 @@ type GetResult struct {
 
 // AddInput is the body shape for POST /api/v1/projects.
 type AddInput struct {
-	Path        string                `json:"path"`
-	ProjectID   *string               `json:"projectId,omitempty"`
-	Name        *string               `json:"name,omitempty"`
-	Config      *domain.ProjectConfig `json:"config,omitempty"`
-	AsWorkspace bool                  `json:"asWorkspace,omitempty"`
+	Path               string                `json:"path"`
+	ProjectID          *string               `json:"projectId,omitempty"`
+	Name               *string               `json:"name,omitempty"`
+	Config             *domain.ProjectConfig `json:"config,omitempty"`
+	AsWorkspace        bool                  `json:"asWorkspace,omitempty"`
+	ClonePreparationID string                `json:"clonePreparationId,omitempty"`
 }
 
 // CloneInput is the body shape for POST /api/v1/projects/clone. The daemon
@@ -31,14 +32,16 @@ type CloneInput struct {
 
 // ClonePreparationResult is the checkout returned before project registration.
 type ClonePreparationResult struct {
-	Path      string `json:"path"`
-	RemoteURL string `json:"remoteUrl"`
+	Path          string `json:"path"`
+	RemoteURL     string `json:"remoteUrl"`
+	PreparationID string `json:"preparationId"`
 }
 
 // ClonePreparationCleanupInput identifies a checkout created by prepare-clone
 // that the user abandoned before project registration.
 type ClonePreparationCleanupInput struct {
-	Path string `json:"path" minLength:"1"`
+	Path          string `json:"path" minLength:"1"`
+	PreparationID string `json:"preparationId" minLength:"1"`
 }
 
 // InitializeRepositoryInput is the body shape for POST /api/v1/projects/initialize.

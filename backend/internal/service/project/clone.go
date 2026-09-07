@@ -2,6 +2,9 @@ package project
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/subtle"
+	"encoding/hex"
 	"errors"
 	"net/url"
 	"os"
@@ -37,18 +40,19 @@ func (m *Service) Clone(ctx context.Context, in CloneInput) (Project, error) {
 		return Project{}, err
 	}
 	if !repoHasCommit(ctx, prepared.Path) {
-		m.cleanupPreparedCloneAfterFailure(ctx, prepared.Path)
+		m.cleanupPreparedCloneAfterFailure(ctx, prepared)
 		return Project{}, apierr.Invalid("CLONE_EMPTY_REPOSITORY", "AO needs a repository with at least one commit.", nil)
 	}
 
 	project, err := m.Add(ctx, AddInput{
-		Path:      prepared.Path,
-		ProjectID: in.ProjectID,
-		Name:      in.Name,
-		Config:    in.Config,
+		Path:               prepared.Path,
+		ProjectID:          in.ProjectID,
+		Name:               in.Name,
+		Config:             in.Config,
+		ClonePreparationID: prepared.PreparationID,
 	})
 	if err != nil {
-		m.cleanupPreparedCloneAfterFailure(ctx, prepared.Path)
+		m.cleanupPreparedCloneAfterFailure(ctx, prepared)
 		return Project{}, err
 	}
 	return project, nil
@@ -71,11 +75,14 @@ func (m *Service) CleanupPreparedClone(ctx context.Context, in ClonePreparationC
 	m.addMu.Lock()
 	defer m.addMu.Unlock()
 
-	marker := filepath.Join(path, ".git", clonePreparationMarker)
-	if _, err := os.Stat(marker); errors.Is(err, os.ErrNotExist) {
+	markerID, exists, err := readClonePreparationID(path)
+	if !exists && err == nil {
 		return nil
 	} else if err != nil {
 		return apierr.Invalid("CLONE_CLEANUP_FAILED", "The prepared clone could not be inspected.", map[string]any{"path": path})
+	}
+	if !sameClonePreparationID(markerID, in.PreparationID) {
+		return apierr.Conflict("CLONE_PREPARATION_MISMATCH", "This checkout belongs to a different clone preparation.", map[string]any{"path": path})
 	}
 	if _, registered, err := m.store.FindProjectByPath(ctx, path); err != nil {
 		return apierr.Invalid("CLONE_CLEANUP_FAILED", "The prepared clone registration state could not be inspected.", map[string]any{"path": path})
@@ -89,9 +96,11 @@ func (m *Service) CleanupPreparedClone(ctx context.Context, in ClonePreparationC
 	return nil
 }
 
-func (m *Service) cleanupPreparedCloneAfterFailure(ctx context.Context, path string) {
-	if err := m.CleanupPreparedClone(context.WithoutCancel(ctx), ClonePreparationCleanupInput{Path: path}); err != nil {
-		m.logger.Warn("project: failed to clean up prepared clone", "path", path, "error", err)
+func (m *Service) cleanupPreparedCloneAfterFailure(ctx context.Context, prepared ClonePreparationResult) {
+	if err := m.CleanupPreparedClone(context.WithoutCancel(ctx), ClonePreparationCleanupInput{
+		Path: prepared.Path, PreparationID: prepared.PreparationID,
+	}); err != nil {
+		m.logger.Warn("project: failed to clean up prepared clone", "path", prepared.Path, "error", err)
 	}
 }
 
@@ -155,7 +164,11 @@ func (m *Service) prepareClone(ctx context.Context, in CloneInput) (ClonePrepara
 	if ctx.Err() != nil {
 		return ClonePreparationResult{}, apierr.Invalid("GIT_CLONE_CANCELLED", "Repository cloning was cancelled.", nil)
 	}
-	if err := os.WriteFile(filepath.Join(temporaryPath, ".git", clonePreparationMarker), []byte("created by AO clone preparation\n"), 0o600); err != nil {
+	preparationID, err := newClonePreparationID()
+	if err != nil {
+		return ClonePreparationResult{}, apierr.Internal("CLONE_PREPARATION_FAILED", "AO could not identify the prepared clone")
+	}
+	if err := os.WriteFile(filepath.Join(temporaryPath, ".git", clonePreparationMarker), []byte(preparationID+"\n"), 0o600); err != nil {
 		return ClonePreparationResult{}, apierr.Invalid("CLONE_PREPARATION_FAILED", "AO could not mark the prepared clone for cleanup.", nil)
 	}
 	if err := os.Rename(temporaryPath, target); err != nil {
@@ -163,7 +176,32 @@ func (m *Service) prepareClone(ctx context.Context, in CloneInput) (ClonePrepara
 	}
 	cleanupPath = target
 	cleanupPath = ""
-	return ClonePreparationResult{Path: target, RemoteURL: remoteURL}, nil
+	return ClonePreparationResult{Path: target, RemoteURL: remoteURL, PreparationID: preparationID}, nil
+}
+
+func newClonePreparationID() (string, error) {
+	value := make([]byte, 32)
+	if _, err := rand.Read(value); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(value), nil
+}
+
+func readClonePreparationID(path string) (string, bool, error) {
+	value, err := os.ReadFile(filepath.Join(path, ".git", clonePreparationMarker))
+	if errors.Is(err, os.ErrNotExist) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	return strings.TrimSpace(string(value)), true, nil
+}
+
+func sameClonePreparationID(actual, requested string) bool {
+	actualBytes := []byte(actual)
+	requestedBytes := []byte(strings.TrimSpace(requested))
+	return len(actualBytes) == len(requestedBytes) && subtle.ConstantTimeCompare(actualBytes, requestedBytes) == 1
 }
 
 func removeClonePreparationMarker(path string) {

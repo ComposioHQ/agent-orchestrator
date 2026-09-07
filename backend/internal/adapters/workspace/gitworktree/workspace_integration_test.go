@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
@@ -59,6 +60,55 @@ func TestWorkspaceIntegrationCreateRestoreDestroy(t *testing.T) {
 	}
 	if err := ws.Destroy(ctx, restored); err != nil {
 		t.Fatalf("destroy restored: %v", err)
+	}
+}
+
+func TestWorkspaceIntegrationMixedWorkspaceContentReachesEverySessionKind(t *testing.T) {
+	git := requireGit(t)
+	tmp := t.TempDir()
+	rootRepo := setupOriginClone(t, git, filepath.Join(tmp, "root"))
+	childRepo := setupOriginClone(t, git, filepath.Join(tmp, "child"))
+	if err := os.MkdirAll(filepath.Join(rootRepo, "docs"), 0o755); err != nil {
+		t.Fatalf("create ordinary folder: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(rootRepo, "docs", "guide.md"), []byte("workspace guide\n"), 0o644); err != nil {
+		t.Fatalf("write ordinary workspace file: %v", err)
+	}
+	runGit(t, git, rootRepo, "add", "docs/guide.md")
+	runGit(t, git, rootRepo, "commit", "-m", "add workspace docs")
+	runGit(t, git, rootRepo, "push", "origin", "HEAD:main")
+
+	ws, err := New(Options{
+		Binary: git, ManagedRoot: filepath.Join(tmp, "managed"),
+		RepoResolver: StaticRepoResolver{"proj": rootRepo},
+	})
+	if err != nil {
+		t.Fatalf("new: %v", err)
+	}
+
+	for _, kind := range []domain.SessionKind{domain.KindWorker, domain.KindOrchestrator} {
+		t.Run(string(kind), func(t *testing.T) {
+			info, err := ws.CreateWorkspaceProject(context.Background(), ports.WorkspaceProjectConfig{
+				ProjectID: "proj", SessionID: domain.SessionID("mixed-" + kind), Kind: kind, Branch: "ao/mixed-" + string(kind),
+				RootRepoPath: rootRepo,
+				Repos: []ports.WorkspaceProjectRepoConfig{{
+					Name: "api", RelativePath: "services/api", RepoPath: childRepo,
+				}},
+			})
+			if err != nil {
+				t.Fatalf("create mixed workspace: %v", err)
+			}
+			t.Cleanup(func() {
+				if err := ws.DestroyWorkspaceProject(context.Background(), info); err != nil {
+					t.Errorf("destroy mixed workspace: %v", err)
+				}
+			})
+			for _, want := range []string{"docs/guide.md", "services/api/README.md"} {
+				if _, err := os.Stat(filepath.Join(info.Root.Path, filepath.FromSlash(want))); err != nil {
+					t.Errorf("%s session missing %s: %v", kind, want, err)
+				}
+			}
+		})
 	}
 }
 

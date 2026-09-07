@@ -61,14 +61,23 @@ test(`renderer: workspace import preserves the root branch and explains unresolv
 		bridge.app.chooseDirectory = async () => "/repos/local-root";
 		bridge.app.checkAncestorRepo = async () => undefined;
 		bridge.app.getRepositoryBranch = async () => "trunk";
-		bridge.app.scanImportFolder = async () => ({ path: "/repos/local-root", repos: [{
-			name: "api", path: "/repos/local-root/api", relativePath: "api", branch: "dev",
-			hasRemote: true, isRepo: true, hasCommit: true,
-			remote: "https://github.com/example/api.git", status: "ok",
-		}] });
+		bridge.app.scanImportFolder = async () => ({ path: "/repos/local-root", repos: [
+			{
+				name: "api", path: "/repos/local-root/api", relativePath: "api", branch: "dev",
+				hasRemote: true, isRepo: true, hasCommit: true,
+				remote: "https://github.com/example/api.git", status: "ok",
+			},
+			{
+				name: "docs", path: "/repos/local-root/docs", relativePath: "docs", branch: "",
+				hasRemote: false, isRepo: false, hasCommit: false, remote: "", status: "ok", needsGitInit: true,
+			},
+		] });
 	});
 	await page.getByRole("button", { name: "New project", exact: true }).first().click();
 	await page.getByRole("button", { name: "Import a workspace folder", exact: true }).click();
+	await expect(page.getByText("api", { exact: true })).toBeVisible();
+	await expect(page.getByText("docs", { exact: true })).toBeVisible();
+	await expect(page.getByRole("button", { name: /Not a Git repo.*Set up/ })).toBeVisible();
 	await page.getByRole("button", { name: "Continue", exact: true }).click();
 	await page.getByRole("button", { name: "Create workspace and start", exact: true }).click();
 	await expect(page).toHaveURL(/projects\/local-root/);

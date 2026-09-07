@@ -457,6 +457,7 @@ function ShellLayout() {
 			orchestratorAgent: string;
 			trackerIntake?: components["schemas"]["TrackerIntakeConfig"];
 			asWorkspace?: boolean;
+			clonePreparationId?: string;
 		}) => {
 			void addRendererExceptionStep("Project add requested", {
 				source: "project-add",
@@ -472,6 +473,7 @@ function ShellLayout() {
 				body: {
 					path: input.path,
 					asWorkspace: input.asWorkspace || undefined,
+					clonePreparationId: input.clonePreparationId,
 					config: createProjectConfig(input),
 				},
 			});
