@@ -325,6 +325,7 @@ function ShellLayout() {
 	// self-framed.
 	const selfFramedCenterPanel = isSettingsRoute;
 	const hideShellTopbar = isHomeRoute || selfFramedCenterPanel || shellTopbarHiddenByPlatform;
+	const restartingProjectIds = useUiStore((state) => state.restartingProjectIds);
 	const setProjectRestarting = useUiStore((state) => state.setProjectRestarting);
 	const orchestratorReplacementErrors = useUiStore((state) => state.orchestratorReplacementErrors);
 	const setOrchestratorReplacementError = useUiStore((state) => state.setOrchestratorReplacementError);
@@ -970,6 +971,7 @@ function ShellLayout() {
 					/>
 				</SidebarProvider>
 				<OrchestratorReplacementDialog
+					pending={Boolean(replacementErrorProjectId && restartingProjectIds.has(replacementErrorProjectId))}
 					error={replacementErrorProjectId ? orchestratorReplacementErrors[replacementErrorProjectId] : undefined}
 					onOpenChange={(open) => {
 						if (!open && replacementErrorProjectId) setOrchestratorReplacementError(replacementErrorProjectId, null);
