@@ -17,6 +17,7 @@ const state = vi.hoisted(() => ({
 		resultListeners: Set<(results: { resultCount: number; resultIndex: number }) => void>;
 	},
 	lastTerminal: null as null | {
+		write(data: Uint8Array, done?: () => void): void;
 		keyHandler?: (event: KeyboardEvent) => boolean;
 		wheelHandler?: (event: WheelEvent) => boolean;
 		selection: string;
