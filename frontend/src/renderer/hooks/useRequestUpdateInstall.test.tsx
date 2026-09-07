@@ -25,9 +25,10 @@ const session = (mode: "chat" | "tui") => ({
 	status: "working",
 });
 
-function renderTrigger(seed?: unknown) {
+function renderTrigger(seed?: unknown, configure?: (client: QueryClient) => void) {
 	const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 	if (seed !== undefined) client.setQueryData(workspaceQueryOptions.queryKey, seed);
+	configure?.(client);
 	let trigger: () => void = () => undefined;
 	function Probe() {
 		trigger = useRequestUpdateInstall();
@@ -67,5 +68,60 @@ describe("useRequestUpdateInstall", () => {
 		renderTrigger()();
 		expect(openPrompt).toHaveBeenCalledTimes(1);
 		expect(install).not.toHaveBeenCalled();
+	});
+});
+
+describe("restart safety with uncertain workspace data", () => {
+	it("confirms for a chat turn waiting for approval", () => {
+		renderTrigger([{ sessions: [{ ...session("chat"), status: "needs_input" }] }])();
+		expect(openPrompt).toHaveBeenCalledTimes(1);
+		expect(install).not.toHaveBeenCalled();
+	});
+	it("confirms when the last snapshot is stale", () => {
+		renderTrigger([], (client) => {
+			client.setQueryData(workspaceQueryOptions.queryKey, [], { updatedAt: Date.now() - 60_000 });
+		})();
+		expect(openPrompt).toHaveBeenCalledTimes(1);
+		expect(install).not.toHaveBeenCalled();
+	});
+	it("confirms when the last snapshot was invalidated", () => {
+		renderTrigger([], (client) => {
+			void client.invalidateQueries({ queryKey: workspaceQueryOptions.queryKey, refetchType: "none" });
+		})();
+		expect(openPrompt).toHaveBeenCalledTimes(1);
+		expect(install).not.toHaveBeenCalled();
+	});
+	it("confirms while a new snapshot is loading", async () => {
+		let resolve!: (value: never[]) => void;
+		let pending!: Promise<never[]>;
+		const trigger = renderTrigger([], (client) => {
+			pending = client.fetchQuery({
+				queryKey: workspaceQueryOptions.queryKey,
+				queryFn: () => new Promise<never[]>((done) => { resolve = done; }),
+				staleTime: 0,
+			});
+		});
+		trigger();
+		resolve([]);
+		await pending;
+		expect(openPrompt).toHaveBeenCalledTimes(1);
+		expect(install).not.toHaveBeenCalled();
+	});
+	it("confirms when a refresh failed but previous data remains", async () => {
+		let client!: QueryClient;
+		const trigger = renderTrigger([], (current) => { client = current; });
+		await client.fetchQuery({
+			queryKey: workspaceQueryOptions.queryKey,
+			queryFn: async () => { throw new Error("daemon unavailable"); },
+			staleTime: 0,
+		}).catch(() => undefined);
+		trigger();
+		expect(openPrompt).toHaveBeenCalledTimes(1);
+		expect(install).not.toHaveBeenCalled();
+	});
+	it("installs directly with a fresh empty snapshot", () => {
+		renderTrigger([])();
+		expect(install).toHaveBeenCalledTimes(1);
+		expect(openPrompt).not.toHaveBeenCalled();
 	});
 });

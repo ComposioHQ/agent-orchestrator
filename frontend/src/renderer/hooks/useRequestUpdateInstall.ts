@@ -22,11 +22,18 @@ export function useRequestUpdateInstall(): () => void {
 	const queryClient = useQueryClient();
 
 	return useCallback(() => {
-		const projects = queryClient.getQueryData<WorkspaceSummary[]>(workspaceQueryOptions.queryKey);
-		// An unresolved workspace list means AO cannot rule out a session losing a
-		// turn, so it confirms. Same bias as `no_signal` inside the risk filter:
-		// when liveness is unknown, assume a turn is in flight.
-		if (projects === undefined) {
+		const snapshot = queryClient.getQueryState<WorkspaceSummary[]>(workspaceQueryOptions.queryKey);
+		const projects = snapshot?.data;
+		// Cached idle sessions are not evidence of safety while a refresh is
+		// pending, failed, or overdue. Confirm rather than quitting on an old
+		// snapshot; keep the same freshness window as the workspace query.
+		if (
+			projects === undefined ||
+			snapshot?.status !== "success" ||
+			snapshot.fetchStatus !== "idle" ||
+			snapshot.isInvalidated ||
+			Date.now() - snapshot.dataUpdatedAt >= workspaceQueryOptions.staleTime
+		) {
 			openPrompt();
 			return;
 		}
