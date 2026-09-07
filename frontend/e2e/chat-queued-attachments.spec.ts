@@ -141,6 +141,7 @@ test("queued image edits preserve attachments and the ordinary draft @T0", async
 	expect(message.content).toHaveLength(1);
 	await page.getByRole("button", { name: "Edit queued message" }).click();
 	await page.getByLabel("Remove attachment-queue.png").click();
+	await page.getByLabel("Remove Image 1", { exact: true }).click();
 	await page.getByRole("button", { name: "Send message", exact: true }).click();
 	await expect.poll(() => edits.length).toBe(3);
 	expect(edits[2]).toEqual({ text: "Inspect it carefully", retainedContent: [], expectedRevision: 2 });

@@ -114,17 +114,52 @@ describe("queued message attachments", () => {
 		);
 	});
 
-	it("removes an existing image's reference and native content together", async () => {
+	it.each(["path", "native"])("removes only the selected %s attachment when independent image counts match", async (selected) => {
 		const { edit } = setup(`inspect this\n\n${suffix}`, [{ type: "image", mimeType: "image/png" }]);
 		await beginEdit();
-		await userEvent.click(screen.getByLabelText("Remove attachment-shot.png"));
+		await userEvent.click(screen.getByLabelText(selected === "path" ? "Remove attachment-shot.png" : "Remove Image 1"));
 		await userEvent.click(screen.getByRole("button", { name: "Send message" }));
 		await waitFor(() =>
-			expect(edit).toHaveBeenCalledWith("q1", "inspect this", {
-				retainedContent: [],
+			expect(edit).toHaveBeenCalledWith("q1", selected === "path" ? "inspect this" : `inspect this\n\n${suffix}`, {
+				retainedContent: selected === "path" ? [0] : [],
 				expectedRevision: 0,
 			}),
 		);
+	});
+
+	it.each([8, 9])("preserves %i resources when saving a valid queued edit", async (count) => {
+		const resources = Array.from({ length: count }, (_, index) => ({
+			type: "resource_link", uri: `file:///context-${index}.txt`, name: `Context ${index}`,
+		}));
+		const { edit, field } = setup("inspect this", resources);
+		await beginEdit();
+		await typeInLexicalEditor(field, " carefully");
+		if (count === 8) await pasteImage(field);
+		await userEvent.click(screen.getByRole("button", { name: "Send message" }));
+		await waitFor(() => expect(edit).toHaveBeenCalledWith(
+			"q1", count === 8 ? `inspect this carefully\n\n${suffix}` : "inspect this carefully",
+			{
+				retainedContent: resources.map((_, index) => index), expectedRevision: 0,
+				...(count === 8 ? { attachments: [{ mimeType: "image/png", data: expect.any(String) }] } : {}),
+			},
+		));
+	});
+
+	it.each(["image/png", "text/plain"])("counts only native images when adding %s to eight retained images", async (mimeType) => {
+		const { edit, field, stage } = setup("inspect this", Array.from({ length: 8 }, () => ({ type: "image", mimeType: "image/png" })));
+		stage.mockResolvedValue([".ao/attachments/attachment-context.txt"]);
+		await beginEdit();
+		fireEvent.paste(field, { clipboardData: { files: [new File(["context"], "new-file", { type: mimeType })], items: [] } });
+		await screen.findByLabelText("Remove new-file");
+		await userEvent.click(screen.getByRole("button", { name: "Send message" }));
+		if (mimeType === "image/png") {
+			await screen.findByText("You can attach up to 8 images.");
+			expect(edit).not.toHaveBeenCalled();
+		} else {
+			await waitFor(() => expect(edit).toHaveBeenCalledWith("q1", "inspect this\n\nAttached files (read these files in the workspace):\n- .ao/attachments/attachment-context.txt", {
+				retainedContent: [0, 1, 2, 3, 4, 5, 6, 7], expectedRevision: 0,
+			}));
+		}
 	});
 
 	it.each(["cancel", "save"])("isolates the ordinary draft and restores it after %s", async (action) => {

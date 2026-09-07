@@ -84,6 +84,7 @@ export type StoredComposerAttachment = {
 	path?: string;
 	dataUrl?: string;
 	contentIndex?: number;
+	contentType?: string;
 };
 
 export const ChatComposer = memo(function ChatComposer({
@@ -532,8 +533,10 @@ export const ChatComposer = memo(function ChatComposer({
 		// leave the image behind when its FileReader completes.
 		const attachmentPayloads = await fileAttachments.toSettledPayload();
 		const hasAttachments = attachmentPayloads.length > 0;
-		if (attachmentPayloads.length + visibleRetainedAttachments.length > MAX_ATTACHMENTS) {
-			setSendError(`You can attach up to ${MAX_ATTACHMENTS} files.`);
+		const imageCount = visibleRetainedAttachments.filter((attachment) => attachment.contentType === "image").length
+			+ (nativeImages ? attachmentPayloads.filter((attachment) => isSupportedImageAttachment(attachment.mimeType)).length : 0);
+		if (imageCount > MAX_ATTACHMENTS) {
+			setSendError(`You can attach up to ${MAX_ATTACHMENTS} images.`);
 			return;
 		}
 		const canSubmitNow =

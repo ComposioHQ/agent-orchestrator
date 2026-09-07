@@ -622,21 +622,16 @@ export function ChatWorkspace({
 			if (!message) return;
 			const parts = stagedAttachmentParts(text);
 			const content = message.content ?? [];
-			const images = content.flatMap((item, index) => item.type === "image" ? [index] : []);
-			// Pair only an unambiguous set of native images with staged image paths.
-			// Path-only and imported native attachments can otherwise coexist.
-			const pairedImages = parts.attachments.filter((path) => IMAGE_ATTACHMENT_PATH.test(path)).length === images.length;
-			let imageIndex = 0;
+			// Paths and native blocks have no shared persisted identity. Keep their
+			// removal independent, even when the image counts happen to match.
 			const attachments: StoredComposerAttachment[] = parts.attachments.map((path) => ({
 				id: path, name: attachmentName(path), path,
 				...(IMAGE_ATTACHMENT_PATH.test(path) ? {
 					dataUrl: attachmentURL(getApiBaseUrl(), snapshot.sessionId, path),
-					contentIndex: pairedImages ? images[imageIndex++] : undefined,
 				} : {}),
 			}));
 			content.forEach((item, index) => {
-				if (attachments.some((attachment) => attachment.contentIndex === index)) return;
-				attachments.push({ id: `content-${index}`, contentIndex: index,
+				attachments.push({ id: `content-${index}`, contentIndex: index, contentType: item.type,
 					name: item.name || (item.type === "image" ? `Image ${index + 1}` : item.uri || "Attachment") });
 			});
 			setQueueEdit({ turnId, text: parts.body, revision: message.revision, attachments });
