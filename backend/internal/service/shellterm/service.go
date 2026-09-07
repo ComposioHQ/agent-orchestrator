@@ -172,7 +172,7 @@ func NewService(runtime ShellRuntime, store Store, projects ProjectRootLocator, 
 }
 
 func (s *Service) pinnedEnv() map[string]string {
-	path, err := agentlaunch.PinnedPATH(s.executable, os.Getenv, nil)
+	path, err := agentlaunch.PinnedPATH(s.executable, os.Getenv, nil, s.dataDir)
 	if err != nil {
 		s.log.Warn("shell terminal PATH not pinned to the daemon binary; a bare `ao` may resolve to a different install", "err", err)
 		return nil

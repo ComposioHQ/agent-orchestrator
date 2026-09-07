@@ -26,6 +26,7 @@ func TestMergeWindowsPATHExecutesBundledAO(t *testing.T) {
 		cmd.Dir = t.TempDir()
 		cmd.Env = Merge(map[string]string{
 			"PATH":  bundle + ";" + os.Getenv("Path"),
+			"Path":  os.Getenv("AO_TEST_FOREIGN_DIR") + ";" + os.Getenv("Path"),
 			modeKey: "identity",
 		})
 		output, err := cmd.CombinedOutput()
@@ -56,7 +57,7 @@ func TestMergeWindowsPATHExecutesBundledAO(t *testing.T) {
 			cmd.Env = append(cmd.Env, entry)
 		}
 	}
-	cmd.Env = append(cmd.Env, "Path="+foreign+";"+os.Getenv("PATH"), modeKey+"=merge", "AO_TEST_BUNDLE_DIR="+bundle)
+	cmd.Env = append(cmd.Env, "Path="+foreign+";"+os.Getenv("PATH"), modeKey+"=merge", "AO_TEST_BUNDLE_DIR="+bundle, "AO_TEST_FOREIGN_DIR="+foreign)
 	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("mixed-case environment process: %v\n%s", err, output)
 	}

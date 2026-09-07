@@ -17,19 +17,19 @@ const aoBinaryName = "ao"
 // PinnedPATH prepends an AO-only directory to the supplied
 // PATH. It rejects executables not named ao because their directory cannot
 // guarantee the identity of a bare ao command.
-func PinnedPATH(executable func() (string, error), getenv func(string) string, configured map[string]string) (string, error) {
+func PinnedPATH(executable func() (string, error), getenv func(string) string, configured map[string]string, dataDir string) (string, error) {
 	exe, err := executable()
 	if err != nil {
 		return "", fmt.Errorf("resolve daemon executable: %w", err)
 	}
-	dir, err := pinDirectory(exe)
+	dir, err := pinDirectory(exe, dataDir)
 	if err != nil {
 		return "", err
 	}
 	if dir == "" {
 		return "", fmt.Errorf("daemon executable %s is not named %q", exe, aoBinaryName)
 	}
-	base := configured["PATH"]
+	base := configuredPATH(configured, runtime.GOOS == "windows")
 	if base == "" {
 		base = getenv("PATH")
 	}
@@ -39,13 +39,27 @@ func PinnedPATH(executable func() (string, error), getenv func(string) string, c
 	return dir + string(os.PathListSeparator) + base, nil
 }
 
+func configuredPATH(configured map[string]string, caseInsensitive bool) string {
+	if path, ok := configured["PATH"]; ok {
+		return path
+	}
+	if caseInsensitive {
+		for key, value := range configured {
+			if strings.EqualFold(key, "PATH") {
+				return value
+			}
+		}
+	}
+	return ""
+}
+
 // PinnedDir returns the directory PinnedPATH would place first.
-func PinnedDir(executable func() (string, error)) string {
+func PinnedDir(executable func() (string, error), dataDir string) string {
 	exe, err := executable()
 	if err != nil {
 		return ""
 	}
-	dir, _ := pinDirectory(exe)
+	dir, _ := pinDirectory(exe, dataDir)
 	return dir
 }
 

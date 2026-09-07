@@ -15,7 +15,7 @@ var pinMu sync.Mutex
 // pinDirectory uses the install directory only when it contains no sibling
 // executables. Shared installs get a shim so pinning ao cannot promote node,
 // git, or other tools ahead of the agent's selected runtime.
-func pinDirectory(exe string) (string, error) {
+func pinDirectory(exe, dataDir string) (string, error) {
 	dir := pinnedDirForExecutable(exe)
 	if dir == "" {
 		return "", nil
@@ -51,13 +51,8 @@ func pinDirectory(exe string) (string, error) {
 	if !shared {
 		return dir, nil
 	}
-	dataDir := os.Getenv("AO_DATA_DIR")
-	if dataDir == "" {
-		home, homeErr := os.UserHomeDir()
-		if homeErr != nil {
-			return "", homeErr
-		}
-		dataDir = filepath.Join(home, ".ao")
+	if !filepath.IsAbs(dataDir) {
+		return "", fmt.Errorf("AO shim data directory must be absolute, got %q", dataDir)
 	}
 	absolute, err := filepath.Abs(exe)
 	if err != nil {
@@ -78,6 +73,11 @@ func pinDirectory(exe string) (string, error) {
 	}
 	target := filepath.Join(shimDir, name)
 	if content, err := os.ReadFile(target); err == nil && string(content) == script {
+		if runtime.GOOS == "windows" {
+			if err := ensureWindowsAOExecutable(shimDir, absolute); err != nil {
+				return "", err
+			}
+		}
 		return shimDir, nil
 	}
 	temp, err := os.CreateTemp(shimDir, ".ao-*")
@@ -99,5 +99,26 @@ func pinDirectory(exe string) (string, error) {
 	if err := os.Rename(tempPath, target); err != nil {
 		return "", err
 	}
+	if runtime.GOOS == "windows" {
+		if err := ensureWindowsAOExecutable(shimDir, absolute); err != nil {
+			return "", err
+		}
+	}
 	return shimDir, nil
+}
+
+func ensureWindowsAOExecutable(shimDir, executable string) error {
+	target := filepath.Join(shimDir, "ao.exe")
+	sourceInfo, err := os.Stat(executable)
+	if err != nil {
+		return fmt.Errorf("stat AO executable: %w", err)
+	}
+	if targetInfo, targetErr := os.Stat(target); targetErr == nil && os.SameFile(sourceInfo, targetInfo) {
+		return nil
+	}
+	_ = os.Remove(target)
+	if err := os.Link(executable, target); err != nil {
+		return fmt.Errorf("link AO executable into shim directory: %w", err)
+	}
+	return nil
 }

@@ -40,3 +40,23 @@ func TestMergeInheritsDaemonEnvironmentAndAppliesOverlay(t *testing.T) {
 		t.Fatalf("missing environment values: %v", want)
 	}
 }
+
+func TestMergeWindowsExactPATHWinsConflictingOverlaySpelling(t *testing.T) {
+	for range 1000 {
+		got := merge(
+			[]string{"Path=inherited"},
+			map[string]string{"Path": "project", "PATH": "ao-pinned"},
+			true,
+		)
+		var paths []string
+		for _, entry := range got {
+			key, _, _ := strings.Cut(entry, "=")
+			if strings.EqualFold(key, "PATH") {
+				paths = append(paths, entry)
+			}
+		}
+		if !slices.Equal(paths, []string{"PATH=ao-pinned"}) {
+			t.Fatalf("PATH entries = %v, want protected AO PATH", paths)
+		}
+	}
+}

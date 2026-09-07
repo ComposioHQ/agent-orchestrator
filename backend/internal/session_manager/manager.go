@@ -4122,14 +4122,28 @@ func workspaceRepoList(repos []domain.WorkspaceRepoRecord) string {
 // the AO-internal vars last so they always win (a project cannot override
 // AO_SESSION_ID and friends).
 func spawnEnv(id domain.SessionID, project domain.ProjectID, issue domain.IssueID, dataDir string, projectEnv map[string]string) map[string]string {
+	return spawnEnvForOS(id, project, issue, dataDir, projectEnv, runtime.GOOS == "windows")
+}
+
+func spawnEnvForOS(id domain.SessionID, project domain.ProjectID, issue domain.IssueID, dataDir string, projectEnv map[string]string, caseInsensitive bool) map[string]string {
 	env := make(map[string]string, len(projectEnv)+4)
 	for k, v := range projectEnv {
 		env[k] = v
 	}
-	env[EnvSessionID] = string(id)
-	env[EnvProjectID] = string(project)
-	env[EnvIssueID] = string(issue)
-	env[EnvDataDir] = dataDir
+	setProtected := func(key, value string) {
+		if caseInsensitive {
+			for existing := range env {
+				if strings.EqualFold(existing, key) {
+					delete(env, existing)
+				}
+			}
+		}
+		env[key] = value
+	}
+	setProtected(EnvSessionID, string(id))
+	setProtected(EnvProjectID, string(project))
+	setProtected(EnvIssueID, string(issue))
+	setProtected(EnvDataDir, dataDir)
 	return env
 }
 
@@ -4156,7 +4170,14 @@ func (m *Manager) runtimeEnv(id domain.SessionID, project domain.ProjectID, issu
 	env[EnvBrowserCapability] = ""
 	env[EnvBrowserRuntimeToken] = ""
 	env[EnvBrowserRuntimeTokenStdin] = ""
-	path, err := HookPATH(m.executable, os.Getenv, projectEnv)
+	if runtime.GOOS == "windows" {
+		for key := range env {
+			if key != "PATH" && strings.EqualFold(key, "PATH") {
+				delete(env, key)
+			}
+		}
+	}
+	path, err := HookPATH(m.executable, os.Getenv, projectEnv, m.dataDir)
 	if err != nil {
 		m.logger.Warn("session PATH not pinned to the daemon binary; `ao hooks` callbacks may resolve to a different ao and activity tracking will stall",
 			"session", id, "error", err)
@@ -4282,14 +4303,14 @@ func chatControllerOwner(
 // applied: the executable is unresolvable, or is not named "ao", in which case
 // prepending its directory would not change what `ao` resolves to. Exported so
 // the reviewer launcher can pin its pane's PATH the same way.
-func HookPATH(executable func() (string, error), getenv func(string) string, projectEnv map[string]string) (string, error) {
-	return agentlaunch.PinnedPATH(executable, getenv, projectEnv)
+func HookPATH(executable func() (string, error), getenv func(string) string, projectEnv map[string]string, dataDir string) (string, error) {
+	return agentlaunch.PinnedPATH(executable, getenv, projectEnv, dataDir)
 }
 
 // PinnedHookDir returns the directory HookPATH places first, or an empty
 // string when the executable cannot provide an ao PATH pin.
-func PinnedHookDir(executable func() (string, error)) string {
-	return agentlaunch.PinnedDir(executable)
+func PinnedHookDir(executable func() (string, error), dataDir string) string {
+	return agentlaunch.PinnedDir(executable, dataDir)
 }
 
 // provisionWorkspace applies the project's per-workspace setup after the
@@ -4733,7 +4754,7 @@ func launchBinary(argv []string) (string, bool) {
 }
 
 func (m *Manager) augmentRuntimePATHForLaunchBinary(ctx context.Context, env map[string]string, argv []string) {
-	AugmentRuntimePATHForLaunchBinary(ctx, env, argv, m.lookPath, PinnedHookDir(m.executable))
+	AugmentRuntimePATHForLaunchBinary(ctx, env, argv, m.lookPath, PinnedHookDir(m.executable, m.dataDir))
 }
 
 // AugmentRuntimePATHForLaunchBinary is retained at the session-manager boundary

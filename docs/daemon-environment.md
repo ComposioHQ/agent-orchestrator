@@ -32,7 +32,9 @@ to reviewer and shell-terminal launches.
 Interactive login shells can still reorder `PATH` through user startup files,
 so this is a launch invariant and a best-effort convenience inside a shell.
 When the install directory contains other executable tools, AO creates an
-`ao` shim under its data directory instead of promoting those sibling tools.
+`ao` shim under its resolved absolute data directory instead of promoting those
+sibling tools. Windows provides both command-shell and Git Bash compatible
+entries in that isolated directory.
 
 So whatever environment the daemon receives propagates to the entire stack:
 
