@@ -25,7 +25,7 @@ test(`renderer: workspace import preserves the root branch and explains unresolv
 		if (pathname === "/api/v1/imports/validate" && route.request().method() === "POST") {
 			await route.fulfill({ json: {
 				importKind: "workspace", isValid: true, blockingErrors: [], nextStep: "continue",
-				root: { repoPath: "/repos/local-root", isRepo: true, hasCommit: true, hasOrigin: true, isEmptyFolder: false, needsGitInit: false, requiredActions: [], blockingErrors: [] },
+				root: { repoPath: "/repos/local-root", isRepo: false, hasCommit: false, hasOrigin: false, isEmptyFolder: false, needsGitInit: false, requiredActions: [], blockingErrors: [] },
 				childRepos: [{ repoPath: "/repos/local-root/api", isRepo: true, hasCommit: true, hasOrigin: true, isEmptyFolder: false, needsGitInit: false, requiredActions: [], blockingErrors: [] }],
 			} });
 			return;
