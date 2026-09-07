@@ -1605,6 +1605,9 @@ describe("attachments", () => {
 				);
 				expect(onSend).not.toHaveBeenCalled();
 
+				// The error can render before the async submission releases its lock.
+				// Retry only once the user-facing send control is available again.
+				await waitFor(() => expect(screen.getByRole("button", { name: "Send message" })).toBeEnabled());
 				storageAvailable = true;
 				fireEvent.keyDown(field, { key: "Enter" });
 				await waitFor(() => expect(onSend).toHaveBeenCalledTimes(1));
