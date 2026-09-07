@@ -14,23 +14,24 @@ import (
 func Merge(overlay map[string]string) []string {
 	merged := make(map[string]string, len(os.Environ())+len(overlay))
 	for _, entry := range os.Environ() {
-		if key, value, ok := strings.Cut(entry, "="); ok {
+		if key, _, ok := strings.Cut(entry, "="); ok {
 			if runtime.GOOS == "windows" {
 				key = strings.ToUpper(key)
 			}
-			merged[key] = value
+			merged[key] = entry
 		}
 	}
 	for key, value := range overlay {
+		entry := key + "=" + value
 		if runtime.GOOS == "windows" {
 			key = strings.ToUpper(key)
 		}
-		merged[key] = value
+		merged[key] = entry
 	}
 
 	out := make([]string, 0, len(merged))
-	for key, value := range merged {
-		out = append(out, key+"="+value)
+	for _, entry := range merged {
+		out = append(out, entry)
 	}
 	sort.Strings(out)
 	return out

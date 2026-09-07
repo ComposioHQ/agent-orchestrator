@@ -14,7 +14,7 @@ import (
 
 const aoBinaryName = "ao"
 
-// PinnedPATH prepends the running AO executable's directory to the supplied
+// PinnedPATH prepends an AO-only directory to the supplied
 // PATH. It rejects executables not named ao because their directory cannot
 // guarantee the identity of a bare ao command.
 func PinnedPATH(executable func() (string, error), getenv func(string) string, configured map[string]string) (string, error) {
@@ -22,7 +22,10 @@ func PinnedPATH(executable func() (string, error), getenv func(string) string, c
 	if err != nil {
 		return "", fmt.Errorf("resolve daemon executable: %w", err)
 	}
-	dir := pinnedDirForExecutable(exe)
+	dir, err := pinDirectory(exe)
+	if err != nil {
+		return "", err
+	}
 	if dir == "" {
 		return "", fmt.Errorf("daemon executable %s is not named %q", exe, aoBinaryName)
 	}
@@ -42,7 +45,8 @@ func PinnedDir(executable func() (string, error)) string {
 	if err != nil {
 		return ""
 	}
-	return pinnedDirForExecutable(exe)
+	dir, _ := pinDirectory(exe)
+	return dir
 }
 
 func pinnedDirForExecutable(exe string) string {
