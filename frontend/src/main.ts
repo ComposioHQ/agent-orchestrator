@@ -33,6 +33,7 @@ import { listFeatureBuilds, getActiveFeatureBuild } from "./main/feature-builds"
 import { initMainSentry, sanitizeRendererCapture } from "./main/sentry-main";
 import { TelemetryPolicyAuthority, resolveDesktopDataDir } from "./main/telemetry-policy-file";
 import { DaemonTelemetryPolicyClient } from "./main/daemon-telemetry-policy-client";
+import { createSaveLinkAs } from "./main/save-link-as";
 import { DesktopTelemetryController } from "./main/desktop-telemetry-controller";
 import { AgentSwitchVisibilityController } from "./main/agent-switch-observability";
 import { readUpdateSettings, type UpdateSettings, type UpdateStatus } from "./main/update-settings";
@@ -52,6 +53,7 @@ import {
 	writeUiSettings,
 	type UiSettings,
 } from "./main/ui-settings";
+import { catalogFor } from "./renderer/i18n/messages";
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomBytes, randomUUID } from "node:crypto";
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync, renameSync, writeFileSync } from "node:fs";
@@ -297,6 +299,7 @@ let pendingBounce: { id: number; critical: boolean } | null = null;
 // Live mirror of the persisted `soundNotificationsEnabled` UI setting, kept in sync by the
 // uiSettings:set handler so a toggle flip takes effect without an app restart.
 let soundNotificationsEnabled = DEFAULT_UI_SETTINGS.soundNotificationsEnabled;
+let uiLocale = DEFAULT_UI_SETTINGS.locale;
 
 const isDev = !app.isPackaged;
 
@@ -660,6 +663,22 @@ async function createWindowInternal(): Promise<void> {
 		shellWebContents,
 		ipcMain,
 		shell,
+		clipboard,
+		contextMenu: {
+			getLabels: () => {
+				const messages = catalogFor(uiLocale);
+				return {
+					annotate: messages["browser.contextMenu.annotate"],
+					copy: messages["browser.contextMenu.copy"],
+					copyLink: messages["browser.contextMenu.copyLink"],
+					inspect: messages["browser.contextMenu.inspect"],
+					openExternal: messages["browser.contextMenu.openExternal"],
+					openLinkTab: messages["browser.contextMenu.openLinkTab"],
+					saveLink: messages["browser.contextMenu.saveLink"],
+				};
+			},
+		},
+		saveLink: createSaveLinkAs((options) => dialog.showSaveDialog(options)),
 		WebContentsView,
 		annotatePreloadPath: annotatePreloadPath(),
 		rendererOrigin: new URL(rendererUrl()).origin,
@@ -2103,6 +2122,7 @@ ipcMain.handle("uiSettings:get", async (): Promise<UiSettings> => {
 		const runFile = runFilePath();
 	const result = !runFile ? coerceUiSettings(settings) : await writeUiSettings(path.dirname(runFile), settings);
 	trayController?.setLocale(result.locale);
+	uiLocale = result.locale;
 	soundNotificationsEnabled = result.soundNotificationsEnabled;
 	terminalShellPreference = result.terminalShell;
 	shellEnvPromise = null;
@@ -2517,6 +2537,7 @@ app.whenReady().then(async () => {
 		? await readUiSettings(path.dirname(keybindingRunFile))
 		: { ...DEFAULT_UI_SETTINGS };
 	soundNotificationsEnabled = initialUiSettings.soundNotificationsEnabled;
+	uiLocale = initialUiSettings.locale;
 	terminalShellPreference = initialUiSettings.terminalShell;
 	if (isTrayEnabled(process.platform, app.isPackaged, app.getVersion())) {
 		trayController = createTrayController({

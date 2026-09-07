@@ -683,8 +683,8 @@ export function BrowserPanelView({
 	const agentStatusLabel = agentActivityLabel(agentBrowserActivity, agentBrowserActive);
 	return (
 		<div
-			className={cn(
-				"browser-panel flex h-full min-h-browser-min flex-col overflow-hidden rounded-lg border border-border bg-background",
+				className={cn(
+					"browser-panel flex h-full min-h-browser-min flex-col overflow-hidden rounded-lg border border-border bg-background",
 				poppedOut && "browser-panel--popped-out",
 				agentStatusLabel && "browser-panel--agent-active",
 			)}

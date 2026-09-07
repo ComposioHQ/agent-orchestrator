@@ -21,6 +21,7 @@ import {
 	NEW_SHELL_TERMINAL_SHORTCUT_CHANNEL,
 } from "../shared/shortcuts";
 import type { BrowserAnnotationDraft } from "../shared/browser-annotations";
+import type { BrowserPageContextMenuPresentation } from "../shared/browser-page-context-menu";
 import { parseAgentBrowserJSON } from "./agent-browser-runtime";
 
 vi.mock("electron", async (importOriginal) => {
@@ -126,6 +127,10 @@ function setupHost(agentBrowserRuntime?: import("./agent-browser-runtime").Agent
 	let debuggerAttached = false;
 	const openDevTools = vi.fn();
 	const closeDevTools = vi.fn();
+	const inspectElement = vi.fn();
+	const writeClipboardText = vi.fn();
+	const openExternal = vi.fn(async () => undefined);
+	const saveLink = vi.fn(async () => undefined);
 	const insertCSS = vi.fn(async (_css: string, _options?: { cssOrigin?: "author" | "user" }) => "ao-browser-scrollbars");
 	let insertedStyleNumber = 0;
 	insertCSS.mockImplementation(async () => `ao-browser-scrollbars-${++insertedStyleNumber}`);
@@ -183,6 +188,7 @@ function setupHost(agentBrowserRuntime?: import("./agent-browser-runtime").Agent
 		close: vi.fn(),
 		openDevTools,
 		closeDevTools,
+		inspectElement,
 		session: {
 			setPermissionCheckHandler,
 			setPermissionRequestHandler,
@@ -253,13 +259,26 @@ function setupHost(agentBrowserRuntime?: import("./agent-browser-runtime").Agent
 			removeHandler: () => undefined,
 			off: () => undefined,
 		} as never,
-		shell: { openExternal: async () => undefined },
+		shell: { openExternal },
+		clipboard: { writeText: writeClipboardText },
 		WebContentsView: function () {
 			return view;
 		} as never,
 		annotatePreloadPath: "/preload.js",
 		rendererOrigin: "http://localhost:5173",
 		agentBrowserRuntime: runtime,
+		contextMenu: {
+			getLabels: () => ({
+				annotate: "Annotate",
+				copy: "Copy",
+				copyLink: "Copy link address",
+				inspect: "Inspect Element",
+				openExternal: "Open in external browser",
+				openLinkTab: "Open link in new tab",
+				saveLink: "Save link as…",
+			}),
+		},
+		saveLink,
 	});
 	const rendererFrame = { processId: 5, routingId: 7 };
 	const invoke = (channel: string, ...args: unknown[]) =>
@@ -330,6 +349,10 @@ function setupHost(agentBrowserRuntime?: import("./agent-browser-runtime").Agent
 		shellSend,
 		openDevTools,
 		closeDevTools,
+		inspectElement,
+		writeClipboardText,
+		openExternal,
+		saveLink,
 		insertCSS,
 		removeInsertedCSS,
 		setBrowserZoomFactor: (zoomFactor: number) => {
@@ -342,6 +365,204 @@ function setupHost(agentBrowserRuntime?: import("./agent-browser-runtime").Agent
 		debuggerSendCommand,
 	};
 }
+
+describe("browser page context menu", () => {
+	async function showContextMenu(
+		host: ReturnType<typeof setupHost>,
+		params: Partial<import("electron").ContextMenuParams>,
+	) {
+		const state = await host.invoke("browser:ensure", "sess-1");
+		host.emit("browser:setBounds", 1, {
+			viewId: state.viewId,
+			rect: { x: 10, y: 20, width: 320, height: 240 },
+			visible: true,
+		});
+		await host.invoke("browser:navigate", { viewId: state.viewId, url: "https://example.test/" });
+		host.sent.length = 0;
+		host.webContentsListeners.get("context-menu")?.(
+			{} as never,
+			{
+				x: 11,
+				y: 13,
+				linkURL: "",
+				selectionText: "",
+				editFlags: { canCopy: false },
+				...params,
+			} as never,
+		);
+		const call = [...host.webContents.send.mock.calls]
+			.reverse()
+			.find(([channel]) => channel === "browser:pageContextMenu:show");
+		if (!call) throw new Error("context menu presentation was not sent");
+		return { viewId: state.viewId, presentation: call[1] as BrowserPageContextMenuPresentation };
+	}
+
+	function choose(
+		host: ReturnType<typeof setupHost>,
+		presentation: BrowserPageContextMenuPresentation,
+		label: string,
+	): void {
+		const item = presentation.items.find((candidate) => candidate.type === "action" && candidate.label === label);
+		if (!item || item.type !== "action") throw new Error(`missing menu item: ${label}`);
+		host.send("browser:pageContextMenu:action", 99, {
+			requestId: presentation.requestId,
+			action: item.action,
+		});
+	}
+
+	it("opens an AO page menu and preselects the annotation target", async () => {
+		const host = setupHost();
+		const { presentation } = await showContextMenu(host, {});
+		expect(presentation.position).toEqual({ x: 11, y: 13 });
+		choose(host, presentation, "Annotate");
+		expect(host.webContents.send).toHaveBeenCalledWith("browser:annotation:setMode", {
+			enabled: true,
+			targetPoint: { x: 11, y: 13 },
+		});
+	});
+
+	it("shows only the AO actions supported by the clicked target, including save link", async () => {
+		const host = setupHost();
+		const { presentation } = await showContextMenu(host, {
+			linkURL: "https://docs.example.test/guide",
+			selectionText: "selected words",
+			editFlags: { canCopy: true } as never,
+		});
+
+		expect(presentation.items.map((item) => item.type === "action" ? item.label : item.type)).toEqual([
+			"Annotate",
+			"separator",
+			"Open link in new tab",
+			"Open in external browser",
+			"Copy link address",
+			"Save link as…",
+			"separator",
+			"Copy",
+			"separator",
+			"Inspect Element",
+		]);
+	});
+
+	it("keeps unsupported links copyable without offering either open action", async () => {
+		const host = setupHost();
+		const { presentation } = await showContextMenu(host, { linkURL: "javascript:alert(1)" });
+
+		expect(presentation.items.map((item) => item.type === "action" ? item.label : item.type)).toEqual([
+			"Annotate",
+			"separator",
+			"Copy link address",
+			"separator",
+			"Inspect Element",
+		]);
+	});
+
+	it("does not expose privileged actions for an oversized link URL", async () => {
+		const host = setupHost();
+		const { presentation } = await showContextMenu(host, { linkURL: `https://example.test/${"a".repeat(8_192)}` });
+
+		expect(presentation.items.map((item) => item.type === "action" ? item.label : item.type)).toEqual([
+			"Annotate",
+			"separator",
+			"Copy link address",
+			"separator",
+			"Inspect Element",
+		]);
+	});
+
+	it("copies the retained selection once and rejects reuse of the consumed request", async () => {
+		const host = setupHost();
+		const { presentation } = await showContextMenu(host, {
+			selectionText: "  selected words  ",
+			editFlags: { canCopy: true } as never,
+		});
+		choose(host, presentation, "Copy");
+
+		expect(host.writeClipboardText).toHaveBeenCalledWith("  selected words  ");
+		choose(host, presentation, "Copy");
+		expect(host.writeClipboardText).toHaveBeenCalledOnce();
+	});
+
+	it("opens an allowed link externally from the retained page target", async () => {
+		const host = setupHost();
+		const { presentation } = await showContextMenu(host, { linkURL: "https://docs.example.test/guide" });
+		choose(host, presentation, "Open in external browser");
+
+		await vi.waitFor(() => expect(host.openExternal).toHaveBeenCalledWith("https://docs.example.test/guide"));
+	});
+
+	it("opens an allowed link in a new managed AO tab", async () => {
+		const host = setupHost();
+		const { viewId, presentation } = await showContextMenu(host, { linkURL: "https://docs.example.test/guide" });
+
+		choose(host, presentation, "Open link in new tab");
+
+		await vi.waitFor(async () => {
+			const tabs = (await host.invoke("browser:getTabs", viewId)) as unknown as BrowserTabsState;
+			expect(tabs.tabs).toHaveLength(2);
+			expect(tabs.tabs.find((tab) => tab.active)?.url).toBe("https://docs.example.test/guide");
+		});
+	});
+
+	it("saves an allowed link through the active browser tab", async () => {
+		const host = setupHost();
+		const { presentation } = await showContextMenu(host, { linkURL: "https://docs.example.test/manual.pdf" });
+
+		choose(host, presentation, "Save link as…");
+
+		await vi.waitFor(() => expect(host.saveLink).toHaveBeenCalledWith(
+			host.webContents,
+			"https://docs.example.test/manual.pdf",
+			expect.any(Function),
+		));
+	});
+
+	it("opens managed DevTools and inspects the retained page point", async () => {
+		const host = setupHost();
+		const { presentation } = await showContextMenu(host, {});
+		choose(host, presentation, "Inspect Element");
+
+		await vi.waitFor(() => {
+			expect(host.openDevTools).toHaveBeenCalledWith({ mode: "right", activate: true });
+			expect(host.inspectElement).toHaveBeenCalledWith(11, 13);
+		});
+	});
+
+	it("dismisses the retained request and rejects a later action", async () => {
+		const host = setupHost();
+		const { presentation } = await showContextMenu(host, { selectionText: "selected", editFlags: { canCopy: true } as never });
+		host.webContents.focus.mockClear();
+
+		host.send("browser:pageContextMenu:dismiss", 99, { requestId: presentation.requestId });
+		choose(host, presentation, "Copy");
+
+		expect(host.webContents.focus).toHaveBeenCalledOnce();
+		expect(host.writeClipboardText).not.toHaveBeenCalled();
+	});
+
+	it("invalidates a retained request when its page navigates", async () => {
+		const host = setupHost();
+		const { presentation } = await showContextMenu(host, { selectionText: "selected", editFlags: { canCopy: true } as never });
+
+		host.webContentsListeners.get("did-navigate")?.({} as never, "https://example.test/next" as never);
+		choose(host, presentation, "Copy");
+
+		expect(host.writeClipboardText).not.toHaveBeenCalled();
+	});
+
+	it("invalidates a retained request when the browser panel is hidden", async () => {
+		const host = setupHost();
+		const { viewId, presentation } = await showContextMenu(host, { selectionText: "selected", editFlags: { canCopy: true } as never });
+
+		host.emit("browser:setBounds", 1, {
+			viewId,
+			rect: { x: 0, y: 0, width: 0, height: 0 },
+			visible: false,
+		});
+		choose(host, presentation, "Copy");
+
+		expect(host.writeClipboardText).not.toHaveBeenCalled();
+	});
+});
 
 describe("browser shortcut matching", () => {
 	it("matches contextual browser shortcuts with platform-native primary modifiers", () => {
