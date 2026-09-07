@@ -571,9 +571,11 @@ function forgetPersistedStagedBuild(stateDir: string | undefined): void {
 /**
  * Reload provenance for a build staged by an earlier run.
  *
- * Discards it when the running version already matches — that build installed,
- * so nothing is pending — and when anything is unreadable, because inventing
- * provenance is worse than having none.
+ * Discards it when the running build already matches, or supersedes a staged
+ * build from the same channel. In both cases nothing remains pending. An older
+ * build from another channel can still be an intentional channel transition.
+ * Unreadable provenance is also discarded because inventing it is worse than
+ * having none.
  */
 function restoreStagedBuild(stateDir: string): void {
   // Synchronous on purpose. Awaiting a real filesystem read here would push the
@@ -589,7 +591,11 @@ function restoreStagedBuild(stateDir: string): void {
     typeof raw.version !== "string" ||
     typeof raw.stagedAt !== "number" ||
     !Number.isFinite(raw.stagedAt) ||
-    raw.version === app.getVersion()
+    raw.version === app.getVersion() ||
+    (raw.channel === installedUpdateChannel() &&
+      semver.valid(raw.version) !== null &&
+      semver.valid(app.getVersion()) !== null &&
+      semver.lt(raw.version, app.getVersion()))
   ) {
     forgetPersistedStagedBuild(stateDir);
     return;

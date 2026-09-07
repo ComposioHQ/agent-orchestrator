@@ -2236,6 +2236,40 @@ describe("startAutoUpdates", () => {
     expect(second.module.getUpdateStatus().staged).toBeUndefined();
   });
 
+  it("drops an older staged build from the running channel", async () => {
+    writeFileSync(nodePath.join(stateDir, "staged-update.json"), JSON.stringify({
+      version: "0.12.13-nightly.202609070711",
+      stagedAt: Date.now(),
+      channel: "nightly",
+    }));
+
+    const harness = await importAutoUpdaterKeepingStagedFile(
+      { enabled: false, channel: "nightly", nightlyAck: true, feature: null },
+      { version: "0.12.13-nightly.202609070850" },
+    );
+    await harness.module.startAutoUpdates(stateDir);
+
+    expect(harness.module.getUpdateStatus().staged).toBeUndefined();
+  });
+
+  it("retains an older staged build from another channel", async () => {
+    writeFileSync(nodePath.join(stateDir, "staged-update.json"), JSON.stringify({
+      version: "0.12.10-nightly.1",
+      stagedAt: Date.now(),
+      channel: "nightly",
+    }));
+
+    const harness = await importAutoUpdaterKeepingStagedFile(
+      { enabled: false, channel: "nightly", nightlyAck: true, feature: null },
+      { version: "0.12.11" },
+    );
+    await harness.module.startAutoUpdates(stateDir);
+
+    expect(harness.module.getUpdateStatus().staged).toMatchObject({
+      version: "0.12.10-nightly.1",
+    });
+  });
+
   // Regression: electron-updater keeps its request open when a download stops
   // receiving bytes, so the last percentage stuck forever, the serialized
   // updater queue stayed occupied, and nothing offered a retry.
