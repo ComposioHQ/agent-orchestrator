@@ -722,7 +722,8 @@ func acpFilePatch(path string, oldText *string, newText string) string {
 		oldLines = strings.Split(strings.ReplaceAll(*oldText, "\r\n", "\n"), "\n")
 	}
 	newLines := strings.Split(strings.ReplaceAll(newText, "\r\n", "\n"), "\n")
-	lines := []string{"--- " + path, "+++ " + path}
+	lines := make([]string, 0, 2+len(oldLines)+len(newLines))
+	lines = append(lines, "--- "+path, "+++ "+path)
 	for _, line := range oldLines {
 		lines = append(lines, "-"+line)
 	}
