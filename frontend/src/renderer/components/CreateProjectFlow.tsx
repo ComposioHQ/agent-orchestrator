@@ -1659,63 +1659,18 @@ function ProjectImportDialog({
 										</span>
 									) : null}
 								</div>
-								<div className="divide-y divide-border overflow-hidden rounded-md border border-border/70 bg-background/40">
-									{validation.root.requiredActions.map((action) => {
-											const checked = approvedActions.includes(action);
-											return (
-												<div
-													key={action}
-													className="flex items-start gap-3 px-3 py-3 transition-colors hover:bg-muted/50"
-												>
-													<Checkbox
-														id={`projectImportAction-${action}`}
-														className="mt-0.5"
-														checked={checked}
-														disabled={disabled}
-														onCheckedChange={(next) =>
-															onChangeApprovedActions(
-																next === true
-																	? [...approvedActions, action]
-																	: approvedActions.filter((value) => value !== action),
-																)
-															}
-														/>
-													<span className="min-w-0 flex-1">
-														<Label
-															htmlFor={`projectImportAction-${action}`}
-															className="block cursor-pointer text-[13px] font-medium text-foreground"
-														>
-															{gitActionLabel(action)}
-														</Label>
-														{action === "set_remote" ? (
-															<span className="mt-3 block space-y-2">
-																<Label
-																	htmlFor="projectImportRemote"
-																	className="text-[12px] font-semibold text-[var(--color-text-import-title)]"
-																>
-																	{t("createProject.originRemoteUrl")}
-																</Label>
-																					<Input
-																						id="projectImportRemote"
-																						autoCapitalize="none"
-																						autoComplete="off"
-																						className="bg-[var(--color-bg-import-card)] text-[13px]"
-																						disabled={disabled}
-																						placeholder={t("createProject.cloneRepositoryUrlPlaceholder")}
-																						spellCheck={false}
-																						value={remoteUrl}
-																						onChange={(event) => onChangeRemote(event.target.value)}
-																					/>
-																<span className="block text-[11px] leading-4 text-muted-foreground">
-																	{t("createProject.remoteRepoRequired")}
-																</span>
-															</span>
-														) : null}
-													</span>
-												</div>
-											);
-										})}
-										</div>
+								<div className="space-y-2 rounded-md border border-border/70 bg-background/40 p-3">
+									<GitSetupFields
+										actions={validation.root.requiredActions}
+										approved={missingApprovals.length === 0}
+										disabled={disabled}
+										onApprovalChange={(approved) => onChangeApprovedActions(approved ? [...validation.root.requiredActions] : [])}
+										onRemoteChange={onChangeRemote}
+										remoteUrl={remoteUrl}
+										showActionSummary={false}
+									/>
+									{needsRemote ? <p className="text-[11px] leading-4 text-muted-foreground">{t("createProject.remoteRepoRequired")}</p> : null}
+								</div>
 									{latestEvents.length > 0 ? (
 										<div className="space-y-1.5 rounded-md border border-border/70 bg-background/30 p-3" aria-live="polite">
 											{latestEvents.map((event) => (
@@ -2003,7 +1958,7 @@ function WorkspaceInlineSetup({ approvedActions, disabled, onChangeApprovedActio
 	const missingApprovals = repo.requiredActions.some((action) => !approvedActions.includes(action));
 	const allApproved = !missingApprovals;
 	return <div className="origin-top animate-modal-in border-t border-border/50 px-3 pb-3 pt-2 motion-reduce:animate-none"><div className="space-y-2 rounded-md border border-border/60 bg-[var(--color-bg-import-modal)] p-2.5">
-		<WorkspaceGitSetupFields
+		<GitSetupFields
 			actions={repo.requiredActions}
 			approved={allApproved}
 			disabled={disabled}
@@ -2014,7 +1969,7 @@ function WorkspaceInlineSetup({ approvedActions, disabled, onChangeApprovedActio
 	</div></div>;
 }
 
-function WorkspaceGitSetupFields({ actions, approved, disabled, onApprovalChange, onRemoteChange, remoteAriaLabel = "Origin remote URL", remotePlaceholder = "https://github.com/owner/repository.git", remoteUrl }: {
+function GitSetupFields({ actions, approved, disabled, onApprovalChange, onRemoteChange, remoteAriaLabel = "Origin remote URL", remotePlaceholder = "https://github.com/owner/repository.git", remoteUrl, showActionSummary = true }: {
 	actions: string[];
 	approved: boolean;
 	disabled: boolean;
@@ -2023,12 +1978,13 @@ function WorkspaceGitSetupFields({ actions, approved, disabled, onApprovalChange
 	remoteAriaLabel?: string;
 	remotePlaceholder?: string;
 	remoteUrl: string;
+	showActionSummary?: boolean;
 }) {
 	const { t } = useTranslation();
 	return <div className="space-y-2">
 		<label className="flex items-start gap-2 text-[12px] text-[var(--color-text-import-title)]">
 			<Checkbox checked={approved} className="mt-0.5" disabled={disabled} onCheckedChange={(checked) => onApprovalChange(checked === true)} />
-			<span className="min-w-0 flex-1"><span className="block font-medium">{t("createProject.setupGitProject")}</span><span className="block text-[11px] leading-4 text-[var(--color-text-import-muted)]">{actions.map(gitActionLabel).join(", ")}</span></span>
+			<span className="min-w-0 flex-1"><span className="block font-medium">{t("createProject.setupGitProject")}</span>{showActionSummary ? <span className="block text-[11px] leading-4 text-[var(--color-text-import-muted)]">{actions.map(gitActionLabel).join(", ")}</span> : null}</span>
 		</label>
 		{actions.includes("set_remote") ? <Input aria-label={remoteAriaLabel} className="h-8 bg-[var(--color-bg-import-card)] font-mono text-[12px]" disabled={disabled} placeholder={remotePlaceholder} value={remoteUrl} onChange={(event) => onRemoteChange(event.target.value)} /> : null}
 	</div>;

@@ -814,7 +814,7 @@ describe("CreateProjectFlow project import validation", () => {
 		});
 	});
 
-	it("shows only the missing Git preparation steps for a project root", async () => {
+	it("groups all required Git preparation behind one approval", async () => {
 		const user = userEvent.setup();
 		bridgeMocks.chooseDirectory.mockResolvedValue("/repo/project");
 		apiMocks.POST.mockResolvedValueOnce({
@@ -834,9 +834,11 @@ describe("CreateProjectFlow project import validation", () => {
 
 		expect(await screen.findByText("Prepare project")).toBeInTheDocument();
 		expect(screen.getByText("Project setup")).toBeInTheDocument();
+		expect(screen.getByRole("checkbox", { name: "Set up Git for this project" })).toBeChecked();
+		expect(screen.getAllByRole("checkbox")).toHaveLength(1);
 		expect(screen.queryByText("Git initialization")).not.toBeInTheDocument();
-		expect(screen.getByText("Initial commit")).toBeInTheDocument();
-		expect(screen.getByText("Remote setup")).toBeInTheDocument();
+		expect(screen.queryByText("Initial commit")).not.toBeInTheDocument();
+		expect(screen.queryByText("Remote setup")).not.toBeInTheDocument();
 		expect(screen.queryByText("Create the first commit so the project has a usable history.")).not.toBeInTheDocument();
 		expect(screen.getByLabelText("Origin remote URL")).toBeInTheDocument();
 		expect(
