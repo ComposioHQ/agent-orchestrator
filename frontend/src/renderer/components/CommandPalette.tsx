@@ -20,7 +20,6 @@ import {
 } from "../lib/command-palette";
 import { iconForCommand } from "../lib/command-palette-icons";
 import { isDialogOrMenuOpen } from "../lib/dom-selectors";
-import { captureRendererEvent } from "../lib/telemetry";
 import { isMacPlatform } from "../lib/platform";
 import { sessionReviewsQueryOptions, type PRReviewState } from "../lib/session-reviews";
 import { spawnOrchestrator } from "../lib/spawn-orchestrator";
@@ -52,13 +51,16 @@ export function CommandPalette() {
 	const queryClient = useQueryClient();
 	const restoreSessionById = useRestoreSession();
 	const params = useParams({ strict: false }) as { projectId?: string; sessionId?: string };
-	const workspaces = useWorkspaceQuery().data ?? [];
 	const { cloneProject, createProject, initializeProjectRepository } = useShell();
 	const resolvedTheme = useUiStore((s) => s.resolvedTheme);
 	const setThemePreference = useUiStore((s) => s.setThemePreference);
 	const isOpen = useUiStore((s) => s.isCommandPaletteOpen);
 	const setOpen = useUiStore((s) => s.setCommandPaletteOpen);
 	const restartingProjectIds = useUiStore((s) => s.restartingProjectIds);
+	// The palette stays mounted to preserve its close animation and global
+	// shortcut. While closed, commands are invisible, so retain the cached
+	// snapshot without subscribing this hidden surface to streamed updates.
+	const workspaces = useWorkspaceQuery({ subscribed: isOpen }).data ?? [];
 
 	const [view, setView] = useState<PaletteView>({ mode: "root" });
 	const [query, setQuery] = useState("");
@@ -89,6 +91,7 @@ export function CommandPalette() {
 	// Review states are fetched only while the palette is open; the shared query
 	// key means sessions already viewed in the inspector reuse the cached data.
 	const reviewQuerySummary = useQueries({
+		subscribed: isOpen,
 		queries: sessionsWithOpenPRs.map((session) =>
 			sessionReviewsQueryOptions(session, isOpen, PALETTE_REVIEW_STALE_TIME_MS),
 		),
@@ -183,6 +186,15 @@ export function CommandPalette() {
 			if (!useUiStore.getState().isCommandPaletteOpen) resetTransient();
 		}, 150);
 	}, [resetTransient, setOpen]);
+	const openExistingProject = useCallback(
+		(path: string) => {
+			const workspace = workspaces.find((candidate) => candidate.path === path);
+			if (!workspace) return;
+			closePalette();
+			void navigate({ to: "/projects/$projectId", params: { projectId: workspace.id } });
+		},
+		[closePalette, navigate, workspaces],
+	);
 
 	const resetAfterClose = useCallback(() => {
 		if (closeResetTimerRef.current !== null) {
@@ -376,16 +388,6 @@ export function CommandPalette() {
 					closePalette();
 					break;
 				case "trigger-review": {
-					// Emitted before the request, like the inspector's: these renderer
-					// events count INTENT, and the daemon's ao.review.* events are the
-					// ground truth for what actually ran.
-					void captureRendererEvent("ao.renderer.review_triggered", {
-						action: action.reviewAction,
-						// The palette sends no body, so it can never carry a per-session
-						// reviewer override.
-						has_override: false,
-						source: "command_palette",
-					});
 					const { error: triggerError } = await apiClient.POST("/api/v1/sessions/{sessionId}/reviews/trigger", {
 						params: { path: { sessionId: action.sessionId } },
 					});
@@ -647,6 +649,9 @@ export function CommandPalette() {
 				onCloneProject={cloneProject}
 				onCreateProject={createProject}
 				onInitializeProject={initializeProjectRepository}
+				onOpenExistingProject={openExistingProject}
+				existingProjectPaths={workspaces.map((workspace) => workspace.path)}
+				existingProjectNames={workspaces.map((workspace) => workspace.name)}
 			>
 				{({ choosePath }) => <BindChoosePath choosePath={choosePath} choosePathRef={choosePathRef} />}
 			</CreateProjectFlow>

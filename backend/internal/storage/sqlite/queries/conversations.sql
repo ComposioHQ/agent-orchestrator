@@ -25,6 +25,22 @@ WHERE id = ? AND scope = 'project';
 -- name: SelectConversationByID :one
 SELECT * FROM conversations WHERE id = ? LIMIT 1;
 
+-- name: HasConversationTurns :one
+SELECT EXISTS (SELECT 1 FROM conversation_turns WHERE conversation_id = ?);
+
+-- name: ReleaseUntouchedConversationProvider :execrows
+UPDATE conversation_branches
+SET provider_conversation_id = '', provider_scope_id = sqlc.arg(provider_scope_id)
+WHERE conversation_branches.session_id = sqlc.arg(session_id) AND parent_branch_id IS NULL
+  AND conversation_branches.id = (
+      SELECT c.active_branch_id FROM conversations AS c
+      WHERE c.session_id = sqlc.arg(session_id) AND c.current_session_id = sqlc.arg(session_id)
+        AND c.latest_sequence = 0
+        AND NOT EXISTS (
+            SELECT 1 FROM conversation_turns WHERE conversation_id = c.id
+        )
+  );
+
 -- name: InsertConversationBranch :exec
 INSERT INTO conversation_branches (
     id, conversation_id, session_id, provider_conversation_id,
@@ -481,6 +497,17 @@ UPDATE conversation_turns
 SET state = ?, error_message = ?, completed_at = COALESCE(completed_at, ?)
 WHERE id = ?;
 
+-- A streamed assistant item may not receive item/completed when steering causes
+-- the provider to finish the turn without replaying it: the accumulated text is
+-- still the durable answer, and the enclosing turn is the terminal boundary.
+-- name: SettleStreamingConversationMessagesForTurn :exec
+UPDATE conversation_messages
+SET streaming = 0, revision = revision + 1, updated_at = sqlc.arg(updated_at)
+WHERE conversation_id = sqlc.arg(conversation_id)
+  AND turn_id = sqlc.arg(turn_id)
+  AND role = 'assistant'
+  AND streaming = 1;
+
 -- A provider can acknowledge an interrupted/failed turn without first emitting
 -- item/completed for the command it killed. Settle those rows with the enclosing
 -- turn so clients never show a permanent live spinner for work that has stopped.
@@ -490,6 +517,20 @@ SET status = sqlc.arg(status), revision = revision + 1, updated_at = sqlc.arg(up
 WHERE conversation_activities.conversation_id = sqlc.arg(conversation_id)
   AND turn_id = sqlc.arg(turn_id)
   AND status = 'running';
+
+-- Successful completion is the terminal fact for a plan even when the provider
+-- omits its customary final plan notification. Keep the timeline copy identical
+-- to the turn copy that SettleTurn finalizes from the same event.
+-- name: FinalizeConversationPlanActivity :exec
+UPDATE conversation_activities
+SET status = 'completed',
+    summary = sqlc.arg(summary),
+    detail_json = sqlc.arg(detail_json),
+    revision = revision + 1,
+    updated_at = sqlc.arg(updated_at)
+WHERE conversation_activities.conversation_id = sqlc.arg(conversation_id)
+  AND turn_id = sqlc.arg(turn_id)
+  AND kind = 'plan';
 
 -- The same invariant applies when startup discovers work abandoned by a dead
 -- controller. This runs before SettleOrphanedConversationTurns while their turn
@@ -844,16 +885,29 @@ WHERE id = ?
   AND state = 'queued'
   AND promotion_started_at IS NULL;
 
--- Rewrite the durable human prompt for a turn that has not yet dispatched.
+-- Read only an undispatched human prompt for editing.
+-- name: SelectQueuedConversationMessage :one
+SELECT conversation_messages.*
+FROM conversation_messages
+JOIN conversation_turns ON conversation_turns.id = conversation_messages.turn_id
+WHERE conversation_messages.conversation_id = ?
+  AND conversation_messages.turn_id = ?
+  AND conversation_messages.role = 'user'
+  AND conversation_messages.origin = 'human'
+  AND conversation_turns.state = 'queued'
+  AND conversation_turns.promotion_started_at IS NULL;
+
+-- Rewrite text and content together, only if the edited revision is current.
 -- name: UpdateQueuedConversationMessageText :execrows
 UPDATE conversation_messages
 SET text = ?,
     revision = revision + 1,
-    delivery_content_json = '',
+    delivery_content_json = ?,
     updated_at = ?
 WHERE conversation_messages.conversation_id = ?
   AND conversation_messages.turn_id = ?
   AND conversation_messages.role = 'user'
+  AND conversation_messages.revision = ?
   AND EXISTS (
       SELECT 1
       FROM conversation_turns
@@ -862,6 +916,24 @@ WHERE conversation_messages.conversation_id = ?
         AND conversation_turns.state = 'queued'
         AND conversation_turns.promotion_started_at IS NULL
   );
+
+-- Current queue order for reorder validation and timestamp permutation.
+-- name: SelectQueuedConversationTurnOrder :many
+SELECT id, requested_at
+FROM conversation_turns
+WHERE conversation_id = ?
+  AND state = 'queued'
+  AND promotion_started_at IS NULL
+ORDER BY requested_at, rowid;
+
+-- Reassign one queued turn's dispatch position without changing its state.
+-- name: UpdateQueuedConversationTurnRequestedAt :execrows
+UPDATE conversation_turns
+SET requested_at = ?
+WHERE id = ?
+  AND conversation_id = ?
+  AND state = 'queued'
+  AND promotion_started_at IS NULL;
 
 -- name: InsertConversationMessage :exec
 INSERT INTO conversation_messages (

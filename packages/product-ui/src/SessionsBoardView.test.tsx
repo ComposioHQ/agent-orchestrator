@@ -308,7 +308,7 @@ describe("SessionsBoardView", () => {
 
 	it("renders a neutral card with grouped multi-PR, usage, and action presentation", () => {
 		const onOpen = vi.fn();
-		render(
+		const { container } = render(
 			<SessionCardView
 				action={<button type="button">Restore</button>}
 				branchAction={<button type="button">Copy branch</button>}
@@ -324,8 +324,25 @@ describe("SessionsBoardView", () => {
 				}}
 				onOpen={onOpen}
 				prs={[
-					{ number: 10, state: "open", url: "https://example.com/pull/10" },
-					{ number: 11, state: "open", url: "https://example.com/pull/11" },
+					{
+						commentCount: 1,
+						number: 10,
+						reviewers: [
+							{
+								id: "ada-lovelace",
+								avatarUrl: "https://avatars.githubusercontent.com/u/1?v=4",
+							},
+						],
+						state: "open",
+						url: "https://example.com/pull/10",
+					},
+					{
+						commentCount: 1,
+						number: 11,
+						reviewers: [{ id: "grace-hopper" }],
+						state: "open",
+						url: "https://example.com/pull/11",
+					},
 					{ number: 12, state: "merged", url: "https://example.com/pull/12" },
 				]}
 				renderAvatar={(provider) => <span role="img" aria-label={provider}>C</span>}
@@ -346,6 +363,14 @@ describe("SessionsBoardView", () => {
 			"href",
 			"https://example.com/pull/12",
 		);
+		const reviewerAvatar = container.querySelector(
+			'img[src="https://avatars.githubusercontent.com/u/1?v=4"]',
+		);
+		expect(reviewerAvatar).not.toBeNull();
+		expect(reviewerAvatar).toHaveAttribute("src", "https://avatars.githubusercontent.com/u/1?v=4");
+		expect(reviewerAvatar).toHaveAttribute("referrerpolicy", "no-referrer");
+		const fallback = screen.getByText("GH");
+		expect(fallback).toHaveAttribute("aria-hidden", "true");
 		// The full label is real text, not an aria-label on a generic span, and
 		// the compact form is hidden so it is not read out alongside it.
 		expect(screen.getByText("12,400 tokens")).toHaveClass("sr-only");
@@ -357,6 +382,43 @@ describe("SessionsBoardView", () => {
 
 		fireEvent.click(screen.getByRole("button", { name: "portable task" }));
 		expect(onOpen).toHaveBeenCalledOnce();
+	});
+
+	it("uses the shared loading and error fallback for reviewer avatars", () => {
+		const avatarUrl = "https://avatars.githubusercontent.com/ada?size=64";
+		render(
+			<SessionCardView
+				externalLink={ExternalLink}
+				labels={{
+					formatTime: () => "5m ago",
+					intakeIssue: (id) => `Issue ${id}`,
+					pr: {
+						short: "PR",
+						states: { closed: "closed", draft: "draft", merged: "merged", open: "open" },
+					},
+					updatedAt: (timestamp) => `Updated ${timestamp}`,
+				}}
+				prs={[{
+					commentCount: 1,
+					number: 10,
+					reviewers: [{ id: "ada-lovelace", avatarUrl }],
+					state: "open",
+					url: "https://example.com/pull/10",
+				}]}
+				renderAvatar={(provider) => <span role="img" aria-label={provider}>C</span>}
+				session={baseSession}
+			/>,
+		);
+
+		const prLink = screen.getByRole("link", { name: "PR #10 open" });
+		const image = prLink.querySelector("img");
+		expect(prLink).toHaveTextContent("AL");
+		expect(image).toHaveAttribute("src", avatarUrl);
+		if (image) fireEvent.load(image);
+		expect(prLink).not.toHaveTextContent("AL");
+		if (image) fireEvent.error(image);
+		expect(prLink).toHaveTextContent("AL");
+		expect(prLink.querySelector("img")).not.toBeInTheDocument();
 	});
 
 	it("truncates the status before card metrics can collide", () => {
