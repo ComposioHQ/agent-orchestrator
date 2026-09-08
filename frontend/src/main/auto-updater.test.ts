@@ -1286,8 +1286,7 @@ describe("startAutoUpdates", () => {
     autoUpdater.checkForUpdates.mockImplementation(() => new Promise(() => undefined));
 
     void module.checkForUpdatesNow(stateDir, { requestId: "manual-update-1" });
-    await flushMicrotasks();
-    expect(module.getUpdateStatus()).toMatchObject({ state: "checking" });
+    await vi.waitFor(() => expect(module.getUpdateStatus()).toMatchObject({ state: "checking" }));
 
     updaterEvents.get("error")?.(new Error("net::ERR_SSL_PROTOCOL_ERROR"));
 
