@@ -113,6 +113,14 @@ func (m *Manager) MarkAllRead(ctx context.Context, ids []string) (int64, error) 
 	return m.store.MarkNotificationsRead(ctx, ids)
 }
 
+// ClearAll deletes every notification.
+func (m *Manager) ClearAll(ctx context.Context) (int64, error) {
+	if m == nil || m.store == nil {
+		return 0, errors.New("notification: store is required")
+	}
+	return m.store.ClearAllNotifications(ctx)
+}
+
 func normalizeLimit(limit int) int {
 	if limit <= 0 {
 		return DefaultListLimit

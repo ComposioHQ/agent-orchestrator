@@ -1,5 +1,8 @@
 import { useInfiniteQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { aoBridge } from "../lib/bridge";
 import {
+	clearAllCachedNotifications,
+	clearAllNotifications,
 	fetchNotificationsPage,
 	markAllCachedNotificationsRead,
 	markAllNotificationsRead,
@@ -36,6 +39,28 @@ export function useMarkAllNotificationsReadMutation() {
 			if (ids.length === 0) {
 				void queryClient.invalidateQueries({ queryKey: unreadNotificationsQueryKey });
 			}
+		},
+	});
+}
+
+export function useClearAllNotificationsMutation() {
+	const queryClient = useQueryClient();
+	return useMutation({
+		mutationFn: clearAllNotifications,
+		// Cancelling only here narrows the window but does not close it: the SSE
+		// stream reconnecting, a daemon base-URL change, or the panel re-opening
+		// can all start a fresh GET after this point, while the DELETE is still
+		// pending. That GET can then resolve after clearAllCachedNotifications
+		// runs and repopulate the cache with rows that were just cleared.
+		onMutate: async () => {
+			await queryClient.cancelQueries({ queryKey: ["notifications", "history"] });
+		},
+		// Cancel again right before clearing the cache so anything that started
+		// during the pending DELETE cannot win the race and overwrite the reset.
+		onSuccess: async () => {
+			await queryClient.cancelQueries({ queryKey: ["notifications", "history"] });
+			clearAllCachedNotifications(queryClient);
+			void aoBridge.notifications.setBadge(0);
 		},
 	});
 }

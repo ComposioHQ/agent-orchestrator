@@ -22,6 +22,7 @@ type NotificationService interface {
 	List(ctx context.Context, filter notificationsvc.ListFilter) (notificationsvc.ListPage, error)
 	MarkRead(ctx context.Context, id string) (notificationsvc.Notification, bool, error)
 	MarkAllRead(ctx context.Context, ids []string) (int64, error)
+	ClearAll(ctx context.Context) (int64, error)
 }
 
 // NotificationStream is the live notification stream used by SSE clients.
@@ -40,6 +41,7 @@ func (c *NotificationsController) Register(r chi.Router) {
 	r.Get("/notifications", c.list)
 	r.Post("/notifications/read-all", c.markAllRead)
 	r.Patch("/notifications/{id}", c.markRead)
+	r.Delete("/notifications", c.clearAll)
 }
 
 // RegisterStream mounts long-lived notification stream routes on the supplied router.
@@ -113,6 +115,21 @@ func (c *NotificationsController) markAllRead(w http.ResponseWriter, r *http.Req
 	envelope.WriteJSON(w, http.StatusOK, MarkAllNotificationsReadResponse{
 		Notifications: []NotificationResponse{},
 		UpdatedCount:  updatedCount,
+	})
+}
+
+func (c *NotificationsController) clearAll(w http.ResponseWriter, r *http.Request) {
+	if c.Svc == nil {
+		apispec.NotImplemented(w, r, "DELETE", "/api/v1/notifications")
+		return
+	}
+	clearedCount, err := c.Svc.ClearAll(r.Context())
+	if err != nil {
+		envelope.WriteError(w, r, err)
+		return
+	}
+	envelope.WriteJSON(w, http.StatusOK, ClearNotificationsResponse{
+		ClearedCount: clearedCount,
 	})
 }
 

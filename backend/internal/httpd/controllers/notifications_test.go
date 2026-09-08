@@ -20,13 +20,14 @@ import (
 )
 
 type fakeNotificationService struct {
-	gotFilter     notificationsvc.ListFilter
-	gotMarkID     string
-	gotMarkAllIDs []string
-	items         []notificationsvc.Notification
-	markItem      notificationsvc.Notification
-	markAllCount  int64
-	err           error
+	gotFilter       notificationsvc.ListFilter
+	gotMarkID       string
+	gotMarkAllIDs   []string
+	items           []notificationsvc.Notification
+	markItem        notificationsvc.Notification
+	markAllCount    int64
+	clearedAllCount int64
+	err             error
 }
 
 type fakeNotificationStream struct {
@@ -47,6 +48,10 @@ func (f *fakeNotificationService) MarkRead(_ context.Context, id string) (notifi
 func (f *fakeNotificationService) MarkAllRead(_ context.Context, ids []string) (int64, error) {
 	f.gotMarkAllIDs = ids
 	return f.markAllCount, f.err
+}
+
+func (f *fakeNotificationService) ClearAll(_ context.Context) (int64, error) {
+	return f.clearedAllCount, f.err
 }
 
 func (f *fakeNotificationStream) Subscribe(projectID domain.ProjectID) (<-chan domain.NotificationEvent, func()) {
@@ -300,4 +305,18 @@ func TestNotificationsAPI_StreamWithoutPublisherIs501(t *testing.T) {
 	srv := newNotificationStreamTestServer(t, &fakeNotificationService{}, nil)
 	body, status, _ := doRequest(t, srv, "GET", "/api/v1/notifications/stream", "")
 	assertErrorCode(t, body, status, http.StatusNotImplemented, "NOT_IMPLEMENTED")
+}
+
+func TestNotificationsAPI_ClearAll(t *testing.T) {
+	svc := &fakeNotificationService{clearedAllCount: 5}
+	srv := newNotificationTestServer(t, svc)
+
+	body, status, _ := doRequest(t, srv, "DELETE", "/api/v1/notifications", "")
+	if status != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", status, body)
+	}
+	if !strings.Contains(string(body), `"clearedCount":5`) {
+		t.Fatalf("body = %s, want clearedCount 5", body)
+	}
+
 }

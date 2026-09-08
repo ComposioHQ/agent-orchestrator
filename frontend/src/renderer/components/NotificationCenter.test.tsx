@@ -9,6 +9,7 @@ import { NotificationCenter, NotificationRuntime } from "./NotificationCenter";
 import { TooltipProvider } from "./ui/tooltip";
 
 const {
+	clearAllMock,
 	connectMock,
 	fetchNextPageMock,
 	markAllMock,
@@ -18,6 +19,7 @@ const {
 	restoreSessionMock,
 	workspaceQueryMock,
 } = vi.hoisted(() => ({
+	clearAllMock: vi.fn(),
 	connectMock: vi.fn(),
 	fetchNextPageMock: vi.fn(),
 	markAllMock: vi.fn(),
@@ -86,6 +88,7 @@ const unreadNotifications = allNotifications.filter((item) => item.status === "u
 vi.mock("@tanstack/react-router", () => ({ useNavigate: () => navigateMock, useParams: () => paramsMock() }));
 
 vi.mock("../hooks/useNotificationsQuery", () => ({
+	useClearAllNotificationsMutation: () => ({ isPending: false, mutateAsync: clearAllMock }),
 	useMarkAllNotificationsReadMutation: () => ({ isPending: false, mutateAsync: markAllMock }),
 	useNotificationsQuery: (status: NotificationListStatus, enabled?: boolean) => notificationQueryMock(status, enabled),
 }));
@@ -167,6 +170,7 @@ beforeEach(() => {
 	paramsMock.mockReset().mockReturnValue({});
 	useUiStore.setState({ visibleTerminalKindBySession: {} });
 	fetchNextPageMock.mockReset().mockResolvedValue(undefined);
+	clearAllMock.mockReset().mockResolvedValue(0);
 	markAllMock.mockReset().mockResolvedValue(0);
 	navigateMock.mockReset();
 	restoreSessionMock.mockReset().mockResolvedValue({ status: "success" });

@@ -749,7 +749,8 @@ export interface paths {
         get: operations["listNotifications"];
         put?: never;
         post?: never;
-        delete?: never;
+        /** Clear all notifications */
+        delete: operations["clearNotifications"];
         options?: never;
         head?: never;
         patch?: never;
@@ -2581,6 +2582,13 @@ export interface components {
         CleanupSkippedSession: {
             reason: string;
             sessionId: string;
+        };
+        ClearNotificationsResponse: {
+            /**
+             * Format: int64
+             * @description Number of notifications deleted.
+             */
+            clearedCount: number;
         };
         CloneProjectInput: {
             config?: components["schemas"]["ProjectConfig"];
@@ -6504,6 +6512,44 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    clearNotifications: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ClearNotificationsResponse"];
                 };
             };
             /** @description Internal Server Error */

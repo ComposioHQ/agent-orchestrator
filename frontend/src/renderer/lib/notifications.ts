@@ -68,6 +68,12 @@ export async function markAllNotificationsRead(ids: string[]): Promise<number> {
 	return data?.updatedCount ?? 0;
 }
 
+export async function clearAllNotifications(): Promise<number> {
+	const { data, error } = await apiClient.DELETE("/api/v1/notifications");
+	if (error) throw new Error(apiErrorMessage(error, "Could not clear notifications"));
+	return data?.clearedCount ?? 0;
+}
+
 export function mergeUnreadNotification(queryClient: QueryClient, notification: NotificationDTO): boolean {
 	if (notification.status !== "unread") return false;
 	const inserted = mergeNotificationIntoCache(queryClient, unreadNotificationsQueryKey, notification);
@@ -220,6 +226,15 @@ export function markAllCachedNotificationsRead(
 					unreadCount: Math.max(0, page.unreadCount - delta),
 				})),
 			};
+		});
+	}
+}
+
+export function clearAllCachedNotifications(queryClient: QueryClient): void {
+	for (const queryKey of [unreadNotificationsQueryKey, recentNotificationsQueryKey] as const) {
+		queryClient.setQueryData<NotificationsCache>(queryKey, {
+			pageParams: [""],
+			pages: [{ notifications: [], unreadCount: 0, unresolvedCount: 0 }],
 		});
 	}
 }
