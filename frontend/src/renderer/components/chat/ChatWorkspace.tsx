@@ -470,6 +470,11 @@ export function ChatWorkspace({
 	mcpReloadError,
 }: ChatWorkspaceProps) {
 	const turn = activeTurn(snapshot);
+	// A session whose controller has not opened a conversation yet is still coming
+	// up, not connecting to something already there. It has nothing to send to, so
+	// the controls stay disabled exactly as before — but the copy must not claim a
+	// stop that never happened.
+	const controllerStarting = snapshot.controller.state === "connecting" && !snapshot.conversationId;
 	const hasPendingInteraction = snapshot.items.some(
 		(item) =>
 			item.kind === "activity" &&
@@ -878,7 +883,7 @@ export function ChatWorkspace({
 					configPending={configOptionPending}
 					error={configOptionError}
 					disabled={
-						snapshot.controller.state === "stopped" || controllerTransitioning || configOptionPending || newWorkDisabled
+						snapshot.controller.state === "stopped" || controllerStarting || controllerTransitioning || configOptionPending || newWorkDisabled
 					}
 				/>
 			) : null,
@@ -886,6 +891,7 @@ export function ChatWorkspace({
 			configOptionError,
 			configOptionPending,
 			configOptions,
+			controllerStarting,
 			controllerTransitioning,
 			models,
 			newWorkDisabled,
@@ -1180,8 +1186,8 @@ export function ChatWorkspace({
 									settings={composerSettings}
 									busy={busy}
 									willQueue={Boolean(turn)}
-									disabled={snapshot.controller.state === "stopped" || controllerTransitioning || newWorkDisabled}
-									disabledPlaceholder={controllerTransitioning
+									disabled={snapshot.controller.state === "stopped" || controllerStarting || controllerTransitioning || newWorkDisabled}
+									disabledPlaceholder={controllerTransitioning || controllerStarting
 										? "Connecting to the agent…"
 										: newWorkDisabled ? "Switching to terminal UI…" : undefined}
 									skills={skills}
