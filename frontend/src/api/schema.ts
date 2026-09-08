@@ -3262,9 +3262,13 @@ export interface components {
             session: components["schemas"]["ControllersSessionView"];
             sessionId: string;
         };
+        GitHubRepositoryPreparation: {
+            name?: string;
+            owner?: string;
+        };
         GitPreparationEvent: {
             /** @enum {string} */
-            action: "git_init" | "git_commit" | "set_remote";
+            action: "git_init" | "git_commit" | "create_remote_repository" | "set_remote";
             error?: string;
             message?: string;
             repoPath: string;
@@ -3273,6 +3277,7 @@ export interface components {
         };
         GitPreparationInput: {
             approvedActions?: string[];
+            githubRepository?: components["schemas"]["GitHubRepositoryPreparation"];
             /** @enum {string} */
             importKind: "project" | "workspace";
             initialCommitMessage?: string;
@@ -3287,6 +3292,7 @@ export interface components {
         };
         GitRepositoryPreparationInput: {
             approvedActions: string[];
+            githubRepository?: components["schemas"]["GitHubRepositoryPreparation"];
             initialCommitMessage?: string;
             remoteUrl?: string;
             repoPath: string;

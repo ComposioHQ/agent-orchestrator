@@ -9,7 +9,9 @@ import { useUiStore } from "../stores/ui-store";
 const bridgeMocks = vi.hoisted(() => ({
 	checkAncestorRepo: vi.fn(),
 	checkGitRepository: vi.fn(),
+	checkGitHubRepositoryAvailability: vi.fn(),
 	chooseDirectory: vi.fn(),
+	getGitHubLogin: vi.fn(),
 	getRepositoryBranch: vi.fn(),
 	scanImportFolder: vi.fn(),
 }));
@@ -26,7 +28,9 @@ vi.mock("../lib/bridge", () => ({
 		app: {
 			checkAncestorRepo: bridgeMocks.checkAncestorRepo,
 			checkGitRepository: bridgeMocks.checkGitRepository,
+			checkGitHubRepositoryAvailability: bridgeMocks.checkGitHubRepositoryAvailability,
 			chooseDirectory: bridgeMocks.chooseDirectory,
+			getGitHubLogin: bridgeMocks.getGitHubLogin,
 			getRepositoryBranch: bridgeMocks.getRepositoryBranch,
 			scanImportFolder: bridgeMocks.scanImportFolder,
 		},
@@ -235,7 +239,9 @@ function projectValidation(
 beforeEach(() => {
 	bridgeMocks.checkAncestorRepo.mockReset().mockResolvedValue(undefined);
 	bridgeMocks.checkGitRepository.mockReset().mockResolvedValue(true);
+	bridgeMocks.checkGitHubRepositoryAvailability.mockReset().mockResolvedValue({ available: true });
 	bridgeMocks.chooseDirectory.mockReset();
+	bridgeMocks.getGitHubLogin.mockReset().mockResolvedValue("");
 	bridgeMocks.getRepositoryBranch.mockReset().mockResolvedValue(undefined);
 	bridgeMocks.scanImportFolder.mockReset().mockImplementation(async ({ path }: { path: string }) => okScan(path));
 	apiMocks.POST.mockReset();
@@ -777,7 +783,7 @@ describe("CreateProjectFlow project import validation", () => {
 					hasCommit: false,
 					hasOrigin: false,
 					needsGitInit: true,
-					requiredActions: ["git_init", "git_commit", "set_remote"],
+					requiredActions: ["git_init", "git_commit", "create_remote_repository"],
 				},
 				childRepos: [
 					{
@@ -795,7 +801,7 @@ describe("CreateProjectFlow project import validation", () => {
 		});
 		apiMocks.POST.mockResolvedValueOnce({
 			data: projectValidation("/repo/parent", {
-				root: { isRepo: false, hasCommit: false, hasOrigin: false, needsGitInit: true, requiredActions: ["git_init", "git_commit", "set_remote"] },
+				root: { isRepo: false, hasCommit: false, hasOrigin: false, needsGitInit: true, requiredActions: ["git_init", "git_commit", "create_remote_repository"] },
 				childRepos: [{ repoPath: "/repo/parent/web", isRepo: true, hasCommit: true, hasOrigin: true, isEmptyFolder: false, needsGitInit: false, requiredActions: [], blockingErrors: [] }],
 			}),
 		});
@@ -804,7 +810,7 @@ describe("CreateProjectFlow project import validation", () => {
 
 		await openSource(user, "Import an existing project");
 
-		expect(await screen.findByText("This folder contains projects and needs to be imported as a workspace.")).toBeInTheDocument();
+		expect(await screen.findByText("This folder contains child Git repositories. Import it as a workspace instead.")).toBeInTheDocument();
 		expect(screen.queryByRole("button", { name: "Continue" })).not.toBeInTheDocument();
 		expect(screen.queryByRole("button", { name: "Back" })).not.toBeInTheDocument();
 		await user.click(screen.getByRole("button", { name: "Import as workspace" }));
@@ -823,7 +829,7 @@ describe("CreateProjectFlow project import validation", () => {
 				root: {
 					hasCommit: false,
 					hasOrigin: false,
-					requiredActions: ["git_commit", "set_remote"],
+					requiredActions: ["git_commit", "create_remote_repository"],
 				},
 			}),
 		});
@@ -834,18 +840,14 @@ describe("CreateProjectFlow project import validation", () => {
 
 		expect(await screen.findByText("Prepare project")).toBeInTheDocument();
 		expect(screen.getByText("Project setup")).toBeInTheDocument();
-		expect(screen.getByRole("checkbox", { name: "Set up Git for this project" })).toBeChecked();
-		expect(screen.getAllByRole("checkbox")).toHaveLength(1);
+		expect(screen.queryByRole("checkbox", { name: "Set up Git for this project" })).not.toBeInTheDocument();
 		expect(screen.queryByText("Git initialization")).not.toBeInTheDocument();
 		expect(screen.queryByText("Initial commit")).not.toBeInTheDocument();
 		expect(screen.queryByText("Remote setup")).not.toBeInTheDocument();
 		expect(screen.queryByText("Create the first commit so the project has a usable history.")).not.toBeInTheDocument();
-		expect(screen.getByLabelText("Origin remote URL")).toBeInTheDocument();
-		expect(
-			screen.getByText(
-				"To create sessions and PRs successfully, make sure this repository also exists on GitHub and that you can push the default branch to it.",
-			),
-		).toBeInTheDocument();
+		expect(screen.getByLabelText("Owner")).toHaveValue("username");
+		expect(screen.getByLabelText("Repository name")).toHaveValue("project");
+		expect(screen.getByText("Create a private GitHub repo?")).toBeInTheDocument();
 		expect(screen.queryByText("Plain folder")).not.toBeInTheDocument();
 		expect(screen.queryByText("No commit yet")).not.toBeInTheDocument();
 		expect(screen.queryByText("No origin remote")).not.toBeInTheDocument();
@@ -889,7 +891,7 @@ describe("CreateProjectFlow project import validation", () => {
 				nextStep: "prepare_git",
 				root: {
 					hasOrigin: false,
-					requiredActions: ["set_remote"],
+					requiredActions: ["create_remote_repository"],
 				},
 			}),
 		});
@@ -898,20 +900,22 @@ describe("CreateProjectFlow project import validation", () => {
 
 		await openSource(user, "Import an existing project");
 
-		expect(await screen.findByLabelText("Origin remote URL")).toHaveValue(
-			"https://github.com/username/project-no-git.git",
-		);
+		expect(await screen.findByLabelText("Owner")).toHaveValue("username");
+		expect(screen.getByLabelText("Repository name")).toHaveValue("project-no-git");
+		expect(screen.getByText("Will create `https://github.com/username/project-no-git.git`")).toBeInTheDocument();
+		expect(await screen.findByText("Repository name is available.")).toHaveClass("text-emerald-600");
 	});
 
-	it("requires the user to keep all required setup actions approved", async () => {
+	it("requires an available GitHub repository name", async () => {
 		const user = userEvent.setup();
 		bridgeMocks.chooseDirectory.mockResolvedValue("/repo/project");
+		bridgeMocks.checkGitHubRepositoryAvailability.mockResolvedValue({ available: false, message: "Repository name is already in use for this owner." });
 		apiMocks.POST.mockResolvedValueOnce({
 			data: projectValidation("/repo/project", {
 				nextStep: "prepare_git",
 				root: {
 					hasOrigin: false,
-					requiredActions: ["set_remote"],
+					requiredActions: ["create_remote_repository"],
 				},
 			}),
 		});
@@ -920,14 +924,39 @@ describe("CreateProjectFlow project import validation", () => {
 
 		await openSource(user, "Import an existing project");
 
-		const remoteAction = screen.getByRole("checkbox");
-		expect(remoteAction).toBeChecked();
-		await user.click(screen.getByLabelText("Origin remote URL"));
-		expect(remoteAction).toBeChecked();
-		await user.click(remoteAction);
-
-		expect(screen.getByText("Approve all required setup actions to continue importing this project.")).toBeInTheDocument();
+		expect(await screen.findByText("Repository name is already in use for this owner.")).toBeInTheDocument();
+		expect(screen.getByText("Repository name is already in use for this owner.")).toHaveClass("text-red-600");
 		expect(screen.getByRole("button", { name: "Continue" })).toBeDisabled();
+	});
+
+	it("checks repository availability again when the repository name changes", async () => {
+		const user = userEvent.setup();
+		bridgeMocks.chooseDirectory.mockResolvedValue("/repo/project");
+		bridgeMocks.checkGitHubRepositoryAvailability
+			.mockResolvedValueOnce({ available: false, message: "Repository name is already in use for this owner." })
+			.mockResolvedValueOnce({ available: true });
+		apiMocks.POST.mockResolvedValueOnce({
+			data: projectValidation("/repo/project", {
+				nextStep: "prepare_git",
+				root: {
+					hasOrigin: false,
+					requiredActions: ["create_remote_repository"],
+				},
+			}),
+		});
+
+		renderChooseFlow();
+
+		await openSource(user, "Import an existing project");
+
+		expect(await screen.findByText("Repository name is already in use for this owner.")).toBeInTheDocument();
+		const repoNameInput = screen.getByLabelText("Repository name");
+		await user.clear(repoNameInput);
+		await user.type(repoNameInput, "project-new");
+
+		await waitFor(() => expect(bridgeMocks.checkGitHubRepositoryAvailability).toHaveBeenLastCalledWith({ owner: "username", name: "project-new" }));
+		expect(await screen.findByText("Repository name is available.")).toHaveClass("text-emerald-600");
+		expect(screen.getByRole("button", { name: "Continue" })).toBeEnabled();
 	});
 
 	it("prepares the project and then opens agent selection", async () => {
@@ -942,7 +971,7 @@ describe("CreateProjectFlow project import validation", () => {
 						hasCommit: false,
 						hasOrigin: false,
 						needsGitInit: true,
-						requiredActions: ["git_init", "git_commit", "set_remote"],
+						requiredActions: ["git_init", "git_commit", "create_remote_repository"],
 					},
 				}),
 			})
@@ -955,7 +984,7 @@ describe("CreateProjectFlow project import validation", () => {
 					],
 					validation: projectValidation("/repo/project", {
 						nextStep: "prepare_git",
-						root: { isRepo: true, hasCommit: false, hasOrigin: false, requiredActions: ["git_commit", "set_remote"] },
+						root: { isRepo: true, hasCommit: false, hasOrigin: false, requiredActions: ["git_commit", "create_remote_repository"] },
 					}),
 				},
 			})
@@ -968,16 +997,16 @@ describe("CreateProjectFlow project import validation", () => {
 					],
 					validation: projectValidation("/repo/project", {
 						nextStep: "prepare_git",
-						root: { isRepo: true, hasCommit: true, hasOrigin: false, requiredActions: ["set_remote"] },
+						root: { isRepo: true, hasCommit: true, hasOrigin: false, requiredActions: ["create_remote_repository"] },
 					}),
 				},
 			})
 			.mockResolvedValueOnce({
 				data: {
 					events: [
-						{ repoPath: "/repo/project", action: "set_remote", state: "pending" },
-						{ repoPath: "/repo/project", action: "set_remote", state: "running" },
-						{ repoPath: "/repo/project", action: "set_remote", state: "success" },
+						{ repoPath: "/repo/project", action: "create_remote_repository", state: "pending" },
+						{ repoPath: "/repo/project", action: "create_remote_repository", state: "running" },
+						{ repoPath: "/repo/project", action: "create_remote_repository", state: "success" },
 					],
 					validation: projectValidation("/repo/project"),
 				},
@@ -986,9 +1015,10 @@ describe("CreateProjectFlow project import validation", () => {
 		renderChooseFlow();
 
 		await openSource(user, "Import an existing project");
-		const remoteInput = await screen.findByLabelText("Origin remote URL");
-		await user.clear(remoteInput);
-		await user.type(remoteInput, "https://github.com/acme/project.git");
+		const ownerInput = await screen.findByLabelText("Owner");
+		await user.clear(ownerInput);
+		await user.type(ownerInput, "acme");
+		await waitFor(() => expect(screen.getByRole("button", { name: "Continue" })).toBeEnabled());
 		await user.click(screen.getByRole("button", { name: "Continue" }));
 
 		await waitFor(() =>
@@ -996,8 +1026,9 @@ describe("CreateProjectFlow project import validation", () => {
 				body: {
 					importKind: "project",
 					path: "/repo/project",
-					approvedActions: ["git_init", "git_commit", "set_remote"],
+					approvedActions: ["git_init", "git_commit", "create_remote_repository"],
 					remoteUrl: "https://github.com/acme/project.git",
+					githubRepository: { owner: "acme", name: "project" },
 					stepwise: true,
 				},
 			}),
@@ -1008,26 +1039,25 @@ describe("CreateProjectFlow project import validation", () => {
 		expect(screen.queryByText("Prepare project")).not.toBeInTheDocument();
 	});
 
-	it("blocks an inaccessible project remote before Git preparation", async () => {
+	it("blocks an unavailable GitHub repository before Git preparation", async () => {
 		const user = userEvent.setup();
 		bridgeMocks.chooseDirectory.mockResolvedValue("/repo/project");
-		bridgeMocks.checkGitRepository.mockResolvedValue(false);
+		bridgeMocks.checkGitHubRepositoryAvailability.mockResolvedValue({ available: false, message: "Repository name is already in use for this owner." });
 		apiMocks.POST.mockResolvedValueOnce({
 			data: projectValidation("/repo/project", {
 				nextStep: "prepare_git",
-				root: { hasOrigin: false, requiredActions: ["set_remote"] },
+				root: { hasOrigin: false, requiredActions: ["create_remote_repository"] },
 			}),
 		});
 
 		renderChooseFlow();
 
 		await openSource(user, "Import an existing project");
-		await user.click(screen.getByRole("button", { name: "Continue" }));
 
-		await waitFor(() => expect(bridgeMocks.checkGitRepository).toHaveBeenCalledWith("https://github.com/username/project.git"));
+		await waitFor(() => expect(bridgeMocks.checkGitHubRepositoryAvailability).toHaveBeenCalledWith({ owner: "username", name: "project" }));
 		expect(apiMocks.POST).toHaveBeenCalledTimes(1);
-		expect(useUiStore.getState().globalToast?.body).toBe("This isn't a repository or you don't have access");
-		await waitFor(() => expect(screen.getByRole("dialog", { name: "Prepare project" })).toHaveClass("modal-shake"));
+		expect(screen.getByText("Repository name is already in use for this owner.")).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Continue" })).toBeDisabled();
 		expect(screen.queryByTestId("agent-sheet")).not.toBeInTheDocument();
 	});
 
@@ -1113,7 +1143,7 @@ describe("CreateProjectFlow project import validation", () => {
 						hasCommit: false,
 						hasOrigin: false,
 						needsGitInit: true,
-						requiredActions: ["git_init", "git_commit", "set_remote"],
+						requiredActions: ["git_init", "git_commit", "create_remote_repository"],
 					},
 				}),
 			})
@@ -1136,9 +1166,10 @@ describe("CreateProjectFlow project import validation", () => {
 		);
 
 		await openSource(user, "Import an existing project");
-		const remoteInput = await screen.findByLabelText("Origin remote URL");
-		await user.clear(remoteInput);
-		await user.type(remoteInput, "https://github.com/acme/project.git");
+		const ownerInput = await screen.findByLabelText("Owner");
+		await user.clear(ownerInput);
+		await user.type(ownerInput, "acme");
+		await waitFor(() => expect(screen.getByRole("button", { name: "Continue" })).toBeEnabled());
 		await user.click(screen.getByRole("button", { name: "Continue" }));
 
 		expect(await screen.findByText("Running project setup. AO is preparing this repository now.")).toBeInTheDocument();
@@ -1153,7 +1184,7 @@ describe("CreateProjectFlow project import validation", () => {
 				],
 				validation: projectValidation("/repo/project", {
 					nextStep: "prepare_git",
-					root: { isRepo: true, hasCommit: false, hasOrigin: false, requiredActions: ["git_commit", "set_remote"] },
+					root: { isRepo: true, hasCommit: false, hasOrigin: false, requiredActions: ["git_commit", "create_remote_repository"] },
 				}),
 			},
 		});
@@ -1167,7 +1198,7 @@ describe("CreateProjectFlow project import validation", () => {
 				events: [{ repoPath: "/repo/project", action: "git_commit", state: "success" }],
 				validation: projectValidation("/repo/project", {
 					nextStep: "prepare_git",
-					root: { isRepo: true, hasCommit: true, hasOrigin: false, requiredActions: ["set_remote"] },
+					root: { isRepo: true, hasCommit: true, hasOrigin: false, requiredActions: ["create_remote_repository"] },
 				}),
 			},
 		});
@@ -1177,7 +1208,7 @@ describe("CreateProjectFlow project import validation", () => {
 
 		resolveRemote({
 			data: {
-				events: [{ repoPath: "/repo/project", action: "set_remote", state: "success" }],
+				events: [{ repoPath: "/repo/project", action: "create_remote_repository", state: "success" }],
 				validation: projectValidation("/repo/project"),
 			},
 		});
@@ -1196,7 +1227,7 @@ describe("CreateProjectFlow project import validation", () => {
 						isRepo: false,
 						hasCommit: false,
 						hasOrigin: false,
-						requiredActions: ["git_init", "git_commit", "set_remote"],
+						requiredActions: ["git_init", "git_commit", "create_remote_repository"],
 					},
 				}),
 			})
@@ -1205,7 +1236,7 @@ describe("CreateProjectFlow project import validation", () => {
 					events: [{ repoPath: "/repo/project", action: "git_init", state: "success" }],
 					validation: projectValidation("/repo/project", {
 						nextStep: "prepare_git",
-						root: { isRepo: true, hasCommit: false, hasOrigin: false, requiredActions: ["git_commit", "set_remote"] },
+						root: { isRepo: true, hasCommit: false, hasOrigin: false, requiredActions: ["git_commit", "create_remote_repository"] },
 					}),
 				},
 			})
@@ -1219,7 +1250,7 @@ describe("CreateProjectFlow project import validation", () => {
 						nextStep: "prepare_git",
 						root: {
 							hasOrigin: false,
-							requiredActions: ["git_commit", "set_remote"],
+							requiredActions: ["git_commit", "create_remote_repository"],
 						},
 					}),
 				},
@@ -1229,22 +1260,23 @@ describe("CreateProjectFlow project import validation", () => {
 					events: [{ repoPath: "/repo/project", action: "git_commit", state: "success" }],
 					validation: projectValidation("/repo/project", {
 						nextStep: "prepare_git",
-						root: { isRepo: true, hasCommit: true, hasOrigin: false, requiredActions: ["set_remote"] },
+						root: { isRepo: true, hasCommit: true, hasOrigin: false, requiredActions: ["create_remote_repository"] },
 					}),
 				},
 			})
 			.mockResolvedValueOnce({
 				data: {
-					events: [{ repoPath: "/repo/project", action: "set_remote", state: "success" }],
+					events: [{ repoPath: "/repo/project", action: "create_remote_repository", state: "success" }],
 					validation: projectValidation("/repo/project"),
 				},
 			});
 
 		renderChooseFlow();
 		await openSource(user, "Import an existing project");
-		const remoteInput = await screen.findByLabelText("Origin remote URL");
-		await user.clear(remoteInput);
-		await user.type(remoteInput, "https://github.com/acme/project.git");
+		const ownerInput = await screen.findByLabelText("Owner");
+		await user.clear(ownerInput);
+		await user.type(ownerInput, "acme");
+		await waitFor(() => expect(screen.getByRole("button", { name: "Continue" })).toBeEnabled());
 		await user.click(screen.getByRole("button", { name: "Continue" }));
 
 		await waitFor(() => expect(useUiStore.getState().globalToast?.body).toMatch(/failed while running Initial commit/i));
@@ -1258,7 +1290,7 @@ describe("CreateProjectFlow project import validation", () => {
 		expect((await screen.findByTestId("agent-sheet"))).toHaveAttribute("data-path", "/repo/project");
 		expect(apiMocks.POST).toHaveBeenCalledTimes(5);
 		expect(apiMocks.POST.mock.calls[3]?.[1]).toMatchObject({
-			body: { approvedActions: ["git_commit", "set_remote"], stepwise: true },
+			body: { approvedActions: ["git_commit", "create_remote_repository"], stepwise: true },
 		});
 	});
 });

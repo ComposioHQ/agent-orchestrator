@@ -9172,12 +9172,20 @@ components:
       - sessionId
       - session
       type: object
+    GitHubRepositoryPreparation:
+      properties:
+        name:
+          type: string
+        owner:
+          type: string
+      type: object
     GitPreparationEvent:
       properties:
         action:
           enum:
           - git_init
           - git_commit
+          - create_remote_repository
           - set_remote
           type: string
         error:
@@ -9204,6 +9212,8 @@ components:
           items:
             type: string
           type: array
+        githubRepository:
+          $ref: '#/components/schemas/GitHubRepositoryPreparation'
         importKind:
           enum:
           - project
@@ -9245,6 +9255,8 @@ components:
           items:
             type: string
           type: array
+        githubRepository:
+          $ref: '#/components/schemas/GitHubRepositoryPreparation'
         initialCommitMessage:
           type: string
         remoteUrl:
