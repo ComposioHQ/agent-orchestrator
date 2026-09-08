@@ -258,6 +258,8 @@
 	"createProject.footerReview": "위 오류를 확인하거나 다른 폴더를 선택하세요",
 	"createProject.gitSetupNotice": "이 폴더에 Git 설정이 필요하면 AO가 시작 전에 초기화하고 첫 커밋을 만듭니다.",
 	"createProject.githubOwner": "Owner",
+	"createProject.otherGitHubOwner": "기타",
+	"createProject.useDifferentGitHubOwner": "다른 소유자 사용",
 	"createProject.githubRepositoryName": "Repository name",
 	"createProject.githubRepoAvailable": "Repository name is available.",
 	"createProject.githubRepoChecking": "Checking repository name...",

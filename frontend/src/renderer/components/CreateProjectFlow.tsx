@@ -1784,8 +1784,8 @@ function ProjectImportDialog({
 														<SelectValue placeholder={t("createProject.githubOwner")}>
 															{customGitHubOwner ? (
 																<span className="flex items-center gap-2">
-																	<GitHubIcon className="size-4" />
-																	Other
+															<GitHubIcon className="size-4" />
+																	{t("createProject.otherGitHubOwner")}
 																</span>
 															) : selectedGitHubOwner ? (
 																<span className="flex items-center gap-2">
@@ -1806,8 +1806,8 @@ function ProjectImportDialog({
 														))}
 														<SelectItem value="__custom__">
 															<span className="flex items-center gap-2">
-																	<GitHubIcon className="size-4" />
-																Use a different owner
+															<GitHubIcon className="size-4" />
+																	{t("createProject.useDifferentGitHubOwner")}
 															</span>
 														</SelectItem>
 													</SelectContent>

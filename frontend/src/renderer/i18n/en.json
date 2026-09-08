@@ -258,6 +258,8 @@
 	"createProject.footerReview": "Review the error above or choose a different folder",
 	"createProject.gitSetupNotice": "If this folder needs Git setup, AO will initialize it and create the first commit before starting.",
 	"createProject.githubOwner": "Owner",
+	"createProject.otherGitHubOwner": "Other",
+	"createProject.useDifferentGitHubOwner": "Use a different owner",
 	"createProject.githubRepositoryName": "Repository name",
 	"createProject.githubRepoAvailable": "Repository name is available.",
 	"createProject.githubRepoChecking": "Checking repository name...",

@@ -260,6 +260,8 @@
 	"createProject.footerReview": "Revisa el error anterior o elige otra carpeta",
 	"createProject.gitSetupNotice": "Si esta carpeta necesita configuración de Git, AO la inicializará y creará el primer commit antes de empezar.",
 	"createProject.githubOwner": "Owner",
+	"createProject.otherGitHubOwner": "Otro",
+	"createProject.useDifferentGitHubOwner": "Usar otro propietario",
 	"createProject.githubRepositoryName": "Repository name",
 	"createProject.githubRepoAvailable": "Repository name is available.",
 	"createProject.githubRepoChecking": "Checking repository name...",

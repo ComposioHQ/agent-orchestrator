@@ -258,6 +258,8 @@
 	"createProject.footerReview": "上記のエラーを確認するか、別のフォルダーを選択してください",
 	"createProject.gitSetupNotice": "このフォルダーに Git のセットアップが必要な場合、AO は開始前に初期化し、最初のコミットを作成します。",
 	"createProject.githubOwner": "Owner",
+	"createProject.otherGitHubOwner": "その他",
+	"createProject.useDifferentGitHubOwner": "別の所有者を使用",
 	"createProject.githubRepositoryName": "Repository name",
 	"createProject.githubRepoAvailable": "Repository name is available.",
 	"createProject.githubRepoChecking": "Checking repository name...",

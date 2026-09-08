@@ -258,6 +258,8 @@
 	"createProject.footerReview": "请查看上方错误，或选择其他文件夹",
 	"createProject.gitSetupNotice": "如果此文件夹需要设置 Git，AO 会先初始化仓库并创建首次提交，然后再启动。",
 	"createProject.githubOwner": "Owner",
+	"createProject.otherGitHubOwner": "其他",
+	"createProject.useDifferentGitHubOwner": "使用其他所有者",
 	"createProject.githubRepositoryName": "Repository name",
 	"createProject.githubRepoAvailable": "Repository name is available.",
 	"createProject.githubRepoChecking": "Checking repository name...",

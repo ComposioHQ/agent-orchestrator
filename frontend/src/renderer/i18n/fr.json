@@ -260,6 +260,8 @@
 	"createProject.footerReview": "Examinez l'erreur ci-dessus ou choisissez un autre dossier",
 	"createProject.gitSetupNotice": "Si ce dossier nécessite une configuration Git, AO l'initialisera et créera le premier commit avant de démarrer.",
 	"createProject.githubOwner": "Owner",
+	"createProject.otherGitHubOwner": "Autre",
+	"createProject.useDifferentGitHubOwner": "Utiliser un autre propriétaire",
 	"createProject.githubRepositoryName": "Repository name",
 	"createProject.githubRepoAvailable": "Repository name is available.",
 	"createProject.githubRepoChecking": "Checking repository name...",

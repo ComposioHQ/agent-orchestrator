@@ -258,6 +258,8 @@
 	"createProject.footerReview": "Fehler oben prüfen oder einen anderen Ordner wählen",
 	"createProject.gitSetupNotice": "Falls dieser Ordner eine Git-Einrichtung benötigt, initialisiert AO ihn und erstellt den ersten Commit vor dem Start.",
 	"createProject.githubOwner": "Owner",
+	"createProject.otherGitHubOwner": "Andere",
+	"createProject.useDifferentGitHubOwner": "Anderen Inhaber verwenden",
 	"createProject.githubRepositoryName": "Repository name",
 	"createProject.githubRepoAvailable": "Repository name is available.",
 	"createProject.githubRepoChecking": "Checking repository name...",
