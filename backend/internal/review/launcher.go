@@ -105,6 +105,7 @@ type ReviewerChatStart struct {
 // ReviewerChatController adapts the live Chat service without making the review
 // engine depend on HTTP or renderer concepts.
 type ReviewerChatController interface {
+	SupportsReviewChat(domain.AgentHarness) bool
 	PreflightReviewChat(context.Context, domain.AgentHarness) error
 	StartReviewChat(context.Context, ReviewerChatStart) (string, error)
 	RestoreReviewChat(context.Context, ReviewerChatStart) (string, error)
@@ -209,7 +210,7 @@ func (l *agentLauncher) Preflight(ctx context.Context, harness domain.ReviewerHa
 	if !ok {
 		return fmt.Errorf("no reviewer adapter for harness %q", harness)
 	}
-	if profile, ok := reviewer.(ports.ReviewerChatProfile); ok && l.chat != nil {
+	if profile, ok := reviewer.(ports.ReviewerChatProfile); ok && l.reviewChatSupported(profile) {
 		return l.chat.PreflightReviewChat(ctx, profile.ReviewChatHarness())
 	}
 	cmd, err := reviewer.ReviewCommand(ctx, ports.ReviewInvocation{WorkspacePath: workspacePath})
@@ -422,7 +423,7 @@ func (l *agentLauncher) Spawn(ctx context.Context, spec LaunchSpec) (LaunchResul
 		return LaunchResult{}, err
 	}
 	if reviewer, ok := l.reviewers.Reviewer(spec.Harness); ok {
-		if profile, ok := reviewer.(ports.ReviewerChatProfile); ok && l.chat != nil {
+		if profile, ok := reviewer.(ports.ReviewerChatProfile); ok && l.reviewChatSupported(profile) {
 			systemPrompt, readErr := os.ReadFile(inv.SystemPromptFile)
 			if readErr != nil {
 				return LaunchResult{}, fmt.Errorf("read reviewer system prompt: %w", readErr)
@@ -453,7 +454,7 @@ func (l *agentLauncher) RestoreTerminal(ctx context.Context, spec LaunchSpec) (L
 		return LaunchResult{}, err
 	}
 	if reviewer, ok := l.reviewers.Reviewer(spec.Harness); ok {
-		if profile, ok := reviewer.(ports.ReviewerChatProfile); ok && l.chat != nil {
+		if profile, ok := reviewer.(ports.ReviewerChatProfile); ok && l.reviewChatSupported(profile) {
 			systemPrompt, readErr := os.ReadFile(inv.SystemPromptFile)
 			if readErr != nil {
 				return LaunchResult{}, fmt.Errorf("read reviewer system prompt: %w", readErr)
@@ -860,8 +861,12 @@ func (l *agentLauncher) InterfaceMode(harness domain.ReviewerHarness) domain.Rev
 	if !ok || l.chat == nil {
 		return domain.ReviewerInterfaceTUI
 	}
-	if _, ok := reviewer.(ports.ReviewerChatProfile); ok {
+	if profile, ok := reviewer.(ports.ReviewerChatProfile); ok && l.reviewChatSupported(profile) {
 		return domain.ReviewerInterfaceChat
 	}
 	return domain.ReviewerInterfaceTUI
+}
+
+func (l *agentLauncher) reviewChatSupported(profile ports.ReviewerChatProfile) bool {
+	return l.chat != nil && l.chat.SupportsReviewChat(profile.ReviewChatHarness())
 }

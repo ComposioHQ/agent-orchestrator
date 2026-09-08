@@ -1794,6 +1794,24 @@ func TestTriggerReplacesPersistedTerminalWhenReviewerMovesToChat(t *testing.T) {
 	}
 }
 
+func TestListSuppressesPersistedChatSurfaceWhenReviewChatHarnessUnsupported(t *testing.T) {
+	store := &fakeStore{
+		review: &domain.Review{
+			ID: "rev-1", SessionID: "mer-1", Harness: domain.ReviewerCodex,
+			InterfaceMode: domain.ReviewerInterfaceChat, ReviewerHandleID: "review-chat:rev-1",
+		},
+	}
+	eng := newEngineForTest(store, fakeSessions{rec: liveWorker(), ok: true}, prAt("sha1"), fakeProjects{}, &fakeLauncher{})
+
+	res, err := eng.List(context.Background(), "mer-1")
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if res.ReviewerSurface.ReviewID != "" || res.ReviewerSurface.Mode != "" || res.ReviewerHandleID != "" {
+		t.Fatalf("unsupported chat reviewer should not be exposed: %+v handle=%q", res.ReviewerSurface, res.ReviewerHandleID)
+	}
+}
+
 func TestTriggerKeepsPersistedTerminalWhenChatMigrationHasNoWork(t *testing.T) {
 	store := &fakeStore{
 		review: &domain.Review{

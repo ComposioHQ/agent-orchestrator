@@ -26,12 +26,16 @@ type fakeChatReviewer struct{ fakeReviewer }
 func (*fakeChatReviewer) ReviewChatHarness() domain.AgentHarness { return domain.HarnessCodex }
 
 type fakeReviewerChat struct {
-	started  ReviewerChatStart
-	restored ReviewerChatStart
-	sentID   string
-	sent     string
+	unsupported bool
+	started     ReviewerChatStart
+	restored    ReviewerChatStart
+	sentID      string
+	sent        string
 }
 
+func (f *fakeReviewerChat) SupportsReviewChat(domain.AgentHarness) bool {
+	return !f.unsupported
+}
 func (f *fakeReviewerChat) PreflightReviewChat(context.Context, domain.AgentHarness) error {
 	return nil
 }
@@ -76,6 +80,33 @@ func TestLauncherUsesTypedChatForCapableReviewer(t *testing.T) {
 	}
 	if runtime.created {
 		t.Fatal("terminal runtime was created for a Chat reviewer")
+	}
+}
+
+func TestLauncherFallsBackToTerminalWhenReviewChatHarnessUnsupported(t *testing.T) {
+	reviewer := &fakeChatReviewer{}
+	chat := &fakeReviewerChat{unsupported: true}
+	runtime := &fakeRuntime{}
+	launcher := NewLauncher(
+		fakeReviewerResolver{reviewer: reviewer, ok: true}, runtime, t.TempDir(),
+		WithReviewerChat(chat),
+	)
+
+	if got := launcher.(*agentLauncher).InterfaceMode(domain.ReviewerCodex); got != domain.ReviewerInterfaceTUI {
+		t.Fatalf("InterfaceMode = %q, want tui", got)
+	}
+	result, err := launcher.Spawn(context.Background(), launchSpec())
+	if err != nil {
+		t.Fatalf("Spawn: %v", err)
+	}
+	if strings.HasPrefix(result.HandleID, reviewerChatHandlePrefix) {
+		t.Fatalf("result handle = %q, should use terminal when chat harness is unsupported", result.HandleID)
+	}
+	if chat.started.ReviewID != "" {
+		t.Fatalf("chat should not start when harness unsupported: %+v", chat.started)
+	}
+	if !runtime.created {
+		t.Fatal("terminal runtime was not created")
 	}
 }
 

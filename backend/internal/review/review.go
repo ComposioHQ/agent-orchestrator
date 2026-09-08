@@ -312,11 +312,11 @@ func (e *Engine) TriggerWithSource(ctx stdctx.Context, workerID domain.SessionID
 		if hadRunningReviewer {
 			return TriggerResult{
 				Run:              firstReusableRun(reviews),
-				ReviewerHandleID: legacyReviewerHandle(reviewRow),
+				ReviewerHandleID: e.legacyReviewerHandle(reviewRow),
 				Created:          false,
 				Reviews:          reviews,
 				Runs:             runs,
-				ReviewerSurface:  reviewerSurface(reviewRow),
+				ReviewerSurface:  e.reviewerSurface(reviewRow),
 			}, nil
 		}
 	}
@@ -393,7 +393,7 @@ func (e *Engine) TriggerWithSource(ctx stdctx.Context, workerID domain.SessionID
 		reviews = replaceReviewLatestRun(reviews, reviewState.PRURL, reviewState.TargetSHA, run)
 	}
 	if len(created) == 0 && len(restarted) == 0 {
-		return TriggerResult{Run: firstReusableRun(reviews), ReviewerHandleID: legacyReviewerHandle(reviewRow), Created: false, Reviews: reviews, Runs: runs, ReviewerSurface: reviewerSurface(reviewRow)}, nil
+		return TriggerResult{Run: firstReusableRun(reviews), ReviewerHandleID: e.legacyReviewerHandle(reviewRow), Created: false, Reviews: reviews, Runs: runs, ReviewerSurface: e.reviewerSurface(reviewRow)}, nil
 	}
 	failRuns := func(start int, err error) error {
 		for _, run := range created[start:] {
@@ -498,7 +498,7 @@ func (e *Engine) TriggerWithSource(ctx stdctx.Context, workerID domain.SessionID
 	triggerRuns = append(triggerRuns, runs...)
 	resultRun := launchRun
 	createdFlag := len(created) > 0 || len(restarted) > 0
-	return TriggerResult{Run: resultRun, ReviewerHandleID: legacyReviewerHandle(reviewRow), Created: createdFlag, Reviews: reviews, Runs: triggerRuns, CreatedRuns: created, ReviewerSurface: reviewerSurface(reviewRow)}, nil
+	return TriggerResult{Run: resultRun, ReviewerHandleID: e.legacyReviewerHandle(reviewRow), Created: createdFlag, Reviews: reviews, Runs: triggerRuns, CreatedRuns: created, ReviewerSurface: e.reviewerSurface(reviewRow)}, nil
 }
 
 func autoReviewSessionReason(worker domain.SessionRecord, now time.Time) string {
@@ -1162,18 +1162,27 @@ func (e *Engine) listLocked(ctx stdctx.Context, workerID domain.SessionID, selec
 	if err != nil {
 		return SessionReviews{}, err
 	}
-	return SessionReviews{ReviewerHandleID: legacyReviewerHandle(reviewRow), ReviewerHarness: reviewerHarness, Runs: runs, Reviews: Plan(prs, runs), ReviewerSurface: reviewerSurface(reviewRow)}, nil
+	return SessionReviews{ReviewerHandleID: e.legacyReviewerHandle(reviewRow), ReviewerHarness: reviewerHarness, Runs: runs, Reviews: Plan(prs, runs), ReviewerSurface: e.reviewerSurface(reviewRow)}, nil
 }
 
-func reviewerSurface(review domain.Review) domain.ReviewerSurface {
-	handleID := review.ReviewerHandleID
-	if review.InterfaceMode == domain.ReviewerInterfaceChat {
-		handleID = ""
+func (e *Engine) reviewerSurface(review domain.Review) domain.ReviewerSurface {
+	if review.ID == "" {
+		return domain.ReviewerSurface{}
 	}
-	return domain.ReviewerSurface{Mode: review.InterfaceMode, ReviewID: review.ID, Harness: review.Harness, HandleID: handleID, ControllerError: review.ControllerError}
+	if review.InterfaceMode == domain.ReviewerInterfaceChat {
+		// A persisted Chat row is offerable only while the reviewer maps to an
+		// enabled coding-agent Chat harness. If that capability is not present in
+		// this daemon, suppress the Chat tab instead of exposing a dead reviewer-chat
+		// owner. The next trigger with work will replace the incompatible handle.
+		if e.reviewerInterfaceMode(review.Harness) != domain.ReviewerInterfaceChat {
+			return domain.ReviewerSurface{}
+		}
+		return domain.ReviewerSurface{Mode: review.InterfaceMode, ReviewID: review.ID, Harness: review.Harness, ControllerError: review.ControllerError}
+	}
+	return domain.ReviewerSurface{Mode: review.InterfaceMode, ReviewID: review.ID, Harness: review.Harness, HandleID: review.ReviewerHandleID, ControllerError: review.ControllerError}
 }
 
-func legacyReviewerHandle(review domain.Review) string {
+func (e *Engine) legacyReviewerHandle(review domain.Review) string {
 	if review.InterfaceMode == domain.ReviewerInterfaceChat {
 		return ""
 	}

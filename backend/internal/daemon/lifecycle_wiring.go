@@ -525,6 +525,10 @@ func (c chatLauncher) PreflightChat(
 	return c.svc.PreflightChat(ctx, harness, permissions)
 }
 
+func (c chatLauncher) SupportsReviewChat(harness domain.AgentHarness) bool {
+	return c.svc.SupportsChat(harness)
+}
+
 func (c chatLauncher) PreflightReviewChat(ctx context.Context, harness domain.AgentHarness) error {
 	return c.svc.PreflightChat(ctx, harness, ports.PermissionModeAuto)
 }
