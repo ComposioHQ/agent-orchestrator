@@ -308,7 +308,7 @@ func (d *Driver) Start(ctx context.Context, cfg ports.ChatStartConfig) (ports.Ch
 		return nil, errors.New("thread/start returned no thread id")
 	}
 
-	conv.start(resp.Thread.ID, resp.Model, resp.ReasoningEffort)
+	conv.start(resp.Thread.ID, resp.Model, resp.ReasoningEffort, launchPosture(cfg.Permissions, postureDeferred))
 	return conv, nil
 }
 
@@ -330,7 +330,9 @@ func (d *Driver) Resume(ctx context.Context, cfg ports.ChatResumeConfig) (ports.
 		// The host preserved the already-initialized app-server connection and its
 		// loaded thread. Host replay bridges output and unresolved server requests
 		// across the daemon detach without waiting for the active turn to settle.
-		conv.start(cfg.ProviderConversationID, cfg.Model, "")
+		// A rejoined thread kept a posture set before this daemon existed, and
+		// nothing was sent to change it, so AO cannot claim to know it.
+		conv.start(cfg.ProviderConversationID, cfg.Model, "", postureUnknown)
 		return conv, nil
 	}
 
@@ -368,7 +370,7 @@ func (d *Driver) Resume(ctx context.Context, cfg ports.ChatResumeConfig) (ports.
 		return nil, fmt.Errorf("%w: %w", ports.ErrChatResumeFailed, err)
 	}
 
-	conv.start(cfg.ProviderConversationID, resp.Model, resp.ReasoningEffort)
+	conv.start(cfg.ProviderConversationID, resp.Model, resp.ReasoningEffort, launchPosture(cfg.Permissions, postureUnknown))
 	return conv, nil
 }
 
@@ -494,6 +496,26 @@ func approvalSettings(mode ports.PermissionMode) (policy, sandbox string) {
 		return "never", "danger-full-access"
 	default:
 		return "", ""
+	}
+}
+
+// launchPosture reports what applyApprovalSettings just did to a thread, so the
+// turn path knows whether omitting keys would inherit a bypassed sandbox.
+//
+// deferred is what a mode that sends no keys leaves behind, and it differs by
+// caller: on a thread AO is opening, nothing was sent because the native config
+// should decide; on one AO is resuming, nothing was sent and the thread kept a
+// posture from before this process that AO never observed. Start passes
+// postureDeferred, Resume passes postureUnknown.
+func launchPosture(mode ports.PermissionMode, deferred threadPosture) threadPosture {
+	policy, sandbox := approvalSettings(mode)
+	switch {
+	case policy == "" || sandbox == "":
+		return deferred
+	case sandbox == "danger-full-access":
+		return postureBypassed
+	default:
+		return postureNotBypassed
 	}
 }
 

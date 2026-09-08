@@ -1515,3 +1515,108 @@ func TestEnvSliceWithNoOverlayStillInheritsTheEnvironment(t *testing.T) {
 		t.Error("an empty overlay produced an environment with no HOME")
 	}
 }
+
+// The per-turn hole: a thread started on Bypass Permissions and later switched
+// to Default used to send no keys, so the turn kept running under
+// never/danger-full-access -- the one path where choosing Default still yielded
+// a bypassed sandbox. A known-bypassed thread is now downgraded explicitly,
+// while a deferring or unobserved thread still inherits.
+func TestTurnDowngradesDefaultOnlyOnAKnownBypassedThread(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		posture     threadPosture
+		approval    ports.PermissionMode
+		wantKeys    bool
+		wantPolicy  string
+		wantSandbox string
+	}{
+		{
+			name:        "default on a bypassed thread is downgraded",
+			posture:     postureBypassed,
+			approval:    ports.PermissionModeDefault,
+			wantKeys:    true,
+			wantPolicy:  "on-request",
+			wantSandbox: "workspaceWrite",
+		},
+		{
+			name:     "default on a deferring thread keeps deferring",
+			posture:  postureDeferred,
+			approval: ports.PermissionModeDefault,
+			wantKeys: false,
+		},
+		{
+			// AO cannot see what a rejoined thread runs under, and pinning a posture
+			// on every reattach would override the native config Default honors.
+			name:     "default on an unobserved thread inherits",
+			posture:  postureUnknown,
+			approval: ports.PermissionModeDefault,
+			wantKeys: false,
+		},
+		{
+			name:        "an explicit bypass turn is still bypassed",
+			posture:     postureBypassed,
+			approval:    ports.PermissionModeBypassPermissions,
+			wantKeys:    true,
+			wantPolicy:  "never",
+			wantSandbox: "dangerFullAccess",
+		},
+		{
+			name:        "accept-edits is unaffected by the thread posture",
+			posture:     postureBypassed,
+			approval:    ports.PermissionModeAcceptEdits,
+			wantKeys:    true,
+			wantPolicy:  "on-request",
+			wantSandbox: "workspaceWrite",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			params := map[string]any{}
+			applyTurnSettings(params, ports.ChatTurnSettings{Approval: tc.approval}, tc.posture)
+
+			policy, ok := params["approvalPolicy"]
+			if ok != tc.wantKeys {
+				t.Fatalf("approvalPolicy present = %v, want %v (params %v)", ok, tc.wantKeys, params)
+			}
+			if !tc.wantKeys {
+				if _, ok := params["sandboxPolicy"]; ok {
+					t.Errorf("sandboxPolicy sent for a deferring turn: %v", params)
+				}
+				return
+			}
+			if policy != tc.wantPolicy {
+				t.Errorf("approvalPolicy = %v, want %q", policy, tc.wantPolicy)
+			}
+			sandbox, _ := params["sandboxPolicy"].(map[string]any)
+			if sandbox["type"] != tc.wantSandbox {
+				t.Errorf("sandboxPolicy.type = %v, want %q", sandbox["type"], tc.wantSandbox)
+			}
+		})
+	}
+}
+
+// What Start and Resume may each claim to know about a thread they just opened.
+func TestLaunchPostureDistinguishesStartFromResume(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		mode          ports.PermissionMode
+		start, resume threadPosture
+	}{
+		// A fresh Default thread was deliberately left to the native config; a
+		// resumed one kept a posture from before this process that AO never saw.
+		{"default", ports.PermissionModeDefault, postureDeferred, postureUnknown},
+		{"unknown mode", ports.PermissionMode("nonsense"), postureDeferred, postureUnknown},
+		// A mode that sends keys pins the thread the same way on both paths.
+		{"bypass", ports.PermissionModeBypassPermissions, postureBypassed, postureBypassed},
+		{"accept-edits", ports.PermissionModeAcceptEdits, postureNotBypassed, postureNotBypassed},
+		{"auto", ports.PermissionModeAuto, postureNotBypassed, postureNotBypassed},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := launchPosture(tc.mode, postureDeferred); got != tc.start {
+				t.Errorf("start posture = %v, want %v", got, tc.start)
+			}
+			if got := launchPosture(tc.mode, postureUnknown); got != tc.resume {
+				t.Errorf("resume posture = %v, want %v", got, tc.resume)
+			}
+		})
+	}
+}
