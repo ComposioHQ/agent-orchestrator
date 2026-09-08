@@ -1,5 +1,6 @@
 import * as Dialog from "@radix-ui/react-dialog";
 import { useQueryClient } from "@tanstack/react-query";
+import { AnimatePresence, motion } from "motion/react";
 import { useTranslation } from "react-i18next";
 import {
 	CheckCircle2,
@@ -12,6 +13,7 @@ import {
 	GitBranch,
 	GitFork,
 	Link2,
+	LoaderCircle,
 	X,
 	XCircle,
 } from "lucide-react";
@@ -36,6 +38,8 @@ import { Button } from "./ui/button";
 import { Checkbox } from "./ui/checkbox";
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
+import { Switch } from "./ui/switch";
 import { Tabs, TabsList, TabsTrigger } from "./ui/tabs";
 
 export type CreateProjectInput = {
@@ -69,8 +73,17 @@ type DisplayImportRepo = ImportFolderScan["repos"][number] & {
 	hasOrigin?: boolean;
 };
 type WorkspacePreparationState = Record<string, { approvedActions: string[]; remoteUrl: string }>;
-type ProjectGitHubRepository = { owner: string; name: string };
+type ProjectGitHubRepository = { owner: string; name: string; private: boolean };
+type GitHubOwner = { login: string; avatarUrl: string };
 type GitHubRepositoryAvailability = { state: "idle" | "checking" | "available" | "unavailable"; message?: string };
+
+function GitHubIcon({ className }: { className?: string }) {
+	return (
+		<svg className={className} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+			<path d="M12 .5C5.65.5.5 5.65.5 12c0 5.08 3.29 9.38 7.86 10.9.58.1.79-.25.79-.56v-2.15c-3.2.7-3.88-1.37-3.88-1.37-.52-1.34-1.28-1.7-1.28-1.7-1.05-.72.08-.7.08-.7 1.16.08 1.77 1.2 1.77 1.2 1.03 1.76 2.7 1.25 3.36.96.1-.75.4-1.25.73-1.54-2.56-.29-5.26-1.28-5.26-5.7 0-1.26.45-2.29 1.19-3.1-.12-.3-.52-1.47.11-3.05 0 0 .97-.31 3.18 1.18A10.96 10.96 0 0 1 12 5.99c.98 0 1.97.13 2.9.38 2.2-1.49 3.17-1.18 3.17-1.18.63 1.58.23 2.75.11 3.05.74.81 1.19 1.84 1.19 3.1 0 4.43-2.7 5.4-5.27 5.69.41.36.78 1.07.78 2.16v3.2c0 .31.21.67.8.55A11.51 11.51 0 0 0 23.5 12C23.5 5.65 18.35.5 12 .5Z" />
+		</svg>
+	);
+}
 
 type CreateProjectFlowMode = ProjectKind | "choose";
 type ProjectSource = "clone" | "local" | "workspace";
@@ -1052,8 +1065,9 @@ function importNeedsRemoteSetup(actions: string[]): boolean {
 
 function defaultProjectGitHubRepository(repoPath: string): ProjectGitHubRepository {
 	return {
-		owner: "username",
+		owner: "",
 		name: projectNameFromPath(repoPath) || "repository",
+		private: true,
 	};
 }
 
@@ -1628,20 +1642,28 @@ function ProjectImportDialog({
 	const needsRemote = importNeedsRemoteSetup(requiredActions);
 	const githubOwner = githubRepository?.owner.trim() ?? "";
 	const githubName = githubRepository?.name.trim() ?? "";
+	const [githubOwners, setGitHubOwners] = useState<GitHubOwner[]>([]);
+	const [customGitHubOwner, setCustomGitHubOwner] = useState(false);
+	const selectedGitHubOwner = githubOwners.find((owner) => owner.login === githubOwner);
 	const [availability, setAvailability] = useState<GitHubRepositoryAvailability>({ state: "idle" });
 	useEffect(() => {
-		if (!open || !needsRemote || !githubRepository) return;
+		if (!open || !needsRemote) return;
 		let cancelled = false;
-		void aoBridge.app.getGitHubLogin(validation?.root.repoPath).then((login) => {
-			const owner = login.trim();
-			if (!cancelled && owner && githubRepository.owner === "username") {
-				const next = { ...githubRepository, owner };
-				onChangeGitHubRepository(next);
-				onChangeRemote(githubRepositoryRemoteUrl(next));
+		const applyOwners = (owners: GitHubOwner[]) => {
+			if (!cancelled) {
+				setGitHubOwners(owners);
+				const owner = owners[0]?.login ?? "";
+				if (owner && githubRepository?.owner === "" && !customGitHubOwner) {
+					const next = { ...githubRepository, owner };
+					onChangeGitHubRepository(next);
+					onChangeRemote(githubRepositoryRemoteUrl(next));
+				}
 			}
-		}).catch(() => undefined);
+		};
+		void aoBridge.app.getCachedGitHubOwners().then(applyOwners).catch(() => undefined);
+		void aoBridge.app.refreshGitHubOwners().then(applyOwners).catch(() => undefined);
 		return () => { cancelled = true; };
-	}, [githubRepository, needsRemote, onChangeGitHubRepository, onChangeRemote, open, validation?.root.repoPath]);
+	}, [customGitHubOwner, githubRepository, needsRemote, onChangeGitHubRepository, onChangeRemote, open]);
 	useEffect(() => {
 		if (!open || !needsRemote || !githubOwner || !githubName) {
 			setAvailability({ state: "idle" });
@@ -1729,80 +1751,160 @@ function ProjectImportDialog({
 						) : null}
 						{step === "prepare_git" ? (
 							<section className="space-y-2">
-								<div className="flex items-center justify-between">
-									<h3 className="text-[13px] font-semibold text-[var(--color-text-import-title)]">{t("createProject.projectSetup")}</h3>
-									{isPreparingGit ? (
-										<span className="text-[11px] text-muted-foreground" role="status">
-											{t("createProject.projectSetupRunning")}
-										</span>
-									) : null}
-								</div>
-								<div className="space-y-2 rounded-md border border-border/70 bg-background/40 p-3">
-									{needsRemote ? (
-										<div className="space-y-3">
-											<div className="space-y-1">
-												<h4 className="text-[13px] font-semibold text-[var(--color-text-import-title)]">{t("createProject.createPrivateGithubRepo")}</h4>
-												<p className="text-[12px] leading-5 text-[var(--color-text-import-muted)]">
-													{validation.root.needsGitInit
-														? t("createProject.createGithubRepoWithInitDescription", { name: projectNameFromPath(validation.root.repoPath) })
-														: t("createProject.createGithubRepoDescription", { name: projectNameFromPath(validation.root.repoPath) })}
-												</p>
-											</div>
-											<div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
-												<div className="space-y-1.5">
-													<Label htmlFor="githubRepoOwner" className="text-[12px] font-medium text-[var(--color-text-import-title)]">{t("createProject.githubOwner")}</Label>
+								{needsRemote ? (
+									<p className="text-[14px] leading-5 text-[var(--color-text-import-muted)]">
+										<code className="rounded bg-muted px-1.5 py-0.5 font-mono text-[0.9em] text-foreground">{projectNameFromPath(validation.root.repoPath)}</code>{" "}
+										{t("createProject.noGitHubRemote")}
+									</p>
+								) : null}
+								{isPreparingGit ? (
+									<span className="text-[11px] text-muted-foreground" role="status">
+										{t("createProject.projectSetupRunning")}
+									</span>
+								) : null}
+								{needsRemote ? (
+									<div className="space-y-3 pt-1">
+											<div className="space-y-1.5">
+												<Label htmlFor="githubRepoOwner" className="text-[12px] font-medium text-[var(--color-text-import-title)]">{t("createProject.githubOwner")}</Label>
+												<Select
+													value={customGitHubOwner ? "__custom__" : githubRepository?.owner ?? ""}
+													disabled={disabled}
+													onValueChange={(owner) => {
+														if (owner === "__custom__") {
+															setCustomGitHubOwner(true);
+															return;
+														}
+														setCustomGitHubOwner(false);
+														const next = { owner, name: githubRepository?.name ?? "", private: githubRepository?.private ?? true };
+														onChangeGitHubRepository(next);
+														onChangeRemote(githubRepositoryRemoteUrl(next));
+													}}
+												>
+													<SelectTrigger id="githubRepoOwner" size="sm" className="h-8 w-full bg-[var(--color-bg-import-card)] font-mono text-[12px]" aria-label={t("createProject.githubOwner")}>
+														<SelectValue placeholder={t("createProject.githubOwner")}>
+															{customGitHubOwner ? (
+																<span className="flex items-center gap-2">
+															<GitHubIcon className="size-4" />
+																	{t("createProject.otherGitHubOwner")}
+																</span>
+															) : selectedGitHubOwner ? (
+																<span className="flex items-center gap-2">
+																	<img className="size-4 rounded-full" src={selectedGitHubOwner.avatarUrl} alt="" />
+																	{selectedGitHubOwner.login}
+																</span>
+															) : null}
+														</SelectValue>
+													</SelectTrigger>
+													<SelectContent position="popper" side="bottom" align="start" sideOffset={4}>
+														{githubOwners.map((owner) => (
+															<SelectItem key={owner.login} value={owner.login}>
+																<span className="flex items-center gap-2">
+																	<img className="size-4 rounded-full" src={owner.avatarUrl} alt="" />
+																	{owner.login}
+																</span>
+															</SelectItem>
+														))}
+														<SelectItem value="__custom__">
+															<span className="flex items-center gap-2">
+															<GitHubIcon className="size-4" />
+																	{t("createProject.useDifferentGitHubOwner")}
+															</span>
+														</SelectItem>
+													</SelectContent>
+												</Select>
+												{customGitHubOwner ? (
 													<Input
-														id="githubRepoOwner"
+														id="githubRepoCustomOwner"
 														aria-label={t("createProject.githubOwner")}
 														className="h-8 bg-[var(--color-bg-import-card)] font-mono text-[12px]"
 														disabled={disabled}
+														placeholder={t("createProject.githubOwner")}
 														value={githubRepository?.owner ?? ""}
 														onChange={(event) => {
-															const next = { owner: event.target.value, name: githubRepository?.name ?? "" };
+															const next = { owner: event.target.value, name: githubRepository?.name ?? "", private: githubRepository?.private ?? true };
 															onChangeGitHubRepository(next);
 															onChangeRemote(githubRepositoryRemoteUrl(next));
 														}}
 													/>
-												</div>
-												<div className="space-y-1.5">
+												) : null}
+											</div>
+											<div className="space-y-1.5">
+												<div className="relative">
 													<Label htmlFor="githubRepoName" className="text-[12px] font-medium text-[var(--color-text-import-title)]">{t("createProject.githubRepositoryName")}</Label>
+													<AnimatePresence initial={false}>
+														{availability.state === "unavailable" ? (
+															<motion.p
+																id="githubRepoNameError"
+																initial={{ opacity: 0, filter: "blur(2px)" }}
+																animate={{ opacity: 1, filter: "blur(0px)" }}
+																exit={{ opacity: 0, filter: "blur(2px)" }}
+																transition={{ duration: 0.15, ease: "easeOut" }}
+																className="absolute right-0 top-0 max-w-[65%] truncate overflow-hidden whitespace-nowrap text-right text-[12px] leading-5 text-destructive"
+																role="alert"
+															>
+																{availability.message ?? t("createProject.githubRepoUnavailable")}
+															</motion.p>
+														) : null}
+													</AnimatePresence>
+												</div>
+												<div className="relative">
 													<Input
 														id="githubRepoName"
 														aria-label={t("createProject.githubRepositoryName")}
-														className="h-8 bg-[var(--color-bg-import-card)] font-mono text-[12px]"
+														aria-describedby={availability.state === "unavailable" ? "githubRepoNameError" : undefined}
+														aria-invalid={availability.state === "unavailable" ? true : undefined}
+														className="h-8 bg-[var(--color-bg-import-card)] pr-8 font-mono text-[12px]"
 														disabled={disabled}
 														value={githubRepository?.name ?? ""}
 														onChange={(event) => {
-															const next = { owner: githubRepository?.owner ?? "", name: event.target.value };
+															const next = { owner: githubRepository?.owner ?? "", name: event.target.value, private: githubRepository?.private ?? true };
 															onChangeGitHubRepository(next);
 															onChangeRemote(githubRepositoryRemoteUrl(next));
 														}}
 													/>
+													<AnimatePresence initial={false}>
+														{availability.state === "checking" ? (
+															<motion.span
+																initial={{ opacity: 0, filter: "blur(2px)" }}
+																animate={{ opacity: 1, filter: "blur(0px)" }}
+																exit={{ opacity: 0, filter: "blur(2px)" }}
+																transition={{ duration: 0.15, ease: "easeOut" }}
+																className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2"
+																aria-label={t("createProject.githubRepoChecking")}
+																role="status"
+															>
+																<LoaderCircle className="size-3.5 animate-spin text-muted-foreground" aria-hidden="true" />
+															</motion.span>
+														) : null}
+													</AnimatePresence>
 												</div>
 											</div>
-											<p className="truncate rounded-sm border border-border/60 bg-[var(--color-bg-import-card)] px-2 py-1.5 font-mono text-[11px] text-[var(--color-text-import-muted)]">
-												{t("createProject.githubRepoWillCreate", { repo: remoteUrl || githubRepositoryRemoteUrl(githubRepository ?? { owner: "", name: "" }) })}
-											</p>
-											{availability.state === "checking" ? (
-												<p className="text-[11px] leading-4 text-muted-foreground" role="status">{t("createProject.githubRepoChecking")}</p>
-											) : availability.state === "available" ? (
-												<p className="text-[11px] leading-4 text-emerald-600" role="status">{t("createProject.githubRepoAvailable")}</p>
-											) : availability.state === "unavailable" ? (
-												<p className="text-[11px] leading-4 text-red-600" role="status">{availability.message ?? t("createProject.githubRepoUnavailable")}</p>
-											) : null}
+											<div className="flex items-center justify-between py-0.5">
+												<Label htmlFor="githubRepoPrivate" className="text-[12px] font-medium text-[var(--color-text-import-title)]">
+													{t("createProject.privateRepository")}
+												</Label>
+												<Switch
+													id="githubRepoPrivate"
+													aria-label={t("createProject.privateRepository")}
+													checked={githubRepository?.private ?? true}
+													disabled={disabled}
+													onCheckedChange={(privateRepository) => onChangeGitHubRepository({ owner: githubRepository?.owner ?? "", name: githubRepository?.name ?? "", private: privateRepository })}
+												/>
+											</div>
+									</div>
+								) : (
+										<div className="space-y-2 rounded-md border border-border/70 bg-background/40 p-3">
+											<GitSetupFields
+												actions={validation.root.requiredActions}
+												approved={missingApprovals.length === 0}
+												disabled={disabled}
+												onApprovalChange={(approved) => onChangeApprovedActions(approved ? [...validation.root.requiredActions] : [])}
+												onRemoteChange={onChangeRemote}
+												remoteUrl={remoteUrl}
+												showActionSummary={false}
+											/>
 										</div>
-									) : (
-										<GitSetupFields
-											actions={validation.root.requiredActions}
-											approved={missingApprovals.length === 0}
-											disabled={disabled}
-											onApprovalChange={(approved) => onChangeApprovedActions(approved ? [...validation.root.requiredActions] : [])}
-											onRemoteChange={onChangeRemote}
-											remoteUrl={remoteUrl}
-											showActionSummary={false}
-										/>
 									)}
-								</div>
 									{latestEvents.length > 0 ? (
 										<div className="space-y-1.5 rounded-md border border-border/70 bg-background/30 p-3" aria-live="polite">
 											{latestEvents.map((event) => (
@@ -1839,7 +1941,11 @@ function ProjectImportDialog({
 									{t("createProject.back")}
 								</Button>
 								<Button type="button" variant="primary" disabled={continueDisabled} onClick={onContinue}>
-									{hasFailedStep ? t("createProject.retry") : t("createProject.cloneContinue")}
+									{hasFailedStep
+										? t("createProject.retry")
+										: needsRemote
+											? t("createProject.createRepositoryAndContinue")
+											: t("createProject.cloneContinue")}
 								</Button>
 							</>
 						) : null}

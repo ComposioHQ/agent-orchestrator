@@ -9178,6 +9178,10 @@ components:
           type: string
         owner:
           type: string
+        private:
+          type:
+          - "null"
+          - boolean
       type: object
     GitPreparationEvent:
       properties:

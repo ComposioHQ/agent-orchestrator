@@ -84,10 +84,11 @@ type GitPreparationInput struct {
 	Stepwise         bool                            `json:"stepwise,omitempty"`
 }
 
-// GitHubRepositoryPreparation describes the private GitHub repository AO should create for a project import.
+// GitHubRepositoryPreparation describes the GitHub repository AO should create for a project import.
 type GitHubRepositoryPreparation struct {
-	Owner string `json:"owner,omitempty"`
-	Name  string `json:"name,omitempty"`
+	Owner   string `json:"owner,omitempty"`
+	Name    string `json:"name,omitempty"`
+	Private *bool  `json:"private,omitempty"`
 }
 
 // GitRepositoryPreparationInput approves Git preparation for one repository.
@@ -571,8 +572,12 @@ func runGitPreparationAction(ctx context.Context, path, action string, in GitRep
 			repository := owner + "/" + name
 			remoteURL := "https://github.com/" + repository + ".git"
 			if currentRemoteURL := resolveImportOriginURL(path); currentRemoteURL == "" {
-				if _, err := importGhOutputFunc(ctx, path, "repo", "create", repository, "--private"); err != nil {
-					return fmt.Errorf("create private GitHub repository: %w", err)
+				visibility := "--private"
+				if in.GitHubRepository.Private != nil && !*in.GitHubRepository.Private {
+					visibility = "--public"
+				}
+				if _, err := importGhOutputFunc(ctx, path, "repo", "create", repository, visibility); err != nil {
+					return fmt.Errorf("create GitHub repository: %w", err)
 				}
 				if err := setImportOriginURL(ctx, path, remoteURL); err != nil {
 					return err
