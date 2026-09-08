@@ -725,3 +725,46 @@ const (
 	// errors as definitive.
 	ConversationEditRejectedProviderFailure ConversationEditRejectionKind = "provider_failure"
 )
+
+// ConversationSteerDelivery is AO's durable answer to one idempotent steer.
+// Reserved is deliberately terminal from an automatic-retry perspective: once
+// provider I/O may have begun, only a recorded accepted or rejected result can
+// safely unlock the same client handle.
+type ConversationSteerDelivery struct {
+	ConversationID   string
+	ClientMessageID  string
+	RequestJSON      string
+	State            ConversationSteerDeliveryState
+	ProviderTurnID   string
+	ActivityID       string
+	RejectionKind    ConversationSteerRejectionKind
+	RejectionMessage string
+	CreatedAt        time.Time
+	SettledAt        *time.Time
+}
+
+// ConversationSteerDeliveryState records whether a reserved steer was accepted
+// or definitively rejected.
+type ConversationSteerDeliveryState string
+
+// Conversation steer delivery states.
+const (
+	ConversationSteerReserved ConversationSteerDeliveryState = "reserved"
+	ConversationSteerAccepted ConversationSteerDeliveryState = "accepted"
+	ConversationSteerRejected ConversationSteerDeliveryState = "rejected"
+)
+
+// ConversationSteerRejectionKind is the stable typed outcome persisted after a
+// provider definitively declines a steer. The original message is display detail;
+// this discriminator is what reconstructs errors.Is behavior after restart.
+type ConversationSteerRejectionKind string
+
+// Conversation steer rejection kinds.
+const (
+	ConversationSteerRejectedNoActiveTurn        ConversationSteerRejectionKind = "no_active_turn"
+	ConversationSteerRejectedUnsupported         ConversationSteerRejectionKind = "unsupported"
+	ConversationSteerRejectedTurnNotSteerable    ConversationSteerRejectionKind = "turn_not_steerable"
+	ConversationSteerRejectedContentUnsupported  ConversationSteerRejectionKind = "content_unsupported"
+	ConversationSteerRejectedByProvider          ConversationSteerRejectionKind = "provider_refused"
+	ConversationSteerRejectedInterfaceTransition ConversationSteerRejectionKind = "interface_transition"
+)
