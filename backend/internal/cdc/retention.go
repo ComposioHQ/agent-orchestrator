@@ -10,17 +10,20 @@ const (
 	// DefaultRetention keeps enough history for normal SSE reconnects without
 	// allowing the durable feed to grow forever.
 	DefaultRetention = 7 * 24 * time.Hour
+	// DefaultRetentionInterval is long enough to avoid competing with normal
+	// writes while still recovering a database that already exceeded the cap.
+	DefaultRetentionInterval = 15 * time.Minute
+)
+
+const (
 	// DefaultMaxRows is a second bound for installations producing events faster
 	// than the age window. The cap is intentionally generous for replay while
 	// keeping the SQLite table bounded under activity bursts.
 	DefaultMaxRows int64 = 100_000
-	// DefaultRetentionInterval is long enough to avoid competing with normal
-	// writes while still recovering a database that already exceeded the cap.
-	DefaultRetentionInterval = 15 * time.Minute
 	// DefaultRetentionBatch bounds each delete transaction so cleanup cannot
 	// monopolize SQLite's single writer connection.
 	DefaultRetentionBatch         int64 = 10_000
-	defaultRetentionBatchesPerRun       = 8
+	defaultRetentionBatchesPerRun int   = 8
 )
 
 // RetentionStore is the small storage surface needed by the change-log
@@ -54,6 +57,7 @@ type RetentionJanitor struct {
 	maxBatches int
 }
 
+// NewRetentionJanitor constructs a bounded change-log cleanup worker.
 func NewRetentionJanitor(store RetentionStore, cfg RetentionConfig) *RetentionJanitor {
 	j := &RetentionJanitor{
 		store:      store,
