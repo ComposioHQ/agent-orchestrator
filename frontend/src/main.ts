@@ -2031,9 +2031,11 @@ ipcMain.on(AGENT_SWITCH_VISIBILITY_IPC_CHANNEL, (event, request: unknown) => {
 function failClosedTelemetryPolicyView(): TelemetryPolicyView {
 	return { eventsEnabled: false, consentGeneration: "unavailable", updatedAt: new Date(0).toISOString(), acknowledged: false, state: "cleanup_failed", environmentVeto: true, durabilitySupported: false, reason: "invalid_authority" };
 }
-async function chooseDirectory(title: string): Promise<string | null> {
+async function chooseDirectory(title: string, defaultPath?: string): Promise<string | null> {
+	if (defaultPath) await mkdir(defaultPath, { recursive: true });
 	const options: OpenDialogOptions = {
-		properties: ["openDirectory"],
+		defaultPath,
+		properties: ["openDirectory", "createDirectory"],
 		title,
 	};
 	// On Windows, parenting the common file dialog forces a repaint of the main
@@ -2046,8 +2048,14 @@ async function chooseDirectory(title: string): Promise<string | null> {
 	return result.filePaths[0] ?? null;
 }
 
-ipcMain.handle("app:chooseDirectory", async (_event, title?: string) => {
-	return chooseDirectory(typeof title === "string" && title.trim() ? title : "Choose a git repository");
+ipcMain.handle("app:chooseDirectory", async (_event, input?: string | { title?: string; defaultPath?: string }) => {
+	const title = typeof input === "string"
+		? input
+		: input?.title;
+	const defaultPath = typeof input === "object" && input !== null && typeof input.defaultPath === "string"
+		? input.defaultPath.trim()
+		: "";
+	return chooseDirectory(title?.trim() || "Choose a git repository", defaultPath === "~/ao/projects" ? path.join(os.homedir(), "ao", "projects") : undefined);
 });
 ipcMain.handle("app:checkGitRepository", async (_event, remoteUrl: string) => {
 	await ensureShellEnv();

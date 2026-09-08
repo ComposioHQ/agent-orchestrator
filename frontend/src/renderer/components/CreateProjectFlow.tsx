@@ -95,7 +95,7 @@ function initialCloneDetails(): CloneRepositoryDetails {
 	return {
 		remoteUrl: "",
 		destinationParent:
-			typeof window === "undefined" ? "" : (window.localStorage.getItem(LAST_CLONE_DESTINATION_KEY) ?? ""),
+			typeof window === "undefined" ? "~/ao/projects" : (window.localStorage.getItem(LAST_CLONE_DESTINATION_KEY) || "~/ao/projects"),
 	};
 }
 

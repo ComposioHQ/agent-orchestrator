@@ -165,7 +165,7 @@ function isRendererQueuePurgeRequest(value: unknown): value is RendererTelemetry
 const api = {
 	app: {
 		getVersion: () => ipcRenderer.invoke("app:getVersion") as Promise<string>,
-		chooseDirectory: (title?: string) => ipcRenderer.invoke("app:chooseDirectory", title) as Promise<string | null>,
+		chooseDirectory: (input?: string | { title?: string; defaultPath?: string }) => ipcRenderer.invoke("app:chooseDirectory", input) as Promise<string | null>,
 		checkGitRepository: (remoteUrl: string) => ipcRenderer.invoke("app:checkGitRepository", remoteUrl) as Promise<boolean>,
 		openExternal: (url: string) => ipcRenderer.invoke("app:openExternal", url) as Promise<void>,
 		scanImportFolder: (input: { path: string; mode: ImportFolderMode }) =>
