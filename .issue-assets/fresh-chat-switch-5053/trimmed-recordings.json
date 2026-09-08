@@ -1,0 +1,73 @@
+{
+  "description": "Idle sections removed from the original desktop recordings. Kept intervals remain at original speed, including complete mode changes, controller startup and transient error messages. Original MP4s remain available.",
+  "clips": [
+    {
+      "provider": "claude",
+      "source": "claude-review-roundtrip.mp4",
+      "sourceSha256": "623f068d0a3dafda12a72946b9a0c97022a9016cdc5a6f1a846f6990ddc5775f",
+      "output": "claude-review-roundtrip-short.mp4",
+      "outputSha256": "4632d92ce827bb3ffb3021295768e878ff6479666df12f748d8b46d80864c728",
+      "durationSeconds": 28.439785,
+      "keptSourceIntervalsSeconds": [
+        [
+          3,
+          9
+        ],
+        [
+          42,
+          46
+        ],
+        [
+          52,
+          58
+        ],
+        [
+          82,
+          86
+        ],
+        [
+          91.5,
+          100
+        ]
+      ]
+    },
+    {
+      "provider": "codex",
+      "source": "codex-review-roundtrip.mp4",
+      "sourceSha256": "2700fa30e1dc4c830807310b9540067112045d5177ffa8c6f029586e998854ff",
+      "output": "codex-review-roundtrip-short.mp4",
+      "outputSha256": "6630a00c4334703bc8bac7f52577ce81828d88078f5c32e18ebf94f3e07f72f0",
+      "durationSeconds": 21.439849,
+      "keptSourceIntervalsSeconds": [
+        [
+          9,
+          13
+        ],
+        [
+          17.5,
+          23
+        ],
+        [
+          42,
+          46
+        ],
+        [
+          50.5,
+          58.5
+        ]
+      ]
+    }
+  ],
+  "claudeTransientError": {
+    "originalApproxSeconds": [
+      94,
+      96.6
+    ],
+    "trimmedApproxSeconds": [
+      22.5,
+      25.1
+    ],
+    "code": "CHAT_CONTROLLER_NOT_READY",
+    "meaning": "Config-options/skills requested after mode commit but before the Chat controller finished starting. The UI displayed the transient response as an error; it cleared once startup completed. This UI issue is not fixed by trimming."
+  }
+}
