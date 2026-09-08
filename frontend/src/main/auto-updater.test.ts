@@ -3128,7 +3128,7 @@ describe("quitAndInstallUpdate", () => {
     } finally { restore(); }
   });
 
-  it.each(["win32", "linux"])("rejects an install without a staged build on %s", async (platform) => {
+  it.each(["win32", "linux"] as const)("rejects an install without a staged build on %s", async (platform) => {
     const restore = stubProcess(platform, "/usr/bin/node");
     try {
       const { module, autoUpdater } = await importAutoUpdater();
