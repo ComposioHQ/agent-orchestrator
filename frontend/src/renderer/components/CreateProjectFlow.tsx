@@ -1635,6 +1635,7 @@ function ProjectImportDialog({
 	const githubOwner = githubRepository?.owner.trim() ?? "";
 	const githubName = githubRepository?.name.trim() ?? "";
 	const [githubOwners, setGitHubOwners] = useState<GitHubOwner[]>([]);
+	const selectedGitHubOwner = githubOwners.find((owner) => owner.login === githubOwner);
 	const [availability, setAvailability] = useState<GitHubRepositoryAvailability>({ state: "idle" });
 	useEffect(() => {
 		if (!open || !needsRemote) return;
@@ -1766,7 +1767,14 @@ function ProjectImportDialog({
 													}}
 												>
 													<SelectTrigger id="githubRepoOwner" size="sm" className="h-8 w-full bg-[var(--color-bg-import-card)] font-mono text-[12px]" aria-label={t("createProject.githubOwner")}>
-														<SelectValue placeholder={t("createProject.githubOwner")} />
+														<SelectValue placeholder={t("createProject.githubOwner")}>
+															{selectedGitHubOwner ? (
+																<span className="flex items-center gap-2">
+																	<img className="size-4 rounded-full" src={selectedGitHubOwner.avatarUrl} alt="" />
+																	{selectedGitHubOwner.login}
+																</span>
+															) : null}
+														</SelectValue>
 													</SelectTrigger>
 													<SelectContent position="popper" side="bottom" align="start" sideOffset={4}>
 														{githubOwners.map((owner) => (
