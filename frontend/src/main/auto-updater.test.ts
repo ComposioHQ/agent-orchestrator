@@ -1280,6 +1280,24 @@ describe("startAutoUpdates", () => {
     });
   });
 
+  it("stops showing checking when an error event fires before the check promise settles", async () => {
+    const { module, autoUpdater, updaterEvents } = await importAutoUpdater();
+    autoUpdater.checkForUpdates.mockImplementation(() => new Promise(() => undefined));
+
+    void module.checkForUpdatesNow(stateDir, { requestId: "manual-update-1" });
+    await flushMicrotasks();
+    expect(module.getUpdateStatus()).toMatchObject({ state: "checking" });
+
+    updaterEvents.get("error")?.(new Error("net::ERR_SSL_PROTOCOL_ERROR"));
+
+    expect(module.getUpdateStatus()).toMatchObject({
+      state: "error",
+      message: "net::ERR_SSL_PROTOCOL_ERROR",
+      netError: true,
+      requestId: "manual-update-1",
+    });
+  });
+
   it("keeps non-net manual check errors verbatim", async () => {
     const { module, autoUpdater } = await importAutoUpdater();
     autoUpdater.checkForUpdates.mockRejectedValueOnce(new Error("boom"));
