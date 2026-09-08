@@ -237,7 +237,7 @@
 	"createProject.couldNotLoadAgents": "无法加载代理目录。",
 	"createProject.createAndStart": "创建并启动",
 	"createProject.createGithubRepoDescription": "`{{name}}` does not have a GitHub remote. AO will create a private GitHub repo, add it as `origin`, and push the current branch.",
-	"createProject.createGithubRepoWithInitDescription": "AO will run `git init`, create a private GitHub repo, add it as `origin`, and push the current branch.",
+	"createProject.createGithubRepoWithInitDescription": "`{{name}}` does not have a GitHub remote. AO will run `git init`, create a private GitHub repo, add it as `origin`, and push the current branch.",
 	"createProject.createPrivateGithubRepo": "Create a private GitHub repo?",
 	"createProject.createWorkspaceAndStart": "创建工作区并启动",
 	"createProject.creating": "正在创建...",

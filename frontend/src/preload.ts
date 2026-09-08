@@ -174,7 +174,7 @@ const api = {
 			ipcRenderer.invoke("app:checkAncestorRepo", path) as Promise<string | undefined>,
 		getRepositoryBranch: (path: string) =>
 			ipcRenderer.invoke("app:getRepositoryBranch", path) as Promise<string | undefined>,
-		getGitHubLogin: () => ipcRenderer.invoke("app:getGitHubLogin") as Promise<string>,
+		getGitHubLogin: (repoPath?: string) => ipcRenderer.invoke("app:getGitHubLogin", repoPath) as Promise<string>,
 		checkGitHubRepositoryAvailability: (input: { owner: string; name: string }) =>
 			ipcRenderer.invoke("app:checkGitHubRepositoryAvailability", input) as Promise<{ available: boolean; message?: string }>,
 		// Resolves a dropped File's real filesystem path. Synchronous passthrough

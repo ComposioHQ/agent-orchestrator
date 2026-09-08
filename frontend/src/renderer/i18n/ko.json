@@ -237,7 +237,7 @@
 	"createProject.couldNotLoadAgents": "에이전트 카탈로그를 불러올 수 없습니다.",
 	"createProject.createAndStart": "만들고 시작",
 	"createProject.createGithubRepoDescription": "`{{name}}` does not have a GitHub remote. AO will create a private GitHub repo, add it as `origin`, and push the current branch.",
-	"createProject.createGithubRepoWithInitDescription": "AO will run `git init`, create a private GitHub repo, add it as `origin`, and push the current branch.",
+	"createProject.createGithubRepoWithInitDescription": "`{{name}}` does not have a GitHub remote. AO will run `git init`, create a private GitHub repo, add it as `origin`, and push the current branch.",
 	"createProject.createPrivateGithubRepo": "Create a private GitHub repo?",
 	"createProject.createWorkspaceAndStart": "워크스페이스 만들고 시작",
 	"createProject.creating": "만드는 중...",

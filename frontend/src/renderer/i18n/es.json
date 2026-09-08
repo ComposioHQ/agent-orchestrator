@@ -238,7 +238,7 @@
 	"createProject.couldNotLoadAgents": "No se pudo cargar el catálogo de agentes.",
 	"createProject.createAndStart": "Crear e iniciar",
 	"createProject.createGithubRepoDescription": "`{{name}}` does not have a GitHub remote. AO will create a private GitHub repo, add it as `origin`, and push the current branch.",
-	"createProject.createGithubRepoWithInitDescription": "AO will run `git init`, create a private GitHub repo, add it as `origin`, and push the current branch.",
+	"createProject.createGithubRepoWithInitDescription": "`{{name}}` does not have a GitHub remote. AO will run `git init`, create a private GitHub repo, add it as `origin`, and push the current branch.",
 	"createProject.createPrivateGithubRepo": "Create a private GitHub repo?",
 	"createProject.createWorkspaceAndStart": "Crear espacio de trabajo e iniciar",
 	"createProject.creating": "Creando...",

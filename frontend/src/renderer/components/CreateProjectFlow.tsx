@@ -1053,8 +1053,12 @@ function importNeedsRemoteSetup(actions: string[]): boolean {
 function defaultProjectGitHubRepository(repoPath: string): ProjectGitHubRepository {
 	return {
 		owner: "username",
-		name: repoPath.split(/[\\/]/).filter(Boolean).pop()?.replace(/\.git$/i, "").trim() || "repository",
+		name: projectNameFromPath(repoPath) || "repository",
 	};
+}
+
+function projectNameFromPath(repoPath: string): string {
+	return repoPath.split(/[\\/]/).filter(Boolean).pop()?.replace(/\.git$/i, "").trim() ?? "";
 }
 
 function githubRepositoryRemoteUrl(repository: ProjectGitHubRepository): string {
@@ -1628,7 +1632,7 @@ function ProjectImportDialog({
 	useEffect(() => {
 		if (!open || !needsRemote || !githubRepository) return;
 		let cancelled = false;
-		void aoBridge.app.getGitHubLogin().then((login) => {
+		void aoBridge.app.getGitHubLogin(validation?.root.repoPath).then((login) => {
 			const owner = login.trim();
 			if (!cancelled && owner && githubRepository.owner === "username") {
 				const next = { ...githubRepository, owner };
@@ -1637,7 +1641,7 @@ function ProjectImportDialog({
 			}
 		}).catch(() => undefined);
 		return () => { cancelled = true; };
-	}, [githubRepository, needsRemote, onChangeGitHubRepository, onChangeRemote, open]);
+	}, [githubRepository, needsRemote, onChangeGitHubRepository, onChangeRemote, open, validation?.root.repoPath]);
 	useEffect(() => {
 		if (!open || !needsRemote || !githubOwner || !githubName) {
 			setAvailability({ state: "idle" });
@@ -1740,8 +1744,8 @@ function ProjectImportDialog({
 												<h4 className="text-[13px] font-semibold text-[var(--color-text-import-title)]">{t("createProject.createPrivateGithubRepo")}</h4>
 												<p className="text-[12px] leading-5 text-[var(--color-text-import-muted)]">
 													{validation.root.needsGitInit
-														? t("createProject.createGithubRepoWithInitDescription")
-														: t("createProject.createGithubRepoDescription", { name: displayImportPath(validation.root.repoPath) })}
+														? t("createProject.createGithubRepoWithInitDescription", { name: projectNameFromPath(validation.root.repoPath) })
+														: t("createProject.createGithubRepoDescription", { name: projectNameFromPath(validation.root.repoPath) })}
 												</p>
 											</div>
 											<div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
