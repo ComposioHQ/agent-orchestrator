@@ -742,6 +742,16 @@ func (s *Store) ConversationForSession(
 	return conversationToDomain(row), nil
 }
 
+// HasConversationTurns includes hidden and settled turns: an empty visible
+// timeline is not proof that the provider conversation never started.
+func (s *Store) HasConversationTurns(ctx context.Context, conversationID string) (bool, error) {
+	hasTurns, err := s.qr.HasConversationTurns(ctx, conversationID)
+	if err != nil {
+		return false, fmt.Errorf("check conversation turns %s: %w", conversationID, err)
+	}
+	return hasTurns, nil
+}
+
 // AppendUserMessage records an inbound message and the turn it opens.
 //
 // Idempotent on clientMessageID: a retried send returns the message and turn that
@@ -1760,21 +1770,113 @@ func (s *Store) CancelQueuedTurnByID(
 	return nil
 }
 
-// UpdateQueuedTurnMessage rewrites the durable human prompt for a turn that has
-// not yet dispatched. Attachments are cleared because the edit path is text-only.
+// ErrInvalidQueuedTurnOrder means the requested queue order does not match the
+// current undispatched queue exactly.
+var ErrInvalidQueuedTurnOrder = errors.New("invalid queued turn order")
+
+// ReorderQueuedTurns permutes the durable queue order by reassigning existing
+// requested_at values. The caller must pass every currently queued turn id in
+// the desired FIFO order.
+func (s *Store) ReorderQueuedTurns(
+	ctx context.Context,
+	conversationID string,
+	turnIDs []string,
+) error {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+
+	current, err := s.qr.SelectQueuedConversationTurnOrder(ctx, conversationID)
+	if err != nil {
+		return fmt.Errorf("list queued turns for reorder: %w", err)
+	}
+	if len(current) != len(turnIDs) {
+		return fmt.Errorf("%w: got %d ids for %d queued turns", ErrInvalidQueuedTurnOrder, len(turnIDs), len(current))
+	}
+	if len(current) == 0 {
+		return nil
+	}
+
+	currentByID := make(map[string]time.Time, len(current))
+	for _, row := range current {
+		currentByID[row.ID] = row.RequestedAt
+	}
+	seen := make(map[string]struct{}, len(turnIDs))
+	for _, turnID := range turnIDs {
+		if _, ok := currentByID[turnID]; !ok {
+			return fmt.Errorf("%w: unknown turn %s", ErrInvalidQueuedTurnOrder, turnID)
+		}
+		if _, dup := seen[turnID]; dup {
+			return fmt.Errorf("%w: duplicate turn %s", ErrInvalidQueuedTurnOrder, turnID)
+		}
+		seen[turnID] = struct{}{}
+	}
+
+	requestedAts := make([]time.Time, len(current))
+	for i, row := range current {
+		requestedAts[i] = row.RequestedAt
+	}
+	sort.Slice(requestedAts, func(i, j int) bool {
+		return requestedAts[i].Before(requestedAts[j])
+	})
+
+	tx, err := s.writeDB.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin queued turn reorder: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	q := s.qw.WithTx(tx)
+	for i, turnID := range turnIDs {
+		rows, err := q.UpdateQueuedConversationTurnRequestedAt(ctx,
+			gen.UpdateQueuedConversationTurnRequestedAtParams{
+				RequestedAt:    requestedAts[i],
+				ID:             turnID,
+				ConversationID: conversationID,
+			})
+		if err != nil {
+			return fmt.Errorf("reorder queued turn %s: %w", turnID, err)
+		}
+		if rows == 0 {
+			return fmt.Errorf("%w: %s", ErrQueuedTurnNotAvailable, turnID)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit queued turn reorder: %w", err)
+	}
+	return nil
+}
+
+// QueuedTurnMessage reads the durable text and content without exposing image
+// bytes to the renderer.
+func (s *Store) QueuedTurnMessage(ctx context.Context, conversationID, turnID string) (domain.ConversationMessage, error) {
+	row, err := s.qr.SelectQueuedConversationMessage(ctx, gen.SelectQueuedConversationMessageParams{
+		ConversationID: conversationID, TurnID: nullableString(turnID),
+	})
+	if errors.Is(err, sql.ErrNoRows) {
+		return domain.ConversationMessage{}, ErrQueuedTurnNotAvailable
+	}
+	if err != nil {
+		return domain.ConversationMessage{}, err
+	}
+	return messageToDomain(row), nil
+}
+
+// UpdateQueuedTurnMessage atomically replaces a still-queued prompt's text and content.
 func (s *Store) UpdateQueuedTurnMessage(
 	ctx context.Context,
-	conversationID, turnID, text string,
+	conversationID, turnID, text, contentJSON string,
+	revision int64,
 	now time.Time,
 ) error {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
 	rows, err := s.qw.UpdateQueuedConversationMessageText(ctx,
 		gen.UpdateQueuedConversationMessageTextParams{
-			Text:           text,
-			UpdatedAt:      now,
-			ConversationID: conversationID,
-			TurnID:         sql.NullString{String: turnID, Valid: true},
+			Text:                text,
+			DeliveryContentJson: contentJSON,
+			Revision:            revision,
+			UpdatedAt:           now,
+			ConversationID:      conversationID,
+			TurnID:              sql.NullString{String: turnID, Valid: true},
 		})
 	if err != nil {
 		return fmt.Errorf("update queued turn message %s: %w", turnID, err)
@@ -3015,18 +3117,19 @@ func turnToDomain(row gen.ConversationTurn) domain.ConversationTurn {
 
 func messageToDomain(row gen.ConversationMessage) domain.ConversationMessage {
 	msg := domain.ConversationMessage{
-		ID:              row.ID,
-		ConversationID:  row.ConversationID,
-		Sequence:        row.Sequence,
-		Revision:        row.Revision,
-		Role:            row.Role,
-		Origin:          row.Origin,
-		Text:            row.Text,
-		Streaming:       row.Streaming != 0,
-		ProviderItemID:  row.ProviderItemID,
-		ClientMessageID: row.ClientMessageID,
-		CreatedAt:       row.CreatedAt,
-		UpdatedAt:       row.UpdatedAt,
+		ID:                  row.ID,
+		ConversationID:      row.ConversationID,
+		Sequence:            row.Sequence,
+		Revision:            row.Revision,
+		Role:                row.Role,
+		Origin:              row.Origin,
+		Text:                row.Text,
+		Streaming:           row.Streaming != 0,
+		ProviderItemID:      row.ProviderItemID,
+		ClientMessageID:     row.ClientMessageID,
+		DeliveryContentJSON: row.DeliveryContentJson,
+		CreatedAt:           row.CreatedAt,
+		UpdatedAt:           row.UpdatedAt,
 	}
 	if row.TurnID.Valid {
 		msg.TurnID = row.TurnID.String

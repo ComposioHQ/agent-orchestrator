@@ -296,12 +296,13 @@ func (f *fakeSessionService) Unpin(_ context.Context, id domain.SessionID) (doma
 	return s, nil
 }
 
-func (f *fakeSessionService) SetReviewerHarness(_ context.Context, id domain.SessionID, harness domain.ReviewerHarness) (domain.Session, error) {
+func (f *fakeSessionService) SetReviewerHarness(_ context.Context, id domain.SessionID, harness domain.ReviewerHarness, config domain.AgentConfig) (domain.Session, error) {
 	s, ok := f.sessions[id]
 	if !ok {
 		return domain.Session{}, apierr.NotFound("SESSION_NOT_FOUND", "Unknown session")
 	}
 	s.ReviewerHarness = harness
+	s.ReviewerConfig = config
 	f.sessions[id] = s
 	return s, nil
 }
@@ -322,6 +323,14 @@ func (f *fakeSessionService) Restore(_ context.Context, id domain.SessionID) (se
 	s.Status = domain.StatusIdle
 	f.sessions[id] = s
 	return sessionsvc.RestoreOutcome{Session: s, Mode: sessionsvc.RestoreModeView("native")}, nil
+}
+
+func (f *fakeSessionService) ExitAgent(_ context.Context, id domain.SessionID) (sessionsvc.ExitAgentOutcome, error) {
+	s := f.sessions[id]
+	s.Activity.State = domain.ActivityExited
+	s.Status = domain.StatusExited
+	f.sessions[id] = s
+	return sessionsvc.ExitAgentOutcome{Session: s}, nil
 }
 
 func (f *fakeSessionService) ResumeAgent(_ context.Context, id domain.SessionID) (sessionsvc.ResumeAgentOutcome, error) {
@@ -1054,6 +1063,21 @@ func TestSessionsAPI_ListSpawnGetAndActions(t *testing.T) {
 		t.Fatalf("restore response = %#v", restored)
 	}
 
+	body, status, _ = doRequest(t, srv, "POST", "/api/v1/sessions/ao-2/exit-agent", "")
+	if status != http.StatusOK {
+		t.Fatalf("exit agent = %d, want 200; body=%s", status, body)
+	}
+	var exited struct {
+		SessionID string `json:"sessionId"`
+		Session   struct {
+			Activity domain.Activity `json:"activity"`
+		} `json:"session"`
+	}
+	mustJSON(t, body, &exited)
+	if exited.SessionID != "ao-2" || exited.Session.Activity.State != domain.ActivityExited {
+		t.Fatalf("exit response = %#v", exited)
+	}
+
 	body, status, _ = doRequest(t, srv, "POST", "/api/v1/sessions/ao-2/resume-agent", "")
 	if status != http.StatusOK {
 		t.Fatalf("resume agent = %d, want 200; body=%s", status, body)
@@ -1202,6 +1226,19 @@ func TestSessionsAPI_ListSpawnGetAndActions(t *testing.T) {
 	body, status, _ = doRequest(t, srv, "POST", "/api/v1/orchestrators", `{"projectId":"ao"}`)
 	if status != http.StatusCreated {
 		t.Fatalf("orchestrator = %d, want 201; body=%s", status, body)
+	}
+}
+
+func TestSessionsAPI_SetReviewerAllowsConfigWithoutHarness(t *testing.T) {
+	svc := newFakeSessionService()
+	srv := newSessionTestServer(t, svc)
+
+	body, status, _ := doRequest(t, srv, "PUT", "/api/v1/sessions/ao-1/reviewer", `{"agentConfig":{"model":"gpt-5"}}`)
+	if status != http.StatusOK {
+		t.Fatalf("set reviewer with default harness override = %d, want 200; body=%s", status, body)
+	}
+	if got := svc.sessions["ao-1"]; got.ReviewerHarness != "" || got.ReviewerConfig.Model != "gpt-5" {
+		t.Fatalf("reviewer update persisted = (%q, %+v), want default harness with model override", got.ReviewerHarness, got.ReviewerConfig)
 	}
 }
 
@@ -1418,6 +1455,26 @@ func TestSessionsAPI_SetPreviewEmptyURLAutodetectsIndex(t *testing.T) {
 	}
 	if strings.Contains(resp.Session.PreviewURL, workspace) {
 		t.Fatalf("preview leaked workspace path: %s", resp.Session.PreviewURL)
+	}
+}
+
+func TestSessionsAPI_SetPreviewEmptyURLDoesNotFallbackToMarkdown(t *testing.T) {
+	svc := newFakeSessionService()
+	workspace := t.TempDir()
+	// A Markdown-rich repo with no index.html: the old behavior fell back to
+	// mostRecentPreviewable and picked README.md. The fix restricts bare
+	// ao preview to real static entrypoints, so this should 404.
+	if err := os.WriteFile(filepath.Join(workspace, "README.md"), []byte("# project"), 0o644); err != nil {
+		t.Fatalf("write readme: %v", err)
+	}
+	s := svc.sessions["ao-1"]
+	s.Metadata = domain.SessionMetadata{WorkspacePath: workspace}
+	svc.sessions["ao-1"] = s
+	srv := newSessionTestServer(t, svc)
+
+	body, status, _ := doRequest(t, srv, "POST", "/api/v1/sessions/ao-1/preview", `{}`)
+	if status != http.StatusNotFound {
+		t.Fatalf("set preview with only .md = %d, want 404; body=%s", status, body)
 	}
 }
 
@@ -2543,6 +2600,53 @@ func TestSessionsAPI_DelegateTask(t *testing.T) {
 	}
 }
 
+func TestSessionsAPI_DelegateTaskAcceptsLongBrief(t *testing.T) {
+	svc := newFakeSessionService()
+	srv := newSessionTestServer(t, svc)
+	brief := strings.Repeat("a", 4097)
+	payload, err := json.Marshal(map[string]string{
+		"projectId": "ao",
+		"brief":     brief,
+	})
+	if err != nil {
+		t.Fatalf("marshal request: %v", err)
+	}
+
+	body, status, _ := doRequest(t, srv, http.MethodPost, "/api/v1/orchestrators/delegate", string(payload))
+	if status != http.StatusAccepted {
+		t.Fatalf("delegate long brief = %d, want 202; body=%s", status, body)
+	}
+	if svc.delegationInput.Brief != brief {
+		t.Fatalf("delegation brief length = %d, want %d", len(svc.delegationInput.Brief), len(brief))
+	}
+}
+
+func TestSessionsAPI_DelegateTaskRejectsBriefPastLaunchSafeLimit(t *testing.T) {
+	svc := newFakeSessionService()
+	srv := newSessionTestServer(t, svc)
+	brief := strings.Repeat("a", (16<<10)+1)
+	payload, err := json.Marshal(map[string]string{
+		"projectId": "ao",
+		"brief":     brief,
+	})
+	if err != nil {
+		t.Fatalf("marshal request: %v", err)
+	}
+
+	body, status, _ := doRequest(t, srv, http.MethodPost, "/api/v1/orchestrators/delegate", string(payload))
+	assertErrorCode(t, body, status, http.StatusBadRequest, "TASK_TOO_LONG")
+	var got struct {
+		Message string `json:"message"`
+	}
+	mustJSON(t, body, &got)
+	if got.Message != "Task must be 16 KiB or fewer" {
+		t.Fatalf("error message = %q, want actionable size limit", got.Message)
+	}
+	if svc.delegationInput.ProjectID != "" {
+		t.Fatalf("delegate service called with oversized brief: %#v", svc.delegationInput)
+	}
+}
+
 func TestSessionsAPI_DelegatesOMPChat(t *testing.T) {
 	svc := newFakeSessionService()
 	srv := newSessionTestServer(t, svc)
@@ -2884,6 +2988,13 @@ func TestSessionsAPI_ClaimPRErrors(t *testing.T) {
 			srv := newSessionTestServer(t, svc)
 			body, status, _ := doRequest(t, srv, "POST", "/api/v1/sessions/ao-1/pr/claim", tc.body)
 			assertErrorCode(t, body, status, tc.code, tc.want)
+			if tc.want == "PR_PROJECT_MISMATCH" {
+				for _, hint := range []string{"canonicalRepoURL", "--canonical-repo-url", "--config-json", "Git remotes"} {
+					if !strings.Contains(string(body), hint) {
+						t.Fatalf("mismatch missing %q guidance: %s", hint, body)
+					}
+				}
+			}
 		})
 	}
 }

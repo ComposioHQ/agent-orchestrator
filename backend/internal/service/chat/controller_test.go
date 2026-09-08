@@ -541,7 +541,9 @@ func TestResumeUsesPersistedBypassPermissionForCapabilityAdmission(t *testing.T)
 		t.Fatalf("CreateConversation: %v", err)
 	}
 	if err := st.SetConversationSettings(ctx, conversation.ID, domain.ConversationSettings{
-		ApprovalMode: domain.PermissionModeBypassPermissions,
+		Model:           "gpt-5.6-luna",
+		ReasoningEffort: "high",
+		ApprovalMode:    domain.PermissionModeBypassPermissions,
 	}, now); err != nil {
 		t.Fatalf("SetConversationSettings: %v", err)
 	}
@@ -573,6 +575,19 @@ func TestResumeUsesPersistedBypassPermissionForCapabilityAdmission(t *testing.T)
 	}
 	if resumed.Permissions != ports.PermissionModeBypassPermissions {
 		t.Fatalf("resume permissions = %q, want persisted bypass", resumed.Permissions)
+	}
+	if resumed.Model != "gpt-5.6-luna" {
+		t.Fatalf("resume model = %q, want persisted model", resumed.Model)
+	}
+	if resumed.Effort != "high" {
+		t.Fatalf("resume effort = %q, want persisted effort", resumed.Effort)
+	}
+	controller, err := svc.Controller(testSession)
+	if err != nil {
+		t.Fatalf("Controller: %v", err)
+	}
+	if settings := controller.Settings(); settings.Model != "gpt-5.6-luna" || settings.ReasoningEffort != "high" {
+		t.Fatalf("controller settings = %+v, want persisted model and effort", settings)
 	}
 }
 
@@ -2132,6 +2147,20 @@ func newHarnessWithConversationAndStore(
 	conv ports.ChatConversation,
 	wrapStore func(*sqlite.Store) chatsvc.Store,
 ) *harness {
+	return newHarnessWithConversationAndStoreForHarness(t, conv, wrapStore, domain.HarnessCodex)
+}
+
+func newHarnessForHarness(t *testing.T, agentHarness domain.AgentHarness) *harness {
+	t.Helper()
+	return newHarnessWithConversationAndStoreForHarness(t, nil, func(st *sqlite.Store) chatsvc.Store { return st }, agentHarness)
+}
+
+func newHarnessWithConversationAndStoreForHarness(
+	t *testing.T,
+	conv ports.ChatConversation,
+	wrapStore func(*sqlite.Store) chatsvc.Store,
+	agentHarness domain.AgentHarness,
+) *harness {
 	t.Helper()
 	st := openStore(t)
 	base := newFakeConversation()
@@ -2175,7 +2204,7 @@ func newHarnessWithConversationAndStore(
 	ctrl, err := svc.Start(context.Background(), chatsvc.StartConfig{
 		SessionID:     testSession,
 		ProjectID:     testProject,
-		Harness:       domain.HarnessCodex,
+		Harness:       agentHarness,
 		WorkspacePath: t.TempDir(),
 	})
 	if err != nil {
@@ -2700,6 +2729,49 @@ func TestControllerReadyRunsBeforeStreamProjection(t *testing.T) {
 		}
 	}
 	t.Fatalf("stream closure was not projected after controller-ready: %+v", activity.snapshot())
+}
+
+func TestSwitchControllerReadyLeavesSourceGenerationForAtomicActivation(t *testing.T) {
+	st := openStore(t)
+	ctx := context.Background()
+	record, found, err := st.GetSession(ctx, testSession)
+	if err != nil || !found {
+		t.Fatalf("get source Chat session: found=%v err=%v", found, err)
+	}
+	record.Harness = domain.HarnessClaudeCode
+	record.Metadata.ProviderConversationID = "source-provider"
+	record.Metadata.ControllerGeneration = "source-generation"
+	if err := st.UpdateSession(ctx, record); err != nil {
+		t.Fatalf("seed source Chat owner: %v", err)
+	}
+
+	conv := newFakeConversation()
+	readyErr := errors.New("stop after source-generation assertion")
+	svc := chatsvc.New(chatsvc.Options{
+		Store: st, Sessions: st,
+		Drivers:  fakeRegistry{driver: fakeDriver{conv: conv}},
+		Activity: &recordingActivity{}, Log: slog.New(slog.DiscardHandler),
+		NewID: func() string { return "switch-controller-ready" },
+	})
+
+	_, err = svc.Start(ctx, chatsvc.StartConfig{
+		SessionID: testSession, ProjectID: testProject, Harness: domain.HarnessCodex,
+		WorkspacePath: t.TempDir(), ProviderScopeID: "switch-1:provider",
+		ControllerGeneration: "target-generation",
+		ControllerReady: func(chatsvc.StartResult) (chatsvc.ControllerCommit, error) {
+			current, found, readErr := st.GetSession(ctx, testSession)
+			if readErr != nil || !found {
+				t.Fatalf("get owner in ControllerReady: found=%v err=%v", found, readErr)
+			}
+			if current.Metadata.ControllerGeneration != "source-generation" {
+				t.Fatalf("ControllerReady preclaimed generation %q, want source-generation", current.Metadata.ControllerGeneration)
+			}
+			return chatsvc.ControllerCommit{}, readyErr
+		},
+	})
+	if !errors.Is(err, readyErr) {
+		t.Fatalf("Start error = %v, want ControllerReady assertion failure", err)
+	}
 }
 
 func TestControllerReadyDurableSettingsRefreshBeforeFirstDispatch(t *testing.T) {
@@ -4711,7 +4783,7 @@ func TestUsageProjectionWithoutContextWindow(t *testing.T) {
 // Rate limits are current state too, and an unreported window must survive a round
 // trip through the database as unreported rather than as a reassuring zero.
 func TestRateLimitProjectionKeepsOnlyTheLatest(t *testing.T) {
-	h := newHarness(t)
+	h := newHarnessForHarness(t, domain.HarnessClaudeCode)
 
 	h.conv.emit(
 		ports.ChatEvent{Kind: ports.ChatEventRateLimits, RateLimits: &ports.ChatRateLimits{
@@ -4741,6 +4813,62 @@ func TestRateLimitProjectionKeepsOnlyTheLatest(t *testing.T) {
 	}
 	if got := limits.WorstUsedPercent(); got != 71 {
 		t.Errorf("worst window = %v, want 71", got)
+	}
+}
+
+func TestCodexRateLimitsUpdateActiveAccountCapacityWithoutConversationPersistence(t *testing.T) {
+	st := openStore(t)
+	conv := newFakeConversation()
+	updates := make(chan ports.CodexCapacityObservation, 1)
+	svc := chatsvc.New(chatsvc.Options{
+		Store: st, Sessions: st,
+		Drivers: fakeRegistry{driver: fakeDriver{conv: conv}},
+		Log:     slog.New(slog.DiscardHandler),
+		NewID:   func() string { return "bound-capacity" },
+		OnCodexCapacityChanged: func(sessionID domain.SessionID, generation string, observation ports.CodexCapacityObservation) {
+			if sessionID != testSession || generation != "managed-generation" {
+				t.Errorf("capacity attribution = %s/%s", sessionID, generation)
+			}
+			updates <- observation
+		},
+	})
+	ctrl, err := svc.Start(context.Background(), chatsvc.StartConfig{
+		SessionID: testSession, ProjectID: testProject, Harness: domain.HarnessCodex,
+		WorkspacePath: t.TempDir(), ControllerGeneration: "managed-generation",
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	t.Cleanup(func() { _ = svc.Stop(context.Background(), testSession) })
+	observation := ports.CodexCapacityObservation{Partial: true, Overall: &domain.CodexCapacityBucket{
+		LimitID: "codex", Reached: domain.CodexCapacityNotReached,
+		Primary: &domain.CodexCapacityWindow{UsedPercent: 81},
+	}}
+	conv.emit(ports.ChatEvent{Kind: ports.ChatEventRateLimits, ProviderEventID: "capacity-1", RateLimits: &ports.ChatRateLimits{
+		PrimaryUsedPercent: 81, PlanLabel: "pro", CodexCapacity: &observation,
+	}})
+	select {
+	case got := <-updates:
+		if got.Overall == nil || got.Overall.Primary == nil || got.Overall.Primary.UsedPercent != 81 {
+			t.Fatalf("capacity callback = %#v", got)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for bound profile capacity update")
+	}
+	snapshot, err := st.LoadConversationSnapshot(context.Background(), ctrl.ConversationID())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.Conversation.RateLimits != nil {
+		t.Fatalf("bound Codex rate limits persisted: %#v", snapshot.Conversation.RateLimits)
+	}
+	events, err := st.ProviderEventsSince(context.Background(), ctrl.ConversationID(), 0, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var archived map[string]any
+	if len(events) != 1 || json.Unmarshal([]byte(events[0].PayloadJson), &archived) != nil || archived["rateLimits"] != nil || strings.Contains(events[0].PayloadJson, "usedPercent") {
+		t.Fatalf("bound Codex capacity leaked into provider archive: %#v", events)
 	}
 }
 

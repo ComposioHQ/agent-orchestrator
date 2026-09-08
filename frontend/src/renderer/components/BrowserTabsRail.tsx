@@ -31,6 +31,7 @@ import type { ClosedBrowserTab } from "../hooks/useBrowserView";
 import { browserTabLabel } from "../lib/browser-tab-label";
 import { reorderBrowserTabs } from "../lib/browser-tab-order";
 import { useResizable } from "../hooks/useResizable";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
 import { cn } from "../lib/utils";
 
 const RAIL_DEFAULT_WIDTH = 220;
@@ -167,13 +168,6 @@ export const BrowserTabsRail = forwardRef<BrowserTabsRailHandle, BrowserTabsRail
 		if (expanded && flyoutOpen) closeFlyout(true);
 	}, [closeFlyout, expanded, flyoutOpen]);
 
-	// The toolbar trigger that opens this flyout only renders once there are 2+
-	// tabs (see BrowserPanel.tsx); dropping back to 1 tab while collapsed would
-	// otherwise leave the flyout stuck open with no trigger left to close it.
-	useEffect(() => {
-		if (collapsed && tabs.length < 2 && flyoutOpen) closeFlyout(true);
-	}, [closeFlyout, collapsed, flyoutOpen, tabs.length]);
-
 	useEffect(() => () => {
 		clearOpenTimer();
 		clearCloseTimer();
@@ -246,8 +240,8 @@ export const BrowserTabsRail = forwardRef<BrowserTabsRailHandle, BrowserTabsRail
 			// renders every tab as a favicon row, so opening the flyout there covered
 			// the live page with a duplicate of the list the user is already looking
 			// at; each favicon exposes its own adjacent close action instead. The
-			// toolbar trigger is likewise hidden while pinned (BrowserPanel.tsx's
-			// showTabsTrigger), so this is the last path into the flyout.
+			// toolbar trigger is likewise hidden while pinned, except when only one
+			// tab remains so recently closed tabs stay reachable.
 			onBlur={
 				collapsed
 					? (event) => {
@@ -279,18 +273,22 @@ export const BrowserTabsRail = forwardRef<BrowserTabsRailHandle, BrowserTabsRail
 					<span className="truncate">{t("browser.newTab")}</span>
 				</button>
 			) : pinned ? (
-				<button
-					aria-label={t("browser.unpinTabs")}
-					className={cn(
-						"flex h-8 w-full shrink-0 items-center justify-center border-b border-border p-1.5 transition-colors",
-						"text-muted-foreground hover:bg-interactive-hover hover:text-foreground",
-					)}
-					onClick={() => onPinnedChange(false)}
-					title={t("browser.unpinTabs")}
-					type="button"
-				>
-					<PinOff aria-hidden="true" className="size-icon-base" />
-				</button>
+				<Tooltip>
+					<TooltipTrigger asChild>
+						<button
+							aria-label={t("browser.unpinTabs")}
+							className={cn(
+								"flex h-8 w-full shrink-0 items-center justify-center border-b border-border p-1.5 transition-colors",
+								"text-muted-foreground hover:bg-interactive-hover hover:text-foreground",
+							)}
+							onClick={() => onPinnedChange(false)}
+							type="button"
+						>
+							<PinOff aria-hidden="true" className="size-icon-base" />
+						</button>
+					</TooltipTrigger>
+					<TooltipContent data-browser-native-overlay="true" side="bottom">{t("browser.unpinTabs")}</TooltipContent>
+				</Tooltip>
 			) : null}
 			<nav
 				aria-label={t("browser.tabsAria", { count: tabs.length })}
@@ -302,6 +300,9 @@ export const BrowserTabsRail = forwardRef<BrowserTabsRailHandle, BrowserTabsRail
 				{collapsed ? null : (
 					<DndContext collisionDetection={closestCenter} onDragEnd={handleDragEnd} sensors={sensors}>
 						<SortableContext items={tabIds} strategy={verticalListSortingStrategy}>
+							{/* No app-wide TooltipProvider exists (each site mounts its own),
+							    so the pinned rail's favicon tooltips need one here. */}
+							<TooltipProvider>
 							<div className="flex flex-col">
 								{tabs.map((tab) =>
 									expanded ? (
@@ -327,6 +328,7 @@ export const BrowserTabsRail = forwardRef<BrowserTabsRailHandle, BrowserTabsRail
 									),
 								)}
 							</div>
+							</TooltipProvider>
 						</SortableContext>
 					</DndContext>
 				)}
@@ -359,6 +361,8 @@ export const BrowserTabsRail = forwardRef<BrowserTabsRailHandle, BrowserTabsRail
 					data-browser-native-overlay="true"
 					data-state={flyoutOpen ? "open" : "closed"}
 					data-testid="browser-tabs-flyout"
+					onPointerEnter={pinned ? clearCloseTimer : undefined}
+					onPointerLeave={pinned ? () => closeFlyout() : undefined}
 					role="menu"
 				>
 					<div className="flex h-full flex-col overflow-y-auto">
@@ -572,24 +576,32 @@ function ExpandedTabRow({ active, chrome, closeTitle, onClose, onSelect, onlyTab
 					{label.title}
 				</span>
 			</button>
-			<button
-				aria-label={closeLabel}
-				className={cn(
-					"mr-1.5 grid size-control-sm shrink-0 place-items-center overflow-hidden rounded-sm text-passive opacity-0",
-					"transition-[opacity,color] hover:text-foreground",
-					"group-hover/tab-row:opacity-100 group-focus-within/tab-row:opacity-100",
-					"disabled:pointer-events-none",
-				)}
-				disabled={onlyTab}
-				onClick={(event) => {
-					event.stopPropagation();
-					onClose();
-				}}
-				title={onlyTab ? closeTitle : closeLabel}
-				type="button"
-			>
-				<X aria-hidden="true" className="size-icon-sm" />
-			</button>
+			<Tooltip>
+				<TooltipTrigger asChild>
+					<span className="inline-flex">
+						<button
+							aria-label={closeLabel}
+							className={cn(
+								"mr-1.5 grid size-control-sm shrink-0 place-items-center overflow-hidden rounded-sm text-passive opacity-0",
+								"transition-[opacity,color] hover:text-foreground",
+								"group-hover/tab-row:opacity-100 group-focus-within/tab-row:opacity-100",
+								"disabled:pointer-events-none",
+							)}
+							disabled={onlyTab}
+							onClick={(event) => {
+								event.stopPropagation();
+								onClose();
+							}}
+							type="button"
+						>
+							<X aria-hidden="true" className="size-icon-sm" />
+						</button>
+					</span>
+				</TooltipTrigger>
+				{/* Expanded rows render in the shell-owned rail beside the native page,
+				    so their styled tooltip does not need to restack the shell. */}
+				<TooltipContent side="bottom">{onlyTab ? closeTitle : closeLabel}</TooltipContent>
+			</Tooltip>
 		</div>
 	);
 }

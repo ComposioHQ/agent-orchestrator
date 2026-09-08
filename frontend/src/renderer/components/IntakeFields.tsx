@@ -1,11 +1,10 @@
-import { Info, TriangleAlert } from "lucide-react";
+import { TriangleAlert } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import type { components } from "../../api/schema";
 import { cn } from "../lib/utils";
 import { Label } from "./ui/label";
 import { SettingsInlineInput, SettingsRow } from "./settings/SettingsRow";
 import { Switch } from "./ui/switch";
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
 
 type TrackerIntakeConfig = components["schemas"]["TrackerIntakeConfig"];
 
@@ -172,31 +171,29 @@ export function IntakeFields({
 						{t("settings.project.intakeDescription")}
 				</p>
 			)}
-			<div className="flex items-center gap-2">
-				<label className="flex items-center gap-2.5 text-control text-foreground">
-					<input
-						type="checkbox"
-						className="size-icon-base accent-accent"
-						checked={form.enabled}
-						onChange={(e) => onChange({ enabled: e.target.checked })}
-					/>
-					{t("settings.project.enableIssueIntake")}
-				</label>
-				{compact && (
-					<TooltipProvider delayDuration={0}>
-						<Tooltip>
-							<TooltipTrigger asChild>
-								<button
-									type="button"
-									className="grid size-icon-base place-items-center rounded-full text-muted-foreground hover:text-foreground focus-visible:outline-none"
-									aria-label={t("settings.project.intakeHelpAria")}
-								>
-									<Info className="size-3.5" aria-hidden="true" />
-								</button>
-							</TooltipTrigger>
-							<TooltipContent>{t("settings.project.intakeTooltip")}</TooltipContent>
-						</Tooltip>
-					</TooltipProvider>
+			<div className={cn("flex items-center", compact ? "justify-between gap-3" : "gap-2")}>
+				{compact ? (
+					<>
+						<label htmlFor="intakeEnabled" className="text-control text-foreground">
+							{t("createProject.workOnAssignedIssues")}
+						</label>
+						<Switch
+							id="intakeEnabled"
+							aria-label={t("createProject.workOnAssignedIssues")}
+							checked={form.enabled}
+							onCheckedChange={(enabled) => onChange({ enabled })}
+						/>
+					</>
+				) : (
+					<label className="flex items-center gap-2.5 text-control text-foreground">
+						<input
+							type="checkbox"
+							className="size-icon-base accent-accent"
+							checked={form.enabled}
+							onChange={(e) => onChange({ enabled: e.target.checked })}
+						/>
+						{t("settings.project.enableIssueIntake")}
+					</label>
 				)}
 			</div>
 			{form.enabled && (

@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@import "tw-animate-css";
 @import "../styles/tokens.css";
 @import "@fontsource-variable/geist";
 @import "@fontsource-variable/geist-mono";
@@ -318,6 +319,18 @@
 	background-color: var(--color-scrim);
 	-webkit-backdrop-filter: blur(var(--blur-overlay));
 	backdrop-filter: blur(var(--blur-overlay));
+}
+
+@utility modal-shake {
+	animation: project-import-shake 280ms ease-in-out;
+}
+
+@utility toast-enter {
+	animation: toast-enter 180ms var(--ease-out);
+}
+
+@utility toast-exit {
+	animation: toast-exit 180ms ease-in forwards;
 }
 
 @utility agent-switch-terminal-scrim {
@@ -695,12 +708,6 @@ button.settings-row-bar {
 	background-color: var(--color-bg-settings-row);
 }
 
-button.settings-link-row:hover,
-button.settings-link-row:active {
-	background-color: var(--color-bg-settings-row-hover);
-	color: var(--color-text-settings-title);
-}
-
 /* Grouped rows size around the shared action control, keeping its top/bottom
  * inset equal to the row's right and left inset. */
 .settings-grouped-rows .settings-row-bar {
@@ -711,15 +718,15 @@ button.settings-link-row:active {
 	border-radius: 0;
 }
 
+/* The dialog body owns the page inset. Rows must not add a second left/right
+ * gutter or their labels drift from the dialog title and section headings. */
+.settings-dialog-body .settings-row-bar {
+	padding-inline: 0;
+}
+
 /* The update summary is a content row, not a compact control row. */
 .settings-grouped-rows .update-status-row {
 	padding-block: var(--space-4);
-}
-
-/* Button/link rows (e.g. Connect Mobile, Keyboard Shortcuts) keep rounded
- * corners even though the shared group container lost its outer border. */
-.settings-grouped-rows .settings-link-row.settings-row-bar {
-	border-radius: var(--radius-md);
 }
 
 @utility settings-menu-item {
@@ -1909,6 +1916,22 @@ textarea,
 	}
 }
 
+@keyframes project-import-shake {
+	0%, 100% { transform: translate(-50%, -50%); }
+	25% { transform: translate(calc(-50% - 6px), -50%); }
+	75% { transform: translate(calc(-50% + 6px), -50%); }
+}
+
+@keyframes toast-enter {
+	from { opacity: 0; transform: translateY(8px) scale(0.98); }
+	to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@keyframes toast-exit {
+	from { opacity: 1; transform: translateY(0) scale(1); }
+	to { opacity: 0; transform: translateY(8px) scale(0.98); }
+}
+
 @keyframes modal-out {
 	from {
 		opacity: 1;
@@ -2080,6 +2103,39 @@ html.sidebar-reordering * {
 	transform: scale(0.96);
 }
 
+/* Timeline summaries are disclosure controls, not raised buttons. Keeping their
+   footprint fixed prevents the label from shifting when the pointer lands. */
+.cursor-chat-surface .activity-summary-button:not(:disabled):active {
+	transform: none;
+}
+
+.activity-run-toggle {
+	border-bottom: 1px solid color-mix(in oklch, var(--color-border) 48%, transparent);
+	color: var(--color-text-muted);
+}
+
+.activity-run-toggle:hover,
+.activity-subgroup-toggle:hover {
+	color: var(--color-text-primary);
+}
+
+.activity-summary-button:hover > .activity-summary-label {
+	color: var(--color-text-primary);
+}
+
+.activity-row-toggle:hover > .activity-row-label {
+	color: var(--color-text-primary);
+}
+
+.cursor-chat-surface .activity-summary-button:not(:disabled),
+.cursor-chat-surface .activity-row-toggle:not(:disabled) {
+	transition: none;
+}
+
+.activity-subgroup {
+	min-width: 0;
+}
+
 @media (prefers-reduced-motion: reduce) {
 	.cursor-chat-surface button:not(:disabled) {
 		transition: none;
@@ -2248,14 +2304,24 @@ html.sidebar-reordering * {
 	--queue-dock-row-height: 2.5rem;
 	--queue-dock-visible-rows: 5;
 	position: relative;
+	z-index: 0;
+	isolation: isolate;
 	overflow: hidden;
+	min-width: 0;
 	height: var(--queue-dock-row-height);
 	transition: height 420ms cubic-bezier(0.16, 1, 0.3, 1);
 	will-change: height;
 }
 
+.queue-dock[data-reordering="true"] .queue-dock-body,
+.queue-dock[data-reordering="true"] .queue-dock-scroll {
+	overflow: hidden;
+}
+
 .queue-dock {
 	height: var(--queue-dock-collapsed-height, 4.5rem);
+	min-width: 0;
+	max-width: 100%;
 	transition: height 420ms cubic-bezier(0.16, 1, 0.3, 1);
 	will-change: height;
 }
@@ -2280,7 +2346,6 @@ html.sidebar-reordering * {
 }
 
 .queue-dock-actions {
-	min-width: max-content;
 	flex-shrink: 0;
 }
 
@@ -2300,13 +2365,35 @@ html.sidebar-reordering * {
 .queue-dock-scroll {
 	display: flex;
 	min-height: 100%;
+	min-width: 0;
+	max-width: 100%;
 	flex-direction: column;
 	justify-content: flex-end;
-	overflow-y: hidden;
+	overflow: hidden;
 }
 
 .queue-dock-scroll > .queue-dock-row {
 	flex: none;
+	width: 100%;
+	min-width: 0;
+	max-width: 100%;
+	overflow: hidden;
+}
+
+.queue-dock-row-content {
+	height: var(--queue-dock-row-height, 2.5rem);
+	max-width: 100%;
+}
+
+.queue-dock-row-text {
+	display: block;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.queue-dock[data-reordering="true"] .queue-dock-row:not([data-dragging="true"]) .queue-dock-actions button {
+	transition: none;
 }
 
 .queue-dock-scroll-active {
@@ -2768,22 +2855,6 @@ html.sidebar-reordering * {
 		var(--size-topbar-control) + var(--size-topbar-control) + var(--space-2) + var(--space-3)
 	);
 	flex: 0 0 auto;
-}
-
-.session-topbar-session-chrome[data-compact-session-chrome="true"]
-	.workspace-topbar-actions
-	[data-priority]
-	[data-compact-label] {
-	inline-size: 0;
-	opacity: 0;
-	transform: translateX(-2px);
-}
-
-.session-topbar-session-chrome[data-compact-session-chrome="true"]
-	.workspace-topbar-actions
-	[data-priority].topbar-control {
-	gap: 0;
-	padding-inline: 0;
 }
 
 @container workspace-topbar (max-width: 759px) {
@@ -4220,6 +4291,8 @@ body:has(#root .platform-linux) > .browser-popout-overlay {
 }
 
 .browser-panel__toolbar {
+	container-name: browser-toolbar;
+	container-type: inline-size;
 	display: flex;
 	align-items: center;
 	gap: 2px;
@@ -4243,13 +4316,32 @@ body:has(#root .platform-linux) > .browser-popout-overlay {
 	backdrop-filter: blur(10px);
 }
 
+/* Keep the URL field useful in the narrow inspector. The selected profile name
+   remains available through the button tooltip, accessible label, and native
+   menu; only its inline label collapses at constrained toolbar widths. */
+@container browser-toolbar (max-width: 34rem) {
+	.browser-profile-button {
+		width: var(--size-control-md);
+		max-width: var(--size-control-md);
+		flex-shrink: 0;
+		justify-content: center;
+		gap: 0;
+		padding-inline: 0;
+	}
+
+	.browser-profile-button__label,
+	.browser-profile-button__chevron {
+		display: none;
+	}
+}
+
 .browser-panel__toolbar > :not(.browser-panel__url-wrap):not(button) {
 	transition:
 		opacity 140ms ease,
 		visibility 0s linear;
 }
 
-.browser-panel__toolbar--url-takeover > :not(.browser-panel__url-wrap):not(.browser-panel__navigation-btn) {
+.browser-panel__toolbar--url-takeover > :not(.browser-panel__url-wrap):not(.browser-panel__navigation-btn):not(.browser-panel__navigation-control) {
 	visibility: hidden;
 	opacity: 0;
 	pointer-events: none;
@@ -4304,6 +4396,26 @@ body:has(#root .platform-linux) > .browser-popout-overlay {
 	background: transparent;
 }
 
+.browser-panel__tab--drag-placeholder {
+	opacity: 0;
+	pointer-events: none;
+}
+
+.browser-panel__tab--drag-overlay {
+	width: 100%;
+	min-width: 0;
+	max-width: none;
+	flex: none;
+	color: var(--fg);
+	border-color: color-mix(in srgb, var(--color-border) 72%, transparent);
+	background: var(--surface);
+	box-shadow:
+		inset 0 1px 0 color-mix(in srgb, white 7%, transparent),
+		0 6px 16px color-mix(in srgb, black 22%, transparent);
+	cursor: grabbing;
+	pointer-events: none;
+}
+
 .browser-panel__tab:not(:last-child)::after {
 	position: absolute;
 	top: 8px;
@@ -4320,8 +4432,8 @@ body:has(#root .platform-linux) > .browser-popout-overlay {
 .browser-panel__tab:has(+ .browser-panel__tab--active)::after,
 .browser-panel__tab:hover::after,
 .browser-panel__tab:has(+ .browser-panel__tab:hover)::after,
-.browser-panel__tab--dragging::after,
-.browser-panel__tab:has(+ .browser-panel__tab--dragging)::after {
+.browser-panel__tab--drag-placeholder::after,
+.browser-panel__tab:has(+ .browser-panel__tab--drag-placeholder)::after {
 	opacity: 0;
 }
 
@@ -4416,6 +4528,11 @@ body:has(#root .platform-linux) > .browser-popout-overlay {
 	background: transparent;
 }
 
+.browser-panel__tab-new--dragging {
+	visibility: hidden;
+	pointer-events: none;
+}
+
 .browser-panel__tab-new:not(:disabled):hover {
 	color: var(--fg);
 	background: var(--surface-hover);
@@ -4427,13 +4544,13 @@ body:has(#root .platform-linux) > .browser-popout-overlay {
 }
 
 @container browser-panel (min-width: 640px) {
-	.browser-panel--popped-out .browser-panel__tab-bar {
+	.browser-panel__tab-bar {
 		display: flex;
 	}
 
-	.browser-panel--popped-out .browser-panel__toolbar-new-tab,
-	.browser-panel--popped-out .browser-panel__toolbar-tabs-trigger,
-	.browser-panel--popped-out .browser-tabs-rail {
+	.browser-panel__toolbar-new-tab,
+	.browser-panel__toolbar-tabs-trigger,
+	.browser-tabs-rail {
 		display: none;
 	}
 }
@@ -4511,6 +4628,24 @@ body:has(#root .platform-linux) > .browser-popout-overlay {
 	box-shadow:
 		inset 0 1px 0 color-mix(in srgb, white 6%, transparent),
 		0 1px 8px color-mix(in srgb, black 9%, transparent);
+}
+
+.browser-panel__url-external {
+	position: absolute;
+	top: 3px;
+	right: 3px;
+	z-index: 3;
+	width: 23px;
+	height: 23px;
+	color: var(--fg-muted);
+	opacity: 0;
+	pointer-events: none;
+}
+
+.browser-panel__url-wrap:hover:not(:has(.browser-panel__url-input:focus)) .browser-panel__url-external,
+.browser-panel__url-external:focus-visible {
+	opacity: 1;
+	pointer-events: auto;
 }
 
 .browser-panel__content {
@@ -4685,6 +4820,16 @@ html[data-native-browser-composition="true"] .browser-popout-backdrop {
 	background: transparent;
 }
 
+/* The popped-out frame is the direct wrapper of the maximized browser panel
+ * (SessionView.tsx's portal) and paints its own opaque `background: var(--bg)`
+ * plate. It is NOT covered by the `:has(.browser-popout-overlay)` shell clears
+ * above — those target ancestors under #root — and leaving it opaque blanked
+ * the live page to black on Windows whenever an overlay (tooltip, menu) raised
+ * the transparent shell over the native view in a maximized window. */
+html[data-native-browser-composition="true"] .browser-popout-frame {
+	background: transparent;
+}
+
 @media (prefers-reduced-motion: reduce) {
 	.browser-popout-frame,
 	.browser-popout-backdrop {
@@ -4744,9 +4889,18 @@ html[data-native-browser-composition="true"] .browser-popout-backdrop {
 	padding-inline: var(--space-2_5);
 	padding-block: var(--space-2);
 }
+
 /* Connect Mobile: the pairing QR and the wait before it. The placeholder is a
    real QR carrying decoy data, so it can dissolve into the finished code
    instead of being swapped for it. See PairingQr.tsx. */
+/* The library's SVG includes a generous quiet zone. Enlarge the artwork
+   inside the fixed card so the preview and the finished code share the same
+   visible bounds while the card still supplies the clipping edge. */
+.ao-qr-visual > svg {
+	transform: scale(0.885);
+	transform-origin: center;
+}
+
 /* A triangular ramp occupying half the cycle. With four layers offset by a
    quarter cycle, two are always mid-ramp in opposite directions, so the
    composite dissolves continuously instead of swapping one code for the next. */
@@ -4786,13 +4940,11 @@ html[data-native-browser-composition="true"] .browser-popout-backdrop {
 @keyframes ao-qr-resolve-in {
 	from {
 		opacity: 0;
-		filter: blur(3px);
-		transform: scale(0.985);
+		filter: blur(4px);
 	}
 	to {
 		opacity: 1;
 		filter: blur(0);
-		transform: none;
 	}
 }
 
@@ -4814,7 +4966,7 @@ html[data-native-browser-composition="true"] .browser-popout-backdrop {
 
 /* The real code has arrived: stop cycling and clear away together. */
 .ao-qr-decoy--settling {
-	animation: ao-qr-decoy-settle 900ms ease-out forwards;
+	animation: ao-qr-decoy-settle 260ms ease-out forwards;
 }
 
 .ao-qr-resolved {

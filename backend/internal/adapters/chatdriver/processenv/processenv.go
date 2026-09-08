@@ -3,6 +3,7 @@ package processenv
 
 import (
 	"os"
+	"runtime"
 	"sort"
 	"strings"
 )
@@ -11,29 +12,46 @@ import (
 // the KEY=VALUE form expected by os/exec. Sorting makes launches deterministic
 // enough to inspect and compare in tests and process diagnostics.
 func Merge(overlay map[string]string) []string {
-	merged := make(map[string]string, len(os.Environ())+len(overlay))
-	for _, entry := range os.Environ() {
-		if key, value, ok := strings.Cut(entry, "="); ok {
-			merged[key] = value
-		}
-	}
-	for key, value := range overlay {
-		merged[key] = value
-	}
-	return entries(merged)
+	return merge(os.Environ(), overlay, runtime.GOOS == "windows")
 }
 
-func entries(values map[string]string) []string {
-	keys := make([]string, 0, len(values))
-	for key := range values {
+func merge(environ []string, overlay map[string]string, caseInsensitive bool) []string {
+	merged := make(map[string]string, len(environ)+len(overlay))
+	for _, entry := range environ {
+		if key, _, ok := strings.Cut(entry, "="); ok {
+			if caseInsensitive {
+				key = strings.ToUpper(key)
+			}
+			merged[key] = entry
+		}
+	}
+	keys := make([]string, 0, len(overlay))
+	for key := range overlay {
 		keys = append(keys, key)
 	}
-	sort.Strings(keys)
-
-	out := make([]string, 0, len(keys))
+	sort.Slice(keys, func(i, j int) bool {
+		if caseInsensitive && strings.EqualFold(keys[i], "PATH") != strings.EqualFold(keys[j], "PATH") {
+			return !strings.EqualFold(keys[i], "PATH")
+		}
+		if caseInsensitive && (keys[i] == "PATH") != (keys[j] == "PATH") {
+			return keys[j] == "PATH"
+		}
+		return keys[i] < keys[j]
+	})
 	for _, key := range keys {
-		out = append(out, key+"="+values[key])
+		value := overlay[key]
+		entry := key + "=" + value
+		if caseInsensitive {
+			key = strings.ToUpper(key)
+		}
+		merged[key] = entry
 	}
+
+	out := make([]string, 0, len(merged))
+	for _, entry := range merged {
+		out = append(out, entry)
+	}
+	sort.Strings(out)
 	return out
 }
 
@@ -49,4 +67,13 @@ func FingerprintEntries(values map[string]string) []string {
 		stable[key] = value
 	}
 	return entries(stable)
+}
+
+func entries(values map[string]string) []string {
+	out := make([]string, 0, len(values))
+	for key, value := range values {
+		out = append(out, key+"="+value)
+	}
+	sort.Strings(out)
+	return out
 }

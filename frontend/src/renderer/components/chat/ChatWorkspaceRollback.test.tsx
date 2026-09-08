@@ -7,12 +7,18 @@
  * lost, and the turn id that reaches the daemon is the one that was clicked.
  */
 
-import { render, screen, within } from "@testing-library/react";
+import { render as rtlRender, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import type { ReactElement } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { ChatWorkspace } from "./ChatWorkspace";
 import { chatFixture } from "../../lib/chat-fixture";
 import type { ConversationSnapshot } from "../../types/conversation";
+import { TooltipProvider } from "../ui/tooltip";
+
+function render(ui: ReactElement) {
+	return rtlRender(<TooltipProvider>{ui}</TooltipProvider>);
+}
 
 /** A conversation with nothing in flight, which is when an undo is offered. */
 function idleSnapshot(): ConversationSnapshot {

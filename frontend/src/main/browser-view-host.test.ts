@@ -12,6 +12,9 @@ import {
 	sanitizeBrowserURL,
 	scaleBoundsForZoom,
 } from "./browser-view-host";
+import { browserProfilePartition, type BrowserProfile } from "../shared/browser-profiles";
+import type { BrowserProfileStore } from "./browser-profile-store";
+import type { BrowserHistoryStore } from "./browser-history-store";
 import {
 	FOCUS_TERMINAL_SHORTCUT_CHANNEL,
 	NEW_SESSION_SHORTCUT_CHANNEL,
@@ -127,6 +130,7 @@ function setupHost(agentBrowserRuntime?: import("./agent-browser-runtime").Agent
 	let insertedStyleNumber = 0;
 	insertCSS.mockImplementation(async () => `ao-browser-scrollbars-${++insertedStyleNumber}`);
 	const removeInsertedCSS = vi.fn(async (_key: string) => undefined);
+	const writeImage = vi.fn();
 	const debuggerSendCommand = vi.fn(async (method: string, params?: Record<string, unknown>): Promise<unknown> => {
 		if (method === "Page.navigate" && typeof params?.url === "string") currentURL = params.url;
 		return {};
@@ -257,6 +261,7 @@ function setupHost(agentBrowserRuntime?: import("./agent-browser-runtime").Agent
 		annotatePreloadPath: "/preload.js",
 		rendererOrigin: "http://localhost:5173",
 		agentBrowserRuntime: runtime,
+		clipboard: { writeImage },
 	});
 	const rendererFrame = { processId: 5, routingId: 7 };
 	const invoke = (channel: string, ...args: unknown[]) =>
@@ -329,6 +334,7 @@ function setupHost(agentBrowserRuntime?: import("./agent-browser-runtime").Agent
 		closeDevTools,
 		insertCSS,
 		removeInsertedCSS,
+		writeImage,
 		setBrowserZoomFactor: (zoomFactor: number) => {
 			browserZoomFactor = zoomFactor;
 		},
@@ -339,6 +345,32 @@ function setupHost(agentBrowserRuntime?: import("./agent-browser-runtime").Agent
 		debuggerSendCommand,
 	};
 }
+
+describe("browser screenshots", () => {
+	it("copies the active page capture to the system clipboard", async () => {
+		const { invoke, webContents, writeImage } = setupHost();
+		const state = await invoke("browser:ensure", "sess-1");
+
+		await expect(invoke("browser:captureScreenshot", state.viewId)).rejects.toThrow(
+			"Open a page before taking a screenshot",
+		);
+		await invoke("browser:navigate", { viewId: state.viewId, url: "https://example.test/" });
+		await invoke("browser:captureScreenshot", state.viewId);
+
+		expect(webContents.capturePage).toHaveBeenCalledOnce();
+		expect(writeImage).toHaveBeenCalledWith(expect.objectContaining({ isEmpty: expect.any(Function) }));
+	});
+
+	it("rejects screenshot requests from a renderer that does not own the browser panel", async () => {
+		const { invoke, invokeFromTab, writeImage } = setupHost();
+		const state = await invoke("browser:ensure", "sess-1");
+
+		await expect(invokeFromTab("browser:captureScreenshot", 99, state.viewId)).rejects.toThrow(
+			"Browser tab is unavailable",
+		);
+		expect(writeImage).not.toHaveBeenCalled();
+	});
+});
 
 describe("browser shortcut matching", () => {
 	it("matches contextual browser shortcuts with platform-native primary modifiers", () => {
@@ -499,7 +531,12 @@ describe("browser scrollbar styling", () => {
 	});
 });
 
-function setupTabHost() {
+function setupTabHost(
+	browserProfileStore?: BrowserProfileStore,
+	failViewConstruction = false,
+	loadURLHook?: (viewIndex: number, url: string) => Promise<void>,
+	browserHistoryStore?: BrowserHistoryStore,
+) {
 	const constructorOptions: Array<{ webPreferences: { partition?: string } }> = [];
 	const handlers = new Map<string, InvokeHandler>();
 	const eventHandlers = new Map<string, EventHandler>();
@@ -515,21 +552,37 @@ function setupTabHost() {
 			close: ReturnType<typeof vi.fn>;
 			emitConsoleMessage: (level: number, message: string, line?: number, sourceId?: string) => void;
 			session: {
+				setPermissionCheckHandler: ReturnType<typeof vi.fn>;
+				setPermissionRequestHandler: ReturnType<typeof vi.fn>;
 				webRequest: {
 					onCompleted: ReturnType<typeof vi.fn>;
 					onErrorOccurred: ReturnType<typeof vi.fn>;
 				};
 			};
-			};
-			setBounds: ReturnType<typeof vi.fn>;
-			setBorderRadius: ReturnType<typeof vi.fn>;
-			setVisible: ReturnType<typeof vi.fn>;
-		}> = [];
+		};
+		listeners: Map<string, (...args: never[]) => void>;
+		setBounds: ReturnType<typeof vi.fn>;
+		setBorderRadius: ReturnType<typeof vi.fn>;
+		setVisible: ReturnType<typeof vi.fn>;
+	}> = [];
 	let nextID = 100;
+	const debuggerCommands: Array<{ method: string; params?: Record<string, unknown> }> = [];
 	// Populated by tests that need a specific navigation to fail, e.g. a dead
 	// localhost dev server — every view's loadURL checks this shared set.
 	const failNavigationTo = new Set<string>();
-	const makeView = () => {
+	const makeElectronSession = () => ({
+		setPermissionCheckHandler: vi.fn(),
+		setPermissionRequestHandler: vi.fn(),
+		webRequest: {
+			onCompleted: vi.fn(),
+			onErrorOccurred: vi.fn(),
+		},
+	});
+	const electronSessions = new Map<string, ReturnType<typeof makeElectronSession>>();
+	const makeView = (partition: string) => {
+		const viewIndex = views.length;
+		const electronSession = electronSessions.get(partition) ?? makeElectronSession();
+		electronSessions.set(partition, electronSession);
 		let currentURL = "";
 		let windowOpenHandler:
 			| ((details: { url: string }) => {
@@ -555,11 +608,11 @@ function setupTabHost() {
 				isAttached: () => debuggerAttached,
 				on: () => undefined,
 				sendCommand: async (method: string, params?: Record<string, unknown>) => {
+					debuggerCommands.push({ method, params });
 					if (method === "Page.navigate" && typeof params?.url === "string") currentURL = params.url;
 					return {};
 				},
 			},
-			focus: vi.fn(),
 			getTitle: () => (currentURL ? `Title ${currentURL}` : ""),
 			getURL: () => currentURL,
 			goBack: () => undefined,
@@ -570,6 +623,7 @@ function setupTabHost() {
 					throw Object.assign(new Error(`ERR_CONNECTION_REFUSED (-102) loading '${url}'`), { errorCode: -102 });
 				}
 				currentURL = url;
+				await loadURLHook?.(viewIndex, url);
 			}),
 			on: (event: string, listener: (...args: never[]) => void) => listeners.set(event, listener),
 			reload: () => undefined,
@@ -584,8 +638,10 @@ function setupTabHost() {
 			},
 			stop: () => undefined,
 			close: vi.fn(),
+			focus: vi.fn(),
 			openDevTools: vi.fn(),
 			closeDevTools: vi.fn(),
+			session: electronSession,
 			openWindow: (url: string) => {
 				const result = windowOpenHandler?.({ url });
 				if (result?.action === "allow") {
@@ -598,14 +654,8 @@ function setupTabHost() {
 					| undefined;
 				listener?.({}, level, message, line, sourceId);
 			},
-			session: {
-				webRequest: {
-					onCompleted: vi.fn(),
-					onErrorOccurred: vi.fn(),
-				},
-			},
 		};
-		const view = { webContents, setBounds: vi.fn(), setBorderRadius: vi.fn(), setVisible: vi.fn() };
+		const view = { webContents, listeners, setBounds: vi.fn(), setBorderRadius: vi.fn(), setVisible: vi.fn() };
 		views.push(view);
 		return view;
 	};
@@ -642,7 +692,9 @@ function setupTabHost() {
 			return {};
 		}),
 		screenshot: vi.fn(async () => ({ data: "", width: 0, height: 0, untrustedExternalContent: true as const })),
-		closeSession: vi.fn(async () => undefined),
+		closeSession: vi.fn(async (sessionId: string) => {
+			activeTargets.delete(sessionId);
+		}),
 		dispose: vi.fn(async () => undefined),
 	} as unknown as import("./agent-browser-runtime").AgentBrowserRuntime;
 	const host = createBrowserViewHost({
@@ -663,12 +715,15 @@ function setupTabHost() {
 		} as never,
 		shell: { openExternal: async () => undefined },
 		WebContentsView: function (options: { webPreferences: { partition?: string } }) {
+			if (failViewConstruction) throw new Error("browser view startup failed");
 			constructorOptions.push(options);
-			return makeView();
+			return makeView(options.webPreferences.partition ?? "");
 		} as never,
 		annotatePreloadPath: "/preload.js",
 		rendererOrigin: "http://localhost:5173",
 		agentBrowserRuntime: runtime,
+		browserProfileStore,
+		browserHistoryStore,
 		// Kept only as a regression tripwire: the removed auto-send path used
 		// this option to discover the daemon before calling net.fetch.
 		...({ getDaemonPort: () => 43123 } as Record<string, unknown>),
@@ -677,7 +732,22 @@ function setupTabHost() {
 		handlers.get(channel)!({ sender: { id: 1 } }, ...args) as Promise<unknown>;
 	const emit = (channel: string, ...args: unknown[]) =>
 		eventHandlers.get(channel)!({ sender: { id: 1, getZoomFactor: () => 1 } }, ...args);
-	return { activeTargets, constructorOptions, emit, failNavigationTo, host, invoke, runtime, sent, views };
+	return { activeTargets, constructorOptions, debuggerCommands, emit, failNavigationTo, host, invoke, runtime, sent, views };
+}
+
+function fakeBrowserProfileStore(profile: BrowserProfile, bindings: Record<string, string>): BrowserProfileStore {
+	return {
+		profiles: [profile],
+		getProfile: (profileId: string) => (profileId === profile.id ? { ...profile } : undefined),
+		getSessionProfileId: (sessionId: string) => bindings[sessionId],
+		bindSession: vi.fn(async (sessionId: string, profileId: string | null) => {
+			if (profileId === null) delete bindings[sessionId];
+			else bindings[sessionId] = profileId;
+		}),
+		isProfileOperationInProgress: () => false,
+		waitForProfileOperation: async () => undefined,
+		partitionForProfile: (profileId: string) => browserProfilePartition(profileId),
+	} as unknown as BrowserProfileStore;
 }
 
 describe("browser:closeTab automation-runtime fallback", () => {
@@ -1178,6 +1248,319 @@ describe("native Chromium DevTools host", () => {
 		expect(await invoke("browser:devtools", { viewId: nav.viewId, operation: "open" })).toMatchObject({ open: false });
 	});
 
+});
+
+describe("browser profile partitions and replacement", () => {
+	const profile: BrowserProfile = {
+		id: "22222222-2222-4222-8222-222222222222",
+		name: "Work",
+		createdAt: "2026-01-01T00:00:00.000Z",
+		updatedAt: "2026-01-01T00:00:00.000Z",
+	};
+
+	it("keeps temporary workers isolated while sharing a worker's tabs", async () => {
+		const { constructorOptions, invoke } = setupTabHost();
+		const first = (await invoke("browser:ensure", "worker-1")) as BrowserNavState;
+		await invoke("browser:ensure", "worker-2");
+		await invoke("browser:openTab", { viewId: first.viewId });
+
+		const firstPartition = constructorOptions[0]!.webPreferences.partition;
+		const secondPartition = constructorOptions[1]!.webPreferences.partition;
+		const firstTabPartition = constructorOptions[2]!.webPreferences.partition;
+		expect(firstPartition).toMatch(/^ao-browser-/);
+		expect(secondPartition).toMatch(/^ao-browser-/);
+		expect(firstPartition).not.toBe(secondPartition);
+		expect(firstTabPartition).toBe(firstPartition);
+	});
+
+	it("uses a stable named partition and restores the durable binding on host reconstruction", async () => {
+		const bindings = { "worker-1": profile.id, "worker-2": profile.id };
+		const store = fakeBrowserProfileStore(profile, bindings);
+		const firstHost = setupTabHost(store);
+		const first = (await firstHost.invoke("browser:ensure", "worker-1")) as BrowserNavState;
+		await firstHost.invoke("browser:ensure", "worker-2");
+
+		expect(firstHost.constructorOptions[0]!.webPreferences.partition).toBe(browserProfilePartition(profile.id));
+		expect(firstHost.constructorOptions[1]!.webPreferences.partition).toBe(browserProfilePartition(profile.id));
+		expect(firstHost.host.getProfileState(first.viewId)).toMatchObject({
+			profileId: profile.id,
+			profileName: "Work",
+			temporary: false,
+		});
+		firstHost.host.destroyAll();
+
+		const reconstructed = setupTabHost(store);
+		await reconstructed.invoke("browser:ensure", "worker-1");
+		expect(reconstructed.constructorOptions[0]!.webPreferences.partition).toBe(browserProfilePartition(profile.id));
+	});
+
+	it("routes shared-profile request failures only to their owning worker and retains the watcher", async () => {
+		const store = fakeBrowserProfileStore(profile, { "worker-1": profile.id, "worker-2": profile.id });
+		const { host, invoke, views } = setupTabHost(store);
+		const first = (await invoke("browser:ensure", "worker-1")) as BrowserNavState;
+		const second = (await invoke("browser:ensure", "worker-2")) as BrowserNavState;
+		const webRequest = views[0]!.webContents.session.webRequest;
+
+		expect(views[1]!.webContents.session).toBe(views[0]!.webContents.session);
+		expect(webRequest.onCompleted).toHaveBeenCalledTimes(1);
+		const onCompleted = webRequest.onCompleted.mock.calls[0]?.[1] as
+			| ((details: {
+					webContentsId: number;
+					resourceType: string;
+					method: string;
+					url: string;
+					statusCode: number;
+			  }) => void)
+			| undefined;
+		onCompleted?.({
+			webContentsId: views[0]!.webContents.id,
+			resourceType: "xhr",
+			method: "GET",
+			url: "https://first.example.test/api",
+			statusCode: 500,
+		});
+
+		const firstErrors = (await host.execute("worker-1", "errors")) as { messages: unknown[] };
+		const secondErrors = (await host.execute("worker-2", "errors")) as { messages: unknown[] };
+		expect(firstErrors.messages).toHaveLength(1);
+		expect(secondErrors.messages).toHaveLength(0);
+
+		host.destroy(first.viewId);
+		expect(webRequest.onCompleted).not.toHaveBeenCalledWith(null);
+		onCompleted?.({
+			webContentsId: views[1]!.webContents.id,
+			resourceType: "xhr",
+			method: "GET",
+			url: "https://second.example.test/api",
+			statusCode: 503,
+		});
+		const survivingErrors = (await host.execute("worker-2", "errors")) as { messages: unknown[] };
+		expect(survivingErrors.messages).toHaveLength(1);
+
+		host.destroy(second.viewId);
+		expect(webRequest.onCompleted).toHaveBeenLastCalledWith(null);
+		expect(webRequest.onErrorOccurred).toHaveBeenLastCalledWith(null);
+	});
+
+	it("records and suggests history only for an explicitly selected named profile", async () => {
+		const history = {
+			record: vi.fn(async () => undefined),
+			suggest: vi.fn(async () => [{ url: "https://github.com/openai", title: "OpenAI" }]),
+		} as unknown as BrowserHistoryStore;
+		const named = setupTabHost(fakeBrowserProfileStore(profile, { "worker-1": profile.id }), false, undefined, history);
+		const namedNav = (await named.invoke("browser:ensure", "worker-1")) as BrowserNavState;
+		await named.invoke("browser:navigate", { viewId: namedNav.viewId, url: "https://github.com/openai" });
+		(named.views[0]!.listeners.get("did-navigate") as ((event: unknown, url: string) => void))(
+			{},
+			"https://github.com/openai",
+		);
+		expect(history.record).toHaveBeenCalledWith(
+			profile.id,
+			"https://github.com/openai",
+			"Title https://github.com/openai",
+			true,
+		);
+		await expect(named.invoke("browser:history:suggest", { viewId: namedNav.viewId, query: "openai" })).resolves.toEqual([
+			{ url: "https://github.com/openai", title: "OpenAI" },
+		]);
+
+		const temporary = setupTabHost(undefined, false, undefined, history);
+		const temporaryNav = (await temporary.invoke("browser:ensure", "worker-2")) as BrowserNavState;
+		await temporary.invoke("browser:navigate", { viewId: temporaryNav.viewId, url: "https://example.com" });
+		(temporary.views[0]!.listeners.get("did-navigate") as ((event: unknown, url: string) => void))(
+			{},
+			"https://example.com",
+		);
+		expect(await temporary.invoke("browser:history:suggest", { viewId: temporaryNav.viewId, query: "example" })).toEqual([]);
+		expect(history.record).toHaveBeenCalledTimes(1);
+	});
+
+	it("cleans the old runtime before rebuilding tabs and preserves hardening on new views", async () => {
+		const bindings = { "worker-1": profile.id };
+		const store = fakeBrowserProfileStore(profile, bindings);
+		const { constructorOptions, debuggerCommands, emit, host, invoke, runtime, sent, views } = setupTabHost(store);
+		const nav = (await invoke("browser:ensure", "worker-1")) as BrowserNavState;
+		await invoke("browser:navigate", { viewId: nav.viewId, url: "http://localhost:3000/" });
+		await invoke("browser:openTab", { viewId: nav.viewId, url: "https://example.com/" });
+		emit("browser:setBounds", {
+			viewId: nav.viewId,
+			rect: { x: 24, y: 32, width: 640, height: 420 },
+			visible: true,
+		});
+		await invoke("browser:devtools", { viewId: nav.viewId, operation: "open" });
+		await invoke("browser:annotation:setMode", { viewId: nav.viewId, enabled: true });
+		await host.execute("worker-1", "network-start", { durationSeconds: 30 });
+
+		const switched = await host.switchProfile(nav.viewId, null);
+		expect(switched).toMatchObject({ profileId: null, temporary: true });
+		expect(bindings["worker-1"]).toBeUndefined();
+		expect(runtime.closeSession).toHaveBeenCalledWith("worker-1");
+		expect(views.some((view) => view.webContents.closeDevTools.mock.calls.length > 0)).toBe(true);
+		expect(views[0]!.webContents.close).toHaveBeenCalled();
+		expect(views[1]!.webContents.close).toHaveBeenCalled();
+		expect(debuggerCommands.some(({ method }) => method === "Network.enable")).toBe(true);
+		expect(sent).toContainEqual({
+			channel: "browser:annotation:canceled",
+			payload: { viewId: nav.viewId, reason: "navigation" },
+		});
+		expect(constructorOptions.slice(2).every(({ webPreferences }) => webPreferences.partition?.startsWith("ao-browser-") === true)).toBe(true);
+		expect(constructorOptions[2]!.webPreferences.partition).toBe(constructorOptions[3]!.webPreferences.partition);
+		for (const view of views.slice(2)) {
+			expect(view.webContents.session.setPermissionCheckHandler).toHaveBeenCalledWith(expect.any(Function));
+			expect(view.webContents.session.setPermissionRequestHandler).toHaveBeenCalledWith(expect.any(Function));
+		}
+		expect(
+			views.slice(2).some((view) =>
+				view.setBounds.mock.calls.some(
+					([bounds]) => JSON.stringify(bounds) === JSON.stringify({ x: 24, y: 32, width: 640, height: 420 }),
+				),
+			),
+		).toBe(true);
+
+		const activeURL = await host.execute("worker-1", "get", { property: "url" });
+		expect(activeURL).toMatchObject({ value: "https://example.com/" });
+		expect(runtime.runAction).toHaveBeenCalledWith(
+			"worker-1",
+			"tab-select",
+			{ tabId: "t2" },
+			expect.anything(),
+			undefined,
+		);
+
+		const sentBeforeStaleEvent = sent.length;
+		const oldActiveDidNavigate = views[1]!.listeners.get("did-navigate") as
+			| ((event: unknown, url: string) => void)
+			| undefined;
+		oldActiveDidNavigate?.({}, "https://stale.example/");
+		expect(
+			sent.slice(sentBeforeStaleEvent).filter(({ channel }) =>
+				channel === "browser:navState" || channel === "browser:tabsState",
+			),
+		).toEqual([]);
+	});
+
+	it("defers a bound worker until an in-flight profile data operation finishes", async () => {
+		const store = fakeBrowserProfileStore(profile, { "worker-1": profile.id });
+		let operationInProgress = true;
+		let release!: () => void;
+		const held = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		store.isProfileOperationInProgress = vi.fn(() => operationInProgress);
+		store.waitForProfileOperation = vi.fn(async () => {
+			await held;
+			operationInProgress = false;
+		});
+		const { constructorOptions, invoke } = setupTabHost(store);
+
+		const ensuring = invoke("browser:ensure", "worker-1");
+		await new Promise<void>((resolve) => setImmediate(resolve));
+		expect(constructorOptions).toHaveLength(0);
+		release();
+		await ensuring;
+		expect(constructorOptions[0]!.webPreferences.partition).toBe(browserProfilePartition(profile.id));
+	});
+
+	it("refuses switching while renderer navigation is still in flight", async () => {
+		const store = fakeBrowserProfileStore(profile, { "worker-1": profile.id });
+		const { host, invoke, views } = setupTabHost(store);
+		const nav = (await invoke("browser:ensure", "worker-1")) as BrowserNavState;
+		let release!: () => void;
+		const held = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		views[0]!.webContents.loadURL.mockImplementationOnce(async () => held);
+
+		const navigation = invoke("browser:navigate", { viewId: nav.viewId, url: "https://example.com/" });
+		await new Promise<void>((resolve) => setImmediate(resolve));
+		expect(host.getProfileSwitchInfo(nav.viewId)).toMatchObject({ agentActive: true });
+		await expect(host.switchProfile(nav.viewId, null)).rejects.toMatchObject({ code: "BROWSER_PROFILE_ACTIVE" });
+		release();
+		await navigation;
+	});
+
+	it("releases profile usage when worker tab startup fails", async () => {
+		const store = fakeBrowserProfileStore(profile, { "worker-1": profile.id });
+		const failing = setupTabHost(store, true);
+
+		await expect(failing.invoke("browser:ensure", "worker-1")).rejects.toThrow(
+			"browser view startup failed",
+		);
+		expect(failing.host.isProfileLive(profile.id)).toBe(false);
+		expect(failing.host.getProfileState("1:worker-1")).toBeNull();
+	});
+
+	it("releases live usage through destroy, destroyAll, and dispose", async () => {
+		const store = fakeBrowserProfileStore(profile, { "worker-1": profile.id });
+		const first = setupTabHost(store);
+		const nav = (await first.invoke("browser:ensure", "worker-1")) as BrowserNavState;
+		expect(first.host.isProfileLive(profile.id)).toBe(true);
+		first.host.destroy(nav.viewId);
+		expect(first.host.isProfileLive(profile.id)).toBe(false);
+
+		const second = setupTabHost(store);
+		await second.invoke("browser:ensure", "worker-1");
+		second.host.destroyAll();
+		expect(second.host.isProfileLive(profile.id)).toBe(false);
+
+		const third = setupTabHost(store);
+		await third.invoke("browser:ensure", "worker-1");
+		await third.host.dispose();
+		expect(third.host.isProfileLive(profile.id)).toBe(false);
+	});
+
+	it("does not recreate tabs after a worker is destroyed during profile replacement", async () => {
+		const bindings = { "worker-1": profile.id };
+		const store = fakeBrowserProfileStore(profile, bindings);
+		let releaseReload!: () => void;
+		let replacementReloadStarted!: () => void;
+		const reloadHeld = new Promise<void>((resolve) => {
+			releaseReload = resolve;
+		});
+		const replacementStarted = new Promise<void>((resolve) => {
+			replacementReloadStarted = resolve;
+		});
+		const fixture = setupTabHost(store, false, async (viewIndex, url) => {
+			if (viewIndex > 0 && url === "https://example.com/") {
+				replacementReloadStarted();
+				await reloadHeld;
+			}
+		});
+		const nav = (await fixture.invoke("browser:ensure", "worker-1")) as BrowserNavState;
+		await fixture.invoke("browser:navigate", { viewId: nav.viewId, url: "https://example.com/" });
+
+		const switching = fixture.host.switchProfile(nav.viewId, null);
+		await replacementStarted;
+		expect(fixture.views).toHaveLength(2);
+		fixture.host.destroy(nav.viewId);
+		releaseReload();
+
+		await expect(switching).rejects.toMatchObject({ code: "BROWSER_TARGET_UNAVAILABLE" });
+		expect(fixture.views).toHaveLength(2);
+		expect(fixture.views[1]!.webContents.close).toHaveBeenCalled();
+		expect(bindings["worker-1"]).toBe(profile.id);
+	});
+
+	it("refuses a profile switch while agent-browser activity is still running", async () => {
+		const store = fakeBrowserProfileStore(profile, { "worker-1": profile.id });
+		const { host, invoke, runtime } = setupTabHost(store);
+		const nav = (await invoke("browser:ensure", "worker-1")) as BrowserNavState;
+		let release!: () => void;
+		const pending = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		vi.mocked(runtime.runAction).mockImplementationOnce(async () => {
+			await pending;
+			return {};
+		});
+
+		const command = host.execute("worker-1", "open", { url: "http://localhost:3000/" });
+		await new Promise<void>((resolve) => setImmediate(resolve));
+		expect(host.getProfileSwitchInfo(nav.viewId)).toMatchObject({ agentActive: true });
+		await expect(host.switchProfile(nav.viewId, null)).rejects.toMatchObject({ code: "BROWSER_PROFILE_ACTIVE" });
+		release();
+		await command;
+	});
 });
 
 describe("normalizeBrowserURL", () => {
@@ -1698,6 +2081,7 @@ describe("agent browser runtime", () => {
 			);
 			const onCompleted = views[0].webContents.session.webRequest.onCompleted.mock.calls[0]?.[1] as
 				| ((details: {
+						webContentsId: number;
 						resourceType: string;
 						method: string;
 						url: string;
@@ -1705,6 +2089,7 @@ describe("agent browser runtime", () => {
 				  }) => void)
 				| undefined;
 			onCompleted?.({
+				webContentsId: views[0]!.webContents.id,
 				resourceType: "xhr",
 				method: "POST",
 				url: "https://alice:completed-password@example.test/api/data?token=completed-secret#private",
@@ -1712,6 +2097,7 @@ describe("agent browser runtime", () => {
 			});
 			const onErrorOccurred = views[0].webContents.session.webRequest.onErrorOccurred.mock.calls[0]?.[1] as
 				| ((details: {
+						webContentsId: number;
 						resourceType: string;
 						method: string;
 						url: string;
@@ -1719,6 +2105,7 @@ describe("agent browser runtime", () => {
 				  }) => void)
 				| undefined;
 			onErrorOccurred?.({
+				webContentsId: views[0]!.webContents.id,
 				resourceType: "xhr",
 				method: "GET",
 				url: "http://bob:error-password@localhost:3000/api/data?token=request-secret#private",
@@ -2166,6 +2553,24 @@ describe("browser:setBounds", () => {
 		expect(view.setBounds).toHaveBeenLastCalledWith({ x: 100, y: 20, width: 320, height: 240 });
 		expect(view.setVisible).toHaveBeenLastCalledWith(false);
 	});
+
+	it("does not hide the page when a subresource fails to load", async () => {
+		const { invoke, sent, view, webContentsListeners } = setupHost();
+		await invoke("browser:ensure", "sess-1");
+		view.setVisible.mockClear();
+		sent.length = 0;
+
+		webContentsListeners.get("did-fail-load")?.(
+			{} as never,
+			-118 as never,
+			"Connection timed out" as never,
+			"https://third-party.example/script.js" as never,
+			false as never,
+		);
+
+		expect(view.setVisible).not.toHaveBeenCalled();
+		expect(sent).not.toContainEqual(expect.objectContaining({ channel: "browser:navState" }));
+	});
 });
 
 describe("browser annotation IPC", () => {
@@ -2432,6 +2837,43 @@ describe("browser annotation IPC", () => {
 		const forwarded = sent.find((entry) => entry.channel === "browser:annotation:submitted");
 		expect(forwarded).toBeDefined();
 		expect((forwarded?.payload as { snapshot?: unknown }).snapshot).toBeUndefined();
+	});
+
+	it("drops an in-flight annotation submission after its browser view is destroyed", async () => {
+		const { host, invoke, invokeFromTab, sent, webContents } = setupHost();
+		await invoke("browser:ensure", "sess-1");
+		let releaseCapture!: (image: Awaited<ReturnType<typeof webContents.capturePage>>) => void;
+		const capture = new Promise<Awaited<ReturnType<typeof webContents.capturePage>>>((resolve) => {
+			releaseCapture = resolve;
+		});
+		webContents.capturePage.mockReturnValueOnce(capture);
+
+		const submit = invokeFromTab("browser:annotation:submit", 99, {
+			instruction: "Make this button blue.",
+			selection: {
+				kind: "element",
+				context: {
+					url: "http://localhost:5173/",
+					tag: "button",
+					classes: [],
+					selector: "button",
+					size: { width: 80, height: 30 },
+					computedStyle: {},
+				},
+			},
+		}) as Promise<void>;
+		await new Promise<void>((resolve) => setImmediate(resolve));
+		host.destroy("1:sess-1");
+		releaseCapture({
+			isEmpty: () => false,
+			toJPEG: () => Buffer.from("snapshot"),
+			toPNG: () => Buffer.from("png-snapshot"),
+			getSize: () => ({ width: 640, height: 480 }),
+			resize: vi.fn(),
+		});
+		await submit;
+
+		expect(sent.some((entry) => entry.channel === "browser:annotation:submitted")).toBe(false);
 	});
 
 	it("forwards a multi-element preview annotation submission to the renderer-owned view", async () => {
