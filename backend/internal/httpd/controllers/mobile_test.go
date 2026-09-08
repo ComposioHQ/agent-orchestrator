@@ -673,7 +673,7 @@ func TestMobileAdvertisesNothingWhileTheBridgeIsOff(t *testing.T) {
 // access then stayed silently off — the UI showed the bridge enabled while the
 // tunnel never came back — until the user toggled it off and on.
 //
-// A restart does not go through enableWithPassword (there is no password to
+// A restart does not go through enableWithPasswordLocked (there is no password to
 // rotate), so RestoreOnBoot has to mirror its post-Start work.
 func TestMobileRestoreOnBootStartsTheTunnel(t *testing.T) {
 	tun := &fakeTunnel{}
@@ -853,5 +853,26 @@ func TestStartRemoteAccessWhileDisabledDoesNothing(t *testing.T) {
 	}
 	if tun.startedOn != 0 {
 		t.Fatal("connector started while the bridge is disabled")
+	}
+}
+
+type startErrorLAN struct {
+	fakeLAN
+	err error
+}
+
+func (f *startErrorLAN) Start(int) (int, error) { return 0, f.err }
+
+func TestMobileRestoreOnBootRollsBackHashWhenStartFails(t *testing.T) {
+	startErr := errors.New("bind failed")
+	lan := &startErrorLAN{fakeLAN: fakeLAN{hash: "previous-hash"}, err: startErr}
+	bridge := &BridgeService{LAN: lan}
+
+	err := bridge.RestoreOnBoot(mobilebridge.State{Enabled: true, Password: "restored-password", LastPort: 3011})
+	if !errors.Is(err, startErr) {
+		t.Fatalf("RestoreOnBoot error = %v, want %v", err, startErr)
+	}
+	if got := lan.PasswordHash(); got != "previous-hash" {
+		t.Fatalf("password hash after failed restore = %q, want previous-hash", got)
 	}
 }
