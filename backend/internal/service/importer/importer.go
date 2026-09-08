@@ -549,14 +549,8 @@ func runGitPreparationAction(ctx context.Context, path, action string, in GitRep
 			return nil
 		}
 		remoteURL := strings.TrimSpace(in.RemoteURL)
-		if importRemoteExists(path, "origin") {
-			if _, err := importGitOutput(ctx, path, "remote", "set-url", "origin", remoteURL); err != nil {
-				return fmt.Errorf("set origin remote: %w", err)
-			}
-			return nil
-		}
-		if _, err := importGitOutput(ctx, path, "remote", "add", "origin", remoteURL); err != nil {
-			return fmt.Errorf("add origin remote: %w", err)
+		if err := setImportOriginURL(ctx, path, remoteURL); err != nil {
+			return err
 		}
 	case GitPreparationActionCreateRemoteRepository:
 		if resolveImportOriginURL(path) != "" {
@@ -569,23 +563,37 @@ func runGitPreparationAction(ctx context.Context, path, action string, in GitRep
 				return errors.New("github repository owner and name are required")
 			}
 			repository := owner + "/" + name
-			if _, err := importGhOutputFunc(ctx, path, "repo", "create", repository, "--private", "--source", path, "--remote", "origin", "--push"); err != nil {
+			if _, err := importGhOutputFunc(ctx, path, "repo", "create", repository, "--private"); err != nil {
 				return fmt.Errorf("create private GitHub repository: %w", err)
+			}
+			remoteURL := "https://github.com/" + repository + ".git"
+			if err := setImportOriginURL(ctx, path, remoteURL); err != nil {
+				return err
+			}
+			if _, err := importGitOutputFunc(ctx, path, "push", "-u", "origin", "HEAD"); err != nil {
+				return fmt.Errorf("push initial commit: %w", err)
 			}
 			return nil
 		}
 		remoteURL := strings.TrimSpace(in.RemoteURL)
-		if importRemoteExists(path, "origin") {
-			if _, err := importGitOutput(ctx, path, "remote", "set-url", "origin", remoteURL); err != nil {
-				return fmt.Errorf("set origin remote: %w", err)
-			}
-			return nil
-		}
-		if _, err := importGitOutput(ctx, path, "remote", "add", "origin", remoteURL); err != nil {
-			return fmt.Errorf("add origin remote: %w", err)
+		if err := setImportOriginURL(ctx, path, remoteURL); err != nil {
+			return err
 		}
 	default:
 		return fmt.Errorf("unsupported action %q", action)
+	}
+	return nil
+}
+
+func setImportOriginURL(ctx context.Context, path, remoteURL string) error {
+	if importRemoteExists(path, "origin") {
+		if _, err := importGitOutputFunc(ctx, path, "remote", "set-url", "origin", remoteURL); err != nil {
+			return fmt.Errorf("set origin remote: %w", err)
+		}
+		return nil
+	}
+	if _, err := importGitOutputFunc(ctx, path, "remote", "add", "origin", remoteURL); err != nil {
+		return fmt.Errorf("add origin remote: %w", err)
 	}
 	return nil
 }
@@ -735,6 +743,7 @@ func invalidImportRemoteURL() error {
 }
 
 var importGhOutputFunc = importGhOutput
+var importGitOutputFunc = importGitOutput
 
 func importGhOutput(ctx context.Context, dir string, args ...string) (string, error) {
 	cmd := aoprocess.CommandContext(ctx, "gh", args...)

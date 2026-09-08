@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -448,12 +449,19 @@ func TestPrepareGitProjectImportCreatesPrivateGitHubRepository(t *testing.T) {
 	importGhOutputFunc = func(_ context.Context, dir string, args ...string) (string, error) {
 		gotDir = dir
 		gotArgs = append([]string(nil), args...)
-		if out, err := exec.Command("git", "-C", dir, "remote", "add", "origin", "https://github.com/octo/project.git").CombinedOutput(); err != nil {
-			return string(out), err
-		}
 		return "", nil
 	}
+	var gitCalls [][]string
+	originalGitOutput := importGitOutputFunc
+	importGitOutputFunc = func(ctx context.Context, dir string, args ...string) (string, error) {
+		gitCalls = append(gitCalls, append([]string(nil), args...))
+		if len(args) > 0 && args[0] == "push" {
+			return "", nil
+		}
+		return originalGitOutput(ctx, dir, args...)
+	}
 	t.Cleanup(func() { importGhOutputFunc = originalGhOutput })
+	t.Cleanup(func() { importGitOutputFunc = originalGitOutput })
 	svc := New(Deps{Store: newFakeStore()})
 
 	result, err := svc.PrepareGit(ctx, GitPreparationInput{
@@ -474,8 +482,15 @@ func TestPrepareGitProjectImportCreatesPrivateGitHubRepository(t *testing.T) {
 	if gotDir != root {
 		t.Fatalf("gh dir = %q, want %q", gotDir, root)
 	}
-	wantArgs := []string{"repo", "create", "octo/project", "--private", "--source", root, "--remote", "origin", "--push"}
+	wantArgs := []string{"repo", "create", "octo/project", "--private"}
 	wantActions(t, gotArgs, wantArgs)
+	wantGitCalls := [][]string{
+		{"remote", "add", "origin", "https://github.com/octo/project.git"},
+		{"push", "-u", "origin", "HEAD"},
+	}
+	if !reflect.DeepEqual(gitCalls, wantGitCalls) {
+		t.Fatalf("git calls = %#v, want %#v", gitCalls, wantGitCalls)
+	}
 }
 
 func TestPrepareGitStepwiseCompletesInThreeCalls(t *testing.T) {
@@ -664,6 +679,59 @@ func TestPrepareGitSetsURLOnExistingOriginWithoutURL(t *testing.T) {
 		t.Fatalf("validation = %#v, want continue", result.Validation)
 	}
 	if out, err := exec.Command("git", "-C", repo, "remote", "get-url", "origin").CombinedOutput(); err != nil || string(out) != "https://example.invalid/repaired.git\n" {
+		t.Fatalf("origin = %q, %v", out, err)
+	}
+}
+
+func TestPrepareGitGitHubRepositoryRepairsExistingOriginWithoutURL(t *testing.T) {
+	ctx := context.Background()
+	repo := gitRepoWithCommitWithOrigin(t, t.TempDir(), "")
+	if out, err := exec.Command("git", "-C", repo, "config", "remote.origin.fetch", "+refs/heads/*:refs/remotes/origin/*").CombinedOutput(); err != nil {
+		t.Fatalf("create origin without URL: %v (%s)", err, out)
+	}
+	var ghArgs []string
+	originalGhOutput := importGhOutputFunc
+	importGhOutputFunc = func(_ context.Context, _ string, args ...string) (string, error) {
+		ghArgs = append([]string(nil), args...)
+		return "", nil
+	}
+	var gitCalls [][]string
+	originalGitOutput := importGitOutputFunc
+	importGitOutputFunc = func(ctx context.Context, dir string, args ...string) (string, error) {
+		gitCalls = append(gitCalls, append([]string(nil), args...))
+		if len(args) > 0 && args[0] == "push" {
+			return "", nil
+		}
+		return originalGitOutput(ctx, dir, args...)
+	}
+	t.Cleanup(func() { importGhOutputFunc = originalGhOutput })
+	t.Cleanup(func() { importGitOutputFunc = originalGitOutput })
+	svc := New(Deps{Store: newFakeStore()})
+
+	result, err := svc.PrepareGit(ctx, GitPreparationInput{
+		ImportKind:      ImportKindProject,
+		Path:            repo,
+		ApprovedActions: []string{GitPreparationActionCreateRemoteRepository},
+		GitHubRepository: &GitHubRepositoryPreparation{
+			Owner: "octo",
+			Name:  "repaired",
+		},
+	})
+	if err != nil {
+		t.Fatalf("PrepareGit: %v", err)
+	}
+	if result.Validation.NextStep != ImportNextStepContinue {
+		t.Fatalf("validation = %#v, want continue", result.Validation)
+	}
+	wantActions(t, ghArgs, []string{"repo", "create", "octo/repaired", "--private"})
+	wantGitCalls := [][]string{
+		{"remote", "set-url", "origin", "https://github.com/octo/repaired.git"},
+		{"push", "-u", "origin", "HEAD"},
+	}
+	if !reflect.DeepEqual(gitCalls, wantGitCalls) {
+		t.Fatalf("git calls = %#v, want %#v", gitCalls, wantGitCalls)
+	}
+	if out, err := exec.Command("git", "-C", repo, "remote", "get-url", "origin").CombinedOutput(); err != nil || string(out) != "https://github.com/octo/repaired.git\n" {
 		t.Fatalf("origin = %q, %v", out, err)
 	}
 }
