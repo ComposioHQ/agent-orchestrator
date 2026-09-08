@@ -56,6 +56,7 @@ import type {
 	BrowserProfile,
 	BrowserProfileListState,
 	BrowserProfileMenuInput,
+	BrowserProfileSelectInput,
 	BrowserProfileViewState,
 } from "./shared/browser-profiles";
 import type {
@@ -65,6 +66,10 @@ import type {
 	BrowserImportRequest,
 	BrowserImportResult,
 } from "./shared/browser-profile-import";
+import type {
+	BrowserDownloadActionInput,
+	BrowserDownloadsState,
+} from "./shared/browser-downloads";
 
 if (typeof document !== "undefined") {
 	const markNativeBrowserComposition = () => {
@@ -164,6 +169,8 @@ const api = {
 			ipcRenderer.invoke("app:scanImportFolder", input) as Promise<ImportFolderScan>,
 		checkAncestorRepo: (path: string) =>
 			ipcRenderer.invoke("app:checkAncestorRepo", path) as Promise<string | undefined>,
+		getRepositoryBranch: (path: string) =>
+			ipcRenderer.invoke("app:getRepositoryBranch", path) as Promise<string | undefined>,
 		// Resolves a dropped File's real filesystem path. Synchronous passthrough
 		// (not ipcRenderer.invoke — a File can't cross that boundary) so it must be
 		// called directly on the File from a drop event, in the same tick, per
@@ -364,6 +371,20 @@ const api = {
 		goForward: (viewId: string) => ipcRenderer.invoke("browser:goForward", viewId) as Promise<BrowserNavState>,
 		reload: (viewId: string) => ipcRenderer.invoke("browser:reload", viewId) as Promise<BrowserNavState>,
 		stop: (viewId: string) => ipcRenderer.invoke("browser:stop", viewId) as Promise<BrowserNavState>,
+		captureScreenshot: (viewId: string) => ipcRenderer.invoke("browser:captureScreenshot", viewId) as Promise<void>,
+		downloads: {
+			list: () => ipcRenderer.invoke("browser:downloads:list") as Promise<BrowserDownloadsState>,
+			action: (input: BrowserDownloadActionInput) =>
+				ipcRenderer.invoke("browser:downloads:action", input) as Promise<BrowserDownloadsState>,
+			clear: () => ipcRenderer.invoke("browser:downloads:clear") as Promise<BrowserDownloadsState>,
+			onChanged: (listener: (state: BrowserDownloadsState) => void) => {
+				const wrapped = (_event: Electron.IpcRendererEvent, state: BrowserDownloadsState) => listener(state);
+				ipcRenderer.on("browser:downloadsChanged", wrapped);
+				return () => {
+					ipcRenderer.off("browser:downloadsChanged", wrapped);
+				};
+			},
+		},
 		getTabs: (viewId: string) => ipcRenderer.invoke("browser:getTabs", viewId) as Promise<BrowserTabsState>,
 		selectTab: (input: { viewId: string; tabId: string }) =>
 			ipcRenderer.invoke("browser:selectTab", input) as Promise<BrowserTabsState>,
@@ -375,6 +396,8 @@ const api = {
 			ipcRenderer.invoke("browser:profile:get", viewId) as Promise<BrowserProfileViewState>,
 		showProfileMenu: (input: BrowserProfileMenuInput) =>
 			ipcRenderer.invoke("browser:profile:menu", input) as Promise<void>,
+		selectProfile: (input: BrowserProfileSelectInput) =>
+			ipcRenderer.invoke("browser:profile:select", input) as Promise<void>,
 		notifyPanelUsed: (viewId: string) => ipcRenderer.send("browser:panelUsed", viewId),
 		notifyPanelBlur: (viewId: string) => ipcRenderer.send("browser:panelBlur", viewId),
 		onFocusLocation: (listener: (viewId: string) => void) => {

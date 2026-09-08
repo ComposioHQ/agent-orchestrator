@@ -18,6 +18,7 @@ import {
 	type OpenDialogOptions,
 } from "electron";
 import {
+	setRendererSink,
 	startAutoUpdates,
 	ensureUpdatePrefs,
 	checkForUpdatesNow,
@@ -121,6 +122,7 @@ import {
 } from "./main/browser-view-host";
 import { createBrowserProfileStore } from "./main/browser-profile-store";
 import { BrowserHistoryStore } from "./main/browser-history-store";
+import { createBrowserDownloadManager } from "./main/browser-download-manager";
 import { BrowserProfileImportService } from "./main/browser-profile-import";
 import {
 	registerBrowserProfileIpc,
@@ -138,7 +140,7 @@ import { readMigrationState, updateMigration, writeAppStateMarker, type Migratio
 import { isAllowedAppExternalURL, openAllowedAppExternalURL } from "./main/external-open";
 import { dockBounceType, shouldReplaceBounce, shouldSignalAttention, shouldToast } from "./main/notification-signals";
 import { buildMacAppMenuTemplate, buildWindowsAppMenuTemplate } from "./main/menu";
-import { ancestorRepositorySetupWarning, scanImportFolder } from "./main/import-folder-scan";
+import { ancestorRepositorySetupWarning, resolveCheckedOutBranch, scanImportFolder } from "./main/import-folder-scan";
 import { parseOpenFolderPathArg } from "./main/open-folder-arg";
 import { AGENT_SWITCH_VISIBILITY_IPC_CHANNEL } from "./shared/agent-switch-observability";
 
@@ -191,9 +193,17 @@ if (disableGpu === "1" || disableGpu === "true" || disableGpu === "yes" || disab
 // keeps this directory open, and two Chromium instances sharing one profile
 // corrupt its LevelDB stores. Mirrors how dev already isolates running.json and
 // the daemon data dir into ~/.ao/dev.
+// AO_DEV_ELECTRON_DIR overrides the dev profile location. The default dev path
+// is shared by every checkout, and Chromium puts a singleton lock in a profile,
+// so a second worktree's `npm run dev` loses requestSingleInstanceLock() and
+// exits immediately. That is a real constraint for a tool built around parallel
+// worktree sessions: two sessions could not both run the app. Packaged builds
+// are deliberately NOT overridable — their profile is part of the install.
 app.setPath(
 	"userData",
-	app.isPackaged ? path.join(os.homedir(), ".ao", "electron") : path.join(os.homedir(), ".ao", "dev", "electron"),
+	app.isPackaged
+		? path.join(os.homedir(), ".ao", "electron")
+		: (process.env.AO_DEV_ELECTRON_DIR ?? path.join(os.homedir(), ".ao", "dev", "electron")),
 );
 
 // Resolve once against the launch cwd, before the daemon can chdir. The exact
@@ -569,6 +579,7 @@ async function createWindowInternal(): Promise<void> {
 		mainWindow,
 		WebContentsView,
 		preload: preloadPath(),
+		platform: process.platform,
 	});
 	windowComposition = composition;
 	syncNativeWindowBackground();
@@ -660,7 +671,14 @@ async function createWindowInternal(): Promise<void> {
 		isCloseShellTerminalShortcutEnabled: () => closeShellTerminalShortcutEnabled,
 		browserProfileStore,
 		browserHistoryStore,
+		browserDownloadManager: createBrowserDownloadManager({
+			downloadsDirectory: app.getPath("downloads"),
+			historyPath: path.join(desktopDataDir, "browser-downloads.json"),
+			shell,
+			notify: (state) => shellWebContents.send("browser:downloadsChanged", state),
+		}),
 		clearBrowserProfileData: clearElectronBrowserProfileData,
+		clipboard,
 	});
 	browserProfileImporter = profileImporter;
 	browserProfileIpc = registerBrowserProfileIpc({
@@ -1895,10 +1913,14 @@ ipcMain.on("shell:focus", () => browserViewHost?.forgetLastFocusedPanel());
 ipcMain.on("browser:overlay", (event, open: unknown) => {
 	if (event.sender !== getShellWebContents() || typeof open !== "boolean") return;
 	windowComposition?.setOverlayOpen(open);
-	// Raising the shell can leave the live page's own compositor surface stale
-	// (the same class of bug window-composition.ts already works around for
-	// the shell itself) — nudge it the same way once the shell is on top.
-	if (open) browserViewHost?.refreshLastFocusedPanelSurface();
+	// Refresh the live page's surface only on macOS: refreshLastFocusedPanelSurface
+	// is a macOS-specific compositor workaround (its own docstring says so). On
+	// Windows, hiding/restoring the native view under the raised shell causes a
+	// brief black flash, and window-composition.ts gates its equivalent nudge to
+	// darwin for the same reason.
+	if (open && process.platform === "darwin") {
+		browserViewHost?.refreshLastFocusedPanelSurface();
+	}
 });
 
 ipcMain.on(SET_CLOSE_SHELL_TERMINAL_SHORTCUT_ENABLED_CHANNEL, (_event, enabled: unknown) => {
@@ -2031,6 +2053,10 @@ ipcMain.handle("app:scanImportFolder", async (_event, input: { path: string; mod
 ipcMain.handle("app:checkAncestorRepo", async (_event, path: string) => {
 	await ensureShellEnv();
 	return ancestorRepositorySetupWarning(path, { env: daemonEnv(), homeDir: os.homedir() });
+});
+ipcMain.handle("app:getRepositoryBranch", async (_event, path: string) => {
+	await ensureShellEnv();
+	return resolveCheckedOutBranch(path, { env: daemonEnv(), homeDir: os.homedir() });
 });
 ipcMain.handle("clipboard:writeText", (_event, text: string) => {
 	clipboard.writeText(text, "clipboard");
@@ -2356,6 +2382,12 @@ function initAutoUpdates(): void {
 	const runFile = runFilePath();
 	if (!runFile) return;
 	const stateDir = path.dirname(runFile);
+	// Route update pushes at the shell WebContents, the same target daemon status
+	// uses. The shell is a BaseWindow + WebContentsView (#3750), which
+	// BrowserWindow.getAllWindows() does not return, so the updater cannot find
+	// the renderer on its own. Resolved lazily so a recreated window still gets
+	// pushes.
+	setRendererSink(() => getShellWebContents());
 	void ensureUpdatePrefs(stateDir).then(() => startAutoUpdates(stateDir));
 }
 

@@ -1307,7 +1307,8 @@ func (s *Service) Models(ctx context.Context, id domain.SessionID) ([]ports.Chat
 // the connected conversation so model entitlements and model-dependent choices
 // cannot go stale in an AO table.
 func (s *Service) ConfigOptions(ctx context.Context, id domain.SessionID) ([]ports.ChatConfigOption, error) {
-	if _, err := s.requireChatSession(ctx, id); err != nil {
+	record, err := s.requireChatSession(ctx, id)
+	if err != nil {
 		return nil, err
 	}
 	controller, err := s.Controller(id)
@@ -1318,7 +1319,8 @@ func (s *Service) ConfigOptions(ctx context.Context, id domain.SessionID) ([]por
 	if !ok {
 		return nil, ErrConfigOptionsUnsupported
 	}
-	return configurer.ListConfigOptions(ctx)
+	options, err := configurer.ListConfigOptions(ctx)
+	return permissionConfigOptions(record.Harness, options), err
 }
 
 // SetConfigOption applies one provider-advertised value and returns the complete
@@ -1330,7 +1332,8 @@ func (s *Service) SetConfigOption(
 	configID string,
 	value ports.ChatConfigOptionValue,
 ) ([]ports.ChatConfigOption, error) {
-	if _, err := s.requireChatSession(ctx, id); err != nil {
+	record, err := s.requireChatSession(ctx, id)
+	if err != nil {
 		return nil, err
 	}
 	controller, err := s.Controller(id)
@@ -1347,6 +1350,7 @@ func (s *Service) SetConfigOption(
 	if err != nil {
 		return nil, err
 	}
+	options = permissionConfigOptions(record.Harness, options)
 	if settings, changed := settingsFromConfigOptions(controller.Settings(), options); changed {
 		if err := controller.SetSettings(ctx, settings); err != nil {
 			return nil, err
@@ -1361,6 +1365,11 @@ func settingsFromConfigOptions(
 ) (domain.ConversationSettings, bool) {
 	next := settings
 	for _, option := range options {
+		for _, choice := range option.Choices {
+			if choice.Value == option.Current.Select && choice.PermissionMode != "" {
+				next.ApprovalMode = choice.PermissionMode
+			}
+		}
 		switch {
 		case option.ID == "model" || option.Category == "model":
 			if option.Current.Select != "" {
@@ -1507,4 +1516,30 @@ func (s *Service) RelayChatTurnWithID(
 // StopChat releases a session's controller.
 func (s *Service) StopChat(ctx context.Context, id domain.SessionID) error {
 	return s.Stop(ctx, id)
+}
+
+// permissionConfigOptions annotates only provider controls whose semantics are
+// known. In particular, plan and dontAsk are not AO approval policies.
+func permissionConfigOptions(harness domain.AgentHarness, options []ports.ChatConfigOption) []ports.ChatConfigOption {
+	out := append([]ports.ChatConfigOption(nil), options...)
+	for i := range out {
+		out[i].Choices = append([]ports.ChatConfigOptionChoice(nil), out[i].Choices...)
+		for j := range out[i].Choices {
+			out[i].Choices[j].PermissionMode = ""
+			if harness != domain.HarnessClaudeCode || out[i].ID != "mode" {
+				continue
+			}
+			switch out[i].Choices[j].Value {
+			case "manual", "default":
+				out[i].Choices[j].PermissionMode = domain.PermissionModeDefault
+			case "acceptEdits":
+				out[i].Choices[j].PermissionMode = domain.PermissionModeAcceptEdits
+			case "auto":
+				out[i].Choices[j].PermissionMode = domain.PermissionModeAuto
+			case "bypassPermissions":
+				out[i].Choices[j].PermissionMode = domain.PermissionModeBypassPermissions
+			}
+		}
+	}
+	return out
 }

@@ -21,6 +21,7 @@ const {
 	getMock,
 	postMock,
 	prepareForActivationMock,
+	sendUserInputMock,
 	terminalError,
 	terminalState,
 	replaySettled,
@@ -28,12 +29,14 @@ const {
 	terminalSessionOptions,
 	xtermMounts,
 	xtermUnmounts,
+	xtermFocusRequests,
 } = vi.hoisted(
 	() => ({
 		attachMock: vi.fn(() => vi.fn()),
 		getMock: vi.fn(async (_path: string, _options: unknown) => ({ data: undefined })),
 		postMock: vi.fn(),
 		prepareForActivationMock: vi.fn(async (): Promise<void> => undefined),
+		sendUserInputMock: vi.fn(),
 		terminalError: { value: undefined as string | undefined },
 		terminalState: { value: "idle" },
 		replaySettled: { value: true },
@@ -41,6 +44,7 @@ const {
 		terminalSessionOptions: [] as Array<{ coverInitialReplay?: boolean; shellTerminalHandleId?: string }>,
 		xtermMounts: { value: 0 },
 		xtermUnmounts: { value: 0 },
+		xtermFocusRequests: { value: 0 },
 	}),
 );
 let terminalLinkHandler: ((uri: string) => void) | undefined;
@@ -58,6 +62,8 @@ vi.mock("../lib/api-client", () => ({
 
 vi.mock("./XtermTerminal", () => ({
 	XtermTerminal: (props: {
+		focusRequested?: boolean;
+		isVisible?: boolean;
 		onLinkOpen?: (uri: string) => void;
 		onReady?: (terminal: AttachableTerminal) => void;
 	}) => {
@@ -68,6 +74,9 @@ vi.mock("./XtermTerminal", () => ({
 			instance.current = xtermMounts.value;
 		}
 		useEffect(() => {
+			if (props.focusRequested && props.isVisible !== false) xtermFocusRequests.value += 1;
+		}, [props.focusRequested, props.isVisible]);
+		useEffect(() => {
 			const disposable = { dispose: vi.fn() };
 			props.onReady?.({
 				cols: 80,
@@ -77,6 +86,7 @@ vi.mock("./XtermTerminal", () => ({
 				showLatestOutput: vi.fn(),
 				prepareForActivation: prepareForActivationMock,
 				notifyCursorColorScheme: vi.fn(),
+				sendUserInput: sendUserInputMock,
 				onUserInput: vi.fn(() => disposable),
 				onResize: vi.fn(() => disposable),
 			});
@@ -137,19 +147,33 @@ beforeEach(() => {
 	attachMock.mockClear();
 	prepareForActivationMock.mockReset();
 	prepareForActivationMock.mockResolvedValue(undefined);
+	sendUserInputMock.mockReset();
+	sendUserInputMock.mockReturnValue(true);
 	xtermMounts.value = 0;
 	xtermUnmounts.value = 0;
+	xtermFocusRequests.value = 0;
 	useUiStore.setState({ inspectorSessions: {} });
 });
 
-function renderPane(session?: WorkspaceSession) {
+function renderPane(
+	session?: WorkspaceSession,
+	inputRequest?: { id: number; data: string },
+	onInputRequestResult?: (id: number, accepted: boolean) => void,
+) {
 	const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 	const previousAO = window.ao;
 	window.ao = {} as typeof window.ao;
 	const result = render(
 		<QueryClientProvider client={queryClient}>
 			<TooltipProvider>
-				<TerminalPane daemonReady fontSize={12} session={session} theme="dark" />
+				<TerminalPane
+					daemonReady
+					fontSize={12}
+					inputRequest={inputRequest}
+					onInputRequestResult={onInputRequestResult}
+					session={session}
+					theme="dark"
+				/>
 			</TooltipProvider>
 		</QueryClientProvider>,
 	);
@@ -180,11 +204,13 @@ function renderCachedPane({
 	sessions,
 	shellTerminals = [],
 	terminalTarget,
+	focusRequested = false,
 }: {
 	session?: WorkspaceSession;
 	sessions: WorkspaceSession[];
 	shellTerminals?: ShellTerminal[];
 	terminalTarget?: TerminalTarget;
+	focusRequested?: boolean;
 }) {
 	const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 	queryClient.setQueryData(workspaceQueryKey, workspaceWithSessions(sessions));
@@ -203,6 +229,7 @@ function renderCachedPane({
 							session={nextSession}
 							terminalTarget={nextTarget}
 							theme="dark"
+							focusRequested={focusRequested}
 						/>
 					) : (
 						<div data-testid="away" />
@@ -263,6 +290,38 @@ describe("TerminalPane empty states", () => {
 		try {
 			expect(screen.getByTestId("xterm").parentElement).toHaveClass("pl-2");
 			expect(screen.getByTestId("xterm").parentElement).not.toHaveClass("pt-2", "pr-2", "pb-2", "p-2");
+		} finally {
+			view.restore();
+		}
+	});
+
+	it("forwards an explicit input request after the terminal is attached", async () => {
+		terminalState.value = "attached";
+		const onInputRequestResult = vi.fn();
+		const view = renderPane(
+			{ ...worker, terminalHandleId: "term-1" },
+			{ id: 1, data: "/login\r" },
+			onInputRequestResult,
+		);
+		try {
+			await waitFor(() => expect(sendUserInputMock).toHaveBeenCalledWith("/login\r"));
+			expect(onInputRequestResult).toHaveBeenCalledWith(1, true);
+		} finally {
+			view.restore();
+		}
+	});
+
+	it("reports rejected input requests without consuming them", async () => {
+		terminalState.value = "attached";
+		sendUserInputMock.mockReturnValue(false);
+		const onInputRequestResult = vi.fn();
+		const view = renderPane(
+			{ ...worker, terminalHandleId: "term-1" },
+			{ id: 1, data: "/login\r" },
+			onInputRequestResult,
+		);
+		try {
+			await waitFor(() => expect(onInputRequestResult).toHaveBeenCalledWith(1, false));
 		} finally {
 			view.restore();
 		}
@@ -497,6 +556,27 @@ describe("TerminalCacheProvider", () => {
 			view.show(sessions[0]);
 			await waitFor(() => expect(activeXterm()).toBe(oldest));
 			expect(xtermMounts.value).toBe(7);
+		} finally {
+			view.restore();
+		}
+	});
+
+	it("focuses each retained TUI terminal when switching among TUI sessions", async () => {
+		const tuiA = { ...sessionA, mode: "tui" as const };
+		const tuiB = { ...sessionB, mode: "tui" as const };
+		const view = renderCachedPane({
+			focusRequested: true,
+			session: tuiA,
+			sessions: [tuiA, tuiB],
+		});
+		try {
+			await waitFor(() => expect(xtermFocusRequests.value).toBe(1));
+
+			view.show(tuiB);
+			await waitFor(() => expect(xtermFocusRequests.value).toBe(2));
+
+			view.show(tuiA);
+			await waitFor(() => expect(xtermFocusRequests.value).toBe(3));
 		} finally {
 			view.restore();
 		}

@@ -249,7 +249,8 @@ func (m *Manager) launchChatController(ctx context.Context, in chatSpawn) (domai
 		},
 		ControllerReady: func(started ChatStarted) (ChatControllerCommit, error) {
 			metadata := domain.SessionMetadata{
-				Branch: in.workspace.Branch,
+				Permissions: in.record.Metadata.Permissions,
+				Branch:      in.workspace.Branch,
 				// An imported conversation keeps the branch it ran on even when
 				// the workspace had to be created on a different one, so its
 				// pull request stays discoverable.
@@ -437,6 +438,9 @@ func (m *Manager) resumeChatController(
 	}
 
 	agentConfig := effectiveAgentConfig(rec.Kind, project.Config)
+	if rec.Metadata.Permissions != "" {
+		agentConfig.Permissions = rec.Metadata.Permissions
+	}
 	additionalDirectories, err := m.restoredWorkspaceProjectDirectories(ctx, rec, project, ws.Path)
 	if err != nil {
 		return RestoreResult{}, fmt.Errorf("%s %s: workspace roots: %w", operation, rec.ID, err)

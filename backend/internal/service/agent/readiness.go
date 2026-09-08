@@ -184,7 +184,9 @@ type sessionUsage struct {
 	lastUsedAt time.Time
 }
 
-// Probe is the legacy projection of a targeted launch ensure.
+// Probe is the legacy projection of a targeted launch ensure. Explicit probes
+// always invalidate authentication first so a user checking immediately after
+// login cannot receive the cached pre-login observation.
 func (s *Service) Probe(ctx context.Context, agentID string) (ProbeResult, error) {
 	if err := ctx.Err(); err != nil {
 		return ProbeResult{}, err
@@ -192,6 +194,7 @@ func (s *Service) Probe(ctx context.Context, agentID string) (ProbeResult, error
 	if _, ok := s.agent(agentID); !ok {
 		return ProbeResult{Agent: Info{ID: agentID}, Supported: false, Installed: false}, nil
 	}
+	s.InvalidateAgentAuthentication(agentID)
 	readiness, err := s.EnsureReadiness(ctx, []string{agentID}, domain.AgentReadinessPurposeLaunch)
 	if err != nil {
 		return ProbeResult{}, err

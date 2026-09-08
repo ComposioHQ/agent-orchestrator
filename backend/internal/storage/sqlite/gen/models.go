@@ -402,6 +402,7 @@ type PR struct {
 	StateChangedAt           sql.NullTime
 	AutoInjectCI             bool
 	ProviderID               string
+	AuthorAvatarURL          string
 }
 
 type PRCheck struct {
@@ -546,6 +547,7 @@ type Session struct {
 	Model                     string
 	LatestUserPromptAt        sql.NullTime
 	ReviewerAgentConfig       string
+	SessionPermissions        string
 	SourceBranch              string
 }
 

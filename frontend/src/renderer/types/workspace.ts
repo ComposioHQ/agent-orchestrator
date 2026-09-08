@@ -316,6 +316,7 @@ export type WorkspaceSummary = {
 	kind?: ProjectKind | typeof CLOUD_PROJECT_KIND;
 	/** Local checkout path; empty string for cloud projects (no local folder). */
 	path: string;
+	folderMissing?: boolean;
 	workspaceRepos?: WorkspaceRepoSummary[];
 	type?: "main" | "worktree";
 	orchestratorAgent?: AgentProvider;

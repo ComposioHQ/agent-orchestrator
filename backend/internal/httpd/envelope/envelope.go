@@ -10,6 +10,7 @@ import (
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apierr"
 	"github.com/aoagents/agent-orchestrator/backend/internal/observe/ownership"
+	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
 // errCapture is a request-scoped slot WriteError records the raw service error
@@ -97,6 +98,18 @@ func WriteError(w http.ResponseWriter, r *http.Request, err error) {
 	if isTransient(err) {
 		writeAPIError(w, r, http.StatusServiceUnavailable, "unavailable", "SERVICE_UNAVAILABLE",
 			"The service is momentarily unavailable, please retry.", nil, reportingOwner)
+		return
+	}
+	// A project whose source repository has been deleted from disk turns any
+	// subsequent filesystem/git operation that reaches it into a raw,
+	// unclassified failure. Map that single, well-defined condition to a clean
+	// 404 before the generic 500 fallthrough so clients can tell "the project
+	// its folder is gone" apart from an internal server fault. Adapters wrap
+	// the same sentinel (ports.ErrWorkspaceRepoUnavailable) with %w, so
+	// errors.Is matches it through any wrapping.
+	if errors.Is(err, ports.ErrWorkspaceRepoUnavailable) {
+		writeAPIError(w, r, http.StatusNotFound, "not_found", "PROJECT_FOLDER_MISSING",
+			"Project repository is missing from disk", nil, reportingOwner)
 		return
 	}
 	writeAPIError(w, r, http.StatusInternalServerError, "internal", "INTERNAL_ERROR", "Internal server error", nil, reportingOwner)

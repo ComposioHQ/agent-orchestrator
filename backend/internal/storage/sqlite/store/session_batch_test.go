@@ -42,3 +42,22 @@ func TestCreateSessionsAtomicRollbackAndCDC(t *testing.T) {
 		t.Fatalf("single create after batch: %v %v", row, err)
 	}
 }
+
+func TestImportedSourceBranchAndPermissionsRoundTripTogether(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedProject(t, s, "combined")
+	rec := sampleRecord("combined")
+	rec.Metadata.SourceBranch = "feature/imported"
+	rec.Metadata.Permissions = domain.PermissionModeAcceptEdits
+	if _, err := s.CreateSessions(ctx, []domain.SessionRecord{rec}); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := s.ListAllSessions(ctx)
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("read sessions: %+v %v", rows, err)
+	}
+	if rows[0].Metadata.SourceBranch != rec.Metadata.SourceBranch || rows[0].Metadata.Permissions != rec.Metadata.Permissions {
+		t.Fatalf("metadata did not survive batch storage: %+v", rows[0].Metadata)
+	}
+}

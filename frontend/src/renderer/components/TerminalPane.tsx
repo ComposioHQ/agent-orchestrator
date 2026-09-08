@@ -51,13 +51,17 @@ type TerminalPaneProps = {
 	onChangeFontSize?: (delta: number) => void;
 	isFullscreen?: boolean;
 	/** Enter or exit fullscreen for the terminal pane that owns this xterm. */
-	onToggleFullscreen?: () => void;
+	onToggleFullscreen?: () => void | Promise<void>;
 	/** Refuse agent PTY input while a controller transition owns the source. */
 	inputDisabled?: boolean;
 	/** Focus the terminal when an in-flight controller asks for human input. */
 	focusRequested?: boolean;
 	/** Observe attachment state without taking ownership of the terminal lifecycle. */
 	onTerminalStateChange?: (state: TerminalSessionState) => void;
+	/** One-shot input initiated by an explicit UI action. */
+	inputRequest?: { id: number; data: string };
+	/** Reports whether the active attachment accepted a one-shot input request. */
+	onInputRequestResult?: (id: number, accepted: boolean) => void;
 	/** Provider-owned shared transport lease factory. */
 	createMux?: () => TerminalMux;
 };
@@ -122,6 +126,8 @@ function terminalPropsMatch(left: TerminalPaneProps, right: TerminalPaneProps): 
 		left.inputDisabled === right.inputDisabled &&
 		left.focusRequested === right.focusRequested &&
 		left.onTerminalStateChange === right.onTerminalStateChange &&
+		left.inputRequest === right.inputRequest &&
+		left.onInputRequestResult === right.onInputRequestResult &&
 		left.createMux === right.createMux &&
 		terminalTargetMatches(left.terminalTarget, right.terminalTarget)
 	);
@@ -607,6 +613,8 @@ export function TerminalPane({
 	inputDisabled,
 	focusRequested,
 	onTerminalStateChange,
+	inputRequest,
+	onInputRequestResult,
 }: TerminalPaneProps) {
 	const { t } = useTranslation();
 	const terminalTarget =
@@ -698,6 +706,8 @@ export function TerminalPane({
 		inputDisabled,
 		focusRequested,
 		onTerminalStateChange,
+		inputRequest,
+		onInputRequestResult,
 	};
 	const descriptor = cacheDescriptor(session, terminalTarget);
 	if (cache && descriptor) {
@@ -717,6 +727,8 @@ export function TerminalPane({
 			onToggleFullscreen={onToggleFullscreen}
 			focusRequested={focusRequested}
 			onTerminalStateChange={onTerminalStateChange}
+			inputRequest={inputRequest}
+			onInputRequestResult={onInputRequestResult}
 			terminalTarget={terminalTarget}
 		/>
 	);
@@ -877,6 +889,8 @@ function AttachedTerminal({
 	inputDisabled,
 	focusRequested,
 	onTerminalStateChange,
+	inputRequest,
+	onInputRequestResult,
 	createMux,
 	isVisible = true,
 	onFatal,
@@ -897,6 +911,7 @@ function AttachedTerminal({
 	// cache retains this component across route switches; a replacement handle
 	// gets a new component rather than inheriting stale screen/input state.
 	const [terminal, setTerminal] = useState<AttachableTerminal | null>(null);
+	const lastInputRequestIdRef = useRef<number | null>(null);
 	const [initFailed, setInitFailed] = useState(false);
 	const [isRestoring, setIsRestoring] = useState(false);
 	const [restoreError, setRestoreError] = useState<string | undefined>();
@@ -917,6 +932,13 @@ function AttachedTerminal({
 	useEffect(() => {
 		onTerminalStateChange?.(state);
 	}, [onTerminalStateChange, state]);
+	useEffect(() => {
+		if (!terminal || state !== "attached" || !inputRequest) return;
+		if (lastInputRequestIdRef.current === inputRequest.id) return;
+		const accepted = terminal.sendUserInput(inputRequest.data);
+		if (accepted) lastInputRequestIdRef.current = inputRequest.id;
+		onInputRequestResult?.(inputRequest.id, accepted);
+	}, [inputRequest, onInputRequestResult, state, terminal]);
 	// xterm's write callback means the replay has been parsed, not that the
 	// browser has painted its final viewport. Keep the first-load cover mounted
 	// through the same render/paint preparation used when activating a retained

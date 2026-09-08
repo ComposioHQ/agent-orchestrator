@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
 	apiClient,
+	apiErrorDetails,
 	apiErrorMessage,
 	getApiBaseUrl,
 	hasTrustedApiBaseUrl,
@@ -235,6 +236,13 @@ describe("normalizeApiOperation", () => {
 		expect(normalizeApiOperation("POST", "/api/v1/projects/clone")).toBe("POST /api/v1/projects/clone");
 		expect(normalizeApiOperation("POST", "/api/v1/projects/initialize")).toBe("POST /api/v1/projects/initialize");
 		expect(normalizeApiOperation("POST", "/api/v1/sessions/cleanup")).toBe("POST /api/v1/sessions/cleanup");
+		expect(normalizeApiOperation("GET", "/api/v1/agents/auth-plans")).toBe("GET /api/v1/agents/auth-plans");
+	});
+
+	it("normalizes agent ids in authentication routes", () => {
+		expect(normalizeApiOperation("POST", "/api/v1/agents/claude-code/auth")).toBe(
+			"POST /api/v1/agents/:id/auth",
+		);
 	});
 
 	it("keeps workspace file routes aligned with the generated API schema", () => {
@@ -455,4 +463,18 @@ describe("apiErrorMessage", () => {
 			}),
 		).toBe("reviewer has not reviewed this PR (REVIEWER_NOT_FOUND)");
 	});
+});
+
+
+describe("apiErrorDetails", () => {
+	it("preserves structured daemon recovery metadata", () => {
+		const details = { existingProjectId: "registered-project", suggestedProjectId: "another-project" };
+		expect(apiErrorDetails({ code: "PATH_ALREADY_REGISTERED", details })).toEqual(details);
+	});
+
+	it.each([undefined, null, "error", {}, { details: null }, { details: "project" }, { details: ["project"] }])(
+		"ignores malformed metadata: %j", (error) => {
+			expect(apiErrorDetails(error)).toBeUndefined();
+		},
+	);
 });

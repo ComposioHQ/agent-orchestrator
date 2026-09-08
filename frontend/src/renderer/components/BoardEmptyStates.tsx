@@ -2,6 +2,7 @@ import { Plus } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { useShell } from "../lib/shell-context";
 import { CreateProjectFlow } from "./CreateProjectFlow";
+import { GitHubOnboardingNotice } from "./GitHubOnboardingNotice";
 import { TopbarButton } from "./TopbarButton";
 import { WelcomePanel } from "./WelcomePanel";
 import { OrchestratorIcon } from "./icons";
@@ -16,13 +17,16 @@ export function BoardWelcome() {
 				className="flex h-full min-h-0 flex-col items-center justify-center overflow-y-auto px-6 py-8"
 				data-testid="board-welcome"
 			>
-				<CreateProjectFlow
-					embedded
-					mode="choose"
-					onCloneProject={cloneProject}
-					onCreateProject={createProject}
-					onInitializeProject={initializeProjectRepository}
-				/>
+				<div className="flex w-full flex-col items-center gap-3">
+					<CreateProjectFlow
+						embedded
+						mode="choose"
+						onCloneProject={cloneProject}
+						onCreateProject={createProject}
+						onInitializeProject={initializeProjectRepository}
+					/>
+					<GitHubOnboardingNotice />
+				</div>
 			</div>
 		</WelcomePanel>
 	);

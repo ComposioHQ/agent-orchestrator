@@ -1,6 +1,6 @@
 import { createFileRoute, Outlet, useMatchRoute, useNavigate, useParams } from "@tanstack/react-router";
 import { isCancelledError, useQueryClient } from "@tanstack/react-query";
-import { memo, type CSSProperties, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { memo, type CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { FolderPlus } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { CommandPalette } from "../components/CommandPalette";
@@ -10,13 +10,15 @@ import { DaemonStartupLoader } from "../components/DaemonStartupLoader";
 import { NotificationRuntime } from "../components/NotificationCenter";
 import { TrayRuntime } from "../components/TrayRuntime";
 import { GlobalNewTaskDialog } from "../components/GlobalNewTaskDialog";
+import { GlobalToast } from "../components/GlobalToast";
 import { SettingsDialog } from "../components/SettingsDialog";
 import { KeyboardShortcutsDialog } from "../components/KeyboardShortcutsDialog";
 import { KeyboardShortcutsSettingsDialog } from "../components/settings/KeyboardShortcutsSettingsDialog";
 import { ShellTopbar } from "../components/ShellTopbar";
 import { SessionTopbarProvider } from "../components/SessionTopbarPortal";
 import { OrchestratorReplacementDialog } from "../components/OrchestratorReplacementDialog";
-import { Sidebar, SIDEBAR_DEFAULT_WIDTH } from "../components/Sidebar";
+import { RestartToUpdateDialog } from "../components/RestartToUpdateDialog";
+import { Sidebar } from "../components/Sidebar";
 import { SidebarProvider } from "../components/ui/sidebar";
 import { TitlebarNav } from "../components/TitlebarNav";
 import { WindowTitlebar } from "../components/WindowTitlebar";
@@ -26,7 +28,7 @@ import { useDaemonStatus } from "../hooks/useDaemonStatus";
 import { useOpenShellTerminal } from "../hooks/useShellTerminals";
 import { useWindowFullScreen } from "../hooks/useWindowFullScreen";
 import { useWorkspaceQuery, workspaceQueryKey, workspaceQueryOptions } from "../hooks/useWorkspaceQuery";
-import { apiClient, apiErrorCode, apiErrorMessage, hasTrustedApiBaseUrl } from "../lib/api-client";
+import { apiClient, apiErrorCode, apiErrorDetails, apiErrorMessage, apiErrorRequestId, hasTrustedApiBaseUrl } from "../lib/api-client";
 import { refreshDaemonStatus } from "../lib/daemon-status";
 import { usesPreviewWorkspaceData } from "../lib/preview-mode";
 import { addRendererExceptionStep, captureRendererEvent, captureRendererException } from "../lib/telemetry";
@@ -37,8 +39,8 @@ import { applyDocumentTheme, applyDocumentThemeStyle } from "../lib/theme";
 import { aoBridge } from "../lib/bridge";
 import { handleModifierLinkClick } from "../lib/external-link-policy";
 import { recordProjectOpened } from "../lib/project-history";
+import { spawnOrchestrator } from "../lib/spawn-orchestrator";
 import { cn } from "../lib/utils";
-import { adaptiveSidebarShouldCompact } from "../lib/adaptive-sidebar";
 import {
 	isLinuxPlatform,
 	isMacPlatform,
@@ -46,7 +48,7 @@ import {
 	usesFramedAppTopbar,
 	hidesShellTopbar,
 } from "../lib/platform";
-import { sidebarIsCompact, sidebarIsVisible, sidebarOccupiesLayout, useUiStore } from "../stores/ui-store";
+import { sidebarIsVisible, sidebarOccupiesLayout, useUiStore } from "../stores/ui-store";
 import { matchesRendererShortcut } from "../stores/keybindings-store";
 import { sessionIsActive, toProjectKind, type WorkspaceSummary } from "../types/workspace";
 import type { components } from "../../api/schema";
@@ -68,19 +70,26 @@ function errorMessage(error: unknown) {
 	return error instanceof Error ? error.message : "Could not load projects";
 }
 
-function expandedSidebarWidthPx(): number {
-	const inlineWidth = Number.parseFloat(document.documentElement.style.getPropertyValue("--ao-sidebar-w"));
-	return Number.isFinite(inlineWidth) && inlineWidth > 0 ? inlineWidth : SIDEBAR_DEFAULT_WIDTH;
+function normalizeProjectPath(path: string): string {
+	if (!path) return path;
+	const trimmed = path.trim().replace(/[\\/]+$/, "");
+	return trimmed === "" ? path : trimmed;
 }
 
+function findRegisteredWorkspaceByPath(workspaces: WorkspaceSummary[], path: string): WorkspaceSummary | undefined {
+	const normalizedPath = normalizeProjectPath(path);
+	return workspaces.find((workspace) => normalizeProjectPath(workspace.path) === normalizedPath);
+}
 type CreateProjectConfigInput = {
 	workerAgent: string;
 	orchestratorAgent: string;
 	trackerIntake?: components["schemas"]["TrackerIntakeConfig"];
+	defaultBranch?: string;
 };
 
 export function createProjectConfig(input: CreateProjectConfigInput): components["schemas"]["ProjectConfig"] {
 	return {
+		...(input.defaultBranch ? { defaultBranch: input.defaultBranch } : {}),
 		worker: { agent: input.workerAgent as components["schemas"]["RoleOverride"]["agent"] },
 		orchestrator: { agent: input.orchestratorAgent as components["schemas"]["RoleOverride"]["agent"] },
 		...(input.trackerIntake ? { trackerIntake: input.trackerIntake } : {}),
@@ -164,12 +173,7 @@ function ShellLayout() {
 	const themeStyle = useUiStore((state) => state.themeStyle);
 	const isSidebarOpen = useUiStore(sidebarIsVisible);
 	const toggleSidebar = useUiStore((state) => state.toggleSidebar);
-	const isSidebarCompact = useUiStore(sidebarIsCompact);
 	const sidebarHasLayout = useUiStore(sidebarOccupiesLayout);
-	const sidebarWorkspaceDemandPx = useUiStore((state) => state.sidebarWorkspaceDemandPx);
-	const setSidebarAutoCollapsed = useUiStore((state) => state.setSidebarAutoCollapsed);
-	const clearSidebarAutoCollapse = useUiStore((state) => state.clearSidebarAutoCollapse);
-	const shellContentRowRef = useRef<HTMLDivElement | null>(null);
 	const syncSystemTheme = useUiStore((state) => state.syncSystemTheme);
 	const requestNewTask = useUiStore((state) => state.requestNewTask);
 	const requestCreateProject = useUiStore((state) => state.requestCreateProject);
@@ -178,34 +182,6 @@ function ShellLayout() {
 	const newShellTerminalNonce = useUiStore((state) => state.newShellTerminalNonce);
 	const setActiveShellTerminal = useUiStore((state) => state.setActiveShellTerminal);
 	const openShellTerminal = useOpenShellTerminal();
-	// Session surfaces publish only their required center-workspace width. The
-	// persistent shell owns the single responsive decision, measured against the
-	// invariant outer row so sidebar animation cannot feed back into itself.
-	useLayoutEffect(() => {
-		if (sidebarWorkspaceDemandPx === null) {
-			clearSidebarAutoCollapse();
-			return;
-		}
-		const row = shellContentRowRef.current;
-		if (!row) return;
-		const update = () => {
-			const rowWidth = row.clientWidth || row.getBoundingClientRect().width;
-			const expandedContentWidth = Math.max(0, rowWidth - expandedSidebarWidthPx());
-			const current = useUiStore.getState().isSidebarAutoCollapsed;
-			setSidebarAutoCollapsed(
-				adaptiveSidebarShouldCompact({
-					expandedContentWidth,
-					workspaceDemand: sidebarWorkspaceDemandPx,
-					isCompact: current,
-				}),
-			);
-		};
-		update();
-		if (typeof ResizeObserver === "undefined") return;
-		const observer = new ResizeObserver(update);
-		observer.observe(row);
-		return () => observer.disconnect();
-	}, [clearSidebarAutoCollapse, setSidebarAutoCollapsed, sidebarWorkspaceDemandPx]);
 	// Single subscription for sidebar clearance + drag strip (macOS no-ops inside the hook).
 	const isFullScreen = useWindowFullScreen();
 	// Drag is on immediately for a normal windowed launch. After leaving fullscreen,
@@ -349,10 +325,12 @@ function ShellLayout() {
 	// self-framed.
 	const selfFramedCenterPanel = isSettingsRoute;
 	const hideShellTopbar = isHomeRoute || selfFramedCenterPanel || shellTopbarHiddenByPlatform;
+	const restartingProjectIds = useUiStore((state) => state.restartingProjectIds);
 	const setProjectRestarting = useUiStore((state) => state.setProjectRestarting);
 	const orchestratorReplacementErrors = useUiStore((state) => state.orchestratorReplacementErrors);
 	const setOrchestratorReplacementError = useUiStore((state) => state.setOrchestratorReplacementError);
 	const setOrchestratorStartupError = useUiStore((state) => state.setOrchestratorStartupError);
+	const showGlobalToast = useUiStore((state) => state.showGlobalToast);
 	const replacementErrorProjectId = Object.keys(orchestratorReplacementErrors)[0] ?? null;
 	const isStartupLoading =
 		!usesPreviewWorkspaceData &&
@@ -409,42 +387,16 @@ function ShellLayout() {
 			updateWorkspaces((current) => [workspace, ...current.filter((item) => item.id !== workspace.id)]);
 			setOrchestratorStartupError(workspace.id, null);
 			try {
-				void captureRendererEvent("ao.renderer.orchestrator_spawn_requested", {
-					project_id: workspace.id,
-					source,
-				});
-				const {
-					data: spawnData,
-					error: spawnError,
-					response: spawnResponse,
-				} = await apiClient.POST("/api/v1/sessions", {
-					body: {
-						projectId: workspace.id,
-						kind: "orchestrator",
-						harness: input.orchestratorAgent as components["schemas"]["SpawnSessionRequest"]["harness"],
-					},
-				});
-				if (spawnError || !spawnData?.session?.id) {
-					const message = spawnError
-						? apiErrorMessage(spawnError, `Failed to spawn orchestrator (${spawnResponse.status})`)
-						: `Failed to spawn orchestrator (${spawnResponse.status})`;
-					throw new Error(message);
-				}
-				void captureRendererEvent("ao.renderer.orchestrator_spawn_succeeded", {
-					project_id: workspace.id,
-					source,
-				});
-				const sessionId = spawnData.session.id;
+				const sessionId = await spawnOrchestrator(
+					workspace.id,
+					source === "project_clone" ? "project_clone" : "project_add",
+				);
 				await queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
 				void navigate({
 					to: "/projects/$projectId/sessions/$sessionId",
 					params: { projectId: workspace.id, sessionId },
 				});
 			} catch (spawnError) {
-				void captureRendererEvent("ao.renderer.orchestrator_spawn_failed", {
-					project_id: workspace.id,
-					source,
-				});
 				void navigate({ to: "/projects/$projectId", params: { projectId: workspace.id } });
 				const message = spawnError instanceof Error ? spawnError.message : "Could not start orchestrator";
 				const startupMessage = `Project added, but orchestrator did not start: ${message}`;
@@ -461,6 +413,7 @@ function ShellLayout() {
 			orchestratorAgent: string;
 			trackerIntake?: components["schemas"]["TrackerIntakeConfig"];
 			asWorkspace?: boolean;
+			defaultBranch?: string;
 		}) => {
 			void addRendererExceptionStep("Project add requested", {
 				source: "project-add",
@@ -480,8 +433,42 @@ function ShellLayout() {
 				},
 			});
 			if (error) {
-				const failure = new Error(apiErrorMessage(error)) as Error & { code?: string };
+				const failure = new Error(apiErrorMessage(error)) as Error & {
+					code?: string;
+					details?: Record<string, unknown>;
+					requestId?: string;
+				};
 				failure.code = apiErrorCode(error);
+				failure.details = apiErrorDetails(error);
+				failure.requestId = apiErrorRequestId(error);
+				if (failure.code === "PATH_ALREADY_REGISTERED") {
+					const existingProjectId = failure.details?.existingProjectId;
+					const findRegisteredWorkspace = (items: WorkspaceSummary[]) => {
+						const local = items.filter((workspace) => workspace.kind !== "cloud");
+						// The daemon resolves symlinks/canonical paths. Prefer its identity
+						// over renderer path spelling, but only open a known local project.
+						return typeof existingProjectId === "string" && existingProjectId !== ""
+							? local.find((workspace) => workspace.id === existingProjectId)
+							: findRegisteredWorkspaceByPath(local, input.path);
+					};
+					let registeredWorkspace = findRegisteredWorkspace(
+						queryClient.getQueryData<WorkspaceSummary[]>(workspaceQueryKey) ?? workspacesRef.current,
+					);
+					if (!registeredWorkspace) {
+						try {
+							registeredWorkspace = findRegisteredWorkspace(await queryClient.fetchQuery({
+								...workspaceQueryOptions, staleTime: 0, retry: false,
+							}));
+						} catch {
+							// Keep the original conflict and selection if refresh is unavailable.
+						}
+					}
+					if (registeredWorkspace) {
+						showGlobalToast("Project already added", "Opened the registered project for this folder.");
+						void navigate({ to: "/projects/$projectId", params: { projectId: registeredWorkspace.id } });
+						return;
+					}
+				}
 				void captureRendererException(failure, {
 					source: "project-add",
 					operation: "project_add",
@@ -492,7 +479,7 @@ function ShellLayout() {
 			if (!data?.project) throw new Error("Project creation returned no project");
 			await completeProjectCreation(data.project, input, "project_add");
 		},
-		[completeProjectCreation],
+		[completeProjectCreation, navigate, queryClient, showGlobalToast],
 	);
 
 	const cloneProject = useCallback(
@@ -521,8 +508,14 @@ function ShellLayout() {
 				},
 			});
 			if (error) {
-				const failure = new Error(apiErrorMessage(error)) as Error & { code?: string };
+				const failure = new Error(apiErrorMessage(error)) as Error & {
+					code?: string;
+					details?: Record<string, unknown>;
+					requestId?: string;
+				};
 				failure.code = apiErrorCode(error);
+				failure.details = apiErrorDetails(error);
+				failure.requestId = apiErrorRequestId(error);
 				void captureRendererException(failure, {
 					source: "project-clone",
 					operation: "project_clone",
@@ -859,7 +852,9 @@ function ShellLayout() {
 					</div>
 				) : null}
 				<GlobalNewTaskDialog />
+				<GlobalToast />
 				<SettingsDialog />
+				<RestartToUpdateDialog />
 				<KeyboardShortcutsDialog
 					open={isKeyboardShortcutsOpen}
 					onOpenChange={setIsKeyboardShortcutsOpen}
@@ -919,13 +914,11 @@ function ShellLayout() {
 				<div
 					className="flex min-h-0 w-full flex-1 overflow-x-hidden"
 					data-testid="shell-content-row"
-					ref={shellContentRowRef}
 				>
 				{/* macOS + Linux reserve a titlebar band for the fixed TitlebarNav
               cluster above a full-height sidebar; Windows hangs the sidebar
               below its custom titlebar. */}
 				<Sidebar
-					autoCompact={isSidebarCompact}
 					hideEdgeBorder={isHomeRoute}
 					underTopbar={isMac || isWindows || isLinux}
 						topbarOffset={isWindows ? "titlebar" : hideShellTopbar ? "trafficLights" : "toolbar"}
@@ -978,6 +971,7 @@ function ShellLayout() {
 					/>
 				</SidebarProvider>
 				<OrchestratorReplacementDialog
+					pending={Boolean(replacementErrorProjectId && restartingProjectIds.has(replacementErrorProjectId))}
 					error={replacementErrorProjectId ? orchestratorReplacementErrors[replacementErrorProjectId] : undefined}
 					onOpenChange={(open) => {
 						if (!open && replacementErrorProjectId) setOrchestratorReplacementError(replacementErrorProjectId, null);

@@ -38,17 +38,14 @@ const {
 	checkUpdateMock,
 	cloudGateState,
 	cloudSessionState,
-	compactRailCanGoBack,
-	compactRailCanGoForward,
 	dragEnds,
 	dragOvers,
 	dragStarts,
 	downloadUpdateMock,
 	getMock,
-	historyBackMock,
-	historyForwardMock,
 	navigateMock,
 	mockParams,
+	postMock,
 	renameSessionMock,
 	spawnMock,
 	updateStatusMock,
@@ -67,6 +64,7 @@ const {
 		dragOvers: new Map<string, (event: DragOverTestEvent) => void>(),
 		dragStarts: new Map<string, (event: { active: { id: string } }) => void>(),
 		getMock: vi.fn(),
+		postMock: vi.fn(),
 		navigateMock: vi.fn(),
 		mockParams: { projectId: undefined as string | undefined, sessionId: undefined as string | undefined },
 		renameSessionMock: vi.fn().mockResolvedValue(undefined),
@@ -75,10 +73,6 @@ const {
 		downloadUpdateMock: vi.fn(),
 		checkUpdateMock: vi.fn(),
 		commandPaletteEnabled: { current: true },
-		compactRailCanGoBack: { current: false },
-		compactRailCanGoForward: { current: false },
-		historyBackMock: vi.fn(),
-		historyForwardMock: vi.fn(),
 	}),
 );
 
@@ -134,25 +128,12 @@ vi.mock("@tanstack/react-router", async (importOriginal) => {
 	const actual = await importOriginal<typeof import("@tanstack/react-router")>();
 	return {
 		...actual,
-		useCanGoBack: () => compactRailCanGoBack.current,
 		useNavigate: () => navigateMock,
 		useParams: () => ({ ...mockParams }),
-		useRouter: () => ({
-			history: {
-				back: historyBackMock,
-				forward: historyForwardMock,
-				location: { state: { __TSR_index: 0 } },
-				subscribe: vi.fn(() => () => undefined),
-			},
-		}),
 		useRouterState: ({ select }: { select: (state: { location: { pathname: string } }) => unknown }) =>
 			select({ location: { pathname: "/" } }),
 	};
 });
-
-vi.mock("./TitlebarNav", () => ({
-	useCanGoForward: () => compactRailCanGoForward.current,
-}));
 
 vi.mock("../lib/bridge", async (importOriginal) => {
 	const actual = await importOriginal<typeof import("../lib/bridge")>();
@@ -170,7 +151,7 @@ vi.mock("../lib/bridge", async (importOriginal) => {
 });
 
 vi.mock("../lib/api-client", () => ({
-	apiClient: { GET: getMock },
+	apiClient: { GET: getMock, POST: postMock },
 	apiErrorMessage: (error: unknown) => {
 		if (error instanceof Error) return error.message;
 		if (typeof error === "object" && error !== null && "message" in error && typeof error.message === "string") {
@@ -246,6 +227,45 @@ type CloneProjectHandler = (input: {
 type InitializeProjectHandler = (path: string) => Promise<void>;
 type RemoveProjectHandler = (projectId: string) => Promise<void>;
 
+function projectValidation(
+	path: string,
+	overrides: Partial<{
+		isValid: boolean;
+		blockingErrors: string[];
+		nextStep: "error" | "choose_import_kind" | "prepare_git" | "continue";
+		warning: string;
+		root: Partial<{
+			repoPath: string;
+			isRepo: boolean;
+			hasCommit: boolean;
+			hasOrigin: boolean;
+			isEmptyFolder: boolean;
+			needsGitInit: boolean;
+			requiredActions: string[];
+			blockingErrors: string[];
+		}>;
+	}> = {},
+) {
+	return {
+		importKind: "project",
+		isValid: overrides.isValid ?? true,
+		blockingErrors: overrides.blockingErrors ?? [],
+		root: {
+			repoPath: overrides.root?.repoPath ?? path,
+			isRepo: overrides.root?.isRepo ?? true,
+			hasCommit: overrides.root?.hasCommit ?? true,
+			hasOrigin: overrides.root?.hasOrigin ?? true,
+			isEmptyFolder: overrides.root?.isEmptyFolder ?? false,
+			needsGitInit: overrides.root?.needsGitInit ?? false,
+			requiredActions: overrides.root?.requiredActions ?? [],
+			blockingErrors: overrides.root?.blockingErrors ?? [],
+		},
+		childRepos: [],
+		nextStep: overrides.nextStep ?? "continue",
+		warning: overrides.warning,
+	};
+}
+
 function renderSidebar({
 	onCloneProject = vi.fn().mockResolvedValue(undefined) as CloneProjectHandler,
 	onCreateProject = vi.fn().mockResolvedValue(undefined) as CreateProjectHandler,
@@ -254,7 +274,6 @@ function renderSidebar({
 	seedAgents = true,
 	workspaces = [workspace],
 	initialOpen = true,
-	autoCompact = false,
 	topbarOffset = "toolbar",
 	expandedProjectIds,
 }: {
@@ -265,7 +284,6 @@ function renderSidebar({
 	seedAgents?: boolean;
 	workspaces?: WorkspaceSummary[];
 	initialOpen?: boolean;
-	autoCompact?: boolean;
 	topbarOffset?: "toolbar" | "titlebar" | "trafficLights" | "session";
 	expandedProjectIds?: string[];
 } = {}) {
@@ -288,7 +306,6 @@ function renderSidebar({
 			<TooltipProvider>
 				<SidebarProvider defaultOpen={initialOpen}>
 					<Sidebar
-						autoCompact={autoCompact}
 						topbarOffset={topbarOffset}
 						onCloneProject={onCloneProject}
 						onCreateProject={onCreateProject}
@@ -316,40 +333,6 @@ function codedError(message: string, code: "NOT_A_GIT_REPO" | "PROJECT_UNBORN") 
 	return error;
 }
 
-async function openCreateProjectDialog(
-	path = "/repo/new-project",
-	scan: {
-		path: string;
-		repos: Array<{
-			name: string;
-			path: string;
-			relativePath: string;
-			branch: string;
-			remote: string;
-			hasRemote: boolean;
-			status?: "ok" | "error";
-			reason?: string;
-			needsGitInit?: boolean;
-		}>;
-	} = {
-		path,
-		repos: [
-			{ name: "project", path, relativePath: ".", branch: "main", remote: "origin", hasRemote: true, status: "ok" },
-		],
-	},
-) {
-	const user = userEvent.setup();
-	window.ao!.app.chooseDirectory = vi.fn().mockResolvedValue(path);
-	window.ao!.app.scanImportFolder = vi.fn().mockResolvedValue(scan);
-	await user.click(screen.getByLabelText("New project"));
-	await user.click(screen.getByRole("button", { name: /^Import an existing project$/i }));
-	await screen.findByText(path);
-	await user.click(await screen.findByRole("button", { name: "Continue" }));
-	await chooseOption(screen.getByRole("combobox", { name: "Worker agent" }), "Codex");
-	await chooseOption(screen.getByRole("combobox", { name: "Orchestrator agent" }), "Claude Code");
-	return user;
-}
-
 beforeEach(() => {
 	window.localStorage.clear();
 	dragEnds.clear();
@@ -357,8 +340,6 @@ beforeEach(() => {
 	dragStarts.clear();
 	document.documentElement.style.removeProperty("--ao-sidebar-w");
 	commandPaletteEnabled.current = true;
-	compactRailCanGoBack.current = false;
-	compactRailCanGoForward.current = false;
 	cloudGateState.cloudEnabled = true;
 	cloudGateState.localEnabled = true;
 	cloudGateState.client = "";
@@ -367,15 +348,29 @@ beforeEach(() => {
 	cloudSessionState.status = "unauthenticated";
 	cloudSessionState.signIn.mockReset();
 	cloudSessionState.signOut.mockReset().mockResolvedValue(undefined);
-	historyBackMock.mockReset();
-	historyForwardMock.mockReset();
 	useUiStore.setState({ isCommandPaletteOpen: false, settingsModal: null });
 	getMock.mockReset();
+	postMock.mockReset();
 	getMock.mockResolvedValue({
 		data: {
 			agents: [agentReadiness("claude-code", "Claude Code"), agentReadiness("codex", "Codex")],
 		},
 		error: undefined,
+	});
+	postMock.mockImplementation(async (route: string, { body }: { body?: { path?: string } }) => {
+		if (route === "/api/v1/imports/validate") {
+			return { data: projectValidation(body?.path ?? "/repo/new-project"), error: undefined };
+		}
+		if (route === "/api/v1/imports/prepare-git") {
+			return {
+				data: {
+					events: [],
+					validation: projectValidation(body?.path ?? "/repo/new-project"),
+				},
+				error: undefined,
+			};
+		}
+		return { data: undefined, error: new Error(`Unhandled POST ${route}`) };
 	});
 	window.ao!.app.scanImportFolder = vi.fn().mockImplementation(async ({ path }: { path: string }) => ({
 		path,
@@ -857,10 +852,8 @@ describe("Sidebar", () => {
 		expect(window.ao!.app.chooseDirectory).not.toHaveBeenCalled();
 		await user.click(screen.getByRole("button", { name: /^Import an existing project$/i }));
 
-		expect(await screen.findByText("/repo/new-project")).toBeInTheDocument();
 		expect(window.ao!.app.chooseDirectory).toHaveBeenCalledWith("Choose a project repository");
-		await user.click(screen.getByRole("button", { name: "Continue" }));
-		const dialog = screen.getByRole("dialog", { name: "Set up project" });
+		const dialog = await screen.findByRole("dialog", { name: "Set up project" });
 		expect(dialog).toHaveClass("left-1/2", "top-1/2", "-translate-x-1/2", "-translate-y-1/2");
 		await user.click(screen.getByRole("button", { name: "Create and start" }));
 
@@ -914,20 +907,6 @@ describe("Sidebar", () => {
 			.fn()
 			.mockResolvedValueOnce("/repo")
 			.mockResolvedValueOnce("/repo/local-project");
-		window.ao!.app.scanImportFolder = vi.fn().mockResolvedValue({
-			path: "/repo/local-project",
-			repos: [
-				{
-					name: "local-project",
-					path: "/repo/local-project",
-					relativePath: ".",
-					branch: "main",
-					remote: "origin",
-					hasRemote: true,
-					status: "ok",
-				},
-			],
-		});
 		renderSidebar({ onCloneProject, onCreateProject });
 
 		await user.click(screen.getByLabelText("New project"));
@@ -943,8 +922,7 @@ describe("Sidebar", () => {
 		await user.click(await screen.findByRole("button", { name: "Back to code source" }));
 		await user.click(await screen.findByRole("button", { name: /^Import an existing project$/i }));
 
-		expect(await screen.findAllByText("/repo/local-project")).not.toHaveLength(0);
-		await user.click(await screen.findByRole("button", { name: "Continue" }));
+		expect(await screen.findByRole("dialog", { name: "Set up project" })).toBeInTheDocument();
 		await user.click(screen.getByRole("button", { name: "Create and start" }));
 
 		await waitFor(() =>
@@ -979,8 +957,7 @@ describe("Sidebar", () => {
 
 		await user.click(screen.getByLabelText("New project"));
 		await user.click(screen.getByRole("button", { name: /^Import an existing project$/i }));
-		expect(await screen.findByText("/repo/new-project")).toBeInTheDocument();
-		await user.click(screen.getByRole("button", { name: "Continue" }));
+		await screen.findByRole("dialog", { name: "Set up project" });
 		expect(screen.getByRole("combobox", { name: "Worker agent" })).toHaveTextContent(/cursor/i);
 		expect(screen.getByRole("combobox", { name: "Orchestrator agent" })).toHaveTextContent(/cursor/i);
 
@@ -1005,95 +982,215 @@ describe("Sidebar", () => {
 		);
 	});
 
-	it("explains Git setup before creating a non-git project", async () => {
+	it("prepares a non-git project before creating it", async () => {
 		const onCreateProject = vi.fn().mockResolvedValue(undefined) as CreateProjectHandler;
 		const onInitializeProject = vi.fn().mockResolvedValue(undefined) as InitializeProjectHandler;
+		postMock.mockResolvedValueOnce({
+			data: projectValidation("/repo/new-project", {
+				nextStep: "prepare_git",
+				root: {
+					isRepo: false,
+					hasCommit: false,
+					hasOrigin: true,
+					needsGitInit: true,
+					requiredActions: ["git_init", "git_commit"],
+				},
+			}),
+			error: undefined,
+		});
+		postMock.mockResolvedValueOnce({
+			data: {
+				events: [
+					{ repoPath: "/repo/new-project", action: "git_init", state: "success" },
+					{ repoPath: "/repo/new-project", action: "git_commit", state: "success" },
+				],
+				validation: projectValidation("/repo/new-project"),
+			},
+			error: undefined,
+		});
 		renderSidebar({ onCreateProject, onInitializeProject });
-		const user = await openCreateProjectDialog("/repo/new-project", { path: "/repo/new-project", repos: [] });
+		const user = userEvent.setup();
+		window.ao!.app.chooseDirectory = vi.fn().mockResolvedValue("/repo/new-project");
 
-		expect(await screen.findByText(/If this folder needs Git setup/i)).toBeInTheDocument();
+		await user.click(screen.getByLabelText("New project"));
+		await user.click(screen.getByRole("button", { name: /^Import an existing project$/i }));
+		expect(await screen.findByRole("dialog", { name: "Prepare project" })).toBeInTheDocument();
+		expect(screen.getByText("Project setup")).toBeInTheDocument();
 		expect(onInitializeProject).not.toHaveBeenCalled();
+		await user.click(screen.getByRole("button", { name: "Continue" }));
+		expect(await screen.findByRole("dialog", { name: "Set up project" })).toBeInTheDocument();
 		await user.click(screen.getByRole("button", { name: "Create and start" }));
-		await waitFor(() => expect(onInitializeProject).toHaveBeenCalledWith("/repo/new-project"));
 		await waitFor(() => expect(onCreateProject).toHaveBeenCalledTimes(1));
+		expect(onInitializeProject).not.toHaveBeenCalled();
 	});
 
-	it("warns before initializing a plain project folder nested inside a parent repo", async () => {
+	it("shows the validation warning before preparing a nested plain project folder", async () => {
 		const user = userEvent.setup();
 		const onCreateProject = vi.fn().mockResolvedValue(undefined) as CreateProjectHandler;
 		const onInitializeProject = vi.fn().mockResolvedValue(undefined) as InitializeProjectHandler;
 		window.ao!.app.chooseDirectory = vi.fn().mockResolvedValue("/repo/parent/universe");
-		window.ao!.app.scanImportFolder = vi.fn().mockResolvedValue({
-			path: "/repo/parent/universe",
-			repos: [],
-			setupWarning:
+		postMock.mockResolvedValueOnce({
+			data: projectValidation("/repo/parent/universe", {
+				nextStep: "prepare_git",
+				warning:
 				"Selected folder is inside an existing Git repository at /repo/parent. AO will initialize this folder as a separate repository.",
+				root: {
+					isRepo: false,
+					hasCommit: false,
+					hasOrigin: true,
+					needsGitInit: true,
+					requiredActions: ["git_init", "git_commit"],
+				},
+			}),
+			error: undefined,
+		});
+		postMock.mockResolvedValueOnce({
+			data: {
+				events: [
+					{ repoPath: "/repo/parent/universe", action: "git_init", state: "success" },
+					{ repoPath: "/repo/parent/universe", action: "git_commit", state: "success" },
+				],
+				validation: projectValidation("/repo/parent/universe"),
+			},
+			error: undefined,
 		});
 		renderSidebar({ onCreateProject, onInitializeProject });
 
 		await user.click(screen.getByLabelText("New project"));
 		await user.click(screen.getByRole("button", { name: /^Import an existing project$/i }));
 
-		await screen.findByText("/repo/parent/universe");
-		await user.click(screen.getByRole("button", { name: "Continue" }));
-		expect(await screen.findByRole("dialog", { name: "Set up project" })).toBeInTheDocument();
-		expect(screen.getByText(/If this folder needs Git setup/i)).toBeInTheDocument();
+		expect(await screen.findByRole("dialog", { name: "Prepare project" })).toBeInTheDocument();
 		expect(screen.getByText(/inside an existing Git repository at \/repo\/parent/i)).toBeInTheDocument();
 		expect(onInitializeProject).not.toHaveBeenCalled();
 		expect(onCreateProject).not.toHaveBeenCalled();
 
+		await user.click(screen.getByRole("button", { name: "Continue" }));
+		expect(await screen.findByRole("dialog", { name: "Set up project" })).toBeInTheDocument();
 		await user.click(screen.getByRole("button", { name: "Create and start" }));
-		await waitFor(() => expect(onInitializeProject).toHaveBeenCalledWith("/repo/parent/universe"));
 		await waitFor(() => expect(onCreateProject).toHaveBeenCalledTimes(1));
+		expect(onInitializeProject).not.toHaveBeenCalled();
 	});
 
-	it("shows repository initialization recovery for git repos with no commits", async () => {
+	it("prepares repositories with no commits before opening agent selection", async () => {
 		const onCreateProject = vi.fn().mockResolvedValue(undefined) as CreateProjectHandler;
 		const onInitializeProject = vi.fn().mockResolvedValue(undefined) as InitializeProjectHandler;
-		renderSidebar({ onCreateProject, onInitializeProject });
-		const user = await openCreateProjectDialog("/repo/unborn", {
-			path: "/repo/unborn",
-			repos: [
-				{
-					name: "unborn",
-					path: "/repo/unborn",
-					relativePath: ".",
-					branch: "HEAD",
-					remote: "",
-					hasRemote: false,
-					status: "error",
-					reason: "Repository must have at least one commit.",
+		postMock.mockResolvedValueOnce({
+			data: projectValidation("/repo/unborn", {
+				nextStep: "prepare_git",
+				root: {
+					isRepo: true,
+					hasCommit: false,
+					hasOrigin: true,
+					requiredActions: ["git_commit"],
 				},
-			],
+			}),
+			error: undefined,
 		});
-		expect(await screen.findByText(/If this folder needs Git setup/i)).toBeInTheDocument();
+		postMock.mockResolvedValueOnce({
+			data: {
+				events: [{ repoPath: "/repo/unborn", action: "git_commit", state: "success" }],
+				validation: projectValidation("/repo/unborn"),
+			},
+			error: undefined,
+		});
+		renderSidebar({ onCreateProject, onInitializeProject });
+		const user = userEvent.setup();
+		window.ao!.app.chooseDirectory = vi.fn().mockResolvedValue("/repo/unborn");
+		await user.click(screen.getByLabelText("New project"));
+		await user.click(screen.getByRole("button", { name: /^Import an existing project$/i }));
+		expect(await screen.findByRole("dialog", { name: "Prepare project" })).toBeInTheDocument();
+		await user.click(screen.getByRole("button", { name: "Continue" }));
+		await waitFor(() => expect(postMock).toHaveBeenCalledWith("/api/v1/imports/prepare-git", expect.anything()));
+		expect(await screen.findByRole("dialog", { name: "Set up project" })).toBeInTheDocument();
 		await user.click(screen.getByRole("button", { name: "Create and start" }));
-		await waitFor(() => expect(onInitializeProject).toHaveBeenCalledWith("/repo/unborn"));
 		await waitFor(() => expect(onCreateProject).toHaveBeenCalledTimes(1));
+		expect(onInitializeProject).not.toHaveBeenCalled();
 	});
 
-	it("does not initialize Git when the project creation is cancelled", async () => {
+	it("does not create the project when agent selection is cancelled after preparation", async () => {
 		const onCreateProject = vi
 			.fn()
 			.mockRejectedValueOnce(
 				codedError("This folder is not a Git repository.", "NOT_A_GIT_REPO"),
 			) as unknown as CreateProjectHandler;
 		const onInitializeProject = vi.fn().mockResolvedValue(undefined) as InitializeProjectHandler;
+		postMock.mockResolvedValueOnce({
+			data: projectValidation("/repo/new-project", {
+				nextStep: "prepare_git",
+				root: {
+					isRepo: false,
+					hasCommit: false,
+					hasOrigin: true,
+					needsGitInit: true,
+					requiredActions: ["git_init", "git_commit"],
+				},
+			}),
+			error: undefined,
+		});
+		postMock.mockResolvedValueOnce({
+			data: {
+				events: [
+					{ repoPath: "/repo/new-project", action: "git_init", state: "success" },
+					{ repoPath: "/repo/new-project", action: "git_commit", state: "success" },
+				],
+				validation: projectValidation("/repo/new-project"),
+			},
+			error: undefined,
+		});
 		renderSidebar({ onCreateProject, onInitializeProject });
-		const user = await openCreateProjectDialog("/repo/new-project", { path: "/repo/new-project", repos: [] });
-	await user.click(screen.getByRole("button", { name: "Close project agents dialog" }));
+		const user = userEvent.setup();
+		window.ao!.app.chooseDirectory = vi.fn().mockResolvedValue("/repo/new-project");
+		await user.click(screen.getByLabelText("New project"));
+		await user.click(screen.getByRole("button", { name: /^Import an existing project$/i }));
+		await user.click(await screen.findByRole("button", { name: "Continue" }));
+		await screen.findByRole("dialog", { name: "Set up project" });
+		await user.click(screen.getByRole("button", { name: "Close project agents dialog" }));
 		expect(onInitializeProject).not.toHaveBeenCalled();
+		expect(onCreateProject).not.toHaveBeenCalled();
 		expect(screen.queryByRole("dialog", { name: "Set up project" })).not.toBeInTheDocument();
 	});
 
-	it("surfaces repository initialization failures", async () => {
+	it("surfaces project preparation failures", async () => {
 		const onCreateProject = vi.fn().mockResolvedValue(undefined) as CreateProjectHandler;
 		const onInitializeProject = vi.fn().mockRejectedValue(new Error("git init failed")) as InitializeProjectHandler;
+		postMock.mockResolvedValueOnce({
+			data: projectValidation("/repo/new-project", {
+				nextStep: "prepare_git",
+				root: {
+					isRepo: false,
+					hasCommit: false,
+					hasOrigin: true,
+					needsGitInit: true,
+					requiredActions: ["git_init"],
+				},
+			}),
+			error: undefined,
+		});
+		postMock.mockResolvedValueOnce({
+			data: {
+				events: [{ repoPath: "/repo/new-project", action: "git_init", state: "error", error: "git init failed" }],
+				validation: projectValidation("/repo/new-project", {
+					nextStep: "prepare_git",
+					root: {
+						isRepo: false,
+						hasCommit: false,
+						hasOrigin: true,
+						needsGitInit: true,
+						requiredActions: ["git_init"],
+					},
+				}),
+			},
+			error: undefined,
+		});
 		renderSidebar({ onCreateProject, onInitializeProject });
-		const user = await openCreateProjectDialog("/repo/new-project", { path: "/repo/new-project", repos: [] });
-		await user.click(screen.getByRole("button", { name: "Create and start" }));
-		await waitFor(() => expect(onInitializeProject).toHaveBeenCalledWith("/repo/new-project"));
+		const user = userEvent.setup();
+		window.ao!.app.chooseDirectory = vi.fn().mockResolvedValue("/repo/new-project");
+		await user.click(screen.getByLabelText("New project"));
+		await user.click(screen.getByRole("button", { name: /^Import an existing project$/i }));
+		await user.click(await screen.findByRole("button", { name: "Continue" }));
+		expect(await screen.findByText(/failed while running Git initialization/i)).toBeInTheDocument();
 		expect(onCreateProject).not.toHaveBeenCalled();
+		expect(onInitializeProject).not.toHaveBeenCalled();
 	});
 
 	it("can create a workspace project from the project add flow", async () => {
@@ -1344,8 +1441,7 @@ describe("Sidebar", () => {
 
 		await user.click(screen.getByLabelText("New project"));
 		await user.click(screen.getByRole("button", { name: /^Import an existing project$/i }));
-		expect(await screen.findByText("/repo/new-project")).toBeInTheDocument();
-		await user.click(screen.getByRole("button", { name: "Continue" }));
+		await screen.findByRole("dialog", { name: "Set up project" });
 
 		await user.click(screen.getByRole("combobox", { name: "Orchestrator agent" }));
 		const options = await screen.findAllByRole("option");
@@ -1382,8 +1478,7 @@ describe("Sidebar", () => {
 
 		await user.click(screen.getByLabelText("New project"));
 		await user.click(screen.getByRole("button", { name: /^Import an existing project$/i }));
-		expect(await screen.findByText("/repo/new-project")).toBeInTheDocument();
-		await user.click(screen.getByRole("button", { name: "Continue" }));
+		await screen.findByRole("dialog", { name: "Set up project" });
 		expect(screen.getByRole("button", { name: "Create and start" })).toBeDisabled();
 
 		resolveAgents({
@@ -1418,15 +1513,15 @@ describe("Sidebar", () => {
 	it("opens the Mobile settings page from the footer", async () => {
 		const user = userEvent.setup();
 		renderSidebar();
-		await user.click((await screen.findAllByRole("button", { name: "Connect Mobile" }))[0]);
+		await user.click((await screen.findAllByRole("button", { name: "Connect mobile" }))[0]);
 		expect(useUiStore.getState().settingsModal).toEqual({ scope: "global", section: "mobile" });
 		expect(navigateMock).not.toHaveBeenCalled();
 	});
 
-	it("always shows Connect Mobile", () => {
+	it("always shows Connect mobile", () => {
 		renderSidebar();
 
-		expect(screen.getByRole("button", { name: "Connect Mobile" })).toBeVisible();
+		expect(screen.getByRole("button", { name: "Connect mobile" })).toBeVisible();
 	});
 
 	it("opens the command palette when Search is clicked", async () => {
@@ -1467,17 +1562,46 @@ describe("Sidebar", () => {
 		expect(dialog).toHaveTextContent("repository folder");
 	});
 
-	it("renames a session inline by double-clicking its name", async () => {
+	it("renames a session inline by double-clicking its full navigation target", async () => {
 		const user = userEvent.setup();
 		const workspaceWithSession = { ...workspace, sessions: [session] };
 		renderSidebar({ workspaces: [workspaceWithSession] });
 
-		await user.dblClick(screen.getByText("fix login"));
+		await user.dblClick(screen.getByRole("button", { name: "Open fix login" }));
+		expect(navigateMock).toHaveBeenCalledTimes(1);
 		const input = screen.getByLabelText("Rename fix login");
 		await user.clear(input);
-		await user.type(input, "polish login{Enter}");
+		await user.type(input, "  polish login  {Enter}");
 
 		await waitFor(() => expect(renameSessionMock).toHaveBeenCalledWith("proj-1-1", "polish login"));
+		expect(navigateMock).toHaveBeenCalledTimes(1);
+	});
+
+	it("still opens a session after an unpaired single click", async () => {
+		renderSidebar({ workspaces: [{ ...workspace, sessions: [session] }] });
+
+		fireEvent.click(screen.getByRole("button", { name: "Open fix login" }), { detail: 1 });
+		expect(navigateMock).toHaveBeenCalledWith({
+			to: "/projects/$projectId/sessions/$sessionId",
+			params: { projectId: "proj-1", sessionId: "proj-1-1" },
+		});
+	});
+
+	it("starts the same inline rename from the session context menu", async () => {
+		const user = userEvent.setup();
+		renderSidebar({ workspaces: [{ ...workspace, sessions: [session] }] });
+
+		fireEvent.contextMenu(screen.getByRole("button", { name: "Open fix login" }));
+		const renameItem = await screen.findByRole("menuitem", { name: "Rename fix login" });
+		const menu = renameItem.closest('[role="menu"]');
+		if (!menu) throw new Error("Session context menu not found");
+		expect(within(menu as HTMLElement).getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["Rename"]);
+		expect(renameItem).toHaveTextContent(/^Rename$/);
+		expect(renameItem.querySelector("svg")).toBeInTheDocument();
+		await user.click(renameItem);
+
+		expect(screen.getByRole("textbox", { name: "Rename fix login" })).toHaveFocus();
+		expect(navigateMock).not.toHaveBeenCalled();
 	});
 
 	it("caps the inline rename input at 20 characters", async () => {
@@ -1546,6 +1670,20 @@ describe("Sidebar", () => {
 		expect(screen.getByLabelText("Open fix login")).toBeInTheDocument();
 	});
 
+	it.each(["", "fix login"])("does not persist the no-op rename %j", async (nextName) => {
+		const user = userEvent.setup();
+		renderSidebar({ workspaces: [{ ...workspace, sessions: [session] }] });
+
+		await user.dblClick(screen.getByRole("button", { name: "Open fix login" }));
+		const input = screen.getByLabelText("Rename fix login");
+		await user.clear(input);
+		if (nextName) await user.type(input, nextName);
+		await user.keyboard("{Enter}");
+
+		expect(renameSessionMock).not.toHaveBeenCalled();
+		expect(screen.getByLabelText("Open fix login")).toBeInTheDocument();
+	});
+
 	it("always shows action icons and reserves padding for them", () => {
 		renderSidebar();
 
@@ -1602,37 +1740,6 @@ describe("Sidebar", () => {
 		// Sidebar stays expanded; dragging no longer collapses it.
 		expect(document.querySelector('[data-slot="sidebar"][data-state="expanded"]')).toBeInTheDocument();
 		expect(document.documentElement.style.getPropertyValue("--ao-sidebar-w")).toBe(`${SIDEBAR_MIN_WIDTH}px`);
-	});
-
-	it("keeps the compact icon rail below the macOS traffic-light band", () => {
-		renderSidebar({ autoCompact: true, initialOpen: false, topbarOffset: "trafficLights" });
-
-		const sidebar = document.querySelector('[data-slot="sidebar"][data-state="collapsed"]');
-		expect(sidebar).toHaveAttribute("data-collapsible", "icon");
-		const compactToggle = document.querySelector('[data-slot="sidebar-header"] button[aria-label="Expand sidebar"]');
-		expect(compactToggle).toBeInTheDocument();
-		expect(compactToggle?.querySelector("svg")).toBeInTheDocument();
-		expect(screen.queryByText("Connect Mobile")).not.toBeVisible();
-		expect(screen.queryByText("Settings")).not.toBeVisible();
-		expect(document.querySelector('[data-slot="sidebar-container"]')).toHaveAttribute(
-			"data-topbar-offset",
-			"trafficLights",
-		);
-		expect(document.querySelector('[data-slot="sidebar-gap"]')).toHaveStyle({
-			width: "var(--sidebar-width-icon)",
-		});
-	});
-
-	it("keeps back and forward accessible from the compact rail on macOS/Linux", async () => {
-		compactRailCanGoBack.current = true;
-		compactRailCanGoForward.current = true;
-		renderSidebar({ autoCompact: true, initialOpen: false, topbarOffset: "trafficLights" });
-
-		await userEvent.click(screen.getByRole("button", { name: "Go back" }));
-		await userEvent.click(screen.getByRole("button", { name: "Go forward" }));
-
-		expect(historyBackMock).toHaveBeenCalledTimes(1);
-		expect(historyForwardMock).toHaveBeenCalledTimes(1);
 	});
 
 	it("flushes any queued rAF frame on pointer-up and persists the clamped width", async () => {
@@ -1959,7 +2066,7 @@ describe("Sidebar", () => {
 		// Both footer variants (expanded row and collapsed rail icon) are mounted.
 		const buttons = await screen.findAllByLabelText("Download update v9.9.9");
 		expect(buttons.length).toBeGreaterThan(0);
-		expect(screen.getByText("Update available")).toBeInTheDocument();
+		expect(screen.getByText("Download update")).toBeInTheDocument();
 		const availableRow = screen.getByTestId("sidebar-update-available");
 		expect(within(availableRow).getByText("v9.9.9")).toBeVisible();
 		expect(availableRow.querySelector(".rounded-full")).toBeNull();
@@ -1991,7 +2098,7 @@ describe("Sidebar", () => {
 		renderSidebar();
 
 		await waitFor(() => expect(updateStatusMock).toHaveBeenCalled());
-		expect(screen.getByText("Downloading… 42%")).toBeInTheDocument();
+		expect(screen.getByText("42% downloaded")).toBeInTheDocument();
 		const downloadingRow = screen.getByTestId("sidebar-update-downloading");
 		expect(downloadingRow).not.toHaveClass("border");
 		expect(downloadingRow.querySelector("svg circle")).toBeNull();
@@ -2032,11 +2139,41 @@ describe("Sidebar", () => {
 		// A build ready to install is more actionable than "checks are failing".
 		expect(await screen.findAllByLabelText("Restart to install update v9.9.9")).not.toHaveLength(0);
 		const readyRow = screen.getByTestId("sidebar-update-ready");
-		expect(readyRow).toHaveClass("border", "border-primary/35", "bg-primary/12", "text-primary");
+		expect(readyRow).toHaveClass("border", "border-success/35", "bg-success/12", "text-success");
 		expect(within(readyRow).getByText("v9.9.9 ready")).toBeVisible();
 		expect(readyRow.querySelector(".rounded-full")).toBeNull();
 		expect(screen.queryByLabelText("Retry update check")).not.toBeInTheDocument();
 		expect(screen.queryByLabelText(/Hide update/)).not.toBeInTheDocument();
+	});
+
+	it("keeps the staged restart row up while a background check runs", async () => {
+		// Regression: the row keyed off `state`, which a routine check drives
+		// through checking/available/not-available while the staged build is
+		// untouched, so the row blinked out of existence every 15 minutes on
+		// nightly. `staged` is stamped on every status for exactly this reason.
+		const stagedAt = Date.now();
+		updateStatusMock.mockResolvedValue({
+			state: "checking",
+			staged: { version: "9.9.9", stagedAt, escalated: false },
+		});
+		renderSidebar();
+
+		expect(await screen.findAllByLabelText("Restart to install update v9.9.9")).not.toHaveLength(0);
+		expect(screen.getByTestId("sidebar-update-ready")).toBeVisible();
+	});
+
+	it("names the channel and build date for a staged nightly", async () => {
+		// A raw nightly string truncates to noise in the sidebar, and two
+		// consecutive nightlies differ only in the trailing digits.
+		updateStatusMock.mockResolvedValue({
+			state: "downloaded",
+			version: "0.12.11-nightly.202609021713",
+			stagedAt: Date.now(),
+		});
+		renderSidebar();
+
+		const readyRow = await screen.findByTestId("sidebar-update-ready");
+		expect(within(readyRow).getByText("Nightly 0.12.11 · Sep 2")).toBeVisible();
 	});
 
 	it("stays quiet for a one-off update failure that has not become a streak", async () => {
@@ -2048,7 +2185,7 @@ describe("Sidebar", () => {
 		expect(screen.queryByText("Update check failed")).not.toBeInTheDocument();
 	});
 
-	it("renders the restart-to-update row with the working-orange treatment when escalated", async () => {
+	it("renders the restart-to-update row with the green treatment even when escalated", async () => {
 		updateStatusMock.mockResolvedValue({
 			state: "downloaded",
 			version: "9.9.9",
@@ -2061,7 +2198,7 @@ describe("Sidebar", () => {
 		const buttons = await screen.findAllByLabelText("Restart to install update v9.9.9");
 		expect(buttons.length).toBeGreaterThan(0);
 		for (const button of buttons) {
-		expect(button).toHaveClass("text-working");
+		expect(button).toHaveClass("text-success");
 		}
 		expect(screen.getByText("v9.9.9 ready")).toBeInTheDocument();
 	});
@@ -2151,7 +2288,6 @@ describe("Sidebar", () => {
 
 	it("keeps hidden sessions out of compact project drag previews", () => {
 		renderSidebar({
-			autoCompact: true,
 			initialOpen: false,
 			workspaces: [{ ...workspace, sessions: [session] }],
 		});

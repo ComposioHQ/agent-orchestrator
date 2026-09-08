@@ -7,7 +7,10 @@ import (
 	"context"
 	"database/sql"
 	"embed"
+	"errors"
 	"fmt"
+	"io"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -44,6 +47,71 @@ const readOnlyPragmas = "?mode=ro" +
 // maxReaders caps the reader pool. WAL allows many concurrent readers.
 const maxReaders = 8
 
+// databaseURI preserves filesystem characters instead of interpreting them as
+// SQLite URI parameters/fragments. Both pools and read-only opens must address
+// the same literal file, including percent signs and Windows drive paths.
+func databaseURI(dataDir string) string {
+	file := url.URL{Path: filepath.Join(dataDir, "ao.db")}
+	return "file:" + file.EscapedPath()
+}
+
+// An older raw file: URI may have stored this directory's data elsewhere. Do
+// not silently replace that database with an empty one after fixing the URI.
+func checkLegacyDatabasePath(dataDir string) error {
+	intended := filepath.Join(dataDir, "ao.db")
+	if _, err := os.Stat(intended); err == nil {
+		return nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("inspect intended database: %w", err)
+	}
+	raw := intended
+	if end := strings.IndexAny(raw, "?#"); end >= 0 {
+		raw = raw[:end]
+	}
+	var decoded strings.Builder
+	for i := 0; i < len(raw); i++ {
+		if raw[i] == '%' && i+2 < len(raw) {
+			if value, err := url.PathUnescape(raw[i : i+3]); err == nil {
+				if value[0] == 0 {
+					break
+				}
+				decoded.WriteString(value)
+				i += 2
+				continue
+			}
+		}
+		decoded.WriteByte(raw[i])
+	}
+	legacy := decoded.String()
+	if legacy == intended {
+		return nil
+	}
+	info, err := os.Stat(legacy)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("inspect legacy database path: %w", err)
+	}
+	if !info.Mode().IsRegular() {
+		return nil
+	}
+	file, err := os.Open(legacy)
+	if err != nil {
+		return fmt.Errorf("inspect legacy database: %w", err)
+	}
+	var header [16]byte
+	n, readErr := io.ReadFull(file, header[:])
+	_ = file.Close()
+	if readErr != nil && !errors.Is(readErr, io.EOF) && !errors.Is(readErr, io.ErrUnexpectedEOF) {
+		return fmt.Errorf("inspect legacy database: %w", readErr)
+	}
+	if n == len(header) && string(header[:]) == "SQLite format 3\x00" {
+		return fmt.Errorf("legacy SQLite path parsing stored data at %q; refusing to create an empty database at %q: stop AO and recover the legacy database explicitly before retrying", legacy, intended)
+	}
+	return nil
+}
+
 // Open opens (creating if absent) the SQLite database under dataDir and returns
 // a Store. It uses TWO pools against the same file:
 //
@@ -59,7 +127,10 @@ func Open(dataDir string) (*Store, error) {
 	if err := os.MkdirAll(dataDir, 0o750); err != nil {
 		return nil, fmt.Errorf("create data dir: %w", err)
 	}
-	dsn := "file:" + filepath.Join(dataDir, "ao.db") + pragmas
+	if err := checkLegacyDatabasePath(dataDir); err != nil {
+		return nil, err
+	}
+	dsn := databaseURI(dataDir) + pragmas
 
 	writeDB, err := sql.Open("sqlite", dsn)
 	if err != nil {
@@ -86,7 +157,7 @@ func Open(dataDir string) (*Store, error) {
 // OpenReadOnly opens an existing SQLite database under dataDir without creating
 // the directory, opening a writable connection, or running migrations.
 func OpenReadOnly(ctx context.Context, dataDir string) (*Store, error) {
-	dsn := "file:" + filepath.Join(dataDir, "ao.db") + readOnlyPragmas
+	dsn := databaseURI(dataDir) + readOnlyPragmas
 
 	writeDB, err := sql.Open("sqlite", dsn)
 	if err != nil {
@@ -175,6 +246,9 @@ func migrate(db *sql.DB) error {
 	}
 	if err := prepareSessionReviewerAgentConfigMigration(db); err != nil {
 		return fmt.Errorf("prepare session reviewer agent-config migration: %w", err)
+	}
+	if err := prepareSessionSourceBranchMigration(db); err != nil {
+		return fmt.Errorf("prepare session source-branch migration: %w", err)
 	}
 	// Builds can advance a database past a migration that is added or
 	// renumbered later (notably across fast-moving Nightly releases). Apply

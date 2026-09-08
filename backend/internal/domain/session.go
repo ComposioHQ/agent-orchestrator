@@ -25,6 +25,9 @@ const (
 // SessionMetadata is the typed, off-status metadata for a session: operational
 // handles and seed inputs used by Session Manager and reaper.
 type SessionMetadata struct {
+	// Permissions pins the resolved launch policy independently of future project defaults.
+	Permissions PermissionMode `json:"permissions,omitempty"`
+
 	Branch string `json:"branch,omitempty"`
 	// SourceBranch is the branch an imported conversation actually ran on, which
 	// is not always the branch its session owns. Git allows one checkout per

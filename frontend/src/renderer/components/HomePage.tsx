@@ -1,7 +1,7 @@
 import type { ProjectSource } from "@aoagents/product-ui";
 import { useNavigate } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
-import { Folder, Folders, FolderOpen, GitFork, Smartphone, Star } from "lucide-react";
+import { AlertTriangle, Folder, Folders, FolderOpen, GitFork, Smartphone, Star } from "lucide-react";
 import { useMemo, useState, type ReactNode } from "react";
 import { useSystemRequirementsGate } from "../hooks/useSystemRequirementsGate";
 import { useWorkspaceQuery } from "../hooks/useWorkspaceQuery";
@@ -14,7 +14,9 @@ import type { WorkspaceSummary } from "../types/workspace";
 import { BoardWelcome } from "./BoardEmptyStates";
 import { CreateProjectFlow } from "./CreateProjectFlow";
 import { DaemonStartupLoader } from "./DaemonStartupLoader";
+import { GitHubOnboardingNotice } from "./GitHubOnboardingNotice";
 import { TopbarButton } from "./TopbarButton";
+import { Badge } from "./ui/badge";
 
 const GITHUB_REPOSITORY_URL = "https://github.com/Untrivial-ai/agent-orchestrator";
 const RECENT_PROJECT_LIMIT = 3;
@@ -51,6 +53,7 @@ function sortProjectsByActivity(projects: WorkspaceSummary[]): WorkspaceSummary[
 }
 
 function ProjectRow({ project, onClick, emptyTimeLabel, justNowLabel }: { project: WorkspaceSummary; onClick: () => void; emptyTimeLabel: string; justNowLabel: string }) {
+	const { t } = useTranslation();
 	const lastOpenedAt = getProjectLastOpenedAt(project.id);
 	const latestProjectFact = latestProjectTimestamp(project) || lastOpenedAt;
 
@@ -61,10 +64,15 @@ function ProjectRow({ project, onClick, emptyTimeLabel, justNowLabel }: { projec
 			type="button"
 		>
 			<span className={HOME_PROJECT_ICON_CLASS} aria-hidden="true">
-				<Folder strokeWidth={1.8} />
+				{project.folderMissing ? <AlertTriangle strokeWidth={1.8} className="text-warning" /> : <Folder strokeWidth={1.8} />}
 			</span>
 			<span className="min-w-0 text-[14px] leading-5">
-				<span className="block truncate font-medium text-[var(--color-text-import-title)]">{project.name}</span>
+				<span className="flex items-center gap-1.5">
+					<span className="block truncate font-medium text-[var(--color-text-import-title)]">{project.name}</span>
+					{project.folderMissing ? (
+						<Badge variant="warning" className="h-4 shrink-0 px-1.5 text-2xs">{t("home.folderMissing")}</Badge>
+					) : null}
+				</span>
 				<span className="block truncate text-[13px] text-muted-foreground">{project.path}</span>
 			</span>
 			<span className="ml-auto shrink-0 text-right text-[13px] text-muted-foreground">
@@ -160,6 +168,8 @@ export function HomePage() {
 						</TopbarButton>
 					</div>
 
+					<GitHubOnboardingNotice />
+
 					<div className="-mt-3 grid grid-cols-2 gap-3 px-3">
 						<HomeActionCard
 							ariaLabel={t("createProject.cloneFromGit")}
@@ -188,6 +198,7 @@ export function HomePage() {
 					</div>
 
 					<div className="-mt-3 space-y-1 px-3">
+						<h2 className="text-[17px] font-medium tracking-[-0.01em] text-foreground/80">{t("home.recentProjects")}</h2>
 						{recentProjects.map((project) => (
 							<ProjectRow
 								key={project.id}

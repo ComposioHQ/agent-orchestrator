@@ -101,10 +101,11 @@ AO checks OMP auth using local-only signals:
 
 1. `PI_CODING_AGENT_DIR/auth.json`, when `PI_CODING_AGENT_DIR` is set.
 2. `~/.omp/agent/auth.json`, when present.
-3. Cheap CLI auth/status probes, such as `omp auth status`.
 
-These probes are advisory. A later model call can still fail because of quota,
-provider configuration, or selected model availability.
+These credential-store checks are advisory. OMP has no non-interactive
+`auth status` command; passing those arguments starts its interactive agent and
+must not be used as an auth probe. A later model call can still fail because of
+quota, provider configuration, or selected model availability.
 
 ## Not Supported
 

@@ -62,10 +62,12 @@ export function setApiDaemonStatus(nextStatus: DaemonStatus): void {
 const ROUTE_TEMPLATES = [
 	"/api/v1/agents",
 	"/api/v1/agents/install-jobs",
+	"/api/v1/agents/auth-plans",
 	"/api/v1/agents/installers",
 	"/api/v1/agents/refresh",
 	"/api/v1/agents/readiness",
 	"/api/v1/agents/readiness/ensure",
+	"/api/v1/agents/{agent}/auth",
 	"/api/v1/agents/{agent}/install",
 	"/api/v1/agents/codex/accounts",
 	"/api/v1/agents/codex/accounts/{accountId}",
@@ -86,6 +88,8 @@ const ROUTE_TEMPLATES = [
 	"/api/v1/desktop/sessions/{sessionId}/workspace",
 	"/api/v1/events",
 	"/api/v1/import",
+	"/api/v1/imports/prepare-git",
+	"/api/v1/imports/validate",
 	"/api/v1/notifications",
 	"/api/v1/notifications/{id}",
 	"/api/v1/notifications/read-all",
@@ -332,6 +336,15 @@ export function apiErrorCode(error: unknown): string | undefined {
 		if (typeof body.code === "string" && body.code !== "") return body.code;
 	}
 	return undefined;
+}
+
+/** Structured recovery metadata from the daemon's stable error envelope. */
+export function apiErrorDetails(error: unknown): Record<string, unknown> | undefined {
+	if (typeof error !== "object" || error === null) return undefined;
+	const details = (error as { details?: unknown }).details;
+	return typeof details === "object" && details !== null && !Array.isArray(details)
+		? (details as Record<string, unknown>)
+		: undefined;
 }
 
 /** Correlation id from the daemon's stable error envelope. */

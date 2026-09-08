@@ -1,4 +1,5 @@
-import { act, fireEvent, render, screen, within } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ComponentProps, ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -33,6 +34,10 @@ const visibilityMocks = vi.hoisted(() => ({
 const reorderMocks = vi.hoisted(() => ({
 	onReorder: undefined as ((values: string[]) => void) | undefined,
 }));
+
+const renameSessionMock = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
+
+vi.mock("../lib/rename-session", () => ({ renameSession: renameSessionMock }));
 
 vi.mock("motion/react", () => ({
 	Reorder: {
@@ -159,10 +164,14 @@ const defaultSwitchAgentAction = (
 
 function renderCenterPane(props: Partial<ComponentProps<typeof CenterPane>> = {}) {
 	const { topbarActions = defaultSwitchAgentAction, ...rest } = props;
+	const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 	return render(
 		<TooltipProvider>
 			<CenterPane daemonReady theme="dark" topbarActions={topbarActions} {...rest} />
 		</TooltipProvider>,
+		{
+			wrapper: ({ children }) => <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>,
+		},
 	);
 }
 
@@ -180,6 +189,7 @@ beforeEach(() => {
 	visibilityMocks.presentation.mockReset();
 	visibilityMocks.route.mockReset();
 	reorderMocks.onReorder = undefined;
+	renameSessionMock.mockReset().mockResolvedValue(undefined);
 });
 
 describe("CenterPane toolbar session label", () => {
@@ -198,6 +208,65 @@ describe("CenterPane toolbar session label", () => {
 		expect(screen.queryByText("sess-1")).not.toBeInTheDocument();
 		expect(screen.getByTestId("terminal-interaction-surface")).not.toHaveAttribute("inert");
 		expect(screen.queryByTestId("agent-switch-terminal-overlay")).not.toBeInTheDocument();
+	});
+
+	it("renames the owning session from a double-click on its terminal tab", async () => {
+		const user = userEvent.setup();
+		const onSelectSessionTerminal = vi.fn();
+		renderCenterPane({ session: worker, onSelectSessionTerminal });
+
+		await user.dblClick(screen.getByRole("tab", { name: /^do the thing/ }));
+		const input = screen.getByRole("textbox", { name: "Rename do the thing" });
+		await user.clear(input);
+		await user.type(input, "  clearer task  {Enter}");
+
+		await waitFor(() => expect(renameSessionMock).toHaveBeenCalledWith("sess-1", "clearer task"));
+		expect(onSelectSessionTerminal).toHaveBeenCalledOnce();
+	});
+
+	it("starts owning-session rename from its context menu", async () => {
+		const user = userEvent.setup();
+		const onSelectSessionTerminal = vi.fn();
+		renderCenterPane({ session: worker, onSelectSessionTerminal });
+
+		fireEvent.contextMenu(screen.getByRole("tab", { name: /^do the thing/ }));
+		const renameItem = await screen.findByRole("menuitem", { name: "Rename do the thing" });
+		expect(renameItem).toHaveTextContent(/^Rename$/);
+		expect(renameItem.querySelector("svg")).toBeInTheDocument();
+		await user.click(renameItem);
+
+		expect(screen.getByRole("textbox", { name: "Rename do the thing" })).toHaveFocus();
+		expect(onSelectSessionTerminal).not.toHaveBeenCalled();
+	});
+
+	it("cancels owning-session rename with Escape", async () => {
+		const user = userEvent.setup();
+		renderCenterPane({ session: worker });
+
+		const tab = screen.getByRole("tab", { name: /^do the thing/ });
+		tab.focus();
+		await user.keyboard("{F2}");
+		const input = screen.getByRole("textbox", { name: "Rename do the thing" });
+		await user.clear(input);
+		await user.type(input, "discard this{Escape}");
+
+		expect(renameSessionMock).not.toHaveBeenCalled();
+		expect(screen.getByRole("tab", { name: /^do the thing/ })).toBeInTheDocument();
+	});
+
+	it.each(["", "do the thing"])("does not persist the no-op terminal-tab rename %j", async (nextName) => {
+		const user = userEvent.setup();
+		renderCenterPane({ session: worker });
+
+		await user.dblClick(screen.getByRole("tab", { name: /^do the thing/ }));
+		const input = screen.getByRole("textbox", { name: "Rename do the thing" });
+		expect(input).toHaveAttribute("maxlength", "20");
+		await user.clear(input);
+		if (nextName) await user.type(input, nextName);
+		await user.keyboard("{Enter}");
+
+		expect(renameSessionMock).not.toHaveBeenCalled();
+		expect(screen.getByRole("tab", { name: /^do the thing/ })).toBeInTheDocument();
 	});
 
 	it("blocks only the terminal interaction surface while the switch selector is open", () => {
@@ -703,6 +772,26 @@ describe("CenterPane toolbar session label", () => {
 
 		act(() => shortcutMocks.closeListener?.());
 		expect(onCloseShellTerminal).not.toHaveBeenCalled();
+	});
+
+	it("closes the selected workspace file from the application shortcut", () => {
+		const onClose = vi.fn();
+		renderCenterPane({
+			session: worker,
+			workspaceActiveTabKey: "file:README.md",
+			workspaceTabs: [
+				{
+					key: "file:README.md",
+					content: <button role="tab">README.md</button>,
+					onSelect: vi.fn(),
+					onClose,
+				},
+			],
+		});
+
+		expect(shortcutMocks.closeableStates.at(-1)).toBe(true);
+		act(() => shortcutMocks.closeListener?.());
+		expect(onClose).toHaveBeenCalledOnce();
 	});
 
 	it("cycles from the session terminal to its next shell tab", () => {
