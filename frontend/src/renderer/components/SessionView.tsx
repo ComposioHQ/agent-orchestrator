@@ -1604,8 +1604,6 @@ export function SessionView({ sessionId }: SessionViewProps) {
 										</div>
 									) : null}
 								</>
-							) : reviewerChatId ? (
-								<ReviewerChatSurface reviewId={reviewerChatId} />
 							) : (
 								<CenterPane
 									agentInputDisabled={
@@ -1620,6 +1618,10 @@ export function SessionView({ sessionId }: SessionViewProps) {
 									onSelectShellTerminal={selectShellTerminal}
 									reviewerTerminal={reviewerTerminal}
 									reviewerChat={reviewerChat}
+									reviewerChatSelected={Boolean(reviewerChatId)}
+									reviewerChatContent={
+										reviewerChatId ? <ReviewerChatSurface hideHeader reviewId={reviewerChatId} /> : undefined
+									}
 									session={session}
 									shellTerminals={shellTerminals}
 									terminalTarget={routedTerminalTarget}

@@ -362,6 +362,8 @@ vi.mock("./CenterPane", () => ({
 		workspaceTabActions,
 		reviewerTerminal,
 		reviewerChat,
+		reviewerChatSelected,
+		reviewerChatContent,
 		terminalTarget,
 		auxiliaryTabOrder,
 	}: {
@@ -379,6 +381,8 @@ vi.mock("./CenterPane", () => ({
 		workspaceTabActions?: ReactNode;
 		reviewerTerminal?: { handleId: string; harness: string };
 		reviewerChat?: { reviewId: string; harness: string };
+		reviewerChatSelected?: boolean;
+		reviewerChatContent?: ReactNode;
 		terminalTarget?: { kind: string; handleId?: string };
 		auxiliaryTabOrder?: string[];
 	}) => (
@@ -395,8 +399,9 @@ vi.mock("./CenterPane", () => ({
 				{tabStripAction}
 			</div>
 			<div data-testid="terminal-target">
-				{terminalTarget?.kind === "shell" ? terminalTarget.handleId : (terminalTarget?.kind ?? "worker")}
+				{reviewerChatSelected ? "reviewer-chat" : terminalTarget?.kind === "shell" ? terminalTarget.handleId : (terminalTarget?.kind ?? "worker")}
 			</div>
+			{reviewerChatSelected ? reviewerChatContent : null}
 			<div data-testid="session-tab">{session?.title ?? ""}</div>
 			<div data-testid="reviewer-harness">{reviewerTerminal?.harness ?? ""}</div>
 			{reviewerTerminal ? (
@@ -1707,6 +1712,38 @@ describe("SessionView", () => {
 		fireEvent.click(await screen.findByRole("button", { name: "Reviewer" }));
 
 		expect(screen.getByTestId("reviewer-chat-surface")).toHaveTextContent("review-persisted");
+	});
+
+	it("keeps the TUI center pane mounted while showing reviewer Chat", async () => {
+		const worker = workerSession("sess-1");
+		worker.mode = undefined;
+		worker.prs = [{
+			url: "https://github.com/acme/repo/pull/7", number: 7, state: "open", ci: "passing",
+			review: "none", mergeability: "mergeable", reviewComments: false,
+			updatedAt: "2026-06-15T00:00:00Z",
+		}];
+		reviewGetMock.mockResolvedValueOnce({
+			data: {
+				reviewerHandleId: "",
+				reviewerHarness: "codex",
+				reviewerSurface: { mode: "chat", reviewId: "review-persisted", harness: "codex" },
+				reviews: [], runs: [],
+			},
+			error: undefined,
+		});
+
+		render(<SessionView sessionId="sess-1" />);
+		fireEvent.click(await screen.findByRole("button", { name: "select reviewer chat tab" }));
+
+		expect(screen.getByText("terminal center")).toBeInTheDocument();
+		expect(screen.getByTestId("terminal-target")).toHaveTextContent("reviewer-chat");
+		expect(screen.getByTestId("reviewer-chat-surface")).toHaveTextContent("review-persisted");
+
+		fireEvent.click(screen.getByRole("button", { name: "select agent tab" }));
+
+		expect(screen.getByText("terminal center")).toBeInTheDocument();
+		expect(screen.getByTestId("terminal-target")).toHaveTextContent("worker");
+		expect(screen.queryByTestId("reviewer-chat-surface")).not.toBeInTheDocument();
 	});
 
 	it.each([
