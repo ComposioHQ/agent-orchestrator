@@ -32,7 +32,7 @@ func TestMain(m *testing.M) {
 		err := Run(context.Background(), Config{
 			SessionID: os.Args[2], DataDir: os.Args[3], Workdir: os.Args[4],
 			Env: os.Environ(), Argv: os.Args[separator+1:], Protocol: protocol,
-			LaunchFingerprint: fingerprint,
+			OwnershipFingerprint: fingerprint,
 		})
 		if err != nil {
 			_, _ = fmt.Fprintln(os.Stderr, err)
@@ -497,7 +497,7 @@ func TestConnectOrStartTimesOutSilentLiveHost(t *testing.T) {
 		Argv:      []string{os.Args[0], "-test.run=TestProviderHelper"},
 	}
 	if err := writeDescriptor(dataDir, Descriptor{
-		Version: ProtocolVersion, SessionID: sessionID, LaunchFingerprint: resolvedLaunchFingerprint(cfg),
+		Version: ProtocolVersion, SessionID: sessionID, OwnershipFingerprint: cfg.OwnershipFingerprint,
 		Address: address, Token: "token", PID: os.Getpid(),
 	}); err != nil {
 		t.Fatal(err)
@@ -523,11 +523,11 @@ func TestConnectOrStartTimesOutSilentLiveHost(t *testing.T) {
 	}
 }
 
-func TestConnectOrStartRejectsChangedProviderLaunch(t *testing.T) {
+func TestConnectOrStartRejectsChangedProviderOwner(t *testing.T) {
 	dataDir := t.TempDir()
 	cfg := Config{SessionID: "launch-fingerprint", DataDir: dataDir, Workdir: t.TempDir(),
 		Env:  append(os.Environ(), "AO_CHAT_HOST_PROVIDER_HELPER=1"),
-		Argv: []string{os.Args[0], "-test.run=TestProviderHelper"}, Protocol: ProtocolACP}
+		Argv: []string{os.Args[0], "-test.run=TestProviderHelper"}, Protocol: ProtocolACP, OwnershipFingerprint: "owner"}
 	done := make(chan error, 1)
 	go func() { done <- Run(context.Background(), cfg) }()
 	_ = awaitDescriptor(t, dataDir, cfg.SessionID)
@@ -537,7 +537,7 @@ func TestConnectOrStartRejectsChangedProviderLaunch(t *testing.T) {
 	})
 
 	changed := cfg
-	changed.Argv = append(append([]string(nil), cfg.Argv...), "--different")
+	changed.OwnershipFingerprint = "different-owner"
 	if _, err := ConnectOrStart(context.Background(), changed); !errors.Is(err, ErrIncompatible) {
 		t.Fatalf("changed launch error = %v, want ErrIncompatible", err)
 	}
@@ -604,20 +604,8 @@ func TestValidateDescriptorAllowsLegacyRawHostOnly(t *testing.T) {
 		t.Fatalf("legacy raw descriptor: %v", err)
 	}
 	cfg.Protocol = ProtocolACP
-	if err := validateDescriptor(cfg, Descriptor{Protocol: ProtocolACP}); !errors.Is(err, ErrIncompatible) {
+	if err := validateDescriptor(cfg, Descriptor{Protocol: ProtocolACP, OwnershipFingerprint: "owner"}); !errors.Is(err, ErrIncompatible) {
 		t.Fatalf("legacy ACP descriptor error = %v, want ErrIncompatible", err)
-	}
-}
-
-func TestComputeLaunchFingerprintCanonicalizesProviderEnvironment(t *testing.T) {
-	first := ComputeLaunchFingerprint("/work", []string{"B=2", "A=1"}, []string{"provider"}, ProtocolACP)
-	second := ComputeLaunchFingerprint("/work", []string{"A=1", "B=2"}, []string{"provider"}, ProtocolACP)
-	if first != second {
-		t.Fatal("environment ordering changed provider launch fingerprint")
-	}
-	changed := ComputeLaunchFingerprint("/work", []string{"A=changed", "B=2"}, []string{"provider"}, ProtocolACP)
-	if first == changed {
-		t.Fatal("provider environment change retained launch fingerprint")
 	}
 }
 
@@ -651,6 +639,39 @@ func TestShutdownHonorsContextAfterDial(t *testing.T) {
 		_ = serverConn.Close()
 		<-result
 		t.Fatal("shutdown ignored its context after connecting")
+	}
+}
+
+func TestShutdownPreservesUnknownOwnerButAcceptsConclusiveDeath(t *testing.T) {
+	dataDir := t.TempDir()
+	if err := Shutdown(context.Background(), dataDir, "missing"); err != nil {
+		t.Fatalf("missing host: %v", err)
+	}
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	address := listener.Addr().String()
+	_ = listener.Close()
+	for _, tc := range []struct {
+		name    string
+		version int
+		pid     int
+		want    error
+	}{
+		{"dead", ProtocolVersion, 2147483647, nil},
+		{"incompatible", ProtocolVersion + 1, os.Getpid(), ErrIncompatible},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := writeDescriptor(dataDir, Descriptor{
+				Version: tc.version, SessionID: tc.name, Address: address, PID: tc.pid, Token: "test",
+			}); err != nil {
+				t.Fatal(err)
+			}
+			if err := Shutdown(context.Background(), dataDir, tc.name); !errors.Is(err, tc.want) {
+				t.Fatalf("shutdown = %v, want %v", err, tc.want)
+			}
+		})
 	}
 }
 

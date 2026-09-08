@@ -42,7 +42,7 @@ func TestMain(m *testing.M) {
 		err := persistenthost.Run(context.Background(), persistenthost.Config{
 			SessionID: os.Args[2], DataDir: os.Args[3], Workdir: os.Args[4],
 			Env: os.Environ(), Argv: os.Args[separator+1:], Protocol: protocol,
-			LaunchFingerprint: fingerprint,
+			OwnershipFingerprint: fingerprint,
 		})
 		if err != nil {
 			_, _ = fmt.Fprintln(os.Stderr, err)
@@ -59,6 +59,7 @@ func TestPersistentACPProviderHelper(t *testing.T) {
 	}
 	scanner := bufio.NewScanner(os.Stdin)
 	var parkedPromptID json.RawMessage
+	promptCount := 0
 	for scanner.Scan() {
 		var request struct {
 			ID     json.RawMessage `json:"id"`
@@ -77,10 +78,23 @@ func TestPersistentACPProviderHelper(t *testing.T) {
 		recordPersistentACPCall(request.Method)
 		switch request.Method {
 		case "initialize":
+			if os.Getenv("AO_TEST_PERSISTENT_ACP_NO_RESUME") == "1" {
+				_, _ = fmt.Fprintf(os.Stdout, `{"jsonrpc":"2.0","id":%s,"result":{"protocolVersion":1,"agentCapabilities":{},"authMethods":[]}}`+"\n", request.ID)
+				continue
+			}
 			_, _ = fmt.Fprintf(os.Stdout, `{"jsonrpc":"2.0","id":%s,"result":{"protocolVersion":1,"agentCapabilities":{"sessionCapabilities":{"resume":{}}},"authMethods":[]}}`+"\n", request.ID)
 		case "session/new":
+			if os.Getenv("AO_TEST_PERSISTENT_ACP_BAD_SETUP") == "1" {
+				_, _ = fmt.Fprintf(os.Stdout, `{"jsonrpc":"2.0","id":%s,"result":{}}`+"\n", request.ID)
+				continue
+			}
 			_, _ = fmt.Fprintf(os.Stdout, `{"jsonrpc":"2.0","id":%s,"result":{"sessionId":"persistent-provider-session"}}`+"\n", request.ID)
 		case "session/prompt":
+			promptCount++
+			if promptCount == 1 && os.Getenv("AO_TEST_PERSISTENT_ACP_ERROR") == "1" {
+				_, _ = fmt.Fprintf(os.Stdout, `{"jsonrpc":"2.0","id":%s,"error":{"code":-32000,"message":"expired auth","data":"original provider data"}}`+"\n", request.ID)
+				continue
+			}
 			_, _ = fmt.Fprintf(os.Stdout, `{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"persistent-provider-session","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"provider-pid=%d survived"}}}}`+"\n", os.Getpid())
 			if os.Getenv("AO_TEST_PERSISTENT_ACP_PERMISSION") == "1" {
 				parkedPromptID = append(json.RawMessage(nil), request.ID...)
@@ -113,6 +127,18 @@ func recordPersistentACPCall(method string) {
 }
 
 func TestPersistentACPDriverSurvivesRealProcessDetach(t *testing.T) {
+	// These are protocol contract tests, not claims of authenticated E2E for
+	// every vendor. Each runs the real detached host with a fake ACP process.
+	for _, harness := range []domain.AgentHarness{
+		domain.HarnessClaudeCode, domain.HarnessCursor, domain.HarnessOpenCode,
+		domain.HarnessDroid, domain.HarnessKimi, domain.HarnessKimchi,
+		domain.HarnessPi, domain.HarnessOMP,
+	} {
+		t.Run(string(harness), func(t *testing.T) { testACPProcessDetach(t, harness) })
+	}
+}
+
+func testACPProcessDetach(t *testing.T, harness domain.AgentHarness) {
 	dataDir := t.TempDir()
 	workdir := t.TempDir()
 	callsPath := filepath.Join(t.TempDir(), "calls.log")
@@ -122,7 +148,7 @@ func TestPersistentACPDriverSurvivesRealProcessDetach(t *testing.T) {
 		return map[string]string{"AO_BROWSER_CAPABILITY": fmt.Sprintf("token-%d", prepareCalls)}, nil
 	}
 	cfg := Config{
-		Harness: domain.HarnessClaudeCode, Persistent: true,
+		Harness: harness,
 		Capabilities: ports.ChatCapabilities{
 			ports.ChatCapabilityStreaming: true, ports.ChatCapabilityResume: true,
 		},
@@ -130,8 +156,9 @@ func TestPersistentACPDriverSurvivesRealProcessDetach(t *testing.T) {
 			return Launch{
 				Command: os.Args[0], Args: []string{"-test.run=TestPersistentACPProviderHelper"},
 				Env: map[string]string{
-					"AO_TEST_PERSISTENT_ACP_PROVIDER": "1",
-					"AO_TEST_PERSISTENT_ACP_CALLS":    callsPath,
+					"AO_TEST_PERSISTENT_ACP_PROVIDER":  "1",
+					"AO_TEST_PERSISTENT_ACP_NO_RESUME": "1",
+					"AO_TEST_PERSISTENT_ACP_CALLS":     callsPath,
 				},
 			}, nil
 		},
@@ -164,11 +191,18 @@ func TestPersistentACPDriverSurvivesRealProcessDetach(t *testing.T) {
 		t.Fatalf("detach first daemon: %v", err)
 	}
 
+	// Simulate an app update moving/removing the new launch installation and
+	// changed desired model/environment. None may prevent live adoption or
+	// rewrite provider files/credentials.
+	cfg.Launch = func(context.Context, LaunchConfig) (Launch, error) {
+		return Launch{}, errors.New("new provider installation is unavailable")
+	}
 	secondDriver := New(cfg, log)
 	second, err := secondDriver.Resume(context.Background(), ports.ChatResumeConfig{
 		SessionID: "persistent-acp-e2e", DataDir: dataDir, WorkspacePath: workdir,
 		ProviderConversationID: "persistent-provider-session", ProviderScopeID: "scope",
-		PrepareEnv: prepareEnv,
+		PrepareEnv: prepareEnv, Model: "changed-model", Permissions: ports.PermissionModeAuto,
+		Env: map[string]string{"PROVIDER_SETTING": "changed"}, SystemPrompt: "new application instructions",
 	})
 	if err != nil {
 		t.Fatalf("Resume live host: %v", err)
@@ -208,6 +242,21 @@ func TestPersistentACPDriverSurvivesRealProcessDetach(t *testing.T) {
 		t.Fatalf("acknowledge completion: %v", err)
 	}
 
+	if err := second.Close(); err != nil {
+		t.Fatal(err)
+	}
+	third, err := New(cfg, log).Resume(context.Background(), ports.ChatResumeConfig{
+		SessionID: "persistent-acp-e2e", DataDir: dataDir, WorkspacePath: workdir,
+		ProviderConversationID: "persistent-provider-session", ProviderScopeID: "scope",
+	})
+	if err != nil {
+		t.Fatalf("second restart: %v", err)
+	}
+	defer func() { _ = third.(ports.ChatProviderTerminator).Terminate() }()
+	if err := third.(ports.ChatLiveReconnectActivator).ActivateLiveReconnect(context.Background(), ""); err != nil {
+		t.Fatalf("completed prompt was not acknowledged before second restart: %v", err)
+	}
+
 	calls, err := os.ReadFile(callsPath)
 	if err != nil {
 		t.Fatal(err)
@@ -224,7 +273,7 @@ func TestPersistentACPDriverReplaysOnePermissionAndOriginalResponder(t *testing.
 	workdir := t.TempDir()
 	callsPath := filepath.Join(t.TempDir(), "calls.log")
 	cfg := Config{
-		Harness: domain.HarnessClaudeCode, Persistent: true,
+		Harness: domain.HarnessClaudeCode,
 		Capabilities: ports.ChatCapabilities{
 			ports.ChatCapabilityStreaming: true, ports.ChatCapabilityApprovals: true,
 			ports.ChatCapabilityResume: true,
@@ -355,7 +404,7 @@ func TestPersistentACPResumeAdoptsLivePromptWithoutSecondSetup(t *testing.T) {
 	daemon, host := net.Pipe()
 	t.Cleanup(func() { _ = host.Close() })
 	driver := New(Config{
-		Harness: domain.HarnessClaudeCode, Persistent: true,
+		Harness: domain.HarnessClaudeCode,
 		Capabilities: ports.ChatCapabilities{
 			ports.ChatCapabilityStreaming: true, ports.ChatCapabilityResume: true,
 		},
@@ -452,7 +501,7 @@ func TestPersistentACPReplayAppliesAcceptedPermissionCommand(t *testing.T) {
 	daemon, host := net.Pipe()
 	t.Cleanup(func() { _ = host.Close() })
 	driver := New(Config{
-		Harness: domain.HarnessClaudeCode, Persistent: true,
+		Harness: domain.HarnessClaudeCode,
 		Capabilities: ports.ChatCapabilities{
 			ports.ChatCapabilityStreaming: true, ports.ChatCapabilityApprovals: true,
 			ports.ChatCapabilityResume: true,
@@ -530,7 +579,7 @@ func TestPersistentACPReconnectAcknowledgesAlreadyCommittedPrompt(t *testing.T) 
 	daemon, host := net.Pipe()
 	t.Cleanup(func() { _ = host.Close() })
 	driver := New(Config{
-		Harness: domain.HarnessClaudeCode, Persistent: true,
+		Harness:      domain.HarnessClaudeCode,
 		Capabilities: ports.ChatCapabilities{ports.ChatCapabilityResume: true},
 		Launch: func(context.Context, LaunchConfig) (Launch, error) {
 			return Launch{Command: "fake"}, nil
@@ -1011,7 +1060,7 @@ func TestACPDriverDefersPromptUntilDurableTurnBinding(t *testing.T) {
 			return []SessionOption{{ID: "model", Value: settings.Model}}
 		},
 	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	driver.spawn = fakeSpawn(agent)
+	driver.useTestProcess(fakeSpawn(agent))
 
 	conversation, err := driver.Start(context.Background(), ports.ChatStartConfig{
 		WorkspacePath: t.TempDir(), SystemPrompt: "AO instructions",
@@ -1115,7 +1164,7 @@ func TestACPDriverValidatesHandshakeIdentityBeforeOpeningSession(t *testing.T) {
 			return errors.New("unsupported adapter version")
 		},
 	}, nil)
-	driver.spawn = fakeSpawn(agent)
+	driver.useTestProcess(fakeSpawn(agent))
 
 	_, err := driver.Start(context.Background(), ports.ChatStartConfig{WorkspacePath: t.TempDir()})
 	if !validated {
@@ -1148,7 +1197,7 @@ func TestACPInterruptWaitsForProviderPromptCompletion(t *testing.T) {
 			return Launch{Command: "fake"}, nil
 		},
 	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	driver.spawn = delayedCancelSpawn(promptReceived, cancelReceived, completePrompt, responseSent)
+	driver.useTestProcess(delayedCancelSpawn(promptReceived, cancelReceived, completePrompt, responseSent))
 
 	conversation, err := driver.Start(context.Background(), ports.ChatStartConfig{
 		WorkspacePath: t.TempDir(),
@@ -1308,7 +1357,7 @@ func TestACPDriverNegotiatesRichClientCapabilitiesAndNativePromptContent(t *test
 			return Launch{Command: "fake"}, nil
 		},
 	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	driver.spawn = fakeSpawn(agent)
+	driver.useTestProcess(fakeSpawn(agent))
 
 	root := t.TempDir()
 	extra := t.TempDir()
@@ -1409,7 +1458,7 @@ func TestACPDriverReappliesLaunchContextWhenResuming(t *testing.T) {
 			return []SessionOption{{ID: "model", Value: settings.Model}}
 		},
 	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	driver.spawn = fakeSpawn(agent)
+	driver.useTestProcess(fakeSpawn(agent))
 
 	workspace := t.TempDir()
 	conv, err := driver.Resume(context.Background(), ports.ChatResumeConfig{
@@ -1501,7 +1550,7 @@ func TestACPDriverRefreshesHistoryWithAnotherSessionLoad(t *testing.T) {
 			return map[string]any{"systemPrompt": map[string]any{"append": cfg.SystemPrompt}}
 		},
 	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	driver.spawn = fakeSpawn(agent)
+	driver.useTestProcess(fakeSpawn(agent))
 
 	conv, err := driver.Resume(context.Background(), ports.ChatResumeConfig{
 		ProviderConversationID: "provider-session-1",
@@ -1642,7 +1691,7 @@ func TestACPDriverHistoryRefreshHonorsCancellation(t *testing.T) {
 		Probe:        func(context.Context) error { return nil },
 		Launch:       func(context.Context, LaunchConfig) (Launch, error) { return Launch{Command: "fake"}, nil },
 	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	driver.spawn = fakeSpawn(agent)
+	driver.useTestProcess(fakeSpawn(agent))
 
 	conv, err := driver.Resume(context.Background(), ports.ChatResumeConfig{
 		ProviderConversationID: "provider-session-1",
@@ -1701,7 +1750,7 @@ func TestACPDriverClosesTrailingUserOnlyHistoryAsRecovered(t *testing.T) {
 		Probe:        func(context.Context) error { return nil },
 		Launch:       func(context.Context, LaunchConfig) (Launch, error) { return Launch{Command: "fake"}, nil },
 	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	driver.spawn = fakeSpawn(agent)
+	driver.useTestProcess(fakeSpawn(agent))
 
 	conv, err := driver.Resume(context.Background(), ports.ChatResumeConfig{
 		ProviderConversationID: "provider-session-1",
@@ -1746,7 +1795,7 @@ func TestACPDriverUsesProviderPermissionPolicyBeforeParking(t *testing.T) {
 			return params.Options[0].OptionId, true
 		},
 	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	driver.spawn = fakeSpawn(agent)
+	driver.useTestProcess(fakeSpawn(agent))
 
 	opened, err := driver.Start(context.Background(), ports.ChatStartConfig{
 		WorkspacePath: t.TempDir(), Permissions: ports.PermissionModeBypassPermissions,
@@ -1803,7 +1852,7 @@ func TestACPDriverKeepsPermissionPolicyWhenLaterTurnSettingFails(t *testing.T) {
 			return []SessionOption{{ID: "model", Value: settings.Model}}
 		},
 	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	driver.spawn = fakeSpawn(agent)
+	driver.useTestProcess(fakeSpawn(agent))
 
 	opened, err := driver.Start(context.Background(), ports.ChatStartConfig{WorkspacePath: t.TempDir()})
 	if err != nil {
@@ -1845,7 +1894,7 @@ func TestACPDriverParksAndResolvesStructuredElicitation(t *testing.T) {
 		Probe:        func(context.Context) error { return nil },
 		Launch:       func(context.Context, LaunchConfig) (Launch, error) { return Launch{Command: "fake"}, nil },
 	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	driver.spawn = fakeSpawn(agent)
+	driver.useTestProcess(fakeSpawn(agent))
 
 	conv, err := driver.Start(context.Background(), ports.ChatStartConfig{WorkspacePath: t.TempDir()})
 	if err != nil {
@@ -1920,7 +1969,7 @@ func TestACPDriverPreservesNestedToolAndTerminalMetadata(t *testing.T) {
 		Probe:        func(context.Context) error { return nil },
 		Launch:       func(context.Context, LaunchConfig) (Launch, error) { return Launch{Command: "fake"}, nil },
 	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	driver.spawn = fakeSpawn(agent)
+	driver.useTestProcess(fakeSpawn(agent))
 	opened, err := driver.Start(context.Background(), ports.ChatStartConfig{WorkspacePath: t.TempDir()})
 	if err != nil {
 		t.Fatalf("Start: %v", err)
@@ -1992,7 +2041,7 @@ func TestACPDriverNamespacesOpaqueItemIDsByProviderScope(t *testing.T) {
 			Probe:        func(context.Context) error { return nil },
 			Launch:       func(context.Context, LaunchConfig) (Launch, error) { return Launch{Command: "fake"}, nil },
 		}, slog.New(slog.NewTextHandler(io.Discard, nil)))
-		driver.spawn = fakeSpawn(agent)
+		driver.useTestProcess(fakeSpawn(agent))
 		opened, err := driver.Start(context.Background(), ports.ChatStartConfig{
 			SessionID: domain.SessionID("session-1"), WorkspacePath: t.TempDir(),
 			ProviderScopeID: providerScopeID,
@@ -2126,7 +2175,7 @@ func TestACPDriverExtractsCommandFromExecuteToolInput(t *testing.T) {
 		Probe:        func(context.Context) error { return nil },
 		Launch:       func(context.Context, LaunchConfig) (Launch, error) { return Launch{Command: "fake"}, nil },
 	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	driver.spawn = fakeSpawn(agent)
+	driver.useTestProcess(fakeSpawn(agent))
 	opened, err := driver.Start(context.Background(), ports.ChatStartConfig{WorkspacePath: t.TempDir()})
 	if err != nil {
 		t.Fatalf("Start: %v", err)
@@ -2249,7 +2298,7 @@ func TestACPDriverMapsCostRateLimitsAndAuthRecovery(t *testing.T) {
 		Probe:        func(context.Context) error { return nil },
 		Launch:       func(context.Context, LaunchConfig) (Launch, error) { return Launch{Command: "fake"}, nil },
 	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	driver.spawn = fakeSpawn(agent)
+	driver.useTestProcess(fakeSpawn(agent))
 	opened, err := driver.Start(context.Background(), ports.ChatStartConfig{WorkspacePath: t.TempDir()})
 	if err != nil {
 		t.Fatalf("Start: %v", err)
@@ -2318,7 +2367,7 @@ func TestACPDriverNormalizesClaudeRetryStatus(t *testing.T) {
 		Probe:        func(context.Context) error { return nil },
 		Launch:       func(context.Context, LaunchConfig) (Launch, error) { return Launch{Command: "fake"}, nil },
 	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	driver.spawn = fakeSpawn(agent)
+	driver.useTestProcess(fakeSpawn(agent))
 	opened, err := driver.Start(context.Background(), ports.ChatStartConfig{WorkspacePath: t.TempDir()})
 	if err != nil {
 		t.Fatalf("Start: %v", err)
@@ -2473,7 +2522,7 @@ func TestACPDriverExposesAndMutatesAdvertisedConfigOptions(t *testing.T) {
 			return Launch{Command: "fake"}, nil
 		},
 	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	driver.spawn = fakeSpawn(agent)
+	driver.useTestProcess(fakeSpawn(agent))
 
 	conv, err := driver.Start(context.Background(), ports.ChatStartConfig{WorkspacePath: t.TempDir()})
 	if err != nil {
@@ -2528,7 +2577,7 @@ func TestACPDriverConsumesLegacyKimiSelectorsOnSDK0135(t *testing.T) {
 			return []SessionOption{{ID: "model", Value: settings.Model}}
 		},
 	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	driver.spawn = fakeLegacyKimiSpawn(agent)
+	driver.useTestProcess(fakeLegacyKimiSpawn(agent))
 
 	conv, err := driver.Start(context.Background(), ports.ChatStartConfig{
 		WorkspacePath: t.TempDir(), Model: "kimi-code/kimi-for-coding",
@@ -2592,7 +2641,7 @@ func TestACPDriverResolvesCLIModelToAdvertisedParameterizedLegacyChoice(t *testi
 			return []SessionOption{{ID: "model", Value: settings.Model}}
 		},
 	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	driver.spawn = fakeLegacyKimiSpawn(agent)
+	driver.useTestProcess(fakeLegacyKimiSpawn(agent))
 
 	conv, err := driver.Start(context.Background(), ports.ChatStartConfig{
 		WorkspacePath: t.TempDir(), Model: "composer-2.5",
@@ -2631,7 +2680,7 @@ func TestACPDriverRejectsNonFastAliasWhenOnlyFastParameterizedChoiceIsAdvertised
 			return []SessionOption{{ID: "model", Value: settings.Model}}
 		},
 	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	driver.spawn = fakeLegacyKimiSpawn(agent)
+	driver.useTestProcess(fakeLegacyKimiSpawn(agent))
 
 	_, err := driver.Start(context.Background(), ports.ChatStartConfig{
 		WorkspacePath: t.TempDir(), Model: "composer-2.5",
@@ -2795,7 +2844,7 @@ func TestACPDriverRejectsLegacyModelAliasWithoutAdvertisedModelCatalog(t *testin
 		Probe:        func(context.Context) error { return nil },
 		Launch:       func(context.Context, LaunchConfig) (Launch, error) { return Launch{Command: "fake"}, nil },
 	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	driver.spawn = fakeLegacyKimiSpawn(agent)
+	driver.useTestProcess(fakeLegacyKimiSpawn(agent))
 
 	conv, err := driver.Start(context.Background(), ports.ChatStartConfig{WorkspacePath: t.TempDir()})
 	if err != nil {
@@ -2833,7 +2882,7 @@ func TestACPDriverRejectsAmbiguousLegacyModelAlias(t *testing.T) {
 		Probe:        func(context.Context) error { return nil },
 		Launch:       func(context.Context, LaunchConfig) (Launch, error) { return Launch{Command: "fake"}, nil },
 	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	driver.spawn = fakeLegacyKimiSpawn(agent)
+	driver.useTestProcess(fakeLegacyKimiSpawn(agent))
 
 	_, err := driver.Start(context.Background(), ports.ChatStartConfig{
 		WorkspacePath: t.TempDir(), Model: "composer-2.5",
@@ -2859,7 +2908,7 @@ func TestACPDriverExposesDynamicAvailableCommandsAsSkills(t *testing.T) {
 			return Launch{Command: "fake"}, nil
 		},
 	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	driver.spawn = fakeSpawn(agent)
+	driver.useTestProcess(fakeSpawn(agent))
 
 	conv, err := driver.Start(context.Background(), ports.ChatStartConfig{WorkspacePath: t.TempDir()})
 	if err != nil {
@@ -2945,7 +2994,7 @@ func TestACPDriverMapsAdvertisedSteeringOntoAO(t *testing.T) {
 			return Launch{Command: "fake"}, nil
 		},
 	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	driver.spawn = fakeSpawn(agent)
+	driver.useTestProcess(fakeSpawn(agent))
 
 	opened, err := driver.Start(context.Background(), ports.ChatStartConfig{WorkspacePath: t.TempDir()})
 	if err != nil {
@@ -3023,7 +3072,7 @@ func TestDiscoverConfigOptionsReadsSessionCatalogWithoutPrompt(t *testing.T) {
 			return Launch{Command: "cline", Args: []string{"--acp"}}, nil
 		},
 	}, slog.New(slog.DiscardHandler))
-	driver.spawn = fakeSpawn(agent)
+	driver.useTestProcess(fakeSpawn(agent))
 
 	got, err := driver.discoverConfigOptions(context.Background(), t.TempDir())
 	if err != nil {
@@ -3100,7 +3149,7 @@ func TestACPDriverStartToleratesMethodNotFound(t *testing.T) {
 			return []SessionOption{{ID: "model", Value: settings.Model}}
 		},
 	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	driver.spawn = fakeSpawn(agent)
+	driver.useTestProcess(fakeSpawn(agent))
 
 	conv, err := driver.Start(context.Background(), ports.ChatStartConfig{
 		WorkspacePath: t.TempDir(),
@@ -3134,7 +3183,7 @@ func TestACPDriverSendTurnPropagatesMethodNotFound(t *testing.T) {
 			return []SessionOption{{ID: "model", Value: settings.Model}}
 		},
 	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	driver.spawn = fakeSpawn(agent)
+	driver.useTestProcess(fakeSpawn(agent))
 
 	conv, err := driver.Start(context.Background(), ports.ChatStartConfig{
 		WorkspacePath: t.TempDir(),
@@ -3169,7 +3218,7 @@ func TestACPDriverRejectsUnsupportedTurnSettingsAtStartAndSend(t *testing.T) {
 			return ports.ErrChatPermissionModeUnsupported
 		},
 	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	driver.spawn = fakeSpawn(agent)
+	driver.useTestProcess(fakeSpawn(agent))
 
 	_, err := driver.Start(context.Background(), ports.ChatStartConfig{
 		WorkspacePath: t.TempDir(), Permissions: ports.PermissionModeAuto,
@@ -3251,7 +3300,7 @@ func TestACPDriverPreservesEarlyConfigOptionUpdates(t *testing.T) {
 		Probe:        func(context.Context) error { return nil },
 		Launch:       func(context.Context, LaunchConfig) (Launch, error) { return Launch{Command: "fake"}, nil },
 	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	driver.spawn = fakeSpawn(agent)
+	driver.useTestProcess(fakeSpawn(agent))
 
 	conv, err := driver.Start(context.Background(), ports.ChatStartConfig{WorkspacePath: t.TempDir()})
 	if err != nil {
@@ -3269,5 +3318,25 @@ func TestACPDriverPreservesEarlyConfigOptionUpdates(t *testing.T) {
 	}
 	if options[0].ID != "model" {
 		t.Fatalf("option id = %q, want %q", options[0].ID, "model")
+	}
+}
+
+// Tests substitute provider stdio at the same private seam as real host
+// connections. Catalog discovery shares only the ephemeral spawn dependency.
+func (d *Driver) useTestProcess(spawn spawnFunc) {
+	d.spawn = spawn
+	d.openProcess = func(ctx context.Context, cfg LaunchConfig, prepare func(context.Context) (map[string]string, error)) (*process, error) {
+		if prepare != nil {
+			env, err := prepare(ctx)
+			if err != nil {
+				return nil, err
+			}
+			cfg.Env = env
+		}
+		launch, err := d.cfg.Launch(ctx, cfg)
+		if err != nil {
+			return nil, err
+		}
+		return spawn(launch, cfg.WorkspacePath)
 	}
 }

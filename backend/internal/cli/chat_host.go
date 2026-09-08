@@ -31,13 +31,13 @@ func newChatHostCommand() *cobra.Command {
 				return usageError{errors.New("chat-host requires <session> <data-dir> <workdir> [acp <fingerprint>] -- <provider> [args...]")}
 			}
 			return persistenthost.Run(cmd.Context(), persistenthost.Config{
-				SessionID:         strings.TrimSpace(args[0]),
-				DataDir:           args[1],
-				Workdir:           args[2],
-				Env:               os.Environ(),
-				Argv:              args[separator+1:],
-				Protocol:          protocol,
-				LaunchFingerprint: fingerprint,
+				SessionID:            strings.TrimSpace(args[0]),
+				DataDir:              args[1],
+				Workdir:              args[2],
+				Env:                  os.Environ(),
+				Argv:                 args[separator+1:],
+				Protocol:             protocol,
+				OwnershipFingerprint: fingerprint,
 			})
 		},
 	}

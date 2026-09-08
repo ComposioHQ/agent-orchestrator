@@ -3,9 +3,11 @@
 package persistenthost
 
 import (
+	"context"
 	"os/exec"
 	"strconv"
 	"syscall"
+	"time"
 
 	"golang.org/x/sys/windows"
 )
@@ -17,11 +19,13 @@ func configureProviderProcess(cmd *exec.Cmd) {
 	}
 }
 
-func killProviderProcess(cmd *exec.Cmd) error {
+func killProviderProcess(ctx context.Context, cmd *exec.Cmd) error {
 	if cmd.Process == nil {
 		return nil
 	}
-	kill := exec.Command("taskkill", "/PID", strconv.Itoa(cmd.Process.Pid), "/T", "/F")
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	kill := exec.CommandContext(ctx, "taskkill", "/PID", strconv.Itoa(cmd.Process.Pid), "/T", "/F")
 	kill.SysProcAttr = &syscall.SysProcAttr{
 		CreationFlags: windows.CREATE_NO_WINDOW,
 		HideWindow:    true,

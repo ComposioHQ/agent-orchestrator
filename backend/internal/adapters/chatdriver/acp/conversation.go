@@ -552,6 +552,13 @@ func (c *conversation) finishPrompt(
 		<-interrupt.done
 		interruptedLocally = interrupt.err == nil
 	}
+	eventID, _ := resp.Meta[persistenthost.ACPEventIDMetaKey].(string)
+	var requestErr *acpsdk.RequestError
+	if eventID == "" && errors.As(err, &requestErr) {
+		if data, ok := requestErr.Data.(map[string]any); ok {
+			eventID, _ = data[persistenthost.ACPEventIDMetaKey].(string)
+		}
+	}
 	var state domain.TurnState
 	if err != nil {
 		if interruptedLocally || errors.Is(err, context.Canceled) {
@@ -583,7 +590,6 @@ func (c *conversation) finishPrompt(
 			}})
 		}
 	}
-	eventID, _ := resp.Meta[persistenthost.ACPEventIDMetaKey].(string)
 	c.mu.Lock()
 	c.terminalEventID = eventID
 	c.mu.Unlock()
@@ -697,6 +703,16 @@ func (c *conversation) ResolveRequest(
 	c.emit(persistentInteractionEvent(command))
 	request.result <- decision.ID
 	return nil
+}
+
+// discard rolls back setup without leaving a newly created host behind.
+// A failed adoption has no authority to terminate an existing provider.
+func (c *conversation) discard() {
+	if c.proc.reconnected {
+		_ = c.Close()
+	} else {
+		_ = c.Terminate()
+	}
 }
 
 func (c *conversation) Close() error {

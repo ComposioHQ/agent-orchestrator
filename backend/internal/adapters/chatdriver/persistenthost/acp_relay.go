@@ -58,6 +58,7 @@ type acpClientFrames struct {
 // SDK and all provider semantics remain in the adapter; the host owns only the
 // connection state that cannot be reconstructed after a daemon dies.
 type acpRelay struct {
+	identity          string
 	nextRequestID     int64
 	nextEventID       uint64
 	nextInteractionID uint64
@@ -74,12 +75,17 @@ type acpRelay struct {
 }
 
 func newACPRelay(ctx context.Context, journalPath string) (*acpRelay, error) {
+	identity, err := randomToken()
+	if err != nil {
+		return nil, err
+	}
 	journal, err := openACPPromptJournal(ctx, journalPath)
 	if err != nil {
 		return nil, err
 	}
 	return &acpRelay{
-		pending: make(map[string]acpClientRequest), serverRequests: make(map[string]acpServerRequest),
+		identity: identity,
+		pending:  make(map[string]acpClientRequest), serverRequests: make(map[string]acpServerRequest),
 		commands:      make(map[string]acpInteractionCommand),
 		promptJournal: journal,
 	}, nil
@@ -100,7 +106,7 @@ func (r *acpRelay) replayTo(ctx context.Context, dst io.Writer) error {
 				return err
 			}
 		case acpReplayRequest:
-			if request, ok := r.serverRequests[entry.key]; ok {
+			if request, ok := r.serverRequest(entry.key); ok {
 				if _, err := dst.Write(request.frame); err != nil {
 					return err
 				}
@@ -209,6 +215,9 @@ func (r *acpRelay) clientFrame(ctx context.Context, frame []byte, generation uin
 		return acpClientFrames{provider: frame}, nil
 	}
 
+	if method == "session/prompt" && (r.state.ActivePrompt || r.state.PendingResultEventID != "") {
+		return acpClientFrames{client: rpcErrorFrame(id, "previous ACP prompt is active or not acknowledged")}, nil
+	}
 	r.nextRequestID++
 	providerID, _ := json.Marshal(r.nextRequestID)
 	r.pending[string(providerID)] = acpClientRequest{
@@ -378,7 +387,7 @@ func (r *acpRelay) providerRequest(
 	request := r.serverRequests[key]
 	if request.requestID == "" {
 		r.nextInteractionID++
-		request.requestID = fmt.Sprintf("acp-request:%d", r.nextInteractionID)
+		request.requestID = fmt.Sprintf("acp-request:%s:%d", r.identity, r.nextInteractionID)
 		request.promptOwned = r.state.ActivePrompt
 		r.serverOrder = append(r.serverOrder, key)
 		created = true
@@ -386,7 +395,7 @@ func (r *acpRelay) providerRequest(
 	injectMeta(envelope, ACPRequestIDMetaKey, request.requestID)
 	request.frame = marshalFrame(envelope, fallback)
 	r.serverRequests[key] = request
-	return request.frame, key, created
+	return request.frame, request.requestID, created
 }
 
 func (r *acpRelay) serverRequest(requestID string) (acpServerRequest, bool) {
@@ -446,6 +455,11 @@ func (r *acpRelay) captureResponse(request acpClientRequest, envelope map[string
 	result := envelope["result"]
 	switch request.method {
 	case "initialize":
+		var params struct {
+			Meta map[string]string `json:"_meta"`
+		}
+		_ = json.Unmarshal(request.params, &params)
+		r.state.InitialPermissions = params.Meta[ACPInitialPermissionsMetaKey]
 		r.state.InitializeResult = append(json.RawMessage(nil), result...)
 	case "session/new", "session/load", "session/resume":
 		r.state.SessionResult = append(json.RawMessage(nil), result...)
@@ -469,7 +483,7 @@ func (r *acpRelay) captureResponse(request acpClientRequest, envelope map[string
 
 func (r *acpRelay) newEventID() string {
 	r.nextEventID++
-	return fmt.Sprintf("acp-host:%d", r.nextEventID)
+	return fmt.Sprintf("acp-host:%s:%d", r.identity, r.nextEventID)
 }
 
 func rewriteResponseID(envelope map[string]json.RawMessage, id json.RawMessage, fallback []byte) []byte {
@@ -495,9 +509,24 @@ func promptResultNotification(response map[string]json.RawMessage, eventID strin
 }
 
 func injectResultMeta(envelope map[string]json.RawMessage, key, value string) {
+	var rpcErr map[string]json.RawMessage
+	if json.Unmarshal(envelope["error"], &rpcErr) == nil && rpcErr != nil {
+		// Error data can be any JSON value. Wrap it rather than overwrite it.
+		data := map[string]json.RawMessage{"providerData": rpcErr["data"]}
+		data[key], _ = json.Marshal(value)
+		if len(data["providerData"]) == 0 {
+			delete(data, "providerData")
+		}
+		rpcErr["data"], _ = json.Marshal(data)
+		envelope["error"], _ = json.Marshal(rpcErr)
+		return
+	}
 	var result map[string]json.RawMessage
 	if json.Unmarshal(envelope["result"], &result) != nil {
 		return
+	}
+	if result == nil {
+		result = make(map[string]json.RawMessage)
 	}
 	injectRawMeta(result, key, value)
 	encoded, _ := json.Marshal(result)
@@ -506,7 +535,7 @@ func injectResultMeta(envelope map[string]json.RawMessage, key, value string) {
 
 func injectMeta(envelope map[string]json.RawMessage, key, value string) {
 	var params map[string]json.RawMessage
-	if json.Unmarshal(envelope["params"], &params) != nil {
+	if json.Unmarshal(envelope["params"], &params) != nil || params == nil {
 		params = make(map[string]json.RawMessage)
 	}
 	injectRawMeta(params, key, value)
@@ -516,7 +545,7 @@ func injectMeta(envelope map[string]json.RawMessage, key, value string) {
 
 func injectRawMeta(object map[string]json.RawMessage, key, value string) {
 	var meta map[string]json.RawMessage
-	if json.Unmarshal(object["_meta"], &meta) != nil {
+	if json.Unmarshal(object["_meta"], &meta) != nil || meta == nil {
 		meta = make(map[string]json.RawMessage)
 	}
 	encoded, _ := json.Marshal(value)

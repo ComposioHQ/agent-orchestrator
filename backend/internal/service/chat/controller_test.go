@@ -2106,11 +2106,12 @@ func TestFreshProjectControllerStartFailureKeepsPreviousHistoryHidden(t *testing
 /* ---- harness ----------------------------------------------------------- */
 
 type harness struct {
-	svc      *chatsvc.Service
-	st       *sqlite.Store
-	conv     *fakeConversation
-	ctrl     *chatsvc.Controller
-	activity *recordingActivity
+	svc       *chatsvc.Service
+	st        *sqlite.Store
+	conv      *fakeConversation
+	ctrl      *chatsvc.Controller
+	activity  *recordingActivity
+	hostStops atomic.Int32
 
 	clockMu sync.Mutex
 	clock   time.Time
@@ -2189,6 +2190,10 @@ func newHarnessWithConversationAndStoreForHarness(
 	svc := chatsvc.New(chatsvc.Options{
 		Store:    chatStore,
 		Sessions: st,
+		StopProviderHost: func(context.Context, domain.SessionID) error {
+			h.hostStops.Add(1)
+			return nil
+		},
 		Drivers:  fakeRegistry{driver: fakeDriver{conv: conv}},
 		Activity: h.activity,
 		Log:      slog.New(slog.DiscardHandler),
@@ -3729,7 +3734,10 @@ func TestServiceLiveReconnectSkipsSettledHistoryBarrier(t *testing.T) {
 	provider := &liveReconnectedConversation{nativeHistoryConversation: native}
 	var prepareCalls atomic.Int32
 	svc := chatsvc.New(chatsvc.Options{
-		Store: st, Reader: fullSnapshotReader(st), Sessions: st, Drivers: fakeRegistry{driver: fakeDriver{conv: provider}},
+		Store: st, Reader: fullSnapshotReader(st), Sessions: st, Drivers: fakeRegistry{driver: fakeDriver{
+			conv:  provider,
+			probe: func() error { return ports.ErrChatDriverUnavailable },
+		}},
 		Log: slog.New(slog.DiscardHandler), NewID: func() string { return "live-reconnect-id" },
 	})
 	if _, err := svc.Start(context.Background(), chatsvc.StartConfig{

@@ -3,6 +3,7 @@
 package persistenthost
 
 import (
+	"context"
 	"errors"
 	"os/exec"
 	"syscall"
@@ -12,7 +13,7 @@ func configureProviderProcess(cmd *exec.Cmd) {
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 }
 
-func killProviderProcess(cmd *exec.Cmd) error {
+func killProviderProcess(_ context.Context, cmd *exec.Cmd) error {
 	if cmd.Process == nil {
 		return nil
 	}

@@ -54,26 +54,3 @@ func merge(environ []string, overlay map[string]string, caseInsensitive bool) []
 	sort.Strings(out)
 	return out
 }
-
-// FingerprintEntries excludes controller credentials that rotate on daemon
-// adoption while retaining provider-effective session and project environment.
-func FingerprintEntries(values map[string]string) []string {
-	stable := make(map[string]string, len(values))
-	for key, value := range values {
-		switch key {
-		case "AO_BROWSER_CAPABILITY", "AO_BROWSER_RUNTIME_TOKEN", "AO_BROWSER_RUNTIME_TOKEN_STDIN":
-			continue
-		}
-		stable[key] = value
-	}
-	return entries(stable)
-}
-
-func entries(values map[string]string) []string {
-	out := make([]string, 0, len(values))
-	for key, value := range values {
-		out = append(out, key+"="+value)
-	}
-	sort.Strings(out)
-	return out
-}

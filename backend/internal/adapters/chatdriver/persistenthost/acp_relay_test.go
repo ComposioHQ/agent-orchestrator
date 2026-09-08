@@ -223,6 +223,8 @@ func TestACPRelayDeduplicatesSessionCancelAcrossAttachments(t *testing.T) {
 	}
 
 	relayProviderFrame(t, relay, []byte(`{"jsonrpc":"2.0","id":`+frameID(t, prompt)+`,"result":{"stopReason":"cancelled"}}`+"\n"), 2, true)
+	ack, _ := json.Marshal(map[string]any{"method": ACPPromptAckMethod, "params": map[string]string{"eventId": relay.snapshot().PendingResultEventID}})
+	relayClientFrame(t, relay, ack, 2)
 	relayClientFrame(t, relay,
 		[]byte(`{"jsonrpc":"2.0","id":2,"method":"session/prompt","params":{}}`+"\n"), 2)
 	if frame := relayClientFrame(t, relay, cancel, 2); len(frame) == 0 {

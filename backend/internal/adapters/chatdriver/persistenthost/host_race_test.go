@@ -33,7 +33,7 @@ func TestConnectOrStartConcurrentStaleProbeDoesNotStartRivalHost(t *testing.T) {
 		Env:  append(os.Environ(), "AO_START_LOG="+startLog),
 		Argv: []string{"/bin/sh", "-c", `echo $$ >> "$AO_START_LOG"; exec cat`}}
 	stale := Descriptor{
-		Version: ProtocolVersion, SessionID: sessionID, LaunchFingerprint: resolvedLaunchFingerprint(cfg),
+		Version: ProtocolVersion, SessionID: sessionID, OwnershipFingerprint: cfg.OwnershipFingerprint,
 		Address: ln.Addr().String(), Token: "stale", PID: 2147483647, StartedAt: time.Now(),
 	}
 	if err := writeDescriptor(dataDir, stale); err != nil {

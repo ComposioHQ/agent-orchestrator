@@ -41,18 +41,6 @@ func TestMergeInheritsDaemonEnvironmentAndAppliesOverlay(t *testing.T) {
 	}
 }
 
-func TestFingerprintEntriesExcludesRotatingControllerCredentials(t *testing.T) {
-	got := FingerprintEntries(map[string]string{
-		"AO_BROWSER_CAPABILITY": "rotating-secret",
-		"AO_SESSION_ID":         "stable-session",
-		"PROVIDER_TOKEN":        "stable-provider",
-	})
-	want := []string{"AO_SESSION_ID=stable-session", "PROVIDER_TOKEN=stable-provider"}
-	if !slices.Equal(got, want) {
-		t.Fatalf("FingerprintEntries = %v, want %v", got, want)
-	}
-}
-
 func TestMergeWindowsExactPATHWinsConflictingOverlaySpelling(t *testing.T) {
 	for range 1000 {
 		got := merge(

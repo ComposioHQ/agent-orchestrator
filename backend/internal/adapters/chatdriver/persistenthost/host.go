@@ -8,7 +8,6 @@ import (
 	"bufio"
 	"context"
 	"crypto/rand"
-	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
@@ -19,7 +18,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -58,6 +56,9 @@ const (
 	// ACPRequestIDMetaKey carries one host-stable identity on replayable
 	// provider-to-client requests such as permissions and elicitations.
 	ACPRequestIDMetaKey = "ao.persistentRequestId"
+	// ACPInitialPermissionsMetaKey records the process-launch approval policy,
+	// which can differ from mutable session settings after reconnect.
+	ACPInitialPermissionsMetaKey = "ao.initialPermissions"
 )
 
 var (
@@ -65,7 +66,7 @@ var (
 	ErrAttached = errors.New("chat host already has a controller")
 	// ErrUnauthorized reports an invalid host capability.
 	ErrUnauthorized = errors.New("chat host authentication failed")
-	// ErrIncompatible reports a control-plane or provider-launch mismatch.
+	// ErrIncompatible reports a control-plane or provider-ownership mismatch.
 	ErrIncompatible = errors.New("chat host incompatible")
 	// ErrHostExists reports an atomic per-session launch-lock conflict.
 	ErrHostExists = errors.New("chat host already exists")
@@ -77,39 +78,39 @@ var (
 
 // Descriptor is the private connection record published by a running host.
 type Descriptor struct {
-	Version           int       `json:"version"`
-	SessionID         string    `json:"sessionId"`
-	Protocol          Protocol  `json:"protocol,omitempty"`
-	LaunchFingerprint string    `json:"launchFingerprint,omitempty"`
-	Address           string    `json:"address"`
-	Token             string    `json:"token"`
-	PID               int       `json:"pid"`
-	StartedAt         time.Time `json:"startedAt"`
+	Version              int       `json:"version"`
+	SessionID            string    `json:"sessionId"`
+	Protocol             Protocol  `json:"protocol,omitempty"`
+	OwnershipFingerprint string    `json:"ownershipFingerprint,omitempty"`
+	Address              string    `json:"address"`
+	Token                string    `json:"token"`
+	PID                  int       `json:"pid"`
+	StartedAt            time.Time `json:"startedAt"`
 }
 
 // Config identifies one provider process and its AO session ownership.
 type Config struct {
-	SessionID         string
-	DataDir           string
-	Workdir           string
-	Env               []string
-	Argv              []string
-	Protocol          Protocol
-	LaunchFingerprint string
-	Prepare           func(context.Context) (PreparedProvider, error)
+	SessionID            string
+	DataDir              string
+	Workdir              string
+	Env                  []string
+	Argv                 []string
+	Protocol             Protocol
+	OwnershipFingerprint string
+	Prepare              func(context.Context) (PreparedProvider, error)
 }
 
 // PreparedProvider is resolved only when no compatible live host can be
 // adopted. This keeps launch-only credential rotation out of reconnects.
 type PreparedProvider struct {
-	Env               []string
-	Argv              []string
-	LaunchFingerprint string
+	Env  []string
+	Argv []string
 }
 
 // ACPState is the connection-scoped state needed to reconstruct an ACP client
 // without initializing or resuming the same live provider a second time.
 type ACPState struct {
+	InitialPermissions   string          `json:"initialPermissions,omitempty"`
 	InitializeResult     json.RawMessage `json:"initializeResult,omitempty"`
 	SessionResult        json.RawMessage `json:"sessionResult,omitempty"`
 	SessionID            string          `json:"sessionId,omitempty"`
@@ -264,28 +265,6 @@ func randomToken() (string, error) {
 	return hex.EncodeToString(b[:]), nil
 }
 
-// ComputeLaunchFingerprint identifies the provider-effective inputs that must
-// match before a replacement daemon adopts an already-running ACP process.
-func ComputeLaunchFingerprint(workdir string, env, argv []string, protocol Protocol) string {
-	env = append([]string(nil), env...)
-	sort.Strings(env)
-	payload, _ := json.Marshal(struct {
-		Workdir  string   `json:"workdir"`
-		Env      []string `json:"env"`
-		Argv     []string `json:"argv"`
-		Protocol Protocol `json:"protocol"`
-	}{workdir, env, argv, protocol})
-	sum := sha256.Sum256(payload)
-	return hex.EncodeToString(sum[:])
-}
-
-func resolvedLaunchFingerprint(cfg Config) string {
-	if cfg.LaunchFingerprint != "" {
-		return cfg.LaunchFingerprint
-	}
-	return ComputeLaunchFingerprint(cfg.Workdir, cfg.Env, cfg.Argv, cfg.Protocol)
-}
-
 func validateDescriptor(cfg Config, d Descriptor) error {
 	if d.Protocol != cfg.Protocol {
 		return fmt.Errorf("%w: host protocol=%q requested=%q", ErrIncompatible, d.Protocol, cfg.Protocol)
@@ -295,7 +274,7 @@ func validateDescriptor(cfg Config, d Descriptor) error {
 	if d.Protocol == ProtocolRaw {
 		return nil
 	}
-	if wanted := resolvedLaunchFingerprint(cfg); d.LaunchFingerprint != wanted {
+	if cfg.OwnershipFingerprint == "" || d.OwnershipFingerprint != cfg.OwnershipFingerprint {
 		return fmt.Errorf("%w: provider launch configuration changed", ErrIncompatible)
 	}
 	return nil
@@ -304,9 +283,8 @@ func validateDescriptor(cfg Config, d Descriptor) error {
 // ConnectOrStart attaches to an existing compatible host or starts one with the
 // current AO executable. Failed/incompatible probes never terminate that host.
 func ConnectOrStart(ctx context.Context, cfg Config) (*Transport, error) {
-	cfg.LaunchFingerprint = resolvedLaunchFingerprint(cfg)
 	if d, err := readDescriptor(cfg.DataDir, cfg.SessionID); err == nil {
-		if err := validateDescriptor(cfg, d); err != nil {
+		if err := validateDescriptor(cfg, d); err != nil && processalive.Alive(d.PID) {
 			return nil, err
 		}
 		transport, attachErr := attach(ctx, d, true)
@@ -350,8 +328,8 @@ func ConnectOrStart(ctx context.Context, cfg Config) (*Transport, error) {
 		// exists. Fail closed instead of launching a competing process.
 		return nil, fmt.Errorf("%w: %w", ErrOwnershipInconclusive, err)
 	}
-	if len(cfg.Argv) == 0 || !filepath.IsAbs(cfg.Workdir) {
-		return nil, errors.New("chat host start requires provider argv and absolute workdir")
+	if !filepath.IsAbs(cfg.Workdir) {
+		return nil, errors.New("chat host start requires an absolute workdir")
 	}
 	if cfg.Prepare != nil {
 		prepared, err := cfg.Prepare(ctx)
@@ -360,10 +338,9 @@ func ConnectOrStart(ctx context.Context, cfg Config) (*Transport, error) {
 		}
 		cfg.Env = prepared.Env
 		cfg.Argv = prepared.Argv
-		cfg.LaunchFingerprint = prepared.LaunchFingerprint
-		if len(cfg.Argv) == 0 {
-			return nil, errors.New("prepared chat host launch requires provider argv")
-		}
+	}
+	if len(cfg.Argv) == 0 {
+		return nil, errors.New("chat host start requires provider argv")
 	}
 	if err := spawnDetached(ctx, cfg); err != nil {
 		return nil, err
@@ -503,8 +480,8 @@ func bindConnToContext(ctx context.Context, conn net.Conn) func(error) error {
 	}
 }
 
-// Shutdown terminates an authenticated host. Missing or unreachable hosts are
-// harmless; callers use this only for explicit session destruction/orphan reap.
+// Shutdown terminates current session ownership after explicit destruction or
+// orphan reap. Missing/dead hosts are harmless; unknown live owners fail closed.
 func Shutdown(ctx context.Context, dataDir, sessionID string) error {
 	d, err := readDescriptor(dataDir, sessionID)
 	if errors.Is(err, os.ErrNotExist) {
@@ -513,10 +490,16 @@ func Shutdown(ctx context.Context, dataDir, sessionID string) error {
 	if err != nil {
 		return err
 	}
+	if d.Version != ProtocolVersion {
+		return ErrIncompatible
+	}
 	handshakeCtx, cancel := context.WithTimeout(ctx, handshakeTimeout)
 	defer cancel()
 	conn, err := (&net.Dialer{}).DialContext(handshakeCtx, "tcp", d.Address)
 	if err != nil {
+		if !processalive.Alive(d.PID) {
+			return nil
+		}
 		return err
 	}
 	defer func() { _ = conn.Close() }()
@@ -576,11 +559,11 @@ func Run(ctx context.Context, cfg Config) error {
 
 	d := Descriptor{
 		Version: ProtocolVersion, SessionID: cfg.SessionID, Protocol: cfg.Protocol,
-		LaunchFingerprint: resolvedLaunchFingerprint(cfg),
-		Address:           listener.Addr().String(), Token: token, PID: os.Getpid(), StartedAt: time.Now().UTC(),
+		OwnershipFingerprint: cfg.OwnershipFingerprint,
+		Address:              listener.Addr().String(), Token: token, PID: os.Getpid(), StartedAt: time.Now().UTC(),
 	}
 	if err := writeDescriptor(cfg.DataDir, d); err != nil {
-		_ = killProviderProcess(child)
+		_ = killProviderProcess(context.WithoutCancel(ctx), child)
 		return err
 	}
 	path, _ := descriptorPath(cfg.DataDir, cfg.SessionID)
@@ -594,7 +577,7 @@ func Run(ctx context.Context, cfg Config) error {
 	if cfg.Protocol == ProtocolACP {
 		h.acp, err = newACPRelay(ctx, filepath.Join(filepath.Dir(path), "acp-prompt.journal"))
 		if err != nil {
-			_ = killProviderProcess(child)
+			_ = killProviderProcess(context.WithoutCancel(ctx), child)
 			return err
 		}
 		defer func() { _ = h.acp.close(context.WithoutCancel(ctx)) }()
@@ -612,15 +595,15 @@ func Run(ctx context.Context, cfg Config) error {
 			// Wrapper adapters may exit before their provider child. The hosted
 			// process group is the ownership boundary, so explicit shutdown reaps
 			// any descendant that did not follow stdin closure.
-			_ = killProviderProcess(child)
+			_ = killProviderProcess(context.WithoutCancel(ctx), child)
 		case <-time.After(3 * time.Second):
-			_ = killProviderProcess(child)
+			_ = killProviderProcess(context.WithoutCancel(ctx), child)
 		}
 	}
 	var runErr error
 	select {
 	case runErr = <-providerDone:
-		_ = killProviderProcess(child)
+		_ = killProviderProcess(context.WithoutCancel(ctx), child)
 	case <-h.shutdown:
 		stopProvider()
 	case <-ctx.Done():
@@ -628,7 +611,7 @@ func Run(ctx context.Context, cfg Config) error {
 		stopProvider()
 	case err := <-acceptDone:
 		if err != nil && !errors.Is(err, net.ErrClosed) {
-			_ = killProviderProcess(child)
+			_ = killProviderProcess(context.WithoutCancel(ctx), child)
 			return err
 		}
 	}
@@ -903,4 +886,13 @@ func (h *host) bufferPendingRequestsLocked() {
 func (h *host) bufferFrameLocked(frame []byte) {
 	h.detached = append(h.detached, append([]byte(nil), frame...))
 	h.detachedBytes += len(frame)
+}
+
+// hostArgs keeps the Unix and Windows detached entry points on one wire format.
+func hostArgs(cfg Config) []string {
+	args := []string{"chat-host", cfg.SessionID, cfg.DataDir, cfg.Workdir}
+	if cfg.Protocol != ProtocolRaw {
+		args = append(args, string(cfg.Protocol), cfg.OwnershipFingerprint)
+	}
+	return append(append(args, "--"), cfg.Argv...)
 }

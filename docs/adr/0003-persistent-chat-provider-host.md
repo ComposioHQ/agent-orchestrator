@@ -49,7 +49,7 @@ Codex app-server uses the original raw protocol profile:
   barrier; buffered protocol events continue the turn immediately on the same
   initialized connection.
 - Startup orphan reconciliation only destroys a compatible host when durable
-  state proves its Codex Chat session is terminated or absent. An unreadable
+  state proves its Chat session is terminated, absent, or no longer Chat. An unreadable
   store, incompatible descriptor, live PID with an unreachable endpoint, or
   failed auth is preserved rather than treated as death.
 - Branch activation first fences an idle source controller, then explicitly
@@ -77,9 +77,15 @@ connection-scoped ACP state that a replacement SDK client cannot infer:
   provider-turn ID. Persistent ACP delivery is lossless at the driver event
   boundary; journal/quota errors fail explicitly instead of dropping deltas.
 - The prompt result is retained until the controller acknowledges its event ID
-  after SQLite projection commits. A daemon killed before commit gets the event
+  after all preceding SQLite projections commit, before dispatching queued work.
+  Failed prompt responses carry receipts too. Persistent projection failures
+  retry in order, then detach without acknowledging or settling the running turn
+  if storage remains unavailable. A daemon killed before commit gets the event
   again; a daemon killed after commit but before ACK deduplicates it and closes
   the pending ACK window without projecting a second terminal event.
+- Event and interaction identities include a random host-lifetime namespace.
+  They are stable across daemon attachments but cannot collide with events from
+  a replacement host resuming the same native provider session.
 - Concurrent provider-to-client requests such as permissions and elicitation are
   retained by the host and receive host-stable interaction IDs. Replaying a
   request therefore restores the same durable AO approval/input and its response
@@ -90,12 +96,17 @@ connection-scoped ACP state that a replacement SDK client cannot infer:
   in causal order. A replacement daemon can therefore finish the original
   provider response and project the resolution exactly once even if its
   predecessor died between host acceptance and the SQLite commit.
-- The shared ACP implementation is enabled for Claude Code, Cursor, and OpenCode,
-  whose real restart gates passed. Other ACP bindings stay daemon-owned until
-  their own authenticated provider matrix passes. Provider-specific launch
+- Persistence is the shared ACP session default: Claude Code, Cursor, OpenCode,
+  Droid, Kimi, Kimchi, Pi, and OMP use the same owner without per-provider flags.
+  Short-lived configuration discovery remains explicitly ephemeral and cannot
+  masquerade as a durable session. Provider-specific launch
   arguments, permission policies, versions, environment, and native recovery
   capabilities remain in their existing bindings; persistence does not broaden
   any provider permission.
+- Explicit Stop also shuts down session ownership when a failed attachment has
+  already disappeared from the controller registry. Retired controller handles
+  remain inert; only the explicit, serialized session operation can target the
+  current host. Daemon-wide StopAll never uses this shutdown fallback.
 
 The host inherits the already-resolved provider environment once at launch; no
 credentials are written to its descriptor. Launch-only credential preparation
@@ -107,12 +118,21 @@ boundary. The daemon never exposes this transport through its HTTP API.
 
 ## Compatibility and update handoff
 
-The descriptor protocol is explicitly versioned and includes a fingerprint of
-the provider worktree, protocol, argv, and environment. A new daemon attaches
-only to the exact supported version and matching launch configuration, leaving
-an incompatible live host untouched. This fails closed—without spawning a
-competing provider—until an explicit compatible handoff or session termination
-occurs.
+The descriptor protocol is explicitly versioned. ACP additionally fingerprints
+stable ownership: harness, cleaned worktree path, and provider scope. Session ID
+and protocol are checked separately. Mutable model/settings, environment,
+generated instructions, and binary paths are deliberately not owner identity:
+an app update may move the installation while the original process remains live.
+Live adoption precedes installation/auth probing and launch-only preparation.
+It preserves the original process environment and initialization, rather than
+silently applying new launch flags. Process-fixed approval validation uses the
+original permission policy retained by the host. Explicit replacement is needed
+to change process-fixed settings or launch environment; ordinary runtime setters
+remain provider-specific. Incompatible or ambiguous live ownership fails closed
+without launching a competing provider.
+
+The updater consumes the daemon's derived `chatProviderPreserved` fact, not a
+frontend harness allowlist. Unknown/missing ownership is conservatively warned.
 
 The ACP journal protects daemon replacement, including forced daemon death; it
 does not make the provider recoverable after the host or machine itself dies. A
@@ -122,7 +142,7 @@ host and is not a second provider-history database.
 
 ## Consequences
 
-- Closing/updating AO no longer terminates Codex or an enabled ACP Chat harness or
+- Closing/updating AO no longer terminates Codex or an ACP Chat harness or
   interrupts its active generation. Reopen latency loses provider launch,
   initialization, and native resume; it retains daemon reconciliation and
   native-history repair.

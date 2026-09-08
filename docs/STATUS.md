@@ -43,7 +43,7 @@ surface (`npm run sqlc`, `npm run api`).
   conversation between TUI and Chat without changing the AO session/worktree;
   rollback, restart recovery, controller-generation fencing, and a transition
   message outbox preserve the one-controller invariant.
-- Codex and the verified Claude Code, Cursor, and OpenCode Chat providers are
+- Codex and all eight registered ACP Chat providers are
   owned by authenticated, detached
   per-session hosts. Desktop close, full quit, and updater daemon replacement
   detach and reconnect without relaunching the provider or interrupting an
@@ -53,9 +53,12 @@ surface (`npm run sqlc`, `npm run api`).
   durable turn. Host-accepted approval/input commands close the crash window
   before SQLite projection, and live host adoption preserves the browser bearer
   already held by the provider instead of rotating its verifier. Native
-  load/resume remains the repair path after actual host failure. Other ACP
-  bindings remain daemon-owned until their provider-specific restart gate has
-  passed.
+  load/resume remains the repair path after actual host failure; it is not needed
+  for live adoption. Installation changes and launch-only credentials do not
+  block adoption. Updater warnings use actual controller ownership rather than
+  a provider allowlist. Shared process tests cover all eight ACP identities;
+  authenticated vendor and platform coverage is tracked separately in
+  [the research/evidence note](research/persistent-acp-chat-hosts.md).
 - Durable Chat conversations with project-scoped orchestrator continuity,
   session-scoped worker history, bounded history pages, transactional raw-event
   archive/projection, controller-generation fencing, turns, messages,

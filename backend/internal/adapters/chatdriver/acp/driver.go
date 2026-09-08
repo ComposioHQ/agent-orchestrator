@@ -6,6 +6,7 @@ package acp
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -80,9 +81,6 @@ type Config struct {
 	// ValidateTurnSettings rejects provider settings that cannot be applied to a
 	// live process. The initial permission mode is the launch-time value.
 	ValidateTurnSettings TurnSettingsValidator
-	// Persistent keeps the provider's initialized ACP connection outside the
-	// daemon. Bindings enable it only after their real provider restart gate passes.
-	Persistent bool
 }
 
 // TurnSettingsValidator validates live turn settings against launch-time state.
@@ -105,7 +103,8 @@ type SessionOption struct {
 type Driver struct {
 	cfg         Config
 	log         *slog.Logger
-	spawn       spawnFunc
+	spawn       spawnFunc // short-lived catalog discovery only
+	openProcess func(context.Context, LaunchConfig, func(context.Context) (map[string]string, error)) (*process, error)
 	connectHost func(context.Context, persistenthost.Config) (*persistenthost.Transport, error)
 }
 
@@ -116,7 +115,9 @@ func New(cfg Config, log *slog.Logger) *Driver {
 	if log == nil {
 		log = slog.New(slog.DiscardHandler)
 	}
-	return &Driver{cfg: cfg, log: log, spawn: spawnAgent, connectHost: persistenthost.ConnectOrStart}
+	driver := &Driver{cfg: cfg, log: log, spawn: spawnAgent, connectHost: persistenthost.ConnectOrStart}
+	driver.openProcess = driver.connectProcess
+	return driver
 }
 
 // DiscoverConfigOptions opens a short-lived ACP session and returns the
@@ -138,7 +139,16 @@ func (d *Driver) discoverConfigOptions(ctx context.Context, workingDir string) (
 	if !filepath.IsAbs(workingDir) {
 		return nil, fmt.Errorf("workspace path must be absolute, got %q", workingDir)
 	}
-	conv, _, _, err := d.connect(ctx, LaunchConfig{WorkspacePath: workingDir}, nil)
+	cfg := LaunchConfig{WorkspacePath: workingDir}
+	launch, err := d.cfg.Launch(ctx, cfg)
+	if err != nil {
+		return nil, err
+	}
+	proc, err := d.spawn(launch, workingDir)
+	if err != nil {
+		return nil, err
+	}
+	conv, _, _, err := d.initialize(ctx, cfg, proc)
 	if err != nil {
 		return nil, err
 	}
@@ -195,7 +205,7 @@ func (d *Driver) Start(ctx context.Context, cfg ports.ChatStartConfig) (ports.Ch
 	if live != nil {
 		// A fresh-start request colliding with a surviving host is a durable-state
 		// mismatch. Detach without destroying a provider that may still be working.
-		_ = conv.Close()
+		conv.discard()
 		return nil, fmt.Errorf("%w: fresh ACP start found an existing initialized session", ports.ErrChatRecoveryInconclusive)
 	}
 	// An agent that does not advertise session/resume can still start new
@@ -205,12 +215,12 @@ func (d *Driver) Start(ctx context.Context, cfg ports.ChatStartConfig) (ports.Ch
 	additional, err := normalizeAdditionalDirectories(cfg.WorkspacePath, cfg.AdditionalDirectories,
 		init.AgentCapabilities.SessionCapabilities.AdditionalDirectories != nil)
 	if err != nil {
-		_ = conv.Close()
+		conv.discard()
 		return nil, err
 	}
 	mcpServers, err := normalizeMCPServers(cfg.MCPServers, init.AgentCapabilities.McpCapabilities)
 	if err != nil {
-		_ = conv.Close()
+		conv.discard()
 		return nil, err
 	}
 
@@ -227,11 +237,11 @@ func (d *Driver) Start(ctx context.Context, cfg ports.ChatStartConfig) (ports.Ch
 		McpServers:            mcpServers,
 	})
 	if err != nil {
-		_ = conv.Close()
+		conv.discard()
 		return nil, normalizeACPError("ACP session/new", err)
 	}
 	if resp.SessionId == "" {
-		_ = conv.Close()
+		conv.discard()
 		return nil, errors.New("ACP session/new returned no session id")
 	}
 	conv.start(
@@ -246,7 +256,7 @@ func (d *Driver) Start(ctx context.Context, cfg ports.ChatStartConfig) (ports.Ch
 		// does not implement the runtime ACP setters returns -32601; tolerate it
 		// at session start so those bindings can still open a session.
 		if !errors.Is(err, ErrACPSetterUnsupported) {
-			_ = conv.Close()
+			conv.discard()
 			return nil, fmt.Errorf("configure ACP session: %w", err)
 		}
 	}
@@ -283,7 +293,7 @@ func (d *Driver) Resume(ctx context.Context, cfg ports.ChatResumeConfig) (ports.
 	}
 	if live != nil {
 		if live.SessionID != cfg.ProviderConversationID {
-			_ = conv.Close()
+			conv.discard()
 			return nil, fmt.Errorf("%w: persistent ACP session %q does not match %q",
 				ports.ErrChatRecoveryInconclusive, live.SessionID, cfg.ProviderConversationID)
 		}
@@ -293,12 +303,20 @@ func (d *Driver) Resume(ctx context.Context, cfg ports.ChatResumeConfig) (ports.
 			Models        *legacySessionModelState     `json:"models,omitempty"`
 		}
 		if len(live.SessionResult) == 0 {
-			_ = conv.Close()
+			conv.discard()
 			return nil, fmt.Errorf("%w: persistent ACP session has no setup response", ports.ErrChatRecoveryInconclusive)
 		}
 		if decodeErr := json.Unmarshal(live.SessionResult, &setup); decodeErr != nil {
-			_ = conv.Close()
+			conv.discard()
 			return nil, fmt.Errorf("%w: decode persistent ACP session: %w", ports.ErrChatRecoveryInconclusive, decodeErr)
+		}
+		if d.cfg.ValidateTurnSettings != nil {
+			if err := d.cfg.ValidateTurnSettings(ports.PermissionMode(live.InitialPermissions), ports.ChatTurnSettings{
+				Model: cfg.Model, Effort: cfg.Effort, Approval: cfg.Permissions,
+			}); err != nil {
+				conv.discard()
+				return nil, fmt.Errorf("%w: live ACP launch settings: %w", ports.ErrChatRecoveryInconclusive, err)
+			}
 		}
 		conv.liveState = live
 		conv.start(
@@ -307,16 +325,17 @@ func (d *Driver) Resume(ctx context.Context, cfg ports.ChatResumeConfig) (ports.
 			cfg.Permissions, d.cfg.ValidateTurnSettings, setup.ConfigOptions,
 			setup.Models, setup.Modes,
 		)
+		conv.initialPermission = ports.PermissionMode(live.InitialPermissions)
 		return conv, nil
 	}
 	if !supportsSessionRestore(init) {
-		_ = conv.Close()
+		conv.discard()
 		return nil, fmt.Errorf("%w: ACP agent supports neither session/load nor session/resume", ports.ErrChatResumeFailed)
 	}
 	additional, err := normalizeAdditionalDirectories(cfg.WorkspacePath, cfg.AdditionalDirectories,
 		init.AgentCapabilities.SessionCapabilities.AdditionalDirectories != nil)
 	if err != nil {
-		_ = conv.Close()
+		conv.discard()
 		if isACPAuthRequired(err) {
 			return nil, normalizeACPError("ACP session/resume", err)
 		}
@@ -324,7 +343,7 @@ func (d *Driver) Resume(ctx context.Context, cfg ports.ChatResumeConfig) (ports.
 	}
 	mcpServers, err := normalizeMCPServers(cfg.MCPServers, init.AgentCapabilities.McpCapabilities)
 	if err != nil {
-		_ = conv.Close()
+		conv.discard()
 		return nil, fmt.Errorf("%w: %w", ports.ErrChatResumeFailed, err)
 	}
 
@@ -347,7 +366,7 @@ func (d *Driver) Resume(ctx context.Context, cfg ports.ChatResumeConfig) (ports.
 		})
 		resp, err := historyConversation.loadHistory(resumeCtx)
 		if err != nil {
-			_ = conv.Close()
+			conv.discard()
 			return nil, fmt.Errorf("%w: %w", ports.ErrChatResumeFailed, normalizeACPError("ACP session/load", err))
 		}
 		configOptions = resp.ConfigOptions
@@ -361,7 +380,7 @@ func (d *Driver) Resume(ctx context.Context, cfg ports.ChatResumeConfig) (ports.
 			McpServers:            mcpServers,
 		})
 		if err != nil {
-			_ = conv.Close()
+			conv.discard()
 			return nil, fmt.Errorf("%w: %w", ports.ErrChatResumeFailed, err)
 		}
 		configOptions = resp.ConfigOptions
@@ -375,7 +394,7 @@ func (d *Driver) Resume(ctx context.Context, cfg ports.ChatResumeConfig) (ports.
 	)
 	if err := conv.applyTurnSettings(ctx, ports.ChatTurnSettings{Model: cfg.Model, Effort: cfg.Effort, Approval: cfg.Permissions}); err != nil {
 		if !errors.Is(err, ErrACPSetterUnsupported) {
-			_ = conv.Close()
+			conv.discard()
 			return nil, fmt.Errorf("%w: configure ACP session: %w", ports.ErrChatResumeFailed, err)
 		}
 	}
@@ -390,46 +409,37 @@ func (d *Driver) connect(
 	cfg LaunchConfig,
 	prepareEnv func(context.Context) (map[string]string, error),
 ) (*conversation, acpsdk.InitializeResponse, *persistenthost.ACPState, error) {
-	// Non-persistent providers are always launched, so prepare their one-shot
-	// environment before resolving launch configuration. Persistent providers
-	// defer it until the host proves that it cannot adopt a live process.
-	if !d.cfg.Persistent && prepareEnv != nil {
-		preparedEnv, err := prepareEnv(ctx)
-		if err != nil {
-			return nil, acpsdk.InitializeResponse{}, nil, err
-		}
-		cfg.Env = preparedEnv
-	}
-	launch, err := d.cfg.Launch(ctx, cfg)
+	proc, err := d.openProcess(ctx, cfg, prepareEnv)
 	if err != nil {
 		return nil, acpsdk.InitializeResponse{}, nil, err
 	}
-	if launch.Command == "" {
-		return nil, acpsdk.InitializeResponse{}, nil, fmt.Errorf("%w: ACP launch command is empty", ports.ErrChatDriverUnavailable)
-	}
-	proc, err := d.connectProcess(ctx, cfg, launch, prepareEnv)
-	if err != nil {
-		return nil, acpsdk.InitializeResponse{}, nil, err
-	}
+	return d.initialize(ctx, cfg, proc)
+}
+
+func (d *Driver) initialize(
+	ctx context.Context,
+	cfg LaunchConfig,
+	proc *process,
+) (*conversation, acpsdk.InitializeResponse, *persistenthost.ACPState, error) {
 	conv := newConversation(
 		proc, d.log, cfg.ProviderScopeID, d.cfg.ClientExtension, d.cfg.ClientExtensionAliases,
 	)
 	if proc.reconnected {
 		state := proc.acpState
 		if state == nil || len(state.InitializeResult) == 0 || len(state.SessionResult) == 0 || state.SessionID == "" {
-			_ = conv.Close()
+			conv.discard()
 			return nil, acpsdk.InitializeResponse{}, nil, fmt.Errorf(
 				"%w: persistent ACP host has incomplete reconnect state", ports.ErrChatRecoveryInconclusive)
 		}
 		var init acpsdk.InitializeResponse
 		if err := json.Unmarshal(state.InitializeResult, &init); err != nil {
-			_ = conv.Close()
+			conv.discard()
 			return nil, acpsdk.InitializeResponse{}, nil, fmt.Errorf(
 				"%w: decode persistent ACP initialize: %w", ports.ErrChatRecoveryInconclusive, err)
 		}
 		if d.cfg.ValidateInitialize != nil {
 			if err := d.cfg.ValidateInitialize(init); err != nil {
-				_ = conv.Close()
+				conv.discard()
 				return nil, acpsdk.InitializeResponse{}, nil, fmt.Errorf("%w: %w", ports.ErrChatDriverIncompatible, err)
 			}
 		}
@@ -439,6 +449,9 @@ func (d *Driver) connect(
 	initCtx, cancel := context.WithTimeout(ctx, handshakeTimeout)
 	defer cancel()
 	init, err := conv.conn.Initialize(initCtx, acpsdk.InitializeRequest{
+		Meta: map[string]any{
+			persistenthost.ACPInitialPermissionsMetaKey: string(ports.NormalizePermissionMode(cfg.Permissions)),
+		},
 		ProtocolVersion: acpsdk.ProtocolVersionNumber,
 		ClientInfo: &acpsdk.Implementation{
 			Name:    "agent-orchestrator",
@@ -469,7 +482,7 @@ func (d *Driver) connect(
 		},
 	})
 	if err != nil {
-		_ = conv.Close()
+		conv.discard()
 		if isACPAuthRequired(err) {
 			return nil, acpsdk.InitializeResponse{}, nil, normalizeACPError("ACP initialize", err)
 		}
@@ -477,7 +490,7 @@ func (d *Driver) connect(
 	}
 	if d.cfg.ValidateInitialize != nil {
 		if err := d.cfg.ValidateInitialize(init); err != nil {
-			_ = conv.Close()
+			conv.discard()
 			return nil, acpsdk.InitializeResponse{}, nil, fmt.Errorf("%w: %w", ports.ErrChatDriverIncompatible, err)
 		}
 	}
@@ -487,39 +500,38 @@ func (d *Driver) connect(
 func (d *Driver) connectProcess(
 	ctx context.Context,
 	cfg LaunchConfig,
-	launch Launch,
 	prepareEnv func(context.Context) (map[string]string, error),
 ) (*process, error) {
-	if !d.cfg.Persistent {
-		proc, err := d.spawn(launch, cfg.WorkspacePath)
-		if err != nil {
-			return nil, fmt.Errorf("%w: launch ACP agent: %w", ports.ErrChatDriverUnavailable, err)
-		}
-		return proc, nil
-	}
-	if !filepath.IsAbs(cfg.DataDir) {
-		return nil, fmt.Errorf("%w: persistent ACP host requires an absolute data directory", ports.ErrChatDriverUnavailable)
-	}
-	provider := preparedACPProvider(cfg, launch)
+	// Ownership is stable across app upgrades and mutable model/approval choices.
+	// An adopted provider keeps its original launch environment and instructions;
+	// changes to those take effect only when the provider is explicitly replaced.
+	owner, _ := json.Marshal([]string{filepath.Clean(cfg.WorkspacePath), string(d.cfg.Harness), cfg.ProviderScopeID})
+	identity := fmt.Sprintf("%x", sha256.Sum256(owner))
 	hostConfig := persistenthost.Config{
 		SessionID: string(cfg.SessionID), DataDir: cfg.DataDir, Workdir: cfg.WorkspacePath,
-		Env: provider.Env, Argv: provider.Argv, Protocol: persistenthost.ProtocolACP,
-		LaunchFingerprint: provider.LaunchFingerprint,
-	}
-	if prepareEnv != nil {
-		hostConfig.Prepare = func(prepareCtx context.Context) (persistenthost.PreparedProvider, error) {
-			preparedEnv, prepareErr := prepareEnv(prepareCtx)
-			if prepareErr != nil {
-				return persistenthost.PreparedProvider{}, prepareErr
+		Protocol: persistenthost.ProtocolACP, OwnershipFingerprint: identity,
+		Prepare: func(prepareCtx context.Context) (persistenthost.PreparedProvider, error) {
+			if prepareEnv != nil {
+				env, err := prepareEnv(prepareCtx)
+				if err != nil {
+					return persistenthost.PreparedProvider{}, err
+				}
+				cfg.Env = env
 			}
-			preparedCfg := cfg
-			preparedCfg.Env = preparedEnv
-			preparedLaunch, prepareErr := d.cfg.Launch(prepareCtx, preparedCfg)
-			if prepareErr != nil {
-				return persistenthost.PreparedProvider{}, prepareErr
+			// Binary resolution, generated provider files, and credential rotation
+			// are launch-only effects. None run when reconnecting to a live host.
+			launch, err := d.cfg.Launch(prepareCtx, cfg)
+			if err != nil {
+				return persistenthost.PreparedProvider{}, err
 			}
-			return preparedACPProvider(preparedCfg, preparedLaunch), nil
-		}
+			if launch.Command == "" {
+				return persistenthost.PreparedProvider{}, fmt.Errorf("%w: ACP launch command is empty", ports.ErrChatDriverUnavailable)
+			}
+			return persistenthost.PreparedProvider{
+				Env:  processenv.Merge(launch.Env),
+				Argv: append([]string{launch.Command}, launch.Args...),
+			}, nil
+		},
 	}
 	transport, err := d.connectHost(ctx, hostConfig)
 	if err != nil {
@@ -541,22 +553,6 @@ func (d *Driver) connectProcess(
 		return persistenthost.Shutdown(shutdownCtx, cfg.DataDir, string(cfg.SessionID))
 	})
 	return proc, nil
-}
-
-func preparedACPProvider(cfg LaunchConfig, launch Launch) persistenthost.PreparedProvider {
-	argv := append([]string{launch.Command}, launch.Args...)
-	fingerprintEnv := append(processenv.FingerprintEntries(launch.Env),
-		"_AO_MODEL="+cfg.Model,
-		"_AO_PERMISSIONS="+string(ports.NormalizePermissionMode(cfg.Permissions)),
-		"_AO_SYSTEM_PROMPT="+cfg.SystemPrompt,
-	)
-	return persistenthost.PreparedProvider{
-		Env:  processenv.Merge(launch.Env),
-		Argv: argv,
-		LaunchFingerprint: persistenthost.ComputeLaunchFingerprint(
-			cfg.WorkspacePath, fingerprintEnv, argv, persistenthost.ProtocolACP,
-		),
-	}
 }
 
 func cloneCapabilities(in ports.ChatCapabilities) ports.ChatCapabilities {

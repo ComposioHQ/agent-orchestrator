@@ -2119,6 +2119,7 @@ func (c *Controller) project() {
 	// Detached from any request context: this outlives the call that started the
 	// controller, and must keep persisting until the provider stream ends.
 	ctx := context.WithoutCancel(context.Background())
+	acknowledger, persistent := c.conv.(ports.ChatProviderEventAcknowledger)
 
 	for event := range c.conv.Events() {
 		c.mu.Lock()
@@ -2135,6 +2136,29 @@ func (c *Controller) project() {
 			c.sendMu.Lock()
 		}
 		projected, primaryTurn, err := c.projectEvent(ctx, event)
+		// A terminal receipt compacts the entire prompt, so it cannot pass a
+		// failed earlier projection. Retry transient store errors in order; if
+		// still failing, detach and leave the journal for a replacement controller.
+		for attempt := 0; err != nil && persistent && attempt < 3; attempt++ {
+			time.Sleep(20 * time.Millisecond)
+			projected, primaryTurn, err = c.projectEvent(ctx, event)
+		}
+		if err == nil && persistent && event.ProviderEventID != "" {
+			err = acknowledger.AcknowledgeProviderEvent(ctx, event.ProviderEventID)
+		}
+		if err != nil && persistent {
+			c.log.Error("persistent chat projection stopped; provider retained for replay",
+				"session", c.sessionID, "kind", event.Kind, "error", err)
+			c.mu.Lock()
+			c.preserveProviderOnStop = true
+			c.state = ports.ChatControllerStopped
+			c.mu.Unlock()
+			if lifecycle {
+				c.sendMu.Unlock()
+			}
+			c.once.Do(func() { c.closeErr = c.conv.Close() })
+			return
+		}
 		if err != nil {
 			// A projection failure must not kill the provider stream. The store
 			// rolls the archive back with its projection, so durable state remains
@@ -2143,14 +2167,6 @@ func (c *Controller) project() {
 				"session", c.sessionID, "kind", event.Kind, "error", err)
 		} else if projected {
 			c.afterProject(ctx, event, primaryTurn)
-		}
-		if err == nil {
-			if acknowledger, ok := c.conv.(ports.ChatProviderEventAcknowledger); ok && event.ProviderEventID != "" {
-				if ackErr := acknowledger.AcknowledgeProviderEvent(ctx, event.ProviderEventID); ackErr != nil {
-					c.log.Warn("failed to acknowledge persistent provider event",
-						"session", c.sessionID, "providerEventId", event.ProviderEventID, "error", ackErr)
-				}
-			}
 		}
 		if lifecycle {
 			c.sendMu.Unlock()
