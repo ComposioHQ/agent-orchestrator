@@ -3902,6 +3902,7 @@ export interface components {
             resolvedBy?: components["schemas"]["SessionPRUnresolvedReviewer"][];
             reviews?: components["schemas"]["SessionPRReviewEntry"][];
             unresolvedBy: components["schemas"]["SessionPRUnresolvedReviewer"][];
+            unresolvedThreadCount?: number;
         };
         SessionPRSummary: {
             additions: number;
