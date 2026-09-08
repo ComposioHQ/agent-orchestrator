@@ -37,3 +37,14 @@ go test -tags chatui_regression -run TestChatUIRegressionDraftDeliveryRecoveryIs
 The last tagged receipt test exists in the final steer slice and selects counted service/SQLite cases for both steer and inline-edit recovery. It uses injected providers; it does not claim an external provider was invoked.
 
 Native screenshots show the cumulative feature stack with the real daemon, native preload and a real Codex scratch session in an isolated AO data/profile directory. The native run checked reload/restoration, independent composer and inline edit state, actual daemon attachment staging, accepted send clearing, Chat/TUI roundtrip, and shell PTY input. All task-owned Electron, daemon, chat-host and PTY-host processes were stopped afterwards.
+
+## Final remote verification
+
+All six PRs are conflict-free and all reported checks are green on the committed heads in [CI.json](CI.json). The backend slices passed the full Linux Go build/vet/race suite, Windows workspace tests, all three native CLI platforms, fresh-install container, API drift, lint, renderer tests and renderer smoke. The queue macOS dependency-download retry passed. The original #4463 remains draft and its head is unchanged.
+
+- [#5105](https://github.com/Untrivial-ai/agent-orchestrator/pull/5105): `40816926f2bf90b889daa9c86dddb956c02165f4`
+- [#5106](https://github.com/Untrivial-ai/agent-orchestrator/pull/5106): `2312eae463942c6939b4dbb6e9834a3e6d298c6a`
+- [#5107](https://github.com/Untrivial-ai/agent-orchestrator/pull/5107): `79abb6d7ff266a547f7fede66f8891ad8457a3f9`
+- [#5109](https://github.com/Untrivial-ai/agent-orchestrator/pull/5109): `c7c119d98f2ecfb6ef2eed949f5e1a68c9f72113`
+- [#5110](https://github.com/Untrivial-ai/agent-orchestrator/pull/5110): `7f6c5249f75692da79000209c34de50a4e534e8a`
+- [#5111](https://github.com/Untrivial-ai/agent-orchestrator/pull/5111): `07f54cfb7c41990d4413988b538794a14452b3a2`
