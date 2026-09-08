@@ -2,6 +2,7 @@ package sessionimport
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -76,7 +77,7 @@ func TestUsageReadCancellation(t *testing.T) {
 	cancel()
 	path := filepath.Join(t.TempDir(), "usage.jsonl")
 	writeFile(t, path, claudeTranscript)
-	if _, _, err := scanUsage(ctx, path, false, 0); err != context.Canceled {
+	if _, _, err := scanUsage(ctx, path, false, 0); !errors.Is(err, context.Canceled) {
 		t.Fatalf("got %v, want cancellation", err)
 	}
 }

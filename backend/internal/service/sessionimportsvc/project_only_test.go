@@ -2,12 +2,13 @@ package sessionimportsvc
 
 import (
 	"context"
-	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
-	projectsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/project"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
+	projectsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/project"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/service/sessionimport"
 )

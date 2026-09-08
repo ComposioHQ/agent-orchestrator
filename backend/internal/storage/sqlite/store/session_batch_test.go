@@ -2,8 +2,9 @@ package store_test
 
 import (
 	"context"
-	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"testing"
+
+	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
 
 func TestCreateSessionsAtomicRollbackAndCDC(t *testing.T) {

@@ -58,3 +58,18 @@ func TestBatchPersists180HistoriesWithoutLaunchingAndRetriesWithoutDuplicates(t 
 		t.Fatal("cancelled batch performed work")
 	}
 }
+
+type rejectedImportSource struct{}
+
+func (rejectedImportSource) Provider() domain.AgentHarness { return domain.HarnessClaudeCode }
+func (rejectedImportSource) Discover(context.Context, sessionimport.DiscoverOptions) ([]sessionimport.ImportableSession, error) {
+	return nil, fmt.Errorf("unselected provider must not be scanned")
+}
+func TestBatchDoesNotScanUnselectedProvider(t *testing.T) {
+	source := &fakeSource{provider: domain.HarnessCodex, sessions: []sessionimport.ImportableSession{{Provider: domain.HarnessCodex, NativeSessionID: "selected", CWD: "/project", TokenCount: MinimumTokens, LastActivity: time.Now()}}}
+	svc := New(&fakeSessions{}, &fakeStore{}, &fakeProjects{list: []projectsvc.Summary{{ID: "p", Path: "/project"}}}, source, rejectedImportSource{})
+	got := svc.ImportBatch(context.Background(), "p", []Selection{{Provider: string(domain.HarnessCodex), NativeSessionID: "selected"}})
+	if len(got) != 1 || got[0].Error != "" || got[0].SessionID == "" {
+		t.Fatalf("unrelated provider blocked selected import: %+v", got)
+	}
+}

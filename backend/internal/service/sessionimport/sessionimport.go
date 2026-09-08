@@ -13,8 +13,10 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
@@ -60,6 +62,8 @@ type ImportableSession struct {
 // DiscoverOptions bounds a discovery scan so a large history directory cannot
 // turn a single request into an unbounded amount of work.
 type DiscoverOptions struct {
+	// Providers limits scanning to selected harnesses. Empty scans all sources.
+	Providers []domain.AgentHarness
 	// Since drops conversations whose LastActivity is older than this instant.
 	// The zero value applies no age filter.
 	Since time.Time
@@ -103,7 +107,7 @@ type Source interface {
 
 // ExistingNativeIDs reports the set of native session ids AO already has a
 // session for, so discovery can flag duplicates. It returns a set keyed by the
-// native id.
+// provider-qualified native id (NativeKey).
 type ExistingNativeIDs func(ctx context.Context) (map[string]struct{}, error)
 
 // Service fans discovery out across every registered Source.
@@ -132,15 +136,39 @@ func (s *Service) Discover(ctx context.Context, opts DiscoverOptions) ([]Importa
 		all  []ImportableSession
 		errs []error
 	)
-	for _, src := range s.sources {
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
-		found, err := src.Discover(ctx, opts)
-		if err != nil {
-			errs = append(errs, err)
+
+	// Each configured provider owns independent files and caches. Scan them
+	// concurrently, then merge in registration order for deterministic results.
+	type scanResult struct {
+		sessions []ImportableSession
+		err      error
+	}
+	results := make([]scanResult, len(s.sources))
+	var scans sync.WaitGroup
+	for i, src := range s.sources {
+		if len(opts.Providers) > 0 && !slices.Contains(opts.Providers, src.Provider()) {
 			continue
 		}
+		scans.Add(1)
+		go func() {
+			defer scans.Done()
+			if err := ctx.Err(); err != nil {
+				results[i].err = err
+				return
+			}
+			results[i].sessions, results[i].err = src.Discover(ctx, opts)
+		}()
+	}
+	scans.Wait()
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	for _, result := range results {
+		if result.err != nil {
+			errs = append(errs, result.err)
+			continue
+		}
+		found := result.sessions
 		for _, session := range found {
 			if underAnyRoot(session.CWD, opts.ExcludeRoots) {
 				continue
@@ -175,7 +203,7 @@ func (s *Service) flagImported(ctx context.Context, sessions []ImportableSession
 		return err
 	}
 	for i := range sessions {
-		if _, ok := imported[sessions[i].NativeSessionID]; ok {
+		if _, ok := imported[NativeKey(sessions[i].Provider, sessions[i].NativeSessionID)]; ok {
 			sessions[i].AlreadyImported = true
 		}
 	}
@@ -239,4 +267,9 @@ func underAnyRoot(dir string, roots []string) bool {
 		}
 	}
 	return false
+}
+
+// NativeKey identifies a conversation within its provider namespace.
+func NativeKey(provider domain.AgentHarness, id string) string {
+	return string(provider) + ":" + id
 }

@@ -124,8 +124,11 @@ func (s *ClaudeSource) readSession(ctx context.Context, configDir, path, fileNam
 		return ImportableSession{}, false, err
 	}
 	info, err := os.Stat(path)
-	if err != nil {
+	if errors.Is(err, os.ErrNotExist) {
 		return ImportableSession{}, false, nil
+	}
+	if err != nil {
+		return ImportableSession{}, false, err
 	}
 	value, cached := s.cache.get(path, info)
 	if !cached {

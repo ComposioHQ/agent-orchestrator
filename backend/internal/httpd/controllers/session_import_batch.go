@@ -10,11 +10,13 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/service/sessionimportsvc"
 )
 
+// ImportSessionsRequest selects native conversations within one project.
 type ImportSessionsRequest struct {
 	ProjectID string                       `json:"projectId"`
 	Sessions  []sessionimportsvc.Selection `json:"sessions"`
 }
 
+// ImportSessionsResponse reports each selected conversation's durable result.
 type ImportSessionsResponse struct {
 	Results []sessionimportsvc.ImportResult `json:"results"`
 }

@@ -19,7 +19,7 @@ type activityPlanDB struct {
 
 func (db activityPlanDB) check(ctx context.Context, query string, args ...any) {
 	db.t.Helper()
-	rows, err := db.DB.QueryContext(ctx, "EXPLAIN QUERY PLAN "+query, args...)
+	rows, err := db.QueryContext(ctx, "EXPLAIN QUERY PLAN "+query, args...)
 	if err != nil {
 		db.t.Fatal(err)
 	}

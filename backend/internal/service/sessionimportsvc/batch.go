@@ -34,11 +34,14 @@ func (s *Service) ImportBatch(ctx context.Context, project domain.ProjectID, sel
 	opts, setupErr := s.projectOptions(ctx, project)
 	var available []sessionimport.ImportableSession
 	if setupErr == nil {
+		for _, selection := range selections {
+			opts.Providers = append(opts.Providers, domain.AgentHarness(selection.Provider))
+		}
 		available, setupErr = s.disco.Discover(ctx, opts)
 	}
 	targets := map[string]sessionimport.ImportableSession{}
 	for _, target := range available {
-		targets[string(target.Provider)+":"+target.NativeSessionID] = target
+		targets[sessionimport.NativeKey(target.Provider, target.NativeSessionID)] = target
 	}
 	existing := map[string]domain.SessionRecord{}
 	records, err := s.store.ListAllSessions(ctx)
@@ -51,7 +54,7 @@ func (s *Service) ImportBatch(ctx context.Context, project domain.ProjectID, sel
 		}
 		for _, id := range []string{record.Metadata.ProviderConversationID, record.Metadata.AgentSessionID} {
 			if id != "" {
-				existing[string(record.Harness)+":"+id] = record
+				existing[sessionimport.NativeKey(record.Harness, id)] = record
 			}
 		}
 	}
@@ -65,7 +68,7 @@ func (s *Service) ImportBatch(ctx context.Context, project domain.ProjectID, sel
 		var configs []ports.SpawnConfig
 		seen := map[string]bool{}
 		for _, selection := range selections {
-			key := selection.Provider + ":" + selection.NativeSessionID
+			key := sessionimport.NativeKey(domain.AgentHarness(selection.Provider), selection.NativeSessionID)
 			target, ok := targets[key]
 			if seen[key] || existing[key].ID != "" || !ok || !opts.IncludeCWD(target.CWD) || target.LastActivity.Before(opts.Since) || target.TokenCount < MinimumTokens {
 				continue
@@ -76,7 +79,7 @@ func (s *Service) ImportBatch(ctx context.Context, project domain.ProjectID, sel
 		var records []domain.SessionRecord
 		records, batchErr = bulk.RegisterImports(ctx, configs)
 		for _, record := range records {
-			created[string(record.Harness)+":"+record.Metadata.ProviderConversationID] = record
+			created[sessionimport.NativeKey(record.Harness, record.Metadata.ProviderConversationID)] = record
 		}
 	}
 	out := make([]ImportResult, 0, len(selections))
@@ -85,7 +88,7 @@ func (s *Service) ImportBatch(ctx context.Context, project domain.ProjectID, sel
 			break
 		}
 		result := ImportResult{Provider: selection.Provider, NativeSessionID: selection.NativeSessionID}
-		key := selection.Provider + ":" + selection.NativeSessionID
+		key := sessionimport.NativeKey(domain.AgentHarness(selection.Provider), selection.NativeSessionID)
 		switch {
 		case setupErr != nil:
 			result.Error = setupErr.Error()

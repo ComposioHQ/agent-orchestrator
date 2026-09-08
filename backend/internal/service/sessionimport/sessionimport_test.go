@@ -2,6 +2,7 @@ package sessionimport
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -143,7 +144,7 @@ func TestDiscoverSinceFilter(t *testing.T) {
 func TestDiscoverFlagsAlreadyImported(t *testing.T) {
 	claudeDir, codexHome := buildFakeHome(t)
 	existing := func(context.Context) (map[string]struct{}, error) {
-		return map[string]struct{}{"11111111-1111-4111-8111-111111111111": {}}, nil
+		return map[string]struct{}{NativeKey(domain.HarnessClaudeCode, "11111111-1111-4111-8111-111111111111"): {}}, nil
 	}
 	svc := NewService(existing, NewClaudeSourceAt(claudeDir), NewCodexSourceAt(codexHome, true))
 
@@ -188,5 +189,119 @@ func TestDiscoverRealHome(t *testing.T) {
 			t.Fatal(err)
 		}
 		t.Logf("scan %d: %d sessions in %s", i, len(found), time.Since(start))
+	}
+}
+
+func TestImportedIdentityDoesNotCrossProviders(t *testing.T) {
+	svc := NewService(func(context.Context) (map[string]struct{}, error) {
+		return map[string]struct{}{"codex:shared": {}}, nil
+	})
+	sessions := []ImportableSession{
+		{Provider: domain.HarnessCodex, NativeSessionID: "shared"},
+		{Provider: domain.HarnessClaudeCode, NativeSessionID: "shared"},
+	}
+	if err := svc.flagImported(context.Background(), sessions); err != nil {
+		t.Fatal(err)
+	}
+	if !sessions[0].AlreadyImported || sessions[1].AlreadyImported {
+		t.Fatalf("incorrect provider import markers: %+v", sessions)
+	}
+}
+
+type coordinatedSource struct {
+	provider domain.AgentHarness
+	run      func(context.Context) ([]ImportableSession, error)
+}
+
+func (s coordinatedSource) Provider() domain.AgentHarness { return s.provider }
+func (s coordinatedSource) Discover(ctx context.Context, _ DiscoverOptions) ([]ImportableSession, error) {
+	return s.run(ctx)
+}
+func TestDiscoveryProvidersMakeIndependentProgress(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	secondStarted := make(chan struct{})
+	first := coordinatedSource{domain.HarnessCodex, func(ctx context.Context) ([]ImportableSession, error) {
+		select {
+		case <-secondStarted:
+			return []ImportableSession{{Provider: domain.HarnessCodex, NativeSessionID: "one"}}, nil
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}}
+	second := coordinatedSource{domain.HarnessClaudeCode, func(context.Context) ([]ImportableSession, error) {
+		close(secondStarted)
+		return []ImportableSession{{Provider: domain.HarnessClaudeCode, NativeSessionID: "two"}}, nil
+	}}
+	got, err := NewService(nil, first, second).Discover(ctx, DiscoverOptions{})
+	if err != nil || len(got) != 2 {
+		t.Fatalf("one provider blocked the other: count=%d err=%v", len(got), err)
+	}
+}
+
+func TestDiscoveryCancellationJoinsProviderScans(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	started := make(chan struct{}, 2)
+	exited := make(chan struct{}, 2)
+	run := func(ctx context.Context) ([]ImportableSession, error) {
+		started <- struct{}{}
+		<-ctx.Done()
+		exited <- struct{}{}
+		return nil, ctx.Err()
+	}
+	done := make(chan error, 1)
+	go func() {
+		_, err := NewService(nil, coordinatedSource{domain.HarnessCodex, run}, coordinatedSource{domain.HarnessClaudeCode, run}).Discover(ctx, DiscoverOptions{})
+		done <- err
+	}()
+	for i := 0; i < 2; i++ {
+		select {
+		case <-started:
+		case <-time.After(time.Second):
+			t.Fatal("provider did not start")
+		}
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("error=%v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("scan did not cancel")
+	}
+	if len(exited) != 2 {
+		t.Fatal("discovery returned before provider cleanup")
+	}
+}
+func TestDiscoveryPreservesOtherProviderResultsOnError(t *testing.T) {
+	failed := errors.New("unreadable history")
+	svc := NewService(nil, coordinatedSource{domain.HarnessCodex, func(context.Context) ([]ImportableSession, error) { return nil, failed }}, coordinatedSource{domain.HarnessClaudeCode, func(context.Context) ([]ImportableSession, error) {
+		return []ImportableSession{{Provider: domain.HarnessClaudeCode, NativeSessionID: "kept"}}, nil
+	}})
+	got, err := svc.Discover(context.Background(), DiscoverOptions{})
+	if !errors.Is(err, failed) || len(got) != 1 || got[0].NativeSessionID != "kept" {
+		t.Fatalf("partial results lost: %+v %v", got, err)
+	}
+}
+
+func TestTranscriptStatFailureIsNotAnEmptyHistory(t *testing.T) {
+	root := t.TempDir()
+	file := filepath.Join(root, "file")
+	writeFile(t, file, "not a directory")
+	path := filepath.Join(file, "session.jsonl")
+	if _, _, err := NewClaudeSourceAt(root).readSession(context.Background(), root, path, "session.jsonl", DiscoverOptions{}); err == nil {
+		t.Fatal("Claude stat failure was hidden")
+	}
+	if _, _, err := NewCodexSourceAt(root, false).readSegment(context.Background(), path, DiscoverOptions{}); err == nil {
+		t.Fatal("Codex stat failure was hidden")
+	}
+	missing := filepath.Join(root, "missing.jsonl")
+	if _, ok, err := NewClaudeSourceAt(root).readSession(context.Background(), root, missing, "missing.jsonl", DiscoverOptions{}); err != nil || ok {
+		t.Fatalf("removed Claude file: %v %v", ok, err)
+	}
+	if _, ok, err := NewCodexSourceAt(root, false).readSegment(context.Background(), missing, DiscoverOptions{}); err != nil || ok {
+		t.Fatalf("removed Codex file: %v %v", ok, err)
 	}
 }

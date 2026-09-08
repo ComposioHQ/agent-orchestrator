@@ -246,10 +246,10 @@ func TestNativeIDSetSkipsTerminated(t *testing.T) {
 		{IsTerminated: true, Metadata: domain.SessionMetadata{ProviderConversationID: "dead"}},
 		{Metadata: domain.SessionMetadata{ProviderConversationID: "live"}},
 	})
-	if _, ok := set["dead"]; ok {
+	if _, ok := set[sessionimport.NativeKey("", "dead")]; ok {
 		t.Error("terminated session should not be flagged already imported")
 	}
-	if _, ok := set["live"]; !ok {
+	if _, ok := set[sessionimport.NativeKey("", "live")]; !ok {
 		t.Error("live session should be flagged already imported")
 	}
 }
@@ -260,10 +260,10 @@ func TestNativeIDSetCollectsBothFields(t *testing.T) {
 		{Metadata: domain.SessionMetadata{AgentSessionID: "as1"}},
 		{Metadata: domain.SessionMetadata{}},
 	})
-	if _, ok := set["pc1"]; !ok {
+	if _, ok := set[sessionimport.NativeKey("", "pc1")]; !ok {
 		t.Error("missing provider conversation id")
 	}
-	if _, ok := set["as1"]; !ok {
+	if _, ok := set[sessionimport.NativeKey("", "as1")]; !ok {
 		t.Error("missing agent session id")
 	}
 	if len(set) != 2 {
@@ -463,4 +463,22 @@ func (s *scopeRecordingSource) Discover(ctx context.Context, opts sessionimport.
 		}
 	}
 	return kept, nil
+}
+
+func TestDiscoveryKeepsSameIDInOtherHarnessImportable(t *testing.T) {
+	store := &fakeStore{recs: []domain.SessionRecord{{ID: "existing", ProjectID: "p", Harness: domain.HarnessCodex, Metadata: domain.SessionMetadata{ProviderConversationID: "shared"}}}}
+	var sources []sessionimport.Source
+	for _, provider := range []domain.AgentHarness{domain.HarnessCodex, domain.HarnessClaudeCode} {
+		sources = append(sources, &fakeSource{provider: provider, sessions: []sessionimport.ImportableSession{{Provider: provider, NativeSessionID: "shared", CWD: "/project", TokenCount: MinimumTokens, LastActivity: time.Now()}}})
+	}
+	svc := New(&fakeSessions{}, store, &fakeProjects{list: []projectsvc.Summary{{ID: "p", Path: "/project"}}}, sources...)
+	got, err := svc.Discover(context.Background(), sessionimport.DiscoverOptions{}, "p")
+	if err != nil || len(got) != 2 {
+		t.Fatalf("discovery: %+v %v", got, err)
+	}
+	for _, session := range got {
+		if session.AlreadyImported != (session.Provider == domain.HarnessCodex) {
+			t.Fatalf("wrong duplicate marker: %+v", session)
+		}
+	}
 }

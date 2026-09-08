@@ -71,11 +71,13 @@ func New(sessions SessionService, store SessionStore, projects ProjectService, s
 
 // DiscoveryWindowDays and MinimumTokens are the fixed import eligibility rules.
 const DiscoveryWindowDays = 15
+
+// MinimumTokens is the cumulative provider usage required for import.
 const MinimumTokens int64 = 15_000
 
 // Discover requires a registered project and limits both discovery and direct
 // imports to recent conversations with enough recorded provider usage.
-func (s *Service) Discover(ctx context.Context, opts sessionimport.DiscoverOptions, projectID domain.ProjectID) ([]sessionimport.ImportableSession, error) {
+func (s *Service) Discover(ctx context.Context, _ sessionimport.DiscoverOptions, projectID domain.ProjectID) ([]sessionimport.ImportableSession, error) {
 	opts, err := s.projectOptions(ctx, projectID)
 	if err != nil {
 		return nil, err
@@ -235,10 +237,10 @@ func nativeIDSet(recs []domain.SessionRecord) map[string]struct{} {
 			continue
 		}
 		if id := strings.TrimSpace(r.Metadata.ProviderConversationID); id != "" {
-			set[id] = struct{}{}
+			set[sessionimport.NativeKey(r.Harness, id)] = struct{}{}
 		}
 		if id := strings.TrimSpace(r.Metadata.AgentSessionID); id != "" {
-			set[id] = struct{}{}
+			set[sessionimport.NativeKey(r.Harness, id)] = struct{}{}
 		}
 	}
 	return set

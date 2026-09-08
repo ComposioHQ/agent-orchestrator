@@ -273,8 +273,11 @@ func (s *CodexSource) readSegment(ctx context.Context, path string, opts Discove
 		return codexSegment{}, false, err
 	}
 	info, err := os.Stat(path)
-	if err != nil {
+	if errors.Is(err, os.ErrNotExist) {
 		return codexSegment{}, false, nil
+	}
+	if err != nil {
+		return codexSegment{}, false, err
 	}
 	value, cached := s.cache.get(path, info)
 	if !cached {
