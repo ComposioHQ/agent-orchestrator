@@ -1,0 +1,38 @@
+{
+  "variant": "after",
+  "commit": "40816926f2bf90b889daa9c86dddb956c02165f4",
+  "scope": "Unmodified AO renderer and real xterm in Chromium development mode; simulated daemon, preload and PTY. Normal timers; no fault injection.",
+  "steps": [
+    {
+      "step": "Initial Chat",
+      "errors": []
+    },
+    {
+      "step": "Terminal 1",
+      "errors": []
+    },
+    {
+      "step": "Back to Chat 1",
+      "errors": []
+    },
+    {
+      "step": "Terminal 2",
+      "errors": []
+    },
+    {
+      "step": "Back to Chat 2",
+      "errors": []
+    },
+    {
+      "step": "Terminal 3",
+      "errors": []
+    },
+    {
+      "step": "Back to Chat 3",
+      "errors": []
+    }
+  ],
+  "pageErrors": [],
+  "consoleErrors": [],
+  "unexpectedRequests": []
+}

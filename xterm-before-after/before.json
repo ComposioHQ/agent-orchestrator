@@ -1,0 +1,60 @@
+{
+  "variant": "before",
+  "commit": "09effe55bdc9005ccd317f63cada6c69d7bb49d7",
+  "scope": "Unmodified AO renderer and real xterm in Chromium development mode; simulated daemon, preload and PTY. Normal timers; no fault injection.",
+  "steps": [
+    {
+      "step": "Initial Chat",
+      "errors": []
+    },
+    {
+      "step": "Terminal 1",
+      "errors": [
+        "TypeError: Cannot read properties of undefined (reading 'dimensions')\n    at get dimensions (http://127.0.0.1:5465/@fs/tmp/pr4463-split/sqlc-evidence-cache/deps/@xterm_xterm.js?v=b7d90942:2099:35)\n    at t.Viewport.syncScrollArea (http://127.0.0.1:5465/@fs/tmp/pr4463-split/sqlc-evidence-cache/deps/@xterm_xterm.js?v=b7d90942:903:64)\n    at http://127.0.0.1:5465/@fs/tmp/pr4463-split/sqlc-evidence-cache/deps/@xterm_xterm.js?v=b7d90942:880:882"
+      ]
+    },
+    {
+      "step": "Back to Chat 1",
+      "errors": [
+        "TypeError: Cannot read properties of undefined (reading 'dimensions')\n    at get dimensions (http://127.0.0.1:5465/@fs/tmp/pr4463-split/sqlc-evidence-cache/deps/@xterm_xterm.js?v=b7d90942:2099:35)\n    at t.Viewport.syncScrollArea (http://127.0.0.1:5465/@fs/tmp/pr4463-split/sqlc-evidence-cache/deps/@xterm_xterm.js?v=b7d90942:903:64)\n    at http://127.0.0.1:5465/@fs/tmp/pr4463-split/sqlc-evidence-cache/deps/@xterm_xterm.js?v=b7d90942:880:882"
+      ]
+    },
+    {
+      "step": "Terminal 2",
+      "errors": [
+        "TypeError: Cannot read properties of undefined (reading 'dimensions')\n    at get dimensions (http://127.0.0.1:5465/@fs/tmp/pr4463-split/sqlc-evidence-cache/deps/@xterm_xterm.js?v=b7d90942:2099:35)\n    at t.Viewport.syncScrollArea (http://127.0.0.1:5465/@fs/tmp/pr4463-split/sqlc-evidence-cache/deps/@xterm_xterm.js?v=b7d90942:903:64)\n    at http://127.0.0.1:5465/@fs/tmp/pr4463-split/sqlc-evidence-cache/deps/@xterm_xterm.js?v=b7d90942:880:882",
+        "TypeError: Cannot read properties of undefined (reading 'dimensions')\n    at get dimensions (http://127.0.0.1:5465/@fs/tmp/pr4463-split/sqlc-evidence-cache/deps/@xterm_xterm.js?v=b7d90942:2099:35)\n    at t.Viewport.syncScrollArea (http://127.0.0.1:5465/@fs/tmp/pr4463-split/sqlc-evidence-cache/deps/@xterm_xterm.js?v=b7d90942:903:64)\n    at http://127.0.0.1:5465/@fs/tmp/pr4463-split/sqlc-evidence-cache/deps/@xterm_xterm.js?v=b7d90942:880:882"
+      ]
+    },
+    {
+      "step": "Back to Chat 2",
+      "errors": [
+        "TypeError: Cannot read properties of undefined (reading 'dimensions')\n    at get dimensions (http://127.0.0.1:5465/@fs/tmp/pr4463-split/sqlc-evidence-cache/deps/@xterm_xterm.js?v=b7d90942:2099:35)\n    at t.Viewport.syncScrollArea (http://127.0.0.1:5465/@fs/tmp/pr4463-split/sqlc-evidence-cache/deps/@xterm_xterm.js?v=b7d90942:903:64)\n    at http://127.0.0.1:5465/@fs/tmp/pr4463-split/sqlc-evidence-cache/deps/@xterm_xterm.js?v=b7d90942:880:882",
+        "TypeError: Cannot read properties of undefined (reading 'dimensions')\n    at get dimensions (http://127.0.0.1:5465/@fs/tmp/pr4463-split/sqlc-evidence-cache/deps/@xterm_xterm.js?v=b7d90942:2099:35)\n    at t.Viewport.syncScrollArea (http://127.0.0.1:5465/@fs/tmp/pr4463-split/sqlc-evidence-cache/deps/@xterm_xterm.js?v=b7d90942:903:64)\n    at http://127.0.0.1:5465/@fs/tmp/pr4463-split/sqlc-evidence-cache/deps/@xterm_xterm.js?v=b7d90942:880:882"
+      ]
+    },
+    {
+      "step": "Terminal 3",
+      "errors": [
+        "TypeError: Cannot read properties of undefined (reading 'dimensions')\n    at get dimensions (http://127.0.0.1:5465/@fs/tmp/pr4463-split/sqlc-evidence-cache/deps/@xterm_xterm.js?v=b7d90942:2099:35)\n    at t.Viewport.syncScrollArea (http://127.0.0.1:5465/@fs/tmp/pr4463-split/sqlc-evidence-cache/deps/@xterm_xterm.js?v=b7d90942:903:64)\n    at http://127.0.0.1:5465/@fs/tmp/pr4463-split/sqlc-evidence-cache/deps/@xterm_xterm.js?v=b7d90942:880:882",
+        "TypeError: Cannot read properties of undefined (reading 'dimensions')\n    at get dimensions (http://127.0.0.1:5465/@fs/tmp/pr4463-split/sqlc-evidence-cache/deps/@xterm_xterm.js?v=b7d90942:2099:35)\n    at t.Viewport.syncScrollArea (http://127.0.0.1:5465/@fs/tmp/pr4463-split/sqlc-evidence-cache/deps/@xterm_xterm.js?v=b7d90942:903:64)\n    at http://127.0.0.1:5465/@fs/tmp/pr4463-split/sqlc-evidence-cache/deps/@xterm_xterm.js?v=b7d90942:880:882",
+        "TypeError: Cannot read properties of undefined (reading 'dimensions')\n    at get dimensions (http://127.0.0.1:5465/@fs/tmp/pr4463-split/sqlc-evidence-cache/deps/@xterm_xterm.js?v=b7d90942:2099:35)\n    at t.Viewport.syncScrollArea (http://127.0.0.1:5465/@fs/tmp/pr4463-split/sqlc-evidence-cache/deps/@xterm_xterm.js?v=b7d90942:903:64)\n    at http://127.0.0.1:5465/@fs/tmp/pr4463-split/sqlc-evidence-cache/deps/@xterm_xterm.js?v=b7d90942:880:882"
+      ]
+    },
+    {
+      "step": "Back to Chat 3",
+      "errors": [
+        "TypeError: Cannot read properties of undefined (reading 'dimensions')\n    at get dimensions (http://127.0.0.1:5465/@fs/tmp/pr4463-split/sqlc-evidence-cache/deps/@xterm_xterm.js?v=b7d90942:2099:35)\n    at t.Viewport.syncScrollArea (http://127.0.0.1:5465/@fs/tmp/pr4463-split/sqlc-evidence-cache/deps/@xterm_xterm.js?v=b7d90942:903:64)\n    at http://127.0.0.1:5465/@fs/tmp/pr4463-split/sqlc-evidence-cache/deps/@xterm_xterm.js?v=b7d90942:880:882",
+        "TypeError: Cannot read properties of undefined (reading 'dimensions')\n    at get dimensions (http://127.0.0.1:5465/@fs/tmp/pr4463-split/sqlc-evidence-cache/deps/@xterm_xterm.js?v=b7d90942:2099:35)\n    at t.Viewport.syncScrollArea (http://127.0.0.1:5465/@fs/tmp/pr4463-split/sqlc-evidence-cache/deps/@xterm_xterm.js?v=b7d90942:903:64)\n    at http://127.0.0.1:5465/@fs/tmp/pr4463-split/sqlc-evidence-cache/deps/@xterm_xterm.js?v=b7d90942:880:882",
+        "TypeError: Cannot read properties of undefined (reading 'dimensions')\n    at get dimensions (http://127.0.0.1:5465/@fs/tmp/pr4463-split/sqlc-evidence-cache/deps/@xterm_xterm.js?v=b7d90942:2099:35)\n    at t.Viewport.syncScrollArea (http://127.0.0.1:5465/@fs/tmp/pr4463-split/sqlc-evidence-cache/deps/@xterm_xterm.js?v=b7d90942:903:64)\n    at http://127.0.0.1:5465/@fs/tmp/pr4463-split/sqlc-evidence-cache/deps/@xterm_xterm.js?v=b7d90942:880:882"
+      ]
+    }
+  ],
+  "pageErrors": [
+    "TypeError: Cannot read properties of undefined (reading 'dimensions')\n    at get dimensions (http://127.0.0.1:5465/@fs/tmp/pr4463-split/sqlc-evidence-cache/deps/@xterm_xterm.js?v=b7d90942:2099:35)\n    at t.Viewport.syncScrollArea (http://127.0.0.1:5465/@fs/tmp/pr4463-split/sqlc-evidence-cache/deps/@xterm_xterm.js?v=b7d90942:903:64)\n    at http://127.0.0.1:5465/@fs/tmp/pr4463-split/sqlc-evidence-cache/deps/@xterm_xterm.js?v=b7d90942:880:882",
+    "TypeError: Cannot read properties of undefined (reading 'dimensions')\n    at get dimensions (http://127.0.0.1:5465/@fs/tmp/pr4463-split/sqlc-evidence-cache/deps/@xterm_xterm.js?v=b7d90942:2099:35)\n    at t.Viewport.syncScrollArea (http://127.0.0.1:5465/@fs/tmp/pr4463-split/sqlc-evidence-cache/deps/@xterm_xterm.js?v=b7d90942:903:64)\n    at http://127.0.0.1:5465/@fs/tmp/pr4463-split/sqlc-evidence-cache/deps/@xterm_xterm.js?v=b7d90942:880:882",
+    "TypeError: Cannot read properties of undefined (reading 'dimensions')\n    at get dimensions (http://127.0.0.1:5465/@fs/tmp/pr4463-split/sqlc-evidence-cache/deps/@xterm_xterm.js?v=b7d90942:2099:35)\n    at t.Viewport.syncScrollArea (http://127.0.0.1:5465/@fs/tmp/pr4463-split/sqlc-evidence-cache/deps/@xterm_xterm.js?v=b7d90942:903:64)\n    at http://127.0.0.1:5465/@fs/tmp/pr4463-split/sqlc-evidence-cache/deps/@xterm_xterm.js?v=b7d90942:880:882"
+  ],
+  "consoleErrors": [],
+  "unexpectedRequests": []
+}
