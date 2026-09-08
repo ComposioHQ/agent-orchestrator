@@ -1,0 +1,351 @@
+{
+  "commit": "7035c185f03ba64ed82323c684be7355531d648e",
+  "recordedDate": "2026-09-08",
+  "method": "Continuous native macOS window capture of the real AO Electron app and installed providers, using isolated local daemon/state. All three switches were selected in the desktop UI.",
+  "expectedFlow": [
+    "chat",
+    "tui",
+    "chat",
+    "tui"
+  ],
+  "trimmed": false,
+  "playbackSpeed": 1,
+  "processing": "The MP4 is a stream copy of every encoded video packet from its original MOV. No cuts, filtering, re-encoding, or speed changes. GIF previews sample at 10 fps and scale to 1100 pixels wide while retaining the full timeline.",
+  "providers": [
+    {
+      "provider": "claude",
+      "providerVersion": "2.1.263",
+      "sessionId": "rt5053-0908-7",
+      "transitions": [
+        {
+          "id": "009a1102-81de-459f-a697-dab5baa18136",
+          "source_mode": "chat",
+          "target_mode": "tui",
+          "phase": "completed",
+          "policy": "drain",
+          "created_at": "2026-09-08 09:45:40.677646 +0000 UTC",
+          "completed_at": "2026-09-08 09:45:40.824595 +0000 UTC"
+        },
+        {
+          "id": "06f1ade9-d1f3-4856-b8d3-2774eb218489",
+          "source_mode": "tui",
+          "target_mode": "chat",
+          "phase": "completed",
+          "policy": "drain",
+          "created_at": "2026-09-08 09:46:09.796716 +0000 UTC",
+          "completed_at": "2026-09-08 09:46:12.724721 +0000 UTC"
+        },
+        {
+          "id": "8ecf1eec-93d3-40c6-9cd6-75cc0a14d21d",
+          "source_mode": "chat",
+          "target_mode": "tui",
+          "phase": "completed",
+          "policy": "drain",
+          "created_at": "2026-09-08 09:46:42.703166 +0000 UTC",
+          "completed_at": "2026-09-08 09:46:42.873866 +0000 UTC"
+        }
+      ],
+      "noPromptsSubmitted": true,
+      "returnedChat": {
+        "controller": "ready",
+        "latestSequence": 0,
+        "turns": 0,
+        "messages": 0
+      },
+      "finalMode": "tui",
+      "finalTerminalReady": "Verified visually in recording",
+      "durableHistory": {
+        "latest_sequence": 0,
+        "turns": 0,
+        "messages": 0
+      },
+      "catalogRequests": [
+        {
+          "time": "2026-09-08T15:14:00.582+05:30",
+          "path": "/api/v1/sessions/rt5053-0908-7/conversation/config-options",
+          "status": 200
+        },
+        {
+          "time": "2026-09-08T15:14:00.599+05:30",
+          "path": "/api/v1/sessions/rt5053-0908-7/conversation/models",
+          "status": 200
+        },
+        {
+          "time": "2026-09-08T15:14:00.603+05:30",
+          "path": "/api/v1/sessions/rt5053-0908-7/conversation/skills",
+          "status": 200
+        },
+        {
+          "time": "2026-09-08T15:14:05.718+05:30",
+          "path": "/api/v1/sessions/rt5053-0908-7/conversation/config-options",
+          "status": 200
+        },
+        {
+          "time": "2026-09-08T15:14:10.722+05:30",
+          "path": "/api/v1/sessions/rt5053-0908-7/conversation/config-options",
+          "status": 200
+        },
+        {
+          "time": "2026-09-08T15:14:15.727+05:30",
+          "path": "/api/v1/sessions/rt5053-0908-7/conversation/config-options",
+          "status": 200
+        },
+        {
+          "time": "2026-09-08T15:14:20.732+05:30",
+          "path": "/api/v1/sessions/rt5053-0908-7/conversation/config-options",
+          "status": 200
+        },
+        {
+          "time": "2026-09-08T15:14:25.738+05:30",
+          "path": "/api/v1/sessions/rt5053-0908-7/conversation/config-options",
+          "status": 200
+        },
+        {
+          "time": "2026-09-08T15:14:30.743+05:30",
+          "path": "/api/v1/sessions/rt5053-0908-7/conversation/config-options",
+          "status": 200
+        },
+        {
+          "time": "2026-09-08T15:14:35.747+05:30",
+          "path": "/api/v1/sessions/rt5053-0908-7/conversation/config-options",
+          "status": 200
+        },
+        {
+          "time": "2026-09-08T15:14:40.752+05:30",
+          "path": "/api/v1/sessions/rt5053-0908-7/conversation/config-options",
+          "status": 200
+        },
+        {
+          "time": "2026-09-08T15:14:45.757+05:30",
+          "path": "/api/v1/sessions/rt5053-0908-7/conversation/config-options",
+          "status": 200
+        },
+        {
+          "time": "2026-09-08T15:14:50.763+05:30",
+          "path": "/api/v1/sessions/rt5053-0908-7/conversation/config-options",
+          "status": 200
+        },
+        {
+          "time": "2026-09-08T15:14:55.768+05:30",
+          "path": "/api/v1/sessions/rt5053-0908-7/conversation/config-options",
+          "status": 200
+        },
+        {
+          "time": "2026-09-08T15:15:00.718+05:30",
+          "path": "/api/v1/sessions/rt5053-0908-7/conversation/skills",
+          "status": 200
+        },
+        {
+          "time": "2026-09-08T15:15:00.771+05:30",
+          "path": "/api/v1/sessions/rt5053-0908-7/conversation/config-options",
+          "status": 200
+        },
+        {
+          "time": "2026-09-08T15:15:05.775+05:30",
+          "path": "/api/v1/sessions/rt5053-0908-7/conversation/config-options",
+          "status": 200
+        },
+        {
+          "time": "2026-09-08T15:15:10.781+05:30",
+          "path": "/api/v1/sessions/rt5053-0908-7/conversation/config-options",
+          "status": 200
+        },
+        {
+          "time": "2026-09-08T15:15:15.788+05:30",
+          "path": "/api/v1/sessions/rt5053-0908-7/conversation/config-options",
+          "status": 200
+        },
+        {
+          "time": "2026-09-08T15:15:20.794+05:30",
+          "path": "/api/v1/sessions/rt5053-0908-7/conversation/config-options",
+          "status": 200
+        },
+        {
+          "time": "2026-09-08T15:15:25.798+05:30",
+          "path": "/api/v1/sessions/rt5053-0908-7/conversation/config-options",
+          "status": 200
+        },
+        {
+          "time": "2026-09-08T15:15:30.802+05:30",
+          "path": "/api/v1/sessions/rt5053-0908-7/conversation/config-options",
+          "status": 200
+        },
+        {
+          "time": "2026-09-08T15:15:35.815+05:30",
+          "path": "/api/v1/sessions/rt5053-0908-7/conversation/config-options",
+          "status": 200
+        },
+        {
+          "time": "2026-09-08T15:16:12.928+05:30",
+          "path": "/api/v1/sessions/rt5053-0908-7/conversation/config-options",
+          "status": 200
+        },
+        {
+          "time": "2026-09-08T15:16:12.928+05:30",
+          "path": "/api/v1/sessions/rt5053-0908-7/conversation/skills",
+          "status": 200
+        },
+        {
+          "time": "2026-09-08T15:16:17.938+05:30",
+          "path": "/api/v1/sessions/rt5053-0908-7/conversation/config-options",
+          "status": 200
+        },
+        {
+          "time": "2026-09-08T15:16:22.943+05:30",
+          "path": "/api/v1/sessions/rt5053-0908-7/conversation/config-options",
+          "status": 200
+        },
+        {
+          "time": "2026-09-08T15:16:27.956+05:30",
+          "path": "/api/v1/sessions/rt5053-0908-7/conversation/config-options",
+          "status": 200
+        },
+        {
+          "time": "2026-09-08T15:16:32.972+05:30",
+          "path": "/api/v1/sessions/rt5053-0908-7/conversation/config-options",
+          "status": 200
+        },
+        {
+          "time": "2026-09-08T15:16:37.980+05:30",
+          "path": "/api/v1/sessions/rt5053-0908-7/conversation/config-options",
+          "status": 200
+        }
+      ],
+      "frameAudit": {
+        "source": "claude-full-loop-uncut.mov",
+        "framesExamined": 4051,
+        "framesWithRedPixelsInComposer": 0,
+        "maxRedPixelsInComposer": 0,
+        "scope": "Every decoded source frame in the entire uncut recording",
+        "criterion": "R>95, R>1.45G, R>1.25B in composer area after scaling to 660x448. Supplemented with visual review; this detector caught the old Claude flash in 107 frames."
+      },
+      "identicalSourceAndMp4VideoPackets": true,
+      "media": [
+        {
+          "file": "claude-full-loop-uncut.mov",
+          "sha256": "2b9d3735a13bf25146d9d34e67d478625f3081b8c3c3b7a25b5b16a0d2c66691",
+          "bytes": 1803128,
+          "durationSeconds": 81.31,
+          "codec": "h264",
+          "frames": 4051
+        },
+        {
+          "file": "claude-full-loop-uncut.mp4",
+          "sha256": "74e381cf788efefe18d795686c719d68d5bc31c023ce0cd847df978c978f69fd",
+          "bytes": 1797966,
+          "durationSeconds": 81.3,
+          "codec": "h264",
+          "frames": 4051
+        },
+        {
+          "file": "claude-full-loop-uncut.gif",
+          "sha256": "34ecd8bc132e8788ba9e43916f8535781638e6ca545a1b02ff20f632045a2cf0",
+          "bytes": 2589606,
+          "durationSeconds": 81.3,
+          "codec": "gif",
+          "frames": 813
+        }
+      ]
+    },
+    {
+      "provider": "codex",
+      "providerVersion": "0.153.4",
+      "sessionId": "rt5053-0908-8",
+      "transitions": [
+        {
+          "id": "3ee6b980-886a-4240-88d5-2094ab4023dc",
+          "source_mode": "chat",
+          "target_mode": "tui",
+          "phase": "completed",
+          "policy": "drain",
+          "created_at": "2026-09-08 09:49:49.201942 +0000 UTC",
+          "completed_at": "2026-09-08 09:49:49.328829 +0000 UTC"
+        },
+        {
+          "id": "e7207210-a4dd-49a4-a047-cc5b857b2d82",
+          "source_mode": "tui",
+          "target_mode": "chat",
+          "phase": "completed",
+          "policy": "drain",
+          "created_at": "2026-09-08 09:50:36.558734 +0000 UTC",
+          "completed_at": "2026-09-08 09:50:39.468415 +0000 UTC"
+        },
+        {
+          "id": "f02ebcb3-0f69-4612-8c08-e83a12c98b64",
+          "source_mode": "chat",
+          "target_mode": "tui",
+          "phase": "completed",
+          "policy": "drain",
+          "created_at": "2026-09-08 09:51:06.805332 +0000 UTC",
+          "completed_at": "2026-09-08 09:51:06.911739 +0000 UTC"
+        }
+      ],
+      "noPromptsSubmitted": true,
+      "returnedChat": {
+        "controller": "ready",
+        "latestSequence": 0,
+        "turns": 0,
+        "messages": 0
+      },
+      "finalMode": "tui",
+      "finalTerminalReady": "Verified visually in recording",
+      "durableHistory": {
+        "latest_sequence": 0,
+        "turns": 0,
+        "messages": 0
+      },
+      "catalogRequests": [
+        {
+          "time": "2026-09-08T15:17:57.174+05:30",
+          "path": "/api/v1/sessions/rt5053-0908-8/conversation/skills",
+          "status": 200
+        },
+        {
+          "time": "2026-09-08T15:17:57.564+05:30",
+          "path": "/api/v1/sessions/rt5053-0908-8/conversation/models",
+          "status": 200
+        },
+        {
+          "time": "2026-09-08T15:20:39.871+05:30",
+          "path": "/api/v1/sessions/rt5053-0908-8/conversation/skills",
+          "status": 200
+        }
+      ],
+      "frameAudit": {
+        "source": "codex-full-loop-uncut.mov",
+        "framesExamined": 6430,
+        "framesWithRedPixelsInComposer": 0,
+        "maxRedPixelsInComposer": 0,
+        "scope": "Every decoded source frame in the entire uncut recording",
+        "criterion": "R>95, R>1.45G, R>1.25B in composer area after scaling to 660x448. Supplemented with visual review; this detector caught the old Claude flash in 107 frames."
+      },
+      "identicalSourceAndMp4VideoPackets": true,
+      "media": [
+        {
+          "file": "codex-full-loop-uncut.mov",
+          "sha256": "c75327eb9ca746615b0094e8ae0f47d8713eb50a379640ee29ff4a7b261edd87",
+          "bytes": 7289677,
+          "durationSeconds": 127.76,
+          "codec": "h264",
+          "frames": 6430
+        },
+        {
+          "file": "codex-full-loop-uncut.mp4",
+          "sha256": "dd19e42d3dd2a83356796ce9c811c1886d13bb4fcd98455c9dd397dfe5c3efa2",
+          "bytes": 7281548,
+          "durationSeconds": 127.75,
+          "codec": "h264",
+          "frames": 6430
+        },
+        {
+          "file": "codex-full-loop-uncut.gif",
+          "sha256": "012b197b4e699e49fcf8ae123fdbce3f9234d5b4d4b7b6b852cfe3a72dc791cf",
+          "bytes": 3853000,
+          "durationSeconds": 127.8,
+          "codec": "gif",
+          "frames": 1278
+        }
+      ]
+    }
+  ]
+}
