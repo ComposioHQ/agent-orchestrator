@@ -3,6 +3,7 @@ package controllers
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"sync"
 	"time"
@@ -505,9 +506,12 @@ func (b *BridgeService) Disable() error {
 	if t := b.tunnel(); t != nil {
 		t.Stop()
 	}
-	if err := b.LAN.Stop(ctx); err != nil {
-		return err
+	stopErr := b.LAN.Stop(ctx)
+	if stopErr != nil && b.LAN.Running() {
+		return stopErr
 	}
+	// Forced cleanup can finish after the graceful-shutdown deadline. Persist
+	// the disabled preference once stopped, while still returning that error.
 	st, _ := mobilebridge.Load(b.ConfigPath)
 	// Only touch the tailnet proxy when this bridge actually installed one.
 	// `tailscale serve --https=443 off` is node-global state: clearing it
@@ -518,7 +522,7 @@ func (b *BridgeService) Disable() error {
 		_ = b.clearServe()
 	}
 	st.Enabled = false
-	return mobilebridge.Save(b.ConfigPath, st)
+	return errors.Join(stopErr, mobilebridge.Save(b.ConfigPath, st))
 }
 
 // ShutdownTunnel stops the managed connector on the way out.
