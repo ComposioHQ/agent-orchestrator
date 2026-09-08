@@ -134,6 +134,7 @@ var shippedMigrations = map[int64]string{
 	127: "0127_session_permissions.sql",
 	128: "0128_pr_author_avatar_url.sql",
 	129: "0129_conversation_queued_edit_delivery.sql",
+	130: "0130_conversation_edit_delivery.sql",
 }
 
 // burnedVersion reports version numbers that must never be (re)used: they
