@@ -3265,6 +3265,7 @@ export interface components {
         GitHubRepositoryPreparation: {
             name?: string;
             owner?: string;
+            private?: null | boolean;
         };
         GitPreparationEvent: {
             /** @enum {string} */
