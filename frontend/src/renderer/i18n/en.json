@@ -623,7 +623,7 @@
 	"pr.progress.closed_one": "{{count}} closed",
 	"pr.progress.closed_other": "{{count}} closed",
 	"pr.progress.draft_one": "{{count}} draft",
-	"pr.progress.draft_other": "{{count}} draft",
+	"pr.progress.draft_other": "{{count}} drafts",
 	"pr.progress.merged_one": "{{merged}} of {{count}} PR merged",
 	"pr.progress.merged_other": "{{merged}} of {{count}} PRs merged",
 	"pr.progress.open_one": "{{count}} open",
