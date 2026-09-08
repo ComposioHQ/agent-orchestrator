@@ -154,12 +154,18 @@ type SessionsController struct {
 	Attachments   *attachmentstore.Store
 	PreviewServer ManagedPreviewServer
 	Capabilities  SessionCapabilityValidator
+	// Import discovers on-disk agent conversations and imports one as a
+	// resumable AO session. Nil keeps the routes registered but 501.
+	Import SessionImportService
 }
 
 // Register mounts the session routes on the supplied router.
 func (c *SessionsController) Register(r chi.Router) {
 	r.Get("/sessions", c.list)
 	r.Post("/sessions", c.spawn)
+	r.Get("/sessions/importable", c.listImportable)
+	r.Post("/sessions/import", c.importSession)
+	r.Post("/sessions/import/batch", c.importSessions)
 	r.Post("/sessions/cleanup", c.cleanup)
 	r.Get("/sessions/{sessionId}", c.get)
 	r.Get("/sessions/{sessionId}/preview", c.preview)
@@ -1837,6 +1843,7 @@ func previewFileURL(r *http.Request, id domain.SessionID, entry string) (string,
 func sessionView(s domain.Session) SessionView {
 	terminalGeneration := s.Metadata.RuntimeLaunchID
 	view := SessionView{
+		ImportedHistory:    s.Metadata.NativeTranscriptPath != "" && s.Metadata.ControllerGeneration == "",
 		Session:            s,
 		Branch:             s.Metadata.Branch,
 		TerminalGeneration: terminalGeneration,

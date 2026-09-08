@@ -127,6 +127,7 @@ import { useUiStore } from "../stores/ui-store"
 import { useKeybindingsStore } from "../stores/keybindings-store";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { CreateProjectFlow, type CloneProjectInput, type CreateProjectInput } from "./CreateProjectFlow";
+import { ImportSessionsHint } from "./ImportSessionsHint";
 import { ResizeHandle } from "./ResizeHandle";
 import { isMacPlatform, isWindowsPlatform } from "../lib/platform";
 import { useCloudSession } from "../lib/cloud-session";
@@ -1430,6 +1431,7 @@ const ProjectItemContent = memo(function ProjectItemContent({
 							{removeError}
 						</div>
 					) : null}
+					<ImportSessionsHint projectId={workspace.id} projectName={workspace.name} />
 					{/* project-sidebar__sessions: indented under the project parent so worker
           sessions read as children without adding a persistent guide rail. */}
 		<AnimatePresence initial={false}>

@@ -2162,6 +2162,57 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/sessions/import": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Import an existing agent conversation as a resumable session */
+        post: operations["importSession"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/sessions/import/batch": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Register existing conversation histories without starting agents */
+        post: operations["importSessions"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/sessions/importable": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List agent conversations on disk that can be imported */
+        get: operations["listImportableSessions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/settings": {
         parameters: {
             query?: never;
@@ -2783,6 +2834,50 @@ export interface components {
         ContainerReapConfig: {
             disabled?: boolean;
         };
+        ControllersImportSessionRequest: {
+            /** @description The provider's own session id from the discovery list. */
+            nativeSessionId: string;
+            /** @description Registered project that owns this conversation. */
+            projectId: string;
+            /** @description Agent harness of the conversation, e.g. claude-code or codex. */
+            provider: string;
+        };
+        ControllersImportSessionResponse: {
+            /** @description True when the session already existed and was returned as-is. */
+            alreadyImported: boolean;
+            session: components["schemas"]["ControllersSessionView"];
+        };
+        ControllersImportableSessionView: {
+            /** @description True when an AO session is already bound to this native session id. */
+            alreadyImported: boolean;
+            /** @description Git branch recorded in the transcript, when present. */
+            branch?: string;
+            /** @description Working directory the conversation ran in, read from the transcript. */
+            cwd: string;
+            /** @description RFC3339 timestamp of the most recent activity. */
+            lastActivity: string;
+            /** @description Retained for compatibility; discovery leaves this zero to avoid counting every message. */
+            messageCount: number;
+            /** @description The provider's own session id, used to bind and resume the imported session. */
+            nativeSessionId: string;
+            /** @description Agent harness that wrote the transcript, e.g. claude-code or codex. */
+            provider: string;
+            /**
+             * Format: int64
+             * @description Transcript size on disk in bytes.
+             */
+            sizeBytes: number;
+            /** @description Human label: the provider's title, else the first prompt, else the file name. */
+            title: string;
+            /**
+             * Format: int64
+             * @description Observed lower bound of cumulative provider usage including cached input; scanning may stop once the import threshold is met.
+             */
+            tokenCount: number;
+        };
+        ControllersListImportableSessionsResponse: {
+            sessions: components["schemas"]["ControllersImportableSessionView"][];
+        };
         ControllersRequestRereviewRequest: {
             /** @description Tracked pull request URL. Required when the session has multiple PRs. */
             pullRequestUrl?: string;
@@ -2823,6 +2918,7 @@ export interface components {
             displayStatus: "Working" | "Blocked" | "Exited" | "No signal" | "Awaiting PR" | "Fixing CI failures" | "Addressing comments" | "Needs review" | "Review scheduled" | "Reviewing" | "Review pending" | "Draft" | "CI failing" | "Commented" | "Changes requested" | "Needs human review" | "Mergeable" | "Approved" | "Merged" | "Closed without merge" | "Terminated";
             harness?: string;
             id: string;
+            importedHistory?: boolean;
             isPinned: boolean;
             isTerminated: boolean;
             issueId?: string;
@@ -3039,6 +3135,7 @@ export interface components {
             conversationId: string;
             harness?: string;
             hasMoreBefore: boolean;
+            importedHistory?: boolean;
             /** Format: int64 */
             latestSequence: number;
             mcpServers?: components["schemas"]["ConversationMCPServerPayload"][];
@@ -3260,8 +3357,26 @@ export interface components {
             projectsImported: number;
             projectsSkipped: number;
         };
+        ImportResult: {
+            alreadyImported: boolean;
+            error?: string;
+            nativeSessionId: string;
+            provider: string;
+            sessionId?: string;
+        };
         ImportRunResponse: {
             report: components["schemas"]["ImportReport"];
+        };
+        ImportSelection: {
+            nativeSessionId: string;
+            provider: string;
+        };
+        ImportSessionsRequest: {
+            projectId: string;
+            sessions: components["schemas"]["ImportSelection"][];
+        };
+        ImportSessionsResponse: {
+            results: components["schemas"]["ImportResult"][];
         };
         ImportStatusResponse: {
             available: boolean;
@@ -12104,6 +12219,178 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CleanupSessionsResponse"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    importSession: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ControllersImportSessionRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ControllersImportSessionResponse"];
+                };
+            };
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ControllersImportSessionResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    importSessions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ImportSessionsRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImportSessionsResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    listImportableSessions: {
+        parameters: {
+            query: {
+                /** @description Restrict to one provider, e.g. claude-code or codex. */
+                provider?: string;
+                /** @description Required registered project. Only conversations active within 15 days with at least 15000 provider tokens are listed. */
+                projectId: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ControllersListImportableSessionsResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
                 };
             };
             /** @description Internal Server Error */
