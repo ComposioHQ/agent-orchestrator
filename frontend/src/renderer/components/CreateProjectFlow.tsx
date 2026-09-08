@@ -41,7 +41,6 @@ import { Tabs, TabsList, TabsTrigger } from "./ui/tabs";
 export type CreateProjectInput = {
 	path: string;
 	asWorkspace?: boolean;
-	defaultBranch?: string;
 	clonePreparationId?: string;
 } & CreateProjectAgentSelection;
 export type CloneProjectInput = Pick<CloneRepositorySelection, "remoteUrl" | "destinationParent"> &
@@ -482,15 +481,14 @@ export function CreateProjectFlow({
 				setIsInitializing(false);
 				setIsCreating(true);
 			}
-			// Workspace imports can adopt an existing local Git root too. Preserve
-			// its branch just as for a single repository; child defaults stay separate.
-			const defaultBranch = await aoBridge.app.getRepositoryBranch(selectedPath);
-			await onCreateProject({
-				path: selectedPath,
-				asWorkspace: selectedKind === "workspace",
-				...(defaultBranch ? { defaultBranch } : {}),
-				...selection,
-			});
+		// The daemon resolves the worktree base branch itself at registration
+		// and spawn time, so the import submits without a blocking branch
+		// lookup here — one less IPC round-trip on the critical path.
+		await onCreateProject({
+			path: selectedPath,
+			asWorkspace: selectedKind === "workspace",
+			...selection,
+		});
 			if (showProgress) {
 				setCreateProgress({ open: true, stage: "complete", value: 100 });
 				await new Promise((resolve) => window.setTimeout(resolve, 180));
