@@ -1,7 +1,7 @@
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
-import { DEV_DAEMON_PORT } from "./daemon-attach";
+import { DEFAULT_DAEMON_PORT, DEV_DAEMON_PORT } from "./daemon-attach";
 import { resolveDevApiTarget } from "./dev-api-target";
 
 const HOME = "/home/tester";
@@ -87,12 +87,39 @@ describe("resolveDevApiTarget", () => {
 		expect(seen).toEqual([custom]);
 	});
 
-	// docs/development.md's CLI-only workflow: a standalone `ao start` daemon
-	// writes ~/.ao/running.json rather than the dev-scoped file.
-	it("falls back to the standalone run file when no dev daemon is recorded", () => {
-		const { opts, seen } = deps({ [STANDALONE_RUN_FILE]: runFile(3009) });
+	// docs/development.md's CLI-only workflow: `dev:web` starts no daemon, so it
+	// is paired with a standalone `ao start`, which writes ~/.ao/running.json
+	// rather than the dev-scoped file.
+	it("reads the standalone run file first under dev:web", () => {
+		const { opts, seen } = deps(
+			{ [STANDALONE_RUN_FILE]: runFile(3009) },
+			{ env: { VITE_NO_ELECTRON: "1" } },
+		);
 		expect(resolveDevApiTarget(opts)).toBe("http://127.0.0.1:3009");
-		expect(seen).toEqual([DEV_RUN_FILE, STANDALONE_RUN_FILE]);
+		// Stops there: a live standalone daemon is the documented pairing, so the
+		// dev file is never consulted.
+		expect(seen).toEqual([STANDALONE_RUN_FILE]);
+	});
+
+	// dev:web has no daemon of its own, so attaching to a `npm run dev` instance
+	// is the only thing left to do rather than a cross-profile mistake.
+	it("still finds the dev daemon under dev:web when no standalone one is running", () => {
+		const { opts } = deps(
+			{ [DEV_RUN_FILE]: runFile(3002) },
+			{ env: { VITE_NO_ELECTRON: "1" } },
+		);
+		expect(resolveDevApiTarget(opts)).toBe("http://127.0.0.1:3002");
+	});
+
+	// The inverse, and the reason the standalone path is not a blanket fallback:
+	// under `npm run dev` the daemon Electron supervises is the only correct
+	// target. ~/.ao/running.json belongs to an installed app or a CLI `ao start`
+	// serving ~/.ao/data, so proxying there would quietly show the wrong
+	// instance's sessions instead of the dev profile's — worse than the 502.
+	it("ignores a live standalone daemon under `npm run dev`", () => {
+		const { opts, seen } = deps({ [STANDALONE_RUN_FILE]: runFile(3009) });
+		expect(resolveDevApiTarget(opts)).toBe(DEFAULT_TARGET);
+		expect(seen).toEqual([DEV_RUN_FILE]);
 	});
 
 	// running.json is removed only on graceful shutdown, so a hard-killed dev run
@@ -101,20 +128,22 @@ describe("resolveDevApiTarget", () => {
 	it("skips a run file whose process is gone and keeps looking", () => {
 		const { opts } = deps(
 			{ [DEV_RUN_FILE]: runFile(3002, 999999), [STANDALONE_RUN_FILE]: runFile(3009, 4242) },
-			{ alive: false },
+			{ alive: false, env: { VITE_NO_ELECTRON: "1" } },
 		);
-		expect(resolveDevApiTarget(opts)).toBe(DEFAULT_TARGET);
+		expect(resolveDevApiTarget(opts)).toBe(`http://127.0.0.1:${DEFAULT_DAEMON_PORT}`);
 	});
 
 	it("uses a live run file even when an earlier candidate is stale", () => {
 		let call = 0;
 		const opts = {
-			...deps({ [DEV_RUN_FILE]: runFile(3002, 111), [STANDALONE_RUN_FILE]: runFile(3009, 222) })
-				.opts,
+			...deps(
+				{ [DEV_RUN_FILE]: runFile(3002, 111), [STANDALONE_RUN_FILE]: runFile(3009, 222) },
+				{ env: { VITE_NO_ELECTRON: "1" } },
+			).opts,
 			// first candidate dead, second alive
 			isPidLive: () => ++call > 1,
 		};
-		expect(resolveDevApiTarget(opts)).toBe("http://127.0.0.1:3009");
+		expect(resolveDevApiTarget(opts)).toBe("http://127.0.0.1:3002");
 	});
 
 	it("honours AO_PORT when no run file yields a live daemon", () => {

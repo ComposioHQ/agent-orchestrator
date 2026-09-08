@@ -40,11 +40,6 @@ export type DaemonProbe = {
 export type DaemonProber = (port: number, endpoint: "healthz" | "readyz") => Promise<DaemonProbe | null>;
 
 /**
- * The port a freshly spawned daemon is expected to bind: AO_PORT when set and
- * valid, otherwise the daemon's default. Used to probe for an already-serving
- * daemon before spawning a child that would only refuse and exit.
- */
-/**
  * Port the Electron dev daemon is started on. `main.ts` puts this into the
  * daemon's environment as AO_PORT when none is set, so it is the port a plain
  * `npm run dev` ends up listening on — not DEFAULT_DAEMON_PORT.
@@ -60,6 +55,11 @@ export function expectedDevDaemonPort(env: Record<string, string | undefined>): 
 	return env.AO_PORT ? expectedDaemonPort(env) : DEV_DAEMON_PORT;
 }
 
+/**
+ * The port a freshly spawned daemon is expected to bind: AO_PORT when set and
+ * valid, otherwise the daemon's default. Used to probe for an already-serving
+ * daemon before spawning a child that would only refuse and exit.
+ */
 export function expectedDaemonPort(env: Record<string, string | undefined>): number {
 	const configured = env.AO_PORT ? Number(env.AO_PORT) : NaN;
 	return Number.isInteger(configured) && configured >= 1 && configured <= 65535 ? configured : DEFAULT_DAEMON_PORT;

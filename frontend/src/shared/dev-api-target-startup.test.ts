@@ -100,4 +100,18 @@ describe("processIsAlive", () => {
 	it("counts an unused pid as dead", () => {
 		expect(processIsAlive(2147483646)).toBe(false);
 	});
+
+	// These never reach process.kill. 0 signals the caller's own process group
+	// and a negative pid signals the group named by its absolute value, so both
+	// would succeed and report "alive" for a pid that names no process — and 0 is
+	// exactly what parseRunFile yields for a run file with no usable pid.
+	it.each([
+		["zero", 0],
+		["negative", -1],
+		["a whole process group", -process.pid],
+		["a float", 42.5],
+		["NaN", Number.NaN],
+	])("counts %s as dead without signalling anything", (_name, pid) => {
+		expect(processIsAlive(pid)).toBe(false);
+	});
 });

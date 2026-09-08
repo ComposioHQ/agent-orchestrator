@@ -45,8 +45,23 @@ export type DevApiTargetDeps = {
 /**
  * Candidate run files, in the order the daemon's own writers pick one:
  * AO_RUN_FILE wins (agent sessions and isolated checkouts set it — which is why
- * ao-desktop-dev's launch command `env -u`s it), then the Electron dev
- * supervisor's dev-scoped file, then the standalone `ao start` default.
+ * ao-desktop-dev's launch command `env -u`s it), then the file the daemon this
+ * dev server is actually paired with would have written.
+ *
+ * Which file that is depends on who supervises the daemon, so the standalone
+ * `ao start` default is not a blanket fallback. Under `npm run dev` Electron
+ * supervises the daemon and writes only the dev-scoped file, so
+ * `~/.ao/running.json` can then only describe *some other* daemon — an installed
+ * AO app, or a CLI `ao start` — serving `~/.ao/data` rather than the dev
+ * profile's `~/.ao/dev/data`. Proxying there is worse than the 502 this module
+ * exists to remove: the renderer comes up populated with another instance's
+ * sessions and workspaces, and writes land there too. main.ts:runFilePath()
+ * draws the same line, returning the dev path alone in dev.
+ *
+ * `dev:web` is the opposite case: it starts no daemon, so it has none of its own
+ * to confuse. docs/development.md pairs it with a CLI daemon on the standalone
+ * path, and falling through to the dev file after that lets it attach to a
+ * `npm run dev` instance when that is the only one running.
  */
 function runFileCandidates(
 	env: Record<string, string | undefined>,
@@ -56,11 +71,10 @@ function runFileCandidates(
 ): string[] {
 	const explicit = env.AO_RUN_FILE?.trim();
 	if (explicit) return [explicit];
-	const candidates: string[] = [];
-	if (homeDir) candidates.push(devRunFilePath(homeDir, joinPath));
+	const dev = homeDir ? [devRunFilePath(homeDir, joinPath)] : [];
+	if (!env.VITE_NO_ELECTRON) return dev;
 	const standalone = defaultRunFilePath(platform, env, homeDir);
-	if (standalone) candidates.push(standalone);
-	return candidates;
+	return standalone ? [standalone, ...dev] : dev;
 }
 
 /**
@@ -102,12 +116,12 @@ export function resolveDevApiTarget(deps: DevApiTargetDeps = {}): string {
 		return `http://127.0.0.1:${info.port}`;
 	}
 
-	// No usable run file yet. Under `npm run dev` this is the normal case: Forge
-	// loads this config and starts Vite before Electron exists, so the daemon has
-	// not written its run file and the target is fixed for the Vite lifetime.
-	// Falling back to DEFAULT_DAEMON_PORT pointed the proxy at 3001 while the
-	// supervised daemon came up on 3002 — a 502, or worse a silent hit on some
-	// other AO instance that happens to hold 3001.
+	// No usable run file. Under `npm run dev` this is the normal case rather than
+	// an error: Forge loads this config and starts Vite before Electron exists, so
+	// the daemon has not written its run file yet and the target is fixed for the
+	// Vite lifetime. Falling back to DEFAULT_DAEMON_PORT pointed the proxy at 3001
+	// while the supervised daemon came up on 3002 — a 502, or worse a silent hit
+	// on some other AO instance that happens to hold 3001.
 	//
 	// `dev:web` has no Electron and no supervised daemon, so it keeps the
 	// standalone default.

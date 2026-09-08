@@ -585,7 +585,8 @@ function numberIsInteger(value: unknown): value is number {
 	return typeof value === "number" && Number.isSafeInteger(value) && value > 0;
 }
 
-// Shared with dev-api-target and main.ts so EPERM is judged identically.
+// Shared with main.ts and the Vite dev-server resolver so EPERM is judged
+// identically everywhere: a live process owned by another account, not a dead one.
 const defaultProcessAlive = processIsAlive;
 
 async function removePath(target: string, log: (message: string) => void, label: string): Promise<void> {
