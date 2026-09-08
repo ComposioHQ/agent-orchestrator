@@ -1,6 +1,6 @@
 # Agent Orchestrator Architecture
 
-Agent Orchestrator is a long-running Go daemon that supervises multiple parallel AI coding agent sessions. Every session owns an isolated git worktree and one committed interface mode at a time. A TUI session runs its agent inside a tmux/conpty runtime; a Chat session runs a native protocol controller without an agent terminal runtime. A durable handoff may move a compatible native conversation between them, but both controllers are never live at once. The daemon coordinates both through the same session, lifecycle, workspace, storage, and observation boundaries.
+Agent Orchestrator is a long-running Go daemon that supervises multiple parallel AI coding agent sessions. Every session owns an isolated git worktree and one committed interface mode at a time. A TUI session runs its agent inside a tmux/conpty runtime; a Chat session runs a native protocol controller without an agent terminal runtime. Codex Chat provider processes live in a detached per-session host so daemon/desktop replacement reconnects without stopping an in-flight turn; other Chat drivers currently retain daemon-owned process lifetime. A durable handoff may move a compatible native conversation between TUI and Chat, but both controllers are never live at once. The daemon coordinates both through the same session, lifecycle, workspace, storage, and observation boundaries.
 
 ## Table of Contents
 
@@ -196,7 +196,7 @@ backend/internal/
 ├── service/             # Controller-facing services
 │   ├── project/         # Project CRUD
 │   ├── session/         # Session read-model assembly
-│   ├── chat/            # Runtime-less Chat controllers + durable projection
+│   ├── chat/            # Chat controllers, persistent Codex hosts + durable projection
 │   ├── pr/              # PR observation service
 │   └── review/          # Code review service
 ├── session_manager/     # Internal session command engine
