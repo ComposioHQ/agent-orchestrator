@@ -1158,6 +1158,7 @@ export function XtermTerminal(props: XtermTerminalProps) {
 		shell.addEventListener("drop", dropInput);
 
 		const showLatestOutput = () => {
+			if (disposed) return;
 			term.scrollToBottom();
 			// Hidden output can leave the offscreen DOM scrollbar stale even
 			// after xterm's logical viewport moves. Synchronize it before either
@@ -1170,6 +1171,7 @@ export function XtermTerminal(props: XtermTerminalProps) {
 
 		let cancelActivationPreparation: (() => void) | null = null;
 		const prepareForActivation = (): Promise<void> => {
+			if (disposed) return Promise.resolve();
 			cancelActivationPreparation?.();
 			return new Promise((resolve) => {
 				let firstFrame: number | null = null;
@@ -1219,6 +1221,10 @@ export function XtermTerminal(props: XtermTerminalProps) {
 			// parsed into the buffer, which is what lets the attachment reveal the
 			// pane at the replay's settled scroll position (issue #3160).
 			write: (data, done) => {
+				if (disposed) {
+					done?.();
+					return;
+				}
 				let hasEsc = false;
 				for (let i = 0; i < data.length; i++) {
 					if (data[i] === 0x1b) {
@@ -1241,7 +1247,9 @@ export function XtermTerminal(props: XtermTerminalProps) {
 					done?.();
 				});
 			},
-			writeln: (line) => term.writeln(line, scheduleScrollbarUpdate),
+			writeln: (line) => {
+				if (!disposed) term.writeln(line, scheduleScrollbarUpdate);
+			},
 			showLatestOutput,
 			prepareForActivation,
 			// Live buffer discriminator for predictive local echo on cloud panes:
@@ -1311,12 +1319,19 @@ export function XtermTerminal(props: XtermTerminalProps) {
 			notifyCursorSchemeRef.current = () => {};
 			announcedCursorSchemeRef.current = null;
 			userInputListeners.clear();
-			try {
-				term.dispose();
-			} catch {
-				// Some renderer addons can throw during dispose in certain GPU
-				// environments; the terminal is being torn down regardless.
-			}
+			// xterm schedules an uncancellable zero-delay Viewport sync from open().
+			// React StrictMode tears this effect down in the same task, and disposing
+			// first leaves that callback reading RenderService.dimensions after its
+			// renderer has gone away. Invalidate the AO handle above immediately, but
+			// let xterm's already-queued open work run before releasing the renderer.
+			window.setTimeout(() => {
+				try {
+					term.dispose();
+				} catch {
+					// Some renderer addons can throw during dispose in certain GPU
+					// environments; the terminal is being torn down regardless.
+				}
+			}, 0);
 		};
 	}, []);
 
