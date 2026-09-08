@@ -639,20 +639,20 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 	if providerBoundary != nil {
 		if cfg.ControllerReady == nil {
 			if commitProviderHistory != nil {
-				_ = conv.Close()
+				cleanupUnpublishedConversation(conv, false)
 				return nil, errors.New("commit native history: atomic provider-boundary lifecycle is unavailable")
 			}
 			if err := s.store.CreateAndActivateConversationBranch(
 				ctx, cfg.SessionID, *providerBoundary, generation, s.now(),
 			); err != nil {
-				_ = conv.Close()
+				cleanupUnpublishedConversation(conv, false)
 				return nil, fmt.Errorf("commit fresh provider boundary: %w", err)
 			}
 			commit.Conversation = controller.conversation
 			commit.Conversation.ActiveBranchID = providerBoundary.ID
 			commit.Conversation.UpdatedAt = s.now()
 		} else if commit.Conversation.ActiveBranchID != providerBoundary.ID {
-			_ = conv.Close()
+			cleanupUnpublishedConversation(conv, false)
 			return nil, fmt.Errorf("commit chat controller: provider boundary %s was not activated", providerBoundary.ID)
 		}
 	}
