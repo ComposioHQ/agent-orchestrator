@@ -4,14 +4,20 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/coder/websocket"
+
 	clouddomain "github.com/aoagents/agent-orchestrator/backend/internal/cloud/domain"
+	cloudevents "github.com/aoagents/agent-orchestrator/backend/internal/cloud/events"
 	cloudpostgres "github.com/aoagents/agent-orchestrator/backend/internal/cloud/postgres"
 	cloudworker "github.com/aoagents/agent-orchestrator/backend/internal/cloud/worker"
 )
@@ -114,6 +120,142 @@ func TestSharedProjectAccessPreservesSessionScope(t *testing.T) {
 	}
 	if access.canOperateSession(projectID, sessionB) {
 		t.Fatal("session A editor must not operate session B")
+	}
+}
+
+type terminalTicketTestStore struct {
+	store
+
+	mu       sync.Mutex
+	consumed bool
+	attempts int
+}
+
+func (s *terminalTicketTestStore) ConsumeAccessTicket(
+	_ context.Context,
+	token, purpose string,
+) (cloudpostgres.ConsumedTicket, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.attempts++
+	if token != "valid-ticket" || purpose != "terminal" || s.consumed {
+		return cloudpostgres.ConsumedTicket{}, cloudpostgres.ErrInvalidTicket
+	}
+	s.consumed = true
+	return cloudpostgres.ConsumedTicket{
+		AccountID: "account-one",
+		SessionID: "session-one",
+		Purpose:   purpose,
+		Scopes:    []string{"terminal:read"},
+	}, nil
+}
+
+func (s *terminalTicketTestStore) LatestEventSequenceByType(
+	context.Context,
+	clouddomain.AccountID,
+	clouddomain.SessionID,
+	string,
+) (int64, error) {
+	return 0, errors.New("stop terminal after successful ticket validation")
+}
+
+func (s *terminalTicketTestStore) consumeAttempts() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.attempts
+}
+
+func terminalSocketTestServer(store *terminalTicketTestStore) *Server {
+	return &Server{
+		store:         store,
+		events:        cloudevents.New(nil),
+		webOriginHost: "app.example",
+	}
+}
+
+func websocketUpgradeRequest(path string, origin string) *http.Request {
+	request := httptest.NewRequest(http.MethodGet, path, nil)
+	request.Header.Set("Connection", "Upgrade")
+	request.Header.Set("Upgrade", "websocket")
+	request.Header.Set("Sec-WebSocket-Version", "13")
+	request.Header.Set("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==")
+	if origin != "" {
+		request.Header.Set("Origin", origin)
+	}
+	return request
+}
+
+func TestTerminalSocketRejectsInvalidRequestsWithoutConsumingTicket(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		request func() *http.Request
+		status  int
+	}{
+		{
+			name: "invalid after",
+			request: func() *http.Request {
+				return websocketUpgradeRequest("/terminal?ticket=valid-ticket&after=-1", "https://app.example")
+			},
+			status: http.StatusBadRequest,
+		},
+		{
+			name: "rejected origin",
+			request: func() *http.Request {
+				return websocketUpgradeRequest("/terminal?ticket=valid-ticket", "https://attacker.example")
+			},
+			status: http.StatusForbidden,
+		},
+		{
+			name: "invalid upgrade",
+			request: func() *http.Request {
+				return httptest.NewRequest(http.MethodGet, "/terminal?ticket=valid-ticket", nil)
+			},
+			status: http.StatusUpgradeRequired,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			store := &terminalTicketTestStore{}
+			response := httptest.NewRecorder()
+			terminalSocketTestServer(store).terminalSocket(response, test.request())
+			if response.Code != test.status {
+				t.Fatalf("status = %d, want %d", response.Code, test.status)
+			}
+			if attempts := store.consumeAttempts(); attempts != 0 {
+				t.Fatalf("ticket consume attempts = %d, want 0", attempts)
+			}
+		})
+	}
+}
+
+func TestTerminalSocketConsumesTicketOnlyAfterSuccessfulUpgrade(t *testing.T) {
+	store := &terminalTicketTestStore{}
+	server := httptest.NewServer(http.HandlerFunc(terminalSocketTestServer(store).terminalSocket))
+	defer server.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	terminalURL := "ws" + strings.TrimPrefix(server.URL, "http") + "/terminal?ticket=valid-ticket"
+	headers := http.Header{"Origin": []string{"https://app.example"}}
+	socket, _, err := websocket.Dial(ctx, terminalURL, &websocket.DialOptions{HTTPHeader: headers})
+	if err != nil {
+		t.Fatalf("dial valid terminal socket: %v", err)
+	}
+	defer socket.Close(websocket.StatusNormalClosure, "test complete")
+	if attempts := store.consumeAttempts(); attempts != 1 {
+		t.Fatalf("ticket consume attempts = %d, want 1 after a successful upgrade", attempts)
+	}
+
+	replay, _, err := websocket.Dial(ctx, terminalURL, &websocket.DialOptions{HTTPHeader: headers})
+	if err != nil {
+		t.Fatalf("dial replay terminal socket: %v", err)
+	}
+	defer replay.Close(websocket.StatusNormalClosure, "test complete")
+	_, _, err = replay.Read(ctx)
+	if websocket.CloseStatus(err) != websocket.StatusPolicyViolation {
+		t.Fatalf("replayed ticket close = %v, want policy violation", err)
+	}
+	if attempts := store.consumeAttempts(); attempts != 2 {
+		t.Fatalf("ticket consume attempts = %d, want 2 including rejected replay", attempts)
 	}
 }
 
