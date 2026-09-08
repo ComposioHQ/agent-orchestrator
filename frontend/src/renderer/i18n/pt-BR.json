@@ -1205,6 +1205,8 @@
 	"shell.projects": "Projetos",
 	"shell.projectActions": "Ações do projeto {{name}}",
 	"shell.projectSettings": "Configurações do projeto",
+	"shell.provisioning": "Configurando o projeto — iniciando o orquestrador…",
+	"shell.provisioningDots": "Configurando...",
 	"shell.restart": "Reiniciar",
 	"shell.remove": "Remover",
 	"shell.removeProjectBody": "Isso interrompe as sessões ativas e remove o projeto da barra lateral, mas mantém a pasta do repositório e o histórico armazenado em disco.",
