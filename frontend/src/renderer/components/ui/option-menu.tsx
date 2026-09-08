@@ -103,11 +103,12 @@ export function OptionMenuLabel({
 export function OptionMenuItem({
 	className,
 	active,
+	radio,
 	...props
-}: React.ComponentProps<typeof DropdownMenuPrimitive.Item> & { active?: boolean }) {
+}: React.ComponentProps<typeof DropdownMenuPrimitive.Item> & { active?: boolean; radio?: boolean }) {
 	return (
 		<DropdownMenuPrimitive.Item
-			{...(active === undefined
+			{...(radio === undefined
 				? {}
 				: { role: "menuitemradio" as const, "aria-checked": active })}
 			data-active={active || undefined}
