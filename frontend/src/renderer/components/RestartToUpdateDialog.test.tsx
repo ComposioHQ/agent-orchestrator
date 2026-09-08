@@ -81,7 +81,7 @@ it("names the sessions that would lose a turn and waits for confirmation", async
 	expect(warning).not.toHaveTextContent("Terminal one");
 
 	expect(updInstall).not.toHaveBeenCalled();
-	await userEvent.click(screen.getByRole("button", { name: "Restart & install" }));
+	await userEvent.click(screen.getByRole("button", { name: "Install and restart" }));
 	expect(updInstall).toHaveBeenCalledTimes(1);
 });
 
