@@ -914,6 +914,29 @@ describe("CreateProjectFlow project import validation", () => {
 		expect(screen.queryByText("Repository name is available.")).not.toBeInTheDocument();
 	});
 
+	it("shows Other after selecting a custom GitHub owner", async () => {
+		const user = userEvent.setup();
+		bridgeMocks.chooseDirectory.mockResolvedValue("/repo/project-no-git");
+		apiMocks.POST.mockResolvedValueOnce({
+			data: projectValidation("/repo/project-no-git", {
+				nextStep: "prepare_git",
+				root: {
+					hasOrigin: false,
+					requiredActions: ["create_remote_repository"],
+				},
+			}),
+		});
+
+		renderChooseFlow();
+		await openSource(user, "Import an existing project");
+
+		await user.click(await screen.findByLabelText("Owner"));
+		await user.click(await screen.findByRole("option", { name: "Use a different owner" }));
+
+		expect(screen.getByText("Other")).toBeInTheDocument();
+		expect(screen.getByRole("textbox", { name: "Owner" })).toHaveValue("username");
+	});
+
 	it("requires an available GitHub repository name", async () => {
 		const user = userEvent.setup();
 		bridgeMocks.chooseDirectory.mockResolvedValue("/repo/project");
