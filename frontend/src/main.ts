@@ -149,6 +149,8 @@ import { AGENT_SWITCH_VISIBILITY_IPC_CHANNEL } from "./shared/agent-switch-obser
 declare const MAIN_WINDOW_VITE_DEV_SERVER_URL: string | undefined;
 declare const MAIN_WINDOW_VITE_NAME: string;
 
+const execFileAsync = promisify(execFile);
+
 // Windows GUI launches (e.g. from a Start-menu/desktop shortcut) have no attached
 // console, so process.stdout and process.stderr are dead pipes. The daemon-output
 // console.log/console.error calls
@@ -261,7 +263,6 @@ const trayLifecycle = createTrayLifecycle({
 // Icon/taskbar-shortcut folder drop, mirroring VS Code: relayed to the
 // renderer's global drop handling so it opens the same create-project flow.
 const OPEN_FOLDER_PATH_CHANNEL = "app:openFolderPath";
-const execFileAsync = promisify(execFile);
 // Folder path from a cold-start launch (icon/shortcut drop while not running)
 // whose renderer isn't mounted yet. Flushed once the shell signals readiness
 // via TRAY_RENDERER_READY_CHANNEL — see the OPEN_FOLDER_PATH_CHANNEL handler.
@@ -2048,6 +2049,18 @@ async function chooseDirectory(title: string): Promise<string | null> {
 ipcMain.handle("app:chooseDirectory", async (_event, title?: string) => {
 	return chooseDirectory(typeof title === "string" && title.trim() ? title : "Choose a git repository");
 });
+ipcMain.handle("app:checkGitRepository", async (_event, remoteUrl: string) => {
+	await ensureShellEnv();
+	try {
+		await execFileAsync("git", ["ls-remote", "--quiet", remoteUrl, "HEAD"], {
+			env: daemonEnv(),
+			timeout: 8000,
+		});
+		return true;
+	} catch {
+		return false;
+	}
+});
 ipcMain.handle("app:scanImportFolder", async (_event, input: { path: string; mode: "project" | "workspace" }) => {
 	await ensureShellEnv();
 	return scanImportFolder(input.path, input.mode, { env: daemonEnv(), homeDir: os.homedir() });
@@ -2060,29 +2073,26 @@ ipcMain.handle("app:getRepositoryBranch", async (_event, path: string) => {
 	await ensureShellEnv();
 	return resolveCheckedOutBranch(path, { env: daemonEnv(), homeDir: os.homedir() });
 });
-ipcMain.handle("app:getGitHubUsername", async () => {
-	await ensureShellEnv();
-	try {
-		const { stdout } = await execFileAsync("gh", ["api", "user", "--jq", ".login"], { env: daemonEnv(), timeout: 5000 });
-		const login = String(stdout).trim();
-		return login || undefined;
-	} catch {
-		return undefined;
-	}
-});
+ipcMain.handle("app:getGitHubLogin", async () => process.env.AO_GITHUB_LOGIN?.trim() ?? "");
 ipcMain.handle("app:checkGitHubRepositoryAvailability", async (_event, input: { owner: string; name: string }) => {
 	await ensureShellEnv();
-	const owner = typeof input?.owner === "string" ? input.owner.trim() : "";
-	const name = typeof input?.name === "string" ? input.name.trim() : "";
-	if (!owner || !name) return { available: false, message: "Owner and repository name are required." };
+	const owner = input.owner.trim();
+	const name = input.name.trim();
+	if (!owner || !name) {
+		return { available: false, message: "Owner and repository name are required." };
+	}
 	try {
-		await execFileAsync("gh", ["api", `repos/${owner}/${name}`], { env: daemonEnv(), timeout: 5000 });
-		return { available: false, message: "This repository already exists." };
-	} catch (err) {
-		const childErr = err as { code?: number; stderr?: unknown; stdout?: unknown };
-		const output = `${String(childErr.stderr ?? "")}\n${String(childErr.stdout ?? "")}`;
-		if (childErr.code === 1 && /not found|404/i.test(output)) return { available: true };
-		return { available: false, message: output.trim() || "Could not check repository availability." };
+		await execFileAsync("gh", ["api", `repos/${owner}/${name}`], {
+			env: daemonEnv(),
+			timeout: 8000,
+		});
+		return { available: false, message: "Repository name is already in use for this owner." };
+	} catch (error) {
+		const output = error instanceof Error ? error.message : String(error);
+		if (/404|not found/i.test(output)) {
+			return { available: true };
+		}
+		return { available: false, message: "Could not check this repository name. Confirm GitHub CLI is signed in." };
 	}
 });
 ipcMain.handle("clipboard:writeText", (_event, text: string) => {

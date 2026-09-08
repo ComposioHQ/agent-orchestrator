@@ -9,14 +9,15 @@ export const aoBridge: AoBridge =
 		app: {
 			getVersion: async () => "0.0.0-preview",
 			chooseDirectory: async () => null,
+			checkGitRepository: async () => true,
 			openExternal: async (url: string) => {
 				window.open(url, "_blank", "noopener,noreferrer");
 			},
 			scanImportFolder: async ({ path }) => ({ path, repos: [] }),
 			checkAncestorRepo: async () => undefined,
 			getRepositoryBranch: async () => undefined,
-			getGitHubUsername: async () => undefined,
-			checkGitHubRepositoryAvailability: async () => ({ available: false, message: "GitHub is unavailable." }),
+			getGitHubLogin: async () => "",
+			checkGitHubRepositoryAvailability: async () => ({ available: true }),
 			getPathForFile: () => "",
 			onOpenFolderPath: () => () => undefined,
 			onNewSessionShortcut: () => () => undefined,

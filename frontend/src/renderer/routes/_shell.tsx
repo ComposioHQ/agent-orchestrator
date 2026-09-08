@@ -1,5 +1,5 @@
 import { createFileRoute, Outlet, useMatchRoute, useNavigate, useParams } from "@tanstack/react-router";
-import { isCancelledError, useQueryClient } from "@tanstack/react-query";
+import { isCancelledError, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { memo, type CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { FolderPlus } from "lucide-react";
 import { useTranslation } from "react-i18next";
@@ -39,7 +39,6 @@ import { applyDocumentTheme, applyDocumentThemeStyle } from "../lib/theme";
 import { aoBridge } from "../lib/bridge";
 import { handleModifierLinkClick } from "../lib/external-link-policy";
 import { recordProjectOpened } from "../lib/project-history";
-import { spawnOrchestrator } from "../lib/spawn-orchestrator";
 import { cn } from "../lib/utils";
 import {
 	isLinuxPlatform,
@@ -80,6 +79,7 @@ function findRegisteredWorkspaceByPath(workspaces: WorkspaceSummary[], path: str
 	const normalizedPath = normalizeProjectPath(path);
 	return workspaces.find((workspace) => normalizeProjectPath(workspace.path) === normalizedPath);
 }
+
 type CreateProjectConfigInput = {
 	workerAgent: string;
 	orchestratorAgent: string;
@@ -94,6 +94,22 @@ export function createProjectConfig(input: CreateProjectConfigInput): components
 		orchestrator: { agent: input.orchestratorAgent as components["schemas"]["RoleOverride"]["agent"] },
 		...(input.trackerIntake ? { trackerIntake: input.trackerIntake } : {}),
 	};
+}
+
+async function waitForWorkspaceSession(
+	queryClient: QueryClient,
+	projectId: string,
+	sessionId: string,
+): Promise<boolean> {
+	for (let attempt = 0; attempt < 3; attempt += 1) {
+		const workspaces = await queryClient.fetchQuery({ ...workspaceQueryOptions, staleTime: 0 });
+		const found = workspaces
+			.find((workspace) => workspace.id === projectId)
+			?.sessions.some((session) => session.id === sessionId);
+		if (found) return true;
+		await new Promise((resolve) => window.setTimeout(resolve, 250));
+	}
+	return false;
 }
 
 const isMac = isMacPlatform();
@@ -387,16 +403,45 @@ function ShellLayout() {
 			updateWorkspaces((current) => [workspace, ...current.filter((item) => item.id !== workspace.id)]);
 			setOrchestratorStartupError(workspace.id, null);
 			try {
-				const sessionId = await spawnOrchestrator(
-					workspace.id,
-					source === "project_clone" ? "project_clone" : "project_add",
-				);
-				await queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
-				void navigate({
-					to: "/projects/$projectId/sessions/$sessionId",
-					params: { projectId: workspace.id, sessionId },
+				void captureRendererEvent("ao.renderer.orchestrator_spawn_requested", {
+					project_id: workspace.id,
+					source,
+				});
+				const {
+					data: spawnData,
+					error: spawnError,
+					response: spawnResponse,
+				} = await apiClient.POST("/api/v1/sessions", {
+					body: {
+						projectId: workspace.id,
+						kind: "orchestrator",
+						harness: input.orchestratorAgent as components["schemas"]["SpawnSessionRequest"]["harness"],
+					},
+				});
+				if (spawnError || !spawnData?.session?.id) {
+					const message = spawnError
+						? apiErrorMessage(spawnError, `Failed to spawn orchestrator (${spawnResponse.status})`)
+						: `Failed to spawn orchestrator (${spawnResponse.status})`;
+					throw new Error(message);
+				}
+					void captureRendererEvent("ao.renderer.orchestrator_spawn_succeeded", {
+						project_id: workspace.id,
+						source,
+					});
+					const sessionId = spawnData.session.id;
+					const sessionVisible = await waitForWorkspaceSession(queryClient, workspace.id, sessionId);
+					if (!sessionVisible) {
+						await queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
+					}
+					void navigate({
+						to: "/projects/$projectId/sessions/$sessionId",
+						params: { projectId: workspace.id, sessionId },
 				});
 			} catch (spawnError) {
+				void captureRendererEvent("ao.renderer.orchestrator_spawn_failed", {
+					project_id: workspace.id,
+					source,
+				});
 				void navigate({ to: "/projects/$projectId", params: { projectId: workspace.id } });
 				const message = spawnError instanceof Error ? spawnError.message : "Could not start orchestrator";
 				const startupMessage = `Project added, but orchestrator did not start: ${message}`;
@@ -413,7 +458,7 @@ function ShellLayout() {
 			orchestratorAgent: string;
 			trackerIntake?: components["schemas"]["TrackerIntakeConfig"];
 			asWorkspace?: boolean;
-			defaultBranch?: string;
+			clonePreparationId?: string;
 		}) => {
 			void addRendererExceptionStep("Project add requested", {
 				source: "project-add",
@@ -429,6 +474,7 @@ function ShellLayout() {
 				body: {
 					path: input.path,
 					asWorkspace: input.asWorkspace || undefined,
+					clonePreparationId: input.clonePreparationId,
 					config: createProjectConfig(input),
 				},
 			});
@@ -489,6 +535,7 @@ function ShellLayout() {
 			workerAgent: string;
 			orchestratorAgent: string;
 			trackerIntake?: components["schemas"]["TrackerIntakeConfig"];
+			signal?: AbortSignal;
 		}) => {
 			void addRendererExceptionStep("Project clone requested", {
 				source: "project-clone",
@@ -501,6 +548,7 @@ function ShellLayout() {
 				throw new Error(status.message || "AO daemon is not ready.");
 			}
 			const { data, error } = await apiClient.POST("/api/v1/projects/clone", {
+				signal: input.signal,
 				body: {
 					remoteUrl: input.remoteUrl,
 					destinationParent: input.destinationParent,
@@ -539,6 +587,16 @@ function ShellLayout() {
 			throw failure;
 		}
 	}, []);
+
+	const validateImport = useCallback(
+		async (input: { path: string; importKind: "project" | "workspace" }) => {
+			const { data, error } = await apiClient.POST("/api/v1/imports/validate", { body: input });
+			if (error) throw new Error(apiErrorMessage(error));
+			if (!data) throw new Error("Import validation returned no result");
+			return data;
+		},
+		[],
+	);
 
 	const removeProject = useCallback(
 		async (projectId: string) => {
@@ -812,12 +870,14 @@ function ShellLayout() {
 			cloneProject,
 			createProject,
 			initializeProjectRepository,
+			validateImport,
 		}),
 		[
 			cloneProject,
 			createProject,
 			daemonStatus,
 			initializeProjectRepository,
+			validateImport,
 			workspaceStartupState,
 		],
 	);
