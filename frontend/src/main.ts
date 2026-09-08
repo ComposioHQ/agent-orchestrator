@@ -2033,7 +2033,7 @@ function failClosedTelemetryPolicyView(): TelemetryPolicyView {
 }
 async function chooseDirectory(title: string): Promise<string | null> {
 	const options: OpenDialogOptions = {
-		properties: ["openDirectory"],
+		properties: ["openDirectory", "createDirectory"],
 		title,
 	};
 	// On Windows, parenting the common file dialog forces a repaint of the main

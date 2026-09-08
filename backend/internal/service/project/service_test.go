@@ -2186,3 +2186,21 @@ func TestManager_RememberPortablePermissions(t *testing.T) {
 		t.Fatal("accepted unknown harness")
 	}
 }
+
+func TestPrepareCloneCreatesDestinationParents(t *testing.T) {
+	m := newManager(t)
+	source := gitRepo(t)
+	parent := filepath.Join(t.TempDir(), "Projects", "new folder")
+	prepared, err := m.PrepareClone(context.Background(), project.CloneInput{
+		RemoteURL: (&url.URL{Scheme: "file", Path: source}).String(), DestinationParent: parent,
+	})
+	if err != nil {
+		t.Fatalf("PrepareClone: %v", err)
+	}
+	if prepared.Path != filepath.Join(parent, filepath.Base(source)) {
+		t.Fatalf("unexpected clone path %q", prepared.Path)
+	}
+	if out, err := exec.Command("git", "-C", prepared.Path, "rev-parse", "--verify", "HEAD").CombinedOutput(); err != nil {
+		t.Fatalf("clone missing commit: %v (%s)", err, out)
+	}
+}

@@ -28,10 +28,28 @@ function renderCloneDialog(
 }
 
 afterEach(() => {
+	window.localStorage.removeItem("ao.clone.lastDestinationParent");
 	vi.restoreAllMocks();
 });
 
 describe("clone repository input", () => {
+	it("edits the destination without opening the picker and submits the updated path", async () => {
+		window.ao!.app.checkGitRepository = vi.fn().mockResolvedValue(true);
+		window.ao!.app.chooseDirectory = vi.fn();
+		const { props, view } = renderCloneDialog();
+		const input = screen.getByRole("textbox", { name: "Destination folder" });
+		fireEvent.click(input);
+		fireEvent.change(input, { target: { value: "/Projects/new folder" } });
+		expect(window.ao!.app.chooseDirectory).not.toHaveBeenCalled();
+		expect(props.onChange).toHaveBeenCalledWith({ ...props.value, destinationParent: "/Projects/new folder" });
+		view.rerender(React.createElement(CloneRepositoryDialog, { ...props, value: { ...props.value, destinationParent: "/Projects/new folder" } }));
+		expect(screen.getByText("Repository will be created at /Projects/new folder/web-app.")).toBeInTheDocument();
+		await waitFor(() => expect(screen.getByRole("button", { name: "Continue" })).toBeEnabled());
+		fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+		expect(props.onContinue).toHaveBeenCalledWith({ ...props.value, destinationParent: "/Projects/new folder", targetPath: "/Projects/new folder/web-app" });
+		expect(window.localStorage.getItem("ao.clone.lastDestinationParent")).toBe("/Projects/new folder");
+	});
+
 	it("describes the destination consistently and shows the exact checkout path", () => {
 		renderCloneDialog();
 
