@@ -74,6 +74,7 @@ type DisplayImportRepo = ImportFolderScan["repos"][number] & {
 };
 type WorkspacePreparationState = Record<string, { approvedActions: string[]; remoteUrl: string }>;
 type ProjectGitHubRepository = { owner: string; name: string; private: boolean };
+type GitHubOwner = { login: string; avatarUrl: string };
 type GitHubRepositoryAvailability = { state: "idle" | "checking" | "available" | "unavailable"; message?: string };
 
 type CreateProjectFlowMode = ProjectKind | "choose";
@@ -1633,26 +1634,24 @@ function ProjectImportDialog({
 	const needsRemote = importNeedsRemoteSetup(requiredActions);
 	const githubOwner = githubRepository?.owner.trim() ?? "";
 	const githubName = githubRepository?.name.trim() ?? "";
-	const [githubOwners, setGitHubOwners] = useState<string[]>([]);
-	const [loadingGitHubOwners, setLoadingGitHubOwners] = useState(false);
+	const [githubOwners, setGitHubOwners] = useState<GitHubOwner[]>([]);
 	const [availability, setAvailability] = useState<GitHubRepositoryAvailability>({ state: "idle" });
 	useEffect(() => {
 		if (!open || !needsRemote) return;
 		let cancelled = false;
-		setLoadingGitHubOwners(true);
-		void aoBridge.app.getGitHubOwners().then((owners) => {
+		const applyOwners = (owners: GitHubOwner[]) => {
 			if (!cancelled) {
 				setGitHubOwners(owners);
-				const owner = owners[0] ?? "";
+				const owner = owners[0]?.login ?? "";
 				if (owner && githubRepository?.owner === "") {
 					const next = { ...githubRepository, owner };
 					onChangeGitHubRepository(next);
 					onChangeRemote(githubRepositoryRemoteUrl(next));
 				}
 			}
-		}).catch(() => undefined).finally(() => {
-			if (!cancelled) setLoadingGitHubOwners(false);
-		});
+		};
+		void aoBridge.app.getCachedGitHubOwners().then(applyOwners).catch(() => undefined);
+		void aoBridge.app.refreshGitHubOwners().then(applyOwners).catch(() => undefined);
 		return () => { cancelled = true; };
 	}, [githubRepository, needsRemote, onChangeGitHubRepository, onChangeRemote, open]);
 	useEffect(() => {
@@ -1759,7 +1758,7 @@ function ProjectImportDialog({
 												<Label htmlFor="githubRepoOwner" className="text-[12px] font-medium text-[var(--color-text-import-title)]">{t("createProject.githubOwner")}</Label>
 												<Select
 													value={githubRepository?.owner ?? ""}
-													disabled={disabled || loadingGitHubOwners || githubOwners.length === 0}
+													disabled={disabled || githubOwners.length === 0}
 													onValueChange={(owner) => {
 														const next = { owner, name: githubRepository?.name ?? "", private: githubRepository?.private ?? true };
 														onChangeGitHubRepository(next);
@@ -1767,10 +1766,17 @@ function ProjectImportDialog({
 													}}
 												>
 													<SelectTrigger id="githubRepoOwner" size="sm" className="h-8 w-full bg-[var(--color-bg-import-card)] font-mono text-[12px]" aria-label={t("createProject.githubOwner")}>
-														<SelectValue placeholder={loadingGitHubOwners ? t("createProject.githubRepoChecking") : t("createProject.githubOwner")} />
+														<SelectValue placeholder={t("createProject.githubOwner")} />
 													</SelectTrigger>
 													<SelectContent position="popper" side="bottom" align="start" sideOffset={4}>
-														{githubOwners.map((owner) => <SelectItem key={owner} value={owner}>{owner}</SelectItem>)}
+														{githubOwners.map((owner) => (
+															<SelectItem key={owner.login} value={owner.login}>
+																<span className="flex items-center gap-2">
+																	<img className="size-4 rounded-full" src={owner.avatarUrl} alt="" />
+																	{owner.login}
+																</span>
+															</SelectItem>
+														))}
 													</SelectContent>
 												</Select>
 											</div>

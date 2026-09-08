@@ -2104,27 +2104,38 @@ ipcMain.handle("app:getGitHubLogin", async (_event, repoPath?: string) => {
 	candidates.push(...gitNames);
 	return candidates.find((candidate) => candidate.length > 0) ?? "";
 });
-ipcMain.handle("app:getGitHubOwners", async () => {
+type GitHubOwner = { login: string; avatarUrl: string };
+let cachedGitHubOwners: GitHubOwner[] = [];
+
+async function refreshGitHubOwners(): Promise<GitHubOwner[]> {
 	await ensureShellEnv();
 	try {
-		const { stdout } = await execFileAsync("gh", ["api", "user", "--jq", ".login"], {
+		const { stdout } = await execFileAsync("gh", ["api", "user", "--jq", "[.login, .avatar_url] | @tsv"], {
 			env: daemonEnv(),
 			timeout: 5000,
 		});
 		let organizationOutput = "";
 		try {
-			({ stdout: organizationOutput } = await execFileAsync("gh", ["api", "user/memberships/orgs", "--paginate", "--jq", ".[].organization.login"], {
+			({ stdout: organizationOutput } = await execFileAsync("gh", ["api", "user/memberships/orgs", "--paginate", "--jq", ".[] | [.organization.login, .organization.avatar_url] | @tsv"], {
 				env: daemonEnv(),
 				timeout: 8000,
 			}));
 		} catch {
 			// The authenticated account may not have the read:org scope; the personal owner is still usable.
 		}
-		return [...new Set([stdout, ...organizationOutput.split("\n")].map((owner) => owner.trim()).filter(Boolean))];
+		const owners = [stdout, ...organizationOutput.split("\n")].map((line) => {
+			const [login, avatarUrl] = line.trim().split("\t");
+			return login && avatarUrl ? { login, avatarUrl } : null;
+		}).filter((owner): owner is GitHubOwner => owner !== null);
+		cachedGitHubOwners = [...new Map(owners.map((owner) => [owner.login, owner])).values()];
+		return cachedGitHubOwners;
 	} catch {
-		return [];
+		return cachedGitHubOwners;
 	}
-});
+}
+
+ipcMain.handle("app:getCachedGitHubOwners", () => cachedGitHubOwners);
+ipcMain.handle("app:refreshGitHubOwners", () => refreshGitHubOwners());
 ipcMain.handle("app:checkGitHubRepositoryAvailability", async (_event, input: { owner: string; name: string }) => {
 	await ensureShellEnv();
 	const owner = input.owner.trim();
@@ -2525,6 +2536,7 @@ async function writeAppStateOnLaunch(): Promise<void> {
 }
 
 app.whenReady().then(async () => {
+	void refreshGitHubOwners();
 	const visibilityKillSwitched = (process.env.AO_TELEMETRY_DISABLED_EVENTS ?? "").split(",").some((name) => name.trim() === "ao.agent_switch.visibility_failure");
 	// The approved release gate is intentionally closed. Tests inject the
 	// dedicated no-cache sender; the shipping composition creates no visibility

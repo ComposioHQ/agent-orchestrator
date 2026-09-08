@@ -12,7 +12,8 @@ const bridgeMocks = vi.hoisted(() => ({
 	checkGitHubRepositoryAvailability: vi.fn(),
 	chooseDirectory: vi.fn(),
 	getGitHubLogin: vi.fn(),
-	getGitHubOwners: vi.fn(),
+	getCachedGitHubOwners: vi.fn(),
+	refreshGitHubOwners: vi.fn(),
 	getRepositoryBranch: vi.fn(),
 	scanImportFolder: vi.fn(),
 }));
@@ -32,7 +33,8 @@ vi.mock("../lib/bridge", () => ({
 			checkGitHubRepositoryAvailability: bridgeMocks.checkGitHubRepositoryAvailability,
 		chooseDirectory: bridgeMocks.chooseDirectory,
 		getGitHubLogin: bridgeMocks.getGitHubLogin,
-		getGitHubOwners: bridgeMocks.getGitHubOwners,
+		getCachedGitHubOwners: bridgeMocks.getCachedGitHubOwners,
+		refreshGitHubOwners: bridgeMocks.refreshGitHubOwners,
 		getRepositoryBranch: bridgeMocks.getRepositoryBranch,
 			scanImportFolder: bridgeMocks.scanImportFolder,
 		},
@@ -244,7 +246,8 @@ beforeEach(() => {
 	bridgeMocks.checkGitHubRepositoryAvailability.mockReset().mockResolvedValue({ available: true });
 	bridgeMocks.chooseDirectory.mockReset();
 	bridgeMocks.getGitHubLogin.mockReset().mockResolvedValue("");
-	bridgeMocks.getGitHubOwners.mockReset().mockResolvedValue(["username", "acme"]);
+	bridgeMocks.getCachedGitHubOwners.mockReset().mockResolvedValue([{ login: "username", avatarUrl: "https://avatars.example/username" }, { login: "acme", avatarUrl: "https://avatars.example/acme" }]);
+	bridgeMocks.refreshGitHubOwners.mockReset().mockResolvedValue([{ login: "username", avatarUrl: "https://avatars.example/username" }, { login: "acme", avatarUrl: "https://avatars.example/acme" }]);
 	bridgeMocks.getRepositoryBranch.mockReset().mockResolvedValue(undefined);
 	bridgeMocks.scanImportFolder.mockReset().mockImplementation(async ({ path }: { path: string }) => okScan(path));
 	apiMocks.POST.mockReset();
