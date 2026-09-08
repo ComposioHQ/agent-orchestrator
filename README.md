@@ -8,4 +8,4 @@ The native folder is a separate real Electron Forge build of the cumulative fina
 
 `receipt-restart-tests.txt` is real Go service/SQLite evidence: uncertain steer and inline delivery reservations survive retries/controller restarts without repeating provider actions. Provider behavior in those tests is an injected fake counted at the service boundary.
 
-Captures contain isolated QA data and exclude credentials. QA captures are kept on this evidence branch so they do not inflate the six implementation diffs. Full validation results and PR links will be added as final checks complete.
+Captures contain isolated QA data and exclude credentials. QA captures are kept on this evidence branch so they do not inflate the six implementation diffs. See [VALIDATION.md](VALIDATION.md) for commands, completed checks and exact local validation limits.
