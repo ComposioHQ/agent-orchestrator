@@ -690,6 +690,7 @@ export interface McpServer {
 }
 
 export interface ConversationSnapshot {
+	importedHistory?: boolean;
 	conversationId: string;
 	sessionId: string;
 	harness: string;

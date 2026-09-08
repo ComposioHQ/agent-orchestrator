@@ -26,7 +26,9 @@ const claudeConfigDirEnv = "CLAUDE_CONFIG_DIR"
 type ClaudeSource struct {
 	// configDir overrides the resolved state root; empty resolves from
 	// CLAUDE_CONFIG_DIR or ~/.claude.
-	configDir string
+	configDir  string
+	cache      fileCache[ImportableSession]
+	usageCache fileCache[usageCount]
 }
 
 // NewClaudeSource builds a Claude Code source using the standard state root.
@@ -96,7 +98,7 @@ func (s *ClaudeSource) Discover(ctx context.Context, opts DiscoverOptions) ([]Im
 		if err != nil || !ok {
 			return ImportableSession{}, false, err
 		}
-		if !opts.IncludeTrivial && !session.Meaning.Imported() {
+		if session.TokenCount < opts.MinTokens {
 			return ImportableSession{}, false, nil
 		}
 		return session, true, nil
@@ -121,6 +123,38 @@ func (s *ClaudeSource) readSession(ctx context.Context, configDir, path, fileNam
 	if err := ctx.Err(); err != nil {
 		return ImportableSession{}, false, err
 	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return ImportableSession{}, false, nil
+	}
+	value, cached := s.cache.get(path, info)
+	if !cached {
+		var ok bool
+		value, ok, err = s.readSessionUncached(ctx, configDir, path, fileName, opts)
+		if err != nil || !ok {
+			return value, ok, err
+		}
+		s.cache.put(path, info, value)
+	}
+	if (!opts.Since.IsZero() && value.LastActivity.Before(opts.Since)) || (opts.IncludeCWD != nil && !opts.IncludeCWD(value.CWD)) {
+		return ImportableSession{}, false, nil
+	}
+	usage, cachedUsage := s.usageCache.get(path, info)
+	if !cachedUsage || !usage.sufficient(opts.MinTokens) {
+		usage.total, usage.complete, err = scanUsage(ctx, path, false, opts.MinTokens)
+		if err != nil {
+			return ImportableSession{}, false, err
+		}
+		s.usageCache.put(path, info, usage)
+	}
+	value.TokenCount = usage.total
+	return value, true, nil
+}
+
+func (s *ClaudeSource) readSessionUncached(ctx context.Context, configDir, path, fileName string, opts DiscoverOptions) (ImportableSession, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return ImportableSession{}, false, err
+	}
 
 	nativeID := strings.TrimSuffix(fileName, ".jsonl")
 
@@ -137,7 +171,7 @@ func (s *ClaudeSource) readSession(ctx context.Context, configDir, path, fileNam
 	if size > opts.MaxScanBytes {
 		if tail, err := tailBytes(path, size, opts.MaxScanBytes); err == nil {
 			for _, line := range completeLines(tail) {
-				if t := parseTime(claudeLineTimestamp(line)); !t.IsZero() {
+				if t := parseTime(claudeLineTimestamp(line)); t.After(last) {
 					last = t
 				}
 			}
@@ -146,28 +180,6 @@ func (s *ClaudeSource) readSession(ctx context.Context, configDir, path, fileNam
 	if last.IsZero() {
 		if info, err := os.Stat(path); err == nil {
 			last = info.ModTime()
-		}
-	}
-
-	if !opts.Since.IsZero() && last.Before(opts.Since) {
-		return ImportableSession{}, false, nil
-	}
-
-	// Out of scope: stop before the expensive full read. A project's listing
-	// otherwise scans every conversation on the machine to show a handful.
-	if opts.IncludeCWD != nil && !opts.IncludeCWD(meta.cwd) {
-		return ImportableSession{}, false, nil
-	}
-
-	// One full pass yields both the display count and the import signals. A
-	// transcript too large to scan keeps count 0 (unknown) and is classified
-	// meaningful on size alone.
-	signals := Signals{FirstPrompt: meta.firstUserText}
-	count := 0
-	if !opts.MetadataOnly && size <= fullCountMaxBytes {
-		signals, count = scanClaudeSignals(path)
-		if signals.FirstPrompt == "" {
-			signals.FirstPrompt = meta.firstUserText
 		}
 	}
 
@@ -182,10 +194,9 @@ func (s *ClaudeSource) readSession(ctx context.Context, configDir, path, fileNam
 		Branch:          meta.gitBranch,
 		Title:           title,
 		LastActivity:    last,
-		MessageCount:    count,
-		SizeBytes:       size,
-		Meaning:         Classify(signals),
-		FirstPrompt:     signals.FirstPrompt,
+
+		SizeBytes:  size,
+		TokenCount: -1,
 	}, true, nil
 }
 
@@ -227,7 +238,7 @@ func parseClaudeHead(head []byte) claudeHeadMeta {
 		if meta.gitBranch == "" && line.GitBranch != "" {
 			meta.gitBranch = line.GitBranch
 		}
-		if t := parseTime(line.Timestamp); !t.IsZero() {
+		if t := parseTime(line.Timestamp); t.After(meta.lastTimestamp) {
 			meta.lastTimestamp = t
 		}
 		switch line.Type {
@@ -283,83 +294,6 @@ func claudeLineTimestamp(raw []byte) string {
 		return ""
 	}
 	return line.Timestamp
-}
-
-// scanClaudeSignals reads a transcript once and returns both the signals that
-// decide whether the conversation is worth importing and the visible message
-// count shown in the list. Sub-agent (side-chain) events are excluded so the
-// numbers reflect the conversation the user would recognize as theirs.
-//
-// The two counts differ on purpose. The display count includes every user and
-// assistant event, matching what a reader would scroll through. The signal
-// count includes only typed human turns, because a user event carrying a tool
-// result is the transcript echoing the agent's own work back, and counting it
-// would make an unattended session look like a conversation.
-func scanClaudeSignals(path string) (Signals, int) {
-	signals := Signals{Scanned: true}
-	visible := 0
-	_ = scanLines(path, func(raw []byte) bool {
-		var line struct {
-			Type        string     `json:"type"`
-			IsSidechain bool       `json:"isSidechain"`
-			Message     *claudeMsg `json:"message"`
-		}
-		if err := json.Unmarshal(raw, &line); err != nil {
-			return true
-		}
-		if line.IsSidechain {
-			return true
-		}
-		if line.Type != "user" && line.Type != "assistant" {
-			return true
-		}
-		visible++
-		if !signals.AuthFailure && hasAuthFailureMarker(strings.ToLower(string(raw))) {
-			signals.AuthFailure = true
-		}
-		switch line.Type {
-		case "user":
-			text := ""
-			if line.Message != nil {
-				text = firstClaudeUserText(line.Message.Content)
-			}
-			if isSyntheticPrompt(text) {
-				return true
-			}
-			signals.UserMessages++
-			if signals.FirstPrompt == "" {
-				signals.FirstPrompt = text
-			}
-		case "assistant":
-			signals.AssistantMessages++
-			if line.Message != nil {
-				signals.ToolCalls += countClaudeToolUses(line.Message.Content)
-			}
-		}
-		return true
-	})
-	return signals, visible
-}
-
-// countClaudeToolUses counts tool_use blocks in an assistant message. Each one
-// is a file edit, a command, or another tool invocation: evidence of real work.
-func countClaudeToolUses(content json.RawMessage) int {
-	if len(content) == 0 {
-		return 0
-	}
-	var blocks []struct {
-		Type string `json:"type"`
-	}
-	if err := json.Unmarshal(content, &blocks); err != nil {
-		return 0
-	}
-	count := 0
-	for _, b := range blocks {
-		if b.Type == "tool_use" {
-			count++
-		}
-	}
-	return count
 }
 
 // capRecent sorts newest-first and keeps at most max entries. max <= 0 keeps all.

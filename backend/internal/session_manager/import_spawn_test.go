@@ -149,3 +149,45 @@ func TestOrdinarySpawnRecordsNoSourceBranch(t *testing.T) {
 		t.Errorf("only an import has a source branch, got %q", rec.Metadata.SourceBranch)
 	}
 }
+
+func TestImportSpawnDoesNotFetchDefaultBranch(t *testing.T) {
+	m, st, ws := importManager(t)
+	project := st.projects["mer"]
+	project.Path = "/repo/mer"
+	st.projects["mer"] = project
+	if _, _, _, err := m.Spawn(context.Background(), importSpawnConfig("feat/payments")); err != nil {
+		t.Fatal(err)
+	}
+	if len(ws.fetches) != 0 {
+		t.Fatalf("import waited for unrelated fetches: %v", ws.fetches)
+	}
+	if ws.lastCfg.BaseRef == "" {
+		t.Fatal("import must pass the locally resolved base to workspace creation")
+	}
+	if len(ws.resolves) != 0 || len(ws.localResolves) != 1 {
+		t.Fatalf("import resolution calls: live=%d local=%d", len(ws.resolves), len(ws.localResolves))
+	}
+	cfg := importSpawnConfig("")
+	cfg.ResumeNativeSession = nil
+	if _, _, _, err := m.Spawn(context.Background(), cfg); err != nil {
+		t.Fatal(err)
+	}
+	if len(ws.resolves) != 1 || len(ws.fetches) != 1 || len(ws.localResolves) != 1 {
+		t.Fatalf("ordinary spawn after import must resolve live and fetch: live=%d local=%d fetch=%d", len(ws.resolves), len(ws.localResolves), len(ws.fetches))
+	}
+}
+
+func TestImportFallbackSeparatesDataDirectories(t *testing.T) {
+	m, st, _ := importManager(t)
+	cfg := importSpawnConfig("")
+	m.dataDir = "/ao/dev-one/data"
+	first := m.importSpawnBranch(cfg, st.projects["mer"], "mer-1")
+	m.dataDir = "/ao/dev-two/data"
+	second := m.importSpawnBranch(cfg, st.projects["mer"], "mer-1")
+	if first == second {
+		t.Fatalf("independent import databases reused branch %q", first)
+	}
+	if second != m.importSpawnBranch(cfg, st.projects["mer"], "mer-1") {
+		t.Fatal("fallback must be stable across retry")
+	}
+}

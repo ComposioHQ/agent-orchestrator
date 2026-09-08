@@ -1,80 +1,83 @@
-import { render, screen } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { fireEvent, render, screen } from "@testing-library/react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ImportSessionsHint } from "./ImportSessionsHint";
-
-const h = vi.hoisted(() => ({ setImportSessionOpen: vi.fn(), ready: true }));
-
-vi.mock("../hooks/useAgentReadinessQuery", () => ({
-	useHasReadyAgent: () => h.ready,
-}));
-
-vi.mock("../stores/ui-store", () => ({
-	useUiStore: (select: (state: { setImportSessionOpen: typeof h.setImportSessionOpen }) => unknown) =>
-		select({ setImportSessionOpen: h.setImportSessionOpen }),
-}));
+import { useImportRunStore } from "../stores/import-run-store";
 
 vi.mock("react-i18next", () => ({
 	useTranslation: () => ({ t: (key: string) => key }),
 }));
-
-const STORAGE_KEY = "ao.importSessionsHint.dismissed";
-
+vi.mock("./ImportSessionDialog", () => ({
+	ImportSessionDialog: ({
+		projectId,
+		onOpenChange,
+	}: {
+		projectId: string;
+		onOpenChange: (open: boolean) => void;
+	}) => (
+		<div role="dialog">
+			{projectId}
+			<button onClick={() => onOpenChange(false)}>Close</button>
+		</div>
+	),
+}));
+vi.mock("../hooks/useAgentReadinessQuery", () => ({
+	useHasReadyAgent: () => false,
+}));
 beforeEach(() => {
-	window.localStorage.clear();
-	h.setImportSessionOpen.mockReset();
-	h.ready = true;
-});
-
-afterEach(() => {
+	useImportRunStore.setState({ runs: {} });
 	window.localStorage.clear();
 });
 
-describe("ImportSessionsHint", () => {
-	it("offers the import route to someone who has not dismissed it", () => {
-		render(<ImportSessionsHint />);
-		expect(screen.getByTestId("import-sessions-hint")).toBeInTheDocument();
-	});
-
-	// The nudge must not cost a disk scan on every launch, so it renders without
-	// asking the daemon what is importable. The dialog does that work on open.
-	it("renders without querying for importable sessions", () => {
+describe("project import action", () => {
+	it("appears without an agent or a scan, even after the old hint was dismissed", () => {
+		window.localStorage.setItem("ao.importSessionsHint.dismissed", "1");
 		const fetchSpy = vi.spyOn(globalThis, "fetch");
-		render(<ImportSessionsHint />);
+		render(
+			<ImportSessionsHint projectId="new-project" projectName="New project" />,
+		);
+		expect(
+			screen.getByRole("button", { name: "importSession.hintTitle" }),
+		).toBeInTheDocument();
 		expect(fetchSpy).not.toHaveBeenCalled();
 		fetchSpy.mockRestore();
 	});
-
-	// Importing is only useful if the conversation can then be resumed, which
-	// takes a working agent. Offering it otherwise is a dead end.
-	it("stays hidden until the user has a ready agent", () => {
-		h.ready = false;
-		render(<ImportSessionsHint />);
-		expect(screen.queryByTestId("import-sessions-hint")).not.toBeInTheDocument();
+	it("opens the selected project's dialog on the first click and remains available after closing", () => {
+		render(
+			<>
+				<ImportSessionsHint projectId="a" projectName="A" />
+				<ImportSessionsHint projectId="b" projectName="B" />
+			</>,
+		);
+		fireEvent.click(screen.getByTestId("import-sessions-b"));
+		expect(screen.getByRole("dialog")).toHaveTextContent("b");
+		fireEvent.click(screen.getByRole("button", { name: "Close" }));
+		expect(screen.getByTestId("import-sessions-b")).toBeInTheDocument();
+		fireEvent.click(screen.getByTestId("import-sessions-a"));
+		expect(screen.getByRole("dialog")).toHaveTextContent("a");
 	});
-
-	it("stays gone once dismissed, across restarts", async () => {
-		const user = userEvent.setup();
-		const { unmount } = render(<ImportSessionsHint />);
-
-		await user.click(screen.getByRole("button", { name: "importSession.hintDismiss" }));
-		expect(screen.queryByTestId("import-sessions-hint")).not.toBeInTheDocument();
-		expect(window.localStorage.getItem(STORAGE_KEY)).toBe("1");
-
-		// A later launch must not bring it back.
-		unmount();
-		render(<ImportSessionsHint />);
-		expect(screen.queryByTestId("import-sessions-hint")).not.toBeInTheDocument();
+	it("keeps another project's progress out of this row", () => {
+		useImportRunStore.setState({
+			runs: {
+				a: {
+					projectId: "a",
+					running: true,
+					stopped: false,
+					progress: { done: 1, total: 3, imported: 1, failed: 0 },
+					errors: [],
+				},
+			},
+		});
+		render(
+			<>
+				<ImportSessionsHint projectId="a" projectName="A" />
+				<ImportSessionsHint projectId="b" projectName="B" />
+			</>,
+		);
+		expect(screen.getByTestId("import-sessions-a")).toHaveTextContent(
+			"importSession.importingProgress",
+		);
+		expect(screen.getByTestId("import-sessions-b")).toHaveTextContent(
+			"importSession.hintTitle",
+		);
 	});
-
-	it("opens the import dialog and retires itself when acted on", async () => {
-		const user = userEvent.setup();
-		render(<ImportSessionsHint />);
-
-		await user.click(screen.getByRole("button", { name: "importSession.hintTitle" }));
-		expect(h.setImportSessionOpen).toHaveBeenCalledWith(true);
-		// Acting on the nudge answers it, so it should not return next launch.
-		expect(window.localStorage.getItem(STORAGE_KEY)).toBe("1");
-		expect(screen.queryByTestId("import-sessions-hint")).not.toBeInTheDocument();
-	});
-})
+});

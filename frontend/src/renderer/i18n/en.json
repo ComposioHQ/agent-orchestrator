@@ -1712,10 +1712,10 @@
 	"settings.project.reviewer": "Reviewer",
 	"settings.models.customAgentModelAria": "Custom {{label}} model",
 	"settings.importSessions": "Import sessions",
-	"importSession.descriptionProject": "Bring a Claude Code or Codex conversation from this project's folder into AO as a resumable session.",
-	"importSession.emptyBodyProject": "Nothing from Claude Code or Codex in this project in the last {{days}} days.",
+	"importSession.descriptionProject": "Import conversations for this project from the past 15 days with at least 15,000 tokens of cumulative provider usage, including cached tokens.",
+	"importSession.emptyBodyProject": "No conversations for this project with at least 15,000 tokens of provider usage in the past 15 days.",
 	"importSession.hintDismiss": "Dismiss the import suggestion",
-	"importSession.hintTitle": "Import session",
+	"importSession.hintTitle": "Import sessions",
 	"importSession.importAll": "Import all",
 	"importSession.importingProgress": "Importing {{done}} of {{total}}…",
 	"importSession.stop": "Stop",
@@ -1726,5 +1726,7 @@
 	"importSession.importedCount_other": "Imported {{count}} sessions",
 	"importSession.failedCount_one": "{{count}} failed",
 	"importSession.failedCount_other": "{{count}} failed",
-	"importSession.keepsRunning": "you can keep working"
+	"importSession.keepsRunning": "you can keep working",
+	"importSession.stopped": "Import stopped. {{count}} remaining.",
+	"importSession.tokens": "≥ {{count}} tokens"
 }

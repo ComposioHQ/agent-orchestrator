@@ -1715,14 +1715,14 @@
 	"settings.importSessions": "セッションのインポート",
 	"importSession.title": "セッションをインポート",
 	"importSession.description": "このマシンにある Claude Code や Codex の会話を、再開できるセッションとして AO に取り込みます。",
-	"importSession.descriptionProject": "このプロジェクトのフォルダにある Claude Code や Codex の会話を、再開できるセッションとして AO に取り込みます。",
+	"importSession.descriptionProject": "過去15日間のこのプロジェクトの会話のうち、キャッシュ済みトークンを含むプロバイダーの累積使用量が15,000トークン以上のものをインポートします。",
 	"importSession.openFromWelcome": "セッションをインポート",
 	"importSession.close": "インポートダイアログを閉じる",
 	"importSession.loading": "会話を検索しています…",
 	"importSession.errorTitle": "会話を読み込めませんでした",
 	"importSession.emptyTitle": "インポートできる会話がありません",
 	"importSession.emptyBody": "過去 {{days}} 日間に Claude Code や Codex の会話はありません。",
-	"importSession.emptyBodyProject": "過去 {{days}} 日間、このプロジェクトに Claude Code や Codex の会話はありません。",
+	"importSession.emptyBodyProject": "過去15日間にプロバイダー使用量が15,000トークン以上のこのプロジェクトの会話はありません。",
 	"importSession.import": "インポート",
 	"importSession.imported": "インポート済み",
 	"importSession.importFailed": "インポートに失敗しました",
@@ -1744,5 +1744,7 @@
 	"importSession.importedCount_other": "{{count}} 件のセッションをインポートしました",
 	"importSession.failedCount_one": "{{count}} 件失敗",
 	"importSession.failedCount_other": "{{count}} 件失敗",
-	"importSession.keepsRunning": "作業を続けられます"
+	"importSession.keepsRunning": "作業を続けられます",
+	"importSession.stopped": "インポートを停止しました。残り{{count}}件。",
+	"importSession.tokens": "≥ {{count}}トークン"
 }

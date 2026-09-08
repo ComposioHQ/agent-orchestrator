@@ -856,8 +856,6 @@ export function Sidebar({
 				</SidebarGroup>
 			</SidebarContent>
 
-			<ImportSessionsHint />
-
 			{/* Footer — Settings opens the global settings page directly.
 			    Its hairline and row height match the board Archive bar. Bottom
 			    spacing stays inside the footer so there is no empty strip beneath
@@ -1474,6 +1472,7 @@ const ProjectItemContent = memo(function ProjectItemContent({
 							{removeError}
 						</div>
 					) : null}
+					<ImportSessionsHint projectId={workspace.id} projectName={workspace.name} />
 					{/* project-sidebar__sessions: indented under the project parent so worker
           sessions read as children without adding a persistent guide rail. */}
 		<AnimatePresence initial={false}>

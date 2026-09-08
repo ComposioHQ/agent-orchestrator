@@ -172,10 +172,10 @@ export function SessionChatSurface({
 	// from the live controller, so there is nothing to fetch before then.
 	const { models } = useConversationModels(
 		session.id,
-		Boolean(snapshot) && !hasProviderModel,
+		Boolean(snapshot) && !snapshot?.importedHistory && !hasProviderModel,
 	);
-	const { skills } = useConversationSkills(session.id, Boolean(snapshot));
-	const { paths, truncated } = useWorkspaceFilePaths(session.id, Boolean(snapshot));
+	const { skills } = useConversationSkills(session.id, Boolean(snapshot) && !snapshot?.importedHistory);
+	const { paths, truncated } = useWorkspaceFilePaths(session.id, Boolean(snapshot) && !snapshot?.importedHistory);
 	const stageAttachments = useStageAttachments(session.id);
 	const openLinkInBrowser = useSessionBrowserLink(session);
 	// Agent-switch presentation for the chat surface progress track and input locks.

@@ -44,22 +44,17 @@ type ImportableSession struct {
 	Title string
 	// LastActivity is the most recent timestamp observed for the conversation.
 	LastActivity time.Time
-	// MessageCount is a best-effort count of visible messages. It is 0 (unknown)
-	// for transcripts too large to scan cheaply; callers should fall back to
-	// SizeBytes for display in that case.
+	// MessageCount is retained for API compatibility. Discovery leaves it zero
+	// to avoid parsing every conversation message merely to display a count.
 	MessageCount int
 	// SizeBytes is the transcript size on disk.
 	SizeBytes int64
 	// AlreadyImported is true when an AO session is already bound to
 	// NativeSessionID. Stamped by the Service, not by a Source.
 	AlreadyImported bool
-	// Meaning is the import verdict from the transcript's own content. Sources
-	// set it; the Service drops trivial conversations before returning.
-	Meaning Meaning
-	// FirstPrompt is the first typed human turn. It stays inside the daemon as
-	// input for classifying an ambiguous conversation and is never sent to the
-	// renderer, which has no use for it.
-	FirstPrompt string
+	// TokenCount is an observed lower bound of cumulative provider usage,
+	// including cached input. Scanning may stop once MinTokens is reached.
+	TokenCount int64
 }
 
 // DiscoverOptions bounds a discovery scan so a large history directory cannot
@@ -79,22 +74,10 @@ type DiscoverOptions struct {
 	// parsed, before the full transcript read, so a scoped listing pays only a
 	// cheap head read for everything it is going to discard.
 	IncludeCWD func(cwd string) bool
-	// MetadataOnly skips the full transcript read that produces message counts
-	// and the import verdict, keeping only what the head and tail already give:
-	// identity, working directory, branch, title, recency. Resolving one known
-	// id needs nothing more, and reading every transcript end to end to answer
-	// that is what made importing a long history take minutes.
-	MetadataOnly bool
-	// ExcludeRoots drops conversations whose working directory lies inside one
-	// of these paths. AO passes its own data directory: asking a user's agent to
-	// classify conversations records a transcript of that question, and it must
-	// never come back as something to import.
+	// ExcludeRoots optionally excludes conversations beneath these directories.
 	ExcludeRoots []string
-	// IncludeTrivial keeps conversations classified MeaningTrivial — greetings,
-	// aborted attempts, failed logins, smoke tests. The default (false) drops
-	// them, so they never reach the sidebar, the board, or the import list.
-	// Diagnostics set it to see what was withheld.
-	IncludeTrivial bool
+	// MinTokens excludes conversations below this provider usage threshold.
+	MinTokens int64
 }
 
 func (o DiscoverOptions) normalized() DiscoverOptions {
@@ -107,9 +90,6 @@ func (o DiscoverOptions) normalized() DiscoverOptions {
 const (
 	// defaultMaxScanBytes bounds head/tail metadata reads per transcript.
 	defaultMaxScanBytes int64 = 256 * 1024
-	// fullCountMaxBytes is the largest transcript we fully scan for an exact
-	// message count. Above it MessageCount is left unknown (0).
-	fullCountMaxBytes int64 = 8 * 1024 * 1024
 )
 
 // Source discovers importable conversations for one provider.
@@ -130,15 +110,12 @@ type ExistingNativeIDs func(ctx context.Context) (map[string]struct{}, error)
 type Service struct {
 	sources  []Source
 	existing ExistingNativeIDs
-	// snapshots reuses a metadata scan across a burst of id lookups, which is
-	// what importing a whole history is.
-	snapshots *snapshotCache
 }
 
 // NewService builds a discovery service over the given sources. existing may be
 // nil, in which case no session is flagged AlreadyImported.
 func NewService(existing ExistingNativeIDs, sources ...Source) *Service {
-	return &Service{sources: sources, existing: existing, snapshots: newSnapshotCache()}
+	return &Service{sources: sources, existing: existing}
 }
 
 // Sources returns the registered provider sources, in registration order.
@@ -168,10 +145,7 @@ func (s *Service) Discover(ctx context.Context, opts DiscoverOptions) ([]Importa
 			if underAnyRoot(session.CWD, opts.ExcludeRoots) {
 				continue
 			}
-			// Importing junk is worse than importing nothing: a trivial
-			// conversation is withheld outright rather than shown in a
-			// low-value section, which would still be clutter.
-			if !opts.IncludeTrivial && !session.Meaning.Imported() {
+			if session.TokenCount < opts.MinTokens {
 				continue
 			}
 			all = append(all, session)
@@ -190,38 +164,6 @@ func (s *Service) Discover(ctx context.Context, opts DiscoverOptions) ([]Importa
 	})
 
 	return all, errors.Join(errs...)
-}
-
-// Locate returns the importable conversation for one provider + native id, or
-// ok=false when it is no longer on disk. It scans that provider's source with no
-// age or count limit so an older conversation the discovery window dropped can
-// still be imported by id.
-func (s *Service) Locate(ctx context.Context, provider domain.AgentHarness, nativeID string) (ImportableSession, bool, error) {
-	nativeID = strings.TrimSpace(nativeID)
-	// Normalize so the bounded head/tail reads use their real default size; a
-	// zero MaxScanBytes would read nothing and leave cwd/title empty.
-	// IncludeTrivial: an id the caller names explicitly is always importable,
-	// even if the heuristic would have withheld it from the browse list.
-	// MetadataOnly: resolving an id needs the conversation's identity and
-	// working directory, never its message count or verdict. Reading every
-	// transcript in full to answer that cost about twelve seconds per import
-	// on a real history, which a bulk import multiplied into half an hour.
-	opts := DiscoverOptions{IncludeTrivial: true, MetadataOnly: true}.normalized()
-	for _, src := range s.sources {
-		if src.Provider() != provider {
-			continue
-		}
-		found, err := s.scanForLocate(ctx, src, opts)
-		if err != nil {
-			return ImportableSession{}, false, err
-		}
-		for _, f := range found {
-			if f.NativeSessionID == nativeID {
-				return f, true, nil
-			}
-		}
-	}
-	return ImportableSession{}, false, nil
 }
 
 func (s *Service) flagImported(ctx context.Context, sessions []ImportableSession) error {

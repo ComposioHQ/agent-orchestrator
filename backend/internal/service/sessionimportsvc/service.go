@@ -1,19 +1,20 @@
 // Package sessionimportsvc turns an on-disk agent conversation, discovered by
 // the sessionimport scanners, into a resumable AO chat session. It is the bridge
 // between provider transcripts and AO's session/project services: it resolves
-// (or registers) the project the conversation ran in, then spawns a chat session
-// bound to the provider's native id so the prior transcript is replayed.
+// the registered project the conversation ran in, then registers a dormant
+// chat session bound to its native transcript. Agent startup is explicit.
 package sessionimportsvc
 
 import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
-	"os"
 	"path/filepath"
 	"strings"
+	"time"
 	"unicode/utf8"
+
+	"golang.org/x/sync/semaphore"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
@@ -27,7 +28,7 @@ const maxImportDisplayName = 20
 
 // SessionService creates and reads AO sessions.
 type SessionService interface {
-	Spawn(context.Context, ports.SpawnConfig) (domain.Session, int, int, error)
+	RegisterImport(context.Context, ports.SpawnConfig) (domain.Session, int, int, error)
 	Get(context.Context, domain.SessionID) (domain.Session, error)
 }
 
@@ -36,177 +37,157 @@ type SessionStore interface {
 	ListAllSessions(context.Context) ([]domain.SessionRecord, error)
 }
 
-// ProjectService resolves or registers the project an imported conversation
-// lands in.
+// ProjectService lists the registered projects available for import.
 type ProjectService interface {
 	List(context.Context) ([]projectsvc.Summary, error)
-	Add(context.Context, projectsvc.AddInput) (projectsvc.Project, error)
 }
 
 var (
 	// ErrImportSessionNotFound is returned when the requested native conversation
-	// is no longer on disk.
+	// is absent or no longer eligible for this project.
 	ErrImportSessionNotFound = errors.New("importable session not found")
-	// ErrImportProjectUnresolved is returned when no project covers the
-	// conversation's working directory and one cannot be created (e.g. the
-	// directory is not a git repository with a commit).
+	// ErrImportProjectUnresolved is returned when the selected project is
+	// missing or the conversation is already imported into another project.
 	ErrImportProjectUnresolved = errors.New("cannot resolve a project for the session working directory")
 )
 
 // Service discovers on-disk agent conversations and imports one as a resumable
 // AO chat session.
 type Service struct {
-	disco      *sessionimport.Service
-	sessions   SessionService
-	store      SessionStore
-	projects   ProjectService
-	classifier *classifier
-	// excludeRoots are directories whose conversations are never importable.
-	// AO's own data directory is one: classification asks the user's agent a
-	// question, and some CLIs record that as a conversation.
-	excludeRoots []string
+	disco    *sessionimport.Service
+	sessions SessionService
+	store    SessionStore
+	projects ProjectService
+	imports  *semaphore.Weighted
 }
 
 // New builds the import service over the given provider sources. Discovery flags
 // already-imported conversations using the session store.
 func New(sessions SessionService, store SessionStore, projects ProjectService, sources ...sessionimport.Source) *Service {
-	s := &Service{sessions: sessions, store: store, projects: projects}
+	s := &Service{sessions: sessions, store: store, projects: projects, imports: semaphore.NewWeighted(1)}
 	s.disco = sessionimport.NewService(s.existingNativeIDs, sources...)
 	return s
 }
 
-// WithClassification lets the service settle conversations the local heuristic
-// could not place, by asking the user's own authorized agent.
-//
-// It is opt-in at construction so the daemon can leave it off, and so tests get
-// a service that never shells out. dataDir is where the verdict cache lives and
-// where the classifier runs, and it is excluded from discovery for that reason.
-func (s *Service) WithClassification(agents AgentRegistry, dataDir string, logger *slog.Logger) *Service {
-	if agents == nil || strings.TrimSpace(dataDir) == "" {
-		return s
-	}
-	if logger == nil {
-		logger = slog.Default()
-	}
-	workDir := filepath.Join(dataDir, "classifier")
-	// The directory must exist before a CLI is asked to run there.
-	if err := os.MkdirAll(workDir, 0o750); err != nil {
-		logger.Warn("session import: no classifier working directory; keeping local classification only", "error", err)
-		return s
-	}
-	s.classifier = &classifier{
-		agents:  agents,
-		cache:   newVerdictCache(dataDir),
-		workDir: workDir,
-		logger:  logger,
-	}
-	s.excludeRoots = append(s.excludeRoots, dataDir)
-	return s
-}
+// DiscoveryWindowDays and MinimumTokens are the fixed import eligibility rules.
+const DiscoveryWindowDays = 15
+const MinimumTokens int64 = 15_000
 
-// Discover lists importable conversations across every provider. A non-empty
-// projectID narrows the list to conversations that ran inside that project, so
-// a project's own settings can offer just its history instead of everything on
-// the machine.
+// Discover requires a registered project and limits both discovery and direct
+// imports to recent conversations with enough recorded provider usage.
 func (s *Service) Discover(ctx context.Context, opts sessionimport.DiscoverOptions, projectID domain.ProjectID) ([]sessionimport.ImportableSession, error) {
-	opts.ExcludeRoots = append(opts.ExcludeRoots, s.excludeRoots...)
-
-	// A project's listing narrows the scan itself rather than scanning every
-	// conversation on the machine and discarding almost all of it. Resolving the
-	// project needs only the working directory, which the head read already
-	// gives, so out-of-scope transcripts are dropped before the full read.
-	var projects []projectsvc.Summary
-	if projectID != "" {
-		var err error
-		if projects, err = s.projects.List(ctx); err != nil {
-			return nil, err
-		}
-		opts.IncludeCWD = func(cwd string) bool {
-			id, ok := bestProjectForDir(projects, cwd)
-			return ok && id == projectID
-		}
+	opts, err := s.projectOptions(ctx, projectID)
+	if err != nil {
+		return nil, err
 	}
-
 	found, err := s.disco.Discover(ctx, opts)
 	if err != nil {
-		return found, err
+		return nil, err
 	}
-	// Settle what the local heuristic could not, before scoping: a conversation
-	// judged trivial should not reach any surface, project-scoped or not.
-	if !opts.IncludeTrivial {
-		found = s.classifier.resolve(found)
-	}
-	if projectID == "" {
-		return found, nil
-	}
-
-	// Resolve each conversation the same way import does, so what a project
-	// lists is exactly what importing from it would produce. Matching the most
-	// specific project means a nested repo's conversations belong to the nested
-	// project, not to its parent.
 	scoped := make([]sessionimport.ImportableSession, 0, len(found))
 	for _, session := range found {
-		if id, ok := bestProjectForDir(projects, session.CWD); ok && id == projectID {
+		if opts.IncludeCWD(session.CWD) && !session.LastActivity.Before(opts.Since) && session.TokenCount >= MinimumTokens {
 			scoped = append(scoped, session)
 		}
 	}
 	return scoped, nil
 }
 
+func (s *Service) projectOptions(ctx context.Context, projectID domain.ProjectID) (sessionimport.DiscoverOptions, error) {
+	if strings.TrimSpace(string(projectID)) == "" {
+		return sessionimport.DiscoverOptions{}, ErrImportProjectUnresolved
+	}
+	projects, err := s.projects.List(ctx)
+	if err != nil {
+		return sessionimport.DiscoverOptions{}, err
+	}
+	exists := false
+	for _, p := range projects {
+		if p.ID == projectID {
+			exists = true
+			break
+		}
+	}
+	if !exists {
+		return sessionimport.DiscoverOptions{}, ErrImportProjectUnresolved
+	}
+	// AO worktrees belong to their registered project even though they live
+	// outside its main checkout. Resolve from durable records, without Git probes.
+	records, err := s.store.ListAllSessions(ctx)
+	if err != nil {
+		return sessionimport.DiscoverOptions{}, err
+	}
+	for _, record := range records {
+		if strings.TrimSpace(record.Metadata.WorkspacePath) != "" {
+			projects = append(projects, projectsvc.Summary{ID: record.ProjectID, Path: record.Metadata.WorkspacePath})
+		}
+	}
+	opts := sessionimport.DiscoverOptions{}
+	opts.Since = time.Now().AddDate(0, 0, -DiscoveryWindowDays)
+	opts.MinTokens = MinimumTokens
+	opts.MaxPerProvider = 0
+	opts.IncludeCWD = projectScope(projects, projectID)
+	return opts, nil
+}
+
 // Import creates a resumable AO chat session from an existing provider
 // conversation. It is idempotent: if a session already bound to nativeID exists,
 // that session is returned with alreadyImported=true and nothing new is created.
-func (s *Service) Import(ctx context.Context, provider domain.AgentHarness, nativeID string) (domain.Session, bool, error) {
+func (s *Service) Import(ctx context.Context, provider domain.AgentHarness, nativeID string, projectID domain.ProjectID) (domain.Session, bool, error) {
 	nativeID = strings.TrimSpace(nativeID)
 	if nativeID == "" {
 		return domain.Session{}, false, ErrImportSessionNotFound
 	}
 
-	if existing, ok, err := s.findExisting(ctx, nativeID); err != nil {
+	// Serialize the check-and-create sequence, including direct API callers.
+	// Acquiring is cancellable; no failed/abandoned request starts a later import.
+	if err := s.imports.Acquire(ctx, 1); err != nil {
+		return domain.Session{}, false, err
+	}
+	defer s.imports.Release(1)
+	if strings.TrimSpace(string(projectID)) == "" {
+		return domain.Session{}, false, ErrImportProjectUnresolved
+	}
+	if existing, ok, err := s.findExisting(ctx, provider, nativeID, projectID); err != nil {
 		return domain.Session{}, false, err
 	} else if ok {
 		return existing, true, nil
 	}
-
-	target, ok, err := s.disco.Locate(ctx, provider, nativeID)
+	opts, err := s.projectOptions(ctx, projectID)
 	if err != nil {
 		return domain.Session{}, false, err
 	}
-	if !ok {
+	target, ok, err := s.disco.Locate(ctx, provider, nativeID, opts)
+	if err != nil {
+		return domain.Session{}, false, err
+	}
+	if !ok || !opts.IncludeCWD(target.CWD) || target.LastActivity.Before(opts.Since) || target.TokenCount < MinimumTokens {
 		return domain.Session{}, false, ErrImportSessionNotFound
 	}
 
-	projectID, err := s.resolveProject(ctx, target.CWD)
-	if err != nil {
-		return domain.Session{}, false, err
-	}
+	session, err := s.registerTarget(ctx, target, projectID)
+	return session, false, err
+}
 
-	session, _, _, err := s.sessions.Spawn(ctx, ports.SpawnConfig{
-		ProjectID:     projectID,
-		Kind:          domain.KindWorker,
-		Harness:       provider,
-		RequestedMode: domain.SessionModeChat,
-		DisplayName:   importDisplayName(target.Title),
-		// The branch the conversation ran on, so AO's existing SCM observer
-		// discovers its pull request and the reducer places the session in
-		// review / ready to merge / merged on its own. No display state is
-		// invented or persisted: only the repository fact is recorded. Empty
-		// when the recorded branch is not one a session may own, in which case
-		// the session gets AO's usual fresh branch.
+func (s *Service) registerTarget(ctx context.Context, target sessionimport.ImportableSession, projectID domain.ProjectID) (domain.Session, error) {
+	session, _, _, err := s.sessions.RegisterImport(ctx, importConfig(target, projectID))
+	if err != nil {
+		return domain.Session{}, fmt.Errorf("import session: %w", err)
+	}
+	return session, nil
+}
+
+func importConfig(target sessionimport.ImportableSession, projectID domain.ProjectID) ports.SpawnConfig {
+	return ports.SpawnConfig{
+		ProjectID: projectID, Kind: domain.KindWorker, Harness: target.Provider,
+		RequestedMode: domain.SessionModeChat, DisplayName: importDisplayName(target.Title),
 		Branch: adoptableBranch(target.Branch),
 		ResumeNativeSession: &ports.ResumeNativeSession{
-			Provider:        provider,
-			NativeSessionID: nativeID,
-			ConfigDir:       target.ConfigDir,
-			// The transcript's own branch, kept even when the session has to be
-			// created on a different one.
+			Provider: target.Provider, NativeSessionID: target.NativeSessionID,
+			ConfigDir: target.ConfigDir, TranscriptPath: target.TranscriptPath,
 			SourceBranch: strings.TrimSpace(target.Branch),
 		},
-	})
-	if err != nil {
-		return domain.Session{}, false, fmt.Errorf("import session: %w", err)
 	}
-	return session, false, nil
 }
 
 // existingNativeIDs collects the native ids AO already has a session for, used
@@ -219,7 +200,7 @@ func (s *Service) existingNativeIDs(ctx context.Context) (map[string]struct{}, e
 	return nativeIDSet(recs), nil
 }
 
-func (s *Service) findExisting(ctx context.Context, nativeID string) (domain.Session, bool, error) {
+func (s *Service) findExisting(ctx context.Context, provider domain.AgentHarness, nativeID string, projectID domain.ProjectID) (domain.Session, bool, error) {
 	recs, err := s.store.ListAllSessions(ctx)
 	if err != nil {
 		return domain.Session{}, false, err
@@ -228,10 +209,13 @@ func (s *Service) findExisting(ctx context.Context, nativeID string) (domain.Ses
 		// A terminated (deleted) session must not block a fresh re-import: the
 		// user expects "delete then import again" to produce a live session, with
 		// the old one kept only as history.
-		if r.IsTerminated {
+		if r.IsTerminated || r.Harness != provider {
 			continue
 		}
 		if r.Metadata.ProviderConversationID == nativeID || r.Metadata.AgentSessionID == nativeID {
+			if r.ProjectID != projectID {
+				return domain.Session{}, false, fmt.Errorf("%w: conversation already belongs to project %s", ErrImportProjectUnresolved, r.ProjectID)
+			}
 			sess, err := s.sessions.Get(ctx, r.ID)
 			if err != nil {
 				return domain.Session{}, false, err
@@ -240,29 +224,6 @@ func (s *Service) findExisting(ctx context.Context, nativeID string) (domain.Ses
 		}
 	}
 	return domain.Session{}, false, nil
-}
-
-// resolveProject finds a registered project covering cwd, or registers the git
-// repository containing cwd as a new project.
-func (s *Service) resolveProject(ctx context.Context, cwd string) (domain.ProjectID, error) {
-	cwd = strings.TrimSpace(cwd)
-	if cwd == "" {
-		return "", ErrImportProjectUnresolved
-	}
-
-	projects, err := s.projects.List(ctx)
-	if err != nil {
-		return "", err
-	}
-	if id, ok := bestProjectForDir(projects, cwd); ok {
-		return id, nil
-	}
-
-	created, err := s.projects.Add(ctx, projectsvc.AddInput{Path: gitRoot(cwd)})
-	if err != nil {
-		return "", fmt.Errorf("%w: %w", ErrImportProjectUnresolved, err)
-	}
-	return created.ID, nil
 }
 
 func nativeIDSet(recs []domain.SessionRecord) map[string]struct{} {
@@ -294,7 +255,7 @@ func bestProjectForDir(projects []projectsvc.Summary, dir string) (domain.Projec
 	)
 	for _, p := range projects {
 		pp := filepath.Clean(strings.TrimSpace(p.Path))
-		if pp == "" {
+		if strings.TrimSpace(p.Path) == "" || !filepath.IsAbs(p.Path) {
 			continue
 		}
 		if pp == dir || dirIsAncestor(pp, dir) {
@@ -317,24 +278,6 @@ func dirIsAncestor(parent, child string) bool {
 		return false
 	}
 	return !strings.HasPrefix(rel, ".."+string(filepath.Separator))
-}
-
-// gitRoot walks up from dir to the nearest directory containing a .git entry,
-// returning that directory. If none is found, dir itself is returned so Add can
-// surface a clear "not a git repository" error.
-func gitRoot(dir string) string {
-	orig := filepath.Clean(dir)
-	d := orig
-	for {
-		if _, err := os.Stat(filepath.Join(d, ".git")); err == nil {
-			return d
-		}
-		parent := filepath.Dir(d)
-		if parent == d {
-			return orig
-		}
-		d = parent
-	}
 }
 
 // importDisplayName trims a provider title to the app's display-name cap.

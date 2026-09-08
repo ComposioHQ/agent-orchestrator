@@ -22,7 +22,6 @@ export type GlobalSettingsSection =
 	| "general"
 	| "harness"
 	| "agents"
-	| "importSessions"
 	| "cloud"
 	| "mobile"
 	| "shortcuts"
@@ -89,9 +88,6 @@ export type UiState = {
 	// Bumps to ask the sidebar's create-project flow to open (the ⌘N fallback
 	// when no project is in scope).
 	createProjectNonce: number;
-	// Whether the "import a session" dialog is open. A plain boolean (not a
-	// nonce): the dialog owns its own lifecycle and only needs open/close.
-	importSessionOpen: boolean;
 	// Transient "a folder was dropped onto the app window — open the
 	// create-project flow for this path" signal, mirroring newTaskRequest: the
 	// nonce always bumps so dropping the same folder twice in a row still
@@ -148,7 +144,6 @@ export type UiState = {
 	requestNewTask: (projectId: string) => void;
 	requestCreateProject: () => void;
 	requestCreateProjectFromPath: (path: string) => void;
-	setImportSessionOpen: (open: boolean) => void;
 	requestNewShellTerminal: () => void;
 	setActiveShellTerminal: (handleId: string | null) => void;
 	setVisibleTerminalKind: (sessionId: string, kind: TerminalTarget["kind"]) => void;
@@ -220,7 +215,6 @@ export const useUiStore = create<UiState>((set, get) => ({
 	orchestratorStartupErrors: {},
 	newTaskRequest: null,
 	createProjectNonce: 0,
-	importSessionOpen: false,
 	folderDropRequest: null,
 	newShellTerminalNonce: 0,
 	activeShellTerminalHandleId: null,
@@ -416,7 +410,6 @@ export const useUiStore = create<UiState>((set, get) => ({
 	requestNewTask: (projectId) =>
 		set((state) => ({ newTaskRequest: { projectId, nonce: (state.newTaskRequest?.nonce ?? 0) + 1 } })),
 	requestCreateProject: () => set((state) => ({ createProjectNonce: state.createProjectNonce + 1 })),
-	setImportSessionOpen: (open) => set({ importSessionOpen: open }),
 	requestCreateProjectFromPath: (path) =>
 		set((state) => ({ folderDropRequest: { path, nonce: (state.folderDropRequest?.nonce ?? 0) + 1 } })),
 	requestNewShellTerminal: () => set((state) => ({ newShellTerminalNonce: state.newShellTerminalNonce + 1 })),

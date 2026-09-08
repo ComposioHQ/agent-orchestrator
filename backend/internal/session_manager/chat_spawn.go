@@ -175,6 +175,8 @@ func (m *Manager) launchChatController(ctx context.Context, in chatSpawn) (domai
 	id := in.record.ID
 	releaseCodexAdmission, err := m.acquireCodexControllerAdmission(ctx, in.cfg.Harness)
 	if err != nil {
+		ctx, cancel := importChatRollbackContext(ctx, in.cfg)
+		defer cancel()
 		m.rollbackSeedSpawnWorkspace(ctx, in.record, in.workspace, in.workspaceProject, false)
 		return domain.SessionRecord{}, wrapSpawnStage(id, ErrChatController, err)
 	}
@@ -280,6 +282,8 @@ func (m *Manager) launchChatController(ctx context.Context, in chatSpawn) (domai
 		},
 	})
 	if err != nil {
+		ctx, cancel := importChatRollbackContext(ctx, in.cfg)
+		defer cancel()
 		if completionErr != nil || controllerCommitted {
 			m.stopChatBestEffort(ctx, id)
 			m.rollbackPreparedSpawnWorkspace(ctx, in.record, in.workspace, in.workspaceProject, true)
@@ -300,6 +304,8 @@ func (m *Manager) launchChatController(ctx context.Context, in chatSpawn) (domai
 	// provider either accepts the turn or reports why.
 	if in.prompt != "" {
 		if _, err := m.chat.StartChatTurn(ctx, id, in.prompt); err != nil {
+			ctx, cancel := importChatRollbackContext(ctx, in.cfg)
+			defer cancel()
 			m.stopChatBestEffort(ctx, id)
 			m.rollbackPreparedSpawnWorkspace(ctx, in.record, in.workspace, in.workspaceProject, true)
 			m.markSpawnFailedTerminated(ctx, id)
@@ -308,6 +314,16 @@ func (m *Manager) launchChatController(ctx context.Context, in chatSpawn) (domai
 	}
 
 	return m.getRecord(ctx, id)
+}
+
+// The HTTP deadline can expire while a provider is loading imported history.
+// Rollback must still remove the seed or park a preserved workspace as terminated.
+// Reuse Kill's bounded teardown policy; ordinary spawn behavior is unchanged.
+func importChatRollbackContext(ctx context.Context, cfg ports.SpawnConfig) (context.Context, context.CancelFunc) {
+	if cfg.ResumeNativeSession == nil {
+		return ctx, func() {}
+	}
+	return context.WithTimeout(context.WithoutCancel(ctx), killTeardownBudget)
 }
 
 // stopChatBestEffort closes a controller during rollback. A failure here is
@@ -428,6 +444,11 @@ func (m *Manager) resumeChatController(
 	env := m.runtimeEnv(rec.ID, rec.ProjectID, rec.IssueID, project.Config.Env)
 	if agent, ok := m.agents.Agent(rec.Harness); ok {
 		m.augmentAgentRuntimeEnv(agent, env)
+	}
+	if dir := importedConfigDir(rec.Metadata.NativeTranscriptPath, rec.Harness); dir != "" {
+		if key := nativeConfigDirEnvKey(rec.Harness); key != "" {
+			env[key] = dir
+		}
 	}
 	providerScopeID, err := m.historicalChatProviderScopeID(ctx, rec)
 	if err != nil {

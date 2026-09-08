@@ -6060,31 +6060,55 @@ paths:
       summary: Import an existing agent conversation as a resumable session
       tags:
       - sessions
+  /api/v1/sessions/import/batch:
+    post:
+      operationId: importSessions
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ImportSessionsRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ImportSessionsResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Register existing conversation histories without starting agents
+      tags:
+      - sessions
   /api/v1/sessions/importable:
     get:
       operationId: listImportableSessions
       parameters:
-      - description: Only include conversations active within the last N days (default
-          60, 0 disables the age filter).
-        in: query
-        name: days
-        schema:
-          description: Only include conversations active within the last N days (default
-            60, 0 disables the age filter).
-          type: integer
       - description: Restrict to one provider, e.g. claude-code or codex.
         in: query
         name: provider
         schema:
           description: Restrict to one provider, e.g. claude-code or codex.
           type: string
-      - description: Restrict to conversations that ran inside this project. Empty
-          lists every conversation on the machine.
+      - description: Required registered project. Only conversations active within
+          15 days with at least 15000 provider tokens are listed.
         in: query
         name: projectId
+        required: true
         schema:
-          description: Restrict to conversations that ran inside this project. Empty
-            lists every conversation on the machine.
+          description: Required registered project. Only conversations active within
+            15 days with at least 15000 provider tokens are listed.
           type: string
       responses:
         "200":
@@ -7720,10 +7744,14 @@ components:
         nativeSessionId:
           description: The provider's own session id from the discovery list.
           type: string
+        projectId:
+          description: Registered project that owns this conversation.
+          type: string
         provider:
           description: Agent harness of the conversation, e.g. claude-code or codex.
           type: string
       required:
+      - projectId
       - provider
       - nativeSessionId
       type: object
@@ -7753,14 +7781,9 @@ components:
         lastActivity:
           description: RFC3339 timestamp of the most recent activity.
           type: string
-        meaning:
-          description: 'Import verdict from the transcript''s content: meaningful,
-            or ambiguous when the local heuristic could not decide. Trivial conversations
-            are withheld and never listed.'
-          type: string
         messageCount:
-          description: Best-effort visible message count; 0 when the transcript is
-            too large to count cheaply.
+          description: Retained for compatibility; discovery leaves this zero to avoid
+            counting every message.
           type: integer
         nativeSessionId:
           description: The provider's own session id, used to bind and resume the
@@ -7778,7 +7801,13 @@ components:
           description: 'Human label: the provider''s title, else the first prompt,
             else the file name.'
           type: string
+        tokenCount:
+          description: Observed lower bound of cumulative provider usage including
+            cached input; scanning may stop once the import threshold is met.
+          format: int64
+          type: integer
       required:
+      - tokenCount
       - provider
       - nativeSessionId
       - title
@@ -7787,7 +7816,6 @@ components:
       - messageCount
       - sizeBytes
       - alreadyImported
-      - meaning
       type: object
     ControllersListImportableSessionsResponse:
       properties:
@@ -7905,6 +7933,8 @@ components:
           type: string
         id:
           type: string
+        importedHistory:
+          type: boolean
         isPinned:
           type: boolean
         isTerminated:
@@ -8508,6 +8538,8 @@ components:
           type: string
         hasMoreBefore:
           type: boolean
+        importedHistory:
+          type: boolean
         latestSequence:
           format: int64
           type: integer
@@ -9031,12 +9063,60 @@ components:
       - projectsImported
       - projectsSkipped
       type: object
+    ImportResult:
+      properties:
+        alreadyImported:
+          type: boolean
+        error:
+          type: string
+        nativeSessionId:
+          type: string
+        provider:
+          type: string
+        sessionId:
+          type: string
+      required:
+      - provider
+      - nativeSessionId
+      - alreadyImported
+      type: object
     ImportRunResponse:
       properties:
         report:
           $ref: '#/components/schemas/ImportReport'
       required:
       - report
+      type: object
+    ImportSelection:
+      properties:
+        nativeSessionId:
+          type: string
+        provider:
+          type: string
+      required:
+      - provider
+      - nativeSessionId
+      type: object
+    ImportSessionsRequest:
+      properties:
+        projectId:
+          type: string
+        sessions:
+          items:
+            $ref: '#/components/schemas/ImportSelection'
+          type: array
+      required:
+      - projectId
+      - sessions
+      type: object
+    ImportSessionsResponse:
+      properties:
+        results:
+          items:
+            $ref: '#/components/schemas/ImportResult'
+          type: array
+      required:
+      - results
       type: object
     ImportStatusResponse:
       properties:

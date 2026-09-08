@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
@@ -33,6 +34,14 @@ type CodexSource struct {
 	home string
 	// includeArchived also scans archived_sessions.
 	includeArchived bool
+	cache           fileCache[codexSegment]
+	inventoryMu     sync.Mutex
+	inventory       map[string]codexInventory
+}
+
+type codexInventory struct {
+	signature string
+	pathsByID map[string][]string
 }
 
 // NewCodexSource builds a Codex source over active sessions plus archived ones.
@@ -56,6 +65,7 @@ func (s *CodexSource) resolveHome() (string, error) {
 
 // codexSegment is one rollout file's contribution to a conversation.
 type codexSegment struct {
+	fileInfo       os.FileInfo
 	rootID         string
 	cwd            string
 	branch         string
@@ -64,7 +74,8 @@ type codexSegment struct {
 	transcriptPath string
 	sizeBytes      int64
 	messageCount   int
-	signals        Signals
+	tokenCount     int64
+	usageComplete  bool
 }
 
 // Discover walks the Codex sessions tree, groups rollout segments by root
@@ -86,34 +97,36 @@ func (s *CodexSource) Discover(ctx context.Context, opts DiscoverOptions) ([]Imp
 	// Group segments by root conversation id, keeping the most recent segment as
 	// the representative for path/cwd/title and the max message count seen.
 	grouped := map[string]*ImportableSession{}
-	// Import signals accumulate per conversation, not per segment, so a
-	// conversation that did real work in any segment is judged on that.
-	signalsByRoot := map[string]*Signals{}
+	segmentsByRoot := map[string][]codexSegment{}
+	// Group metadata before project filtering: a resumed conversation may move
+	// directories while retaining cumulative usage from its earlier segments.
 	for _, root := range roots {
-		if err := s.scanRoot(ctx, root, titles, opts, grouped, signalsByRoot); err != nil {
+		if err := s.scanRoot(ctx, root, titles, opts, grouped, segmentsByRoot); err != nil {
 			return nil, err
 		}
 	}
 
 	found := make([]ImportableSession, 0, len(grouped))
 	for rootID, session := range grouped {
+		session.ConfigDir = home
 		if !opts.Since.IsZero() && session.LastActivity.Before(opts.Since) {
 			continue
 		}
-		if merged, ok := signalsByRoot[rootID]; ok {
-			session.Meaning = Classify(*merged)
-			session.FirstPrompt = merged.FirstPrompt
-		}
-		// Drop junk before the per-provider cap, so a run of trivial
-		// conversations cannot crowd out real ones sitting just outside it.
-		if !opts.IncludeTrivial && !session.Meaning.Imported() {
+		if opts.IncludeCWD != nil && !opts.IncludeCWD(session.CWD) {
 			continue
 		}
-		// The session index can know about activity the rollout segments do not
-		// carry, so it is allowed to advance the displayed recency — but only
-		// now that every segment has been compared and a representative chosen.
-		if t, ok := titles[rootID]; ok && t.updatedAt.After(session.LastActivity) {
-			session.LastActivity = t.updatedAt
+		for _, seg := range segmentsByRoot[rootID] {
+			if opts.MinTokens > 0 && session.TokenCount >= opts.MinTokens {
+				break
+			}
+			tokens, err := s.segmentUsage(ctx, seg, opts.MinTokens)
+			if err != nil {
+				return nil, err
+			}
+			session.TokenCount = max(session.TokenCount, tokens)
+		}
+		if session.TokenCount < opts.MinTokens {
+			continue
 		}
 		found = append(found, *session)
 	}
@@ -121,7 +134,7 @@ func (s *CodexSource) Discover(ctx context.Context, opts DiscoverOptions) ([]Imp
 	return capRecent(found, opts.MaxPerProvider), nil
 }
 
-func (s *CodexSource) scanRoot(ctx context.Context, root string, titles map[string]codexTitle, opts DiscoverOptions, grouped map[string]*ImportableSession, signalsByRoot map[string]*Signals) error {
+func (s *CodexSource) scanRoot(ctx context.Context, root string, titles map[string]codexTitle, opts DiscoverOptions, grouped map[string]*ImportableSession, segmentsByRoot map[string][]codexSegment, selectedID ...string) error {
 	// Walk first, read after. The walk only lists names, which is cheap; every
 	// rollout is then parsed across a pool, since segments are independent.
 	var paths []string
@@ -148,6 +161,21 @@ func (s *CodexSource) scanRoot(ctx context.Context, root string, titles map[stri
 		return fmt.Errorf("codex: scan %s: %w", root, err)
 	}
 
+	// Compare names, not every transcript's metadata, when importing a known
+	// conversation. New/resumed segments invalidate membership and force a full
+	// metadata refresh, preserving discovery correctness without quadratic reads.
+	signature := strings.Join(paths, "\x00")
+	s.inventoryMu.Lock()
+	inventory, known := s.inventory[root]
+	s.inventoryMu.Unlock()
+	narrowed := false
+	if len(selectedID) > 0 && known && inventory.signature == signature {
+		if selected := inventory.pathsByID[selectedID[0]]; len(selected) > 0 {
+			paths = selected
+			narrowed = true
+		}
+	}
+
 	segments, err := scanParallel(ctx, paths, func(ctx context.Context, path string) (codexSegment, bool, error) {
 		return s.readSegment(ctx, path, opts)
 	})
@@ -155,17 +183,26 @@ func (s *CodexSource) scanRoot(ctx context.Context, root string, titles map[stri
 		return fmt.Errorf("codex: scan %s: %w", root, err)
 	}
 
+	if !narrowed {
+		inventory = codexInventory{signature: signature, pathsByID: map[string][]string{}}
+		for _, seg := range segments {
+			inventory.pathsByID[seg.rootID] = append(inventory.pathsByID[seg.rootID], seg.transcriptPath)
+		}
+		s.inventoryMu.Lock()
+		if s.inventory == nil {
+			s.inventory = map[string]codexInventory{}
+		}
+		s.inventory[root] = inventory
+		s.inventoryMu.Unlock()
+	}
+
 	// Merging stays sequential and in walk order. It folds segments into shared
 	// maps and picks a representative by recency, so doing it concurrently would
 	// both race and make the winner depend on scheduling.
 	for _, seg := range segments {
 		mergeCodexSegment(grouped, seg, titles)
-		if existing, found := signalsByRoot[seg.rootID]; found {
-			*existing = mergeSignals(*existing, seg.signals)
-		} else {
-			merged := seg.signals
-			signalsByRoot[seg.rootID] = &merged
-		}
+		segmentsByRoot[seg.rootID] = append(segmentsByRoot[seg.rootID], seg)
+
 	}
 	return nil
 }
@@ -188,7 +225,7 @@ func mergeCodexSegment(grouped map[string]*ImportableSession, seg codexSegment, 
 			Branch:          seg.branch,
 			Title:           titleFrom(title, seg.firstUserText, filepath.Base(seg.transcriptPath)),
 			LastActivity:    seg.lastActivity,
-			MessageCount:    seg.messageCount,
+			TokenCount:      seg.tokenCount,
 			SizeBytes:       seg.sizeBytes,
 		}
 		grouped[seg.rootID] = session
@@ -211,6 +248,9 @@ func mergeCodexSegment(grouped map[string]*ImportableSession, seg codexSegment, 
 			existing.Branch = seg.branch
 		}
 	}
+	if seg.tokenCount > existing.TokenCount {
+		existing.TokenCount = seg.tokenCount
+	}
 	// Message count reflects the longest single segment observed rather than a
 	// sum, because resume segments overlap and summing would over-count.
 	if seg.messageCount > existing.MessageCount {
@@ -229,6 +269,27 @@ func isCodexRollout(name string) bool {
 }
 
 func (s *CodexSource) readSegment(ctx context.Context, path string, opts DiscoverOptions) (codexSegment, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return codexSegment{}, false, err
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return codexSegment{}, false, nil
+	}
+	value, cached := s.cache.get(path, info)
+	if !cached {
+		var ok bool
+		value, ok, err = s.readSegmentUncached(ctx, path, opts)
+		if err != nil || !ok {
+			return value, ok, err
+		}
+		value.fileInfo = info
+		s.cache.put(path, info, value)
+	}
+	return value, true, nil
+}
+
+func (s *CodexSource) readSegmentUncached(ctx context.Context, path string, opts DiscoverOptions) (codexSegment, bool, error) {
 	if err := ctx.Err(); err != nil {
 		return codexSegment{}, false, err
 	}
@@ -275,22 +336,6 @@ func (s *CodexSource) readSegment(ctx context.Context, path string, opts Discove
 		}
 	}
 
-	// Out of scope: stop before the expensive full read. A project's listing
-	// otherwise scans every conversation on the machine to show a handful.
-	if opts.IncludeCWD != nil && !opts.IncludeCWD(meta.cwd) {
-		return codexSegment{}, false, nil
-	}
-
-	// One full pass yields both the display count and the import signals.
-	signals := Signals{FirstPrompt: meta.firstUserText}
-	count := 0
-	if !opts.MetadataOnly && size <= fullCountMaxBytes {
-		signals, count = scanCodexSignals(path)
-		if signals.FirstPrompt == "" {
-			signals.FirstPrompt = meta.firstUserText
-		}
-	}
-
 	return codexSegment{
 		rootID:         rootID,
 		cwd:            meta.cwd,
@@ -299,8 +344,7 @@ func (s *CodexSource) readSegment(ctx context.Context, path string, opts Discove
 		lastActivity:   last,
 		transcriptPath: path,
 		sizeBytes:      size,
-		messageCount:   count,
-		signals:        signals,
+		tokenCount:     -1,
 	}, true, nil
 }
 
@@ -416,66 +460,6 @@ func codexLineTimestamp(raw []byte) string {
 		return ""
 	}
 	return env.Timestamp
-}
-
-// codexToolCallTypes are the response_item payload types Codex writes when the
-// agent does something to the machine rather than talk: shell commands, patch
-// application, and tool invocations.
-var codexToolCallTypes = map[string]struct{}{
-	"function_call":    {},
-	"local_shell_call": {},
-	"custom_tool_call": {},
-	"exec_command":     {},
-	"apply_patch":      {},
-}
-
-// scanCodexSignals reads a rollout segment once and returns the import signals
-// plus the visible message count, mirroring scanClaudeSignals so the two
-// providers are classified on identical terms.
-func scanCodexSignals(path string) (Signals, int) {
-	signals := Signals{Scanned: true}
-	visible := 0
-	_ = scanLines(path, func(raw []byte) bool {
-		var env codexEnvelope
-		if err := json.Unmarshal(raw, &env); err != nil {
-			return true
-		}
-		if env.Type != "response_item" {
-			return true
-		}
-		var item struct {
-			Type string `json:"type"`
-			Role string `json:"role"`
-		}
-		if err := json.Unmarshal(env.Payload, &item); err != nil {
-			return true
-		}
-		if _, isTool := codexToolCallTypes[item.Type]; isTool {
-			signals.ToolCalls++
-			return true
-		}
-		if item.Type != "message" || (item.Role != "user" && item.Role != "assistant") {
-			return true
-		}
-		visible++
-		if !signals.AuthFailure && hasAuthFailureMarker(strings.ToLower(string(raw))) {
-			signals.AuthFailure = true
-		}
-		if item.Role == "assistant" {
-			signals.AssistantMessages++
-			return true
-		}
-		text := firstCodexUserText(env.Payload)
-		if isSyntheticPrompt(text) {
-			return true
-		}
-		signals.UserMessages++
-		if signals.FirstPrompt == "" {
-			signals.FirstPrompt = text
-		}
-		return true
-	})
-	return signals, visible
 }
 
 type codexTitle struct {

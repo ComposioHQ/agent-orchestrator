@@ -827,6 +827,7 @@ type fakeWorkspace struct {
 	fetchErr      error
 	fetches       []fetchDefaultBranchCall
 	resolves      []resolveDefaultBranchCall
+	localResolves []resolveDefaultBranchCall
 	resolved      map[string]ports.WorkspaceDefaultBranch
 	fetchFunc     func(context.Context, string, ports.WorkspaceDefaultBranch) error
 	// createRepoPath, when set, is returned as the RepoPath of a single-repo
@@ -882,6 +883,15 @@ type resolveDefaultBranchCall struct {
 
 func (w *fakeWorkspace) ResolveDefaultBranch(_ context.Context, repoPath, configuredBranch string) (ports.WorkspaceDefaultBranch, error) {
 	w.resolves = append(w.resolves, resolveDefaultBranchCall{repoPath: repoPath, configuredBranch: configuredBranch})
+	return w.defaultBranchTarget(repoPath, configuredBranch)
+}
+
+func (w *fakeWorkspace) ResolveLocalDefaultBranch(_ context.Context, repoPath, configuredBranch string) (ports.WorkspaceDefaultBranch, error) {
+	w.localResolves = append(w.localResolves, resolveDefaultBranchCall{repoPath: repoPath, configuredBranch: configuredBranch})
+	return w.defaultBranchTarget(repoPath, configuredBranch)
+}
+
+func (w *fakeWorkspace) defaultBranchTarget(repoPath, configuredBranch string) (ports.WorkspaceDefaultBranch, error) {
 	if target, ok := w.resolved[repoPath]; ok {
 		return target, nil
 	}
@@ -3800,7 +3810,7 @@ func TestRefreshDefaultBranchesUsesOneOverallFetchBudget(t *testing.T) {
 	}
 
 	started := time.Now()
-	baseRefs := m.refreshDefaultBranchesBestEffort(context.Background(), project)
+	baseRefs := m.refreshDefaultBranchesBestEffort(context.Background(), project, true)
 	elapsed := time.Since(started)
 
 	if elapsed > 250*time.Millisecond {

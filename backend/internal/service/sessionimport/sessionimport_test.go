@@ -105,9 +105,6 @@ func TestDiscoverAcrossProviders(t *testing.T) {
 	if claude.Title != "Fix flaky login test" {
 		t.Errorf("claude title (want ai-title): got %q", claude.Title)
 	}
-	if claude.MessageCount != 3 {
-		t.Errorf("claude message count: got %d, want 3", claude.MessageCount)
-	}
 
 	// Bound to the root conversation id, not a per-segment id.
 	if codex.NativeSessionID != "019fbaf8-67a4-79b2-aa80-01283063aab8" {
@@ -118,9 +115,6 @@ func TestDiscoverAcrossProviders(t *testing.T) {
 	}
 	if codex.Title != "Valence health endpoint" {
 		t.Errorf("codex title (want index name): got %q", codex.Title)
-	}
-	if codex.MessageCount != 2 {
-		t.Errorf("codex message count (max segment): got %d, want 2", codex.MessageCount)
 	}
 	// The two segments collapse into one importable session, represented by the
 	// newer resume segment.
@@ -165,24 +159,6 @@ func TestDiscoverFlagsAlreadyImported(t *testing.T) {
 	}
 }
 
-func TestLocatePopulatesMetadata(t *testing.T) {
-	claudeDir, codexHome := buildFakeHome(t)
-	svc := NewService(nil, NewClaudeSourceAt(claudeDir), NewCodexSourceAt(codexHome, true))
-
-	// Locate must normalize scan options; a zero MaxScanBytes would read nothing
-	// and leave cwd empty, which breaks project resolution on import.
-	got, ok, err := svc.Locate(context.Background(), domain.HarnessClaudeCode, "11111111-1111-4111-8111-111111111111")
-	if err != nil || !ok {
-		t.Fatalf("locate: ok=%v err=%v", ok, err)
-	}
-	if got.CWD != "/Users/dev/project" {
-		t.Errorf("located cwd empty/wrong: %q", got.CWD)
-	}
-	if got.Title == "" {
-		t.Error("located title should be populated")
-	}
-}
-
 func TestCodexIDFromFileName(t *testing.T) {
 	cases := map[string]string{
 		"rollout-2026-08-01T07-07-49-019fbaf8-67a4-79b2-aa80-01283063aab8.jsonl": "019fbaf8-67a4-79b2-aa80-01283063aab8",
@@ -196,55 +172,21 @@ func TestCodexIDFromFileName(t *testing.T) {
 	}
 }
 
-// TestDiscoverRealHome is a manual, opt-in run against the developer's actual
-// ~/.claude and ~/.codex history. It is skipped by default; run with
-// AO_IMPORT_SCAN_REAL=1 to see what the importer would list.
+// Manual latency check: AO_IMPORT_SCAN_REAL is an explicit opt-in to local
+// metadata reads. Only durations and counts are logged, never conversation text.
 func TestDiscoverRealHome(t *testing.T) {
-	if os.Getenv("AO_IMPORT_SCAN_REAL") == "" {
-		t.Skip("set AO_IMPORT_SCAN_REAL=1 to scan the real home directory")
+	project := os.Getenv("AO_IMPORT_SCAN_PROJECT")
+	if project == "" {
+		t.Skip("set AO_IMPORT_SCAN_PROJECT to a project path")
 	}
 	svc := NewService(nil, NewClaudeSource(), NewCodexSource())
-	opts := DiscoverOptions{Since: time.Now().AddDate(0, 0, -60)}
-
-	// Everything on disk, so the run shows what is withheld as well as kept.
-	all, err := svc.Discover(context.Background(), withTrivial(opts))
-	if err != nil {
-		t.Logf("discover returned partial error: %v", err)
-	}
-	kept, err := svc.Discover(context.Background(), opts)
-	if err != nil {
-		t.Logf("discover returned partial error: %v", err)
-	}
-
-	counts := map[Meaning]int{}
-	for _, s := range all {
-		counts[s.Meaning]++
-	}
-	t.Logf("scanned %d conversations in the last 60 days: %d meaningful, %d ambiguous, %d trivial (withheld)",
-		len(all), counts[MeaningMeaningful], counts[MeaningAmbiguous], counts[MeaningTrivial])
-	t.Logf("%d would be listed", len(kept))
-
-	for i, s := range kept {
-		if i >= 25 {
-			t.Logf("... and %d more", len(kept)-25)
-			break
+	opts := DiscoverOptions{Since: time.Now().AddDate(0, 0, -15), MinTokens: 15000, IncludeCWD: func(cwd string) bool { return cwd == project }}
+	for i := 0; i < 3; i++ {
+		start := time.Now()
+		found, err := svc.Discover(context.Background(), opts)
+		if err != nil {
+			t.Fatal(err)
 		}
-		t.Logf("%2d. [%-11s] %-10s msgs=%-4d %s\n      cwd=%s branch=%s\n      title=%s",
-			i+1, s.Provider, s.Meaning, s.MessageCount,
-			s.LastActivity.Format("2006-01-02 15:04"), s.CWD, s.Branch, s.Title)
+		t.Logf("scan %d: %d sessions in %s", i, len(found), time.Since(start))
 	}
-
-	shown := 0
-	for _, s := range all {
-		if s.Meaning != MeaningTrivial || shown >= 15 {
-			continue
-		}
-		shown++
-		t.Logf("withheld: [%s] msgs=%-3d title=%q", s.Provider, s.MessageCount, s.Title)
-	}
-}
-
-func withTrivial(opts DiscoverOptions) DiscoverOptions {
-	opts.IncludeTrivial = true
-	return opts
 }

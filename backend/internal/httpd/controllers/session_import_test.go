@@ -11,6 +11,7 @@ import (
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/service/sessionimport"
+	"github.com/aoagents/agent-orchestrator/backend/internal/service/sessionimportsvc"
 )
 
 type fakeImportService struct {
@@ -27,7 +28,7 @@ func (f *fakeImportService) Discover(_ context.Context, opts sessionimport.Disco
 	return f.discover, f.discoverErr
 }
 
-func (f *fakeImportService) Import(_ context.Context, provider domain.AgentHarness, nativeID string) (domain.Session, bool, error) {
+func (f *fakeImportService) Import(_ context.Context, provider domain.AgentHarness, nativeID string, projectID domain.ProjectID) (domain.Session, bool, error) {
 	already := f.imported[nativeID]
 	return domain.Session{SessionRecord: domain.SessionRecord{ID: domain.SessionID("imported-1"), Harness: provider}}, already, nil
 }
@@ -41,7 +42,7 @@ func TestListImportable(t *testing.T) {
 	}
 	c := &SessionsController{Import: svc}
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/sessions/importable?days=30", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/sessions/importable?projectId=proj", nil)
 	rec := httptest.NewRecorder()
 	c.listImportable(rec, req)
 
@@ -64,9 +65,9 @@ func TestListImportable(t *testing.T) {
 	if !resp.Sessions[1].AlreadyImported {
 		t.Errorf("second session should be flagged already imported")
 	}
-	// days=30 -> a Since ~30 days before now.
+	// Discovery always uses the approved 15-day window.
 	if svc.lastOpts.Since.IsZero() {
-		t.Errorf("expected a Since filter for days=30")
+		t.Errorf("expected a fixed activity window")
 	}
 }
 
@@ -78,7 +79,7 @@ func TestListImportableProviderFilter(t *testing.T) {
 		},
 	}
 	c := &SessionsController{Import: svc}
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/sessions/importable?provider=claude-code", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/sessions/importable?projectId=proj&provider=claude-code", nil)
 	rec := httptest.NewRecorder()
 	c.listImportable(rec, req)
 
@@ -89,23 +90,32 @@ func TestListImportableProviderFilter(t *testing.T) {
 	}
 }
 
-func TestListImportableBadDays(t *testing.T) {
+func TestListImportableRequiresProject(t *testing.T) {
 	c := &SessionsController{Import: &fakeImportService{}}
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/sessions/importable?days=-3", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/sessions/importable", nil)
 	rec := httptest.NewRecorder()
 	c.listImportable(rec, req)
 	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("want 400 for negative days, got %d", rec.Code)
+		t.Fatalf("want 400 for missing project, got %d", rec.Code)
 	}
 }
 
 func TestImportSessionValidation(t *testing.T) {
-	c := &SessionsController{Import: &fakeImportService{}}
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/sessions/import", strings.NewReader(`{"provider":"","nativeSessionId":""}`))
-	rec := httptest.NewRecorder()
-	c.importSession(rec, req)
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("want 400 for empty body fields, got %d", rec.Code)
+	for _, body := range []string{
+		`{}`, `{"provider":"codex","nativeSessionId":"x"}`,
+		`{"projectId":"  ","provider":"codex","nativeSessionId":"x"}`,
+		`{"projectId":"proj","nativeSessionId":"x"}`,
+		`{"projectId":"proj","provider":"codex"}`,
+	} {
+		t.Run(body, func(t *testing.T) {
+			c := &SessionsController{Import: &fakeImportService{}}
+			req := httptest.NewRequest(http.MethodPost, "/api/v1/sessions/import", strings.NewReader(body))
+			rec := httptest.NewRecorder()
+			c.importSession(rec, req)
+			if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "INVALID_BODY") {
+				t.Fatalf("want missing-field error, got %d %s", rec.Code, rec.Body.String())
+			}
+		})
 	}
 }
 
@@ -113,7 +123,7 @@ func TestImportSessionIdempotent(t *testing.T) {
 	c := &SessionsController{Import: &fakeImportService{imported: map[string]bool{"u1": true}}}
 
 	// Fresh import -> 201.
-	fresh := httptest.NewRequest(http.MethodPost, "/api/v1/sessions/import", strings.NewReader(`{"provider":"claude-code","nativeSessionId":"new"}`))
+	fresh := httptest.NewRequest(http.MethodPost, "/api/v1/sessions/import", strings.NewReader(`{"projectId":"proj","provider":"claude-code","nativeSessionId":"new"}`))
 	frec := httptest.NewRecorder()
 	c.importSession(frec, fresh)
 	if frec.Code != http.StatusCreated {
@@ -121,7 +131,7 @@ func TestImportSessionIdempotent(t *testing.T) {
 	}
 
 	// Re-import of an existing native id -> 200 with alreadyImported.
-	dup := httptest.NewRequest(http.MethodPost, "/api/v1/sessions/import", strings.NewReader(`{"provider":"claude-code","nativeSessionId":"u1"}`))
+	dup := httptest.NewRequest(http.MethodPost, "/api/v1/sessions/import", strings.NewReader(`{"projectId":"proj","provider":"claude-code","nativeSessionId":"u1"}`))
 	drec := httptest.NewRecorder()
 	c.importSession(drec, dup)
 	if drec.Code != http.StatusOK {
@@ -142,7 +152,7 @@ func TestImportRoutesNilService501(t *testing.T) {
 		fn           func(http.ResponseWriter, *http.Request)
 	}{
 		{http.MethodGet, "/api/v1/sessions/importable", "", c.listImportable},
-		{http.MethodPost, "/api/v1/sessions/import", `{"provider":"codex","nativeSessionId":"x"}`, c.importSession},
+		{http.MethodPost, "/api/v1/sessions/import", `{"projectId":"proj","provider":"codex","nativeSessionId":"x"}`, c.importSession},
 	} {
 		req := httptest.NewRequest(tc.method, tc.path, strings.NewReader(tc.body))
 		rec := httptest.NewRecorder()
@@ -150,5 +160,14 @@ func TestImportRoutesNilService501(t *testing.T) {
 		if rec.Code != http.StatusNotImplemented {
 			t.Errorf("%s %s: want 501 when service nil, got %d", tc.method, tc.path, rec.Code)
 		}
+	}
+}
+
+func TestListImportableUnknownProject(t *testing.T) {
+	c := &SessionsController{Import: &fakeImportService{discoverErr: sessionimportsvc.ErrImportProjectUnresolved}}
+	rec := httptest.NewRecorder()
+	c.listImportable(rec, httptest.NewRequest(http.MethodGet, "/api/v1/sessions/importable?projectId=deleted", nil))
+	if rec.Code != http.StatusUnprocessableEntity || !strings.Contains(rec.Body.String(), "IMPORT_PROJECT_UNRESOLVED") {
+		t.Fatalf("want actionable project error, got %d %s", rec.Code, rec.Body.String())
 	}
 }

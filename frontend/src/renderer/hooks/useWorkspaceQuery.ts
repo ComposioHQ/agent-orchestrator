@@ -138,6 +138,7 @@ async function fetchWorkspaces(): Promise<WorkspaceSummary[]> {
 						// current default happens to be.
 						mode: session.mode === "chat" ? "chat" : "tui",
 						branch: session.branch || undefined,
+						importedHistory: session.importedHistory,
 						status,
 						scmStatus,
 						kanbanColumn,

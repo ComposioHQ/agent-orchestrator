@@ -142,6 +142,10 @@ func schemaName(_ reflect.Type, defaultName string) string {
 // by projectOperations(). Add an entry when a new contract type is introduced;
 // the drift test fails until the spec is regenerated, which flags the gap.
 var schemaNames = map[string]string{ //nolint:gosec // Public OpenAPI type names include reset-credit contracts; no credential value is stored here.
+	"ControllersImportSessionsRequest":                     "ImportSessionsRequest",
+	"ControllersImportSessionsResponse":                    "ImportSessionsResponse",
+	"SessionimportsvcSelection":                            "ImportSelection",
+	"SessionimportsvcImportResult":                         "ImportResult",
 	"ControllersSettingsResponse":                          "SettingsResponse",
 	"ControllersDesktopWorkspaceLocationResponse":          "DesktopWorkspaceLocationResponse",
 	"ControllersUpdateSessionInterfaceRequest":             "UpdateSessionInterfaceRequest",
@@ -1744,6 +1748,12 @@ func sessionOperations() []operation {
 				{http.StatusInternalServerError, envelope.APIError{}},
 				{http.StatusNotImplemented, envelope.APIError{}},
 			},
+		},
+		{
+			method: http.MethodPost, path: "/api/v1/sessions/import/batch", id: "importSessions", tag: "sessions",
+			summary: "Register existing conversation histories without starting agents",
+			reqBody: controllers.ImportSessionsRequest{},
+			resps:   []respUnit{{http.StatusOK, controllers.ImportSessionsResponse{}}, {http.StatusBadRequest, envelope.APIError{}}, {http.StatusNotImplemented, envelope.APIError{}}},
 		},
 		{
 			method: http.MethodPost, path: "/api/v1/sessions/import", id: "importSession", tag: "sessions",

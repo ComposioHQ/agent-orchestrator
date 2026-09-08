@@ -6,10 +6,8 @@ import "strings"
 // caveats prepended to command output, system reminders, hook results, and the
 // CLI's own internal requests all land in the transcript as user messages.
 //
-// Treating one as a prompt has three consequences, all bad: it becomes the
-// conversation's title in the sidebar, it becomes the imported session's
-// display name, and it is what a classifier is asked to judge. So a turn the
-// machine wrote is not counted as a human turn anywhere.
+// Keep machine-injected text out of conversation titles and imported display
+// names by choosing the first actual human prompt instead.
 
 // syntheticPromptPrefixes open a user turn the CLI injected itself.
 var syntheticPromptPrefixes = []string{

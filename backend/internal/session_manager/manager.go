@@ -4,6 +4,7 @@ package sessionmanager
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -939,9 +940,9 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 
 	branch := cfg.Branch
 	if branch == "" {
-		branch = DefaultSpawnBranch(id, cfg.Kind, sessionPrefix(project), projectKind, m.dataDir)
+		branch = m.importSpawnBranch(cfg, project, id)
 	}
-	baseRefs := m.refreshDefaultBranchesBestEffort(ctx, project)
+	baseRefs := m.refreshDefaultBranchesBestEffort(ctx, project, cfg.ResumeNativeSession == nil)
 	ws, workspaceProject, err := m.createSessionWorkspace(ctx, project, cfg, id, branch, baseRefs)
 	// An imported conversation asks for the branch it actually ran on, so the
 	// SCM observer can find its pull request and the board can place it in
@@ -954,7 +955,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	// pull-request discovery, so no reason for it to be unusable — checked out
 	// elsewhere, unfetched, malformed — is worth failing an import over.
 	if err != nil && cfg.ResumeNativeSession != nil && strings.TrimSpace(cfg.Branch) != "" {
-		fallback := DefaultSpawnBranch(id, cfg.Kind, sessionPrefix(project), projectKind, m.dataDir)
+		fallback := m.importSpawnBranch(cfg, project, id)
 		m.logger.Info("import: conversation branch is checked out elsewhere; using a fresh session branch",
 			"sessionID", id, "conversationBranch", branch, "branch", fallback)
 		branch = fallback
@@ -1160,7 +1161,7 @@ type defaultBranchRefreshTarget struct {
 	resolved         ports.WorkspaceDefaultBranch
 }
 
-func (m *Manager) refreshDefaultBranchesBestEffort(ctx context.Context, project domain.ProjectRecord) map[string]string {
+func (m *Manager) refreshDefaultBranchesBestEffort(ctx context.Context, project domain.ProjectRecord, fetch bool) map[string]string {
 	if project.Kind.WithDefault() == domain.ProjectKindScratch {
 		return nil
 	}
@@ -1173,6 +1174,14 @@ func (m *Manager) refreshDefaultBranchesBestEffort(ctx context.Context, project 
 	refresher, ok := m.workspace.(ports.WorkspaceDefaultBranchRefresher)
 	if !ok {
 		return nil
+	}
+	resolve := refresher.ResolveDefaultBranch
+	if !fetch {
+		local, ok := m.workspace.(ports.WorkspaceLocalDefaultBranchResolver)
+		if !ok {
+			return nil
+		}
+		resolve = local.ResolveLocalDefaultBranch
 	}
 	baseRefs := make(map[string]string)
 	targets := []defaultBranchRefreshTarget{{
@@ -1203,7 +1212,7 @@ func (m *Manager) refreshDefaultBranchesBestEffort(ctx context.Context, project 
 	// each repository's own inferred origin/HEAD even if an earlier fetch uses
 	// the entire shared refresh budget.
 	for i := range targets {
-		resolved, err := refresher.ResolveDefaultBranch(ctx, targets[i].repoPath, targets[i].configuredBranch)
+		resolved, err := resolve(ctx, targets[i].repoPath, targets[i].configuredBranch)
 		if err != nil {
 			m.logger.Warn("spawn: default branch resolution failed; continuing with adapter fallback",
 				"projectID", project.ID,
@@ -1217,6 +1226,12 @@ func (m *Manager) refreshDefaultBranchesBestEffort(ctx context.Context, project 
 		if resolved.BaseRef != "" {
 			baseRefs[filepath.Clean(targets[i].repoPath)] = resolved.BaseRef
 		}
+	}
+
+	// Imports resume local history and must not wait for an unrelated remote
+	// refresh. Do not seed the refresh cache: a later ordinary spawn still fetches.
+	if !fetch {
+		return baseRefs
 	}
 
 	// One deadline covers the complete workspace refresh. A slow or offline
@@ -1326,6 +1341,17 @@ func resolveSpawnDiffBase(ctx context.Context, root, defaultBranch string) (stri
 		return sha, "HEAD"
 	}
 	return "", ""
+}
+
+// Import fallback branches are unique to the conversation and data directory.
+// Separate isolated databases can allocate the same session id in a shared repo.
+func (m *Manager) importSpawnBranch(cfg ports.SpawnConfig, project domain.ProjectRecord, id domain.SessionID) string {
+	branch := DefaultSpawnBranch(id, cfg.Kind, sessionPrefix(project), project.Kind.WithDefault(), m.dataDir)
+	if branch == "" || cfg.ResumeNativeSession == nil {
+		return branch
+	}
+	key := sha256.Sum256([]byte(filepath.Clean(m.dataDir) + "\x00" + string(cfg.Harness) + "\x00" + cfg.ResumeNativeSession.NativeSessionID))
+	return fmt.Sprintf("%s-import-%x", branch, key[:6])
 }
 
 // importedSourceBranch is the branch an imported conversation ran on, recorded
@@ -2221,6 +2247,12 @@ func (m *Manager) resumeAgentRecordWithReservedGeneration(
 	project, err := m.loadProject(ctx, rec.ProjectID)
 	if err != nil {
 		return RestoreResult{}, fmt.Errorf("%s %s: %w", operation, rec.ID, err)
+	}
+	if rec.Mode == domain.SessionModeChat && rec.Metadata.WorkspacePath == "" && rec.Metadata.NativeTranscriptPath != "" {
+		rec, err = m.prepareImportedWorkspace(ctx, rec, project)
+		if err != nil {
+			return RestoreResult{}, err
+		}
 	}
 	meta := rec.Metadata
 	mode := domain.NormalizeSessionMode(rec.Mode)

@@ -204,6 +204,7 @@ type WorkspaceTreeEntry struct {
 // prs is a list. The embedded domain.Session.Metadata and domain.Session.PRs
 // fields are json:"-"; these curated fields are what serialize.
 type SessionView struct {
+	ImportedHistory bool `json:"importedHistory,omitempty"`
 	domain.Session
 	Branch string `json:"branch,omitempty"`
 	// TerminalGeneration is an opaque renderer fence. A restarted controller
@@ -2058,6 +2059,7 @@ type ConversationActivityResponse struct {
 
 // ConversationSnapshotResponse is the durable read model a client bootstraps from.
 type ConversationSnapshotResponse struct {
+	ImportedHistory            bool   `json:"importedHistory,omitempty"`
 	ConversationID             string `json:"conversationId"`
 	ActiveBranchID             string `json:"activeBranchId,omitempty"`
 	BranchedFromEarlierMessage bool   `json:"branchedFromEarlierMessage"`

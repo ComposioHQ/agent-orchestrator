@@ -62,6 +62,7 @@ type SpawnConfig struct {
 // transcript lives under (e.g. ~/.claude or ~/.codex), used to point the
 // launched agent at the right home so it can find and replay that transcript.
 type ResumeNativeSession struct {
+	TranscriptPath  string
 	Provider        domain.AgentHarness
 	NativeSessionID string
 	ConfigDir       string

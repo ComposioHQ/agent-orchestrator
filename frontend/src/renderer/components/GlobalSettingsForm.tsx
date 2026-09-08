@@ -3,7 +3,6 @@ import { useTranslation } from "react-i18next";
 import type { GlobalSettingsSection as GlobalSettingsPage } from "../stores/ui-store";
 import { GeneralSettingsSection } from "./settings/GeneralSettingsSection";
 import { HarnessSettingsSection } from "./settings/HarnessSettingsSection";
-import { ImportSessionsSection } from "./settings/ImportSessionsSection";
 import { CloudCredentialsSection } from "./settings/CloudCredentialsSection";
 import { CodexAccountsSection } from "./settings/CodexAccountsSection";
 import { ConnectMobileContent } from "./settings/ConnectMobileContent";
@@ -49,7 +48,6 @@ export function GlobalSettingsForm({
 
 			{(all || section === "agents") && <CodexAccountsSection titleHidden={titleHidden} />}
 
-			{(all || section === "importSessions") && <ImportSessionsSection titleHidden={titleHidden} />}
 
 			{(all || section === "browserProfiles") && <BrowserProfilesSection titleHidden={titleHidden} />}
 			{(all || section === "cloud") && <CloudCredentialsSection titleHidden={titleHidden} />}

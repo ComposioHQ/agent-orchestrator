@@ -2,9 +2,11 @@ package sessionimportsvc
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
@@ -65,26 +67,6 @@ func TestDirIsAncestor(t *testing.T) {
 	}
 }
 
-func TestGitRootWalksUp(t *testing.T) {
-	root := t.TempDir()
-	deep := filepath.Join(root, "pkg", "sub")
-	if err := os.MkdirAll(deep, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	// .git at the repo root.
-	if err := os.MkdirAll(filepath.Join(root, ".git"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if got := gitRoot(deep); got != filepath.Clean(root) {
-		t.Errorf("gitRoot(%s) = %s, want %s", deep, got, root)
-	}
-	// No .git anywhere -> returns the input unchanged.
-	noRepo := t.TempDir()
-	if got := gitRoot(noRepo); got != filepath.Clean(noRepo) {
-		t.Errorf("gitRoot(no repo) = %s, want %s", got, noRepo)
-	}
-}
-
 func TestImportDisplayName(t *testing.T) {
 	if got := importDisplayName("short"); got != "short" {
 		t.Errorf("short title changed: %q", got)
@@ -103,7 +85,7 @@ type fakeSessions struct {
 	get      map[domain.SessionID]domain.Session
 }
 
-func (f *fakeSessions) Spawn(_ context.Context, cfg ports.SpawnConfig) (domain.Session, int, int, error) {
+func (f *fakeSessions) RegisterImport(_ context.Context, cfg ports.SpawnConfig) (domain.Session, int, int, error) {
 	f.spawned = cfg
 	if f.spawnErr != nil {
 		return domain.Session{}, 0, 0, f.spawnErr
@@ -136,11 +118,11 @@ func TestImportIsIdempotent(t *testing.T) {
 	existing := domain.Session{SessionRecord: domain.SessionRecord{ID: "proj-9"}}
 	sessions := &fakeSessions{get: map[domain.SessionID]domain.Session{"proj-9": existing}}
 	store := &fakeStore{recs: []domain.SessionRecord{
-		{ID: "proj-9", Metadata: domain.SessionMetadata{ProviderConversationID: "native-abc"}},
+		{ID: "proj-9", ProjectID: "proj", Harness: domain.HarnessClaudeCode, Metadata: domain.SessionMetadata{ProviderConversationID: "native-abc"}},
 	}}
 	svc := New(sessions, store, &fakeProjects{})
 
-	got, already, err := svc.Import(context.Background(), domain.HarnessClaudeCode, "native-abc")
+	got, already, err := svc.Import(context.Background(), domain.HarnessClaudeCode, "native-abc", "proj")
 	if err != nil {
 		t.Fatalf("import: %v", err)
 	}
@@ -157,6 +139,7 @@ func TestImportIsIdempotent(t *testing.T) {
 
 func TestImportSpawnsChatSessionBoundToNativeID(t *testing.T) {
 	target := sessionimport.ImportableSession{
+		TokenCount: MinimumTokens, LastActivity: time.Now(),
 		Provider:        domain.HarnessClaudeCode,
 		NativeSessionID: "nat-1",
 		ConfigDir:       "/home/user/.claude",
@@ -170,7 +153,7 @@ func TestImportSpawnsChatSessionBoundToNativeID(t *testing.T) {
 	projects := &fakeProjects{list: []projectsvc.Summary{{ID: "proj-existing", Path: "/Users/dev/code"}}}
 	svc := New(sessions, store, projects, src)
 
-	got, already, err := svc.Import(context.Background(), domain.HarnessClaudeCode, "nat-1")
+	got, already, err := svc.Import(context.Background(), domain.HarnessClaudeCode, "nat-1", "proj-existing")
 	if err != nil {
 		t.Fatalf("import: %v", err)
 	}
@@ -210,32 +193,14 @@ func TestImportSpawnsChatSessionBoundToNativeID(t *testing.T) {
 	}
 }
 
-func TestImportRegistersProjectWhenNoneCovers(t *testing.T) {
-	// A real git repo so gitRoot resolves and Add is exercised with a valid path.
-	repo := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(repo, ".git"), 0o755); err != nil {
-		t.Fatal(err)
+func TestImportNeverRegistersProject(t *testing.T) {
+	projects := &fakeProjects{}
+	svc := New(&fakeSessions{}, &fakeStore{}, projects)
+	if _, _, err := svc.Import(context.Background(), domain.HarnessCodex, "native", "missing"); !errors.Is(err, ErrImportProjectUnresolved) {
+		t.Fatalf("expected unregistered project error, got %v", err)
 	}
-	target := sessionimport.ImportableSession{
-		Provider:        domain.HarnessCodex,
-		NativeSessionID: "codex-root-1",
-		ConfigDir:       "/home/user/.codex",
-		CWD:             repo,
-		Title:           "codex thread",
-	}
-	src := &fakeSource{provider: domain.HarnessCodex, sessions: []sessionimport.ImportableSession{target}}
-	sessions := &fakeSessions{}
-	projects := &fakeProjects{} // no projects -> must register one
-
-	svc := New(sessions, &fakeStore{}, projects, src)
-	if _, _, err := svc.Import(context.Background(), domain.HarnessCodex, "codex-root-1"); err != nil {
-		t.Fatalf("import: %v", err)
-	}
-	if projects.added.Path != filepath.Clean(repo) {
-		t.Errorf("expected a project registered at the repo root %q, got %q", repo, projects.added.Path)
-	}
-	if sessions.spawned.ProjectID != "created-1" {
-		t.Errorf("expected the newly created project, got %q", sessions.spawned.ProjectID)
+	if projects.added.Path != "" {
+		t.Fatal("import must not register a project")
 	}
 }
 
@@ -246,6 +211,7 @@ func TestImportAfterDeleteCreatesFresh(t *testing.T) {
 		t.Fatal(err)
 	}
 	target := sessionimport.ImportableSession{
+		TokenCount: MinimumTokens, LastActivity: time.Now(),
 		Provider:        domain.HarnessClaudeCode,
 		NativeSessionID: "nat-9",
 		ConfigDir:       "/home/user/.claude",
@@ -260,7 +226,7 @@ func TestImportAfterDeleteCreatesFresh(t *testing.T) {
 	projects := &fakeProjects{list: []projectsvc.Summary{{ID: "p1", Path: repo}}}
 
 	svc := New(sessions, store, projects, src)
-	got, already, err := svc.Import(context.Background(), domain.HarnessClaudeCode, "nat-9")
+	got, already, err := svc.Import(context.Background(), domain.HarnessClaudeCode, "nat-9", "p1")
 	if err != nil {
 		t.Fatalf("import: %v", err)
 	}
@@ -309,9 +275,9 @@ func TestDiscoverScopedToProject(t *testing.T) {
 	// Three conversations: one in a project, one in a nested project inside it,
 	// and one in a directory no project covers.
 	sessions := []sessionimport.ImportableSession{
-		{Provider: domain.HarnessClaudeCode, NativeSessionID: "in-root", CWD: "/Users/dev/code", Meaning: sessionimport.MeaningMeaningful},
-		{Provider: domain.HarnessClaudeCode, NativeSessionID: "in-nested", CWD: "/Users/dev/code/app/sub", Meaning: sessionimport.MeaningMeaningful},
-		{Provider: domain.HarnessClaudeCode, NativeSessionID: "elsewhere", CWD: "/tmp/scratch", Meaning: sessionimport.MeaningMeaningful},
+		{Provider: domain.HarnessClaudeCode, NativeSessionID: "in-root", CWD: "/Users/dev/code", TokenCount: MinimumTokens, LastActivity: time.Now()},
+		{Provider: domain.HarnessClaudeCode, NativeSessionID: "in-nested", CWD: "/Users/dev/code/app/sub", TokenCount: MinimumTokens, LastActivity: time.Now()},
+		{Provider: domain.HarnessClaudeCode, NativeSessionID: "elsewhere", CWD: "/tmp/scratch", TokenCount: MinimumTokens, LastActivity: time.Now()},
 	}
 	src := &fakeSource{provider: domain.HarnessClaudeCode, sessions: sessions}
 	projects := &fakeProjects{list: []projectsvc.Summary{
@@ -319,15 +285,6 @@ func TestDiscoverScopedToProject(t *testing.T) {
 		{ID: "nested", Path: "/Users/dev/code/app"},
 	}}
 	svc := New(&fakeSessions{}, &fakeStore{}, projects, src)
-
-	// No project: everything on the machine, which is what global settings offer.
-	all, err := svc.Discover(context.Background(), sessionimport.DiscoverOptions{}, "")
-	if err != nil {
-		t.Fatalf("discover all: %v", err)
-	}
-	if len(all) != 3 {
-		t.Fatalf("unscoped discovery should list every conversation, got %d", len(all))
-	}
 
 	// A project lists only its own history, and the nested project's
 	// conversation belongs to the nested project rather than its parent.
@@ -380,6 +337,7 @@ func TestAdoptableBranch(t *testing.T) {
 // fail git's branch validation and take the whole import down with it.
 func TestImportOfDetachedHeadConversationDropsTheBranch(t *testing.T) {
 	target := sessionimport.ImportableSession{
+		TokenCount: MinimumTokens, LastActivity: time.Now(),
 		Provider:        domain.HarnessClaudeCode,
 		NativeSessionID: "detached-1",
 		CWD:             "/Users/dev/code",
@@ -391,7 +349,7 @@ func TestImportOfDetachedHeadConversationDropsTheBranch(t *testing.T) {
 	projects := &fakeProjects{list: []projectsvc.Summary{{ID: "proj-existing", Path: "/Users/dev/code"}}}
 	svc := New(sessions, &fakeStore{}, projects, src)
 
-	if _, _, err := svc.Import(context.Background(), domain.HarnessClaudeCode, "detached-1"); err != nil {
+	if _, _, err := svc.Import(context.Background(), domain.HarnessClaudeCode, "detached-1", "proj-existing"); err != nil {
 		t.Fatalf("a detached-HEAD conversation must still import: %v", err)
 	}
 	if sessions.spawned.Branch != "" {
@@ -404,6 +362,7 @@ func TestImportOfDetachedHeadConversationDropsTheBranch(t *testing.T) {
 // pull request. Without it every import lands awaiting a PR that is never found.
 func TestImportRecordsTheConversationBranchForPRDiscovery(t *testing.T) {
 	target := sessionimport.ImportableSession{
+		TokenCount: MinimumTokens, LastActivity: time.Now(),
 		Provider:        domain.HarnessClaudeCode,
 		NativeSessionID: "nat-branch",
 		CWD:             "/Users/dev/code",
@@ -415,7 +374,7 @@ func TestImportRecordsTheConversationBranchForPRDiscovery(t *testing.T) {
 	projects := &fakeProjects{list: []projectsvc.Summary{{ID: "proj", Path: "/Users/dev/code"}}}
 	svc := New(sessions, &fakeStore{}, projects, src)
 
-	if _, _, err := svc.Import(context.Background(), domain.HarnessClaudeCode, "nat-branch"); err != nil {
+	if _, _, err := svc.Import(context.Background(), domain.HarnessClaudeCode, "nat-branch", "proj"); err != nil {
 		t.Fatalf("import: %v", err)
 	}
 	rns := sessions.spawned.ResumeNativeSession
@@ -431,6 +390,7 @@ func TestImportRecordsTheConversationBranchForPRDiscovery(t *testing.T) {
 // where the conversation ran.
 func TestImportRecordsTrunkAsSourceEvenThoughItIsNotAdopted(t *testing.T) {
 	target := sessionimport.ImportableSession{
+		TokenCount: MinimumTokens, LastActivity: time.Now(),
 		Provider:        domain.HarnessClaudeCode,
 		NativeSessionID: "nat-main",
 		CWD:             "/Users/dev/code",
@@ -442,7 +402,7 @@ func TestImportRecordsTrunkAsSourceEvenThoughItIsNotAdopted(t *testing.T) {
 	projects := &fakeProjects{list: []projectsvc.Summary{{ID: "proj", Path: "/Users/dev/code"}}}
 	svc := New(sessions, &fakeStore{}, projects, src)
 
-	if _, _, err := svc.Import(context.Background(), domain.HarnessClaudeCode, "nat-main"); err != nil {
+	if _, _, err := svc.Import(context.Background(), domain.HarnessClaudeCode, "nat-main", "proj"); err != nil {
 		t.Fatalf("import: %v", err)
 	}
 	if sessions.spawned.Branch != "" {
@@ -457,8 +417,8 @@ func TestImportRecordsTrunkAsSourceEvenThoughItIsNotAdopted(t *testing.T) {
 // machine just to show its own handful.
 func TestScopedDiscoveryNarrowsTheScan(t *testing.T) {
 	sessions := []sessionimport.ImportableSession{
-		{Provider: domain.HarnessClaudeCode, NativeSessionID: "mine", CWD: "/Users/dev/code", Meaning: sessionimport.MeaningMeaningful},
-		{Provider: domain.HarnessClaudeCode, NativeSessionID: "elsewhere", CWD: "/tmp/other", Meaning: sessionimport.MeaningMeaningful},
+		{Provider: domain.HarnessClaudeCode, NativeSessionID: "mine", CWD: "/Users/dev/code", TokenCount: MinimumTokens, LastActivity: time.Now()},
+		{Provider: domain.HarnessClaudeCode, NativeSessionID: "elsewhere", CWD: "/tmp/other", TokenCount: MinimumTokens, LastActivity: time.Now()},
 	}
 	src := &scopeRecordingSource{inner: &fakeSource{provider: domain.HarnessClaudeCode, sessions: sessions}}
 	projects := &fakeProjects{list: []projectsvc.Summary{{ID: "proj", Path: "/Users/dev/code"}}}
@@ -481,13 +441,6 @@ func TestScopedDiscoveryNarrowsTheScan(t *testing.T) {
 		t.Error("the project's own conversations must still be read")
 	}
 
-	// An unscoped listing reads everything, as it must.
-	if _, err := svc.Discover(context.Background(), sessionimport.DiscoverOptions{}, ""); err != nil {
-		t.Fatalf("discover all: %v", err)
-	}
-	if src.lastOpts.IncludeCWD != nil {
-		t.Error("an unscoped listing must not narrow the scan")
-	}
 }
 
 // scopeRecordingSource captures the options discovery was asked for.
