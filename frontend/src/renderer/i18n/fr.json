@@ -294,6 +294,7 @@
 	"createProject.originRemoteUrl": "URL distante origin",
 	"createProject.originRemoteUrlPlaceholder": "https://github.com/org/repository.git",
 	"createProject.workspaceRequiresInitializedChildRepo": "L’importation d’un espace de travail nécessite au moins un dépôt Git enfant direct avec un commit et un remote origin.",
+	"createProject.workspaceRemoteSetupRequired": "Définissez un remote origin pour les dépôts enfants indiqués ci-dessous avant d’importer cet espace de travail. AO ne configure ni ne pousse les dépôts enfants pendant l’importation.",
 	"createProject.workspaceSetup": "Configuration de l’espace de travail",
 	"createProject.workspaceSetupApproval": "Approuvez les actions de configuration requises pour chaque dépôt enfant initialisé.",
 	"createProject.workspaceSetupRepoApproval": "Approuvez uniquement la configuration manquante pour ce dépôt enfant initialisé.",

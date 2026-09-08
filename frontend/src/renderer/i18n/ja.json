@@ -292,6 +292,7 @@
 	"createProject.originRemoteUrl": "Origin リモート URL",
 	"createProject.originRemoteUrlPlaceholder": "https://github.com/org/repository.git",
 	"createProject.workspaceRequiresInitializedChildRepo": "ワークスペースをインポートするには、コミットと origin リモートを持つ直接の子 Git リポジトリが少なくとも1つ必要です。",
+	"createProject.workspaceRemoteSetupRequired": "このワークスペースをインポートする前に、下に表示された子リポジトリに origin リモートを設定してください。AO はワークスペースのインポート中に子リポジトリの設定やプッシュを行いません。",
 	"createProject.workspaceSetup": "ワークスペースの設定",
 	"createProject.workspaceSetupApproval": "初期化された各子リポジトリに必要な設定操作を承認してください。",
 	"createProject.workspaceSetupRepoApproval": "この初期化済み子リポジトリに不足している設定だけを承認してください。",

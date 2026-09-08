@@ -292,6 +292,7 @@
 	"createProject.originRemoteUrl": "Origin-Remote-URL",
 	"createProject.originRemoteUrlPlaceholder": "https://github.com/org/repository.git",
 	"createProject.workspaceRequiresInitializedChildRepo": "Zum Importieren eines Workspace ist mindestens ein direkt untergeordnetes Git-Repository mit Commit und Origin-Remote erforderlich.",
+	"createProject.workspaceRemoteSetupRequired": "Legen Sie vor dem Importieren dieses Workspace ein Origin-Remote für die unten markierten untergeordneten Repositorys fest. AO konfiguriert oder pusht beim Workspace-Import keine untergeordneten Repositorys.",
 	"createProject.workspaceSetup": "Workspace-Einrichtung",
 	"createProject.workspaceSetupApproval": "Bestätige die erforderlichen Einrichtungsschritte für jedes initialisierte untergeordnete Repository.",
 	"createProject.workspaceSetupRepoApproval": "Bestätige nur die fehlende Einrichtung für dieses initialisierte untergeordnete Repository.",
