@@ -7,7 +7,7 @@ import { cn } from "../../lib/utils";
 import { parseNightlyVersion } from "../../lib/build-channel";
 import { useUiStore } from "../../stores/ui-store";
 import { useRequestUpdateInstall } from "../../hooks/useRequestUpdateInstall";
-import { useUpdateStatus } from "../../hooks/useUpdateStatus";
+import { useUpdateStatus, requestUpdateDownload } from "../../hooks/useUpdateStatus";
 import type { UpdateChannel, UpdateSettings, UpdateState, UpdateStatus } from "../../../main/update-settings";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
@@ -44,6 +44,7 @@ export function UpdatesSection({ titleHidden }: { titleHidden?: boolean } = {}) 
 	const query = useQuery({
 		queryKey: updateSettingsQueryKey,
 		queryFn: () => aoBridge.updateSettings.get(),
+		refetchInterval: 3_000,
 	});
 
 	const [form, setForm] = useState<UpdateSettings>(DEFAULT_SETTINGS);
@@ -52,6 +53,7 @@ export function UpdatesSection({ titleHidden }: { titleHidden?: boolean } = {}) 
 	const [showFeature, setShowFeature] = useState(false);
 	const [savingField, setSavingField] = useState<"automatic" | "channel" | null>(null);
 	const [pendingPin, setPendingPin] = useState<{ pr: number; title: string } | null>(null);
+	const [manualCheckFailure, setManualCheckFailure] = useState<string | null>(null);
 	const [manualCheckRequestId, setManualCheckRequestId] = useState<string | null>(null);
 	const [channelSwitch, setChannelSwitch] = useState<{ channel: UpdateChannel; requestId: string } | null>(null);
 	const channelSwitchRef = useRef<typeof channelSwitch>(null);
@@ -67,7 +69,8 @@ export function UpdatesSection({ titleHidden }: { titleHidden?: boolean } = {}) 
 		manualCheckWatchdogRef.current = null;
 	};
 
-	const finishManualCheck = (requestId: string) => {
+	const finishManualCheck = (requestId: string, error?: unknown) => {
+		if (error) setManualCheckFailure(error instanceof Error ? error.message : t("settings.updates.updateFailed"));
 		clearManualCheckWatchdog();
 		if (manualCheckFinishTimerRef.current !== null) clearTimeout(manualCheckFinishTimerRef.current);
 		const elapsed = manualCheckStartedAtRef.current === null ? MIN_MANUAL_CHECK_VISIBLE_MS : Date.now() - manualCheckStartedAtRef.current;
@@ -85,11 +88,13 @@ export function UpdatesSection({ titleHidden }: { titleHidden?: boolean } = {}) 
 	};
 
 	const startManualCheck = (requestId: string) => {
+		setManualCheckFailure(null);
 		clearManualCheckWatchdog();
 		manualCheckStartedAtRef.current = Date.now();
 		setManualCheckRequestId(requestId);
 		manualCheckWatchdogRef.current = setTimeout(() => {
 			manualCheckWatchdogRef.current = null;
+			setManualCheckFailure(t("settings.updates.checkTimedOut"));
 			setManualCheckRequestId((pending) => (pending === requestId ? null : pending));
 		}, MAX_MANUAL_CHECK_MS);
 	};
@@ -102,7 +107,7 @@ export function UpdatesSection({ titleHidden }: { titleHidden?: boolean } = {}) 
 		if (pending && next.requestId === pending.requestId && ["not-available", "error", "unsupported"].includes(next.state)) {
 			setChannelSwitch(null);
 		}
-	});
+	}, true);
 
 	useEffect(
 		() => () => {
@@ -126,7 +131,7 @@ export function UpdatesSection({ titleHidden }: { titleHidden?: boolean } = {}) 
 		if (handledStatusRef.current === status.state) return;
 		handledStatusRef.current = status.state;
 		if (status.state === "available") {
-			void aoBridge.updates.download(requestId);
+			void requestUpdateDownload(requestId);
 		} else if (status.state === "downloaded") {
 			void aoBridge.updates.install();
 			autoProgressRef.current = null;
@@ -250,7 +255,7 @@ export function UpdatesSection({ titleHidden }: { titleHidden?: boolean } = {}) 
 		<>
 			<SettingsSection title={t("settings.updates")} sectionId="updates" titleHidden={titleHidden} grouped>
 				<UpdateActions
-					status={status}
+					status={manualCheckFailure ? { ...status, state: "error", message: manualCheckFailure } : status}
 					manualCheckRequestId={manualCheckRequestId}
 					startManualCheck={startManualCheck}
 					finishManualCheck={finishManualCheck}
@@ -381,7 +386,7 @@ function UpdateActions({
 	status: UpdateStatus;
 	manualCheckRequestId: string | null;
 	startManualCheck: (requestId: string) => void;
-	finishManualCheck: (requestId: string) => void;
+	finishManualCheck: (requestId: string, error?: unknown) => void;
 	channelSwitch: { channel: UpdateChannel; requestId: string } | null;
 }) {
 	const { t, i18n } = useTranslation();
@@ -394,7 +399,7 @@ function UpdateActions({
 	const manualCheckPending = manualCheckRequestId !== null;
 	const checking = status.state === "checking" || manualCheckPending;
 	const replacementAvailable = status.state === "replacing" && status.replacementPhase === "checking";
-	const downloading = status.state === "downloading" || (status.state === "replacing" && !replacementAvailable);
+	const downloading = status.state === "downloading" || status.state === "preparing" || (status.state === "replacing" && !replacementAvailable);
 	// Only the user's OWN in-flight check blocks the button. A background check
 	// also reports "checking", and gating on that swallowed the first click
 	// whenever Settings was opened during one — every 15 minutes on nightly.
@@ -404,10 +409,15 @@ function UpdateActions({
 	// The minimum-spinner window keeps "checking" on screen briefly after the
 	// updater has already answered, so the status line and the primary action
 	// read from the live state and only the button's own label follows `checking`.
-	const displayState: UpdateState = checking && !downloading && status.state !== "replacement-failed" ? "checking" : status.state;
+	const displayState: UpdateState = checking && !downloading && !["error", "downloaded", "replacing", "replacement-failed"].includes(status.state) ? "checking" : status.state;
 
+	const [now, setNow] = useState(Date.now());
+	useEffect(() => {
+		const timer = setInterval(() => setNow(Date.now()), 1_000);
+		return () => clearInterval(timer);
+	}, []);
 	const checkedAt = status.checkedAt
-		? new Intl.DateTimeFormat(locale, { dateStyle: "medium", timeStyle: "short" }).format(status.checkedAt)
+		? new Intl.DateTimeFormat(locale, { dateStyle: "medium", timeStyle: "medium" }).format(status.checkedAt)
 		: null;
 
 	const channelSwitchInFlight = channelSwitch !== null && (!status.requestId || status.requestId === channelSwitch.requestId);
@@ -431,8 +441,8 @@ function UpdateActions({
 		startManualCheck(requestId);
 		try {
 			await aoBridge.updates.check({ requestId });
-		} catch {
-			// The main process publishes the actionable updater error state.
+		} catch (error) {
+			finishManualCheck(requestId, error);
 		} finally {
 			finishManualCheck(requestId);
 		}
@@ -484,7 +494,7 @@ function UpdateActions({
 				    across the heading. The target build is named in the status line. */}
 				<div className="flex w-full shrink-0 flex-wrap items-center gap-2 sm:w-auto sm:justify-end [&>button]:flex-1 sm:[&>button]:flex-none">
 					{replacementAvailable && (
-						<Button type="button" variant="primary" size="sm" onClick={() => void aoBridge.updates.download()}>
+						<Button type="button" variant="primary" size="sm" onClick={() => void requestUpdateDownload()}>
 							{t("settings.updates.updateTo", { version: status.replacementCandidate?.version ?? status.version })}
 						</Button>
 					)}
@@ -511,23 +521,26 @@ function UpdateActions({
 							{t("settings.updates.retryVersion", { version: status.replacementCandidate?.version ?? status.version })}
 						</Button>
 					)}
-					{status.state === "downloading" && (
+					{(status.state === "downloading" || status.state === "preparing") && (
 						<Button type="button" variant="primary" size="sm" disabled>
-							<DownloadProgressIcon percent={status.percent ?? 0} />
-							{t("settings.updates.downloading", { percent: status.percent ?? 0 })}
-
+							{status.state === "preparing" ? <Loader2 className="size-icon-sm animate-spin" aria-hidden="true" /> : <DownloadProgressIcon percent={status.percent ?? 0} />}
+							{status.state === "preparing"
+								? t("settings.updates.preparing", { defaultValue: "Preparing update…" })
+								: status.percent === undefined
+									? t("settings.updates.startingDownload", { defaultValue: "Starting download…" })
+									: t("settings.updates.downloading", { percent: status.percent })}
 						</Button>
 					)}
 					{status.state === "available" && (
 						<Button type="button" variant="primary" size="sm"
 							aria-label={status.version ? t("settings.updates.updateTo", { version: `v${status.version}` }) : t("settings.updates.updateToLatest")}
-							onClick={() => void aoBridge.updates.download()}
+							onClick={() => void requestUpdateDownload()}
 						>
 							<Download className="size-icon-sm" aria-hidden="true" />
 							{t("settings.updates.update")}
 						</Button>
 					)}
-					{status.state === "downloaded" && (
+					{(!downloading && (status.state === "downloaded" || (status.staged && status.staged.ready !== false))) && (
 						// Opens the restart confirmation rather than installing outright:
 						// installing quits the app, which costs a turn on any chat session
 						// running a daemon-owned driver.
@@ -574,15 +587,16 @@ function UpdateActions({
 				<UpdateStatusLine
 					state={displayState}
 					status={status}
-					locale={locale}
 				/>
+				{status.state === "downloading" && status.percent !== undefined && <progress aria-label={t("settings.updates.progress")} max={100} value={status.percent} className="h-1 w-full" />}
+				{status.transferred !== undefined && status.total !== undefined && <p className="text-xs tabular-nums text-settings-muted">{t("settings.updates.bytes", { downloaded: (status.transferred / 1_000_000).toFixed(1), total: (status.total / 1_000_000).toFixed(1) })}</p>}
 				{channelSwitchMessage && <p className="text-xs leading-4 text-settings-muted">{channelSwitchMessage}</p>}
 				{checkedAt ? (
 					<p className="flex min-w-0 items-start gap-2 text-xs leading-4 tabular-nums text-settings-muted" data-testid="update-checked-at">
 						<span className="flex h-4 shrink-0 items-center">
 							<Clock3 className="size-icon-sm shrink-0" aria-hidden="true" />
 						</span>
-						{t("settings.updates.lastChecked", { time: checkedAt })}
+						<span title={new Date(status.checkedAt!).toISOString()}>{now - status.checkedAt! < 60_000 ? t("settings.updates.checkedJustNow", { defaultValue: "Checked just now" }) : t("settings.updates.checkedMinutesAgo", { defaultValue: "Checked {{count}} minutes ago", count: Math.floor((now - status.checkedAt!) / 60_000) })} · {checkedAt}</span>
 					</p>
 				) : null}
 			</div>
@@ -592,7 +606,7 @@ function UpdateActions({
 			    entirely. The panel has room the dialog never did. Plain text on
 			    purpose: these are the remote release body, sanitized in the main
 			    process, and nothing here injects markup. */}
-			{status.state === "downloaded" && status.releaseNotes ? (
+			{(status.state === "downloaded" || status.staged) && status.releaseNotes ? (
 				<div className="mt-3" data-testid="update-release-notes">
 					<p className="text-caption font-medium uppercase tracking-wide text-settings-muted">
 						{t("update.restart.whatsNew")}
@@ -603,7 +617,9 @@ function UpdateActions({
 				</div>
 			) : null}
 
-			{!status.staleCheckNudge && status.checksFailing && (
+			{status.checkError && <UpdateNotice tone="error" text={status.checkError} />}
+
+			{!status.checkError && !status.staleCheckNudge && status.checksFailing && (
 				<UpdateNotice tone="warning" text={t("settings.updates.checksFailing")} />
 			)}
 
@@ -652,11 +668,9 @@ function installedUpdateChannel(version: string | undefined): UpdateChannel {
 function UpdateStatusLine({
 	state,
 	status,
-	locale,
 }: {
 	state: UpdateState;
 	status: UpdateStatus;
-	locale: string;
 }) {
 	const { t } = useTranslation();
 	let className = "text-settings-muted";
@@ -664,16 +678,6 @@ function UpdateStatusLine({
 	let label: string;
 	let detail: string | null = null;
 
-	const targetBuild = (version: string | undefined): string | null => {
-		if (!version) return null;
-		const nightly = parseNightlyVersion(version);
-		if (!nightly) return `v${version}`;
-		// Same compact form as the sidebar row, so the two never disagree.
-		return t("shell.nightlyBuild", {
-			version: nightly.base,
-			date: new Intl.DateTimeFormat(locale, { month: "short", day: "numeric" }).format(nightly.builtAt),
-		});
-	};
 
 	switch (state) {
 		case "replacing": {
@@ -724,19 +728,24 @@ function UpdateStatusLine({
 			className = "text-settings-label";
 			icon = <Download className="size-icon-sm shrink-0" aria-hidden="true" />;
 			label = t("settings.updates.availableNow");
-			detail = targetBuild(status.version);
+			detail = status.version ? t("settings.updates.targetVersion", { version: status.version }) : null;
 			break;
 		case "downloading":
 			className = "text-settings-label tabular-nums";
 			icon = <DownloadProgressIcon percent={status.percent ?? 0} />;
-			label = t("settings.updates.downloading", { percent: status.percent ?? 0 });
-			detail = targetBuild(status.version);
+			label = status.percent === undefined ? t("settings.updates.startingDownload", { defaultValue: "Starting download…" }) : t("settings.updates.downloading", { percent: status.percent });
+			detail = status.version ? t("settings.updates.targetVersion", { version: status.version }) : null;
+			break;
+		case "preparing":
+			icon = <Loader2 className="size-icon-sm animate-spin" aria-hidden="true" />;
+			label = t("settings.updates.preparing", { defaultValue: "Preparing update…" });
+			detail = status.version ? t("settings.updates.targetVersion", { version: status.version }) : null;
 			break;
 		case "downloaded":
 			className = "text-success";
 			icon = <CheckCircle2 className="size-icon-sm shrink-0" aria-hidden="true" />;
 			label = t("settings.updates.downloaded");
-			detail = targetBuild(status.version);
+			detail = status.version ? t("settings.updates.targetVersion", { version: status.version }) : null;
 			break;
 		case "not-available":
 			className = "text-success";

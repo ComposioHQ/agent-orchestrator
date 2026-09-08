@@ -1009,6 +1009,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 					/>
 				),
 				onSelect: () => activateCenterFile(path),
+				onClose: () => closeCenterFile(path),
 			})),
 		[activateCenterFile, closeCenterFile, fileAnnotation, fileTabs.activePath, fileTabs.openPaths],
 	);
