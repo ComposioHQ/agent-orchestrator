@@ -71,6 +71,24 @@ func New(binary string, run Runner) *Resolver {
 	return &Resolver{binary: binary, run: run}
 }
 
+// RecordInitialBranch records the branch AO is about to give its first commit.
+// Call only while initializing an unborn repository; ordinary default-branch
+// resolution must never infer a default from the current checkout.
+func (r *Resolver) RecordInitialBranch(ctx context.Context, repo string) error {
+	out, err := r.run(ctx, r.binary, "-C", repo, "symbolic-ref", "--quiet", "--short", "HEAD")
+	if err != nil {
+		return fmt.Errorf("determine initial branch: %w", err)
+	}
+	branch := strings.TrimSpace(string(out))
+	if branch == "" {
+		return errors.New("determine initial branch: empty symbolic HEAD")
+	}
+	if _, err := r.run(ctx, r.binary, "-C", repo, "config", "--local", ManagedDefaultConfigKey, branch); err != nil {
+		return fmt.Errorf("record initial branch: %w", err)
+	}
+	return nil
+}
+
 // Inspect resolves from local, durable repository metadata only. It never
 // contacts a remote, so it is suitable for project read models and registration.
 func (r *Resolver) Inspect(ctx context.Context, repo string) (Resolution, error) {

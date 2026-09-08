@@ -366,19 +366,7 @@ func (m *Service) InitializeRepository(ctx context.Context, in InitializeReposit
 			return InitializeRepositoryResult{}, apierr.Invalid("GIT_INIT_FAILED", "Could not initialize a Git repository in this folder.", map[string]any{"error": err.Error()})
 		}
 	}
-	managedBranch := domain.DefaultBranchName
-	if target == repositorySetupUnbornRepo {
-		out, err := gitOutput(ctx, path, "symbolic-ref", "--quiet", "--short", "HEAD")
-		if err != nil || strings.TrimSpace(out) == "" {
-			detail := "empty symbolic HEAD"
-			if err != nil {
-				detail = err.Error()
-			}
-			return InitializeRepositoryResult{}, apierr.Invalid("GIT_INIT_FAILED", "Could not determine the initial branch for this repository.", map[string]any{"error": detail})
-		}
-		managedBranch = strings.TrimSpace(out)
-	}
-	if _, err := gitOutput(ctx, path, "config", "--local", gitdefault.ManagedDefaultConfigKey, managedBranch); err != nil {
+	if err := gitdefault.New("git", nil).RecordInitialBranch(ctx, path); err != nil {
 		return InitializeRepositoryResult{}, apierr.Invalid("GIT_INIT_FAILED", "Could not record the default branch for this repository.", map[string]any{"error": err.Error()})
 	}
 
