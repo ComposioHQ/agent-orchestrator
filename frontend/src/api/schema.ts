@@ -3086,7 +3086,7 @@ export interface components {
         };
         ConversationTurnSettingsPayload: {
             /** @enum {string} */
-            approvalMode?: "default" | "accept-edits" | "auto" | "bypass-permissions";
+            approvalMode?: "default" | "manual" | "accept-edits" | "auto" | "dont-ask" | "bypass-permissions";
             model?: string;
             reasoningEffort?: string;
         };

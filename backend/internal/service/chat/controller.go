@@ -1225,6 +1225,22 @@ func (c *Controller) Settings() domain.ConversationSettings {
 // The row is written first: if that fails, the in-memory copy must not move, or a
 // restart would silently revert a choice the user watched take effect.
 func (c *Controller) SetSettings(ctx context.Context, settings domain.ConversationSettings) error {
+	// Serialize with ArmHandoff: target preflight must observe either this
+	// committed choice or a refusal, never a choice changed during source drain.
+	c.sendMu.Lock()
+	defer c.sendMu.Unlock()
+	if c.handoffActive() {
+		return ErrControllerHandoff
+	}
+	return c.setSettingsLocked(ctx, settings)
+}
+
+// setSettingsLocked requires sendMu, including when a provider mutation and its
+// durable projection must complete together before handoff can be armed.
+func (c *Controller) setSettingsLocked(ctx context.Context, settings domain.ConversationSettings) error {
+	if err := explicitPermissionModeError(c.harness, settings.ApprovalMode); err != nil {
+		return err
+	}
 	if err := c.store.SetConversationSettings(ctx, c.conversation.ID, settings, c.now()); err != nil {
 		return fmt.Errorf("record conversation settings: %w", err)
 	}
@@ -1237,6 +1253,11 @@ func (c *Controller) SetSettings(ctx context.Context, settings domain.Conversati
 // turnSettings converts the stored choices into what a driver takes per turn.
 func (c *Controller) turnSettings() ports.ChatTurnSettings {
 	current := c.Settings()
+	// Durable settings describe the complete desired policy. An omitted approval
+	// means Default, not inheritance of a prior provider-side override.
+	if current.ApprovalMode == "" {
+		current.ApprovalMode = domain.PermissionModeDefault
+	}
 	return ports.ChatTurnSettings{
 		Model:    current.Model,
 		Effort:   current.ReasoningEffort,
