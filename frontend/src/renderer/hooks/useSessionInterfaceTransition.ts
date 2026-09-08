@@ -302,7 +302,13 @@ export function useSessionInterfaceTransition(
 			targetSessionId,
 			transitionId,
 		}: AcknowledgeInterfaceTransitionNoticeMutationInput) => {
-			if (isCloud) return undefined;
+			if (isCloud && cloud) {
+				return cloudCp.client.acknowledgeInterfaceTransitionNotice(
+					cloud.orgId,
+					targetSessionId,
+					transitionId,
+				);
+			}
 			const { data, error } = await apiClient.PUT(
 				"/api/v1/sessions/{sessionId}/interface-transition/{transitionId}/notice-acknowledgement",
 				{
@@ -315,7 +321,7 @@ export function useSessionInterfaceTransition(
 			return data;
 		},
 		onSuccess: (response, variables) => {
-			if (!response) return;
+			if (!response || !("transition" in response)) return;
 			queryClient.setQueryData<SessionInterfaceTransitionStatus>(
 				sessionInterfaceTransitionQueryKey(variables.targetSessionId),
 				(current) =>
