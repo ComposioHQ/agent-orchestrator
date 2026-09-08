@@ -142,6 +142,12 @@ export interface ConversationContentSummary {
 	name?: string;
 }
 
+export interface QueuedMessageEditOptions {
+	attachments?: { mimeType: string; data: string }[];
+	retainedContent?: number[];
+	expectedRevision?: number;
+}
+
 export interface ConversationMessage {
 	kind: "message";
 	id: string;
@@ -292,6 +298,9 @@ export interface FileChangeFile {
 	additions: number;
 	deletions: number;
 	patch?: string;
+	/** Native provider before/after text, used to render a fallback diff. */
+	oldText?: string;
+	newText?: string;
 	/** The patch was cut at the daemon's cap, so it is not the whole change. */
 	patchTruncated?: boolean;
 }
@@ -324,6 +333,8 @@ export interface McpToolDetail {
 	namespace?: string;
 	arguments?: unknown;
 	result?: unknown;
+	/** Structured provider content, including native ACP read output. */
+	content?: unknown;
 	error?: string;
 	success?: boolean;
 	/** Progress notes streamed while a long call runs. */
