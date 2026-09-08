@@ -1,0 +1,3902 @@
+[
+  {
+    "pr": 5105,
+    "workflow": "Frontend",
+    "conclusion": "success",
+    "databaseId": 34225259166,
+    "headSha": "40816926f2bf90b889daa9c86dddb956c02165f4",
+    "jobs": [
+      {
+        "completedAt": "2026-09-08T12:23:52Z",
+        "conclusion": "success",
+        "databaseId": 102057692857,
+        "name": "test",
+        "startedAt": "2026-09-08T12:17:35Z",
+        "status": "completed",
+        "steps": [
+          {
+            "completedAt": "2026-09-08T12:17:37Z",
+            "conclusion": "success",
+            "name": "Set up job",
+            "number": 1,
+            "startedAt": "2026-09-08T12:17:36Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T12:17:41Z",
+            "conclusion": "success",
+            "name": "Run actions/checkout@v4",
+            "number": 2,
+            "startedAt": "2026-09-08T12:17:37Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T12:17:50Z",
+            "conclusion": "success",
+            "name": "Run actions/setup-node@v4",
+            "number": 3,
+            "startedAt": "2026-09-08T12:17:41Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T12:18:13Z",
+            "conclusion": "success",
+            "name": "Install frontend dependencies",
+            "number": 4,
+            "startedAt": "2026-09-08T12:17:50Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T12:18:15Z",
+            "conclusion": "success",
+            "name": "Install Cloud client dependencies",
+            "number": 5,
+            "startedAt": "2026-09-08T12:18:13Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T12:18:17Z",
+            "conclusion": "success",
+            "name": "Install product UI dependencies",
+            "number": 6,
+            "startedAt": "2026-09-08T12:18:15Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T12:18:22Z",
+            "conclusion": "success",
+            "name": "Verify Cloud contract and client",
+            "number": 7,
+            "startedAt": "2026-09-08T12:18:17Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T12:18:34Z",
+            "conclusion": "success",
+            "name": "Verify product UI package",
+            "number": 8,
+            "startedAt": "2026-09-08T12:18:22Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T12:18:35Z",
+            "conclusion": "success",
+            "name": "Prepare pinned agent-browser runtime",
+            "number": 9,
+            "startedAt": "2026-09-08T12:18:34Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T12:18:55Z",
+            "conclusion": "success",
+            "name": "Install landing dependencies",
+            "number": 10,
+            "startedAt": "2026-09-08T12:18:35Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T12:19:56Z",
+            "conclusion": "success",
+            "name": "Typecheck project",
+            "number": 11,
+            "startedAt": "2026-09-08T12:18:55Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T12:20:04Z",
+            "conclusion": "success",
+            "name": "Typecheck E2E suite",
+            "number": 12,
+            "startedAt": "2026-09-08T12:19:56Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T12:23:50Z",
+            "conclusion": "success",
+            "name": "Run vitest suite",
+            "number": 13,
+            "startedAt": "2026-09-08T12:20:04Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T12:23:50Z",
+            "conclusion": "success",
+            "name": "Post Run actions/setup-node@v4",
+            "number": 25,
+            "startedAt": "2026-09-08T12:23:50Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T12:23:50Z",
+            "conclusion": "success",
+            "name": "Post Run actions/checkout@v4",
+            "number": 26,
+            "startedAt": "2026-09-08T12:23:50Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T12:23:50Z",
+            "conclusion": "success",
+            "name": "Complete job",
+            "number": 27,
+            "startedAt": "2026-09-08T12:23:50Z",
+            "status": "completed"
+          }
+        ],
+        "url": "https://github.com/Untrivial-ai/agent-orchestrator/actions/runs/34225259166/job/102057692857"
+      },
+      {
+        "completedAt": "2026-09-08T12:20:35Z",
+        "conclusion": "success",
+        "databaseId": 102057693231,
+        "name": "renderer-smoke",
+        "startedAt": "2026-09-08T12:17:36Z",
+        "status": "completed",
+        "steps": [
+          {
+            "completedAt": "2026-09-08T12:17:37Z",
+            "conclusion": "success",
+            "name": "Set up job",
+            "number": 1,
+            "startedAt": "2026-09-08T12:17:36Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T12:18:03Z",
+            "conclusion": "success",
+            "name": "Initialize containers",
+            "number": 2,
+            "startedAt": "2026-09-08T12:17:37Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T12:18:06Z",
+            "conclusion": "success",
+            "name": "Run actions/checkout@v4",
+            "number": 3,
+            "startedAt": "2026-09-08T12:18:03Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T12:18:10Z",
+            "conclusion": "success",
+            "name": "Run actions/setup-node@v4",
+            "number": 4,
+            "startedAt": "2026-09-08T12:18:06Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T12:18:33Z",
+            "conclusion": "success",
+            "name": "Run npm ci",
+            "number": 5,
+            "startedAt": "2026-09-08T12:18:10Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T12:18:36Z",
+            "conclusion": "success",
+            "name": "Install product UI dependencies",
+            "number": 6,
+            "startedAt": "2026-09-08T12:18:33Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T12:18:45Z",
+            "conclusion": "success",
+            "name": "Typecheck e2e suite",
+            "number": 7,
+            "startedAt": "2026-09-08T12:18:36Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T12:20:32Z",
+            "conclusion": "success",
+            "name": "Run renderer smoke suite",
+            "number": 8,
+            "startedAt": "2026-09-08T12:18:45Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T12:20:32Z",
+            "conclusion": "success",
+            "name": "Post Run actions/setup-node@v4",
+            "number": 14,
+            "startedAt": "2026-09-08T12:20:32Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T12:20:33Z",
+            "conclusion": "success",
+            "name": "Post Run actions/checkout@v4",
+            "number": 15,
+            "startedAt": "2026-09-08T12:20:32Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T12:20:33Z",
+            "conclusion": "success",
+            "name": "Stop containers",
+            "number": 16,
+            "startedAt": "2026-09-08T12:20:33Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T12:20:33Z",
+            "conclusion": "success",
+            "name": "Complete job",
+            "number": 17,
+            "startedAt": "2026-09-08T12:20:33Z",
+            "status": "completed"
+          }
+        ],
+        "url": "https://github.com/Untrivial-ai/agent-orchestrator/actions/runs/34225259166/job/102057693231"
+      }
+    ],
+    "status": "completed",
+    "url": "https://github.com/Untrivial-ai/agent-orchestrator/actions/runs/34225259166"
+  },
+  {
+    "pr": 5105,
+    "workflow": "gitleaks",
+    "conclusion": "success",
+    "databaseId": 34225259178,
+    "headSha": "40816926f2bf90b889daa9c86dddb956c02165f4",
+    "jobs": [
+      {
+        "completedAt": "2026-09-08T12:17:58Z",
+        "conclusion": "success",
+        "databaseId": 102057693862,
+        "name": "scan",
+        "startedAt": "2026-09-08T12:17:36Z",
+        "status": "completed",
+        "steps": [
+          {
+            "completedAt": "2026-09-08T12:17:37Z",
+            "conclusion": "success",
+            "name": "Set up job",
+            "number": 1,
+            "startedAt": "2026-09-08T12:17:37Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T12:17:41Z",
+            "conclusion": "success",
+            "name": "Pull zricethezav/gitleaks:v7.4.0@sha256:ffe35a0d42974c19da37b3fb5ca1ff1e781ae6dffaf80164568129a2714eca61",
+            "number": 2,
+            "startedAt": "2026-09-08T12:17:37Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T12:17:54Z",
+            "conclusion": "success",
+            "name": "Run actions/checkout@v4",
+            "number": 3,
+            "startedAt": "2026-09-08T12:17:41Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T12:17:54Z",
+            "conclusion": "success",
+            "name": "Select commits to scan",
+            "number": 4,
+            "startedAt": "2026-09-08T12:17:54Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T12:17:54Z",
+            "conclusion": "success",
+            "name": "Scan selected commits for secrets",
+            "number": 5,
+            "startedAt": "2026-09-08T12:17:54Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T12:17:55Z",
+            "conclusion": "success",
+            "name": "Post Run actions/checkout@v4",
+            "number": 10,
+            "startedAt": "2026-09-08T12:17:54Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T12:17:55Z",
+            "conclusion": "success",
+            "name": "Complete job",
+            "number": 11,
+            "startedAt": "2026-09-08T12:17:55Z",
+            "status": "completed"
+          }
+        ],
+        "url": "https://github.com/Untrivial-ai/agent-orchestrator/actions/runs/34225259178/job/102057693862"
+      }
+    ],
+    "status": "completed",
+    "url": "https://github.com/Untrivial-ai/agent-orchestrator/actions/runs/34225259178"
+  },
+  {
+    "pr": 5106,
+    "workflow": "Frontend",
+    "conclusion": "success",
+    "databaseId": 34251437374,
+    "headSha": "db63563e4b8a01b5a819e67e81f47aa0d67464c2",
+    "jobs": [
+      {
+        "completedAt": "2026-09-08T16:33:29Z",
+        "conclusion": "success",
+        "databaseId": 102146579618,
+        "name": "renderer-smoke",
+        "startedAt": "2026-09-08T16:30:39Z",
+        "status": "completed",
+        "steps": [
+          {
+            "completedAt": "2026-09-08T16:30:40Z",
+            "conclusion": "success",
+            "name": "Set up job",
+            "number": 1,
+            "startedAt": "2026-09-08T16:30:40Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:31:05Z",
+            "conclusion": "success",
+            "name": "Initialize containers",
+            "number": 2,
+            "startedAt": "2026-09-08T16:30:40Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:31:10Z",
+            "conclusion": "success",
+            "name": "Run actions/checkout@v4",
+            "number": 3,
+            "startedAt": "2026-09-08T16:31:05Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:31:14Z",
+            "conclusion": "success",
+            "name": "Run actions/setup-node@v4",
+            "number": 4,
+            "startedAt": "2026-09-08T16:31:10Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:31:34Z",
+            "conclusion": "success",
+            "name": "Run npm ci",
+            "number": 5,
+            "startedAt": "2026-09-08T16:31:14Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:31:36Z",
+            "conclusion": "success",
+            "name": "Install product UI dependencies",
+            "number": 6,
+            "startedAt": "2026-09-08T16:31:34Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:31:45Z",
+            "conclusion": "success",
+            "name": "Typecheck e2e suite",
+            "number": 7,
+            "startedAt": "2026-09-08T16:31:36Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:33:26Z",
+            "conclusion": "success",
+            "name": "Run renderer smoke suite",
+            "number": 8,
+            "startedAt": "2026-09-08T16:31:45Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:33:26Z",
+            "conclusion": "success",
+            "name": "Post Run actions/setup-node@v4",
+            "number": 14,
+            "startedAt": "2026-09-08T16:33:26Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:33:27Z",
+            "conclusion": "success",
+            "name": "Post Run actions/checkout@v4",
+            "number": 15,
+            "startedAt": "2026-09-08T16:33:26Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:33:27Z",
+            "conclusion": "success",
+            "name": "Stop containers",
+            "number": 16,
+            "startedAt": "2026-09-08T16:33:27Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:33:27Z",
+            "conclusion": "success",
+            "name": "Complete job",
+            "number": 17,
+            "startedAt": "2026-09-08T16:33:27Z",
+            "status": "completed"
+          }
+        ],
+        "url": "https://github.com/Untrivial-ai/agent-orchestrator/actions/runs/34251437374/job/102146579618"
+      },
+      {
+        "completedAt": "2026-09-08T16:45:43Z",
+        "conclusion": "success",
+        "databaseId": 102146579945,
+        "name": "test",
+        "startedAt": "2026-09-08T16:39:39Z",
+        "status": "completed",
+        "steps": [
+          {
+            "completedAt": "2026-09-08T16:39:41Z",
+            "conclusion": "success",
+            "name": "Set up job",
+            "number": 1,
+            "startedAt": "2026-09-08T16:39:40Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:39:45Z",
+            "conclusion": "success",
+            "name": "Run actions/checkout@v4",
+            "number": 2,
+            "startedAt": "2026-09-08T16:39:41Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:39:50Z",
+            "conclusion": "success",
+            "name": "Run actions/setup-node@v4",
+            "number": 3,
+            "startedAt": "2026-09-08T16:39:45Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:40:10Z",
+            "conclusion": "success",
+            "name": "Install frontend dependencies",
+            "number": 4,
+            "startedAt": "2026-09-08T16:39:50Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:40:12Z",
+            "conclusion": "success",
+            "name": "Install Cloud client dependencies",
+            "number": 5,
+            "startedAt": "2026-09-08T16:40:10Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:40:13Z",
+            "conclusion": "success",
+            "name": "Install product UI dependencies",
+            "number": 6,
+            "startedAt": "2026-09-08T16:40:12Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:40:18Z",
+            "conclusion": "success",
+            "name": "Verify Cloud contract and client",
+            "number": 7,
+            "startedAt": "2026-09-08T16:40:13Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:40:29Z",
+            "conclusion": "success",
+            "name": "Verify product UI package",
+            "number": 8,
+            "startedAt": "2026-09-08T16:40:18Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:40:30Z",
+            "conclusion": "success",
+            "name": "Prepare pinned agent-browser runtime",
+            "number": 9,
+            "startedAt": "2026-09-08T16:40:29Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:40:47Z",
+            "conclusion": "success",
+            "name": "Install landing dependencies",
+            "number": 10,
+            "startedAt": "2026-09-08T16:40:30Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:41:54Z",
+            "conclusion": "success",
+            "name": "Typecheck project",
+            "number": 11,
+            "startedAt": "2026-09-08T16:40:47Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:42:02Z",
+            "conclusion": "success",
+            "name": "Typecheck E2E suite",
+            "number": 12,
+            "startedAt": "2026-09-08T16:41:54Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:45:40Z",
+            "conclusion": "success",
+            "name": "Run vitest suite",
+            "number": 13,
+            "startedAt": "2026-09-08T16:42:02Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:45:40Z",
+            "conclusion": "success",
+            "name": "Post Run actions/setup-node@v4",
+            "number": 25,
+            "startedAt": "2026-09-08T16:45:40Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:45:41Z",
+            "conclusion": "success",
+            "name": "Post Run actions/checkout@v4",
+            "number": 26,
+            "startedAt": "2026-09-08T16:45:40Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:45:41Z",
+            "conclusion": "success",
+            "name": "Complete job",
+            "number": 27,
+            "startedAt": "2026-09-08T16:45:41Z",
+            "status": "completed"
+          }
+        ],
+        "url": "https://github.com/Untrivial-ai/agent-orchestrator/actions/runs/34251437374/job/102146579945"
+      }
+    ],
+    "status": "completed",
+    "url": "https://github.com/Untrivial-ai/agent-orchestrator/actions/runs/34251437374"
+  },
+  {
+    "pr": 5106,
+    "workflow": "gitleaks",
+    "conclusion": "success",
+    "databaseId": 34251437563,
+    "headSha": "db63563e4b8a01b5a819e67e81f47aa0d67464c2",
+    "jobs": [
+      {
+        "completedAt": "2026-09-08T16:34:32Z",
+        "conclusion": "success",
+        "databaseId": 102146580568,
+        "name": "scan",
+        "startedAt": "2026-09-08T16:33:55Z",
+        "status": "completed",
+        "steps": [
+          {
+            "completedAt": "2026-09-08T16:33:57Z",
+            "conclusion": "success",
+            "name": "Set up job",
+            "number": 1,
+            "startedAt": "2026-09-08T16:33:56Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:34:02Z",
+            "conclusion": "success",
+            "name": "Pull zricethezav/gitleaks:v7.4.0@sha256:ffe35a0d42974c19da37b3fb5ca1ff1e781ae6dffaf80164568129a2714eca61",
+            "number": 2,
+            "startedAt": "2026-09-08T16:33:57Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:34:27Z",
+            "conclusion": "success",
+            "name": "Run actions/checkout@v4",
+            "number": 3,
+            "startedAt": "2026-09-08T16:34:02Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:34:27Z",
+            "conclusion": "success",
+            "name": "Select commits to scan",
+            "number": 4,
+            "startedAt": "2026-09-08T16:34:27Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:34:29Z",
+            "conclusion": "success",
+            "name": "Scan selected commits for secrets",
+            "number": 5,
+            "startedAt": "2026-09-08T16:34:27Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:34:29Z",
+            "conclusion": "success",
+            "name": "Post Run actions/checkout@v4",
+            "number": 10,
+            "startedAt": "2026-09-08T16:34:29Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:34:29Z",
+            "conclusion": "success",
+            "name": "Complete job",
+            "number": 11,
+            "startedAt": "2026-09-08T16:34:29Z",
+            "status": "completed"
+          }
+        ],
+        "url": "https://github.com/Untrivial-ai/agent-orchestrator/actions/runs/34251437563/job/102146580568"
+      }
+    ],
+    "status": "completed",
+    "url": "https://github.com/Untrivial-ai/agent-orchestrator/actions/runs/34251437563"
+  },
+  {
+    "pr": 5107,
+    "workflow": "gitleaks",
+    "conclusion": "success",
+    "databaseId": 34251434252,
+    "headSha": "7ff1ca3a5f15453953640441cc5ef3d88eaecc27",
+    "jobs": [
+      {
+        "completedAt": "2026-09-08T16:30:37Z",
+        "conclusion": "success",
+        "databaseId": 102146568793,
+        "name": "scan",
+        "startedAt": "2026-09-08T16:30:13Z",
+        "status": "completed",
+        "steps": [
+          {
+            "completedAt": "2026-09-08T16:30:14Z",
+            "conclusion": "success",
+            "name": "Set up job",
+            "number": 1,
+            "startedAt": "2026-09-08T16:30:14Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:30:18Z",
+            "conclusion": "success",
+            "name": "Pull zricethezav/gitleaks:v7.4.0@sha256:ffe35a0d42974c19da37b3fb5ca1ff1e781ae6dffaf80164568129a2714eca61",
+            "number": 2,
+            "startedAt": "2026-09-08T16:30:14Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:30:33Z",
+            "conclusion": "success",
+            "name": "Run actions/checkout@v4",
+            "number": 3,
+            "startedAt": "2026-09-08T16:30:18Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:30:33Z",
+            "conclusion": "success",
+            "name": "Select commits to scan",
+            "number": 4,
+            "startedAt": "2026-09-08T16:30:33Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:30:33Z",
+            "conclusion": "success",
+            "name": "Scan selected commits for secrets",
+            "number": 5,
+            "startedAt": "2026-09-08T16:30:33Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:30:34Z",
+            "conclusion": "success",
+            "name": "Post Run actions/checkout@v4",
+            "number": 10,
+            "startedAt": "2026-09-08T16:30:33Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:30:34Z",
+            "conclusion": "success",
+            "name": "Complete job",
+            "number": 11,
+            "startedAt": "2026-09-08T16:30:34Z",
+            "status": "completed"
+          }
+        ],
+        "url": "https://github.com/Untrivial-ai/agent-orchestrator/actions/runs/34251434252/job/102146568793"
+      }
+    ],
+    "status": "completed",
+    "url": "https://github.com/Untrivial-ai/agent-orchestrator/actions/runs/34251434252"
+  },
+  {
+    "pr": 5107,
+    "workflow": "Frontend",
+    "conclusion": "success",
+    "databaseId": 34251434264,
+    "headSha": "7ff1ca3a5f15453953640441cc5ef3d88eaecc27",
+    "jobs": [
+      {
+        "completedAt": "2026-09-08T16:36:10Z",
+        "conclusion": "success",
+        "databaseId": 102146568625,
+        "name": "test",
+        "startedAt": "2026-09-08T16:30:11Z",
+        "status": "completed",
+        "steps": [
+          {
+            "completedAt": "2026-09-08T16:30:14Z",
+            "conclusion": "success",
+            "name": "Set up job",
+            "number": 1,
+            "startedAt": "2026-09-08T16:30:12Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:30:18Z",
+            "conclusion": "success",
+            "name": "Run actions/checkout@v4",
+            "number": 2,
+            "startedAt": "2026-09-08T16:30:14Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:30:28Z",
+            "conclusion": "success",
+            "name": "Run actions/setup-node@v4",
+            "number": 3,
+            "startedAt": "2026-09-08T16:30:18Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:30:50Z",
+            "conclusion": "success",
+            "name": "Install frontend dependencies",
+            "number": 4,
+            "startedAt": "2026-09-08T16:30:28Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:30:51Z",
+            "conclusion": "success",
+            "name": "Install Cloud client dependencies",
+            "number": 5,
+            "startedAt": "2026-09-08T16:30:50Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:30:53Z",
+            "conclusion": "success",
+            "name": "Install product UI dependencies",
+            "number": 6,
+            "startedAt": "2026-09-08T16:30:51Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:30:58Z",
+            "conclusion": "success",
+            "name": "Verify Cloud contract and client",
+            "number": 7,
+            "startedAt": "2026-09-08T16:30:53Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:31:09Z",
+            "conclusion": "success",
+            "name": "Verify product UI package",
+            "number": 8,
+            "startedAt": "2026-09-08T16:30:58Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:31:09Z",
+            "conclusion": "success",
+            "name": "Prepare pinned agent-browser runtime",
+            "number": 9,
+            "startedAt": "2026-09-08T16:31:09Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:31:28Z",
+            "conclusion": "success",
+            "name": "Install landing dependencies",
+            "number": 10,
+            "startedAt": "2026-09-08T16:31:09Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:32:33Z",
+            "conclusion": "success",
+            "name": "Typecheck project",
+            "number": 11,
+            "startedAt": "2026-09-08T16:31:28Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:32:41Z",
+            "conclusion": "success",
+            "name": "Typecheck E2E suite",
+            "number": 12,
+            "startedAt": "2026-09-08T16:32:33Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:36:07Z",
+            "conclusion": "success",
+            "name": "Run vitest suite",
+            "number": 13,
+            "startedAt": "2026-09-08T16:32:41Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:36:07Z",
+            "conclusion": "success",
+            "name": "Post Run actions/setup-node@v4",
+            "number": 25,
+            "startedAt": "2026-09-08T16:36:07Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:36:07Z",
+            "conclusion": "success",
+            "name": "Post Run actions/checkout@v4",
+            "number": 26,
+            "startedAt": "2026-09-08T16:36:07Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:36:07Z",
+            "conclusion": "success",
+            "name": "Complete job",
+            "number": 27,
+            "startedAt": "2026-09-08T16:36:07Z",
+            "status": "completed"
+          }
+        ],
+        "url": "https://github.com/Untrivial-ai/agent-orchestrator/actions/runs/34251434264/job/102146568625"
+      },
+      {
+        "completedAt": "2026-09-08T16:36:01Z",
+        "conclusion": "success",
+        "databaseId": 102146569079,
+        "name": "renderer-smoke",
+        "startedAt": "2026-09-08T16:33:31Z",
+        "status": "completed",
+        "steps": [
+          {
+            "completedAt": "2026-09-08T16:33:33Z",
+            "conclusion": "success",
+            "name": "Set up job",
+            "number": 1,
+            "startedAt": "2026-09-08T16:33:32Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:34:03Z",
+            "conclusion": "success",
+            "name": "Initialize containers",
+            "number": 2,
+            "startedAt": "2026-09-08T16:33:33Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:34:07Z",
+            "conclusion": "success",
+            "name": "Run actions/checkout@v4",
+            "number": 3,
+            "startedAt": "2026-09-08T16:34:03Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:34:12Z",
+            "conclusion": "success",
+            "name": "Run actions/setup-node@v4",
+            "number": 4,
+            "startedAt": "2026-09-08T16:34:07Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:34:28Z",
+            "conclusion": "success",
+            "name": "Run npm ci",
+            "number": 5,
+            "startedAt": "2026-09-08T16:34:12Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:34:30Z",
+            "conclusion": "success",
+            "name": "Install product UI dependencies",
+            "number": 6,
+            "startedAt": "2026-09-08T16:34:28Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:34:37Z",
+            "conclusion": "success",
+            "name": "Typecheck e2e suite",
+            "number": 7,
+            "startedAt": "2026-09-08T16:34:30Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:35:57Z",
+            "conclusion": "success",
+            "name": "Run renderer smoke suite",
+            "number": 8,
+            "startedAt": "2026-09-08T16:34:37Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:35:58Z",
+            "conclusion": "success",
+            "name": "Post Run actions/setup-node@v4",
+            "number": 14,
+            "startedAt": "2026-09-08T16:35:57Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:35:58Z",
+            "conclusion": "success",
+            "name": "Post Run actions/checkout@v4",
+            "number": 15,
+            "startedAt": "2026-09-08T16:35:58Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:35:58Z",
+            "conclusion": "success",
+            "name": "Stop containers",
+            "number": 16,
+            "startedAt": "2026-09-08T16:35:58Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:35:58Z",
+            "conclusion": "success",
+            "name": "Complete job",
+            "number": 17,
+            "startedAt": "2026-09-08T16:35:58Z",
+            "status": "completed"
+          }
+        ],
+        "url": "https://github.com/Untrivial-ai/agent-orchestrator/actions/runs/34251434264/job/102146569079"
+      }
+    ],
+    "status": "completed",
+    "url": "https://github.com/Untrivial-ai/agent-orchestrator/actions/runs/34251434264"
+  },
+  {
+    "pr": 5109,
+    "workflow": "Frontend",
+    "conclusion": "success",
+    "databaseId": 34251435739,
+    "headSha": "a03d533b1a1d9e8221501de2f494ef1605357340",
+    "jobs": [
+      {
+        "completedAt": "2026-09-08T16:41:46Z",
+        "conclusion": "success",
+        "databaseId": 102146574091,
+        "name": "renderer-smoke",
+        "startedAt": "2026-09-08T16:38:54Z",
+        "status": "completed",
+        "steps": [
+          {
+            "completedAt": "2026-09-08T16:38:55Z",
+            "conclusion": "success",
+            "name": "Set up job",
+            "number": 1,
+            "startedAt": "2026-09-08T16:38:54Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:39:20Z",
+            "conclusion": "success",
+            "name": "Initialize containers",
+            "number": 2,
+            "startedAt": "2026-09-08T16:38:55Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:39:23Z",
+            "conclusion": "success",
+            "name": "Run actions/checkout@v4",
+            "number": 3,
+            "startedAt": "2026-09-08T16:39:20Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:39:26Z",
+            "conclusion": "success",
+            "name": "Run actions/setup-node@v4",
+            "number": 4,
+            "startedAt": "2026-09-08T16:39:23Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:39:47Z",
+            "conclusion": "success",
+            "name": "Run npm ci",
+            "number": 5,
+            "startedAt": "2026-09-08T16:39:26Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:39:49Z",
+            "conclusion": "success",
+            "name": "Install product UI dependencies",
+            "number": 6,
+            "startedAt": "2026-09-08T16:39:47Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:39:58Z",
+            "conclusion": "success",
+            "name": "Typecheck e2e suite",
+            "number": 7,
+            "startedAt": "2026-09-08T16:39:49Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:41:44Z",
+            "conclusion": "success",
+            "name": "Run renderer smoke suite",
+            "number": 8,
+            "startedAt": "2026-09-08T16:39:58Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:41:44Z",
+            "conclusion": "success",
+            "name": "Post Run actions/setup-node@v4",
+            "number": 14,
+            "startedAt": "2026-09-08T16:41:44Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:41:44Z",
+            "conclusion": "success",
+            "name": "Post Run actions/checkout@v4",
+            "number": 15,
+            "startedAt": "2026-09-08T16:41:44Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:41:44Z",
+            "conclusion": "success",
+            "name": "Stop containers",
+            "number": 16,
+            "startedAt": "2026-09-08T16:41:44Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:41:44Z",
+            "conclusion": "success",
+            "name": "Complete job",
+            "number": 17,
+            "startedAt": "2026-09-08T16:41:44Z",
+            "status": "completed"
+          }
+        ],
+        "url": "https://github.com/Untrivial-ai/agent-orchestrator/actions/runs/34251435739/job/102146574091"
+      },
+      {
+        "completedAt": "2026-09-08T16:46:59Z",
+        "conclusion": "success",
+        "databaseId": 102146574387,
+        "name": "test",
+        "startedAt": "2026-09-08T16:40:24Z",
+        "status": "completed",
+        "steps": [
+          {
+            "completedAt": "2026-09-08T16:40:26Z",
+            "conclusion": "success",
+            "name": "Set up job",
+            "number": 1,
+            "startedAt": "2026-09-08T16:40:25Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:40:30Z",
+            "conclusion": "success",
+            "name": "Run actions/checkout@v4",
+            "number": 2,
+            "startedAt": "2026-09-08T16:40:26Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:40:36Z",
+            "conclusion": "success",
+            "name": "Run actions/setup-node@v4",
+            "number": 3,
+            "startedAt": "2026-09-08T16:40:30Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:41:00Z",
+            "conclusion": "success",
+            "name": "Install frontend dependencies",
+            "number": 4,
+            "startedAt": "2026-09-08T16:40:36Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:41:02Z",
+            "conclusion": "success",
+            "name": "Install Cloud client dependencies",
+            "number": 5,
+            "startedAt": "2026-09-08T16:41:00Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:41:04Z",
+            "conclusion": "success",
+            "name": "Install product UI dependencies",
+            "number": 6,
+            "startedAt": "2026-09-08T16:41:02Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:41:09Z",
+            "conclusion": "success",
+            "name": "Verify Cloud contract and client",
+            "number": 7,
+            "startedAt": "2026-09-08T16:41:04Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:41:21Z",
+            "conclusion": "success",
+            "name": "Verify product UI package",
+            "number": 8,
+            "startedAt": "2026-09-08T16:41:09Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:41:22Z",
+            "conclusion": "success",
+            "name": "Prepare pinned agent-browser runtime",
+            "number": 9,
+            "startedAt": "2026-09-08T16:41:21Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:41:43Z",
+            "conclusion": "success",
+            "name": "Install landing dependencies",
+            "number": 10,
+            "startedAt": "2026-09-08T16:41:22Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:42:48Z",
+            "conclusion": "success",
+            "name": "Typecheck project",
+            "number": 11,
+            "startedAt": "2026-09-08T16:41:43Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:42:57Z",
+            "conclusion": "success",
+            "name": "Typecheck E2E suite",
+            "number": 12,
+            "startedAt": "2026-09-08T16:42:48Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:46:56Z",
+            "conclusion": "success",
+            "name": "Run vitest suite",
+            "number": 13,
+            "startedAt": "2026-09-08T16:42:57Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:46:56Z",
+            "conclusion": "success",
+            "name": "Post Run actions/setup-node@v4",
+            "number": 25,
+            "startedAt": "2026-09-08T16:46:56Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:46:56Z",
+            "conclusion": "success",
+            "name": "Post Run actions/checkout@v4",
+            "number": 26,
+            "startedAt": "2026-09-08T16:46:56Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:46:56Z",
+            "conclusion": "success",
+            "name": "Complete job",
+            "number": 27,
+            "startedAt": "2026-09-08T16:46:56Z",
+            "status": "completed"
+          }
+        ],
+        "url": "https://github.com/Untrivial-ai/agent-orchestrator/actions/runs/34251435739/job/102146574387"
+      }
+    ],
+    "status": "completed",
+    "url": "https://github.com/Untrivial-ai/agent-orchestrator/actions/runs/34251435739"
+  },
+  {
+    "pr": 5109,
+    "workflow": "gitleaks",
+    "conclusion": "success",
+    "databaseId": 34251435783,
+    "headSha": "a03d533b1a1d9e8221501de2f494ef1605357340",
+    "jobs": [
+      {
+        "completedAt": "2026-09-08T16:35:21Z",
+        "conclusion": "success",
+        "databaseId": 102146573596,
+        "name": "scan",
+        "startedAt": "2026-09-08T16:35:04Z",
+        "status": "completed",
+        "steps": [
+          {
+            "completedAt": "2026-09-08T16:35:05Z",
+            "conclusion": "success",
+            "name": "Set up job",
+            "number": 1,
+            "startedAt": "2026-09-08T16:35:05Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:35:06Z",
+            "conclusion": "success",
+            "name": "Pull zricethezav/gitleaks:v7.4.0@sha256:ffe35a0d42974c19da37b3fb5ca1ff1e781ae6dffaf80164568129a2714eca61",
+            "number": 2,
+            "startedAt": "2026-09-08T16:35:05Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:35:18Z",
+            "conclusion": "success",
+            "name": "Run actions/checkout@v4",
+            "number": 3,
+            "startedAt": "2026-09-08T16:35:06Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:35:18Z",
+            "conclusion": "success",
+            "name": "Select commits to scan",
+            "number": 4,
+            "startedAt": "2026-09-08T16:35:18Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:35:19Z",
+            "conclusion": "success",
+            "name": "Scan selected commits for secrets",
+            "number": 5,
+            "startedAt": "2026-09-08T16:35:18Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:35:19Z",
+            "conclusion": "success",
+            "name": "Post Run actions/checkout@v4",
+            "number": 10,
+            "startedAt": "2026-09-08T16:35:19Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:35:19Z",
+            "conclusion": "success",
+            "name": "Complete job",
+            "number": 11,
+            "startedAt": "2026-09-08T16:35:19Z",
+            "status": "completed"
+          }
+        ],
+        "url": "https://github.com/Untrivial-ai/agent-orchestrator/actions/runs/34251435783/job/102146573596"
+      }
+    ],
+    "status": "completed",
+    "url": "https://github.com/Untrivial-ai/agent-orchestrator/actions/runs/34251435783"
+  },
+  {
+    "pr": 5109,
+    "workflow": "CLI E2E",
+    "conclusion": "success",
+    "databaseId": 34251435711,
+    "headSha": "a03d533b1a1d9e8221501de2f494ef1605357340",
+    "jobs": [
+      {
+        "completedAt": "2026-09-08T16:42:50Z",
+        "conclusion": "success",
+        "databaseId": 102146573946,
+        "name": "native (ubuntu-latest)",
+        "startedAt": "2026-09-08T16:41:34Z",
+        "status": "completed",
+        "steps": [
+          {
+            "completedAt": "2026-09-08T16:41:37Z",
+            "conclusion": "success",
+            "name": "Set up job",
+            "number": 1,
+            "startedAt": "2026-09-08T16:41:36Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:41:40Z",
+            "conclusion": "success",
+            "name": "Run actions/checkout@v4",
+            "number": 2,
+            "startedAt": "2026-09-08T16:41:37Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:41:45Z",
+            "conclusion": "success",
+            "name": "Run actions/setup-go@v5",
+            "number": 3,
+            "startedAt": "2026-09-08T16:41:40Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:42:47Z",
+            "conclusion": "success",
+            "name": "CLI E2E (native)",
+            "number": 4,
+            "startedAt": "2026-09-08T16:41:45Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:42:47Z",
+            "conclusion": "success",
+            "name": "Post Run actions/setup-go@v5",
+            "number": 7,
+            "startedAt": "2026-09-08T16:42:47Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:42:47Z",
+            "conclusion": "success",
+            "name": "Post Run actions/checkout@v4",
+            "number": 8,
+            "startedAt": "2026-09-08T16:42:47Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:42:47Z",
+            "conclusion": "success",
+            "name": "Complete job",
+            "number": 9,
+            "startedAt": "2026-09-08T16:42:47Z",
+            "status": "completed"
+          }
+        ],
+        "url": "https://github.com/Untrivial-ai/agent-orchestrator/actions/runs/34251435711/job/102146573946"
+      },
+      {
+        "completedAt": "2026-09-08T16:35:19Z",
+        "conclusion": "success",
+        "databaseId": 102146574214,
+        "name": "native (macos-latest)",
+        "startedAt": "2026-09-08T16:33:48Z",
+        "status": "completed",
+        "steps": [
+          {
+            "completedAt": "2026-09-08T16:33:50Z",
+            "conclusion": "success",
+            "name": "Set up job",
+            "number": 1,
+            "startedAt": "2026-09-08T16:33:48Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:33:55Z",
+            "conclusion": "success",
+            "name": "Run actions/checkout@v4",
+            "number": 2,
+            "startedAt": "2026-09-08T16:33:50Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:34:04Z",
+            "conclusion": "success",
+            "name": "Run actions/setup-go@v5",
+            "number": 3,
+            "startedAt": "2026-09-08T16:33:55Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:35:15Z",
+            "conclusion": "success",
+            "name": "CLI E2E (native)",
+            "number": 4,
+            "startedAt": "2026-09-08T16:34:04Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:35:15Z",
+            "conclusion": "success",
+            "name": "Post Run actions/setup-go@v5",
+            "number": 7,
+            "startedAt": "2026-09-08T16:35:15Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:35:16Z",
+            "conclusion": "success",
+            "name": "Post Run actions/checkout@v4",
+            "number": 8,
+            "startedAt": "2026-09-08T16:35:15Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:35:17Z",
+            "conclusion": "success",
+            "name": "Complete job",
+            "number": 9,
+            "startedAt": "2026-09-08T16:35:16Z",
+            "status": "completed"
+          }
+        ],
+        "url": "https://github.com/Untrivial-ai/agent-orchestrator/actions/runs/34251435711/job/102146574214"
+      },
+      {
+        "completedAt": "2026-09-08T16:42:52Z",
+        "conclusion": "success",
+        "databaseId": 102146574394,
+        "name": "container",
+        "startedAt": "2026-09-08T16:41:48Z",
+        "status": "completed",
+        "steps": [
+          {
+            "completedAt": "2026-09-08T16:41:49Z",
+            "conclusion": "success",
+            "name": "Set up job",
+            "number": 1,
+            "startedAt": "2026-09-08T16:41:49Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:41:54Z",
+            "conclusion": "success",
+            "name": "Run actions/checkout@v4",
+            "number": 2,
+            "startedAt": "2026-09-08T16:41:49Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:42:49Z",
+            "conclusion": "success",
+            "name": "Build fresh-install image",
+            "number": 3,
+            "startedAt": "2026-09-08T16:41:54Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:42:49Z",
+            "conclusion": "success",
+            "name": "Fresh-install check (container)",
+            "number": 4,
+            "startedAt": "2026-09-08T16:42:49Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:42:50Z",
+            "conclusion": "success",
+            "name": "Post Run actions/checkout@v4",
+            "number": 8,
+            "startedAt": "2026-09-08T16:42:49Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:42:50Z",
+            "conclusion": "success",
+            "name": "Complete job",
+            "number": 9,
+            "startedAt": "2026-09-08T16:42:50Z",
+            "status": "completed"
+          }
+        ],
+        "url": "https://github.com/Untrivial-ai/agent-orchestrator/actions/runs/34251435711/job/102146574394"
+      },
+      {
+        "completedAt": "2026-09-08T16:38:26Z",
+        "conclusion": "success",
+        "databaseId": 102146574397,
+        "name": "native (windows-latest)",
+        "startedAt": "2026-09-08T16:36:28Z",
+        "status": "completed",
+        "steps": [
+          {
+            "completedAt": "2026-09-08T16:36:30Z",
+            "conclusion": "success",
+            "name": "Set up job",
+            "number": 1,
+            "startedAt": "2026-09-08T16:36:29Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:36:42Z",
+            "conclusion": "success",
+            "name": "Run actions/checkout@v4",
+            "number": 2,
+            "startedAt": "2026-09-08T16:36:30Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:37:09Z",
+            "conclusion": "success",
+            "name": "Run actions/setup-go@v5",
+            "number": 3,
+            "startedAt": "2026-09-08T16:36:42Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:38:22Z",
+            "conclusion": "success",
+            "name": "CLI E2E (native)",
+            "number": 4,
+            "startedAt": "2026-09-08T16:37:09Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:38:22Z",
+            "conclusion": "success",
+            "name": "Post Run actions/setup-go@v5",
+            "number": 7,
+            "startedAt": "2026-09-08T16:38:22Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:38:24Z",
+            "conclusion": "success",
+            "name": "Post Run actions/checkout@v4",
+            "number": 8,
+            "startedAt": "2026-09-08T16:38:22Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:38:24Z",
+            "conclusion": "success",
+            "name": "Complete job",
+            "number": 9,
+            "startedAt": "2026-09-08T16:38:24Z",
+            "status": "completed"
+          }
+        ],
+        "url": "https://github.com/Untrivial-ai/agent-orchestrator/actions/runs/34251435711/job/102146574397"
+      }
+    ],
+    "status": "completed",
+    "url": "https://github.com/Untrivial-ai/agent-orchestrator/actions/runs/34251435711"
+  },
+  {
+    "pr": 5109,
+    "workflow": "Go",
+    "conclusion": "success",
+    "databaseId": 34251435806,
+    "headSha": "a03d533b1a1d9e8221501de2f494ef1605357340",
+    "jobs": [
+      {
+        "completedAt": "2026-09-08T16:56:59Z",
+        "conclusion": "success",
+        "databaseId": 102146573812,
+        "name": "build-test",
+        "startedAt": "2026-09-08T16:37:57Z",
+        "status": "completed",
+        "steps": [
+          {
+            "completedAt": "2026-09-08T16:38:00Z",
+            "conclusion": "success",
+            "name": "Set up job",
+            "number": 1,
+            "startedAt": "2026-09-08T16:37:58Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:38:05Z",
+            "conclusion": "success",
+            "name": "Run actions/checkout@v4",
+            "number": 2,
+            "startedAt": "2026-09-08T16:38:00Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:38:23Z",
+            "conclusion": "success",
+            "name": "Run actions/setup-go@v5",
+            "number": 3,
+            "startedAt": "2026-09-08T16:38:05Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:38:23Z",
+            "conclusion": "success",
+            "name": "Check formatting",
+            "number": 4,
+            "startedAt": "2026-09-08T16:38:23Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:39:02Z",
+            "conclusion": "success",
+            "name": "Build",
+            "number": 5,
+            "startedAt": "2026-09-08T16:38:23Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:39:14Z",
+            "conclusion": "success",
+            "name": "Vet",
+            "number": 6,
+            "startedAt": "2026-09-08T16:39:02Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:56:55Z",
+            "conclusion": "success",
+            "name": "Test",
+            "number": 7,
+            "startedAt": "2026-09-08T16:39:14Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:56:55Z",
+            "conclusion": "success",
+            "name": "Post Run actions/setup-go@v5",
+            "number": 13,
+            "startedAt": "2026-09-08T16:56:55Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:56:55Z",
+            "conclusion": "success",
+            "name": "Post Run actions/checkout@v4",
+            "number": 14,
+            "startedAt": "2026-09-08T16:56:55Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:56:55Z",
+            "conclusion": "success",
+            "name": "Complete job",
+            "number": 15,
+            "startedAt": "2026-09-08T16:56:55Z",
+            "status": "completed"
+          }
+        ],
+        "url": "https://github.com/Untrivial-ai/agent-orchestrator/actions/runs/34251435806/job/102146573812"
+      },
+      {
+        "completedAt": "2026-09-08T16:36:26Z",
+        "conclusion": "success",
+        "databaseId": 102146573942,
+        "name": "api-drift",
+        "startedAt": "2026-09-08T16:35:23Z",
+        "status": "completed",
+        "steps": [
+          {
+            "completedAt": "2026-09-08T16:35:25Z",
+            "conclusion": "success",
+            "name": "Set up job",
+            "number": 1,
+            "startedAt": "2026-09-08T16:35:23Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:35:29Z",
+            "conclusion": "success",
+            "name": "Run actions/checkout@v4",
+            "number": 2,
+            "startedAt": "2026-09-08T16:35:25Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:35:42Z",
+            "conclusion": "success",
+            "name": "Run actions/setup-go@v5",
+            "number": 3,
+            "startedAt": "2026-09-08T16:35:29Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:35:45Z",
+            "conclusion": "success",
+            "name": "Run actions/setup-node@v4",
+            "number": 4,
+            "startedAt": "2026-09-08T16:35:42Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:35:47Z",
+            "conclusion": "success",
+            "name": "Install dependencies",
+            "number": 5,
+            "startedAt": "2026-09-08T16:35:45Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:36:23Z",
+            "conclusion": "success",
+            "name": "Regenerate API spec and TS types",
+            "number": 6,
+            "startedAt": "2026-09-08T16:35:47Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:36:23Z",
+            "conclusion": "success",
+            "name": "Check for schema.ts drift",
+            "number": 7,
+            "startedAt": "2026-09-08T16:36:23Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:36:23Z",
+            "conclusion": "success",
+            "name": "Post Run actions/setup-node@v4",
+            "number": 12,
+            "startedAt": "2026-09-08T16:36:23Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:36:23Z",
+            "conclusion": "success",
+            "name": "Post Run actions/setup-go@v5",
+            "number": 13,
+            "startedAt": "2026-09-08T16:36:23Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:36:23Z",
+            "conclusion": "success",
+            "name": "Post Run actions/checkout@v4",
+            "number": 14,
+            "startedAt": "2026-09-08T16:36:23Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:36:23Z",
+            "conclusion": "success",
+            "name": "Complete job",
+            "number": 15,
+            "startedAt": "2026-09-08T16:36:23Z",
+            "status": "completed"
+          }
+        ],
+        "url": "https://github.com/Untrivial-ai/agent-orchestrator/actions/runs/34251435806/job/102146573942"
+      },
+      {
+        "completedAt": "2026-09-08T16:40:24Z",
+        "conclusion": "success",
+        "databaseId": 102146574017,
+        "name": "lint",
+        "startedAt": "2026-09-08T16:38:25Z",
+        "status": "completed",
+        "steps": [
+          {
+            "completedAt": "2026-09-08T16:38:26Z",
+            "conclusion": "success",
+            "name": "Set up job",
+            "number": 1,
+            "startedAt": "2026-09-08T16:38:25Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:38:29Z",
+            "conclusion": "success",
+            "name": "Run actions/checkout@v4",
+            "number": 2,
+            "startedAt": "2026-09-08T16:38:26Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:38:42Z",
+            "conclusion": "success",
+            "name": "Run actions/setup-go@v5",
+            "number": 3,
+            "startedAt": "2026-09-08T16:38:29Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:40:21Z",
+            "conclusion": "success",
+            "name": "golangci-lint",
+            "number": 4,
+            "startedAt": "2026-09-08T16:38:42Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:40:21Z",
+            "conclusion": "success",
+            "name": "Post golangci-lint",
+            "number": 6,
+            "startedAt": "2026-09-08T16:40:21Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:40:21Z",
+            "conclusion": "success",
+            "name": "Post Run actions/setup-go@v5",
+            "number": 7,
+            "startedAt": "2026-09-08T16:40:21Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:40:21Z",
+            "conclusion": "success",
+            "name": "Post Run actions/checkout@v4",
+            "number": 8,
+            "startedAt": "2026-09-08T16:40:21Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:40:21Z",
+            "conclusion": "success",
+            "name": "Complete job",
+            "number": 9,
+            "startedAt": "2026-09-08T16:40:21Z",
+            "status": "completed"
+          }
+        ],
+        "url": "https://github.com/Untrivial-ai/agent-orchestrator/actions/runs/34251435806/job/102146574017"
+      },
+      {
+        "completedAt": "2026-09-08T16:35:53Z",
+        "conclusion": "success",
+        "databaseId": 102146574210,
+        "name": "windows-workspace",
+        "startedAt": "2026-09-08T16:32:04Z",
+        "status": "completed",
+        "steps": [
+          {
+            "completedAt": "2026-09-08T16:32:06Z",
+            "conclusion": "success",
+            "name": "Set up job",
+            "number": 1,
+            "startedAt": "2026-09-08T16:32:05Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:32:15Z",
+            "conclusion": "success",
+            "name": "Run actions/checkout@v4",
+            "number": 2,
+            "startedAt": "2026-09-08T16:32:06Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:32:57Z",
+            "conclusion": "success",
+            "name": "Run actions/setup-go@v5",
+            "number": 3,
+            "startedAt": "2026-09-08T16:32:15Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:34:59Z",
+            "conclusion": "success",
+            "name": "Test SQLite filesystem path identity",
+            "number": 4,
+            "startedAt": "2026-09-08T16:32:57Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:35:40Z",
+            "conclusion": "success",
+            "name": "Test workspace teardown and session kill",
+            "number": 5,
+            "startedAt": "2026-09-08T16:34:59Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:35:48Z",
+            "conclusion": "success",
+            "name": "Test Windows Chat environment precedence",
+            "number": 6,
+            "startedAt": "2026-09-08T16:35:40Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:35:48Z",
+            "conclusion": "success",
+            "name": "Post Run actions/setup-go@v5",
+            "number": 11,
+            "startedAt": "2026-09-08T16:35:48Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:35:50Z",
+            "conclusion": "success",
+            "name": "Post Run actions/checkout@v4",
+            "number": 12,
+            "startedAt": "2026-09-08T16:35:48Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:35:50Z",
+            "conclusion": "success",
+            "name": "Complete job",
+            "number": 13,
+            "startedAt": "2026-09-08T16:35:50Z",
+            "status": "completed"
+          }
+        ],
+        "url": "https://github.com/Untrivial-ai/agent-orchestrator/actions/runs/34251435806/job/102146574210"
+      }
+    ],
+    "status": "completed",
+    "url": "https://github.com/Untrivial-ai/agent-orchestrator/actions/runs/34251435806"
+  },
+  {
+    "pr": 5110,
+    "workflow": "CLI E2E",
+    "conclusion": "success",
+    "databaseId": 34251434657,
+    "headSha": "3829c4dcbfe49ddfd008ef3a51c879f64d7fa39c",
+    "jobs": [
+      {
+        "completedAt": "2026-09-08T16:32:29Z",
+        "conclusion": "success",
+        "databaseId": 102146570529,
+        "name": "native (windows-latest)",
+        "startedAt": "2026-09-08T16:30:28Z",
+        "status": "completed",
+        "steps": [
+          {
+            "completedAt": "2026-09-08T16:30:29Z",
+            "conclusion": "success",
+            "name": "Set up job",
+            "number": 1,
+            "startedAt": "2026-09-08T16:30:28Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:30:38Z",
+            "conclusion": "success",
+            "name": "Run actions/checkout@v4",
+            "number": 2,
+            "startedAt": "2026-09-08T16:30:29Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:31:03Z",
+            "conclusion": "success",
+            "name": "Run actions/setup-go@v5",
+            "number": 3,
+            "startedAt": "2026-09-08T16:30:38Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:32:25Z",
+            "conclusion": "success",
+            "name": "CLI E2E (native)",
+            "number": 4,
+            "startedAt": "2026-09-08T16:31:03Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:32:25Z",
+            "conclusion": "success",
+            "name": "Post Run actions/setup-go@v5",
+            "number": 7,
+            "startedAt": "2026-09-08T16:32:25Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:32:28Z",
+            "conclusion": "success",
+            "name": "Post Run actions/checkout@v4",
+            "number": 8,
+            "startedAt": "2026-09-08T16:32:25Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:32:28Z",
+            "conclusion": "success",
+            "name": "Complete job",
+            "number": 9,
+            "startedAt": "2026-09-08T16:32:28Z",
+            "status": "completed"
+          }
+        ],
+        "url": "https://github.com/Untrivial-ai/agent-orchestrator/actions/runs/34251434657/job/102146570529"
+      },
+      {
+        "completedAt": "2026-09-08T16:32:35Z",
+        "conclusion": "success",
+        "databaseId": 102146570740,
+        "name": "native (ubuntu-latest)",
+        "startedAt": "2026-09-08T16:31:28Z",
+        "status": "completed",
+        "steps": [
+          {
+            "completedAt": "2026-09-08T16:31:30Z",
+            "conclusion": "success",
+            "name": "Set up job",
+            "number": 1,
+            "startedAt": "2026-09-08T16:31:29Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:31:33Z",
+            "conclusion": "success",
+            "name": "Run actions/checkout@v4",
+            "number": 2,
+            "startedAt": "2026-09-08T16:31:30Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:31:39Z",
+            "conclusion": "success",
+            "name": "Run actions/setup-go@v5",
+            "number": 3,
+            "startedAt": "2026-09-08T16:31:33Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:32:33Z",
+            "conclusion": "success",
+            "name": "CLI E2E (native)",
+            "number": 4,
+            "startedAt": "2026-09-08T16:31:39Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:32:33Z",
+            "conclusion": "success",
+            "name": "Post Run actions/setup-go@v5",
+            "number": 7,
+            "startedAt": "2026-09-08T16:32:33Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:32:33Z",
+            "conclusion": "success",
+            "name": "Post Run actions/checkout@v4",
+            "number": 8,
+            "startedAt": "2026-09-08T16:32:33Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:32:33Z",
+            "conclusion": "success",
+            "name": "Complete job",
+            "number": 9,
+            "startedAt": "2026-09-08T16:32:33Z",
+            "status": "completed"
+          }
+        ],
+        "url": "https://github.com/Untrivial-ai/agent-orchestrator/actions/runs/34251434657/job/102146570740"
+      },
+      {
+        "completedAt": "2026-09-08T16:37:46Z",
+        "conclusion": "success",
+        "databaseId": 102146570827,
+        "name": "container",
+        "startedAt": "2026-09-08T16:36:34Z",
+        "status": "completed",
+        "steps": [
+          {
+            "completedAt": "2026-09-08T16:36:35Z",
+            "conclusion": "success",
+            "name": "Set up job",
+            "number": 1,
+            "startedAt": "2026-09-08T16:36:34Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:36:38Z",
+            "conclusion": "success",
+            "name": "Run actions/checkout@v4",
+            "number": 2,
+            "startedAt": "2026-09-08T16:36:35Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:37:44Z",
+            "conclusion": "success",
+            "name": "Build fresh-install image",
+            "number": 3,
+            "startedAt": "2026-09-08T16:36:38Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:37:45Z",
+            "conclusion": "success",
+            "name": "Fresh-install check (container)",
+            "number": 4,
+            "startedAt": "2026-09-08T16:37:44Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:37:45Z",
+            "conclusion": "success",
+            "name": "Post Run actions/checkout@v4",
+            "number": 8,
+            "startedAt": "2026-09-08T16:37:45Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:37:45Z",
+            "conclusion": "success",
+            "name": "Complete job",
+            "number": 9,
+            "startedAt": "2026-09-08T16:37:45Z",
+            "status": "completed"
+          }
+        ],
+        "url": "https://github.com/Untrivial-ai/agent-orchestrator/actions/runs/34251434657/job/102146570827"
+      },
+      {
+        "completedAt": "2026-09-08T16:34:39Z",
+        "conclusion": "success",
+        "databaseId": 102146570995,
+        "name": "native (macos-latest)",
+        "startedAt": "2026-09-08T16:33:24Z",
+        "status": "completed",
+        "steps": [
+          {
+            "completedAt": "2026-09-08T16:33:26Z",
+            "conclusion": "success",
+            "name": "Set up job",
+            "number": 1,
+            "startedAt": "2026-09-08T16:33:24Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:33:31Z",
+            "conclusion": "success",
+            "name": "Run actions/checkout@v4",
+            "number": 2,
+            "startedAt": "2026-09-08T16:33:26Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:33:40Z",
+            "conclusion": "success",
+            "name": "Run actions/setup-go@v5",
+            "number": 3,
+            "startedAt": "2026-09-08T16:33:31Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:34:36Z",
+            "conclusion": "success",
+            "name": "CLI E2E (native)",
+            "number": 4,
+            "startedAt": "2026-09-08T16:33:40Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:34:36Z",
+            "conclusion": "success",
+            "name": "Post Run actions/setup-go@v5",
+            "number": 7,
+            "startedAt": "2026-09-08T16:34:36Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:34:37Z",
+            "conclusion": "success",
+            "name": "Post Run actions/checkout@v4",
+            "number": 8,
+            "startedAt": "2026-09-08T16:34:36Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:34:37Z",
+            "conclusion": "success",
+            "name": "Complete job",
+            "number": 9,
+            "startedAt": "2026-09-08T16:34:37Z",
+            "status": "completed"
+          }
+        ],
+        "url": "https://github.com/Untrivial-ai/agent-orchestrator/actions/runs/34251434657/job/102146570995"
+      }
+    ],
+    "status": "completed",
+    "url": "https://github.com/Untrivial-ai/agent-orchestrator/actions/runs/34251434657"
+  },
+  {
+    "pr": 5110,
+    "workflow": "gitleaks",
+    "conclusion": "success",
+    "databaseId": 34251434643,
+    "headSha": "3829c4dcbfe49ddfd008ef3a51c879f64d7fa39c",
+    "jobs": [
+      {
+        "completedAt": "2026-09-08T16:30:29Z",
+        "conclusion": "success",
+        "databaseId": 102146570533,
+        "name": "scan",
+        "startedAt": "2026-09-08T16:30:12Z",
+        "status": "completed",
+        "steps": [
+          {
+            "completedAt": "2026-09-08T16:30:13Z",
+            "conclusion": "success",
+            "name": "Set up job",
+            "number": 1,
+            "startedAt": "2026-09-08T16:30:12Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:30:14Z",
+            "conclusion": "success",
+            "name": "Pull zricethezav/gitleaks:v7.4.0@sha256:ffe35a0d42974c19da37b3fb5ca1ff1e781ae6dffaf80164568129a2714eca61",
+            "number": 2,
+            "startedAt": "2026-09-08T16:30:13Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:30:26Z",
+            "conclusion": "success",
+            "name": "Run actions/checkout@v4",
+            "number": 3,
+            "startedAt": "2026-09-08T16:30:14Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:30:26Z",
+            "conclusion": "success",
+            "name": "Select commits to scan",
+            "number": 4,
+            "startedAt": "2026-09-08T16:30:26Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:30:27Z",
+            "conclusion": "success",
+            "name": "Scan selected commits for secrets",
+            "number": 5,
+            "startedAt": "2026-09-08T16:30:26Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:30:27Z",
+            "conclusion": "success",
+            "name": "Post Run actions/checkout@v4",
+            "number": 10,
+            "startedAt": "2026-09-08T16:30:27Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:30:27Z",
+            "conclusion": "success",
+            "name": "Complete job",
+            "number": 11,
+            "startedAt": "2026-09-08T16:30:27Z",
+            "status": "completed"
+          }
+        ],
+        "url": "https://github.com/Untrivial-ai/agent-orchestrator/actions/runs/34251434643/job/102146570533"
+      }
+    ],
+    "status": "completed",
+    "url": "https://github.com/Untrivial-ai/agent-orchestrator/actions/runs/34251434643"
+  },
+  {
+    "pr": 5110,
+    "workflow": "Go",
+    "conclusion": "success",
+    "databaseId": 34251434672,
+    "headSha": "3829c4dcbfe49ddfd008ef3a51c879f64d7fa39c",
+    "jobs": [
+      {
+        "completedAt": "2026-09-08T16:33:25Z",
+        "conclusion": "success",
+        "databaseId": 102146570370,
+        "name": "api-drift",
+        "startedAt": "2026-09-08T16:32:14Z",
+        "status": "completed",
+        "steps": [
+          {
+            "completedAt": "2026-09-08T16:32:18Z",
+            "conclusion": "success",
+            "name": "Set up job",
+            "number": 1,
+            "startedAt": "2026-09-08T16:32:16Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:32:22Z",
+            "conclusion": "success",
+            "name": "Run actions/checkout@v4",
+            "number": 2,
+            "startedAt": "2026-09-08T16:32:18Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:32:36Z",
+            "conclusion": "success",
+            "name": "Run actions/setup-go@v5",
+            "number": 3,
+            "startedAt": "2026-09-08T16:32:22Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:32:40Z",
+            "conclusion": "success",
+            "name": "Run actions/setup-node@v4",
+            "number": 4,
+            "startedAt": "2026-09-08T16:32:36Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:32:44Z",
+            "conclusion": "success",
+            "name": "Install dependencies",
+            "number": 5,
+            "startedAt": "2026-09-08T16:32:40Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:33:21Z",
+            "conclusion": "success",
+            "name": "Regenerate API spec and TS types",
+            "number": 6,
+            "startedAt": "2026-09-08T16:32:44Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:33:21Z",
+            "conclusion": "success",
+            "name": "Check for schema.ts drift",
+            "number": 7,
+            "startedAt": "2026-09-08T16:33:21Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:33:21Z",
+            "conclusion": "success",
+            "name": "Post Run actions/setup-node@v4",
+            "number": 12,
+            "startedAt": "2026-09-08T16:33:21Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:33:22Z",
+            "conclusion": "success",
+            "name": "Post Run actions/setup-go@v5",
+            "number": 13,
+            "startedAt": "2026-09-08T16:33:21Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:33:22Z",
+            "conclusion": "success",
+            "name": "Post Run actions/checkout@v4",
+            "number": 14,
+            "startedAt": "2026-09-08T16:33:22Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:33:22Z",
+            "conclusion": "success",
+            "name": "Complete job",
+            "number": 15,
+            "startedAt": "2026-09-08T16:33:22Z",
+            "status": "completed"
+          }
+        ],
+        "url": "https://github.com/Untrivial-ai/agent-orchestrator/actions/runs/34251434672/job/102146570370"
+      },
+      {
+        "completedAt": "2026-09-08T16:37:55Z",
+        "conclusion": "success",
+        "databaseId": 102146570672,
+        "name": "lint",
+        "startedAt": "2026-09-08T16:36:02Z",
+        "status": "completed",
+        "steps": [
+          {
+            "completedAt": "2026-09-08T16:36:04Z",
+            "conclusion": "success",
+            "name": "Set up job",
+            "number": 1,
+            "startedAt": "2026-09-08T16:36:03Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:36:08Z",
+            "conclusion": "success",
+            "name": "Run actions/checkout@v4",
+            "number": 2,
+            "startedAt": "2026-09-08T16:36:05Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:36:21Z",
+            "conclusion": "success",
+            "name": "Run actions/setup-go@v5",
+            "number": 3,
+            "startedAt": "2026-09-08T16:36:08Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:37:52Z",
+            "conclusion": "success",
+            "name": "golangci-lint",
+            "number": 4,
+            "startedAt": "2026-09-08T16:36:21Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:37:52Z",
+            "conclusion": "success",
+            "name": "Post golangci-lint",
+            "number": 6,
+            "startedAt": "2026-09-08T16:37:52Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:37:52Z",
+            "conclusion": "success",
+            "name": "Post Run actions/setup-go@v5",
+            "number": 7,
+            "startedAt": "2026-09-08T16:37:52Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:37:52Z",
+            "conclusion": "success",
+            "name": "Post Run actions/checkout@v4",
+            "number": 8,
+            "startedAt": "2026-09-08T16:37:52Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:37:53Z",
+            "conclusion": "success",
+            "name": "Complete job",
+            "number": 9,
+            "startedAt": "2026-09-08T16:37:52Z",
+            "status": "completed"
+          }
+        ],
+        "url": "https://github.com/Untrivial-ai/agent-orchestrator/actions/runs/34251434672/job/102146570672"
+      },
+      {
+        "completedAt": "2026-09-08T16:40:23Z",
+        "conclusion": "success",
+        "databaseId": 102146570845,
+        "name": "windows-workspace",
+        "startedAt": "2026-09-08T16:36:28Z",
+        "status": "completed",
+        "steps": [
+          {
+            "completedAt": "2026-09-08T16:36:30Z",
+            "conclusion": "success",
+            "name": "Set up job",
+            "number": 1,
+            "startedAt": "2026-09-08T16:36:29Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:36:39Z",
+            "conclusion": "success",
+            "name": "Run actions/checkout@v4",
+            "number": 2,
+            "startedAt": "2026-09-08T16:36:30Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:37:18Z",
+            "conclusion": "success",
+            "name": "Run actions/setup-go@v5",
+            "number": 3,
+            "startedAt": "2026-09-08T16:36:39Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:39:29Z",
+            "conclusion": "success",
+            "name": "Test SQLite filesystem path identity",
+            "number": 4,
+            "startedAt": "2026-09-08T16:37:18Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:40:11Z",
+            "conclusion": "success",
+            "name": "Test workspace teardown and session kill",
+            "number": 5,
+            "startedAt": "2026-09-08T16:39:29Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:40:19Z",
+            "conclusion": "success",
+            "name": "Test Windows Chat environment precedence",
+            "number": 6,
+            "startedAt": "2026-09-08T16:40:11Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:40:19Z",
+            "conclusion": "success",
+            "name": "Post Run actions/setup-go@v5",
+            "number": 11,
+            "startedAt": "2026-09-08T16:40:19Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:40:21Z",
+            "conclusion": "success",
+            "name": "Post Run actions/checkout@v4",
+            "number": 12,
+            "startedAt": "2026-09-08T16:40:19Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:40:21Z",
+            "conclusion": "success",
+            "name": "Complete job",
+            "number": 13,
+            "startedAt": "2026-09-08T16:40:21Z",
+            "status": "completed"
+          }
+        ],
+        "url": "https://github.com/Untrivial-ai/agent-orchestrator/actions/runs/34251434672/job/102146570845"
+      },
+      {
+        "completedAt": "2026-09-08T16:51:15Z",
+        "conclusion": "success",
+        "databaseId": 102146570906,
+        "name": "build-test",
+        "startedAt": "2026-09-08T16:36:41Z",
+        "status": "completed",
+        "steps": [
+          {
+            "completedAt": "2026-09-08T16:36:43Z",
+            "conclusion": "success",
+            "name": "Set up job",
+            "number": 1,
+            "startedAt": "2026-09-08T16:36:41Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:36:47Z",
+            "conclusion": "success",
+            "name": "Run actions/checkout@v4",
+            "number": 2,
+            "startedAt": "2026-09-08T16:36:43Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:37:00Z",
+            "conclusion": "success",
+            "name": "Run actions/setup-go@v5",
+            "number": 3,
+            "startedAt": "2026-09-08T16:36:47Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:37:01Z",
+            "conclusion": "success",
+            "name": "Check formatting",
+            "number": 4,
+            "startedAt": "2026-09-08T16:37:00Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:37:38Z",
+            "conclusion": "success",
+            "name": "Build",
+            "number": 5,
+            "startedAt": "2026-09-08T16:37:01Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:37:49Z",
+            "conclusion": "success",
+            "name": "Vet",
+            "number": 6,
+            "startedAt": "2026-09-08T16:37:38Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:51:12Z",
+            "conclusion": "success",
+            "name": "Test",
+            "number": 7,
+            "startedAt": "2026-09-08T16:37:49Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:51:12Z",
+            "conclusion": "success",
+            "name": "Post Run actions/setup-go@v5",
+            "number": 13,
+            "startedAt": "2026-09-08T16:51:12Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:51:13Z",
+            "conclusion": "success",
+            "name": "Post Run actions/checkout@v4",
+            "number": 14,
+            "startedAt": "2026-09-08T16:51:12Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:51:13Z",
+            "conclusion": "success",
+            "name": "Complete job",
+            "number": 15,
+            "startedAt": "2026-09-08T16:51:13Z",
+            "status": "completed"
+          }
+        ],
+        "url": "https://github.com/Untrivial-ai/agent-orchestrator/actions/runs/34251434672/job/102146570906"
+      }
+    ],
+    "status": "completed",
+    "url": "https://github.com/Untrivial-ai/agent-orchestrator/actions/runs/34251434672"
+  },
+  {
+    "pr": 5110,
+    "workflow": "Frontend",
+    "conclusion": "success",
+    "databaseId": 34251434618,
+    "headSha": "3829c4dcbfe49ddfd008ef3a51c879f64d7fa39c",
+    "jobs": [
+      {
+        "completedAt": "2026-09-08T16:38:52Z",
+        "conclusion": "success",
+        "databaseId": 102146570704,
+        "name": "renderer-smoke",
+        "startedAt": "2026-09-08T16:36:01Z",
+        "status": "completed",
+        "steps": [
+          {
+            "completedAt": "2026-09-08T16:36:03Z",
+            "conclusion": "success",
+            "name": "Set up job",
+            "number": 1,
+            "startedAt": "2026-09-08T16:36:02Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:36:28Z",
+            "conclusion": "success",
+            "name": "Initialize containers",
+            "number": 2,
+            "startedAt": "2026-09-08T16:36:03Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:36:32Z",
+            "conclusion": "success",
+            "name": "Run actions/checkout@v4",
+            "number": 3,
+            "startedAt": "2026-09-08T16:36:28Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:36:36Z",
+            "conclusion": "success",
+            "name": "Run actions/setup-node@v4",
+            "number": 4,
+            "startedAt": "2026-09-08T16:36:32Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:36:56Z",
+            "conclusion": "success",
+            "name": "Run npm ci",
+            "number": 5,
+            "startedAt": "2026-09-08T16:36:36Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:36:58Z",
+            "conclusion": "success",
+            "name": "Install product UI dependencies",
+            "number": 6,
+            "startedAt": "2026-09-08T16:36:56Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:37:07Z",
+            "conclusion": "success",
+            "name": "Typecheck e2e suite",
+            "number": 7,
+            "startedAt": "2026-09-08T16:36:58Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:38:49Z",
+            "conclusion": "success",
+            "name": "Run renderer smoke suite",
+            "number": 8,
+            "startedAt": "2026-09-08T16:37:07Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:38:49Z",
+            "conclusion": "success",
+            "name": "Post Run actions/setup-node@v4",
+            "number": 14,
+            "startedAt": "2026-09-08T16:38:49Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:38:50Z",
+            "conclusion": "success",
+            "name": "Post Run actions/checkout@v4",
+            "number": 15,
+            "startedAt": "2026-09-08T16:38:49Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:38:50Z",
+            "conclusion": "success",
+            "name": "Stop containers",
+            "number": 16,
+            "startedAt": "2026-09-08T16:38:50Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:38:50Z",
+            "conclusion": "success",
+            "name": "Complete job",
+            "number": 17,
+            "startedAt": "2026-09-08T16:38:50Z",
+            "status": "completed"
+          }
+        ],
+        "url": "https://github.com/Untrivial-ai/agent-orchestrator/actions/runs/34251434618/job/102146570704"
+      },
+      {
+        "completedAt": "2026-09-08T16:42:55Z",
+        "conclusion": "success",
+        "databaseId": 102146570951,
+        "name": "test",
+        "startedAt": "2026-09-08T16:37:48Z",
+        "status": "completed",
+        "steps": [
+          {
+            "completedAt": "2026-09-08T16:37:50Z",
+            "conclusion": "success",
+            "name": "Set up job",
+            "number": 1,
+            "startedAt": "2026-09-08T16:37:49Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:37:55Z",
+            "conclusion": "success",
+            "name": "Run actions/checkout@v4",
+            "number": 2,
+            "startedAt": "2026-09-08T16:37:50Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:38:01Z",
+            "conclusion": "success",
+            "name": "Run actions/setup-node@v4",
+            "number": 3,
+            "startedAt": "2026-09-08T16:37:55Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:38:19Z",
+            "conclusion": "success",
+            "name": "Install frontend dependencies",
+            "number": 4,
+            "startedAt": "2026-09-08T16:38:01Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:38:20Z",
+            "conclusion": "success",
+            "name": "Install Cloud client dependencies",
+            "number": 5,
+            "startedAt": "2026-09-08T16:38:19Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:38:21Z",
+            "conclusion": "success",
+            "name": "Install product UI dependencies",
+            "number": 6,
+            "startedAt": "2026-09-08T16:38:20Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:38:25Z",
+            "conclusion": "success",
+            "name": "Verify Cloud contract and client",
+            "number": 7,
+            "startedAt": "2026-09-08T16:38:21Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:38:35Z",
+            "conclusion": "success",
+            "name": "Verify product UI package",
+            "number": 8,
+            "startedAt": "2026-09-08T16:38:25Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:38:36Z",
+            "conclusion": "success",
+            "name": "Prepare pinned agent-browser runtime",
+            "number": 9,
+            "startedAt": "2026-09-08T16:38:35Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:38:50Z",
+            "conclusion": "success",
+            "name": "Install landing dependencies",
+            "number": 10,
+            "startedAt": "2026-09-08T16:38:36Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:39:43Z",
+            "conclusion": "success",
+            "name": "Typecheck project",
+            "number": 11,
+            "startedAt": "2026-09-08T16:38:50Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:39:50Z",
+            "conclusion": "success",
+            "name": "Typecheck E2E suite",
+            "number": 12,
+            "startedAt": "2026-09-08T16:39:43Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:42:52Z",
+            "conclusion": "success",
+            "name": "Run vitest suite",
+            "number": 13,
+            "startedAt": "2026-09-08T16:39:50Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:42:52Z",
+            "conclusion": "success",
+            "name": "Post Run actions/setup-node@v4",
+            "number": 25,
+            "startedAt": "2026-09-08T16:42:52Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:42:53Z",
+            "conclusion": "success",
+            "name": "Post Run actions/checkout@v4",
+            "number": 26,
+            "startedAt": "2026-09-08T16:42:52Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:42:53Z",
+            "conclusion": "success",
+            "name": "Complete job",
+            "number": 27,
+            "startedAt": "2026-09-08T16:42:53Z",
+            "status": "completed"
+          }
+        ],
+        "url": "https://github.com/Untrivial-ai/agent-orchestrator/actions/runs/34251434618/job/102146570951"
+      }
+    ],
+    "status": "completed",
+    "url": "https://github.com/Untrivial-ai/agent-orchestrator/actions/runs/34251434618"
+  },
+  {
+    "pr": 5111,
+    "workflow": "gitleaks",
+    "conclusion": "success",
+    "databaseId": 34251435458,
+    "headSha": "bfa0f6a58c6e370a7a1876c5545a7c8c035a357b",
+    "jobs": [
+      {
+        "completedAt": "2026-09-08T16:32:11Z",
+        "conclusion": "success",
+        "databaseId": 102146573941,
+        "name": "scan",
+        "startedAt": "2026-09-08T16:31:48Z",
+        "status": "completed",
+        "steps": [
+          {
+            "completedAt": "2026-09-08T16:31:49Z",
+            "conclusion": "success",
+            "name": "Set up job",
+            "number": 1,
+            "startedAt": "2026-09-08T16:31:49Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:31:51Z",
+            "conclusion": "success",
+            "name": "Pull zricethezav/gitleaks:v7.4.0@sha256:ffe35a0d42974c19da37b3fb5ca1ff1e781ae6dffaf80164568129a2714eca61",
+            "number": 2,
+            "startedAt": "2026-09-08T16:31:49Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:32:07Z",
+            "conclusion": "success",
+            "name": "Run actions/checkout@v4",
+            "number": 3,
+            "startedAt": "2026-09-08T16:31:51Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:32:07Z",
+            "conclusion": "success",
+            "name": "Select commits to scan",
+            "number": 4,
+            "startedAt": "2026-09-08T16:32:07Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:32:08Z",
+            "conclusion": "success",
+            "name": "Scan selected commits for secrets",
+            "number": 5,
+            "startedAt": "2026-09-08T16:32:07Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:32:09Z",
+            "conclusion": "success",
+            "name": "Post Run actions/checkout@v4",
+            "number": 10,
+            "startedAt": "2026-09-08T16:32:08Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:32:09Z",
+            "conclusion": "success",
+            "name": "Complete job",
+            "number": 11,
+            "startedAt": "2026-09-08T16:32:09Z",
+            "status": "completed"
+          }
+        ],
+        "url": "https://github.com/Untrivial-ai/agent-orchestrator/actions/runs/34251435458/job/102146573941"
+      }
+    ],
+    "status": "completed",
+    "url": "https://github.com/Untrivial-ai/agent-orchestrator/actions/runs/34251435458"
+  },
+  {
+    "pr": 5111,
+    "workflow": "Frontend",
+    "conclusion": "success",
+    "databaseId": 34251435491,
+    "headSha": "bfa0f6a58c6e370a7a1876c5545a7c8c035a357b",
+    "jobs": [
+      {
+        "completedAt": "2026-09-08T16:41:03Z",
+        "conclusion": "success",
+        "databaseId": 102146574582,
+        "name": "test",
+        "startedAt": "2026-09-08T16:34:41Z",
+        "status": "completed",
+        "steps": [
+          {
+            "completedAt": "2026-09-08T16:34:43Z",
+            "conclusion": "success",
+            "name": "Set up job",
+            "number": 1,
+            "startedAt": "2026-09-08T16:34:42Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:34:46Z",
+            "conclusion": "success",
+            "name": "Run actions/checkout@v4",
+            "number": 2,
+            "startedAt": "2026-09-08T16:34:43Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:34:50Z",
+            "conclusion": "success",
+            "name": "Run actions/setup-node@v4",
+            "number": 3,
+            "startedAt": "2026-09-08T16:34:46Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:35:12Z",
+            "conclusion": "success",
+            "name": "Install frontend dependencies",
+            "number": 4,
+            "startedAt": "2026-09-08T16:34:50Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:35:14Z",
+            "conclusion": "success",
+            "name": "Install Cloud client dependencies",
+            "number": 5,
+            "startedAt": "2026-09-08T16:35:12Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:35:16Z",
+            "conclusion": "success",
+            "name": "Install product UI dependencies",
+            "number": 6,
+            "startedAt": "2026-09-08T16:35:14Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:35:21Z",
+            "conclusion": "success",
+            "name": "Verify Cloud contract and client",
+            "number": 7,
+            "startedAt": "2026-09-08T16:35:16Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:35:33Z",
+            "conclusion": "success",
+            "name": "Verify product UI package",
+            "number": 8,
+            "startedAt": "2026-09-08T16:35:21Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:35:34Z",
+            "conclusion": "success",
+            "name": "Prepare pinned agent-browser runtime",
+            "number": 9,
+            "startedAt": "2026-09-08T16:35:33Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:35:53Z",
+            "conclusion": "success",
+            "name": "Install landing dependencies",
+            "number": 10,
+            "startedAt": "2026-09-08T16:35:34Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:36:58Z",
+            "conclusion": "success",
+            "name": "Typecheck project",
+            "number": 11,
+            "startedAt": "2026-09-08T16:35:53Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:37:07Z",
+            "conclusion": "success",
+            "name": "Typecheck E2E suite",
+            "number": 12,
+            "startedAt": "2026-09-08T16:36:58Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:41:01Z",
+            "conclusion": "success",
+            "name": "Run vitest suite",
+            "number": 13,
+            "startedAt": "2026-09-08T16:37:07Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:41:01Z",
+            "conclusion": "success",
+            "name": "Post Run actions/setup-node@v4",
+            "number": 25,
+            "startedAt": "2026-09-08T16:41:01Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:41:02Z",
+            "conclusion": "success",
+            "name": "Post Run actions/checkout@v4",
+            "number": 26,
+            "startedAt": "2026-09-08T16:41:01Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:41:02Z",
+            "conclusion": "success",
+            "name": "Complete job",
+            "number": 27,
+            "startedAt": "2026-09-08T16:41:02Z",
+            "status": "completed"
+          }
+        ],
+        "url": "https://github.com/Untrivial-ai/agent-orchestrator/actions/runs/34251435491/job/102146574582"
+      },
+      {
+        "completedAt": "2026-09-08T16:38:40Z",
+        "conclusion": "success",
+        "databaseId": 102146574767,
+        "name": "renderer-smoke",
+        "startedAt": "2026-09-08T16:35:54Z",
+        "status": "completed",
+        "steps": [
+          {
+            "completedAt": "2026-09-08T16:35:56Z",
+            "conclusion": "success",
+            "name": "Set up job",
+            "number": 1,
+            "startedAt": "2026-09-08T16:35:55Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:36:19Z",
+            "conclusion": "success",
+            "name": "Initialize containers",
+            "number": 2,
+            "startedAt": "2026-09-08T16:35:56Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:36:24Z",
+            "conclusion": "success",
+            "name": "Run actions/checkout@v4",
+            "number": 3,
+            "startedAt": "2026-09-08T16:36:19Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:36:28Z",
+            "conclusion": "success",
+            "name": "Run actions/setup-node@v4",
+            "number": 4,
+            "startedAt": "2026-09-08T16:36:24Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:36:47Z",
+            "conclusion": "success",
+            "name": "Run npm ci",
+            "number": 5,
+            "startedAt": "2026-09-08T16:36:28Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:36:49Z",
+            "conclusion": "success",
+            "name": "Install product UI dependencies",
+            "number": 6,
+            "startedAt": "2026-09-08T16:36:47Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:36:58Z",
+            "conclusion": "success",
+            "name": "Typecheck e2e suite",
+            "number": 7,
+            "startedAt": "2026-09-08T16:36:49Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:38:37Z",
+            "conclusion": "success",
+            "name": "Run renderer smoke suite",
+            "number": 8,
+            "startedAt": "2026-09-08T16:36:58Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:38:37Z",
+            "conclusion": "success",
+            "name": "Post Run actions/setup-node@v4",
+            "number": 14,
+            "startedAt": "2026-09-08T16:38:37Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:38:37Z",
+            "conclusion": "success",
+            "name": "Post Run actions/checkout@v4",
+            "number": 15,
+            "startedAt": "2026-09-08T16:38:37Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:38:37Z",
+            "conclusion": "success",
+            "name": "Stop containers",
+            "number": 16,
+            "startedAt": "2026-09-08T16:38:37Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:38:37Z",
+            "conclusion": "success",
+            "name": "Complete job",
+            "number": 17,
+            "startedAt": "2026-09-08T16:38:37Z",
+            "status": "completed"
+          }
+        ],
+        "url": "https://github.com/Untrivial-ai/agent-orchestrator/actions/runs/34251435491/job/102146574767"
+      }
+    ],
+    "status": "completed",
+    "url": "https://github.com/Untrivial-ai/agent-orchestrator/actions/runs/34251435491"
+  },
+  {
+    "pr": 5111,
+    "workflow": "CLI E2E",
+    "conclusion": "success",
+    "databaseId": 34251435469,
+    "headSha": "bfa0f6a58c6e370a7a1876c5545a7c8c035a357b",
+    "jobs": [
+      {
+        "completedAt": "2026-09-08T16:39:38Z",
+        "conclusion": "success",
+        "databaseId": 102146573345,
+        "name": "native (ubuntu-latest)",
+        "startedAt": "2026-09-08T16:38:42Z",
+        "status": "completed",
+        "steps": [
+          {
+            "completedAt": "2026-09-08T16:38:43Z",
+            "conclusion": "success",
+            "name": "Set up job",
+            "number": 1,
+            "startedAt": "2026-09-08T16:38:42Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:38:47Z",
+            "conclusion": "success",
+            "name": "Run actions/checkout@v4",
+            "number": 2,
+            "startedAt": "2026-09-08T16:38:43Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:38:51Z",
+            "conclusion": "success",
+            "name": "Run actions/setup-go@v5",
+            "number": 3,
+            "startedAt": "2026-09-08T16:38:47Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:39:36Z",
+            "conclusion": "success",
+            "name": "CLI E2E (native)",
+            "number": 4,
+            "startedAt": "2026-09-08T16:38:51Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:39:36Z",
+            "conclusion": "success",
+            "name": "Post Run actions/setup-go@v5",
+            "number": 7,
+            "startedAt": "2026-09-08T16:39:36Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:39:36Z",
+            "conclusion": "success",
+            "name": "Post Run actions/checkout@v4",
+            "number": 8,
+            "startedAt": "2026-09-08T16:39:36Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:39:36Z",
+            "conclusion": "success",
+            "name": "Complete job",
+            "number": 9,
+            "startedAt": "2026-09-08T16:39:36Z",
+            "status": "completed"
+          }
+        ],
+        "url": "https://github.com/Untrivial-ai/agent-orchestrator/actions/runs/34251435469/job/102146573345"
+      },
+      {
+        "completedAt": "2026-09-08T16:34:12Z",
+        "conclusion": "success",
+        "databaseId": 102146573431,
+        "name": "native (macos-latest)",
+        "startedAt": "2026-09-08T16:32:55Z",
+        "status": "completed",
+        "steps": [
+          {
+            "completedAt": "2026-09-08T16:32:56Z",
+            "conclusion": "success",
+            "name": "Set up job",
+            "number": 1,
+            "startedAt": "2026-09-08T16:32:55Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:33:03Z",
+            "conclusion": "success",
+            "name": "Run actions/checkout@v4",
+            "number": 2,
+            "startedAt": "2026-09-08T16:32:56Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:33:12Z",
+            "conclusion": "success",
+            "name": "Run actions/setup-go@v5",
+            "number": 3,
+            "startedAt": "2026-09-08T16:33:03Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:34:09Z",
+            "conclusion": "success",
+            "name": "CLI E2E (native)",
+            "number": 4,
+            "startedAt": "2026-09-08T16:33:12Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:34:09Z",
+            "conclusion": "success",
+            "name": "Post Run actions/setup-go@v5",
+            "number": 7,
+            "startedAt": "2026-09-08T16:34:09Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:34:10Z",
+            "conclusion": "success",
+            "name": "Post Run actions/checkout@v4",
+            "number": 8,
+            "startedAt": "2026-09-08T16:34:09Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:34:10Z",
+            "conclusion": "success",
+            "name": "Complete job",
+            "number": 9,
+            "startedAt": "2026-09-08T16:34:10Z",
+            "status": "completed"
+          }
+        ],
+        "url": "https://github.com/Untrivial-ai/agent-orchestrator/actions/runs/34251435469/job/102146573431"
+      },
+      {
+        "completedAt": "2026-09-08T16:34:32Z",
+        "conclusion": "success",
+        "databaseId": 102146573521,
+        "name": "native (windows-latest)",
+        "startedAt": "2026-09-08T16:32:37Z",
+        "status": "completed",
+        "steps": [
+          {
+            "completedAt": "2026-09-08T16:32:39Z",
+            "conclusion": "success",
+            "name": "Set up job",
+            "number": 1,
+            "startedAt": "2026-09-08T16:32:38Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:32:46Z",
+            "conclusion": "success",
+            "name": "Run actions/checkout@v4",
+            "number": 2,
+            "startedAt": "2026-09-08T16:32:39Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:33:07Z",
+            "conclusion": "success",
+            "name": "Run actions/setup-go@v5",
+            "number": 3,
+            "startedAt": "2026-09-08T16:32:46Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:34:29Z",
+            "conclusion": "success",
+            "name": "CLI E2E (native)",
+            "number": 4,
+            "startedAt": "2026-09-08T16:33:07Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:34:29Z",
+            "conclusion": "success",
+            "name": "Post Run actions/setup-go@v5",
+            "number": 7,
+            "startedAt": "2026-09-08T16:34:29Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:34:31Z",
+            "conclusion": "success",
+            "name": "Post Run actions/checkout@v4",
+            "number": 8,
+            "startedAt": "2026-09-08T16:34:29Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:34:31Z",
+            "conclusion": "success",
+            "name": "Complete job",
+            "number": 9,
+            "startedAt": "2026-09-08T16:34:31Z",
+            "status": "completed"
+          }
+        ],
+        "url": "https://github.com/Untrivial-ai/agent-orchestrator/actions/runs/34251435469/job/102146573521"
+      },
+      {
+        "completedAt": "2026-09-08T16:40:06Z",
+        "conclusion": "success",
+        "databaseId": 102146573678,
+        "name": "container",
+        "startedAt": "2026-09-08T16:38:57Z",
+        "status": "completed",
+        "steps": [
+          {
+            "completedAt": "2026-09-08T16:38:58Z",
+            "conclusion": "success",
+            "name": "Set up job",
+            "number": 1,
+            "startedAt": "2026-09-08T16:38:58Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:39:03Z",
+            "conclusion": "success",
+            "name": "Run actions/checkout@v4",
+            "number": 2,
+            "startedAt": "2026-09-08T16:38:58Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:40:02Z",
+            "conclusion": "success",
+            "name": "Build fresh-install image",
+            "number": 3,
+            "startedAt": "2026-09-08T16:39:03Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:40:03Z",
+            "conclusion": "success",
+            "name": "Fresh-install check (container)",
+            "number": 4,
+            "startedAt": "2026-09-08T16:40:02Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:40:03Z",
+            "conclusion": "success",
+            "name": "Post Run actions/checkout@v4",
+            "number": 8,
+            "startedAt": "2026-09-08T16:40:03Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:40:03Z",
+            "conclusion": "success",
+            "name": "Complete job",
+            "number": 9,
+            "startedAt": "2026-09-08T16:40:03Z",
+            "status": "completed"
+          }
+        ],
+        "url": "https://github.com/Untrivial-ai/agent-orchestrator/actions/runs/34251435469/job/102146573678"
+      }
+    ],
+    "status": "completed",
+    "url": "https://github.com/Untrivial-ai/agent-orchestrator/actions/runs/34251435469"
+  },
+  {
+    "pr": 5111,
+    "workflow": "Go",
+    "conclusion": "success",
+    "databaseId": 34251435328,
+    "headSha": "bfa0f6a58c6e370a7a1876c5545a7c8c035a357b",
+    "jobs": [
+      {
+        "completedAt": "2026-09-08T16:54:25Z",
+        "conclusion": "success",
+        "databaseId": 102146573241,
+        "name": "build-test",
+        "startedAt": "2026-09-08T16:35:57Z",
+        "status": "completed",
+        "steps": [
+          {
+            "completedAt": "2026-09-08T16:35:59Z",
+            "conclusion": "success",
+            "name": "Set up job",
+            "number": 1,
+            "startedAt": "2026-09-08T16:35:58Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:36:03Z",
+            "conclusion": "success",
+            "name": "Run actions/checkout@v4",
+            "number": 2,
+            "startedAt": "2026-09-08T16:35:59Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:36:16Z",
+            "conclusion": "success",
+            "name": "Run actions/setup-go@v5",
+            "number": 3,
+            "startedAt": "2026-09-08T16:36:03Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:36:17Z",
+            "conclusion": "success",
+            "name": "Check formatting",
+            "number": 4,
+            "startedAt": "2026-09-08T16:36:16Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:36:58Z",
+            "conclusion": "success",
+            "name": "Build",
+            "number": 5,
+            "startedAt": "2026-09-08T16:36:17Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:37:11Z",
+            "conclusion": "success",
+            "name": "Vet",
+            "number": 6,
+            "startedAt": "2026-09-08T16:36:58Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:54:22Z",
+            "conclusion": "success",
+            "name": "Test",
+            "number": 7,
+            "startedAt": "2026-09-08T16:37:11Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:54:22Z",
+            "conclusion": "success",
+            "name": "Post Run actions/setup-go@v5",
+            "number": 13,
+            "startedAt": "2026-09-08T16:54:22Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:54:22Z",
+            "conclusion": "success",
+            "name": "Post Run actions/checkout@v4",
+            "number": 14,
+            "startedAt": "2026-09-08T16:54:22Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:54:22Z",
+            "conclusion": "success",
+            "name": "Complete job",
+            "number": 15,
+            "startedAt": "2026-09-08T16:54:22Z",
+            "status": "completed"
+          }
+        ],
+        "url": "https://github.com/Untrivial-ai/agent-orchestrator/actions/runs/34251435328/job/102146573241"
+      },
+      {
+        "completedAt": "2026-09-08T16:40:22Z",
+        "conclusion": "success",
+        "databaseId": 102146573413,
+        "name": "lint",
+        "startedAt": "2026-09-08T16:38:28Z",
+        "status": "completed",
+        "steps": [
+          {
+            "completedAt": "2026-09-08T16:38:29Z",
+            "conclusion": "success",
+            "name": "Set up job",
+            "number": 1,
+            "startedAt": "2026-09-08T16:38:28Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:38:33Z",
+            "conclusion": "success",
+            "name": "Run actions/checkout@v4",
+            "number": 2,
+            "startedAt": "2026-09-08T16:38:29Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:38:45Z",
+            "conclusion": "success",
+            "name": "Run actions/setup-go@v5",
+            "number": 3,
+            "startedAt": "2026-09-08T16:38:33Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:40:20Z",
+            "conclusion": "success",
+            "name": "golangci-lint",
+            "number": 4,
+            "startedAt": "2026-09-08T16:38:45Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:40:20Z",
+            "conclusion": "success",
+            "name": "Post golangci-lint",
+            "number": 6,
+            "startedAt": "2026-09-08T16:40:20Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:40:20Z",
+            "conclusion": "success",
+            "name": "Post Run actions/setup-go@v5",
+            "number": 7,
+            "startedAt": "2026-09-08T16:40:20Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:40:20Z",
+            "conclusion": "success",
+            "name": "Post Run actions/checkout@v4",
+            "number": 8,
+            "startedAt": "2026-09-08T16:40:20Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:40:20Z",
+            "conclusion": "success",
+            "name": "Complete job",
+            "number": 9,
+            "startedAt": "2026-09-08T16:40:20Z",
+            "status": "completed"
+          }
+        ],
+        "url": "https://github.com/Untrivial-ai/agent-orchestrator/actions/runs/34251435328/job/102146573413"
+      },
+      {
+        "completedAt": "2026-09-08T16:38:38Z",
+        "conclusion": "success",
+        "databaseId": 102146573599,
+        "name": "windows-workspace",
+        "startedAt": "2026-09-08T16:33:39Z",
+        "status": "completed",
+        "steps": [
+          {
+            "completedAt": "2026-09-08T16:33:43Z",
+            "conclusion": "success",
+            "name": "Set up job",
+            "number": 1,
+            "startedAt": "2026-09-08T16:33:41Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:34:03Z",
+            "conclusion": "success",
+            "name": "Run actions/checkout@v4",
+            "number": 2,
+            "startedAt": "2026-09-08T16:33:43Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:35:01Z",
+            "conclusion": "success",
+            "name": "Run actions/setup-go@v5",
+            "number": 3,
+            "startedAt": "2026-09-08T16:34:03Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:37:29Z",
+            "conclusion": "success",
+            "name": "Test SQLite filesystem path identity",
+            "number": 4,
+            "startedAt": "2026-09-08T16:35:01Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:38:25Z",
+            "conclusion": "success",
+            "name": "Test workspace teardown and session kill",
+            "number": 5,
+            "startedAt": "2026-09-08T16:37:29Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:38:34Z",
+            "conclusion": "success",
+            "name": "Test Windows Chat environment precedence",
+            "number": 6,
+            "startedAt": "2026-09-08T16:38:25Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:38:34Z",
+            "conclusion": "success",
+            "name": "Post Run actions/setup-go@v5",
+            "number": 11,
+            "startedAt": "2026-09-08T16:38:34Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:38:36Z",
+            "conclusion": "success",
+            "name": "Post Run actions/checkout@v4",
+            "number": 12,
+            "startedAt": "2026-09-08T16:38:34Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:38:36Z",
+            "conclusion": "success",
+            "name": "Complete job",
+            "number": 13,
+            "startedAt": "2026-09-08T16:38:36Z",
+            "status": "completed"
+          }
+        ],
+        "url": "https://github.com/Untrivial-ai/agent-orchestrator/actions/runs/34251435328/job/102146573599"
+      },
+      {
+        "completedAt": "2026-09-08T16:39:37Z",
+        "conclusion": "success",
+        "databaseId": 102146573639,
+        "name": "api-drift",
+        "startedAt": "2026-09-08T16:38:39Z",
+        "status": "completed",
+        "steps": [
+          {
+            "completedAt": "2026-09-08T16:38:41Z",
+            "conclusion": "success",
+            "name": "Set up job",
+            "number": 1,
+            "startedAt": "2026-09-08T16:38:40Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:38:44Z",
+            "conclusion": "success",
+            "name": "Run actions/checkout@v4",
+            "number": 2,
+            "startedAt": "2026-09-08T16:38:41Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:38:56Z",
+            "conclusion": "success",
+            "name": "Run actions/setup-go@v5",
+            "number": 3,
+            "startedAt": "2026-09-08T16:38:44Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:38:56Z",
+            "conclusion": "success",
+            "name": "Run actions/setup-node@v4",
+            "number": 4,
+            "startedAt": "2026-09-08T16:38:56Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:38:58Z",
+            "conclusion": "success",
+            "name": "Install dependencies",
+            "number": 5,
+            "startedAt": "2026-09-08T16:38:56Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:39:35Z",
+            "conclusion": "success",
+            "name": "Regenerate API spec and TS types",
+            "number": 6,
+            "startedAt": "2026-09-08T16:38:58Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:39:35Z",
+            "conclusion": "success",
+            "name": "Check for schema.ts drift",
+            "number": 7,
+            "startedAt": "2026-09-08T16:39:35Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:39:35Z",
+            "conclusion": "success",
+            "name": "Post Run actions/setup-node@v4",
+            "number": 12,
+            "startedAt": "2026-09-08T16:39:35Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:39:35Z",
+            "conclusion": "success",
+            "name": "Post Run actions/setup-go@v5",
+            "number": 13,
+            "startedAt": "2026-09-08T16:39:35Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:39:35Z",
+            "conclusion": "success",
+            "name": "Post Run actions/checkout@v4",
+            "number": 14,
+            "startedAt": "2026-09-08T16:39:35Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-08T16:39:35Z",
+            "conclusion": "success",
+            "name": "Complete job",
+            "number": 15,
+            "startedAt": "2026-09-08T16:39:35Z",
+            "status": "completed"
+          }
+        ],
+        "url": "https://github.com/Untrivial-ai/agent-orchestrator/actions/runs/34251435328/job/102146573639"
+      }
+    ],
+    "status": "completed",
+    "url": "https://github.com/Untrivial-ai/agent-orchestrator/actions/runs/34251435328"
+  }
+]

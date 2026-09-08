@@ -51,4 +51,4 @@ The thumbnail check verifies a successful image load (`complete` and nonzero `na
 
 [Browser test source](correctness-review.spec.ts) · [Before results](before-results.json) · [After results](after-results.json)
 
-Full suite results and remote checks are recorded in each PR description once complete. Local execution is macOS with Node 24.14.0 and Go 1.26.5. Docker did not respond, so Linux-container and native Windows validation are delegated to the corresponding CI jobs; no production publish was used as validation.
+Full suite results, final review conclusions and remote checks are recorded in [the validation report](validation.md). Local execution is macOS with Node 24.14.0 and Go 1.26.5. Docker did not respond, so Linux-container and native Windows validation are delegated to the corresponding CI jobs; no production publish was used as validation.
