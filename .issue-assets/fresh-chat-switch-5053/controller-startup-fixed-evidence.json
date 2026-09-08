@@ -1,0 +1,394 @@
+{
+  "commit": "7035c185f03ba64ed82323c684be7355531d648e",
+  "method": "Real AO Electron window, isolated local daemon/state, installed Claude Code 2.1.263 and Codex 0.153.4. All interface switches performed via native desktop UI. No prompt submitted. Claude clip focuses on a repeated untouched terminal-to-Chat return; Codex clip shows the first untouched full round trip. Native recordings trimmed only outside complete transitions; normal playback speed.",
+  "results": [
+    {
+      "sessionId": "rt5053-0908-5",
+      "provider": "claude-code",
+      "sequence": 0,
+      "turns": 0,
+      "messages": 0,
+      "controller": "ready",
+      "mode": "chat",
+      "transitions": [
+        {
+          "id": "d079a9a8-92c6-482b-8ed8-52fd2372903b",
+          "source_mode": "chat",
+          "target_mode": "tui",
+          "phase": "completed",
+          "policy": "drain",
+          "created_at": "2026-09-08 09:12:30.492607 +0000 UTC",
+          "completed_at": "2026-09-08 09:12:32.064626 +0000 UTC"
+        },
+        {
+          "id": "00914c13-7288-42ec-8579-c6add3ba8bb4",
+          "source_mode": "tui",
+          "target_mode": "chat",
+          "phase": "completed",
+          "policy": "drain",
+          "created_at": "2026-09-08 09:13:02.812418 +0000 UTC",
+          "completed_at": "2026-09-08 09:13:19.274136 +0000 UTC"
+        },
+        {
+          "id": "4a8c8eaa-0d7b-4dc2-89be-f447aede1b74",
+          "source_mode": "chat",
+          "target_mode": "tui",
+          "phase": "completed",
+          "policy": "drain",
+          "created_at": "2026-09-08 09:17:29.187241 +0000 UTC",
+          "completed_at": "2026-09-08 09:17:29.526742 +0000 UTC"
+        },
+        {
+          "id": "588243d2-d7c6-49b4-a7af-dc3ea02a2f1f",
+          "source_mode": "tui",
+          "target_mode": "chat",
+          "phase": "completed",
+          "policy": "drain",
+          "created_at": "2026-09-08 09:18:20.140573 +0000 UTC",
+          "completed_at": "2026-09-08 09:18:22.951851 +0000 UTC"
+        },
+        {
+          "id": "ae11e093-fad0-4bf7-bea0-dd7f92e9a6fb",
+          "source_mode": "chat",
+          "target_mode": "tui",
+          "phase": "completed",
+          "policy": "drain",
+          "created_at": "2026-09-08 09:20:28.813589 +0000 UTC",
+          "completed_at": "2026-09-08 09:20:28.896329 +0000 UTC"
+        },
+        {
+          "id": "eb2be9e5-6ead-4174-90d6-ccfd70a77707",
+          "source_mode": "tui",
+          "target_mode": "chat",
+          "phase": "completed",
+          "policy": "drain",
+          "created_at": "2026-09-08 09:21:27.381187 +0000 UTC",
+          "completed_at": "2026-09-08 09:21:30.2962 +0000 UTC"
+        }
+      ],
+      "controllerCatalogRequests": [
+        {
+          "time": "2026-09-08T14:41:36.381+05:30",
+          "endpoint": "/api/v1/sessions/rt5053-0908-5/conversation/config-options",
+          "status": 200
+        },
+        {
+          "time": "2026-09-08T14:41:36.392+05:30",
+          "endpoint": "/api/v1/sessions/rt5053-0908-5/conversation/models",
+          "status": 200
+        },
+        {
+          "time": "2026-09-08T14:41:36.396+05:30",
+          "endpoint": "/api/v1/sessions/rt5053-0908-5/conversation/skills",
+          "status": 200
+        },
+        {
+          "time": "2026-09-08T14:41:41.521+05:30",
+          "endpoint": "/api/v1/sessions/rt5053-0908-5/conversation/config-options",
+          "status": 200
+        },
+        {
+          "time": "2026-09-08T14:41:46.527+05:30",
+          "endpoint": "/api/v1/sessions/rt5053-0908-5/conversation/config-options",
+          "status": 200
+        },
+        {
+          "time": "2026-09-08T14:41:51.532+05:30",
+          "endpoint": "/api/v1/sessions/rt5053-0908-5/conversation/config-options",
+          "status": 200
+        },
+        {
+          "time": "2026-09-08T14:41:56.538+05:30",
+          "endpoint": "/api/v1/sessions/rt5053-0908-5/conversation/config-options",
+          "status": 200
+        },
+        {
+          "time": "2026-09-08T14:42:01.542+05:30",
+          "endpoint": "/api/v1/sessions/rt5053-0908-5/conversation/config-options",
+          "status": 200
+        },
+        {
+          "time": "2026-09-08T14:42:06.583+05:30",
+          "endpoint": "/api/v1/sessions/rt5053-0908-5/conversation/config-options",
+          "status": 200
+        },
+        {
+          "time": "2026-09-08T14:42:21.608+05:30",
+          "endpoint": "/api/v1/sessions/rt5053-0908-5/conversation/config-options",
+          "status": 200
+        },
+        {
+          "time": "2026-09-08T14:42:26.619+05:30",
+          "endpoint": "/api/v1/sessions/rt5053-0908-5/conversation/config-options",
+          "status": 200
+        },
+        {
+          "time": "2026-09-08T14:43:19.652+05:30",
+          "endpoint": "/api/v1/sessions/rt5053-0908-5/conversation/config-options",
+          "status": 200
+        },
+        {
+          "time": "2026-09-08T14:43:19.656+05:30",
+          "endpoint": "/api/v1/sessions/rt5053-0908-5/conversation/skills",
+          "status": 200
+        },
+        {
+          "time": "2026-09-08T14:43:24.662+05:30",
+          "endpoint": "/api/v1/sessions/rt5053-0908-5/conversation/config-options",
+          "status": 200
+        },
+        {
+          "time": "2026-09-08T14:43:29.669+05:30",
+          "endpoint": "/api/v1/sessions/rt5053-0908-5/conversation/config-options",
+          "status": 200
+        },
+        {
+          "time": "2026-09-08T14:43:34.674+05:30",
+          "endpoint": "/api/v1/sessions/rt5053-0908-5/conversation/config-options",
+          "status": 200
+        },
+        {
+          "time": "2026-09-08T14:44:04.623+05:30",
+          "endpoint": "/api/v1/sessions/rt5053-0908-5/conversation/models",
+          "status": 200
+        },
+        {
+          "time": "2026-09-08T14:44:04.623+05:30",
+          "endpoint": "/api/v1/sessions/rt5053-0908-5/conversation/config-options",
+          "status": 200
+        },
+        {
+          "time": "2026-09-08T14:44:04.624+05:30",
+          "endpoint": "/api/v1/sessions/rt5053-0908-5/conversation/skills",
+          "status": 200
+        },
+        {
+          "time": "2026-09-08T14:44:55.009+05:30",
+          "endpoint": "/api/v1/sessions/rt5053-0908-5/conversation/config-options",
+          "status": 200
+        },
+        {
+          "time": "2026-09-08T14:46:55.262+05:30",
+          "endpoint": "/api/v1/sessions/rt5053-0908-5/conversation/config-options",
+          "status": 200
+        },
+        {
+          "time": "2026-09-08T14:46:55.264+05:30",
+          "endpoint": "/api/v1/sessions/rt5053-0908-5/conversation/skills",
+          "status": 200
+        },
+        {
+          "time": "2026-09-08T14:47:00.419+05:30",
+          "endpoint": "/api/v1/sessions/rt5053-0908-5/conversation/config-options",
+          "status": 200
+        },
+        {
+          "time": "2026-09-08T14:47:05.433+05:30",
+          "endpoint": "/api/v1/sessions/rt5053-0908-5/conversation/config-options",
+          "status": 200
+        },
+        {
+          "time": "2026-09-08T14:47:20.444+05:30",
+          "endpoint": "/api/v1/sessions/rt5053-0908-5/conversation/config-options",
+          "status": 200
+        },
+        {
+          "time": "2026-09-08T14:47:25.449+05:30",
+          "endpoint": "/api/v1/sessions/rt5053-0908-5/conversation/config-options",
+          "status": 200
+        },
+        {
+          "time": "2026-09-08T14:48:24.233+05:30",
+          "endpoint": "/api/v1/sessions/rt5053-0908-5/conversation/config-options",
+          "status": 200
+        },
+        {
+          "time": "2026-09-08T14:48:24.233+05:30",
+          "endpoint": "/api/v1/sessions/rt5053-0908-5/conversation/skills",
+          "status": 200
+        },
+        {
+          "time": "2026-09-08T14:49:54.244+05:30",
+          "endpoint": "/api/v1/sessions/rt5053-0908-5/conversation/config-options",
+          "status": 200
+        },
+        {
+          "time": "2026-09-08T14:49:59.254+05:30",
+          "endpoint": "/api/v1/sessions/rt5053-0908-5/conversation/config-options",
+          "status": 200
+        },
+        {
+          "time": "2026-09-08T14:51:30.563+05:30",
+          "endpoint": "/api/v1/sessions/rt5053-0908-5/conversation/config-options",
+          "status": 200
+        },
+        {
+          "time": "2026-09-08T14:51:30.563+05:30",
+          "endpoint": "/api/v1/sessions/rt5053-0908-5/conversation/skills",
+          "status": 200
+        },
+        {
+          "time": "2026-09-08T14:51:35.597+05:30",
+          "endpoint": "/api/v1/sessions/rt5053-0908-5/conversation/config-options",
+          "status": 200
+        },
+        {
+          "time": "2026-09-08T14:51:40.602+05:30",
+          "endpoint": "/api/v1/sessions/rt5053-0908-5/conversation/config-options",
+          "status": 200
+        },
+        {
+          "time": "2026-09-08T14:51:45.606+05:30",
+          "endpoint": "/api/v1/sessions/rt5053-0908-5/conversation/config-options",
+          "status": 200
+        },
+        {
+          "time": "2026-09-08T14:51:50.613+05:30",
+          "endpoint": "/api/v1/sessions/rt5053-0908-5/conversation/config-options",
+          "status": 200
+        },
+        {
+          "time": "2026-09-08T14:56:07.881+05:30",
+          "endpoint": "/api/v1/sessions/rt5053-0908-5/conversation/config-options",
+          "status": 200
+        },
+        {
+          "time": "2026-09-08T14:56:12.995+05:30",
+          "endpoint": "/api/v1/sessions/rt5053-0908-5/conversation/config-options",
+          "status": 200
+        },
+        {
+          "time": "2026-09-08T14:56:17.999+05:30",
+          "endpoint": "/api/v1/sessions/rt5053-0908-5/conversation/config-options",
+          "status": 200
+        },
+        {
+          "time": "2026-09-08T14:56:23.003+05:30",
+          "endpoint": "/api/v1/sessions/rt5053-0908-5/conversation/config-options",
+          "status": 200
+        },
+        {
+          "time": "2026-09-08T14:56:28.007+05:30",
+          "endpoint": "/api/v1/sessions/rt5053-0908-5/conversation/config-options",
+          "status": 200
+        },
+        {
+          "time": "2026-09-08T14:56:30.597+05:30",
+          "endpoint": "/api/v1/sessions/rt5053-0908-5/conversation/skills",
+          "status": 200
+        }
+      ],
+      "catalog409Count": 0
+    },
+    {
+      "sessionId": "rt5053-0908-6",
+      "provider": "codex",
+      "sequence": 0,
+      "turns": 0,
+      "messages": 0,
+      "controller": "ready",
+      "mode": "chat",
+      "transitions": [
+        {
+          "id": "8432310b-19d7-4878-bc30-b9a94369a667",
+          "source_mode": "chat",
+          "target_mode": "tui",
+          "phase": "completed",
+          "policy": "drain",
+          "created_at": "2026-09-08 09:27:19.946716 +0000 UTC",
+          "completed_at": "2026-09-08 09:27:20.036744 +0000 UTC"
+        },
+        {
+          "id": "7c058566-0cba-442d-80cb-d1606ce1c4ce",
+          "source_mode": "tui",
+          "target_mode": "chat",
+          "phase": "completed",
+          "policy": "drain",
+          "created_at": "2026-09-08 09:27:48.564591 +0000 UTC",
+          "completed_at": "2026-09-08 09:27:50.128056 +0000 UTC"
+        }
+      ],
+      "controllerCatalogRequests": [
+        {
+          "time": "2026-09-08T14:56:31.497+05:30",
+          "endpoint": "/api/v1/sessions/rt5053-0908-6/conversation/models",
+          "status": 200
+        },
+        {
+          "time": "2026-09-08T14:56:31.800+05:30",
+          "endpoint": "/api/v1/sessions/rt5053-0908-6/conversation/skills",
+          "status": 200
+        },
+        {
+          "time": "2026-09-08T14:57:50.244+05:30",
+          "endpoint": "/api/v1/sessions/rt5053-0908-6/conversation/skills",
+          "status": 200
+        }
+      ],
+      "catalog409Count": 0
+    }
+  ],
+  "frameAudit": [
+    {
+      "source": "claude-review-roundtrip.mp4",
+      "startSeconds": 90,
+      "durationSeconds": 10,
+      "framesExamined": 499,
+      "framesWithRedPixelsInComposer": 107,
+      "maxRedPixelsInComposer": 242,
+      "criterion": "R>95, R>1.45G, R>1.25B inside composer area after scaling to 660x448; checked every decoded source frame; visual contact sheets also reviewed"
+    },
+    {
+      "source": "claude-return-fixed.mov",
+      "startSeconds": 15,
+      "durationSeconds": 12,
+      "framesExamined": 600,
+      "framesWithRedPixelsInComposer": 0,
+      "maxRedPixelsInComposer": 0,
+      "criterion": "R>95, R>1.45G, R>1.25B inside composer area after scaling to 660x448; checked every decoded source frame; visual contact sheets also reviewed"
+    },
+    {
+      "source": "codex-controller-final.mov",
+      "startSeconds": 38,
+      "durationSeconds": 12,
+      "framesExamined": 601,
+      "framesWithRedPixelsInComposer": 0,
+      "maxRedPixelsInComposer": 0,
+      "criterion": "R>95, R>1.45G, R>1.25B inside composer area after scaling to 660x448; checked every decoded source frame; visual contact sheets also reviewed"
+    }
+  ],
+  "clips": [
+    {
+      "file": "claude-controller-fixed-11s.mp4",
+      "durationSeconds": 11.02,
+      "sha256": "dd33c49e1757cff023b5755dd6f6b773a80672aebd21ebb3d04cd81e55466bcb",
+      "source": "claude-return-fixed.mov",
+      "sourceSha256": "562af3b4233cd800390666e86a19a25d68ecbc17b2cc0927ed5848034ad5e00e",
+      "retainedSourceIntervalsSeconds": [
+        [
+          15,
+          26
+        ]
+      ],
+      "speed": 1
+    },
+    {
+      "file": "codex-controller-fixed-25s.mp4",
+      "durationSeconds": 25.0,
+      "sha256": "5f7a3b1dd1722dd751ff4eadf631da48a939c21a4c1e131c6a5c3eb59442b096",
+      "source": "codex-controller-final.mov",
+      "sourceSha256": "1b849e1b9b8042b0a1c946ebcbcda0decb34c23f6588319eb357150a05180726",
+      "retainedSourceIntervalsSeconds": [
+        [
+          6,
+          20
+        ],
+        [
+          38,
+          49
+        ]
+      ],
+      "speed": 1
+    }
+  ]
+}
