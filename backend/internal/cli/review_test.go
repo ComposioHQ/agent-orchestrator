@@ -54,7 +54,7 @@ func TestReviewRequestDefaultsToOriginAndForwardsOverrides(t *testing.T) {
 	if err := json.Unmarshal([]byte(capture.body), &req); err != nil {
 		t.Fatalf("decode body: %v", err)
 	}
-	if req.Harness != "codex" || req.Model != "gpt-5.6" || req.RequestedBySessionID != "mer-7" {
+	if req.Harness != "codex" || req.AgentConfig.Model != "gpt-5.6" || req.RequestedBySessionID != "mer-7" {
 		t.Fatalf("request = %+v", req)
 	}
 	if !strings.Contains(out, "started AO review for PR #42 at abc123 (running)") {

@@ -29,6 +29,9 @@ type fakeAgent struct {
 	loadParams          acpsdk.LoadSessionRequest
 	resumeParams        acpsdk.ResumeSessionRequest
 	loadUpdates         []acpsdk.SessionUpdate
+	loadUpdateBatches   [][]acpsdk.SessionUpdate
+	blockLoadCall       int
+	loadStarted         chan struct{}
 	loadCalls           int
 	resumeCalls         int
 	promptParams        acpsdk.PromptRequest
@@ -57,12 +60,15 @@ type fakeAgent struct {
 }
 
 type legacyKimiAgent struct {
-	mu          sync.Mutex
-	model       string
-	modelCalls  int
-	mode        string
-	modeCalls   int
-	configCalls int
+	mu                 sync.Mutex
+	currentModel       string
+	availableModels    []legacyModelInfo
+	rejectUnknownModel bool
+	model              string
+	modelCalls         int
+	mode               string
+	modeCalls          int
+	configCalls        int
 }
 
 func fakeLegacyKimiSpawn(agent *legacyKimiAgent) spawnFunc {
@@ -109,14 +115,21 @@ func serveLegacyKimi(agent *legacyKimiAgent, in io.Reader, out io.Writer) {
 				},
 			}
 		case "session/new":
+			currentModel := agent.currentModel
+			availableModels := agent.availableModels
+			if currentModel == "" {
+				currentModel = "kimi-code/kimi-for-coding"
+			}
+			if len(availableModels) == 0 {
+				availableModels = []legacyModelInfo{{
+					ModelID: "kimi-code/kimi-for-coding", Name: "Kimi for Coding",
+				}}
+			}
 			result = map[string]any{
 				"sessionId": "kimi-session-1",
 				"models": map[string]any{
-					"currentModelId": "kimi-code/kimi-for-coding",
-					"availableModels": []map[string]any{{
-						"modelId": "kimi-code/kimi-for-coding",
-						"name":    "Kimi for Coding", "description": "Kimi coding model",
-					}},
+					"currentModelId":  currentModel,
+					"availableModels": availableModels,
 				},
 				"modes": map[string]any{
 					"currentModeId": "default",
@@ -131,8 +144,19 @@ func serveLegacyKimi(agent *legacyKimiAgent, in io.Reader, out io.Writer) {
 			}
 			_ = json.Unmarshal(request.Params, &params)
 			agent.mu.Lock()
-			agent.model = params.ModelID
-			agent.modelCalls++
+			accepted := !agent.rejectUnknownModel
+			for _, model := range agent.availableModels {
+				accepted = accepted || model.ModelID == params.ModelID
+			}
+			if accepted {
+				agent.model = params.ModelID
+				agent.modelCalls++
+			} else {
+				responseError = map[string]any{
+					"code": -32602, "message": "Invalid params",
+					"data": map[string]any{"message": "Invalid model value: " + params.ModelID},
+				}
+			}
 			agent.mu.Unlock()
 		case "session/set_mode":
 			var params struct {
@@ -259,8 +283,21 @@ func (a *fakeAgent) LoadSession(ctx context.Context, params acpsdk.LoadSessionRe
 	a.mu.Lock()
 	a.loadParams = params
 	a.loadCalls++
+	loadCall := a.loadCalls
 	updates := append([]acpsdk.SessionUpdate(nil), a.loadUpdates...)
+	if batch := a.loadCalls - 1; batch < len(a.loadUpdateBatches) {
+		updates = append([]acpsdk.SessionUpdate(nil), a.loadUpdateBatches[batch]...)
+	}
+	block := a.blockLoadCall == loadCall
+	started := a.loadStarted
 	a.mu.Unlock()
+	if block {
+		if started != nil {
+			close(started)
+		}
+		<-ctx.Done()
+		return acpsdk.LoadSessionResponse{}, ctx.Err()
+	}
 	for _, update := range updates {
 		if err := a.conn.SessionUpdate(ctx, acpsdk.SessionNotification{SessionId: params.SessionId, Update: update}); err != nil {
 			return acpsdk.LoadSessionResponse{}, err
@@ -654,6 +691,7 @@ func TestACPDriverNegotiatesRichClientCapabilitiesAndNativePromptContent(t *test
 			{Type: "image", Data: "aW1hZ2U=", MIMEType: "image/png"},
 			{Type: "resource_link", URI: "file:///repo/README.md", Name: "README.md"},
 			{Type: "resource", URI: "file:///repo/notes.txt", Name: "notes.txt", MIMEType: "text/plain", Text: "notes"},
+			{Type: "resource", URI: ports.ChatInternalReplayResourceURI, Name: "replay", MIMEType: "application/json", Text: `{}`, Internal: true},
 		},
 	})
 	if err != nil {
@@ -671,8 +709,13 @@ func TestACPDriverNegotiatesRichClientCapabilitiesAndNativePromptContent(t *test
 	prompt := agent.promptParams.Prompt
 	promptMessageID := agent.promptParams.MessageId
 	agent.mu.Unlock()
-	if len(prompt) != 4 || prompt[1].Image == nil || prompt[2].ResourceLink == nil || prompt[3].Resource == nil {
+	if len(prompt) != 5 || prompt[1].Image == nil || prompt[2].ResourceLink == nil ||
+		prompt[3].Resource == nil || prompt[4].Resource == nil {
 		t.Fatalf("native prompt = %#v", prompt)
+	}
+	internalResource := prompt[4].Resource.Resource.TextResourceContents
+	if internalResource == nil || internalResource.Meta[aoInternalReplayMetaKey] != true {
+		t.Fatalf("internal replay ACP metadata = %#v", internalResource)
 	}
 	if promptMessageID == nil || *promptMessageID != "ao-client-message-1" {
 		t.Fatalf("ACP prompt message id = %v, want AO's durable client id", promptMessageID)
@@ -740,15 +783,26 @@ func TestACPDriverReappliesLaunchContextWhenResuming(t *testing.T) {
 	if _, err := conv.(ports.ChatHistoryReader).ReadHistory(context.Background()); !errors.Is(err, ports.ErrChatHistoryUnavailable) {
 		t.Fatalf("ReadHistory error = %v, want ErrChatHistoryUnavailable after session/resume", err)
 	}
+	if _, ok := conv.(ports.ChatHistoryRefresher); ok {
+		t.Fatal("resume-only ACP conversation advertised refreshable history")
+	}
 }
 
-func TestACPDriverClosesReplayTurnsAsRecoveredWithoutBlockingResume(t *testing.T) {
+func TestACPDriverRefreshesHistoryWithAnotherSessionLoad(t *testing.T) {
 	userOneID := "11111111-1111-4111-8111-111111111111"
 	answerOneID := "22222222-2222-4222-8222-222222222222"
 	userTwoID := "33333333-3333-4333-8333-333333333333"
 	answerTwoID := "44444444-4444-4444-8444-444444444444"
 	userOne := acpsdk.UpdateUserMessageText("Inspect the repository")
 	userOne.UserMessageChunk.MessageId = &userOneID
+	replayBlock := acpsdk.ResourceBlock(acpsdk.EmbeddedResourceResource{
+		TextResourceContents: &acpsdk.TextResourceContents{
+			Uri: ports.ChatInternalReplayResourceURI, Text: `{"kind":"approximate_conversation_context"}`,
+			Meta: map[string]any{aoInternalReplayMetaKey: true},
+		},
+	})
+	replaySeed := acpsdk.UpdateUserMessage(replayBlock)
+	replaySeed.UserMessageChunk.MessageId = &userOneID
 	answerOneA := acpsdk.UpdateAgentMessageText("The repository ")
 	answerOneA.AgentMessageChunk.MessageId = &answerOneID
 	answerOneB := acpsdk.UpdateAgentMessageText("is ready.")
@@ -766,7 +820,11 @@ func TestACPDriverClosesReplayTurnsAsRecoveredWithoutBlockingResume(t *testing.T
 		capabilities: &acpsdk.AgentCapabilities{
 			LoadSession: true,
 		},
-		loadUpdates: []acpsdk.SessionUpdate{userOne, answerOneA, answerOneB, userTwo, answerTwo, pendingTool},
+		loadUpdateBatches: [][]acpsdk.SessionUpdate{
+			{userOne, replaySeed, answerOneA, answerOneB},
+			{userOne, replaySeed, answerOneA, answerOneB, userTwo, answerTwo, pendingTool},
+			{userOne, replaySeed, answerOneA, answerOneB, userTwo, answerTwo, pendingTool},
+		},
 	}
 	driver := New(Config{
 		Harness:      domain.HarnessClaudeCode,
@@ -783,13 +841,15 @@ func TestACPDriverClosesReplayTurnsAsRecoveredWithoutBlockingResume(t *testing.T
 		ProviderConversationID: "provider-session-1",
 		WorkspacePath:          t.TempDir(),
 		SystemPrompt:           "AO load instructions",
+		ProviderScopeID:        "history-scope",
 	})
 	if err != nil {
 		t.Fatalf("Resume: %v", err)
 	}
 	defer conv.Close()
-	if _, ok := conv.(ports.ChatHistoryRefresher); ok {
-		t.Fatal("ACP session/load replay is a frozen snapshot, not refreshable history")
+	refresher, ok := conv.(ports.ChatHistoryRefresher)
+	if !ok {
+		t.Fatal("load-capable ACP conversation does not advertise refreshable history")
 	}
 
 	agent.mu.Lock()
@@ -805,9 +865,56 @@ func TestACPDriverClosesReplayTurnsAsRecoveredWithoutBlockingResume(t *testing.T
 		t.Fatalf("session/load metadata = %#v, want recomputed system prompt", loadMeta)
 	}
 
-	history, err := conv.(ports.ChatHistoryReader).ReadHistory(context.Background())
+	initial, err := conv.(ports.ChatHistoryReader).ReadHistory(context.Background())
 	if err != nil {
 		t.Fatalf("ReadHistory: %v", err)
+	}
+	initialTurns := 0
+	for _, event := range initial {
+		if event.Kind == ports.ChatEventTurnCompleted {
+			initialTurns++
+		}
+	}
+	if initialTurns != 1 {
+		t.Fatalf("initial completed turns = %d, want only the first replayed turn", initialTurns)
+	}
+	history, err := refresher.RefreshHistory(context.Background())
+	if err != nil {
+		t.Fatalf("RefreshHistory: %v", err)
+	}
+	agent.mu.Lock()
+	loadCalls = agent.loadCalls
+	agent.mu.Unlock()
+	if loadCalls != 2 {
+		t.Fatalf("session/load calls = %d, want a fresh provider observation", loadCalls)
+	}
+	if len(history) <= len(initial) {
+		t.Fatalf("refreshed history has %d events, want more than initial snapshot's %d", len(history), len(initial))
+	}
+	for i := range initial {
+		if initial[i].ProviderEventID != history[i].ProviderEventID {
+			t.Fatalf("event %d identity changed across replay: %q != %q",
+				i, initial[i].ProviderEventID, history[i].ProviderEventID)
+		}
+	}
+	identical, err := refresher.RefreshHistory(context.Background())
+	if err != nil {
+		t.Fatalf("RefreshHistory identical replay: %v", err)
+	}
+	agent.mu.Lock()
+	loadCalls = agent.loadCalls
+	agent.mu.Unlock()
+	if loadCalls != 3 {
+		t.Fatalf("session/load calls = %d after identical refresh, want another provider observation", loadCalls)
+	}
+	if len(identical) != len(history) {
+		t.Fatalf("identical replay has %d events, want %d", len(identical), len(history))
+	}
+	for i := range history {
+		if history[i].ProviderEventID != identical[i].ProviderEventID {
+			t.Fatalf("identical replay event %d changed identity: %q != %q",
+				i, history[i].ProviderEventID, identical[i].ProviderEventID)
+		}
 	}
 	var states []domain.TurnState
 	var recoveredActivity bool
@@ -815,7 +922,8 @@ func TestACPDriverClosesReplayTurnsAsRecoveredWithoutBlockingResume(t *testing.T
 		if event.Kind == ports.ChatEventTurnCompleted {
 			states = append(states, event.TurnState)
 		}
-		if event.ProviderItemID == "history-tool" && event.Kind == ports.ChatEventActivityCompleted {
+		if event.ProviderItemID == (&conversation{providerScopeID: "history-scope"}).providerItemID("history-tool") &&
+			event.Kind == ports.ChatEventActivityCompleted {
 			recoveredActivity = event.ActivityStatus == domain.ActivityStatusRecovered
 		}
 	}
@@ -825,6 +933,16 @@ func TestACPDriverClosesReplayTurnsAsRecoveredWithoutBlockingResume(t *testing.T
 	}
 	if !recoveredActivity {
 		t.Fatalf("history = %#v, want pending replay tool settled as recovered", history)
+	}
+	if history[0].ProviderTurnID != historyTurnID("history-scope", userOneID) ||
+		history[1].ProviderItemID != (&conversation{providerScopeID: "history-scope"}).providerItemID(userOneID) ||
+		history[1].ClientMessageID != (&conversation{providerScopeID: "history-scope"}).providerItemID(userOneID) ||
+		history[2].ProviderItemID != (&conversation{providerScopeID: "history-scope"}).providerItemID(answerOneID) {
+		t.Fatalf("history ids do not use the durable provider scope: %#v", history[:3])
+	}
+	if len(history[1].ProviderItemAliases) != 1 || history[1].ProviderItemAliases[0] != userOneID ||
+		len(history[2].ProviderItemAliases) != 1 || history[2].ProviderItemAliases[0] != answerOneID {
+		t.Fatalf("history does not preserve legacy raw item aliases: %#v", history[:3])
 	}
 	if !conv.Capabilities().Has(ports.ChatCapabilityHistory) {
 		t.Fatal("session/load conversation did not advertise replayable history")
@@ -838,6 +956,63 @@ func TestACPDriverClosesReplayTurnsAsRecoveredWithoutBlockingResume(t *testing.T
 	case event := <-conv.Events():
 		t.Fatalf("history leaked onto the live event stream: %#v", event)
 	case <-time.After(30 * time.Millisecond):
+	}
+}
+
+func TestACPDriverHistoryRefreshHonorsCancellation(t *testing.T) {
+	userID := "11111111-1111-4111-8111-111111111111"
+	user := acpsdk.UpdateUserMessageText("Inspect the repository")
+	user.UserMessageChunk.MessageId = &userID
+	refreshStarted := make(chan struct{})
+	agent := &fakeAgent{
+		capabilities:  &acpsdk.AgentCapabilities{LoadSession: true},
+		loadUpdates:   []acpsdk.SessionUpdate{user},
+		blockLoadCall: 2,
+		loadStarted:   refreshStarted,
+	}
+	driver := New(Config{
+		Harness:      domain.HarnessClaudeCode,
+		Capabilities: ports.ChatCapabilities{ports.ChatCapabilityStreaming: true},
+		Probe:        func(context.Context) error { return nil },
+		Launch:       func(context.Context, LaunchConfig) (Launch, error) { return Launch{Command: "fake"}, nil },
+	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	driver.spawn = fakeSpawn(agent)
+
+	conv, err := driver.Resume(context.Background(), ports.ChatResumeConfig{
+		ProviderConversationID: "provider-session-1",
+		WorkspacePath:          t.TempDir(),
+	})
+	if err != nil {
+		t.Fatalf("Resume: %v", err)
+	}
+	defer conv.Close()
+	refresher := conv.(ports.ChatHistoryRefresher)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		_, refreshErr := refresher.RefreshHistory(ctx)
+		done <- refreshErr
+	}()
+	<-refreshStarted
+	cancel()
+	if err := <-done; !errors.Is(err, context.Canceled) {
+		t.Fatalf("RefreshHistory error = %v, want context cancellation", err)
+	}
+}
+
+func TestHistoricalUserContentSuppressesOnlyMarkedInternalReplayResources(t *testing.T) {
+	resource := acpsdk.ResourceBlock(acpsdk.EmbeddedResourceResource{
+		TextResourceContents: &acpsdk.TextResourceContents{
+			Uri: ports.ChatInternalReplayResourceURI, Text: `{"kind":"approximate_conversation_context"}`,
+		},
+	})
+	if got := historicalUserContent(resource); got != "[Embedded context]" {
+		t.Fatalf("unmarked reserved resource = %q, want visible embedded context", got)
+	}
+
+	resource.Resource.Resource.TextResourceContents.Meta = map[string]any{aoInternalReplayMetaKey: true}
+	if got := historicalUserContent(resource); got != "" {
+		t.Fatalf("marked internal replay resource = %q, want hidden", got)
 	}
 }
 
@@ -1136,6 +1311,147 @@ func TestACPDriverPreservesNestedToolAndTerminalMetadata(t *testing.T) {
 	}
 }
 
+func TestACPDriverNamespacesOpaqueItemIDsByProviderScope(t *testing.T) {
+	type observed struct {
+		messageID string
+		toolID    string
+		parentID  string
+	}
+	open := func(t *testing.T, providerScopeID string) observed {
+		t.Helper()
+		agent := &fakeAgent{}
+		driver := New(Config{
+			Harness:      domain.HarnessClaudeCode,
+			Capabilities: ports.ChatCapabilities{ports.ChatCapabilityStreaming: true},
+			Probe:        func(context.Context) error { return nil },
+			Launch:       func(context.Context, LaunchConfig) (Launch, error) { return Launch{Command: "fake"}, nil },
+		}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+		driver.spawn = fakeSpawn(agent)
+		opened, err := driver.Start(context.Background(), ports.ChatStartConfig{
+			SessionID: domain.SessionID("session-1"), WorkspacePath: t.TempDir(),
+			ProviderScopeID: providerScopeID,
+		})
+		if err != nil {
+			t.Fatalf("Start: %v", err)
+		}
+		t.Cleanup(func() { _ = opened.Close() })
+		_ = nextEvent(t, opened.Events())
+		conv := opened.(*conversation)
+		conv.mu.Lock()
+		conv.activeTurn = "turn-1"
+		conv.mu.Unlock()
+
+		messageID := "reused-message"
+		message := acpsdk.UpdateAgentMessageText("working")
+		message.AgentMessageChunk.MessageId = &messageID
+		if err := agent.conn.SessionUpdate(context.Background(), acpsdk.SessionNotification{
+			SessionId: acpsdk.SessionId(opened.ProviderConversationID()), Update: message,
+		}); err != nil {
+			t.Fatalf("message update: %v", err)
+		}
+		messageEvent := nextEvent(t, opened.Events())
+
+		if err := agent.conn.SessionUpdate(context.Background(), acpsdk.SessionNotification{
+			SessionId: acpsdk.SessionId(opened.ProviderConversationID()),
+			Update: acpsdk.SessionUpdate{ToolCall: &acpsdk.SessionUpdateToolCall{
+				SessionUpdate: "tool_call", ToolCallId: "reused-tool", Title: "Run tests",
+				Kind: acpsdk.ToolKindExecute, Status: acpsdk.ToolCallStatusPending,
+				Meta: map[string]any{"claudeCode": map[string]any{"parentToolUseId": "reused-parent"}},
+			}},
+		}); err != nil {
+			t.Fatalf("tool update: %v", err)
+		}
+		toolEvent := nextEvent(t, opened.Events())
+		var detail map[string]any
+		if err := json.Unmarshal(toolEvent.Detail, &detail); err != nil {
+			t.Fatalf("tool detail: %v", err)
+		}
+		parentID, _ := detail["parentProviderItemId"].(string)
+		return observed{
+			messageID: messageEvent.ProviderItemID,
+			toolID:    toolEvent.ProviderItemID,
+			parentID:  parentID,
+		}
+	}
+
+	first := open(t, "scope-one")
+	second := open(t, "scope-two")
+	if first.messageID == second.messageID || first.toolID == second.toolID || first.parentID == second.parentID {
+		t.Fatalf("provider scopes reused opaque ids: first=%+v second=%+v", first, second)
+	}
+	firstScope := &conversation{providerScopeID: "scope-one"}
+	if first.messageID != firstScope.providerItemID("reused-message") ||
+		first.toolID != firstScope.providerItemID("reused-tool") ||
+		first.parentID != firstScope.providerItemID("reused-parent") {
+		t.Fatalf("first scoped ids = %+v", first)
+	}
+	secondScope := &conversation{providerScopeID: "scope-two"}
+	if second.messageID != secondScope.providerItemID("reused-message") ||
+		second.toolID != secondScope.providerItemID("reused-tool") ||
+		second.parentID != secondScope.providerItemID("reused-parent") {
+		t.Fatalf("second scoped ids = %+v", second)
+	}
+}
+
+func TestACPOpaqueIDNamespaceIsUnambiguous(t *testing.T) {
+	first := &conversation{providerScopeID: "a"}
+	second := &conversation{providerScopeID: "a:b"}
+
+	firstID := first.providerItemID("b:c")
+	secondID := second.providerItemID("c")
+	if firstID == secondID {
+		t.Fatalf("distinct scope/id pairs collided at %q", firstID)
+	}
+
+	firstTurn := historyTurnID("a", "b:c")
+	secondTurn := historyTurnID("a:b", "c")
+	if firstTurn == secondTurn {
+		t.Fatalf("distinct history scope/id pairs collided at %q", firstTurn)
+	}
+}
+
+func TestACPLegacyUnscopedHistoryIdentityRemainsCompatible(t *testing.T) {
+	conv := &conversation{
+		history: &historyCapture{
+			sessionID: "legacy-session", occurrences: make(map[string]int),
+		},
+	}
+	conv.startHistoryTurn("legacy-user")
+	if got := conv.history.turnID; got != "acp-history-turn:legacy-session:legacy-user" {
+		t.Fatalf("legacy history turn = %q", got)
+	}
+	if got := conv.providerItemID("legacy-item"); got != "legacy-item" {
+		t.Fatalf("legacy provider item = %q, want raw identity", got)
+	}
+}
+
+func TestACPHistoryEventIdentityIsUnambiguousWithNULInOpaqueIDs(t *testing.T) {
+	capture := func(event ports.ChatEvent) string {
+		t.Helper()
+		conv := &conversation{
+			providerScopeID: "scope",
+			history: &historyCapture{
+				sessionID:   "session",
+				occurrences: make(map[string]int),
+			},
+		}
+		if !conv.captureHistoryEvent(event) {
+			t.Fatal("captureHistoryEvent did not capture replay event")
+		}
+		return conv.history.events[0].ProviderEventID
+	}
+
+	first := capture(ports.ChatEvent{
+		Kind: ports.ChatEventMessageDelta, ProviderTurnID: "a", ProviderItemID: "b\x00c",
+	})
+	second := capture(ports.ChatEvent{
+		Kind: ports.ChatEventMessageDelta, ProviderTurnID: "a\x00b", ProviderItemID: "c",
+	})
+	if first == second {
+		t.Fatalf("distinct history events collided at %q", first)
+	}
+}
+
 func TestACPDriverExtractsCommandFromExecuteToolInput(t *testing.T) {
 	agent := &fakeAgent{}
 	driver := New(Config{
@@ -1325,6 +1641,151 @@ func TestACPDriverMapsCostRateLimitsAndAuthRecovery(t *testing.T) {
 	}
 }
 
+func TestACPDriverNormalizesClaudeRetryStatus(t *testing.T) {
+	agent := &fakeAgent{
+		promptBlock:   true,
+		promptStarted: make(chan struct{}, 1),
+	}
+	driver := New(Config{
+		Harness:      domain.HarnessClaudeCode,
+		Capabilities: ports.ChatCapabilities{ports.ChatCapabilityStreaming: true},
+		Probe:        func(context.Context) error { return nil },
+		Launch:       func(context.Context, LaunchConfig) (Launch, error) { return Launch{Command: "fake"}, nil },
+	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	driver.spawn = fakeSpawn(agent)
+	opened, err := driver.Start(context.Background(), ports.ChatStartConfig{WorkspacePath: t.TempDir()})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer opened.Close()
+	_ = nextEvent(t, opened.Events())
+	agent.mu.Lock()
+	clientMeta := agent.initParams.ClientCapabilities.Meta
+	agent.mu.Unlock()
+	jetbrains, _ := clientMeta["jetbrains"].(map[string]any)
+	air, _ := jetbrains["air"].(map[string]any)
+	version, versionOK := number(air["version"])
+	capabilities, _ := air["capabilities"].([]any)
+	capability := ""
+	if len(capabilities) == 1 {
+		capability, _ = capabilities[0].(string)
+	}
+	if !versionOK || version != 1 || capability != "sessionFailure" {
+		t.Fatalf("session failure capability = %#v", air)
+	}
+
+	ref, err := opened.SendTurn(context.Background(), ports.ChatUserMessage{Text: "continue"})
+	if err != nil {
+		t.Fatalf("SendTurn: %v", err)
+	}
+	if err := opened.(ports.ChatDeferredTurnStarter).StartDeferredTurn(ref.ProviderTurnID); err != nil {
+		t.Fatalf("StartDeferredTurn: %v", err)
+	}
+	select {
+	case <-agent.promptStarted:
+	case <-time.After(time.Second):
+		t.Fatal("ACP prompt did not start")
+	}
+
+	if err := agent.conn.SessionUpdate(context.Background(), acpsdk.SessionNotification{
+		SessionId: acpsdk.SessionId(opened.ProviderConversationID()),
+		Update: acpsdk.SessionUpdate{SessionInfoUpdate: &acpsdk.SessionSessionInfoUpdate{
+			SessionUpdate: "session_info_update",
+			Meta: map[string]any{
+				"jetbrains": map[string]any{
+					"air": map[string]any{
+						"version": float64(1),
+						"sessionFailure": map[string]any{
+							"id":       "claude-turn:error",
+							"revision": float64(2),
+							"category": "connection",
+							"severity": "warning",
+							"title":    "Reconnecting to Claude, attempt 2 of 10.",
+							"details":  "The API request failed. Trying again in 4s.",
+							"actions":  []any{"new_session"},
+						},
+					},
+				},
+			},
+		}},
+	}); err != nil {
+		t.Fatalf("session retry update: %v", err)
+	}
+
+	var retry ports.ChatEvent
+	retryItemID := "session-failure:" + ref.ProviderTurnID
+	for retry.Kind == "" {
+		event := nextEvent(t, opened.Events())
+		if event.Kind == ports.ChatEventActivityStarted && event.ProviderItemID == retryItemID {
+			retry = event
+		}
+	}
+	if retry.ProviderTurnID != ref.ProviderTurnID ||
+		retry.ActivityKind != domain.ActivityKindSystem ||
+		retry.ActivityStatus != domain.ActivityStatusRunning ||
+		retry.Summary != "Reconnecting to Claude, attempt 2 of 10." {
+		t.Fatalf("retry event = %#v", retry)
+	}
+	var detail map[string]any
+	if err := json.Unmarshal(retry.Detail, &detail); err != nil {
+		t.Fatalf("retry detail: %v", err)
+	}
+	if detail["event"] != "provider.failure" ||
+		detail["category"] != "connection" ||
+		detail["severity"] != "warning" ||
+		detail["text"] != "The API request failed. Trying again in 4s." {
+		t.Fatalf("retry detail = %#v", detail)
+	}
+
+	// Claude can use a new extension incident id for each attempt before its
+	// provider turn id is available. AO must still update one per-turn activity.
+	if err := agent.conn.SessionUpdate(context.Background(), acpsdk.SessionNotification{
+		SessionId: acpsdk.SessionId(opened.ProviderConversationID()),
+		Update: acpsdk.SessionUpdate{SessionInfoUpdate: &acpsdk.SessionSessionInfoUpdate{
+			SessionUpdate: "session_info_update",
+			Meta: map[string]any{
+				"jetbrains": map[string]any{
+					"air": map[string]any{
+						"version": float64(1),
+						"sessionFailure": map[string]any{
+							"id":       "another-incident-id",
+							"revision": float64(1),
+							"category": "connection",
+							"severity": "warning",
+							"title":    "Reconnecting to Claude, attempt 3 of 10.",
+							"details":  "Connection error. Trying again in 8s.",
+						},
+					},
+				},
+			},
+		}},
+	}); err != nil {
+		t.Fatalf("next session retry update: %v", err)
+	}
+	nextRetry := nextEvent(t, opened.Events())
+	if nextRetry.Kind != ports.ChatEventActivityStarted ||
+		nextRetry.ProviderItemID != retry.ProviderItemID ||
+		nextRetry.Summary != "Reconnecting to Claude, attempt 3 of 10." {
+		t.Fatalf("next retry event = %#v", nextRetry)
+	}
+
+	if err := agent.conn.SessionUpdate(context.Background(), acpsdk.SessionNotification{
+		SessionId: acpsdk.SessionId(opened.ProviderConversationID()),
+		Update: acpsdk.SessionUpdate{AgentMessageChunk: &acpsdk.SessionUpdateAgentMessageChunk{
+			SessionUpdate: "agent_message_chunk",
+			Content:       acpsdk.ContentBlock{Text: &acpsdk.ContentBlockText{Text: "Back online."}},
+		}},
+	}); err != nil {
+		t.Fatalf("recovery update: %v", err)
+	}
+	recovered := nextEvent(t, opened.Events())
+	if recovered.Kind != ports.ChatEventActivityCompleted ||
+		recovered.ProviderItemID != retry.ProviderItemID ||
+		recovered.ActivityStatus != domain.ActivityStatusCompleted {
+		t.Fatalf("recovered retry event = %#v", recovered)
+	}
+}
+
 func TestACPDriverExposesAndMutatesAdvertisedConfigOptions(t *testing.T) {
 	initial := []acpsdk.SessionConfigOption{
 		selectConfigOption("model", "Model", "model", "sonnet", "sonnet", "opus"),
@@ -1440,6 +1901,285 @@ func TestACPDriverConsumesLegacyKimiSelectorsOnSDK0135(t *testing.T) {
 		mode != "default" || modeCalls != 1 || configCalls != 0 {
 		t.Fatalf("legacy setters: model=%q/%d mode=%q/%d config=%d",
 			model, modelCalls, mode, modeCalls, configCalls)
+	}
+}
+
+func TestACPDriverResolvesCLIModelToAdvertisedParameterizedLegacyChoice(t *testing.T) {
+	agent := &legacyKimiAgent{
+		currentModel: "auto",
+		availableModels: []legacyModelInfo{
+			{ModelID: "auto", Name: "Auto"},
+			{ModelID: "composer-2.5[fast=false]", Name: "Composer 2.5"},
+			{ModelID: "composer-2.5[fast=true]", Name: "Composer 2.5 Fast"},
+		},
+		rejectUnknownModel: true,
+	}
+	driver := New(Config{
+		Harness:      domain.HarnessCursor,
+		Capabilities: ports.ChatCapabilities{ports.ChatCapabilityStreaming: true},
+		Probe:        func(context.Context) error { return nil },
+		Launch:       func(context.Context, LaunchConfig) (Launch, error) { return Launch{Command: "fake"}, nil },
+		SessionOptions: func(settings ports.ChatTurnSettings) []SessionOption {
+			if settings.Model == "" {
+				return nil
+			}
+			return []SessionOption{{ID: "model", Value: settings.Model}}
+		},
+	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	driver.spawn = fakeLegacyKimiSpawn(agent)
+
+	conv, err := driver.Start(context.Background(), ports.ChatStartConfig{
+		WorkspacePath: t.TempDir(), Model: "composer-2.5",
+	})
+	if err != nil {
+		t.Fatalf("Start with CLI model alias: %v", err)
+	}
+	defer conv.Close()
+
+	agent.mu.Lock()
+	model, calls := agent.model, agent.modelCalls
+	agent.mu.Unlock()
+	if model != "composer-2.5[fast=false]" || calls != 1 {
+		t.Fatalf("legacy model setter = %q across %d calls, want advertised non-fast value", model, calls)
+	}
+}
+
+func TestACPDriverRejectsNonFastAliasWhenOnlyFastParameterizedChoiceIsAdvertised(t *testing.T) {
+	agent := &legacyKimiAgent{
+		currentModel: "auto",
+		availableModels: []legacyModelInfo{
+			{ModelID: "auto", Name: "Auto"},
+			{ModelID: "composer-2.5[fast=true]", Name: "Composer 2.5 Fast"},
+		},
+		rejectUnknownModel: true,
+	}
+	driver := New(Config{
+		Harness:      domain.HarnessCursor,
+		Capabilities: ports.ChatCapabilities{ports.ChatCapabilityStreaming: true},
+		Probe:        func(context.Context) error { return nil },
+		Launch:       func(context.Context, LaunchConfig) (Launch, error) { return Launch{Command: "fake"}, nil },
+		SessionOptions: func(settings ports.ChatTurnSettings) []SessionOption {
+			if settings.Model == "" {
+				return nil
+			}
+			return []SessionOption{{ID: "model", Value: settings.Model}}
+		},
+	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	driver.spawn = fakeLegacyKimiSpawn(agent)
+
+	_, err := driver.Start(context.Background(), ports.ChatStartConfig{
+		WorkspacePath: t.TempDir(), Model: "composer-2.5",
+	})
+	if !errors.Is(err, ports.ErrChatConfigOptionInvalid) {
+		t.Fatalf("Start with unavailable non-fast alias: err = %v, want ErrChatConfigOptionInvalid", err)
+	}
+	agent.mu.Lock()
+	calls := agent.modelCalls
+	agent.mu.Unlock()
+	if calls != 0 {
+		t.Fatalf("legacy model setter called %d times, want 0", calls)
+	}
+}
+
+func TestResolveLegacyModelChoiceDerivesParameterizedCursorAliases(t *testing.T) {
+	tests := []struct {
+		name      string
+		requested string
+		choice    string
+	}{
+		{
+			name:      "fast",
+			requested: "composer-2.5-fast",
+			choice:    "composer-2.5[fast=true]",
+		},
+		{
+			name:      "reasoning",
+			requested: "gpt-5.5-medium",
+			choice:    "gpt-5.5[context=272k,reasoning=medium,fast=false]",
+		},
+		{
+			name:      "reasoning and fast",
+			requested: "gpt-5.5-high-fast",
+			choice:    "gpt-5.5[context=272k,reasoning=high,fast=true]",
+		},
+		{
+			name:      "effort",
+			requested: "gemini-3.6-flash-high",
+			choice:    "gemini-3.6-flash[effort=high]",
+		},
+		{
+			name:      "reasoning effort",
+			requested: "gpt-5.5-low",
+			choice:    "gpt-5.5[reasoning_effort=low,fast=false]",
+		},
+		{
+			name:      "thinking with effort",
+			requested: "claude-opus-5-thinking-high",
+			choice:    "claude-opus-5[thinking=true,context=300k,effort=high,fast=false]",
+		},
+		{
+			name:      "thinking after effort",
+			requested: "claude-4.6-sonnet-medium-thinking",
+			choice:    "claude-4.6-sonnet[thinking=true,context=1m,effort=medium,fast=false]",
+		},
+		{
+			name:      "thinking without effort",
+			requested: "claude-4.5-sonnet-thinking",
+			choice:    "claude-4.5-sonnet[thinking=true,context=200k]",
+		},
+		{
+			name:      "cursor-prefixed grok",
+			requested: "cursor-grok-4.6-high-fast",
+			choice:    "grok-4.6[effort=high,fast=true]",
+		},
+		{
+			name:      "auto",
+			requested: "auto",
+			choice:    "default[]",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			choices := []ports.ChatConfigOptionChoice{{Value: tt.choice}}
+			got, ok := resolveLegacyModelChoice(choices, tt.requested)
+			if !ok || got != tt.choice {
+				t.Fatalf("resolveLegacyModelChoice(%q) = %q, %v; want %q, true", tt.requested, got, ok, tt.choice)
+			}
+		})
+	}
+}
+
+func TestResolveLegacyModelChoiceRejectsDroppedParameterizedSemantics(t *testing.T) {
+	tests := []struct {
+		name      string
+		requested string
+		choice    string
+	}{
+		{
+			name:      "thinking variant is not non-thinking alias",
+			requested: "claude-opus-5-high",
+			choice:    "claude-opus-5[thinking=true,context=300k,effort=high,fast=false]",
+		},
+		{
+			name:      "thinking without effort has no known alias",
+			requested: "claude-opus-5",
+			choice:    "claude-opus-5[thinking=true,context=300k,fast=false]",
+		},
+		{
+			name:      "unknown semantic parameter",
+			requested: "future-model",
+			choice:    "future-model[quality=high,fast=false]",
+		},
+		{
+			name:      "conflicting effort parameters",
+			requested: "gpt-5.5-high",
+			choice:    "gpt-5.5[reasoning=high,reasoning_effort=medium]",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			choices := []ports.ChatConfigOptionChoice{{Value: tt.choice}}
+			if got, ok := resolveLegacyModelChoice(choices, tt.requested); ok {
+				t.Fatalf("resolveLegacyModelChoice(%q) = %q, true; want rejection", tt.requested, got)
+			}
+		})
+	}
+}
+
+func TestResolveLegacyModelChoiceDistinguishesThinkingVariants(t *testing.T) {
+	choices := []ports.ChatConfigOptionChoice{
+		{Value: "claude-opus-5[thinking=false,context=300k,effort=high,fast=false]"},
+		{Value: "claude-opus-5[thinking=true,context=300k,effort=high,fast=false]"},
+	}
+	tests := []struct {
+		requested string
+		want      string
+	}{
+		{
+			requested: "claude-opus-5-high",
+			want:      choices[0].Value,
+		},
+		{
+			requested: "claude-opus-5-thinking-high",
+			want:      choices[1].Value,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.requested, func(t *testing.T) {
+			got, ok := resolveLegacyModelChoice(choices, tt.requested)
+			if !ok || got != tt.want {
+				t.Fatalf("resolveLegacyModelChoice(%q) = %q, %v; want %q, true", tt.requested, got, ok, tt.want)
+			}
+		})
+	}
+}
+
+func TestACPDriverRejectsLegacyModelAliasWithoutAdvertisedModelCatalog(t *testing.T) {
+	agent := &legacyKimiAgent{
+		currentModel: "auto",
+		availableModels: []legacyModelInfo{
+			{ModelID: "auto", Name: "Auto"},
+			{ModelID: "composer-2.5[fast=false]", Name: "Composer 2.5"},
+		},
+		rejectUnknownModel: true,
+	}
+	driver := New(Config{
+		Harness:      domain.HarnessCursor,
+		Capabilities: ports.ChatCapabilities{ports.ChatCapabilityStreaming: true},
+		Probe:        func(context.Context) error { return nil },
+		Launch:       func(context.Context, LaunchConfig) (Launch, error) { return Launch{Command: "fake"}, nil },
+	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	driver.spawn = fakeLegacyKimiSpawn(agent)
+
+	conv, err := driver.Start(context.Background(), ports.ChatStartConfig{WorkspacePath: t.TempDir()})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer conv.Close()
+
+	conv.(*conversation).replaceConfigOptions(nil)
+	_, err = conv.SendTurn(context.Background(), ports.ChatUserMessage{
+		Text: "hello", Settings: ports.ChatTurnSettings{Model: "composer-2.5"},
+	})
+	if !errors.Is(err, ports.ErrChatConfigOptionInvalid) {
+		t.Fatalf("SendTurn without advertised model catalog: err = %v, want ErrChatConfigOptionInvalid", err)
+	}
+	agent.mu.Lock()
+	calls := agent.modelCalls
+	agent.mu.Unlock()
+	if calls != 0 {
+		t.Fatalf("legacy model setter called %d times, want 0", calls)
+	}
+}
+
+func TestACPDriverRejectsAmbiguousLegacyModelAlias(t *testing.T) {
+	agent := &legacyKimiAgent{
+		currentModel: "auto",
+		availableModels: []legacyModelInfo{
+			{ModelID: "composer-2.5[fast=false]", Name: "Composer 2.5"},
+			{ModelID: "composer-2.5[context=1m,fast=false]", Name: "Composer 2.5 1M"},
+		},
+		rejectUnknownModel: true,
+	}
+	driver := New(Config{
+		Harness:      domain.HarnessCursor,
+		Capabilities: ports.ChatCapabilities{ports.ChatCapabilityStreaming: true},
+		Probe:        func(context.Context) error { return nil },
+		Launch:       func(context.Context, LaunchConfig) (Launch, error) { return Launch{Command: "fake"}, nil },
+	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	driver.spawn = fakeLegacyKimiSpawn(agent)
+
+	_, err := driver.Start(context.Background(), ports.ChatStartConfig{
+		WorkspacePath: t.TempDir(), Model: "composer-2.5",
+	})
+	if !errors.Is(err, ports.ErrChatConfigOptionInvalid) {
+		t.Fatalf("Start with ambiguous model alias: err = %v, want ErrChatConfigOptionInvalid", err)
+	}
+	agent.mu.Lock()
+	calls := agent.modelCalls
+	agent.mu.Unlock()
+	if calls != 0 {
+		t.Fatalf("legacy model setter called %d times, want 0", calls)
 	}
 }
 
@@ -1605,6 +2345,30 @@ func selectConfigOption(id, name, category, current string, values ...string) ac
 		Options:      acpsdk.SessionConfigSelectOptions{Ungrouped: &choices},
 		Type:         "select",
 	}}
+}
+
+func TestDiscoverConfigOptionsReadsSessionCatalogWithoutPrompt(t *testing.T) {
+	agent := &fakeAgent{newConfig: []acpsdk.SessionConfigOption{
+		selectConfigOption("model", "Model", "model", "sonnet", "sonnet", "opus"),
+	}}
+	driver := New(Config{
+		Harness: domain.HarnessCline,
+		Launch: func(context.Context, LaunchConfig) (Launch, error) {
+			return Launch{Command: "cline", Args: []string{"--acp"}}, nil
+		},
+	}, slog.New(slog.DiscardHandler))
+	driver.spawn = fakeSpawn(agent)
+
+	got, err := driver.discoverConfigOptions(context.Background(), t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].Category != "model" || got[0].Current.Select != "sonnet" || len(got[0].Choices) != 2 {
+		t.Fatalf("options = %#v", got)
+	}
+	if agent.promptParams.Prompt != nil {
+		t.Fatalf("discovery sent a prompt: %#v", agent.promptParams)
+	}
 }
 
 func booleanConfigOption(id, name string, current bool) acpsdk.SessionConfigOption {

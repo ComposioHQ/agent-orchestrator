@@ -38,6 +38,11 @@ var (
 	// resumed. Callers must surface a recovery choice, never silently start a
 	// new provider conversation.
 	ErrChatResumeFailed = errors.New("chat conversation resume failed")
+	// ErrChatRecoveryInconclusive means a detached provider host may still own
+	// live work, but this daemon could not safely attach to it. Startup recovery
+	// must preserve the durable session and worktree rather than treating the
+	// failed attachment as proof that the provider died.
+	ErrChatRecoveryInconclusive = errors.New("chat conversation recovery is inconclusive")
 	// ErrChatNoActiveTurn means an interrupt found nothing to cancel — either AO
 	// has no turn in flight, or the provider no longer considers the named turn
 	// active. A driver must translate its provider's refusal into this rather than
@@ -117,6 +122,10 @@ const (
 	ChatCapabilityRollback ChatCapability = "rollback"
 	// ChatCapabilityFork means a conversation can be branched.
 	ChatCapabilityFork ChatCapability = "fork"
+	// ChatCapabilityPromptReplay means AO can open a fresh provider session with
+	// a durable textual transcript supplied as context. This is an approximation
+	// of fork for providers whose protocol cannot fork from a historical turn.
+	ChatCapabilityPromptReplay ChatCapability = "prompt_replay"
 	// ChatCapabilityRename means the thread carries a title AO can set.
 	ChatCapabilityRename ChatCapability = "rename"
 	// ChatCapabilitySkills means named skills can be enumerated and invoked.
@@ -218,6 +227,9 @@ type ChatStartConfig struct {
 	Permissions PermissionMode
 	// SystemPrompt carries AO's standing instructions for the session.
 	SystemPrompt string
+	// ProviderScopeID identifies the AO ownership boundary for opaque provider
+	// identifiers. Fresh approximate branches receive a new value.
+	ProviderScopeID string
 	// AdditionalDirectories are extra absolute workspace roots the provider may
 	// access alongside WorkspacePath. Workspace projects use this for child repo
 	// worktrees; it is not a replacement for AO's worktree ownership.
@@ -225,6 +237,12 @@ type ChatStartConfig struct {
 	// MCPServers are client-supplied tool servers for this provider conversation.
 	// User/provider configuration still loads normally; these are additive.
 	MCPServers []ChatMCPServerConfig
+	// AllowConcurrentHostReplacement is set only by the idle branch-handoff
+	// coordinator, which deliberately stages a replacement before destroying the
+	// source. Ordinary startup/reconciliation must leave this false so a second
+	// daemon can never mistake an attached persistent host for permission to
+	// launch a competing provider.
+	AllowConcurrentHostReplacement bool
 }
 
 // ChatResumeConfig reattaches to a provider conversation after a restart.
@@ -235,13 +253,20 @@ type ChatResumeConfig struct {
 	WorkspacePath          string
 	Env                    map[string]string
 	// Model is optional; empty keeps the provider conversation's current model.
-	Model       string
+	Model string
+	// Effort is optional; empty keeps the provider conversation's current effort.
+	Effort      string
 	Permissions PermissionMode
 	// SystemPrompt is recomputed by the session manager on restore and reapplied
 	// to the provider process. It is not persisted in the conversation transcript.
-	SystemPrompt          string
+	SystemPrompt string
+	// ProviderScopeID identifies AO's provider ownership boundary. A fresh
+	// approximate branch must never inherit the parent's opaque-id scope.
+	ProviderScopeID       string
 	AdditionalDirectories []string
 	MCPServers            []ChatMCPServerConfig
+	// See ChatStartConfig.AllowConcurrentHostReplacement.
+	AllowConcurrentHostReplacement bool
 }
 
 // ChatMCPServerConfig is the provider-neutral session-setup shape for a tool
@@ -258,6 +283,9 @@ type ChatMCPServerConfig struct {
 	Headers map[string]string
 }
 
+// ChatInternalReplayResourceURI is reserved for AO's reconstructed edit context.
+const ChatInternalReplayResourceURI = "ao://conversation/edit-replay"
+
 // ChatContent is structured prompt context. Text remains on ChatUserMessage so
 // the durable transcript has an ordinary readable message; these blocks enrich
 // what the provider receives without leaking protocol DTOs above the adapter.
@@ -268,6 +296,16 @@ type ChatContent struct {
 	URI      string `json:"uri,omitempty"`
 	Name     string `json:"name,omitempty"`
 	Text     string `json:"text,omitempty"`
+	// Internal distinguishes AO-owned prompt context from a user attachment.
+	// Public request DTOs never expose this bit; it is durable so edit/retry and
+	// snapshot reconstruction can hide only content AO actually synthesized.
+	Internal bool `json:"internal,omitempty"`
+}
+
+// IsInternalReplayContent reports whether content is AO's reconstructed-history
+// seed rather than a resource supplied by the user.
+func IsInternalReplayContent(content ChatContent) bool {
+	return content.Internal && content.Type == "resource" && content.URI == ChatInternalReplayResourceURI
 }
 
 // ChatUserMessage is one inbound request to the agent.
@@ -359,11 +397,12 @@ type ChatConfigOptionValue struct {
 // agent's organization without making grouped menus a protocol concern above
 // the adapter.
 type ChatConfigOptionChoice struct {
-	Value       string
-	Name        string
-	Description string
-	Group       string
-	GroupName   string
+	PermissionMode PermissionMode
+	Value          string
+	Name           string
+	Description    string
+	Group          string
+	GroupName      string
 }
 
 // ChatConfigOption is one live provider-owned session control.
@@ -429,6 +468,10 @@ type ChatRateLimits struct {
 	SecondaryResetsInSeconds int64
 	// PlanLabel is the provider's name for the account tier, when it says.
 	PlanLabel string
+	// CodexCapacity carries the normalized full/sparse provider observation to
+	// the daemon-owned account coordinator. It is never persisted with the
+	// conversation quota projection.
+	CodexCapacity *CodexCapacityObservation
 }
 
 // ChatTurnDiff is the running diff of what a turn changed on disk.
@@ -785,6 +828,10 @@ type ChatEvent struct {
 	ProviderConversationID string
 	// ProviderItemID identifies the message or activity being reported.
 	ProviderItemID string
+	// ProviderItemAliases carries replay-only historical identities that referred
+	// to the same item before an adapter introduced stronger namespacing. They are
+	// reconciliation hints, not new durable provider identities.
+	ProviderItemAliases []string
 	// ClientMessageID is the provider-carried idempotency key for a recovered user
 	// message, when one exists. History adapters synthesize a stable value when the
 	// native protocol has no client identity.
@@ -887,6 +934,24 @@ type ChatConversation interface {
 	Events() <-chan ChatEvent
 	// Close releases the controller. It does not delete provider-side history.
 	Close() error
+}
+
+// ChatProviderPreserver is optionally implemented when Close only detaches the
+// daemon-side controller and deliberately leaves provider work alive.
+type ChatProviderPreserver interface {
+	PreservesProviderOnClose() bool
+}
+
+// ChatProviderTerminator is optionally implemented when explicit session
+// destruction must do more than detach the controller.
+type ChatProviderTerminator interface {
+	Terminate() error
+}
+
+// ChatLiveReconnector identifies attachment to the same initialized provider
+// process, as distinct from native resume in a replacement process.
+type ChatLiveReconnector interface {
+	ReconnectedLive() bool
 }
 
 // ChatHistoryReader is optionally implemented by a conversation whose native

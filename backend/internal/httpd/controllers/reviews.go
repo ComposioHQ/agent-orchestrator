@@ -174,7 +174,7 @@ func (c *ReviewsController) trigger(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	res, err := c.Svc.Request(r.Context(), sessionID(r), reviewcore.Request{
-		Harness: in.Harness, Model: in.Model, RequestedBy: in.RequestedBySessionID,
+		Harness: in.Harness, AgentConfig: in.AgentConfig, RequestedBy: in.RequestedBySessionID,
 	})
 	if err != nil {
 		writeReviewError(w, r, err)
@@ -318,7 +318,7 @@ func (c *ReviewsController) switchReviewer(w http.ResponseWriter, r *http.Reques
 		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_JSON", "Invalid JSON body", nil)
 		return
 	}
-	res, err := c.Svc.SwitchReviewer(r.Context(), sessionID(r), in.Harness)
+	res, err := c.Svc.SwitchReviewer(r.Context(), sessionID(r), in.Harness, in.AgentConfig)
 	if err != nil {
 		writeReviewError(w, r, err)
 		return

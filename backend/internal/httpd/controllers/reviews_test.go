@@ -19,9 +19,9 @@ import (
 )
 
 type fakeReviewService struct {
-	// triggeredHarness records the override the controller forwarded.
+	// triggeredHarness/config/requester record the override the controller forwarded.
 	triggeredHarness   domain.ReviewerHarness
-	triggeredModel     string
+	triggeredConfig    domain.AgentConfig
 	triggeredRequester domain.SessionID
 	triggerErr         error
 	submitErr          error
@@ -51,8 +51,10 @@ func (f *fakeReviewService) Trigger(
 	_ context.Context,
 	_ domain.SessionID,
 	harness domain.ReviewerHarness,
+	config domain.AgentConfig,
 ) (reviewcore.TriggerResult, error) {
 	f.triggeredHarness = harness
+	f.triggeredConfig = config
 	if f.triggerErr != nil {
 		return reviewcore.TriggerResult{}, f.triggerErr
 	}
@@ -63,9 +65,8 @@ func (f *fakeReviewService) Trigger(
 }
 
 func (f *fakeReviewService) Request(ctx context.Context, workerID domain.SessionID, request reviewcore.Request) (reviewcore.TriggerResult, error) {
-	f.triggeredModel = request.Model
 	f.triggeredRequester = request.RequestedBy
-	return f.Trigger(ctx, workerID, request.Harness)
+	return f.Trigger(ctx, workerID, request.Harness, request.AgentConfig)
 }
 
 func (f *fakeReviewService) RequestRereview(_ context.Context, workerID domain.SessionID, prURL, reviewer string) error {
@@ -123,7 +124,7 @@ func (f *fakeReviewService) RestoreReviewer(context.Context, domain.SessionID) e
 	return nil
 }
 
-func (f *fakeReviewService) SwitchReviewer(_ context.Context, _ domain.SessionID, harness domain.ReviewerHarness) (reviewcore.SessionReviews, error) {
+func (f *fakeReviewService) SwitchReviewer(_ context.Context, _ domain.SessionID, harness domain.ReviewerHarness, _ domain.AgentConfig) (reviewcore.SessionReviews, error) {
 	f.switchedHarness = harness
 	f.list.ReviewerHarness = harness
 	if f.list.Runs == nil {
@@ -251,13 +252,13 @@ func TestReviewsTriggerForwardsRequestOriginAndOverrides(t *testing.T) {
 	svc := &fakeReviewService{}
 	srv := newReviewTestServer(t, svc)
 
-	body, status, headers := doRequest(t, srv, "POST", "/api/v1/sessions/mer-1/reviews/trigger", `{"harness":"codex","model":"gpt-5.6","requestedBySessionId":"mer-1"}`)
+	body, status, headers := doRequest(t, srv, "POST", "/api/v1/sessions/mer-1/reviews/trigger", `{"harness":"codex","agentConfig":{"model":"gpt-5.6"},"requestedBySessionId":"mer-1"}`)
 	assertJSON(t, headers)
 	if status != http.StatusCreated {
 		t.Fatalf("status = %d body=%s", status, body)
 	}
-	if svc.triggeredHarness != domain.ReviewerCodex || svc.triggeredModel != "gpt-5.6" || svc.triggeredRequester != "mer-1" {
-		t.Fatalf("forwarded harness/model/requester = %q/%q/%q", svc.triggeredHarness, svc.triggeredModel, svc.triggeredRequester)
+	if svc.triggeredHarness != domain.ReviewerCodex || svc.triggeredConfig.Model != "gpt-5.6" || svc.triggeredRequester != "mer-1" {
+		t.Fatalf("forwarded harness/model/requester = %q/%q/%q", svc.triggeredHarness, svc.triggeredConfig.Model, svc.triggeredRequester)
 	}
 }
 

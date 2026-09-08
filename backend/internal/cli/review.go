@@ -61,9 +61,13 @@ type triggerReviewResponse struct {
 }
 
 type requestReviewRequest struct {
-	Harness              string `json:"harness,omitempty"`
-	Model                string `json:"model,omitempty"`
-	RequestedBySessionID string `json:"requestedBySessionId,omitempty"`
+	Harness              string                   `json:"harness,omitempty"`
+	AgentConfig          requestReviewAgentConfig `json:"agentConfig,omitempty"`
+	RequestedBySessionID string                   `json:"requestedBySessionId,omitempty"`
+}
+
+type requestReviewAgentConfig struct {
+	Model string `json:"model,omitempty"`
 }
 
 // reviewRunResponse mirrors controllers.ReviewRunResponse.
@@ -174,7 +178,7 @@ func (c *commandContext) requestReview(cmd *cobra.Command, args []string, opts r
 	path := "sessions/" + url.PathEscape(session) + "/reviews/trigger"
 	var res triggerReviewResponse
 	if err := c.postJSON(cmd.Context(), path, requestReviewRequest{
-		Harness: strings.TrimSpace(opts.reviewer), Model: strings.TrimSpace(opts.model), RequestedBySessionID: requestedBy,
+		Harness: strings.TrimSpace(opts.reviewer), AgentConfig: requestReviewAgentConfig{Model: strings.TrimSpace(opts.model)}, RequestedBySessionID: requestedBy,
 	}, &res); err != nil {
 		return err
 	}

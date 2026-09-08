@@ -1,8 +1,14 @@
-import { render, screen } from "@testing-library/react";
+import { render as rtlRender, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import type { ReactElement } from "react";
 import { describe, expect, it } from "vitest";
 import { ActivityRow, SteerMessage } from "./ChatTimelineItems";
 import type { ConversationActivity } from "../../types/conversation";
+import { TooltipProvider } from "../ui/tooltip";
+
+function render(ui: ReactElement) {
+	return rtlRender(<TooltipProvider>{ui}</TooltipProvider>);
+}
 
 // One test file per new provider signal the daemon started serving. What each covers
 // is the claim the row makes, not its markup: an MCP call must not read as a command
@@ -91,10 +97,9 @@ describe("MCP tool call", () => {
 
 	it("names the server and the tool, not a shell command", () => {
 		render(<ActivityRow activity={call} />);
-		expect(screen.getByText("github")).toBeInTheDocument();
 		expect(screen.getByText("search_issues")).toBeInTheDocument();
 		// The distinction the kind exists to draw: nothing ran in the worktree.
-		expect(screen.getByText("MCP tool")).toBeInTheDocument();
+		expect(screen.getByText("MCP · github")).toBeInTheDocument();
 	});
 
 	it("shows the arguments and the answer when opened", async () => {
@@ -279,6 +284,7 @@ describe("steer message", () => {
 	it("shows the user's own words and says they landed mid-turn", () => {
 		render(
 			<SteerMessage
+				sessionId="ao-1"
 				activity={activity({
 					activityKind: "system",
 					summary: "Skip the integration tests",

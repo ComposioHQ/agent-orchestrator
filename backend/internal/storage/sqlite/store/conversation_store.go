@@ -207,6 +207,7 @@ func (s *Store) createConversation(
 			SessionID:              nullableString(string(options.session)),
 			ProviderConversationID: owner.ProviderConversationID,
 			ForkAfterSequence:      0,
+			ProviderScopeID:        rootBranchID,
 			CreatedAt:              options.now,
 		})
 	})
@@ -296,6 +297,10 @@ func insertConversationBranchTx(
 		ReplacedTurnID:         nullableString(branch.ReplacedTurnID),
 		ReplacementTurnID:      nullableString(branch.ReplacementTurnID),
 		ForkAfterSequence:      branch.ForkAfterSequence,
+		Strategy:               string(domain.NormalizeConversationBranchStrategy(branch.Strategy)),
+		ReplayCutoffSequence:   branch.ReplayCutoffSequence,
+		ReplayTruncated:        boolInt(branch.ReplayTruncated),
+		ProviderScopeID:        branch.ProviderScopeID,
 		CreatedAt:              now,
 	}); err != nil {
 		return fmt.Errorf("insert conversation branch %s: %w", branch.ID, err)
@@ -342,6 +347,113 @@ func (s *Store) CreateAndActivateConversationBranch(
 		}
 		if sessionRows != 1 {
 			return fmt.Errorf("move session controller: live chat session %s not found", sessionID)
+		}
+		return nil
+	})
+}
+
+// CommitChatSpawn publishes a reserved fresh-provider boundary and the complete
+// lifecycle-owned session record in one transaction. It is intentionally
+// separate from CreateAndActivateConversationBranch: ordinary ControllerReady
+// must not commit MarkSpawned first and leave the previous provider branch
+// active if the boundary write fails.
+func (s *Store) CommitChatSpawn(
+	ctx context.Context,
+	rec domain.SessionRecord,
+	branch domain.ConversationBranch,
+) error {
+	return s.commitChatSpawn(ctx, rec, branch, nil)
+}
+
+// CommitChatSpawnPrepared stages the reserved boundary and controller generation,
+// projects a reconciled native replay onto that branch, then publishes the live
+// session as one transaction. The staged ownership is invisible outside the
+// transaction, so input cannot reach the controller before its history exists.
+func (s *Store) CommitChatSpawnPrepared(
+	ctx context.Context,
+	rec domain.SessionRecord,
+	branch domain.ConversationBranch,
+	prepare func(context.Context) error,
+) error {
+	if prepare == nil {
+		return errors.New("commit Chat spawn: provider-history preparation is missing")
+	}
+	return s.commitChatSpawn(ctx, rec, branch, prepare)
+}
+
+func (s *Store) commitChatSpawn(
+	ctx context.Context,
+	rec domain.SessionRecord,
+	branch domain.ConversationBranch,
+	prepare func(context.Context) error,
+) error {
+	if rec.ID == "" || branch.ID == "" || branch.ConversationID == "" ||
+		branch.SessionID != rec.ID || branch.ParentBranchID == "" ||
+		branch.ProviderConversationID == "" ||
+		branch.ProviderConversationID != rec.Metadata.ProviderConversationID ||
+		branch.ProviderScopeID != branch.ID || rec.Metadata.ControllerGeneration == "" {
+		return errors.New("commit Chat spawn: incomplete or mismatched provider boundary ownership")
+	}
+
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	return s.inTx(ctx, "commit Chat spawn", func(q *gen.Queries) error {
+		owner, err := q.GetSession(ctx, rec.ID)
+		if err != nil {
+			return fmt.Errorf("select Chat session %s: %w", rec.ID, err)
+		}
+		if domain.NormalizeSessionMode(owner.SessionMode) != domain.SessionModeChat {
+			return fmt.Errorf("session %s is not in Chat mode", rec.ID)
+		}
+		conversation, err := q.SelectConversationByID(ctx, branch.ConversationID)
+		if err != nil {
+			return fmt.Errorf("select conversation %s: %w", branch.ConversationID, err)
+		}
+		if conversation.CurrentSessionID == nil || *conversation.CurrentSessionID != rec.ID {
+			return fmt.Errorf("conversation %s is no longer owned by session %s",
+				branch.ConversationID, rec.ID)
+		}
+		if conversation.ActiveBranchID != branch.ParentBranchID {
+			return fmt.Errorf("conversation %s active branch changed from %s to %s",
+				branch.ConversationID, branch.ParentBranchID, conversation.ActiveBranchID)
+		}
+		if err := insertConversationBranchTx(ctx, q, branch, branch.CreatedAt); err != nil {
+			return err
+		}
+		rows, err := q.ActivateConversationBranch(ctx, gen.ActivateConversationBranchParams{
+			ActiveBranchID: branch.ID,
+			UpdatedAt:      rec.UpdatedAt,
+			ID:             branch.ConversationID,
+		})
+		if err != nil {
+			return fmt.Errorf("move conversation head: %w", err)
+		}
+		if rows != 1 {
+			return fmt.Errorf("move conversation head: conversation %s not found", branch.ConversationID)
+		}
+		if prepare != nil {
+			// Provider-event projection is fenced by controller generation. Stage
+			// that generation only inside this transaction, after the new branch is
+			// active, so the replay lands in the new provider namespace while the
+			// terminated target remains unavailable to every concurrent reader.
+			rows, err := q.ClaimChatControllerGeneration(ctx, gen.ClaimChatControllerGenerationParams{
+				ControllerGeneration: rec.Metadata.ControllerGeneration,
+				UpdatedAt:            rec.UpdatedAt,
+				ID:                   rec.ID,
+			})
+			if err != nil {
+				return fmt.Errorf("stage Chat controller generation: %w", err)
+			}
+			if rows != 1 {
+				return fmt.Errorf("stage Chat controller generation: Chat session %s not found", rec.ID)
+			}
+			txCtx := context.WithValue(ctx, conversationProjectionTxKey{}, q)
+			if err := prepare(txCtx); err != nil {
+				return fmt.Errorf("project native provider history: %w", err)
+			}
+		}
+		if err := q.UpdateSession(ctx, recordToUpdate(rec)); err != nil {
+			return fmt.Errorf("commit Chat session owner: %w", err)
 		}
 		return nil
 	})
@@ -404,6 +516,8 @@ func (s *Store) ConversationEditAnchor(
 		ReplacedTurnID:              row.ReplacedTurnID.String,
 		PreviousProviderTurnID:      row.PreviousProviderTurnID,
 		ForkAfterSequence:           row.ForkAfterSequence,
+		ReplayFloorSequence:         row.ReplayFloorSequence,
+		HasPriorContext:             row.HasPriorContext,
 		OriginalDeliveryContentJSON: row.OriginalDeliveryContentJson,
 		RetryActiveBranch:           row.RetryActiveBranch.Valid && row.RetryActiveBranch.Bool,
 	}, nil
@@ -429,6 +543,123 @@ func (s *Store) UpdateConversationBranchReplacement(
 		return fmt.Errorf("%w: %s", domain.ErrNoConversationBranch, branchID)
 	}
 	return nil
+}
+
+// RepairIncompleteConversationEdit closes the only crash window in edit branch
+// creation. If the active edit child already owns a durable human prompt, that
+// earliest prompt becomes its replacement. If no prompt was recorded, the child
+// was never dispatched and the conversation plus session provider ownership move
+// back to the source branch in the same transaction.
+//
+// A non-empty returned branch means a repair was applied. restoredProviderOwner
+// is true only when the abandoned child belongs to the same AO session, so
+// startup may replace that session's stale child provider handle. A project
+// conversation can be rebound to a new orchestrator session; that new owner must
+// start its own provider boundary rather than inherit the prior agent's handle.
+func (s *Store) RepairIncompleteConversationEdit(
+	ctx context.Context,
+	sessionID domain.SessionID,
+	conversationID string,
+	now time.Time,
+) (repaired domain.ConversationBranch, restoredProviderOwner bool, err error) {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+
+	err = s.inTx(ctx, "repair incomplete conversation edit", func(q *gen.Queries) error {
+		conversation, selectErr := q.SelectConversationByID(ctx, conversationID)
+		if selectErr != nil {
+			return fmt.Errorf("select conversation %s: %w", conversationID, selectErr)
+		}
+		if conversation.CurrentSessionID == nil || *conversation.CurrentSessionID != sessionID {
+			return fmt.Errorf("conversation %s is not controlled by session %s", conversationID, sessionID)
+		}
+		activeRow, selectErr := q.SelectConversationBranch(ctx, gen.SelectConversationBranchParams{
+			ConversationID: conversationID,
+			BranchID:       conversation.ActiveBranchID,
+		})
+		if selectErr != nil {
+			return fmt.Errorf("select active conversation branch %s: %w",
+				conversation.ActiveBranchID, selectErr)
+		}
+		active := conversationBranchToDomain(activeRow)
+		if active.ParentBranchID == "" || active.ReplacedTurnID == "" || active.ReplacementTurnID != "" {
+			return nil
+		}
+
+		replacementTurnID, selectErr := q.SelectFirstHumanTurnOnBranch(
+			ctx, gen.SelectFirstHumanTurnOnBranchParams{
+				ConversationID: conversationID,
+				BranchID:       active.ID,
+			})
+		if selectErr == nil {
+			rows, updateErr := q.UpdateConversationBranchReplacement(
+				ctx, gen.UpdateConversationBranchReplacementParams{
+					ReplacementTurnID: nullableString(replacementTurnID),
+					BranchID:          active.ID,
+				})
+			if updateErr != nil {
+				return fmt.Errorf("link recovered edit branch %s: %w", active.ID, updateErr)
+			}
+			if rows != 1 {
+				return fmt.Errorf("link recovered edit branch %s: branch disappeared", active.ID)
+			}
+			active.ReplacementTurnID = replacementTurnID
+			repaired = active
+			return nil
+		}
+		if !errors.Is(selectErr, sql.ErrNoRows) {
+			return fmt.Errorf("select first prompt on edit branch %s: %w", active.ID, selectErr)
+		}
+
+		parentRow, selectErr := q.SelectConversationBranch(ctx, gen.SelectConversationBranchParams{
+			ConversationID: conversationID,
+			BranchID:       active.ParentBranchID,
+		})
+		if selectErr != nil {
+			return fmt.Errorf("select source conversation branch %s: %w",
+				active.ParentBranchID, selectErr)
+		}
+		parent := conversationBranchToDomain(parentRow)
+		conversationRows, updateErr := q.ActivateConversationBranch(
+			ctx, gen.ActivateConversationBranchParams{
+				ActiveBranchID: parent.ID,
+				UpdatedAt:      now,
+				ID:             conversationID,
+			})
+		if updateErr != nil {
+			return fmt.Errorf("restore source conversation head: %w", updateErr)
+		}
+		if conversationRows != 1 {
+			return fmt.Errorf("restore source conversation head: conversation %s not found", conversationID)
+		}
+		parent.Active = true
+		repaired = parent
+		if active.SessionID != sessionID {
+			// CreateConversation may have just rebound a project narrative to a new
+			// orchestrator. Repair the lineage, but never copy the prior agent's
+			// opaque provider handle into this new session.
+			return nil
+		}
+		sessionRows, updateErr := q.ActivateConversationBranchSession(
+			ctx, gen.ActivateConversationBranchSessionParams{
+				ProviderConversationID: parent.ProviderConversationID,
+				ControllerGeneration:   "",
+				UpdatedAt:              now,
+				ID:                     sessionID,
+			})
+		if updateErr != nil {
+			return fmt.Errorf("restore source session controller: %w", updateErr)
+		}
+		if sessionRows != 1 {
+			return fmt.Errorf("restore source session controller: live chat session %s not found", sessionID)
+		}
+		restoredProviderOwner = true
+		return nil
+	})
+	if err != nil {
+		return domain.ConversationBranch{}, false, err
+	}
+	return repaired, restoredProviderOwner, nil
 }
 
 // ActivateConversationBranch moves the durable conversation head and the Chat
@@ -509,6 +740,16 @@ func (s *Store) ConversationForSession(
 		return domain.ConversationRecord{}, fmt.Errorf("select conversation for %s: %w", session, err)
 	}
 	return conversationToDomain(row), nil
+}
+
+// HasConversationTurns includes hidden and settled turns: an empty visible
+// timeline is not proof that the provider conversation never started.
+func (s *Store) HasConversationTurns(ctx context.Context, conversationID string) (bool, error) {
+	hasTurns, err := s.qr.HasConversationTurns(ctx, conversationID)
+	if err != nil {
+		return false, fmt.Errorf("check conversation turns %s: %w", conversationID, err)
+	}
+	return hasTurns, nil
 }
 
 // AppendUserMessage records an inbound message and the turn it opens.
@@ -786,6 +1027,14 @@ func (s *Store) SettleTurn(
 	}); err != nil {
 		return fmt.Errorf("settle turn %s: %w", turn.ID, err)
 	}
+	if err := q.SettleStreamingConversationMessagesForTurn(ctx,
+		gen.SettleStreamingConversationMessagesForTurnParams{
+			UpdatedAt:      now,
+			ConversationID: conversationID,
+			TurnID:         sql.NullString{String: turn.ID, Valid: true},
+		}); err != nil {
+		return fmt.Errorf("settle streaming messages for turn %s: %w", turn.ID, err)
+	}
 	if err := q.SettleRunningConversationActivitiesForTurn(ctx,
 		gen.SettleRunningConversationActivitiesForTurnParams{
 			Status:         terminalActivityStatus(state),
@@ -794,6 +1043,70 @@ func (s *Store) SettleTurn(
 			TurnID:         sql.NullString{String: turn.ID, Valid: true},
 		}); err != nil {
 		return fmt.Errorf("settle running activities for turn %s: %w", turn.ID, err)
+	}
+	if state == domain.TurnStateCompleted {
+		if err := finalizeCompletedTurnPlan(ctx, q, turn, now); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// finalizeCompletedTurnPlan reconciles the two durable plan projections when a
+// provider completes a turn without sending a final plan notification. The raw
+// provider event remains unchanged; this only records AO's terminal inference.
+func finalizeCompletedTurnPlan(
+	ctx context.Context,
+	q *gen.Queries,
+	turn gen.ConversationTurn,
+	now time.Time,
+) error {
+	if turn.PlanJson == "" {
+		return nil
+	}
+	var plan domain.ConversationPlan
+	if err := json.Unmarshal([]byte(turn.PlanJson), &plan); err != nil {
+		return fmt.Errorf("decode plan for completed turn %s: %w", turn.ID, err)
+	}
+	changed := false
+	for i := range plan.Steps {
+		if plan.Steps[i].Status != domain.PlanStepCompleted {
+			plan.Steps[i].Status = domain.PlanStepCompleted
+			changed = true
+		}
+	}
+	if !changed {
+		return nil
+	}
+
+	encodedPlan, err := json.Marshal(plan)
+	if err != nil {
+		return fmt.Errorf("encode finalized plan for turn %s: %w", turn.ID, err)
+	}
+	if _, err := q.UpdateConversationTurnPlan(ctx, gen.UpdateConversationTurnPlanParams{
+		PlanJson:       string(encodedPlan),
+		ConversationID: turn.ConversationID,
+		ProviderTurnID: turn.ProviderTurnID,
+	}); err != nil {
+		return fmt.Errorf("finalize turn plan %s: %w", turn.ID, err)
+	}
+
+	detail := map[string]any{"event": "plan", "steps": plan.Steps}
+	if plan.Explanation != "" {
+		detail["explanation"] = plan.Explanation
+	}
+	encodedDetail, err := json.Marshal(detail)
+	if err != nil {
+		return fmt.Errorf("encode finalized plan activity for turn %s: %w", turn.ID, err)
+	}
+	if err := q.FinalizeConversationPlanActivity(ctx, gen.FinalizeConversationPlanActivityParams{
+		Summary:        fmt.Sprintf("Plan %d/%d steps done", len(plan.Steps), len(plan.Steps)),
+		DetailJson:     string(encodedDetail),
+		UpdatedAt:      now,
+		ConversationID: turn.ConversationID,
+		TurnID:         sql.NullString{String: turn.ID, Valid: true},
+	}); err != nil {
+		return fmt.Errorf("finalize plan activity for turn %s: %w", turn.ID, err)
 	}
 	return nil
 }
@@ -834,6 +1147,77 @@ func (s *Store) SettleOrphanedTurns(ctx context.Context, session domain.SessionI
 		return fmt.Errorf("settle orphaned turns for %s: %w", session, err)
 	}
 	return nil
+}
+
+// CleanupOwnedControllerWork settles work only when the closing controller still
+// owns its session generation. Branch/interface handoffs start the replacement
+// before closing the source, so an unconditional stream-end cleanup would
+// otherwise fail the replacement's turns and requests. Project conversations can
+// be rebound to another session before the old stream ends; request cleanup is
+// therefore scoped through turns handled by this session, not current ownership
+// of the conversation.
+//
+// Startup deliberately uses SettleOrphanedTurns and FailPending* directly: no
+// controller owns the abandoned generation then, and that repair must remain
+// unconditional.
+func (s *Store) CleanupOwnedControllerWork(
+	ctx context.Context,
+	session domain.SessionID,
+	conversationID, generation string,
+	now time.Time,
+) (owned bool, err error) {
+	if q, ok := ctx.Value(conversationProjectionTxKey{}).(*gen.Queries); ok && q != nil {
+		return cleanupOwnedControllerWork(ctx, q, session, conversationID, generation, now)
+	}
+
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+
+	err = s.inTx(ctx, "clean up owned Chat controller work", func(q *gen.Queries) error {
+		var cleanupErr error
+		owned, cleanupErr = cleanupOwnedControllerWork(
+			ctx, q, session, conversationID, generation, now)
+		return cleanupErr
+	})
+	return owned, err
+}
+
+func cleanupOwnedControllerWork(
+	ctx context.Context,
+	q *gen.Queries,
+	session domain.SessionID,
+	conversationID, generation string,
+	now time.Time,
+) (bool, error) {
+	owner, err := q.GetSession(ctx, session)
+	if err != nil {
+		return false, fmt.Errorf("read controller generation for %s: %w", session, err)
+	}
+	if owner.ControllerGeneration != generation {
+		return false, nil
+	}
+	if err := q.FailOrphanedConversationActivities(ctx,
+		gen.FailOrphanedConversationActivitiesParams{
+			UpdatedAt: now, HandledBySessionID: session,
+		}); err != nil {
+		return false, fmt.Errorf("settle orphaned activities for %s: %w", session, err)
+	}
+	if err := q.SettleOrphanedConversationTurns(ctx,
+		gen.SettleOrphanedConversationTurnsParams{
+			CompletedAt:        sql.NullTime{Time: now, Valid: true},
+			HandledBySessionID: session,
+		}); err != nil {
+		return false, fmt.Errorf("settle orphaned turns for %s: %w", session, err)
+	}
+	if err := q.FailPendingConversationRequestsForSession(ctx,
+		gen.FailPendingConversationRequestsForSessionParams{
+			UpdatedAt:            now,
+			TargetConversationID: conversationID,
+			HandledBySessionID:   session,
+		}); err != nil {
+		return false, fmt.Errorf("fail pending requests for %s on %s: %w", session, conversationID, err)
+	}
+	return true, nil
 }
 
 // ListVisibleRunningTurnProviderIDs returns the same active-branch running turns,
@@ -1362,6 +1746,147 @@ func (s *Store) CancelAllQueuedTurns(
 	return nil
 }
 
+// CancelQueuedTurnByID removes one undispatched queue item without disturbing
+// later queue items or the running turn.
+func (s *Store) CancelQueuedTurnByID(
+	ctx context.Context,
+	conversationID, turnID string,
+	now time.Time,
+) error {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	rows, err := s.qw.CancelQueuedConversationTurnByID(ctx,
+		gen.CancelQueuedConversationTurnByIDParams{
+			CompletedAt:    sql.NullTime{Time: now, Valid: true},
+			ID:             turnID,
+			ConversationID: conversationID,
+		})
+	if err != nil {
+		return fmt.Errorf("cancel queued turn %s: %w", turnID, err)
+	}
+	if rows == 0 {
+		return fmt.Errorf("%w: %s", ErrQueuedTurnNotAvailable, turnID)
+	}
+	return nil
+}
+
+// ErrInvalidQueuedTurnOrder means the requested queue order does not match the
+// current undispatched queue exactly.
+var ErrInvalidQueuedTurnOrder = errors.New("invalid queued turn order")
+
+// ReorderQueuedTurns permutes the durable queue order by reassigning existing
+// requested_at values. The caller must pass every currently queued turn id in
+// the desired FIFO order.
+func (s *Store) ReorderQueuedTurns(
+	ctx context.Context,
+	conversationID string,
+	turnIDs []string,
+) error {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+
+	current, err := s.qr.SelectQueuedConversationTurnOrder(ctx, conversationID)
+	if err != nil {
+		return fmt.Errorf("list queued turns for reorder: %w", err)
+	}
+	if len(current) != len(turnIDs) {
+		return fmt.Errorf("%w: got %d ids for %d queued turns", ErrInvalidQueuedTurnOrder, len(turnIDs), len(current))
+	}
+	if len(current) == 0 {
+		return nil
+	}
+
+	currentByID := make(map[string]time.Time, len(current))
+	for _, row := range current {
+		currentByID[row.ID] = row.RequestedAt
+	}
+	seen := make(map[string]struct{}, len(turnIDs))
+	for _, turnID := range turnIDs {
+		if _, ok := currentByID[turnID]; !ok {
+			return fmt.Errorf("%w: unknown turn %s", ErrInvalidQueuedTurnOrder, turnID)
+		}
+		if _, dup := seen[turnID]; dup {
+			return fmt.Errorf("%w: duplicate turn %s", ErrInvalidQueuedTurnOrder, turnID)
+		}
+		seen[turnID] = struct{}{}
+	}
+
+	requestedAts := make([]time.Time, len(current))
+	for i, row := range current {
+		requestedAts[i] = row.RequestedAt
+	}
+	sort.Slice(requestedAts, func(i, j int) bool {
+		return requestedAts[i].Before(requestedAts[j])
+	})
+
+	tx, err := s.writeDB.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin queued turn reorder: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	q := s.qw.WithTx(tx)
+	for i, turnID := range turnIDs {
+		rows, err := q.UpdateQueuedConversationTurnRequestedAt(ctx,
+			gen.UpdateQueuedConversationTurnRequestedAtParams{
+				RequestedAt:    requestedAts[i],
+				ID:             turnID,
+				ConversationID: conversationID,
+			})
+		if err != nil {
+			return fmt.Errorf("reorder queued turn %s: %w", turnID, err)
+		}
+		if rows == 0 {
+			return fmt.Errorf("%w: %s", ErrQueuedTurnNotAvailable, turnID)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit queued turn reorder: %w", err)
+	}
+	return nil
+}
+
+// QueuedTurnMessage reads the durable text and content without exposing image
+// bytes to the renderer.
+func (s *Store) QueuedTurnMessage(ctx context.Context, conversationID, turnID string) (domain.ConversationMessage, error) {
+	row, err := s.qr.SelectQueuedConversationMessage(ctx, gen.SelectQueuedConversationMessageParams{
+		ConversationID: conversationID, TurnID: nullableString(turnID),
+	})
+	if errors.Is(err, sql.ErrNoRows) {
+		return domain.ConversationMessage{}, ErrQueuedTurnNotAvailable
+	}
+	if err != nil {
+		return domain.ConversationMessage{}, err
+	}
+	return messageToDomain(row), nil
+}
+
+// UpdateQueuedTurnMessage atomically replaces a still-queued prompt's text and content.
+func (s *Store) UpdateQueuedTurnMessage(
+	ctx context.Context,
+	conversationID, turnID, text, contentJSON string,
+	revision int64,
+	now time.Time,
+) error {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	rows, err := s.qw.UpdateQueuedConversationMessageText(ctx,
+		gen.UpdateQueuedConversationMessageTextParams{
+			Text:                text,
+			DeliveryContentJson: contentJSON,
+			Revision:            revision,
+			UpdatedAt:           now,
+			ConversationID:      conversationID,
+			TurnID:              sql.NullString{String: turnID, Valid: true},
+		})
+	if err != nil {
+		return fmt.Errorf("update queued turn message %s: %w", turnID, err)
+	}
+	if rows == 0 {
+		return fmt.Errorf("%w: %s", ErrQueuedTurnNotAvailable, turnID)
+	}
+	return nil
+}
+
 // SettleTurnByID records a terminal state for a turn AO can name directly.
 //
 // Needed for a turn that never reached the provider: it has no provider turn id,
@@ -1672,6 +2197,16 @@ func (s *Store) ResolveApproval(
 	return nil
 }
 
+// HasPendingConversationInteractions reports whether the durable conversation
+// still contains an actionable approval or structured-input request.
+func (s *Store) HasPendingConversationInteractions(ctx context.Context, conversationID string) (bool, error) {
+	pending, err := s.qr.HasPendingConversationInteractions(ctx, conversationID)
+	if err != nil {
+		return false, fmt.Errorf("check pending interactions for %s: %w", conversationID, err)
+	}
+	return pending, nil
+}
+
 // FailPendingApprovals closes out anything the user can no longer answer, because
 // the provider call it was blocking is gone.
 func (s *Store) FailPendingApprovals(ctx context.Context, conversationID string, now time.Time) error {
@@ -1715,6 +2250,12 @@ func (s *Store) ProjectProviderEvent(
 	now time.Time,
 	project func(context.Context) error,
 ) (bool, error) {
+	if q, ok := ctx.Value(conversationProjectionTxKey{}).(*gen.Queries); ok && q != nil {
+		return projectProviderEventTx(
+			ctx, q, conversationID, session, generation,
+			providerEventID, method, payloadJSON, now, project,
+		)
+	}
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
 
@@ -1724,6 +2265,28 @@ func (s *Store) ProjectProviderEvent(
 	}
 	defer func() { _ = tx.Rollback() }()
 	q := s.qw.WithTx(tx)
+	projected, err := projectProviderEventTx(
+		ctx, q, conversationID, session, generation,
+		providerEventID, method, payloadJSON, now, project,
+	)
+	if err != nil {
+		return false, err
+	}
+	if err := tx.Commit(); err != nil {
+		return false, fmt.Errorf("commit provider event %s: %w", method, err)
+	}
+	return projected, nil
+}
+
+func projectProviderEventTx(
+	ctx context.Context,
+	q *gen.Queries,
+	conversationID string,
+	session domain.SessionID,
+	generation, providerEventID, method, payloadJSON string,
+	now time.Time,
+	project func(context.Context) error,
+) (bool, error) {
 	owner, err := q.GetSession(ctx, session)
 	if err != nil {
 		return false, fmt.Errorf("read controller generation for %s: %w", session, err)
@@ -1743,17 +2306,11 @@ func (s *Store) ProjectProviderEvent(
 		return false, fmt.Errorf("archive provider event %s: %w", method, err)
 	}
 	if inserted == 0 {
-		if err := tx.Commit(); err != nil {
-			return false, fmt.Errorf("commit duplicate provider event %s: %w", method, err)
-		}
 		return false, nil
 	}
 	txCtx := context.WithValue(ctx, conversationProjectionTxKey{}, q)
 	if err := project(txCtx); err != nil {
 		return false, fmt.Errorf("project provider event %s: %w", method, err)
-	}
-	if err := tx.Commit(); err != nil {
-		return false, fmt.Errorf("commit provider event %s: %w", method, err)
 	}
 	return true, nil
 }
@@ -1945,14 +2502,17 @@ func (s *Store) ApplyProviderTitle(
 
 // ConversationSnapshot is the durable read model for one conversation.
 type ConversationSnapshot struct {
-	Conversation               domain.ConversationRecord
-	Turns                      []domain.ConversationTurn
-	Messages                   []domain.ConversationMessage
-	Activities                 []domain.ConversationActivity
-	BranchPoints               []domain.ConversationBranchPoint
-	BranchedFromEarlierMessage bool
-	OldestSequence             int64
-	HasMoreBefore              bool
+	Conversation                     domain.ConversationRecord
+	ActiveBranch                     domain.ConversationBranch
+	EditFloorSequence                int64
+	NativeForkAvailableAfterSequence int64
+	Turns                            []domain.ConversationTurn
+	Messages                         []domain.ConversationMessage
+	Activities                       []domain.ConversationActivity
+	BranchPoints                     []domain.ConversationBranchPoint
+	BranchedFromEarlierMessage       bool
+	OldestSequence                   int64
+	HasMoreBefore                    bool
 }
 
 // DefaultConversationPageSize is the standard bounded read size for conversation snapshots.
@@ -1991,11 +2551,14 @@ func (s *Store) LoadConversationSnapshotPage(
 	presentation := s.conversationHistoryPresentation(ctx, conversationID)
 	if beforeSequence <= visibleAfterSequence {
 		snapshot := ConversationSnapshot{
-			Conversation:               conversationToDomain(conv),
-			BranchPoints:               presentation.branchPoints,
-			BranchedFromEarlierMessage: presentation.branchedFromEarlierMessage,
-			OldestSequence:             visibleAfterSequence,
-			HasMoreBefore:              false,
+			Conversation:                     conversationToDomain(conv),
+			ActiveBranch:                     presentation.activeBranch,
+			EditFloorSequence:                presentation.editFloorSequence,
+			NativeForkAvailableAfterSequence: presentation.nativeForkAvailableAfterSequence,
+			BranchPoints:                     presentation.branchPoints,
+			BranchedFromEarlierMessage:       presentation.branchedFromEarlierMessage,
+			OldestSequence:                   visibleAfterSequence,
+			HasMoreBefore:                    false,
 		}
 		return snapshot, nil
 	}
@@ -2059,11 +2622,14 @@ func (s *Store) LoadConversationSnapshotPage(
 	}
 
 	snapshot := ConversationSnapshot{
-		Conversation:               conversationToDomain(conv),
-		BranchPoints:               presentation.branchPoints,
-		BranchedFromEarlierMessage: presentation.branchedFromEarlierMessage,
-		OldestSequence:             oldest,
-		HasMoreBefore:              hasMore,
+		Conversation:                     conversationToDomain(conv),
+		ActiveBranch:                     presentation.activeBranch,
+		EditFloorSequence:                presentation.editFloorSequence,
+		NativeForkAvailableAfterSequence: presentation.nativeForkAvailableAfterSequence,
+		BranchPoints:                     presentation.branchPoints,
+		BranchedFromEarlierMessage:       presentation.branchedFromEarlierMessage,
+		OldestSequence:                   oldest,
+		HasMoreBefore:                    hasMore,
 	}
 	for _, row := range turnRows {
 		if !conversationTurnVisibleAfterSequence(row, conv, visibleAfterSequence) {
@@ -2188,9 +2754,12 @@ func (s *Store) LoadConversationSnapshot(
 
 	presentation := s.conversationHistoryPresentation(ctx, conversationID)
 	snapshot := ConversationSnapshot{
-		Conversation:               conversationToDomain(conv),
-		BranchPoints:               presentation.branchPoints,
-		BranchedFromEarlierMessage: presentation.branchedFromEarlierMessage,
+		Conversation:                     conversationToDomain(conv),
+		ActiveBranch:                     presentation.activeBranch,
+		EditFloorSequence:                presentation.editFloorSequence,
+		NativeForkAvailableAfterSequence: presentation.nativeForkAvailableAfterSequence,
+		BranchPoints:                     presentation.branchPoints,
+		BranchedFromEarlierMessage:       presentation.branchedFromEarlierMessage,
 	}
 	for _, row := range turnRows {
 		turn := turnToDomain(row)
@@ -2220,10 +2789,14 @@ func (s *Store) conversationRetriedSources(ctx context.Context, conversationID s
 }
 
 type conversationHistoryPresentation struct {
-	activeProviderScopeID      string
-	branchProviderScopes       map[string]string
-	branchPoints               []domain.ConversationBranchPoint
-	branchedFromEarlierMessage bool
+	activeBranch                     domain.ConversationBranch
+	activeProviderScopeID            string
+	activeProviderBindingID          string
+	editFloorSequence                int64
+	nativeForkAvailableAfterSequence int64
+	branchProviderScopes             map[string]string
+	branchPoints                     []domain.ConversationBranchPoint
+	branchedFromEarlierMessage       bool
 }
 
 func (p conversationHistoryPresentation) filterInactiveProviderTurn(turn *domain.ConversationTurn) {
@@ -2256,19 +2829,30 @@ func (s *Store) conversationHistoryPresentation(
 	for _, branch := range branches {
 		presentation.branchProviderScopes[branch.ID] = branch.ProviderScopeID
 		if branch.Active {
+			presentation.activeBranch = branch
 			presentation.activeProviderScopeID = branch.ProviderScopeID
+			presentation.activeProviderBindingID = branch.ProviderBindingID
 			presentation.branchedFromEarlierMessage =
 				branch.ParentBranchID != "" && branch.ReplacedTurnID != ""
 		}
 	}
-	presentation.branchPoints = conversationBranchPointsForProviderScope(
-		branches, presentation.activeProviderScopeID)
+	if sequence, queryErr := s.qr.SelectConversationNativeForkAvailableAfterSequence(ctx, conversationID); queryErr == nil {
+		presentation.nativeForkAvailableAfterSequence = sequence
+	}
+	for _, branch := range branches {
+		if branch.ID == presentation.activeProviderBindingID {
+			presentation.editFloorSequence = branch.ForkAfterSequence
+			break
+		}
+	}
+	presentation.branchPoints = conversationBranchPointsForProviderBinding(
+		branches, presentation.activeProviderBindingID)
 	return presentation
 }
 
-func conversationBranchPointsForProviderScope(
+func conversationBranchPointsForProviderBinding(
 	branches []domain.ConversationBranch,
-	activeProviderScopeID string,
+	activeProviderBindingID string,
 ) []domain.ConversationBranchPoint {
 	type groupKey struct {
 		sourceBranchID string
@@ -2282,7 +2866,7 @@ func conversationBranchPointsForProviderScope(
 	groupByReplacement := make(map[string]groupKey)
 	order := make([]groupKey, 0)
 	for _, branch := range branches {
-		if branch.ProviderScopeID != activeProviderScopeID ||
+		if branch.ProviderBindingID != activeProviderBindingID ||
 			branch.ParentBranchID == "" || branch.ReplacedTurnID == "" || branch.ReplacementTurnID == "" {
 			continue
 		}
@@ -2378,12 +2962,16 @@ func conversationBranchToDomain(row gen.SelectConversationBranchRow) domain.Conv
 		ConversationID:         row.ConversationID,
 		SessionID:              domain.SessionID(row.SessionID.String),
 		ProviderConversationID: row.ProviderConversationID,
-		ProviderScopeID:        row.ProviderScopeID,
 		ParentBranchID:         row.ParentBranchID.String,
 		ForkAfterTurnID:        row.ForkAfterTurnID.String,
 		ReplacedTurnID:         row.ReplacedTurnID.String,
 		ReplacementTurnID:      row.ReplacementTurnID.String,
 		ForkAfterSequence:      row.ForkAfterSequence,
+		Strategy:               domain.NormalizeConversationBranchStrategy(domain.ConversationBranchStrategy(row.Strategy)),
+		ReplayCutoffSequence:   row.ReplayCutoffSequence,
+		ReplayTruncated:        row.ReplayTruncated != 0,
+		ProviderBindingID:      row.ProviderBindingID,
+		ProviderScopeID:        row.EffectiveProviderScopeID,
 		Active:                 row.Active,
 		CreatedAt:              row.CreatedAt,
 	}
@@ -2395,12 +2983,16 @@ func conversationBranchListToDomain(row gen.SelectConversationBranchesRow) domai
 		ConversationID:         row.ConversationID,
 		SessionID:              domain.SessionID(row.SessionID.String),
 		ProviderConversationID: row.ProviderConversationID,
-		ProviderScopeID:        row.ProviderScopeID,
 		ParentBranchID:         row.ParentBranchID.String,
 		ForkAfterTurnID:        row.ForkAfterTurnID.String,
 		ReplacedTurnID:         row.ReplacedTurnID.String,
 		ReplacementTurnID:      row.ReplacementTurnID.String,
 		ForkAfterSequence:      row.ForkAfterSequence,
+		Strategy:               domain.NormalizeConversationBranchStrategy(domain.ConversationBranchStrategy(row.Strategy)),
+		ReplayCutoffSequence:   row.ReplayCutoffSequence,
+		ReplayTruncated:        row.ReplayTruncated != 0,
+		ProviderBindingID:      row.ProviderBindingID,
+		ProviderScopeID:        row.EffectiveProviderScopeID,
 		Active:                 row.Active,
 		CreatedAt:              row.CreatedAt,
 	}
@@ -2525,18 +3117,19 @@ func turnToDomain(row gen.ConversationTurn) domain.ConversationTurn {
 
 func messageToDomain(row gen.ConversationMessage) domain.ConversationMessage {
 	msg := domain.ConversationMessage{
-		ID:              row.ID,
-		ConversationID:  row.ConversationID,
-		Sequence:        row.Sequence,
-		Revision:        row.Revision,
-		Role:            row.Role,
-		Origin:          row.Origin,
-		Text:            row.Text,
-		Streaming:       row.Streaming != 0,
-		ProviderItemID:  row.ProviderItemID,
-		ClientMessageID: row.ClientMessageID,
-		CreatedAt:       row.CreatedAt,
-		UpdatedAt:       row.UpdatedAt,
+		ID:                  row.ID,
+		ConversationID:      row.ConversationID,
+		Sequence:            row.Sequence,
+		Revision:            row.Revision,
+		Role:                row.Role,
+		Origin:              row.Origin,
+		Text:                row.Text,
+		Streaming:           row.Streaming != 0,
+		ProviderItemID:      row.ProviderItemID,
+		ClientMessageID:     row.ClientMessageID,
+		DeliveryContentJSON: row.DeliveryContentJson,
+		CreatedAt:           row.CreatedAt,
+		UpdatedAt:           row.UpdatedAt,
 	}
 	if row.TurnID.Valid {
 		msg.TurnID = row.TurnID.String

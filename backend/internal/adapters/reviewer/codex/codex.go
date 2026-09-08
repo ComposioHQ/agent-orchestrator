@@ -40,7 +40,7 @@ var _ ports.ReviewerRestorer = (*Reviewer)(nil)
 // network access for posting the review and reporting its result.
 func (r *Reviewer) ReviewCommand(ctx context.Context, inv ports.ReviewInvocation) (ports.ReviewCommandSpec, error) {
 	argv, err := r.agent.GetLaunchCommand(ctx, ports.LaunchConfig{
-		Config:           ports.AgentConfig{Model: inv.Model},
+		Config:           inv.Config,
 		SessionID:        inv.ReviewerID,
 		WorkspacePath:    inv.WorkspacePath,
 		Prompt:           inv.Prompt,
@@ -61,7 +61,7 @@ func (r *Reviewer) ReviewCommand(ctx context.Context, inv ports.ReviewInvocation
 // ReviewRestoreCommand resumes the reviewer Codex conversation captured from
 // Codex hooks when AO recreates the reviewer pane after worker restore.
 func (r *Reviewer) ReviewRestoreCommand(ctx context.Context, inv ports.ReviewInvocation) (ports.ReviewCommandSpec, bool, error) {
-	cmd, ok, err := agentrestore.Command(ctx, r.agent, inv, agentrestore.Options{Config: ports.AgentConfig{Model: inv.Model}, Permissions: ports.PermissionModeAuto})
+	cmd, ok, err := agentrestore.Command(ctx, r.agent, inv, agentrestore.Options{Config: inv.Config, Permissions: ports.PermissionModeAuto})
 	if err != nil || !ok {
 		return cmd, ok, err
 	}

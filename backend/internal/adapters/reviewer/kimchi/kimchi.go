@@ -105,7 +105,7 @@ var _ ports.ReviewerRestorer = (*Reviewer)(nil)
 // common mutation paths, but does not make the process read-only or isolated.
 func (r *Reviewer) ReviewCommand(ctx context.Context, inv ports.ReviewInvocation) (ports.ReviewCommandSpec, error) {
 	argv, err := r.agent.GetLaunchCommand(ctx, ports.LaunchConfig{
-		Config:           ports.AgentConfig{Model: inv.Model},
+		Config:           inv.Config,
 		SessionID:        inv.ReviewerID,
 		WorkspacePath:    inv.WorkspacePath,
 		Prompt:           inv.Prompt,
@@ -136,7 +136,7 @@ func (r *Reviewer) ReviewMessage(_ context.Context, inv ports.ReviewInvocation) 
 // reapplies the same best-effort tool policy as a fresh reviewer launch.
 func (r *Reviewer) ReviewRestoreCommand(ctx context.Context, inv ports.ReviewInvocation) (ports.ReviewCommandSpec, bool, error) {
 	return agentrestore.Command(ctx, r.agent, inv, agentrestore.Options{
-		Config:          ports.AgentConfig{Model: inv.Model},
+		Config:          inv.Config,
 		Permissions:     ports.PermissionModeAuto,
 		AllowedTools:    reviewerAllowedTools,
 		DisallowedTools: reviewerDisallowedTools,

@@ -1,8 +1,10 @@
-import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render as rtlRender, screen, waitFor, within } from "@testing-library/react";
+import type { ReactElement } from "react";
 import userEvent from "@testing-library/user-event";
 import { Profiler } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { ChatComposer } from "./ChatComposer";
+import { TooltipProvider } from "../ui/tooltip";
 import type { ChatSkill } from "../../types/conversation";
 import {
 	lexicalEditorText,
@@ -10,6 +12,13 @@ import {
 	typeAndPressInLexicalEditor,
 	typeInLexicalEditor,
 } from "../../test/lexical";
+
+// Every button in the composer relies on the shared styled Tooltip, which needs
+// a TooltipProvider ancestor. `wrapper` survives `rerender`, so every render call
+// in this file — direct or through renderComposer/renderSteerable — gets one.
+function render(ui: ReactElement, options?: Parameters<typeof rtlRender>[1]) {
+	return rtlRender(ui, { wrapper: TooltipProvider, ...options });
+}
 
 const SKILLS: ChatSkill[] = [
 	{ name: "code-review", displayName: "code-review", description: "Review the diff", source: "user" },
@@ -27,6 +36,14 @@ function renderComposer(props: Partial<Parameters<typeof ChatComposer>[0]> = {})
 	const onSend = vi.fn();
 	render(<ChatComposer onSend={onSend} {...props} />);
 	return { onSend, field: screen.getByLabelText("Message the agent") as HTMLElement };
+}
+
+function deferred<T>() {
+	let resolve!: (value: T) => void;
+	const promise = new Promise<T>((resolvePromise) => {
+		resolve = resolvePromise;
+	});
+	return { promise, resolve };
 }
 
 async function typeInComposer(field: HTMLElement, text: string) {
@@ -107,7 +124,8 @@ describe("send keys", () => {
 		);
 	});
 
-	it("separates secondary message tools from the primary send action", () => {
+	it("separates secondary message tools from the primary send action", async () => {
+		const user = userEvent.setup();
 		render(
 			<ChatComposer
 				onSend={vi.fn()}
@@ -121,12 +139,11 @@ describe("send keys", () => {
 		expect(within(tools).getByRole("button", { name: "Model" })).toBeInTheDocument();
 
 		const actions = screen.getByRole("group", { name: "Send message controls" });
-		// The destination Enter is armed with rides on the send control itself rather
-		// than as a line of prose beside it.
-		expect(within(actions).getByRole("button", { name: "Send message" })).toHaveAttribute(
-			"title",
-			"Enter to send",
-		);
+		// The destination Enter is armed with rides on the send control's tooltip
+		// rather than as a line of prose beside it.
+		const send = within(actions).getByRole("button", { name: "Send message" });
+		await user.hover(send);
+		expect(await screen.findByRole("tooltip")).toHaveTextContent("Enter to send");
 	});
 
 
@@ -185,6 +202,29 @@ describe("send keys", () => {
 		expect(field).toHaveTextContent("hello");
 		await userEvent.keyboard("{Enter}");
 		expect(onSend).toHaveBeenCalledWith("hello");
+	});
+
+	it("joins rapid duplicate Enter submissions without showing a false retry error", async () => {
+		const provider = deferred<void>();
+		const onSend = vi
+			.fn()
+			.mockImplementationOnce(() => provider.promise)
+			.mockRejectedValueOnce(new Error("A message is already being sent for this session."));
+		render(<ChatComposer onSend={onSend} />);
+		const field = screen.getByLabelText("Message the agent") as HTMLElement;
+		await typeInComposer(field, "only send this once");
+
+		fireEvent.keyDown(field, { key: "Enter" });
+		fireEvent.keyDown(field, { key: "Enter" });
+
+		await waitFor(() => expect(onSend).toHaveBeenCalledTimes(1));
+		provider.resolve();
+		await act(async () => {
+			await provider.promise;
+		});
+		await waitFor(() => expect(field).toHaveTextContent(""));
+		expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+		expect(screen.queryByText(/draft.*kept|retry/i)).not.toBeInTheDocument();
 	});
 
 	it("makes a newline on Shift+Enter and does not send", async () => {
@@ -262,6 +302,24 @@ describe("send keys", () => {
    is the only way to pick the second one now, so each path that can reach it —
    Cmd, Ctrl, and the send control while a modifier is held — is pinned here.
 --------------------------------------------------------------------------- */
+
+describe("queued message edit", () => {
+	it("saves a queued edit while the composer is busy", async () => {
+		const onSend = vi.fn().mockResolvedValue(undefined);
+		render(
+			<ChatComposer
+				onSend={onSend}
+				busy
+				willQueue
+				editingQueuedTurnId="queued-1"
+				draftSeed={{ id: "queued-1", text: "hi" }}
+			/>,
+		);
+		await waitFor(() => expect(screen.getByLabelText("Message the agent")).toHaveTextContent("hi"));
+		await userEvent.keyboard("{Enter}");
+			await waitFor(() => expect(onSend).toHaveBeenCalledWith("hi", undefined, []));
+	});
+});
 
 describe("steering", () => {
 	function renderSteerable(props: Partial<Parameters<typeof ChatComposer>[0]> = {}) {
@@ -457,14 +515,14 @@ describe("slash commands", () => {
 		expect(selected).toBe(0);
 	});
 
-	it("scrolls the first result back into view when filtering resets selection", async () => {
+	it("does not force-scroll when filtering keeps the visible first result selected", async () => {
 		const scrollIntoView = vi.spyOn(Element.prototype, "scrollIntoView");
 		const { field } = renderComposer({ skills: SKILLS });
 		await typeInComposer(field, "/");
 		scrollIntoView.mockClear();
 		await typeInComposer(field, "r");
 
-		expect(scrollIntoView).toHaveBeenCalledWith({ block: "nearest" });
+		expect(scrollIntoView).not.toHaveBeenCalled();
 		scrollIntoView.mockRestore();
 	});
 
@@ -856,6 +914,20 @@ describe("unavailable states", () => {
 		expect(onSend).not.toHaveBeenCalled();
 	});
 
+	it("does not show a loading spinner when no queued edit is saving", () => {
+		renderComposer();
+		expect(
+			screen.getByRole("button", { name: "Send message" }).querySelector(".animate-spin"),
+		).not.toBeInTheDocument();
+	});
+
+	it("shows a loading spinner only while the queued edit being edited is saving", () => {
+		renderComposer({ editingQueuedTurnId: "turn-1", savingQueuedEditPending: true });
+		expect(
+			screen.getByRole("button", { name: "Send message" }).querySelector(".animate-spin"),
+		).toBeInTheDocument();
+	});
+
 	it("says a mid-turn message will be held", () => {
 		const { field } = renderComposer({ willQueue: true });
 		expect(field).toHaveAttribute(
@@ -885,5 +957,21 @@ describe("unavailable states", () => {
 
 		expect(onSend).toHaveBeenCalledWith("follow up");
 		expect(onInterrupt).not.toHaveBeenCalled();
+	});
+
+	it("explains when a send is blocked by the previous in-flight message", async () => {
+		const onSend = vi.fn().mockImplementation(
+			() => new Promise<void>(() => {
+				/* keep pending */
+			}),
+		);
+		render(<ChatComposer busy onSend={onSend} willQueue />);
+		const field = screen.getByLabelText("Message the agent");
+
+		await typeInComposer(field, "follow up");
+		await userEvent.keyboard("{Enter}");
+
+		expect(onSend).not.toHaveBeenCalled();
+		expect(screen.getByRole("alert")).toHaveTextContent(/still sending the previous message/i);
 	});
 });

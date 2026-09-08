@@ -2,6 +2,7 @@ package review
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -61,20 +62,21 @@ type Launcher interface {
 
 // LaunchSpec is the engine's request to (re)launch a reviewer for one pass.
 type LaunchSpec struct {
-	RunID           string
-	BatchID         string
-	ReviewSessionID string
-	WorkerID        domain.SessionID
-	ProjectID       domain.ProjectID
-	Harness         domain.ReviewerHarness
-	Model           string
-	WorkspacePath   string
-	AgentSessionID  string
-	PreviousRuns    []domain.ReviewRun
-	PRURL           string
-	TargetSHA       string
-	ReviewQueue     []ports.ReviewTask
-	ReviewIndex     int
+	RunID                string
+	BatchID              string
+	ReviewSessionID      string
+	WorkerID             domain.SessionID
+	ProjectID            domain.ProjectID
+	Harness              domain.ReviewerHarness
+	AgentConfig          domain.AgentConfig
+	WorkspacePath        string
+	AgentSessionID       string
+	RequireNativeHistory bool
+	PreviousRuns         []domain.ReviewRun
+	PRURL                string
+	TargetSHA            string
+	ReviewQueue          []ports.ReviewTask
+	ReviewIndex          int
 }
 
 // LaunchResult is the terminal/runtime state created by a reviewer launch.
@@ -242,12 +244,13 @@ func (l *agentLauncher) invocation(spec LaunchSpec) ports.ReviewInvocation {
 		ReviewerID:      reviewerHandleID(spec.WorkerID),
 		RunID:           spec.RunID,
 		WorkerSessionID: spec.WorkerID,
-		Model:           spec.Model,
+		Model:           spec.AgentConfig.Model,
 		AgentSessionID:  spec.AgentSessionID,
 		PRURL:           spec.PRURL,
 		TargetSHA:       spec.TargetSHA,
 		ReviewQueue:     spec.ReviewQueue,
 		ReviewIndex:     spec.ReviewIndex,
+		Config:          spec.AgentConfig,
 		WorkspacePath:   spec.WorkspacePath,
 		DataDir:         l.dataDir,
 		RunFilePath:     l.runFile,
@@ -321,8 +324,9 @@ func (l *agentLauncher) prepareIdleInvocation(spec LaunchSpec) (ports.ReviewInvo
 	return ports.ReviewInvocation{
 		ReviewerID:       reviewerHandleID(spec.WorkerID),
 		WorkerSessionID:  spec.WorkerID,
-		Model:            spec.Model,
+		Model:            spec.AgentConfig.Model,
 		AgentSessionID:   spec.AgentSessionID,
+		Config:           spec.AgentConfig,
 		WorkspacePath:    spec.WorkspacePath,
 		DataDir:          l.dataDir,
 		RunFilePath:      l.runFile,
@@ -420,6 +424,9 @@ func (l *agentLauncher) launchReviewerTerminalWithMode(ctx context.Context, spec
 				cmd = restoreCmd
 			}
 		}
+	}
+	if restoring && spec.RequireNativeHistory && len(cmd.Argv) == 0 {
+		return LaunchResult{}, errors.New("reviewer native history resume is unavailable")
 	}
 	if len(cmd.Argv) == 0 {
 		var err error
@@ -540,15 +547,21 @@ func (l *agentLauncher) runtimeEnv(ctx context.Context, spec LaunchSpec, argv []
 	if strings.TrimSpace(l.runFile) != "" {
 		env[EnvRunFile] = l.runFile
 	}
-	path, err := sessionmanager.HookPATH(l.executable, os.Getenv, env)
+	// pinnedDir is whichever directory ends up at the head of PATH here, so the
+	// launch-binary prepend below can put it back rather than letting a foreign
+	// `ao` beside the agent binary win a bare `ao` inside the reviewer pane.
+	pinnedDir := ""
+	path, err := sessionmanager.HookPATH(l.executable, os.Getenv, env, l.dataDir)
 	if err == nil {
 		env["PATH"] = path
+		pinnedDir = sessionmanager.PinnedHookDir(l.executable, l.dataDir)
 	} else if shimDir, shimErr := l.ensureAOShimDir(); shimErr == nil {
 		env["PATH"] = prependPathDir(shimDir, env["PATH"])
+		pinnedDir = shimDir
 	} else {
 		env[EnvAOCommandWarning] = fmt.Sprintf("PATH pin failed: %v; AO shim fallback failed: %v", err, shimErr)
 	}
-	sessionmanager.AugmentRuntimePATHForLaunchBinary(ctx, env, argv, exec.LookPath)
+	sessionmanager.AugmentRuntimePATHForLaunchBinary(ctx, env, argv, exec.LookPath, pinnedDir)
 	return env
 }
 

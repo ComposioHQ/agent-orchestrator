@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "@tanstack/react-router";
-import { useEffect, useId, useState, type ReactNode } from "react";
+import { memo, useCallback, useEffect, useId, useState, type ReactNode } from "react";
 import type { TFunction } from "i18next";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -52,6 +52,7 @@ import { useSessionUsage, type SessionUsage } from "../hooks/useSessionUsage";
 import { useSessionWorkspaceFilesChangedCount } from "../hooks/useSessionWorkspaceFiles";
 import { useSessionBrowserLink } from "../hooks/useSessionBrowserLink";
 import { clearTerminateSessionState, useTerminateSession } from "../hooks/useTerminateSession";
+import { formatEstimatedCost, type EstimatedCost } from "../lib/format-cost";
 import { prBrowserUrl, prCardPresentation, prNounKeys, sessionPRDisplaySummaries } from "../lib/pr-display";
 import { formatTokenCount } from "../lib/format-token-count";
 import type { WorkspaceSession, WorkspaceSummary } from "../types/workspace";
@@ -66,7 +67,7 @@ import { cn } from "../lib/utils";
 import { SessionTerminationPopover } from "./SessionTerminationPopover";
 import { ReviewerSelect } from "./ReviewerSelect";
 import { agentLabel } from "../lib/agent-options";
-import { agentsQueryOptions } from "../hooks/useAgentsQuery";
+import { useAgentReadinessQuery, useEnsureAgentReadiness } from "../hooks/useAgentReadinessQuery";
 import { Switch } from "./ui/switch";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
 import { appI18n } from "../i18n";
@@ -76,7 +77,6 @@ import {
 	openReviewStatesFor,
 	reviewIsRunning,
 	reviewRunDisabled,
-	reviewRunActionKind,
 	reviewSessionRunAction,
 	sessionReviewsQueryOptions,
 	type PRReviewState,
@@ -176,11 +176,12 @@ export function SessionInspector({
 		session ? Boolean(state.inspectorSessions[session.id]?.browserUnseen) : false,
 	);
 	const filesChangedCount = useSessionWorkspaceFilesChangedCount(session?.id);
-	const setView = (next: InspectorView) => {
+	const setView = useCallback((next: InspectorView) => {
 		setInternalView(next);
 		onViewChange?.(next);
 		if (next === "files") onOpenFiles?.();
-	};
+	}, [onOpenFiles, onViewChange]);
+	const openReviews = useCallback(() => setView("reviews"), [setView]);
 	// A persisted/controlled Reviews selection can outlive the last reviewable PR.
 	// Keep the shell on a real, visible tab instead of rendering an empty, unlabelled body.
 	const reviewsAvailable = reviewsTabVisible(session);
@@ -238,7 +239,7 @@ export function SessionInspector({
 					session ? <ReviewsView onOpenReviewFile={onOpenReviewFile} onOpenReviewerTerminal={onOpenReviewerTerminal} session={session} /> : undefined
 				}
 				summaryView={
-					session ? <SummaryView canOpenReviews={reviewsAvailable} onOpenReviews={() => setView("reviews")} session={session} /> : undefined
+					session ? <SummaryView canOpenReviews={reviewsAvailable} onOpenReviews={openReviews} session={session} /> : undefined
 				}
 				tabs={tabs}
 			/>
@@ -261,7 +262,7 @@ function normalizeReviewerId(value: string | undefined): string {
 	return value?.trim().replace(/^@+/, "").toLowerCase() ?? "";
 }
 
-function SummaryView({
+const SummaryView = memo(function SummaryView({
 	canOpenReviews,
 	onOpenReviews,
 	session,
@@ -326,9 +327,9 @@ function SummaryView({
 			}
 		/>
 	);
-}
+});
 
-function ReviewsView({
+const ReviewsView = memo(function ReviewsView({
 	session,
 	onOpenReviewFile,
 	onOpenReviewerTerminal,
@@ -342,7 +343,7 @@ function ReviewsView({
 			<ReviewsSection onOpenReviewFile={onOpenReviewFile} onOpenReviewerTerminal={onOpenReviewerTerminal} session={session} />
 		</div>
 	);
-}
+});
 
 function InspectorPolicyRow({
 	id,
@@ -390,7 +391,6 @@ function InspectorPolicyRow({
 				disabled={disabled}
 				id={id}
 				onCheckedChange={onCheckedChange}
-				size="sm"
 			/>
 		</div>
 	);
@@ -400,6 +400,8 @@ function UsageCostTelemetry({ usage }: { usage: SessionUsage }) {
 	const { t } = useTranslation();
 	const processedTokens = usageProcessedTokens(usage.totals);
 	const exactProcessed = processedTokens?.toLocaleString("en-US");
+	const estimatedCost = formatEstimatedCost(usage.totals.estimatedCost);
+	const showsAgentCost = usage.harnesses.some((harness) => harness.totals.estimatedCost !== null);
 
 	return (
 		<div>
@@ -419,12 +421,12 @@ function UsageCostTelemetry({ usage }: { usage: SessionUsage }) {
 					</p>
 				</div>
 				<div className="min-w-0 text-right">
-					<p className="text-2xs text-settings-muted">{t("inspector.usage.estimatedCost")}</p>
-					<p
-						className="mt-0.5 truncate text-sm-md text-settings-muted"
-						title={t("inspector.usage.costComingSoon")}
-					>
-						{t("inspector.usage.comingSoon")}
+					<div className="flex items-center justify-end gap-1">
+						<p className="text-2xs text-settings-muted">{t("inspector.usage.estimatedCost")}</p>
+						<EstimatedCostInfo cost={usage.totals.estimatedCost} />
+					</div>
+					<p className="mt-0.5 truncate font-mono text-sm-md font-medium text-settings-label">
+						{estimatedCost ?? t("usage.unavailable")}
 					</p>
 				</div>
 			</div>
@@ -442,15 +444,18 @@ function UsageCostTelemetry({ usage }: { usage: SessionUsage }) {
 				<UsageAgentAttribution harness={usage.harnesses[0]} />
 			) : usage.harnesses.length > 1 ? (
 				<div className="mt-2 border-t border-(--color-border-settings-input) pt-1.5">
-					<div className="grid grid-cols-[minmax(0,1fr)_4.5rem_5.5rem] items-center gap-2 px-1 pb-0.5 text-2xs text-settings-muted">
+					<div
+						className={`grid ${usageRowColumns(showsAgentCost)} items-center gap-2 px-1 pb-0.5 text-2xs text-settings-muted`}
+					>
 						<span>{t("inspector.usage.agent")}</span>
 						<span className="text-right">{t("inspector.usage.tokens")}</span>
-						<span className="text-right">{t("inspector.usage.cost")}</span>
+						{showsAgentCost ? <span className="text-right">{t("inspector.usage.cost")}</span> : null}
 					</div>
 					{usage.harnesses.map((harness, index) => (
 						<UsageProviderRow
 							harness={harness}
 							key={`${harness.harness}:${index}`}
+							showCost={showsAgentCost}
 						/>
 					))}
 				</div>
@@ -583,7 +588,13 @@ function AutoInjectCIPolicyControl({ session }: { session: WorkspaceSession }) {
 	);
 }
 
-function UsageProviderRow({ harness }: { harness: SessionUsage["harnesses"][number] }) {
+function UsageProviderRow({
+	harness,
+	showCost,
+}: {
+	harness: SessionUsage["harnesses"][number];
+	showCost: boolean;
+}) {
 	const { t } = useTranslation();
 	const harnessName = formatHarnessName(harness.harness);
 
@@ -594,6 +605,7 @@ function UsageProviderRow({ harness }: { harness: SessionUsage["harnesses"][numb
 			name={harnessName}
 			nameClassName="text-sm-md"
 			regionLabel={t("inspector.usage.providerPeek", { name: harnessName })}
+			showCost={showCost}
 			totals={harness.totals}
 		>
 			<ProviderUsageDetails harness={harness} />
@@ -603,12 +615,17 @@ function UsageProviderRow({ harness }: { harness: SessionUsage["harnesses"][numb
 
 function ProviderUsageDetails({ harness }: { harness: SessionUsage["harnesses"][number] }) {
 	const { t } = useTranslation();
+	const showCost = harness.models.some((model) => model.totals.estimatedCost !== null);
 
 	return (
 		<div>
 			{harness.models.length > 0 ? (
 				harness.models.map((model, index) => (
-					<UsageModelRow key={`${model.modelId}:${index}`} model={model} />
+					<UsageModelRow
+						key={`${model.modelId}:${index}`}
+						model={model}
+						showCost={showCost}
+					/>
 				))
 			) : (
 				<p className="px-1 py-1 text-2xs text-settings-muted">{t("inspector.usage.noModelTelemetry")}</p>
@@ -679,8 +696,10 @@ function updateSessionAutoInjectCI(
 
 function UsageModelRow({
 	model,
+	showCost,
 }: {
 	model: SessionUsage["harnesses"][number]["models"][number];
+	showCost: boolean;
 }) {
 	const { t } = useTranslation();
 	const modelName = formatModelName(model.modelId);
@@ -692,11 +711,19 @@ function UsageModelRow({
 			nameClassName="text-2xs"
 			nameTitle={model.modelId}
 			regionLabel={t("inspector.usage.modelPeek", { name: modelName })}
+			showCost={showCost}
 			totals={model.totals}
 		>
 			<UsageMetrics totals={model.totals} />
 		</UsageDisclosureRow>
 	);
+}
+
+// usageRowColumns keeps the disclosure rows aligned with their header. The cost
+// column is dropped entirely when no row in the list has an estimate, so an
+// install without pricing shows no empty column at all.
+function usageRowColumns(showCost: boolean): string {
+	return showCost ? "grid-cols-[minmax(0,1fr)_4.5rem_5.5rem]" : "grid-cols-[minmax(0,1fr)_4.5rem]";
 }
 
 function UsageDisclosureRow({
@@ -707,6 +734,7 @@ function UsageDisclosureRow({
 	nameClassName,
 	nameTitle,
 	regionLabel,
+	showCost,
 	totals,
 }: {
 	children: ReactNode;
@@ -716,6 +744,7 @@ function UsageDisclosureRow({
 	nameClassName: string;
 	nameTitle?: string;
 	regionLabel: string;
+	showCost: boolean;
 	totals: SessionUsage["totals"];
 }) {
 	const { t } = useTranslation();
@@ -730,7 +759,7 @@ function UsageDisclosureRow({
 				aria-controls={detailID}
 				aria-expanded={open}
 				aria-label={detailsLabel}
-				className="grid w-full grid-cols-[minmax(0,1fr)_4.5rem_5.5rem] items-center gap-2 rounded-md px-1 py-1 text-left outline-none transition-colors hover:bg-interactive-hover focus-visible:bg-interactive-hover focus-visible:ring-1 focus-visible:ring-ring"
+				className={`grid w-full ${usageRowColumns(showCost)} items-center gap-2 rounded-md px-1 py-1 text-left outline-none transition-colors hover:bg-interactive-hover focus-visible:bg-interactive-hover focus-visible:ring-1 focus-visible:ring-ring`}
 				onClick={() => setOpen((current) => !current)}
 				type="button"
 			>
@@ -749,7 +778,7 @@ function UsageDisclosureRow({
 				>
 					{processedTokens === null ? "—" : formatTelemetryTokenValue(processedTokens)}
 				</span>
-				<UsageCostPlaceholder />
+				{showCost ? <UsageCostValue cost={totals.estimatedCost} /> : null}
 			</button>
 			{open ? (
 				<div
@@ -765,13 +794,56 @@ function UsageDisclosureRow({
 	);
 }
 
-function UsageCostPlaceholder() {
+// UsageCostValue renders one row's cost inside a column that some sibling row
+// already justified. Once the column is on screen the absence is a real answer
+// about that agent, so it says so in words — a dash beside a priced neighbour
+// reads as a rendering gap rather than "this one could not be priced".
+function UsageCostValue({ cost }: { cost: EstimatedCost | null }) {
 	const { t } = useTranslation();
-	const label = t("inspector.usage.metricUnavailable", { label: t("inspector.usage.cost") });
+	const value = formatEstimatedCost(cost);
+	const label = value ?? t("inspector.usage.metricUnavailable", { label: t("inspector.usage.cost") });
 	return (
-		<span aria-label={label} className="text-right font-mono text-2xs text-settings-muted" title={label}>
-			—
+		<span aria-label={label} className="text-right font-mono text-2xs text-settings-label" title={label}>
+			{value ?? t("usage.unavailable")}
 		</span>
+	);
+}
+
+/**
+ * Contextual disclosure for the estimated-cost heading.
+ *
+ * Coverage never reaches the presented value as a qualifier, so this is where a
+ * partial estimate says so — in words, next to the heading, rather than as a `≥`
+ * the reader has to decode. Hover and keyboard focus both open it.
+ */
+function EstimatedCostInfo({ cost }: { cost: EstimatedCost | null }) {
+	const { t } = useTranslation();
+	const label = t("usage.estimatedCostInfoLabel");
+	const providerInfoKey = cost?.providerAttribution === "inferred"
+		? "usage.estimatedCostInfoInferred"
+		: cost?.providerAttribution === "mixed"
+			? "usage.estimatedCostInfoMixed"
+			: "usage.estimatedCostInfo";
+	return (
+		<Tooltip>
+			<TooltipTrigger asChild>
+				<button
+					aria-label={label}
+					className="rounded-sm text-settings-muted outline-none transition-colors hover:text-settings-label focus-visible:ring-1 focus-visible:ring-ring"
+					type="button"
+				>
+					<Info aria-hidden="true" className="size-3" />
+				</button>
+			</TooltipTrigger>
+			{/* Opens upward: the figure it explains sits directly under the heading,
+			    so a downward tooltip covers the very number the reader came for. */}
+			<TooltipContent className="max-w-64 text-left" side="top">
+				<p>{t(providerInfoKey)}</p>
+				{cost?.coverage === "partial" ? (
+					<p className="mt-1.5">{t("usage.estimatedCostInfoPartial")}</p>
+				) : null}
+			</TooltipContent>
+		</Tooltip>
 	);
 }
 
@@ -873,7 +945,7 @@ function usageScopes(usage: SessionUsage): SessionUsage["totals"][] {
 function hasMeaningfulSessionUsage(usage?: SessionUsage): usage is SessionUsage {
 	if (!usage) return false;
 	return usageScopes(usage).some((totals) =>
-		usageMetricKeys.some((key) => (totals[key] ?? 0) > 0),
+		totals.estimatedCost !== null || usageMetricKeys.some((key) => (totals[key] ?? 0) > 0),
 	);
 }
 
@@ -901,6 +973,9 @@ function formatHarnessName(harness: string): string {
 		.join(" ");
 }
 
+// The billing provider stays out of the display name: the row already sits
+// under its agent, so the prefix only repeats context the reader has. The exact
+// model id remains available as the title.
 function formatModelName(modelID: string): string {
 	let parts = modelID.trim().split(/[-_]+/).filter(Boolean);
 	const isClaude = parts[0]?.toLowerCase() === "claude";
@@ -1039,22 +1114,29 @@ function SessionControls({ session }: { session: WorkspaceSession }) {
 			{session.kind === "orchestrator" ? null : canTerminateNow ? (
 				<div className="flex items-center justify-between gap-3 py-1">
 					<span className="min-w-0 text-xs font-medium text-settings-label">{t("inspector.terminateShort")}</span>
-					<SessionTerminationPopover
-						onConfirm={confirmTermination}
-						onOpenChange={setConfirmOpen}
-						open={confirmOpen}
-						session={session}
-						trigger={
-							<button
-								aria-label={t("inspector.terminate")}
-								className="inline-flex size-control-md items-center justify-center rounded-sm text-passive transition-colors hover:bg-error/10 hover:text-error focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
-								onClick={() => clearTerminateSessionState(queryClient, session.id)}
-								type="button"
-							>
-								<Trash2 className="size-icon-sm" aria-hidden="true" />
-							</button>
-						}
-					/>
+					<Tooltip>
+						<TooltipTrigger asChild>
+							<span className="inline-flex">
+								<SessionTerminationPopover
+									onConfirm={confirmTermination}
+									onOpenChange={setConfirmOpen}
+									open={confirmOpen}
+									session={session}
+									trigger={
+										<button
+											aria-label={t("inspector.terminate")}
+											className="inline-flex size-control-md items-center justify-center rounded-sm text-passive transition-colors hover:bg-error/10 hover:text-error focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
+											onClick={() => clearTerminateSessionState(queryClient, session.id)}
+											type="button"
+										>
+											<Trash2 className="size-icon-sm" aria-hidden="true" />
+										</button>
+									}
+								/>
+							</span>
+						</TooltipTrigger>
+						<TooltipContent side="bottom">{t("inspector.terminate")}</TooltipContent>
+					</Tooltip>
 				</div>
 			) : (
 				<>
@@ -1355,8 +1437,7 @@ function scmTimelineStates(session: WorkspaceSession): ScmTimelineState[] {
 
 /** Reviewer harness the daemon accepts, typed from the generated schema. */
 type ReviewerHarness = NonNullable<components["schemas"]["TriggerReviewRequest"]["harness"]>;
-type AgentInfo = components["schemas"]["AgentInfo"];
-type AgentCatalog = { supported?: AgentInfo[]; installed?: AgentInfo[]; authorized?: AgentInfo[] };
+type AgentCatalog = components["schemas"]["AgentReadinessResponse"];
 
 const WORKER_DEFAULT_REVIEWERS: Partial<Record<WorkspaceSession["provider"], ReviewerHarness>> = {
 	"claude-code": "claude-code",
@@ -1398,7 +1479,8 @@ function ReviewsSection({
 			return session.autoReviewEnabled === true ? 10_000 : false;
 		},
 	});
-	const agentsQuery = useQuery(agentsQueryOptions);
+	const agentsQuery = useAgentReadinessQuery();
+	useEnsureAgentReadiness();
 	const projectConfigQuery = useQuery({
 		queryKey: ["project-config", session.workspaceId],
 		enabled: hasPr,
@@ -1414,17 +1496,37 @@ function ReviewsSection({
 	// The reviewer preference belongs to the worker session, not this component
 	// or the whole project. Keep local state responsive while the daemon persists
 	// it, and resync when the inspector moves to another session.
+	const currentDefaultReviewerHarness = resolveDefaultReviewerHarness(projectConfigQuery.data, session.provider);
 	const [reviewerOverride, setReviewerOverride] = useState<ReviewerHarness | "">(
 		session.reviewerHarness ?? "",
 	);
+	const [reviewerModel, setReviewerModel] = useState(session.reviewerConfig?.model ?? "");
+	const [reviewerMode, setReviewerMode] = useState(session.reviewerConfig?.mode ?? "");
+	useEnsureAgentReadiness({
+		agentIds: reviewerOverride ? [reviewerOverride] : [],
+		enabled: reviewerOverride !== "",
+	});
 	useEffect(() => {
 		setReviewerOverride(session.reviewerHarness ?? "");
-	}, [session.id, session.reviewerHarness]);
+		setReviewerModel(session.reviewerConfig?.model ?? "");
+		setReviewerMode(session.reviewerConfig?.mode ?? "");
+	}, [session.id, session.reviewerConfig?.mode, session.reviewerConfig?.model, session.reviewerHarness]);
 	const saveReviewer = useMutation({
-		mutationFn: async (harness: ReviewerHarness | "") => {
+		mutationFn: async ({ harness, model, mode }: { harness: ReviewerHarness | ""; model: string; mode: string }) => {
+			const clearingToProjectDefault = harness === "" && model === "" && mode === "";
+			const currentEffectiveReviewerHarness = (session.reviewerHarness ?? "") || currentDefaultReviewerHarness;
+			const nextEffectiveReviewerHarness = harness || currentDefaultReviewerHarness;
+			const existingReviewerConfig =
+				!clearingToProjectDefault && currentEffectiveReviewerHarness === nextEffectiveReviewerHarness
+					? session.reviewerConfig
+					: undefined;
+			const nextReviewerConfig = buildReviewerAgentConfig(existingReviewerConfig, model, mode);
 			const { data, error } = await apiClient.POST("/api/v1/sessions/{sessionId}/reviews/switch", {
 				params: { path: { sessionId: session.id } },
-				body: { harness: harness || undefined },
+				body: {
+					harness: harness || undefined,
+					agentConfig: nextReviewerConfig,
+				},
 			});
 			if (error) throw new Error(apiErrorMessage(error, "Unable to save reviewer"));
 			if (data) queryClient.setQueryData(["session-reviews", session.id], data);
@@ -1451,18 +1553,14 @@ function ReviewsSection({
 	});
 	const triggerReview = useMutation({
 		mutationFn: async () => {
-			// Emitted before the request: these renderer events count INTENT, and the
-			// daemon's ao.review.* events are the ground truth for what actually ran.
-			void captureRendererEvent("ao.renderer.review_triggered", {
-				action: reviewRunActionKind(openReviewStatesFor(session, reviewsQuery.data?.reviews ?? []), false),
-				has_override: reviewerOverride !== "",
-				source: "inspector",
-			});
 			// No override sends no body at all, leaving the default path on the wire
 			// exactly as it was.
+			const reviewerConfig = reviewerModel || reviewerMode
+				? { ...(reviewerModel ? { model: reviewerModel } : {}), ...(reviewerMode ? { mode: reviewerMode } : {}) }
+				: undefined;
 			const { data, error, response } = await apiClient.POST("/api/v1/sessions/{sessionId}/reviews/trigger", {
 				params: { path: { sessionId: session.id } },
-				...(reviewerOverride ? { body: { harness: reviewerOverride } } : {}),
+				...(reviewerOverride || reviewerConfig ? { body: { ...(reviewerOverride ? { harness: reviewerOverride } : {}), ...(reviewerConfig ? { agentConfig: reviewerConfig } : {}) } } : {}),
 			});
 			if (error) throw new Error(apiErrorMessage(error, t("inspector.unableStartReview")));
 			return { data, reused: response?.status === 200 };
@@ -1552,9 +1650,18 @@ function ReviewsSection({
 				notice={reviewNotice}
 				agentCatalog={agentsQuery.data}
 				reviewerOverride={reviewerOverride}
-				onReviewerOverrideChange={(next) => {
+				reviewerModel={reviewerModel}
+				reviewerMode={reviewerMode}
+				onReviewerOverrideChange={(next, config) => {
 					setReviewerOverride(next);
-					saveReviewer.mutate(next);
+					setReviewerModel(config.model ?? "");
+					setReviewerMode(config.mode ?? "");
+					saveReviewer.mutate({ harness: next, model: config.model ?? "", mode: config.mode ?? "" });
+				}}
+				onReviewerHarnessPreviewChange={(next) => {
+					setReviewerOverride(next);
+					setReviewerModel("");
+					setReviewerMode("");
 				}}
 				session={session}
 			/>
@@ -1931,6 +2038,19 @@ function renderReviewMarkdown(body: string) {
 	);
 }
 
+function buildReviewerAgentConfig(
+	existing: WorkspaceSession["reviewerConfig"] | undefined,
+	model: string,
+	mode: string,
+): { model?: string; mode?: string; permissions?: string } | undefined {
+	const next = { ...existing };
+	if (model) next.model = model;
+	else delete next.model;
+	if (mode) next.mode = mode;
+	else delete next.mode;
+	return Object.keys(next).length > 0 ? next : undefined;
+}
+
 function formatInlineReviewCommentMessage(comment: InspectorInlineComment & { reviewerId?: string }): string {
 	const reviewer = sanitizeWorkerMessagePart(comment.reviewerId?.trim() || "unknown reviewer");
 	const file = sanitizeWorkerMessagePart(comment.file?.trim() || "");
@@ -2001,7 +2121,10 @@ function ReviewPanel({
 	notice,
 	agentCatalog,
 	reviewerOverride,
+	reviewerModel,
+	reviewerMode,
 	onReviewerOverrideChange,
+	onReviewerHarnessPreviewChange,
 	onTrigger,
 	onCancel,
 	onAutoReviewChange,
@@ -2021,7 +2144,10 @@ function ReviewPanel({
 	notice: string | null;
 	agentCatalog?: AgentCatalog;
 	reviewerOverride: ReviewerHarness | "";
-	onReviewerOverrideChange: (next: ReviewerHarness | "") => void;
+	reviewerModel: string;
+	reviewerMode: string;
+	onReviewerOverrideChange: (next: ReviewerHarness | "", config: { model?: string; mode?: string }) => void;
+	onReviewerHarnessPreviewChange: (next: ReviewerHarness | "") => void;
 	onTrigger: () => void;
 	onCancel: () => void;
 	onAutoReviewChange: (enabled: boolean) => void;
@@ -2133,17 +2259,18 @@ function ReviewPanel({
 						</span>
 						<ReviewerSelect
 							ariaLabel={t("inspector.selectReviewerAgent")}
-							authorized={agentCatalog?.authorized}
+							agents={agentCatalog?.agents}
 							contentAlign="end"
 							defaultHarness={resolvedDefaultHarness}
 							defaultOptionLabel={agentLabel(resolvedDefaultHarness)}
 							disabled={reviewRunning || autoReviewEnabled || isKilling || isSwitchingReviewer || isTriggering || isCancelling}
-							installed={agentCatalog?.installed}
-							onChange={(next) => onReviewerOverrideChange(next as ReviewerHarness | "")}
-							supported={agentCatalog?.supported}
+							onChange={(next) => onReviewerHarnessPreviewChange(next as ReviewerHarness | "")}
+							onConfigChange={(harness, config) => onReviewerOverrideChange(harness as ReviewerHarness | "", config)}
+							model={reviewerModel}
+							mode={reviewerMode}
+							projectId={session.workspaceId}
 							triggerClassName="review-run-agent-select ml-auto h-control-md w-auto min-w-0 max-w-[11rem] shrink-0 justify-end px-2 text-right text-xs"
 							value={reviewerOverride}
-							excludedHarness={resolvedDefaultHarness}
 							showDefaultOption
 						/>
 					</div>
@@ -2159,36 +2286,39 @@ function ReviewPanel({
 					<div className="flex min-h-10 min-w-0 items-center justify-between gap-3 py-2">
 						<span className="text-xs font-medium text-foreground">{t("inspector.review.session")}</span>
 						<div className="flex min-w-0 items-center justify-end gap-1.5">
-							<Tooltip>
-								<TooltipTrigger asChild>
-									<Button
-										aria-label={primaryReviewActionLabel}
-										className="shrink-0 gap-1 px-1.5 text-xs [&_svg]:size-icon-sm"
-										disabled={reviewRunning ? isCancelling || isKilling || isSwitchingReviewer : runDisabled || autoReviewEnabled}
-										onClick={reviewRunning ? onCancel : onTrigger}
-										size="sm"
-										type="button"
-										variant={reviewRunning ? "ghost" : reviewHasRun ? "secondary" : "primary"}
-									>
-										{reviewRunning ? <X aria-hidden="true" /> : <Play aria-hidden="true" />}
-										<span className="review-run-action-label">{primaryReviewActionLabel}</span>
-									</Button>
-								</TooltipTrigger>
-								<TooltipContent side="top">{primaryReviewActionLabel}</TooltipContent>
-							</Tooltip>
-							{hasReviewerSession ? (
-								<Button
-								aria-label={isKilling ? t("inspector.review.killingSession") : t("inspector.review.killSession")}
-								className="h-control-md w-control-md shrink-0 p-0 text-error [&_svg]:size-icon-sm"
-								disabled={killDisabled}
-								onClick={onKill}
+							<Button
+								aria-label={primaryReviewActionLabel}
+								className="shrink-0 gap-1 px-1.5 text-xs [&_svg]:size-icon-sm"
+								disabled={reviewRunning ? isCancelling || isKilling || isSwitchingReviewer : runDisabled || autoReviewEnabled}
+								onClick={reviewRunning ? onCancel : onTrigger}
 								size="sm"
-								title={isKilling ? t("inspector.review.killingSession") : t("inspector.review.killSession")}
 								type="button"
-								variant="ghost"
+								variant={reviewRunning ? "ghost" : reviewHasRun ? "secondary" : "primary"}
 							>
-								<Trash2 aria-hidden="true" />
+								{reviewRunning ? <X aria-hidden="true" /> : <Play aria-hidden="true" />}
+								<span className="review-run-action-label">{primaryReviewActionLabel}</span>
 							</Button>
+							{hasReviewerSession ? (
+								<Tooltip>
+									<TooltipTrigger asChild>
+										<span className="inline-flex">
+											<Button
+												aria-label={isKilling ? t("inspector.review.killingSession") : t("inspector.review.killSession")}
+												className="h-control-md w-control-md shrink-0 p-0 text-error [&_svg]:size-icon-sm"
+												disabled={killDisabled}
+												onClick={onKill}
+												size="sm"
+												type="button"
+												variant="ghost"
+											>
+												<Trash2 aria-hidden="true" />
+											</Button>
+										</span>
+									</TooltipTrigger>
+									<TooltipContent side="bottom">
+										{isKilling ? t("inspector.review.killingSession") : t("inspector.review.killSession")}
+									</TooltipContent>
+								</Tooltip>
 							) : null}
 						</div>
 					</div>
