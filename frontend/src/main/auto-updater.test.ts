@@ -190,10 +190,12 @@ describe("macOS differential update policy", () => {
     const production = await vi.importActual<{ default: { enabled: boolean } }>("../../scripts/mac-differential-rollout.json");
     expect(production.default.enabled).toBe(false);
     const { module, autoUpdater } = await importAutoUpdater(nightly, { rolloutReady: production.default.enabled });
+    const stockLogger = autoUpdater.logger;
     await module.setMacDifferentialUpdates(stateDir, true);
     await module.checkForUpdatesNow(stateDir);
     await module.downloadUpdateNow();
     expect(autoUpdater.disableDifferentialDownload).toBe(true);
+    expect(autoUpdater.logger).toBe(stockLogger);
   });
 
   it("starts fail-closed before settings hydration", async () => {

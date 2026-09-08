@@ -93,7 +93,7 @@ export function applyUpdaterPolicy(
 // This observes the pinned dependency's phase messages, never its raw URLs,
 // paths, HTTP headers or error stacks. Unknown messages cannot leak credentials.
 function wireUpdaterLogger(): void {
-  if (updaterLoggerWired || process.platform !== "darwin") return;
+  if (updaterLoggerWired || process.platform !== "darwin" || macDifferentialRollout.enabled !== true) return;
   updaterLoggerWired = true;
   const base = autoUpdater.logger ?? console;
   const observe = (level: "info" | "warn" | "error" | "debug", first: unknown) => {
