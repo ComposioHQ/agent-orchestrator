@@ -13,6 +13,7 @@ import {
 	GitBranch,
 	GitFork,
 	Link2,
+	LoaderCircle,
 	X,
 	XCircle,
 } from "lucide-react";
@@ -1779,20 +1780,37 @@ function ProjectImportDialog({
 														) : null}
 													</AnimatePresence>
 												</div>
-												<Input
-													id="githubRepoName"
-													aria-label={t("createProject.githubRepositoryName")}
-													aria-describedby={availability.state === "unavailable" ? "githubRepoNameError" : undefined}
-													aria-invalid={availability.state === "unavailable" ? true : undefined}
-													className="h-8 bg-[var(--color-bg-import-card)] font-mono text-[12px]"
-													disabled={disabled}
-													value={githubRepository?.name ?? ""}
-													onChange={(event) => {
-														const next = { owner: githubRepository?.owner ?? "", name: event.target.value, private: githubRepository?.private ?? true };
-														onChangeGitHubRepository(next);
-														onChangeRemote(githubRepositoryRemoteUrl(next));
-													}}
-												/>
+												<div className="relative">
+													<Input
+														id="githubRepoName"
+														aria-label={t("createProject.githubRepositoryName")}
+														aria-describedby={availability.state === "unavailable" ? "githubRepoNameError" : undefined}
+														aria-invalid={availability.state === "unavailable" ? true : undefined}
+														className="h-8 bg-[var(--color-bg-import-card)] pr-8 font-mono text-[12px]"
+														disabled={disabled}
+														value={githubRepository?.name ?? ""}
+														onChange={(event) => {
+															const next = { owner: githubRepository?.owner ?? "", name: event.target.value, private: githubRepository?.private ?? true };
+															onChangeGitHubRepository(next);
+															onChangeRemote(githubRepositoryRemoteUrl(next));
+														}}
+													/>
+													<AnimatePresence initial={false}>
+														{availability.state === "checking" ? (
+															<motion.span
+																initial={{ opacity: 0, filter: "blur(2px)" }}
+																animate={{ opacity: 1, filter: "blur(0px)" }}
+																exit={{ opacity: 0, filter: "blur(2px)" }}
+																transition={{ duration: 0.15, ease: "easeOut" }}
+																className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2"
+																aria-label={t("createProject.githubRepoChecking")}
+																role="status"
+															>
+																<LoaderCircle className="size-3.5 animate-spin text-muted-foreground" aria-hidden="true" />
+															</motion.span>
+														) : null}
+													</AnimatePresence>
+												</div>
 											</div>
 											<div className="flex items-center justify-between py-0.5">
 												<Label htmlFor="githubRepoPrivate" className="text-[12px] font-medium text-[var(--color-text-import-title)]">
