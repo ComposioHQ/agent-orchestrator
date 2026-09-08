@@ -1734,7 +1734,7 @@ function ProjectImportDialog({
 							<section className="space-y-2">
 								{needsRemote ? (
 									<p className="text-[14px] leading-5 text-[var(--color-text-import-muted)]">
-										<code className="rounded bg-muted px-1.5 py-0.5 font-mono text-[0.9em] text-foreground">{githubName || projectNameFromPath(validation.root.repoPath)}</code>{" "}
+										<code className="rounded bg-muted px-1.5 py-0.5 font-mono text-[0.9em] text-foreground">{projectNameFromPath(validation.root.repoPath)}</code>{" "}
 										{t("createProject.noGitHubRemote")}
 									</p>
 								) : null}

@@ -956,6 +956,7 @@ describe("CreateProjectFlow project import validation", () => {
 		await user.type(repoNameInput, "project-new");
 
 		await waitFor(() => expect(bridgeMocks.checkGitHubRepositoryAvailability).toHaveBeenLastCalledWith({ owner: "username", name: "project-new" }));
+		expect(screen.getByText("project")).toBeInTheDocument();
 		expect(screen.queryByText("Repository name is available.")).not.toBeInTheDocument();
 			expect(screen.getByRole("button", { name: "Create repository and continue" })).toBeEnabled();
 	});
