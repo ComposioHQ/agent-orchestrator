@@ -569,6 +569,7 @@ func genPRParams(r domain.PullRequest) gen.UpsertPRParams {
 		Deletions:                int64(r.Deletions),
 		ChangedFiles:             int64(r.ChangedFiles),
 		Author:                   r.Author,
+		AuthorAvatarURL:          r.AuthorAvatarURL,
 		BaseSha:                  r.BaseSHA,
 		MergeCommitSha:           r.MergeCommitSHA,
 		IsDraft:                  boolInt(r.Draft),
@@ -672,6 +673,7 @@ func prRowFromGen(p gen.PR) domain.PullRequest {
 		Deletions:                int(p.Deletions),
 		ChangedFiles:             int(p.ChangedFiles),
 		Author:                   p.Author,
+		AuthorAvatarURL:          p.AuthorAvatarURL,
 		BaseSHA:                  p.BaseSha,
 		MergeCommitSHA:           p.MergeCommitSha,
 		ProviderState:            p.ProviderState,
@@ -716,7 +718,7 @@ func genCommentParams(prURL string, c domain.PullRequestComment) gen.UpsertPRCom
 	return gen.UpsertPRCommentParams{
 		PRURL: prURL, CommentID: c.ID, Author: c.Author, File: c.File,
 		Line: int64(c.Line), Body: c.Body, Resolved: c.Resolved, CreatedAt: c.CreatedAt,
-		ThreadID: c.ThreadID, URL: c.URL, IsBot: boolInt(c.IsBot), AutoInjectReview: c.AutoInjectReview,
+		ThreadID: c.ThreadID, ReviewID: c.ReviewID, URL: c.URL, IsBot: boolInt(c.IsBot), AutoInjectReview: c.AutoInjectReview,
 	}
 }
 
@@ -724,13 +726,13 @@ func genLegacyCommentParams(prURL string, c domain.PullRequestComment) gen.Inser
 	return gen.InsertLegacyPRCommentParams{
 		PRURL: prURL, CommentID: c.ID, Author: c.Author, File: c.File,
 		Line: int64(c.Line), Body: c.Body, Resolved: c.Resolved, CreatedAt: c.CreatedAt,
-		ThreadID: "", URL: "", IsBot: 0,
+		ThreadID: "", ReviewID: c.ReviewID, URL: "", IsBot: 0,
 	}
 }
 
 func commentFromGen(c gen.PRComment) domain.PullRequestComment {
 	return domain.PullRequestComment{
-		ThreadID: c.ThreadID, ID: c.CommentID, Author: c.Author,
+		ThreadID: c.ThreadID, ReviewID: c.ReviewID, ID: c.CommentID, Author: c.Author,
 		File: c.File, Line: int(c.Line), Body: c.Body, URL: c.URL,
 		Resolved: c.Resolved, IsBot: c.IsBot != 0, CreatedAt: c.CreatedAt,
 		AutoInjectReview: c.AutoInjectReview,

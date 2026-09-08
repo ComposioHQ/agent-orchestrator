@@ -180,6 +180,7 @@ function mockReviewsResponse(session: WorkspaceSession): ReviewsResponse {
 			targetSha: state.targetSha,
 		};
 		return [
+			...(state.latestRun?.body?.trim() ? [state.latestRun] : []),
 			{
 				...base,
 				id: `demo-hist-${state.prNumber}-a`,

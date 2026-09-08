@@ -10,6 +10,7 @@ on:
   pull_request:
     paths:
       - "frontend/**"
+      - ".github/workflows/**"
       - "contracts/cloud/**"
       - "packages/cloud-client/**"
       - "packages/product-ui/**"
@@ -117,6 +118,12 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
 
       - run: npm ci
+
+      # The performance fixture imports real renderer components, which in turn
+      # typecheck product-ui source through the frontend's TS path alias.
+      - name: Install product UI dependencies
+        run: npm ci
+        working-directory: packages/product-ui
 
       - name: Typecheck e2e suite
         # Playwright transpiles specs without typechecking, so the

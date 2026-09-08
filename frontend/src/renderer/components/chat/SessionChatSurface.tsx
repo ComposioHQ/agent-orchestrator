@@ -8,7 +8,7 @@
  */
 
 import { AlertTriangle, CheckCircle2, Loader2, X } from "lucide-react";
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import {
 	findActiveAgentSwitch,
@@ -16,6 +16,7 @@ import {
 	useAgentSwitches,
 } from "../../hooks/useAgentSwitches";
 import { useObservedAgentSwitchLifecycle } from "../../hooks/useObservedAgentSwitchLifecycle";
+import { useAgentSwitchPresentationVisibility, useAgentSwitchRouteVisibility } from "../../hooks/useAgentSwitchVisibility";
 import { useSwitchAgentState } from "../../hooks/useSwitchAgent";
 import {
 	useConversation,
@@ -26,10 +27,12 @@ import {
 	useStageAttachments,
 	useWorkspaceFilePaths,
 } from "../../hooks/useConversation";
+import { useRememberProjectPermissions } from "../../hooks/useRememberProjectPermissions";
 import { useSessionBrowserLink } from "../../hooks/useSessionBrowserLink";
 import type { ShellTerminal } from "../../hooks/useShellTerminals";
 import {
 	deriveAgentSwitchPresentation,
+	agentSwitchVisibilityPresentationKind,
 	type AgentSwitchPresentation,
 } from "../../lib/agent-switch-presentation";
 import { cn } from "../../lib/utils";
@@ -39,13 +42,19 @@ import type { ConversationSnapshot } from "../../types/conversation";
 import type { TerminalTarget } from "../../types/terminal";
 import type { AgentSwitchSummary, WorkspaceSession } from "../../types/workspace";
 import { AgentSwitchProgressTrack } from "../AgentSwitchProgressTrack";
-import { TerminalSwitchAgentButton } from "../TerminalSwitchAgentButton";
 import { ChatWorkspace } from "./ChatWorkspace";
+
+export interface ConversationWorkState {
+	controllerBusy: boolean;
+	hasRunningTurn: boolean;
+	queuedTurnCount: number;
+}
 
 export function SessionChatSurface({
 	session,
 	reviewerTerminal,
 	onOpenReviewerTerminal,
+	onSessionRenamed,
 	reviewerTarget,
 	onSelectChat,
 	shellTerminals,
@@ -58,12 +67,26 @@ export function SessionChatSurface({
 	onOpenShell,
 	openingShell,
 	shellError,
+	onOpenFiles,
+	onOpenFile,
 	headerActions,
+	sessionTabAction,
+	tabStripAction,
+	handoffDialogOpen = false,
+	workspaceTabs,
+	workspaceTabActions,
+	workspaceActiveTabKey,
+	workspaceFileActive,
+	auxiliaryTabOrder,
+	onAuxiliaryTabOrderChange,
 	controllerTransitioning,
+	newWorkDisabled,
+	onConversationWorkChange,
 }: {
 	session: WorkspaceSession;
 	reviewerTerminal?: { handleId: string; harness: string };
 	onOpenReviewerTerminal?: (target: { handleId: string; harness: string }) => void;
+	onSessionRenamed?: () => void | Promise<void>;
 	reviewerTarget?: Extract<TerminalTarget, { kind: "reviewer" }>;
 	onSelectChat?: () => void;
 	/** This session's standalone shells, rendered as tabs in the chat header. */
@@ -78,12 +101,31 @@ export function SessionChatSurface({
 	onOpenShell?: () => void;
 	openingShell?: boolean;
 	shellError?: string;
+	/** Opens the Files inspector from a turn's changed-files Review control. */
+	onOpenFiles?: () => void;
+	/** Opens the Files inspector focused on one changed path. */
+	onOpenFile?: (path: string) => void;
 	headerActions?: ReactNode;
+	sessionTabAction?: ReactNode;
+	tabStripAction?: ReactNode;
+	handoffDialogOpen?: boolean;
+	workspaceTabs?: Array<{ key: string; content: ReactNode; onSelect: () => void }>;
+	workspaceTabActions?: ReactNode;
+	workspaceActiveTabKey?: string;
+	/** A file overlay hides the chat surface, so it must not acknowledge switch UI. */
+	workspaceFileActive?: boolean;
+	/** Session-owned order shared with the terminal UI surface. */
+	auxiliaryTabOrder?: string[];
+	onAuxiliaryTabOrderChange?: (keys: string[]) => void;
 	/** The target controller is being installed by an interface handoff. */
 	controllerTransitioning?: boolean;
+	/** An interface handoff fences new agent work while current-turn decisions remain available. */
+	newWorkDisabled?: boolean;
+	/** Reports accepted Chat work that must inform an interface-switch policy choice. */
+	onConversationWorkChange?: (state: ConversationWorkState) => void;
 }) {
 	const {
-		snapshot,
+		snapshot: queriedSnapshot,
 		isLoading,
 		unavailable,
 		error,
@@ -91,10 +133,39 @@ export function SessionChatSurface({
 		isLoadingOlder,
 		loadOlder,
 	} = useConversation(session.id);
+	// Route props can move to the destination before the old query observer drops
+	// its data. Treat that snapshot as unknown everywhere, especially at the work
+	// boundary that decides whether switching to Terminal needs user consent.
+	const snapshot = queriedSnapshot?.sessionId === session.id ? queriedSnapshot : undefined;
 	const commands = useConversationCommands(session.id);
+	const projectPermissions = useRememberProjectPermissions(session.workspaceId, snapshot?.harness);
+	const { acknowledgeAcceptedTurn, pendingAcceptedTurnId } = commands;
+	const conversationWorkKnown = Boolean(snapshot);
+	const acceptedLocalTurnObserved = Boolean(
+		pendingAcceptedTurnId && snapshot?.turns.some((turn) => turn.id === pendingAcceptedTurnId),
+	);
+	const acceptedLocalWorkPending = Boolean(pendingAcceptedTurnId && !acceptedLocalTurnObserved);
+	const controllerBusy =
+		snapshot?.controller?.state === "busy" || commands.busy || acceptedLocalWorkPending;
+	const hasRunningTurn = Boolean(snapshot?.turns.some((turn) => turn.state === "running"));
+	const queuedTurnCount = snapshot?.turns.filter((turn) => turn.state === "queued").length ?? 0;
+	useEffect(() => {
+		if (acceptedLocalTurnObserved && pendingAcceptedTurnId) {
+			acknowledgeAcceptedTurn(pendingAcceptedTurnId);
+		}
+	}, [acceptedLocalTurnObserved, acknowledgeAcceptedTurn, pendingAcceptedTurnId]);
+	useEffect(() => {
+		if (!conversationWorkKnown) return;
+		onConversationWorkChange?.({ controllerBusy, hasRunningTurn, queuedTurnCount });
+	}, [controllerBusy, conversationWorkKnown, hasRunningTurn, onConversationWorkChange, queuedTurnCount]);
+	const targetChatControllerReady =
+		snapshot?.controller?.state === "ready" || snapshot?.controller?.state === "busy";
+	// Mode commits before the target controller starts. A cached ready snapshot
+	// can also outlive the source, so wait for the handoff's final snapshot refresh.
+	const controllerCatalogsEnabled = targetChatControllerReady && !controllerTransitioning && !newWorkDisabled;
 	const configOptions = useConversationConfigOptions(
 		session.id,
-		Boolean(snapshot && can(snapshot, "config_options")),
+		Boolean(controllerCatalogsEnabled && snapshot && can(snapshot, "config_options")),
 	);
 	// A provider config catalog may cover only model, only mode, or both.
 	// Suppress native controls only for dimensions the provider catalog replaces;
@@ -104,24 +175,19 @@ export function SessionChatSurface({
 		(option) => option.category === "mode" || option.id === "mode",
 	);
 	const hasProviderModel = providerOptions.some(
-		(option) => option.category === "model" || option.id === "model" || option.id === "agent",
+		(option) => option.category === "model" || option.id === "model",
 	);
 	// Only asked for once the conversation is actually readable: the catalog comes
 	// from the live controller, so there is nothing to fetch before then.
 	const { models } = useConversationModels(
 		session.id,
-		Boolean(snapshot) && !hasProviderModel,
+		controllerCatalogsEnabled && !hasProviderModel,
 	);
-	const { skills } = useConversationSkills(session.id, Boolean(snapshot));
+	const { skills } = useConversationSkills(session.id, controllerCatalogsEnabled);
 	const { paths, truncated } = useWorkspaceFilePaths(session.id, Boolean(snapshot));
 	const stageAttachments = useStageAttachments(session.id);
 	const openLinkInBrowser = useSessionBrowserLink(session);
-	// In-place agent switching is the same session-level operation in either
-	// interface; the chat header offers the same entry point the terminal pane's
-	// tab strip does. Mirrors CenterPane: dialog open flag plus the element the
-	// dialog anchors to (the workspace body, handed up by ChatWorkspace).
-	const [switchSelectorOpen, setSwitchSelectorOpen] = useState(false);
-	const [switchSelectorContainer, setSwitchSelectorContainer] = useState<HTMLDivElement | null>(null);
+	// Agent-switch presentation for the chat surface progress track and input locks.
 	const switchMutation = useSwitchAgentState(session.id);
 	const agentSwitches = useAgentSwitches(session.id).data ?? [];
 	const activeHistorySwitch = findActiveAgentSwitch(agentSwitches);
@@ -162,8 +228,7 @@ export function SessionChatSurface({
 			}
 			: undefined;
 	const agentSwitch = durableAgentSwitch ?? admissionAgentSwitch ?? observedTerminalSwitch;
-	const targetChatControllerReady =
-		snapshot?.controller?.state === "ready" || snapshot?.controller?.state === "busy";
+	useAgentSwitchRouteVisibility(`session/${session.id}`, agentSwitch && agentSwitch.state !== "completed" && agentSwitch.state !== "failed" ? "active" : "history", undefined, false);
 	const switchPresentation = agentSwitch
 		? deriveAgentSwitchPresentation({
 				agentSwitch,
@@ -193,8 +258,6 @@ export function SessionChatSurface({
 					? transientSuccessNotice?.presentation
 					: undefined
 				: switchPresentation ?? transientSuccessNotice?.presentation;
-	const switchControlPresentation =
-		switchPresentation ?? transientSuccessNotice?.presentation;
 	const switchLocksChat = Boolean(
 		switchPresentation?.lockAgentTerminal && !switchPresentation.allowSourceInput,
 	);
@@ -204,6 +267,20 @@ export function SessionChatSurface({
 		(renderShellFallback
 			? unavailableConversationSnapshot(session)
 			: undefined);
+	const visibilityPresentationKind = agentSwitchVisibilityPresentationKind(shownSwitchPresentation);
+	useAgentSwitchPresentationVisibility({
+		localRouteKey: `session/${session.id}`,
+		agentSwitch,
+		presentationKind: visibilityPresentationKind,
+		visible: Boolean(
+			shownSwitchPresentation &&
+				(!isLoading || renderShellFallback) &&
+				(!unavailable || renderShellFallback) &&
+				!error &&
+				renderSnapshot &&
+				!workspaceFileActive,
+		),
+	});
 
 	if (isLoading && !renderShellFallback) {
 		return (
@@ -247,12 +324,15 @@ export function SessionChatSurface({
 	return (
 		<div className="relative h-full min-h-0">
 			<ChatWorkspace
+				key={session.id}
 				snapshot={renderSnapshot}
-				agentInputDisabled={switchLocksChat || switchSelectorOpen}
+				agentInputDisabled={switchLocksChat || handoffDialogOpen}
+				newWorkDisabled={newWorkDisabled}
 				onLinkOpen={openLinkInBrowser}
 				sessionTitle={session.title}
 				sessionRole={session.kind}
 				session={session}
+				onSessionRenamed={onSessionRenamed}
 				reviewerTerminal={reviewerTerminal}
 				onOpenReviewerTerminal={onOpenReviewerTerminal}
 				reviewerTarget={reviewerTarget}
@@ -262,20 +342,16 @@ export function SessionChatSurface({
 				onSelectShellTerminal={onSelectShellTerminal}
 				onCloseShellTerminal={onCloseShellTerminal}
 				onRenameShellTerminal={onRenameShellTerminal}
-				switchAgentControl={
-					<TerminalSwitchAgentButton
-						container={switchSelectorContainer}
-						onOpenChange={setSwitchSelectorOpen}
-						open={switchSelectorOpen}
-						presentation={switchControlPresentation}
-						session={session}
-						switchError={switchMutation.error}
-					/>
-				}
-				switchDialogContainer={setSwitchSelectorContainer}
 				daemonReady={daemonReady}
 				theme={theme}
 				headerActions={headerActions}
+				sessionTabAction={sessionTabAction}
+				tabStripAction={tabStripAction}
+				workspaceTabs={workspaceTabs}
+				workspaceTabActions={workspaceTabActions}
+				workspaceActiveTabKey={workspaceActiveTabKey}
+				auxiliaryTabOrder={auxiliaryTabOrder}
+				onAuxiliaryTabOrderChange={onAuxiliaryTabOrderChange}
 				controllerTransitioning={controllerTransitioning}
 				hasOlder={hasOlder}
 				loadingOlder={isLoadingOlder}
@@ -296,9 +372,14 @@ export function SessionChatSurface({
 				shellError={shellError}
 				models={models}
 				onChooseSettings={hasProviderMode ? undefined : commands.chooseSettings}
+				onRememberPermissions={can(renderSnapshot, "config_options") && !configOptions.loaded
+					? undefined : projectPermissions.remember}
+				rememberPermissionsPending={projectPermissions.pending}
+				rememberPermissionsError={projectPermissions.error}
+				rememberedPermissionMode={projectPermissions.savedMode}
 				configOptions={configOptions.options}
 				onChooseConfigOption={configOptions.setOption}
-				configOptionPending={configOptions.pending}
+				configOptionPending={configOptions.pending || commands.choosingSettings}
 				configOptionError={configOptions.error}
 				onCompact={commands.compact}
 				compacting={commands.compacting}
@@ -306,6 +387,9 @@ export function SessionChatSurface({
 				onRollback={commands.rollback}
 				rollbackPending={commands.rollbackPending}
 				rollbackError={commands.rollbackError}
+				onOpenFiles={onOpenFiles}
+				onOpenFile={onOpenFile}
+				retryControl={commands.retryControl}
 				onEditMessage={commands.editMessage}
 				editMessagePending={commands.editMessagePending}
 				editMessageError={commands.editMessageError}
@@ -322,13 +406,20 @@ export function SessionChatSurface({
 				// covers the window before the controller reports, and it is the last word
 				// afterwards, since the capability is a property of the driver.
 				onSteer={can(renderSnapshot, "steer") && !commands.steerUnsupported ? commands.steer : undefined}
+				sendPending={commands.sendPending}
+				steerPending={commands.steerPending}
+				steerRefusal={commands.steerRefusal}
 				onPromoteQueuedTurn={
 					can(renderSnapshot, "steer") && !commands.steerUnsupported
 						? commands.promoteQueuedTurn
 						: undefined
 				}
-				steerPending={commands.steerPending}
-				steerRefusal={commands.steerRefusal}
+				onEditQueuedTurn={commands.editQueuedTurn}
+				onCancelQueuedTurn={commands.cancelQueuedTurn}
+				onReorderQueuedTurns={commands.reorderQueuedTurns}
+				promoteQueuedTurnPendingTurnId={commands.promoteQueuedTurnPendingTurnId}
+				cancelQueuedTurnPendingTurnId={commands.cancelQueuedTurnPendingTurnId}
+				editQueuedTurnPendingTurnId={commands.editQueuedTurnPendingTurnId}
 				onReloadMcpServers={
 					!can(renderSnapshot, "mcp_reload") || commands.mcpReloadUnsupported
 						? undefined

@@ -17,6 +17,7 @@ import {
 	TextInput,
 	View,
 } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { restoreSession, resumeSessionAgent, type DashboardSession, type OrchestratorLink } from "../api";
 import { haptics } from "../haptics";
 import { headerActionStyle } from "../headerAction";
@@ -76,6 +77,9 @@ export function ChatSessionScreen({ session }: { session: MobileChatSession }) {
 	const [openingShell, setOpeningShell] = useState(false);
 	const [resuming, setResuming] = useState(false);
 	const [keyboardHeight, setKeyboardHeight] = useState(0);
+	// Android's keyboard event reports its height with the nav bar subtracted; the
+	// root view draws under that nav bar, so screenKeyboardAvoidance adds it back.
+	const insets = useSafeAreaInsets();
 	const terminated = "projectName" in session ? Boolean(session.isTerminal) : Boolean(session.isTerminated);
 	const interfaceTransitionActive = mobileInterfaceTransitionIsActive(interfaceSwitch.transition);
 	const interfaceTransitionNotice =
@@ -109,7 +113,7 @@ export function ChatSessionScreen({ session }: { session: MobileChatSession }) {
 
 	useEffect(() => {
 		if (Platform.OS !== "android") return;
-		const avoidance = screenKeyboardAvoidance("android", 0);
+		const avoidance = screenKeyboardAvoidance("android", 0, 0);
 		const animate = (duration?: number) => LayoutAnimation.configureNext({
 			duration: duration || 250,
 			update: { type: LayoutAnimation.Types.keyboard },
@@ -262,7 +266,7 @@ export function ChatSessionScreen({ session }: { session: MobileChatSession }) {
 			style={[
 				styles.screen,
 				Platform.OS === "android" && keyboardHeight > 0
-					? { paddingBottom: screenKeyboardAvoidance("android", keyboardHeight).paddingBottom }
+					? { paddingBottom: screenKeyboardAvoidance("android", keyboardHeight, insets.bottom).paddingBottom }
 					: undefined,
 			]}
 			behavior={Platform.OS === "ios" ? "padding" : undefined}
@@ -482,7 +486,7 @@ const makeStyles = (t: Theme) => StyleSheet.create({
 	centerCopy: { color: t.textSecondary, fontSize: 13, lineHeight: 19, textAlign: "center" },
 	centerAction: { minHeight: 42, justifyContent: "center", backgroundColor: t.blue, borderRadius: 11, paddingHorizontal: 15, marginTop: 4 },
 	centerActionText: { color: t.onAccent, fontSize: 13, fontWeight: "700" },
-	menuScrim: { ...StyleSheet.absoluteFillObject, backgroundColor: t.scrim },
+	menuScrim: { ...StyleSheet.absoluteFill, backgroundColor: t.scrim },
 	menu: { ...centeredConversationMenu, top: 76, maxHeight: "75%", backgroundColor: t.bgSurface, borderRadius: 16, borderWidth: 1, borderColor: t.borderDefault, overflow: "hidden" },
 	menuHeading: { color: t.textPrimary, fontSize: 14, fontWeight: "700", paddingHorizontal: 14, paddingTop: 14, paddingBottom: 8 },
 	menuRow: { minHeight: 57, flexDirection: "row", alignItems: "center", gap: 11, paddingHorizontal: 14, paddingVertical: 9, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: t.borderSubtle },

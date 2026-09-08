@@ -74,8 +74,36 @@ func TestDoctorChecksTmuxVersion(t *testing.T) {
 	})
 
 	check := findDoctorCheck(t, c.runDoctor(context.Background()), "tmux")
-	if check.Level != doctorPass || !strings.Contains(check.Message, "3.3a") {
-		t.Fatalf("tmux check = %+v, want PASS with version", check)
+	if check.Level != doctorPass || !strings.Contains(check.Message, "3.3a") || !strings.Contains(check.Message, "system for this ao process") {
+		t.Fatalf("tmux check = %+v, want PASS with system source and version", check)
+	}
+}
+
+func TestDoctorPrefersAndReportsConfiguredTmux(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("ao doctor emits a conpty check on Windows, not tmux")
+	}
+	setConfigEnv(t)
+	bundled := filepath.Join(t.TempDir(), "resources", "tmux", "bin", "tmux")
+	c := doctorContext(t, map[string]string{"git": "/bin/git", bundled: bundled, "tmux": "/bin/tmux"}, func(_ context.Context, name string, args ...string) ([]byte, error) {
+		switch name {
+		case "/bin/git":
+			return []byte("git version 2.43.0\n"), nil
+		case bundled:
+			if len(args) != 1 || args[0] != "-V" {
+				t.Fatalf("unexpected tmux command: %s %v", name, args)
+			}
+			return []byte("tmux 3.5a\n"), nil
+		default:
+			t.Fatalf("unexpected command: %s %v", name, args)
+			return nil, nil
+		}
+	})
+	t.Setenv("AO_TMUX_BINARY", bundled)
+
+	check := findDoctorCheck(t, c.runDoctor(context.Background()), "tmux")
+	if check.Level != doctorPass || !strings.Contains(check.Message, bundled) || !strings.Contains(check.Message, "configured for this ao process") || !strings.Contains(check.Message, "3.5a") {
+		t.Fatalf("tmux check = %+v, want PASS with configured source and version", check)
 	}
 }
 
@@ -111,6 +139,9 @@ func TestDoctorWarnsWhenTmuxMissing(t *testing.T) {
 	check := findDoctorCheck(t, c.runDoctor(context.Background()), "tmux")
 	if check.Level != doctorWarn {
 		t.Fatalf("tmux check = %+v, want WARN", check)
+	}
+	if !strings.Contains(check.Message, "no configured, bundled, or system tmux found") {
+		t.Fatalf("tmux check = %+v, want all lookup locations reported missing", check)
 	}
 }
 
@@ -454,17 +485,29 @@ func TestDoctorChecksAOBinaryIdentity(t *testing.T) {
 	}
 	selfExe := func() (string, error) { return self, nil }
 
+	daemon := filepath.Join(dir, "ao-bundled")
+	if err := os.WriteFile(daemon, []byte("#!/bin/sh\n"), 0o755); err != nil { //nolint:gosec // test fixture must be executable-shaped
+		t.Fatal(err)
+	}
+
 	cases := []struct {
 		name       string
 		executable func() (string, error)
+		daemonExe  string
 		paths      map[string]string
 		wantLevel  doctorLevel
 		wantIn     string
 	}{
-		{"ao in PATH is this binary", selfExe, map[string]string{"ao": self}, doctorPass, "this binary"},
-		{"ao in PATH is a different binary", selfExe, map[string]string{"ao": other}, doctorWarn, "not this binary"},
-		{"ao missing from PATH", selfExe, map[string]string{}, doctorWarn, "not found in PATH"},
-		{"running executable unresolvable", func() (string, error) { return "", errors.New("no exe") }, map[string]string{"ao": self}, doctorWarn, "could not resolve"},
+		{"ao in PATH is this binary", selfExe, "", map[string]string{"ao": self}, doctorPass, "this binary"},
+		{"ao in PATH is a different binary", selfExe, "", map[string]string{"ao": other}, doctorWarn, "not this binary"},
+		{"ao missing from PATH", selfExe, "", map[string]string{}, doctorWarn, "not found in PATH"},
+		{"running executable unresolvable", func() (string, error) { return "", errors.New("no exe") }, "", map[string]string{"ao": self}, doctorWarn, "could not resolve"},
+		// The running daemon is the authority: doctor may itself BE the
+		// shadowing copy, so comparing against its own executable would call
+		// the shadow a match. Both paths must be named in the warning.
+		{"ao in PATH shadows the running daemon", selfExe, daemon, map[string]string{"ao": self}, doctorWarn, "shadows the running daemon's binary " + daemon},
+		{"ao in PATH is the running daemon's binary", selfExe, daemon, map[string]string{"ao": daemon}, doctorPass, "the running daemon's binary"},
+		{"daemon binary resolves even when doctor's own does not", func() (string, error) { return "", errors.New("no exe") }, daemon, map[string]string{"ao": daemon}, doctorPass, "the running daemon's binary"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -480,7 +523,7 @@ func TestDoctorChecksAOBinaryIdentity(t *testing.T) {
 				ProcessAlive: func(int) bool { return false },
 			}
 			c := &commandContext{deps: deps.withDefaults()}
-			check := c.checkAOBinary()
+			check := c.checkAOBinary(tc.daemonExe)
 			if check.Level != tc.wantLevel || !strings.Contains(check.Message, tc.wantIn) {
 				t.Fatalf("ao-binary check = %+v, want level %s with %q", check, tc.wantLevel, tc.wantIn)
 			}
@@ -505,6 +548,7 @@ func TestDoctorIncludesAOBinaryCheck(t *testing.T) {
 
 func doctorContext(t *testing.T, paths map[string]string, commandOutput func(context.Context, string, ...string) ([]byte, error)) *commandContext {
 	t.Helper()
+	t.Setenv("AO_TMUX_BINARY", "")
 	clearDoctorGitHubEnv(t)
 	clearDoctorGitLabEnv(t)
 	deps := Deps{
