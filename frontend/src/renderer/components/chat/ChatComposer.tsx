@@ -359,10 +359,9 @@ export const ChatComposer = memo(function ChatComposer({
 	);
 	const persistAttachments = useCallback(
 		(attachments: FileAttachment[]) => {
-			const descriptors = attachments.map((attachment) => ({
-				id: attachment.id, path: attachment.stagedPath ?? "", name: attachment.name,
-				mimeType: attachment.mimeType, bytes: attachment.bytes,
-			}));
+			const descriptors = attachments.flatMap((attachment) => attachment.stagedPath
+				? [{ id: attachment.id, path: attachment.stagedPath, name: attachment.name, mimeType: attachment.mimeType, bytes: attachment.bytes }]
+				: []);
 			if (!draftScope) {
 					return;
 			}
@@ -375,6 +374,24 @@ export const ChatComposer = memo(function ChatComposer({
 			);
 		},
 		[draftScope],
+	);
+	const prepareAttachments = useCallback(
+		async (attachments: FileAttachment[]): Promise<FileAttachment[]> => {
+			if (!onStageAttachments) throw new Error("Attachment staging is unavailable");
+			const paths = await onStageAttachments(
+				attachments.flatMap(({ mimeType, data }) =>
+					data ? [{ mimeType, data }] : [],
+				),
+			);
+			if (paths.length !== attachments.length) {
+				throw new Error("Attachment staging returned an incomplete result");
+			}
+			return attachments.map((attachment, index) => ({
+				...attachment,
+				stagedPath: paths[index],
+			}));
+		},
+		[onStageAttachments],
 	);
 	useEffect(() => {
 		if (restoredSessionId.current === draftScopeKey) return;
@@ -393,6 +410,7 @@ export const ChatComposer = memo(function ChatComposer({
 	const fileAttachments = useFileAttachments({
 		initialAttachments: restoredAttachments,
 		initialKey: attachmentScopeKey,
+		prepareAttachments: onStageAttachments ? prepareAttachments : undefined,
 		onAttachmentsChange: persistAttachments,
 	});
 	const canAttach = Boolean(onStageAttachments);
@@ -976,8 +994,8 @@ export const ChatComposer = memo(function ChatComposer({
 		const attachmentPayloads = await fileAttachments.toSettledPayload();
 		// A replacement hook can still have staging work owned by the old surface.
 		if (fileAttachments.hasPendingReads()) return;
-		let settledAttachments = fileAttachments.getAttachments();
-		let settledPaths = settledAttachments.flatMap((attachment) =>
+		const settledAttachments = fileAttachments.getAttachments();
+		const settledPaths = settledAttachments.flatMap((attachment) =>
 			attachment.stagedPath ? [attachment.stagedPath] : []);
 		const hasAttachments = settledAttachments.length > 0 || visibleRetainedAttachments.length > 0;
 		const canSubmitNow =
@@ -994,29 +1012,9 @@ export const ChatComposer = memo(function ChatComposer({
 			}
 			return;
 		}
-		if (settledPaths.length !== settledAttachments.length) {
-			// Text drafts also retain a filename reminder. Bytes remain local until
-			// submission; a reminder restored after restart must never send text alone.
-			const unstaged = settledAttachments.filter((attachment) => !attachment.stagedPath);
-			if (!onStageAttachments || unstaged.some((attachment) => !attachment.data)) {
-				setSendError("chat.draft.filesUnavailable");
-				return;
-			}
-			try {
-				const paths = await onStageAttachments(unstaged.map((attachment) => ({
-					mimeType: attachment.mimeType, data: attachment.data!,
-				})));
-				if (paths.length !== unstaged.length) throw new Error("Incomplete attachment staging");
-				// Publish paths before journaling so a replacement surface cannot restore
-				// the old filename-only reminder over the delivery's exact revision.
-				settledAttachments = fileAttachments.recordStagedPaths(new Map(
-					unstaged.map((attachment, index) => [attachment.id, paths[index]]),
-				));
-				settledPaths = settledAttachments.map((attachment) => attachment.stagedPath!);
-			} catch {
-				setSendError("chat.draft.sendAttachmentsFailed");
-				return;
-			}
+		if (hasAttachments && settledPaths.length !== settledAttachments.length) {
+			setSendError("chat.draft.filesUnavailable");
+			return;
 		}
 		const shouldSteer = Boolean(forceSteer && !savingQueuedEdit);
 		const message = withAttachmentReferences(body, [
@@ -1419,13 +1417,17 @@ export const ChatComposer = memo(function ChatComposer({
 				) : null}
 				{staged ? (
 					<ul className="flex flex-wrap gap-1.5" aria-label="Attached files">
-						{[...visibleRetainedAttachments, ...fileAttachments.attachments].map((file) => (
+						{[...visibleRetainedAttachments, ...fileAttachments.attachments].map((file) => {
+							const path = "stagedPath" in file ? file.stagedPath : "path" in file ? file.path : undefined;
+							const preview = file.dataUrl ?? (path && IMAGE_ATTACHMENT_PATH.test(path)
+								? attachmentURL(getApiBaseUrl(), boundarySessionId ?? "", path) : undefined);
+							return (
 							<li
 								key={file.id}
 								className="flex items-center gap-1.5 rounded border border-border bg-background py-0.5 pl-0.5 pr-1"
 							>
-								{file.dataUrl || ("path" in file && file.path && IMAGE_ATTACHMENT_PATH.test(file.path)) ? (
-									<img src={file.dataUrl ?? ("path" in file && file.path ? attachmentURL(getApiBaseUrl(), boundarySessionId ?? "", file.path) : undefined)} alt="" className="size-6 rounded-sm object-cover" />
+								{preview ? (
+									<img src={preview} alt="" className="size-6 rounded-sm object-cover" />
 								) : (
 									<div className="flex size-6 items-center justify-center rounded-sm bg-surface">
 										<File aria-hidden="true" className="size-3.5 text-muted-foreground" />
@@ -1453,7 +1455,8 @@ export const ChatComposer = memo(function ChatComposer({
 									<X aria-hidden="true" className="size-3" />
 								</button>
 							</li>
-						))}
+							);
+						})}
 					</ul>
 				) : null}
 
