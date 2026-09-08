@@ -146,25 +146,27 @@ func (r *Runner) previewWorkspaceFile(input workspaceRequest) (map[string]any, e
 	if method != http.MethodGet && method != http.MethodHead {
 		return nil, errors.New("file preview only supports GET and HEAD")
 	}
-	fullPath, _, err := r.resolveWorkspacePath(input.Path)
+	fullPath, relativePath, err := r.resolveWorkspacePath(input.Path)
 	if err != nil {
 		return nil, err
 	}
 	info, err := os.Stat(fullPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return map[string]any{
-				"status":      http.StatusNotFound,
-				"contentType": "text/plain; charset=utf-8",
-				"body":        base64.StdEncoding.EncodeToString([]byte("File not found.")),
-			}, nil
+			return workspacePreviewNotFound(), nil
 		}
 		return nil, fmt.Errorf("stat preview file: %w", err)
 	}
 	if info.IsDir() {
-		fullPath = filepath.Join(fullPath, "index.html")
+		fullPath, _, err = r.resolveWorkspacePath(filepath.Join(relativePath, "index.html"))
+		if err != nil {
+			return nil, err
+		}
 		info, err = os.Stat(fullPath)
 		if err != nil {
+			if os.IsNotExist(err) {
+				return workspacePreviewNotFound(), nil
+			}
 			return nil, fmt.Errorf("open directory preview index: %w", err)
 		}
 	}
@@ -184,6 +186,14 @@ func (r *Runner) previewWorkspaceFile(input workspaceRequest) (map[string]any, e
 		"contentType": contentType,
 		"body":        base64.StdEncoding.EncodeToString(body),
 	}, nil
+}
+
+func workspacePreviewNotFound() map[string]any {
+	return map[string]any{
+		"status":      http.StatusNotFound,
+		"contentType": "text/plain; charset=utf-8",
+		"body":        base64.StdEncoding.EncodeToString([]byte("File not found.")),
+	}
 }
 
 func (r *Runner) listWorkspace(path string) (map[string]any, error) {
@@ -576,20 +586,54 @@ func (r *Runner) resolveWorkspacePath(path string) (string, string, error) {
 	if relativePath == "." {
 		relativePath = ""
 	}
-	fullPath := filepath.Join(r.workspaceDir, relativePath)
-	resolved, err := filepath.EvalSymlinks(fullPath)
-	if err != nil {
-		return "", "", fmt.Errorf("resolve workspace path: %w", err)
+	if relativePath == ".." || strings.HasPrefix(relativePath, ".."+string(os.PathSeparator)) {
+		return "", "", errors.New("workspace path escapes the repository")
 	}
 	workspaceResolved, err := filepath.EvalSymlinks(r.workspaceDir)
 	if err != nil {
 		return "", "", fmt.Errorf("resolve workspace root: %w", err)
 	}
-	relativeResolved, err := filepath.Rel(workspaceResolved, resolved)
-	if err != nil || relativeResolved == ".." || strings.HasPrefix(relativeResolved, ".."+string(os.PathSeparator)) {
+	fullPath := filepath.Join(r.workspaceDir, relativePath)
+	resolved, err := filepath.EvalSymlinks(fullPath)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			return "", "", fmt.Errorf("resolve workspace path: %w", err)
+		}
+		// EvalSymlinks reports a missing final path before callers can map it to
+		// a preview 404. Resolve its closest existing parent first so that a
+		// symlink escape is still rejected rather than hidden as not found.
+		parent := filepath.Dir(fullPath)
+		for {
+			resolvedParent, parentErr := filepath.EvalSymlinks(parent)
+			if parentErr == nil {
+				if !workspacePathContains(workspaceResolved, resolvedParent) {
+					return "", "", errors.New("workspace path escapes the repository")
+				}
+				return fullPath, filepath.ToSlash(relativePath), nil
+			}
+			if !os.IsNotExist(parentErr) {
+				return "", "", fmt.Errorf("resolve workspace path: %w", parentErr)
+			}
+			nextParent := filepath.Dir(parent)
+			if nextParent == parent {
+				return "", "", fmt.Errorf("resolve workspace path: %w", err)
+			}
+			parent = nextParent
+		}
+	}
+	if !workspacePathContains(workspaceResolved, resolved) {
 		return "", "", errors.New("workspace path escapes the repository")
 	}
+	relativeResolved, err := filepath.Rel(workspaceResolved, resolved)
+	if err != nil {
+		return "", "", fmt.Errorf("resolve workspace path: %w", err)
+	}
 	return resolved, filepath.ToSlash(relativeResolved), nil
+}
+
+func workspacePathContains(root, candidate string) bool {
+	relative, err := filepath.Rel(root, candidate)
+	return err == nil && relative != ".." && !strings.HasPrefix(relative, ".."+string(os.PathSeparator))
 }
 
 func limitedCommandOutput(

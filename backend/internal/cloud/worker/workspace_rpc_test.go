@@ -152,10 +152,44 @@ func TestWorkspaceFilePreviewServesRepositoryAssets(t *testing.T) {
 	if string(body) != `<img src="logo.png"><h1>AO preview</h1>` {
 		t.Fatalf("preview body = %q", body)
 	}
+
+	missing, err := runner.previewWorkspaceFile(workspaceRequest{
+		Path: "site/missing.html",
+	})
+	if err != nil {
+		t.Fatalf("preview missing file: %v", err)
+	}
+	if status, _ := missing["status"].(int); status != http.StatusNotFound {
+		t.Fatalf("missing file preview status = %d, want %d", status, http.StatusNotFound)
+	}
+
+	if err := os.Mkdir(filepath.Join(workspace, "empty"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	missingIndex, err := runner.previewWorkspaceFile(workspaceRequest{Path: "empty"})
+	if err != nil {
+		t.Fatalf("preview directory without index: %v", err)
+	}
+	if status, _ := missingIndex["status"].(int); status != http.StatusNotFound {
+		t.Fatalf("missing directory index preview status = %d, want %d", status, http.StatusNotFound)
+	}
+
 	if _, err := runner.previewWorkspaceFile(workspaceRequest{
 		Path: "../outside.html",
-	}); err == nil {
-		t.Fatal("workspace file preview accepted a path escape")
+	}); err == nil || !strings.Contains(err.Error(), "escapes") {
+		t.Fatalf("workspace file preview traversal error = %v", err)
+	}
+
+	outside := filepath.Join(t.TempDir(), "secret.html")
+	if err := os.WriteFile(outside, []byte("secret"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(workspace, "escape.html")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runner.previewWorkspaceFile(workspaceRequest{Path: "escape.html"}); err == nil ||
+		!strings.Contains(err.Error(), "escapes") {
+		t.Fatalf("workspace file preview symlink error = %v", err)
 	}
 }
 
