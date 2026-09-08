@@ -1,3 +1,4 @@
+import { ModelFamilyOptions } from "../ModelFamilyOptions";
 /**
  * What the next turn will be sent with: model, reasoning effort, approval mode.
  *
@@ -123,18 +124,16 @@ export function TurnSettingsBar({
 	children?: ReactNode;
 }) {
 	const selected = models.find((model) => model.id === settings.model);
-	const fallback = settings.model ? undefined : models.find((model) => model.default);
-	// A catalog miss must not relabel an explicit choice or borrow another model's
-	// effort settings. Custom or newly available models may not be listed yet.
-	const chosenLabel =
-		selected?.displayName ?? settings.model ?? fallback?.displayName ?? "Provider default";
+	// A stale catalog is not evidence that an explicit request uses its default.
+	// The catalog default need not match the user's native provider config.
+	const effective = selected;
+	const chosenLabel = effective?.displayName ?? settings.model ?? "Provider default";
 	const rerouted = reroute
 		? models.find((model) => model.id === reroute.toModel)?.displayName ?? reroute.toModel
 		: undefined;
 	const modelLabel = rerouted ?? chosenLabel;
-	const efforts = (selected ?? fallback)?.efforts ?? [];
-	const effortLabel =
-		settings.reasoningEffort ?? (selected ?? fallback)?.defaultEffort ?? undefined;
+	const efforts = effective?.efforts ?? [];
+	const effortLabel = settings.reasoningEffort ?? effective?.defaultEffort ?? undefined;
 	const approvalCopy = harness === "codex" ? CODEX_APPROVAL_COPY : APPROVAL_COPY;
 	const approvalOrder = harness === "codex" ? CODEX_APPROVAL_ORDER : APPROVAL_ORDER;
 	const approvalLabel = approvalCopy[settings.approvalMode ?? "default"].label;
@@ -147,7 +146,7 @@ export function TurnSettingsBar({
 		if (!onChangeConfigOption) return;
 		void Promise.resolve(onChangeConfigOption(optionId, value)).catch(() => {});
 	};
-	const nativeModelMenu = Boolean(onChange && models.length > 0 && grouped.model.length === 0);
+	const nativeModelMenu = Boolean(onChange && (models.length > 0 || settings.model || reroute) && grouped.model.length === 0);
 	const clubbedLeft =
 		grouped.model.length > 0 ||
 		grouped.effort.length > 0 ||
@@ -358,29 +357,16 @@ function ModelEffortPicker({
 								className="model-menu-scroll flex max-h-[calc(var(--size-select-menu-max)-var(--space-2)*2)] flex-col overflow-y-auto overscroll-contain"
 								onScroll={updateScrollCue}
 							>
-								{models.map((model) => (
-									<OptionMenuItem
-									key={model.id}
-									active={model.id === settings.model}
-									onSelect={() =>
-										onChange({ ...settings, model: model.id, reasoningEffort: undefined })
-									}
-									className={cn("text-xs")}
-									>
-										<span className="flex w-full items-baseline gap-2">
-											<span
-												className={cn(
-																"text-xs",
-													model.id === settings.model
-														? "text-foreground"
-														: "text-muted-foreground",
-												)}
-											>
-												{model.displayName}
-											</span>
-									</span>
-									</OptionMenuItem>
-								))}
+								<OptionMenuItem
+									active={!settings.model}
+									onSelect={() => onChange({ ...settings, model: undefined, reasoningEffort: undefined })}
+								>
+									Provider default
+								</OptionMenuItem>
+								{settings.model && !models.some((model) => model.id === settings.model) ? (
+									<OptionMenuItem active disabled>{settings.model} (not in catalog)</OptionMenuItem>
+								) : null}
+								<ModelFamilyOptions models={models.map((model) => ({ id: model.id, label: model.displayName }))} value={settings.model} onSelect={(id) => onChange({ ...settings, model: id, reasoningEffort: undefined })} />
 							</div>
 							<div
 								className={cn("model-menu-overflow-cue", canScrollDown ? "opacity-100" : "opacity-0")}
@@ -680,6 +666,9 @@ function ConfigOptionChoices({
 	option: ChatConfigOption;
 	onChange: (value: ChatConfigOptionValue) => void;
 }) {
+	if (option.type === "select" && (option.category === "model" || option.id === "model")) {
+		return <ModelFamilyOptions models={(option.choices ?? []).map((choice) => ({ id: choice.value, label: choice.name, description: choice.description, provider: choice.group }))} value={option.currentValue} onSelect={(value) => onChange({ value })} />;
+	}
 	if (option.type === "boolean") {
 		return (
 			<>
