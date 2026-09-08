@@ -1277,10 +1277,11 @@ describe("Sidebar", () => {
 
 		await user.click(screen.getByLabelText("New project"));
 		await user.click(screen.getByRole("button", { name: /^Import a workspace folder$/i }));
-		expect(screen.getByText("Set up at least one child folder as a Git repository before importing this workspace.")).toBeInTheDocument();
+		expect(screen.getByText("Importing a workspace requires at least one direct child Git repository that already has a commit and an origin remote. You can import this folder as a project instead.")).toBeInTheDocument();
 		expect(screen.queryByText("No repositories detected in this folder.")).not.toBeInTheDocument();
 		expect(screen.queryByText("/repo/workspace")).not.toBeInTheDocument();
 		expect(screen.queryByRole("button", { name: "Continue" })).not.toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Import as project" })).toBeInTheDocument();
 		expect(screen.queryByRole("button", { name: "Cancel" })).not.toBeInTheDocument();
 		await user.click(screen.getByRole("button", { name: "Go Back" }));
 		expect(screen.getByRole("dialog", { name: "Add a project" })).toBeInTheDocument();
@@ -1322,33 +1323,18 @@ describe("Sidebar", () => {
 		await screen.findByRole("dialog", { name: "Import workspace" });
 
 		expect(screen.getByText("unborn")).toBeInTheDocument();
+		expect(screen.getByText("Set an origin remote for the child repositories marked below before importing this workspace.")).toBeInTheDocument();
 		expect(screen.queryByRole("dialog", { name: "Prepare project" })).not.toBeInTheDocument();
 		expect(screen.getByRole("button", { name: "Continue" })).toBeDisabled();
-		await user.click(screen.getByRole("button", { name: "Git setup needed · Set up" }));
-		expect(screen.getByText(/Initial commit/)).toBeInTheDocument();
-		expect(screen.getAllByRole("checkbox")).toHaveLength(2);
+		expect(screen.queryByRole("button", { name: /Set up|Hide setup/i })).not.toBeInTheDocument();
+		expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
 	});
 
-	it("renders remote setup controls for workspace repositories that need them", async () => {
+	it("blocks workspace repositories until their remotes are configured", async () => {
 		const user = userEvent.setup();
-		window.localStorage.setItem("ao.import.lastRemoteUrl", "https://github.com/chauhan/old.git");
-		window.localStorage.setItem("ao.import.lastRemoteOwner", "chauhan");
 		window.ao!.app.chooseDirectory = vi.fn().mockResolvedValue("/repo/workspace");
 		window.ao!.app.checkAncestorRepo = vi.fn().mockResolvedValue(undefined);
-		let prepared = false;
 		postMock.mockImplementation(async (path: string, options?: { body?: { importKind?: string; path?: string } }) => {
-			if (path === "/api/v1/imports/prepare-git") {
-				prepared = true;
-				return {
-					data: {
-						events: [
-							{ action: "set_remote", repoPath: "/repo/workspace/temp", state: "success" },
-						],
-						validation: importValidation("/repo/workspace"),
-					},
-					error: undefined,
-				};
-			}
 			if (path === "/api/v1/imports/validate") {
 				return {
 					data: importValidation(options?.body?.path ?? "/repo/workspace", {
@@ -1370,39 +1356,18 @@ describe("Sidebar", () => {
 		await user.click(screen.getByRole("button", { name: /^Import a workspace folder$/i }));
 		expect(screen.getByRole("dialog", { name: "Import workspace" })).toBeInTheDocument();
 		expect(screen.getByText("temp")).toBeInTheDocument();
-		expect(screen.getByRole("textbox", { name: "Origin remote URL" })).toBeInTheDocument();
-		expect(screen.getByText("Remote setup")).toBeInTheDocument();
-		expect(screen.queryByText(/Initial commit/)).not.toBeInTheDocument();
-		expect(screen.getAllByRole("checkbox")).toHaveLength(1);
+		expect(screen.getByText("Set an origin remote for the child repositories marked below before importing this workspace.")).toBeInTheDocument();
+		expect(screen.queryByRole("textbox", { name: "Origin remote URL" })).not.toBeInTheDocument();
+		expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
 		expect(screen.queryByRole("button", { name: /Set up|Hide setup/i })).not.toBeInTheDocument();
 		expect(screen.getByRole("button", { name: "Continue" })).toBeDisabled();
-
-		await user.click(screen.getByRole("checkbox"));
-		expect(prepared).toBe(false);
-		expect(screen.getByRole("button", { name: "Continue" })).toBeEnabled();
-		await user.click(screen.getByRole("button", { name: "Continue" }));
-		await vi.waitFor(() => expect(prepared).toBe(true));
 	});
 
-	it("allows an all-plain workspace after one child is approved for setup", async () => {
+	it("offers project import when all workspace children are plain folders", async () => {
 		const user = userEvent.setup();
 		window.ao!.app.chooseDirectory = vi.fn().mockResolvedValue("/repo/workspace");
 		window.ao!.app.checkAncestorRepo = vi.fn().mockResolvedValue(undefined);
-		let preparationBody: unknown;
-		postMock.mockImplementation(async (path: string, options?: { body?: unknown }) => {
-			if (path === "/api/v1/imports/prepare-git") {
-				preparationBody = options?.body;
-				return {
-					data: {
-						events: [],
-						validation: importValidation("/repo/workspace", {
-							root: repoStatus("/repo/workspace", { needsGitInit: true, requiredActions: ["git_init", "git_commit", "set_remote"] }),
-						}),
-					},
-					error: undefined,
-				};
-			}
-			return {
+		postMock.mockResolvedValue({
 				data: importValidation("/repo/workspace", {
 					isValid: false,
 					blockingErrors: ["WORKSPACE_CHILD_REPO_REQUIRED"],
@@ -1410,7 +1375,6 @@ describe("Sidebar", () => {
 					nextStep: "error",
 				}),
 				error: undefined,
-			};
 		});
 		window.ao!.app.scanImportFolder = vi.fn().mockResolvedValue({
 			path: "/repo/workspace",
@@ -1424,11 +1388,8 @@ describe("Sidebar", () => {
 		await user.click(screen.getByLabelText("New project"));
 		await user.click(screen.getByRole("button", { name: /^Import a workspace folder$/i }));
 		expect(screen.queryByRole("button", { name: "Continue" })).not.toBeInTheDocument();
-		await user.click(screen.getAllByRole("button", { name: "Not a Git repo · Set up" })[0]);
-		await user.click(screen.getAllByRole("checkbox")[0]);
-		expect(preparationBody).toBeUndefined();
-		await user.click(screen.getByRole("button", { name: "Continue" }));
-		await vi.waitFor(() => expect(preparationBody).toMatchObject({ repositories: [{ repoPath: "/repo/workspace/app" }] }));
+		expect(screen.getByRole("button", { name: "Import as project" })).toBeInTheDocument();
+		expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
 	});
 
 	it("does not rescan folders for non-validation create failures", async () => {

@@ -231,7 +231,7 @@ func (m *Manager) Validate(ctx context.Context, in ImportValidationInput) (Impor
 		return result, nil
 	}
 	if importKind == ImportKindWorkspace {
-		if root.IsRepo {
+		if root.IsRepo && root.HasOrigin {
 			result.Warning = "This folder is already a Git project. AO will import it as a project instead of a workspace."
 			result.NextStep = ImportNextStepChooseImportKind
 			return result, nil
