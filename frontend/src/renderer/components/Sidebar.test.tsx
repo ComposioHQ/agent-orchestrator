@@ -2221,23 +2221,40 @@ describe("Sidebar", () => {
 		expect(downloadUpdateMock).toHaveBeenCalledTimes(1);
 	});
 
-	it("offers a retry when automatic update checks keep failing", async () => {
-		// The state stays truthful (the suppressed automatic failure never
-		// replaced it); the flag is what makes the dead end visible.
+	it("keeps automatic update check failures out of the sidebar", async () => {
 		updateStatusMock.mockResolvedValue({ state: "idle", checksFailing: true });
 		renderSidebar();
 
-		// Both footer variants (expanded row and collapsed rail icon) are mounted.
-		const buttons = await screen.findAllByLabelText("Retry update check");
-		expect(buttons.length).toBeGreaterThan(0);
-		expect(screen.getByText("Update check failed")).toBeInTheDocument();
-		const failedRow = screen.getByTestId("sidebar-update-failed");
-		expect(failedRow).toHaveClass("border", "border-warning/35", "bg-warning/12", "text-warning");
-		expect(within(failedRow).getByText("Retry update check")).toBeVisible();
-		expect(failedRow.querySelector(".rounded-full")).toBeNull();
+		await waitFor(() => expect(updateStatusMock).toHaveBeenCalled());
+		expect(screen.queryByLabelText("Retry update check")).not.toBeInTheDocument();
+		expect(screen.queryByText("Update check failed")).not.toBeInTheDocument();
+		expect(screen.queryByTestId("sidebar-update-failed")).not.toBeInTheDocument();
+	});
 
-		await userEvent.click(buttons[0]);
-		expect(checkUpdateMock).toHaveBeenCalledTimes(1);
+	it("keeps explicit update errors out of the sidebar", async () => {
+		updateStatusMock.mockResolvedValue({
+			state: "error",
+			message: "net::ERR_SSL_PROTOCOL_ERROR",
+			netError: true,
+		});
+		renderSidebar();
+
+		await waitFor(() => expect(updateStatusMock).toHaveBeenCalled());
+		expect(screen.queryByText("net::ERR_SSL_PROTOCOL_ERROR")).not.toBeInTheDocument();
+		expect(screen.queryByLabelText("Retry update check")).not.toBeInTheDocument();
+	});
+
+	it("keeps a ready install action when a later check fails", async () => {
+		updateStatusMock.mockResolvedValue({
+			state: "error",
+			message: "net::ERR_SSL_PROTOCOL_ERROR",
+			staged: { version: "9.9.9", stagedAt: Date.now(), escalated: false },
+		});
+		renderSidebar();
+
+		expect(await screen.findByTestId("sidebar-update-ready")).toBeVisible();
+		expect(screen.getAllByLabelText("Restart to install update v9.9.9")).not.toHaveLength(0);
+		expect(screen.queryByText("net::ERR_SSL_PROTOCOL_ERROR")).not.toBeInTheDocument();
 	});
 
 	it("keeps a staged build's restart action ahead of the failing-checks retry", async () => {
