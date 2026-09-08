@@ -323,7 +323,7 @@
 	"createProject.workspaceAgents": "Workspace agents",
 	"createProject.workspaceDesc": "Several repositories that live under one parent folder",
 	"createProject.workspaceRoot": "Workspace root",
-	"createProject.workspaceNeedsGitRepo": "Set up at least one child folder as a Git repository before importing this workspace.",
+	"createProject.workspaceNeedsGitRepo": "No child Git repositories exist in this folder. Add a child repository or choose a different workspace folder.",
 	"createProject.workspaceRootIsProject": "This is a single project, not a collection of projects. Import it as a project instead.",
 	"daemon.hint.binaryMissing": "Run npm run build:daemon to rebuild the daemon.",
 	"daemon.hint.conflict": "Stop the conflicting daemon, then restart the desktop app.",

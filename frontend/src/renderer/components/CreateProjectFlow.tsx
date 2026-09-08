@@ -1886,9 +1886,9 @@ function CreateProjectFolderDialog({
 	const { t } = useTranslation();
 	const isWorkspace = kind === "workspace";
 	const displayRepos = isWorkspace ? mergeWorkspaceImportRepos(scan, validation) : normalizeImportRepos(scan?.repos ?? []);
-	const workspaceNeedsInitializedRepo = isWorkspace && validation?.blockingErrors.includes("WORKSPACE_CHILD_REPO_REQUIRED");
+	const workspaceHasNoChildGitRepos = isWorkspace && validation?.blockingErrors.includes("WORKSPACE_CHILD_REPO_REQUIRED");
 	const workspaceRootIsProject = isWorkspace && validation?.root.isRepo === true;
-	const workspaceValidationBlocked = isWorkspace && validation !== null && (!validation.isValid || validation.nextStep === "error") && !workspaceNeedsInitializedRepo;
+	const workspaceValidationBlocked = isWorkspace && validation !== null && (!validation.isValid || validation.nextStep === "error") && !workspaceHasNoChildGitRepos;
 	const selectedSetupRepos = displayRepos.filter((repo) => repo.requiredActions.length > 0 && (workspacePreparation[repo.path]?.approvedActions.length ?? 0) > 0);
 	const selectedSetupReady = selectedSetupRepos.every((repo) =>
 		repo.requiredActions.every((action) => workspacePreparation[repo.path]?.approvedActions.includes(action)) &&
@@ -1900,7 +1900,7 @@ function CreateProjectFolderDialog({
 		if (!repo.isRepo && !approved) return true;
 		return approved && (!repo.requiredActions.includes("set_remote") || Boolean(workspacePreparation[repo.path]?.remoteUrl.trim()));
 	});
-	const workspaceSetupReady = !isWorkspace || (workspaceNeedsInitializedRepo ? selectedSetupRepos.length > 0 && selectedSetupReady : requiredSetupReady && selectedSetupReady);
+	const workspaceSetupReady = !isWorkspace || (!workspaceHasNoChildGitRepos && requiredSetupReady && selectedSetupReady);
 	const failedRepos =
 		displayRepos.filter(
 			(repo) =>
@@ -1947,7 +1947,7 @@ function CreateProjectFolderDialog({
 					<div className="min-h-0 flex-1 overflow-y-auto px-4 pb-1 pt-3">
 						{hasScan ? (
 							<div className="space-y-3">
-								{!workspaceNeedsInitializedRepo ? <PathRow
+								{!workspaceHasNoChildGitRepos ? <PathRow
 									action={t("createProject.change")}
 									disabled={disabled}
 									icon={<Folder className="size-4 shrink-0 text-[var(--color-text-import-muted)]" aria-hidden="true" />}
@@ -1978,10 +1978,10 @@ function CreateProjectFolderDialog({
 										)}
 									</div>
 								)}
-								{workspaceNeedsInitializedRepo && !error ? <p className="text-[14px] leading-6 text-[var(--color-text-import-muted)]">{t("createProject.workspaceNeedsGitRepo")}</p> : null}
+								{workspaceHasNoChildGitRepos && !error ? <p className="text-[14px] leading-6 text-[var(--color-text-import-muted)]">{t("createProject.workspaceNeedsGitRepo")}</p> : null}
 								{workspaceRootIsProject && !error ? <p className="text-[14px] leading-6 text-[var(--color-text-import-muted)]">{t("createProject.workspaceRootIsProject")}</p> : null}
 
-							{workspaceRootIsProject ? null : isWorkspace ? <WorkspaceImportRepoList
+							{workspaceRootIsProject || workspaceHasNoChildGitRepos ? null : isWorkspace ? <WorkspaceImportRepoList
 								preparation={workspacePreparation}
 								disabled={disabled}
 								isPreparingGit={isPreparingGit}
@@ -1991,7 +1991,7 @@ function CreateProjectFolderDialog({
 								{displayRepos.map((repo) => <ImportRepoRow key={repo.path} repo={repo} />)}
 							</div> : null}
 
-								{displayRepos.length === 0 && !workspaceNeedsInitializedRepo && !workspaceRootIsProject && (
+								{displayRepos.length === 0 && !workspaceHasNoChildGitRepos && !workspaceRootIsProject && (
 									<div className="rounded-md border border-[var(--color-border-import-modal)] bg-[var(--color-bg-import-card)] p-3 text-[12px] text-[var(--color-text-import-muted)]">
 										{t("createProject.noRepos")}
 									</div>
@@ -2001,14 +2001,14 @@ function CreateProjectFolderDialog({
 					</div>
 					<div className="flex shrink-0 justify-end gap-2 px-4 pb-4 pt-3">
 						<div className="flex flex-wrap items-center justify-end gap-3">
-							<Button type="button" variant="outline" disabled={disabled} onClick={workspaceNeedsInitializedRepo ? onBack : () => onOpenChange(false)}>
-								{workspaceNeedsInitializedRepo ? "Go Back" : t("createProject.cancel")}
+							<Button type="button" variant="outline" disabled={disabled} onClick={workspaceHasNoChildGitRepos ? onBack : () => onOpenChange(false)}>
+								{workspaceHasNoChildGitRepos ? "Go Back" : t("createProject.cancel")}
 							</Button>
 							{hasScan && workspaceRootIsProject && !error ? (
 								<Button type="button" variant="primary" disabled={disabled} onClick={onContinueAsProject}>
 									{t("createProject.importAsProject")}
 								</Button>
-							) : hasScan && !workspaceValidationBlocked && failedRepos.length === 0 && (!error || isWorkspace) && (!workspaceNeedsInitializedRepo || selectedSetupRepos.length > 0) ? (
+							) : hasScan && !workspaceValidationBlocked && failedRepos.length === 0 && (!error || isWorkspace) ? (
 								<Button type="button" variant="primary" disabled={disabled || !workspaceSetupReady} onClick={onContinue}>
 									{isPreparingGit ? <><CircleDashed className="size-4 animate-spin" aria-hidden="true" />{t("createProject.settingUp")}</> : t("createProject.cloneContinue")}
 								</Button>

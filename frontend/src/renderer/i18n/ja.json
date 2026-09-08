@@ -323,7 +323,7 @@
 	"createProject.workspaceAgents": "ワークスペースエージェント",
 	"createProject.workspaceDesc": "1 つの親フォルダー配下にある複数の Git リポジトリ。",
 	"createProject.workspaceRoot": "ワークスペースルート",
-	"createProject.workspaceNeedsGitRepo": "このワークスペースをインポートする前に、少なくとも 1 つの子フォルダーを Git リポジトリとして設定してください。",
+	"createProject.workspaceNeedsGitRepo": "このフォルダーには子 Git リポジトリがありません。子リポジトリを追加するか、別のワークスペースフォルダーを選択してください。",
 	"createProject.workspaceRootIsProject": "これはプロジェクトのコレクションではなく、単一のプロジェクトです。代わりにプロジェクトとしてインポートしてください。",
 	"daemon.hint.binaryMissing": "npm run build:daemon を実行してデーモンを再ビルドしてください。",
 	"daemon.hint.conflict": "競合しているデーモンを停止してから、デスクトップアプリを再起動してください。",
