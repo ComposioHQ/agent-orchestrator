@@ -295,7 +295,7 @@ describe("createEventTransport", () => {
 		try {
 			const queryClient = fakeQueryClient();
 			createEventTransport(queryClient).connect();
-			EventSourceStub.instances[0].emit(
+			cdcSources()[0].emit(
 				"session_updated",
 				JSON.stringify({
 					seq: 44,
@@ -315,9 +315,10 @@ describe("createEventTransport", () => {
 			);
 
 			vi.advanceTimersByTime(200);
-			expect(queryClient.invalidateQueries).toHaveBeenCalledWith({
-				queryKey: ["reviewer-conversation", "review-1"],
-			});
+			expect(queryClient.invalidateQueries).toHaveBeenCalledWith(
+				{ queryKey: ["reviewer-conversation", "review-1"] },
+				{ cancelRefetch: false },
+			);
 			expect(queryClient.invalidateQueries).not.toHaveBeenCalledWith({
 				queryKey: ["conversation", "worker-1"],
 			});

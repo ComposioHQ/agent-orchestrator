@@ -2066,7 +2066,7 @@ describe("ChatWorkspace reviewer tabs", () => {
 			/>,
 		);
 
-		const workerTab = screen.getByRole("tab", { name: "Codex" });
+		const workerTab = screen.getByRole("tab", { name: /Codex/ });
 		expect(workerTab).toHaveAttribute("aria-selected", "false");
 		expect(screen.getByRole("tab", { name: "Reviewer" })).toHaveAttribute("aria-selected", "true");
 		const workerConversation = screen.getByTestId("chat-conversation-panel");

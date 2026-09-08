@@ -1,6 +1,7 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { chatFixtureSettled } from "../../lib/chat-fixture";
+import { TooltipProvider } from "../ui/tooltip";
 
 const { loadOlderMock, reviewerQuery } = vi.hoisted(() => ({
 	loadOlderMock: vi.fn(),
@@ -36,7 +37,11 @@ beforeEach(() => {
 
 describe("ReviewerChatSurface", () => {
 	it("offers the reviewer history page loader", () => {
-		render(<ReviewerChatSurface hideHeader reviewId="review-1" />);
+		render(
+			<TooltipProvider>
+				<ReviewerChatSurface hideHeader reviewId="review-1" />
+			</TooltipProvider>,
+		);
 
 		fireEvent.click(screen.getByRole("button", { name: "Load earlier messages" }));
 

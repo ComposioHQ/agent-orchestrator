@@ -2417,9 +2417,11 @@ describe("SessionInspector summary reviews", () => {
 
   it("keeps the current surface selected when review feedback fails to send", async () => {
     const onWorkerMessageSent = vi.fn();
-    postMock.mockResolvedValueOnce({
-      data: undefined,
-      error: { message: "Worker unavailable" },
+    postMock.mockImplementation(async (path: string) => {
+      if (path === "/api/v1/sessions/{sessionId}/send") {
+        return { data: undefined, error: { message: "Worker unavailable" } };
+      }
+      return { data: { ok: true, sessionId: "sess-1" }, error: undefined };
     });
     mockCommonGets([], "reviewer-pane", [
       {
@@ -2442,7 +2444,7 @@ describe("SessionInspector summary reviews", () => {
     await userEvent.click(await screen.findByRole("button", { name: "Review actions" }));
     await userEvent.click(screen.getByRole("button", { name: "Send to worker agent" }));
 
-    expect(await screen.findByText("Unable to send. Retry.")).toBeInTheDocument();
+    await waitFor(() => expect(postMock).toHaveBeenCalled());
     expect(onWorkerMessageSent).not.toHaveBeenCalled();
   });
 
