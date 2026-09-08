@@ -6,77 +6,32 @@ body:
   - type: markdown
     attributes:
       value: |
-        Thanks for reporting a bug. Fill this in so we can reproduce it quickly.
-        For realtime help, join [Discord](https://discord.com/invite/UZv7JjxbwG).
+        A few sentences in your own words are enough. Search existing issues when possible,
+        and submit from your own GitHub account so we can follow up with you.
+        Please don't ask AO Bot to file on your behalf.
+        For help, join [Discord](https://discord.com/invite/UZv7JjxbwG).
 
   - type: textarea
     id: summary
     attributes:
-      label: Summary
-      description: What went wrong in one or two sentences?
+      label: What happened?
+      description: |
+        Describe what you did and what went wrong. If you can, include what you expected,
+        steps to reproduce, how often it happens, and your AO version and OS.
+        Missing details or a bug you can't reproduce reliably are OK.
+      placeholder: When I ..., I saw ... . I expected ... .
     validations:
       required: true
 
   - type: textarea
-    id: repro
+    id: evidence
     attributes:
-      label: Steps to reproduce
-      description: Minimal steps someone else can follow.
-      placeholder: |
-        1. …
-        2. …
-        3. …
-    validations:
-      required: true
-
-  - type: textarea
-    id: expected
-    attributes:
-      label: Expected behavior
-    validations:
-      required: true
-
-  - type: textarea
-    id: actual
-    attributes:
-      label: Actual behavior
-      description: Include error messages or screenshots if useful.
-    validations:
-      required: true
-
-  - type: input
-    id: ao-version
-    attributes:
-      label: AO version
-      description: Output of `ao --version` (or how you installed / which commit).
-      placeholder: e.g. ao 0.x.x / commit abc1234
-    validations:
-      required: true
-
-  - type: input
-    id: environment
-    attributes:
-      label: Environment
-      description: OS, arch, and relevant runtime (e.g. macOS 15 arm64, Go/Node versions if known).
-      placeholder: e.g. macOS 15.x arm64
-    validations:
-      required: true
-
-  - type: textarea
-    id: logs
-    attributes:
-      label: Logs / extra context
-      description: Relevant daemon logs, terminal output, or notes from `~/.ao` (redact secrets).
-      render: shell
+      label: Screenshots or supporting evidence (optional)
+      description: |
+        Drag in screenshots, a recording, or relevant diagnostic files. Remove secrets and
+        unrelated personal data first. We recommend the bug-triage skill for local agent help:
+        https://github.com/Untrivial-ai/agent-orchestrator/blob/main/.agents/skills/bug-triage/SKILL.md
+        Keep agent-collected logs, database excerpts, and analysis in clearly labeled attachments,
+        separate from your description. You can add evidence later.
     validations:
       required: false
-
-  - type: checkboxes
-    id: checks
-    attributes:
-      label: Before submitting
-      options:
-        - label: I searched existing issues for duplicates
-          required: true
-        - label: I removed secrets / tokens from logs and screenshots
-          required: true
