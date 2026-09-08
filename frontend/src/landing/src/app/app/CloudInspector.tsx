@@ -65,6 +65,10 @@ const inspectorTabs: {
   { id: "files", label: "Files", icon: Files },
 ];
 
+// Worker-controlled previews must have an opaque origin: they intentionally
+// cannot access app-origin storage, cookies, or authenticated APIs.
+const workspacePreviewSandbox = "allow-forms allow-modals allow-popups allow-scripts";
+
 export function CloudInspector({
   api,
   orgId,
@@ -855,7 +859,7 @@ function BrowserView({
             key={`${previewURL}-${reloadKey}`}
             title="Worker preview"
             src={previewURL}
-            sandbox="allow-forms allow-modals allow-popups allow-same-origin allow-scripts"
+            sandbox={workspacePreviewSandbox}
             className="h-full w-full border-0 bg-white"
           />
         )}

@@ -93,6 +93,14 @@ it("switches between changes, files, and a capability-scoped browser preview", a
       "https://cloud.example/api/cloud/v1/preview/token/docs",
     ),
   );
+  expect(screen.getByTitle("Worker preview")).toHaveAttribute(
+    "sandbox",
+    "allow-forms allow-modals allow-popups allow-scripts",
+  );
+  expect(screen.getByTitle("Worker preview")).not.toHaveAttribute(
+    "sandbox",
+    expect.stringContaining("allow-same-origin"),
+  );
 
   await user.clear(address);
   await user.type(address, "http://localhost:5002/dashboard");

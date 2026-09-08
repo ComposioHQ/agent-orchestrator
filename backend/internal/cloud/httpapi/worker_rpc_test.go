@@ -4,6 +4,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	clouddomain "github.com/aoagents/agent-orchestrator/backend/internal/cloud/domain"
 )
@@ -58,6 +59,29 @@ func TestPreviewTokenPreservesRequestedPort(t *testing.T) {
 		if value.Port != port {
 			t.Fatalf("preview token port = %d, want %d", value.Port, port)
 		}
+	}
+}
+
+func TestPreviewTokensAreSessionScopedAndExpire(t *testing.T) {
+	store := newPreviewTokenStore()
+	firstToken, _ := store.issue(clouddomain.SessionID("session-one"), 3000)
+	secondToken, _ := store.issue(clouddomain.SessionID("session-two"), 3001)
+
+	first, ok := store.get(firstToken)
+	if !ok || first.SessionID != "session-one" || first.Port != 3000 {
+		t.Fatalf("first preview token = %#v, found=%t", first, ok)
+	}
+	second, ok := store.get(secondToken)
+	if !ok || second.SessionID != "session-two" || second.Port != 3001 {
+		t.Fatalf("second preview token = %#v, found=%t", second, ok)
+	}
+
+	store.tokens[firstToken] = previewToken{ExpiresAt: time.Now().Add(-time.Second)}
+	if _, ok := store.get(firstToken); ok {
+		t.Fatal("expired preview token remained valid")
+	}
+	if _, ok := store.get(secondToken); !ok {
+		t.Fatal("expiring one preview token must not invalidate another session's token")
 	}
 }
 
