@@ -4,7 +4,12 @@ import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useUiStore } from "../stores/ui-store";
-import type { SessionActivityState, WorkspaceSession, WorkspaceSummary } from "../types/workspace";
+import {
+	CLOUD_PROJECT_KIND,
+	type SessionActivityState,
+	type WorkspaceSession,
+	type WorkspaceSummary,
+} from "../types/workspace";
 import { ShellTopbar, TopbarKillButton } from "./ShellTopbar";
 import { TooltipProvider } from "./ui/tooltip";
 
@@ -27,7 +32,21 @@ vi.mock("@tanstack/react-router", async (importOriginal) => {
 });
 
 vi.mock("../hooks/useWorkspaceQuery", () => ({
-	useWorkspaceQuery: () => useWorkspaceQueryMock(),
+	useWorkspaceScope: () => {
+		const query = useWorkspaceQueryMock();
+		const project = query.data?.find((workspace: WorkspaceSummary) => workspace.id === paramsMock.projectId);
+		const session = query.data
+			?.flatMap((workspace: WorkspaceSummary) => workspace.sessions)
+			.find((candidate: WorkspaceSession) => candidate.id === paramsMock.sessionId);
+		return {
+			...query,
+			data: {
+				project,
+				session,
+				orchestrator: project?.sessions.find((candidate: WorkspaceSession) => candidate.kind === "orchestrator"),
+			},
+		};
+	},
 	workspaceQueryKey: ["workspaces"],
 }));
 
@@ -118,6 +137,7 @@ function renderTopbarSessions(
 	sessionId: string,
 	embedded = false,
 	sessionAction?: ReactNode,
+	projectKind?: WorkspaceSummary["kind"],
 ) {
 	const data: WorkspaceSummary[] = [
 		{
@@ -125,6 +145,7 @@ function renderTopbarSessions(
 			name: sessions[0].workspaceName,
 			path: "/repo/my-app",
 			orchestratorAgent: "claude-code",
+			kind: projectKind,
 			sessions,
 		},
 	];
@@ -152,11 +173,13 @@ function renderKill(session: WorkspaceSession = worker, orchestratorId?: string)
 	});
 	const killButton = (currentSession: WorkspaceSession, currentOrchestratorId?: string) => (
 		<QueryClientProvider client={queryClient}>
-			<TopbarKillButton
-				session={currentSession}
-				orchestratorId={currentOrchestratorId}
-				onKilled={onKilledMock}
-			/>
+			<TooltipProvider>
+				<TopbarKillButton
+					session={currentSession}
+					orchestratorId={currentOrchestratorId}
+					onKilled={onKilledMock}
+				/>
+			</TooltipProvider>
 		</QueryClientProvider>
 	);
 	const result = render(killButton(session, orchestratorId));
@@ -468,6 +491,28 @@ describe("ShellTopbar inspector state", () => {
 		expect(screen.getByTestId("session-pinned-actions-reserve")).toBe(reserve);
 		expect(reserve).toHaveAttribute("data-state", "collapsed");
 		expect(within(reserve).queryByRole("button")).not.toBeInTheDocument();
+	});
+});
+
+describe("ShellTopbar open-in-editor control", () => {
+	it("shows the open-in-editor control for a local session", async () => {
+		renderTopbarSessions([worker], "sess-1");
+
+		expect(await screen.findByRole("button", { name: "Open in Cursor" })).toBeInTheDocument();
+	});
+
+	it("hides the open-in-editor control for a cloud session instead of asking the local daemon for it", async () => {
+		// Cloud sessions have no local workspace: the local daemon has never
+		// heard of them, so this control's own "workspace" query would 404 with
+		// "Unknown session" and surface that raw local-daemon error in the
+		// topbar (see issue #4570). Hiding the control for kind === CLOUD_PROJECT_KIND
+		// avoids the query entirely.
+		renderTopbarSessions([worker], "sess-1", false, undefined, CLOUD_PROJECT_KIND);
+
+		await waitFor(() => {
+			expect(screen.queryByRole("button", { name: "Open in Cursor" })).not.toBeInTheDocument();
+			expect(screen.queryByRole("button", { name: "Choose editor" })).not.toBeInTheDocument();
+		});
 	});
 });
 

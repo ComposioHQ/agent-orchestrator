@@ -25,6 +25,9 @@ const (
 // SessionMetadata is the typed, off-status metadata for a session: operational
 // handles and seed inputs used by Session Manager and reaper.
 type SessionMetadata struct {
+	// Permissions pins the resolved launch policy independently of future project defaults.
+	Permissions PermissionMode `json:"permissions,omitempty"`
+
 	Branch            string `json:"branch,omitempty"`
 	WorkspacePath     string `json:"workspacePath,omitempty"`
 	WorkspaceRepoPath string `json:"workspaceRepoPath,omitempty"`
@@ -97,6 +100,7 @@ type SessionRecord struct {
 	// ReviewerHarness is this session's preferred reviewer. Empty delegates to
 	// the project configuration.
 	ReviewerHarness   ReviewerHarness `json:"reviewerHarness,omitempty" enum:"claude-code,codex,copilot,cursor,kilocode,opencode,kiro,pi,qwen,agy,continue,goose,vibe,devin,droid,kimi,kimchi,muse,amp,aider,grok,crush,auggie,cline,autohand"`
+	ReviewerConfig    AgentConfig     `json:"reviewerConfig,omitempty"`
 	AutoReviewEnabled bool            `json:"autoReviewEnabled"`
 	DisplayName       string          `json:"displayName,omitempty"`
 	// Mode is the session's currently committed conversation controller. Every
@@ -129,6 +133,34 @@ type SessionRecord struct {
 	UpdatedAt         time.Time  `json:"updatedAt"`
 	IsPinned          bool       `json:"isPinned"`
 	PinnedAt          *time.Time `json:"pinnedAt,omitempty"`
+}
+
+// SessionControllerOwner is the durable identity of the process/controller
+// currently allowed to act for a session. Narrow lifecycle writes compare this
+// snapshot before updating so stale launch work cannot mutate a replacement.
+type SessionControllerOwner struct {
+	Harness                AgentHarness
+	Mode                   SessionMode
+	IsTerminated           bool
+	RuntimeLaunchID        string
+	AgentSessionID         string
+	AgentSessionIDLaunchID string
+	ProviderConversationID string
+	ControllerGeneration   string
+}
+
+// ControllerOwner returns the fields that fence process/controller ownership.
+func (r SessionRecord) ControllerOwner() SessionControllerOwner {
+	return SessionControllerOwner{
+		Harness:                r.Harness,
+		Mode:                   NormalizeSessionMode(r.Mode),
+		IsTerminated:           r.IsTerminated,
+		RuntimeLaunchID:        r.Metadata.RuntimeLaunchID,
+		AgentSessionID:         r.Metadata.AgentSessionID,
+		AgentSessionIDLaunchID: r.Metadata.AgentSessionIDLaunchID,
+		ProviderConversationID: r.Metadata.ProviderConversationID,
+		ControllerGeneration:   r.Metadata.ControllerGeneration,
+	}
 }
 
 // Session is the read-model returned across the API boundary: a SessionRecord

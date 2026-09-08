@@ -112,6 +112,43 @@ func New(cfg Config, log *slog.Logger) *Driver {
 	return &Driver{cfg: cfg, log: log, spawn: spawnAgent}
 }
 
+// DiscoverConfigOptions opens a short-lived ACP session and returns the
+// provider-owned configuration catalog advertised by session/new. It sends no
+// prompt and closes the process immediately after the handshake.
+func DiscoverConfigOptions(
+	ctx context.Context,
+	launch Launch,
+	workingDir string,
+	log *slog.Logger,
+) ([]ports.ChatConfigOption, error) {
+	driver := New(Config{
+		Launch: func(context.Context, LaunchConfig) (Launch, error) { return launch, nil },
+	}, log)
+	return driver.discoverConfigOptions(ctx, workingDir)
+}
+
+func (d *Driver) discoverConfigOptions(ctx context.Context, workingDir string) ([]ports.ChatConfigOption, error) {
+	if !filepath.IsAbs(workingDir) {
+		return nil, fmt.Errorf("workspace path must be absolute, got %q", workingDir)
+	}
+	conv, _, err := d.connect(ctx, LaunchConfig{WorkspacePath: workingDir})
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = conv.Close() }()
+
+	openCtx, cancel := context.WithTimeout(ctx, handshakeTimeout)
+	defer cancel()
+	resp, err := conv.conn.NewSession(openCtx, acpsdk.NewSessionRequest{
+		Cwd:        workingDir,
+		McpServers: []acpsdk.McpServer{},
+	})
+	if err != nil {
+		return nil, normalizeACPError("ACP session/new", err)
+	}
+	return normalizeConfigOptions(resp.ConfigOptions), nil
+}
+
 // Harness identifies the AO harness this ACP transport adapts.
 func (d *Driver) Harness() domain.AgentHarness { return d.cfg.Harness }
 
@@ -215,7 +252,7 @@ func (d *Driver) Resume(ctx context.Context, cfg ports.ChatResumeConfig) (ports.
 	}
 	if d.cfg.ValidateTurnSettings != nil {
 		if err := d.cfg.ValidateTurnSettings(cfg.Permissions, ports.ChatTurnSettings{
-			Model: cfg.Model, Approval: cfg.Permissions,
+			Model: cfg.Model, Effort: cfg.Effort, Approval: cfg.Permissions,
 		}); err != nil {
 			return nil, fmt.Errorf("%w: validate ACP session settings: %w", ports.ErrChatResumeFailed, err)
 		}
@@ -256,21 +293,20 @@ func (d *Driver) Resume(ctx context.Context, cfg ports.ChatResumeConfig) (ports.
 	}
 	var configOptions []acpsdk.SessionConfigOption
 	var modes *acpsdk.SessionModeState
+	var historyConversation *refreshableConversation
 	if init.AgentCapabilities.LoadSession {
-		conv.beginHistoryReplay(cfg.ProviderConversationID)
-		resp, err := conv.conn.LoadSession(resumeCtx, acpsdk.LoadSessionRequest{
+		historyConversation = newRefreshableConversation(conv, acpsdk.LoadSessionRequest{
 			Meta:                  meta,
 			SessionId:             acpsdk.SessionId(cfg.ProviderConversationID),
 			Cwd:                   cfg.WorkspacePath,
 			AdditionalDirectories: additional,
 			McpServers:            mcpServers,
 		})
+		resp, err := historyConversation.loadHistory(resumeCtx)
 		if err != nil {
-			conv.abortHistoryReplay()
 			_ = conv.Close()
 			return nil, fmt.Errorf("%w: %w", ports.ErrChatResumeFailed, normalizeACPError("ACP session/load", err))
 		}
-		conv.finishHistoryReplay()
 		configOptions = resp.ConfigOptions
 		modes = resp.Modes
 	} else {
@@ -294,11 +330,14 @@ func (d *Driver) Resume(ctx context.Context, cfg ports.ChatResumeConfig) (ports.
 		cfg.Permissions, d.cfg.ValidateTurnSettings, configOptions,
 		conv.legacyWire.modelState(), modes,
 	)
-	if err := conv.applyTurnSettings(ctx, ports.ChatTurnSettings{Model: cfg.Model, Approval: cfg.Permissions}); err != nil {
+	if err := conv.applyTurnSettings(ctx, ports.ChatTurnSettings{Model: cfg.Model, Effort: cfg.Effort, Approval: cfg.Permissions}); err != nil {
 		if !errors.Is(err, ErrACPSetterUnsupported) {
 			_ = conv.Close()
 			return nil, fmt.Errorf("%w: configure ACP session: %w", ports.ErrChatResumeFailed, err)
 		}
+	}
+	if historyConversation != nil {
+		return historyConversation, nil
 	}
 	return conv, nil
 }

@@ -584,6 +584,51 @@ func TestQueuedTurnPromotionReservationPreservesTheOtherQueueOrder(t *testing.T)
 	}
 }
 
+func TestReorderQueuedTurns(t *testing.T) {
+	s, session, conversation := conversationFixture(t)
+	ctx := context.Background()
+	for i, text := range []string{"first queued", "second queued", "third queued"} {
+		turnID := fmt.Sprintf("queued-%d", i+1)
+		created, err := s.AppendUserMessage(ctx, conversation, session, "gen-1",
+			domain.ConversationMessage{
+				ID: turnID + "-message", Text: text, Origin: domain.MessageOriginHuman,
+			}, turnID, histClock.Add(time.Duration(i)*time.Second))
+		if err != nil || !created {
+			t.Fatalf("append %s: created=%v err=%v", turnID, created, err)
+		}
+	}
+
+	if err := s.ReorderQueuedTurns(ctx, conversation, []string{"queued-3", "queued-1", "queued-2"}); err != nil {
+		t.Fatalf("reorder queued turns: %v", err)
+	}
+	next, err := s.NextQueuedTurn(ctx, conversation)
+	if err != nil {
+		t.Fatalf("next queued turn: %v", err)
+	}
+	if next.TurnID != "queued-3" || next.Text != "third queued" {
+		t.Fatalf("queue head = %+v, want queued-3", next)
+	}
+}
+
+func TestReorderQueuedTurnsRejectsInvalidOrder(t *testing.T) {
+	s, session, conversation := conversationFixture(t)
+	ctx := context.Background()
+	for i, text := range []string{"first queued", "second queued"} {
+		turnID := fmt.Sprintf("queued-%d", i+1)
+		created, err := s.AppendUserMessage(ctx, conversation, session, "gen-1",
+			domain.ConversationMessage{
+				ID: turnID + "-message", Text: text, Origin: domain.MessageOriginHuman,
+			}, turnID, histClock.Add(time.Duration(i)*time.Second))
+		if err != nil || !created {
+			t.Fatalf("append %s: created=%v err=%v", turnID, created, err)
+		}
+	}
+
+	if err := s.ReorderQueuedTurns(ctx, conversation, []string{"queued-1", "missing"}); !errors.Is(err, store.ErrInvalidQueuedTurnOrder) {
+		t.Fatalf("invalid reorder error = %v, want ErrInvalidQueuedTurnOrder", err)
+	}
+}
+
 func TestUpdateQueuedTurnMessage(t *testing.T) {
 	s, session, conversation := conversationFixture(t)
 	ctx := context.Background()
@@ -595,7 +640,7 @@ func TestUpdateQueuedTurnMessage(t *testing.T) {
 		t.Fatalf("append queued turn: created=%v err=%v", created, err)
 	}
 
-	if err := s.UpdateQueuedTurnMessage(ctx, conversation, "queued-1", "edited draft", histClock.Add(time.Minute)); err != nil {
+	if err := s.UpdateQueuedTurnMessage(ctx, conversation, "queued-1", "edited draft", "", 0, histClock.Add(time.Minute)); err != nil {
 		t.Fatalf("update queued turn message: %v", err)
 	}
 
@@ -606,7 +651,7 @@ func TestUpdateQueuedTurnMessage(t *testing.T) {
 	if got := texts(page.Messages); len(got) != 1 || got[0] != "edited draft" {
 		t.Fatalf("messages after edit = %#v, want [edited draft]", got)
 	}
-	if err := s.UpdateQueuedTurnMessage(ctx, conversation, "missing", "nope", histClock.Add(2*time.Minute)); !errors.Is(err, store.ErrQueuedTurnNotAvailable) {
+	if err := s.UpdateQueuedTurnMessage(ctx, conversation, "missing", "nope", "", 0, histClock.Add(2*time.Minute)); !errors.Is(err, store.ErrQueuedTurnNotAvailable) {
 		t.Fatalf("missing turn error = %v, want ErrQueuedTurnNotAvailable", err)
 	}
 }
@@ -673,6 +718,42 @@ func seedTurn(t *testing.T, s *sqlite.Store, conversationID string, session doma
 	if err := s.SettleTurn(ctx, conversationID, "provider-"+turnID,
 		domain.TurnStateCompleted, "", at); err != nil {
 		t.Fatalf("settle %s: %v", turnID, err)
+	}
+}
+
+func TestSettleTurnStopsStreamingAssistantMessages(t *testing.T) {
+	s, session, conversation := conversationFixture(t)
+	ctx := context.Background()
+	turnID := "turn-streaming"
+	providerTurnID := "provider-" + turnID
+
+	created, err := s.AppendUserMessage(ctx, conversation, session, "gen-1", domain.ConversationMessage{
+		ID: turnID + "-msg", Text: "do the work", Origin: domain.MessageOriginHuman,
+	}, turnID, histClock)
+	if err != nil || !created {
+		t.Fatalf("append user message: created=%v err=%v", created, err)
+	}
+	if err := s.BindTurnToProvider(ctx, turnID, providerTurnID, histClock); err != nil {
+		t.Fatalf("bind turn: %v", err)
+	}
+	if err := s.AppendAssistantDelta(ctx, conversation, "assistant-item", providerTurnID, "the answer so far", "delta-1", histClock); err != nil {
+		t.Fatalf("append assistant delta: %v", err)
+	}
+
+	if err := s.SettleTurn(ctx, conversation, providerTurnID, domain.TurnStateCompleted, "", histClock.Add(time.Minute)); err != nil {
+		t.Fatalf("settle turn: %v", err)
+	}
+	snapshot, err := s.LoadConversationSnapshot(ctx, conversation)
+	if err != nil {
+		t.Fatalf("load snapshot: %v", err)
+	}
+	if len(snapshot.Messages) != 2 {
+		t.Fatalf("messages = %+v, want user and assistant", snapshot.Messages)
+	}
+	for _, message := range snapshot.Messages {
+		if message.Role == domain.MessageRoleAssistant && message.Streaming {
+			t.Fatal("assistant message remained streaming after its turn completed")
+		}
 	}
 }
 

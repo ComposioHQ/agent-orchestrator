@@ -28,6 +28,7 @@ import {
 	type ProductUITranslator,
 } from "./session-presentation";
 import type { KanbanColumn, SessionActivity, SessionStatus } from "./session-models";
+import { UserAvatar } from "./UserAvatar";
 import { cn } from "./utils";
 
 export type BoardSessionPresentation = {
@@ -52,6 +53,13 @@ export type BoardSessionPresentation = {
 	 * send one falls back to the translated {@link status} label.
 	 */
 	displayStatus?: string;
+	/**
+	 * Daemon-confirmed termination fact. `status` can already read "merged"
+	 * while the session is still live (the SCM merged before the session
+	 * exited), so the finished-card PR progress footer requires this in
+	 * addition to `status` before it renders.
+	 */
+	isTerminated?: boolean;
 	provider: string;
 	status: SessionStatus;
 	statusPresentation?: BoardSessionStatusPresentation;
@@ -70,12 +78,21 @@ export type BoardSessionStatusPresentation = {
 
 export type BoardPullRequestState = "closed" | "open" | "draft" | "merged";
 
+export type BoardReviewerPresentation = {
+	id: string;
+	avatarUrl?: string;
+};
+
 export type BoardPullRequestPresentation = {
 	commentCount?: number;
 	number: number;
-	reviewerAvatars?: string[];
+	reviewers?: BoardReviewerPresentation[];
 	state: BoardPullRequestState;
 	url: string;
+};
+
+export type BoardPullRequestProgress = Record<BoardPullRequestState, number> & {
+	total: number;
 };
 
 export type BoardUsagePresentation = {
@@ -84,6 +101,7 @@ export type BoardUsagePresentation = {
 };
 
 export type BoardPullRequestLabels = {
+	progress?: (progress: BoardPullRequestProgress) => string;
 	short: string;
 	states: Record<BoardPullRequestState, string>;
 };
@@ -236,6 +254,17 @@ export function SessionCardView({
 	const renderedStatusLabel =
 		statusPresentation?.label ??
 		(session.displayStatus ? getDisplayStatusLabel(session.displayStatus, translate) : badge.label);
+	// Additive summary footer, not a replacement for renderedStatusLabel: it
+	// only appears once the daemon confirms the session is actually finished
+	// ("terminated", or "merged" with isTerminated true -- a live session can
+	// already read "merged" before it exits and gain more PRs).
+	const isFinishedForPullRequestProgress =
+		session.status === "terminated" ||
+		(session.status === "merged" && session.isTerminated === true);
+	const pullRequestProgressLabel =
+		prs.length > 0 && isFinishedForPullRequestProgress
+			? labels.pr.progress?.(countBoardPullRequests(prs))
+			: undefined;
 	const showStatusLoader =
 		!needsAttention &&
 		session.displayStatus !== "Needs human review" &&
@@ -267,22 +296,21 @@ export function SessionCardView({
 					type="button"
 				/>
 			) : null}
-			{overlay}
-			{action ? <div className="absolute right-2 top-1.5 z-10">{action}</div> : null}
-			<div className="px-3.5 pb-2.5 pt-3">
-				<div className="flex min-w-0 items-start gap-2.5">
+			<div className="px-3.5 pb-2.5 pt-2.5">
+				<div className="flex min-w-0 items-center gap-2.5">
 					{renderAvatar(session.provider)}
-					<div className="min-w-0 flex-1">
-						<div
-							className={cn(
-								"line-clamp-2 overflow-hidden text-balance text-sm-md font-semibold leading-tight tracking-tight text-foreground",
-								(overlay || action) && "pr-6",
-							)}
-							title={session.title}
-						>
-							{session.title}
-						</div>
+					<div
+						className="min-w-0 flex-1 line-clamp-2 overflow-hidden text-balance text-sm-md font-semibold leading-tight tracking-tight text-foreground"
+						title={session.title}
+					>
+						{session.title}
 					</div>
+					{overlay || action ? (
+						<div className="relative z-10 -mr-1 shrink-0 self-center">
+							{overlay}
+							{action}
+						</div>
+					) : null}
 				</div>
 				{showBranch && (
 					<div className="mt-1.5 flex min-w-0 items-center gap-1.5 font-mono text-2xs text-muted-foreground">
@@ -330,9 +358,7 @@ export function SessionCardView({
 						data-testid="session-status"
 					>
 						{showStatusLoader ? <LoaderCircleIcon aria-hidden="true" className="mr-1 size-icon-2xs animate-spin" /> : null}
-						<span className="min-w-0 truncate">
-							{renderedStatusLabel}
-						</span>
+						<span className="min-w-0 truncate">{renderedStatusLabel}</span>
 					</span>
 				</div>
 				<div className="ml-auto flex shrink-0 items-center gap-2 whitespace-nowrap text-2xs text-muted-foreground">
@@ -342,6 +368,15 @@ export function SessionCardView({
 						{labels.formatTime(session.updatedAt)}
 					</span>
 				</div>
+				{pullRequestProgressLabel ? (
+					<div
+						className="col-span-2 min-w-0 truncate text-2xs text-muted-foreground"
+						data-testid="session-pr-progress"
+						title={pullRequestProgressLabel}
+					>
+						{pullRequestProgressLabel}
+					</div>
+				) : null}
 			</div>
 			{error ? (
 				<div className="border-t border-border px-3.5 py-1.5 text-2xs text-destructive" role="alert">
@@ -424,14 +459,14 @@ function BoardPullRequestGroup({
 			<span className="sr-only">{statusLabel}</span>
 			{hasComments ? (
 				<div className="-ml-0.5 flex shrink-0 items-center pl-1">
-					{(pr.reviewerAvatars ?? [])
+					{(pr.reviewers ?? [])
 						.slice(0, 3)
-						.map((avatar, index) => (
-							<img
-								alt=""
+						.map((reviewer, index) => (
+							<UserAvatar
 								className={cn("size-5 rounded-full border-2 border-surface object-cover ring-1 ring-border", index > 0 && "-ml-1.5")}
-								key={`${avatar}-${index}`}
-								src={avatar}
+								imageUrl={reviewer.avatarUrl}
+								key={`${reviewer.id}-${index}`}
+								name={reviewer.id}
 							/>
 						))}
 				</div>
@@ -470,6 +505,18 @@ export function groupBoardPullRequests(
 		else groups.set(pr.state, { state: pr.state, prs: [pr] });
 	}
 	return Array.from(groups.values());
+}
+
+function countBoardPullRequests(prs: BoardPullRequestPresentation[]): BoardPullRequestProgress {
+	const progress: BoardPullRequestProgress = {
+		closed: 0,
+		draft: 0,
+		merged: 0,
+		open: 0,
+		total: prs.length,
+	};
+	for (const pr of prs) progress[pr.state] += 1;
+	return progress;
 }
 
 function lifecycleClassName(state: BoardPullRequestState): string {

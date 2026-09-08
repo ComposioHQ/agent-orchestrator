@@ -58,11 +58,14 @@ export type AgentSwitchSummary = {
 	id: string;
 	state: string;
 	targetHarness: string;
+	updatedAt?: string;
 };
 
 export type WorkspaceSession = {
 	id: string;
 	terminalHandleId?: string;
+	/** Opaque controller generation; changes even when a restarted PTY reuses its handle. */
+	terminalGeneration?: string;
 	workspaceId: string;
 	workspaceName: string;
 	title: string;
@@ -71,6 +74,12 @@ export type WorkspaceSession = {
 	provider: AgentProvider;
 	/** Reviewer selected for this session; absent means use the project default. */
 	reviewerHarness?: ReviewerHarnessId;
+	/** Per-session reviewer override, including hidden fields preserved across saves. */
+	reviewerConfig?: {
+		model?: string;
+		mode?: string;
+		permissions?: string;
+	};
 	/** Whether the daemon may automatically review this session after it becomes idle. */
 	autoReviewEnabled?: boolean;
 	kind?: SessionKind;
@@ -167,6 +176,9 @@ export function canonicalTrackerIssueId(issueId?: string): string | undefined {
 }
 
 export type ProjectKind = "single_repo" | "workspace" | "scratch";
+
+/** Sentinel `kind` value for projects hosted by the AO cloud control plane. */
+export const CLOUD_PROJECT_KIND = "cloud" as const;
 
 const projectKinds = new Set<ProjectKind>(["single_repo", "workspace", "scratch"]);
 
@@ -297,11 +309,13 @@ export type WorkspaceSummary = {
 	/**
 	 * Discriminator for where the project lives. Local projects carry the
 	 * daemon's ProjectKind (or undefined for older daemons); projects hosted by
-	 * the AO cloud control plane carry "cloud" — branch on `kind === "cloud"`.
+	 * the AO cloud control plane carry CLOUD_PROJECT_KIND — branch on
+	 * `kind === CLOUD_PROJECT_KIND`.
 	 */
-	kind?: ProjectKind | "cloud";
+	kind?: ProjectKind | typeof CLOUD_PROJECT_KIND;
 	/** Local checkout path; empty string for cloud projects (no local folder). */
 	path: string;
+	folderMissing?: boolean;
 	workspaceRepos?: WorkspaceRepoSummary[];
 	type?: "main" | "worktree";
 	orchestratorAgent?: AgentProvider;

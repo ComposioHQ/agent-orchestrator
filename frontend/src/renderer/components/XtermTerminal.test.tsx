@@ -29,6 +29,10 @@ const state = vi.hoisted(() => ({
 		focus: ReturnType<typeof vi.fn>;
 		selectAll: ReturnType<typeof vi.fn>;
 		dataListeners: Set<(data: string) => void>;
+		csiHandlers: Array<{
+			callback: (params: (number | number[])[]) => boolean | Promise<boolean>;
+			id: { final: string; intermediates?: string; prefix?: string };
+		}>;
 		keyListeners: Set<(event: { key: string }) => void>;
 		selectionListeners: Set<() => void>;
 		scrollListeners: Set<() => void>;
@@ -61,6 +65,24 @@ vi.mock("@xterm/xterm", () => ({
 		focus = vi.fn();
 		selectAll = vi.fn();
 		dataListeners = new Set<(data: string) => void>();
+		csiHandlers: Array<{
+			callback: (params: (number | number[])[]) => boolean | Promise<boolean>;
+			id: { final: string; intermediates?: string; prefix?: string };
+		}> = [];
+		parser = {
+			registerCsiHandler: (
+				id: { final: string; intermediates?: string; prefix?: string },
+				callback: (params: (number | number[])[]) => boolean | Promise<boolean>,
+			) => {
+				const handler = { callback, id };
+				this.csiHandlers.push(handler);
+				return {
+					dispose: () => {
+						this.csiHandlers = this.csiHandlers.filter((candidate) => candidate !== handler);
+					},
+				};
+			},
+		};
 		keyListeners = new Set<(event: { key: string }) => void>();
 		selectionListeners = new Set<() => void>();
 		scrollListeners = new Set<() => void>();
@@ -266,6 +288,101 @@ describe("XtermTerminal", () => {
 		const { rerender } = render(<XtermTerminal theme="dark" />);
 
 		rerender(<XtermTerminal focusRequested theme="dark" />);
+
+		await waitFor(() => expect(state.lastTerminal!.focus).toHaveBeenCalled());
+	});
+
+	it("does not steal focus from an open dialog or another control", () => {
+		const { rerender } = render(<XtermTerminal theme="dark" />);
+		const dialog = document.createElement("div");
+		dialog.setAttribute("role", "dialog");
+		dialog.dataset.state = "open";
+		const dialogInput = document.createElement("input");
+		dialog.appendChild(dialogInput);
+		document.body.appendChild(dialog);
+		dialogInput.focus();
+		state.lastTerminal!.focus.mockClear();
+
+		rerender(<XtermTerminal focusRequested theme="dark" />);
+
+		expect(state.lastTerminal!.focus).not.toHaveBeenCalled();
+
+		dialog.remove();
+		const control = document.createElement("button");
+		document.body.appendChild(control);
+		control.focus();
+		rerender(<XtermTerminal theme="dark" />);
+		state.lastTerminal!.focus.mockClear();
+		rerender(<XtermTerminal focusRequested theme="dark" />);
+
+		expect(state.lastTerminal!.focus).not.toHaveBeenCalled();
+		control.remove();
+	});
+
+	it("allows the session navigation button to hand focus to the destination TUI", async () => {
+		const { rerender } = render(<XtermTerminal theme="dark" />);
+		const sessionButton = document.createElement("button");
+		sessionButton.setAttribute("aria-current", "page");
+		document.body.appendChild(sessionButton);
+		sessionButton.focus();
+		state.lastTerminal!.focus.mockClear();
+
+		rerender(<XtermTerminal focusRequested theme="dark" />);
+
+		await waitFor(() => expect(state.lastTerminal!.focus).toHaveBeenCalled());
+		sessionButton.remove();
+	});
+
+	it("allows an in-pane terminal tab to hand focus to the destination TUI", async () => {
+		const { rerender } = render(<XtermTerminal theme="dark" />);
+		const topbar = document.createElement("div");
+		topbar.dataset.testid = "session-workspace-topbar";
+		const tab = document.createElement("button");
+		tab.setAttribute("aria-current", "true");
+		tab.setAttribute("role", "tab");
+		topbar.appendChild(tab);
+		document.body.appendChild(topbar);
+		tab.focus();
+		state.lastTerminal!.focus.mockClear();
+
+		rerender(<XtermTerminal focusRequested theme="dark" />);
+
+		await waitFor(() => expect(state.lastTerminal!.focus).toHaveBeenCalled());
+		topbar.remove();
+	});
+
+	it("retries terminal focus after a closing dialog releases focus", async () => {
+		const frames: FrameRequestCallback[] = [];
+		const requestAnimationFrameSpy = vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => {
+			frames.push(callback);
+			return frames.length;
+		});
+		const { rerender } = render(<XtermTerminal theme="dark" />);
+		frames.length = 0;
+		const dialog = document.createElement("div");
+		dialog.setAttribute("role", "dialog");
+		dialog.dataset.state = "open";
+		const dialogInput = document.createElement("input");
+		dialog.appendChild(dialogInput);
+		document.body.appendChild(dialog);
+		dialogInput.focus();
+		state.lastTerminal!.focus.mockClear();
+
+		rerender(<XtermTerminal focusRequested theme="dark" />);
+		dialogInput.blur();
+		dialog.remove();
+		expect(frames).toHaveLength(1);
+		act(() => frames.shift()?.(performance.now()));
+
+		expect(state.lastTerminal!.focus).toHaveBeenCalled();
+		requestAnimationFrameSpy.mockRestore();
+	});
+
+	it("focuses a retained terminal when it becomes visible", async () => {
+		const { rerender } = render(<XtermTerminal focusRequested isVisible={false} theme="dark" />);
+		state.lastTerminal!.focus.mockClear();
+
+		rerender(<XtermTerminal focusRequested isVisible theme="dark" />);
 
 		await waitFor(() => expect(state.lastTerminal!.focus).toHaveBeenCalled());
 	});
@@ -685,6 +802,89 @@ describe("XtermTerminal", () => {
 		const exitFullscreenItem = await screen.findByText("Exit fullscreen");
 		expect(pane.contains(exitFullscreenItem.closest<HTMLElement>("[role='menu']"))).toBe(true);
 		Object.defineProperty(document, "fullscreenElement", { configurable: true, value: null });
+	});
+
+
+	it.each([true, false])("preserves newer focus after deferred fullscreen completion when visible=%s", async (isVisible) => {
+		let complete!: () => void;
+		const onToggleFullscreen = vi.fn(() => new Promise<void>((resolve) => { complete = resolve; }));
+		const frames: FrameRequestCallback[] = [];
+		const frameSpy = vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => {
+			frames.push(callback);
+			return frames.length;
+		});
+		const { container, rerender } = render(<XtermTerminal onToggleFullscreen={onToggleFullscreen} theme="dark" />);
+		const control = document.createElement("button");
+		document.body.appendChild(control);
+		try {
+			fireEvent.contextMenu(container.firstElementChild!);
+			fireEvent.click(await screen.findByText("Fullscreen terminal"));
+			rerender(<XtermTerminal isVisible={isVisible} onToggleFullscreen={onToggleFullscreen} theme="dark" />);
+			control.focus();
+			state.lastTerminal!.focus.mockClear();
+			frames.length = 0;
+			await act(async () => complete());
+			expect(control).toHaveFocus();
+			act(() => { while (frames.length) frames.shift()!(performance.now()); });
+			expect(control).toHaveFocus();
+			expect(state.lastTerminal!.focus).not.toHaveBeenCalled();
+		} finally {
+			control.remove();
+			frameSpy.mockRestore();
+		}
+	});
+	it("returns focus to xterm after entering and exiting fullscreen from the menu", async () => {
+		const onToggleFullscreen = vi.fn(async () => undefined);
+		const frames: FrameRequestCallback[] = [];
+		const requestAnimationFrameSpy = vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => {
+			frames.push(callback);
+			return frames.length;
+		});
+		const { container, rerender } = render(
+			<div className="terminal-pane-frame">
+				<XtermTerminal onToggleFullscreen={onToggleFullscreen} theme="dark" />
+			</div>,
+		);
+		const trigger = document.createElement("button");
+		document.body.appendChild(trigger);
+		state.lastTerminal!.focus.mockClear();
+		frames.length = 0;
+
+		try {
+			fireEvent.contextMenu(container.querySelector(".terminal-pane-frame")!.firstElementChild!);
+			fireEvent.click(await screen.findByText("Fullscreen terminal"));
+			await act(async () => undefined);
+
+			expect(onToggleFullscreen).toHaveBeenCalledOnce();
+			expect(frames).toHaveLength(1);
+			act(() => frames.shift()?.(performance.now()));
+			expect(frames).toHaveLength(1);
+			act(() => frames.shift()?.(performance.now()));
+			expect(state.lastTerminal!.focus).toHaveBeenCalledOnce();
+
+			const pane = container.querySelector(".terminal-pane-frame")!;
+			Object.defineProperty(document, "fullscreenElement", { configurable: true, value: pane });
+			rerender(
+				<div className="terminal-pane-frame">
+					<XtermTerminal isFullscreen onToggleFullscreen={onToggleFullscreen} theme="dark" />
+				</div>,
+			);
+			frames.length = 0;
+			state.lastTerminal!.focus.mockClear();
+
+			fireEvent.contextMenu(pane.querySelector("div")!);
+			fireEvent.click(await screen.findByText("Exit fullscreen"));
+			await act(async () => undefined);
+			expect(onToggleFullscreen).toHaveBeenCalledTimes(2);
+			expect(frames).toHaveLength(1);
+			act(() => frames.shift()?.(performance.now()));
+			act(() => frames.shift()?.(performance.now()));
+			expect(state.lastTerminal!.focus).toHaveBeenCalledOnce();
+		} finally {
+			Object.defineProperty(document, "fullscreenElement", { configurable: true, value: null });
+			requestAnimationFrameSpy.mockRestore();
+			trigger.remove();
+		}
 	});
 
 	it("runs context menu copy and select all against the xterm instance", async () => {
@@ -1146,11 +1346,198 @@ describe("XtermTerminal", () => {
 
 	it("does not forward raw xterm data/control bytes as user input", () => {
 		const onInput = vi.fn();
-		render(<XtermTerminal theme="dark" onReady={(terminal) => terminal.onUserInput(onInput)} />);
+		render(
+			<XtermTerminal
+				theme="dark"
+				supportsCursorColorScheme
+				onReady={(terminal) => terminal.onUserInput(onInput)}
+			/>,
+		);
 
-		expect(state.lastTerminal!.dataListeners.size).toBe(0);
+		// One onData hook exists for OSC 10/11/12 color replies (Cursor theme probes).
+		expect(state.lastTerminal!.dataListeners.size).toBe(1);
 		state.lastTerminal!.dataListeners.forEach((listener) => listener("\x1b[A"));
 		expect(onInput).not.toHaveBeenCalled();
+
+		state.lastTerminal!.dataListeners.forEach((listener) =>
+			listener("\x1b]11;rgb:f5f5/f5f5/f4f4\x07"),
+		);
+		expect(onInput).toHaveBeenCalledWith("\x1b]11;rgb:f5f5/f5f5/f4f4\x07", "protocol");
+	});
+
+	it("forwards validated OSC replies for generic terminals without forwarding raw control bytes", () => {
+		const onInput = vi.fn();
+		render(
+			<XtermTerminal
+				theme="dark"
+				paneScrollsByKeyboard
+				onReady={(terminal) => terminal.onUserInput(onInput)}
+			/>,
+		);
+
+		state.lastTerminal!.dataListeners.forEach((listener) => listener("\x1b[?997;1n"));
+		expect(onInput).not.toHaveBeenCalled();
+		state.lastTerminal!.dataListeners.forEach((listener) =>
+			listener("\x1b]4;196;rgb:ffff/0000/8000\x07"),
+		);
+		expect(onInput).toHaveBeenCalledWith("\x1b]4;196;rgb:ffff/0000/8000\x07", "protocol");
+	});
+
+	it("updates protocol handling when a retained terminal becomes a Cursor terminal", () => {
+		const onInput = vi.fn();
+		const { rerender } = render(
+			<XtermTerminal theme="dark" onReady={(terminal) => terminal.onUserInput(onInput)} />,
+		);
+		onInput.mockClear();
+		rerender(
+			<XtermTerminal
+				theme="dark"
+				supportsCursorColorScheme
+				onReady={(terminal) => terminal.onUserInput(onInput)}
+			/>,
+		);
+		onInput.mockClear();
+		state.lastTerminal!.dataListeners.forEach((listener) =>
+			listener("\x1b]11;rgb:f5f5/f5f5/f4f4\x07"),
+		);
+
+		expect(onInput).toHaveBeenCalledWith("\x1b]11;rgb:f5f5/f5f5/f4f4\x07", "protocol");
+	});
+
+	it("reports live light and dark changes to mode 2031 subscribers", () => {
+		const onInput = vi.fn();
+		const view = render(
+			<XtermTerminal theme="light" onReady={(terminal) => terminal.onUserInput(onInput)} />,
+		);
+		const setMode = state.lastTerminal!.csiHandlers.find(
+			({ id }) => id.prefix === "?" && id.final === "h",
+		);
+		const resetMode = state.lastTerminal!.csiHandlers.find(
+			({ id }) => id.prefix === "?" && id.final === "l",
+		);
+
+		expect(setMode?.callback([2031])).toBe(true);
+		view.rerender(
+			<XtermTerminal theme="dark" onReady={(terminal) => terminal.onUserInput(onInput)} />,
+		);
+		expect(onInput).toHaveBeenLastCalledWith("\x1b[?997;1n", "protocol");
+
+		view.rerender(
+			<XtermTerminal theme="light" onReady={(terminal) => terminal.onUserInput(onInput)} />,
+		);
+		expect(onInput).toHaveBeenLastCalledWith("\x1b[?997;2n", "protocol");
+
+		expect(resetMode?.callback([2031])).toBe(true);
+		onInput.mockClear();
+		view.rerender(
+			<XtermTerminal theme="dark" onReady={(terminal) => terminal.onUserInput(onInput)} />,
+		);
+		expect(onInput).not.toHaveBeenCalled();
+	});
+
+	it("reports named palette changes to mode 2031 subscribers", () => {
+		const onInput = vi.fn();
+		useUiStore.setState({ themeStyle: "orchestrate" });
+
+		try {
+			render(<XtermTerminal theme="dark" onReady={(terminal) => terminal.onUserInput(onInput)} />);
+			const setMode = state.lastTerminal!.csiHandlers.find(
+				({ id }) => id.prefix === "?" && id.final === "h",
+			);
+
+			expect(setMode?.callback([2031])).toBe(true);
+			onInput.mockClear();
+			act(() => useUiStore.getState().setThemeStyle("github"));
+
+			expect(onInput).toHaveBeenLastCalledWith("\x1b[?997;1n", "protocol");
+		} finally {
+			act(() => useUiStore.setState({ themeStyle: "orchestrate" }));
+		}
+	});
+
+	it("leaves unrelated private modes for xterm to handle", () => {
+		render(<XtermTerminal theme="light" />);
+		const setMode = state.lastTerminal!.csiHandlers.find(
+			({ id }) => id.prefix === "?" && id.final === "h",
+		);
+
+		expect(setMode?.callback([25])).toBe(false);
+	});
+
+	it("enables color-scheme updates from mixed private mode sets without consuming them", () => {
+		const onInput = vi.fn();
+		const view = render(
+			<XtermTerminal theme="light" onReady={(terminal) => terminal.onUserInput(onInput)} />,
+		);
+		const setMode = state.lastTerminal!.csiHandlers.find(
+			({ id }) => id.prefix === "?" && id.final === "h",
+		);
+
+		expect(setMode?.callback([2031, 25])).toBe(false);
+		view.rerender(
+			<XtermTerminal theme="dark" onReady={(terminal) => terminal.onUserInput(onInput)} />,
+		);
+		expect(onInput).toHaveBeenLastCalledWith("\x1b[?997;1n", "protocol");
+	});
+
+	it("disables color-scheme updates from mixed private mode resets without consuming them", () => {
+		const onInput = vi.fn();
+		const view = render(
+			<XtermTerminal theme="light" onReady={(terminal) => terminal.onUserInput(onInput)} />,
+		);
+		const setMode = state.lastTerminal!.csiHandlers.find(
+			({ id }) => id.prefix === "?" && id.final === "h",
+		);
+		const resetMode = state.lastTerminal!.csiHandlers.find(
+			({ id }) => id.prefix === "?" && id.final === "l",
+		);
+
+		expect(setMode?.callback([2031])).toBe(true);
+		expect(resetMode?.callback([2031, 25])).toBe(false);
+		view.rerender(
+			<XtermTerminal theme="dark" onReady={(terminal) => terminal.onUserInput(onInput)} />,
+		);
+		expect(onInput).not.toHaveBeenCalled();
+	});
+
+	it("answers mixed color-scheme capability queries without consuming them", () => {
+		const onInput = vi.fn();
+		render(<XtermTerminal theme="light" onReady={(terminal) => terminal.onUserInput(onInput)} />);
+		const capabilityQuery = state.lastTerminal!.csiHandlers.find(
+			({ id }) => id.prefix === "?" && id.intermediates === "$" && id.final === "p",
+		);
+
+		expect(capabilityQuery?.callback([2031, 25])).toBe(false);
+		expect(onInput).toHaveBeenCalledWith("\x1b[?2031;2$y", "protocol");
+	});
+
+	it("answers mixed color-scheme mode queries without consuming them", () => {
+		const onInput = vi.fn();
+		render(<XtermTerminal theme="light" onReady={(terminal) => terminal.onUserInput(onInput)} />);
+		const modeQuery = state.lastTerminal!.csiHandlers.find(
+			({ id }) => id.prefix === "?" && id.final === "n",
+		);
+
+		expect(modeQuery?.callback([996, 25])).toBe(false);
+		expect(onInput).toHaveBeenCalledWith("\x1b[?997;2n", "protocol");
+	});
+
+	it("answers color-scheme capability and current-mode queries", () => {
+		const onInput = vi.fn();
+		render(<XtermTerminal theme="light" onReady={(terminal) => terminal.onUserInput(onInput)} />);
+		const capabilityQuery = state.lastTerminal!.csiHandlers.find(
+			({ id }) => id.prefix === "?" && id.intermediates === "$" && id.final === "p",
+		);
+		const modeQuery = state.lastTerminal!.csiHandlers.find(
+			({ id }) => id.prefix === "?" && id.final === "n",
+		);
+
+		expect(capabilityQuery?.callback([2031])).toBe(true);
+		expect(modeQuery?.callback([996])).toBe(true);
+		expect(onInput.mock.calls).toEqual([
+			["\x1b[?2031;2$y", "protocol"],
+			["\x1b[?997;2n", "protocol"],
+		]);
 	});
 
 	it("translates wheel motion into SGR wheel reports for zellij scrollback", () => {

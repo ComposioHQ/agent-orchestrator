@@ -10,6 +10,7 @@
  */
 
 import {
+	type InfiniteData,
 	type QueryClient,
 	useInfiniteQuery,
 	useMutation,
@@ -40,6 +41,7 @@ import type {
 	ChatSkill,
 	PlanStep,
 	PlanStepStatus,
+	QueuedMessageEditOptions,
 	SessionMode,
 	ThreadStatus,
 	TurnSettings,
@@ -481,19 +483,33 @@ export function useConversationCommands(sessionId: string | undefined) {
 	});
 
 	const chooseSettings = useMutation({
-		mutationFn: async (settings: TurnSettings) => {
-			const { error } = await apiClient.PATCH(
+		mutationFn: async ({ targetSessionId, settings }: { targetSessionId: string; settings: TurnSettings }) => {
+			const { data, error } = await apiClient.PATCH(
 				"/api/v1/sessions/{sessionId}/conversation/settings",
 				{
-					params: { path: { sessionId: sessionId as string } },
+					params: { path: { sessionId: targetSessionId } },
 					body: settings,
 				},
 			);
 			if (error) throw error;
+			return data;
 		},
-		// The snapshot carries the selection, so refetching is what confirms it took
-		// rather than the composer trusting its own optimistic state.
-		onSuccess: invalidate,
+		// Confirm from the daemon's response before enabling Remember. A background
+		// snapshot refetch can be slow; it must not expose the previous permission.
+		onSuccess: async (settings, { targetSessionId }) => {
+			const queryKey = conversationQueryKey(targetSessionId);
+			await queryClient.cancelQueries({ queryKey });
+			if (settings) {
+				queryClient.setQueryData<InfiniteData<ConversationSnapshot>>(queryKey, (current) =>
+					current ? {
+						...current,
+						pages: current.pages.map((page, index) => index === 0
+							? { ...page, settings: settings as TurnSettings } : page),
+					} : current,
+				);
+			}
+			refreshSessionInBackground(targetSessionId);
+		},
 	});
 
 	/**
@@ -515,12 +531,12 @@ export function useConversationCommands(sessionId: string | undefined) {
 	 * means "wait and try again", and one means this harness cannot do it at all.
 	 */
 	const steer = useMutation({
-		mutationFn: async (text: string) => {
+		mutationFn: async (input: { text: string; attachments?: WireImageContent[] }) => {
 			const { data, error } = await apiClient.POST(
 				"/api/v1/sessions/{sessionId}/conversation/steer",
 				{
 					params: { path: { sessionId: sessionId as string } },
-					body: { text, clientMessageId: crypto.randomUUID() },
+					body: { ...input, clientMessageId: crypto.randomUUID() },
 				},
 			);
 			if (error) throw error;
@@ -561,19 +577,54 @@ export function useConversationCommands(sessionId: string | undefined) {
 	});
 
 	const editQueuedTurn = useMutation({
-		mutationFn: async ({ turnId, text }: { turnId: string; text: string }) => {
+		mutationFn: async ({ turnId, text, ...options }: { turnId: string; text: string } & QueuedMessageEditOptions) => {
 			const { error } = await apiClient.POST(
 				"/api/v1/sessions/{sessionId}/conversation/turns/{turnId}/queue/edit",
 				{
 					params: {
 						path: { sessionId: sessionId as string, turnId },
 					},
-					body: { text },
+					body: { text, ...options },
 				},
 			);
 			if (error) throw new Error(apiErrorMessage(error, "Could not save queued message edit"));
 		},
 		onSuccess: invalidate,
+	});
+
+	const reorderQueuedTurns = useMutation({
+		mutationFn: async (turnIds: string[]) => {
+			const { error } = await apiClient.POST(
+				"/api/v1/sessions/{sessionId}/conversation/queue/reorder",
+				{
+					params: {
+						path: { sessionId: sessionId as string },
+					},
+					body: { turnIds },
+				},
+			);
+			if (error) throw new Error(apiErrorMessage(error, "Could not reorder queued messages"));
+		},
+		onMutate: async (turnIds) => {
+			if (!sessionId) return;
+			const queryKey = conversationQueryKey(sessionId);
+			await queryClient.cancelQueries({ queryKey });
+			const previous = queryClient.getQueryData<InfiniteData<ConversationSnapshot>>(queryKey);
+			if (previous) {
+				queryClient.setQueryData<InfiniteData<ConversationSnapshot>>(
+					queryKey,
+					applyQueuedTurnOrderToPages(previous, turnIds),
+				);
+			}
+			return { previous };
+		},
+		onError: (_error, _turnIds, context) => {
+			if (!sessionId || !context?.previous) return;
+			queryClient.setQueryData(conversationQueryKey(sessionId), context.previous);
+		},
+		onSettled: () => {
+			invalidate();
+		},
 	});
 
 	/**
@@ -748,7 +799,8 @@ export function useConversationCommands(sessionId: string | undefined) {
 		resumingAgent: resume.isPending,
 		resumeError: resume.error ? apiErrorMessage(resume.error) : undefined,
 		compact: () => compact.mutateAsync(),
-		chooseSettings: (settings: TurnSettings) => chooseSettings.mutate(settings),
+		choosingSettings: chooseSettings.isPending && chooseSettings.variables?.targetSessionId === sessionId,
+		chooseSettings: (settings: TurnSettings) => chooseSettings.mutate({ targetSessionId: sessionId as string, settings }),
 		/** A compaction is in flight provider-side and takes seconds, so it reads as
 		 *  its own state rather than folding into the generic busy flag, which also
 		 *  gates the composer. */
@@ -817,12 +869,20 @@ export function useConversationCommands(sessionId: string | undefined) {
 		activateBranch: (branchId: string) => activateBranch.mutateAsync(branchId),
 		activateBranchPending: activateBranch.isPending,
 		activateBranchError: activateBranch.error ? apiErrorMessage(activateBranch.error) : undefined,
-		steer: (text: string) => steer.mutateAsync(text),
+		steer: (text: string, attachments?: WireImageContent[]) =>
+			steer.mutateAsync({
+				text,
+				...(attachments?.length ? { attachments } : {}),
+			}),
 		promoteQueuedTurn: (turnId: string) => promoteQueuedTurn.mutateAsync(turnId),
 		cancelQueuedTurn: (turnId: string) => cancelQueuedTurn.mutateAsync(turnId),
-		editQueuedTurn: (turnId: string, text: string) => {
+		editQueuedTurn: (turnId: string, text: string, options?: QueuedMessageEditOptions) => {
 			if (!sessionId) return Promise.reject(new Error("No conversation session is selected."));
-			return editQueuedTurn.mutateAsync({ turnId, text });
+			return editQueuedTurn.mutateAsync({ turnId, text, ...options });
+		},
+		reorderQueuedTurns: (turnIds: string[]) => {
+			if (!sessionId) return Promise.reject(new Error("No conversation session is selected."));
+			return reorderQueuedTurns.mutateAsync(turnIds);
 		},
 		promoteQueuedTurnPendingTurnId: promoteQueuedTurn.isPending
 			? promoteQueuedTurn.variables
@@ -995,10 +1055,11 @@ export function useConversationConfigOptions(sessionId: string | undefined, enab
 
 	return {
 		options: query.data ?? [],
+		loaded: query.isSuccess,
 		setOption: (optionId: string, value: ChatConfigOptionValue) =>
 			mutation.mutateAsync({ optionId, value }),
 		pending: mutation.isPending,
-		error: mutation.error ? apiErrorMessage(mutation.error) : undefined,
+		error: mutation.error || query.error ? apiErrorMessage(mutation.error ?? query.error) : undefined,
 	};
 }
 
@@ -1234,6 +1295,48 @@ export function toSnapshot(wire: WireSnapshot): ConversationSnapshot {
 			rolledBack: turn.rolledBack ?? undefined,
 		})),
 		items,
+	};
+}
+
+function applyQueuedTurnOrder(
+	snapshot: ConversationSnapshot,
+	fifoTurnIds: readonly string[],
+): ConversationSnapshot {
+	const queuedTurns = snapshot.turns.filter((turn) => turn.state === "queued");
+	if (queuedTurns.length !== fifoTurnIds.length) return snapshot;
+
+	const queuedById = new Map(queuedTurns.map((turn) => [turn.id, turn]));
+	const requestedAts = [...queuedTurns]
+		.sort((left, right) => left.requestedAt.localeCompare(right.requestedAt))
+		.map((turn) => turn.requestedAt);
+	const reorderedQueued = fifoTurnIds.flatMap((turnId, index) => {
+		const turn = queuedById.get(turnId);
+		return turn
+			? [{ ...turn, requestedAt: requestedAts[index] ?? turn.requestedAt }]
+			: [];
+	});
+	if (reorderedQueued.length !== queuedTurns.length) return snapshot;
+
+	const queuedIds = new Set(fifoTurnIds);
+	const otherTurns = snapshot.turns.filter((turn) => !queuedIds.has(turn.id));
+	return {
+		...snapshot,
+		turns: [...otherTurns, ...reorderedQueued].sort((left, right) =>
+			left.requestedAt.localeCompare(right.requestedAt),
+		),
+	};
+}
+
+function applyQueuedTurnOrderToPages(
+	data: InfiniteData<ConversationSnapshot>,
+	fifoTurnIds: readonly string[],
+): InfiniteData<ConversationSnapshot> {
+	if (data.pages.length === 0) return data;
+	return {
+		...data,
+		pages: data.pages.map((page, index) =>
+			index === 0 ? applyQueuedTurnOrder(page, fifoTurnIds) : page,
+		),
 	};
 }
 

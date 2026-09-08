@@ -257,16 +257,11 @@ func TestLauncherSpawnCreatesAOShimWhenExecutableIsNotNamedAO(t *testing.T) {
 func TestLauncherSpawnWarnsWhenPATHPinAndShimFail(t *testing.T) {
 	reviewer := &fakeReviewer{env: map[string]string{"PATH": "/reviewer/bin"}}
 	rt := &fakeRuntime{}
-	calls := 0
 	l := NewLauncher(
 		fakeReviewerResolver{reviewer: reviewer, ok: true},
 		rt,
 		t.TempDir(),
 		WithExecutable(func() (string, error) {
-			calls++
-			if calls == 1 {
-				return filepath.Join(t.TempDir(), "ao-dev-daemon"), nil
-			}
 			return "", errors.New("executable unavailable")
 		}),
 	)
@@ -281,8 +276,8 @@ func TestLauncherSpawnWarnsWhenPATHPinAndShimFail(t *testing.T) {
 		t.Fatalf("PATH = %q, want original reviewer PATH", rt.createCfg.Env["PATH"])
 	}
 	warning := rt.createCfg.Env[EnvAOCommandWarning]
-	if !strings.Contains(warning, "PATH pin failed") || !strings.Contains(warning, "AO shim fallback failed") || !strings.Contains(warning, "executable unavailable") {
-		t.Fatalf("%s = %q, want combined PATH/shim warning", EnvAOCommandWarning, warning)
+	if !strings.Contains(warning, "AO shim failed") || !strings.Contains(warning, "PATH pin fallback failed") || !strings.Contains(warning, "executable unavailable") {
+		t.Fatalf("%s = %q, want combined shim/PATH warning", EnvAOCommandWarning, warning)
 	}
 }
 
@@ -318,14 +313,72 @@ func TestLauncherSpawnPrependsNodeRuntimeForNodeShimReviewer(t *testing.T) {
 	}
 	reviewerWithCommand := reviewerCommandFunc{reviewer: reviewer, reviewCommand: reviewerCommand}
 	rt := &fakeRuntime{}
-	l := newTestLauncher(t, reviewerWithCommand, rt)
+	dataDir := t.TempDir()
+	exe := filepath.Join(t.TempDir(), "ao")
+	l := NewLauncher(
+		fakeReviewerResolver{reviewer: reviewerWithCommand, ok: true},
+		rt,
+		dataDir,
+		WithExecutable(func() (string, error) { return exe, nil }),
+	)
+
+	if _, err := l.Spawn(context.Background(), launchSpec()); err != nil {
+		t.Fatalf("Spawn: %v", err)
+	}
+	// The stable AO shim stays at the head: the reviewer binary is invoked by
+	// absolute path, and `env node` skips the AO shim dir (which holds `ao`, not
+	// `node`) to reach the node dir behind it.
+	parts := strings.Split(rt.createCfg.Env["PATH"], string(os.PathListSeparator))
+	shimDir := filepath.Join(dataDir, "reviewer-runtime", "bin")
+	if len(parts) < 3 || parts[0] != shimDir || parts[1] != binDir || parts[2] != nodeDir {
+		t.Fatalf("runtime PATH = %q, want AO shim dir, reviewer bin, then node dir", rt.createCfg.Env["PATH"])
+	}
+}
+
+// A foreign `ao` beside the reviewer binary must not win a bare `ao` typed into
+// a reviewer pane: the launch-binary prepend puts that directory in front of
+// the stable AO shim, and the shim has to be moved back. Same failure as #3562,
+// one context over.
+func TestLauncherSpawnKeepsDaemonAOAheadOfLaunchBinaryDir(t *testing.T) {
+	home := t.TempDir()
+	binDir := filepath.Join(home, "reviewer", "bin")
+	reviewerBin := filepath.Join(binDir, "codex")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{reviewerBin, filepath.Join(binDir, "ao")} {
+		if err := os.WriteFile(name, []byte("#!/bin/sh\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// binDir is deliberately NOT on the inherited PATH, which is what makes the
+	// launch-binary prepend happen at all (a GUI-launched app does not see the
+	// npm global bin the agent CLI and the legacy `ao` share).
+	basePath := t.TempDir()
+	t.Setenv("PATH", basePath)
+
+	reviewer := &fakeReviewer{env: map[string]string{"PATH": basePath}}
+	reviewerCommand := func(_ context.Context, inv ports.ReviewInvocation) (ports.ReviewCommandSpec, error) {
+		reviewer.gotInv = inv
+		return ports.ReviewCommandSpec{Argv: []string{reviewerBin, "--review"}, Env: reviewer.env}, nil
+	}
+	rt := &fakeRuntime{}
+	exe := filepath.Join(t.TempDir(), "ao")
+	dataDir := t.TempDir()
+	l := NewLauncher(
+		fakeReviewerResolver{reviewer: reviewerCommandFunc{reviewer: reviewer, reviewCommand: reviewerCommand}, ok: true},
+		rt,
+		dataDir,
+		WithExecutable(func() (string, error) { return exe, nil }),
+	)
 
 	if _, err := l.Spawn(context.Background(), launchSpec()); err != nil {
 		t.Fatalf("Spawn: %v", err)
 	}
 	parts := strings.Split(rt.createCfg.Env["PATH"], string(os.PathListSeparator))
-	if len(parts) < 2 || parts[0] != binDir || parts[1] != nodeDir {
-		t.Fatalf("runtime PATH = %q, want reviewer bin then node dir first", rt.createCfg.Env["PATH"])
+	shimDir := filepath.Join(dataDir, "reviewer-runtime", "bin")
+	if len(parts) == 0 || parts[0] != shimDir {
+		t.Fatalf("reviewer PATH = %q, want the AO shim dir %q first", rt.createCfg.Env["PATH"], shimDir)
 	}
 }
 

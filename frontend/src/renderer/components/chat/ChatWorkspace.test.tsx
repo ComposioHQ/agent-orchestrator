@@ -1,5 +1,6 @@
-import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render as rtlRender, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import type { ReactElement } from "react";
 import { typeInLexicalEditor } from "../../test/lexical";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ChatWorkspace, promptSpacerHeight, promptTopInset } from "./ChatWorkspace";
@@ -17,6 +18,19 @@ import type { ConversationMessage, ConversationSnapshot } from "../../types/conv
 import { setApiBaseUrl } from "../../lib/api-client";
 import { useUiStore } from "../../stores/ui-store";
 import type { WorkspaceSession } from "../../types/workspace";
+import { TooltipProvider } from "../ui/tooltip";
+
+const renameSessionMock = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
+
+vi.mock("../../lib/rename-session", () => ({ renameSession: renameSessionMock }));
+
+function render(ui: ReactElement) {
+	const result = rtlRender(<TooltipProvider>{ui}</TooltipProvider>);
+	return {
+		...result,
+		rerender: (nextUi: ReactElement) => result.rerender(<TooltipProvider>{nextUi}</TooltipProvider>),
+	};
+}
 
 const writeText = vi.fn(async (_text: string) => undefined);
 const menuAction = vi.fn(async (_action: string) => undefined);
@@ -137,6 +151,7 @@ beforeEach(() => {
 	closeShellTerminalListeners.clear();
 	closeShellTerminalShortcutStates.length = 0;
 	terminalPaneState.props = undefined;
+	renameSessionMock.mockReset().mockResolvedValue(undefined);
 	window.localStorage.clear();
 	setApiBaseUrl("http://127.0.0.1:3001");
 	useUiStore.setState({ isSidebarOpen: true, inspectorSessions: {} });
@@ -171,6 +186,7 @@ const chatSession = {
 	mode: "chat",
 	status: "working",
 	updatedAt: "2026-08-15T00:00:00Z",
+	activity: { state: "active", lastActivityAt: "2026-08-15T00:00:00Z" },
 	prs: [],
 } satisfies WorkspaceSession;
 
@@ -342,6 +358,8 @@ describe("ChatWorkspace timeline", () => {
 		const user = userEvent.setup();
 		const onDecide = vi.fn();
 		const view = render(<ChatWorkspace snapshot={idleSnapshot()} newWorkDisabled />);
+		expect(screen.getByText("Switching to terminal UI…")).toBeInTheDocument();
+		expect(screen.queryByText("The controller is not connected")).not.toBeInTheDocument();
 
 		expect(screen.getByTestId("chat-conversation-panel")).not.toHaveAttribute("inert");
 		expect(screen.getByLabelText("Message the agent")).toHaveAttribute("aria-disabled", "true");
@@ -370,21 +388,60 @@ describe("ChatWorkspace timeline", () => {
 		expect(onDecide).toHaveBeenCalledWith("drain-approval", "allow_once");
 	});
 
-	it("uses the shared session topbar chrome for workers and orchestrators", () => {
-		const view = render(<ChatWorkspace snapshot={chatFixture} sessionRole="worker" />);
+	it("labels worker and orchestrator primary tabs with accessible provider context", () => {
+		const view = render(<ChatWorkspace snapshot={chatFixture} session={chatSession} sessionRole="worker" />);
 
 		expect(screen.getByLabelText("Chat")).toHaveAttribute("data-session-role", "worker");
 		expect(screen.getByTestId("session-workspace-topbar")).toBeInTheDocument();
 		expect(screen.getByTestId("session-terminal-region")).toBeInTheDocument();
-		expect(screen.getByRole("tab", { name: chatFixture.title })).toBeInTheDocument();
+		const workerTab = screen.getByRole("tab", { name: "Reviewer chat · Codex · Working" });
+		expect(workerTab).toHaveTextContent(chatSession.title);
+		expect(workerTab).not.toHaveTextContent("Codex");
+		expect(workerTab.querySelector('img[aria-hidden="true"]')).toBeInTheDocument();
 
-		view.rerender(<ChatWorkspace snapshot={chatFixture} sessionRole="orchestrator" />);
+		view.rerender(
+			<ChatWorkspace
+				snapshot={chatFixture}
+				session={{ ...chatSession, id: "ao-demo-orchestrator", kind: "orchestrator" }}
+				sessionRole="orchestrator"
+			/>,
+		);
 
 		expect(screen.getByLabelText("Chat")).toHaveAttribute("data-session-role", "orchestrator");
 		expect(screen.getByTestId("session-workspace-topbar")).toBeInTheDocument();
 		const actionRegion = screen.getByTestId("session-action-region");
 		expect(actionRegion).toHaveClass("pl-2", "pr-3");
 		expect(actionRegion).not.toHaveClass("px-3");
+		expect(screen.getByRole("tab", { name: "Orchestrator · Codex · Working" })).toBeInTheDocument();
+
+		view.rerender(
+			<ChatWorkspace
+				snapshot={chatFixture}
+				session={{ ...chatSession, id: "legacy-orchestrator", kind: undefined }}
+			/>,
+		);
+		expect(screen.getByRole("tab", { name: "Orchestrator · Codex · Working" })).toBeInTheDocument();
+	});
+
+	it("refreshes the owning workspace after renaming the primary chat tab", async () => {
+		const user = userEvent.setup();
+		const onSessionRenamed = vi.fn().mockResolvedValue(undefined);
+		render(
+			<ChatWorkspace
+				snapshot={chatFixture}
+				session={chatSession}
+				sessionRole="worker"
+				onSessionRenamed={onSessionRenamed}
+			/>,
+		);
+
+		await user.dblClick(screen.getByRole("tab", { name: "Reviewer chat · Codex · Working" }));
+		const input = screen.getByRole("textbox", { name: "Rename Reviewer chat" });
+		await user.clear(input);
+		await user.type(input, "Focused review{Enter}");
+
+		await waitFor(() => expect(renameSessionMock).toHaveBeenCalledWith(chatSession.id, "Focused review"));
+		expect(onSessionRenamed).toHaveBeenCalledOnce();
 	});
 
 	it("clears the fixed titlebar nav when the sidebar is collapsed, like the terminal session", () => {
@@ -414,7 +471,7 @@ describe("ChatWorkspace timeline", () => {
 		);
 
 		const terminalRegion = screen.getByTestId("session-terminal-region");
-		expect(terminalRegion).toContainElement(screen.getByRole("tab", { name: /^Codex/ }));
+		expect(terminalRegion).toContainElement(screen.getByRole("tab", { name: /^Reviewer chat/ }));
 		expect(terminalRegion).toContainElement(screen.getByRole("button", { name: "Session tab action" }));
 		expect(screen.getByTestId("session-tab-action")).toContainElement(
 			screen.getByRole("button", { name: "Session tab action" }),
@@ -954,14 +1011,15 @@ describe("ChatWorkspace timeline", () => {
 		);
 
 		expect(screen.getByRole("alert")).toHaveTextContent("The agent controller stopped");
+		expect(screen.getByText("The controller is not connected")).toBeInTheDocument();
 		await user.click(screen.getByRole("button", { name: "Resume agent" }));
 		await user.click(screen.getByRole("button", { name: "Open shell" }));
 		expect(resume).toHaveBeenCalledOnce();
 		expect(openShell).toHaveBeenCalledOnce();
 	});
 
-	it("does not report the intentional controller gap during an interface handoff as a crash", () => {
-		render(
+	it("shows connecting during the controller gap, then restores the composer when ready", () => {
+		const { rerender } = render(
 			<ChatWorkspace
 				snapshot={{
 					...chatFixtureSettled,
@@ -975,6 +1033,13 @@ describe("ChatWorkspace timeline", () => {
 
 		expect(screen.queryByText("The agent controller stopped")).not.toBeInTheDocument();
 		expect(screen.queryByRole("button", { name: "Resume agent" })).not.toBeInTheDocument();
+		expect(screen.getByText("Connecting to the agent…")).toBeInTheDocument();
+		expect(screen.queryByText("The controller is not connected")).not.toBeInTheDocument();
+		expect(screen.getByRole("combobox", { name: "Message the agent" })).toHaveAttribute("contenteditable", "false");
+
+		rerender(<ChatWorkspace snapshot={chatFixtureEmpty} />);
+		expect(screen.queryByText("Connecting to the agent…")).not.toBeInTheDocument();
+		expect(screen.getByRole("combobox", { name: "Message the agent" })).toHaveAttribute("contenteditable", "true");
 	});
 
 	it("announces thread and tool-server failures", () => {
@@ -983,6 +1048,30 @@ describe("ChatWorkspace timeline", () => {
 
 		rerender(<ChatWorkspace snapshot={chatFixtureMcpFailed} />);
 		expect(screen.getByRole("status")).toHaveTextContent(/tool servers? did not start/);
+	});
+
+	it("reuses anchor measurements while scrolling and refreshes after content mutations", () => {
+		useUiStore.setState({ inspectorSessions: { "ao-long": { isOpen: false, view: "summary" } } });
+		render(<ChatWorkspace snapshot={chatFixtureLongHistory(8)} />);
+		const log = screen.getByRole("log");
+		stubGeometry(log, { scrollHeight: 4000, clientHeight: 800, scrollTop: 1000 });
+		const anchors = Array.from(log.querySelectorAll<HTMLElement>("[data-chat-scroll-anchor]"));
+		const reads = anchors.map((anchor) => vi.spyOn(anchor, "getBoundingClientRect"));
+		fireEvent.scroll(log);
+		for (const read of reads) read.mockClear();
+		for (let i = 0; i < 5; i++) {
+			log.scrollTop += 10;
+			fireEvent.scroll(log);
+		}
+		expect(reads.reduce((total, read) => total + read.mock.calls.length, 0)).toBe(0);
+		// Same overall content height can hide a changed prompt position. Detect
+		// DOM mutations too, including those queued before the observer callback.
+		reads[0]!.mockReturnValue({ top: 1000, height: 20 } as DOMRect);
+		anchors[0]!.setAttribute("style", "padding-top: 20px");
+		fireEvent.scroll(log);
+		expect(reads.every((read) => read.mock.calls.length > 0)).toBe(true);
+		const marker = screen.getByRole("scrollbar", { name: "Conversation scrollbar" }).querySelector<HTMLElement>("[data-chat-scroll-marker]");
+		expect(Number(marker?.dataset.scrollTarget)).toBe(1660);
 	});
 
 	it("provides an interactive conversation minimap", () => {
@@ -1026,15 +1115,13 @@ describe("ChatWorkspace timeline", () => {
 		expect(scrollbar).toHaveAttribute("aria-valuenow", "100");
 	});
 
-	it("hides conversation minimap markers while the inspector is open", () => {
+	it("disables the conversation minimap while the inspector is open", () => {
 		useUiStore.setState({
 			inspectorSessions: { "ao-long": { isOpen: true, view: "summary" } },
 		});
 		render(<ChatWorkspace snapshot={chatFixtureLongHistory(8)} />);
 		const log = screen.getByRole("log");
-		const scrollbar = screen.getByRole("scrollbar", {
-			name: "Conversation scrollbar",
-		});
+		const scrollbar = screen.getByTestId("chat-conversation-minimap");
 		stubGeometry(log, {
 			scrollHeight: 4000,
 			clientHeight: 800,
@@ -1047,7 +1134,59 @@ describe("ChatWorkspace timeline", () => {
 		});
 		fireEvent.scroll(log);
 
+		expect(scrollbar).toHaveAttribute("aria-hidden", "true");
+		expect(scrollbar).toHaveClass("pointer-events-none");
 		expect(scrollbar.querySelectorAll("[data-chat-scroll-marker]")).toHaveLength(0);
+
+		fireEvent.wheel(scrollbar, { deltaY: 200 });
+		expect(log.scrollTop).toBe(1000);
+	});
+
+	it("re-enables the conversation minimap when the inspector closes again", async () => {
+		useUiStore.setState({
+			inspectorSessions: { "ao-long": { isOpen: false, view: "summary" } },
+		});
+		render(<ChatWorkspace snapshot={chatFixtureLongHistory(8)} />);
+		const log = screen.getByRole("log");
+		const scrollbar = screen.getByTestId("chat-conversation-minimap");
+		stubGeometry(log, {
+			scrollHeight: 4000,
+			clientHeight: 800,
+			scrollTop: 1000,
+		});
+		stubGeometry(scrollbar, {
+			scrollHeight: 800,
+			clientHeight: 800,
+			scrollTop: 0,
+		});
+		fireEvent.scroll(log);
+
+		expect(scrollbar.querySelectorAll("[data-chat-scroll-marker]").length).toBeGreaterThan(0);
+		fireEvent.wheel(scrollbar, { deltaY: 200 });
+		expect(log.scrollTop).toBe(1200);
+
+		act(() => {
+			useUiStore.setState({
+				inspectorSessions: { "ao-long": { isOpen: true, view: "summary" } },
+			});
+		});
+		await waitFor(() => {
+			expect(scrollbar).toHaveAttribute("aria-hidden", "true");
+		});
+		fireEvent.wheel(scrollbar, { deltaY: 200 });
+		expect(log.scrollTop).toBe(1200);
+
+		act(() => {
+			useUiStore.setState({
+				inspectorSessions: { "ao-long": { isOpen: false, view: "summary" } },
+			});
+		});
+		await waitFor(() => {
+			expect(scrollbar).not.toHaveAttribute("aria-hidden", "true");
+			expect(scrollbar.querySelectorAll("[data-chat-scroll-marker]").length).toBeGreaterThan(0);
+		});
+		fireEvent.wheel(scrollbar, { deltaY: 200 });
+		expect(log.scrollTop).toBe(1400);
 	});
 
 	it("previews the request and response for a hovered conversation marker", () => {
@@ -1950,7 +2089,7 @@ describe("ChatWorkspace reviewer tabs", () => {
 			/>,
 		);
 
-		const chatTab = screen.getByRole("tab", { name: /^Codex/ });
+		const chatTab = screen.getByRole("tab", { name: /^Reviewer chat/ });
 		const reviewerTab = screen.getByRole("tab", { name: "Reviewer" });
 		expect(chatTab).toHaveClass("px-2", "cursor-pointer");
 		expect(chatTab.closest("[data-terminal-tab-frame]")).toHaveClass("self-stretch");
@@ -2093,7 +2232,7 @@ describe("ChatWorkspace reviewer tabs", () => {
 		};
 		const view = render(<ChatWorkspace {...common} />);
 		const chatTab = screen.getByRole("tab", {
-			name: /^Codex/,
+			name: /^Reviewer chat/,
 		});
 		const reviewerTab = screen.getByRole("tab", { name: "Reviewer" });
 		expect(chatTab).toHaveAttribute("tabindex", "0");
@@ -2117,7 +2256,7 @@ describe("ChatWorkspace reviewer tabs", () => {
 
 		view.rerender(<ChatWorkspace {...common} reviewerTarget={reviewerTarget} />);
 		const activeReviewerTab = screen.getByRole("tab", { name: "Reviewer" });
-		expect(screen.getByRole("tab", { name: /^Codex/ })).toHaveAttribute(
+		expect(screen.getByRole("tab", { name: /^Reviewer chat/ })).toHaveAttribute(
 			"tabindex",
 			"-1",
 		);
@@ -2126,7 +2265,7 @@ describe("ChatWorkspace reviewer tabs", () => {
 		activeReviewerTab.focus();
 		fireEvent.keyDown(activeReviewerTab, { key: "Home" });
 		expect(onSelectChat).toHaveBeenCalledOnce();
-		expect(screen.getByRole("tab", { name: /^Codex/ })).toHaveFocus();
+		expect(screen.getByRole("tab", { name: /^Reviewer chat/ })).toHaveFocus();
 
 		onSelectChat.mockClear();
 		activeReviewerTab.focus();
@@ -2296,7 +2435,7 @@ describe("ChatWorkspace shell tabs", () => {
 			/>,
 		);
 
-		const workerTab = screen.getByRole("tab", { name: /^Codex/ });
+		const workerTab = screen.getByRole("tab", { name: /^Reviewer chat/ });
 		workerTab.focus();
 		fireEvent.keyDown(workerTab, { key: "Tab", ctrlKey: true });
 
@@ -2364,5 +2503,27 @@ describe("ChatWorkspace shell tabs", () => {
 			/>,
 		);
 		expect(closeShellTerminalShortcutStates.at(-1)).toBe(false);
+	});
+
+	it("enables the close shortcut and closes the active workspace file tab", () => {
+		const onClose = vi.fn();
+		render(
+			<ChatWorkspace
+				snapshot={idleSnapshot()}
+				workspaceActiveTabKey="file:README.md"
+				workspaceTabs={[
+					{
+						key: "file:README.md",
+						content: <button role="tab">README.md</button>,
+						onSelect: vi.fn(),
+						onClose,
+					},
+				]}
+			/>,
+		);
+
+		expect(closeShellTerminalShortcutStates.at(-1)).toBe(true);
+		act(() => [...closeShellTerminalListeners][0]?.());
+		expect(onClose).toHaveBeenCalledOnce();
 	});
 });

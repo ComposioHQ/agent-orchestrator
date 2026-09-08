@@ -38,6 +38,13 @@ vi.mock("@tanstack/react-router", () => ({
 vi.mock("../hooks/useWorkspaceQuery", () => ({
 	workspaceQueryKey: ["workspaces"],
 	useWorkspaceQuery: workspaceQueryMock,
+	useWorkspaceScope: (projectId?: string) => {
+		const query = workspaceQueryMock();
+		return {
+			...query,
+			data: { project: query.data?.find((workspace: WorkspaceSummary) => workspace.id === projectId) },
+		};
+	},
 }));
 
 vi.mock("../hooks/useSessionUsageSummaries", () => ({
@@ -803,6 +810,9 @@ describe("SessionsBoard", () => {
 		expect(terminatedCard).not.toHaveClass("min-h-28");
 		expect(within(terminatedCard!).queryByRole("button", { name: "Open dead worker" })).not.toBeInTheDocument();
 		expect(within(terminatedCard!).getByText("Terminated")).toBeInTheDocument();
+		expect(within(terminatedCard!).getByTestId("session-pr-progress")).toHaveTextContent(
+			"1 of 2 PRs merged · 1 open",
+		);
 		// Agent shown as its brand logo with an accessible name (not a text label).
 		expect(within(terminatedCard!).getByRole("img", { name: "claude-code" })).toBeInTheDocument();
 		expect(screen.getByText("ao/dead-worker")).toBeInTheDocument();
@@ -826,6 +836,27 @@ describe("SessionsBoard", () => {
 		expect(screen.getByRole("button", { name: "Restore dead worker" })).toBeInTheDocument();
 
 		expect(screen.queryByRole("group", { name: "Archive layout" })).not.toBeInTheDocument();
+	});
+
+	it("hides PR progress for a live merged session that has not actually terminated", () => {
+		const liveMergedSession = terminatedSession({
+			id: "s-live-merged",
+			title: "live merged worker",
+			status: "merged",
+			isTerminated: false,
+			kanbanColumn: "ready",
+		});
+		workspaceQueryMock.mockReturnValue({
+			data: [workspaceWithSessions([liveMergedSession])],
+			isError: false,
+			isSuccess: true,
+		});
+
+		renderBoard("p1");
+
+		const card = screen.getByText("live merged worker").closest<HTMLElement>("[data-testid='board-session-card']");
+		expect(card).not.toBeNull();
+		expect(within(card!).queryByTestId("session-pr-progress")).not.toBeInTheDocument();
 	});
 
 	it("keeps archive cards mounted after collapse so reopen does not remount them", async () => {
@@ -1429,6 +1460,22 @@ describe("SessionsBoard", () => {
 		expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 		expect(await screen.findByRole("alert")).toHaveTextContent("Failed to terminate session (500)");
 		expect(screen.getByRole("button", { name: "Terminate merged worker" })).toBeEnabled();
+	});
+
+	it("shows a folder-missing banner when the project root no longer exists on disk", () => {
+		workspaceQueryMock.mockReturnValue({
+			data: [{ ...workspaceWithSessions([]), folderMissing: true }],
+		});
+		renderBoard("p1");
+		expect(screen.getByText(appI18n.t("home.folderMissing"))).toBeInTheDocument();
+	});
+
+	it("does not show the folder-missing banner when the project folder exists", () => {
+		workspaceQueryMock.mockReturnValue({
+			data: [{ ...workspaceWithSessions([]), folderMissing: false }],
+		});
+		renderBoard("p1");
+		expect(screen.queryByText(appI18n.t("home.folderMissing"))).not.toBeInTheDocument();
 	});
 });
 
