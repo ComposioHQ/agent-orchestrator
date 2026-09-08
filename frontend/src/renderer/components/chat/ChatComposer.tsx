@@ -73,6 +73,7 @@ import {
 	beginChatComposerMutation,
 	cancelChatComposerMutation,
 	chatDraftScopeKey,
+	chatQueuedAttachmentScopeKey,
 	clearAcceptedChatComposer,
 	clearRejectedChatComposerDelivery,
 	clearUncertainChatComposerDelivery,
@@ -88,6 +89,8 @@ import {
 	type ChatDraftMutationToken,
 	type ChatComposerDelivery,
 	type ChatDraftScope,
+	type ChatDraftAttachment,
+	type ChatDraftRetainedAttachment,
 	type DraftClearResult,
 } from "../../lib/chat-drafts";
 import { attachmentURL, IMAGE_ATTACHMENT_PATH } from "./messageAttachments";
@@ -131,14 +134,7 @@ function restoredDeliveryNotice(delivery: ChatComposerDelivery | undefined): str
 		: "chat.draft.sendRestart";
 }
 /** A retained server-owned attachment; image bytes stay in durable storage. */
-export type StoredComposerAttachment = {
-	id: string;
-	name: string;
-	path?: string;
-	dataUrl?: string;
-	contentIndex?: number;
-	contentType?: string;
-};
+export type StoredComposerAttachment = ChatDraftRetainedAttachment & { dataUrl?: string };
 
 export const ChatComposer = memo(function ChatComposer({
 	onSend,
@@ -162,8 +158,12 @@ export const ChatComposer = memo(function ChatComposer({
 	draftSeed,
 	editingQueuedTurnId,
 	onCancelQueuedEdit,
+	onQueuedDraftChange,
 	queuedDraftScope,
+	onQueuedAttachmentsChange,
+	onQueuedRetainedAttachmentsChange,
 	savingQueuedEditPending,
+	queuedEditRecovery,
 	commandError,
 	attachedTop = false,
 	queuedDock,
@@ -222,13 +222,18 @@ export const ChatComposer = memo(function ChatComposer({
 	/** Why the last steer was refused. */
 	steerRefusal?: string;
 	/** A selected history message to load into the composer as a new draft. */
-	draftSeed?: { id: string; text: string; attachments?: StoredComposerAttachment[] };
+	draftSeed?: { id: string; text: string; attachments?: StoredComposerAttachment[]; stagedAttachments?: ChatDraftAttachment[] };
 	/** A queued turn being edited in the composer instead of the dock. */
 	editingQueuedTurnId?: string;
 	onCancelQueuedEdit?: () => void;
+	onQueuedDraftChange?: (text: string) => void;
 	queuedDraftScope?: ChatDraftScope;
+	onQueuedAttachmentsChange?: (attachments: ChatDraftAttachment[]) => void;
+	onQueuedRetainedAttachmentsChange?: (attachments: ChatDraftRetainedAttachment[]) => void;
 	/** The queued edit mutation is in flight for the turn being edited. */
 	savingQueuedEditPending?: boolean;
+	/** Keep the exact queued edit immutable until its saved delivery ID is reconciled. */
+	queuedEditRecovery?: boolean;
 	/** A failed send, approval, interrupt, or settings mutation. */
 	commandError?: string;
 	/** A queued-message dock owns the shared rounded top edge. */
@@ -266,7 +271,9 @@ export const ChatComposer = memo(function ChatComposer({
 		[draftSessionId, draftSessionIncarnation],
 	);
 	const draftScopeKey = draftScope ? chatDraftScopeKey(draftScope) : undefined;
-	const attachmentScopeKey = draftScopeKey;
+	const attachmentScopeKey = queuedDraftScope
+		? chatQueuedAttachmentScopeKey(queuedDraftScope, draftSeed?.id ?? "undefined")
+		: draftScopeKey;
 	const boundarySessionId = draftSessionId ?? queuedDraftScope?.sessionId;
 	const [retainedAttachments, setRetainedAttachments] = useState<StoredComposerAttachment[]>(draftSeed?.attachments ?? []);
 	const visibleRetainedAttachments = editingQueuedTurnId ? retainedAttachments : [];
@@ -348,14 +355,14 @@ export const ChatComposer = memo(function ChatComposer({
 	const synchronouslyClearedDeliveryRevision = useRef<number | undefined>(undefined);
 	const restoredAttachments = useMemo<FileAttachment[]>(
 		() =>
-			(persistedDraft?.composer.attachments)?.map((attachment) => ({
+			(persistedDraft?.composer.attachments ?? draftSeed?.stagedAttachments)?.map((attachment) => ({
 				id: attachment.id,
 				name: attachment.name,
 				mimeType: attachment.mimeType,
 				bytes: attachment.bytes,
 				stagedPath: attachment.path,
 			})) ?? [],
-		[persistedDraft],
+		[persistedDraft, draftSeed?.stagedAttachments],
 	);
 	const persistAttachments = useCallback(
 		(attachments: FileAttachment[]) => {
@@ -363,7 +370,8 @@ export const ChatComposer = memo(function ChatComposer({
 				? [{ id: attachment.id, path: attachment.stagedPath, name: attachment.name, mimeType: attachment.mimeType, bytes: attachment.bytes }]
 				: []);
 			if (!draftScope) {
-					return;
+				onQueuedAttachmentsChange?.(descriptors);
+				return;
 			}
 			const result = writeChatAttachments(draftScope, descriptors);
 			composerRevision.current = result.draft.composer.revision;
@@ -373,7 +381,7 @@ export const ChatComposer = memo(function ChatComposer({
 					: "chat.draft.saveFailed",
 			);
 		},
-		[draftScope],
+		[draftScope, onQueuedAttachmentsChange],
 	);
 	const prepareAttachments = useCallback(
 		async (attachments: FileAttachment[]): Promise<FileAttachment[]> => {
@@ -413,7 +421,7 @@ export const ChatComposer = memo(function ChatComposer({
 		prepareAttachments: onStageAttachments ? prepareAttachments : undefined,
 		onAttachmentsChange: persistAttachments,
 	});
-	const canAttach = Boolean(onStageAttachments);
+	const canAttach = Boolean(onStageAttachments) && !queuedEditRecovery;
 
 	const slashCommands = useMemo<ChatSkill[]>(() => {
 		if (!onCompact || compactUnavailable === "This agent cannot compact its history") return skills;
@@ -491,7 +499,7 @@ export const ChatComposer = memo(function ChatComposer({
 		? durableDelivery.state === "accepted"
 			? "chat.draft.clearMessage"
 			: "chat.draft.retryMessage"
-		: "Send message");
+		: queuedEditRecovery ? "chat.draft.retryEdit" : "Send message");
 	const canStopTurn = Boolean(
 		willQueue && onInterrupt && !controlsDisabled && !hasDraft && !savingQueuedEdit,
 	);
@@ -817,6 +825,7 @@ export const ChatComposer = memo(function ChatComposer({
 
 	const onEditorChange = useCallback((snapshot: ComposerEditorSnapshot) => {
 		textRef.current = snapshot.text;
+		onQueuedDraftChange?.(snapshot.text);
 		if (draftScope) {
 			const result = writeChatComposerText(draftScope, snapshot.text);
 			composerRevision.current = result.draft.composer.revision;
@@ -854,7 +863,7 @@ export const ChatComposer = memo(function ChatComposer({
 			dismissedKeyRef.current = null;
 			setDismissedKey(null);
 		}
-	}, [draftScope]);
+	}, [draftScope, onQueuedDraftChange]);
 
 	const pick = useCallback((value: string) => {
 		const currentTrigger = triggerRef.current;
@@ -1446,9 +1455,10 @@ export const ChatComposer = memo(function ChatComposer({
 									if (visibleRetainedAttachments.some((attachment) => attachment.id === file.id)) {
 										const next = retainedAttachments.filter((attachment) => attachment.id !== file.id);
 										setRetainedAttachments(next);
+										onQueuedRetainedAttachmentsChange?.(next);
 									} else fileAttachments.remove(file.id);
 									}}
-									disabled={controlsDisabled || draftMutationPending || fileAttachments.preparing}
+									disabled={controlsDisabled || queuedEditRecovery || draftMutationPending || fileAttachments.preparing}
 									aria-label={`Remove ${file.name}`}
 									className="text-muted-foreground hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
 								>
@@ -1462,7 +1472,7 @@ export const ChatComposer = memo(function ChatComposer({
 
 				<ComposerEditor
 					ref={editor}
-					disabled={controlsDisabled || draftMutationPending}
+					disabled={controlsDisabled || queuedEditRecovery || draftMutationPending}
 					label="Message the agent"
 					placeholder={
 						disabledPlaceholder ?? (disabled
@@ -1539,7 +1549,7 @@ export const ChatComposer = memo(function ChatComposer({
 												type="button"
 												variant="ghost"
 												size="icon-sm"
-												disabled={controlsDisabled || draftMutationPending || fileAttachments.preparing}
+												disabled={controlsDisabled || queuedEditRecovery || draftMutationPending || fileAttachments.preparing}
 												onClick={() => filePicker.current?.click()}
 												aria-label="Attach a file"
 												className="size-7 shrink-0 rounded-full p-0 text-muted-foreground hover:bg-white/5! hover:text-foreground"
