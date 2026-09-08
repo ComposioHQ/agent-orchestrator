@@ -11755,7 +11755,7 @@ components:
         config:
           $ref: '#/components/schemas/ProjectConfig'
         displayName:
-          maxLength: 20
+          maxLength: 100
           minLength: 1
           type: string
       required:
