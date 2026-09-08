@@ -588,6 +588,56 @@ describe("CreateProjectFlow project import validation", () => {
 		});
 	});
 
+	it("keeps workspace import available when the parent repository has no remote", async () => {
+		const user = userEvent.setup();
+		bridgeMocks.chooseDirectory.mockResolvedValue("/repo/workspace");
+		bridgeMocks.scanImportFolder.mockResolvedValue({
+			path: "/repo/workspace",
+			repos: [{
+				name: "app",
+				path: "/repo/workspace/app",
+				relativePath: "app",
+				branch: "main",
+				remote: "https://github.com/acme/app.git",
+				hasRemote: true,
+				isRepo: true,
+				hasCommit: true,
+				status: "ok",
+				needsGitInit: false,
+			}],
+		});
+		apiMocks.POST.mockResolvedValueOnce({
+			data: {
+				...projectValidation("/repo/workspace", {
+					nextStep: "continue",
+					root: { isRepo: true, hasCommit: true, hasOrigin: false, requiredActions: ["create_remote_repository"] },
+					childRepos: [{
+						repoPath: "/repo/workspace/app",
+						isRepo: true,
+						hasCommit: true,
+						hasOrigin: true,
+						isEmptyFolder: false,
+						needsGitInit: false,
+						requiredActions: [],
+						blockingErrors: [],
+					}],
+				}),
+				importKind: "workspace",
+			},
+		});
+
+		renderChooseFlow();
+		await openSource(user, "Import a workspace folder");
+
+		expect(screen.queryByText("This is a single project, not a collection of projects. Import it as a project instead.")).not.toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: "Import as project" })).not.toBeInTheDocument();
+		expect(await screen.findByText("app")).toBeInTheDocument();
+		await user.click(screen.getByRole("button", { name: "Continue" }));
+
+		expect(await screen.findByTestId("agent-sheet")).toHaveAttribute("data-kind", "workspace");
+		expect(screen.getByTestId("agent-sheet")).toHaveAttribute("data-path", "/repo/workspace");
+	});
+
 	it("keeps workspace mode after preparing a child repository", async () => {
 		const user = userEvent.setup();
 		bridgeMocks.chooseDirectory.mockResolvedValue("/repo/workspace");

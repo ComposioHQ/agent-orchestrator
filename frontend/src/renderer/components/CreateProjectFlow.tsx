@@ -1993,7 +1993,7 @@ function CreateProjectFolderDialog({
 	const isWorkspace = kind === "workspace";
 	const displayRepos = isWorkspace ? mergeWorkspaceImportRepos(scan, validation) : normalizeImportRepos(scan?.repos ?? []);
 	const workspaceHasNoChildGitRepos = isWorkspace && validation?.blockingErrors.includes("WORKSPACE_CHILD_REPO_REQUIRED");
-	const workspaceRootIsProject = isWorkspace && validation?.root.isRepo === true;
+	const workspaceRootIsProject = isWorkspace && validation?.root.isRepo === true && validation.root.hasOrigin === true;
 	const workspaceValidationBlocked = isWorkspace && validation !== null && (!validation.isValid || validation.nextStep === "error") && !workspaceHasNoChildGitRepos;
 	const selectedSetupRepos = displayRepos.filter((repo) => repo.requiredActions.length > 0 && (workspacePreparation[repo.path]?.approvedActions.length ?? 0) > 0);
 	const selectedSetupReady = selectedSetupRepos.every((repo) =>
