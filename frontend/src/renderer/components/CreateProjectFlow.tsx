@@ -2002,6 +2002,10 @@ function CreateProjectFolderDialog({
 								<Button type="button" variant="primary" disabled={disabled} onClick={onContinueAsProject}>
 									{t("createProject.importAsProject")}
 								</Button>
+							) : hasScan && workspaceHasNoChildGitRepos && !error ? (
+								<Button type="button" variant="outline" disabled={disabled} onClick={onContinueAsProject}>
+									{t("createProject.importAsProject")}
+								</Button>
 							) : hasScan && !workspaceValidationBlocked && failedRepos.length === 0 && (!error || isWorkspace) ? (
 								<Button type="button" variant="primary" disabled={disabled || !workspaceSetupReady} onClick={onContinue}>
 									{isPreparingGit ? <><CircleDashed className="size-4 animate-spin" aria-hidden="true" />{t("createProject.settingUp")}</> : t("createProject.cloneContinue")}
@@ -2097,7 +2101,7 @@ function mergeWorkspaceImportRepos(scan: ImportFolderScan | null, validation: Im
 			hasCommit: status?.hasCommit ?? repo?.hasCommit ?? false,
 			hasOrigin: status?.hasOrigin ?? repo?.hasRemote,
 		};
-	}).sort((left, right) => left.name.localeCompare(right.name));
+	}).filter((repo) => repo.isRepo).sort((left, right) => left.name.localeCompare(right.name));
 }
 
 function scanRequiredActions(repo: ImportFolderScan["repos"][number] | undefined): string[] {

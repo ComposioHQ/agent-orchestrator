@@ -678,7 +678,7 @@ describe("CreateProjectFlow project import validation", () => {
 
 		renderChooseFlow();
 		await openSource(user, "Import a workspace folder");
-		expect(screen.getByText("Set an origin remote for the child repositories marked below before importing this workspace. AO does not configure or push child repositories during workspace import.")).toBeInTheDocument();
+		expect(screen.getByText("Set an origin remote for the child repositories marked below before importing this workspace.")).toBeInTheDocument();
 		expect(screen.getByText("app")).toBeInTheDocument();
 		expect(screen.getByText("Setup required")).toBeInTheDocument();
 		expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
@@ -706,8 +706,9 @@ describe("CreateProjectFlow project import validation", () => {
 		renderChooseFlow();
 		await openSource(user, "Import a workspace folder");
 
-		expect(screen.getByText("Importing a workspace requires at least one direct child Git repository that already has a commit and an origin remote. Plain folders are not initialized from this flow.")).toBeInTheDocument();
-		expect(screen.getByRole("button", { name: "Continue" })).toBeDisabled();
+		expect(screen.getByText("Importing a workspace requires at least one direct child Git repository that already has a commit and an origin remote. You can import this folder as a project instead.")).toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: "Continue" })).not.toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Import as project" })).toBeInTheDocument();
 		expect(screen.getByRole("button", { name: "Go Back" })).toBeInTheDocument();
 		expect(useUiStore.getState().globalToast).toBeNull();
 		expect(screen.getByRole("dialog", { name: "Import workspace" })).not.toHaveClass("modal-shake");
@@ -736,8 +737,9 @@ describe("CreateProjectFlow project import validation", () => {
 		renderChooseFlow();
 		await openSource(user, "Import a workspace folder");
 
-		expect(screen.getByText("Importing a workspace requires at least one direct child Git repository that already has a commit and an origin remote. Plain folders are not initialized from this flow.")).toBeInTheDocument();
-		expect(screen.getByRole("button", { name: "Continue" })).toBeDisabled();
+		expect(screen.getByText("Importing a workspace requires at least one direct child Git repository that already has a commit and an origin remote. You can import this folder as a project instead.")).toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: "Continue" })).not.toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Import as project" })).toBeInTheDocument();
 		expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
 	});
 
