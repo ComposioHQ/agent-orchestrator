@@ -288,7 +288,7 @@ func applyTurnSettings(params map[string]any, settings ports.ChatTurnSettings) {
 		// rather than assumed to be interchangeable.
 		// An empty pair means the mode defers to the provider's native config, so
 		// the turn sends no override rather than falling through to full access.
-		if policy, sandbox := approvalSettings(settings.Approval); policy != "" && sandbox != "" {
+		if policy, sandbox := approvalSettings(settings.Approval); policy != "" || sandbox != "" {
 			params["approvalPolicy"] = policy
 			params["approvalsReviewer"] = approvalReviewer(settings.Approval)
 			params["sandboxPolicy"] = turnSandboxPolicy(sandbox)
