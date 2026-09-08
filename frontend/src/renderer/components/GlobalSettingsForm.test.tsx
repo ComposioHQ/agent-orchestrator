@@ -733,15 +733,15 @@ it("keeps running version separate while live download progress becomes install 
 	renderForm("updates");
 	await screen.findByTestId("app-version");
 	act(() => emit({ state: "downloading", version: "2.0.0" }));
-	expect(screen.getByText("Starting download…")).toBeVisible();
+	expect(screen.getByTestId("update-status-line")).toHaveTextContent("Starting download…");
 	expect(screen.queryByRole("button", { name: "Update to v2.0.0" })).toBeNull();
 	act(() => emit({ state: "downloading", version: "2.0.0", percent: 42, transferred: 42_000_000, total: 100_000_000 }));
-	expect(screen.getByText("42% downloaded")).toBeVisible();
+	expect(screen.getByTestId("update-status-line")).toHaveTextContent("42% downloaded");
 	expect(screen.getByText("42.0 / 100.0 MB")).toBeVisible();
 	expect(screen.getByText("Updating to v2.0.0")).toBeVisible();
 	expect(screen.getByTestId("app-version")).toHaveTextContent("v1.4.0");
 	act(() => emit({ state: "preparing", version: "2.0.0", percent: 100, staged: { version: "2.0.0", stagedAt: 10, escalated: false, ready: false } }));
-	expect(screen.getByText("Preparing update…")).toBeVisible();
+	expect(screen.getByTestId("update-status-line")).toHaveTextContent("Preparing update…");
 	expect(screen.queryByRole("button", { name: "Install Update" })).toBeNull();
 	act(() => emit({ state: "downloaded", version: "2.0.0" }));
 	expect(screen.getByRole("button", { name: "Install Update" })).toBeEnabled();
