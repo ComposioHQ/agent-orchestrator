@@ -149,15 +149,9 @@ func (d *Driver) Probe(ctx context.Context) (ports.ChatCapabilities, error) {
 		return nil, fmt.Errorf("%w: %w", ports.ErrChatDriverUnavailable, err)
 	}
 
-	// An unknown auth result is not proof of failure — the same rule AO already
-	// applies to runtime probes. Only an explicit unauthorized blocks creation.
-	status, err := d.plugin.AuthStatus(ctx)
-	if err == nil && status == ports.AgentAuthStatusUnauthorized {
-		return nil, ports.ErrChatAuthRequired
-	}
-	if err != nil {
-		d.log.Debug("codex auth probe inconclusive; continuing", "error", err)
-	}
+	// Authentication is owned by the daemon's active-account readiness check.
+	// Probing the ambient device home here would reject a valid AO account (or
+	// admit a different device account) before the managed runtime is launched.
 	versionProbe := d.versionProbe
 	if versionProbe == nil {
 		versionProbe = installedCodexVersion
@@ -202,6 +196,25 @@ func (d *Driver) Probe(ctx context.Context) (ports.ChatCapabilities, error) {
 	}
 
 	return capabilities(), nil
+}
+
+// DiscoverModels reads the account's current provider catalog without opening
+// a Codex thread. The caller supplies the same project directory and environment
+// overlay used for a normal launch so project-scoped Codex configuration applies.
+func (d *Driver) DiscoverModels(ctx context.Context, workdir string, env map[string]string) ([]ports.ChatModel, error) {
+	if !filepath.IsAbs(workdir) {
+		var err error
+		workdir, err = os.Getwd()
+		if err != nil || !filepath.IsAbs(workdir) {
+			workdir = os.TempDir()
+		}
+	}
+	conv, err := d.connect(ctx, workdir, env)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = conv.Close() }()
+	return listModels(ctx, conv.conn)
 }
 
 type codexVersion [3]int
@@ -452,15 +465,19 @@ func (d *Driver) connectSession(
 }
 
 func (d *Driver) initialize(ctx context.Context, conv *conversation) error {
+	return initializeConnection(ctx, conv.conn)
+}
+
+func initializeConnection(ctx context.Context, connection *conn) error {
 	initCtx, cancel := context.WithTimeout(ctx, handshakeTimeout)
 	defer cancel()
-	if err := conv.conn.request(initCtx, "initialize", map[string]any{
+	if err := connection.request(initCtx, "initialize", map[string]any{
 		"clientInfo":   map[string]any{"name": clientName, "title": clientTitle, "version": clientVersion},
 		"capabilities": map[string]any{"experimentalApi": true, "optOutNotificationMethods": nil},
 	}, nil); err != nil {
 		return fmt.Errorf("%w: initialize: %w", ports.ErrChatDriverIncompatible, err)
 	}
-	if err := conv.conn.notify("initialized", nil); err != nil {
+	if err := connection.notify("initialized", nil); err != nil {
 		return fmt.Errorf("notify initialized: %w", err)
 	}
 	return nil
@@ -496,7 +513,8 @@ func approvalReviewer(mode ports.PermissionMode) string {
 
 // spawnAppServer is the real launcher.
 func spawnAppServer(ctx context.Context, bin, workdir string, env []string) (*process, error) {
-	cmd := aoprocess.Command(bin, "app-server")
+	args := []string{"app-server"}
+	cmd := aoprocess.Command(bin, args...)
 	cmd.Dir = workdir
 	if len(env) > 0 {
 		cmd.Env = env
@@ -576,6 +594,6 @@ func codexProcessEnv(ctx context.Context, bin string, env map[string]string) []s
 	if _, ok := overlay["PATH"]; !ok {
 		overlay["PATH"] = os.Getenv("PATH")
 	}
-	agentlaunch.AugmentRuntimePATHForLaunchBinary(ctx, overlay, []string{bin}, exec.LookPath)
+	agentlaunch.AugmentRuntimePATHForLaunchBinary(ctx, overlay, []string{bin}, exec.LookPath, agentlaunch.PinnedDir(os.Executable, overlay["AO_DATA_DIR"]))
 	return envSlice(overlay)
 }

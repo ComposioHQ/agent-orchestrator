@@ -309,7 +309,7 @@ describe("TaskComposer", () => {
 
 		const agent = await screen.findByTestId("agent-field");
 		await waitFor(() => expect(agent).toHaveAttribute("data-value", "codex"));
-		const model = await screen.findByRole("textbox", { name: "Model" });
+		const model = await screen.findByRole("button", { name: "Model" });
 		const prompt = task();
 		expect(agent).toBeEnabled();
 		expect(model).toBeEnabled();
@@ -336,6 +336,7 @@ describe("TaskComposer", () => {
 				agent: "codex",
 				selectionMode: "mode",
 				models: [{ id: "plan", label: "Plan", isDefault: true }],
+				customModelEntry: "none",
 				allowCustom: false,
 			},
 			controls: async () => [await screen.findByRole("button", { name: "Model" })],
@@ -346,25 +347,30 @@ describe("TaskComposer", () => {
 				agent: "codex",
 				selectionMode: "catalog",
 				models: [{ id: "gpt-5", label: "GPT-5", isDefault: true }],
+				customModelEntry: "none",
 				allowCustom: false,
 			},
 			controls: async () => [await screen.findByRole("button", { name: "Model" })],
 		},
 		{
-			name: "custom input and browse",
+			name: "search and direct model ID",
 			catalog: {
 				agent: "codex",
 				selectionMode: "catalog",
 				models: [{ id: "gpt-5", label: "GPT-5", isDefault: true }],
+				customModelEntry: "direct",
 				allowCustom: true,
 			},
 			controls: async () => {
-				await userEvent.click(await screen.findByRole("button", { name: "Model" }));
-				await userEvent.click(await screen.findByRole("menuitem", { name: "Custom model…" }));
-				return [
-					screen.getByRole("textbox", { name: "Model" }),
-					screen.getByRole("button", { name: "Model options" }),
-				];
+				const model = await screen.findByRole("button", { name: "Model" });
+				await userEvent.click(model);
+				await userEvent.type(screen.getByRole("searchbox", { name: "Search model" }), "private/model-id");
+				await userEvent.click(
+					screen.getByRole("menuitem", { name: "Use “private/model-id” as a custom model" }),
+				);
+				expect(model).toHaveTextContent("private/model-id");
+				expect(screen.queryByRole("textbox", { name: "Model" })).not.toBeInTheDocument();
+				return [model];
 			},
 		},
 	])("locks the $name selector while creating and restores it after failure", async ({ catalog, controls }) => {
@@ -633,7 +639,7 @@ describe("TaskComposer", () => {
 			</QueryClientProvider>,
 		);
 
-		expect(await screen.findByDisplayValue("gpt-5.6-sol")).toBeInTheDocument();
+		expect(await screen.findByRole("button", { name: "Model" })).toHaveTextContent("GPT-5.6 Sol");
 		expect(h.agentValues).not.toContain("");
 	});
 
@@ -678,7 +684,7 @@ describe("TaskComposer", () => {
 			</Wrap>,
 		);
 
-		expect(await screen.findByDisplayValue("gpt-5-codex")).toBeInTheDocument();
+		expect(await screen.findByRole("button", { name: "Model" })).toHaveTextContent("GPT-5 Codex");
 	});
 
 	it("clears a stale model while the newly selected agent catalog resolves", async () => {
@@ -715,10 +721,10 @@ describe("TaskComposer", () => {
 			</Wrap>,
 		);
 
-		expect(await screen.findByDisplayValue("gpt-5.6-sol")).toBeInTheDocument();
+		expect(await screen.findByRole("button", { name: "Model" })).toHaveTextContent("GPT-5.6 Sol");
 		fireEvent.click(screen.getByTestId("agent-field"));
 
-		expect(screen.queryByDisplayValue("gpt-5.6-sol")).not.toBeInTheDocument();
+		expect(screen.getByLabelText("Model")).not.toHaveTextContent("GPT-5.6 Sol");
 		expect(screen.getByRole("status", { name: "Loading models…" })).toBeInTheDocument();
 
 		await act(async () => {
@@ -731,7 +737,7 @@ describe("TaskComposer", () => {
 				},
 			});
 		});
-		expect(await screen.findByDisplayValue("opus[1m]")).toBeInTheDocument();
+		expect(await screen.findByRole("button", { name: "Model" })).toHaveTextContent("opus[1m]");
 	});
 
 	it("shows the same no-override label on the trigger and in the menu", async () => {
@@ -760,6 +766,34 @@ describe("TaskComposer", () => {
 
 		await userEvent.click(picker);
 		expect(await screen.findByRole("menuitem", { name: "Use codex's default" })).toBeInTheDocument();
+	});
+
+	it("does not render free text when models must be configured in the agent", async () => {
+		h.get.mockImplementation(async (path: string) => {
+			if (path.includes("/models")) {
+				return {
+					data: {
+						agentId: "opencode",
+						selectionMode: "catalog",
+						models: [],
+						customModelEntry: "configured",
+						allowCustom: false,
+					},
+				};
+			}
+			return { data: { status: "ok", project: { agent: "opencode", config: {} } } };
+		});
+
+		render(
+			<Wrap>
+				<TaskComposer projectId="proj-1" onCreated={vi.fn()} />
+			</Wrap>,
+		);
+
+		const picker = await screen.findByRole("button", { name: "Model" });
+		expect(screen.queryByRole("textbox", { name: "Model" })).not.toBeInTheDocument();
+		await userEvent.click(picker);
+		expect(screen.getByText("Configure the model in opencode, then refresh.")).toBeInTheDocument();
 	});
 
 	it("uses the project worker model as the new task model default", async () => {
@@ -792,8 +826,10 @@ describe("TaskComposer", () => {
 			</Wrap>,
 		);
 
-		const model = await screen.findByDisplayValue("gpt-5");
-		fireEvent.change(model, { target: { value: "gpt-5.1" } });
+		const model = await screen.findByRole("button", { name: "Model" });
+		await userEvent.click(model);
+		await userEvent.type(screen.getByRole("searchbox", { name: "Search model" }), "gpt-5.1");
+		await userEvent.click(screen.getByRole("menuitem", { name: "Use “gpt-5.1” as a custom model" }));
 		fireEvent.change(task(), { target: { value: "Use the selected model" } });
 		fireEvent.click(screen.getByText("Start task"));
 

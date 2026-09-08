@@ -130,6 +130,8 @@ Commit `openapi.yaml` and `frontend/src/api/schema.ts` together with the Go chan
 
 ## PR hygiene
 
+- Before creating or handing over a PR, run all CI validation jobs locally using the workflow commands, pinned runtimes, and CI environment (including complete suites, not only focused tests). Fix failures and rerun the affected full suites before sharing the PR. A local pass is not a guarantee: verify the remote checks too. If a job cannot run locally (for example, an unavailable native OS runner, Docker, or required credentials), explicitly report the exact gap and verify that job in CI; never label it locally passed. Do not execute publishing or production deployment as a validation step.
+
 - Branch from `main` unless explicitly continuing an existing PR.
 - Keep one issue per PR. If asked for separate work, create a separate branch and PR.
 - Use conventional commit messages (`feat:`, `fix:`, `docs:`, `test:`, `chore:`).

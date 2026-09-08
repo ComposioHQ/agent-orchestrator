@@ -16,6 +16,7 @@ import {
 	useAgentSwitches,
 } from "../../hooks/useAgentSwitches";
 import { useObservedAgentSwitchLifecycle } from "../../hooks/useObservedAgentSwitchLifecycle";
+import { useAgentSwitchPresentationVisibility, useAgentSwitchRouteVisibility } from "../../hooks/useAgentSwitchVisibility";
 import { useSwitchAgentState } from "../../hooks/useSwitchAgent";
 import {
 	useConversation,
@@ -26,10 +27,12 @@ import {
 	useStageAttachments,
 	useWorkspaceFilePaths,
 } from "../../hooks/useConversation";
+import { useRememberProjectPermissions } from "../../hooks/useRememberProjectPermissions";
 import { useSessionBrowserLink } from "../../hooks/useSessionBrowserLink";
 import type { ShellTerminal } from "../../hooks/useShellTerminals";
 import {
 	deriveAgentSwitchPresentation,
+	agentSwitchVisibilityPresentationKind,
 	type AgentSwitchPresentation,
 } from "../../lib/agent-switch-presentation";
 import { cn } from "../../lib/utils";
@@ -51,6 +54,7 @@ export function SessionChatSurface({
 	session,
 	reviewerTerminal,
 	onOpenReviewerTerminal,
+	onSessionRenamed,
 	reviewerTarget,
 	onSelectChat,
 	shellTerminals,
@@ -72,6 +76,7 @@ export function SessionChatSurface({
 	workspaceTabs,
 	workspaceTabActions,
 	workspaceActiveTabKey,
+	workspaceFileActive,
 	auxiliaryTabOrder,
 	onAuxiliaryTabOrderChange,
 	controllerTransitioning,
@@ -81,6 +86,7 @@ export function SessionChatSurface({
 	session: WorkspaceSession;
 	reviewerTerminal?: { handleId: string; harness: string };
 	onOpenReviewerTerminal?: (target: { handleId: string; harness: string }) => void;
+	onSessionRenamed?: () => void | Promise<void>;
 	reviewerTarget?: Extract<TerminalTarget, { kind: "reviewer" }>;
 	onSelectChat?: () => void;
 	/** This session's standalone shells, rendered as tabs in the chat header. */
@@ -106,6 +112,8 @@ export function SessionChatSurface({
 	workspaceTabs?: Array<{ key: string; content: ReactNode; onSelect: () => void }>;
 	workspaceTabActions?: ReactNode;
 	workspaceActiveTabKey?: string;
+	/** A file overlay hides the chat surface, so it must not acknowledge switch UI. */
+	workspaceFileActive?: boolean;
 	/** Session-owned order shared with the terminal UI surface. */
 	auxiliaryTabOrder?: string[];
 	onAuxiliaryTabOrderChange?: (keys: string[]) => void;
@@ -130,6 +138,7 @@ export function SessionChatSurface({
 	// boundary that decides whether switching to Terminal needs user consent.
 	const snapshot = queriedSnapshot?.sessionId === session.id ? queriedSnapshot : undefined;
 	const commands = useConversationCommands(session.id);
+	const projectPermissions = useRememberProjectPermissions(session.workspaceId, snapshot?.harness);
 	const { acknowledgeAcceptedTurn, pendingAcceptedTurnId } = commands;
 	const conversationWorkKnown = Boolean(snapshot);
 	const acceptedLocalTurnObserved = Boolean(
@@ -149,9 +158,14 @@ export function SessionChatSurface({
 		if (!conversationWorkKnown) return;
 		onConversationWorkChange?.({ controllerBusy, hasRunningTurn, queuedTurnCount });
 	}, [controllerBusy, conversationWorkKnown, hasRunningTurn, onConversationWorkChange, queuedTurnCount]);
+	const targetChatControllerReady =
+		snapshot?.controller?.state === "ready" || snapshot?.controller?.state === "busy";
+	// Mode commits before the target controller starts. A cached ready snapshot
+	// can also outlive the source, so wait for the handoff's final snapshot refresh.
+	const controllerCatalogsEnabled = targetChatControllerReady && !controllerTransitioning && !newWorkDisabled;
 	const configOptions = useConversationConfigOptions(
 		session.id,
-		Boolean(snapshot && can(snapshot, "config_options")),
+		Boolean(controllerCatalogsEnabled && snapshot && can(snapshot, "config_options")),
 	);
 	// A provider config catalog may cover only model, only mode, or both.
 	// Suppress native controls only for dimensions the provider catalog replaces;
@@ -167,9 +181,9 @@ export function SessionChatSurface({
 	// from the live controller, so there is nothing to fetch before then.
 	const { models } = useConversationModels(
 		session.id,
-		Boolean(snapshot) && !hasProviderModel,
+		controllerCatalogsEnabled && !hasProviderModel,
 	);
-	const { skills } = useConversationSkills(session.id, Boolean(snapshot));
+	const { skills } = useConversationSkills(session.id, controllerCatalogsEnabled);
 	const { paths, truncated } = useWorkspaceFilePaths(session.id, Boolean(snapshot));
 	const stageAttachments = useStageAttachments(session.id);
 	const openLinkInBrowser = useSessionBrowserLink(session);
@@ -214,8 +228,7 @@ export function SessionChatSurface({
 			}
 			: undefined;
 	const agentSwitch = durableAgentSwitch ?? admissionAgentSwitch ?? observedTerminalSwitch;
-	const targetChatControllerReady =
-		snapshot?.controller?.state === "ready" || snapshot?.controller?.state === "busy";
+	useAgentSwitchRouteVisibility(`session/${session.id}`, agentSwitch && agentSwitch.state !== "completed" && agentSwitch.state !== "failed" ? "active" : "history", undefined, false);
 	const switchPresentation = agentSwitch
 		? deriveAgentSwitchPresentation({
 				agentSwitch,
@@ -254,6 +267,20 @@ export function SessionChatSurface({
 		(renderShellFallback
 			? unavailableConversationSnapshot(session)
 			: undefined);
+	const visibilityPresentationKind = agentSwitchVisibilityPresentationKind(shownSwitchPresentation);
+	useAgentSwitchPresentationVisibility({
+		localRouteKey: `session/${session.id}`,
+		agentSwitch,
+		presentationKind: visibilityPresentationKind,
+		visible: Boolean(
+			shownSwitchPresentation &&
+				(!isLoading || renderShellFallback) &&
+				(!unavailable || renderShellFallback) &&
+				!error &&
+				renderSnapshot &&
+				!workspaceFileActive,
+		),
+	});
 
 	if (isLoading && !renderShellFallback) {
 		return (
@@ -305,6 +332,7 @@ export function SessionChatSurface({
 				sessionTitle={session.title}
 				sessionRole={session.kind}
 				session={session}
+				onSessionRenamed={onSessionRenamed}
 				reviewerTerminal={reviewerTerminal}
 				onOpenReviewerTerminal={onOpenReviewerTerminal}
 				reviewerTarget={reviewerTarget}
@@ -344,9 +372,14 @@ export function SessionChatSurface({
 				shellError={shellError}
 				models={models}
 				onChooseSettings={hasProviderMode ? undefined : commands.chooseSettings}
+				onRememberPermissions={can(renderSnapshot, "config_options") && !configOptions.loaded
+					? undefined : projectPermissions.remember}
+				rememberPermissionsPending={projectPermissions.pending}
+				rememberPermissionsError={projectPermissions.error}
+				rememberedPermissionMode={projectPermissions.savedMode}
 				configOptions={configOptions.options}
 				onChooseConfigOption={configOptions.setOption}
-				configOptionPending={configOptions.pending}
+				configOptionPending={configOptions.pending || commands.choosingSettings}
 				configOptionError={configOptions.error}
 				onCompact={commands.compact}
 				compacting={commands.compacting}
