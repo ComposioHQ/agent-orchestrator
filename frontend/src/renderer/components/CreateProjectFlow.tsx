@@ -1,5 +1,6 @@
 import * as Dialog from "@radix-ui/react-dialog";
 import { useQueryClient } from "@tanstack/react-query";
+import { AnimatePresence, motion } from "motion/react";
 import { useTranslation } from "react-i18next";
 import {
 	CheckCircle2,
@@ -1760,10 +1761,29 @@ function ProjectImportDialog({
 												/>
 											</div>
 											<div className="space-y-1.5">
-												<Label htmlFor="githubRepoName" className="text-[12px] font-medium text-[var(--color-text-import-title)]">{t("createProject.githubRepositoryName")}</Label>
+												<div className="relative">
+													<Label htmlFor="githubRepoName" className="text-[12px] font-medium text-[var(--color-text-import-title)]">{t("createProject.githubRepositoryName")}</Label>
+													<AnimatePresence initial={false}>
+														{availability.state === "unavailable" ? (
+															<motion.p
+																id="githubRepoNameError"
+																initial={{ opacity: 0, filter: "blur(2px)" }}
+																animate={{ opacity: 1, filter: "blur(0px)" }}
+																exit={{ opacity: 0, filter: "blur(2px)" }}
+																transition={{ duration: 0.15, ease: "easeOut" }}
+																className="absolute right-0 top-0 max-w-[65%] truncate overflow-hidden whitespace-nowrap text-right text-[12px] leading-5 text-destructive"
+																role="alert"
+															>
+																{availability.message ?? t("createProject.githubRepoUnavailable")}
+															</motion.p>
+														) : null}
+													</AnimatePresence>
+												</div>
 												<Input
 													id="githubRepoName"
 													aria-label={t("createProject.githubRepositoryName")}
+													aria-describedby={availability.state === "unavailable" ? "githubRepoNameError" : undefined}
+													aria-invalid={availability.state === "unavailable" ? true : undefined}
 													className="h-8 bg-[var(--color-bg-import-card)] font-mono text-[12px]"
 													disabled={disabled}
 													value={githubRepository?.name ?? ""}
@@ -1786,13 +1806,6 @@ function ProjectImportDialog({
 													onCheckedChange={(privateRepository) => onChangeGitHubRepository({ owner: githubRepository?.owner ?? "", name: githubRepository?.name ?? "", private: privateRepository })}
 												/>
 											</div>
-											{availability.state === "checking" ? (
-												<p className="text-[11px] leading-4 text-muted-foreground" role="status">{t("createProject.githubRepoChecking")}</p>
-											) : availability.state === "available" ? (
-												<p className="text-[11px] leading-4 text-emerald-600" role="status">{t("createProject.githubRepoAvailable")}</p>
-											) : availability.state === "unavailable" ? (
-												<p className="text-[11px] leading-4 text-red-600" role="status">{availability.message ?? t("createProject.githubRepoUnavailable")}</p>
-											) : null}
 									</div>
 								) : (
 										<div className="space-y-2 rounded-md border border-border/70 bg-background/40 p-3">

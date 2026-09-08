@@ -905,7 +905,7 @@ describe("CreateProjectFlow project import validation", () => {
 		expect(await screen.findByLabelText("Owner")).toHaveValue("username");
 		expect(screen.getByLabelText("Repository name")).toHaveValue("project-no-git");
 			expect(screen.queryByText(/Will create/)).not.toBeInTheDocument();
-		expect(await screen.findByText("Repository name is available.")).toHaveClass("text-emerald-600");
+		expect(screen.queryByText("Repository name is available.")).not.toBeInTheDocument();
 	});
 
 	it("requires an available GitHub repository name", async () => {
@@ -926,8 +926,7 @@ describe("CreateProjectFlow project import validation", () => {
 
 		await openSource(user, "Import an existing project");
 
-		expect(await screen.findByText("Repository name is already in use for this owner.")).toBeInTheDocument();
-		expect(screen.getByText("Repository name is already in use for this owner.")).toHaveClass("text-red-600");
+		expect(await screen.findByRole("alert")).toHaveTextContent("Repository name is already in use for this owner.");
 			expect(screen.getByRole("button", { name: "Create repository and continue" })).toBeDisabled();
 	});
 
@@ -957,7 +956,7 @@ describe("CreateProjectFlow project import validation", () => {
 		await user.type(repoNameInput, "project-new");
 
 		await waitFor(() => expect(bridgeMocks.checkGitHubRepositoryAvailability).toHaveBeenLastCalledWith({ owner: "username", name: "project-new" }));
-		expect(await screen.findByText("Repository name is available.")).toHaveClass("text-emerald-600");
+		expect(screen.queryByText("Repository name is available.")).not.toBeInTheDocument();
 			expect(screen.getByRole("button", { name: "Create repository and continue" })).toBeEnabled();
 	});
 
