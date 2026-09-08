@@ -434,7 +434,7 @@ func TestPrepareGitRunsApprovedMissingActionsInOrder(t *testing.T) {
 	}
 }
 
-func TestPrepareGitProjectImportCreatesPrivateGitHubRepository(t *testing.T) {
+func TestPrepareGitProjectImportCreatesPublicGitHubRepository(t *testing.T) {
 	ctx := context.Background()
 	root := t.TempDir()
 	if out, err := exec.Command("git", "init", "-b", "main", root).CombinedOutput(); err != nil {
@@ -468,13 +468,15 @@ func TestPrepareGitProjectImportCreatesPrivateGitHubRepository(t *testing.T) {
 	t.Cleanup(func() { importGitOutputFunc = originalGitOutput })
 	svc := New(Deps{Store: newFakeStore()})
 
+	private := false
 	result, err := svc.PrepareGit(ctx, GitPreparationInput{
 		ImportKind:      ImportKindProject,
 		Path:            root,
 		ApprovedActions: []string{GitPreparationActionCreateRemoteRepository},
 		GitHubRepository: &GitHubRepositoryPreparation{
-			Owner: "octo",
-			Name:  "project",
+			Owner:   "octo",
+			Name:    "project",
+			Private: &private,
 		},
 	})
 	if err != nil {
@@ -486,7 +488,7 @@ func TestPrepareGitProjectImportCreatesPrivateGitHubRepository(t *testing.T) {
 	if gotDir != root {
 		t.Fatalf("gh dir = %q, want %q", gotDir, root)
 	}
-	wantArgs := []string{"repo", "create", "octo/project", "--private"}
+	wantArgs := []string{"repo", "create", "octo/project", "--public"}
 	wantActions(t, gotArgs, wantArgs)
 	wantGitCalls := [][]string{
 		{"remote", "add", "origin", "https://github.com/octo/project.git"},
