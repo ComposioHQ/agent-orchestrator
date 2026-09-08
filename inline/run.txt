@@ -1,0 +1,24 @@
+[WebServer] (node:50807) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+
+[WebServer] 
+[WebServer]   VITE v8.0.16  ready in 1326 ms
+[WebServer] 
+
+[WebServer]   ➜  Local:   http://127.0.0.1:5444/
+
+
+Running 1 test using 1 worker
+
+[WebServer] 5:32:48 PM [vite] (client) [optimizer] bundling dependencies...
+
+(node:50883) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+
+
+(node:50883) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+
+
+[1/1] chatui-regression/contracts/draft-overlap.spec.ts:40:7 › Draft persistence split › restores an unsaved inline edit and preserves the ordinary draft
+  1 passed (18.4s)

@@ -1,0 +1,318 @@
+[
+  {
+    "consoleErrors": [],
+    "conversation": {
+      "conversationId": "conversation-chatui-draft-round-trip",
+      "activeBranchId": "branch-root",
+      "branchedFromEarlierMessage": false,
+      "sessionId": "chatui-draft-round-trip",
+      "harness": "codex",
+      "mode": "chat",
+      "controller": "ready",
+      "latestSequence": 0,
+      "oldestSequence": 0,
+      "hasMoreBefore": false,
+      "turns": [],
+      "queuedTurns": [],
+      "messages": [],
+      "activities": [],
+      "branchPoints": [],
+      "settings": {},
+      "capabilities": [
+        "streaming",
+        "interrupt",
+        "steer",
+        "history",
+        "usage",
+        "rate_limits",
+        "models",
+        "config_options",
+        "fork",
+        "skills",
+        "images"
+      ]
+    },
+    "pageErrors": [],
+    "requests": [
+      {
+        "method": "GET",
+        "pathname": "/api/v1/settings",
+        "url": "http://127.0.0.1:8080/api/v1/settings"
+      },
+      {
+        "method": "GET",
+        "pathname": "/api/v1/notifications",
+        "url": "http://127.0.0.1:8080/api/v1/notifications?status=unread&limit=100"
+      },
+      {
+        "method": "GET",
+        "pathname": "/api/v1/agents/readiness",
+        "url": "http://127.0.0.1:8080/api/v1/agents/readiness"
+      },
+      {
+        "method": "GET",
+        "pathname": "/api/v1/projects/chatui-regression",
+        "url": "http://127.0.0.1:8080/api/v1/projects/chatui-regression"
+      },
+      {
+        "method": "GET",
+        "pathname": "/api/v1/agents/readiness",
+        "url": "http://127.0.0.1:8080/api/v1/agents/readiness"
+      },
+      {
+        "method": "GET",
+        "pathname": "/api/v1/agents/codex/models",
+        "url": "http://127.0.0.1:8080/api/v1/agents/codex/models?projectId=chatui-regression"
+      },
+      {
+        "method": "GET",
+        "pathname": "/api/v1/sessions/chatui-draft-round-trip/conversation",
+        "url": "http://127.0.0.1:8080/api/v1/sessions/chatui-draft-round-trip/conversation?limit=200"
+      },
+      {
+        "method": "GET",
+        "pathname": "/api/v1/sessions/chatui-draft-round-trip/pr",
+        "url": "http://127.0.0.1:8080/api/v1/sessions/chatui-draft-round-trip/pr"
+      },
+      {
+        "method": "GET",
+        "pathname": "/api/v1/sessions/chatui-draft-round-trip/workspace/files",
+        "url": "http://127.0.0.1:8080/api/v1/sessions/chatui-draft-round-trip/workspace/files"
+      },
+      {
+        "method": "GET",
+        "pathname": "/api/v1/agents/codex/accounts",
+        "url": "http://127.0.0.1:8080/api/v1/agents/codex/accounts"
+      },
+      {
+        "method": "GET",
+        "pathname": "/api/v1/sessions/chatui-draft-round-trip/interface-transition",
+        "url": "http://127.0.0.1:8080/api/v1/sessions/chatui-draft-round-trip/interface-transition"
+      },
+      {
+        "method": "GET",
+        "pathname": "/api/v1/sessions/chatui-draft-round-trip/conversation/config-options",
+        "url": "http://127.0.0.1:8080/api/v1/sessions/chatui-draft-round-trip/conversation/config-options"
+      },
+      {
+        "method": "GET",
+        "pathname": "/api/v1/sessions/chatui-draft-round-trip/conversation/models",
+        "url": "http://127.0.0.1:8080/api/v1/sessions/chatui-draft-round-trip/conversation/models"
+      },
+      {
+        "method": "GET",
+        "pathname": "/api/v1/sessions/chatui-draft-round-trip/conversation/skills",
+        "url": "http://127.0.0.1:8080/api/v1/sessions/chatui-draft-round-trip/conversation/skills"
+      },
+      {
+        "method": "GET",
+        "pathname": "/api/v1/sessions/chatui-draft-round-trip/workspace/files",
+        "url": "http://127.0.0.1:8080/api/v1/sessions/chatui-draft-round-trip/workspace/files"
+      },
+      {
+        "method": "GET",
+        "pathname": "/api/v1/sessions/chatui-draft-round-trip/workspace/files",
+        "url": "http://127.0.0.1:8080/api/v1/sessions/chatui-draft-round-trip/workspace/files"
+      },
+      {
+        "method": "GET",
+        "pathname": "/api/v1/sessions/chatui-draft-round-trip/pr",
+        "url": "http://127.0.0.1:8080/api/v1/sessions/chatui-draft-round-trip/pr"
+      },
+      {
+        "method": "GET",
+        "pathname": "/api/v1/sessions/chatui-draft-round-trip/pr",
+        "url": "http://127.0.0.1:8080/api/v1/sessions/chatui-draft-round-trip/pr"
+      },
+      {
+        "method": "GET",
+        "pathname": "/api/v1/sessions/chatui-draft-round-trip-secondary/conversation",
+        "url": "http://127.0.0.1:8080/api/v1/sessions/chatui-draft-round-trip-secondary/conversation?limit=200"
+      },
+      {
+        "method": "GET",
+        "pathname": "/api/v1/sessions/chatui-draft-round-trip-secondary/pr",
+        "url": "http://127.0.0.1:8080/api/v1/sessions/chatui-draft-round-trip-secondary/pr"
+      },
+      {
+        "method": "GET",
+        "pathname": "/api/v1/sessions/chatui-draft-round-trip-secondary/workspace/files",
+        "url": "http://127.0.0.1:8080/api/v1/sessions/chatui-draft-round-trip-secondary/workspace/files"
+      },
+      {
+        "method": "GET",
+        "pathname": "/api/v1/sessions/chatui-draft-round-trip-secondary/interface-transition",
+        "url": "http://127.0.0.1:8080/api/v1/sessions/chatui-draft-round-trip-secondary/interface-transition"
+      },
+      {
+        "method": "GET",
+        "pathname": "/api/v1/sessions/chatui-draft-round-trip-secondary/conversation/config-options",
+        "url": "http://127.0.0.1:8080/api/v1/sessions/chatui-draft-round-trip-secondary/conversation/config-options"
+      },
+      {
+        "method": "GET",
+        "pathname": "/api/v1/sessions/chatui-draft-round-trip-secondary/conversation/models",
+        "url": "http://127.0.0.1:8080/api/v1/sessions/chatui-draft-round-trip-secondary/conversation/models"
+      },
+      {
+        "method": "GET",
+        "pathname": "/api/v1/sessions/chatui-draft-round-trip-secondary/conversation/skills",
+        "url": "http://127.0.0.1:8080/api/v1/sessions/chatui-draft-round-trip-secondary/conversation/skills"
+      },
+      {
+        "method": "GET",
+        "pathname": "/api/v1/sessions/chatui-draft-round-trip-secondary/workspace/files",
+        "url": "http://127.0.0.1:8080/api/v1/sessions/chatui-draft-round-trip-secondary/workspace/files"
+      },
+      {
+        "method": "GET",
+        "pathname": "/api/v1/notifications",
+        "url": "http://127.0.0.1:8080/api/v1/notifications?status=unread&limit=100"
+      },
+      {
+        "method": "GET",
+        "pathname": "/api/v1/agents/readiness",
+        "url": "http://127.0.0.1:8080/api/v1/agents/readiness"
+      },
+      {
+        "method": "GET",
+        "pathname": "/api/v1/projects/chatui-regression",
+        "url": "http://127.0.0.1:8080/api/v1/projects/chatui-regression"
+      },
+      {
+        "method": "GET",
+        "pathname": "/api/v1/agents/readiness",
+        "url": "http://127.0.0.1:8080/api/v1/agents/readiness"
+      },
+      {
+        "method": "GET",
+        "pathname": "/api/v1/agents/codex/models",
+        "url": "http://127.0.0.1:8080/api/v1/agents/codex/models?projectId=chatui-regression"
+      },
+      {
+        "method": "GET",
+        "pathname": "/api/v1/sessions/chatui-draft-round-trip/conversation",
+        "url": "http://127.0.0.1:8080/api/v1/sessions/chatui-draft-round-trip/conversation?limit=200"
+      },
+      {
+        "method": "GET",
+        "pathname": "/api/v1/sessions/chatui-draft-round-trip/pr",
+        "url": "http://127.0.0.1:8080/api/v1/sessions/chatui-draft-round-trip/pr"
+      },
+      {
+        "method": "GET",
+        "pathname": "/api/v1/sessions/chatui-draft-round-trip/workspace/files",
+        "url": "http://127.0.0.1:8080/api/v1/sessions/chatui-draft-round-trip/workspace/files"
+      },
+      {
+        "method": "GET",
+        "pathname": "/api/v1/agents/codex/accounts",
+        "url": "http://127.0.0.1:8080/api/v1/agents/codex/accounts"
+      },
+      {
+        "method": "GET",
+        "pathname": "/api/v1/sessions/chatui-draft-round-trip/interface-transition",
+        "url": "http://127.0.0.1:8080/api/v1/sessions/chatui-draft-round-trip/interface-transition"
+      },
+      {
+        "method": "GET",
+        "pathname": "/api/v1/sessions/chatui-draft-round-trip/conversation/config-options",
+        "url": "http://127.0.0.1:8080/api/v1/sessions/chatui-draft-round-trip/conversation/config-options"
+      },
+      {
+        "method": "GET",
+        "pathname": "/api/v1/sessions/chatui-draft-round-trip/conversation/models",
+        "url": "http://127.0.0.1:8080/api/v1/sessions/chatui-draft-round-trip/conversation/models"
+      },
+      {
+        "method": "GET",
+        "pathname": "/api/v1/sessions/chatui-draft-round-trip/conversation/skills",
+        "url": "http://127.0.0.1:8080/api/v1/sessions/chatui-draft-round-trip/conversation/skills"
+      },
+      {
+        "method": "GET",
+        "pathname": "/api/v1/sessions/chatui-draft-round-trip/workspace/files",
+        "url": "http://127.0.0.1:8080/api/v1/sessions/chatui-draft-round-trip/workspace/files"
+      },
+      {
+        "method": "GET",
+        "pathname": "/api/v1/settings",
+        "url": "http://127.0.0.1:8080/api/v1/settings"
+      },
+      {
+        "method": "GET",
+        "pathname": "/api/v1/sessions/chatui-draft-round-trip/workspace/files",
+        "url": "http://127.0.0.1:8080/api/v1/sessions/chatui-draft-round-trip/workspace/files"
+      },
+      {
+        "method": "GET",
+        "pathname": "/api/v1/sessions/chatui-draft-round-trip-secondary/conversation",
+        "url": "http://127.0.0.1:8080/api/v1/sessions/chatui-draft-round-trip-secondary/conversation?limit=200"
+      },
+      {
+        "method": "GET",
+        "pathname": "/api/v1/sessions/chatui-draft-round-trip-secondary/pr",
+        "url": "http://127.0.0.1:8080/api/v1/sessions/chatui-draft-round-trip-secondary/pr"
+      },
+      {
+        "method": "GET",
+        "pathname": "/api/v1/sessions/chatui-draft-round-trip-secondary/workspace/files",
+        "url": "http://127.0.0.1:8080/api/v1/sessions/chatui-draft-round-trip-secondary/workspace/files"
+      },
+      {
+        "method": "GET",
+        "pathname": "/api/v1/sessions/chatui-draft-round-trip-secondary/interface-transition",
+        "url": "http://127.0.0.1:8080/api/v1/sessions/chatui-draft-round-trip-secondary/interface-transition"
+      },
+      {
+        "method": "GET",
+        "pathname": "/api/v1/sessions/chatui-draft-round-trip-secondary/conversation/config-options",
+        "url": "http://127.0.0.1:8080/api/v1/sessions/chatui-draft-round-trip-secondary/conversation/config-options"
+      },
+      {
+        "method": "GET",
+        "pathname": "/api/v1/sessions/chatui-draft-round-trip-secondary/conversation/models",
+        "url": "http://127.0.0.1:8080/api/v1/sessions/chatui-draft-round-trip-secondary/conversation/models"
+      },
+      {
+        "method": "GET",
+        "pathname": "/api/v1/sessions/chatui-draft-round-trip-secondary/conversation/skills",
+        "url": "http://127.0.0.1:8080/api/v1/sessions/chatui-draft-round-trip-secondary/conversation/skills"
+      },
+      {
+        "method": "GET",
+        "pathname": "/api/v1/sessions/chatui-draft-round-trip-secondary/workspace/files",
+        "url": "http://127.0.0.1:8080/api/v1/sessions/chatui-draft-round-trip-secondary/workspace/files"
+      },
+      {
+        "method": "GET",
+        "pathname": "/api/v1/sessions/chatui-draft-round-trip-secondary/workspace/files",
+        "url": "http://127.0.0.1:8080/api/v1/sessions/chatui-draft-round-trip-secondary/workspace/files"
+      },
+      {
+        "body": {
+          "text": "secondary-session-draft-75c4",
+          "clientMessageId": "486d40f4-f67d-4bbc-83e4-8de95d1baa97"
+        },
+        "method": "POST",
+        "pathname": "/api/v1/sessions/chatui-draft-round-trip-secondary/conversation/messages",
+        "url": "http://127.0.0.1:8080/api/v1/sessions/chatui-draft-round-trip-secondary/conversation/messages"
+      },
+      {
+        "method": "GET",
+        "pathname": "/api/v1/sessions/chatui-draft-round-trip-secondary/conversation",
+        "url": "http://127.0.0.1:8080/api/v1/sessions/chatui-draft-round-trip-secondary/conversation?limit=200"
+      },
+      {
+        "method": "GET",
+        "pathname": "/api/v1/sessions/chatui-draft-round-trip-secondary/workspace/files",
+        "url": "http://127.0.0.1:8080/api/v1/sessions/chatui-draft-round-trip-secondary/workspace/files"
+      }
+    ],
+    "transitionStatus": {
+      "supported": true,
+      "targetMode": "tui"
+    },
+    "unexpectedRequests": []
+  }
+]

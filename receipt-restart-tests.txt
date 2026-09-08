@@ -1,0 +1,8 @@
+=== RUN   TestChatUIRegressionDraftDeliveryRecoveryIsAtMostOnce
+=== RUN   TestChatUIRegressionDraftDeliveryRecoveryIsAtMostOnce/steer
+=== RUN   TestChatUIRegressionDraftDeliveryRecoveryIsAtMostOnce/inline_edit
+--- PASS: TestChatUIRegressionDraftDeliveryRecoveryIsAtMostOnce (4.04s)
+    --- PASS: TestChatUIRegressionDraftDeliveryRecoveryIsAtMostOnce/steer (3.97s)
+    --- PASS: TestChatUIRegressionDraftDeliveryRecoveryIsAtMostOnce/inline_edit (0.07s)
+PASS
+ok  	github.com/aoagents/agent-orchestrator/backend/internal/service/chat	4.770s

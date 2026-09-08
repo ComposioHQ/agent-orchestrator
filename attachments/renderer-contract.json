@@ -1,0 +1,217 @@
+[
+  {
+    "consoleErrors": [],
+    "conversation": {
+      "conversationId": "conversation-chatui-worker",
+      "activeBranchId": "branch-root",
+      "branchedFromEarlierMessage": false,
+      "sessionId": "chatui-worker",
+      "harness": "codex",
+      "mode": "chat",
+      "controller": "ready",
+      "latestSequence": 0,
+      "oldestSequence": 0,
+      "hasMoreBefore": false,
+      "turns": [],
+      "queuedTurns": [],
+      "messages": [],
+      "activities": [],
+      "branchPoints": [],
+      "settings": {},
+      "capabilities": [
+        "streaming",
+        "interrupt",
+        "steer",
+        "history",
+        "usage",
+        "rate_limits",
+        "models",
+        "config_options",
+        "fork",
+        "skills",
+        "images"
+      ]
+    },
+    "pageErrors": [],
+    "requests": [
+      {
+        "method": "GET",
+        "pathname": "/api/v1/settings",
+        "url": "http://127.0.0.1:8080/api/v1/settings"
+      },
+      {
+        "method": "GET",
+        "pathname": "/api/v1/notifications",
+        "url": "http://127.0.0.1:8080/api/v1/notifications?status=unread&limit=100"
+      },
+      {
+        "method": "GET",
+        "pathname": "/api/v1/agents/readiness",
+        "url": "http://127.0.0.1:8080/api/v1/agents/readiness"
+      },
+      {
+        "method": "GET",
+        "pathname": "/api/v1/projects/chatui-regression",
+        "url": "http://127.0.0.1:8080/api/v1/projects/chatui-regression"
+      },
+      {
+        "method": "GET",
+        "pathname": "/api/v1/agents/readiness",
+        "url": "http://127.0.0.1:8080/api/v1/agents/readiness"
+      },
+      {
+        "method": "GET",
+        "pathname": "/api/v1/agents/codex/models",
+        "url": "http://127.0.0.1:8080/api/v1/agents/codex/models?projectId=chatui-regression"
+      },
+      {
+        "method": "GET",
+        "pathname": "/api/v1/sessions/chatui-worker/conversation",
+        "url": "http://127.0.0.1:8080/api/v1/sessions/chatui-worker/conversation?limit=200"
+      },
+      {
+        "method": "GET",
+        "pathname": "/api/v1/sessions/chatui-worker/pr",
+        "url": "http://127.0.0.1:8080/api/v1/sessions/chatui-worker/pr"
+      },
+      {
+        "method": "GET",
+        "pathname": "/api/v1/sessions/chatui-worker/workspace/files",
+        "url": "http://127.0.0.1:8080/api/v1/sessions/chatui-worker/workspace/files"
+      },
+      {
+        "method": "GET",
+        "pathname": "/api/v1/agents/codex/accounts",
+        "url": "http://127.0.0.1:8080/api/v1/agents/codex/accounts"
+      },
+      {
+        "method": "GET",
+        "pathname": "/api/v1/sessions/chatui-worker/interface-transition",
+        "url": "http://127.0.0.1:8080/api/v1/sessions/chatui-worker/interface-transition"
+      },
+      {
+        "method": "GET",
+        "pathname": "/api/v1/sessions/chatui-worker/conversation/config-options",
+        "url": "http://127.0.0.1:8080/api/v1/sessions/chatui-worker/conversation/config-options"
+      },
+      {
+        "method": "GET",
+        "pathname": "/api/v1/sessions/chatui-worker/conversation/models",
+        "url": "http://127.0.0.1:8080/api/v1/sessions/chatui-worker/conversation/models"
+      },
+      {
+        "method": "GET",
+        "pathname": "/api/v1/sessions/chatui-worker/conversation/skills",
+        "url": "http://127.0.0.1:8080/api/v1/sessions/chatui-worker/conversation/skills"
+      },
+      {
+        "method": "GET",
+        "pathname": "/api/v1/sessions/chatui-worker/workspace/files",
+        "url": "http://127.0.0.1:8080/api/v1/sessions/chatui-worker/workspace/files"
+      },
+      {
+        "method": "GET",
+        "pathname": "/api/v1/sessions/chatui-worker/workspace/files",
+        "url": "http://127.0.0.1:8080/api/v1/sessions/chatui-worker/workspace/files"
+      },
+      {
+        "body": {
+          "attachments": [
+            {
+              "mimeType": "image/png",
+              "data": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII="
+            }
+          ]
+        },
+        "method": "POST",
+        "pathname": "/api/v1/sessions/chatui-worker/attachments",
+        "url": "http://127.0.0.1:8080/api/v1/sessions/chatui-worker/attachments"
+      },
+      {
+        "method": "GET",
+        "pathname": "/api/v1/settings",
+        "url": "http://127.0.0.1:8080/api/v1/settings"
+      },
+      {
+        "method": "GET",
+        "pathname": "/api/v1/notifications",
+        "url": "http://127.0.0.1:8080/api/v1/notifications?status=unread&limit=100"
+      },
+      {
+        "method": "GET",
+        "pathname": "/api/v1/agents/readiness",
+        "url": "http://127.0.0.1:8080/api/v1/agents/readiness"
+      },
+      {
+        "method": "GET",
+        "pathname": "/api/v1/projects/chatui-regression",
+        "url": "http://127.0.0.1:8080/api/v1/projects/chatui-regression"
+      },
+      {
+        "method": "GET",
+        "pathname": "/api/v1/agents/readiness",
+        "url": "http://127.0.0.1:8080/api/v1/agents/readiness"
+      },
+      {
+        "method": "GET",
+        "pathname": "/api/v1/agents/codex/models",
+        "url": "http://127.0.0.1:8080/api/v1/agents/codex/models?projectId=chatui-regression"
+      },
+      {
+        "method": "GET",
+        "pathname": "/api/v1/sessions/chatui-worker/conversation",
+        "url": "http://127.0.0.1:8080/api/v1/sessions/chatui-worker/conversation?limit=200"
+      },
+      {
+        "method": "GET",
+        "pathname": "/api/v1/sessions/chatui-worker/pr",
+        "url": "http://127.0.0.1:8080/api/v1/sessions/chatui-worker/pr"
+      },
+      {
+        "method": "GET",
+        "pathname": "/api/v1/sessions/chatui-worker/workspace/files",
+        "url": "http://127.0.0.1:8080/api/v1/sessions/chatui-worker/workspace/files"
+      },
+      {
+        "method": "GET",
+        "pathname": "/api/v1/agents/codex/accounts",
+        "url": "http://127.0.0.1:8080/api/v1/agents/codex/accounts"
+      },
+      {
+        "method": "GET",
+        "pathname": "/api/v1/sessions/chatui-worker/interface-transition",
+        "url": "http://127.0.0.1:8080/api/v1/sessions/chatui-worker/interface-transition"
+      },
+      {
+        "method": "GET",
+        "pathname": "/api/v1/sessions/chatui-worker/conversation/config-options",
+        "url": "http://127.0.0.1:8080/api/v1/sessions/chatui-worker/conversation/config-options"
+      },
+      {
+        "method": "GET",
+        "pathname": "/api/v1/sessions/chatui-worker/conversation/models",
+        "url": "http://127.0.0.1:8080/api/v1/sessions/chatui-worker/conversation/models"
+      },
+      {
+        "method": "GET",
+        "pathname": "/api/v1/sessions/chatui-worker/conversation/skills",
+        "url": "http://127.0.0.1:8080/api/v1/sessions/chatui-worker/conversation/skills"
+      },
+      {
+        "method": "GET",
+        "pathname": "/api/v1/sessions/chatui-worker/workspace/files",
+        "url": "http://127.0.0.1:8080/api/v1/sessions/chatui-worker/workspace/files"
+      },
+      {
+        "method": "GET",
+        "pathname": "/api/v1/sessions/chatui-worker/workspace/files",
+        "url": "http://127.0.0.1:8080/api/v1/sessions/chatui-worker/workspace/files"
+      }
+    ],
+    "transitionStatus": {
+      "supported": true,
+      "targetMode": "tui"
+    },
+    "unexpectedRequests": []
+  }
+]

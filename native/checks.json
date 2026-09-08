@@ -1,0 +1,14 @@
+{
+  "native": true,
+  "url": "http://localhost:5173/#/projects/scratch/sessions/scratch-1",
+  "bridge": "object",
+  "visibility": "visible",
+  "errors": [],
+  "checks": [
+    "text after reload",
+    "native staged attachment after reload",
+    "inline edit and ordinary composer independently after reload",
+    "cancel preserves ordinary draft",
+    "accepted send clears across reload"
+  ]
+}

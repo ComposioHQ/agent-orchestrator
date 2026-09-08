@@ -1,0 +1,22 @@
+[WebServer] (node:17402) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+
+[WebServer] 
+[WebServer]   VITE v8.0.16  ready in 954 ms
+[WebServer] 
+
+[WebServer]   ➜  Local:   http://127.0.0.1:5441/
+
+
+Running 1 test using 1 worker
+
+(node:17476) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+
+
+(node:17476) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+
+
+[1/1] chatui-regression/contracts/interface-switch.spec.ts:139:7 › ChatUI interface switching › MQA-04 composer durability › keeps drafts session-scoped across interface, navigation, reload, and accepted send
+  1 passed (12.5s)

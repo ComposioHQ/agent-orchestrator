@@ -1,0 +1,9 @@
+{
+  "checks": [
+    "real Chat to TUI transition",
+    "native xterm mount",
+    "real TUI to Chat transition",
+    "text draft survives interface round trip"
+  ],
+  "errors": []
+}
