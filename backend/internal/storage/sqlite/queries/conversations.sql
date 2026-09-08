@@ -1430,10 +1430,6 @@ WHERE conversation_id = ?
   AND client_message_id = ?
   AND state = 'reserved';
 
--- Stopping the agent stops the queue with it: a brake that starts new work
--- instead of ending it would be the wrong shape for the button the user pressed.
--- The cutoff is the moment the user pressed stop, so a message typed after that
--- is still delivered rather than swept up by a cancellation it predates.
 
 -- A steer has no provider-side idempotency guarantee. The row is reserved before
 -- provider I/O and remains reserved when AO cannot prove whether the call landed.
