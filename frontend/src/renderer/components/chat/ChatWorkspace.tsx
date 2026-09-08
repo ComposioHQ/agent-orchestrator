@@ -76,7 +76,9 @@ import {
 } from "./ChatTimelineItems";
 import { HumanMessageEditor } from "./HumanMessageEditor";
 import { ChatLinkProvider } from "./ChatMarkdown";
-import { ChatComposer } from "./ChatComposer";
+import { ChatComposer, type StoredComposerAttachment } from "./ChatComposer";
+import { stagedAttachmentParts, attachmentName, attachmentURL, IMAGE_ATTACHMENT_PATH } from "./messageAttachments";
+import type { QueuedMessageEditOptions } from "../../types/conversation";
 import { QueuedMessageDock, type QueuedMessage } from "./QueuedMessageDock";
 import { ActivityRun } from "./ActivityRun";
 import { TurnPlan } from "./TurnPlan";
@@ -366,7 +368,7 @@ export interface ChatWorkspaceProps {
 	/** Why the last steer was refused, from the daemon's typed answer. */
 	steerRefusal?: string;
 	onPromoteQueuedTurn?: (turnId: string) => Promise<unknown>;
-	onEditQueuedTurn?: (turnId: string, text: string) => Promise<unknown>;
+	onEditQueuedTurn?: (turnId: string, text: string, options?: QueuedMessageEditOptions) => Promise<unknown>;
 	onCancelQueuedTurn?: (turnId: string) => Promise<unknown>;
 	onReorderQueuedTurns?: (turnIds: string[]) => Promise<unknown>;
 	promoteQueuedTurnPendingTurnId?: string;
@@ -586,13 +588,9 @@ export function ChatWorkspace({
 	const queuedMessages = useQueuedMessages(snapshot);
 	const stablePromoteQueuedTurn = useStableCallback(onPromoteQueuedTurn);
 	const stableCancelQueuedTurn = useStableCallback(onCancelQueuedTurn);
-	const [queueEdit, setQueueEdit] = useState<{ turnId: string; text: string } | undefined>();
-	useEffect(() => {
-		if (!queueEdit) return;
-		if (!queuedMessages.some((message) => message.turnId === queueEdit.turnId)) {
-			setQueueEdit(undefined);
-		}
-	}, [queueEdit, queuedMessages]);
+	const [queueEdit, setQueueEdit] = useState<{
+		turnId: string; text: string; revision: number; attachments: StoredComposerAttachment[];
+	} | undefined>();
 	const handleCancelQueuedTurn = useCallback(
 		async (turnId: string) => {
 			if (!onCancelQueuedTurn) return;
@@ -602,15 +600,15 @@ export function ChatWorkspace({
 		[stableCancelQueuedTurn],
 	);
 	const handleComposerSend = useCallback(
-		async (text: string, attachments?: Parameters<NonNullable<typeof onSend>>[1]) => {
+		async (text: string, attachments?: Parameters<NonNullable<typeof onSend>>[1], retainedContent?: number[]) => {
 			if (queueEdit) {
-				if (attachments && attachments.length > 0) {
-					throw new Error("Queued message edits cannot include attachments.");
-				}
 				if (!onEditQueuedTurn) {
 					throw new Error("Queued message edits are unavailable right now.");
 				}
-				await onEditQueuedTurn(queueEdit.turnId, text);
+				await onEditQueuedTurn(queueEdit.turnId, text, {
+					...(attachments?.length ? { attachments } : {}),
+					retainedContent, expectedRevision: queueEdit.revision,
+				});
 				setQueueEdit(undefined);
 				return;
 			}
@@ -618,15 +616,30 @@ export function ChatWorkspace({
 		},
 		[onEditQueuedTurn, onSend, queueEdit],
 	);
-	const composerSend = useStableCallback(handleComposerSend);
 	const stableInterrupt = useStableCallback(onInterrupt);
 	const stableSteer = useStableCallback(onSteer);
 	const beginQueuedEdit = useCallback(
 		(turnId: string, text: string) => {
 			if (newWorkDisabled) return;
-			setQueueEdit({ turnId, text });
+			const message = queuedMessages.find((queued) => queued.turnId === turnId)?.message;
+			if (!message) return;
+			const parts = stagedAttachmentParts(text);
+			const content = message.content ?? [];
+			// Paths and native blocks have no shared persisted identity. Keep their
+			// removal independent, even when the image counts happen to match.
+			const attachments: StoredComposerAttachment[] = parts.attachments.map((path) => ({
+				id: path, name: attachmentName(path), path,
+				...(IMAGE_ATTACHMENT_PATH.test(path) ? {
+					dataUrl: attachmentURL(getApiBaseUrl(), snapshot.sessionId, path),
+				} : {}),
+			}));
+			content.forEach((item, index) => {
+				attachments.push({ id: `content-${index}`, contentIndex: index, contentType: item.type,
+					name: item.name || (item.type === "image" ? `Image ${index + 1}` : item.uri || "Attachment") });
+			});
+			setQueueEdit({ turnId, text: parts.body, revision: message.revision, attachments });
 		},
-		[newWorkDisabled],
+		[newWorkDisabled, queuedMessages, snapshot.sessionId],
 	);
 	const cancelQueuedEdit = useCallback(() => setQueueEdit(undefined), []);
 	const promoteQueuedTurn = useCallback(
@@ -865,7 +878,7 @@ export function ChatWorkspace({
 					configPending={configOptionPending}
 					error={configOptionError}
 					disabled={
-						snapshot.controller.state === "stopped" || configOptionPending || newWorkDisabled
+						snapshot.controller.state === "stopped" || controllerTransitioning || configOptionPending || newWorkDisabled
 					}
 				/>
 			) : null,
@@ -873,6 +886,7 @@ export function ChatWorkspace({
 			configOptionError,
 			configOptionPending,
 			configOptions,
+			controllerTransitioning,
 			models,
 			newWorkDisabled,
 			onChooseConfigOption,
@@ -932,7 +946,7 @@ export function ChatWorkspace({
 		],
 	);
 	const composerDraftSeed = useMemo(
-		() => (queueEdit ? { id: queueEdit.turnId, text: queueEdit.text } : undefined),
+		() => (queueEdit ? { id: `${queueEdit.turnId}:${queueEdit.revision}`, text: queueEdit.text, attachments: queueEdit.attachments } : undefined),
 		[queueEdit],
 	);
 	// Empty chats center the prompt; once a turn or item exists the composer docks
@@ -1153,7 +1167,7 @@ export function ChatWorkspace({
 								<ChatComposer
 									queuedDock={composerQueuedDock}
 									approval={composerApproval}
-									onSend={composerSend}
+									onSend={handleComposerSend}
 									draftSeed={composerDraftSeed}
 									editingQueuedTurnId={queueEdit?.turnId}
 									savingQueuedEditPending={Boolean(
@@ -1166,7 +1180,10 @@ export function ChatWorkspace({
 									settings={composerSettings}
 									busy={busy}
 									willQueue={Boolean(turn)}
-									disabled={snapshot.controller.state === "stopped" || newWorkDisabled}
+									disabled={snapshot.controller.state === "stopped" || controllerTransitioning || newWorkDisabled}
+									disabledPlaceholder={controllerTransitioning
+										? "Connecting to the agent…"
+										: newWorkDisabled ? "Switching to terminal UI…" : undefined}
 									skills={skills}
 									filePaths={filePaths}
 									filePathsTruncated={filePathsTruncated}
@@ -1268,9 +1285,6 @@ function runsOf(items: ConversationItem[]): TimelineRun[] {
 			item.activityKind !== "approval" &&
 			item.activityKind !== "user_input" &&
 			item.activityKind !== "error" &&
-			// An edit is a result, not a mechanic. Burying it in a summary would hide
-			// the one kind of activity that changed the user's worktree.
-			item.activityKind !== "file_change" &&
 			// Reasoning only reaches the timeline when the reader asked for it, so
 			// folding it into "Explored 4 files" would answer that request with the
 			// summary they were trying to get past.
@@ -2024,6 +2038,17 @@ function Timeline({
 		updateScrollbar();
 	}, [syncPromptSpacer, updateScrollbar]);
 
+	// A disclosure animation changes the content box but is not new conversation
+	// content. Re-measure it without re-pinning the viewport to the bottom; doing
+	// that during a height animation makes the whole chat jump under the reader.
+	const syncScrollMetrics = useCallback(() => {
+		anchorGeometry.current = null;
+		// UI-only disclosure resizes must not rewrite the trailing spacer. Doing so
+		// every animation frame changes the scroll range and causes a small jerk when
+		// a panel collapses near the bottom of the viewport.
+		updateScrollbar();
+	}, [updateScrollbar]);
+
 	useEffect(() => {
 		syncScrollLayout();
 	}, [pinned, snapshot.latestSequence, groups.length, messageEdit?.turnId, syncScrollLayout]);
@@ -2046,11 +2071,11 @@ function Timeline({
 	useEffect(() => {
 		syncScrollLayout();
 		if (typeof ResizeObserver === "undefined") return;
-		const observer = new ResizeObserver(syncScrollLayout);
+		const observer = new ResizeObserver(syncScrollMetrics);
 		if (scroller.current) observer.observe(scroller.current);
 		if (scrollContent.current) observer.observe(scrollContent.current);
 		return () => observer.disconnect();
-	}, [groups.length, syncScrollLayout]);
+	}, [groups.length, syncScrollMetrics]);
 
 	function onScroll() {
 		const node = scroller.current;
@@ -2513,12 +2538,11 @@ const TurnGroup = memo(function TurnGroup({
 			    list that grows both change while the reader watches, and at the end of a
 			    turn neither pushes anything the reader is already looking at. */}
 			{group.plan ? <TurnPlan plan={group.plan} live={group.live} /> : null}
-			{/* Above the outcome divider: the changed files are part of what the turn
-			    did, and belong inside it rather than after it closes. */}
-			{group.diff ? (
+			{/* Changed-files review is a settled result, not live activity. Keep it
+			    below the completed assistant response and its bottom action row. */}
+			{group.diff && group.outcome?.state === "completed" && copyableMessageId ? (
 				<TurnChangedFiles
 					diff={group.diff}
-					live={group.live}
 					items={group.items}
 					onReview={onOpenFiles}
 					onOpenFile={onOpenFile}
