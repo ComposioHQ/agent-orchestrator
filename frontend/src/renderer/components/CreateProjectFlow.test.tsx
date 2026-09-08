@@ -903,6 +903,7 @@ describe("CreateProjectFlow project import validation", () => {
 		expect(await screen.findByLabelText("Owner")).toHaveValue("username");
 		expect(screen.getByLabelText("Repository name")).toHaveValue("project-no-git");
 		expect(screen.getByText("Will create `https://github.com/username/project-no-git.git`")).toBeInTheDocument();
+		expect(await screen.findByText("Repository name is available.")).toHaveClass("text-emerald-600");
 	});
 
 	it("requires an available GitHub repository name", async () => {
@@ -924,7 +925,38 @@ describe("CreateProjectFlow project import validation", () => {
 		await openSource(user, "Import an existing project");
 
 		expect(await screen.findByText("Repository name is already in use for this owner.")).toBeInTheDocument();
+		expect(screen.getByText("Repository name is already in use for this owner.")).toHaveClass("text-red-600");
 		expect(screen.getByRole("button", { name: "Continue" })).toBeDisabled();
+	});
+
+	it("checks repository availability again when the repository name changes", async () => {
+		const user = userEvent.setup();
+		bridgeMocks.chooseDirectory.mockResolvedValue("/repo/project");
+		bridgeMocks.checkGitHubRepositoryAvailability
+			.mockResolvedValueOnce({ available: false, message: "Repository name is already in use for this owner." })
+			.mockResolvedValueOnce({ available: true });
+		apiMocks.POST.mockResolvedValueOnce({
+			data: projectValidation("/repo/project", {
+				nextStep: "prepare_git",
+				root: {
+					hasOrigin: false,
+					requiredActions: ["create_remote_repository"],
+				},
+			}),
+		});
+
+		renderChooseFlow();
+
+		await openSource(user, "Import an existing project");
+
+		expect(await screen.findByText("Repository name is already in use for this owner.")).toBeInTheDocument();
+		const repoNameInput = screen.getByLabelText("Repository name");
+		await user.clear(repoNameInput);
+		await user.type(repoNameInput, "project-new");
+
+		await waitFor(() => expect(bridgeMocks.checkGitHubRepositoryAvailability).toHaveBeenLastCalledWith({ owner: "username", name: "project-new" }));
+		expect(await screen.findByText("Repository name is available.")).toHaveClass("text-emerald-600");
+		expect(screen.getByRole("button", { name: "Continue" })).toBeEnabled();
 	});
 
 	it("prepares the project and then opens agent selection", async () => {

@@ -1785,8 +1785,10 @@ function ProjectImportDialog({
 											</p>
 											{availability.state === "checking" ? (
 												<p className="text-[11px] leading-4 text-muted-foreground" role="status">{t("createProject.githubRepoChecking")}</p>
+											) : availability.state === "available" ? (
+												<p className="text-[11px] leading-4 text-emerald-600" role="status">{t("createProject.githubRepoAvailable")}</p>
 											) : availability.state === "unavailable" ? (
-												<p className="text-[11px] leading-4 text-amber-600" role="status">{availability.message ?? t("createProject.githubRepoUnavailable")}</p>
+												<p className="text-[11px] leading-4 text-red-600" role="status">{availability.message ?? t("createProject.githubRepoUnavailable")}</p>
 											) : null}
 										</div>
 									) : (
