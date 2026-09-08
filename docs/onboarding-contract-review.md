@@ -22,10 +22,10 @@ workspace can be created. The reported failure crossed precisely that boundary.
 
 ## Changes in PR #5126
 
-- Clone destinations default to `~/ao/projects` without a saved selection.
-  The destination row opens a native picker at that folder, creating it if
-  needed; the picker permits folder creation. Existing user selections remain
-  respected. Direct path editing is not available in the current UI.
+- Clone destinations can be typed and default to `~/ao/projects` without a
+  saved selection. A separate button opens the native picker at that folder,
+  creating it if needed; the picker permits folder creation. Existing user
+  selections remain respected, and cloning creates missing destination parents.
 - Default resolution accepts an AO-initialized local branch before the first
   push, without guessing from an arbitrary current checkout. Remote defaults
   retain precedence, and a failed fetch of a known default still fails.

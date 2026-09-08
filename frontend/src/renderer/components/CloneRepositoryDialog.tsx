@@ -5,7 +5,6 @@ import { type FormEvent, useCallback, useEffect, useRef, useState } from "react"
 import { useTranslation } from "react-i18next";
 import { aoBridge } from "../lib/bridge";
 import { isMacPlatform, isWindowsPlatform } from "../lib/platform";
-import { PathRow } from "./PathRow";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
@@ -309,18 +308,27 @@ export default function CloneRepositoryDialog({
 								<Label htmlFor="cloneDestination" className="text-[13px] font-semibold text-[var(--color-text-import-title)]">
 									{t("createProject.cloneDestination")}
 								</Label>
-								<PathRow
-									action={t("createProject.cloneChoose")}
-									ariaDescribedBy={`cloneDestinationHelp${destinationError ? " cloneDestinationError" : ""}`}
-									ariaInvalid={Boolean(destinationError)}
-									ariaLabel={t("createProject.cloneChooseDestination")}
-									disabled={disabled || choosingDestination}
-									id="cloneDestination"
-									icon={<Folder className="size-4 shrink-0 text-[var(--color-text-import-muted)]" aria-hidden="true" />}
-									onClick={() => void chooseDestination()}
-								>
-									{value.destinationParent || "~/ao/projects"}
-								</PathRow>
+								<div className="flex items-center overflow-hidden rounded-md bg-[var(--color-bg-import-card)]">
+									<div className="relative min-w-0 flex-1">
+										<Folder className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-[var(--color-text-import-muted)]" aria-hidden="true" />
+										<Input
+											id="cloneDestination"
+											className="border-transparent bg-transparent pl-10 font-mono text-[13px]"
+											aria-describedby={`cloneDestinationHelp${destinationError ? " cloneDestinationError" : ""}`}
+											aria-invalid={Boolean(destinationError)}
+											disabled={disabled || choosingDestination}
+											autoCapitalize="none"
+											autoComplete="off"
+											spellCheck={false}
+											placeholder={t("createProject.cloneDestinationPlaceholder")}
+											value={value.destinationParent}
+											onChange={(event) => onChange({ ...value, destinationParent: event.target.value })}
+										/>
+									</div>
+									<Button type="button" aria-label={t("createProject.cloneChooseDestination")} variant="ghost" className="shrink-0 rounded-none border-l border-border/60" disabled={disabled || choosingDestination} onClick={() => void chooseDestination()}>
+										{t("createProject.cloneChoose")}
+									</Button>
+								</div>
 								<p id="cloneDestinationHelp" className="text-pretty text-[12px] leading-5 text-[var(--color-text-import-muted)]">
 									{targetPath
 										? t("createProject.cloneDestinationTarget", { path: targetPath })
