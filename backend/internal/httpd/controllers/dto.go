@@ -1736,8 +1736,10 @@ type ConversationImageContentRequest struct {
 // EditQueuedConversationMessageRequest changes an undispatched prompt. Omitted
 // retainedContent preserves the stored blocks; an empty list removes attachments.
 type EditQueuedConversationMessageRequest struct {
-	Text        string                            `json:"text"`
-	Attachments []ConversationImageContentRequest `json:"attachments,omitempty"`
+	// Stable retry key for this exact edit, including its attachments.
+	ClientMessageID string                            `json:"clientMessageId,omitempty"`
+	Text            string                            `json:"text"`
+	Attachments     []ConversationImageContentRequest `json:"attachments,omitempty"`
 	// Indices in the message's public content summary, in their original order.
 	RetainedContent *[]int `json:"retainedContent,omitempty"`
 	// Reject a stale editor before interpreting attachment indices.
@@ -1773,10 +1775,13 @@ type SteerConversationRequest struct {
 	Text string `json:"text"`
 	// Attachments are native image prompt blocks delivered with the correction.
 	Attachments []ConversationImageContentRequest `json:"attachments,omitempty"`
-	// ClientMessageID makes a retry idempotent: the same handle updates the recorded
-	// guidance instead of adding a second copy of it, and the provider echoes it back
-	// on the item it replays so a client can recognize its own steer.
+	// ClientMessageID makes a retry idempotent at AO's durable daemon boundary. The
+	// provider does not promise to honor this handle, so AO reserves it before I/O
+	// and replays only a known result on every later request.
 	ClientMessageID string `json:"clientMessageId,omitempty"`
+	// RecoverOnly reads the saved result for ClientMessageID without contacting the
+	// provider. Native image bytes need not be resent after a renderer restart.
+	RecoverOnly bool `json:"recoverOnly,omitempty"`
 }
 
 // SteerConversationResponse reports the turn the guidance joined.

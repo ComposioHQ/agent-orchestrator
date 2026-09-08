@@ -3181,6 +3181,7 @@ export interface components {
         };
         EditQueuedConversationMessageRequest: {
             attachments?: components["schemas"]["ConversationImageContentRequest"][];
+            clientMessageId?: string;
             expectedRevision?: null | number;
             retainedContent?: null | number[];
             text: string;
@@ -4108,6 +4109,7 @@ export interface components {
         SteerConversationRequest: {
             attachments?: components["schemas"]["ConversationImageContentRequest"][];
             clientMessageId?: string;
+            recoverOnly?: boolean;
             text: string;
         };
         SteerConversationResponse: {
