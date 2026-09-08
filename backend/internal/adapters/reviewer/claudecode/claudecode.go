@@ -31,6 +31,9 @@ func (r *Reviewer) Harness() domain.ReviewerHarness {
 	return domain.ReviewerClaudeCode
 }
 
+// SupportsReviewModelSelection reports that this adapter forwards model overrides.
+func (r *Reviewer) SupportsReviewModelSelection() bool { return true }
+
 var _ ports.Reviewer = (*Reviewer)(nil)
 var _ ports.ReviewerCanceller = (*Reviewer)(nil)
 var _ ports.ReviewerRestorer = (*Reviewer)(nil)
@@ -131,6 +134,7 @@ func (r *Reviewer) ReviewMessage(_ context.Context, inv ports.ReviewInvocation) 
 // from hooks, reapplying the same read-only tool policy as a fresh review launch.
 func (r *Reviewer) ReviewRestoreCommand(ctx context.Context, inv ports.ReviewInvocation) (ports.ReviewCommandSpec, bool, error) {
 	cmd, ok, err := agentrestore.Command(ctx, r.agent, inv, agentrestore.Options{
+		Config:          inv.Config,
 		Permissions:     ports.PermissionModeAuto,
 		AllowedTools:    reviewerAllowedTools,
 		DisallowedTools: reviewerDisallowedTools,

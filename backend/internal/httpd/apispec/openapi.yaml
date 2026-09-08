@@ -995,12 +995,6 @@ paths:
               schema:
                 $ref: '#/components/schemas/APIError'
           description: Not Found
-        "409":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/APIError'
-          description: Conflict
         "422":
           content:
             application/json:
@@ -5491,6 +5485,12 @@ paths:
               schema:
                 $ref: '#/components/schemas/APIError'
           description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
         "422":
           content:
             application/json:
@@ -5671,6 +5671,12 @@ paths:
               schema:
                 $ref: '#/components/schemas/APIError'
           description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
         "422":
           content:
             application/json:
@@ -10474,7 +10480,11 @@ components:
           type: string
         id:
           type: string
+        model:
+          type: string
         prUrl:
+          type: string
+        requestedBySessionId:
           type: string
         reviewId:
           type: string
@@ -10695,6 +10705,43 @@ components:
       - supported
       - targetMode
       type: object
+    SessionPRAOReviewSummary:
+      properties:
+        body:
+          type: string
+        createdAt:
+          format: date-time
+          type:
+          - "null"
+          - string
+        harness:
+          type: string
+        model:
+          type: string
+        requestedBySessionId:
+          type: string
+        runId:
+          type: string
+        state:
+          enum:
+          - needs_review
+          - running
+          - up_to_date
+          - changes_requested
+          - ineligible
+          type: string
+        targetSha:
+          type: string
+        verdict:
+          enum:
+          - ""
+          - approved
+          - changes_requested
+          type: string
+      required:
+      - state
+      - verdict
+      type: object
     SessionPRCISummary:
       properties:
         autoInjectCI:
@@ -10894,6 +10941,8 @@ components:
       properties:
         additions:
           type: integer
+        aoReview:
+          $ref: '#/components/schemas/SessionPRAOReviewSummary'
         author:
           type: string
         authorAvatarUrl:
@@ -11720,6 +11769,10 @@ components:
           - auggie
           - cline
           - autohand
+          type: string
+        requestedBySessionId:
+          description: Originating worker session. Set by the worker CLI; omitted
+            by UI/orchestrator actions.
           type: string
       type: object
     TriggerReviewResponse:
