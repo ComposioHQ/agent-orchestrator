@@ -163,6 +163,10 @@ export function SessionChatSurface({
 	const targetChatControllerReady =
 		snapshot?.harness === session.provider &&
 		(snapshot.controller?.state === "ready" || snapshot.controller?.state === "busy");
+	// Mode commits before the target controller starts. A cached ready snapshot
+	// can also outlive the source, so wait for the handoff's final snapshot refresh.
+	const controllerCatalogsEnabled = targetChatControllerReady && !controllerTransitioning && !newWorkDisabled;
+	// Agent-switch presentation for the chat surface progress track and input locks.
 	const switchMutation = useSwitchAgentState(session.id);
 	const agentSwitches = useAgentSwitches(session.id).data ?? [];
 	const activeHistorySwitch = findActiveAgentSwitch(agentSwitches);
@@ -250,7 +254,7 @@ export function SessionChatSurface({
 	});
 	const configOptions = useConversationConfigOptions(
 		session.id,
-		catalogsEnabled && Boolean(snapshot && can(snapshot, "config_options")),
+		Boolean(controllerCatalogsEnabled && catalogsEnabled && snapshot && can(snapshot, "config_options")),
 	);
 	// A provider config catalog may cover only model, only mode, or both.
 	// Suppress native controls only for dimensions the provider catalog replaces;
@@ -266,9 +270,12 @@ export function SessionChatSurface({
 	// from the live controller, so there is nothing to fetch before then.
 	const { models } = useConversationModels(
 		session.id,
-		catalogsEnabled && Boolean(snapshot) && !hasProviderModel,
+		Boolean(controllerCatalogsEnabled && catalogsEnabled && snapshot) && !hasProviderModel,
 	);
-	const { skills } = useConversationSkills(session.id, catalogsEnabled && Boolean(snapshot));
+	const { skills } = useConversationSkills(
+		session.id,
+		Boolean(controllerCatalogsEnabled && catalogsEnabled && snapshot),
+	);
 	const { paths, truncated } = useWorkspaceFilePaths(session.id, Boolean(snapshot));
 	const stageAttachments = useStageAttachments(session.id);
 	const openLinkInBrowser = useSessionBrowserLink(session);
