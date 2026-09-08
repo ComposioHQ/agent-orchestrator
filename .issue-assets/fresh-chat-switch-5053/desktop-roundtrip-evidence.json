@@ -1,0 +1,62 @@
+{
+  "commit": "f13c15f58ca3d427fa4e3f403550b3b095a3ddfe",
+  "reviewerReport": "https://github.com/Untrivial-ai/agent-orchestrator/pull/5053#issuecomment-5574988987",
+  "method": "Continuous native AO Electron window recordings, operated through desktop controls. Real installed Claude Code 2.1.263 and Codex 0.153.4; isolated local daemon/state. Sidecar assertions read actual daemon transitions and SQLite history. No mocked provider results.",
+  "environment": "macOS arm64; branch codex/fresh-session-interface-switch",
+  "results": [
+    {
+      "commit": "f13c15f58ca3d427fa4e3f403550b3b095a3ddfe",
+      "sessionId": "rt5053-0908-3",
+      "harness": "claude-code",
+      "transition": {
+        "id": "1a985480-4e77-4dc6-a061-95768ebd5c82",
+        "sessionId": "rt5053-0908-3",
+        "sourceMode": "tui",
+        "targetMode": "chat",
+        "policy": "drain",
+        "phase": "completed",
+        "createdAt": "2026-09-08T04:54:08.711605Z",
+        "updatedAt": "2026-09-08T04:54:12.164244Z",
+        "completedAt": "2026-09-08T04:54:12.164244Z"
+      },
+      "sequence": 0,
+      "turns": 0,
+      "messages": 0,
+      "beforeReverse": {
+        "nativeTranscriptPathReserved": true,
+        "transcriptFileExists": false,
+        "latestUserPromptEmpty": true,
+        "latestAssistantUpdateEmpty": true
+      },
+      "video": "claude-review-roundtrip.mp4",
+      "durationSeconds": 110,
+      "sha256": "623f068d0a3dafda12a72946b9a0c97022a9016cdc5a6f1a846f6990ddc5775f",
+      "allSwitchesPerformedThroughDesktopUI": true,
+      "noPromptSubmitted": true
+    },
+    {
+      "commit": "f13c15f58ca3d427fa4e3f403550b3b095a3ddfe",
+      "sessionId": "rt5053-0908-4",
+      "harness": "codex",
+      "transition": {
+        "id": "86c7726e-34e6-4c7b-a1ca-116df302a909",
+        "sessionId": "rt5053-0908-4",
+        "sourceMode": "tui",
+        "targetMode": "chat",
+        "policy": "drain",
+        "phase": "completed",
+        "createdAt": "2026-09-08T05:04:13.289818Z",
+        "updatedAt": "2026-09-08T05:04:15.043503Z",
+        "completedAt": "2026-09-08T05:04:15.043503Z"
+      },
+      "sequence": 0,
+      "turns": 0,
+      "messages": 0,
+      "video": "codex-review-roundtrip.mp4",
+      "durationSeconds": 90,
+      "sha256": "2700fa30e1dc4c830807310b9540067112045d5177ffa8c6f029586e998854ff",
+      "allSwitchesPerformedThroughDesktopUI": true,
+      "noPromptSubmitted": true
+    }
+  ]
+}
