@@ -1577,6 +1577,38 @@ func TestSpawnModelPersisted(t *testing.T) {
 	}
 }
 
+// A spawn that names a harness other than the role override's must not inherit
+// that role's model: it was tuned for the other agent and would reach the
+// selected harness as an unknown provider alias. The harness picks its own
+// default instead, while harness-neutral permissions still carry over.
+func TestSpawn_DropsRoleModelOnHarnessMismatch(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: domain.ProjectConfig{
+		Worker: domain.RoleOverride{
+			Harness:     domain.HarnessOpenCode,
+			AgentConfig: domain.AgentConfig{Model: "custom/gpt-5.5", Permissions: domain.PermissionModeAuto},
+		},
+	}}
+	agent := &recordingAgent{}
+	m := New(Deps{
+		Runtime: &fakeRuntime{}, Agents: singleAgent{agent: agent}, Workspace: &fakeWorkspace{},
+		Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st},
+		LookPath: func(string) (string, error) { return "/bin/true", nil },
+	})
+
+	if _, _, _, err := m.Spawn(ctx, ports.SpawnConfig{
+		ProjectID: "mer", Kind: domain.KindWorker, Harness: domain.HarnessCodex,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if agent.lastConfig.Model != "" {
+		t.Fatalf("launch model = %q, want empty so codex uses its own default", agent.lastConfig.Model)
+	}
+	if agent.lastConfig.Permissions != domain.PermissionModeAuto {
+		t.Fatalf("launch permissions = %q, want auto (harness-neutral)", agent.lastConfig.Permissions)
+	}
+}
+
 func TestSpawnRecordsDiffBaseForSingleRepoSessions(t *testing.T) {
 	m, st, _, ws := newManager()
 	repo := newManagerGitRepo(t)

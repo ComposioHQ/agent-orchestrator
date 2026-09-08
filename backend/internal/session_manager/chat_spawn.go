@@ -163,7 +163,7 @@ func (m *Manager) launchChatController(ctx context.Context, in chatSpawn) (domai
 	}
 	defer releaseCodexAdmission()
 	agentConfig := applySpawnAgentConfig(
-		effectiveAgentConfig(in.cfg.Kind, in.project.Config),
+		effectiveAgentConfig(in.cfg.Harness, in.cfg.Kind, in.project.Config),
 		in.cfg.AgentConfig,
 	)
 
@@ -381,7 +381,7 @@ func (m *Manager) resumeChatController(
 		return RestoreResult{}, fmt.Errorf("%s %s: switched continuation: %w", operation, rec.ID, err)
 	}
 
-	agentConfig := effectiveAgentConfig(rec.Kind, project.Config)
+	agentConfig := effectiveAgentConfig(rec.Harness, rec.Kind, project.Config)
 	if rec.Metadata.Permissions != "" {
 		agentConfig.Permissions = rec.Metadata.Permissions
 	}
