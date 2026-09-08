@@ -361,7 +361,7 @@ describe("CreateProjectFlow droppedPath", () => {
 		const { rerender } = render(<CreateProjectFlow mode="choose" {...noop} openSignal={0} />);
 		rerender(<CreateProjectFlow mode="choose" {...noop} openSignal={1} />);
 		await user.click(await screen.findByRole("button", { name: "Clone from Git" }));
-		expect(await screen.findByTestId("clone-dialog")).toHaveAttribute("data-destination", saved ?? "~/Projects");
+		expect(await screen.findByTestId("clone-dialog")).toHaveAttribute("data-destination", saved ?? "~/ao/projects");
 		window.localStorage.removeItem("ao.clone.lastDestinationParent");
 	});
 
