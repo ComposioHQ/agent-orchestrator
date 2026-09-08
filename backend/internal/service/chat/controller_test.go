@@ -618,6 +618,39 @@ func TestServicePassesRecomputedSystemPromptToResume(t *testing.T) {
 	}
 }
 
+func TestServiceResumePreservesExplicitProviderDefaultTuning(t *testing.T) {
+	st := openStore(t)
+	existing, err := st.CreateConversation(context.Background(), "conversation-provider-defaults",
+		domain.ConversationScopeSession, testProject, testSession, time.Now())
+	if err != nil {
+		t.Fatalf("CreateConversation: %v", err)
+	}
+	if err := st.SetConversationSettings(context.Background(), existing.ID, domain.ConversationSettings{}, time.Now()); err != nil {
+		t.Fatalf("SetConversationSettings: %v", err)
+	}
+
+	var resumed ports.ChatResumeConfig
+	svc := chatsvc.New(chatsvc.Options{
+		Store: st, Sessions: st,
+		Drivers: fakeRegistry{driver: fakeDriver{conv: newFakeConversation(), resumeCfg: &resumed}},
+		Log:     slog.New(slog.DiscardHandler),
+		NewID:   func() string { return "conversation-provider-defaults" },
+	})
+	t.Cleanup(func() { _ = svc.Stop(context.Background(), testSession) })
+
+	_, err = svc.Start(context.Background(), chatsvc.StartConfig{
+		SessionID: testSession, ProjectID: testProject, Harness: domain.HarnessCodex,
+		WorkspacePath: t.TempDir(), ProviderConversationID: "thread-1",
+		Effort: "high", SpeedMode: "fast",
+	})
+	if err != nil {
+		t.Fatalf("Start resume: %v", err)
+	}
+	if resumed.Effort != "" || resumed.SpeedMode != "" {
+		t.Fatalf("resume tuning = effort %q speed %q, want persisted provider defaults", resumed.Effort, resumed.SpeedMode)
+	}
+}
+
 func TestServicePersistsAndPassesInitialModelTuningBeforeProviderStart(t *testing.T) {
 	st := openStore(t)
 	conv := newFakeConversation()

@@ -421,10 +421,8 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 	if cfg.ProviderConversationID != "" && conversation.Settings.Model != "" {
 		cfg.Model = conversation.Settings.Model
 	}
-	if cfg.ProviderConversationID != "" && conversation.Settings.ReasoningEffort != "" {
+	if cfg.ProviderConversationID != "" {
 		cfg.Effort = conversation.Settings.ReasoningEffort
-	}
-	if cfg.ProviderConversationID != "" && conversation.Settings.SpeedMode != "" {
 		cfg.SpeedMode = conversation.Settings.SpeedMode
 	}
 	if cfg.ProviderConversationID != "" && conversation.Settings.ApprovalMode != "" {

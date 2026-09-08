@@ -906,12 +906,14 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 				"harness", cfg.Harness, "error", err)
 			mode = domain.SessionModeTUI
 		}
-		resolved, err := m.resolveChatAgentConfig(ctx, cfg, project.Config)
-		if err != nil {
-			return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn: %w", err)
+		if mode == domain.SessionModeChat {
+			resolved, err := m.resolveChatAgentConfig(ctx, cfg, project.Config)
+			if err != nil {
+				return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn: %w", err)
+			}
+			cfg.AgentConfig = resolved
+			cfg.AgentConfigResolved = true
 		}
-		cfg.AgentConfig = resolved
-		cfg.AgentConfigResolved = true
 	}
 	cfg.RequestedMode = mode
 
