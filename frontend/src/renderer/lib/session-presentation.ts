@@ -1,289 +1,140 @@
-import type {
-	PullRequestFacts,
-	SessionActivity,
-	SessionActivityState,
-	SessionStatus,
-	WorkspaceSession,
-} from "../types/workspace";
+import {
+	attentionZone,
+	attentionZoneOrder,
+	boardAttentionZoneOrder,
+	boardKanbanColumnOrder,
+	getAgentActivityView as getPortableAgentActivityView,
+	getAttentionZoneView as getPortableAttentionZoneView,
+	getAttentionZoneViewForZone as getPortableAttentionZoneViewForZone,
+	getKanbanColumnView as getPortableKanbanColumnView,
+	getSessionStatusView as getPortableSessionStatusView,
+	getSessionTimelinePillView as getPortableSessionTimelinePillView,
+	isAgentActivityWorking,
+	isSessionIdle,
+	type AgentActivityView,
+	type AttentionZone,
+	type AttentionZoneView,
+	type KanbanColumn,
+	type KanbanColumnView,
+	type ProductUITranslator,
+	type SessionStatusView,
+	type SessionTimelinePillStatus,
+	type SessionTimelinePillView,
+} from "@aoagents/product-ui";
+import type { TFunction } from "i18next";
+import { appI18n, type MessageKey } from "../i18n";
+import type { SessionActivity, SessionStatus } from "../types/workspace";
 
-export type AgentActivityView = {
-	state: SessionActivityState;
-	label: string;
-	tone: string;
-	dotClassName: string;
+function translator(t: TFunction): ProductUITranslator {
+	return (key, values) => t(key as MessageKey, values);
+}
+
+export function getAgentActivityView(
+	activity?: SessionActivity | null,
+	t: TFunction = appI18n.t,
+): AgentActivityView {
+	return getPortableAgentActivityView(activity, translator(t));
+}
+
+export function getSessionStatusView(
+	status: SessionStatus,
+	t: TFunction = appI18n.t,
+): SessionStatusView {
+	return getPortableSessionStatusView(status, translator(t));
+}
+
+export function getAttentionZoneView(
+	status: SessionStatus,
+	t: TFunction = appI18n.t,
+): AttentionZoneView {
+	return getPortableAttentionZoneView(status, translator(t));
+}
+
+export function getAttentionZoneViewForZone(
+	zone: AttentionZone,
+	t: TFunction = appI18n.t,
+): AttentionZoneView {
+	return getPortableAttentionZoneViewForZone(zone, translator(t));
+}
+
+export type SessionStatusDotView = {
+	className: string;
 	breathe: boolean;
 };
 
-const agentActivityViews: Record<SessionActivityState, AgentActivityView> = {
-	active: {
-		state: "active",
-		label: "Working",
-		tone: "var(--color-status-working)",
-		dotClassName: "bg-status-working",
-		breathe: true,
-	},
-	idle: {
-		state: "idle",
-		label: "Idle",
-		tone: "var(--color-status-idle)",
-		dotClassName: "bg-status-idle",
-		breathe: false,
-	},
-	waiting_input: {
-		state: "waiting_input",
-		label: "Input Needed",
-		tone: "var(--color-status-needs-you)",
-		dotClassName: "bg-status-needs-you",
-		breathe: false,
-	},
-	blocked: {
-		state: "blocked",
-		label: "Awaiting Decision",
-		tone: "var(--color-status-needs-you)",
-		dotClassName: "bg-status-needs-you",
-		breathe: false,
-	},
-	exited: {
-		state: "exited",
-		label: "Exited",
-		tone: "var(--color-status-exited)",
-		dotClassName: "bg-status-exited",
-		breathe: false,
-	},
-	unknown: {
-		state: "unknown",
-		label: "Unknown",
-		tone: "var(--color-status-unknown)",
-		dotClassName: "bg-status-unknown",
-		breathe: false,
-	},
-};
+// The session dot carries two independent signals. Colour comes from the board
+// section represented by the SCM state, which survives a running agent —
+// `status` is activity-first, so it collapses to `working` the moment an agent
+// wakes and would otherwise take every pull request tone with it. Merged keeps
+// its split-section tone instead of sharing Ready to merge's tone.
+//
+// Motion stays on raw agent activity. A no-PR idle session is the exception to
+// the preserved section colour: when its agent starts working it blinks blue.
+export function getSessionStatusDotView(
+	session: { activity?: SessionActivity | null; scmStatus?: SessionStatus; status: SessionStatus },
+	t: TFunction = appI18n.t,
+): SessionStatusDotView {
+	const working = isAgentActivityWorking(session.activity);
+	const sectionStatus = session.scmStatus ?? session.status;
+	const toneStatus = sectionStatus === "idle" && working ? "working" : sectionStatus;
+	const className =
+		toneStatus === "idle" || toneStatus === "merged"
+			? getSessionStatusView(toneStatus, t).dotClassName
+			: getAttentionZoneView(toneStatus, t).dotClassName;
 
-export function getAgentActivityView(activity?: SessionActivity | null): AgentActivityView {
-	const state = activity?.state ?? "unknown";
-	return agentActivityViews[state] ?? agentActivityViews.unknown;
-}
-
-export function isAgentActivityWorking(activity?: SessionActivity | null): boolean {
-	return getAgentActivityView(activity).state === "active";
-}
-
-export type SessionStatusView = {
-	label: string;
-	className: string;
-	cardClassName?: string;
-};
-
-const sessionStatusViews: Record<SessionStatus, SessionStatusView> = {
-	working: { label: "Working", className: "text-status-working" },
-	idle: { label: "Idle", className: "text-status-idle" },
-	needs_input: { label: "Input needed", className: "text-status-needs-you" },
-	exited: { label: "Exited", className: "text-status-exited" },
-	no_signal: { label: "No signal", className: "text-status-unknown" },
-	ci_failed: { label: "CI failed", className: "text-status-exited" },
-	changes_requested: { label: "Changes requested", className: "text-status-needs-you" },
-	review_pending: { label: "Review pending", className: "text-status-in-review" },
-	draft: { label: "Draft PR", className: "text-status-in-review" },
-	pr_open: { label: "PR open", className: "text-status-in-review" },
-	approved: { label: "Approved", className: "text-status-ready" },
-	mergeable: { label: "Ready", className: "text-status-ready" },
-	merged: { label: "Merged", className: "text-status-merged" },
-	terminated: {
-		label: "Terminated",
-		className: "text-status-terminated-foreground",
-		cardClassName: "session-card-terminated",
-	},
-	unknown: { label: "Unknown status", className: "text-status-unknown" },
-};
-
-export function getSessionStatusView(status: SessionStatus): SessionStatusView {
-	return sessionStatusViews[status] ?? sessionStatusViews.unknown;
-}
-
-export type AttentionZone = "merge" | "action" | "pending" | "working" | "done";
-
-export type AttentionZoneView = {
-	zone: AttentionZone;
-	label: string;
-	glow: string;
-	dot: string;
-	dotGlow: boolean;
-	titleClassName: string;
-	dotClassName: string;
-};
-
-const attentionZoneViews: Record<AttentionZone, AttentionZoneView> = {
-	working: {
-		zone: "working",
-		label: "Working",
-		glow: "color-mix(in srgb, var(--color-status-working) 7%, transparent)",
-		dot: "var(--color-status-working)",
-		dotGlow: true,
-		titleClassName: "text-status-working",
-		dotClassName: "bg-status-working",
-	},
-	action: {
-		zone: "action",
-		label: "Needs you",
-		glow: "color-mix(in srgb, var(--color-status-needs-you) 6%, transparent)",
-		dot: "var(--color-status-needs-you)",
-		dotGlow: true,
-		titleClassName: "text-status-needs-you",
-		dotClassName: "bg-status-needs-you",
-	},
-	pending: {
-		zone: "pending",
-		label: "In review",
-		glow: "color-mix(in srgb, var(--color-status-in-review) 5%, transparent)",
-		dot: "var(--color-status-in-review)",
-		dotGlow: false,
-		titleClassName: "text-status-in-review",
-		dotClassName: "bg-status-in-review",
-	},
-	merge: {
-		zone: "merge",
-		label: "Ready to merge",
-		glow: "color-mix(in srgb, var(--color-status-ready) 7%, transparent)",
-		dot: "var(--color-status-ready)",
-		dotGlow: true,
-		titleClassName: "text-status-ready",
-		dotClassName: "bg-status-ready",
-	},
-	done: {
-		zone: "done",
-		label: "Terminated",
-		glow: "var(--color-overlay-faint)",
-		dot: "var(--color-status-terminated)",
-		dotGlow: false,
-		titleClassName: "text-status-terminated-foreground",
-		dotClassName: "bg-status-terminated",
-	},
-};
-
-export const attentionZoneOrder: AttentionZone[] = ["merge", "action", "pending", "working", "done"];
-export const boardAttentionZoneOrder: AttentionZone[] = ["working", "action", "pending", "merge"];
-
-export const attentionZoneLabel: Record<AttentionZone, string> = {
-	merge: attentionZoneViews.merge.label,
-	action: attentionZoneViews.action.label,
-	pending: attentionZoneViews.pending.label,
-	working: attentionZoneViews.working.label,
-	done: attentionZoneViews.done.label,
-};
-
-export function attentionZone(input: SessionStatus | Pick<WorkspaceSession, "status">): AttentionZone {
-	const status = typeof input === "string" ? input : input.status;
-	switch (status) {
-		case "merged":
-		case "approved":
-		case "mergeable":
-			return "merge";
-		case "terminated":
-			return "done";
-		case "needs_input":
-		case "exited":
-		case "no_signal":
-		case "ci_failed":
-		case "changes_requested":
-		case "unknown":
-			return "action";
-		case "review_pending":
-		case "pr_open":
-		case "draft":
-			return "pending";
-		case "working":
-		case "idle":
-		default:
-			return "working";
-	}
-}
-
-export function getAttentionZoneView(status: SessionStatus): AttentionZoneView {
-	return attentionZoneViews[attentionZone(status)];
-}
-
-export function getAttentionZoneViewForZone(zone: AttentionZone): AttentionZoneView {
-	return attentionZoneViews[zone];
-}
-
-const activeSessionDotClassNames: Partial<Record<SessionStatus, string>> = {
-	working: "bg-status-working",
-	ci_failed: "bg-status-needs-you",
-	changes_requested: "bg-status-needs-you",
-	draft: "bg-status-in-review",
-	review_pending: "bg-status-in-review",
-	pr_open: "bg-status-in-review",
-	approved: "bg-status-ready",
-	mergeable: "bg-status-ready",
-	merged: "bg-status-merged",
-};
-
-const scmStatusSeverity: Partial<Record<SessionStatus, number>> = {
-	ci_failed: 0,
-	changes_requested: 1,
-	draft: 2,
-	review_pending: 3,
-	pr_open: 4,
-	approved: 5,
-	mergeable: 6,
-};
-
-function prStatus(pr: PullRequestFacts): SessionStatus {
-	if (pr.ci === "failing") return "ci_failed";
-	if (pr.state === "draft") return "draft";
-	if (pr.review === "changes_requested" || pr.reviewComments) return "changes_requested";
-	if (pr.mergeability === "mergeable") return "mergeable";
-	if (pr.review === "approved") return "approved";
-	if (pr.review === "review_required") return "review_pending";
-	return "pr_open";
-}
-
-// Compatibility for snapshots from an older daemon. New daemons provide the
-// stack-aware scmStatus and always take precedence over this flat PR reduction.
-function fallbackSCMStatus(prs: PullRequestFacts[]): SessionStatus | undefined {
-	const open = prs.filter((pr) => pr.state === "open" || pr.state === "draft");
-	if (open.length > 0) {
-		return open
-			.map(prStatus)
-			.reduce((worst, status) =>
-				(scmStatusSeverity[status] ?? Number.MAX_SAFE_INTEGER) < (scmStatusSeverity[worst] ?? Number.MAX_SAFE_INTEGER)
-					? status
-					: worst,
-			);
-	}
-	return prs.some((pr) => pr.state === "merged") ? "merged" : undefined;
-}
-
-export function getSessionDotView(session: Pick<WorkspaceSession, "activity" | "scmStatus" | "prs">): {
-	className: string;
-} {
-	const activity = getAgentActivityView(session.activity);
-	if (activity.state !== "active") return { className: activity.dotClassName };
-
-	const contextStatus = session.scmStatus ?? fallbackSCMStatus(session.prs) ?? "working";
 	return {
-		className: `${activeSessionDotClassNames[contextStatus] ?? "bg-status-working"} animate-status-pulse`,
+		className,
+		breathe: working,
 	};
 }
 
-export type SessionTimelinePillStatus = Extract<SessionStatus, "no_signal" | "ci_failed" | "changes_requested">;
-
-export type SessionTimelinePillView = {
-	label: string;
-	tone: string;
-	breathe: boolean;
-};
-
-const sessionTimelinePillViews: Record<SessionTimelinePillStatus, SessionTimelinePillView> = {
-	no_signal: { label: "No Signal", tone: "var(--color-status-unknown)", breathe: false },
-	ci_failed: { label: "CI Failed", tone: "var(--color-status-exited)", breathe: false },
-	changes_requested: { label: "Changes Requested", tone: "var(--color-status-needs-you)", breathe: false },
-};
-
-export function getSessionTimelinePillView(status: SessionTimelinePillStatus): SessionTimelinePillView {
-	return sessionTimelinePillViews[status];
+export function getKanbanColumnView(
+	column: KanbanColumn,
+	t: TFunction = appI18n.t,
+): KanbanColumnView {
+	return getPortableKanbanColumnView(column, translator(t));
 }
 
-export function isSessionIdle(session: Pick<WorkspaceSession, "status">): boolean {
-	return session.status === "idle";
+export function getSessionTimelinePillView(
+	status: SessionTimelinePillStatus,
+	t: TFunction = appI18n.t,
+): SessionTimelinePillView {
+	return getPortableSessionTimelinePillView(status, translator(t));
 }
+
+/** Live labels for the current locale (getters re-resolve on each access). */
+export const attentionZoneLabel: Record<AttentionZone, string> = {
+	get merge() {
+		return getAttentionZoneViewForZone("merge").label;
+	},
+	get action() {
+		return getAttentionZoneViewForZone("action").label;
+	},
+	get pending() {
+		return getAttentionZoneViewForZone("pending").label;
+	},
+	get working() {
+		return getAttentionZoneViewForZone("working").label;
+	},
+	get done() {
+		return getAttentionZoneViewForZone("done").label;
+	},
+};
+
+export {
+	attentionZone,
+	attentionZoneOrder,
+	boardAttentionZoneOrder,
+	boardKanbanColumnOrder,
+	isAgentActivityWorking,
+	isSessionIdle,
+};
+export type {
+	AgentActivityView,
+	AttentionZone,
+	AttentionZoneView,
+	KanbanColumnView,
+	SessionStatusView,
+	SessionTimelinePillStatus,
+	SessionTimelinePillView,
+};

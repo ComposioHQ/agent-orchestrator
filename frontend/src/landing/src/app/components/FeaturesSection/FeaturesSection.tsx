@@ -4,29 +4,32 @@ import { FeatureDemo } from "./components/FeatureDemo";
 import { DelegationDemo } from "./components/DelegationDemo/DelegationDemo";
 import { FeedbackLoopDemo } from "./components/FeedbackLoopDemo/FeedbackLoopDemo";
 import { FleetBoardDemo } from "./components/FleetBoardDemo/FleetBoardDemo";
-import { HarnessCoverageDemo } from "./components/HarnessCoverageDemo/HarnessCoverageDemo";
 import { MobileAppDemo } from "./components/MobileAppDemo/MobileAppDemo";
+import { ProjectAgentsDemo } from "./components/ProjectAgentsDemo/ProjectAgentsDemo";
 import { FEATURES } from "./constants";
 
 const DEMO_COMPONENTS = [
 	DelegationDemo,
 	FleetBoardDemo,
 	FeedbackLoopDemo,
-	HarnessCoverageDemo,
+	ProjectAgentsDemo,
 	MobileAppDemo,
 ];
 
 const FEATURE_BACKGROUNDS = [
-	"/feature3.png",
-	"/feature.png",
-	"/feature4.png",
-	"/feature2.png",
-	"/feature3.png",
+	"/optimized/feature3.webp",
+	"/optimized/feature.webp",
+	"/optimized/feature4.webp",
+	"/optimized/feature2.webp",
+	"/optimized/feature3.webp",
 ] as const;
 
 export function FeaturesSection() {
 	return (
-		<section className="relative px-4 py-16 sm:px-8 sm:py-20 lg:px-[30px] lg:py-24">
+		<section
+			id="features"
+			className="relative px-4 py-16 sm:px-8 sm:py-20 lg:px-[30px] lg:py-24"
+		>
 			<div className="max-w-7xl mx-auto">
 				{/* Feature Rows */}
 				<div className="space-y-20 sm:space-y-24 lg:space-y-32">
@@ -65,6 +68,7 @@ export function FeaturesSection() {
 										backgroundImage={
 											FEATURE_BACKGROUNDS[index % FEATURE_BACKGROUNDS.length]
 										}
+										preload
 									>
 										{DemoComponent && <DemoComponent />}
 									</FeatureDemo>

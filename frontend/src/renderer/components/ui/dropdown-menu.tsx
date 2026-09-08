@@ -1,5 +1,12 @@
 import { DropdownMenu as DropdownMenuPrimitive } from "radix-ui";
 import { cn } from "../../lib/utils";
+import { composeMenuCloseAutoFocus, useMenuReturnTarget } from "./menu-focus";
+import {
+	actionMenuContentClass,
+	actionMenuItemClass,
+	actionMenuLabelClass,
+	actionMenuSeparatorClass,
+} from "./menu-styles";
 
 export const DropdownMenu = DropdownMenuPrimitive.Root;
 export const DropdownMenuTrigger = DropdownMenuPrimitive.Trigger;
@@ -8,16 +15,24 @@ export const DropdownMenuPortal = DropdownMenuPrimitive.Portal;
 
 export function DropdownMenuContent({
 	className,
+	onCloseAutoFocus,
+	portalContainer,
 	sideOffset = 6,
 	...props
-}: React.ComponentProps<typeof DropdownMenuPrimitive.Content>) {
+}: React.ComponentProps<typeof DropdownMenuPrimitive.Content> & {
+	portalContainer?: React.ComponentProps<typeof DropdownMenuPrimitive.Portal>["container"];
+}) {
+	const rememberReturnTarget = useMenuReturnTarget<HTMLDivElement>();
 	return (
-		<DropdownMenuPrimitive.Portal>
+		<DropdownMenuPrimitive.Portal container={portalContainer}>
 			<DropdownMenuPrimitive.Content
+				ref={rememberReturnTarget}
+				onCloseAutoFocus={composeMenuCloseAutoFocus(onCloseAutoFocus)}
 				sideOffset={sideOffset}
 				className={cn(
-					"z-overlay min-w-[10rem] overflow-hidden rounded-lg border border-border bg-popover p-1 text-popover-foreground shadow-md",
-					"data-[state=open]:animate-overlay-in",
+					actionMenuContentClass,
+					"origin-(--radix-dropdown-menu-content-transform-origin)",
+					"data-[state=open]:animate-popover-in data-[state=closed]:animate-popover-out",
 					className,
 				)}
 				{...props}
@@ -34,9 +49,7 @@ export function DropdownMenuItem({
 	return (
 		<DropdownMenuPrimitive.Item
 			className={cn(
-				"relative flex cursor-default select-none items-center gap-2.5 rounded-md px-2 py-1.5 text-control outline-none transition-colors",
-				"text-muted-foreground focus:bg-surface focus:text-foreground data-[disabled]:pointer-events-none data-[disabled]:opacity-50",
-				"[&_svg]:size-icon-lg [&_svg]:shrink-0 [&_svg]:text-passive",
+				actionMenuItemClass,
 				inset && "pl-8",
 				className,
 			)}
@@ -53,7 +66,7 @@ export function DropdownMenuLabel({
 	return (
 		<DropdownMenuPrimitive.Label
 			className={cn(
-				"px-2 py-1.5 font-mono text-micro uppercase tracking-wide-xl text-passive",
+				actionMenuLabelClass,
 				inset && "pl-8",
 				className,
 			)}
@@ -66,9 +79,9 @@ export function DropdownMenuSeparator({
 	className,
 	...props
 }: React.ComponentProps<typeof DropdownMenuPrimitive.Separator>) {
-	return <DropdownMenuPrimitive.Separator className={cn("-mx-1 my-1 h-px bg-border", className)} {...props} />;
+	return <DropdownMenuPrimitive.Separator className={cn(actionMenuSeparatorClass, className)} {...props} />;
 }
 
 export function DropdownMenuShortcut({ className, ...props }: React.ComponentProps<"span">) {
-	return <span className={cn("ml-auto font-mono text-micro tracking-wide-md text-passive", className)} {...props} />;
+	return <span className={cn("ml-auto text-micro tracking-wide-md text-passive", className)} {...props} />;
 }

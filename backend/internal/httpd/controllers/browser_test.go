@@ -82,10 +82,11 @@ func TestBrowserCoreInteractionActionsReachRuntime(t *testing.T) {
 	runtime := &fakeBrowserRuntime{}
 	srv := browserServer(t, runtime)
 	actions := []string{
-		"type", "press", "hover", "highlight", "unhighlight",
+		"act", "type", "press", "hover", "highlight", "unhighlight",
 		"tabs", "tab-new", "tab-select", "tab-close",
 		"scroll", "select", "check", "uncheck", "get",
 		"network-start", "network-status", "network-list", "network-stop", "network-clear",
+		"devtools-open", "devtools-close",
 	}
 
 	for _, action := range actions {

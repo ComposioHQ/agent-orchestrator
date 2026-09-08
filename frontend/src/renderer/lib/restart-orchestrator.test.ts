@@ -7,9 +7,20 @@ const { spawnMock } = vi.hoisted(() => ({
 }));
 
 vi.mock("./spawn-orchestrator", () => ({
+	OrchestratorSpawnError: class OrchestratorSpawnError extends Error {
+		constructor(
+			message: string,
+			readonly code?: string,
+			readonly requestId?: string,
+			readonly status?: number,
+		) {
+			super(message);
+		}
+	},
 	spawnOrchestrator: spawnMock,
 }));
 
+import { OrchestratorSpawnError } from "./spawn-orchestrator";
 import { restartProjectOrchestrator } from "./restart-orchestrator";
 
 describe("restartProjectOrchestrator", () => {
@@ -36,14 +47,65 @@ describe("restartProjectOrchestrator", () => {
 			onError,
 		});
 
-		expect(spawnMock).toHaveBeenCalledWith("proj-1", "restart", true);
+		expect(spawnMock).toHaveBeenCalledWith("proj-1", "restart", true, undefined);
 		expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: workspaceQueryKey });
-		expect(setOrchestratorReplacementError).toHaveBeenNthCalledWith(1, "proj-1", null);
-		expect(setOrchestratorReplacementError).toHaveBeenNthCalledWith(2, "proj-1", "missing goose binary");
+		expect(setOrchestratorReplacementError).toHaveBeenNthCalledWith(1, "proj-1", {
+			message: "missing goose binary",
+		});
 		expect(setProjectRestarting).toHaveBeenNthCalledWith(1, "proj-1", true);
 		expect(setProjectRestarting).toHaveBeenLastCalledWith("proj-1", false);
 		expect(onError).toHaveBeenCalledWith(failure);
 		expect(navigate).not.toHaveBeenCalled();
+	});
+
+	it("blurs the restart control so the replacement terminal can reclaim focus", async () => {
+		const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+		vi.spyOn(queryClient, "invalidateQueries").mockResolvedValue();
+		const restartButton = document.createElement("button");
+		document.body.appendChild(restartButton);
+		restartButton.focus();
+		spawnMock.mockResolvedValue("session-2");
+
+		await restartProjectOrchestrator({
+			projectId: "proj-1",
+			queryClient,
+			navigate: vi.fn(),
+			setProjectRestarting: vi.fn(),
+			setOrchestratorReplacementError: vi.fn(),
+		});
+
+		expect(restartButton).not.toHaveFocus();
+		restartButton.remove();
+	});
+
+	it("keeps the initiating control focused until replacement and refresh finish", async () => {
+		let completeSpawn!: (id: string) => void;
+		let completeRefresh!: () => void;
+		spawnMock.mockImplementation(() => new Promise<string>((resolve) => { completeSpawn = resolve; }));
+		const queryClient = new QueryClient();
+		vi.spyOn(queryClient, "invalidateQueries").mockImplementation(() => new Promise<void>((resolve) => { completeRefresh = resolve; }));
+		const button = document.createElement("button");
+		document.body.appendChild(button);
+		button.focus();
+		const navigate = vi.fn();
+		const setError = vi.fn();
+		try {
+			const restart = restartProjectOrchestrator({ projectId: "proj-1", queryClient, navigate,
+				setProjectRestarting: vi.fn(), setOrchestratorReplacementError: setError });
+			expect(button).toHaveFocus();
+			expect(setError).not.toHaveBeenCalled();
+			completeSpawn("replacement");
+			await Promise.resolve();
+			expect(button).toHaveFocus();
+			expect(navigate).not.toHaveBeenCalled();
+			completeRefresh();
+			await restart;
+			expect(button).not.toHaveFocus();
+			expect(setError).toHaveBeenCalledWith("proj-1", null);
+			expect(navigate).toHaveBeenCalledOnce();
+		} finally {
+			button.remove();
+		}
 	});
 
 	it("still records the replacement error when workspace invalidation fails", async () => {
@@ -65,9 +127,41 @@ describe("restartProjectOrchestrator", () => {
 			onError,
 		});
 
-		expect(setOrchestratorReplacementError).toHaveBeenLastCalledWith("proj-1", "missing goose binary");
+		expect(setOrchestratorReplacementError).toHaveBeenLastCalledWith("proj-1", {
+			message: "missing goose binary",
+		});
 		expect(setProjectRestarting).toHaveBeenLastCalledWith("proj-1", false);
 		expect(onError).toHaveBeenCalledWith(failure);
 		expect(navigate).not.toHaveBeenCalled();
+	});
+
+	it("preserves typed preflight details and retries with an explicit TUI mode", async () => {
+		const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+		vi.spyOn(queryClient, "invalidateQueries").mockResolvedValue();
+		const setOrchestratorReplacementError = vi.fn();
+		spawnMock.mockRejectedValue(
+			new OrchestratorSpawnError(
+				"Claude Code is unavailable",
+				"CHAT_DRIVER_UNAVAILABLE",
+				"request-42",
+				400,
+			),
+		);
+
+		await restartProjectOrchestrator({
+			projectId: "proj-1",
+			queryClient,
+			navigate: vi.fn(),
+			setProjectRestarting: vi.fn(),
+			setOrchestratorReplacementError,
+			mode: "tui",
+		});
+
+		expect(spawnMock).toHaveBeenCalledWith("proj-1", "restart", true, "tui");
+		expect(setOrchestratorReplacementError).toHaveBeenLastCalledWith("proj-1", {
+			message: "Claude Code is unavailable",
+			code: "CHAT_DRIVER_UNAVAILABLE",
+			requestId: "request-42",
+		});
 	});
 });

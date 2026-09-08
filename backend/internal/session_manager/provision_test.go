@@ -15,7 +15,34 @@ import (
 
 type fixedBrowserCapability string
 
-func (f fixedBrowserCapability) Token(_ domain.SessionID) string { return string(f) }
+func (f fixedBrowserCapability) Issue(_ domain.SessionID) (string, string, error) {
+	return string(f), "verifier-1", nil
+}
+
+type browserCapabilityIssue struct {
+	token    string
+	verifier string
+	err      error
+}
+
+type scriptedBrowserCapabilities struct {
+	issues  []browserCapabilityIssue
+	calls   int
+	onIssue func(call int, id domain.SessionID)
+}
+
+func (s *scriptedBrowserCapabilities) Issue(id domain.SessionID) (string, string, error) {
+	call := s.calls
+	s.calls++
+	if s.onIssue != nil {
+		s.onIssue(call, id)
+	}
+	if call >= len(s.issues) {
+		return "", "", errors.New("unexpected browser capability issuance")
+	}
+	issue := s.issues[call]
+	return issue.token, issue.verifier, issue.err
+}
 
 func TestSpawnEnvProjectVarsCannotOverrideInternal(t *testing.T) {
 	env := spawnEnv("mer-1", "mer", "issue-9", "/data", map[string]string{
@@ -34,6 +61,19 @@ func TestSpawnEnvProjectVarsCannotOverrideInternal(t *testing.T) {
 	}
 }
 
+func TestSpawnEnvWindowsRemovesCaseVariantsOfProtectedVariables(t *testing.T) {
+	env := spawnEnvForOS("mer-1", "mer", "issue-9", `C:\ao`, map[string]string{
+		"ao_session_id": "hacked",
+		"buildMode":     "production",
+	}, true)
+	if _, ok := env["ao_session_id"]; ok {
+		t.Fatal("case variant of protected AO_SESSION_ID survived")
+	}
+	if env[EnvSessionID] != "mer-1" || env["buildMode"] != "production" {
+		t.Fatalf("environment = %v, want protected ID and untouched project variable spelling", env)
+	}
+}
+
 func TestRuntimeEnvInjectsBrowserCapability(t *testing.T) {
 	manager := &Manager{
 		dataDir:             "/data",
@@ -41,9 +81,47 @@ func TestRuntimeEnvInjectsBrowserCapability(t *testing.T) {
 		executable:          func() (string, error) { return filepath.Join("/opt", "aod", "ao"), nil },
 		logger:              slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
-	env := manager.runtimeEnv("mer-1", "mer", "", nil)
+	env, verifier, err := manager.launchRuntimeEnv("mer-1", "mer", "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if env[EnvBrowserCapability] != "capability-1" {
 		t.Fatalf("%s = %q", EnvBrowserCapability, env[EnvBrowserCapability])
+	}
+	if verifier != "verifier-1" {
+		t.Fatalf("verifier = %q", verifier)
+	}
+}
+
+func TestRuntimeEnvClearsDaemonBrowserRuntimeSecrets(t *testing.T) {
+	manager := &Manager{
+		dataDir:    "/data",
+		executable: func() (string, error) { return filepath.Join("/opt", "aod", "ao"), nil },
+		logger:     slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+	env := manager.runtimeEnv("mer-1", "mer", "", map[string]string{
+		EnvBrowserRuntimeToken:      "runtime-secret",
+		EnvBrowserRuntimeTokenStdin: "1",
+	})
+	if env[EnvBrowserRuntimeToken] != "" || env[EnvBrowserRuntimeTokenStdin] != "" {
+		t.Fatalf("daemon browser runtime credentials leaked to worker: token=%q stdin=%q", env[EnvBrowserRuntimeToken], env[EnvBrowserRuntimeTokenStdin])
+	}
+}
+
+func TestRuntimeEnvPinsHooksToDaemonRunFile(t *testing.T) {
+	daemonRunFile := filepath.Join(t.TempDir(), "daemon-running.json")
+	t.Setenv("AO_RUN_FILE", filepath.Join(t.TempDir(), "inherited-wrong-daemon.json"))
+	manager := &Manager{
+		dataDir:     "/data",
+		runFilePath: daemonRunFile,
+		executable:  func() (string, error) { return filepath.Join("/opt", "aod", "ao"), nil },
+		logger:      slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+	env := manager.runtimeEnv("mer-1", "mer", "", map[string]string{
+		"AO_RUN_FILE": "/project/cannot-redirect-hooks.json",
+	})
+	if got, want := env["AO_RUN_FILE"], daemonRunFile; got != want {
+		t.Fatalf("AO_RUN_FILE = %q, want daemon run-file %q", got, want)
 	}
 }
 
@@ -102,7 +180,7 @@ func TestHookPATH(t *testing.T) {
 				}
 				return ""
 			}
-			got, err := HookPATH(tc.executable, getenv, tc.projectEnv)
+			got, err := HookPATH(tc.executable, getenv, tc.projectEnv, "/data")
 			if tc.wantErr {
 				if err == nil {
 					t.Fatalf("HookPATH = %q, want error", got)
@@ -121,8 +199,8 @@ func TestHookPATH(t *testing.T) {
 
 func TestEffectiveHarnessAndAgentConfig(t *testing.T) {
 	cfg := domain.ProjectConfig{
-		AgentConfig:  domain.AgentConfig{Model: "base", Permissions: domain.PermissionModeAuto},
-		Worker:       domain.RoleOverride{Harness: domain.HarnessCodex, AgentConfig: domain.AgentConfig{Model: "worker"}},
+		AgentConfig:  domain.AgentConfig{Model: "base", Mode: "low", Permissions: domain.PermissionModeAuto},
+		Worker:       domain.RoleOverride{Harness: domain.HarnessCodex, AgentConfig: domain.AgentConfig{Model: "worker", Mode: "high"}},
 		Orchestrator: domain.RoleOverride{Harness: domain.HarnessClaudeCode},
 	}
 
@@ -140,8 +218,8 @@ func TestEffectiveHarnessAndAgentConfig(t *testing.T) {
 
 	// Role override merges over the base agent config (set fields win; unset keep base).
 	got := effectiveAgentConfig(domain.KindWorker, cfg)
-	if got.Model != "worker" || got.Permissions != domain.PermissionModeAuto {
-		t.Fatalf("merged worker config = %#v, want model=worker permissions=auto", got)
+	if got.Model != "worker" || got.Mode != "high" || got.Permissions != domain.PermissionModeAuto {
+		t.Fatalf("merged worker config = %#v, want model=worker mode=high permissions=auto", got)
 	}
 	// Orchestrator has no agent-config override, so the base config is used as-is.
 	if got := effectiveAgentConfig(domain.KindOrchestrator, cfg); got.Model != "base" {
@@ -196,5 +274,30 @@ func TestRunPostCreate(t *testing.T) {
 	// A failing command surfaces an error.
 	if err := runPostCreate(context.Background(), workspace, []string{"exit 3"}); err == nil {
 		t.Fatal("expected error from failing post-create command")
+	}
+}
+
+func TestSpawnPermissionPrecedence(t *testing.T) {
+	for _, kind := range []domain.SessionKind{domain.KindWorker, domain.KindOrchestrator} {
+		for _, tc := range []struct {
+			name                    string
+			base, role, spawn, want domain.PermissionMode
+		}{
+			{"unset", "", "", "", domain.PermissionModeAuto},
+			{"project", domain.PermissionModeDefault, "", "", domain.PermissionModeDefault},
+			{"role", domain.PermissionModeAuto, domain.PermissionModeAcceptEdits, "", domain.PermissionModeAcceptEdits},
+			{"spawn", domain.PermissionModeAuto, domain.PermissionModeAcceptEdits, domain.PermissionModeDefault, domain.PermissionModeDefault},
+		} {
+			t.Run(string(kind)+"/"+tc.name, func(t *testing.T) {
+				cfg := domain.ProjectConfig{AgentConfig: domain.AgentConfig{Permissions: tc.base}, Worker: domain.RoleOverride{AgentConfig: domain.AgentConfig{Permissions: tc.role}}, Orchestrator: domain.RoleOverride{AgentConfig: domain.AgentConfig{Permissions: tc.role}}}
+				got := applySpawnAgentConfig(effectiveAgentConfig(kind, cfg), domain.AgentConfig{Permissions: tc.spawn})
+				if got.Permissions != tc.want {
+					t.Fatalf("got %q want %q", got.Permissions, tc.want)
+				}
+			})
+		}
+	}
+	if got := effectiveAgentConfig(domain.KindWorker, domain.ProjectConfig{}); got.Permissions != "" {
+		t.Fatalf("non-spawn resolution changed: %q", got.Permissions)
 	}
 }

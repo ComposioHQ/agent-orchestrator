@@ -6,13 +6,128 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/hooksjson"
+	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
+
+func TestResolveClaudeBinaryFindsLocalAppDataNPMShimOnWindows(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows install location")
+	}
+	localAppData := t.TempDir()
+	t.Setenv("PATH", t.TempDir())
+	t.Setenv("APPDATA", "")
+	t.Setenv("LOCALAPPDATA", localAppData)
+	t.Setenv("USERPROFILE", t.TempDir())
+	want := filepath.Join(localAppData, "npm", "claude.cmd")
+	if err := os.MkdirAll(filepath.Dir(want), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(want, []byte("@echo off\r\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := ResolveClaudeBinary(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != want {
+		t.Fatalf("ResolveClaudeBinary() = %q, want %q", got, want)
+	}
+}
+
+func TestNativeConversationIDUsesTheSameClaudeUUIDAcrossInterfaces(t *testing.T) {
+	p := &Plugin{}
+	tuiID, ok, err := p.NativeConversationID(context.Background(), ports.SessionRef{
+		ID: "ao-session-1", Metadata: map[string]string{},
+	}, domain.SessionModeTUI, "")
+	if err != nil || !ok || tuiID != claudeSessionUUID("ao-session-1") {
+		t.Fatalf("TUI native id = %q ok=%v err=%v", tuiID, ok, err)
+	}
+	chatID, ok, err := p.NativeConversationID(context.Background(), ports.SessionRef{
+		ID: "ao-session-1", Metadata: map[string]string{ports.MetadataKeyAgentSessionID: "stale"},
+	}, domain.SessionModeChat, tuiID)
+	if err != nil || !ok || chatID != tuiID {
+		t.Fatalf("Chat native id = %q ok=%v err=%v", chatID, ok, err)
+	}
+}
+
+func TestWindowsNativeClaudeCandidatesForNPMShim(t *testing.T) {
+	shim := filepath.Join("prefix", "claude.cmd")
+	want := []string{
+		filepath.Join("prefix", "claude.exe"),
+		filepath.Join("prefix", "node_modules", "@anthropic-ai", "claude-code", "bin", "claude.exe"),
+	}
+	if got := windowsNativeClaudeCandidatesForShim(shim); !reflect.DeepEqual(got, want) {
+		t.Fatalf("candidates = %#v, want %#v", got, want)
+	}
+}
+
+func TestResolveNativeWindowsClaudeFindsNPMExecutable(t *testing.T) {
+	prefix := t.TempDir()
+	shim := filepath.Join(prefix, "claude.cmd")
+	if err := os.WriteFile(shim, []byte("@echo off\r\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	want := filepath.Join(prefix, "node_modules", "@anthropic-ai", "claude-code", "bin", "claude.exe")
+	if err := os.MkdirAll(filepath.Dir(want), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(want, []byte("native claude"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := resolveNativeWindowsClaude(shim, "windows"); got != want {
+		t.Fatalf("resolved binary = %q, want %q", got, want)
+	}
+	if got := resolveNativeWindowsClaude(shim, "linux"); got != shim {
+		t.Fatalf("non-Windows resolution = %q, want unchanged shim %q", got, shim)
+	}
+}
+
+func TestNativeConversationExistsRequiresPersistedClaudeTranscript(t *testing.T) {
+	configDir := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", configDir)
+	p := &Plugin{}
+	id := claudeSessionUUID("ao-session-1")
+
+	exists, err := p.NativeConversationExists(context.Background(), ports.SessionRef{}, id, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if exists {
+		t.Fatal("reserved id without a transcript reported as persisted")
+	}
+
+	projectDir := filepath.Join(configDir, "projects", "-tmp-worktree")
+	if err := os.MkdirAll(projectDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(projectDir, id+".jsonl"), []byte("{\"type\":\"user\"}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	exists, err = p.NativeConversationExists(context.Background(), ports.SessionRef{}, id, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !exists {
+		t.Fatal("persisted transcript was not found")
+	}
+
+	// Project/session env is the environment Claude itself receives and must win
+	// over the daemon's ambient configuration directory.
+	t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir())
+	exists, err = p.NativeConversationExists(context.Background(), ports.SessionRef{}, id,
+		map[string]string{"CLAUDE_CONFIG_DIR": configDir})
+	if err != nil || !exists {
+		t.Fatalf("session env transcript lookup: exists=%v err=%v", exists, err)
+	}
+}
 
 func TestGetLaunchCommandBypassWithPrompt(t *testing.T) {
 	p := &Plugin{resolvedBinary: "claude"}
@@ -86,7 +201,7 @@ func TestGetLaunchCommandAppendsSystemPromptFromFile(t *testing.T) {
 
 	want := []string{
 		"claude",
-		"--append-system-prompt", "You are an orchestrator.",
+		"--append-system-prompt-file", promptFile,
 		"--", "do the thing",
 	}
 	if !reflect.DeepEqual(cmd, want) {
@@ -94,9 +209,9 @@ func TestGetLaunchCommandAppendsSystemPromptFromFile(t *testing.T) {
 	}
 }
 
-func TestGetLaunchCommandInlineSystemPrompt(t *testing.T) {
+func TestGetLaunchCommandSystemPromptFileTakesPrecedenceOverInline(t *testing.T) {
 	promptFile := filepath.Join(t.TempDir(), "system.md")
-	if err := os.WriteFile(promptFile, []byte("file ignored\n"), 0600); err != nil {
+	if err := os.WriteFile(promptFile, []byte("file instructions\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -108,12 +223,28 @@ func TestGetLaunchCommandInlineSystemPrompt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !containsSubsequence(cmd, []string{"--append-system-prompt", "inline instructions"}) {
-		t.Fatalf("command %#v does not append inline system prompt", cmd)
+	if !containsSubsequence(cmd, []string{"--append-system-prompt-file", promptFile}) {
+		t.Fatalf("command %#v does not use the system prompt file", cmd)
+	}
+	if contains(cmd, "inline instructions") {
+		t.Fatalf("command %#v unexpectedly embeds the inline system prompt", cmd)
 	}
 }
 
-func TestGetLaunchCommandMissingSystemPromptFileErrors(t *testing.T) {
+func TestGetLaunchCommandInlineSystemPromptFallback(t *testing.T) {
+	p := &Plugin{resolvedBinary: "claude"}
+	cmd, err := p.GetLaunchCommand(context.Background(), ports.LaunchConfig{
+		SystemPrompt: "inline instructions",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !containsSubsequence(cmd, []string{"--append-system-prompt", "inline instructions"}) {
+		t.Fatalf("command %#v does not append the inline system prompt fallback", cmd)
+	}
+}
+
+func TestGetLaunchCommandRejectsMissingSystemPromptFile(t *testing.T) {
 	p := &Plugin{resolvedBinary: "claude"}
 	_, err := p.GetLaunchCommand(context.Background(), ports.LaunchConfig{
 		SystemPromptFile: filepath.Join(t.TempDir(), "does-not-exist.md"),
@@ -144,6 +275,128 @@ func TestGetLaunchCommandInjectsSessionID(t *testing.T) {
 	}
 	if contains(cmd, "--session-id") {
 		t.Fatalf("command %#v unexpectedly contains --session-id", cmd)
+	}
+}
+
+func TestGetLaunchCommandUsesRequestedNativeSessionID(t *testing.T) {
+	p := &Plugin{resolvedBinary: "claude"}
+	requested := "019f9f7c-53c0-7f10-8d56-a8a979dd7001"
+	cmd, err := p.GetLaunchCommand(context.Background(), ports.LaunchConfig{
+		SessionID:       "stable-ao-session",
+		NativeSessionID: requested,
+		Prompt:          "continue",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !containsSubsequence(cmd, []string{"--session-id", requested}) {
+		t.Fatalf("command %#v missing requested native session id", cmd)
+	}
+	if contains(cmd, claudeSessionUUID("stable-ao-session")) {
+		t.Fatalf("command %#v used AO-derived id despite explicit native id", cmd)
+	}
+}
+
+func TestGetLaunchCommandRejectsInvalidRequestedNativeSessionID(t *testing.T) {
+	p := &Plugin{resolvedBinary: "claude"}
+	if _, err := p.GetLaunchCommand(context.Background(), ports.LaunchConfig{
+		NativeSessionID: "not-a-uuid",
+	}); err == nil {
+		t.Fatal("expected invalid native session id error")
+	}
+}
+
+func TestNewNativeSessionIDReturnsDistinctClaudeUUIDs(t *testing.T) {
+	p := &Plugin{}
+	first := p.NewNativeSessionID()
+	second := p.NewNativeSessionID()
+	if first == second {
+		t.Fatalf("fresh native ids collided: %q", first)
+	}
+	if _, err := uuid.Parse(first); err != nil {
+		t.Fatalf("first native id %q is not a UUID: %v", first, err)
+	}
+	if _, err := uuid.Parse(second); err != nil {
+		t.Fatalf("second native id %q is not a UUID: %v", second, err)
+	}
+}
+
+func TestNativeSessionConfigDirUsesRuntimeOverride(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "claude-profile")
+	got, err := (&Plugin{}).NativeSessionConfigDir(context.Background(), map[string]string{
+		claudeConfigDirEnv: dir,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != dir {
+		t.Fatalf("config dir = %q, want %q", got, dir)
+	}
+}
+
+func TestNativeSessionConfigDirExplicitEmptyIgnoresDaemonOverride(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv(claudeConfigDirEnv, filepath.Join(t.TempDir(), "daemon-claude-profile"))
+
+	got, err := (&Plugin{}).NativeSessionConfigDir(context.Background(), map[string]string{
+		claudeConfigDirEnv: "",
+		"HOME":             home,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := filepath.Join(home, ".claude"); got != want {
+		t.Fatalf("config dir = %q, want provider default %q", got, want)
+	}
+}
+
+func TestLocateAndProbeNativeSessionTranscript(t *testing.T) {
+	configDir := t.TempDir()
+	sessionID := "019f9f7c-53c0-7f10-8d56-a8a979dd7001"
+	transcript := filepath.Join(configDir, "projects", "encoded-workspace", sessionID+".jsonl")
+	if err := os.MkdirAll(filepath.Dir(transcript), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(transcript, []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	ref := ports.NativeSessionRef{NativeSessionID: sessionID, ConfigDir: configDir}
+	p := &Plugin{}
+	path, ok, err := p.LocateTranscript(context.Background(), ref)
+	if err != nil || !ok {
+		t.Fatalf("LocateTranscript = (%q, %v, %v), want transcript", path, ok, err)
+	}
+	if path != transcript {
+		t.Fatalf("path = %q, want %q", path, transcript)
+	}
+	availability, err := p.ProbeNativeSession(context.Background(), ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if availability != ports.NativeSessionAvailabilityAvailable {
+		t.Fatalf("availability = %q, want available", availability)
+	}
+
+	ref.NativeSessionID = "019f9f7c-53c0-7f10-8d56-a8a979dd7002"
+	availability, err = p.ProbeNativeSession(context.Background(), ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if availability != ports.NativeSessionAvailabilityUnavailable {
+		t.Fatalf("missing availability = %q, want unavailable", availability)
+	}
+}
+
+func TestProbeNativeSessionUnknownWithoutConfigDir(t *testing.T) {
+	availability, err := (&Plugin{}).ProbeNativeSession(context.Background(), ports.NativeSessionRef{
+		NativeSessionID: "019f9f7c-53c0-7f10-8d56-a8a979dd7001",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if availability != ports.NativeSessionAvailabilityUnknown {
+		t.Fatalf("availability = %q, want unknown", availability)
 	}
 }
 
@@ -214,9 +467,11 @@ func TestGetAgentHooksInstallsClaudeHooks(t *testing.T) {
 	if len(config.Permissions) == 0 {
 		t.Fatalf("unrelated settings clobbered: %s", data)
 	}
-	// SessionStart carries the required matcher; UserPromptSubmit omits it.
-	if m := matcherForCommand(config.Hooks["SessionStart"], "ao hooks claude-code session-start"); m == nil || *m != "startup" {
-		t.Fatalf("SessionStart matcher = %v, want startup", m)
+	// SessionStart must fire on resume (and clear/compact/fork) as well as a
+	// fresh startup: a --resume relaunch otherwise never confirms the native
+	// session id under the new RuntimeLaunchID until the user types again (#4122).
+	if m := matcherForCommand(config.Hooks["SessionStart"], "ao hooks claude-code session-start"); m == nil || *m != "startup|resume|clear|compact|fork" {
+		t.Fatalf("SessionStart matcher = %v, want startup|resume|clear|compact|fork", m)
 	}
 	if m := matcherForCommand(config.Hooks["UserPromptSubmit"], "ao hooks claude-code user-prompt-submit"); m != nil {
 		t.Fatalf("UserPromptSubmit matcher = %v, want none", m)
@@ -228,6 +483,47 @@ func TestGetAgentHooksInstallsClaudeHooks(t *testing.T) {
 	}
 	if m := matcherForCommand(config.Hooks["SessionEnd"], "ao hooks claude-code session-end"); m != nil {
 		t.Fatalf("SessionEnd matcher = %v, want none", m)
+	}
+}
+
+func TestGetAgentHooksMigratesSessionStartMatcher(t *testing.T) {
+	p := &Plugin{resolvedBinary: "claude"}
+	workspace := t.TempDir()
+	settingsPath := filepath.Join(workspace, ".claude", "settings.local.json")
+	if err := os.MkdirAll(filepath.Dir(settingsPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Workspaces installed before #4122 registered SessionStart only under
+	// "startup". Reconcile must move the AO command onto the broader matcher
+	// without duplicating it or dropping a user's own startup hook.
+	existing := `{"hooks":{"SessionStart":[{"matcher":"startup","hooks":[{"type":"command","command":"ao hooks claude-code session-start","timeout":30},{"type":"command","command":"custom startup hook","timeout":5}]}]}}`
+	if err := os.WriteFile(settingsPath, []byte(existing), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := p.GetAgentHooks(context.Background(), ports.WorkspaceHookConfig{WorkspacePath: workspace}); err != nil {
+		t.Fatal(err)
+	}
+
+	data, err := os.ReadFile(settingsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var config struct {
+		Hooks map[string][]hooksjson.MatcherGroup `json:"hooks"`
+	}
+	if err := json.Unmarshal(data, &config); err != nil {
+		t.Fatal(err)
+	}
+	groups := config.Hooks["SessionStart"]
+	if m := matcherForCommand(groups, "ao hooks claude-code session-start"); m == nil || *m != "startup|resume|clear|compact|fork" {
+		t.Fatalf("SessionStart matcher = %v, want startup|resume|clear|compact|fork", m)
+	}
+	if got := countClaudeHookCommand(groups, "ao hooks claude-code session-start"); got != 1 {
+		t.Fatalf("session-start command count = %d, want 1 in %#v", got, groups)
+	}
+	if got := countClaudeHookCommand(groups, "custom startup hook"); got != 1 {
+		t.Fatalf("custom startup hook count = %d, want 1 in %#v", got, groups)
 	}
 }
 
@@ -378,6 +674,7 @@ func matcherForCommand(groups []hooksjson.MatcherGroup, command string) *string 
 func TestGetRestoreCommandReadsAgentSessionID(t *testing.T) {
 	cmd, ok, err := (&Plugin{resolvedBinary: "claude"}).GetRestoreCommand(context.Background(), ports.RestoreConfig{
 		Permissions: ports.PermissionModeBypassPermissions,
+		Prompt:      "continue from AO",
 		Session: ports.SessionRef{
 			ID:       "sess-r",
 			Metadata: map[string]string{ports.MetadataKeyAgentSessionID: "claude-native-1"},
@@ -387,7 +684,7 @@ func TestGetRestoreCommandReadsAgentSessionID(t *testing.T) {
 		t.Fatalf("restore = (ok=%v, err=%v), want ok", ok, err)
 	}
 	// The hook-captured native id wins over the derived fallback.
-	want := []string{"claude", "--permission-mode", "bypassPermissions", "--resume", "claude-native-1"}
+	want := []string{"claude", "--permission-mode", "bypassPermissions", "--resume", "claude-native-1", "--", "continue from AO"}
 	if !reflect.DeepEqual(cmd, want) {
 		t.Fatalf("restore cmd\nwant: %#v\n got: %#v", want, cmd)
 	}
@@ -421,7 +718,8 @@ func TestGetRestoreCommandReappendsSystemPromptFromFile(t *testing.T) {
 
 	cmd, ok, err := (&Plugin{resolvedBinary: "claude"}).GetRestoreCommand(context.Background(), ports.RestoreConfig{
 		Permissions:      ports.PermissionModeBypassPermissions,
-		SystemPrompt:     "inline wins",
+		Prompt:           "continue from AO",
+		SystemPrompt:     "inline fallback",
 		SystemPromptFile: promptFile,
 		Session: ports.SessionRef{
 			ID:       "sess-r",
@@ -431,9 +729,26 @@ func TestGetRestoreCommandReappendsSystemPromptFromFile(t *testing.T) {
 	if err != nil || !ok {
 		t.Fatalf("restore = (ok=%v, err=%v), want ok", ok, err)
 	}
-	want := []string{"claude", "--permission-mode", "bypassPermissions", "--append-system-prompt", "inline wins", "--resume", "claude-native-1"}
+	want := []string{
+		"claude", "--permission-mode", "bypassPermissions",
+		"--append-system-prompt-file", promptFile,
+		"--resume", "claude-native-1",
+		"--", "continue from AO",
+	}
 	if !reflect.DeepEqual(cmd, want) {
 		t.Fatalf("restore cmd\nwant: %#v\n got: %#v", want, cmd)
+	}
+}
+
+func TestGetRestoreCommandRejectsNonRegularSystemPromptFile(t *testing.T) {
+	_, ok, err := (&Plugin{resolvedBinary: "claude"}).GetRestoreCommand(context.Background(), ports.RestoreConfig{
+		SystemPromptFile: t.TempDir(),
+		Session: ports.SessionRef{
+			Metadata: map[string]string{ports.MetadataKeyAgentSessionID: "claude-native-1"},
+		},
+	})
+	if err == nil || ok {
+		t.Fatalf("restore = (ok=%v, err=%v), want non-regular-file error", ok, err)
 	}
 }
 
@@ -612,6 +927,13 @@ func TestClaudeAuthStatusFromOutputUnauthorized(t *testing.T) {
 	}
 }
 
+func TestClaudeAuthStatusFromOutputUnknownForUnrecognizedFailure(t *testing.T) {
+	status, ok := claudeAuthStatusFromOutput([]byte("unsupported subcommand on this version"))
+	if ok || status != ports.AgentAuthStatusUnknown {
+		t.Fatalf("status = (%q, %v), want (%q, false)", status, ok, ports.AgentAuthStatusUnknown)
+	}
+}
+
 func TestEnsureWorkspaceTrustedCreatesEntry(t *testing.T) {
 	dir := t.TempDir()
 	cfgPath := filepath.Join(dir, ".claude.json")
@@ -643,6 +965,50 @@ func TestEnsureWorkspaceTrustedCreatesEntry(t *testing.T) {
 	// Top-level key preserved.
 	if root["userID"] != "abc" {
 		t.Fatalf("top-level key clobbered: %#v", root["userID"])
+	}
+}
+
+func TestEnsureWorkspaceTrustedNormalizesWindowsProjectKey(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, ".claude.json")
+	if err := os.WriteFile(cfgPath, []byte(`{"projects":{}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	const workspacePath = `D:\dev\agent-orchestrator\.ao\worktrees\demo\worker-1`
+	const wantKey = `D:/dev/agent-orchestrator/.ao/worktrees/demo/worker-1`
+	if err := ensureWorkspaceTrustedForOS(cfgPath, workspacePath, "windows"); err != nil {
+		t.Fatalf("ensureWorkspaceTrustedForOS: %v", err)
+	}
+
+	root := readJSON(t, cfgPath)
+	projects := root["projects"].(map[string]any)
+	entry, ok := projects[wantKey].(map[string]any)
+	if !ok || entry["hasTrustDialogAccepted"] != true {
+		t.Fatalf("forward-slash trust entry = %#v, want accepted entry", projects[wantKey])
+	}
+	if _, exists := projects[workspacePath]; exists {
+		t.Fatalf("unexpected backslash-keyed trust entry: %#v", projects[workspacePath])
+	}
+}
+
+func TestEnsureWorkspaceTrustedLeavesNonWindowsProjectKeyUnchanged(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, ".claude.json")
+	if err := os.WriteFile(cfgPath, []byte(`{"projects":{}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	const workspacePath = `/worktrees/project\with-backslash`
+	if err := ensureWorkspaceTrustedForOS(cfgPath, workspacePath, "linux"); err != nil {
+		t.Fatalf("ensureWorkspaceTrustedForOS: %v", err)
+	}
+
+	root := readJSON(t, cfgPath)
+	projects := root["projects"].(map[string]any)
+	entry, ok := projects[workspacePath].(map[string]any)
+	if !ok || entry["hasTrustDialogAccepted"] != true {
+		t.Fatalf("unchanged trust entry = %#v, want accepted entry", projects[workspacePath])
 	}
 }
 
@@ -689,6 +1055,29 @@ func TestEnsureWorkspaceTrustedCreatesMissingConfig(t *testing.T) {
 	}
 }
 
+func TestEnsureWorkspaceTrustedRefusesZeroByteConfig(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, ".claude.json")
+	// Simulate catching some other writer mid-truncate: the file exists
+	// but reads back as zero bytes.
+	if err := os.WriteFile(cfgPath, []byte{}, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	err := ensureWorkspaceTrusted(cfgPath, "/some/worktree")
+	if err == nil {
+		t.Fatal("expected error for zero-byte config, got nil")
+	}
+
+	data, readErr := os.ReadFile(cfgPath)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if len(data) != 0 {
+		t.Fatalf("zero-byte config must not be overwritten; got %d bytes: %s", len(data), data)
+	}
+}
+
 func readJSON(t *testing.T, path string) map[string]any {
 	t.Helper()
 	data, err := os.ReadFile(path)
@@ -731,6 +1120,161 @@ func TestGetLaunchCommandOmitsToolFlagsWhenUnset(t *testing.T) {
 	}
 	if contains(cmd, "--allowedTools") || contains(cmd, "--disallowedTools") {
 		t.Fatalf("unrestricted launch should emit no tool flags; got %#v", cmd)
+	}
+}
+
+func TestComposerIsEmptyUsesClaudePromptMarker(t *testing.T) {
+	plugin := &Plugin{}
+	if !plugin.ComposerIsEmpty("\x1b[39m❯\u00a0") {
+		t.Fatal("blank Claude composer was not recognized")
+	}
+	rule := "\x1b[38;5;244m" + strings.Repeat("─", 48) + "\x1b[39m"
+	footer := "\x1b[38;5;220mUpdate available!\x1b[39m\n\x1b[38;5;211m⏵⏵ bypass permissions on\x1b[39m"
+	if !plugin.ComposerIsEmpty(rule + "\n\x1b[39m❯\u00a0\x1b[7m \x1b[0m\n" + rule + "\n" + footer) {
+		t.Fatal("blank bordered Claude composer above status footer was not recognized")
+	}
+}
+
+func TestInspectTerminalSurfaceSeparatesClaudeWorkFromComposer(t *testing.T) {
+	plugin := &Plugin{}
+	rule := "\x1b[38;5;244m" + strings.Repeat("─", 48) + "\x1b[39m"
+	tests := []struct {
+		name       string
+		output     string
+		wantWork   ports.TerminalSurfaceWorkState
+		wantEditor ports.TerminalComposerState
+	}{
+		{
+			name:       "idle empty composer",
+			output:     rule + "\n\x1b[39m❯\u00a0\x1b[7m \x1b[0m\n" + rule + "\n⏵⏵ bypass permissions on",
+			wantWork:   ports.TerminalSurfaceWorkIdle,
+			wantEditor: ports.TerminalComposerEmpty,
+		},
+		{
+			name:       "idle draft",
+			output:     rule + "\n❯ keep this draft\n" + rule + "\n⏵⏵ bypass permissions on",
+			wantWork:   ports.TerminalSurfaceWorkIdle,
+			wantEditor: ports.TerminalComposerDraft,
+		},
+		{
+			name:       "active wording inside draft is not current chrome",
+			output:     rule + "\n❯ quote ✶ Generating… (esc to interrupt · 2s)\n" + rule + "\n⏵⏵ bypass permissions on",
+			wantWork:   ports.TerminalSurfaceWorkIdle,
+			wantEditor: ports.TerminalComposerDraft,
+		},
+		{
+			name:       "active with empty composer",
+			output:     "✶ Generating… (esc to interrupt · 2s)\n" + rule + "\n❯\n" + rule,
+			wantWork:   ports.TerminalSurfaceWorkActive,
+			wantEditor: ports.TerminalComposerEmpty,
+		},
+		{
+			name: "active with interrupt hint in footer",
+			output: "✻ Computing… (24s · ↓ 114 tokens)\n" + rule + "\n❯\n" + rule +
+				"\n⏵⏵ auto mode on (shift+tab to cycle) · esc to interrupt · ← for agents",
+			wantWork:   ports.TerminalSurfaceWorkActive,
+			wantEditor: ports.TerminalComposerEmpty,
+		},
+		{
+			name: "spinner transcript above idle composer without active footer",
+			output: "✻ Computing… (24s · ↓ 114 tokens)\n" + rule + "\n❯\n" + rule +
+				"\n⏵⏵ auto mode on (shift+tab to cycle) · ← for agents",
+			wantWork:   ports.TerminalSurfaceWorkIdle,
+			wantEditor: ports.TerminalComposerEmpty,
+		},
+		{
+			name:       "permission dialog",
+			output:     "Do you want to proceed?\n❯ 1. Yes\n  2. No\nPress enter to confirm",
+			wantWork:   ports.TerminalSurfaceWorkBlocked,
+			wantEditor: ports.TerminalComposerUnknown,
+		},
+		{
+			name: "permission dialog with provider-specific question and modern footer",
+			output: "Claude wants to run Bash\n" +
+				"❯ 1. Yes\n" +
+				"  2. No\n" +
+				"Esc to cancel · Tab to amend",
+			wantWork:   ports.TerminalSurfaceWorkBlocked,
+			wantEditor: ports.TerminalComposerUnknown,
+		},
+		{
+			name: "permission dialog with a non-first selected option",
+			output: "Claude wants to run Bash\n" +
+				"  1. Yes\n" +
+				"❯ 2. No\n" +
+				"Esc to cancel · Tab to amend",
+			wantWork:   ports.TerminalSurfaceWorkBlocked,
+			wantEditor: ports.TerminalComposerUnknown,
+		},
+		{
+			name: "permissions menu without a selected prompt marker",
+			output: "❯ /permissions\n" + rule + "\n" +
+				"  Permissions  Recently denied   Allow   Ask   Deny   Workspace\n\n" +
+				"  Claude Code won't ask before using allowed tools.\n" +
+				"  ╭───────────────────────────────────────────────╮\n" +
+				"  │ ⌕ Search…                                     │\n" +
+				"  ╰───────────────────────────────────────────────╯\n\n" +
+				"    1. Add a new rule…\n\n" +
+				"  ←/→ to switch · ↓ to select · Esc to cancel",
+			wantWork:   ports.TerminalSurfaceWorkBlocked,
+			wantEditor: ports.TerminalComposerUnknown,
+		},
+		{
+			name: "completed permissions menu above current composer is not blocked",
+			output: "  ╭─── Search… ───╮\n" +
+				"  │ ⌕ Search… │\n" +
+				"  ╰────────────╯\n" +
+				"    1. Add a new rule…\n" +
+				"  ←/→ to switch · ↓ to select · Esc to cancel\n" +
+				rule + "\n❯\u00a0\x1b[7m \x1b[0m\n" + rule + "\n⏵⏵ auto mode on",
+			wantWork:   ports.TerminalSurfaceWorkIdle,
+			wantEditor: ports.TerminalComposerEmpty,
+		},
+		{
+			name: "completed permission menu above the current composer is not blocked",
+			output: "Claude wanted to run Bash\n" +
+				"❯ 1. Yes\n" +
+				"  2. No\n" +
+				"Esc to cancel · Tab to amend\n" + rule + "\n❯\u00a0\x1b[7m \x1b[0m\n" + rule,
+			wantWork:   ports.TerminalSurfaceWorkIdle,
+			wantEditor: ports.TerminalComposerEmpty,
+		},
+		{
+			name: "permission wording in completed response is not current chrome",
+			output: "The command asked: Do you want to proceed?\n" +
+				"It then said: Press enter to confirm.\n" + rule + "\n❯\u00a0\x1b[7m \x1b[0m\n" + rule + "\n⏵⏵ bypass permissions on",
+			wantWork:   ports.TerminalSurfaceWorkIdle,
+			wantEditor: ports.TerminalComposerEmpty,
+		},
+		{
+			name: "interrupt wording in completed response is not active chrome",
+			output: "The status previously read esc to interrupt while the command ran.\n" +
+				rule + "\n❯\u00a0\x1b[7m \x1b[0m\n" + rule + "\n⏵⏵ bypass permissions on",
+			wantWork:   ports.TerminalSurfaceWorkIdle,
+			wantEditor: ports.TerminalComposerEmpty,
+		},
+		{
+			name: "old active row separated from composer is not current chrome",
+			output: "✶ Generating… (esc to interrupt · 2s)\nThe work finished.\n" +
+				rule + "\n❯\u00a0\x1b[7m \x1b[0m\n" + rule + "\n⏵⏵ bypass permissions on",
+			wantWork:   ports.TerminalSurfaceWorkIdle,
+			wantEditor: ports.TerminalComposerEmpty,
+		},
+		{
+			name: "transcript marker is outside current surface",
+			output: "Earlier output mentioned esc to interrupt\n1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n" +
+				"❯\u00a0",
+			wantWork:   ports.TerminalSurfaceWorkIdle,
+			wantEditor: ports.TerminalComposerEmpty,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := plugin.InspectTerminalSurface(tt.output)
+			if got.Work != tt.wantWork || got.Composer != tt.wantEditor {
+				t.Fatalf("InspectTerminalSurface() = %+v, want work=%v composer=%v", got, tt.wantWork, tt.wantEditor)
+			}
+		})
 	}
 }
 

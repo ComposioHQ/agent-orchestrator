@@ -1,32 +1,44 @@
 import { useQueryClient } from "@tanstack/react-query";
+import { useTranslation } from "react-i18next";
 import { useNavigate, useParams } from "@tanstack/react-router";
-import { GitBranch, LayoutDashboard, PanelRightClose, PanelRightOpen, Plus, Trash2 } from "lucide-react";
-import { useState } from "react";
+import { Folder, LayoutDashboard, Plus, Trash2 } from "lucide-react";
+import { useEffect, useState, type ReactNode } from "react";
+import { animate, LayoutGroup, motion, useMotionValue, useReducedMotion } from "motion/react";
 import { NotificationCenter } from "./NotificationCenter";
 import {
-	findProjectOrchestrator,
+	CLOUD_PROJECT_KIND,
 	hasConfiguredOrchestratorAgent,
 	isOrchestratorSession,
 	sessionIsActive,
 	type WorkspaceSession,
 } from "../types/workspace";
-import { useWorkspaceQuery, workspaceQueryKey } from "../hooks/useWorkspaceQuery";
+import { cloudSessionsQueryKey, useWorkspaceScope, workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import {
 	clearTerminateSessionState,
 	useProjectTerminateSessionStates,
 	useTerminateSession,
 	useTerminateSessionState,
 } from "../hooks/useTerminateSession";
+import { spawnCloudOrchestrator } from "../lib/cloud-orchestrator";
 import { spawnOrchestrator } from "../lib/spawn-orchestrator";
 import { addRendererExceptionStep, captureRendererEvent, captureRendererException } from "../lib/telemetry";
-import { useUiStore } from "../stores/ui-store";
+import { sidebarOccupiesLayout, useUiStore } from "../stores/ui-store";
 import { OrchestratorIcon } from "./icons";
 import { OrchestratorActivityIndicator } from "./OrchestratorActivityIndicator";
 import { getAgentActivityView } from "../lib/session-presentation";
-import { isMacPlatform, usesBoardActionsInPanel } from "../lib/platform";
+import { isLinuxPlatform, isMacPlatform, usesBoardActionsInPanel } from "../lib/platform";
+import { cn } from "../lib/utils";
+import { SHELL_PANEL_SPRING } from "../lib/motion-spring";
+import { useWindowFullScreen } from "../hooks/useWindowFullScreen";
 import { StatusPill } from "./StatusPill";
-import { TopbarButton, TopbarKillError, topbarHeaderClass, topbarProjectLabelClass } from "./TopbarButton";
+import { TopbarActionError, TopbarButton, topbarHeaderClass, topbarProjectLabelClass } from "./TopbarButton";
 import { SessionTerminationPopover } from "./SessionTerminationPopover";
+import { TopbarOpenEditorButton } from "./TopbarOpenEditorButton";
+import {
+	agentSwitchStatusVisual,
+	deriveSessionAgentSwitchPresentation,
+} from "../lib/agent-switch-presentation";
+import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 
 const isMac = isMacPlatform();
 const boardActionsInPanel = usesBoardActionsInPanel();
@@ -41,10 +53,33 @@ const noDragStyle = isMac ? ({ WebkitAppRegion: "no-drag" } as React.CSSProperti
 // crumb + mode badge, or worker branch + status pill) and the actions to
 // board/orchestrator + inspector controls (orchestrators open the Kanban board;
 // workers open their orchestrator); otherwise it's the dashboard crumb plus the
-// Orchestrator launcher when a project is in scope. Merges the old
-// DashboardTopbar/Topbar pair — agent-orchestrator keeps those as two components
-// aligned only by CSS.
-export function ShellTopbar() {
+// Orchestrator launcher when a project is in scope. Embedded mode contributes
+// only session actions to the terminal bar; other routes retain this full bar.
+// Pixel equivalents of the CSS custom properties used for titlebar clearance.
+// --size-titlebar-cluster-left (72) + --size-titlebar-cluster-width (3×28+2×4=92)
+// + --size-titlebar-content-gap (12) = 176; minus --size-center-panel-inset-mac (6) = 170.
+// Fullscreen: --space-2 (8) + 92 + 12 = 112.
+// Linux: --size-titlebar-cluster-left-linux (6) + 92 + 12 = 110; minus
+// --size-center-panel-inline-inset (16) because the framed panel keeps that gutter.
+const PADDING_DEFAULT = 18; // 1.125rem
+const PADDING_CLEARANCE = 170;
+const PADDING_CLEARANCE_FULLSCREEN = 112;
+// Off-canvas the Linux cluster shifts right to clear the framed panel border, so
+// measure the reserve from that inset, relative to the panel's own left edge:
+// --size-titlebar-cluster-left-linux-panel (26) + --size-titlebar-cluster-width
+// (92) + --size-titlebar-content-gap (12) - --size-center-panel-inline-inset (16).
+const PADDING_CLEARANCE_LINUX = 114;
+
+export function ShellTopbar({
+	embedded = false,
+	sessionAction,
+	compactActions = false,
+}: {
+	embedded?: boolean;
+	sessionAction?: ReactNode;
+	compactActions?: boolean;
+} = {}) {
+	const { t } = useTranslation();
 	const navigate = useNavigate();
 	const queryClient = useQueryClient();
 	const params = useParams({ strict: false }) as { projectId?: string; sessionId?: string };
@@ -52,17 +87,34 @@ export function ShellTopbar() {
 	const isInspectorOpen = useUiStore((state) =>
 		currentSessionId ? (state.inspectorSessions[currentSessionId]?.isOpen ?? true) : false,
 	);
-	const toggleInspector = useUiStore((state) => state.toggleInspector);
-	const restartingProjectIds = useUiStore((state) => state.restartingProjectIds);
 	const requestNewTask = useUiStore((state) => state.requestNewTask);
+	const isSidebarOpen = useUiStore(sidebarOccupiesLayout);
+	const isFullScreen = useWindowFullScreen();
+	const prefersReducedMotion = useReducedMotion();
+	const mac = isMacPlatform();
+	const linux = isLinuxPlatform();
+	const targetPaddingLeft =
+		!embedded && !isSidebarOpen && mac
+			? isFullScreen
+				? PADDING_CLEARANCE_FULLSCREEN
+				: PADDING_CLEARANCE
+			: !embedded && !isSidebarOpen && linux
+				? PADDING_CLEARANCE_LINUX
+				: PADDING_DEFAULT;
+	const paddingLeft = useMotionValue(targetPaddingLeft);
+	useEffect(() => {
+		const controls = animate(
+			paddingLeft,
+			targetPaddingLeft,
+			prefersReducedMotion ? { duration: 0 } : SHELL_PANEL_SPRING,
+		);
+		return controls.stop;
+	}, [targetPaddingLeft, paddingLeft, prefersReducedMotion]);
 	const [isSpawning, setIsSpawning] = useState(false);
 	// Board-scope spawn failures surface where the board actions render.
 	const [boardSpawnError, setBoardSpawnError] = useState<string | null>(null);
-	const all = useWorkspaceQuery().data ?? [];
-
-	const session = params.sessionId
-		? all.flatMap((workspace) => workspace.sessions).find((s) => s.id === params.sessionId)
-		: undefined;
+	const workspaceScope = useWorkspaceScope(params.projectId, params.sessionId).data;
+	const session = workspaceScope?.session;
 	const isSessionRoute = Boolean(params.sessionId);
 	const isOrchestrator = session ? isOrchestratorSession(session) : false;
 	// Project in scope: the session's workspace wins over the route param so the
@@ -71,13 +123,21 @@ export function ShellTopbar() {
 	// removed, or data still loading) shows an empty crumb — never the raw
 	// route slug. "Board" is the root-board crumb only.
 	const projectId = session?.workspaceId ?? params.projectId;
+	const isProjectRestarting = useUiStore((state) =>
+		projectId ? state.restartingProjectIds.has(projectId) : false,
+	);
 	const isProjectBoardRoute = !isSessionRoute && Boolean(projectId);
 	const isRootBoardRoute = !isSessionRoute && !isProjectBoardRoute;
-	const project = projectId ? all.find((workspace) => workspace.id === projectId) : undefined;
-	const projectLabel = project?.name ?? session?.workspaceName ?? (projectId ? "" : "Board");
-	const orchestrator = projectId ? findProjectOrchestrator(all, projectId) : undefined;
-	const orchestratorActivityLabel = orchestrator ? getAgentActivityView(orchestrator.activity).label : undefined;
-	const isProjectRestarting = projectId ? restartingProjectIds.has(projectId) : false;
+	const project = workspaceScope?.project;
+	const projectLabel = project?.name ?? session?.workspaceName ?? (projectId ? "" : t("shell.board"));
+	const orchestrator = workspaceScope?.orchestrator;
+	const orchestratorActivityLabel = orchestrator ? getAgentActivityView(orchestrator.activity, t).label : undefined;
+	const orchestratorActionLabel = orchestrator ? t("shell.openOrchestrator") : t("shell.spawnOrchestrator");
+	const orchestratorTooltip = isProjectRestarting
+		? t("shell.restarting")
+		: isSpawning
+			? t("shell.spawning")
+			: orchestratorActionLabel;
 
 	const openBoard = () =>
 		projectId ? void navigate({ to: "/projects/$projectId", params: { projectId } }) : void navigate({ to: "/" });
@@ -85,11 +145,6 @@ export function ShellTopbar() {
 	const openNewTask = () => {
 		if (!projectId || isProjectRestarting) return;
 		requestNewTask(projectId);
-	};
-
-	const handleToggleInspector = () => {
-		if (!currentSessionId) return;
-		toggleInspector(currentSessionId);
 	};
 
 	const openOrchestrator = async () => {
@@ -109,9 +164,29 @@ export function ShellTopbar() {
 			});
 			return;
 		}
+		// Cloud projects carry no local orchestrator-agent config; spawn the
+		// orchestrator as a cloud session in its own sandbox instead of falling
+		// through to the project-settings page.
+		if (project?.kind === CLOUD_PROJECT_KIND) {
+			setIsSpawning(true);
+			try {
+				const sessionId = await spawnCloudOrchestrator(queryClient, projectId);
+				await queryClient.invalidateQueries({ queryKey: cloudSessionsQueryKey });
+				void navigate({
+					to: "/projects/$projectId/sessions/$sessionId",
+					params: { projectId, sessionId },
+				});
+			} catch (error) {
+				console.error("Failed to spawn cloud orchestrator:", error);
+				setBoardSpawnError(error instanceof Error ? error.message : t("shell.couldNotSpawn"));
+			} finally {
+				setIsSpawning(false);
+			}
+			return;
+		}
 		if (!hasConfiguredOrchestratorAgent(project)) {
 			if (project) {
-				void navigate({ to: "/projects/$projectId/settings", params: { projectId } });
+				useUiStore.getState().openProjectSettings(projectId);
 			}
 			return;
 		}
@@ -131,83 +206,107 @@ export function ShellTopbar() {
 				project_id: projectId,
 			});
 			console.error("Failed to spawn orchestrator:", error);
-			setBoardSpawnError(error instanceof Error ? error.message : "Could not spawn orchestrator");
+			setBoardSpawnError(error instanceof Error ? error.message : t("shell.couldNotSpawn"));
 		} finally {
 			setIsSpawning(false);
 		}
 	};
 
 	return (
-		<header className={topbarHeaderClass} style={dragStyle}>
-			<div className="flex min-w-0 items-center gap-3">
-				{isSessionRoute && isOrchestrator ? (
-					<div className="inline-flex min-w-0 items-center gap-2">
-						<div className="inline-flex min-w-0 items-center gap-1.5">
-							<span className={topbarProjectLabelClass}>{projectLabel}</span>
-							<span aria-hidden="true" className="text-xs leading-none text-passive">
-								·
+		<LayoutGroup id="shell-topbar">
+		<motion.header
+			className={
+				embedded ? "contents" : cn(topbarHeaderClass, "workspace-topbar-container", isSessionRoute && "pr-2")
+			}
+			style={embedded ? undefined : { ...dragStyle, paddingLeft }}
+		>
+			{!embedded ? (
+				<div className="flex min-w-0 items-center gap-3">
+				{isSessionRoute && session ? (
+					<div className="flex min-w-0 items-center gap-2.5" data-testid="session-topbar-identity">
+						{isOrchestrator ? (
+							<span className={cn(topbarProjectLabelClass, "inline-flex min-w-0 items-center gap-1.5")}>
+								<Folder aria-hidden="true" className="size-icon-md shrink-0 text-muted-foreground" />
+								<span className="max-w-content-max truncate">{projectLabel}</span>
 							</span>
-							<span className="inline-flex h-control-sm items-center gap-1 rounded-md border border-border bg-surface px-2 text-micro font-semibold leading-none tracking-wide-sm text-muted-foreground">
-								<OrchestratorIcon className="size-3 shrink-0" aria-hidden="true" />
-								Orchestrator
-							</span>
-						</div>
-					</div>
-				) : isSessionRoute ? (
-					<div className="flex min-w-0 items-center gap-3">
-						{session?.branch ? (
-							<div className="inline-flex min-w-0 items-center gap-1 font-mono text-2xs leading-none text-passive">
-								<GitBranch className="size-icon-2xs shrink-0" aria-hidden="true" />
-								<span className="truncate">{session.branch}</span>
-							</div>
-						) : null}
-						{session ? <SessionStatusPill session={session} /> : null}
+						) : (
+							<span className={cn(topbarProjectLabelClass, "max-w-content-max truncate")}>{session.title}</span>
+						)}
+						<span aria-hidden="true" className="workspace-topbar__identity-separator" />
+						<SessionStatusPill session={session} />
 					</div>
 				) : (isProjectBoardRoute && boardActionsInPanel) ||
 				  (isMac && isRootBoardRoute && boardActionsInPanel) ? null : (
-					<div className="inline-flex min-w-0 items-center gap-1.5">
-						<span className={topbarProjectLabelClass}>{projectLabel}</span>
+					<div className="inline-flex min-w-0 items-center gap-1.5" data-testid="board-topbar-label">
+						<motion.span
+							layoutId="topbar-project-label"
+							layout="position"
+							className={cn(topbarProjectLabelClass, "inline-flex items-center gap-1.5")}
+							transition={{ type: "spring", stiffness: 400, damping: 40 }}
+						>
+							<LayoutDashboard aria-hidden="true" className="size-icon-md" />
+							{t("shell.board")}
+						</motion.span>
 					</div>
 				)}
-			</div>
+				</div>
+			) : null}
 
-			<div className="min-w-0 flex-1" />
+			{!embedded ? <div className="min-w-0 flex-1" /> : null}
 
-			<div className="flex shrink-0 items-center gap-1.5">
+			<div
+				className="workspace-topbar-actions flex shrink-0 items-center"
+				data-compact-actions={compactActions ? "true" : "false"}
+				data-testid="workspace-topbar-actions"
+			>
 				{!boardActionsInPanel && isProjectBoardRoute ? (
 					<>
 						{boardSpawnError ? (
-							<TopbarKillError className="max-w-content-max truncate" title={boardSpawnError}>
+							<TopbarActionError className="max-w-content-max truncate" title={boardSpawnError}>
 								{boardSpawnError}
-							</TopbarKillError>
+							</TopbarActionError>
 						) : null}
-						<TopbarButton
-							aria-label="New task"
-							disabled={isProjectRestarting}
-							onClick={openNewTask}
-							style={noDragStyle}
-							variant="accent"
-						>
-							<Plus className="size-icon-lg" aria-hidden="true" />
-							New task
-						</TopbarButton>
-						<TopbarButton
-							aria-label={orchestratorActivityLabel ? `Orchestrator, ${orchestratorActivityLabel}` : "Spawn Orchestrator"}
-							disabled={isSpawning || isProjectRestarting}
-							onClick={() => void openOrchestrator()}
-							style={noDragStyle}
-							variant="primary"
-						>
-							<OrchestratorIcon className="size-icon-lg" aria-hidden="true" />
-							{orchestrator ? <OrchestratorActivityIndicator session={orchestrator} /> : null}
-							{isProjectRestarting
-								? "Restarting…"
-								: isSpawning
-									? "Spawning…"
-									: orchestrator
-										? "Orchestrator"
-										: "Spawn Orchestrator"}
-						</TopbarButton>
+						<Tooltip>
+							<TooltipTrigger asChild>
+								<span className="inline-flex" style={noDragStyle}>
+									<TopbarButton
+										aria-label={t("shell.newTask")}
+										className="topbar-control--labeled"
+										data-priority="primary"
+										disabled={isProjectRestarting}
+										onClick={openNewTask}
+										variant="accent"
+									>
+										<Plus className="size-icon-md" aria-hidden="true" />
+										<span data-compact-label>{t("newTask.task")}</span>
+									</TopbarButton>
+								</span>
+							</TooltipTrigger>
+							<TooltipContent side="bottom">{t("shell.newTask")}</TooltipContent>
+						</Tooltip>
+						<Tooltip>
+							<TooltipTrigger asChild>
+								<span className="inline-flex" style={noDragStyle}>
+									<TopbarButton
+										aria-label={
+											orchestratorActivityLabel
+												? t("shell.orchestratorWithActivity", { activity: orchestratorActivityLabel })
+												: orchestratorActionLabel
+										}
+										className="topbar-control--labeled"
+										data-priority="secondary"
+										disabled={isSpawning || isProjectRestarting}
+										onClick={() => void openOrchestrator()}
+										variant="primary"
+									>
+										<OrchestratorIcon className="size-icon-md" aria-hidden="true" />
+										<span data-compact-label>{t("shell.orchestrator")}</span>
+										{orchestrator ? <OrchestratorActivityIndicator session={orchestrator} /> : null}
+									</TopbarButton>
+								</span>
+							</TooltipTrigger>
+							<TooltipContent side="bottom">{orchestratorTooltip}</TooltipContent>
+						</Tooltip>
 					</>
 				) : null}
 				{isSessionRoute ? (
@@ -215,76 +314,131 @@ export function ShellTopbar() {
 						{isOrchestrator ? (
 							<>
 								<ProjectTerminationFeedback projectId={projectId} />
-								<TopbarButton
-									aria-label="New task"
-									disabled={isProjectRestarting}
-									onClick={openNewTask}
-									style={noDragStyle}
-									variant="accent"
-								>
-									<Plus className="size-icon-lg" aria-hidden="true" />
-									New task
-								</TopbarButton>
-								<TopbarButton aria-label="Open Kanban" onClick={openBoard} style={noDragStyle} variant="primary">
-									<LayoutDashboard className="size-icon-lg" aria-hidden="true" />
-									Kanban
-								</TopbarButton>
+								{sessionAction ? (
+									<div className="inline-flex shrink-0 items-center" style={noDragStyle}>
+										{sessionAction}
+									</div>
+								) : null}
+								<Tooltip>
+									<TooltipTrigger asChild>
+										<span className="inline-flex" style={noDragStyle}>
+											<TopbarButton
+												aria-label={t("shell.newTask")}
+												className="topbar-control--labeled"
+												data-priority="primary"
+												disabled={isProjectRestarting}
+												onClick={openNewTask}
+												variant="accent"
+											>
+												<Plus className="size-icon-md" aria-hidden="true" />
+												<span data-compact-label>{t("newTask.task")}</span>
+											</TopbarButton>
+										</span>
+									</TooltipTrigger>
+									<TooltipContent side="bottom">{t("shell.newTask")}</TooltipContent>
+								</Tooltip>
+								<Tooltip>
+									<TooltipTrigger asChild>
+										<TopbarButton
+											aria-label={t("shell.openKanban")}
+											className="topbar-control--labeled"
+											data-priority="secondary"
+											onClick={openBoard}
+											style={noDragStyle}
+											variant="feature"
+										>
+											<LayoutDashboard className="size-icon-md" aria-hidden="true" />
+											<span data-compact-label>{t("shell.openKanban")}</span>
+										</TopbarButton>
+									</TooltipTrigger>
+									<TooltipContent side="bottom">{t("shell.openKanban")}</TooltipContent>
+								</Tooltip>
 							</>
 						) : null}
-						{/* Kill control sits beside the orchestrator link for active workers —
-						    moved here from the inspector's Summary "Danger zone". */}
-						{!isOrchestrator && session && sessionIsActive(session) ? (
-							<TopbarKillButton
-								key={session.id}
-								session={session}
-								orchestratorId={orchestrator?.id}
-								onKilled={(workspaceId, orchestratorId) => {
-									if (orchestratorId) {
-										void navigate({
-											to: "/projects/$projectId/sessions/$sessionId",
-											params: { projectId: workspaceId, sessionId: orchestratorId },
-										});
-										return;
-									}
-									void navigate({ to: "/projects/$projectId", params: { projectId: workspaceId } });
-								}}
+						{/* Open-in-editor leads the session actions: it is the only
+						    non-destructive one, and it must sit left of Kill. Kept outside
+						    the local-actions group because Electron main independently
+						    reports whether this session has a live workspace. Cloud sessions
+						    have no local workspace to hand off to an editor: the local daemon
+						    has never heard of them, so querying it just surfaces its 404 as a
+						    confusing "Unknown session" error (see workspace.ts's `kind` doc). */}
+						{session && project?.kind !== CLOUD_PROJECT_KIND ? (
+							// Keyed per session so a stale launch error does not carry over
+							// when switching sessions. The prefix keeps it distinct from the
+							// kill button's key: identical sibling keys make React duplicate
+							// the nodes.
+							<TopbarOpenEditorButton
+								key={`open-workspace-${session.id}`}
+								sessionId={session.id}
+								projectId={session.workspaceId}
+								style={noDragStyle}
 							/>
 						) : null}
-						{!isOrchestrator && (
-							<TopbarButton
-								aria-label="Open orchestrator"
-								disabled={isSpawning || isProjectRestarting}
-								onClick={() => void openOrchestrator()}
+						{/* Local worker actions share one tight control group. Navigation
+						    remains a separate visual target in the outer top-bar row. */}
+						{!isOrchestrator && session && (sessionAction || sessionIsActive(session)) ? (
+							<div
+								className="inline-flex shrink-0 items-center gap-1"
+								data-testid="session-local-actions"
 								style={noDragStyle}
-								variant="primary"
 							>
-								<OrchestratorIcon className="size-icon-lg" aria-hidden="true" />
-								{isProjectRestarting ? "Restarting…" : isSpawning ? "Spawning…" : "Orchestrator"}
-							</TopbarButton>
-						)}
-						{/* Inspector collapse (worker sessions only — orchestrators have no rail). */}
-						{!isOrchestrator && (
-							<TopbarButton
-								aria-label={isInspectorOpen ? "Close inspector panel" : "Open inspector panel"}
-								aria-pressed={isInspectorOpen}
-								onClick={handleToggleInspector}
-								style={noDragStyle}
-								title={`${isInspectorOpen ? "Close" : "Open"} inspector · ⌘⇧B`}
-								variant="icon"
-							>
-								{isInspectorOpen ? (
-									<PanelRightClose className="size-5" aria-hidden="true" />
-								) : (
-									<PanelRightOpen className="size-5" aria-hidden="true" />
-								)}
-							</TopbarButton>
-						)}
+								{sessionAction ? <div className="inline-flex shrink-0 items-center">{sessionAction}</div> : null}
+								{sessionIsActive(session) ? (
+									<TopbarKillButton
+										key={session.id}
+										session={session}
+										orchestratorId={orchestrator?.id}
+										onKilled={(workspaceId, orchestratorId) => {
+											if (orchestratorId) {
+												void navigate({
+													to: "/projects/$projectId/sessions/$sessionId",
+													params: { projectId: workspaceId, sessionId: orchestratorId },
+												});
+												return;
+											}
+											void navigate({ to: "/projects/$projectId", params: { projectId: workspaceId } });
+										}}
+									/>
+								) : null}
+							</div>
+						) : null}
+						{!isOrchestrator ? (
+							<Tooltip>
+								<TooltipTrigger asChild>
+									<span className="inline-flex" style={noDragStyle}>
+										<TopbarButton
+											aria-label={t("shell.openOrchestrator")}
+											className="topbar-control--labeled -mr-1"
+											data-priority="secondary"
+											disabled={isSpawning || isProjectRestarting}
+											onClick={() => void openOrchestrator()}
+											variant="primary"
+										>
+											<OrchestratorIcon className="size-icon-md" aria-hidden="true" />
+											<span data-compact-label>{t("shell.orchestrator")}</span>
+										</TopbarButton>
+									</span>
+								</TooltipTrigger>
+								<TooltipContent side="bottom">{orchestratorTooltip}</TooltipContent>
+							</Tooltip>
+						) : null}
 					</>
 				) : null}
-				{/* The bell always trails the actions row, on every platform. */}
-				<NotificationCenter style={noDragStyle} />
+				{isSessionRoute && !isOrchestrator ? (
+					/* The pinned controls are owned by SessionView so they stay at the
+					   window's right edge. Reserve their width only when the rail is closed. */
+					<div
+						className="session-pinned-actions-reserve"
+						data-state={isInspectorOpen ? "collapsed" : "expanded"}
+						data-testid="session-pinned-actions-reserve"
+						aria-hidden="true"
+					/>
+				) : (
+					<NotificationCenter style={noDragStyle} />
+				)}
 			</div>
-		</header>
+		</motion.header>
+	</LayoutGroup>
 	);
 }
 
@@ -301,6 +455,7 @@ export function TopbarKillButton({
 	orchestratorId?: string;
 	onKilled: (workspaceId: string, orchestratorId?: string) => void;
 }) {
+	const { t } = useTranslation();
 	const [confirmOpen, setConfirmOpen] = useState(false);
 	const queryClient = useQueryClient();
 	const kill = useTerminateSession();
@@ -314,50 +469,56 @@ export function TopbarKillButton({
 
 	return (
 		<div className="inline-flex items-center gap-1.5" style={noDragStyle}>
-			<SessionTerminationPopover
-				onConfirm={confirmKill}
-				onOpenChange={setConfirmOpen}
-				open={confirmOpen}
-				session={session}
-				trigger={
-					<TopbarButton
-						aria-label={isPending ? "Killing..." : "Kill session"}
-						disabled={isPending}
-						onClick={() => {
-							clearTerminateSessionState(queryClient, session.id);
-						}}
-						title="Kill session"
-						variant="kill"
-					>
-						<Trash2 className="size-icon-lg" aria-hidden="true" />
-						{isPending ? "Killing..." : "Kill"}
-					</TopbarButton>
-				}
-			/>
-			{error ? <TopbarKillError>{error}</TopbarKillError> : null}
+			<Tooltip>
+				<TooltipTrigger asChild>
+					<span className="inline-flex">
+						<SessionTerminationPopover
+							onConfirm={confirmKill}
+							onOpenChange={setConfirmOpen}
+							open={confirmOpen}
+							session={session}
+							trigger={
+								<TopbarButton
+									aria-label={isPending ? t("shell.killing") : t("shell.killSession")}
+									disabled={isPending}
+									onClick={() => {
+										clearTerminateSessionState(queryClient, session.id);
+									}}
+									variant="killIcon"
+								>
+									<Trash2 className="size-icon-md" aria-hidden="true" />
+								</TopbarButton>
+							}
+						/>
+					</span>
+				</TooltipTrigger>
+				<TooltipContent side="bottom">{t("shell.killSession")}</TooltipContent>
+			</Tooltip>
+			{error ? <TopbarActionError>{error}</TopbarActionError> : null}
 		</div>
 	);
 }
 
 function ProjectTerminationFeedback({ projectId }: { projectId: string | undefined }) {
+	const { t } = useTranslation();
 	const states = useProjectTerminateSessionStates(projectId);
 	if (states.length === 0) return null;
 
 	return (
-		<div aria-label="Session termination status" className="flex max-w-content-max items-center gap-2">
+		<div aria-label={t("shell.sessionTerminationStatus")} className="flex max-w-content-max items-center gap-2">
 			{states.map((state) =>
 				state.error ? (
-					<TopbarKillError className="max-w-48 truncate" key={state.session.id} title={state.error}>
+					<TopbarActionError className="max-w-48 truncate" key={state.session.id} title={state.error}>
 						{state.session.title}: {state.error}
-					</TopbarKillError>
+					</TopbarActionError>
 				) : (
 					<span
 						className="max-w-40 truncate text-caption text-muted-foreground"
 						key={state.session.id}
 						role="status"
-						title={`Killing ${state.session.title}…`}
+						title={t("shell.killingNamed", { title: state.session.title })}
 					>
-						Killing {state.session.title}…
+						{t("shell.killingNamed", { title: state.session.title })}
 					</span>
 				),
 			)}
@@ -365,8 +526,22 @@ function ProjectTerminationFeedback({ projectId }: { projectId: string | undefin
 	);
 }
 function SessionStatusPill({ session }: { session: WorkspaceSession }) {
-	const { label, tone, breathe } = getAgentActivityView(session.activity);
+	const { t } = useTranslation();
+	const switchPresentation = deriveSessionAgentSwitchPresentation(session);
+	if (switchPresentation) {
+		const visual = agentSwitchStatusVisual(switchPresentation);
+		return (
+			<StatusPill
+				label={t(switchPresentation.compactLabelKey, switchPresentation.values)}
+				tone={visual.tone}
+				breathe={visual.breathe}
+				leading="none"
+				className="px-2 py-1 text-micro"
+			/>
+		);
+	}
+	const { label, tone, breathe } = getAgentActivityView(session.activity, t);
 	return (
-		<StatusPill label={label} tone={tone} breathe={breathe} leading="none" className="px-3.5 py-2 text-sm" />
+		<StatusPill label={label} tone={tone} breathe={breathe} leading="none" className="px-2 py-1 text-micro" />
 	);
 }

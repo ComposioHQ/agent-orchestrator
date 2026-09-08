@@ -1,9 +1,8 @@
 // Package amp implements the Amp agent adapter: launching new interactive Amp
 // sessions and resuming sessions when a native Amp thread id is known.
 //
-// AO injects standing session instructions through a workspace-local Amp
-// TypeScript plugin. Activity hooks and SessionInfo derivation will likely
-// require more Amp-specific plugin work, so SessionInfo remains a no-op.
+// AO injects standing session instructions and reports Amp lifecycle activity
+// through a workspace-local TypeScript plugin.
 package amp
 
 import (
@@ -49,6 +48,21 @@ func (p *Plugin) Manifest() adapters.Manifest {
 	}
 }
 
+// GetConfigSpec reports Amp's built-in operating modes. Amp deliberately
+// chooses the underlying models for a mode, so AO exposes mode rather than a
+// misleading raw-model field.
+func (p *Plugin) GetConfigSpec(ctx context.Context) (ports.ConfigSpec, error) {
+	if err := ctx.Err(); err != nil {
+		return ports.ConfigSpec{}, err
+	}
+	return ports.ConfigSpec{Fields: []ports.ConfigField{{
+		Key:         "mode",
+		Type:        ports.ConfigFieldEnum,
+		Description: "Amp agent mode.",
+		Enum:        []string{"low", "medium", "high", "ultra"},
+	}}}, nil
+}
+
 // GetLaunchCommand builds the argv to start a new interactive Amp session:
 //
 //	amp
@@ -72,6 +86,9 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 	}
 
 	cmd = []string{binary}
+	if mode := strings.TrimSpace(cfg.Config.Mode); mode != "" {
+		cmd = append(cmd, "--mode", mode)
+	}
 	return cmd, nil
 }
 
@@ -122,8 +139,23 @@ func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig)
 	}
 	// Capacity fits binary + --resume + sessionID.
 	cmd = make([]string, 0, 3)
-	cmd = append(cmd, binary, "--resume", agentSessionID)
+	cmd = append(cmd, binary)
+	if mode := strings.TrimSpace(cfg.Config.Mode); mode != "" {
+		cmd = append(cmd, "--mode", mode)
+	}
+	cmd = append(cmd, "--resume", agentSessionID)
 	return cmd, true, nil
+}
+
+// SessionInfo surfaces the native Amp thread id captured by the managed
+// session-start callback. Other standard hook-derived metadata is forwarded
+// when present.
+func (p *Plugin) SessionInfo(ctx context.Context, session ports.SessionRef) (ports.SessionInfo, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return ports.SessionInfo{}, false, err
+	}
+	info, ok := agentbase.StandardSessionInfo(session)
+	return info, ok, nil
 }
 
 var ampBinarySpec = binaryutil.BinarySpec{

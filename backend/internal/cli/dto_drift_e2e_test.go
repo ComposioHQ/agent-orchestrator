@@ -39,20 +39,14 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/runfile"
 	agentsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/agent"
 	projectsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/project"
-	sessionsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/session"
 )
 
 // fakeSessionService captures the ports.SpawnConfig the controller decodes from
-// the CLI's request body. Every other method is a no-op so it satisfies the
-// controllers.SessionService interface.
+// the CLI's request body. Its embedded interface keeps unrelated controller
+// methods outside this DTO-drift test's fixture surface.
 type fakeSessionService struct {
+	controllers.SessionService
 	spawned ports.SpawnConfig
-}
-
-var _ controllers.SessionService = (*fakeSessionService)(nil)
-
-func (f *fakeSessionService) List(context.Context, sessionsvc.ListFilter) ([]domain.Session, error) {
-	return nil, nil
 }
 
 func (f *fakeSessionService) Spawn(_ context.Context, cfg ports.SpawnConfig) (domain.Session, int, int, error) {
@@ -63,74 +57,26 @@ func (f *fakeSessionService) Spawn(_ context.Context, cfg ports.SpawnConfig) (do
 	}, len(cfg.Prompt), 0, nil
 }
 
-func (f *fakeSessionService) SpawnOrchestrator(ctx context.Context, projectID domain.ProjectID, _ bool) (domain.Session, error) {
-	s, _, _, err := f.Spawn(ctx, ports.SpawnConfig{ProjectID: projectID, Kind: domain.KindOrchestrator})
-	return s, err
-}
-
-func (f *fakeSessionService) Get(context.Context, domain.SessionID) (domain.Session, error) {
-	return domain.Session{}, nil
-}
-
-func (f *fakeSessionService) Restore(context.Context, domain.SessionID) (sessionsvc.RestoreOutcome, error) {
-	return sessionsvc.RestoreOutcome{}, nil
-}
-
-func (f *fakeSessionService) ResumeAgent(context.Context, domain.SessionID) (sessionsvc.ResumeAgentOutcome, error) {
-	return sessionsvc.ResumeAgentOutcome{}, nil
-}
-
-func (f *fakeSessionService) Kill(context.Context, domain.SessionID) (bool, error) {
-	return false, nil
-}
-
-func (f *fakeSessionService) RollbackSpawn(context.Context, domain.SessionID) (sessionsvc.RollbackOutcome, error) {
-	return sessionsvc.RollbackOutcome{}, nil
-}
-
-func (f *fakeSessionService) Cleanup(context.Context, domain.ProjectID) (sessionsvc.CleanupOutcome, error) {
-	return sessionsvc.CleanupOutcome{}, nil
-}
-
-func (f *fakeSessionService) Rename(context.Context, domain.SessionID, string) error {
-	return nil
-}
-
-func (f *fakeSessionService) SetPreview(context.Context, domain.SessionID, string) (domain.Session, error) {
-	return domain.Session{}, nil
-}
-
-func (f *fakeSessionService) SetTerminateOnPRMerge(context.Context, domain.SessionID, bool) (domain.Session, error) {
-	return domain.Session{}, nil
-}
-
-func (f *fakeSessionService) CompleteOrchestrator(context.Context, domain.SessionID) error {
-	return nil
-}
-
-func (f *fakeSessionService) Send(context.Context, domain.SessionID, string) error {
-	return nil
-}
-
-func (f *fakeSessionService) ListPRSummaries(context.Context, domain.SessionID) ([]sessionsvc.PRSummary, error) {
-	return nil, nil
-}
-
-func (f *fakeSessionService) ClaimPR(context.Context, domain.SessionID, string, sessionsvc.ClaimPROptions) (sessionsvc.ClaimPRResult, error) {
-	return sessionsvc.ClaimPRResult{}, nil
-}
-
-func (f *fakeSessionService) ListWorkspaceFiles(context.Context, domain.SessionID) (sessionsvc.WorkspaceFiles, error) {
-	return sessionsvc.WorkspaceFiles{}, nil
-}
-
-func (f *fakeSessionService) GetWorkspaceFile(context.Context, domain.SessionID, string) (sessionsvc.WorkspaceFileDetail, error) {
-	return sessionsvc.WorkspaceFileDetail{}, nil
-}
-
 type fakeAgentCatalog struct{}
 
 var _ controllers.AgentCatalog = (*fakeAgentCatalog)(nil)
+
+func (f *fakeAgentCatalog) CachedReadiness(context.Context) (agentsvc.Readiness, error) {
+	return f.readiness(), nil
+}
+
+func (f *fakeAgentCatalog) EnsureReadiness(context.Context, []string, domain.AgentReadinessPurpose) (agentsvc.Readiness, error) {
+	return f.readiness(), nil
+}
+
+func (f *fakeAgentCatalog) readiness() agentsvc.Readiness {
+	return agentsvc.Readiness{Agents: []domain.AgentReadinessSnapshot{{
+		ID: "codex", Label: "Codex",
+		Installation:       domain.AgentInstallationObservation{State: domain.AgentInstallationInstalled, Freshness: domain.AgentReadinessFresh},
+		Authentication:     domain.AgentAuthenticationObservation{State: domain.AgentAuthenticationAuthorized, Freshness: domain.AgentReadinessFresh},
+		EffectiveReadiness: domain.AgentReadinessReady,
+	}}}
+}
 
 func (f *fakeAgentCatalog) List(context.Context) (agentsvc.Inventory, error) {
 	return authorizedCodexInventory(), nil
@@ -143,6 +89,21 @@ func (f *fakeAgentCatalog) Refresh(context.Context) (agentsvc.Inventory, error) 
 func (f *fakeAgentCatalog) Probe(_ context.Context, agentID string) (agentsvc.ProbeResult, error) {
 	info := agentsvc.Info{ID: agentID, Label: agentID, AuthStatus: "authorized"}
 	return agentsvc.ProbeResult{Agent: info, Supported: true, Installed: true}, nil
+}
+
+func (f *fakeAgentCatalog) Models(_ context.Context, agentID, _ string, _ bool) (ports.AgentModelCatalog, error) {
+	return ports.AgentModelCatalog{
+		AgentID:          agentID,
+		SelectionMode:    ports.ModelSelectionText,
+		Models:           []ports.AgentModelInfo{},
+		CustomModelEntry: ports.CustomModelEntryDirect,
+		AllowCustom:      true,
+		Source:           "test",
+	}, nil
+}
+
+func (f *fakeAgentCatalog) RevalidateModels(ctx context.Context, agentID, projectID string) (ports.AgentModelCatalog, error) {
+	return f.Models(ctx, agentID, projectID, false)
 }
 
 func authorizedCodexInventory() agentsvc.Inventory {
@@ -179,6 +140,18 @@ func (f *fakeProjectManager) Add(_ context.Context, in projectsvc.AddInput) (pro
 		id = domain.ProjectID(*in.ProjectID)
 	}
 	return projectsvc.Project{ID: id, Path: in.Path}, nil
+}
+
+func (f *fakeProjectManager) Clone(_ context.Context, in projectsvc.CloneInput) (projectsvc.Project, error) {
+	return projectsvc.Project{ID: "cloned", Repo: in.RemoteURL}, nil
+}
+
+func (f *fakeProjectManager) PrepareClone(_ context.Context, in projectsvc.CloneInput) (projectsvc.ClonePreparationResult, error) {
+	return projectsvc.ClonePreparationResult{Path: "/tmp/" + in.RemoteURL, RemoteURL: in.RemoteURL}, nil
+}
+
+func (f *fakeProjectManager) CleanupPreparedClone(context.Context, projectsvc.ClonePreparationCleanupInput) error {
+	return nil
 }
 
 func (f *fakeProjectManager) InitializeRepository(_ context.Context, in projectsvc.InitializeRepositoryInput) (projectsvc.InitializeRepositoryResult, error) {
@@ -244,6 +217,7 @@ func TestE2E_SpawnAndProjectAddDTORoundTrip(t *testing.T) {
 			"--prompt", "hi",
 			"--issue", "ISS-1",
 			"--name", "my worker",
+			"--model", "gpt-5.6-sol",
 		})
 		if err := root.Execute(); err != nil {
 			t.Fatalf("spawn execute: %v\noutput: %s", err, out.String())
@@ -267,6 +241,9 @@ func TestE2E_SpawnAndProjectAddDTORoundTrip(t *testing.T) {
 		}
 		if got.DisplayName != "my worker" {
 			t.Errorf("DisplayName = %q, want %q (CLI json:\"displayName\" vs SpawnSessionRequest)", got.DisplayName, "my worker")
+		}
+		if got.AgentConfig.Model != "gpt-5.6-sol" {
+			t.Errorf("AgentConfig.Model = %q, want %q (CLI json:\"model\" vs SpawnSessionRequest)", got.AgentConfig.Model, "gpt-5.6-sol")
 		}
 		if !bytes.Contains(out.Bytes(), []byte("spawned session")) {
 			t.Errorf("output missing %q; got: %s", "spawned session", out.String())
@@ -323,4 +300,8 @@ func TestE2E_SpawnAndProjectAddDTORoundTrip(t *testing.T) {
 			t.Errorf("output missing %q; got: %s", "registered project", out.String())
 		}
 	})
+}
+
+func (f *fakeProjectManager) SetPermissions(_ context.Context, id domain.ProjectID, in projectsvc.SetPermissionsInput) (projectsvc.Project, error) {
+	return projectsvc.Project{ID: id, Config: &domain.ProjectConfig{AgentConfig: domain.AgentConfig{Permissions: in.Permissions}}}, nil
 }

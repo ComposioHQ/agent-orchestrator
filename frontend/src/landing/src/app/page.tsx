@@ -4,11 +4,11 @@ import dynamic from "next/dynamic";
 import {
   FAQPageJsonLd,
   HomeWebPageJsonLd,
-  OrganizationJsonLd,
 } from "@/components/JsonLd";
 import { getGitHubRepoStats } from "@/lib/github-stats";
 import { FAQ_ITEMS } from "./components/FAQSection/constants";
 import { HeroSection } from "./components/HeroSection";
+import { TrackedSection } from "./components/TrackedSection/TrackedSection";
 
 const TrustedBySection = dynamic(() =>
   import("./components/TrustedBySection").then((mod) => mod.TrustedBySection),
@@ -39,13 +39,24 @@ export default async function Home() {
     <main className="flex flex-col bg-background">
       <FAQPageJsonLd items={FAQ_ITEMS} />
       <HomeWebPageJsonLd />
-      <OrganizationJsonLd />
-      <HeroSection initialStars={stats?.stars ?? null} />
-      <TrustedBySection />
-      <FeaturesSection />
-      <VideoSection />
-      <WallOfLoveSection />
-      <FAQSection />
+      <TrackedSection section="hero">
+        <HeroSection initialStars={stats?.stars ?? null} />
+      </TrackedSection>
+      <TrackedSection section="trusted_by">
+        <TrustedBySection />
+      </TrackedSection>
+      <TrackedSection section="features">
+        <FeaturesSection />
+      </TrackedSection>
+      <TrackedSection section="video">
+        <VideoSection />
+      </TrackedSection>
+      <TrackedSection section="wall_of_love">
+        <WallOfLoveSection />
+      </TrackedSection>
+      <TrackedSection section="faq">
+        <FAQSection />
+      </TrackedSection>
     </main>
   );
 }

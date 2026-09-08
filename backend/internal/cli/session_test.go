@@ -88,6 +88,10 @@ func sessionCommandServer(t *testing.T) (*httptest.Server, *sessionRequestLog) {
 			_, _ = io.WriteString(w, `{"ok":true,"sessionId":"demo-1","freed":true}`)
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/sessions/demo-1/restore":
 			_, _ = io.WriteString(w, `{"ok":true,"sessionId":"demo-1","session":`+sessionJSON("demo-1", "demo", "worker", "idle", false)+`}`)
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/sessions/demo-1/exit-agent":
+			_, _ = io.WriteString(w, `{"ok":true,"sessionId":"demo-1","session":`+sessionJSON("demo-1", "demo", "worker", "exited", false)+`}`)
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/sessions/demo-1/resume-agent":
+			_, _ = io.WriteString(w, `{"ok":true,"sessionId":"demo-1","resumeMode":"native","session":`+sessionJSON("demo-1", "demo", "worker", "idle", false)+`}`)
 		case r.Method == http.MethodPatch && r.URL.Path == "/api/v1/sessions/demo-1":
 			var req sessionRenameRequest
 			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -144,12 +148,46 @@ func TestSessionList_ProjectFilterAndDefaultFiltering(t *testing.T) {
 	if !strings.Contains(out, "1 terminated session hidden") {
 		t.Fatalf("hidden terminated hint missing:\n%s", out)
 	}
+	if !strings.Contains(out, "2 orchestrator sessions hidden. Use --all or `ao orchestrator ls` to show.") {
+		t.Fatalf("hidden orchestrator hint missing:\n%s", out)
+	}
 	want := []string{
 		"GET /api/v1/sessions?active=true&project=demo",
 		"GET /api/v1/sessions?active=false&project=demo",
 	}
 	if got := log.all(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("requests = %#v, want %#v", got, want)
+	}
+}
+
+func TestSessionList_HintsWhenOnlyTerminatedOrchestratorIsHidden(t *testing.T) {
+	cfg := setConfigEnv(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method != http.MethodGet || r.URL.Path != "/api/v1/sessions" {
+			http.NotFound(w, r)
+			return
+		}
+		if r.URL.Query().Get("active") == "false" {
+			_, _ = io.WriteString(w, `{"sessions":[`+sessionJSON("demo-orch-old", "demo", "orchestrator", "terminated", true)+`]}`)
+			return
+		}
+		_, _ = io.WriteString(w, `{"sessions":[]}`)
+	}))
+	t.Cleanup(srv.Close)
+	writeRunFileFor(t, cfg, srv)
+
+	out, errOut, err := executeCLI(t, Deps{
+		ProcessAlive: func(int) bool { return true },
+	}, "session", "ls", "--project", "demo")
+	if err != nil {
+		t.Fatalf("session ls failed: %v\nstderr=%s", err, errOut)
+	}
+	if !strings.Contains(out, "1 orchestrator session hidden. Use --all or `ao orchestrator ls` to show.") {
+		t.Fatalf("terminated orchestrator hint missing:\n%s", out)
+	}
+	if strings.Contains(out, "terminated session hidden") {
+		t.Fatalf("terminated orchestrator should not be reported as visible via --include-terminated alone:\n%s", out)
 	}
 }
 
@@ -171,11 +209,33 @@ func TestSessionList_JSONOutputDecodes(t *testing.T) {
 	if got.Meta.HiddenTerminatedCount != 1 {
 		t.Fatalf("hiddenTerminatedCount = %d, want 1", got.Meta.HiddenTerminatedCount)
 	}
+	if got.Meta.HiddenOrchestratorCount != 2 {
+		t.Fatalf("hiddenOrchestratorCount = %d, want 2", got.Meta.HiddenOrchestratorCount)
+	}
 	if len(got.Data) != 1 {
 		t.Fatalf("len(data) = %d, want 1; data=%#v", len(got.Data), got.Data)
 	}
 	if got.Data[0].ID != "demo-1" || got.Data[0].ProjectID != "demo" || got.Data[0].Role != "worker" {
 		t.Fatalf("unexpected JSON entry: %#v", got.Data[0])
+	}
+}
+
+func TestSessionList_AllIncludesOrchestratorsWithoutHiddenHint(t *testing.T) {
+	cfg := setConfigEnv(t)
+	srv, _ := sessionCommandServer(t)
+	writeRunFileFor(t, cfg, srv)
+
+	out, errOut, err := executeCLI(t, Deps{
+		ProcessAlive: func(int) bool { return true },
+	}, "session", "ls", "--project", "demo", "--all")
+	if err != nil {
+		t.Fatalf("session ls --all failed: %v\nstderr=%s", err, errOut)
+	}
+	if !strings.Contains(out, "demo-1") || !strings.Contains(out, "demo-2") {
+		t.Fatalf("output missing worker or orchestrator session:\n%s", out)
+	}
+	if strings.Contains(out, "orchestrator session hidden") {
+		t.Fatalf("output reports hidden orchestrators with --all:\n%s", out)
 	}
 }
 
@@ -286,6 +346,38 @@ func TestSessionRestore_SuccessWithProjectScope(t *testing.T) {
 	}
 }
 
+func TestSessionExitAndResumeAgentUseProcessOnlyRoutes(t *testing.T) {
+	cfg := setConfigEnv(t)
+	srv, log := sessionCommandServer(t)
+	writeRunFileFor(t, cfg, srv)
+	deps := Deps{ProcessAlive: func(int) bool { return true }}
+
+	out, errOut, err := executeCLI(t, deps, "session", "exit-agent", "demo-1", "--project", "demo")
+	if err != nil {
+		t.Fatalf("session exit-agent failed: %v\nstderr=%s", err, errOut)
+	}
+	if !strings.Contains(out, "agent exited for session demo-1") {
+		t.Fatalf("unexpected exit-agent output:\n%s", out)
+	}
+
+	out, errOut, err = executeCLI(t, deps, "session", "resume-agent", "demo-1")
+	if err != nil {
+		t.Fatalf("session resume-agent failed: %v\nstderr=%s", err, errOut)
+	}
+	if !strings.Contains(out, "agent resumed for session demo-1") || !strings.Contains(out, "mode: native") {
+		t.Fatalf("unexpected resume-agent output:\n%s", out)
+	}
+
+	want := []string{
+		"GET /api/v1/sessions/demo-1",
+		"POST /api/v1/sessions/demo-1/exit-agent",
+		"POST /api/v1/sessions/demo-1/resume-agent",
+	}
+	if got := log.all(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("requests = %#v, want %#v", got, want)
+	}
+}
+
 func TestSessionCleanup_YesSkipsPrompt(t *testing.T) {
 	cfg := setConfigEnv(t)
 	srv, log := sessionCommandServer(t)
@@ -312,6 +404,49 @@ func TestSessionCleanup_YesSkipsPrompt(t *testing.T) {
 	}
 	if got := log.all(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("requests = %#v, want %#v", got, want)
+	}
+}
+
+// TestSessionCleanup_ReportsAlreadyGoneWorkspacesSeparately: a workspace whose
+// directory was already missing tears down without error but reclaims nothing.
+// Folding it into the cleaned count is what lets a batch run report hundreds of
+// sessions cleaned while disk usage does not move, so the summary has to keep
+// the two apart.
+func TestSessionCleanup_ReportsAlreadyGoneWorkspacesSeparately(t *testing.T) {
+	cfg := setConfigEnv(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/sessions":
+			_, _ = io.WriteString(w, `{"sessions":[`+
+				sessionJSON("demo-old", "demo", "worker", "terminated", true)+`,`+
+				sessionJSON("demo-orch", "demo", "orchestrator", "terminated", true)+`]}`)
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/sessions/cleanup":
+			_, _ = io.WriteString(w, `{"ok":true,"cleaned":["demo-old"],"alreadyGone":["demo-orch"],"skipped":[]}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	writeRunFileFor(t, cfg, srv)
+
+	out, errOut, err := executeCLI(t, Deps{
+		ProcessAlive: func(int) bool { return true },
+	}, "session", "cleanup", "--project", "demo", "--yes")
+	if err != nil {
+		t.Fatalf("session cleanup failed: %v\nstderr=%s", err, errOut)
+	}
+	for _, want := range []string{
+		"Cleaned: demo-old",
+		"Already gone: demo-orch (workspace was missing; nothing reclaimed)",
+		"Cleanup complete. 1 session cleaned, 1 already gone.",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("cleanup output missing %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "Cleaned: demo-orch") {
+		t.Fatalf("a workspace that was already gone must not be reported as cleaned:\n%s", out)
 	}
 }
 
@@ -434,7 +569,7 @@ func TestSessionRename_SuccessWithProjectScope(t *testing.T) {
 
 func TestSessionCommands_MissingIDIsUsageError(t *testing.T) {
 	setConfigEnv(t)
-	for _, sub := range []string{"get", "kill", "restore"} {
+	for _, sub := range []string{"get", "kill", "restore", "exit-agent", "resume-agent"} {
 		t.Run(sub, func(t *testing.T) {
 			_, _, err := executeCLI(t, Deps{}, "session", sub)
 			if err == nil {
@@ -516,6 +651,59 @@ func TestSessionClaimPR_ProjectScopeMismatchIsUsage(t *testing.T) {
 	}
 }
 
+func TestSessionClaimPR_UsesCurrentSessionFromEnv(t *testing.T) {
+	t.Setenv("AO_SESSION_ID", "demo-1")
+	cfg := setConfigEnv(t)
+	srv, log := sessionCommandServer(t)
+	writeRunFileFor(t, cfg, srv)
+
+	out, errOut, err := executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }}, "session", "claim-pr", "142")
+	if err != nil {
+		t.Fatalf("claim-pr with AO_SESSION_ID failed: %v stderr=%s", err, errOut)
+	}
+	if !strings.Contains(out, "claimed PR #142") {
+		t.Fatalf("unexpected output: %s", out)
+	}
+	want := []string{
+		"GET /api/v1/sessions/demo-1",
+		"GET /api/v1/projects/demo",
+		"POST /api/v1/sessions/demo-1/pr/claim",
+	}
+	if got := log.all(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("requests=%#v want %#v", got, want)
+	}
+}
+
+func TestSessionClaimPR_OneArgRequiresCurrentSessionEnv(t *testing.T) {
+	t.Setenv("AO_SESSION_ID", "")
+	setConfigEnv(t)
+
+	_, _, err := executeCLI(t, Deps{}, "session", "claim-pr", "142")
+	if err == nil || ExitCode(err) != 2 {
+		t.Fatalf("err=%v exit=%d, want usage error", err, ExitCode(err))
+	}
+	if !strings.Contains(err.Error(), "pass <session-id> or set AO_SESSION_ID") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestSessionClaimPR_HelpDocumentsCurrentSessionShorthand(t *testing.T) {
+	out, _, err := executeCLI(t, Deps{}, "session", "claim-pr", "--help")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"claim-pr [<session-id>] <pr-ref>",
+		"current session is read from AO_SESSION_ID",
+		"ao session claim-pr 88",
+		"ao session claim-pr mer-3 88",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("help missing %q:\n%s", want, out)
+		}
+	}
+}
+
 func TestSessionClaimPR_JSONAndNoTakeoverError(t *testing.T) {
 	cfg := setConfigEnv(t)
 	srv, _ := sessionCommandServer(t)
@@ -533,6 +721,111 @@ func TestSessionClaimPR_JSONAndNoTakeoverError(t *testing.T) {
 	_, _, err = executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }}, "session", "claim-pr", "demo-1", "https://github.com/aoagents/agent-orchestrator/pull/142", "--no-takeover")
 	if err == nil || ExitCode(err) != 1 || !strings.Contains(err.Error(), "PR_CLAIMED_BY_ACTIVE_SESSION") {
 		t.Fatalf("err=%v exit=%d, want takeover refusal runtime error", err, ExitCode(err))
+	}
+}
+
+// TestSessionClaimPR_Draft covers #4171 from the CLI side: claiming a draft PR
+// succeeds and the draft state survives into `--json` output instead of the
+// daemon answering PR_NOT_OPEN.
+func TestSessionClaimPR_Draft(t *testing.T) {
+	cfg := setConfigEnv(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/sessions/demo-1":
+			_, _ = io.WriteString(w, `{"session":`+sessionJSON("demo-1", "demo", "worker", "working", false)+`}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/projects/demo":
+			_, _ = io.WriteString(w, `{"status":"ok","project":{"id":"demo","name":"Demo","path":"/repo/demo","repo":"https://github.com/aoagents/agent-orchestrator","defaultBranch":"main"}}`)
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/sessions/demo-1/pr/claim":
+			var req claimPRRequest
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			_, _ = io.WriteString(w, `{"ok":true,"sessionId":"demo-1","prs":[{"url":`+jsonQuote(req.PR)+`,"number":4168,"state":"draft","ci":"pending","review":"none","mergeability":"unknown","reviewComments":false,"updatedAt":"2026-08-20T12:00:00Z"}],"branchChanged":false,"takenOverFrom":[]}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	writeRunFileFor(t, cfg, srv)
+
+	out, errOut, err := executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }}, "session", "claim-pr", "demo-1", "4168")
+	if err != nil {
+		t.Fatalf("claim-pr draft failed: %v stderr=%s", err, errOut)
+	}
+	if !strings.Contains(out, "claimed PR #4168") {
+		t.Fatalf("unexpected output: %s", out)
+	}
+
+	out, errOut, err = executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }}, "session", "claim-pr", "demo-1", "4168", "--json")
+	if err != nil {
+		t.Fatalf("claim-pr draft --json failed: %v stderr=%s", err, errOut)
+	}
+	var got claimPRResponse
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("bad json err=%v out=%s", err, out)
+	}
+	if len(got.PRs) != 1 || got.PRs[0].State != "draft" {
+		t.Fatalf("claim response = %#v, want a single draft PR", got.PRs)
+	}
+}
+
+func TestSessionClaimPR_GitLabMR(t *testing.T) {
+	cfg := setConfigEnv(t)
+	var capturedReq claimPRRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/sessions/demo-1":
+			_, _ = io.WriteString(w, `{"session":`+sessionJSON("demo-1", "demo", "worker", "working", false)+`}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/projects/demo":
+			_, _ = io.WriteString(w, `{"status":"ok","project":{"id":"demo","name":"Demo","path":"/repo/demo","repo":"https://gitlab.com/castai/ctxd","defaultBranch":"main"}}`)
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/sessions/demo-1/pr/claim":
+			_ = json.NewDecoder(r.Body).Decode(&capturedReq)
+			_, _ = io.WriteString(w, `{"ok":true,"sessionId":"demo-1","prs":[{"url":"`+capturedReq.PR+`","number":9,"state":"open","ci":"passing","review":"review_required","mergeability":"mergeable","reviewComments":false,"updatedAt":"2026-06-04T12:00:00Z"}],"branchChanged":false,"takenOverFrom":[]}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	writeRunFileFor(t, cfg, srv)
+
+	_, _, err := executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }}, "session", "claim-pr", "demo-1", "https://gitlab.com/castai/ctxd/-/merge_requests/9")
+	if err != nil {
+		t.Fatalf("claim-pr gitlab failed: %v", err)
+	}
+	if capturedReq.PR != "https://gitlab.com/castai/ctxd/-/merge_requests/9" {
+		t.Fatalf("claim request PR = %q, want gitlab MR URL", capturedReq.PR)
+	}
+}
+
+func TestSessionClaimPR_GitLabNumericRef(t *testing.T) {
+	cfg := setConfigEnv(t)
+	var capturedReq claimPRRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/sessions/demo-1":
+			_, _ = io.WriteString(w, `{"session":`+sessionJSON("demo-1", "demo", "worker", "working", false)+`}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/projects/demo":
+			_, _ = io.WriteString(w, `{"status":"ok","project":{"id":"demo","name":"Demo","path":"/repo/demo","repo":"https://gitlab.com/castai/ctxd","defaultBranch":"main"}}`)
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/sessions/demo-1/pr/claim":
+			_ = json.NewDecoder(r.Body).Decode(&capturedReq)
+			_, _ = io.WriteString(w, `{"ok":true,"sessionId":"demo-1","prs":[{"url":"`+capturedReq.PR+`","number":9,"state":"open","ci":"passing","review":"review_required","mergeability":"mergeable","reviewComments":false,"updatedAt":"2026-06-04T12:00:00Z"}],"branchChanged":false,"takenOverFrom":[]}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	writeRunFileFor(t, cfg, srv)
+
+	_, _, err := executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }}, "session", "claim-pr", "demo-1", "9")
+	if err != nil {
+		t.Fatalf("claim-pr gitlab numeric failed: %v", err)
+	}
+	if capturedReq.PR != "https://gitlab.com/castai/ctxd/-/merge_requests/9" {
+		t.Fatalf("claim request PR = %q, want expanded gitlab MR URL", capturedReq.PR)
 	}
 }
 

@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -84,6 +85,12 @@ var remoteCommandTokens = map[string]struct{}{
 }
 
 var remotePayloadAllowlist = map[string]map[string]struct{}{
+	// Reported by the LAN listener on the first authenticated request per
+	// transport per day (httpd/mobile_connect_telemetry.go). "transport" is a
+	// closed vocabulary — lan / tailscale / loopback / other — never an address.
+	"ao.mobile.device_connected": {
+		"transport": {},
+	},
 	"ao.app.active": {
 		"actor_type":   {},
 		"channel":      {},
@@ -144,15 +151,39 @@ var remotePayloadAllowlist = map[string]map[string]struct{}{
 	"ao.onboarding.first_project_added": {
 		"has_git_remote": {},
 		"kind":           {},
+		"github_org":     {},
 	},
 	"ao.onboarding.first_session_spawned": {
 		"harness":                {},
 		"kind":                   {},
 		"since_first_project_ms": {},
 	},
+	"ao.review.triggered": {
+		"created_runs": {},
+		"harness":      {},
+		"reused":       {},
+		"trigger":      {},
+	},
+	"ao.review.trigger_failed": {
+		"error_kind": {},
+		"trigger":    {},
+	},
+	"ao.review.submitted": {
+		"auto_inject":        {},
+		"body_bytes":         {},
+		"duration_ms":        {},
+		"harness":            {},
+		"posted_to_provider": {},
+		"trigger":            {},
+		"verdict":            {},
+	},
+	"ao.review.cancelled": {
+		"cancelled_runs": {},
+	},
 	"ao.projects.created": {
 		"has_git_remote": {},
 		"kind":           {},
+		"github_org":     {},
 	},
 	"ao.session.spawn_failed": {
 		"component":   {},
@@ -185,18 +216,30 @@ type postHogClient interface {
 
 // PostHogSink exports allowlisted telemetry events to PostHog.
 type PostHogSink struct {
-	apiKey     string
-	host       string
-	distinctID string
+	apiKey       string
+	host         string
+	distinctID   string
+	defaultAgent string
+	tenure       *tenureTracker
+	// appVersion stamps app_version/ao_version on every exported event. Empty
+	// leaves the properties off entirely rather than reporting a misleading
+	// "unknown" that would show up as a real version in release breakdowns.
+	appVersion string
 	client     postHogClient
 	log        *slog.Logger
 	ch         chan ports.TelemetryEvent
 	wg         sync.WaitGroup
 	closeOnce  sync.Once
+	// ctx bounds every in-flight send and its retry backoff. Close cancels it
+	// when the caller's shutdown context is done, so pending retry work stops
+	// promptly instead of outliving shutdown on an uncancellable sleep or a
+	// long HTTP timeout.
+	ctx    context.Context
+	cancel context.CancelFunc
 }
 
 // NewPostHogSink starts a buffered PostHog exporter with a stable install ID.
-func NewPostHogSink(dataDir, apiKey, host string, client postHogClient, log *slog.Logger) (*PostHogSink, error) {
+func NewPostHogSink(dataDir, apiKey, host, appVersion, defaultAgent string, client postHogClient, log *slog.Logger) (*PostHogSink, error) {
 	if strings.TrimSpace(apiKey) == "" {
 		return nil, fmt.Errorf("posthog api key is required")
 	}
@@ -210,13 +253,19 @@ func NewPostHogSink(dataDir, apiKey, host string, client postHogClient, log *slo
 	if err != nil {
 		return nil, err
 	}
+	ctx, cancel := context.WithCancel(context.Background())
 	s := &PostHogSink{
-		apiKey:     apiKey,
-		host:       strings.TrimRight(host, "/"),
-		distinctID: distinctID,
-		client:     client,
-		log:        telemetryLogger(log),
-		ch:         make(chan ports.TelemetryEvent, postHogBufferSize),
+		apiKey:       apiKey,
+		host:         strings.TrimRight(host, "/"),
+		distinctID:   distinctID,
+		defaultAgent: safeAgentSlug(defaultAgent),
+		tenure:       newTenureTracker(dataDir, time.Now),
+		client:       client,
+		log:          telemetryLogger(log),
+		appVersion:   strings.TrimSpace(appVersion),
+		ch:           make(chan ports.TelemetryEvent, postHogBufferSize),
+		ctx:          ctx,
+		cancel:       cancel,
 	}
 	s.wg.Add(1)
 	go s.loop()
@@ -242,8 +291,14 @@ func (s *PostHogSink) Close(ctx context.Context) error {
 	}()
 	select {
 	case <-ctx.Done():
+		// The caller's shutdown deadline elapsed: cancel in-flight sends and
+		// their retry backoff so the drain goroutine exits promptly rather than
+		// blocking on a sleep or a long HTTP timeout.
+		s.cancel()
+		<-done
 		return ctx.Err()
 	case <-done:
+		s.cancel()
 		return nil
 	}
 }
@@ -251,16 +306,36 @@ func (s *PostHogSink) Close(ctx context.Context) error {
 func (s *PostHogSink) loop() {
 	defer s.wg.Done()
 	for ev := range s.ch {
-		s.send(ev)
+		s.send(s.ctx, ev)
 	}
 }
 
-func (s *PostHogSink) send(ev ports.TelemetryEvent) {
+// Bounded retry for a single event. A dropped send is a permanent gap,
+// because the upstream reservoir has already marked this event's dedup slot
+// (ao.app.active per UTC day, ao.cli.invoked per command/day) spent before it
+// ever reached this sink, so there is no second attempt from the caller. Only
+// failed sends are retried, so a healthy path still makes exactly one request
+// per event and adds no billable volume. A sustained outage gives up after
+// postHogSendMaxAttempts rather than blocking the drain goroutine forever.
+const (
+	postHogSendMaxAttempts = 2
+	postHogSendRetryDelay  = 200 * time.Millisecond
+)
+
+func (s *PostHogSink) send(ctx context.Context, ev ports.TelemetryEvent) {
 	eventName := remoteEventName(ev.Name)
+	// A stable per-event UUID, reused across every attempt, is PostHog's
+	// idempotency key. A transport error only means AO received no response;
+	// PostHog may already have ingested the first attempt, so without a shared
+	// UUID a retry would land as a duplicate (inflating counts and the billed
+	// volume, breaking the "retries add no volume" guarantee). PostHog dedupes
+	// events that carry the same uuid.
+	eventUUID := uuid.NewString()
 	body := map[string]any{
 		"api_key":     s.apiKey,
 		"event":       eventName,
 		"distinct_id": s.distinctID,
+		"uuid":        eventUUID,
 		"properties":  s.properties(ev),
 		"timestamp":   ev.OccurredAt.UTC().Format(time.RFC3339Nano),
 	}
@@ -269,23 +344,51 @@ func (s *PostHogSink) send(ev ports.TelemetryEvent) {
 		s.log.Warn("telemetry posthog payload marshal failed", "name", ev.Name, "error", err)
 		return
 	}
-	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, s.host+"/capture/", bytes.NewReader(payload))
+
+	for attempt := 1; attempt <= postHogSendMaxAttempts; attempt++ {
+		retryable, err := s.sendOnce(ctx, payload)
+		if err == nil {
+			return
+		}
+		if !retryable || attempt == postHogSendMaxAttempts {
+			s.log.Warn("telemetry posthog export failed", "name", ev.Name, "attempts", attempt, "error", err)
+			return
+		}
+		// Cancellable backoff: shutdown must be able to stop pending retry work
+		// instead of waiting out the full delay.
+		timer := time.NewTimer(postHogSendRetryDelay)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return
+		case <-timer.C:
+		}
+	}
+}
+
+// sendOnce posts a single capture attempt. retryable is true only for
+// transient failures a retry might clear (connection errors, HTTP 429, and
+// 5xx); a permanent rejection (any other non-2xx, e.g. a 4xx auth/shape error)
+// returns retryable=false so a retry does not waste a call that will fail
+// identically.
+func (s *PostHogSink) sendOnce(ctx context.Context, payload []byte) (retryable bool, err error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.host+"/capture/", bytes.NewReader(payload))
 	if err != nil {
-		s.log.Warn("telemetry posthog request build failed", "name", ev.Name, "error", err)
-		return
+		return false, fmt.Errorf("build request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := s.client.Do(req)
 	if err != nil {
-		s.log.Warn("telemetry posthog export failed", "name", ev.Name, "error", err)
-		return
+		return true, fmt.Errorf("do request: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		b, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
-		s.log.Warn("telemetry posthog rejected event", "name", ev.Name, "status", resp.StatusCode, "body", strings.TrimSpace(string(b)))
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		return false, nil
 	}
+	b, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
+	rejected := fmt.Errorf("rejected status=%d body=%s", resp.StatusCode, strings.TrimSpace(string(b)))
+	return resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500, rejected
 }
 
 func (s *PostHogSink) properties(ev ports.TelemetryEvent) map[string]any {
@@ -293,6 +396,10 @@ func (s *PostHogSink) properties(ev ports.TelemetryEvent) map[string]any {
 		"source":                   ev.Source,
 		"level":                    string(ev.Level),
 		"telemetry_schema_version": remoteTelemetrySchemaVersion,
+		// Classifies this install as the CLI/daemon on every event, matching the
+		// desktop renderer (client="desktop") and mobile (client="mobile"), so a
+		// shared event like ao.app.active splits by one property across surfaces.
+		"client": "cli",
 		// The distinct ID is a random install ID with no person data behind it,
 		// so skip PostHog person-profile processing: identified events bill at
 		// several times the anonymous rate and the profiles would hold nothing.
@@ -300,6 +407,31 @@ func (s *PostHogSink) properties(ev ports.TelemetryEvent) map[string]any {
 	}
 	if remoteEventName(ev.Name) != ev.Name {
 		props["legacy_event_name"] = ev.Name
+	}
+	// Without this, every daemon event lands with no version at all, so a
+	// failure rate cannot be attributed to a release. Renderer events already
+	// carry app_version; these are the matching daemon-side values.
+	if s.appVersion != "" {
+		props["app_version"] = s.appVersion
+		props["ao_version"] = s.appVersion
+		// Channel of the build actually running, from the version string. A
+		// nightly build carries "-nightly." (CI stamps 0.11.3-nightly.5); plain
+		// semver is stable. The renderer sends the same property.
+		props["version_channel"] = versionChannel(s.appVersion)
+	}
+	// Which agent this install actually defaults to. Without it, "how many people
+	// use Claude versus Codex" is only answerable for sessions that were spawned,
+	// which silently excludes everyone who installed and never ran one.
+	if s.defaultAgent != "" {
+		props["default_agent"] = s.defaultAgent
+	}
+	// Tenure turns retention into a property rather than a cohort query, so the
+	// spread of first-day versus long-standing installs is one breakdown.
+	if s.tenure != nil {
+		ageDays, activeDays, bucket := s.tenure.observe()
+		props["install_age_days"] = ageDays
+		props["active_days"] = activeDays
+		props["tenure"] = string(bucket)
 	}
 	if ev.RequestID != "" {
 		props["request_id"] = ev.RequestID
@@ -419,6 +551,31 @@ func sanitizeRemoteValue(key string, v any) (any, bool) {
 	default:
 		return nil, false
 	}
+}
+
+// agentSlugPattern is the shape of a real adapter id (claude-code, codex, ...).
+// AO_AGENT is free text and cfg.Agent is only validated against the registry
+// when the daemon builds its resolver, which happens after ao.daemon.started is
+// already emitted. So a malformed value, including a filesystem path, could ride
+// on that first event. safeAgentSlug drops anything that is not a plain slug, so
+// telemetry carries a known-shape id or nothing, never a path.
+var agentSlugPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,39}$`)
+
+func safeAgentSlug(agent string) string {
+	trimmed := strings.TrimSpace(agent)
+	if agentSlugPattern.MatchString(trimmed) {
+		return trimmed
+	}
+	return ""
+}
+
+// versionChannel derives stable/nightly from the version string, matching the
+// renderer's versionChannelFrom.
+func versionChannel(appVersion string) string {
+	if strings.Contains(strings.ToLower(appVersion), "-nightly.") {
+		return "nightly"
+	}
+	return "stable"
 }
 
 func loadOrCreateInstallID(dataDir string) (string, error) {

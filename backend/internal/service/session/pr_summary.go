@@ -9,103 +9,36 @@ import (
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apierr"
+	"github.com/aoagents/agent-orchestrator/backend/pkg/contract"
 )
 
 // PRSummary is the user-facing SCM read model for one PR owned by a session.
-type PRSummary struct {
-	URL          string
-	HTMLURL      string
-	Number       int
-	Title        string
-	State        domain.PRState
-	Provider     string
-	Repo         string
-	Author       string
-	SourceBranch string
-	TargetBranch string
-	HeadSHA      string
-	Additions    int
-	Deletions    int
-	ChangedFiles int
-	CI           PRCISummary
-	Review       PRReviewSummary
-	Mergeability PRMergeabilitySummary
-	// StateChangedAt is when the current draft/open/merged/closed state became
-	// active. It is backend-selected from durable PR/provider facts.
-	StateChangedAt   time.Time
-	CreatedAt        time.Time
-	UpdatedAt        time.Time
-	ObservedAt       time.Time
-	CIObservedAt     time.Time
-	ReviewObservedAt time.Time
-}
+type PRSummary = contract.PullRequestSummary
 
 // PRCISummary describes the latest CI status and failing checks for a PR.
-type PRCISummary struct {
-	State         domain.CIState
-	FailingChecks []PRFailingCheck
-}
+type PRCISummary = contract.PullRequestCISummary
 
 // PRFailingCheck is one failed or cancelled CI check for a PR.
-type PRFailingCheck struct {
-	Name       string
-	Status     domain.PRCheckStatus
-	Conclusion string
-	URL        string
-}
+type PRFailingCheck = contract.PullRequestFailingCheck
 
 // PRReviewSummary describes the latest review decision and unresolved comments.
-type PRReviewSummary struct {
-	Decision                   domain.ReviewDecision
-	HasUnresolvedHumanComments bool
-	UnresolvedBy               []PRUnresolvedReviewer
-	// Reviews is the latest decisive submitted review per reviewer, carrying
-	// the reviewer's summary body so the UI can show a verdict with context.
-	// Inline review comment bodies are deliberately not included here; they
-	// stay folded into UnresolvedBy counts and links.
-	Reviews []PRReviewEntry
-}
+type PRReviewSummary = contract.PullRequestReviewSummary
 
 // PRReviewEntry is one submitted provider review summary: a reviewer's decisive
 // verdict and the body they submitted with it.
-type PRReviewEntry struct {
-	Reviewer    string
-	Verdict     domain.ReviewDecision
-	Body        string
-	URL         string
-	SubmittedAt time.Time
-	IsBot       bool
-}
+type PRReviewEntry = contract.PullRequestSubmittedReview
 
 // PRUnresolvedReviewer groups unresolved human comments by reviewer.
-type PRUnresolvedReviewer struct {
-	ReviewerID string
-	Count      int
-	Links      []PRReviewCommentLink
-	ReviewURL  string
-	IsBot      bool
-}
+type PRUnresolvedReviewer = contract.PullRequestUnresolvedReviewer
 
 // PRReviewCommentLink points to one unresolved review comment.
-type PRReviewCommentLink struct {
-	URL  string
-	File string
-	Line int
-}
+type PRReviewCommentLink = contract.PullRequestReviewCommentLink
 
 // PRMergeabilitySummary describes whether a PR can be merged and why.
-type PRMergeabilitySummary struct {
-	State         domain.Mergeability
-	Reasons       []string
-	PRURL         string
-	ConflictFiles []PRConflictFile
-}
+type PRMergeabilitySummary = contract.PullRequestMergeabilitySummary
 
 // PRConflictFile is one file involved in a PR merge conflict.
-type PRConflictFile struct {
-	Path string
-	URL  string
-}
+type PRConflictFile = contract.PullRequestConflictFile
 
 // ListPRSummaries returns all PRs owned by a session with concise SCM details
 // assembled from persisted PR/check/review facts.
@@ -119,25 +52,36 @@ func (s *Service) ListPRSummaries(ctx context.Context, id domain.SessionID) ([]P
 	if err != nil {
 		return nil, err
 	}
-	out := make([]PRSummary, 0, len(prs))
-	for _, pr := range prs {
-		checks, err := s.store.ListChecks(ctx, pr.URL)
-		if err != nil {
-			return nil, err
+	groups := groupPullRequestAliases(prs)
+	out := make([]PRSummary, 0, len(groups))
+	for _, group := range groups {
+		var checks []domain.PullRequestCheck
+		var threads []domain.PullRequestReviewThread
+		var reviews []domain.PullRequestReview
+		var comments []domain.PullRequestComment
+		for _, pr := range group.aliases {
+			prChecks, err := s.store.ListChecks(ctx, pr.URL)
+			if err != nil {
+				return nil, err
+			}
+			checks = append(checks, prChecks...)
+			prThreads, err := s.store.ListPRReviewThreads(ctx, pr.URL)
+			if err != nil {
+				return nil, err
+			}
+			threads = append(threads, prThreads...)
+			prReviews, err := s.store.ListPRReviews(ctx, pr.URL)
+			if err != nil {
+				return nil, err
+			}
+			reviews = append(reviews, prReviews...)
+			prComments, err := s.store.ListPRComments(ctx, pr.URL)
+			if err != nil {
+				return nil, err
+			}
+			comments = append(comments, prComments...)
 		}
-		threads, err := s.store.ListPRReviewThreads(ctx, pr.URL)
-		if err != nil {
-			return nil, err
-		}
-		reviews, err := s.store.ListPRReviews(ctx, pr.URL)
-		if err != nil {
-			return nil, err
-		}
-		comments, err := s.store.ListPRComments(ctx, pr.URL)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, summarizePR(pr, checks, reviews, threads, comments))
+		out = append(out, summarizePR(group.primary, checks, reviews, threads, comments))
 	}
 	sortPRSummaries(out)
 	return out, nil
@@ -153,6 +97,7 @@ func summarizePR(pr domain.PullRequest, checks []domain.PullRequestCheck, review
 		Provider:         firstNonEmpty(pr.Provider, "github"),
 		Repo:             pr.Repo,
 		Author:           pr.Author,
+		AuthorAvatarURL:  pr.AuthorAvatarURL,
 		SourceBranch:     pr.SourceBranch,
 		TargetBranch:     pr.TargetBranch,
 		HeadSHA:          pr.HeadSHA,
@@ -189,7 +134,7 @@ func summarizePRStateChangedAt(pr domain.PullRequest) time.Time {
 
 func summarizeCI(pr domain.PullRequest, checks []domain.PullRequestCheck) PRCISummary {
 	state := ciOrUnknown(pr.CI)
-	out := PRCISummary{State: state}
+	out := PRCISummary{State: state, AutoInjectCI: pr.AutoInjectCI}
 	if state != domain.CIFailing || pr.Merged || pr.Closed {
 		return out
 	}
@@ -216,27 +161,44 @@ func summarizeReview(pr domain.PullRequest, comments []domain.PullRequestComment
 		return out
 	}
 	byReviewer := map[string]int{}
+	resolvedByReviewer := map[string]int{}
 	order := []string{}
+	resolvedOrder := []string{}
 	links := map[string][]PRReviewCommentLink{}
+	resolvedLinks := map[string][]PRReviewCommentLink{}
 	isBot := map[string]bool{}
+	resolvedIsBot := map[string]bool{}
 	for _, c := range comments {
-		if c.Resolved || c.IsBot {
+		if c.IsBot {
 			continue
 		}
 		reviewer := strings.TrimSpace(c.Author)
 		if reviewer == "" {
 			reviewer = "unknown"
 		}
+		link := PRReviewCommentLink{
+			URL:              c.URL,
+			ReviewID:         c.ReviewID,
+			File:             c.File,
+			Line:             c.Line,
+			Body:             c.Body,
+			AutoInjectReview: c.AutoInjectReview,
+		}
+		if c.Resolved {
+			if _, ok := resolvedByReviewer[reviewer]; !ok {
+				resolvedOrder = append(resolvedOrder, reviewer)
+			}
+			resolvedByReviewer[reviewer]++
+			resolvedIsBot[reviewer] = c.IsBot
+			resolvedLinks[reviewer] = append(resolvedLinks[reviewer], link)
+			continue
+		}
 		if _, ok := byReviewer[reviewer]; !ok {
 			order = append(order, reviewer)
 		}
 		byReviewer[reviewer]++
 		isBot[reviewer] = c.IsBot
-		links[reviewer] = append(links[reviewer], PRReviewCommentLink{
-			URL:  c.URL,
-			File: c.File,
-			Line: c.Line,
-		})
+		links[reviewer] = append(links[reviewer], link)
 	}
 	latestReviews := latestChangesRequestedReviews(reviews)
 	reviewURLByAuthor := map[string]string{}
@@ -247,18 +209,18 @@ func summarizeReview(pr domain.PullRequest, comments []domain.PullRequestComment
 		reviewURLByAuthor[reviewer] = review.URL
 		isBot[reviewer] = review.IsBot
 	}
-	// Reviews carries every reviewer's latest decisive verdict (approved and
-	// changes_requested alike), not just the changes-requested subset used for
-	// the unresolved-comment grouping above, so an approved review's summary
-	// body is surfaced too.
-	for reviewer, review := range latestDecisiveReviews(reviews) {
+	// Reviews carries every reviewer's latest submitted review, including
+	// non-decisive COMMENTED reviews normalized as ReviewNone. The unresolved
+	// grouping above still uses decisive changes-requested reviews only.
+	for reviewer, review := range latestReviewSummaries(reviews) {
 		out.Reviews = append(out.Reviews, PRReviewEntry{
-			Reviewer:    reviewer,
-			Verdict:     reviewOrNone(review.State),
-			Body:        review.Body,
-			URL:         review.URL,
-			SubmittedAt: review.SubmittedAt,
-			IsBot:       review.IsBot,
+			Reviewer:         reviewer,
+			Verdict:          reviewOrNone(review.State),
+			Body:             review.Body,
+			URL:              review.URL,
+			SubmittedAt:      review.SubmittedAt,
+			IsBot:            review.IsBot,
+			AutoInjectReview: review.AutoInjectReview,
 		})
 	}
 	sort.Slice(out.Reviews, func(i, j int) bool { return out.Reviews[i].Reviewer < out.Reviews[j].Reviewer })
@@ -272,6 +234,16 @@ func summarizeReview(pr domain.PullRequest, comments []domain.PullRequestComment
 			IsBot:      isBot[reviewer],
 		})
 	}
+	sort.Strings(resolvedOrder)
+	for _, reviewer := range resolvedOrder {
+		out.ResolvedBy = append(out.ResolvedBy, PRUnresolvedReviewer{
+			ReviewerID: reviewer,
+			Count:      resolvedByReviewer[reviewer],
+			Links:      resolvedLinks[reviewer],
+			ReviewURL:  reviewURLByAuthor[reviewer],
+			IsBot:      resolvedIsBot[reviewer],
+		})
+	}
 	for _, reviewer := range out.UnresolvedBy {
 		if reviewer.Count > 0 && !reviewer.IsBot {
 			out.HasUnresolvedHumanComments = true
@@ -279,6 +251,27 @@ func summarizeReview(pr domain.PullRequest, comments []domain.PullRequestComment
 		}
 	}
 	return out
+}
+
+// latestReviewSummaries returns each reviewer's newest submitted review.
+// Providers normalize non-decisive COMMENTED reviews as ReviewNone; a
+// ReviewRequired value is an aggregate PR decision, not a submitted review.
+func latestReviewSummaries(reviews []domain.PullRequestReview) map[string]domain.PullRequestReview {
+	latestByReviewer := map[string]domain.PullRequestReview{}
+	for _, review := range reviews {
+		if review.State == domain.ReviewRequired {
+			continue
+		}
+		reviewer := strings.TrimSpace(review.Author)
+		if reviewer == "" {
+			reviewer = "unknown"
+		}
+		current, ok := latestByReviewer[reviewer]
+		if !ok || reviewAfter(review, current) {
+			latestByReviewer[reviewer] = review
+		}
+	}
+	return latestByReviewer
 }
 
 // latestDecisiveReviews returns each reviewer's most recent decisive review —

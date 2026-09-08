@@ -1,4 +1,6 @@
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useLayoutEffect, useRef } from "react";
+
+type ResizableConstraint = number | (() => number);
 
 interface UseResizableOptions {
 	/** CSS custom property to drive (set on :root), e.g. "--ao-sidebar-w". */
@@ -6,20 +8,18 @@ interface UseResizableOptions {
 	/** localStorage key to persist the width. */
 	storageKey: string;
 	defaultWidth: number;
-	min: number;
-	max: number;
+	min: ResizableConstraint;
+	max: ResizableConstraint;
 	/**
 	 * Which edge the drag handle sits on relative to the panel it resizes.
 	 * "right" (sidebar handle) grows with rightward drag; "left" (inspector
 	 * handle) grows with leftward drag.
 	 */
 	edge: "left" | "right";
-	/** Optional raw drag width below which the owner should collapse. */
-	collapseBelow?: number;
-	/** Called once when a drag crosses collapseBelow. */
-	onCollapse?: () => void;
 	/** Called once when a collapsed rail drag should reopen the owner. */
 	onExpand?: () => void;
+	/** Optional one-time floor when restoring a saved width for a new panel profile. */
+	restoreMin?: number;
 	/** Pointer movement needed before a collapsed rail drag expands. */
 	expandDragThreshold?: number;
 }
@@ -37,22 +37,23 @@ export function useResizable({
 	min,
 	max,
 	edge,
-	collapseBelow,
-	onCollapse,
 	onExpand,
+	restoreMin,
 	expandDragThreshold = 8,
 }: UseResizableOptions) {
 	const widthRef = useRef(defaultWidth);
 	const frameRef = useRef<number | null>(null);
 	const pendingWidthRef = useRef<number | null>(null);
+	const minValue = useCallback(() => (typeof min === "function" ? min() : min), [min]);
+	const maxValue = useCallback(() => (typeof max === "function" ? max() : max), [max]);
 
 	const apply = useCallback(
 		(next: number) => {
-			const clamped = Math.min(max, Math.max(min, next));
+			const clamped = Math.min(maxValue(), Math.max(minValue(), next));
 			widthRef.current = clamped;
 			document.documentElement.style.setProperty(cssVar, `${clamped}px`);
 		},
-		[cssVar, max, min],
+		[cssVar, maxValue, minValue],
 	);
 
 	const applyOnFrame = useCallback(
@@ -79,31 +80,24 @@ export function useResizable({
 		if (pending !== null) apply(pending);
 	}, [apply]);
 
-	const discardPending = useCallback(() => {
-		if (frameRef.current !== null) {
-			window.cancelAnimationFrame(frameRef.current);
-			frameRef.current = null;
-		}
-		pendingWidthRef.current = null;
-	}, []);
-
-	// Restore persisted width on mount.
-	useEffect(() => {
+	// Restore persisted width before first paint so the sidebar does not appear
+	// at the default width on reload and then jump/animate to the stored width.
+	useLayoutEffect(() => {
 		const saved = Number(window.localStorage.getItem(storageKey));
-		apply(Number.isFinite(saved) && saved > 0 ? saved : defaultWidth);
+		const restored = Number.isFinite(saved) && saved > 0 ? saved : defaultWidth;
+		apply(restoreMin === undefined ? restored : Math.max(restoreMin, restored));
 		return () => {
 			if (frameRef.current !== null) window.cancelAnimationFrame(frameRef.current);
 			document.documentElement.style.removeProperty(cssVar);
 		};
-	}, [apply, cssVar, defaultWidth, storageKey]);
+	}, [apply, cssVar, defaultWidth, restoreMin, storageKey]);
 
 	const onPointerDown = useCallback(
 		(event: React.PointerEvent<HTMLElement>) => {
 			event.preventDefault();
 			const startX = event.clientX;
-			const startWidth = widthRef.current;
+			const startWidth = Math.min(maxValue(), Math.max(minValue(), widthRef.current));
 			const sign = edge === "right" ? 1 : -1;
-			let collapsed = false;
 			document.body.classList.add("is-resizing-x");
 
 			const onUp = () => {
@@ -111,26 +105,17 @@ export function useResizable({
 				window.removeEventListener("pointerup", onUp);
 				flushPending();
 				document.body.classList.remove("is-resizing-x");
-				if (!collapsed) window.localStorage.setItem(storageKey, String(widthRef.current));
+				window.localStorage.setItem(storageKey, String(widthRef.current));
 			};
+			// Dragging never collapses the panel: `apply` clamps at `min`, so the
+			// drag simply stops at the floor. Collapse stays on explicit controls.
 			const onMove = (e: PointerEvent) => {
-				const nextWidth = startWidth + sign * (e.clientX - startX);
-				if (collapseBelow !== undefined && onCollapse && nextWidth <= collapseBelow) {
-					collapsed = true;
-					const preservedWidth = Math.min(max, Math.max(min, startWidth));
-					discardPending();
-					apply(preservedWidth);
-					window.localStorage.setItem(storageKey, String(preservedWidth));
-					onUp();
-					onCollapse();
-					return;
-				}
-				applyOnFrame(nextWidth);
+				applyOnFrame(startWidth + sign * (e.clientX - startX));
 			};
 			window.addEventListener("pointermove", onMove);
 			window.addEventListener("pointerup", onUp);
 		},
-		[apply, applyOnFrame, collapseBelow, discardPending, edge, flushPending, max, min, onCollapse, storageKey],
+		[applyOnFrame, edge, flushPending, maxValue, minValue, storageKey],
 	);
 
 	const onCollapsedPointerDown = useCallback(
@@ -154,12 +139,12 @@ export function useResizable({
 					expanded = true;
 					onExpand?.();
 				}
-				applyOnFrame(min + delta);
+				applyOnFrame(minValue() + delta);
 			};
 			window.addEventListener("pointermove", onMove);
 			window.addEventListener("pointerup", onUp);
 		},
-		[applyOnFrame, edge, expandDragThreshold, flushPending, min, onExpand, storageKey],
+		[applyOnFrame, edge, expandDragThreshold, flushPending, minValue, onExpand, storageKey],
 	);
 
 	/** Double-click the handle to reset to the default width. */

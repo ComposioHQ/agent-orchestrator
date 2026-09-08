@@ -422,6 +422,22 @@ func TestAuthStatusAuthorizedFromEnv(t *testing.T) {
 	}
 }
 
+func TestCopilotClassicPATIsNotAnAuthorizationSignal(t *testing.T) {
+	clearCopilotAuthEnv(t)
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("GH_TOKEN", "ghp_classic_token")
+
+	status, ok, err := copilotLocalAuthStatus(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok || status != ports.AgentAuthStatusUnknown {
+		t.Fatalf("status = (%q, %v), want (%q, false)", status, ok, ports.AgentAuthStatusUnknown)
+	}
+}
+
 func TestCopilotConfigAuthStatusAuthorizedWithPlainTextToken(t *testing.T) {
 	configPath := filepath.Join(t.TempDir(), "config.json")
 	if err := os.WriteFile(configPath, []byte(`{"authToken":"token"}`), 0o600); err != nil {
@@ -437,7 +453,7 @@ func TestCopilotConfigAuthStatusAuthorizedWithPlainTextToken(t *testing.T) {
 	}
 }
 
-func TestCopilotConfigAuthStatusUnauthorizedWithEmptyConfig(t *testing.T) {
+func TestCopilotConfigAuthStatusUnknownWithEmptyConfig(t *testing.T) {
 	configPath := filepath.Join(t.TempDir(), "config.json")
 	if err := os.WriteFile(configPath, []byte(" \n"), 0o600); err != nil {
 		t.Fatal(err)
@@ -447,27 +463,23 @@ func TestCopilotConfigAuthStatusUnauthorizedWithEmptyConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !ok || status != ports.AgentAuthStatusUnauthorized {
-		t.Fatalf("status = (%q, %v), want (%q, true)", status, ok, ports.AgentAuthStatusUnauthorized)
+	if ok || status != ports.AgentAuthStatusUnknown {
+		t.Fatalf("status = (%q, %v), want (%q, false)", status, ok, ports.AgentAuthStatusUnknown)
 	}
 }
 
-func TestCopilotSessionStateAuthStatusAuthorizedWithModelEvent(t *testing.T) {
-	dir := t.TempDir()
-	sessionDir := filepath.Join(dir, "session-1")
-	if err := os.MkdirAll(sessionDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(sessionDir, "events.jsonl"), []byte(`{"type":"tool.execution_complete","data":{"model":"claude-sonnet-4.5"}}`), 0o600); err != nil {
+func TestCopilotConfigAuthStatusDoesNotTreatAuthModeAsCredential(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(configPath, []byte(`{"authMode":"github"}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
-	status, ok, err := copilotSessionStateAuthStatus(context.Background(), dir)
+	status, ok, err := copilotConfigAuthStatus(configPath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !ok || status != ports.AgentAuthStatusAuthorized {
-		t.Fatalf("status = (%q, %v), want (%q, true)", status, ok, ports.AgentAuthStatusAuthorized)
+	if ok || status != ports.AgentAuthStatusUnknown {
+		t.Fatalf("status = (%q, %v), want (%q, false)", status, ok, ports.AgentAuthStatusUnknown)
 	}
 }
 
@@ -687,7 +699,7 @@ func TestGetAgentHooksInstallsCopilotHooks(t *testing.T) {
 	}
 }
 
-func TestGetAgentHooksInstallsSessionCopilotAgent(t *testing.T) {
+func TestInstallAgentProfileInstallsSessionCopilotAgent(t *testing.T) {
 	plugin := &Plugin{resolvedBinary: "copilot"}
 	workspace := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(workspace, ".git", "info"), 0o755); err != nil {
@@ -735,6 +747,75 @@ func TestGetAgentHooksInstallsSessionCopilotAgent(t *testing.T) {
 	}
 }
 
+func TestInstallAgentProfileDoesNotInstallLifecycleHooks(t *testing.T) {
+	plugin := &Plugin{resolvedBinary: "copilot"}
+	workspace := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(workspace, ".git", "info"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	systemPromptFile := filepath.Join(t.TempDir(), "system.md")
+	if err := os.WriteFile(systemPromptFile, []byte("review without modifying files\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	err := plugin.InstallAgentProfile(context.Background(), ports.WorkspaceHookConfig{
+		DataDir:          t.TempDir(),
+		SessionID:        "review-sess-1",
+		SystemPromptFile: systemPromptFile,
+		WorkspacePath:    workspace,
+	})
+	if err != nil {
+		t.Fatalf("InstallAgentProfile: %v", err)
+	}
+	profilePath := filepath.Join(workspace, ".github", "agents", "ao-review-sess-1.agent.md")
+	data, err := os.ReadFile(profilePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "review without modifying files") {
+		t.Fatalf("hidden system prompt missing from profile:\n%s", data)
+	}
+	if _, err := os.Stat(copilotHooksPath(workspace)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("profile-only install created lifecycle hooks: %v", err)
+	}
+	exclude, err := os.ReadFile(filepath.Join(workspace, ".git", "info", "exclude"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(exclude), "/.github/agents/ao-review-sess-1.agent.md\n") {
+		t.Fatalf("profile is not git-excluded:\n%s", exclude)
+	}
+}
+
+func TestInstallAgentProfilePreservesUserOwnedProfile(t *testing.T) {
+	plugin := &Plugin{resolvedBinary: "copilot"}
+	workspace := t.TempDir()
+	profilePath := filepath.Join(workspace, ".github", "agents", "ao-review-sess-1.agent.md")
+	if err := os.MkdirAll(filepath.Dir(profilePath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	const userProfile = "---\nname: user-owned\n---\nkeep me\n"
+	if err := os.WriteFile(profilePath, []byte(userProfile), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	err := plugin.InstallAgentProfile(context.Background(), ports.WorkspaceHookConfig{
+		SessionID:     "review-sess-1",
+		SystemPrompt:  "AO replacement",
+		WorkspacePath: workspace,
+	})
+	if err != nil {
+		t.Fatalf("InstallAgentProfile: %v", err)
+	}
+	data, err := os.ReadFile(profilePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != userProfile {
+		t.Fatalf("user-owned profile changed:\n%s", data)
+	}
+}
+
 func TestGetAgentHooksIgnoresSessionCopilotAgentInLinkedWorktreeCommonExclude(t *testing.T) {
 	plugin := &Plugin{resolvedBinary: "copilot"}
 	dir := t.TempDir()
@@ -776,7 +857,7 @@ func TestGetAgentHooksIgnoresSessionCopilotAgentInLinkedWorktreeCommonExclude(t 
 	}
 }
 
-func TestGetAgentHooksUpdatesManagedSessionCopilotAgent(t *testing.T) {
+func TestInstallAgentProfileUpdatesManagedSessionCopilotAgent(t *testing.T) {
 	plugin := &Plugin{resolvedBinary: "copilot"}
 	workspace := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(workspace, ".git", "info"), 0o755); err != nil {
@@ -784,11 +865,11 @@ func TestGetAgentHooksUpdatesManagedSessionCopilotAgent(t *testing.T) {
 	}
 
 	cfg := ports.WorkspaceHookConfig{DataDir: t.TempDir(), SessionID: "sess-1", SystemPrompt: "old rules", WorkspacePath: workspace}
-	if err := plugin.GetAgentHooks(context.Background(), cfg); err != nil {
+	if err := plugin.InstallAgentProfile(context.Background(), cfg); err != nil {
 		t.Fatal(err)
 	}
 	cfg.SystemPrompt = "new rules"
-	if err := plugin.GetAgentHooks(context.Background(), cfg); err != nil {
+	if err := plugin.InstallAgentProfile(context.Background(), cfg); err != nil {
 		t.Fatal(err)
 	}
 

@@ -1,48 +1,34 @@
-import { useNavigate } from "@tanstack/react-router";
-import { useState } from "react";
-import { Keyboard, Mail } from "lucide-react";
-import { ConnectMobileModal } from "./ConnectMobileModal";
-import { DeveloperModeSection } from "./settings/DeveloperModeSection";
-import { GeneralSettingsSection } from "./settings/GeneralSettingsSection";
-import { ReportProblemDialog } from "./settings/ReportProblemDialog";
-import { SettingsLinkRow } from "./settings/SettingsRow";
-import { SettingsPageShell } from "./settings/SettingsPageShell";
-import { SettingsPanel } from "./settings/SettingsPanel";
-import { SettingsSection } from "./settings/SettingsSection";
-import { UpdatesSection } from "./settings/UpdatesSection";
-import { KeyboardShortcutsSettingsDialog } from "./settings/KeyboardShortcutsSettingsDialog";
+import { Fragment, Suspense } from "react";
+import { useTranslation } from "react-i18next";
+import type { GlobalSettingsSection as GlobalSettingsPage } from "../stores/ui-store";
+import { globalSettingsItemsFor } from "./settings/settingsCatalog";
 
-export function GlobalSettingsForm() {
-	const navigate = useNavigate();
-	const [mobileOpen, setMobileOpen] = useState(false);
-	const [reportProblemOpen, setReportProblemOpen] = useState(false);
-	const [keyboardShortcutsOpen, setKeyboardShortcutsOpen] = useState(false);
+export type GlobalSettingsSection = GlobalSettingsPage | "all";
+
+export function GlobalSettingsForm({
+	cloudEnabled = true,
+	section = "all",
+}: {
+	cloudEnabled?: boolean;
+	section?: GlobalSettingsSection;
+}) {
+	const { t } = useTranslation();
+	const all = section === "all";
+	// One section per page means the dialog header already names it, so a
+	// leading in-page heading would just repeat that title.
+	const titleHidden = !all;
 
 	return (
-		<>
-			<SettingsPageShell>
-				<SettingsPanel onClose={() => navigate({ to: "/" })}>
-					<GeneralSettingsSection onConnectMobile={() => setMobileOpen(true)} />
-					<SettingsSection title="Preferences">
-						<SettingsLinkRow
-							icon={Keyboard}
-							label="Keyboard shortcuts"
-							onClick={() => setKeyboardShortcutsOpen(true)}
-						/>
-					</SettingsSection>
-					<UpdatesSection />
-					<DeveloperModeSection />
-					<SettingsSection title="Get help">
-						<SettingsLinkRow icon={Mail} label="Report a problem" onClick={() => setReportProblemOpen(true)} />
-					</SettingsSection>
-				</SettingsPanel>
-			</SettingsPageShell>
-			<ConnectMobileModal open={mobileOpen} onOpenChange={setMobileOpen} />
-			<ReportProblemDialog open={reportProblemOpen} onOpenChange={setReportProblemOpen} />
-			<KeyboardShortcutsSettingsDialog
-				open={keyboardShortcutsOpen}
-				onOpenChange={setKeyboardShortcutsOpen}
-			/>
-		</>
+		<div
+			aria-label={t("settings.title")}
+			className="flex w-full flex-col gap-(--size-settings-section-gap)"
+			data-testid="settings-page"
+		>
+			{globalSettingsItemsFor(section, { cloudEnabled }).map((item) => (
+				<Fragment key={item.id}>
+					<Suspense fallback={null}>{item.render(t, titleHidden)}</Suspense>
+				</Fragment>
+			))}
+		</div>
 	);
 }

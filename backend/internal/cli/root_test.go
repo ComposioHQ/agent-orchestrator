@@ -21,6 +21,7 @@ import (
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/daemonmeta"
 	"github.com/aoagents/agent-orchestrator/backend/internal/runfile"
+	"github.com/aoagents/agent-orchestrator/backend/internal/telemetrymeta"
 )
 
 func TestRootHelpDoesNotShowDaemon(t *testing.T) {
@@ -56,6 +57,25 @@ func TestCommandsRejectUnexpectedArgs(t *testing.T) {
 		{"status", "extra"},
 		{"doctor", "extra"},
 		{"version", "extra"},
+	} {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			_, _, err := executeCLI(t, Deps{}, args...)
+			if err == nil {
+				t.Fatal("expected usage error")
+			}
+			if got := ExitCode(err); got != 2 {
+				t.Fatalf("ExitCode(%v) = %d, want 2", err, got)
+			}
+		})
+	}
+}
+
+func TestChatHostRejectsMalformedInternalArgumentsAsUsage(t *testing.T) {
+	setConfigEnv(t)
+	for _, args := range [][]string{
+		{"chat-host"},
+		{"chat-host", "session", "/tmp/data", "/tmp/work", "provider"},
+		{"chat-host", "session", "/tmp/data", "/tmp/work", "not-a-separator", "provider"},
 	} {
 		t.Run(strings.Join(args, " "), func(t *testing.T) {
 			_, _, err := executeCLI(t, Deps{}, args...)
@@ -147,6 +167,40 @@ func TestCLIInvocationActorType(t *testing.T) {
 	t.Setenv("AO_SESSION_ID", "ao-session-1")
 	if got := cliInvocationActorType(byName["status"]); got != "agent" {
 		t.Fatalf("status actor with session env = %q, want agent", got)
+	}
+}
+
+func TestTelemetryMetaClassifiesRegisteredCommandPaths(t *testing.T) {
+	systemCommands := map[string]struct{}{
+		"ao agent-process":           {},
+		"ao agent-process supervise": {},
+		"ao chat-host":               {},
+		"ao completion":              {},
+		"ao daemon":                  {},
+		"ao help":                    {},
+		"ao pty-host":                {},
+		"ao start":                   {},
+	}
+
+	var failures []string
+	var walk func(*cobra.Command)
+	walk = func(cmd *cobra.Command) {
+		for _, child := range cmd.Commands() {
+			path := telemetrymeta.NormalizeCommandPath(child.CommandPath())
+			got := telemetrymeta.CLIActorType("", path)
+			if got == "system" {
+				_, explicitlySystem := systemCommands[path]
+				if !explicitlySystem && !telemetrymeta.IsRoutineInternalCLICommand(path) {
+					failures = append(failures, path)
+				}
+			}
+			walk(child)
+		}
+	}
+	walk(NewRootCommand(Deps{}))
+
+	if len(failures) > 0 {
+		t.Fatalf("actor-less command paths classified as system: %s", strings.Join(failures, ", "))
 	}
 }
 

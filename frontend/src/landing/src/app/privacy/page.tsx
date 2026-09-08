@@ -1,10 +1,10 @@
 import { COMPANY } from "@ao/shared/constants";
 import type { Metadata } from "next";
 
-const LAST_UPDATED = "30 July 2026";
+const LAST_UPDATED = "19 August 2026";
 
 const description =
-  "How Agent Orchestrator handles data in AO Mobile, the desktop app and CLI, and aoagents.dev: local-first operation, optional analytics, and waitlist email processing.";
+  "How Agent Orchestrator handles data in AO Mobile, the desktop app and CLI, and aoagents.dev: local-first operation, optional analytics, waitlists, and testimonial submissions.";
 
 export const metadata: Metadata = {
   title: "Privacy Policy",
@@ -118,32 +118,40 @@ const toc = [
 export default function PrivacyPage() {
   return (
     <main className="relative min-h-screen">
-      <div className="mx-auto max-w-[820px] px-6 pb-24 pt-[clamp(120px,13vw,180px)]">
-        <div className="font-mono text-sm text-muted-foreground">Legal</div>
-        <h1 className="mt-4 text-[clamp(34px,5vw,54px)] font-semibold leading-[1.04] tracking-[-0.03em] text-foreground">
-          Privacy Policy
-        </h1>
-        <p className="mt-4 font-mono text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
-          Last updated {LAST_UPDATED}
-        </p>
-
-        <div className="mt-9 rounded-[8px] border border-border bg-card/50 p-6 sm:p-7">
-          <p className="text-[15px] leading-[1.75] text-muted-foreground sm:text-[16px]">
-            <Strong>The short version.</Strong> Agent Orchestrator runs on your
-            own machine. No account is required, and no hosted AO service stores
-            your work. We never see your source code, prompts, agent output,
-            terminal contents, repository names, or file paths, and we never
-            sell or rent data to anyone. The desktop app sends{" "}
-            <Strong>anonymous, redacted usage telemetry</Strong> so we can tell
-            whether releases are stable — you can turn it off. Website analytics
-            stay off until you accept them. If you voluntarily join the
-            Windows/Linux waitlist, we process the email you submit only for
-            that purpose. The mobile app sends <Strong>no telemetry at all</Strong>{" "}
-            and talks only to the server you point it at.
+      <header className="relative">
+        <div className="relative mx-auto max-w-3xl px-6 pb-10 pt-16 md:pb-12 md:pt-20">
+          <div className="font-mono text-sm tracking-[0.5px] text-muted-foreground">
+            Legal
+          </div>
+          <h1 className="mt-4 text-[clamp(34px,5vw,54px)] font-semibold leading-[1.04] tracking-[-0.03em] text-foreground">
+            Privacy Policy
+          </h1>
+          <p className="mt-4 font-mono text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
+            Last updated {LAST_UPDATED}
           </p>
-        </div>
 
-        <nav aria-label="On this page" className="mt-10">
+          <div className="mt-8 rounded-[8px] border border-border bg-card/50 p-6 sm:p-7">
+            <p className="text-[15px] leading-[1.75] text-muted-foreground sm:text-[16px]">
+              <Strong>The short version.</Strong> Agent Orchestrator runs on your
+              own machine. No account is required, and no hosted AO service stores
+              your work. We never see your source code, prompts, agent output,
+              terminal contents, repository names, or file paths, and we never
+              sell or rent data to anyone. The desktop app sends{" "}
+              <Strong>anonymous, redacted usage telemetry</Strong> so we can tell
+              whether releases are stable — you can turn it off. Website analytics
+              stay off until you accept them. If you voluntarily join a
+              waitlist or send us a testimonial, we process the details you
+              submit only for the purpose described on that form. The mobile
+              app sends <Strong>no telemetry at all</Strong>{" "}
+              and talks only to the server you point it at.
+            </p>
+          </div>
+
+        </div>
+      </header>
+
+      <div className="relative mx-auto max-w-3xl px-6 pb-24 pt-12">
+        <nav aria-label="On this page">
           <h2 className="font-mono text-[10px] uppercase tracking-[0.22em] text-muted-foreground">
             On this page
           </h2>
@@ -165,7 +173,7 @@ export default function PrivacyPage() {
           <Section id="scope" title="What this policy covers">
             <p>
               Agent Orchestrator ("AO") is open-source software published by the
-              AgentWrapper project. This policy applies to:
+              Untrivial-ai project. This policy applies to:
             </p>
             <Bullets>
               <Bullet>
@@ -331,12 +339,12 @@ export default function PrivacyPage() {
               connection's IP address; AO itself never sends location data.
             </p>
             <p>
-              The desktop app also enables PostHog{" "}
-              <Strong>session recording</Strong> of the app's own interface for
-              debugging, with local paths, local URLs, and network request names
-              masked before transmission. This records the AO interface only —
-              never other applications, never your desktop, and never keystroke
-              content.
+              The desktop app does <Strong>not</Strong> currently send PostHog{" "}
+              <Strong>session recordings</Strong>. Session recording is disabled
+              by default; if a time-boxed investigation enables it, local paths,
+              local URLs, and network request names are masked before
+              transmission. It would cover the AO interface only — never other
+              applications, never your desktop, and never keystroke content.
             </p>
 
             <div className="rounded-[8px] border border-border bg-card/50 p-5">
@@ -347,7 +355,7 @@ export default function PrivacyPage() {
                 to stop daemon events. Because AO is open source, you can also
                 build it yourself with an empty <Code>VITE_AO_POSTHOG_KEY</Code>
                 , which removes transmission entirely. See{" "}
-                <Ext href="https://github.com/AgentWrapper/agent-orchestrator/blob/main/docs/telemetry.md">
+                <Ext href="https://github.com/Untrivial-ai/agent-orchestrator/blob/main/docs/telemetry.md">
                   docs/telemetry.md
                 </Ext>{" "}
                 for the full, source-level detail.
@@ -373,13 +381,18 @@ export default function PrivacyPage() {
               recording is disabled on the marketing site.
             </p>
             <p>
-              The optional Windows/Linux waitlist is separate from analytics.
-              When you submit it, the email address and requested platform are
-              sent to PostHog solely to manage that waitlist, even if you opted
-              out of site analytics. The form discloses this before submission,
-              and submitting it does not enable analytics for later browsing.
-              Fonts are self-hosted. Other services involved when you browse
-              are:
+              Optional waitlists and testimonial submissions are separate from
+              analytics. When you submit one, the details requested by that form
+              are sent to the relevant submission endpoint and stored solely to
+              manage that request. Waitlist forms may also send their requested
+              details to PostHog even if you opted out of site analytics;
+              submitting a form does not enable analytics for later browsing.
+              Testimonial submissions include the testimonial, your public
+              LinkedIn profile URL, and any optional public X post URL. We use
+              those details to review and, with the permission granted on the
+              form, publish your testimonial with public attribution on the AO
+              website. Fonts are self-hosted. Other services involved when you
+              browse are:
             </p>
             <Bullets>
               <Bullet>
@@ -418,9 +431,9 @@ export default function PrivacyPage() {
                 API keys, tokens, passwords, or any other credential.
               </Bullet>
               <Bullet>
-                Names or account information. The only email address we collect
-                is one you voluntarily submit through the optional
-                Windows/Linux waitlist.
+                Names or account information. The only email address or company
+                role we collect is information you voluntarily submit through an
+                optional waitlist.
               </Bullet>
               <Bullet>Precise location data.</Bullet>
               <Bullet>
@@ -443,7 +456,7 @@ export default function PrivacyPage() {
               <Bullet>
                 <Strong>PostHog</Strong> — product analytics for the desktop
                 app, CLI, and website, plus storage of voluntarily submitted
-                Windows/Linux waitlist emails (
+                waitlist details (
                 <Ext href="https://posthog.com/privacy">privacy policy</Ext>).
               </Bullet>
               <Bullet>
@@ -527,10 +540,16 @@ export default function PrivacyPage() {
                 back to an individual.
               </Bullet>
               <Bullet>
-                <Strong>Waitlist emails.</Strong> Retained in PostHog while
-                needed to notify you about Windows or Linux availability, then
-                deleted. You may request earlier deletion using the private
-                contact address below.
+                <Strong>Waitlist details.</Strong> Retained in PostHog while
+                needed to notify you about the relevant release or AO Cloud
+                access, then deleted. You may request earlier deletion using the
+                private contact address below.
+              </Bullet>
+              <Bullet>
+                <Strong>Testimonial submissions.</Strong> Retained while they
+                are reviewed or displayed on the AO website, including the
+                supplied public LinkedIn and optional X post URLs. You may
+                request deletion using the private contact address below.
               </Bullet>
             </Bullets>
           </Section>

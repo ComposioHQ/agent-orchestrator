@@ -13,6 +13,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"sync"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
@@ -22,6 +23,15 @@ import (
 // current liveness and activity state.
 type SessionReader interface {
 	GetSession(ctx context.Context, id domain.SessionID) (domain.SessionRecord, bool, error)
+}
+
+// InputLease is the late-bound admission authority shared by every path that
+// can write bytes into an agent pane. A successful acquisition must be held
+// until the underlying pane write returns. Session mutations close admission
+// first and then wait for already-issued leases to drain, eliminating the
+// check-then-write race that a boolean "input allowed" query cannot avoid.
+type InputLease interface {
+	AcquireSessionInput(id domain.SessionID) (release func(), ok bool)
 }
 
 // Outcome reports what a guarded write did. Anything other than Sent means the
@@ -51,8 +61,17 @@ const (
 	// the next instruction (Nudge only).
 	SuppressedAwaitingUser
 	// SuppressedBusy means the session is mid-turn on a harness that cannot
-	// safely steer an active turn (NudgeCoordination only).
+	// safely steer an active turn (coordination writes only).
 	SuppressedBusy
+	// SuppressedInputGated means an exclusive session mutation (for example an
+	// agent switch, resume, restore, or kill) closed pane-input admission before
+	// this write acquired a lease.
+	SuppressedInputGated
+	// SuppressedStartupPending means a TUI session has not yet received its
+	// first agent hook callback. Pre-session dialogs (for example Cursor's MCP
+	// server approval) leave the row idle with FirstSignalAt unset; writing
+	// there consumes input on the dialog instead of the agent composer.
+	SuppressedStartupPending
 )
 
 // String names the outcome for logs.
@@ -70,23 +89,63 @@ func (o Outcome) String() string {
 		return "suppressed_awaiting_user"
 	case SuppressedBusy:
 		return "suppressed_busy"
+	case SuppressedInputGated:
+		return "suppressed_input_gated"
+	case SuppressedStartupPending:
+		return "suppressed_startup_pending"
 	default:
 		return "suppressed_unknown"
 	}
 }
 
 // Guard is the guarded pane-write primitive shared by the session manager and
-// lifecycle. It takes no locks of its own, so callers may hold theirs across a
-// call (lifecycle's sendOnce calls it under react.mu). It implements
+// lifecycle. Its small lease lock only protects late binding; it is never held
+// across a store read or pane write. It implements
 // ports.AgentMessenger (via Send) so it can transparently replace a raw
 // messenger wherever only the error matters.
 type Guard struct {
 	store     SessionReader
 	messenger ports.AgentMessenger
 	logger    *slog.Logger
+
+	leaseMu sync.RWMutex
+	lease   InputLease
+
+	startupGateMu           sync.RWMutex
+	startupSignalGatesInput func(domain.AgentHarness) bool
 }
 
 var _ ports.AgentMessenger = (*Guard)(nil)
+
+func (g *Guard) tuiAwaitingStartupInput(rec domain.SessionRecord) bool {
+	if domain.NormalizeSessionMode(rec.Mode) != domain.SessionModeTUI || !rec.FirstSignalAt.IsZero() {
+		return false
+	}
+	g.startupGateMu.RLock()
+	requiresSignal := g.startupSignalGatesInput
+	g.startupGateMu.RUnlock()
+	return requiresSignal != nil && requiresSignal(rec.Harness)
+}
+
+func (g *Guard) refuseDeliver(rec domain.SessionRecord) (Outcome, bool) {
+	if g.tuiAwaitingStartupInput(rec) {
+		return SuppressedStartupPending, true
+	}
+	if rec.Activity.State == domain.ActivityBlocked {
+		return SuppressedAwaitingUser, true
+	}
+	return SuppressedUnknown, false
+}
+
+func (g *Guard) refuseNudge(rec domain.SessionRecord) (Outcome, bool) {
+	if g.tuiAwaitingStartupInput(rec) {
+		return SuppressedStartupPending, true
+	}
+	if rec.Activity.State.NeedsInput() {
+		return SuppressedAwaitingUser, true
+	}
+	return SuppressedUnknown, false
+}
 
 // New builds a Guard over the store it re-reads and the messenger it writes
 // through. A nil logger falls back to slog.Default().
@@ -95,6 +154,24 @@ func New(store SessionReader, messenger ports.AgentMessenger, logger *slog.Logge
 		logger = slog.Default()
 	}
 	return &Guard{store: store, messenger: messenger, logger: logger}
+}
+
+// SetInputLease late-binds the process-wide pane-input admission authority.
+// This is needed by lifecycle, which is constructed before Session Manager at
+// daemon boot. Nil restores the legacy always-admitted behavior.
+func (g *Guard) SetInputLease(lease InputLease) {
+	g.leaseMu.Lock()
+	g.lease = lease
+	g.leaseMu.Unlock()
+}
+
+// SetStartupSignalGate supplies the adapter capability predicate that decides
+// whether a TUI session must receive its first hook before pane input is safe.
+// A nil predicate leaves hookless and unknown adapters ungated.
+func (g *Guard) SetStartupSignalGate(pred func(domain.AgentHarness) bool) {
+	g.startupGateMu.Lock()
+	g.startupSignalGatesInput = pred
+	g.startupGateMu.Unlock()
 }
 
 // Send satisfies ports.AgentMessenger so a Guard can sit in for the raw
@@ -117,9 +194,82 @@ func (g *Guard) Send(ctx context.Context, id domain.SessionID, msg string) error
 // sitting at an idle prompt is exactly where a user message (or the Enter that
 // submits its unsent draft) belongs.
 func (g *Guard) Deliver(ctx context.Context, id domain.SessionID, msg string) (Outcome, error) {
-	return g.send(ctx, id, msg, func(rec domain.SessionRecord) (Outcome, bool) {
+	return g.send(ctx, id, msg, g.refuseDeliver)
+}
+
+// DeliverWithPostWrite is Deliver plus a callback that runs only after a
+// successful pane write and while the same input lease is still held. Session
+// Manager uses it to persist narrow message facts before a provider switch can
+// close admission and snapshot handoff context.
+func (g *Guard) DeliverWithPostWrite(ctx context.Context, id domain.SessionID, msg string, after func(context.Context) error) (Outcome, error) {
+	return g.sendThen(ctx, id, msg, g.refuseDeliver, after)
+}
+
+// DeliverUnderMutation applies the same just-in-time session safety checks as
+// Deliver but intentionally bypasses input admission. It is only for an AO
+// mutation that already owns the session's exclusive operation fence and must
+// write its own handoff or startup prompt while ordinary input stays gated.
+func (g *Guard) DeliverUnderMutation(ctx context.Context, id domain.SessionID, msg string) (Outcome, error) {
+	return g.sendAdmitted(ctx, id, msg, func(rec domain.SessionRecord) (Outcome, bool) {
 		return SuppressedAwaitingUser, rec.Activity.State == domain.ActivityBlocked
 	})
+}
+
+// CoordinationUnderMutation writes an AO coordination message while the caller
+// owns the session's exclusive mutation fence. It intentionally bypasses the
+// ordinary input lease (which the mutation has already closed), but re-reads
+// activity at the pane-write boundary. Idle is always safe. waiting_input is
+// safe only when the harness can distinguish an idle composer from a blocked
+// decision; blocked is never safe, and active is safe only when the current
+// harness explicitly supports mid-turn steering.
+func (g *Guard) CoordinationUnderMutation(
+	ctx context.Context,
+	id domain.SessionID,
+	msg string,
+	acceptsWaitingInput func(domain.AgentHarness) bool,
+	steersActiveTurn func(domain.AgentHarness) bool,
+) (Outcome, error) {
+	return g.coordinationUnderMutation(ctx, id, msg, acceptsWaitingInput, steersActiveTurn, nil)
+}
+
+// CoordinationUnderMutationChecked adds one caller-owned proof immediately
+// after the durable session/activity read and immediately before the runtime
+// write. Agent switching uses it to revalidate the exact runtime handle and
+// generation at the pane-write boundary. The runtime's safe exit sink remains
+// the final defense if the child exits during a chunked paste.
+func (g *Guard) CoordinationUnderMutationChecked(
+	ctx context.Context,
+	id domain.SessionID,
+	msg string,
+	acceptsWaitingInput func(domain.AgentHarness) bool,
+	steersActiveTurn func(domain.AgentHarness) bool,
+	preWrite func(context.Context, domain.SessionRecord) error,
+) (Outcome, error) {
+	return g.coordinationUnderMutation(ctx, id, msg, acceptsWaitingInput, steersActiveTurn, preWrite)
+}
+
+func (g *Guard) coordinationUnderMutation(
+	ctx context.Context,
+	id domain.SessionID,
+	msg string,
+	acceptsWaitingInput func(domain.AgentHarness) bool,
+	steersActiveTurn func(domain.AgentHarness) bool,
+	preWrite func(context.Context, domain.SessionRecord) error,
+) (Outcome, error) {
+	return g.sendAdmittedChecked(ctx, id, msg, func(rec domain.SessionRecord) (Outcome, bool) {
+		switch rec.Activity.State {
+		case domain.ActivityIdle:
+			return SuppressedUnknown, false
+		case domain.ActivityWaitingInput:
+			return SuppressedAwaitingUser, acceptsWaitingInput == nil || !acceptsWaitingInput(rec.Harness)
+		case domain.ActivityBlocked:
+			return SuppressedAwaitingUser, true
+		case domain.ActivityActive:
+			return SuppressedBusy, steersActiveTurn == nil || !steersActiveTurn(rec.Harness)
+		default:
+			return SuppressedUnknown, true
+		}
+	}, preWrite)
 }
 
 // Nudge writes an AO-initiated (unsolicited) message into a live agent. Its
@@ -127,8 +277,41 @@ func (g *Guard) Deliver(ctx context.Context, id domain.SessionID, msg string) (O
 // decision or waiting at the prompt — because an automated paste+Enter there
 // either answers a dialog or submits text the user never saw.
 func (g *Guard) Nudge(ctx context.Context, id domain.SessionID, msg string) (Outcome, error) {
+	return g.send(ctx, id, msg, g.refuseNudge)
+}
+
+// NudgeUrgent writes an AO-initiated message that must reach the agent even
+// while the session sits idle at a needs-input prompt (waiting_input) —
+// reserved for alerts where a human parked at that prompt may be exactly who
+// needs to act (e.g. a merge conflict needing a rebase or a redirected agent),
+// unlike a routine reaction nudge that can simply wait for the agent to resume
+// on its own. It still refuses while a TUI session has not yet signalled
+// startup and while the session is blocked on a live permission decision (an
+// unsolicited paste+Enter there answers the dialog rather than merely being
+// read late).
+//
+// waiting_input is only safe on a harness that reports a permission dialog AS
+// blocked. Harnesses that instead surface an ambiguous permission state as
+// waiting_input (codex maps permission-request to waiting_input — see
+// ports.BlockedActivitySignaler) would have this unsolicited write land on that
+// hidden dialog. acceptsWaitingInput is the adapter-declared capability that a
+// waiting_input prompt is a genuine idle composer, not a masked decision; a nil
+// predicate is treated as "cannot distinguish", so an unknown harness never
+// takes an urgent write while waiting_input. This mirrors
+// CoordinationUnderMutation's waiting_input gating.
+func (g *Guard) NudgeUrgent(ctx context.Context, id domain.SessionID, msg string, acceptsWaitingInput func(domain.AgentHarness) bool) (Outcome, error) {
 	return g.send(ctx, id, msg, func(rec domain.SessionRecord) (Outcome, bool) {
-		return SuppressedAwaitingUser, rec.Activity.State.NeedsInput()
+		if g.tuiAwaitingStartupInput(rec) {
+			return SuppressedStartupPending, true
+		}
+		switch rec.Activity.State {
+		case domain.ActivityBlocked:
+			return SuppressedAwaitingUser, true
+		case domain.ActivityWaitingInput:
+			return SuppressedAwaitingUser, acceptsWaitingInput == nil || !acceptsWaitingInput(rec.Harness)
+		default:
+			return SuppressedUnknown, false
+		}
 	})
 }
 
@@ -141,6 +324,9 @@ func (g *Guard) Nudge(ctx context.Context, id domain.SessionID, msg string) (Out
 // unsolicited write during a live turn.
 func (g *Guard) NudgeCoordination(ctx context.Context, id domain.SessionID, msg string, steersActiveTurn func(domain.AgentHarness) bool) (Outcome, error) {
 	return g.send(ctx, id, msg, func(rec domain.SessionRecord) (Outcome, bool) {
+		if g.tuiAwaitingStartupInput(rec) {
+			return SuppressedStartupPending, true
+		}
 		if rec.Activity.State.NeedsInput() {
 			return SuppressedAwaitingUser, true
 		}
@@ -158,6 +344,37 @@ func (g *Guard) NudgeCoordination(ctx context.Context, id domain.SessionID, msg 
 // available without scraping the terminal. Fail closed: a store error
 // suppresses the write rather than pressing Enter on an unknown state.
 func (g *Guard) send(ctx context.Context, id domain.SessionID, msg string, refuse func(domain.SessionRecord) (Outcome, bool)) (Outcome, error) {
+	return g.sendThen(ctx, id, msg, refuse, nil)
+}
+
+func (g *Guard) sendThen(ctx context.Context, id domain.SessionID, msg string, refuse func(domain.SessionRecord) (Outcome, bool), after func(context.Context) error) (Outcome, error) {
+	g.leaseMu.RLock()
+	lease := g.lease
+	g.leaseMu.RUnlock()
+	if lease != nil {
+		release, ok := lease.AcquireSessionInput(id)
+		if !ok {
+			g.logger.Info("sessionguard: write suppressed", "sessionID", id, "reason", SuppressedInputGated.String())
+			return SuppressedInputGated, nil
+		}
+		defer release()
+	}
+	outcome, err := g.sendAdmitted(ctx, id, msg, refuse)
+	if err == nil && outcome == Sent && after != nil {
+		if afterErr := after(ctx); afterErr != nil {
+			return outcome, afterErr
+		}
+	}
+	return outcome, err
+}
+
+// sendAdmitted performs the durable safety read and the actual pane write. A
+// caller reaching it through send holds its input lease for this entire span.
+func (g *Guard) sendAdmitted(ctx context.Context, id domain.SessionID, msg string, refuse func(domain.SessionRecord) (Outcome, bool)) (Outcome, error) {
+	return g.sendAdmittedChecked(ctx, id, msg, refuse, nil)
+}
+
+func (g *Guard) sendAdmittedChecked(ctx context.Context, id domain.SessionID, msg string, refuse func(domain.SessionRecord) (Outcome, bool), preWrite func(context.Context, domain.SessionRecord) error) (Outcome, error) {
 	rec, ok, err := g.store.GetSession(ctx, id)
 	if err != nil {
 		return SuppressedUnknown, fmt.Errorf("guard %s: read session: %w", id, err)
@@ -177,6 +394,11 @@ func (g *Guard) send(ctx context.Context, id domain.SessionID, msg string, refus
 	if outcome, deny := refuse(rec); deny {
 		g.logger.Info("sessionguard: write suppressed", "sessionID", id, "reason", outcome.String(), "state", string(rec.Activity.State))
 		return outcome, nil
+	}
+	if preWrite != nil {
+		if err := preWrite(ctx, rec); err != nil {
+			return SuppressedUnknown, fmt.Errorf("guard %s: pre-write check: %w", id, err)
+		}
 	}
 	if err := g.messenger.Send(ctx, id, msg); err != nil {
 		return Sent, fmt.Errorf("guard %s: send: %w", id, err)

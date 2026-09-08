@@ -1,278 +1,194 @@
-# Telemetry
+# Product telemetry
 
-AO uses anonymous telemetry to understand reliability and product usage. The
-Electron renderer sends sanitized PostHog events directly, and the Go daemon can
-persist allowlisted events locally and fan them out to PostHog when remote
-telemetry is enabled.
+AO collects limited product-usage and reliability data to learn which parts of
+the app are useful and whether releases are working as expected. The data is
+not account-linked: AO does not attach a name or email address. It is
+pseudonymous rather than unlinkable, because a random installation identifier
+lets events from the same installation be counted together over time.
 
-For cost-control runbooks, including the v2 PostHog event namespace and legacy
-ingestion drop rules, see [posthog-cost-controls.md](posthog-cost-controls.md).
+Remote telemetry is enabled in production desktop and mobile releases. A
+packaged desktop release also enables telemetry for the daemon it starts.
+Development builds and daemons started directly do not send remote telemetry by
+default.
 
-## What is collected
+## What AO sends
 
-- App activation events: `ao.app.active` / `ao.v2.app.active` from the
-  renderer and meaningful user-context CLI commands, each capped to one event
-  per six-hour UTC slot, or four per day per install/channel
-- Renderer load and daily route-surface usage, grouped by coarse surface names
-- Project/task/session UI actions, with project identifiers SHA-256 hashed
-- Renderer exceptions, reduced to error name and coarse context
-- Daemon operational events: CLI invocation, session spawn/failure, waiting-input
-  transitions, HTTP 5xx, and daemon panics
-- AO version context (`app_version` / `ao_version`), platform, and build mode
+AO sends structured events in a few broad categories:
 
-PostHog session recording is disabled by default. If a time-boxed investigation
-enables it, network request names are masked before recording.
+- App usage, such as launching AO, viewing a coarse area of the interface, or
+  starting a task or agent session
+- Feature outcomes, such as whether creating a project, starting an agent,
+  connecting the mobile app, or installing an update succeeded
+- The GitHub organization or account that owns a project's configured remote,
+  recorded on project-add events. Only the owner segment is sent, never the
+  repository name, path, or URL. For a personal repository this owner is the
+  user's own GitHub username, so this particular value is not anonymous. We use
+  it to understand which organizations and developers get the most value from
+  AO, so we can prioritize improvements and reach out for feedback
+- Reliability data, such as an error type and context, a crash message and
+  stack trace after path redaction, an HTTP status, or an agent waiting for
+  input
+- Basic environment information, such as the AO version, operating system,
+  release channel, and which supported agent types are available
+- A random installation identifier and one-way hashes of project or session
+  identifiers when an event needs them
+- Coarse mobile-app usage, such as pairing, reconnecting, completing onboarding,
+  opening a notification, or using a core action
 
-## Privacy
+AO uses [PostHog](https://posthog.com/privacy) to process remote product
+telemetry. PostHog receives standard connection and device metadata, including
+the connection's IP address, device type, and operating system, and may use it
+to derive approximate geographic information.
 
-Before any renderer event or recording is transmitted:
+The installation identifier lets PostHog group activity from one AO
+installation over time. Hashed project and session identifiers can likewise
+group events for the same project or session without sending those identifiers
+in plain text. Neither is linked to an AO account.
 
-- Absolute file paths (`/home/...`, `/Users/...`, `C:\...`) are replaced with
-  `[redacted-local-path]`
-- Local URLs (`file://`, `app://renderer`, `localhost`, `127.0.0.1`, `[::1]`)
-  are replaced with `[redacted-local-url]`
-- Project IDs are one-way hashed and never sent in plain text
+## What AO does not intentionally send
 
-Daemon events use a remote payload allowlist before PostHog export. Project and
-session IDs are hashed, and raw location/IP fields are not accepted from AO
-payloads. Geographic reporting should use PostHog's GeoIP enrichment only.
+Product telemetry is designed not to include:
 
-Three burst-prone daemon events — `ao.http.5xx`, `ao.daemon.panic`,
-`ao.cli.usage_errors` — are aggregated before export: every occurrence in a
-rolling one-minute window is folded into a single rollup event carrying
-`count`, `window_start`, and `window_end`, instead of exporting one PostHog
-event per occurrence. A storm of 10,000 errors and one of 6 both cost the same
-one event, and the true magnitude is still visible via `count` rather than
-being silently capped away. Only the most recent occurrence's other
-properties (path, fingerprint, etc.) are kept on the rollup — if a burst hits
-several different endpoints or fingerprints in the same window, the ones
-overwritten by later occurrences aren't visible on that rollup. Local SQLite
-storage is unaffected: it receives every raw occurrence, unaggregated, for
-full-fidelity debugging regardless of what PostHog sees.
+- Source code, diffs, commits, or file contents
+- Prompts, agent conversations, agent output, or terminal contents
+- Shell command arguments, command history, or environment variables
+- Repository names, project names, branch names, or plain-text file paths
+- API keys, access tokens, passwords, or other credentials
+- Names, email addresses, or account identities
 
-Everything reaching PostHog remotely is still bounded per event name: a
-5-per-minute burst cap plus a 200-per-day hard ceiling for ordinary events,
-or a 1,500-per-day ceiling for the three aggregated names above (since their
-per-occurrence cost is already collapsed by aggregation, the daily cap there
-is a structural backstop rather than the primary limit). The renderer applies
-the same 5-per-minute / 200-per-day shape to its own event and exception
-capture path, without the aggregation step.
+The GitHub owner segment described under "What AO sends" is the one
+GitHub-derived value AO does send. It is limited to the owning
+organization or account and never includes the repository, path, or URL.
 
-All events are sent as PostHog anonymous events (`$process_person_profile:
-false`; the renderer never calls `identify()`). The renderer keeps PostHog SDK
-persistence in memory, disables person profiles, and explicitly bootstraps the
-AO install ID as anonymous. This prevents legacy PostHog state from restoring
-an identified user or replacing the stable AO device ID after an upgrade. The
-install ID still deduplicates unique-user counts, but no person profiles are
-created — person properties and person-property cohorts are intentionally
-unavailable. AO's heartbeat and route reservations continue to use their own
-sanitized `localStorage` keys independently of PostHog SDK persistence.
+The optional website waitlist is separate from product telemetry. If you submit
+an email address there, it is used to manage that waitlist as described in the
+[privacy policy](https://aoagents.dev/privacy).
 
-`ao.cli.invoked` is capped at once per actor type and command path per UTC day
-per install. Routine successful internal/read-only commands (`ao status`,
-`ao session ls`, `ao session get`, `ao project ls`, `ao project get`,
-`ao orchestrator ls`, `ao hooks`, and `ao pty-host`) are excluded outright.
-Commands that never reflect product activity — the supervisor-driven
-`ao daemon`/`ao start`, the self-documenting `ao completion`/`ao help`, and
-the internal `ao agent-process` runtime process — are also excluded outright.
+## How AO limits the data
 
-CLI invocations are classified by actor:
+- AO generates a random installation identifier on first run. It is stored at
+  `~/.ao/data/telemetry_install_id` (or under `AO_DATA_DIR`) and is not linked to
+  a personal account.
+- Project and session identifiers included in telemetry are one-way hashed.
+  Hashing hides the plain text but still allows related events to be grouped.
+- Absolute local paths and local application URLs detected in desktop events
+  are replaced with redaction markers before the events are sent.
+- Daemon events sent to PostHog and mobile events accept a fixed set of
+  properties; unexpected fields are discarded.
+- Event rates are limited to reduce repeated background activity and error
+  loops.
+- Person profiles and session recording are disabled in the desktop and mobile
+  apps. AO does not automatically record screens, clicks, or touches.
 
-- `actor_type=user`: a user-context CLI command. These can refresh CLI-channel
-  `ao.app.active`.
-- `actor_type=agent`: commands run inside an AO-managed agent session
-  (`AO_SESSION_ID` is set). These are useful command-adoption signal but do not
-  refresh `ao.app.active`, because agents can keep running after the human has
-  stopped actively using AO. Routine internal paths such as `ao hooks` are
-  dropped on success.
-- `actor_type=system`: supervisor/runtime background processes. These are not
-  sent as CLI usage.
+Separately from remote telemetry, the daemon can keep a local copy of
+operational events in AO's SQLite database. While local telemetry is active, AO
+periodically prunes records older than 30 days. This data stays under `~/.ao` on
+your machine.
 
-The per-command daily cap keeps invocation frequency off PostHog, and the CLI
-reservation state is persisted under the AO data dir so a daemon restart does
-not re-emit every polling command for the same day.
+## Agent-switch failure reporting (staged, production disabled)
 
-Routine successful internal/read-only commands are not reliability signal by
-themselves and should not be reintroduced as success telemetry. For commands
-such as `ao status`, `ao session ls`, `ao session get`, `ao project ls`,
-`ao project get`, `ao orchestrator ls`, `ao hooks`, and `ao pty-host`, track
-only meaningful user-impacting failures through a separate, rate-limited event
-such as `ao.v2.cli.failed`. That event should carry safe enum-like fields such
-as `command_path`, `actor_type`, `error_category`, and stable `error_code`; it
-must not include raw error messages, stack traces, local paths, project names,
-repository URLs, prompts, terminal output, tokens, or request payloads.
+AO contains a separate, consent-gated reliability path for asynchronous
+agent-switch failures. It is intentionally failure-only: a successful switch,
+an expected validation rejection, an idempotent replay, a stale callback, or a
+transient condition that is proven recovered creates no failure receipt, no
+outbox payload, and no Sentry event.
 
-`ao.renderer.route_viewed` is capped at once per coarse surface per UTC day per
-renderer install. This preserves surface adoption and retention signal while
-dropping repeated navigation churn inside the same surface.
+When enabled in a future release, an eligible failure event is limited to a
+closed set of operational fields: event ID and occurrence time; bounded title,
+level, environment, platform, operating system, release, and channel; report
+kind, subsystem, classifier callsite, durable phase, failure point, broad
+error/fault code, execution and session mode, source and target harness,
+target-start mode, runtime backend, call outcome, ownership, compensation, user
+impact, elapsed-time bucket, and tri-state source-stop, target-owner, and
+recovery-gate facts. The local outbox schema/envelope versions are not exported
+as event fields. Eligible semantic and process events may attach a bounded,
+sanitized stack containing repository-relative filenames, line numbers,
+packages, and function names; panic events require those sanitized frames but
+never include the panic value. The event does not contain prompts, conversation
+content, terminal output, commands, provider payloads, repository or branch
+names, local paths, runtime handles, native identities, switch/session/project
+identifiers, raw errors, or panic values. Local identifiers used to decide
+whether a frontend failure is still current are stripped before event
+construction.
 
-## Product Metrics Model
+Eligible daemon events are stored in a dedicated local delivery outbox before
+network delivery. Every pending, leased, delivered, or discarded payload row
+has a hard seven-day expiry. An already-consented payload is intentionally
+independent of the switch foreign key, so deleting the switch or session does
+not delete that payload before its TTL. Separate payload-free receipts prevent
+the same incident from being enrolled again. Terminal/run receipts remain for
+seven days; an unresolved receipt may remain while its switch remains
+unresolved and, after resolution, is retained for seven more days. Receipts
+contain only the minimum local deduplication facts and are never sent remotely.
 
-AO currently has a stable install ID, not a signed-in account user ID. That
-means today's DAU/MAU can accurately represent active installs, but not unique
-people across multiple machines. True user-level new/churn/journey metrics
-require an explicit stable user identity from a login, license, or workspace
-account system. That identity should be sent as a first-party AO user ID (or a
-one-way hash of it) only when the user has authenticated or explicitly enabled
-account-level telemetry; it should not be inferred from machine fingerprints,
-paths, git remotes, emails in repo config, or other local data.
+Opting in does not backfill old terminal switch history. It may enroll the
+current state of an unresolved recovery marker as a new incident at opt-in time,
+so AO can report a problem that is still affecting the user without exporting a
+pre-consent occurrence timestamp. Delivery is at-least-once: if the provider
+accepts an event but its response is lost, AO may retry the same event ID. This
+can produce more than one provider occurrence, while the stable fingerprint
+groups the occurrences into one issue.
 
-The minimum signals for accurate usage analytics are:
+The required opt-out sequence is: Electron main closes and drains its sender;
+the daemon closes and drains its delivery gate; main durably writes the disabled
+consent generation; the daemon rereads that generation, mirrors it, and purges
+every pending, leased, delivered, or discarded outbox payload; main purges its
+local transport cache and renderer queue; only then may the UI acknowledge the
+change. If the daemon is unavailable or any cleanup cannot be proven, the UI
+reports `cleanup_pending` rather than claiming completion. Payload-free receipts
+remain solely to prevent a later duplicate enrollment. A provider may already
+have accepted a request that was in flight before cancellation; AO cannot recall
+data already received by the provider.
 
-- `ao.app.active` / `ao.v2.app.active`: up to one event per six-hour UTC slot
-  per install/account when a human uses the desktop app or runs a meaningful
-  user-context CLI command. This powers DAU, WAU, MAU, retention, and churn
-  while keeping arbitrary rolling windows from undercounting long-running
-  usage. Renderer active events are sent immediately; a slot is released for
-  retry when the SDK rejects or throws while capturing the event.
-- `ao.projects.created` and `ao.onboarding.first_project_added`: activation
-  funnel from install to first project.
-- `ao.session.spawned`, `ao.session.spawn_failed`, and
-  `ao.onboarding.first_session_spawned`: activation funnel from project to
-  first running agent, plus spawn reliability.
-- `ao.cli.invoked` / `ao.v2.cli.invoked` with `actor_type=user|agent`:
-  command adoption by actor for meaningful non-internal commands, capped by
-  command/install/day. Agent-context command usage is product signal, but
-  should be analyzed separately from active-user counts.
-- `ao.session.waiting_input_entered/exited`: whether agents are making progress
-  or waiting on the human, with dwell time.
-- Renderer and daemon error/crash events: reliability and support signal.
+This path uses Sentry as the intended processor. Like any remote endpoint,
+Sentry receives connection metadata such as the source IP address even though
+AO does not place an IP address in the event body. The Sentry organization's IP
+storage/scrubbing setting, data residency, retention, and automatic-context
+settings have not yet received the required dated privacy approval. The
+production feature flag therefore remains disabled and AO does not initialize
+this agent-switch Sentry sender in production. Windows fails closed: event
+consent is treated as disabled and an enable acknowledgement is rejected until
+a tested native write-through replacement satisfies the policy-file durability
+contract.
 
-Signals that should not drive active-user metrics:
+## Turn desktop and daemon telemetry off
 
-- Internal runtime hosts such as `ao pty-host`.
-- Supervisor startup/control commands such as `ao daemon` and `ao start`.
-- Agent hook callbacks and other CLI commands run with `AO_SESSION_ID`, except
-  as separate agent-activity or command-adoption metrics.
-- Raw polling frequency for read-only state commands.
-
-## Volume Investigation: 2026-07-21
-
-Read-only HogQL queries against PostHog project `475752` over the trailing
-30-day window found 3,203,364 total events. The dominant event names were:
-
-| Event                              |     Count | Installs | Events/install |
-| ---------------------------------- | --------: | -------: | -------------: |
-| `ao.cli.invoked`                   | 1,508,888 |      870 |       1,734.35 |
-| `ao.app.active`                    | 1,411,807 |    1,434 |         984.52 |
-| `ao.renderer.route_viewed`         |   114,940 |    1,388 |          82.81 |
-| `ao.renderer.api_error`            |    18,634 |      662 |          28.15 |
-| `ao.session.waiting_input_entered` |    17,583 |      377 |          46.64 |
-| `$exception`                       |    16,563 |      681 |          24.32 |
-| `ao.cli.usage_errors`              |    15,349 |      215 |          71.39 |
-| `ao.session.waiting_input_exited`  |    15,343 |      339 |          45.26 |
-| `$set`                             |    13,211 |    1,137 |          11.62 |
-| `ao.session.spawned`               |    11,439 |      887 |          12.90 |
-
-The top two events were almost entirely CLI-sourced and moved together:
-`ao.cli.invoked` had 1,508,888 events and CLI-channel `ao.app.active` had
-1,403,170 events. The largest command paths were polling/hook paths:
-
-| Command path         | `ao.cli.invoked` count | Install-days | Projected events saved by persistent daily cap |
-| -------------------- | ---------------------: | -----------: | ---------------------------------------------: |
-| `ao hooks`           |                589,338 |        1,624 |                                        587,714 |
-| `ao session ls`      |                270,977 |          764 |                                        270,213 |
-| `ao orchestrator ls` |                236,877 |          177 |                                        236,700 |
-| `ao status`          |                220,436 |          524 |                                        219,912 |
-| `ao session get`     |                 75,946 |          603 |                                         75,343 |
-| `ao project ls`      |                 40,435 |          462 |                                         39,973 |
-| `ao project get`     |                 31,048 |          356 |                                         30,692 |
-| `ao send`            |                 19,104 |          536 |                                         18,568 |
-
-Using `ao.session.spawned` as the AO-session denominator, the 30-day window had
-11,439 spawned sessions, 131.91 `ao.cli.invoked` events per spawned session,
-and 10.05 `ao.renderer.route_viewed` events per spawned session. Looking only
-at renderer/PostHog browser sessions, there were 211,532 renderer SDK events
-across 6,988 PostHog sessions, or 30.27 events per PostHog session. Route
-views were the largest renderer contributor at 17.67 events per PostHog
-session.
-
-Projected 30-day reduction from the implemented changes, using the observed
-install-day cardinalities:
-
-- Persisting the CLI command daily cap: `ao.cli.invoked` drops from 1,508,888
-  to about 8,416 events, saving about 1,500,472 events.
-- Persisting the CLI active six-hour slot cap: CLI-channel `ao.app.active`
-  drops from 1,403,170 to at most about 7,508 events, saving at least about
-  1,395,662 events.
-- Daily renderer route-surface capping: `ao.renderer.route_viewed` drops from
-  114,940 to about 8,483 events, saving about 106,457 events.
-
-Total projected event-volume savings from those three changes are still roughly
-3.0M events per trailing 30 days before adoption effects.
-
-Anonymous-vs-identified check: all events had a `person_id` in HogQL, but the
-event-level profile-processing property showed renderer exceptions as the
-remaining identified-risk path: 16,534 of 16,563 `$exception` events carried
-`$process_person_profile=true`, while only 29 carried `false`. Renderer
-captures now force `$process_person_profile=false` on the event properties, and
-Web Vitals capture is disabled because the 7,017 `$web_vitals` events in the
-window were diagnostic noise rather than activation, feature usage, or
-crash/error signal.
-
-## Install ID
-
-On first run, a random install identifier is generated and stored at
-`~/.ao/data/telemetry_install_id` (or `$AO_DATA_DIR/telemetry_install_id`). The
-renderer and daemon both use this ID as the PostHog distinct ID so activity is
-deduplicated across app launches and CLI invocations. It is not linked to any
-personal account. In the renderer it is also the PostHog device ID, and the SDK
-is explicitly kept in anonymous mode.
-
-## Configuration
-
-Renderer PostHog key and host are baked in at build time. To point a build at
-another PostHog project, set these environment variables before building:
+The desktop General Settings page includes an **Event reporting** control for
+the staged agent-switch reliability path. The environment-variable controls
+below continue to govern the existing desktop/daemon product-telemetry paths.
+Set all three variables in the environment used to launch AO:
 
 ```bash
-VITE_AO_POSTHOG_KEY=phc_yourkey
-VITE_AO_POSTHOG_HOST=https://your-posthog-host.com
+export AO_TELEMETRY_RENDERER=off
+export AO_TELEMETRY_EVENTS=off
+export AO_TELEMETRY_REMOTE=off
 ```
 
-Daemon event capture is off by default when the daemon is launched directly. The
-Electron supervisor starts the daemon with these defaults unless the environment
-already provides explicit values:
+Then restart AO. `AO_TELEMETRY_RENDERER=off` disables events sent directly by
+the desktop interface. `AO_TELEMETRY_EVENTS=off` disables daemon event capture,
+including its local copy. `AO_TELEMETRY_REMOTE=off` explicitly disables daemon
+export to PostHog.
 
-```bash
-AO_TELEMETRY_EVENTS=on
-AO_TELEMETRY_REMOTE=posthog
-AO_TELEMETRY_POSTHOG_KEY=phc_yourkey
-AO_TELEMETRY_POSTHOG_HOST=https://us.i.posthog.com
-```
+The values must reach the desktop app process itself. For example, variables in
+a shell startup file may not be inherited when you launch AO from the macOS
+Finder or Dock.
 
-Local daemon telemetry is retained in SQLite for 30 days.
+If you run the daemon without the desktop app, event capture and remote export
+are already off unless you enable them.
 
-## PostHog Retention And Geography Dashboard
+These environment variables do not control the mobile app. The current
+production mobile app does not provide an in-app telemetry opt-out. Turning
+desktop or daemon product telemetry off stops new collection there; it does not
+delete events already sent to PostHog, remove the local installation identifier,
+or delete existing local product-telemetry records. Automatic deletion of those
+local records older than 30 days resumes if daemon event capture is enabled
+again. The separate Event reporting opt-out follows the purge sequence above:
+it deletes agent-switch outbox payloads but retains the durable switch/failure
+state required for product recovery and payload-free deduplication receipts.
 
-Use `ao.v2.app.active` as the current active-user event for DAU, weekly
-retention, and country-level active-user maps. During migration, union it with
-legacy `ao.app.active` where `channel=renderer` or where `channel=cli` and
-`actor_type=user`. AO emits active-user telemetry from:
+## Questions or corrections
 
-- `channel=renderer` when the desktop app initializes and at most once per UTC
-  six-hour slot while the app stays open
-- `channel=cli` when the CLI reports a meaningful user-typed command
-  invocation to the local daemon, at most once per UTC six-hour slot per install
-
-Recommended PostHog setup:
-
-1. Enable PostHog GeoIP enrichment for the project.
-2. Create an "AO Active Users" dashboard.
-3. Add a Trends insight:
-   - Event: `ao.v2.app.active`
-   - Aggregation: unique users
-   - Chart type: world map
-   - Breakdown: GeoIP country code, for example `$geoip_country_code`
-4. Add a Retention insight:
-   - Start event: `ao.v2.app.active`
-   - Return event: `ao.v2.app.active`
-   - Interval: weekly
-   - Range: last 12 weeks
-5. Add optional filters or breakdowns for `channel=renderer` and `channel=cli`
-   when comparing desktop app and CLI activity.
-
-PostHog references:
-
-- GeoIP enrichment: https://posthog.com/docs/cdp/geoip-enrichment
-- Trends insights: https://posthog.com/docs/product-analytics/trends
-- Retention insights: https://posthog.com/docs/product-analytics/retention
+For the broader data policy, retention information, and contact options, see
+the [AO privacy policy](https://aoagents.dev/privacy). You can report a problem
+with this documentation in the
+[GitHub repository](https://github.com/Untrivial-ai/agent-orchestrator).

@@ -76,24 +76,36 @@ func buildSystemPromptText(cfg systemPromptConfig) string {
 			sections = append(sections, "## Project-Specific Orchestrator Rules\n"+rules)
 		}
 	case sessionPromptRoleWorker:
-		sections = append(sections, workerSystemPrompt(cfg.Project))
-		if orchestratorID := strings.TrimSpace(cfg.OrchestratorSessionID); orchestratorID != "" {
+		orchestratorID := strings.TrimSpace(cfg.OrchestratorSessionID)
+		sections = append(sections, workerSystemPrompt(cfg.Project, orchestratorID != ""))
+		if orchestratorID != "" {
 			sections = append(sections, workerOrchestratorPrompt(orchestratorID))
 		}
-		sections = append(sections, workerMultiPRPrompt())
+		sections = append(sections, workerMultiPRPrompt(), workerContainerLabelPrompt())
 		if rules := strings.TrimSpace(cfg.ProjectRules); rules != "" {
 			sections = append(sections, "## Project Rules\n"+rules)
 		}
 	default:
 		return ""
 	}
-	sections = append(sections, systemPromptGuard())
+	sections = append(sections, publishingScopePrompt(), systemPromptGuard())
 	for _, section := range cfg.AdditionalSections {
 		if section := strings.TrimSpace(section); section != "" {
 			sections = append(sections, section)
 		}
 	}
 	return strings.Join(sections, "\n\n")
+}
+
+// publishingScopePrompt clarifies authority without replacing the established
+// issue-to-PR, opt-in intake, or PR maintenance workflows.
+func publishingScopePrompt() string {
+	return `## Publishing Scope
+
+- Keep the task-source workflows above for provider-backed issues, explicitly enabled issue intake, and user-requested PR/MR continuation. Do not request fresh approval for each push or PR/MR update within an already authorized workflow.
+- For freeform work, publish only when the user requests it or explicitly configured project rules require it. Available credentials, a configured remote, auto/bypass tool permissions, or an associated PR/MR alone do not authorize publishing.
+- Explicit user restrictions such as local-only, review-only, or do-not-publish take precedence over workflow defaults, including issue-task prompts and CI/review follow-up instructions. Complete the permitted local work and report the result without publishing.
+- Preserve the user's publishing scope and restrictions when spawning or redirecting workers. Do not add publishing to a freeform implementation task unless the user or explicitly configured project rules authorize it.`
 }
 
 // systemPromptGuard is appended to every agent system prompt. The role,
@@ -174,7 +186,9 @@ Your job is to coordinate work, not to perform implementation. Keep the project 
 - If the human explicitly insists that the orchestrator itself make code changes, ask for explicit confirmation before making any code changes, and prefer spawning or redirecting a worker unless the human explicitly confirms direct orchestrator edits are required.
 - Delegate implementation, fixes, tests, and PR ownership to worker sessions.
 - Before spawning new work, inspect current state so you do not duplicate active sessions.
-- For complex planning, research, or large coordination tasks, write a short plan first. If your agent runtime has native subagent or task-delegation support, use it for independent analysis or planning work when that helps keep your context window clean.
+- For complex planning, research, or large coordination tasks, write a short plan first.
+- Do not use the agent runtime's built-in subagent or task-delegation tools for implementation work.
+- You may coordinate multiple workers, but AO workers only. If parallel help is needed, spawn or redirect additional AO worker sessions.
 - If a worker is stuck, clarify the task with `+"`ao send`"+`, or spawn/redirect another worker when appropriate.
 - Never claim a PR into the orchestrator session. If a PR needs continuation, assign or spawn a worker.
 - Use `+"`ao send`"+` for session communication. Do not bypass AO by writing directly to tmux, PTY, pipes, or runtime internals.
@@ -189,8 +203,10 @@ Your job is to coordinate work, not to perform implementation. Keep the project 
 - `+"`--name`"+` is required: a deliberate sidebar label so the user can see what each worker is working on at a glance; labels must be 20 characters or fewer.
 - Before running `+"`ao spawn`"+`, count the `+"`--name`"+` label yourself. It must be 20 characters or fewer. If your first label is longer, shorten it before executing the command.
 - Add `+"`--agent <name>`"+` when a worker must use a specific agent.
+- Add `+"`--model <id>`"+` when the human or task explicitly requests a specific model.
+- Never drop an explicitly requested `+"`--model`"+` or substitute another model automatically. If `+"`ao spawn --model ...`"+` fails because the model is unsupported, report the error and ask the human to choose an alternative; model access, credits, and cost may differ.
 - `+"`ao send --session <session-id> --message \"<message>\"`"+` - message a worker.
-- `+"`ao session claim-pr <session-id> <pr-ref>`"+` - attach an existing PR to a worker session.
+- `+"`ao session claim-pr <worker-session-id> <pr-ref>`"+` - attach an existing PR to a worker session. Orchestrators must pass the target worker session explicitly; never rely on the orchestrator's own `+"`AO_SESSION_ID`"+`.
 - `+"`ao session kill <session-id>`"+` - terminate a session when appropriate.
 
 ## Coordination Workflow
@@ -212,13 +228,13 @@ Your job is to coordinate work, not to perform implementation. Keep the project 
 %s`, projectName(project), project.ID, project.ID, project.ID, projectContextSection(project))
 }
 
-func workerSystemPrompt(project promptProject) string {
+func workerSystemPrompt(project promptProject, hasOrchestrator bool) string {
 	taskSourceRules := `## Task Source and PR/MR Behavior
 
 - Treat the explicit task description, provider issue context, or claimed PR/MR context as the source of truth for this session.
 - If the task is backed by a provider issue from GitHub, GitLab, or another tracker/SCM, implement the task, run verification, and create or update a PR/MR when the project has a configured remote/provider and the change is ready. Link the provider issue in the PR/MR body.
-- If the task is a freeform task, new-task button task, or orchestrator-requested feature without a provider issue, implement and verify the task; do not invent issue, PR, or MR requirements. Create or update a PR/MR only when the user asks, the project workflow clearly requires it, or an associated PR/MR already exists.
-- If the task is to claim or continue an existing PR/MR, claim or attach that PR/MR first, inspect its description, diff, CI, and review comments, keep that PR/MR context, and continue only the work required by that PR/MR. Do not create a replacement PR/MR unless explicitly asked.
+- If the task is a freeform task, new-task button task, or orchestrator-requested feature without a provider issue, implement and verify the task; do not invent issue, PR, or MR requirements. Create or update a PR/MR only when the user asks for that action or explicitly configured project rules require it. An associated PR/MR alone does not authorize publishing; a user request to continue that PR/MR does authorize its normal follow-up workflow.
+- If the task is to claim or continue an existing PR/MR, attach it to this worker first with ` + "`ao session claim-pr <pr-ref>`" + `; AO resolves this session from ` + "`AO_SESSION_ID`" + `. Then inspect its description, diff, CI, and review comments, keep that PR/MR context, and continue only the work required by that PR/MR. Do not create a replacement PR/MR unless explicitly asked.
 - If no remote or SCM provider is available, work locally, verify the result, and report changed files, tests, and risks instead of inventing issue, PR, or MR requirements.`
 
 	repoRules := `## Git and PR/MR Rules
@@ -238,6 +254,10 @@ func workerSystemPrompt(project promptProject) string {
 - Do not invent issue, PR, or MR requirements when no remote or SCM provider is available.
 - Clearly report what changed, what was verified, and any remaining risks.`
 	}
+	parallelHelpRules := "- If parallel help is needed for CI or review follow-up and an orchestrator is attached to this project, ask it to spawn additional AO worker sessions instead of delegating inside the runtime.\n- If no orchestrator is attached, continue serially and report the need for additional AO workers to the human."
+	if hasOrchestrator {
+		parallelHelpRules = "- If parallel help is needed for CI or review follow-up, ask the orchestrator to spawn additional AO worker sessions instead of using the agent runtime's built-in subagent or task-delegation tools."
+	}
 	return fmt.Sprintf(`## AO Worker Role
 
 You are an implementation worker for an Agent Orchestrator session.
@@ -248,7 +268,7 @@ Your job is to complete the assigned task in this workspace. Inspect the relevan
 
 - Focus on the assigned task only.
 - Do not take unrelated work or perform broad refactors.
-- If you are continuing an existing PR, claim or attach it through AO before changing it when the workflow supports that.
+- If you are continuing an existing PR, claim or attach it through AO before changing it when the workflow supports that. From this worker, use `+"`ao session claim-pr <pr-ref>`"+`; `+"`AO_SESSION_ID`"+` selects this session automatically.
 - If CI fails, fix the failures and push again.
 - If review comments arrive, address each one, push fixes, and report progress.
 - If you cannot proceed without a decision, ask for that decision instead of guessing.
@@ -259,12 +279,13 @@ Your job is to complete the assigned task in this workspace. Inspect the relevan
 
 - When you address PR/MR review comments, address each relevant thread, push the fix, and mark every thread you fixed as resolved when the platform supports it.
 - If this session owns multiple PRs/MRs with CI failures or review comments, inspect all actionable items first, decide the order based on blockers, stack order, failing scope, and user priority, then work through them in that order.
-- If your agent runtime has native subagent or task-delegation support, use it for independent CI or review-fix tasks when that is likely to reduce turnaround time. Coordinate the subagents, review their results, and make sure the final branch state is coherent.
+- Do not use the agent runtime's built-in subagent or task-delegation tools. Complete the assigned task in this AO session only.
+- %s
 - For complex tasks, write a short implementation plan before editing. Keep the plan focused, then implement and update the plan if the work changes materially.
 
 %s
 
-%s`, taskSourceRules, repoRules, projectContextSection(project))
+%s`, taskSourceRules, parallelHelpRules, repoRules, projectContextSection(project))
 }
 
 func workerOrchestratorPrompt(orchestratorID string) string {
@@ -289,6 +310,20 @@ AO attributes PRs to this session when the source branch is this session branch 
 - To stack a PR on top of another, create the child branch from the parent branch and name it ` + "`<parent-branch>/<topic>`" + `, then target the parent branch in the PR.
 
 Keep branch names inside this session namespace so AO can track every PR you open.`
+}
+
+// workerContainerLabelPrompt tells a worker how to make any Docker containers
+// it starts reapable by AO on session end (#2652). AO does not run docker
+// itself -- this is the only place the ao.session/ao.spare convention reaches
+// an agent.
+func workerContainerLabelPrompt() string {
+	return `## Docker Containers Started By This Session
+
+If this task starts its own Docker containers (a local database, a queue, any ad-hoc service), label every one so AO can find and remove it when this session ends:
+
+- Add ` + "`" + `--label ao.session=$AO_SESSION_ID` + "`" + ` to every ` + "`" + `docker run` + "`" + `. AO force-removes containers carrying this label when the session is killed or otherwise terminates.
+- If a container is deliberately shared substrate that must outlive this session (a shared postgres, a registry), also add ` + "`" + `--label ao.spare=true` + "`" + ` -- AO never reaps a spared container.
+- Without the ` + "`" + `ao.session` + "`" + ` label, a container you start is not tracked and will not be cleaned up automatically.`
 }
 
 func projectContextSection(project promptProject) string {

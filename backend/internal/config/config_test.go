@@ -10,7 +10,7 @@ import (
 func TestLoadDefaults(t *testing.T) {
 	// Clear every recognised var so we observe pure defaults regardless of the
 	// surrounding environment.
-	for _, k := range []string{"AO_PORT", "AO_REQUEST_TIMEOUT", "AO_SHUTDOWN_TIMEOUT", "AO_RUN_FILE", "AO_DATA_DIR", "AO_AGENT", "AO_ALLOWED_ORIGINS", "AO_TELEMETRY_EVENTS", "AO_TELEMETRY_METRICS", "AO_TELEMETRY_REMOTE", "AO_TELEMETRY_POSTHOG_KEY", "AO_TELEMETRY_POSTHOG_HOST"} {
+	for _, k := range []string{"AO_PORT", "AO_REQUEST_TIMEOUT", "AO_SHUTDOWN_TIMEOUT", "AO_RUN_FILE", "AO_DATA_DIR", "AO_AGENT", "AO_ALLOWED_ORIGINS", "AO_TELEMETRY_EVENTS", "AO_TELEMETRY_METRICS", "AO_TELEMETRY_REMOTE", "AO_TELEMETRY_POSTHOG_KEY", "AO_TELEMETRY_POSTHOG_HOST", "AO_TELEMETRY_DISABLED_EVENTS", "AO_TELEMETRY_APP_VERSION"} {
 		t.Setenv(k, "")
 	}
 
@@ -48,8 +48,14 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.DataDir != wantDataDir {
 		t.Errorf("DataDir = %q, want %q", cfg.DataDir, wantDataDir)
 	}
+	if wantStateDir := filepath.Join(homeDir, ".ao"); cfg.StateDir != wantStateDir {
+		t.Errorf("StateDir = %q, want %q", cfg.StateDir, wantStateDir)
+	}
 	if cfg.Telemetry.Remote != TelemetryRemoteOff || cfg.Telemetry.PostHogHost != DefaultTelemetryPostHogHost {
 		t.Fatalf("Telemetry defaults = %+v", cfg.Telemetry)
+	}
+	if cfg.Telemetry.EventsExplicit {
+		t.Fatal("Telemetry.EventsExplicit = true for an absent setting")
 	}
 }
 
@@ -77,17 +83,24 @@ func TestLoadAbsolutizesRelativeOverrides(t *testing.T) {
 	if want := filepath.Join(cwd, "rel-data"); cfg.DataDir != want {
 		t.Errorf("DataDir = %q, want %q", cfg.DataDir, want)
 	}
+	if cfg.StateDir != cfg.DataDir {
+		t.Errorf("StateDir = %q, want explicit DataDir %q", cfg.StateDir, cfg.DataDir)
+	}
 	if want := filepath.Join(cwd, "rel-running.json"); cfg.RunFilePath != want {
 		t.Errorf("RunFilePath = %q, want %q", cfg.RunFilePath, want)
 	}
 }
 
 func TestLoadOverrides(t *testing.T) {
+	overrideDir := t.TempDir()
+	runFilePath := filepath.Join(overrideDir, "ao-test-running.json")
+	dataDir := filepath.Join(overrideDir, "ao-test-data")
+
 	t.Setenv("AO_PORT", "4002")
 	t.Setenv("AO_REQUEST_TIMEOUT", "5s")
 	t.Setenv("AO_SHUTDOWN_TIMEOUT", "3s")
-	t.Setenv("AO_RUN_FILE", "/tmp/ao-test-running.json")
-	t.Setenv("AO_DATA_DIR", "/tmp/ao-test-data")
+	t.Setenv("AO_RUN_FILE", runFilePath)
+	t.Setenv("AO_DATA_DIR", dataDir)
 	t.Setenv("AO_TELEMETRY_EVENTS", "on")
 	t.Setenv("AO_TELEMETRY_METRICS", "off")
 	t.Setenv("AO_TELEMETRY_REMOTE", "posthog")
@@ -107,14 +120,20 @@ func TestLoadOverrides(t *testing.T) {
 	if cfg.ShutdownTimeout != 3*time.Second {
 		t.Errorf("ShutdownTimeout = %s, want 3s", cfg.ShutdownTimeout)
 	}
-	if cfg.RunFilePath != "/tmp/ao-test-running.json" {
-		t.Errorf("RunFilePath = %q, want /tmp/ao-test-running.json", cfg.RunFilePath)
+	if cfg.RunFilePath != runFilePath {
+		t.Errorf("RunFilePath = %q, want %q", cfg.RunFilePath, runFilePath)
 	}
-	if cfg.DataDir != "/tmp/ao-test-data" {
-		t.Errorf("DataDir = %q, want /tmp/ao-test-data", cfg.DataDir)
+	if cfg.DataDir != dataDir {
+		t.Errorf("DataDir = %q, want %q", cfg.DataDir, dataDir)
+	}
+	if cfg.StateDir != dataDir {
+		t.Errorf("StateDir = %q, want explicit DataDir %q", cfg.StateDir, dataDir)
 	}
 	if !cfg.Telemetry.Events || cfg.Telemetry.Metrics {
 		t.Fatalf("Telemetry toggles = %+v", cfg.Telemetry)
+	}
+	if !cfg.Telemetry.EventsExplicit {
+		t.Fatal("Telemetry.EventsExplicit = false for AO_TELEMETRY_EVENTS=on")
 	}
 	if cfg.Telemetry.Remote != TelemetryRemotePostHog || cfg.Telemetry.PostHogKey != "phc_test" || cfg.Telemetry.PostHogHost != "https://eu.i.posthog.com" {
 		t.Fatalf("Telemetry remote = %+v", cfg.Telemetry)
@@ -186,4 +205,269 @@ func TestLoadAllowedOrigins(t *testing.T) {
 			}
 		}
 	})
+}
+
+// The kill switch and the supervisor-supplied version are user-visible
+// boundaries: the daemon reads them from the environment the desktop app hands
+// it, so a parsing regression here silently disables the switch.
+func TestLoadTelemetryDisabledEventsAndAppVersion(t *testing.T) {
+	t.Setenv("AO_TELEMETRY_DISABLED_EVENTS", " ao.v2.app.active , ao.renderer.* ,, ")
+	t.Setenv("AO_TELEMETRY_APP_VERSION", "  0.11.2  ")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	want := []string{"ao.v2.app.active", "ao.renderer.*"}
+	if len(cfg.Telemetry.DisabledEvents) != len(want) {
+		t.Fatalf("DisabledEvents = %#v, want %#v", cfg.Telemetry.DisabledEvents, want)
+	}
+	for i, name := range want {
+		if cfg.Telemetry.DisabledEvents[i] != name {
+			t.Fatalf("DisabledEvents[%d] = %q, want %q", i, cfg.Telemetry.DisabledEvents[i], name)
+		}
+	}
+	if cfg.Telemetry.AppVersion != "0.11.2" {
+		t.Fatalf("AppVersion = %q, want trimmed 0.11.2", cfg.Telemetry.AppVersion)
+	}
+}
+
+// An unparseable or blank list must never stop the daemon booting: the switch
+// has to be usable in a hurry, so a bad entry is inert rather than fatal.
+func TestLoadTelemetryDisabledEventsBlankIsInert(t *testing.T) {
+	t.Setenv("AO_TELEMETRY_DISABLED_EVENTS", " , , ")
+	t.Setenv("AO_TELEMETRY_APP_VERSION", "")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(cfg.Telemetry.DisabledEvents) != 0 {
+		t.Fatalf("DisabledEvents = %#v, want empty", cfg.Telemetry.DisabledEvents)
+	}
+	if cfg.Telemetry.AppVersion != "" {
+		t.Fatalf("AppVersion = %q, want empty", cfg.Telemetry.AppVersion)
+	}
+}
+
+func TestLoadOfferingDefaults(t *testing.T) {
+	// Clear the offering vars so we observe pure defaults: no client identity,
+	// cloud off, local on.
+	for _, k := range []string{"AO_CLIENT", "AO_CLOUD_OFFERING", "AO_LOCAL_OFFERING", "AO_CLOUD_CONTROL_PLANE_URL"} {
+		t.Setenv(k, "")
+	}
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Client != "" {
+		t.Errorf("Client = %q, want empty", cfg.Client)
+	}
+	if cfg.CloudOffering {
+		t.Error("CloudOffering = true, want false by default")
+	}
+	if !cfg.LocalOffering {
+		t.Error("LocalOffering = false, want true by default")
+	}
+	if cfg.CloudControlPlaneURL != "https://staging-api.aoagents.dev" {
+		t.Errorf("CloudControlPlaneURL = %q, want the baked default", cfg.CloudControlPlaneURL)
+	}
+}
+
+func TestLoadOfferingOverrides(t *testing.T) {
+	t.Setenv("AO_CLIENT", "  eleven_x  ")
+	t.Setenv("AO_CLOUD_OFFERING", "true")
+	t.Setenv("AO_LOCAL_OFFERING", "false")
+	t.Setenv("AO_CLOUD_CONTROL_PLANE_URL", " https://cp.example.com ")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Client != "eleven_x" {
+		t.Errorf("Client = %q, want trimmed eleven_x", cfg.Client)
+	}
+	if !cfg.CloudOffering {
+		t.Error("CloudOffering = false, want true")
+	}
+	if cfg.LocalOffering {
+		t.Error("LocalOffering = true, want explicit false to stick")
+	}
+	if cfg.CloudControlPlaneURL != "https://cp.example.com" {
+		t.Errorf("CloudControlPlaneURL = %q, want trimmed https://cp.example.com", cfg.CloudControlPlaneURL)
+	}
+}
+
+// The offering toggles must accept the numeric spellings the supervisor may
+// hand down: 1 switches cloud on, 0 is the only way local goes off.
+func TestLoadOfferingNumericToggles(t *testing.T) {
+	t.Setenv("AO_CLOUD_OFFERING", "1")
+	t.Setenv("AO_LOCAL_OFFERING", "0")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !cfg.CloudOffering {
+		t.Error("CloudOffering = false, want true for AO_CLOUD_OFFERING=1")
+	}
+	if cfg.LocalOffering {
+		t.Error("LocalOffering = true, want false for AO_LOCAL_OFFERING=0")
+	}
+}
+
+func TestLoadOfferingInvalid(t *testing.T) {
+	tests := []struct {
+		name string
+		env  map[string]string
+	}{
+		{"bad cloud offering toggle", map[string]string{"AO_CLOUD_OFFERING": "maybe"}},
+		{"bad local offering toggle", map[string]string{"AO_LOCAL_OFFERING": "maybe"}},
+		{"control plane without scheme", map[string]string{"AO_CLOUD_CONTROL_PLANE_URL": "cp.example.com"}},
+		{"control plane non-http scheme", map[string]string{"AO_CLOUD_CONTROL_PLANE_URL": "ftp://cp.example.com"}},
+		{"control plane without host", map[string]string{"AO_CLOUD_CONTROL_PLANE_URL": "https://"}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			for k, v := range tc.env {
+				t.Setenv(k, v)
+			}
+			if _, err := Load(); err == nil {
+				t.Fatal("Load() = nil error, want error")
+			}
+		})
+	}
+}
+
+func TestLoadGitLabDefaults(t *testing.T) {
+	// Clear the GitLab config vars so we observe pure defaults.
+	for _, k := range []string{"AO_GITLAB_ALLOWED_HOSTS", "AO_GITLAB_HOST_TOKENS"} {
+		t.Setenv(k, "")
+	}
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.GitLab.AllowedHosts != nil {
+		t.Errorf("GitLab.AllowedHosts = %v, want nil", cfg.GitLab.AllowedHosts)
+	}
+	if cfg.GitLab.HostTokens != nil {
+		t.Errorf("GitLab.HostTokens = %v, want nil", cfg.GitLab.HostTokens)
+	}
+}
+
+func TestLoadGitLabAllowedHosts(t *testing.T) {
+	tests := []struct {
+		name string
+		env  string
+		want []string
+	}{
+		{"single host", "gitlab.mycompany.com", []string{"gitlab.mycompany.com"}},
+		{"comma-separated", "gitlab.mycompany.com,gitlab.internal.corp", []string{"gitlab.mycompany.com", "gitlab.internal.corp"}},
+		{"trimmed whitespace", " gitlab.mycompany.com , gitlab.internal.corp ", []string{"gitlab.mycompany.com", "gitlab.internal.corp"}},
+		{"empty entries skipped", "gitlab.mycompany.com,,gitlab.internal.corp,", []string{"gitlab.mycompany.com", "gitlab.internal.corp"}},
+		{"with port", "gitlab.internal:8443", []string{"gitlab.internal:8443"}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("AO_GITLAB_ALLOWED_HOSTS", tc.env)
+			cfg, err := Load()
+			if err != nil {
+				t.Fatalf("Load: %v", err)
+			}
+			if len(cfg.GitLab.AllowedHosts) != len(tc.want) {
+				t.Fatalf("AllowedHosts = %v, want %v", cfg.GitLab.AllowedHosts, tc.want)
+			}
+			for i, h := range tc.want {
+				if cfg.GitLab.AllowedHosts[i] != h {
+					t.Errorf("AllowedHosts[%d] = %q, want %q", i, cfg.GitLab.AllowedHosts[i], h)
+				}
+			}
+		})
+	}
+}
+
+func TestLoadGitLabHostTokens(t *testing.T) {
+	tests := []struct {
+		name string
+		env  string
+		want map[string]string
+	}{
+		{
+			name: "single host=token",
+			env:  "gitlab.mycompany.com=token-1",
+			want: map[string]string{"gitlab.mycompany.com": "token-1"},
+		},
+		{
+			name: "multiple host=token pairs",
+			env:  "gitlab.mycompany.com=token-1,gitlab.internal.corp=token-2",
+			want: map[string]string{
+				"gitlab.mycompany.com": "token-1",
+				"gitlab.internal.corp": "token-2",
+			},
+		},
+		{
+			name: "trimmed whitespace around entries",
+			env:  " gitlab.mycompany.com = token-1 , gitlab.internal.corp = token-2 ",
+			want: map[string]string{
+				"gitlab.mycompany.com": "token-1",
+				"gitlab.internal.corp": "token-2",
+			},
+		},
+		{
+			name: "host with port",
+			env:  "gitlab.internal:8443=token-port",
+			want: map[string]string{"gitlab.internal:8443": "token-port"},
+		},
+		{
+			name: "empty entries skipped",
+			env:  "gitlab.mycompany.com=token-1,,",
+			want: map[string]string{"gitlab.mycompany.com": "token-1"},
+		},
+		{
+			name: "entry without equals skipped",
+			env:  "gitlab.mycompany.com=token-1,not-a-pair",
+			want: map[string]string{"gitlab.mycompany.com": "token-1"},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("AO_GITLAB_HOST_TOKENS", tc.env)
+			cfg, err := Load()
+			if err != nil {
+				t.Fatalf("Load: %v", err)
+			}
+			if len(cfg.GitLab.HostTokens) != len(tc.want) {
+				t.Fatalf("HostTokens = %v, want %v", cfg.GitLab.HostTokens, tc.want)
+			}
+			for k, v := range tc.want {
+				got, ok := cfg.GitLab.HostTokens[k]
+				if !ok {
+					t.Errorf("HostTokens missing key %q", k)
+					continue
+				}
+				if got != v {
+					t.Errorf("HostTokens[%q] = %q, want %q", k, got, v)
+				}
+			}
+		})
+	}
+}
+
+func TestLoadGitLabInvalidHostTokens(t *testing.T) {
+	tests := []struct {
+		name string
+		env  string
+	}{
+		{"token contains equals", "gitlab.mycompany.com=token=with=equals"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("AO_GITLAB_HOST_TOKENS", tc.env)
+			_, err := Load()
+			if err == nil {
+				t.Fatal("Load() = nil error, want error for malformed AO_GITLAB_HOST_TOKENS")
+			}
+		})
+	}
 }

@@ -1,37 +1,26 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
+import { sidebarIsVisible, sidebarOccupiesLayout, useUiStore } from "./ui-store";
 
-// developerMode initializes from localStorage at module load, so each case resets
-// modules and re-imports to exercise the real initialization path.
-describe("ui-store developerMode persistence", () => {
+describe("sidebar visibility", () => {
 	beforeEach(() => {
 		window.localStorage.clear();
-		vi.resetModules();
+		useUiStore.setState({ isSidebarOpen: true });
 	});
 
-	it("defaults to off when nothing is stored", async () => {
-		const { useUiStore } = await import("./ui-store");
-		expect(useUiStore.getState().developerMode).toBe(false);
-	});
+	it("changes only through the explicit toggle and persists the preference", () => {
+		useUiStore.getState().toggleSidebar();
 
-	it("restores an enabled flag from stored ao.developerMode=true", async () => {
-		window.localStorage.setItem("ao.developerMode", "true");
-		const { useUiStore } = await import("./ui-store");
-		expect(useUiStore.getState().developerMode).toBe(true);
-	});
+		let state = useUiStore.getState();
+		expect(state.isSidebarOpen).toBe(false);
+		expect(sidebarIsVisible(state)).toBe(false);
+		expect(sidebarOccupiesLayout(state)).toBe(false);
+		expect(window.localStorage.getItem("ao.sidebar.open")).toBe("false");
 
-	it('treats any non-"true" stored value as off', async () => {
-		window.localStorage.setItem("ao.developerMode", "1");
-		const { useUiStore } = await import("./ui-store");
-		expect(useUiStore.getState().developerMode).toBe(false);
-	});
-
-	it("setDeveloperMode writes localStorage and updates state", async () => {
-		const { useUiStore } = await import("./ui-store");
-		useUiStore.getState().setDeveloperMode(true);
-		expect(useUiStore.getState().developerMode).toBe(true);
-		expect(window.localStorage.getItem("ao.developerMode")).toBe("true");
-		useUiStore.getState().setDeveloperMode(false);
-		expect(useUiStore.getState().developerMode).toBe(false);
-		expect(window.localStorage.getItem("ao.developerMode")).toBe("false");
+		useUiStore.getState().toggleSidebar();
+		state = useUiStore.getState();
+		expect(state.isSidebarOpen).toBe(true);
+		expect(sidebarIsVisible(state)).toBe(true);
+		expect(sidebarOccupiesLayout(state)).toBe(true);
+		expect(window.localStorage.getItem("ao.sidebar.open")).toBe("true");
 	});
 });

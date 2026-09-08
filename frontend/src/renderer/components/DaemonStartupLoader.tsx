@@ -1,31 +1,40 @@
 import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import aoLogo from "../../../assets/ao-logo.svg";
+import { useSystemRequirementsGate } from "../hooks/useSystemRequirementsGate";
+import { InstallDependencyDialog } from "./InstallDependencyDialog";
 
-const STARTUP_PHRASES = [
-	"Starting local services",
-	"Connecting to the daemon",
-	"Loading workspaces",
-	"Preparing your board",
+const STARTUP_PHRASE_KEYS = [
+	"startup.startingServices",
+	"startup.connectingDaemon",
+	"startup.loadingWorkspaces",
+	"startup.preparingBoard",
 ] as const;
 
 const PHRASE_INTERVAL_MS = 2_200;
 
 export function DaemonStartupLoader() {
+	const { t } = useTranslation();
 	const [phraseIndex, setPhraseIndex] = useState(0);
+	const {
+		query: requirementsQuery,
+		requirements,
+		requirementsBlocked,
+	} = useSystemRequirementsGate();
 
 	useEffect(() => {
 		const timer = window.setInterval(() => {
-			setPhraseIndex((current) => (current + 1) % STARTUP_PHRASES.length);
+			setPhraseIndex((current) => (current + 1) % STARTUP_PHRASE_KEYS.length);
 		}, PHRASE_INTERVAL_MS);
 		return () => window.clearInterval(timer);
 	}, []);
 
-	const phrase = STARTUP_PHRASES[phraseIndex];
+	const phrase = t(STARTUP_PHRASE_KEYS[phraseIndex]);
 
 	return (
 		<div
 			aria-busy="true"
-			aria-label="Agent Orchestrator is starting"
+			aria-label={t("startup.aria", { brand: "Agent Orchestrator" })}
 			aria-live="polite"
 			className="ao-startup-screen flex h-full w-full items-center justify-center bg-background text-foreground"
 			data-testid="daemon-startup-loader"
@@ -37,7 +46,7 @@ export function DaemonStartupLoader() {
 				</div>
 				<p className="mt-5 text-base font-semibold tracking-tight text-foreground">Agent Orchestrator</p>
 				<p className="mt-2 min-h-5 text-md-sm text-muted-foreground">
-					<span aria-hidden="true" className="ao-startup-status" key={phrase}>
+					<span aria-hidden="true" className={phraseIndex === 0 ? undefined : "ao-startup-status"} key={phraseIndex}>
 						{phrase}
 					</span>
 				</p>
@@ -47,6 +56,9 @@ export function DaemonStartupLoader() {
 					<span />
 				</div>
 			</div>
+			{requirementsBlocked ? (
+				<InstallDependencyDialog requirements={requirements} onRefetchRequirements={() => requirementsQuery.refetch()} />
+			) : null}
 		</div>
 	);
 }
