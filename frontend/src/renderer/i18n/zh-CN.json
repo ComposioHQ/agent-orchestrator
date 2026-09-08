@@ -328,7 +328,7 @@
 	"createProject.workspaceAgents": "工作区代理",
 	"createProject.workspaceDesc": "位于同一父文件夹下的多个 Git 仓库。",
 	"createProject.workspaceRoot": "工作区根目录",
-	"createProject.workspaceNeedsGitRepo": "导入此工作区前，请至少将一个子文件夹设置为 Git 仓库。",
+	"createProject.workspaceNeedsGitRepo": "此文件夹中没有子 Git 仓库。请添加一个子仓库，或选择其他工作区文件夹。",
 	"createProject.workspaceRootIsProject": "这是单个项目，而不是项目集合。请改为将其作为项目导入。",
 	"daemon.hint.binaryMissing": "请运行 npm run build:daemon 重新构建守护进程。",
 	"daemon.hint.conflict": "请先停止冲突的守护进程，然后重启桌面应用。",

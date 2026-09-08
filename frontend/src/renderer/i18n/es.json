@@ -330,7 +330,7 @@
 	"createProject.workspaceAgents": "Agentes del espacio de trabajo",
 	"createProject.workspaceDesc": "Varios repos Git bajo una carpeta principal.",
 	"createProject.workspaceRoot": "Raíz del espacio de trabajo",
-	"createProject.workspaceNeedsGitRepo": "Configura al menos una carpeta secundaria como repositorio Git antes de importar este espacio de trabajo.",
+	"createProject.workspaceNeedsGitRepo": "No hay repositorios Git secundarios en esta carpeta. Agrega un repositorio secundario o elige otra carpeta de espacio de trabajo.",
 	"createProject.workspaceRootIsProject": "Este es un proyecto individual, no una colección de proyectos. Impórtalo como proyecto.",
 	"daemon.hint.binaryMissing": "Ejecuta npm run build:daemon para recompilar el daemon.",
 	"daemon.hint.conflict": "Detén el daemon en conflicto y reinicia la aplicación de escritorio.",

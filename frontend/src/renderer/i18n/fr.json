@@ -330,7 +330,7 @@
 	"createProject.workspaceAgents": "Agents de l'espace de travail",
 	"createProject.workspaceDesc": "Plusieurs dépôts Git sous un même dossier parent.",
 	"createProject.workspaceRoot": "Racine de l'espace de travail",
-	"createProject.workspaceNeedsGitRepo": "Configurez au moins un dossier enfant comme dépôt Git avant d’importer cet espace de travail.",
+	"createProject.workspaceNeedsGitRepo": "Aucun dépôt Git enfant n’existe dans ce dossier. Ajoutez un dépôt enfant ou choisissez un autre dossier d’espace de travail.",
 	"createProject.workspaceRootIsProject": "Il s’agit d’un seul projet, pas d’une collection de projets. Importez-le plutôt comme projet.",
 	"daemon.hint.binaryMissing": "Exécutez npm run build:daemon pour recompiler le daemon.",
 	"daemon.hint.conflict": "Arrêtez le daemon en conflit, puis redémarrez l'application de bureau.",

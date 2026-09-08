@@ -676,6 +676,60 @@ describe("CreateProjectFlow project import validation", () => {
 		});
 	});
 
+	it("disables workspace import when no child Git repositories exist", async () => {
+		const user = userEvent.setup();
+		bridgeMocks.chooseDirectory.mockResolvedValue("/repo/workspace");
+		bridgeMocks.scanImportFolder.mockResolvedValue({ path: "/repo/workspace", repos: [] });
+		apiMocks.POST.mockResolvedValueOnce({
+			data: {
+				...projectValidation("/repo/workspace", {
+					isValid: false,
+					blockingErrors: ["WORKSPACE_CHILD_REPO_REQUIRED"],
+					nextStep: "error",
+					root: { isRepo: false, hasCommit: false, hasOrigin: false, needsGitInit: true, blockingErrors: ["WORKSPACE_CHILD_REPO_REQUIRED"] },
+				}),
+				importKind: "workspace",
+			},
+		});
+
+		renderChooseFlow();
+		await openSource(user, "Import a workspace folder");
+
+		expect(screen.getByText("No child Git repositories exist in this folder. Add a child repository or choose a different workspace folder.")).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Continue" })).toBeDisabled();
+		expect(screen.getByRole("button", { name: "Go Back" })).toBeInTheDocument();
+		expect(useUiStore.getState().globalToast).toBeNull();
+		expect(screen.getByRole("dialog", { name: "Import workspace" })).not.toHaveClass("modal-shake");
+	});
+
+	it("keeps workspace import disabled when only non-Git child folders exist", async () => {
+		const user = userEvent.setup();
+		bridgeMocks.chooseDirectory.mockResolvedValue("/repo/workspace");
+		bridgeMocks.scanImportFolder.mockResolvedValue({
+			path: "/repo/workspace",
+			repos: [{ name: "empty", path: "/repo/workspace/empty", relativePath: "empty", branch: "", remote: "", hasRemote: false, isRepo: false, hasCommit: false, status: "ok", needsGitInit: true }],
+		});
+		apiMocks.POST.mockResolvedValueOnce({
+			data: {
+				...projectValidation("/repo/workspace", {
+					isValid: false,
+					blockingErrors: ["WORKSPACE_CHILD_REPO_REQUIRED"],
+					nextStep: "error",
+					root: { isRepo: false, hasCommit: false, hasOrigin: false, needsGitInit: true, blockingErrors: ["WORKSPACE_CHILD_REPO_REQUIRED"] },
+					childRepos: [],
+				}),
+				importKind: "workspace",
+			},
+		});
+
+		renderChooseFlow();
+		await openSource(user, "Import a workspace folder");
+
+		expect(screen.getByText("No child Git repositories exist in this folder. Add a child repository or choose a different workspace folder.")).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Continue" })).toBeDisabled();
+		expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
+	});
+
 	it("blocks invalid workspace validation with a toast and modal shake", async () => {
 		const user = userEvent.setup();
 		bridgeMocks.chooseDirectory.mockResolvedValue("/repo/workspace");
