@@ -7,15 +7,18 @@ import { aoBridge } from "../../lib/bridge";
 import { captureRendererEvent } from "../../lib/telemetry";
 import { ANDROID_PLAY_STORE_URL, IOS_APP_STORE_URL } from "./ConnectMobileGetApp";
 import { reasonMessage, type SetupMode } from "./ConnectMobileSetup";
-// Returns with the commented-out connection picker below.
-// import { SettingsOptionMenu, type SettingsOption } from "./SettingsOptionMenu";
 import { StyledQRCode } from "./StyledQRCode";
 import { PairingQr } from "./PairingQr";
+import { scramblePairingCodes } from "./qrScramble";
 import { InstallCloudflared } from "./InstallCloudflared";
 import { Button } from "../ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
+import { cn } from "../../lib/utils";
 
-const QR_CODE_SIZE = 204;
+// Match the panel's full width so the generated code uses the same visual
+// footprint as the preview. The containing panel still scales it down on
+// narrower layouts.
+const QR_CODE_SIZE = 320;
 const STORE_QR_SIZE = 140;
 
 const STORE_LINKS = [
@@ -144,9 +147,9 @@ export function qrIsReady(status: {
  * required. Universal links can be added later without changing the payload. */
 const PAIRING_LINK_BASE = "aomobile://pair";
 
-/** Static junk payload for the blurred placeholder QR — deliberately not a
- *  real pairing payload so a sneaky scan through the blur gets nothing. */
-const PLACEHOLDER_QR_VALUE = "agent-orchestrator";
+/** A decoy with the same payload shape as a real pairing offer. Keeping the
+ * same QR version makes the blurred preview look like the code it becomes. */
+const PLACEHOLDER_QR_VALUE = scramblePairingCodes(1)[0];
 
 function AppleIcon({ className }: { className?: string }) {
 	return (
@@ -215,7 +218,9 @@ export function ConnectMobileContent({ active }: { active: boolean }) {
 	const { t } = useTranslation();
 	const queryClient = useQueryClient();
 	const [copied, setCopied] = useState(false);
+	const [optimisticEnabled, setOptimisticEnabled] = useState<boolean | null>(null);
 	const copiedTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+	const lastQrValueRef = useRef<string | null>(null);
 	// Pinned to "lan" while the connection picker below is commented out.
 	// setMode is still called by the close-reset effect.
 	const [mode, setMode] = useState<SetupMode>("lan");
@@ -247,6 +252,7 @@ export function ConnectMobileContent({ active }: { active: boolean }) {
 		if (!active) {
 			reportedOpen.current = false;
 			setMode("lan");
+			setOptimisticEnabled(null);
 			return;
 		}
 		if (initialEnabled === undefined || reportedOpen.current) return;
@@ -258,6 +264,13 @@ export function ConnectMobileContent({ active }: { active: boolean }) {
 		void queryClient.invalidateQueries({ queryKey: mobileStatusQueryKey });
 	};
 
+	const serverEnabled = query.data?.enabled;
+	useEffect(() => {
+		if (optimisticEnabled !== null && serverEnabled === optimisticEnabled) {
+			setOptimisticEnabled(null);
+		}
+	}, [optimisticEnabled, serverEnabled]);
+
 	const enable = useMutation({
 		mutationFn: async () => {
 			const { data, error } = await apiClient.POST("/api/v1/mobile/enable");
@@ -265,6 +278,7 @@ export function ConnectMobileContent({ active }: { active: boolean }) {
 			return data;
 		},
 		onSuccess: invalidate,
+		onError: () => setOptimisticEnabled(null),
 	});
 
 	const startRemoteAccess = useMutation({
@@ -291,6 +305,7 @@ export function ConnectMobileContent({ active }: { active: boolean }) {
 			if (error) throw new Error(apiErrorMessage(error));
 		},
 		onSuccess: invalidate,
+		onError: () => setOptimisticEnabled(null),
 	});
 
 	const setSecure = useMutation({
@@ -329,7 +344,7 @@ export function ConnectMobileContent({ active }: { active: boolean }) {
 	}, [active, query.data?.tailscaleHost, query.data?.securePairing, setSecure]);
 
 	const status = query.data;
-	const enabled = status?.enabled ?? false;
+	const enabled = optimisticEnabled ?? status?.enabled ?? false;
 	const secureActive = mode === "tailscale" && (status?.securePairing?.active ?? false);
 	const activeHost = secureActive
 		? status!.securePairing.host
@@ -376,6 +391,7 @@ export function ConnectMobileContent({ active }: { active: boolean }) {
 	const startBridge = () => {
 		if (busy || enabled) return;
 		clearActionErrors();
+		setOptimisticEnabled(true);
 		enable.mutate(undefined, {
 			onSuccess: () => reportToggle(true, "succeeded"),
 			onError: () => reportToggle(true, "failed"),
@@ -418,6 +434,12 @@ export function ConnectMobileContent({ active }: { active: boolean }) {
 				endpoints: status?.endpoints ?? [],
 			})
 		: undefined;
+	if (qrValue) lastQrValueRef.current = qrValue;
+	// Keep the preview in place while enable/remote access is still preparing.
+	// Only reveal the generated panel once there is a real, scannable payload.
+	const generatedQrVisible = Boolean(showRealQR && qrValue);
+	const generatedQrValue = generatedQrVisible ? (qrValue ?? null) : lastQrValueRef.current;
+	const shouldRenderGeneratedQr = generatedQrVisible || Boolean(lastQrValueRef.current);
 	const secureReasonText = reasonMessage(status.securePairing?.reason ?? "", t);
 
 	return (
@@ -563,48 +585,63 @@ export function ConnectMobileContent({ active }: { active: boolean }) {
 
 				{/* Right: dedicated pairing-QR panel — square, clipping, flush with
 				    the content's right edge so bottom/right spacing match. */}
-				<div className="flex w-full shrink-0 flex-col gap-3 self-start sm:w-60">
-					{enabled && activeHost ? (
-						// Owns its own square box and puts the caption beneath it: the
-						// caption cannot live inside a clipping aspect-square, which is
-						// what cut it off and pushed it under the button.
-						<PairingQr
-							value={showRealQR ? (qrValue ?? null) : null}
-							size={QR_CODE_SIZE}
-							caption={t("mobile.tunnelStarting")}
-						/>
-					) : (
-						<div className="relative aspect-square w-full overflow-hidden rounded-md">
-							{enabled && !activeHost ? (
-								<div className="flex size-full items-center justify-center bg-(--color-bg-settings-input) p-4">
-									<p className="text-center text-caption leading-(--leading-settings-mobile-hint) text-settings-muted">
-										{mode === "tailscale" ? t("mobile.noTailscaleHost") : t("mobile.noPairingHost")}
-									</p>
-								</div>
-							) : (
-								<>
-									<div className="size-full opacity-60 blur-[6px]" aria-hidden="true">
-										<StyledQRCode
-											value={PLACEHOLDER_QR_VALUE}
-											size={QR_CODE_SIZE}
-											className="block size-full p-4 [&_svg]:size-full"
-										/>
-									</div>
-									<div className="absolute inset-0 flex items-center justify-center">
-										<Button
-											type="button"
-											variant="footer-primary"
-											className="rounded-md shadow-lg"
-											onClick={startBridge}
-											disabled={busy || (enabled && secureBlocked)}
-										>
-											{t("mobile.generate")}
-										</Button>
-									</div>
-								</>
+				<div className="flex w-full shrink-0 flex-col gap-3 self-start sm:w-80">
+					<div className="relative">
+						<div
+							className={cn(
+								"transition-opacity duration-200",
+								generatedQrVisible ? "relative opacity-100" : "pointer-events-none absolute inset-0 opacity-0",
+							)}
+						>
+							{shouldRenderGeneratedQr && (
+								<PairingQr
+									value={generatedQrValue}
+									size={QR_CODE_SIZE}
+									caption={t("mobile.tunnelStarting")}
+								/>
 							)}
 						</div>
-					)}
+						<div
+							className={cn(
+								"transition-opacity duration-200",
+								generatedQrVisible
+									? "pointer-events-none absolute inset-0 opacity-0"
+									: "relative pb-6 opacity-100",
+							)}
+						>
+							<div className="relative aspect-square w-full overflow-hidden rounded-md">
+								{enabled && !activeHost ? (
+									<div className="flex size-full items-center justify-center bg-(--color-bg-settings-input) p-4">
+										<p className="text-center text-caption leading-(--leading-settings-mobile-hint) text-settings-muted">
+											{mode === "tailscale" ? t("mobile.noTailscaleHost") : t("mobile.noPairingHost")}
+										</p>
+									</div>
+								) : (
+									<>
+										{/* The QR stays dark on white so Android can scan it. */}
+										<div className="size-full bg-white opacity-60 blur-[6px]" aria-hidden="true">
+											<StyledQRCode
+												value={PLACEHOLDER_QR_VALUE}
+												size={QR_CODE_SIZE}
+												className="ao-qr-visual block size-full [&_svg]:size-full"
+											/>
+										</div>
+										<div className="absolute inset-0 flex items-center justify-center">
+											<Button
+												type="button"
+												variant="footer-primary"
+												className="rounded-md shadow-lg"
+												onClick={startBridge}
+												disabled={busy || enabled}
+											>
+												{t("mobile.generate")}
+											</Button>
+										</div>
+									</>
+								)}
+							</div>
+						</div>
+					</div>
 					{enabled && (
 						<Button
 							type="button"
@@ -613,6 +650,7 @@ export function ConnectMobileContent({ active }: { active: boolean }) {
 							disabled={busy}
 							onClick={() => {
 								clearActionErrors();
+								setOptimisticEnabled(false);
 								disable.mutate();
 							}}
 						>

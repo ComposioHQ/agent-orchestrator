@@ -118,6 +118,18 @@ async function resolveDefaultBranch(repoPath: string, options: ScanOptions = {})
 	return "auto";
 }
 
+export async function resolveCheckedOutBranch(repoPath: string, options: ScanOptions = {}): Promise<string | undefined> {
+	try {
+		// Git walks up to an ancestor repository for plain nested folders. AO
+		// initializes those workspace roots separately, so do not inherit its branch.
+		if (await gitOutput(repoPath, ["rev-parse", "--show-prefix"], options)) return undefined;
+		const branch = await gitOutput(repoPath, ["symbolic-ref", "--short", "HEAD"], options);
+		return branch || undefined;
+	} catch {
+		return undefined;
+	}
+}
+
 async function scanGitRepo(
 	repoPath: string,
 	rootPath: string,

@@ -45,6 +45,7 @@ import {
 import { isLinuxPlatform, isMacPlatform } from "../../lib/platform";
 import { handleTerminalTabListKeyDown } from "../../lib/terminal-tabs";
 import { agentLabel } from "../../lib/agent-options";
+import type { ApprovalMode } from "../../types/conversation";
 import type { ShellTerminal } from "../../hooks/useShellTerminals";
 import { sidebarOccupiesLayout, useUiStore } from "../../stores/ui-store";
 import type { TerminalTarget } from "../../types/terminal";
@@ -75,7 +76,9 @@ import {
 } from "./ChatTimelineItems";
 import { HumanMessageEditor } from "./HumanMessageEditor";
 import { ChatLinkProvider } from "./ChatMarkdown";
-import { ChatComposer } from "./ChatComposer";
+import { ChatComposer, type StoredComposerAttachment } from "./ChatComposer";
+import { stagedAttachmentParts, attachmentName, attachmentURL, IMAGE_ATTACHMENT_PATH } from "./messageAttachments";
+import type { QueuedMessageEditOptions } from "../../types/conversation";
 import { QueuedMessageDock, type QueuedMessage } from "./QueuedMessageDock";
 import { ActivityRun } from "./ActivityRun";
 import { TurnPlan } from "./TurnPlan";
@@ -136,7 +139,7 @@ function initialTerminalFontSize(): number {
 
 type ReviewerTerminalTarget = Extract<TerminalTarget, { kind: "reviewer" }>;
 type ShellTerminalTarget = Extract<TerminalTarget, { kind: "shell" }>;
-type WorkspaceTab = { key: string; content: ReactNode; onSelect: () => void };
+type WorkspaceTab = { key: string; content: ReactNode; onSelect: () => void; onClose?: () => void };
 type ChatAuxiliaryTab =
 	| { key: string; kind: "reviewer"; terminal: { handleId: string; harness: string } }
 	| { key: string; kind: "shell"; terminal: ShellTerminal }
@@ -275,6 +278,8 @@ export interface ChatWorkspaceProps {
 	models?: ChatModel[];
 	/** The AO session this surface renders for. Used to attach the reviewer pane. */
 	session?: WorkspaceSession;
+	/** Refresh the owning workspace cache after the shared primary tab is renamed. */
+	onSessionRenamed?: () => void | Promise<void>;
 	/** The selected reviewer pane. Kept even while its tab is temporarily unavailable. */
 	reviewerTarget?: ReviewerTerminalTarget;
 	/** Switch the active tab back to the chat timeline. */
@@ -291,6 +296,10 @@ export interface ChatWorkspaceProps {
 	/** Resolved color theme for the reviewer terminal pane. */
 	theme?: "light" | "dark";
 	onChooseSettings?: (settings: TurnSettings) => void;
+	onRememberPermissions?: (mode: ApprovalMode) => Promise<unknown> | void;
+	rememberPermissionsPending?: boolean;
+	rememberPermissionsError?: string;
+	rememberedPermissionMode?: ApprovalMode;
 	/** Live provider-owned options, such as ACP model, effort, mode, and fast mode. */
 	configOptions?: ChatConfigOption[];
 	onChooseConfigOption?: (
@@ -359,7 +368,7 @@ export interface ChatWorkspaceProps {
 	/** Why the last steer was refused, from the daemon's typed answer. */
 	steerRefusal?: string;
 	onPromoteQueuedTurn?: (turnId: string) => Promise<unknown>;
-	onEditQueuedTurn?: (turnId: string, text: string) => Promise<unknown>;
+	onEditQueuedTurn?: (turnId: string, text: string, options?: QueuedMessageEditOptions) => Promise<unknown>;
 	onCancelQueuedTurn?: (turnId: string) => Promise<unknown>;
 	onReorderQueuedTurns?: (turnIds: string[]) => Promise<unknown>;
 	promoteQueuedTurnPendingTurnId?: string;
@@ -389,6 +398,7 @@ export function ChatWorkspace({
 	reviewerTerminal,
 	onOpenReviewerTerminal,
 	session,
+	onSessionRenamed,
 	reviewerTarget,
 	onSelectChat,
 	shellTerminals,
@@ -416,6 +426,10 @@ export function ChatWorkspace({
 	busy,
 	models,
 	onChooseSettings,
+	onRememberPermissions,
+	rememberPermissionsPending,
+	rememberPermissionsError,
+	rememberedPermissionMode,
 	configOptions,
 	onChooseConfigOption,
 	configOptionPending,
@@ -529,6 +543,9 @@ export function ChatWorkspace({
 		});
 		return [...ordered, ...byKey.values()];
 	}, [auxiliaryTabOrder, auxiliaryTabs, snapshot.sessionId, tabOrderBySession]);
+	const activeWorkspaceTab = workspaceActiveTabKey
+		? workspaceTabs?.find((tab) => tab.key === workspaceActiveTabKey)
+		: undefined;
 	const reorderAuxiliaryTabs = useCallback(
 		(nextKeys: string[]) => {
 			const available = new Set(availableTabKeys);
@@ -571,13 +588,9 @@ export function ChatWorkspace({
 	const queuedMessages = useQueuedMessages(snapshot);
 	const stablePromoteQueuedTurn = useStableCallback(onPromoteQueuedTurn);
 	const stableCancelQueuedTurn = useStableCallback(onCancelQueuedTurn);
-	const [queueEdit, setQueueEdit] = useState<{ turnId: string; text: string } | undefined>();
-	useEffect(() => {
-		if (!queueEdit) return;
-		if (!queuedMessages.some((message) => message.turnId === queueEdit.turnId)) {
-			setQueueEdit(undefined);
-		}
-	}, [queueEdit, queuedMessages]);
+	const [queueEdit, setQueueEdit] = useState<{
+		turnId: string; text: string; revision: number; attachments: StoredComposerAttachment[];
+	} | undefined>();
 	const handleCancelQueuedTurn = useCallback(
 		async (turnId: string) => {
 			if (!onCancelQueuedTurn) return;
@@ -587,15 +600,15 @@ export function ChatWorkspace({
 		[stableCancelQueuedTurn],
 	);
 	const handleComposerSend = useCallback(
-		async (text: string, attachments?: Parameters<NonNullable<typeof onSend>>[1]) => {
+		async (text: string, attachments?: Parameters<NonNullable<typeof onSend>>[1], retainedContent?: number[]) => {
 			if (queueEdit) {
-				if (attachments && attachments.length > 0) {
-					throw new Error("Queued message edits cannot include attachments.");
-				}
 				if (!onEditQueuedTurn) {
 					throw new Error("Queued message edits are unavailable right now.");
 				}
-				await onEditQueuedTurn(queueEdit.turnId, text);
+				await onEditQueuedTurn(queueEdit.turnId, text, {
+					...(attachments?.length ? { attachments } : {}),
+					retainedContent, expectedRevision: queueEdit.revision,
+				});
 				setQueueEdit(undefined);
 				return;
 			}
@@ -603,15 +616,30 @@ export function ChatWorkspace({
 		},
 		[onEditQueuedTurn, onSend, queueEdit],
 	);
-	const composerSend = useStableCallback(handleComposerSend);
 	const stableInterrupt = useStableCallback(onInterrupt);
 	const stableSteer = useStableCallback(onSteer);
 	const beginQueuedEdit = useCallback(
 		(turnId: string, text: string) => {
 			if (newWorkDisabled) return;
-			setQueueEdit({ turnId, text });
+			const message = queuedMessages.find((queued) => queued.turnId === turnId)?.message;
+			if (!message) return;
+			const parts = stagedAttachmentParts(text);
+			const content = message.content ?? [];
+			// Paths and native blocks have no shared persisted identity. Keep their
+			// removal independent, even when the image counts happen to match.
+			const attachments: StoredComposerAttachment[] = parts.attachments.map((path) => ({
+				id: path, name: attachmentName(path), path,
+				...(IMAGE_ATTACHMENT_PATH.test(path) ? {
+					dataUrl: attachmentURL(getApiBaseUrl(), snapshot.sessionId, path),
+				} : {}),
+			}));
+			content.forEach((item, index) => {
+				attachments.push({ id: `content-${index}`, contentIndex: index, contentType: item.type,
+					name: item.name || (item.type === "image" ? `Image ${index + 1}` : item.uri || "Attachment") });
+			});
+			setQueueEdit({ turnId, text: parts.body, revision: message.revision, attachments });
 		},
-		[newWorkDisabled],
+		[newWorkDisabled, queuedMessages, snapshot.sessionId],
 	);
 	const cancelQueuedEdit = useCallback(() => setQueueEdit(undefined), []);
 	const promoteQueuedTurn = useCallback(
@@ -783,9 +811,10 @@ export function ChatWorkspace({
 	useEffect(
 		() =>
 			aoBridge.app.onCloseShellTerminalShortcut(() => {
-				if (shellTarget) onCloseShellTerminal?.(shellTarget.handleId);
+				if (activeWorkspaceTab?.onClose) activeWorkspaceTab.onClose();
+				else if (shellTarget) onCloseShellTerminal?.(shellTarget.handleId);
 			}),
-		[onCloseShellTerminal, shellTarget],
+		[activeWorkspaceTab, onCloseShellTerminal, shellTarget],
 	);
 
 	useEffect(() => {
@@ -798,9 +827,11 @@ export function ChatWorkspace({
 	}, [selectAdjacentTab]);
 
 	useEffect(() => {
-		aoBridge.app.setCloseShellTerminalShortcutEnabled(Boolean(shellTarget && onCloseShellTerminal));
+		aoBridge.app.setCloseShellTerminalShortcutEnabled(
+			Boolean(activeWorkspaceTab?.onClose) || Boolean(shellTarget && onCloseShellTerminal),
+		);
 		return () => aoBridge.app.setCloseShellTerminalShortcutEnabled(false);
-	}, [onCloseShellTerminal, shellTarget]);
+	}, [activeWorkspaceTab, onCloseShellTerminal, shellTarget]);
 
 	// Offered only while the agent is idle. The daemon refuses a rollback mid-turn,
 	// and a control that exists to be refused is worse than one that waits.
@@ -835,6 +866,10 @@ export function ChatWorkspace({
 				<TurnSettingsBar
 					models={models ?? []}
 					settings={stableSettings}
+					onRememberPermissions={onRememberPermissions}
+					rememberPermissionsPending={rememberPermissionsPending}
+					rememberPermissionsError={rememberPermissionsError}
+					rememberedPermissionMode={rememberedPermissionMode}
 					harness={snapshot.harness}
 					reroute={stableModelReroute}
 					onChange={newWorkDisabled ? undefined : onChooseSettings}
@@ -855,6 +890,10 @@ export function ChatWorkspace({
 			newWorkDisabled,
 			onChooseConfigOption,
 			onChooseSettings,
+			onRememberPermissions,
+			rememberPermissionsPending,
+			rememberPermissionsError,
+			rememberedPermissionMode,
 			snapshot.controller.state,
 			stableModelReroute,
 			stableSettings,
@@ -906,7 +945,7 @@ export function ChatWorkspace({
 		],
 	);
 	const composerDraftSeed = useMemo(
-		() => (queueEdit ? { id: queueEdit.turnId, text: queueEdit.text } : undefined),
+		() => (queueEdit ? { id: `${queueEdit.turnId}:${queueEdit.revision}`, text: queueEdit.text, attachments: queueEdit.attachments } : undefined),
 		[queueEdit],
 	);
 	// Empty chats center the prompt; once a turn or item exists the composer docks
@@ -1000,6 +1039,7 @@ export function ChatWorkspace({
 				onTabsKeyDown={handleChatTabsKeyDown}
 				headerActions={headerActions}
 				session={session}
+				onSessionRenamed={onSessionRenamed}
 				sessionTabAction={sessionTabAction}
 				tabStripAction={tabStripAction}
 				workspaceTabActions={workspaceTabActions}
@@ -1126,7 +1166,7 @@ export function ChatWorkspace({
 								<ChatComposer
 									queuedDock={composerQueuedDock}
 									approval={composerApproval}
-									onSend={composerSend}
+									onSend={handleComposerSend}
 									draftSeed={composerDraftSeed}
 									editingQueuedTurnId={queueEdit?.turnId}
 									savingQueuedEditPending={Boolean(
@@ -1241,9 +1281,6 @@ function runsOf(items: ConversationItem[]): TimelineRun[] {
 			item.activityKind !== "approval" &&
 			item.activityKind !== "user_input" &&
 			item.activityKind !== "error" &&
-			// An edit is a result, not a mechanic. Burying it in a summary would hide
-			// the one kind of activity that changed the user's worktree.
-			item.activityKind !== "file_change" &&
 			// Reasoning only reaches the timeline when the reader asked for it, so
 			// folding it into "Explored 4 files" would answer that request with the
 			// summary they were trying to get past.
@@ -1330,6 +1367,7 @@ function ChatHeader({
 	inline,
 	topbarBounds,
 	session,
+	onSessionRenamed,
 }: {
 	snapshot: ConversationSnapshot;
 	sessionTitle?: string;
@@ -1353,6 +1391,7 @@ function ChatHeader({
 	orderedAuxiliaryTabs: ChatAuxiliaryTab[];
 	onReorderAuxiliaryTabs: (keys: string[]) => void;
 	session?: WorkspaceSession;
+	onSessionRenamed?: () => void | Promise<void>;
 	/** Fullscreen content cannot see the normal topbar portal outside its subtree. */
 	inline?: boolean;
 	topbarBounds: TopbarBounds;
@@ -1411,6 +1450,7 @@ function ChatHeader({
 								isActive={timelineActive}
 								label={label}
 								onSelect={timelineActive ? undefined : onSelectChat}
+								onRenamed={onSessionRenamed}
 								session={session}
 								tabAction={sessionTabAction}
 							/>
@@ -1884,6 +1924,11 @@ function Timeline({
 	const navigableGroups = useMemo(() => groups.filter(groupHasHumanPrompt), [groups]);
 	const previews = useMemo(() => navigableGroups.map(groupPreview), [navigableGroups]);
 
+	// Keep the full transcript mounted (selection/find still work), but measure
+	// prompt positions only when content geometry changes, not on every scroll.
+	const anchorGeometry = useRef<{ height: number; width: number; positions: number[] } | null>(null);
+	const contentMutations = useRef<MutationObserver | null>(null);
+
 	const updateScrollbar = useCallback(() => {
 		const node = scroller.current;
 		const track = scrollTrack.current;
@@ -1897,24 +1942,32 @@ function Timeline({
 			: trackHeight;
 		const travel = Math.max(0, trackHeight - height);
 		const fraction = maxScroll > 0 ? Math.min(1, Math.max(0, node.scrollTop / maxScroll)) : 0;
-		const viewportRect = node.getBoundingClientRect();
-		const anchors = Array.from(
-			scrollContent.current?.querySelectorAll<HTMLElement>("[data-chat-scroll-anchor]") ?? [],
-		);
-		// 8px is the Cursor-chat cadence: a 2px dash with a ~6px gap. 18px left
-		// a sparse ladder when the conversation only had a handful of turns.
-		const markerGap =
-			anchors.length > 1 ? Math.min(8, (trackHeight - 12) / (anchors.length - 1)) : 0;
-		const markerStart = (trackHeight - markerGap * Math.max(0, anchors.length - 1)) / 2;
-		const markers = anchors.map((anchor, index) => {
-			const rect = anchor.getBoundingClientRect();
-			const contentY = rect.top - viewportRect.top + node.scrollTop + rect.height / 2;
-			return {
-				top: markerStart + index * markerGap,
-				scrollTop: Math.min(maxScroll, Math.max(0, contentY - node.clientHeight / 2)),
-				visible: contentY >= node.scrollTop && contentY <= node.scrollTop + node.clientHeight,
+		if (contentMutations.current?.takeRecords().length) anchorGeometry.current = null;
+		let geometry = anchorGeometry.current;
+		if (!geometry || geometry.height !== node.scrollHeight || geometry.width !== node.clientWidth) {
+			const viewportRect = node.getBoundingClientRect();
+			const anchors = Array.from(
+				scrollContent.current?.querySelectorAll<HTMLElement>("[data-chat-scroll-anchor]") ?? [],
+			);
+			geometry = {
+				height: node.scrollHeight,
+				width: node.clientWidth,
+				positions: anchors.map((anchor) => {
+					const rect = anchor.getBoundingClientRect();
+					return rect.top - viewportRect.top + node.scrollTop + rect.height / 2;
+				}),
 			};
-		});
+			anchorGeometry.current = geometry;
+		}
+		const positions = geometry.positions;
+		// 8px is the existing 2px dash + 6px gap cadence.
+		const markerGap = positions.length > 1 ? Math.min(8, (trackHeight - 12) / (positions.length - 1)) : 0;
+		const markerStart = (trackHeight - markerGap * Math.max(0, positions.length - 1)) / 2;
+		const markers = positions.map((contentY, index) => ({
+			top: markerStart + index * markerGap,
+			scrollTop: Math.min(maxScroll, Math.max(0, contentY - node.clientHeight / 2)),
+			visible: contentY >= node.scrollTop && contentY <= node.scrollTop + node.clientHeight,
+		}));
 		const next = {
 			visible,
 			top: travel * fraction,
@@ -1972,6 +2025,7 @@ function Timeline({
 	}, []);
 
 	const syncScrollLayout = useCallback(() => {
+		anchorGeometry.current = null;
 		syncPromptSpacer();
 		const node = scroller.current;
 		if (node && pinnedRef.current) {
@@ -1980,18 +2034,44 @@ function Timeline({
 		updateScrollbar();
 	}, [syncPromptSpacer, updateScrollbar]);
 
+	// A disclosure animation changes the content box but is not new conversation
+	// content. Re-measure it without re-pinning the viewport to the bottom; doing
+	// that during a height animation makes the whole chat jump under the reader.
+	const syncScrollMetrics = useCallback(() => {
+		anchorGeometry.current = null;
+		// UI-only disclosure resizes must not rewrite the trailing spacer. Doing so
+		// every animation frame changes the scroll range and causes a small jerk when
+		// a panel collapses near the bottom of the viewport.
+		updateScrollbar();
+	}, [updateScrollbar]);
+
 	useEffect(() => {
 		syncScrollLayout();
 	}, [pinned, snapshot.latestSequence, groups.length, messageEdit?.turnId, syncScrollLayout]);
 
 	useEffect(() => {
+		const content = scrollContent.current;
+		const mutations = new MutationObserver(() => { anchorGeometry.current = null; });
+		if (content) mutations.observe(content, {
+			subtree: true, childList: true, characterData: true, attributes: true,
+			attributeFilter: ["class", "style", "hidden", "open", "data-chat-scroll-anchor"],
+		});
+		contentMutations.current = mutations;
+		return () => {
+			mutations.disconnect();
+			contentMutations.current = null;
+			anchorGeometry.current = null;
+		};
+	}, []);
+
+	useEffect(() => {
 		syncScrollLayout();
 		if (typeof ResizeObserver === "undefined") return;
-		const observer = new ResizeObserver(syncScrollLayout);
+		const observer = new ResizeObserver(syncScrollMetrics);
 		if (scroller.current) observer.observe(scroller.current);
 		if (scrollContent.current) observer.observe(scrollContent.current);
 		return () => observer.disconnect();
-	}, [groups.length, syncScrollLayout]);
+	}, [groups.length, syncScrollMetrics]);
 
 	function onScroll() {
 		const node = scroller.current;
@@ -2454,12 +2534,11 @@ const TurnGroup = memo(function TurnGroup({
 			    list that grows both change while the reader watches, and at the end of a
 			    turn neither pushes anything the reader is already looking at. */}
 			{group.plan ? <TurnPlan plan={group.plan} live={group.live} /> : null}
-			{/* Above the outcome divider: the changed files are part of what the turn
-			    did, and belong inside it rather than after it closes. */}
-			{group.diff ? (
+			{/* Changed-files review is a settled result, not live activity. Keep it
+			    below the completed assistant response and its bottom action row. */}
+			{group.diff && group.outcome?.state === "completed" && copyableMessageId ? (
 				<TurnChangedFiles
 					diff={group.diff}
-					live={group.live}
 					items={group.items}
 					onReview={onOpenFiles}
 					onOpenFile={onOpenFile}

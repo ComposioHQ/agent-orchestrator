@@ -80,7 +80,10 @@ function contentSecurityPolicy(mode: "build" | "serve"): string {
 		// impractical because the preamble changes with the plugin version.
 		mode === "serve" ? "script-src 'self' 'unsafe-inline'" : "script-src 'self'",
 		"style-src 'self' 'unsafe-inline'",
-		"img-src 'self' data: http://127.0.0.1:*",
+		// Repository avatars can come from self-hosted SCM instances whose origins
+		// are only known at runtime. Keep the broad exception limited to images;
+		// scripts, connections, frames, and other resource classes remain scoped.
+		"img-src 'self' data: http://127.0.0.1:* https:",
 		"font-src 'self' data:",
 		[
 			"connect-src",
@@ -103,14 +106,12 @@ function contentSecurityPolicy(mode: "build" | "serve"): string {
 
 const injectCspMeta: Plugin = {
 	name: "inject-csp-meta",
-	transformIndexHtml(_html, ctx) {
+	apply: "build",
+	transformIndexHtml() {
 		return [
 			{
 				tag: "meta",
-				attrs: {
-					"http-equiv": "Content-Security-Policy",
-					content: contentSecurityPolicy(ctx.server ? "serve" : "build"),
-				},
+				attrs: { "http-equiv": "Content-Security-Policy", content: contentSecurityPolicy("build") },
 				injectTo: "head-prepend",
 			},
 		];

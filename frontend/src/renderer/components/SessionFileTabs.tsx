@@ -1,9 +1,7 @@
-import { MoreHorizontal, Plus, X } from "lucide-react";
+import { Plus, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import type { SessionFileTabState } from "../lib/session-file-tabs";
 import { TerminalTabFrame } from "./TerminalTabFrame";
-import { Button } from "./ui/button";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "./ui/dropdown-menu";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 import { WorkspaceEntryIcon } from "./WorkspaceEntryIcon";
 
@@ -16,13 +14,11 @@ export function SessionFileTabs({
 	onAddFeedback,
 	onActivateFile,
 	onCloseFile,
-	onCloseAll,
 }: {
 	state: SessionFileTabState;
 	onAddFeedback: (path: string) => void;
 	onActivateFile: (path: string) => void;
 	onCloseFile: (path: string) => void;
-	onCloseAll: () => void;
 }) {
 	if (state.openPaths.length === 0) return null;
 	return (
@@ -37,7 +33,6 @@ export function SessionFileTabs({
 					path={path}
 				/>
 			))}
-			<SessionFileTabActions onCloseAll={onCloseAll} />
 		</>
 	);
 }
@@ -101,13 +96,14 @@ export function SessionFileTab({
 			buttonProps={{
 				"aria-label": name,
 				"aria-selected": active,
+				className: "pr-9",
 				onClick: onActivate,
 				role: "tab",
 				tabIndex: active ? 0 : -1,
 				title: path,
 				type: "button",
 			}}
-			className="session-tab-icon-floor session-tab-icon-floor--closable max-w-shell-tab-max"
+			className="max-w-shell-tab-max"
 			contentClassName="font-medium"
 			trailingAction={feedbackAction}
 		>
@@ -118,26 +114,5 @@ export function SessionFileTab({
 			/>
 			<span className="truncate">{name}</span>
 		</TerminalTabFrame>
-	);
-}
-
-export function SessionFileTabActions({ onCloseAll }: { onCloseAll: () => void }) {
-	const { t } = useTranslation();
-	return (
-		<DropdownMenu>
-			<Tooltip>
-				<TooltipTrigger asChild>
-					<DropdownMenuTrigger asChild>
-						<Button aria-label={t("files.tabActions")} className="mx-1 self-center" size="icon-sm" type="button" variant="ghost">
-							<MoreHorizontal className="size-icon-sm" aria-hidden="true" />
-						</Button>
-					</DropdownMenuTrigger>
-				</TooltipTrigger>
-				<TooltipContent side="bottom">{t("files.tabActions")}</TooltipContent>
-			</Tooltip>
-			<DropdownMenuContent align="end">
-				<DropdownMenuItem onSelect={onCloseAll}>{t("files.closeAllTabs")}</DropdownMenuItem>
-			</DropdownMenuContent>
-		</DropdownMenu>
 	);
 }
