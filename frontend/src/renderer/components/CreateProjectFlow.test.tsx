@@ -707,6 +707,9 @@ describe("CreateProjectFlow project import validation", () => {
 
 		renderChooseFlow();
 		await openSource(user, "Import a workspace folder");
+		expect(screen.getByText("Approve the required setup actions for each initialized child repository. AO will run only the selected required steps before continuing.")).toBeInTheDocument();
+		expect(screen.getByText("app")).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Continue" })).toBeDisabled();
 		await user.click(await screen.findByRole("checkbox"));
 		await user.click(screen.getByRole("button", { name: "Continue" }));
 
@@ -745,7 +748,7 @@ describe("CreateProjectFlow project import validation", () => {
 		renderChooseFlow();
 		await openSource(user, "Import a workspace folder");
 
-		expect(screen.getByText("No child Git repositories exist in this folder. Add a child repository or choose a different workspace folder.")).toBeInTheDocument();
+		expect(screen.getByText("Importing a workspace requires at least one direct child Git repository that already has a commit and an origin remote. Plain folders are not initialized from this flow.")).toBeInTheDocument();
 		expect(screen.getByRole("button", { name: "Continue" })).toBeDisabled();
 		expect(screen.getByRole("button", { name: "Go Back" })).toBeInTheDocument();
 		expect(useUiStore.getState().globalToast).toBeNull();
@@ -775,7 +778,7 @@ describe("CreateProjectFlow project import validation", () => {
 		renderChooseFlow();
 		await openSource(user, "Import a workspace folder");
 
-		expect(screen.getByText("No child Git repositories exist in this folder. Add a child repository or choose a different workspace folder.")).toBeInTheDocument();
+		expect(screen.getByText("Importing a workspace requires at least one direct child Git repository that already has a commit and an origin remote. Plain folders are not initialized from this flow.")).toBeInTheDocument();
 		expect(screen.getByRole("button", { name: "Continue" })).toBeDisabled();
 		expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
 	});
