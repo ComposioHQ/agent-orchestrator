@@ -62,21 +62,22 @@ type Launcher interface {
 
 // LaunchSpec is the engine's request to (re)launch a reviewer for one pass.
 type LaunchSpec struct {
-	RunID                string
-	BatchID              string
-	ReviewSessionID      string
-	WorkerID             domain.SessionID
-	ProjectID            domain.ProjectID
-	Harness              domain.ReviewerHarness
-	AgentConfig          domain.AgentConfig
-	WorkspacePath        string
-	AgentSessionID       string
-	RequireNativeHistory bool
-	PreviousRuns         []domain.ReviewRun
-	PRURL                string
-	TargetSHA            string
-	ReviewQueue          []ports.ReviewTask
-	ReviewIndex          int
+	RunID                  string
+	BatchID                string
+	ReviewSessionID        string
+	WorkerID               domain.SessionID
+	ProjectID              domain.ProjectID
+	Harness                domain.ReviewerHarness
+	AgentConfig            domain.AgentConfig
+	WorkspacePath          string
+	AgentSessionID         string
+	ProviderConversationID string
+	RequireNativeHistory   bool
+	PreviousRuns           []domain.ReviewRun
+	PRURL                  string
+	TargetSHA              string
+	ReviewQueue            []ports.ReviewTask
+	ReviewIndex            int
 }
 
 // LaunchResult is the terminal/runtime state created by a reviewer launch.
@@ -84,6 +85,37 @@ type LaunchResult struct {
 	HandleID       string
 	AgentSessionID string
 }
+
+// ReviewerChatStart is the transport-neutral launch request for a typed reviewer
+// conversation. It deliberately carries the already-authored review prompt so
+// Chat and TUI reviewers receive identical instructions.
+type ReviewerChatStart struct {
+	ReviewID               string
+	WorkerID               domain.SessionID
+	ProjectID              domain.ProjectID
+	Harness                domain.AgentHarness
+	DataDir                string
+	WorkspacePath          string
+	Env                    map[string]string
+	Prompt                 string
+	SystemPrompt           string
+	ProviderConversationID string
+}
+
+// ReviewerChatController adapts the live Chat service without making the review
+// engine depend on HTTP or renderer concepts.
+type ReviewerChatController interface {
+	SupportsReviewChat(domain.AgentHarness) bool
+	PreflightReviewChat(context.Context, domain.AgentHarness) error
+	StartReviewChat(context.Context, ReviewerChatStart) (string, error)
+	RestoreReviewChat(context.Context, ReviewerChatStart) (string, error)
+	SendReviewChat(context.Context, string, string) error
+	ReviewChatAlive(string) bool
+	InterruptReviewChat(context.Context, string) error
+	StopReviewChat(context.Context, string) error
+}
+
+const reviewerChatHandlePrefix = "review-chat:"
 
 // reviewerRuntime is the runtime surface the launcher needs: create a pane,
 // inject a message into a running pane, and probe liveness. The tmux runtime
@@ -108,6 +140,13 @@ type agentLauncher struct {
 	runFile    string
 	auth       agentAuthResolver
 	executable func() (string, error)
+	chat       ReviewerChatController
+}
+
+// WithReviewerChat wires the typed Chat controller used by Chat-capable
+// reviewer adapters.
+func WithReviewerChat(chat ReviewerChatController) LauncherOption {
+	return func(l *agentLauncher) { l.chat = chat }
 }
 
 type preLaunchReviewer interface {
@@ -170,6 +209,9 @@ func (l *agentLauncher) Preflight(ctx context.Context, harness domain.ReviewerHa
 	reviewer, ok := l.reviewers.Reviewer(harness)
 	if !ok {
 		return fmt.Errorf("no reviewer adapter for harness %q", harness)
+	}
+	if profile, ok := reviewer.(ports.ReviewerChatProfile); ok && l.reviewChatSupported(profile) {
+		return l.chat.PreflightReviewChat(ctx, profile.ReviewChatHarness())
 	}
 	cmd, err := reviewer.ReviewCommand(ctx, ports.ReviewInvocation{WorkspacePath: workspacePath})
 	if err != nil {
@@ -380,6 +422,29 @@ func (l *agentLauncher) Spawn(ctx context.Context, spec LaunchSpec) (LaunchResul
 	if err != nil {
 		return LaunchResult{}, err
 	}
+	if reviewer, ok := l.reviewers.Reviewer(spec.Harness); ok {
+		if profile, ok := reviewer.(ports.ReviewerChatProfile); ok && l.reviewChatSupported(profile) {
+			systemPrompt, readErr := os.ReadFile(inv.SystemPromptFile)
+			if readErr != nil {
+				return LaunchResult{}, fmt.Errorf("read reviewer system prompt: %w", readErr)
+			}
+			resumeID := strings.TrimSpace(spec.ProviderConversationID)
+			if resumeID == "" {
+				resumeID = strings.TrimSpace(spec.AgentSessionID)
+			}
+			providerID, startErr := l.chat.StartReviewChat(ctx, ReviewerChatStart{
+				ReviewID: spec.ReviewSessionID, WorkerID: spec.WorkerID,
+				ProjectID: spec.ProjectID, Harness: profile.ReviewChatHarness(),
+				DataDir: l.dataDir, WorkspacePath: spec.WorkspacePath,
+				Env: l.runtimeEnv(ctx, spec, nil, nil), Prompt: inv.Prompt,
+				SystemPrompt: string(systemPrompt), ProviderConversationID: resumeID,
+			})
+			if startErr != nil {
+				return LaunchResult{}, startErr
+			}
+			return LaunchResult{HandleID: reviewerChatHandlePrefix + spec.ReviewSessionID, AgentSessionID: providerID}, nil
+		}
+	}
 	return l.launchReviewerTerminal(ctx, spec, inv)
 }
 
@@ -387,6 +452,29 @@ func (l *agentLauncher) RestoreTerminal(ctx context.Context, spec LaunchSpec) (L
 	inv, err := l.prepareIdleInvocation(spec)
 	if err != nil {
 		return LaunchResult{}, err
+	}
+	if reviewer, ok := l.reviewers.Reviewer(spec.Harness); ok {
+		if profile, ok := reviewer.(ports.ReviewerChatProfile); ok && l.reviewChatSupported(profile) {
+			systemPrompt, readErr := os.ReadFile(inv.SystemPromptFile)
+			if readErr != nil {
+				return LaunchResult{}, fmt.Errorf("read reviewer system prompt: %w", readErr)
+			}
+			resumeID := strings.TrimSpace(spec.ProviderConversationID)
+			if resumeID == "" {
+				resumeID = strings.TrimSpace(spec.AgentSessionID)
+			}
+			providerID, restoreErr := l.chat.RestoreReviewChat(ctx, ReviewerChatStart{
+				ReviewID: spec.ReviewSessionID, WorkerID: spec.WorkerID,
+				ProjectID: spec.ProjectID, Harness: profile.ReviewChatHarness(),
+				DataDir: l.dataDir, WorkspacePath: spec.WorkspacePath,
+				Env: l.runtimeEnv(ctx, spec, nil, nil), SystemPrompt: string(systemPrompt),
+				ProviderConversationID: resumeID,
+			})
+			if restoreErr != nil {
+				return LaunchResult{}, restoreErr
+			}
+			return LaunchResult{HandleID: reviewerChatHandlePrefix + spec.ReviewSessionID, AgentSessionID: providerID}, nil
+		}
 	}
 	return l.launchReviewerTerminalWithMode(ctx, spec, inv, true)
 }
@@ -543,18 +631,40 @@ func (l *agentLauncher) runtimeEnv(ctx context.Context, spec LaunchSpec, argv []
 	// launch-binary prepend below can put it back rather than letting a foreign
 	// `ao` beside the agent binary win a bare `ao` inside the reviewer pane.
 	pinnedDir := ""
-	path, err := sessionmanager.HookPATH(l.executable, os.Getenv, env, l.dataDir)
-	if err == nil {
+	basePath := env["PATH"]
+	if basePath == "" {
+		basePath = os.Getenv("PATH")
+	}
+	if shimDir, shimErr := l.ensureAOShimDir(); shimErr == nil {
+		path := basePath
+		if exe, err := l.executable(); err == nil && aoExecutableName(exe) {
+			if !filepath.IsAbs(exe) {
+				if abs, absErr := filepath.Abs(exe); absErr == nil {
+					exe = abs
+				}
+			}
+			if dir := filepath.Dir(exe); dir != "." && dir != string(filepath.Separator) && dir != shimDir {
+				path = prependPathDir(dir, path)
+			}
+		}
+		env["PATH"] = prependPathDir(shimDir, path)
+		pinnedDir = shimDir
+	} else if path, err := sessionmanager.HookPATH(l.executable, os.Getenv, env, l.dataDir); err == nil {
 		env["PATH"] = path
 		pinnedDir = sessionmanager.PinnedHookDir(l.executable, l.dataDir)
-	} else if shimDir, shimErr := l.ensureAOShimDir(); shimErr == nil {
-		env["PATH"] = prependPathDir(shimDir, env["PATH"])
-		pinnedDir = shimDir
 	} else {
-		env[EnvAOCommandWarning] = fmt.Sprintf("PATH pin failed: %v; AO shim fallback failed: %v", err, shimErr)
+		env[EnvAOCommandWarning] = fmt.Sprintf("AO shim failed: %v; PATH pin fallback failed: %v", shimErr, err)
 	}
 	sessionmanager.AugmentRuntimePATHForLaunchBinary(ctx, env, argv, exec.LookPath, pinnedDir)
 	return env
+}
+
+func aoExecutableName(path string) bool {
+	name := filepath.Base(path)
+	if runtime.GOOS == "windows" {
+		name = strings.TrimSuffix(strings.ToLower(name), ".exe")
+	}
+	return name == "ao"
 }
 
 func (l *agentLauncher) ensureAOShimDir() (string, error) {
@@ -611,6 +721,12 @@ func (l *agentLauncher) Notify(ctx context.Context, handleID string, spec Launch
 	if !ok {
 		return fmt.Errorf("no reviewer adapter for harness %q", spec.Harness)
 	}
+	// Reviewer panes survive daemon restarts. Refresh the stable shim before
+	// notifying one so its existing PATH reaches this daemon binary rather than
+	// an expired go-run path or an older globally installed AO CLI.
+	if _, err := l.ensureAOShimDir(); err != nil {
+		return fmt.Errorf("refresh reviewer AO command: %w", err)
+	}
 	inv, err := l.prepareInvocation(ctx, spec)
 	if err != nil {
 		return err
@@ -618,6 +734,9 @@ func (l *agentLauncher) Notify(ctx context.Context, handleID string, spec Launch
 	msg, err := reviewer.ReviewMessage(ctx, inv)
 	if err != nil {
 		return fmt.Errorf("reviewer message: %w", err)
+	}
+	if reviewID, ok := reviewerChatID(handleID); ok && l.chat != nil {
+		return l.chat.SendReviewChat(ctx, reviewID, msg)
 	}
 	if err := l.runtime.SendMessage(ctx, ports.RuntimeHandle{ID: handleID}, msg); err != nil {
 		return fmt.Errorf("notify reviewer: %w", err)
@@ -628,6 +747,9 @@ func (l *agentLauncher) Notify(ctx context.Context, handleID string, spec Launch
 func (l *agentLauncher) Alive(ctx context.Context, handleID string) (bool, error) {
 	if handleID == "" {
 		return false, nil
+	}
+	if reviewID, ok := reviewerChatID(handleID); ok && l.chat != nil {
+		return l.chat.ReviewChatAlive(reviewID), nil
 	}
 	return l.runtime.IsAlive(ctx, ports.RuntimeHandle{ID: handleID})
 }
@@ -644,6 +766,9 @@ func (l *agentLauncher) Reusable(harness domain.ReviewerHarness) bool {
 func (l *agentLauncher) Cancel(ctx context.Context, handleID string, harness domain.ReviewerHarness) error {
 	if handleID == "" {
 		return nil
+	}
+	if reviewID, ok := reviewerChatID(handleID); ok && l.chat != nil {
+		return l.chat.InterruptReviewChat(ctx, reviewID)
 	}
 	reviewer, ok := l.reviewers.Reviewer(harness)
 	if !ok {
@@ -719,5 +844,29 @@ func (l *agentLauncher) Destroy(ctx context.Context, handleID string) error {
 	if handleID == "" {
 		return nil
 	}
+	if reviewID, ok := reviewerChatID(handleID); ok && l.chat != nil {
+		return l.chat.StopReviewChat(ctx, reviewID)
+	}
 	return l.runtime.Destroy(ctx, ports.RuntimeHandle{ID: handleID})
+}
+
+func reviewerChatID(handleID string) (string, bool) {
+	id, ok := strings.CutPrefix(handleID, reviewerChatHandlePrefix)
+	return id, ok && id != ""
+}
+
+// InterfaceMode reports the launch surface selected for a harness.
+func (l *agentLauncher) InterfaceMode(harness domain.ReviewerHarness) domain.ReviewerInterfaceMode {
+	reviewer, ok := l.reviewers.Reviewer(harness)
+	if !ok || l.chat == nil {
+		return domain.ReviewerInterfaceTUI
+	}
+	if profile, ok := reviewer.(ports.ReviewerChatProfile); ok && l.reviewChatSupported(profile) {
+		return domain.ReviewerInterfaceChat
+	}
+	return domain.ReviewerInterfaceTUI
+}
+
+func (l *agentLauncher) reviewChatSupported(profile ports.ReviewerChatProfile) bool {
+	return l.chat != nil && l.chat.SupportsReviewChat(profile.ReviewChatHarness())
 }

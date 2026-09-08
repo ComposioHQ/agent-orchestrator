@@ -279,7 +279,7 @@ func (d *Driver) Start(ctx context.Context, cfg ports.ChatStartConfig) (ports.Ch
 		return nil, errors.New("persistent chat host already owns a provider conversation for a fresh session")
 	}
 
-	policy, sandbox := approvalSettings(cfg.Permissions)
+	policy, sandbox := approvalSettings(cfg.Permissions, cfg.WorkspaceAccess)
 	params := map[string]any{
 		"cwd":               cfg.WorkspacePath,
 		"approvalPolicy":    policy,
@@ -337,7 +337,7 @@ func (d *Driver) Resume(ctx context.Context, cfg ports.ChatResumeConfig) (ports.
 		return conv, nil
 	}
 
-	policy, sandbox := approvalSettings(cfg.Permissions)
+	policy, sandbox := approvalSettings(cfg.Permissions, cfg.WorkspaceAccess)
 	params := map[string]any{
 		"threadId":          cfg.ProviderConversationID,
 		"cwd":               cfg.WorkspacePath,
@@ -490,7 +490,10 @@ func initializeConnection(ctx context.Context, connection *conn) error {
 // (--dangerously-bypass-approvals-and-sandbox): AO sessions run in isolated
 // worktrees and are expected to work without prompting. Chat does not quietly
 // become stricter than the terminal path for the same setting.
-func approvalSettings(mode ports.PermissionMode) (policy, sandbox string) {
+func approvalSettings(mode ports.PermissionMode, access ...ports.ChatWorkspaceAccess) (policy, sandbox string) {
+	if len(access) > 0 && access[0] == ports.ChatWorkspaceReadOnly {
+		return "on-request", "read-only"
+	}
 	switch ports.NormalizePermissionMode(mode) {
 	case ports.PermissionModeAcceptEdits, ports.PermissionModeAuto:
 		// on-request lets the provider decide when to ask; workspace-write keeps

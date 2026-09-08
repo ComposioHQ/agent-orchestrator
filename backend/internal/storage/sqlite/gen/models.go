@@ -206,7 +206,9 @@ type Conversation struct {
 	Scope                      domain.ConversationScope
 	ProjectID                  domain.ProjectID
 	SessionID                  *domain.SessionID
+	ReviewID                   sql.NullString
 	CurrentSessionID           *domain.SessionID
+	CurrentReviewID            sql.NullString
 	LatestSequence             int64
 	CreatedAt                  time.Time
 	UpdatedAt                  time.Time
@@ -261,17 +263,18 @@ type ConversationBranch struct {
 	ID                     string
 	ConversationID         string
 	SessionID              sql.NullString
+	ReviewID               sql.NullString
 	ProviderConversationID string
+	Strategy               string
+	ReplayCutoffSequence   int64
+	ReplayTruncated        int64
+	ProviderScopeID        string
 	ParentBranchID         sql.NullString
 	ForkAfterTurnID        sql.NullString
 	ReplacedTurnID         sql.NullString
 	ReplacementTurnID      sql.NullString
 	ForkAfterSequence      int64
 	CreatedAt              time.Time
-	Strategy               string
-	ReplayCutoffSequence   int64
-	ReplayTruncated        int64
-	ProviderScopeID        string
 }
 
 type ConversationMessage struct {
@@ -296,6 +299,7 @@ type ConversationProviderEvent struct {
 	ID              int64
 	ConversationID  string
 	SessionID       domain.SessionID
+	ReviewID        sql.NullString
 	ProviderEventID string
 	Method          string
 	PayloadJson     string
@@ -307,6 +311,7 @@ type ConversationTurn struct {
 	ID                   string
 	ConversationID       string
 	HandledBySessionID   domain.SessionID
+	HandledByReviewID    sql.NullString
 	ProviderTurnID       string
 	ControllerGeneration string
 	State                domain.TurnState
@@ -474,15 +479,19 @@ type Project struct {
 }
 
 type Review struct {
-	ID               string
-	SessionID        domain.SessionID
-	ProjectID        domain.ProjectID
-	Harness          domain.ReviewerHarness
-	PRURL            string
-	ReviewerHandleID string
-	AgentSessionID   string
-	CreatedAt        time.Time
-	UpdatedAt        time.Time
+	ID                     string
+	SessionID              domain.SessionID
+	ProjectID              domain.ProjectID
+	Harness                domain.ReviewerHarness
+	PRURL                  string
+	ReviewerHandleID       string
+	AgentSessionID         string
+	CreatedAt              time.Time
+	UpdatedAt              time.Time
+	InterfaceMode          domain.ReviewerInterfaceMode
+	ProviderConversationID string
+	ControllerGeneration   string
+	ControllerError        string
 }
 
 type ReviewRun struct {

@@ -52,6 +52,9 @@ export interface ConversationWorkState {
 
 export function SessionChatSurface({
 	session,
+	reviewerChat,
+	onOpenReviewerChat,
+	reviewerChatSelected,
 	reviewerTerminal,
 	onOpenReviewerTerminal,
 	onSessionRenamed,
@@ -84,6 +87,10 @@ export function SessionChatSurface({
 	onConversationWorkChange,
 }: {
 	session: WorkspaceSession;
+	reviewerChat?: { reviewId: string; harness: string };
+	onOpenReviewerChat?: (target: { reviewId: string; harness: string }) => void;
+	/** Keep this worker surface mounted while the reviewer conversation owns the body. */
+	reviewerChatSelected?: boolean;
 	reviewerTerminal?: { handleId: string; harness: string };
 	onOpenReviewerTerminal?: (target: { handleId: string; harness: string }) => void;
 	onSessionRenamed?: () => void | Promise<void>;
@@ -333,6 +340,9 @@ export function SessionChatSurface({
 				sessionRole={session.kind}
 				session={session}
 				onSessionRenamed={onSessionRenamed}
+				reviewerChat={reviewerChat}
+				onOpenReviewerChat={onOpenReviewerChat}
+				reviewerChatSelected={reviewerChatSelected}
 				reviewerTerminal={reviewerTerminal}
 				onOpenReviewerTerminal={onOpenReviewerTerminal}
 				reviewerTarget={reviewerTarget}
@@ -434,7 +444,7 @@ export function SessionChatSurface({
 			/>
 			{shownSwitchPresentation ? (
 				<ChatAgentSwitchStatus
-					auxiliaryActive={Boolean(reviewerTarget || shellTarget)}
+					auxiliaryActive={Boolean(reviewerChatSelected || reviewerTarget || shellTarget)}
 					onDismiss={
 						shownSwitchPresentation.outcome === "failure" && agentSwitch
 							? () => dismissAgentSwitchFailure(agentSwitch.id)

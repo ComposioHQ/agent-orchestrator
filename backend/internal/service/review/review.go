@@ -501,6 +501,12 @@ func (s *Service) RestoreReviewer(ctx context.Context, workerID domain.SessionID
 	return err
 }
 
+// RecoverChatReviewers restores durable typed reviewer controllers after a
+// daemon restart without creating or resending review tasks.
+func (s *Service) RecoverChatReviewers(ctx context.Context) error {
+	return s.engine.RecoverChatReviewers(ctx)
+}
+
 // CodexReviewerRunning reports whether the worker has a live Codex reviewer.
 func (s *Service) CodexReviewerRunning(ctx context.Context, workerID domain.SessionID) (bool, error) {
 	return s.engine.CodexReviewerRunning(ctx, workerID)

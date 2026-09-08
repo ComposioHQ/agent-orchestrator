@@ -65,6 +65,10 @@ type CenterPaneProps = {
 	terminalTarget?: TerminalTarget;
 	reviewerTerminal?: { handleId: string; harness: string };
 	onSelectReviewerTerminal?: (target: { handleId: string; harness: string }) => void;
+	reviewerChat?: { reviewId: string; harness: string };
+	reviewerChatSelected?: boolean;
+	reviewerChatContent?: ReactNode;
+	onSelectReviewerChat?: (target: { reviewId: string; harness: string }) => void;
 	/** Standalone shells to render as tabs beside the session's own pane. */
 	shellTerminals?: ShellTerminal[];
 	onSelectSessionTerminal?: () => void;
@@ -99,6 +103,7 @@ export type CenterPaneWorkspaceTab = {
 
 type AuxiliaryTab =
 	| { key: string; kind: "reviewer"; terminal: NonNullable<CenterPaneProps["reviewerTerminal"]> }
+	| { key: string; kind: "reviewer-chat"; terminal: NonNullable<CenterPaneProps["reviewerChat"]> }
 	| { key: string; kind: "shell"; terminal: ShellTerminal }
 	| { key: string; kind: "workspace"; tab: CenterPaneWorkspaceTab };
 
@@ -149,7 +154,11 @@ export function CenterPane({
 	daemonReady,
 	terminalTarget,
 	reviewerTerminal,
+	reviewerChat,
+	reviewerChatSelected = false,
+	reviewerChatContent,
 	onSelectReviewerTerminal,
+	onSelectReviewerChat,
 	shellTerminals = [],
 	onSelectSessionTerminal,
 	onSelectShellTerminal,
@@ -193,10 +202,13 @@ export function CenterPane({
 						},
 					]
 				: []),
+			...(!reviewerTerminal && reviewerChat
+				? [{ key: `reviewer-chat:${reviewerChat.reviewId}`, kind: "reviewer-chat" as const, terminal: reviewerChat }]
+				: []),
 			...shellTerminals.map((terminal) => ({ key: terminal.handleId, kind: "shell" as const, terminal })),
 			...(workspaceTabs ?? []).map((tab) => ({ key: tab.key, kind: "workspace" as const, tab })),
 		],
-		[reviewerTerminal, shellTerminals, workspaceTabs],
+		[reviewerChat, reviewerTerminal, shellTerminals, workspaceTabs],
 	);
 	const availableAuxiliaryKeys = useMemo(() => auxiliaryTabs.map((tab) => tab.key), [auxiliaryTabs]);
 	const orderedAuxiliaryTabs = useMemo(() => {
@@ -333,7 +345,9 @@ export function CenterPane({
 			: session.title
 		: t("terminal.noSession");
 	const activeTerminalLabel =
-		target.kind === "shell"
+		reviewerChatSelected && reviewerChat
+			? `${t("terminal.reviewer")} · ${reviewerChat.harness}`
+			: target.kind === "shell"
 			? (shellTerminals.find((shell) => shell.handleId === target.handleId)?.title ?? target.title)
 			: target.kind === "reviewer"
 				? `${t("terminal.reviewer")} · ${target.harness}`
@@ -354,11 +368,13 @@ export function CenterPane({
 	const selectAdjacentTab = useCallback(
 		(direction: -1 | 1) => {
 			const activeKey =
-				workspaceActiveTabKey ?? (target.kind === "shell"
-					? target.handleId
-					: target.kind === "reviewer"
-						? `reviewer:${target.handleId}`
-						: "worker");
+				reviewerChatSelected && reviewerChat
+					? `reviewer-chat:${reviewerChat.reviewId}`
+					: workspaceActiveTabKey ?? (target.kind === "shell"
+						? target.handleId
+						: target.kind === "reviewer"
+							? `reviewer:${target.handleId}`
+							: "worker");
 			const tabKeys = ["worker", ...orderedAuxiliaryTabs.map((tab) => tab.key)];
 			const activeIndex = Math.max(0, tabKeys.indexOf(activeKey));
 			const nextIndex = (activeIndex + direction + tabKeys.length) % tabKeys.length;
@@ -368,14 +384,18 @@ export function CenterPane({
 			}
 			const nextTab = orderedAuxiliaryTabs[nextIndex - 1];
 			if (nextTab?.kind === "reviewer") onSelectReviewerTerminal?.(nextTab.terminal);
+			if (nextTab?.kind === "reviewer-chat") onSelectReviewerChat?.(nextTab.terminal);
 			if (nextTab?.kind === "shell") onSelectShellTerminal?.(nextTab.terminal.handleId);
 			if (nextTab?.kind === "workspace") nextTab.tab.onSelect();
 		},
 		[
 			onSelectReviewerTerminal,
+			onSelectReviewerChat,
 			onSelectSessionTerminal,
 			onSelectShellTerminal,
 			orderedAuxiliaryTabs,
+			reviewerChat,
+			reviewerChatSelected,
 			target,
 			workspaceActiveTabKey,
 		],
@@ -506,11 +526,13 @@ export function CenterPane({
 
 	useEffect(() => {
 		const activeKey =
-			workspaceActiveTabKey ?? (target.kind === "shell"
-				? target.handleId
-				: target.kind === "reviewer"
-					? `reviewer:${target.handleId}`
-					: undefined);
+			reviewerChatSelected && reviewerChat
+				? `reviewer-chat:${reviewerChat.reviewId}`
+				: workspaceActiveTabKey ?? (target.kind === "shell"
+					? target.handleId
+					: target.kind === "reviewer"
+						? `reviewer:${target.handleId}`
+						: undefined);
 		if (!activeKey) return;
 		const scrollRegion = tabsOverflowRef.current;
 		if (!scrollRegion) return;
@@ -525,7 +547,7 @@ export function CenterPane({
 		if (tabRect.right > scrollRect.right) nextScrollLeft += tabRect.right - scrollRect.right;
 		if (nextScrollLeft === scrollRegion.scrollLeft) return;
 		scrollRegion.scrollTo({ behavior: "smooth", left: Math.max(0, nextScrollLeft) });
-	}, [orderedAuxiliaryTabs, target, workspaceActiveTabKey]);
+	}, [orderedAuxiliaryTabs, reviewerChat, reviewerChatSelected, target, workspaceActiveTabKey]);
 
 	useEffect(() => {
 		const pane = paneRef.current;
@@ -614,21 +636,21 @@ export function CenterPane({
 					}}
 				>
 					<div
-							aria-label={t("terminal.tabsAria")}
-							className="flex h-full min-w-0 flex-1 items-stretch"
-							onKeyDown={handleTerminalTabListKeyDown}
-							role="tablist"
-						>
-							<div className="relative min-w-0 flex-1 self-stretch overflow-hidden">
-								<div
-									ref={tabsOverflowRef}
-									className="session-tab-scroll-region scrollbar-none flex h-full min-w-flex-min min-w-0 items-stretch overflow-x-auto"
-								>
+						aria-label={t("terminal.tabsAria")}
+						className="flex h-full min-w-0 flex-1 items-stretch"
+						onKeyDown={handleTerminalTabListKeyDown}
+						role="tablist"
+					>
+						<div className="relative min-w-0 flex-1 self-stretch overflow-hidden">
+							<div
+								ref={tabsOverflowRef}
+								className="session-tab-scroll-region scrollbar-none flex h-full min-w-flex-min min-w-0 items-stretch overflow-x-auto"
+							>
 								<div className="flex w-max items-stretch">
 									{/* The owning session scrolls with its auxiliary terminals, but remains fixed in order. */}
 									{session ? (
 										<SessionPaneTab
-											isActive={target.kind === "worker" && !workspaceActiveTabKey}
+											isActive={target.kind === "worker" && !workspaceActiveTabKey && !reviewerChatSelected}
 											label={sessionTabLabel}
 											onSelect={onSelectSessionTerminal}
 											onRenamed={refreshWorkspaces}
@@ -647,7 +669,7 @@ export function CenterPane({
 									>
 										{orderedAuxiliaryTabs.map((tab) => (
 											<DraggableWorkspaceTab key={tab.key} value={tab.key}>
-												{tab.kind === "reviewer" ? (
+												{tab.kind === "reviewer" || tab.kind === "reviewer-chat" ? (
 													<SessionPaneTab
 														appearance="connected"
 														icon={
@@ -657,9 +679,13 @@ export function CenterPane({
 																decorative
 															/>
 														}
-														isActive={target.kind === "reviewer"}
+														isActive={tab.kind === "reviewer" ? target.kind === "reviewer" : reviewerChatSelected}
 														label={t("terminal.reviewer")}
-														onSelect={() => onSelectReviewerTerminal?.(tab.terminal)}
+														onSelect={() =>
+															tab.kind === "reviewer"
+																? onSelectReviewerTerminal?.(tab.terminal)
+																: onSelectReviewerChat?.(tab.terminal)
+														}
 														title={tab.terminal.harness}
 													/>
 												) : tab.kind === "shell" ? (
@@ -684,9 +710,9 @@ export function CenterPane({
 									{workspaceTabActions}
 								</div>
 							</div>
-								{showLeftFade ? <div aria-hidden="true" className="session-tab-scroll-fade session-tab-scroll-fade--left" /> : null}
-								{showRightFade ? <div aria-hidden="true" className="session-tab-scroll-fade" /> : null}
-							</div>
+							{showLeftFade ? <div aria-hidden="true" className="session-tab-scroll-fade session-tab-scroll-fade--left" /> : null}
+							{showRightFade ? <div aria-hidden="true" className="session-tab-scroll-fade" /> : null}
+						</div>
 					</div>
 				</div>
 				{isFullscreen ? null : (
@@ -714,30 +740,34 @@ export function CenterPane({
 				className="relative min-h-0 flex-1"
 				role="tabpanel"
 			>
-				<div
-					className="h-full min-h-0"
-					data-testid="terminal-interaction-surface"
-					inert={workerInputDisabled ? true : undefined}
-				>
-					<TerminalPane
-						daemonReady={daemonReady}
-						fontSize={fontSize}
-						// A terminal you can type into should already hold the caret when you
-						// open or switch to the session, the same way the chat composer does.
-						// Worker input is off during an interface transition or a locked agent
-						// switch; every other target is interactive as soon as it is on screen.
-						// Without this a worker terminal was only focused mid agent-switch, so
-						// switching sessions left keystrokes going nowhere until you clicked it.
-						focusRequested={target.kind !== "worker" || !workerInputDisabled}
-						isFullscreen={isFullscreen}
-						inputDisabled={workerInputDisabled}
-						onChangeFontSize={updateFontSize}
-						onToggleFullscreen={toggleFullscreen}
-						session={session}
-						terminalTarget={target}
-						theme={theme}
-					/>
-				</div>
+				{reviewerChatSelected && reviewerChatContent ? (
+					reviewerChatContent
+				) : (
+					<div
+						className="h-full min-h-0"
+						data-testid="terminal-interaction-surface"
+						inert={workerInputDisabled ? true : undefined}
+					>
+						<TerminalPane
+							daemonReady={daemonReady}
+							fontSize={fontSize}
+							// A terminal you can type into should already hold the caret when you
+							// open or switch to the session, the same way the chat composer does.
+							// Worker input is off during an interface transition or a locked agent
+							// switch; every other target is interactive as soon as it is on screen.
+							// Without this a worker terminal was only focused mid agent-switch, so
+							// switching sessions left keystrokes going nowhere until you clicked it.
+							focusRequested={target.kind !== "worker" || !workerInputDisabled}
+							isFullscreen={isFullscreen}
+							inputDisabled={workerInputDisabled}
+							onChangeFontSize={updateFontSize}
+							onToggleFullscreen={toggleFullscreen}
+							session={session}
+							terminalTarget={target}
+							theme={theme}
+						/>
+					</div>
+				)}
 				{handoffDialogOpen ? null : shownPresentation && shownAgentSwitch && target.kind === "worker" ? (
 					<AgentSwitchTerminalOverlay
 						agentSwitch={shownAgentSwitch}

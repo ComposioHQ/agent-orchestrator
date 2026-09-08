@@ -888,6 +888,25 @@ describe("CenterPane toolbar session label", () => {
 		expect(onSelectReviewerTerminal).toHaveBeenCalledWith({ handleId: "review-sess-1", harness: "codex" });
 	});
 
+	it("renders reviewer Chat inside the existing terminal tab strip", () => {
+		const onSelectSessionTerminal = vi.fn();
+		renderCenterPane({
+			session: worker,
+			reviewerChat: { reviewId: "review-1", harness: "codex" },
+			reviewerChatSelected: true,
+			reviewerChatContent: <div data-testid="reviewer-chat-content">reviewer chat</div>,
+			onSelectSessionTerminal,
+		});
+
+		expect(screen.getByTestId("session-workspace-topbar")).toBeInTheDocument();
+		expect(screen.getByTestId("reviewer-chat-content")).toBeInTheDocument();
+		expect(screen.queryByText("terminal body")).not.toBeInTheDocument();
+		expect(screen.getByRole("tab", { name: "Reviewer" })).toHaveAttribute("aria-selected", "true");
+
+		fireEvent.click(screen.getByRole("tab", { name: /^do the thing/ }));
+		expect(onSelectSessionTerminal).toHaveBeenCalledOnce();
+	});
+
 	it("leaves terminal creation out of the terminal strip", () => {
 		renderCenterPane({ session: worker });
 

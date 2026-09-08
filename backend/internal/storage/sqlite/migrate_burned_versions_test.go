@@ -133,6 +133,7 @@ var shippedMigrations = map[int64]string{
 	126: "0126_canonical_repository_identity.sql",
 	127: "0127_session_permissions.sql",
 	128: "0128_pr_author_avatar_url.sql",
+	129: "0129_reviewer_chat_conversations.sql",
 }
 
 // burnedVersion reports version numbers that must never be (re)used: they
@@ -147,9 +148,7 @@ var shippedMigrations = map[int64]string{
 // (#3475/#3476), so migrations numbered up to 0051 are skipped there entirely.
 // Any such migration whose schema the generated queries depend on must add a
 // schemaRepairs entry in db.go.
-func burnedVersion(v int64) bool {
-	return v == 22
-}
+func burnedVersion(v int64) bool { return v == 22 }
 
 // TestMigrationVersionLedger enforces the append-only migration ledger: every
 // migration file has exactly one entry in shippedMigrations (adding a
