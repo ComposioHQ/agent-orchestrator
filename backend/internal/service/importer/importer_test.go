@@ -905,6 +905,26 @@ func TestValidateWorkspaceImportOfGitRepoRequiresProjectChoice(t *testing.T) {
 	}
 }
 
+func TestValidateWorkspaceImportOfRootRepoWithoutOriginUsesChildRepos(t *testing.T) {
+	ctx := context.Background()
+	root := filepath.Join(t.TempDir(), "workspace")
+	gitRepoWithCommitNoOrigin(t, root)
+	child := filepath.Join(root, "child")
+	gitRepoWithCommitWithOrigin(t, child, "https://example.invalid/child.git")
+	svc := New(Deps{Store: newFakeStore()})
+
+	result, err := svc.Validate(ctx, ImportValidationInput{ImportKind: ImportKindWorkspace, Path: root})
+	if err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	if !result.IsValid || result.NextStep != ImportNextStepContinue || result.Warning != "" {
+		t.Fatalf("result = %#v, want workspace import to continue", result)
+	}
+	if len(result.ChildRepos) != 1 || result.ChildRepos[0].RepoPath != child || !result.ChildRepos[0].HasOrigin {
+		t.Fatalf("childRepos = %#v, want ready child repository", result.ChildRepos)
+	}
+}
+
 func TestValidateWorkspaceImportReportsBareChildRepository(t *testing.T) {
 	ctx := context.Background()
 	root := t.TempDir()
