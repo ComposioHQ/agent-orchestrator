@@ -78,6 +78,17 @@ export type BoardSessionStatusPresentation = {
 
 export type BoardPullRequestState = "closed" | "open" | "draft" | "merged";
 
+// Display statuses that mean work is still turning, and so earn the spinning
+// loader beside the card's status label: the review the PR is waiting on, or an
+// AO-driven loop working the PR. Settled phrases ("Mergeable", "Approved",
+// "Merged") are deliberately absent — see #4725 and #5081.
+const IN_PROGRESS_DISPLAY_STATUSES = new Set<string>([
+	"Review pending",
+	"Fixing CI failures",
+	"Addressing comments",
+	"Reviewing",
+]);
+
 export type BoardReviewerPresentation = {
 	id: string;
 	avatarUrl?: string;
@@ -269,10 +280,15 @@ export function SessionCardView({
 		!needsAttention &&
 		session.displayStatus !== "Needs human review" &&
 		(session.status === "working" ||
-			session.status === "review_pending" ||
-			session.displayStatus === "Fixing CI failures" ||
-			session.displayStatus === "Addressing comments" ||
-			session.displayStatus === "Reviewing");
+			// The label reads `displayStatus`, so the loader must too. `status`
+			// aggregates the session's WORST open PR while `displayStatus` describes
+			// its BEST one, so keying the loader off `status` spun a settled
+			// "Mergeable" card forever whenever a sibling PR was still review-pending
+			// (#5081). Fall back to `status` only for a daemon too old to send
+			// `displayStatus`.
+			(session.displayStatus
+				? IN_PROGRESS_DISPLAY_STATUSES.has(session.displayStatus)
+				: session.status === "review_pending"));
 
 	return (
 		<div
