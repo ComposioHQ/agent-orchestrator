@@ -259,9 +259,10 @@ func TestStartCompletesHandshakeAndOpensThread(t *testing.T) {
 	if params.DeveloperInstructions != "standing rules" {
 		t.Errorf("developerInstructions = %q", params.DeveloperInstructions)
 	}
-	// Default permissions must match what AO already gives a Codex TUI session.
-	if params.ApprovalPolicy != "never" || params.Sandbox != "danger-full-access" {
-		t.Errorf("default posture = %q/%q, want never/danger-full-access", params.ApprovalPolicy, params.Sandbox)
+	// Default permissions send no approval override: the provider's own config
+	// decides, and nothing silently escalates to a bypassed sandbox.
+	if params.ApprovalPolicy != "" || params.Sandbox != "" {
+		t.Errorf("default posture = %q/%q, want no override sent", params.ApprovalPolicy, params.Sandbox)
 	}
 }
 
@@ -986,16 +987,50 @@ func TestApprovalSettingsMirrorTUIPosture(t *testing.T) {
 		mode                      ports.PermissionMode
 		policy, sandbox, reviewer string
 	}{
-		{ports.PermissionModeDefault, "never", "danger-full-access", "user"},
+		// Default sends no override at all: only an explicit Bypass Permissions
+		// choice may disable approvals and the sandbox. The reviewer is still a
+		// pure mapping; applyApprovalSettings is what withholds it for Default.
+		{ports.PermissionModeDefault, "", "", "user"},
 		{ports.PermissionModeBypassPermissions, "never", "danger-full-access", "user"},
 		{ports.PermissionModeAcceptEdits, "on-request", "workspace-write", "user"},
 		{ports.PermissionModeAuto, "on-request", "workspace-write", "auto_review"},
-		{ports.PermissionMode("nonsense"), "never", "danger-full-access", "user"},
+		{ports.PermissionMode("nonsense"), "", "", "user"},
 	} {
 		policy, sandbox := approvalSettings(tc.mode)
 		reviewer := approvalReviewer(tc.mode)
 		if policy != tc.policy || sandbox != tc.sandbox || reviewer != tc.reviewer {
 			t.Errorf("approval settings(%q) = %q/%q/%q, want %q/%q/%q", tc.mode, policy, sandbox, reviewer, tc.policy, tc.sandbox, tc.reviewer)
+		}
+	}
+
+	defPolicy, defSandbox := approvalSettings(ports.PermissionModeDefault)
+	bypassPolicy, bypassSandbox := approvalSettings(ports.PermissionModeBypassPermissions)
+	if defPolicy == bypassPolicy && defSandbox == bypassSandbox {
+		t.Error("Default and Bypass Permissions produce the same posture; Default must not imply bypass")
+	}
+}
+
+// thread/start and thread/resume must omit the approval keys entirely for
+// Default so the provider's own configuration decides.
+func TestApprovalKeysOmittedForDefaultMode(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		mode ports.PermissionMode
+		want bool
+	}{
+		{"default", ports.PermissionModeDefault, false},
+		{"unknown", ports.PermissionMode("nonsense"), false},
+		{"bypass", ports.PermissionModeBypassPermissions, true},
+		{"acceptEdits", ports.PermissionModeAcceptEdits, true},
+		{"auto", ports.PermissionModeAuto, true},
+	} {
+		params := map[string]any{}
+		applyApprovalSettings(params, tc.mode)
+		_, gotPolicy := params["approvalPolicy"]
+		_, gotSandbox := params["sandbox"]
+		_, gotReviewer := params["approvalsReviewer"]
+		if gotPolicy != tc.want || gotSandbox != tc.want || gotReviewer != tc.want {
+			t.Errorf("%s: approvalPolicy present=%v sandbox present=%v approvalsReviewer present=%v, want all %v", tc.name, gotPolicy, gotSandbox, gotReviewer, tc.want)
 		}
 	}
 }
