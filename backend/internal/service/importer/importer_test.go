@@ -454,9 +454,13 @@ func TestPrepareGitProjectImportCreatesPrivateGitHubRepository(t *testing.T) {
 	var gitCalls [][]string
 	originalGitOutput := importGitOutputFunc
 	importGitOutputFunc = func(ctx context.Context, dir string, args ...string) (string, error) {
-		gitCalls = append(gitCalls, append([]string(nil), args...))
 		if len(args) > 0 && args[0] == "push" {
+			gitCalls = append(gitCalls, append([]string(nil), args...))
+			setTestUpstream(t, dir)
 			return "", nil
+		}
+		if isImportGitMutation(args) {
+			gitCalls = append(gitCalls, append([]string(nil), args...))
 		}
 		return originalGitOutput(ctx, dir, args...)
 	}
@@ -486,6 +490,7 @@ func TestPrepareGitProjectImportCreatesPrivateGitHubRepository(t *testing.T) {
 	wantActions(t, gotArgs, wantArgs)
 	wantGitCalls := [][]string{
 		{"remote", "add", "origin", "https://github.com/octo/project.git"},
+		{"config", "--local", importGitHubRepositoryConfigKey, "octo/project"},
 		{"push", "-u", "origin", "HEAD"},
 	}
 	if !reflect.DeepEqual(gitCalls, wantGitCalls) {
@@ -698,9 +703,13 @@ func TestPrepareGitGitHubRepositoryRepairsExistingOriginWithoutURL(t *testing.T)
 	var gitCalls [][]string
 	originalGitOutput := importGitOutputFunc
 	importGitOutputFunc = func(ctx context.Context, dir string, args ...string) (string, error) {
-		gitCalls = append(gitCalls, append([]string(nil), args...))
 		if len(args) > 0 && args[0] == "push" {
+			gitCalls = append(gitCalls, append([]string(nil), args...))
+			setTestUpstream(t, dir)
 			return "", nil
+		}
+		if isImportGitMutation(args) {
+			gitCalls = append(gitCalls, append([]string(nil), args...))
 		}
 		return originalGitOutput(ctx, dir, args...)
 	}
@@ -726,6 +735,7 @@ func TestPrepareGitGitHubRepositoryRepairsExistingOriginWithoutURL(t *testing.T)
 	wantActions(t, ghArgs, []string{"repo", "create", "octo/repaired", "--private"})
 	wantGitCalls := [][]string{
 		{"remote", "set-url", "origin", "https://github.com/octo/repaired.git"},
+		{"config", "--local", importGitHubRepositoryConfigKey, "octo/repaired"},
 		{"push", "-u", "origin", "HEAD"},
 	}
 	if !reflect.DeepEqual(gitCalls, wantGitCalls) {
@@ -733,6 +743,86 @@ func TestPrepareGitGitHubRepositoryRepairsExistingOriginWithoutURL(t *testing.T)
 	}
 	if out, err := exec.Command("git", "-C", repo, "remote", "get-url", "origin").CombinedOutput(); err != nil || string(out) != "https://github.com/octo/repaired.git\n" {
 		t.Fatalf("origin = %q, %v", out, err)
+	}
+}
+
+func TestPrepareGitGitHubRepositoryRetriesPushAfterPartialSuccess(t *testing.T) {
+	ctx := context.Background()
+	repo := gitRepoWithCommitWithOrigin(t, t.TempDir(), "")
+	var ghCalls [][]string
+	originalGhOutput := importGhOutputFunc
+	importGhOutputFunc = func(_ context.Context, _ string, args ...string) (string, error) {
+		ghCalls = append(ghCalls, append([]string(nil), args...))
+		return "", nil
+	}
+	var gitCalls [][]string
+	pushAttempts := 0
+	originalGitOutput := importGitOutputFunc
+	importGitOutputFunc = func(ctx context.Context, dir string, args ...string) (string, error) {
+		if len(args) > 0 && args[0] == "push" {
+			gitCalls = append(gitCalls, append([]string(nil), args...))
+			pushAttempts++
+			if pushAttempts == 1 {
+				return "", errors.New("network failed")
+			}
+			setTestUpstream(t, dir)
+			return "", nil
+		}
+		if isImportGitMutation(args) {
+			gitCalls = append(gitCalls, append([]string(nil), args...))
+		}
+		return originalGitOutput(ctx, dir, args...)
+	}
+	t.Cleanup(func() { importGhOutputFunc = originalGhOutput })
+	t.Cleanup(func() { importGitOutputFunc = originalGitOutput })
+	svc := New(Deps{Store: newFakeStore()})
+	request := GitPreparationInput{
+		ImportKind:      ImportKindProject,
+		Path:            repo,
+		ApprovedActions: []string{GitPreparationActionCreateRemoteRepository},
+		GitHubRepository: &GitHubRepositoryPreparation{
+			Owner: "octo",
+			Name:  "partial",
+		},
+	}
+
+	first, err := svc.PrepareGit(ctx, request)
+	if err != nil {
+		t.Fatalf("first PrepareGit: %v", err)
+	}
+	wantEventActions(t, first.Events, []string{
+		GitPreparationActionCreateRemoteRepository,
+		GitPreparationActionCreateRemoteRepository,
+		GitPreparationActionCreateRemoteRepository,
+	})
+	if first.Events[2].State != GitPreparationEventError {
+		t.Fatalf("first final event = %#v, want push error", first.Events[2])
+	}
+	if first.Validation.NextStep != ImportNextStepPrepareGit {
+		t.Fatalf("first validation = %#v, want retryable prepare_git", first.Validation)
+	}
+	wantActions(t, first.Validation.Root.RequiredActions, []string{GitPreparationActionCreateRemoteRepository})
+
+	second, err := svc.PrepareGit(ctx, request)
+	if err != nil {
+		t.Fatalf("second PrepareGit: %v", err)
+	}
+	if second.Validation.NextStep != ImportNextStepContinue {
+		t.Fatalf("second validation = %#v, want continue", second.Validation)
+	}
+	if len(ghCalls) != 1 {
+		t.Fatalf("gh calls = %#v, want repo creation only once", ghCalls)
+	}
+	wantActions(t, ghCalls[0], []string{"repo", "create", "octo/partial", "--private"})
+	wantGitCalls := [][]string{
+		{"remote", "add", "origin", "https://github.com/octo/partial.git"},
+		{"config", "--local", importGitHubRepositoryConfigKey, "octo/partial"},
+		{"push", "-u", "origin", "HEAD"},
+		{"config", "--local", importGitHubRepositoryConfigKey, "octo/partial"},
+		{"push", "-u", "origin", "HEAD"},
+	}
+	if !reflect.DeepEqual(gitCalls, wantGitCalls) {
+		t.Fatalf("git calls = %#v, want %#v", gitCalls, wantGitCalls)
 	}
 }
 
@@ -978,6 +1068,26 @@ func gitRepoWithCommitWithOrigin(t *testing.T, dir, origin string) string {
 		}
 	}
 	return dir
+}
+
+func setTestUpstream(t *testing.T, dir string) {
+	t.Helper()
+	if out, err := exec.Command("git", "-C", dir, "config", "branch.main.remote", "origin").CombinedOutput(); err != nil {
+		t.Fatalf("set branch remote: %v (%s)", err, out)
+	}
+	if out, err := exec.Command("git", "-C", dir, "config", "branch.main.merge", "refs/heads/main").CombinedOutput(); err != nil {
+		t.Fatalf("set branch merge: %v (%s)", err, out)
+	}
+	if out, err := exec.Command("git", "-C", dir, "update-ref", "refs/remotes/origin/main", "HEAD").CombinedOutput(); err != nil {
+		t.Fatalf("set remote-tracking ref: %v (%s)", err, out)
+	}
+}
+
+func isImportGitMutation(args []string) bool {
+	if len(args) == 0 {
+		return false
+	}
+	return args[0] == "remote" || (args[0] == "config" && len(args) > 1 && args[1] == "--local")
 }
 
 func wantActions(t *testing.T, got, want []string) {

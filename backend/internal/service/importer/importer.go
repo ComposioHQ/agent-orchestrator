@@ -64,6 +64,8 @@ const (
 	GitPreparationEventError   = "error"
 )
 
+const importGitHubRepositoryConfigKey = "ao.import.githubRepository"
+
 // ImportValidationInput is the body shape for POST /api/v1/imports/validate.
 type ImportValidationInput struct {
 	ImportKind string `json:"importKind" enum:"project,workspace" minLength:"1"`
@@ -216,6 +218,9 @@ func (m *Manager) Validate(ctx context.Context, in ImportValidationInput) (Impor
 	root := inspectImportRepo(ctx, path)
 	if importKind == ImportKindProject {
 		root.RequiredActions = addProjectRemoteRepositoryAction(root.RequiredActions)
+		if root.HasOrigin && root.HasCommit && importGitHubPreparationIncomplete(ctx, path) && !slices.Contains(root.RequiredActions, GitPreparationActionCreateRemoteRepository) {
+			root.RequiredActions = append(root.RequiredActions, GitPreparationActionCreateRemoteRepository)
+		}
 	}
 	result.Root = root
 	if len(root.BlockingErrors) > 0 {
@@ -325,6 +330,10 @@ preparation:
 			if actionErr := runGitPreparationAction(ctx, target.Status.RepoPath, action, target.Input); actionErr != nil {
 				events = append(events, GitPreparationEvent{RepoPath: target.Status.RepoPath, Action: action, State: GitPreparationEventError, Error: actionErr.Error()})
 				latest, _ := m.Validate(ctx, ImportValidationInput{ImportKind: importKind, Path: validation.Root.RepoPath})
+				if importKind == ImportKindProject && action == GitPreparationActionCreateRemoteRepository && target.Input.GitHubRepository != nil {
+					latest.Root.RequiredActions = []string{GitPreparationActionCreateRemoteRepository}
+					latest.NextStep = ImportNextStepPrepareGit
+				}
 				return GitPreparationResult{Events: events, Validation: latest}, nil //nolint:nilerr // action failures are reported in-band as progress events for partial recovery
 			}
 			events = append(events, GitPreparationEvent{RepoPath: target.Status.RepoPath, Action: action, State: GitPreparationEventSuccess})
@@ -553,9 +562,6 @@ func runGitPreparationAction(ctx context.Context, path, action string, in GitRep
 			return err
 		}
 	case GitPreparationActionCreateRemoteRepository:
-		if resolveImportOriginURL(path) != "" {
-			return nil
-		}
 		if in.GitHubRepository != nil {
 			owner := strings.TrimSpace(in.GitHubRepository.Owner)
 			name := strings.TrimSpace(in.GitHubRepository.Name)
@@ -563,16 +569,26 @@ func runGitPreparationAction(ctx context.Context, path, action string, in GitRep
 				return errors.New("github repository owner and name are required")
 			}
 			repository := owner + "/" + name
-			if _, err := importGhOutputFunc(ctx, path, "repo", "create", repository, "--private"); err != nil {
-				return fmt.Errorf("create private GitHub repository: %w", err)
-			}
 			remoteURL := "https://github.com/" + repository + ".git"
-			if err := setImportOriginURL(ctx, path, remoteURL); err != nil {
-				return err
+			if currentRemoteURL := resolveImportOriginURL(path); currentRemoteURL == "" {
+				if _, err := importGhOutputFunc(ctx, path, "repo", "create", repository, "--private"); err != nil {
+					return fmt.Errorf("create private GitHub repository: %w", err)
+				}
+				if err := setImportOriginURL(ctx, path, remoteURL); err != nil {
+					return err
+				}
+			} else if currentRemoteURL != remoteURL {
+				return nil
+			}
+			if _, err := importGitOutputFunc(ctx, path, "config", "--local", importGitHubRepositoryConfigKey, repository); err != nil {
+				return fmt.Errorf("record GitHub repository preparation: %w", err)
 			}
 			if _, err := importGitOutputFunc(ctx, path, "push", "-u", "origin", "HEAD"); err != nil {
 				return fmt.Errorf("push initial commit: %w", err)
 			}
+			return nil
+		}
+		if resolveImportOriginURL(path) != "" {
 			return nil
 		}
 		remoteURL := strings.TrimSpace(in.RemoteURL)
@@ -596,6 +612,15 @@ func setImportOriginURL(ctx context.Context, path, remoteURL string) error {
 		return fmt.Errorf("add origin remote: %w", err)
 	}
 	return nil
+}
+
+func importGitHubPreparationIncomplete(ctx context.Context, path string) bool {
+	out, err := importGitOutputFunc(ctx, path, "config", "--get", importGitHubRepositoryConfigKey)
+	if err != nil || strings.TrimSpace(out) == "" {
+		return false
+	}
+	_, err = importGitOutputFunc(ctx, path, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}")
+	return err != nil
 }
 
 func normalizeImportPath(raw string) (string, error) {
