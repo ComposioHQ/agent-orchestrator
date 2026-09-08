@@ -212,6 +212,10 @@ func (c ProjectConfig) Validate() error {
 		if err := rv.AgentConfig.Validate(); err != nil {
 			return fmt.Errorf("reviewers[%d].%w", i, err)
 		}
+		model := rv.AgentConfig.Model
+		if len(strings.TrimSpace(model)) > 256 || strings.ContainsAny(model, "\r\n\x00") {
+			return fmt.Errorf("reviewers[%d].agentConfig.model: must be a single line of at most 256 characters", i)
+		}
 	}
 	if err := c.TrackerIntake.Validate(); err != nil {
 		return err
