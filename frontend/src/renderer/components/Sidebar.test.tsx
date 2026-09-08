@@ -945,8 +945,8 @@ describe("Sidebar", () => {
 			await screen.findByRole("textbox", { name: "Repository URL" }),
 			"git@github.com:acme/web-app.git",
 		);
-		await user.click(screen.getByRole("button", { name: "Choose" }));
-		expect(window.ao!.app.chooseDirectory).toHaveBeenCalledWith("Choose where to clone the repository");
+		await user.click(screen.getByRole("button", { name: "Choose where to clone the repository" }));
+		expect(window.ao!.app.chooseDirectory).toHaveBeenCalledWith({ title: "Choose where to clone the repository", defaultPath: "~/ao/projects" });
 		await waitFor(() => expect(screen.getByRole("button", { name: "Continue" })).toBeEnabled());
 		await user.click(screen.getByRole("button", { name: "Continue" }));
 
@@ -991,7 +991,7 @@ describe("Sidebar", () => {
 			await screen.findByRole("textbox", { name: "Repository URL" }),
 			"git@github.com:acme/web-app.git",
 		);
-		await user.click(screen.getByRole("button", { name: "Choose" }));
+		await user.click(screen.getByRole("button", { name: "Choose where to clone the repository" }));
 		await waitFor(() => expect(screen.getByRole("button", { name: "Continue" })).toBeEnabled());
 		await user.click(await screen.findByRole("button", { name: "Continue" }));
 

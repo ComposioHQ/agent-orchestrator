@@ -16,6 +16,9 @@ test("renderer: clone cancel and retry use the matching preparation ID @T0", asy
 			return;
 		}
 		if (pathname === "/api/v1/projects/clone/prepare") {
+			expect(route.request().postDataJSON()).toEqual({
+				remoteUrl: "https://example.com/example.git", destinationParent: "/repos",
+			});
 			preparation += 1;
 			await route.fulfill({ json: {
 				path: "/repos/example", remoteUrl: "https://example.com/example.git",
@@ -60,7 +63,7 @@ test("renderer: clone cancel and retry use the matching preparation ID @T0", asy
 		await page.getByRole("button", { name: "New project", exact: true }).first().click();
 		await page.getByRole("button", { name: "Clone from Git", exact: true }).click();
 		await page.getByRole("textbox", { name: "Repository URL" }).fill("https://example.com/example.git");
-		await page.getByRole("button", { name: "Choose", exact: true }).click();
+		await page.getByRole("button", { name: "Choose where to clone the repository", exact: true }).click();
 		await page.getByRole("button", { name: "Continue", exact: true }).click();
 	};
 
@@ -69,7 +72,7 @@ test("renderer: clone cancel and retry use the matching preparation ID @T0", asy
 	await expect.poll(() => cleanupRequests).toEqual([{ path: "/repos/example", preparationId: "prep-1" }]);
 
 	await page.getByRole("textbox", { name: "Repository URL" }).fill("https://example.com/example.git");
-	await page.getByRole("button", { name: "Choose", exact: true }).click();
+	await page.getByRole("button", { name: "Choose where to clone the repository", exact: true }).click();
 	await page.getByRole("button", { name: "Continue", exact: true }).click();
 	await page.getByRole("button", { name: "Clone", exact: true }).click();
 
