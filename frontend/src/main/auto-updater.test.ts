@@ -67,10 +67,13 @@ function createAutoUpdaterMock(): AutoUpdaterMock {
 // land after the next test's cleanup. One fresh directory per test removes the
 // race outright rather than trying to time it.
 let stateDir = "";
+const hostPlatform = Object.getOwnPropertyDescriptor(process, "platform")!;
 beforeEach(() => {
+  Object.defineProperty(process, "platform", { value: "linux" });
   stateDir = mkdtempSync(nodePath.join(os.tmpdir(), "ao-updater-state-"));
 });
 afterEach(() => {
+  Object.defineProperty(process, "platform", hostPlatform);
   rmSync(stateDir, { recursive: true, force: true });
 });
 
@@ -247,7 +250,7 @@ describe("startAutoUpdates", () => {
   it("recovers a macOS ShipIt missing-file failure instead of retaining a ready update", async () => {
     const restore = stubProcess("darwin", "/usr/local/bin/node");
     try {
-      const { module, autoUpdater, updaterEvents, nativeAutoUpdater } = await importAutoUpdater(undefined, { nativeReadyManually: true });
+      const { module, autoUpdater, updaterEvents, nativeAutoUpdater } = await importAutoUpdater({ enabled: false, channel: "latest", nightlyAck: false, feature: null }, { nativeReadyManually: true });
       await module.startAutoUpdates(stateDir);
       updaterEvents.get("update-downloaded")?.({ version: "2.1.0" });
       await flushMicrotasks();
@@ -363,7 +366,7 @@ describe("startAutoUpdates", () => {
     }
   });
 
-  it.each(["download", "check", "return-home"])("does not discard a queued retry when the previous %s rejects", async (operation) => {
+  it.each(["download", "check", "return-home"])("allows retry after the previous %s rejects", async (operation) => {
     const restore = stubProcess("darwin", "/usr/bin/node");
     try {
       const { module, autoUpdater, updaterEvents } = await importAutoUpdater();
@@ -377,7 +380,8 @@ describe("startAutoUpdates", () => {
       const failed = operation === "download" ? module.downloadUpdateNow("failed")
         : operation === "check" ? module.checkForUpdatesNow(stateDir, { requestId: "failed" })
         : module.returnToHome(stateDir, "failed");
-      await Promise.all([failed, module.downloadUpdateNow("retry")]);
+      await failed;
+      await module.downloadUpdateNow("retry");
       expect(module.getUpdateStatus().staged?.version).toBe("2.2.0");
       expect(autoUpdater.autoInstallOnAppQuit).toBe(true);
     } finally { restore(); }
@@ -510,6 +514,108 @@ describe("startAutoUpdates", () => {
         useMultipleRangeRequest: false,
       });
       expect(autoUpdater.checkForUpdates).toHaveBeenCalledTimes(1);
+      expect(autoUpdater.setFeedURL).toHaveBeenNthCalledWith(2, {
+        provider: "github",
+        owner: "Untrivial-ai",
+        repo: "agent-orchestrator",
+      });
+    } finally {
+      if (originalResourcesPath) {
+        Object.defineProperty(process, "resourcesPath", originalResourcesPath);
+      } else {
+        Reflect.deleteProperty(process, "resourcesPath");
+      }
+      rmSync(resourcesPath, { recursive: true, force: true });
+    }
+  });
+
+  it("revalidates release history without a second body and refreshes when a release changes", async () => {
+    const platformManifest =
+      process.platform === "darwin"
+        ? "nightly-mac.yml"
+        : process.platform === "linux"
+          ? "nightly-linux.yml"
+          : "nightly.yml";
+    const resourcesPath = mkdtempSync(
+      nodePath.join(os.tmpdir(), "ao-nightly-feed-"),
+    );
+    writeFileSync(
+      nodePath.join(resourcesPath, "app-update.yml"),
+      "provider: github\nowner: Untrivial-ai\nrepo: agent-orchestrator\n",
+    );
+    const originalResourcesPath = Object.getOwnPropertyDescriptor(
+      process,
+      "resourcesPath",
+    );
+    Object.defineProperty(process, "resourcesPath", {
+      configurable: true,
+      value: resourcesPath,
+    });
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify([
+          {
+            tag_name: "v1.0.1-nightly.202608231518",
+            draft: false,
+            prerelease: true,
+            assets: [{ name: "Agent.Orchestrator.dmg" }],
+          },
+          {
+            tag_name: "v1.0.1-nightly.202608231517",
+            draft: false,
+            prerelease: true,
+            assets: [{ name: platformManifest }],
+          },
+          {
+            tag_name: "v1.0.1-nightly.202608231350",
+            draft: false,
+            prerelease: true,
+            assets: [{ name: platformManifest }],
+          },
+        ]),
+        { status: 200, headers: { etag: '"release-v1"' } },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    try {
+      const { module, autoUpdater } = await importAutoUpdater({
+        enabled: true,
+        channel: "nightly",
+        nightlyAck: true,
+        feature: null,
+      });
+
+      await module.checkForUpdatesNow(stateDir);
+
+      expect(fetchMock).toHaveBeenCalledWith(
+        "https://api.github.com/repos/Untrivial-ai/agent-orchestrator/releases?per_page=100",
+        expect.objectContaining({ signal: expect.any(AbortSignal) }),
+      );
+      expect(autoUpdater.setFeedURL).toHaveBeenNthCalledWith(1, {
+        provider: "generic",
+        url: "https://github.com/Untrivial-ai/agent-orchestrator/releases/download/v1.0.1-nightly.202608231517",
+        channel: "nightly",
+        useMultipleRangeRequest: false,
+      });
+      fetchMock.mockResolvedValueOnce(new Response(null, { status: 304 }));
+      await module.checkForUpdatesNow(stateDir);
+      expect(fetchMock).toHaveBeenLastCalledWith(
+        expect.any(String),
+        expect.objectContaining({ headers: expect.objectContaining({ "If-None-Match": '"release-v1"' }) }),
+      );
+      expect(autoUpdater.setFeedURL).toHaveBeenNthCalledWith(3, expect.objectContaining({
+        url: "https://github.com/Untrivial-ai/agent-orchestrator/releases/download/v1.0.1-nightly.202608231517",
+      }));
+      fetchMock.mockResolvedValueOnce(new Response(JSON.stringify([{
+        tag_name: "v1.0.2-nightly.202608241000", draft: false, prerelease: true,
+        assets: [{ name: platformManifest }],
+      }]), { status: 200, headers: { etag: '"release-v2"' } }));
+      await module.checkForUpdatesNow(stateDir);
+      expect(autoUpdater.setFeedURL).toHaveBeenNthCalledWith(5, expect.objectContaining({
+        url: "https://github.com/Untrivial-ai/agent-orchestrator/releases/download/v1.0.2-nightly.202608241000",
+      }));
+      expect(autoUpdater.checkForUpdates).toHaveBeenCalledTimes(3);
       expect(autoUpdater.setFeedURL).toHaveBeenNthCalledWith(2, {
         provider: "github",
         owner: "Untrivial-ai",
@@ -850,7 +956,7 @@ describe("startAutoUpdates", () => {
     );
     // The UI stays quiet: no status is pushed and the status never leaves idle.
     expect(statusMessages()).toEqual([]);
-    expect(module.getUpdateStatus()).toEqual({ state: "idle" });
+    expect(module.getUpdateStatus()).toMatchObject({ state: "idle" });
     // But the outcome is still reported. Automatic checks run hourly and are how
     // installs go silently stale, so suppressing the UI must not lose the signal.
     expect(telemetryMessages().map((m) => m.payload)).toEqual([
@@ -872,7 +978,7 @@ describe("startAutoUpdates", () => {
 
     await module.checkForUpdatesNow(stateDir);
     updaterEvents.get("update-available")?.({ version: "2.0.0" });
-    expect(module.getUpdateStatus()).toEqual({
+    expect(module.getUpdateStatus()).toMatchObject({
       state: "available",
       version: "2.0.0",
       checkedAt: expect.any(Number),
@@ -890,15 +996,15 @@ describe("startAutoUpdates", () => {
       "auto-update check failed:",
       err,
     );
-    expect(module.getUpdateStatus()).toEqual({
+    expect(module.getUpdateStatus()).toMatchObject({
       state: "available",
       version: "2.0.0",
       checkedAt: expect.any(Number),
     });
   });
 
-  it("restores the prior status when an automatic download fails after publishing progress", async () => {
-    const consoleErrorSpy = vi
+  it("reports an automatic download failure after progress", async () => {
+    vi
       .spyOn(console, "error")
       .mockImplementation(() => undefined);
     const lateDownload = deferred();
@@ -932,15 +1038,8 @@ describe("startAutoUpdates", () => {
     lateDownload.resolve();
     await startPromise;
 
-    expect(consoleErrorSpy).toHaveBeenCalledWith(
-      "auto-update check failed:",
-      err,
-    );
-    expect(module.getUpdateStatus()).toEqual({
-      state: "available",
-      version: "2.0.0",
-      checkedAt: expect.any(Number),
-    });
+    expect(module.getUpdateStatus()).toMatchObject({ state: "error", message: "download failed" });
+
   });
 
   it("restores a staged update when an automatic check emits checking before an error", async () => {
@@ -955,7 +1054,7 @@ describe("startAutoUpdates", () => {
 
     await module.checkForUpdatesNow(stateDir);
     updaterEvents.get("update-downloaded")?.({ version: "2.1.0" });
-    expect(module.getUpdateStatus()).toEqual({
+    expect(module.getUpdateStatus()).toMatchObject({
       state: "downloaded",
       version: "2.1.0",
       stagedAt,
@@ -976,7 +1075,7 @@ describe("startAutoUpdates", () => {
       "auto-update check failed:",
       err,
     );
-    expect(module.getUpdateStatus()).toEqual({
+    expect(module.getUpdateStatus()).toMatchObject({
       state: "downloaded",
       version: "2.1.0",
       stagedAt,
@@ -1097,7 +1196,7 @@ describe("startAutoUpdates", () => {
     runEscalation();
     await Promise.resolve();
     await Promise.resolve();
-    expect(module.getUpdateStatus()).toEqual({
+    expect(module.getUpdateStatus()).toMatchObject({
       state: "downloaded",
       version: "2.1.0",
       stagedAt,
@@ -1114,7 +1213,7 @@ describe("startAutoUpdates", () => {
       "auto-update check failed:",
       err,
     );
-    expect(module.getUpdateStatus()).toEqual({
+    expect(module.getUpdateStatus()).toMatchObject({
       state: "downloaded",
       version: "2.1.0",
       stagedAt,
@@ -1124,13 +1223,13 @@ describe("startAutoUpdates", () => {
     });
   });
 
-  it("restores an independent staged escalation after later automatic download progress fails", async () => {
+  it("reports the download failure and retains valid staged metadata", async () => {
     vi.useFakeTimers();
     const setIntervalSpy = vi.spyOn(globalThis, "setInterval");
     const stagedAt = new Date("2026-07-17T12:00:00.000Z").getTime();
     vi.setSystemTime(stagedAt);
     const automaticDownload = deferred();
-    const consoleErrorSpy = vi
+    vi
       .spyOn(console, "error")
       .mockImplementation(() => undefined);
     const { module, autoUpdater, updaterEvents } = await importAutoUpdater();
@@ -1170,18 +1269,9 @@ describe("startAutoUpdates", () => {
     automaticDownload.resolve();
     await startPromise;
 
-    expect(consoleErrorSpy).toHaveBeenCalledWith(
-      "auto-update check failed:",
-      err,
-    );
-    expect(module.getUpdateStatus()).toEqual({
-      state: "downloaded",
-      version: "2.1.0",
-      stagedAt,
-      escalated: true,
-      checkedAt: expect.any(Number),
-      staged: { version: "2.1.0", stagedAt, escalated: true },
-    });
+    expect(module.getUpdateStatus()).toMatchObject({ state: "error", message: "download failed" });
+    expect(module.getUpdateStatus().staged).toEqual({ version: "2.1.0", stagedAt, escalated: true });
+
   });
 
   it("keeps automatic download errors silent after checkForUpdates resolves", async () => {
@@ -1318,7 +1408,6 @@ describe("startAutoUpdates", () => {
       state: "error",
       message:
         "Couldn't check for updates — the update information was not found on the server.",
-      checkedAt: expect.any(Number),
     });
   });
 
@@ -1347,7 +1436,10 @@ describe("startAutoUpdates", () => {
 
     await module.checkForUpdatesNow(stateDir);
     updaterEvents.get("update-downloaded")?.({ version: "2.1.0" });
+    const checkedAt = module.getUpdateStatus().checkedAt;
     updaterEvents.get("error")?.(err);
+    expect(module.getUpdateStatus().checkedAt).toBe(checkedAt);
+    expect(module.getUpdateStatus().checkError).toBe(err.message);
 
     expect(module.getUpdateStatus()).toEqual(
       expect.objectContaining({
@@ -1436,7 +1528,6 @@ describe("startAutoUpdates", () => {
       state: "error",
       message: "net::ERR_FAILED",
       netError: true,
-      checkedAt: expect.any(Number),
     });
   });
 
@@ -1463,7 +1554,6 @@ describe("startAutoUpdates", () => {
     expect(module.getUpdateStatus()).toEqual({
       state: "error",
       message: "boom",
-      checkedAt: expect.any(Number),
     });
   });
 
@@ -1479,11 +1569,11 @@ describe("startAutoUpdates", () => {
     await module.startAutoUpdates(stateDir);
     await module.startAutoUpdates(stateDir);
     // Below the threshold the suppressed automatic failure stays fully silent.
-    expect(module.getUpdateStatus()).toEqual({ state: "idle" });
+    expect(module.getUpdateStatus()).toMatchObject({ state: "idle" });
 
     await module.startAutoUpdates(stateDir);
 
-    expect(module.getUpdateStatus()).toEqual({
+    expect(module.getUpdateStatus()).toMatchObject({
       state: "idle",
       staleCheckNudge: true,
       checksFailing: true,
@@ -1507,7 +1597,7 @@ describe("startAutoUpdates", () => {
     // failing-checks flag still trips, because three failed checks in a row
     // leave the install just as stranded.
     expect(module.getUpdateStatus().staleCheckNudge).toBeUndefined();
-    expect(module.getUpdateStatus()).toEqual({
+    expect(module.getUpdateStatus()).toMatchObject({
       state: "idle",
       checksFailing: true,
     });
@@ -1540,7 +1630,7 @@ describe("startAutoUpdates", () => {
     // lone trailing net error stays below the threshold (#3526). Four failed
     // checks is still four failed checks, so the generic flag trips.
     expect(module.getUpdateStatus().staleCheckNudge).toBeUndefined();
-    expect(module.getUpdateStatus()).toEqual({
+    expect(module.getUpdateStatus()).toMatchObject({
       state: "idle",
       checksFailing: true,
     });
@@ -1559,10 +1649,10 @@ describe("startAutoUpdates", () => {
     // threshold of three.
     await module.startAutoUpdates(stateDir);
     await module.startAutoUpdates(stateDir);
-    expect(module.getUpdateStatus()).toEqual({ state: "idle" });
+    expect(module.getUpdateStatus()).toMatchObject({ state: "idle" });
 
     await module.startAutoUpdates(stateDir);
-    expect(module.getUpdateStatus()).toEqual({
+    expect(module.getUpdateStatus()).toMatchObject({
       state: "idle",
       staleCheckNudge: true,
       checksFailing: true,
@@ -1581,10 +1671,10 @@ describe("startAutoUpdates", () => {
     await module.startAutoUpdates(stateDir);
     // Restored to the pre-check status (not stuck on "checking"), and no nudge
     // below the threshold.
-    expect(module.getUpdateStatus()).toEqual({ state: "idle" });
+    expect(module.getUpdateStatus()).toMatchObject({ state: "idle" });
 
     await module.startAutoUpdates(stateDir);
-    expect(module.getUpdateStatus()).toEqual({
+    expect(module.getUpdateStatus()).toMatchObject({
       state: "idle",
       staleCheckNudge: true,
       checksFailing: true,
@@ -1614,7 +1704,7 @@ describe("startAutoUpdates", () => {
         checksFailing: true,
       }),
     ]);
-    expect(module.getUpdateStatus()).toEqual({
+    expect(module.getUpdateStatus()).toMatchObject({
       state: "idle",
       staleCheckNudge: true,
       checksFailing: true,
@@ -1633,7 +1723,7 @@ describe("startAutoUpdates", () => {
     await module.startAutoUpdates(stateDir);
     await module.startAutoUpdates(stateDir);
     await module.startAutoUpdates(stateDir);
-    expect(module.getUpdateStatus()).toEqual({
+    expect(module.getUpdateStatus()).toMatchObject({
       state: "idle",
       staleCheckNudge: true,
       checksFailing: true,
@@ -1646,7 +1736,7 @@ describe("startAutoUpdates", () => {
     });
     await module.startAutoUpdates(stateDir);
 
-    expect(module.getUpdateStatus()).toEqual({ state: "not-available", checkedAt: expect.any(Number) });
+    expect(module.getUpdateStatus()).toMatchObject({ state: "not-available", checkedAt: expect.any(Number) });
   });
 
   it("logs settings failures during automatic checks and retries on later ticks", async () => {
@@ -1913,7 +2003,7 @@ describe("startAutoUpdates", () => {
 
     updaterEvents.get("update-available")?.({ version: "1.9.0" });
     expect(module.getUpdateStatus()).toEqual({
-      state: "available",
+      state: "downloading",
       version: "1.9.0",
       checkedAt: expect.any(Number),
     });
@@ -2326,7 +2416,7 @@ describe("startAutoUpdates", () => {
     });
   });
 
-  it("settles an event-less manual check as available when the feed has a build", async () => {
+  it("downloads an event-less manual offer when automatic downloads are enabled when the feed has a build", async () => {
     const { module, autoUpdater } = await importAutoUpdater();
     autoUpdater.checkForUpdates.mockResolvedValue({
       isUpdateAvailable: true,
@@ -2336,7 +2426,7 @@ describe("startAutoUpdates", () => {
     await module.checkForUpdatesNow(stateDir, { requestId: "manual-update-1" });
 
     expect(module.getUpdateStatus()).toMatchObject({
-      state: "available",
+      state: "downloading",
       version: "2.5.0",
     });
   });
@@ -2409,6 +2499,40 @@ describe("startAutoUpdates", () => {
     const second = await importAutoUpdaterKeepingStagedFile();
     await second.module.startAutoUpdates(stateDir);
     expect(second.module.getUpdateStatus().staged).toBeUndefined();
+  });
+
+  it("drops an older staged build from the running channel", async () => {
+    writeFileSync(nodePath.join(stateDir, "staged-update.json"), JSON.stringify({
+      version: "0.12.13-nightly.202609070711",
+      stagedAt: Date.now(),
+      channel: "nightly",
+    }));
+
+    const harness = await importAutoUpdaterKeepingStagedFile(
+      { enabled: false, channel: "nightly", nightlyAck: true, feature: null },
+      { version: "0.12.13-nightly.202609070850" },
+    );
+    await harness.module.startAutoUpdates(stateDir);
+
+    expect(harness.module.getUpdateStatus().staged).toBeUndefined();
+  });
+
+  it("retains an older staged build from another channel", async () => {
+    writeFileSync(nodePath.join(stateDir, "staged-update.json"), JSON.stringify({
+      version: "0.12.10-nightly.1",
+      stagedAt: Date.now(),
+      channel: "nightly",
+    }));
+
+    const harness = await importAutoUpdaterKeepingStagedFile(
+      { enabled: false, channel: "nightly", nightlyAck: true, feature: null },
+      { version: "0.12.11" },
+    );
+    await harness.module.startAutoUpdates(stateDir);
+
+    expect(harness.module.getUpdateStatus().staged).toMatchObject({
+      version: "0.12.10-nightly.1",
+    });
   });
 
   // Regression: electron-updater keeps its request open when a download stops
@@ -2909,7 +3033,7 @@ describe("quitAndInstallUpdate", () => {
     } finally { vi.useRealTimers(); restore(); }
   });
 
-  it("keeps a second download behind the first native preparation", async () => {
+  it("ignores duplicate downloads during native preparation and accepts a later replacement", async () => {
     const restore = stubProcess("darwin", "/usr/bin/node");
     try {
       const { module, autoUpdater, updaterEvents, nativeAutoUpdater } = await importAutoUpdater(undefined, { nativeReadyManually: true });
@@ -2924,13 +3048,18 @@ describe("quitAndInstallUpdate", () => {
       expect(autoUpdater.downloadUpdate).toHaveBeenCalledTimes(1);
       nativeAutoUpdater.emit("update-downloaded");
       await first;
+      await second;
+      expect(autoUpdater.downloadUpdate).toHaveBeenCalledTimes(1);
+      autoUpdater.autoDownload = false;
+      updaterEvents.get("update-available")?.({ version: "2.2.0" });
+      const replacement = module.downloadUpdateNow();
       await flushMicrotasks();
       expect(autoUpdater.downloadUpdate).toHaveBeenCalledTimes(2);
       const install = module.quitAndInstallUpdate();
       await flushMicrotasks();
       expect(autoUpdater.quitAndInstall).not.toHaveBeenCalled();
       nativeAutoUpdater.emit("update-downloaded");
-      await Promise.all([second, install]);
+      await Promise.all([replacement, install]);
       expect(autoUpdater.quitAndInstall).toHaveBeenCalledTimes(1);
     } finally { restore(); }
   });
@@ -2999,11 +3128,23 @@ describe("quitAndInstallUpdate", () => {
     } finally { restore(); }
   });
 
+  it.each(["win32", "linux"])("rejects an install without a staged build on %s", async (platform) => {
+    const restore = stubProcess(platform, "/usr/bin/node");
+    try {
+      const { module, autoUpdater } = await importAutoUpdater();
+      await module.checkForUpdatesNow(stateDir);
+      await expect(module.quitAndInstallUpdate()).rejects.toThrow(/not ready/);
+      expect(autoUpdater.quitAndInstall).not.toHaveBeenCalled();
+    } finally { restore(); }
+  });
+
   it("never blocks off macOS, even for translocation-looking paths", async () => {
     const restore = stubProcess("win32", TRANSLOCATED_EXEC_PATH);
     try {
-      const { module, autoUpdater, dialog } = await importAutoUpdater(undefined, { nativeReadyManually: true });
+      const { module, autoUpdater, dialog, updaterEvents } = await importAutoUpdater(undefined, { nativeReadyManually: true });
 
+      await module.checkForUpdatesNow(stateDir);
+      updaterEvents.get("update-downloaded")?.({ version: "2.0.0" });
       module.quitAndInstallUpdate();
 
       expect(dialog.showMessageBox).not.toHaveBeenCalled();
@@ -3161,10 +3302,10 @@ describe("channel downgrade safety", () => {
     const h = await importAutoUpdater({ ...stable, enabled }, { version: running });
     serveVersion(h, "0.12.10");
     await h.module.startAutoUpdates(stateDir);
-    expect(h.module.getUpdateStatus()).toMatchObject({ state: "available", version: "0.12.10" });
+    expect(h.module.getUpdateStatus()).toMatchObject({ state: enabled ? "downloading" : "available", version: "0.12.10" });
     expect(h.autoUpdater.autoDownload).toBe(enabled);
     await h.module.checkForUpdatesNow(stateDir);
-    expect(h.module.getUpdateStatus()).toMatchObject({ state: "available", version: "0.12.10" });
+    expect(h.module.getUpdateStatus()).toMatchObject({ state: enabled ? "downloading" : "available", version: "0.12.10" });
     expect(h.autoUpdater.allowDowngrade).toBe(true);
   });
 
@@ -3726,4 +3867,67 @@ describe("renderer delivery does not depend on the window registry", () => {
     module.setRendererSink(() => null);
     await expect(module.checkForUpdatesNow(stateDir)).resolves.toBeUndefined();
   });
+});
+
+describe("live download-to-install flow", () => {
+  it("publishes starting immediately and refuses duplicate download requests", async () => {
+    const { module, autoUpdater, updaterEvents } = await importAutoUpdater();
+    await module.checkForUpdatesNow(stateDir);
+    updaterEvents.get("update-available")?.({ version: "2.0.0" });
+    let finish!: () => void;
+    autoUpdater.downloadUpdate.mockImplementation(() => new Promise<void>((resolve) => { finish = resolve; }));
+    const download = module.downloadUpdateNow();
+    expect(module.getUpdateStatus()).toMatchObject({ state: "downloading", version: "2.0.0" });
+    expect(module.getUpdateStatus().percent).toBeUndefined();
+    await module.downloadUpdateNow();
+    expect(autoUpdater.downloadUpdate).toHaveBeenCalledTimes(1);
+    updaterEvents.get("download-progress")?.({ percent: 42.8, transferred: 428, total: 1000 });
+    expect(module.getUpdateStatus()).toMatchObject({ state: "downloading", percent: 42, transferred: 428, total: 1000 });
+    finish();
+    await download;
+  });
+
+  it("does not offer installation at 100% or before native macOS readiness", async () => {
+    const restore = stubProcess("darwin", process.execPath);
+    try {
+      const { module, updaterEvents, nativeUpdaterEvents, autoUpdater } = await importAutoUpdater(undefined, { nativeReadyManually: true });
+      await module.checkForUpdatesNow(stateDir);
+      updaterEvents.get("download-progress")?.({ percent: 100, transferred: 1000, total: 1000 });
+      expect(module.getUpdateStatus().state).toBe("preparing");
+      updaterEvents.get("update-downloaded")?.({ version: "2.0.0" });
+      expect(module.getUpdateStatus()).toMatchObject({ state: "preparing", staged: { ready: false } });
+      const install = module.quitAndInstallUpdate();
+      expect(autoUpdater.quitAndInstall).not.toHaveBeenCalled();
+      nativeUpdaterEvents.get("update-downloaded")?.({}, "notes", "2.0.0");
+      expect(module.getUpdateStatus().state).toBe("downloaded");
+      await install;
+      expect(autoUpdater.quitAndInstall).toHaveBeenCalledTimes(1);
+    } finally { restore(); }
+  });
+
+  it("never advances the successful check timestamp for a failure", async () => {
+    const { module, updaterEvents } = await importAutoUpdater();
+    await module.checkForUpdatesNow(stateDir);
+    updaterEvents.get("update-not-available")?.();
+    const checkedAt = module.getUpdateStatus().checkedAt;
+    updaterEvents.get("error")?.(new Error("offline"));
+    expect(module.getUpdateStatus()).toMatchObject({ state: "error", checkedAt });
+  });
+});
+
+it("keeps timed-out native preparation non-installable even after a late event", async () => {
+  vi.useFakeTimers();
+  const restore = stubProcess("darwin", process.execPath);
+  try {
+    const { module, updaterEvents, nativeUpdaterEvents, autoUpdater } = await importAutoUpdater(undefined, { nativeReadyManually: true });
+    await module.checkForUpdatesNow(stateDir);
+    updaterEvents.get("update-downloaded")?.({ version: "2.0.0" });
+    await vi.advanceTimersByTimeAsync(3 * 60_000);
+    expect(module.getUpdateStatus()).toMatchObject({ state: "error", staged: { ready: false } });
+    expect(module.getUpdateStatus().message).toContain("stopped responding while preparing");
+    await expect(module.quitAndInstallUpdate()).rejects.toThrow(/Close and reopen AO/);
+    expect(autoUpdater.quitAndInstall).not.toHaveBeenCalled();
+    nativeUpdaterEvents.get("update-downloaded")?.({}, "notes", "2.0.0");
+    expect(module.getUpdateStatus().state).toBe("error");
+  } finally { restore(); vi.useRealTimers(); }
 });

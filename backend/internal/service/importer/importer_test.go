@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
@@ -118,6 +119,31 @@ func TestValidateProjectImportPlainFolderNeedsPreparation(t *testing.T) {
 	}
 }
 
+func TestPrepareGitProjectImportCommitsExistingFolderContents(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "README.md"), []byte("existing project\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	svc := New(Deps{Store: newFakeStore()})
+
+	result, err := svc.PrepareGit(ctx, GitPreparationInput{
+		ImportKind:      ImportKindProject,
+		Path:            root,
+		ApprovedActions: []string{GitPreparationActionInit, GitPreparationActionCommit, GitPreparationActionSetRemote},
+		RemoteURL:       "https://example.invalid/existing.git",
+	})
+	if err != nil {
+		t.Fatalf("PrepareGit: %v", err)
+	}
+	if result.Validation.NextStep != ImportNextStepContinue {
+		t.Fatalf("validation = %#v, want continue", result.Validation)
+	}
+	if out, err := exec.Command("git", "-C", root, "show", "HEAD:README.md").CombinedOutput(); err != nil || string(out) != "existing project\n" {
+		t.Fatalf("committed README = %q, %v", out, err)
+	}
+}
+
 func TestValidateProjectImportMissingPathReturnsBlockingError(t *testing.T) {
 	ctx := context.Background()
 	missing := filepath.Join(t.TempDir(), "missing")
@@ -134,6 +160,23 @@ func TestValidateProjectImportMissingPathReturnsBlockingError(t *testing.T) {
 	if _, err := os.Stat(missing); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("Validate created missing path: %v", err)
 	}
+}
+
+func TestValidateProjectImportRejectsFilePath(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "README.md")
+	if err := os.WriteFile(path, []byte("not a directory\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	svc := New(Deps{Store: newFakeStore()})
+
+	result, err := svc.Validate(context.Background(), ImportValidationInput{ImportKind: ImportKindProject, Path: path})
+	if err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	if result.IsValid || result.NextStep != ImportNextStepError {
+		t.Fatalf("result = %#v, want path-not-directory error", result)
+	}
+	wantActions(t, result.BlockingErrors, []string{"PATH_NOT_DIRECTORY"})
 }
 
 func TestValidateProjectImportRejectsAOStatePath(t *testing.T) {
@@ -198,6 +241,45 @@ func TestValidateProjectImportParentWithChildReposChoosesImportKind(t *testing.T
 	}
 }
 
+func TestValidateProjectImportRejectsDetachedHead(t *testing.T) {
+	ctx := context.Background()
+	repo := gitRepoWithOrigin(t)
+	out, err := exec.Command("git", "-C", repo, "rev-parse", "HEAD").Output()
+	if err != nil {
+		t.Fatalf("rev-parse HEAD: %v", err)
+	}
+	if out, err := exec.Command("git", "-C", repo, "checkout", "--detach", strings.TrimSpace(string(out))).CombinedOutput(); err != nil {
+		t.Fatalf("checkout --detach: %v (%s)", err, out)
+	}
+	svc := New(Deps{Store: newFakeStore()})
+
+	result, err := svc.Validate(ctx, ImportValidationInput{ImportKind: ImportKindProject, Path: repo})
+	if err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	if result.IsValid || result.NextStep != ImportNextStepError || len(result.BlockingErrors) != 1 || result.BlockingErrors[0] != "DETACHED_HEAD" {
+		t.Fatalf("result = %#v, want detached-head error", result)
+	}
+}
+
+func TestValidateProjectImportRejectsBareRepository(t *testing.T) {
+	ctx := context.Background()
+	repo := filepath.Join(t.TempDir(), "bare.git")
+	if out, err := exec.Command("git", "init", "--bare", repo).CombinedOutput(); err != nil {
+		t.Fatalf("git init --bare: %v (%s)", err, out)
+	}
+	svc := New(Deps{Store: newFakeStore()})
+
+	result, err := svc.Validate(ctx, ImportValidationInput{ImportKind: ImportKindProject, Path: repo})
+	if err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	if result.IsValid || result.NextStep != ImportNextStepError {
+		t.Fatalf("result = %#v, want bare-repository error", result)
+	}
+	wantActions(t, result.BlockingErrors, []string{"BARE_REPOSITORY"})
+}
+
 func TestValidateProjectImportRootWithOriginAndChildReposWarnsProjectImport(t *testing.T) {
 	ctx := context.Background()
 	root := gitRepoWithOrigin(t)
@@ -260,6 +342,60 @@ func TestPrepareGitRequiresApprovalBeforeMutation(t *testing.T) {
 	}
 }
 
+func TestPrepareGitRejectsInvalidRemoteBeforeMutation(t *testing.T) {
+	tests := []struct {
+		name      string
+		remoteURL string
+		code      string
+	}{
+		{name: "malformed", remoteURL: "not a remote", code: "INVALID_GIT_URL"},
+		{name: "hostless HTTPS", remoteURL: "https:///owner/repo.git", code: "INVALID_GIT_URL"},
+		{name: "hostless SSH", remoteURL: "ssh:///owner/repo.git", code: "INVALID_GIT_URL"},
+		{name: "hostless Git", remoteURL: "git:///owner/repo.git", code: "INVALID_GIT_URL"},
+		{name: "HTTPS username", remoteURL: "https://token@github.com/acme/repository.git", code: "GIT_URL_CONTAINS_CREDENTIALS"},
+		{name: "HTTPS password", remoteURL: "https://user:secret@github.com/acme/repository.git", code: "GIT_URL_CONTAINS_CREDENTIALS"},
+		{name: "SSH password", remoteURL: "ssh://git:secret@github.com/acme/repository.git", code: "GIT_URL_CONTAINS_CREDENTIALS"},
+		{name: "Git userinfo", remoteURL: "git://token@git.example.test/acme/repository.git", code: "GIT_URL_CONTAINS_CREDENTIALS"},
+		{name: "file userinfo", remoteURL: "file://token@localhost/tmp/acme/repository.git", code: "GIT_URL_CONTAINS_CREDENTIALS"},
+		{name: "access token query", remoteURL: "https://github.com/acme/repository.git?access_token=secret", code: "GIT_URL_CONTAINS_CREDENTIALS"},
+		{name: "generic token query", remoteURL: "https://github.com/acme/repository.git?token=secret", code: "GIT_URL_CONTAINS_CREDENTIALS"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			svc := New(Deps{Store: newFakeStore()})
+
+			_, err := svc.PrepareGit(context.Background(), GitPreparationInput{
+				ImportKind:      ImportKindProject,
+				Path:            root,
+				ApprovedActions: []string{GitPreparationActionInit, GitPreparationActionCommit, GitPreparationActionSetRemote},
+				RemoteURL:       tc.remoteURL,
+			})
+			wantCode(t, err, tc.code)
+			if _, err := os.Stat(filepath.Join(root, ".git")); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("PrepareGit mutated before rejecting remote: %v", err)
+			}
+		})
+	}
+}
+
+func TestValidImportRemoteURLPreservesSupportedCredentialFreeForms(t *testing.T) {
+	for _, remoteURL := range []string{
+		"https://github.com/acme/repository.git",
+		"http://git.example.test/acme/repository.git",
+		"ssh://git@github.com/acme/repository.git",
+		"git://github.com/acme/repository.git",
+		"git@github.com:acme/repository.git",
+		"file:///tmp/acme/repository.git",
+	} {
+		t.Run(remoteURL, func(t *testing.T) {
+			if err := validateImportRemoteURL(remoteURL); err != nil {
+				t.Fatalf("validateImportRemoteURL(%q) = %v, want nil", remoteURL, err)
+			}
+		})
+	}
+}
+
 func TestPrepareGitRunsApprovedMissingActionsInOrder(t *testing.T) {
 	ctx := context.Background()
 	root := t.TempDir()
@@ -297,6 +433,105 @@ func TestPrepareGitRunsApprovedMissingActionsInOrder(t *testing.T) {
 	}
 }
 
+func TestPrepareGitStepwiseCompletesInThreeCalls(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	svc := New(Deps{Store: newFakeStore()})
+	request := GitPreparationInput{
+		ImportKind: ImportKindProject,
+		Path:       root,
+		ApprovedActions: []string{
+			GitPreparationActionInit,
+			GitPreparationActionCommit,
+			GitPreparationActionSetRemote,
+		},
+		RemoteURL: "https://example.invalid/repo.git",
+		Stepwise:  true,
+	}
+
+	for index, wantAction := range []string{GitPreparationActionInit, GitPreparationActionCommit, GitPreparationActionSetRemote} {
+		result, err := svc.PrepareGit(ctx, request)
+		if err != nil {
+			t.Fatalf("PrepareGit call %d: %v", index+1, err)
+		}
+		wantEventActions(t, result.Events, []string{wantAction, wantAction, wantAction})
+		if index == 0 {
+			if !result.Validation.Root.IsRepo || result.Validation.Root.HasCommit || result.Validation.Root.HasOrigin {
+				t.Fatalf("first validation = %#v, want only git init complete", result.Validation)
+			}
+			wantActions(t, result.Validation.Root.RequiredActions, []string{GitPreparationActionCommit, GitPreparationActionSetRemote})
+		}
+		if index < 2 && result.Validation.NextStep != ImportNextStepPrepareGit {
+			t.Fatalf("call %d validation = %#v, want prepare_git", index+1, result.Validation)
+		}
+		if index == 2 && result.Validation.NextStep != ImportNextStepContinue {
+			t.Fatalf("final validation = %#v, want continue", result.Validation)
+		}
+	}
+}
+
+func TestPrepareGitStepwiseValidatesFullApprovalBeforeMutation(t *testing.T) {
+	root := t.TempDir()
+	svc := New(Deps{Store: newFakeStore()})
+
+	_, err := svc.PrepareGit(context.Background(), GitPreparationInput{
+		ImportKind:      ImportKindProject,
+		Path:            root,
+		ApprovedActions: []string{GitPreparationActionInit},
+		RemoteURL:       "https://example.invalid/repo.git",
+		Stepwise:        true,
+	})
+	if err == nil {
+		t.Fatal("PrepareGit succeeded without approval for the full plan")
+	}
+	if _, statErr := os.Stat(filepath.Join(root, ".git")); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("PrepareGit mutated before validating the full plan: %v", statErr)
+	}
+}
+
+func TestPrepareGitStepwiseRetryResumesAtMissingAction(t *testing.T) {
+	ctx := context.Background()
+	repo := filepath.Join(t.TempDir(), "repo")
+	if out, err := exec.Command("git", "init", "-b", "main", repo).CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v (%s)", err, out)
+	}
+	hook := filepath.Join(repo, ".git", "hooks", "pre-commit")
+	if err := os.WriteFile(hook, []byte("#!/bin/sh\nexit 1\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	svc := New(Deps{Store: newFakeStore()})
+	request := GitPreparationInput{
+		ImportKind:      ImportKindProject,
+		Path:            repo,
+		ApprovedActions: []string{GitPreparationActionCommit, GitPreparationActionSetRemote},
+		RemoteURL:       "https://example.invalid/retry.git",
+		Stepwise:        true,
+	}
+
+	failed, err := svc.PrepareGit(ctx, request)
+	if err != nil {
+		t.Fatalf("PrepareGit failed attempt: %v", err)
+	}
+	if len(failed.Events) != 3 || failed.Events[2].Action != GitPreparationActionCommit || failed.Events[2].State != GitPreparationEventError {
+		t.Fatalf("events = %#v, want commit failure", failed.Events)
+	}
+	if err := os.WriteFile(hook, []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	retried, err := svc.PrepareGit(ctx, request)
+	if err != nil {
+		t.Fatalf("PrepareGit retry: %v", err)
+	}
+	wantEventActions(t, retried.Events, []string{
+		GitPreparationActionCommit,
+		GitPreparationActionCommit,
+		GitPreparationActionCommit,
+	})
+	if retried.Validation.Root.HasOrigin {
+		t.Fatalf("retry ran more than the failed commit step: %#v", retried.Validation)
+	}
+}
+
 func TestPrepareGitDoesNotOverwriteExistingOrigin(t *testing.T) {
 	ctx := context.Background()
 	repo := gitRepoWithOrigin(t)
@@ -316,6 +551,117 @@ func TestPrepareGitDoesNotOverwriteExistingOrigin(t *testing.T) {
 	}
 	if out, err := exec.Command("git", "-C", repo, "remote", "get-url", "origin").CombinedOutput(); err != nil || string(out) != "https://example.invalid/original.git\n" {
 		t.Fatalf("origin = %q, %v", out, err)
+	}
+}
+
+func TestPrepareGitAddsOnlyMissingOriginToCommittedRepository(t *testing.T) {
+	ctx := context.Background()
+	repo := gitRepoWithCommitWithOrigin(t, t.TempDir(), "")
+	headBefore, err := exec.Command("git", "-C", repo, "rev-parse", "HEAD").CombinedOutput()
+	if err != nil {
+		t.Fatalf("rev-parse HEAD: %v (%s)", err, headBefore)
+	}
+	svc := New(Deps{Store: newFakeStore()})
+
+	before, err := svc.Validate(ctx, ImportValidationInput{ImportKind: ImportKindProject, Path: repo})
+	if err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	wantActions(t, before.Root.RequiredActions, []string{GitPreparationActionSetRemote})
+
+	result, err := svc.PrepareGit(ctx, GitPreparationInput{
+		ImportKind:      ImportKindProject,
+		Path:            repo,
+		ApprovedActions: []string{GitPreparationActionSetRemote},
+		RemoteURL:       "https://example.invalid/missing-origin.git",
+	})
+	if err != nil {
+		t.Fatalf("PrepareGit: %v", err)
+	}
+	wantEventActions(t, result.Events, []string{
+		GitPreparationActionSetRemote,
+		GitPreparationActionSetRemote,
+		GitPreparationActionSetRemote,
+	})
+	headAfter, err := exec.Command("git", "-C", repo, "rev-parse", "HEAD").CombinedOutput()
+	if err != nil {
+		t.Fatalf("rev-parse HEAD after preparation: %v (%s)", err, headAfter)
+	}
+	if string(headAfter) != string(headBefore) {
+		t.Fatalf("HEAD changed from %q to %q while adding origin", headBefore, headAfter)
+	}
+}
+
+func TestPrepareGitSetsURLOnExistingOriginWithoutURL(t *testing.T) {
+	ctx := context.Background()
+	repo := gitRepoWithCommitWithOrigin(t, t.TempDir(), "")
+	if out, err := exec.Command("git", "-C", repo, "config", "remote.origin.fetch", "+refs/heads/*:refs/remotes/origin/*").CombinedOutput(); err != nil {
+		t.Fatalf("create origin without URL: %v (%s)", err, out)
+	}
+	svc := New(Deps{Store: newFakeStore()})
+
+	before, err := svc.Validate(ctx, ImportValidationInput{ImportKind: ImportKindProject, Path: repo})
+	if err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	wantActions(t, before.Root.RequiredActions, []string{GitPreparationActionSetRemote})
+
+	result, err := svc.PrepareGit(ctx, GitPreparationInput{
+		ImportKind:      ImportKindProject,
+		Path:            repo,
+		ApprovedActions: []string{GitPreparationActionSetRemote},
+		RemoteURL:       "https://example.invalid/repaired.git",
+	})
+	if err != nil {
+		t.Fatalf("PrepareGit: %v", err)
+	}
+	if result.Validation.NextStep != ImportNextStepContinue {
+		t.Fatalf("validation = %#v, want continue", result.Validation)
+	}
+	if out, err := exec.Command("git", "-C", repo, "remote", "get-url", "origin").CombinedOutput(); err != nil || string(out) != "https://example.invalid/repaired.git\n" {
+		t.Fatalf("origin = %q, %v", out, err)
+	}
+}
+
+func TestPrepareGitProjectImportCanRetryAfterCommitFailure(t *testing.T) {
+	ctx := context.Background()
+	repo := filepath.Join(t.TempDir(), "repo")
+	if out, err := exec.Command("git", "init", "-b", "main", repo).CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v (%s)", err, out)
+	}
+	hook := filepath.Join(repo, ".git", "hooks", "pre-commit")
+	if err := os.WriteFile(hook, []byte("#!/bin/sh\nexit 1\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	svc := New(Deps{Store: newFakeStore()})
+	request := GitPreparationInput{
+		ImportKind:      ImportKindProject,
+		Path:            repo,
+		ApprovedActions: []string{GitPreparationActionCommit, GitPreparationActionSetRemote},
+		RemoteURL:       "https://example.invalid/retry.git",
+	}
+
+	failed, err := svc.PrepareGit(ctx, request)
+	if err != nil {
+		t.Fatalf("PrepareGit failed attempt: %v", err)
+	}
+	if len(failed.Events) != 3 || failed.Events[2].Action != GitPreparationActionCommit || failed.Events[2].State != GitPreparationEventError {
+		t.Fatalf("events = %#v, want commit failure", failed.Events)
+	}
+	wantActions(t, failed.Validation.Root.RequiredActions, []string{GitPreparationActionCommit, GitPreparationActionSetRemote})
+	if importRemoteExists(repo, "origin") {
+		t.Fatal("origin added after commit failure")
+	}
+
+	if err := os.WriteFile(hook, []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	retried, err := svc.PrepareGit(ctx, request)
+	if err != nil {
+		t.Fatalf("PrepareGit retry: %v", err)
+	}
+	if retried.Validation.NextStep != ImportNextStepContinue || !retried.Validation.Root.HasCommit || !retried.Validation.Root.HasOrigin {
+		t.Fatalf("validation = %#v, want ready repository after retry", retried.Validation)
 	}
 }
 
@@ -340,6 +686,41 @@ func TestValidateWorkspaceImportReadyChildrenContinue(t *testing.T) {
 	}
 }
 
+func TestValidateWorkspaceImportOfGitRepoRequiresProjectChoice(t *testing.T) {
+	ctx := context.Background()
+	repo := gitRepoWithOrigin(t)
+	svc := New(Deps{Store: newFakeStore()})
+
+	result, err := svc.Validate(ctx, ImportValidationInput{ImportKind: ImportKindWorkspace, Path: repo})
+	if err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	if !result.IsValid || result.NextStep != ImportNextStepChooseImportKind || result.Warning == "" {
+		t.Fatalf("result = %#v, want project import choice", result)
+	}
+}
+
+func TestValidateWorkspaceImportReportsBareChildRepository(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	bare := filepath.Join(root, "bare")
+	if out, err := exec.Command("git", "init", "--bare", bare).CombinedOutput(); err != nil {
+		t.Fatalf("git init --bare: %v (%s)", err, out)
+	}
+	svc := New(Deps{Store: newFakeStore()})
+
+	result, err := svc.Validate(ctx, ImportValidationInput{ImportKind: ImportKindWorkspace, Path: root})
+	if err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	if result.IsValid || result.NextStep != ImportNextStepError || len(result.ChildRepos) != 1 {
+		t.Fatalf("result = %#v, want blocked bare child", result)
+	}
+	if got := result.ChildRepos[0].BlockingErrors; len(got) != 1 || got[0] != "BARE_REPOSITORY" {
+		t.Fatalf("blocking errors = %#v, want bare repository", got)
+	}
+}
+
 func TestValidateWorkspaceImportPartialChildrenExposeMissingActions(t *testing.T) {
 	ctx := context.Background()
 	root := t.TempDir()
@@ -358,26 +739,39 @@ func TestValidateWorkspaceImportPartialChildrenExposeMissingActions(t *testing.T
 	if err != nil {
 		t.Fatalf("Validate: %v", err)
 	}
-	if !result.IsValid || result.NextStep != ImportNextStepPrepareGit || len(result.ChildRepos) != 3 {
+	if !result.IsValid || result.NextStep != ImportNextStepPrepareGit || len(result.ChildRepos) != 2 {
 		t.Fatalf("result = %#v, want workspace needing preparation", result)
 	}
 	byPath := childStatusByPath(result.ChildRepos)
 	wantActions(t, byPath[unborn].RequiredActions, []string{GitPreparationActionCommit, GitPreparationActionSetRemote})
 	wantActions(t, byPath[noRemote].RequiredActions, []string{GitPreparationActionSetRemote})
-	wantActions(t, byPath[plain].RequiredActions, []string{GitPreparationActionInit, GitPreparationActionCommit, GitPreparationActionSetRemote})
-	if !byPath[plain].NeedsGitInit {
-		t.Fatalf("plain child = %#v, want needsGitInit", byPath[plain])
+	if _, ok := byPath[plain]; ok {
+		t.Fatalf("childRepos = %#v, plain folder must not be surfaced as a workspace repo", result.ChildRepos)
 	}
+}
+
+func TestValidateWorkspaceImportRequiresInitializedChildRepo(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, "plain"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	svc := New(Deps{Store: newFakeStore()})
+
+	result, err := svc.Validate(ctx, ImportValidationInput{ImportKind: ImportKindWorkspace, Path: root})
+	if err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	if result.IsValid || result.NextStep != ImportNextStepError {
+		t.Fatalf("result = %#v, want invalid workspace child repo requirement", result)
+	}
+	wantActions(t, result.BlockingErrors, []string{"WORKSPACE_CHILD_REPO_REQUIRED"})
 }
 
 func TestPrepareGitWorkspaceRunsPerRepositoryEvents(t *testing.T) {
 	ctx := context.Background()
 	root := t.TempDir()
 	noRemote := gitRepoWithCommitWithOrigin(t, filepath.Join(root, "no-remote"), "")
-	plain := filepath.Join(root, "plain")
-	if err := os.Mkdir(plain, 0o755); err != nil {
-		t.Fatal(err)
-	}
 	svc := New(Deps{Store: newFakeStore()})
 
 	result, err := svc.PrepareGit(ctx, GitPreparationInput{
@@ -389,15 +783,6 @@ func TestPrepareGitWorkspaceRunsPerRepositoryEvents(t *testing.T) {
 				ApprovedActions: []string{GitPreparationActionSetRemote},
 				RemoteURL:       "https://example.invalid/no-remote.git",
 			},
-			{
-				RepoPath: plain,
-				ApprovedActions: []string{
-					GitPreparationActionInit,
-					GitPreparationActionCommit,
-					GitPreparationActionSetRemote,
-				},
-				RemoteURL: "https://example.invalid/plain.git",
-			},
 		},
 	})
 	if err != nil {
@@ -406,14 +791,53 @@ func TestPrepareGitWorkspaceRunsPerRepositoryEvents(t *testing.T) {
 	if result.Validation.NextStep != ImportNextStepContinue {
 		t.Fatalf("validation = %#v, want continue", result.Validation)
 	}
-	if len(result.Events) != 12 {
-		t.Fatalf("events = %#v, want 12 state events", result.Events)
+	if len(result.Events) != 3 {
+		t.Fatalf("events = %#v, want 3 state events", result.Events)
 	}
 	if result.Events[0].RepoPath != noRemote || result.Events[0].Action != GitPreparationActionSetRemote {
 		t.Fatalf("first event = %#v, want noRemote set_remote", result.Events[0])
 	}
-	if result.Events[3].RepoPath != plain || result.Events[3].Action != GitPreparationActionInit {
-		t.Fatalf("plain first event = %#v, want git_init", result.Events[3])
+	if result.Events[2].RepoPath != noRemote || result.Events[2].Action != GitPreparationActionSetRemote {
+		t.Fatalf("last event = %#v, want noRemote set_remote complete", result.Events[2])
+	}
+}
+
+func TestPrepareGitWorkspaceCanInitializeAnApprovedPlainChild(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	plain := filepath.Join(root, "plain")
+	if err := os.Mkdir(plain, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	svc := New(Deps{Store: newFakeStore()})
+
+	result, err := svc.PrepareGit(ctx, GitPreparationInput{
+		ImportKind: ImportKindWorkspace,
+		Path:       root,
+		Repositories: []GitRepositoryPreparationInput{{
+			RepoPath: plain,
+			ApprovedActions: []string{
+				GitPreparationActionInit,
+				GitPreparationActionCommit,
+				GitPreparationActionSetRemote,
+			},
+			RemoteURL: "https://example.invalid/plain.git",
+		}},
+	})
+	if err != nil {
+		t.Fatalf("PrepareGit: %v", err)
+	}
+	if result.Validation.NextStep != ImportNextStepContinue {
+		t.Fatalf("validation = %#v, want continue", result.Validation)
+	}
+	wantEventActions(t, result.Events, []string{
+		GitPreparationActionInit, GitPreparationActionInit, GitPreparationActionInit,
+		GitPreparationActionCommit, GitPreparationActionCommit, GitPreparationActionCommit,
+		GitPreparationActionSetRemote, GitPreparationActionSetRemote, GitPreparationActionSetRemote,
+	})
+	status := inspectImportRepo(ctx, plain)
+	if !status.IsRepo || !status.HasCommit || !status.HasOrigin {
+		t.Fatalf("plain child status = %#v, want ready repository", status)
 	}
 }
 

@@ -82,7 +82,7 @@ it("names the sessions that would lose a turn and waits for confirmation", async
 	expect(warning).not.toHaveTextContent("Terminal one");
 
 	expect(updInstall).not.toHaveBeenCalled();
-	await userEvent.click(screen.getByRole("button", { name: "Restart & install" }));
+	await userEvent.click(screen.getByRole("button", { name: "Install and restart" }));
 	expect(updInstall).toHaveBeenCalledTimes(1);
 });
 
@@ -117,7 +117,7 @@ it("keeps notes and session risks visible, blocks duplicate submits and dismissa
 	useUiStore.setState({ updateInstallPromptOpen: true });
 	renderDialog({ state: "downloaded", version: "1.2.3", releaseNotes: "Safer updates" });
 	await screen.findByText("Safer updates");
-	const confirm = screen.getByRole("button", { name: "Restart & install" });
+	const confirm = screen.getByRole("button", { name: "Install and restart" });
 	act(() => { fireEvent.click(confirm); fireEvent.click(confirm); });
 	expect(updInstall).toHaveBeenCalledTimes(1);
 	// Minimal working state: the button relabels and disables; no progress bar.
@@ -147,7 +147,7 @@ it("shows an inline failure and allows retry", async () => {
 	useUiStore.setState({ updateInstallPromptOpen: true });
 	renderDialog({ state: "downloaded", version: "1.2.3", releaseNotes: "Safer updates" });
 	await screen.findByText("Safer updates");
-	await userEvent.click(screen.getByRole("button", { name: "Restart & install" }));
+	await userEvent.click(screen.getByRole("button", { name: "Install and restart" }));
 	await act(async () => install.reject(new Error("Error invoking remote method 'updates:install': Error: macOS preparation timed out. Close AO and reopen it before trying again.")));
 	expect(screen.getByRole("alert")).toHaveTextContent("AO could not prepare the update. Please try again.");
 	expect(screen.getByRole("alert")).toHaveTextContent("macOS preparation timed out. Close AO and reopen it before trying again.");
@@ -157,7 +157,7 @@ it("shows an inline failure and allows retry", async () => {
 	expect(screen.getByRole("button", { name: "Close" })).toBeEnabled();
 	expect(screen.queryByRole("progressbar")).toBeNull();
 	const retry = deferredInstall();
-	await userEvent.click(screen.getByRole("button", { name: "Restart & install" }));
+	await userEvent.click(screen.getByRole("button", { name: "Install and restart" }));
 	expect(updInstall).toHaveBeenCalledTimes(2);
 	expect(screen.queryByRole("alert")).toBeNull();
 	expect(screen.queryByText(/Close AO and reopen it/)).toBeNull();
@@ -170,7 +170,7 @@ it("allows cancelling after preparation fails", async () => {
 	useUiStore.setState({ updateInstallPromptOpen: true });
 	renderDialog({ state: "downloaded", version: "1.2.3" });
 	await screen.findByText("v1.2.3");
-	await userEvent.click(screen.getByRole("button", { name: "Restart & install" }));
+	await userEvent.click(screen.getByRole("button", { name: "Install and restart" }));
 	await screen.findByRole("alert");
 	await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
 	expect(useUiStore.getState().updateInstallPromptOpen).toBe(false);
@@ -181,7 +181,7 @@ it.each(["resolve", "reject"] as const)("ignores an install %s after unmount", a
 	useUiStore.setState({ updateInstallPromptOpen: true });
 	const view = renderDialog({ state: "downloaded", version: "1.2.3" });
 	await screen.findByText("v1.2.3");
-	await userEvent.click(screen.getByRole("button", { name: "Restart & install" }));
+	await userEvent.click(screen.getByRole("button", { name: "Install and restart" }));
 	view.unmount();
 	// A subsequent dialog must not be closed by the previous mount's promise.
 	renderDialog({ state: "downloaded", version: "1.2.3" });
@@ -191,7 +191,7 @@ it.each(["resolve", "reject"] as const)("ignores an install %s after unmount", a
 	});
 	expect(useUiStore.getState().updateInstallPromptOpen).toBe(true);
 	expect(screen.queryByRole("alert")).toBeNull();
-	expect(screen.getByRole("button", { name: "Restart & install" })).toBeEnabled();
+	expect(screen.getByRole("button", { name: "Install and restart" })).toBeEnabled();
 });
 
 it("renders bounded recovery details as plain text", async () => {
@@ -200,7 +200,7 @@ it("renders bounded recovery details as plain text", async () => {
 	useUiStore.setState({ updateInstallPromptOpen: true });
 	renderDialog({ state: "downloaded", version: "1.2.3" });
 	await screen.findByText("v1.2.3");
-	await userEvent.click(screen.getByRole("button", { name: "Restart & install" }));
+	await userEvent.click(screen.getByRole("button", { name: "Install and restart" }));
 	const alert = await screen.findByRole("alert");
 	expect(alert).toHaveTextContent(message.slice(0, 1000));
 	expect(alert.querySelector("strong")).toBeNull();
@@ -212,14 +212,14 @@ it("shows the replacement build and requires another explicit confirmation", asy
 	updInstall.mockResolvedValueOnce({ state: "confirmation-required", version: "2.2.0", releaseNotes: "New release B" });
 	renderDialog({ state: "downloaded", version: "2.1.0", releaseNotes: "Old release A" });
 	await screen.findByText("Old release A");
-	await userEvent.click(screen.getByRole("button", { name: "Restart & install" }));
+	await userEvent.click(screen.getByRole("button", { name: "Install and restart" }));
 	expect(updInstall).toHaveBeenCalledWith("2.1.0");
 	expect(await screen.findByText("New release B")).toBeVisible();
 	expect(screen.getByText("v2.2.0")).toBeVisible();
 	expect(screen.queryByText("Old release A")).toBeNull();
 	expect(useUiStore.getState().updateInstallPromptOpen).toBe(true);
 	expect(updInstall).toHaveBeenCalledTimes(1);
-	await userEvent.click(screen.getByRole("button", { name: "Restart & install" }));
+	await userEvent.click(screen.getByRole("button", { name: "Install and restart" }));
 	expect(updInstall).toHaveBeenLastCalledWith("2.2.0");
 	expect(useUiStore.getState().updateInstallPromptOpen).toBe(false);
 });
@@ -229,7 +229,7 @@ it("does not reuse old release notes when a replacement has none and allows canc
 	updInstall.mockResolvedValueOnce({ state: "confirmation-required", version: "2.2.0" });
 	renderDialog({ state: "downloaded", version: "2.1.0", releaseNotes: "Old release A" });
 	await screen.findByText("Old release A");
-	await userEvent.click(screen.getByRole("button", { name: "Restart & install" }));
+	await userEvent.click(screen.getByRole("button", { name: "Install and restart" }));
 	expect(await screen.findByText("v2.2.0")).toBeVisible();
 	expect(screen.queryByText("Old release A")).toBeNull();
 	expect(screen.getByRole("status")).toHaveTextContent("confirm again");
