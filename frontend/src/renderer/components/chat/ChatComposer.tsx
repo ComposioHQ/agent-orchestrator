@@ -81,7 +81,7 @@ export const ChatComposer = memo(function ChatComposer({
 	busy,
 	willQueue,
 	disabled,
-	connecting,
+	disabledPlaceholder,
 	settings,
 	approval,
 	skills = [],
@@ -118,8 +118,8 @@ export const ChatComposer = memo(function ChatComposer({
 	/** The agent is mid-turn, so this message is held until the turn ends. */
 	willQueue?: boolean;
 	disabled?: boolean;
-	/** An interface handoff is still installing the Chat controller. */
-	connecting?: boolean;
+	/** Explains why message entry is temporarily blocked. */
+	disabledPlaceholder?: string;
 	/** The provider's skills. Empty leaves `/` an ordinary character. */
 	skills?: ChatSkill[];
 	/** Worktree-relative paths offered for `@`. Empty leaves `@` ordinary. */
@@ -817,13 +817,11 @@ export const ChatComposer = memo(function ChatComposer({
 					disabled={controlsDisabled}
 					label="Message the agent"
 					placeholder={
-						connecting
-							? "Connecting to the agent…"
-							: disabled
-								? "The controller is not connected"
-									: willQueue
-										? "Agent is working — this sends when it finishes"
-										: "Message the agent…"
+						disabledPlaceholder ?? (disabled
+							? "The controller is not connected"
+							: willQueue
+								? "Agent is working — this sends when it finishes"
+								: "Message the agent…")
 					}
 					menuOpen={menuOpen}
 					menuId={menuId}

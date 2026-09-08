@@ -1168,7 +1168,9 @@ export function ChatWorkspace({
 									busy={busy}
 									willQueue={Boolean(turn)}
 									disabled={snapshot.controller.state === "stopped" || controllerTransitioning || newWorkDisabled}
-									connecting={controllerTransitioning}
+									disabledPlaceholder={controllerTransitioning
+										? "Connecting to the agent…"
+										: newWorkDisabled ? "Switching to terminal UI…" : undefined}
 									skills={skills}
 									filePaths={filePaths}
 									filePathsTruncated={filePathsTruncated}

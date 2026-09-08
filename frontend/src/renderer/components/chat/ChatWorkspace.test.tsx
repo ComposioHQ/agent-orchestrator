@@ -338,6 +338,8 @@ describe("ChatWorkspace timeline", () => {
 		const user = userEvent.setup();
 		const onDecide = vi.fn();
 		const view = render(<ChatWorkspace snapshot={idleSnapshot()} newWorkDisabled />);
+		expect(screen.getByText("Switching to terminal UI…")).toBeInTheDocument();
+		expect(screen.queryByText("The controller is not connected")).not.toBeInTheDocument();
 
 		expect(screen.getByTestId("chat-conversation-panel")).not.toHaveAttribute("inert");
 		expect(screen.getByLabelText("Message the agent")).toHaveAttribute("aria-disabled", "true");
