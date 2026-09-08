@@ -865,7 +865,7 @@ export function ChatWorkspace({
 					configPending={configOptionPending}
 					error={configOptionError}
 					disabled={
-						snapshot.controller.state === "stopped" || configOptionPending || newWorkDisabled
+						snapshot.controller.state === "stopped" || controllerTransitioning || configOptionPending || newWorkDisabled
 					}
 				/>
 			) : null,
@@ -873,6 +873,7 @@ export function ChatWorkspace({
 			configOptionError,
 			configOptionPending,
 			configOptions,
+			controllerTransitioning,
 			models,
 			newWorkDisabled,
 			onChooseConfigOption,
@@ -1166,7 +1167,8 @@ export function ChatWorkspace({
 									settings={composerSettings}
 									busy={busy}
 									willQueue={Boolean(turn)}
-									disabled={snapshot.controller.state === "stopped" || newWorkDisabled}
+									disabled={snapshot.controller.state === "stopped" || controllerTransitioning || newWorkDisabled}
+									connecting={controllerTransitioning}
 									skills={skills}
 									filePaths={filePaths}
 									filePathsTruncated={filePathsTruncated}
