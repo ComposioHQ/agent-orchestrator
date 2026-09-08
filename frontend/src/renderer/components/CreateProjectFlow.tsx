@@ -1635,6 +1635,7 @@ function ProjectImportDialog({
 	const githubOwner = githubRepository?.owner.trim() ?? "";
 	const githubName = githubRepository?.name.trim() ?? "";
 	const [githubOwners, setGitHubOwners] = useState<GitHubOwner[]>([]);
+	const [customGitHubOwner, setCustomGitHubOwner] = useState(false);
 	const selectedGitHubOwner = githubOwners.find((owner) => owner.login === githubOwner);
 	const [availability, setAvailability] = useState<GitHubRepositoryAvailability>({ state: "idle" });
 	useEffect(() => {
@@ -1644,7 +1645,7 @@ function ProjectImportDialog({
 			if (!cancelled) {
 				setGitHubOwners(owners);
 				const owner = owners[0]?.login ?? "";
-				if (owner && githubRepository?.owner === "") {
+				if (owner && githubRepository?.owner === "" && !customGitHubOwner) {
 					const next = { ...githubRepository, owner };
 					onChangeGitHubRepository(next);
 					onChangeRemote(githubRepositoryRemoteUrl(next));
@@ -1654,7 +1655,7 @@ function ProjectImportDialog({
 		void aoBridge.app.getCachedGitHubOwners().then(applyOwners).catch(() => undefined);
 		void aoBridge.app.refreshGitHubOwners().then(applyOwners).catch(() => undefined);
 		return () => { cancelled = true; };
-	}, [githubRepository, needsRemote, onChangeGitHubRepository, onChangeRemote, open]);
+	}, [customGitHubOwner, githubRepository, needsRemote, onChangeGitHubRepository, onChangeRemote, open]);
 	useEffect(() => {
 		if (!open || !needsRemote || !githubOwner || !githubName) {
 			setAvailability({ state: "idle" });
@@ -1758,9 +1759,14 @@ function ProjectImportDialog({
 											<div className="space-y-1.5">
 												<Label htmlFor="githubRepoOwner" className="text-[12px] font-medium text-[var(--color-text-import-title)]">{t("createProject.githubOwner")}</Label>
 												<Select
-													value={githubRepository?.owner ?? ""}
-													disabled={disabled || githubOwners.length === 0}
+													value={customGitHubOwner ? "__custom__" : githubRepository?.owner ?? ""}
+													disabled={disabled}
 													onValueChange={(owner) => {
+														if (owner === "__custom__") {
+															setCustomGitHubOwner(true);
+															return;
+														}
+														setCustomGitHubOwner(false);
 														const next = { owner, name: githubRepository?.name ?? "", private: githubRepository?.private ?? true };
 														onChangeGitHubRepository(next);
 														onChangeRemote(githubRepositoryRemoteUrl(next));
@@ -1785,8 +1791,24 @@ function ProjectImportDialog({
 																</span>
 															</SelectItem>
 														))}
+														<SelectItem value="__custom__">{t("createProject.customGithubOwner", { defaultValue: "Other GitHub owner…" })}</SelectItem>
 													</SelectContent>
 												</Select>
+												{customGitHubOwner ? (
+													<Input
+														id="githubRepoCustomOwner"
+														aria-label={t("createProject.githubOwner")}
+														className="h-8 bg-[var(--color-bg-import-card)] font-mono text-[12px]"
+														disabled={disabled}
+														placeholder={t("createProject.githubOwner")}
+														value={githubRepository?.owner ?? ""}
+														onChange={(event) => {
+															const next = { owner: event.target.value, name: githubRepository?.name ?? "", private: githubRepository?.private ?? true };
+															onChangeGitHubRepository(next);
+															onChangeRemote(githubRepositoryRemoteUrl(next));
+														}}
+													/>
+												) : null}
 											</div>
 											<div className="space-y-1.5">
 												<div className="relative">
