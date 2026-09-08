@@ -104,6 +104,8 @@ if (typeof window !== "undefined") {
 			scanImportFolder: async ({ path }: { path: string }) => ({ path, repos: [] }),
 			checkAncestorRepo: async () => undefined,
 			getRepositoryBranch: async () => undefined,
+			getGitHubUsername: async () => undefined,
+			checkGitHubRepositoryAvailability: async () => ({ available: false, message: "GitHub is unavailable." }),
 			getPathForFile: () => "",
 			onOpenFolderPath: () => () => undefined,
 			onNewSessionShortcut: () => () => undefined,

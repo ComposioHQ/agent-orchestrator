@@ -9099,6 +9099,7 @@ components:
           enum:
           - git_init
           - git_commit
+          - create_remote_repository
           - set_remote
           type: string
         error:
@@ -9125,6 +9126,8 @@ components:
           items:
             type: string
           type: array
+        githubRepository:
+          $ref: '#/components/schemas/ImporterGitHubRepositoryPreparation'
         importKind:
           enum:
           - project
@@ -9164,6 +9167,8 @@ components:
           items:
             type: string
           type: array
+        githubRepository:
+          $ref: '#/components/schemas/ImporterGitHubRepositoryPreparation'
         initialCommitMessage:
           type: string
         remoteUrl:
@@ -9265,6 +9270,18 @@ components:
       - blockingErrors
       - root
       - nextStep
+      type: object
+    ImporterGitHubRepositoryPreparation:
+      properties:
+        name:
+          minLength: 1
+          type: string
+        owner:
+          minLength: 1
+          type: string
+      required:
+      - owner
+      - name
       type: object
     InitializeRepositoryInput:
       properties:

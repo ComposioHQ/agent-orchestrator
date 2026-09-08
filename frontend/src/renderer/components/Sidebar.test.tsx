@@ -376,6 +376,8 @@ beforeEach(() => {
 		path,
 		repos: [],
 	}));
+	window.ao!.app.getGitHubUsername = vi.fn().mockResolvedValue("octocat");
+	window.ao!.app.checkGitHubRepositoryAvailability = vi.fn().mockResolvedValue({ available: true });
 	navigateMock.mockReset();
 	renameSessionMock.mockReset().mockResolvedValue(undefined);
 	spawnMock.mockReset();
@@ -991,9 +993,9 @@ describe("Sidebar", () => {
 				root: {
 					isRepo: false,
 					hasCommit: false,
-					hasOrigin: true,
+					hasOrigin: false,
 					needsGitInit: true,
-					requiredActions: ["git_init", "git_commit"],
+					requiredActions: ["git_init", "git_commit", "create_remote_repository"],
 				},
 			}),
 			error: undefined,
@@ -1003,6 +1005,7 @@ describe("Sidebar", () => {
 				events: [
 					{ repoPath: "/repo/new-project", action: "git_init", state: "success" },
 					{ repoPath: "/repo/new-project", action: "git_commit", state: "success" },
+					{ repoPath: "/repo/new-project", action: "create_remote_repository", state: "success" },
 				],
 				validation: projectValidation("/repo/new-project"),
 			},
@@ -1015,7 +1018,8 @@ describe("Sidebar", () => {
 		await user.click(screen.getByLabelText("New project"));
 		await user.click(screen.getByRole("button", { name: /^Import an existing project$/i }));
 		expect(await screen.findByRole("dialog", { name: "Prepare project" })).toBeInTheDocument();
-		expect(screen.getByText("Project setup")).toBeInTheDocument();
+		expect(screen.getByText("Create a private GitHub repo?")).toBeInTheDocument();
+		expect(await screen.findByText("Repository name is available.")).toBeInTheDocument();
 		expect(onInitializeProject).not.toHaveBeenCalled();
 		await user.click(screen.getByRole("button", { name: "Continue" }));
 		expect(await screen.findByRole("dialog", { name: "Set up project" })).toBeInTheDocument();

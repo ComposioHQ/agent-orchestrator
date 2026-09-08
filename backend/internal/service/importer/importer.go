@@ -50,9 +50,10 @@ const (
 	ImportNextStepPrepareGit       = "prepare_git"
 	ImportNextStepContinue         = "continue"
 
-	GitPreparationActionInit      = "git_init"
-	GitPreparationActionCommit    = "git_commit"
-	GitPreparationActionSetRemote = "set_remote"
+	GitPreparationActionInit                   = "git_init"
+	GitPreparationActionCommit                 = "git_commit"
+	GitPreparationActionCreateRemoteRepository = "create_remote_repository"
+	GitPreparationActionSetRemote              = "set_remote"
 
 	GitPreparationEventPending = "pending"
 	GitPreparationEventRunning = "running"
@@ -72,16 +73,25 @@ type GitPreparationInput struct {
 	Path             string                          `json:"path" minLength:"1"`
 	ApprovedActions  []string                        `json:"approvedActions,omitempty"`
 	RemoteURL        string                          `json:"remoteUrl,omitempty"`
+	GitHubRepository *GitHubRepositoryPreparation    `json:"githubRepository,omitempty"`
 	InitialCommitMsg string                          `json:"initialCommitMessage,omitempty"`
 	Repositories     []GitRepositoryPreparationInput `json:"repositories,omitempty"`
 }
 
+// GitHubRepositoryPreparation requests creation of a private GitHub repository
+// before adding it as origin.
+type GitHubRepositoryPreparation struct {
+	Owner string `json:"owner" minLength:"1"`
+	Name  string `json:"name" minLength:"1"`
+}
+
 // GitRepositoryPreparationInput approves Git preparation for one repository.
 type GitRepositoryPreparationInput struct {
-	RepoPath         string   `json:"repoPath" minLength:"1"`
-	ApprovedActions  []string `json:"approvedActions"`
-	RemoteURL        string   `json:"remoteUrl,omitempty"`
-	InitialCommitMsg string   `json:"initialCommitMessage,omitempty"`
+	RepoPath         string                       `json:"repoPath" minLength:"1"`
+	ApprovedActions  []string                     `json:"approvedActions"`
+	RemoteURL        string                       `json:"remoteUrl,omitempty"`
+	GitHubRepository *GitHubRepositoryPreparation `json:"githubRepository,omitempty"`
+	InitialCommitMsg string                       `json:"initialCommitMessage,omitempty"`
 }
 
 // RepoGitStatus describes the Git readiness of one repository candidate.
@@ -111,7 +121,7 @@ type ImportValidationResult struct {
 
 // GitPreparationEvent reports one state transition for a requested Git action.
 type GitPreparationEvent struct {
-	Action   string `json:"action" enum:"git_init,git_commit,set_remote"`
+	Action   string `json:"action" enum:"git_init,git_commit,create_remote_repository,set_remote"`
 	RepoPath string `json:"repoPath"`
 	State    string `json:"state" enum:"pending,running,success,error"`
 	Message  string `json:"message,omitempty"`
@@ -139,6 +149,8 @@ type Manager struct {
 }
 
 var _ Service = (*Manager)(nil)
+
+var importGhOutputFunc = importGhOutput
 
 // New constructs the import service. An empty Root falls back to the default.
 func New(deps Deps) *Manager {
@@ -201,6 +213,9 @@ func (m *Manager) Validate(ctx context.Context, in ImportValidationInput) (Impor
 	}
 
 	root := inspectImportRepo(ctx, path)
+	if importKind == ImportKindProject {
+		root.RequiredActions = addProjectRemoteRepositoryAction(root.RequiredActions)
+	}
 	result.Root = root
 	if importKind == ImportKindWorkspace {
 		children, scanErr := directChildImportStatuses(ctx, path)
@@ -271,10 +286,12 @@ func (m *Manager) PrepareGit(ctx context.Context, in GitPreparationInput) (GitPr
 				return GitPreparationResult{}, apierr.Invalid("IMPORT_ACTION_APPROVAL_REQUIRED", "Every missing Git preparation action requires explicit approval.", map[string]any{"repoPath": target.Status.RepoPath, "action": action})
 			}
 		}
-		if required[GitPreparationActionSetRemote] && strings.TrimSpace(target.Input.RemoteURL) == "" {
+		if (required[GitPreparationActionSetRemote] || required[GitPreparationActionCreateRemoteRepository]) &&
+			target.Input.GitHubRepository == nil &&
+			strings.TrimSpace(target.Input.RemoteURL) == "" {
 			return GitPreparationResult{}, apierr.Invalid("IMPORT_REMOTE_URL_REQUIRED", "remoteUrl is required before AO can add an origin remote.", map[string]any{"repoPath": target.Status.RepoPath})
 		}
-		for _, action := range []string{GitPreparationActionInit, GitPreparationActionCommit, GitPreparationActionSetRemote} {
+		for _, action := range []string{GitPreparationActionInit, GitPreparationActionCommit, GitPreparationActionCreateRemoteRepository, GitPreparationActionSetRemote} {
 			if !required[action] {
 				continue
 			}
@@ -333,6 +350,20 @@ func inspectImportRepo(ctx context.Context, path string) RepoGitStatus {
 	return status
 }
 
+func addProjectRemoteRepositoryAction(actions []string) []string {
+	for index, action := range actions {
+		if action == GitPreparationActionCreateRemoteRepository {
+			return actions
+		}
+		if action == GitPreparationActionSetRemote {
+			next := append([]string{}, actions[:index]...)
+			next = append(next, GitPreparationActionCreateRemoteRepository)
+			return append(next, actions[index+1:]...)
+		}
+	}
+	return actions
+}
+
 type gitPreparationTarget struct {
 	Status RepoGitStatus
 	Input  GitRepositoryPreparationInput
@@ -346,6 +377,7 @@ func preparationTargets(validation ImportValidationResult, in GitPreparationInpu
 				RepoPath:         validation.Root.RepoPath,
 				ApprovedActions:  in.ApprovedActions,
 				RemoteURL:        in.RemoteURL,
+				GitHubRepository: in.GitHubRepository,
 				InitialCommitMsg: in.InitialCommitMsg,
 			},
 		}}, nil
@@ -431,6 +463,23 @@ func runGitPreparationAction(ctx context.Context, path, action string, in GitRep
 		}
 		if _, err := importGitOutput(ctx, path, "-c", "user.name=Agent Orchestrator", "-c", "user.email=ao@example.com", "commit", "--allow-empty", "-m", msg); err != nil {
 			return fmt.Errorf("create initial commit: %w", err)
+		}
+	case GitPreparationActionCreateRemoteRepository:
+		if resolveImportOriginURL(path) != "" {
+			return nil
+		}
+		if in.GitHubRepository != nil {
+			repo := strings.TrimSpace(in.GitHubRepository.Owner) + "/" + strings.TrimSpace(in.GitHubRepository.Name)
+			if strings.TrimSpace(in.GitHubRepository.Owner) == "" || strings.TrimSpace(in.GitHubRepository.Name) == "" {
+				return errors.New("create GitHub repository: owner and repository name are required")
+			}
+			if _, err := importGhOutputFunc(ctx, path, "repo", "create", repo, "--private", "--source", path, "--remote", "origin", "--push"); err != nil {
+				return fmt.Errorf("create private GitHub repository: %w", err)
+			}
+			return nil
+		}
+		if _, err := importGitOutput(ctx, path, "remote", "add", "origin", strings.TrimSpace(in.RemoteURL)); err != nil {
+			return fmt.Errorf("add origin remote: %w", err)
 		}
 	case GitPreparationActionSetRemote:
 		if resolveImportOriginURL(path) != "" {
@@ -586,6 +635,16 @@ func importGitOutput(ctx context.Context, dir string, args ...string) (string, e
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return "", fmt.Errorf("git -C %s %s: %w: %s", dir, strings.Join(args, " "), err, strings.TrimSpace(string(out)))
+	}
+	return string(out), nil
+}
+
+func importGhOutput(ctx context.Context, dir string, args ...string) (string, error) {
+	cmd := aoprocess.CommandContext(ctx, "gh", args...)
+	cmd.Dir = dir
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("gh %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(out)))
 	}
 	return string(out), nil
 }

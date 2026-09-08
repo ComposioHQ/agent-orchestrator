@@ -3224,7 +3224,7 @@ export interface components {
         };
         GitPreparationEvent: {
             /** @enum {string} */
-            action: "git_init" | "git_commit" | "set_remote";
+            action: "git_init" | "git_commit" | "create_remote_repository" | "set_remote";
             error?: string;
             message?: string;
             repoPath: string;
@@ -3233,6 +3233,7 @@ export interface components {
         };
         GitPreparationInput: {
             approvedActions?: string[];
+            githubRepository?: components["schemas"]["ImporterGitHubRepositoryPreparation"];
             /** @enum {string} */
             importKind: "project" | "workspace";
             initialCommitMessage?: string;
@@ -3246,6 +3247,7 @@ export interface components {
         };
         GitRepositoryPreparationInput: {
             approvedActions: string[];
+            githubRepository?: components["schemas"]["ImporterGitHubRepositoryPreparation"];
             initialCommitMessage?: string;
             remoteUrl?: string;
             repoPath: string;
@@ -3281,6 +3283,10 @@ export interface components {
             nextStep: "error" | "choose_import_kind" | "prepare_git" | "continue";
             root: components["schemas"]["RepoGitStatus"];
             warning?: string;
+        };
+        ImporterGitHubRepositoryPreparation: {
+            name: string;
+            owner: string;
         };
         InitializeRepositoryInput: {
             path: string;

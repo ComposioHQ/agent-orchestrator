@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"testing"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
@@ -112,7 +113,7 @@ func TestValidateProjectImportPlainFolderNeedsPreparation(t *testing.T) {
 	if !result.IsValid || result.NextStep != ImportNextStepPrepareGit {
 		t.Fatalf("result = %#v, want prepare_git", result)
 	}
-	wantActions(t, result.Root.RequiredActions, []string{GitPreparationActionInit, GitPreparationActionCommit, GitPreparationActionSetRemote})
+	wantActions(t, result.Root.RequiredActions, []string{GitPreparationActionInit, GitPreparationActionCommit, GitPreparationActionCreateRemoteRepository})
 	if _, err := os.Stat(filepath.Join(root, ".git")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("Validate mutated git metadata: %v", err)
 	}
@@ -170,7 +171,7 @@ func TestValidateProjectImportUnbornRepositoryNeedsCommitAndRemote(t *testing.T)
 	if !result.IsValid || result.NextStep != ImportNextStepPrepareGit || !result.Root.IsRepo || result.Root.HasCommit {
 		t.Fatalf("result = %#v, want unborn repo needing preparation", result)
 	}
-	wantActions(t, result.Root.RequiredActions, []string{GitPreparationActionCommit, GitPreparationActionSetRemote})
+	wantActions(t, result.Root.RequiredActions, []string{GitPreparationActionCommit, GitPreparationActionCreateRemoteRepository})
 }
 
 func TestValidateProjectImportParentWithChildReposChoosesImportKind(t *testing.T) {
@@ -271,7 +272,7 @@ func TestPrepareGitRunsApprovedMissingActionsInOrder(t *testing.T) {
 		ApprovedActions: []string{
 			GitPreparationActionInit,
 			GitPreparationActionCommit,
-			GitPreparationActionSetRemote,
+			GitPreparationActionCreateRemoteRepository,
 		},
 		RemoteURL: "https://example.invalid/repo.git",
 	})
@@ -288,12 +289,55 @@ func TestPrepareGitRunsApprovedMissingActionsInOrder(t *testing.T) {
 		GitPreparationActionCommit,
 		GitPreparationActionCommit,
 		GitPreparationActionCommit,
-		GitPreparationActionSetRemote,
-		GitPreparationActionSetRemote,
-		GitPreparationActionSetRemote,
+		GitPreparationActionCreateRemoteRepository,
+		GitPreparationActionCreateRemoteRepository,
+		GitPreparationActionCreateRemoteRepository,
 	})
 	if out, err := exec.Command("git", "-C", root, "remote", "get-url", "origin").CombinedOutput(); err != nil || string(out) != "https://example.invalid/repo.git\n" {
 		t.Fatalf("origin = %q, %v", out, err)
+	}
+}
+
+func TestPrepareGitCreatesPrivateGitHubRepoWhenRequested(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	svc := New(Deps{Store: newFakeStore()})
+	var gotDir string
+	var gotArgs []string
+	original := importGhOutputFunc
+	importGhOutputFunc = func(_ context.Context, dir string, args ...string) (string, error) {
+		gotDir = dir
+		gotArgs = append([]string{}, args...)
+		if _, err := exec.Command("git", "-C", dir, "remote", "add", "origin", "https://github.com/octo/project.git").CombinedOutput(); err != nil {
+			t.Fatalf("fake gh add origin: %v", err)
+		}
+		return "", nil
+	}
+	t.Cleanup(func() { importGhOutputFunc = original })
+
+	result, err := svc.PrepareGit(ctx, GitPreparationInput{
+		ImportKind: ImportKindProject,
+		Path:       root,
+		ApprovedActions: []string{
+			GitPreparationActionInit,
+			GitPreparationActionCommit,
+			GitPreparationActionCreateRemoteRepository,
+		},
+		RemoteURL: "https://github.com/octo/project.git",
+		GitHubRepository: &GitHubRepositoryPreparation{
+			Owner: "octo",
+			Name:  "project",
+		},
+	})
+	if err != nil {
+		t.Fatalf("PrepareGit: %v", err)
+	}
+	if result.Validation.NextStep != ImportNextStepContinue || !result.Validation.Root.HasOrigin {
+		t.Fatalf("validation = %#v, want ready repository", result.Validation)
+	}
+	wantArgs := []string{"repo", "create", "octo/project", "--private", "--source", root, "--remote", "origin", "--push"}
+	if gotDir != root || !reflect.DeepEqual(gotArgs, wantArgs) {
+		t.Fatalf("gh call dir=%q args=%#v, want dir=%q args=%#v", gotDir, gotArgs, root, wantArgs)
 	}
 }
 

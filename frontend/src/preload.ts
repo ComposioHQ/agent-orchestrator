@@ -117,6 +117,11 @@ export type ImportFolderScan = {
 	setupWarning?: string;
 };
 
+export type GitHubRepositoryAvailability = {
+	available: boolean;
+	message?: string;
+};
+
 // A folder-drop path can arrive (cold start, or an early second-instance)
 // before ShellLayout's own effect has registered app.onOpenFolderPath's
 // listener below — React mounts TrayRuntime's child effect (which pings
@@ -171,6 +176,9 @@ const api = {
 			ipcRenderer.invoke("app:checkAncestorRepo", path) as Promise<string | undefined>,
 		getRepositoryBranch: (path: string) =>
 			ipcRenderer.invoke("app:getRepositoryBranch", path) as Promise<string | undefined>,
+		getGitHubUsername: () => ipcRenderer.invoke("app:getGitHubUsername") as Promise<string | undefined>,
+		checkGitHubRepositoryAvailability: (input: { owner: string; name: string }) =>
+			ipcRenderer.invoke("app:checkGitHubRepositoryAvailability", input) as Promise<GitHubRepositoryAvailability>,
 		// Resolves a dropped File's real filesystem path. Synchronous passthrough
 		// (not ipcRenderer.invoke — a File can't cross that boundary) so it must be
 		// called directly on the File from a drop event, in the same tick, per

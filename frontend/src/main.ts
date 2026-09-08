@@ -52,13 +52,14 @@ import {
 	writeUiSettings,
 	type UiSettings,
 } from "./main/ui-settings";
-import { spawn, type ChildProcess } from "node:child_process";
+import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { randomBytes, randomUUID } from "node:crypto";
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { chmod, copyFile, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import { promisify } from "node:util";
 import { type DaemonLaunchSpec, bundledDaemonIdentityError, resolveDaemonLaunch } from "./shared/daemon-launch";
 import { createListenPortScanner, defaultRunFilePath, parseRunFile } from "./shared/daemon-discovery";
 import type { DaemonStatus } from "./shared/daemon-status";
@@ -260,6 +261,7 @@ const trayLifecycle = createTrayLifecycle({
 // Icon/taskbar-shortcut folder drop, mirroring VS Code: relayed to the
 // renderer's global drop handling so it opens the same create-project flow.
 const OPEN_FOLDER_PATH_CHANNEL = "app:openFolderPath";
+const execFileAsync = promisify(execFile);
 // Folder path from a cold-start launch (icon/shortcut drop while not running)
 // whose renderer isn't mounted yet. Flushed once the shell signals readiness
 // via TRAY_RENDERER_READY_CHANNEL — see the OPEN_FOLDER_PATH_CHANNEL handler.
@@ -2057,6 +2059,31 @@ ipcMain.handle("app:checkAncestorRepo", async (_event, path: string) => {
 ipcMain.handle("app:getRepositoryBranch", async (_event, path: string) => {
 	await ensureShellEnv();
 	return resolveCheckedOutBranch(path, { env: daemonEnv(), homeDir: os.homedir() });
+});
+ipcMain.handle("app:getGitHubUsername", async () => {
+	await ensureShellEnv();
+	try {
+		const { stdout } = await execFileAsync("gh", ["api", "user", "--jq", ".login"], { env: daemonEnv(), timeout: 5000 });
+		const login = String(stdout).trim();
+		return login || undefined;
+	} catch {
+		return undefined;
+	}
+});
+ipcMain.handle("app:checkGitHubRepositoryAvailability", async (_event, input: { owner: string; name: string }) => {
+	await ensureShellEnv();
+	const owner = typeof input?.owner === "string" ? input.owner.trim() : "";
+	const name = typeof input?.name === "string" ? input.name.trim() : "";
+	if (!owner || !name) return { available: false, message: "Owner and repository name are required." };
+	try {
+		await execFileAsync("gh", ["api", `repos/${owner}/${name}`], { env: daemonEnv(), timeout: 5000 });
+		return { available: false, message: "This repository already exists." };
+	} catch (err) {
+		const childErr = err as { code?: number; stderr?: unknown; stdout?: unknown };
+		const output = `${String(childErr.stderr ?? "")}\n${String(childErr.stdout ?? "")}`;
+		if (childErr.code === 1 && /not found|404/i.test(output)) return { available: true };
+		return { available: false, message: output.trim() || "Could not check repository availability." };
+	}
 });
 ipcMain.handle("clipboard:writeText", (_event, text: string) => {
 	clipboard.writeText(text, "clipboard");
