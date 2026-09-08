@@ -67,6 +67,20 @@ it("shows what the build changes", async () => {
 	expect(screen.getByText("Nightly 0.12.11 · Sep 2")).toBeVisible();
 });
 
+it("renders the nightly build date from the UTC instant", async () => {
+	// The stamp 202609070300 encodes 03:00 UTC. Near the UTC day boundary the
+	// date-only dialog label must show the device-local calendar day of the
+	// correct instant, not the stamp digits re-read as local wall time
+	// (issue #5059). The expected label is derived from the absolute instant,
+	// so this holds in every timezone.
+	useUiStore.setState({ updateInstallPromptOpen: true });
+	renderDialog({ state: "downloaded", version: "0.12.11-nightly.202609070300" });
+	const expected = new Intl.DateTimeFormat("en", { month: "short", day: "numeric" }).format(
+		new Date(Date.UTC(2026, 8, 7, 3, 0)),
+	);
+	expect(await screen.findByText(`Nightly 0.12.11 · ${expected}`)).toBeVisible();
+});
+
 it("names the sessions that would lose a turn and waits for confirmation", async () => {
 	workspaceData.current = [
 		{ sessions: [session(), session({ id: "s2", mode: "tui", title: "Terminal one" })] },
