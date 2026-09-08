@@ -810,7 +810,7 @@ describe("CreateProjectFlow project import validation", () => {
 
 		await openSource(user, "Import an existing project");
 
-		expect(await screen.findByText("This folder contains projects and needs to be imported as a workspace.")).toBeInTheDocument();
+		expect(await screen.findByText("This folder contains child Git repositories. Import it as a workspace instead.")).toBeInTheDocument();
 		expect(screen.queryByRole("button", { name: "Continue" })).not.toBeInTheDocument();
 		expect(screen.queryByRole("button", { name: "Back" })).not.toBeInTheDocument();
 		await user.click(screen.getByRole("button", { name: "Import as workspace" }));

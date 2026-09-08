@@ -302,7 +302,7 @@
 	"createProject.projectDesc": "Un unique dépôt Git, suivi dans une seule base de code.",
 	"createProject.projectFolder": "Dossier du projet",
 	"createProject.projectHasChildRepos": "Contient des dépôts Git enfants. AO importera uniquement ce dépôt racine.",
-	"createProject.projectMustBeWorkspace": "Ce dossier contient des projets et doit être importé comme espace de travail.",
+	"createProject.projectMustBeWorkspace": "Ce dossier contient des dépôts Git enfants. Importez-le plutôt comme espace de travail.",
 	"createProject.projectImportApproval": "Autorisez AO à terminer les étapes Git manquantes pour ce dépôt avant de poursuivre l’import.",
 	"createProject.projectImportBlocked": "AO a détecté un problème avec ce dossier avant de pouvoir poursuivre l’import du projet.",
 	"createProject.prepareProjectTitle": "Préparer le projet",
