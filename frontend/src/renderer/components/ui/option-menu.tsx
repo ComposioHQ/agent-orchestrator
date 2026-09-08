@@ -107,6 +107,9 @@ export function OptionMenuItem({
 }: React.ComponentProps<typeof DropdownMenuPrimitive.Item> & { active?: boolean }) {
 	return (
 		<DropdownMenuPrimitive.Item
+			{...(active === undefined
+				? {}
+				: { role: "menuitemradio" as const, "aria-checked": active })}
 			data-active={active || undefined}
 			className={cn(ROW, className)}
 			{...props}

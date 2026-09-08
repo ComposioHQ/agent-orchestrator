@@ -227,6 +227,7 @@ export function TurnSettingsBar({
 								{approvalOrder.map((mode) => (
 									<OptionMenuItem
 										key={mode}
+										active={mode === (settings.approvalMode ?? "default")}
 										onSelect={() => onChange({ ...settings, approvalMode: mode })}
 										className={cn("text-xs")}
 									>
