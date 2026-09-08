@@ -38,6 +38,7 @@ import { Button } from "./ui/button";
 import { Checkbox } from "./ui/checkbox";
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
 import { Switch } from "./ui/switch";
 import { Tabs, TabsList, TabsTrigger } from "./ui/tabs";
 
@@ -1055,7 +1056,7 @@ function importNeedsRemoteSetup(actions: string[]): boolean {
 
 function defaultProjectGitHubRepository(repoPath: string): ProjectGitHubRepository {
 	return {
-		owner: "username",
+		owner: "",
 		name: projectNameFromPath(repoPath) || "repository",
 		private: true,
 	};
@@ -1632,20 +1633,28 @@ function ProjectImportDialog({
 	const needsRemote = importNeedsRemoteSetup(requiredActions);
 	const githubOwner = githubRepository?.owner.trim() ?? "";
 	const githubName = githubRepository?.name.trim() ?? "";
+	const [githubOwners, setGitHubOwners] = useState<string[]>([]);
+	const [loadingGitHubOwners, setLoadingGitHubOwners] = useState(false);
 	const [availability, setAvailability] = useState<GitHubRepositoryAvailability>({ state: "idle" });
 	useEffect(() => {
-		if (!open || !needsRemote || !githubRepository) return;
+		if (!open || !needsRemote) return;
 		let cancelled = false;
-		void aoBridge.app.getGitHubLogin(validation?.root.repoPath).then((login) => {
-			const owner = login.trim();
-			if (!cancelled && owner && githubRepository.owner === "username") {
-				const next = { ...githubRepository, owner };
-				onChangeGitHubRepository(next);
-				onChangeRemote(githubRepositoryRemoteUrl(next));
+		setLoadingGitHubOwners(true);
+		void aoBridge.app.getGitHubOwners().then((owners) => {
+			if (!cancelled) {
+				setGitHubOwners(owners);
+				const owner = owners[0] ?? "";
+				if (owner && githubRepository?.owner === "") {
+					const next = { ...githubRepository, owner };
+					onChangeGitHubRepository(next);
+					onChangeRemote(githubRepositoryRemoteUrl(next));
+				}
 			}
-		}).catch(() => undefined);
+		}).catch(() => undefined).finally(() => {
+			if (!cancelled) setLoadingGitHubOwners(false);
+		});
 		return () => { cancelled = true; };
-	}, [githubRepository, needsRemote, onChangeGitHubRepository, onChangeRemote, open, validation?.root.repoPath]);
+	}, [githubRepository, needsRemote, onChangeGitHubRepository, onChangeRemote, open]);
 	useEffect(() => {
 		if (!open || !needsRemote || !githubOwner || !githubName) {
 			setAvailability({ state: "idle" });
@@ -1748,18 +1757,22 @@ function ProjectImportDialog({
 									<div className="space-y-3 pt-1">
 											<div className="space-y-1.5">
 												<Label htmlFor="githubRepoOwner" className="text-[12px] font-medium text-[var(--color-text-import-title)]">{t("createProject.githubOwner")}</Label>
-												<Input
-													id="githubRepoOwner"
-													aria-label={t("createProject.githubOwner")}
-													className="h-8 bg-[var(--color-bg-import-card)] font-mono text-[12px]"
-													disabled={disabled}
+												<Select
 													value={githubRepository?.owner ?? ""}
-													onChange={(event) => {
-														const next = { owner: event.target.value, name: githubRepository?.name ?? "", private: githubRepository?.private ?? true };
+													disabled={disabled || loadingGitHubOwners || githubOwners.length === 0}
+													onValueChange={(owner) => {
+														const next = { owner, name: githubRepository?.name ?? "", private: githubRepository?.private ?? true };
 														onChangeGitHubRepository(next);
 														onChangeRemote(githubRepositoryRemoteUrl(next));
 													}}
-												/>
+												>
+													<SelectTrigger id="githubRepoOwner" size="sm" className="h-8 w-full bg-[var(--color-bg-import-card)] font-mono text-[12px]" aria-label={t("createProject.githubOwner")}>
+														<SelectValue placeholder={loadingGitHubOwners ? t("createProject.githubRepoChecking") : t("createProject.githubOwner")} />
+													</SelectTrigger>
+													<SelectContent position="popper" side="bottom" align="start" sideOffset={4}>
+														{githubOwners.map((owner) => <SelectItem key={owner} value={owner}>{owner}</SelectItem>)}
+													</SelectContent>
+												</Select>
 											</div>
 											<div className="space-y-1.5">
 												<div className="relative">

@@ -2104,6 +2104,27 @@ ipcMain.handle("app:getGitHubLogin", async (_event, repoPath?: string) => {
 	candidates.push(...gitNames);
 	return candidates.find((candidate) => candidate.length > 0) ?? "";
 });
+ipcMain.handle("app:getGitHubOwners", async () => {
+	await ensureShellEnv();
+	try {
+		const { stdout } = await execFileAsync("gh", ["api", "user", "--jq", ".login"], {
+			env: daemonEnv(),
+			timeout: 5000,
+		});
+		let organizationOutput = "";
+		try {
+			({ stdout: organizationOutput } = await execFileAsync("gh", ["api", "user/memberships/orgs", "--paginate", "--jq", ".[].organization.login"], {
+				env: daemonEnv(),
+				timeout: 8000,
+			}));
+		} catch {
+			// The authenticated account may not have the read:org scope; the personal owner is still usable.
+		}
+		return [...new Set([stdout, ...organizationOutput.split("\n")].map((owner) => owner.trim()).filter(Boolean))];
+	} catch {
+		return [];
+	}
+});
 ipcMain.handle("app:checkGitHubRepositoryAvailability", async (_event, input: { owner: string; name: string }) => {
 	await ensureShellEnv();
 	const owner = input.owner.trim();

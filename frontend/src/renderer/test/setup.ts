@@ -106,6 +106,7 @@ if (typeof window !== "undefined") {
 			checkAncestorRepo: async () => undefined,
 			getRepositoryBranch: async () => undefined,
 			getGitHubLogin: async (_repoPath?: string) => "",
+			getGitHubOwners: async () => [],
 			checkGitHubRepositoryAvailability: async () => ({ available: true }),
 			getPathForFile: () => "",
 			onOpenFolderPath: () => () => undefined,

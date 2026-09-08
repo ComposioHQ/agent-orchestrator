@@ -12,6 +12,7 @@ const bridgeMocks = vi.hoisted(() => ({
 	checkGitHubRepositoryAvailability: vi.fn(),
 	chooseDirectory: vi.fn(),
 	getGitHubLogin: vi.fn(),
+	getGitHubOwners: vi.fn(),
 	getRepositoryBranch: vi.fn(),
 	scanImportFolder: vi.fn(),
 }));
@@ -29,9 +30,10 @@ vi.mock("../lib/bridge", () => ({
 			checkAncestorRepo: bridgeMocks.checkAncestorRepo,
 			checkGitRepository: bridgeMocks.checkGitRepository,
 			checkGitHubRepositoryAvailability: bridgeMocks.checkGitHubRepositoryAvailability,
-			chooseDirectory: bridgeMocks.chooseDirectory,
-			getGitHubLogin: bridgeMocks.getGitHubLogin,
-			getRepositoryBranch: bridgeMocks.getRepositoryBranch,
+		chooseDirectory: bridgeMocks.chooseDirectory,
+		getGitHubLogin: bridgeMocks.getGitHubLogin,
+		getGitHubOwners: bridgeMocks.getGitHubOwners,
+		getRepositoryBranch: bridgeMocks.getRepositoryBranch,
 			scanImportFolder: bridgeMocks.scanImportFolder,
 		},
 	},
@@ -242,6 +244,7 @@ beforeEach(() => {
 	bridgeMocks.checkGitHubRepositoryAvailability.mockReset().mockResolvedValue({ available: true });
 	bridgeMocks.chooseDirectory.mockReset();
 	bridgeMocks.getGitHubLogin.mockReset().mockResolvedValue("");
+	bridgeMocks.getGitHubOwners.mockReset().mockResolvedValue(["username", "acme"]);
 	bridgeMocks.getRepositoryBranch.mockReset().mockResolvedValue(undefined);
 	bridgeMocks.scanImportFolder.mockReset().mockImplementation(async ({ path }: { path: string }) => okScan(path));
 	apiMocks.POST.mockReset();
@@ -847,7 +850,7 @@ describe("CreateProjectFlow project import validation", () => {
 		expect(screen.queryByText("Initial commit")).not.toBeInTheDocument();
 		expect(screen.queryByText("Remote setup")).not.toBeInTheDocument();
 		expect(screen.queryByText("Create the first commit so the project has a usable history.")).not.toBeInTheDocument();
-		expect(screen.getByLabelText("Owner")).toHaveValue("username");
+		await waitFor(() => expect(screen.getByLabelText("Owner")).toHaveTextContent("username"));
 		expect(screen.getByLabelText("Repository name")).toHaveValue("project");
 			expect(screen.getByRole("button", { name: "Create repository and continue" })).toBeDisabled();
 		expect(screen.queryByText("Plain folder")).not.toBeInTheDocument();
@@ -902,7 +905,7 @@ describe("CreateProjectFlow project import validation", () => {
 
 		await openSource(user, "Import an existing project");
 
-		expect(await screen.findByLabelText("Owner")).toHaveValue("username");
+		await waitFor(() => expect(screen.getByLabelText("Owner")).toHaveTextContent("username"));
 		expect(screen.getByLabelText("Repository name")).toHaveValue("project-no-git");
 			expect(screen.queryByText(/Will create/)).not.toBeInTheDocument();
 		expect(screen.queryByText("Repository name is available.")).not.toBeInTheDocument();
@@ -1018,8 +1021,8 @@ describe("CreateProjectFlow project import validation", () => {
 
 		await openSource(user, "Import an existing project");
 		const ownerInput = await screen.findByLabelText("Owner");
-		await user.clear(ownerInput);
-		await user.type(ownerInput, "acme");
+		await user.click(ownerInput);
+		await user.click(await screen.findByRole("option", { name: "acme" }));
 		const privateRepository = screen.getByRole("switch", { name: "Private repository" });
 		expect(privateRepository).toBeChecked();
 		await user.click(privateRepository);
@@ -1173,8 +1176,8 @@ describe("CreateProjectFlow project import validation", () => {
 
 		await openSource(user, "Import an existing project");
 		const ownerInput = await screen.findByLabelText("Owner");
-		await user.clear(ownerInput);
-		await user.type(ownerInput, "acme");
+		await user.click(ownerInput);
+		await user.click(await screen.findByRole("option", { name: "acme" }));
 			await waitFor(() => expect(screen.getByRole("button", { name: "Create repository and continue" })).toBeEnabled());
 			await user.click(screen.getByRole("button", { name: "Create repository and continue" }));
 
@@ -1280,8 +1283,8 @@ describe("CreateProjectFlow project import validation", () => {
 		renderChooseFlow();
 		await openSource(user, "Import an existing project");
 		const ownerInput = await screen.findByLabelText("Owner");
-		await user.clear(ownerInput);
-		await user.type(ownerInput, "acme");
+		await user.click(ownerInput);
+		await user.click(await screen.findByRole("option", { name: "acme" }));
 			await waitFor(() => expect(screen.getByRole("button", { name: "Create repository and continue" })).toBeEnabled());
 			await user.click(screen.getByRole("button", { name: "Create repository and continue" }));
 
