@@ -1,5 +1,5 @@
 import { useQueries, useQueryClient } from "@tanstack/react-query";
-import { useNavigate, useParams } from "@tanstack/react-router";
+import { useNavigate, useParams, useLocation } from "@tanstack/react-router";
 import { ArrowLeft, Loader2 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type AnimationEvent, type MutableRefObject } from "react";
 import { useTranslation } from "react-i18next";
@@ -48,6 +48,9 @@ export function CommandPalette() {
 	const { i18n, t } = useTranslation();
 	const enabled = useCommandPaletteEnabled();
 	const navigate = useNavigate();
+	const location = useLocation();
+	const [composerContainer, setComposerContainer] = useState<HTMLDivElement | null>(null);
+	const [startup, setStartup] = useState(false);
 	const queryClient = useQueryClient();
 	const restoreSessionById = useRestoreSession();
 	const params = useParams({ strict: false }) as { projectId?: string; sessionId?: string };
@@ -437,13 +440,16 @@ export function CommandPalette() {
 	);
 
 	const handleTaskCreated = useCallback(
-		async (projectId: string, sessionId: string) => {
+		async (projectId: string, sessionId: string, focusSession = true) => {
+			const origin = window.location.href;
+			await queryClient.invalidateQueries({ queryKey: workspaceQueryKey }, { throwOnError: true });
+			if (focusSession && window.location.href === origin) {
+				await navigate({
+					to: "/projects/$projectId/sessions/$sessionId",
+					params: { projectId, sessionId },
+				});
+			}
 			closePalette();
-			await queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
-			void navigate({
-				to: "/projects/$projectId/sessions/$sessionId",
-				params: { projectId, sessionId },
-			});
 		},
 		[navigate, queryClient, closePalette],
 	);
@@ -496,11 +502,30 @@ export function CommandPalette() {
 
 	return (
 		<>
+			{/* Keep request ownership outside Radix's replaceable modal content. */}
+			{isOpen && view.mode === "new-task" ? (
+				<TaskComposer
+					container={composerContainer}
+					projectId={view.projectId}
+					navigationKey={location.href}
+					onStartupChange={setStartup}
+					onDiscard={closePalette}
+					autoFocusTitle
+					onDirtyChange={onComposerDirtyChange}
+					onSubmittingChange={onComposerSubmittingChange}
+					onCreated={(sessionId, focusSession) => handleTaskCreated(view.projectId, sessionId, focusSession)}
+				/>
+			) : null}
 			<CommandDialog
 				open={isOpen}
+				modal={!startup}
+				className={startup ? "hidden" : undefined}
 				onOpenChange={(open) => (open ? setOpen(true) : requestDismiss("close"))}
 				contentProps={{
+					role: startup ? "presentation" : "dialog",
 					onAnimationEnd: handlePaletteAnimationEnd,
+					onOpenAutoFocus: (event) => { if (startup) event.preventDefault(); },
+					onInteractOutside: (event) => { if (startup) event.preventDefault(); },
 					onEscapeKeyDown: (event) => {
 						event.preventDefault();
 						if (event.isComposing) return;
@@ -550,13 +575,7 @@ export function CommandPalette() {
 								</div>
 							</div>
 						)}
-						<TaskComposer
-							projectId={view.projectId}
-							autoFocusTitle
-							onDirtyChange={onComposerDirtyChange}
-							onSubmittingChange={onComposerSubmittingChange}
-							onCreated={(sessionId) => void handleTaskCreated(view.projectId, sessionId)}
-						/>
+						<div ref={setComposerContainer} />
 					</div>
 				) : (
 					<>

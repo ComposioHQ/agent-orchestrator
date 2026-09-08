@@ -1,9 +1,10 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { agentReadiness } from "../test/agent-readiness-fixtures";
 import { NewTaskDialog } from "./NewTaskDialog";
+import { TooltipProvider } from "./ui/tooltip";
 
 const { getMock, postMock, ensureAgentReadinessMock } = vi.hoisted(() => ({
 	getMock: vi.fn(),
@@ -40,7 +41,7 @@ function renderDialog() {
 	const onOpenChange = vi.fn();
 	render(
 		<QueryClientProvider client={new QueryClient()}>
-			<NewTaskDialog open projectId="proj-1" onCreated={onCreated} onOpenChange={onOpenChange} />
+			<TooltipProvider><NewTaskDialog open projectId="proj-1" onCreated={onCreated} onOpenChange={onOpenChange} /></TooltipProvider>
 		</QueryClientProvider>,
 	);
 	return { onCreated, onOpenChange };
@@ -341,4 +342,36 @@ describe("NewTaskDialog", () => {
 
 		expect(await screen.findByText(`${message} (${code})`)).toBeInTheDocument();
 	});
+});
+
+
+it("keeps the request alive when the modal becomes a central chat surface", async () => {
+	const originalGet = getMock.getMockImplementation()!;
+	getMock.mockImplementation((path: string, ...args: unknown[]) => path === "/api/v1/settings"
+		? Promise.resolve({ data: { defaultSessionMode: "chat", chatHarnesses: ["claude-code"] } })
+		: originalGet(path, ...args));
+	const host = document.createElement("div");
+	host.id = "task-startup-host";
+	document.body.append(host);
+	try {
+		let resolve!: (value: { data: { workerId: string } }) => void;
+		postMock.mockImplementation((path: string) => path === "/api/v1/orchestrators/delegate"
+			? new Promise((done) => { resolve = done; })
+			: Promise.resolve({ data: agentInventory }));
+		const { onCreated, onOpenChange } = renderDialog();
+		await waitForAgentCatalog();
+		fireEvent.change(screen.getByLabelText("Task"), { target: { value: "hello from the dialog" } });
+		fireEvent.click(screen.getByRole("button", { name: "Start task" }));
+		await waitFor(() => expect(delegateCalls()).toHaveLength(1));
+		expect(screen.getByRole("region", { name: "Chat" })).toHaveTextContent("hello from the dialog");
+		expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+		expect(document.body.style.pointerEvents).not.toBe("none");
+		fireEvent.keyDown(document.body, { key: "Escape" });
+		expect(onOpenChange).not.toHaveBeenCalled();
+		await act(async () => resolve({ data: { workerId: "started-worker" } }));
+		expect(onCreated).toHaveBeenCalledExactlyOnceWith("started-worker");
+		expect(delegateCalls()).toHaveLength(1);
+	} finally {
+		host.remove();
+	}
 });
