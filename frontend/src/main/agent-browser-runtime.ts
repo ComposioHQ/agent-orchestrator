@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { processIsAlive } from "../shared/daemon-discovery";
 import { createHash, randomBytes } from "node:crypto";
 import { access, chmod, mkdir, mkdtemp, readFile, readdir, readlink, rm, stat, symlink, utimes, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -584,14 +585,8 @@ function numberIsInteger(value: unknown): value is number {
 	return typeof value === "number" && Number.isSafeInteger(value) && value > 0;
 }
 
-function defaultProcessAlive(pid: number): boolean {
-	try {
-		process.kill(pid, 0);
-		return true;
-	} catch (error) {
-		return (error as NodeJS.ErrnoException).code === "EPERM";
-	}
-}
+// Shared with dev-api-target and main.ts so EPERM is judged identically.
+const defaultProcessAlive = processIsAlive;
 
 async function removePath(target: string, log: (message: string) => void, label: string): Promise<void> {
 	try {

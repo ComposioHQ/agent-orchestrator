@@ -1,12 +1,16 @@
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
-import { DEFAULT_DAEMON_PORT, resolveDevApiTarget } from "./dev-api-target";
+import { DEV_DAEMON_PORT } from "./daemon-attach";
+import { resolveDevApiTarget } from "./dev-api-target";
 
 const HOME = "/home/tester";
 const DEV_RUN_FILE = path.join(HOME, ".ao", "dev", "running.json");
 const STANDALONE_RUN_FILE = path.join(HOME, ".ao", "running.json");
-const DEFAULT_TARGET = `http://127.0.0.1:${DEFAULT_DAEMON_PORT}`;
+// These cases pass no VITE_NO_ELECTRON, i.e. the `npm run dev` path, where the
+// daemon Electron supervises comes up on DEV_DAEMON_PORT. The standalone
+// default is covered separately in dev-api-target-startup.test.ts.
+const DEFAULT_TARGET = `http://127.0.0.1:${DEV_DAEMON_PORT}`;
 
 const ENOENT = () => {
 	throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });

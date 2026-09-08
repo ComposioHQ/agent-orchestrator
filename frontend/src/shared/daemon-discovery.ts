@@ -114,6 +114,32 @@ export function parseRunFile(contents: string): RunFileInfo | null {
  * the same file the daemon writes. Returns null when the user home directory
  * cannot be resolved.
  */
+/**
+ * Run file the Electron dev daemon writes. Kept here so the Vite dev-server
+ * config and main.ts agree on one path instead of each spelling out
+ * `~/.ao/dev/running.json`.
+ */
+export function devRunFilePath(homeDir: string, joinPath: (...parts: string[]) => string): string {
+	return joinPath(homeDir, ".ao", "dev", "running.json");
+}
+
+/**
+ * Whether a pid names a live process.
+ *
+ * `process.kill(pid, 0)` sends no signal; it throws iff the pid cannot be
+ * signalled. EPERM means the process exists but belongs to another user, so it
+ * counts as alive — treating it as dead would discard a perfectly good run
+ * file written by a daemon running under a different account.
+ */
+export function processIsAlive(pid: number): boolean {
+	try {
+		process.kill(pid, 0);
+		return true;
+	} catch (error) {
+		return (error as NodeJS.ErrnoException).code === "EPERM";
+	}
+}
+
 export function defaultRunFilePath(
 	platform: NodeJS.Platform,
 	_env: Record<string, string | undefined>,

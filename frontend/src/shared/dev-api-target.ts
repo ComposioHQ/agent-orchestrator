@@ -19,8 +19,8 @@ import { readFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { DEFAULT_DAEMON_PORT, expectedDaemonPort } from "./daemon-attach";
-import { defaultRunFilePath, parseRunFile } from "./daemon-discovery";
+import { DEFAULT_DAEMON_PORT, expectedDaemonPort, expectedDevDaemonPort } from "./daemon-attach";
+import { defaultRunFilePath, devRunFilePath, parseRunFile, processIsAlive } from "./daemon-discovery";
 
 export { DEFAULT_DAEMON_PORT };
 
@@ -30,15 +30,8 @@ export type RunFileReader = (runFilePath: string) => string;
 /** True when a pid is live. Injected in tests. */
 export type PidLiveness = (pid: number) => boolean;
 
-/** `process.kill(pid, 0)` does not kill; it throws iff the pid is not live. */
-const pidIsLive: PidLiveness = (pid) => {
-	try {
-		process.kill(pid, 0);
-		return true;
-	} catch {
-		return false;
-	}
-};
+/** Shared with the rest of the app so EPERM is judged the same way everywhere. */
+const pidIsLive: PidLiveness = processIsAlive;
 
 export type DevApiTargetDeps = {
 	env?: Record<string, string | undefined>;
@@ -64,7 +57,7 @@ function runFileCandidates(
 	const explicit = env.AO_RUN_FILE?.trim();
 	if (explicit) return [explicit];
 	const candidates: string[] = [];
-	if (homeDir) candidates.push(joinPath(homeDir, ".ao", "dev", "running.json"));
+	if (homeDir) candidates.push(devRunFilePath(homeDir, joinPath));
 	const standalone = defaultRunFilePath(platform, env, homeDir);
 	if (standalone) candidates.push(standalone);
 	return candidates;
@@ -102,9 +95,22 @@ export function resolveDevApiTarget(deps: DevApiTargetDeps = {}): string {
 			continue; // absent or unreadable
 		}
 		if (!info) continue;
-		if (info.pid > 0 && !isPidLive(info.pid)) continue; // stale record
+		// A port is only trustworthy behind a pid we can confirm. parseRunFile
+		// reports a missing or non-integer pid as 0, so requiring > 0 here is what
+		// stops `{"port":4321}` — no pid at all — being accepted unchecked.
+		if (info.pid <= 0 || !isPidLive(info.pid)) continue; // stale or unverifiable
 		return `http://127.0.0.1:${info.port}`;
 	}
 
-	return `http://127.0.0.1:${expectedDaemonPort(env)}`;
+	// No usable run file yet. Under `npm run dev` this is the normal case: Forge
+	// loads this config and starts Vite before Electron exists, so the daemon has
+	// not written its run file and the target is fixed for the Vite lifetime.
+	// Falling back to DEFAULT_DAEMON_PORT pointed the proxy at 3001 while the
+	// supervised daemon came up on 3002 — a 502, or worse a silent hit on some
+	// other AO instance that happens to hold 3001.
+	//
+	// `dev:web` has no Electron and no supervised daemon, so it keeps the
+	// standalone default.
+	const port = env.VITE_NO_ELECTRON ? expectedDaemonPort(env) : expectedDevDaemonPort(env);
+	return `http://127.0.0.1:${port}`;
 }

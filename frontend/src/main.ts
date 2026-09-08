@@ -59,7 +59,7 @@ import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { type DaemonLaunchSpec, bundledDaemonIdentityError, resolveDaemonLaunch } from "./shared/daemon-launch";
-import { createListenPortScanner, defaultRunFilePath, parseRunFile } from "./shared/daemon-discovery";
+import { createListenPortScanner, defaultRunFilePath, devRunFilePath, parseRunFile } from "./shared/daemon-discovery";
 import type { DaemonStatus } from "./shared/daemon-status";
 import {
 	refreshSlowDaemonStartupDetails,
@@ -79,6 +79,7 @@ import {
 	TRAY_SET_ATTENTION_STATE_CHANNEL,
 } from "./shared/tray";
 import {
+	DEV_DAEMON_PORT,
 	type DaemonProbe,
 	expectedDaemonPort,
 	parseDaemonProbe,
@@ -303,7 +304,6 @@ const isDev = !app.isPackaged;
 // a concurrently running installed-app daemon. The subdir also isolates supervise.sock
 // on Unix (backend derives it as dir(RunFilePath)/supervise.sock) and the named pipe
 // on Windows (supervisorPipeFromRunFile derives it from the same dir basename).
-const DEV_DAEMON_PORT = 3002;
 const DEV_STATE_SUBDIR = "dev"; // ~/.ao/dev/
 
 // Traffic lights stay fixed across sidebar expand/collapse. Y matches the
@@ -788,7 +788,7 @@ const DAEMON_PROBE_TIMEOUT_MS = 2_000;
 
 function runFilePath(): string | null {
 	if (process.env.AO_RUN_FILE) return process.env.AO_RUN_FILE;
-	if (isDev) return path.join(os.homedir(), ".ao", DEV_STATE_SUBDIR, "running.json");
+	if (isDev) return devRunFilePath(os.homedir(), path.join);
 	return defaultRunFilePath(process.platform, process.env, os.homedir());
 }
 
