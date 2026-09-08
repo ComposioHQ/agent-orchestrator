@@ -85,6 +85,7 @@ export async function installFakeBridge(page: Page, opts: FakeBridgeOptions = {}
 					onNewShellTerminalShortcut: unsubscribe,
 					onCloseShellTerminalShortcut: unsubscribe,
 					setCloseShellTerminalShortcutEnabled: () => undefined,
+					setChatDraftRisk: () => undefined,
 					onOpenSettingsShortcut: unsubscribe,
 					onPreviousSessionShortcut: unsubscribe,
 					onNextSessionShortcut: unsubscribe,
@@ -371,9 +372,11 @@ export async function installFakeAgent(page: Page, opts: FakeAgentOptions = {}):
 	const projectName = opts.projectName ?? "fake-proj";
 	const platform = opts.platform ?? null;
 	const workers = opts.workers ?? [];
+	// Renderer reload does not create a new daemon session incarnation.
+	const nowIso = new Date().toISOString();
 
 	await page.addInitScript(
-		({ version, daemonPort, projectId, projectName, platform, workers }) => {
+		({ version, daemonPort, projectId, projectName, platform, workers, nowIso }) => {
 			if (platform) {
 				try {
 					Object.defineProperty(navigator, "platform", { get: () => platform, configurable: true });
@@ -382,7 +385,6 @@ export async function installFakeAgent(page: Page, opts: FakeAgentOptions = {}):
 				}
 			}
 
-			const nowIso = new Date().toISOString();
 			type Session = Record<string, unknown>;
 			// The daemon derives the board lane; the fake stands in for it so
 			// driving a spec's status through setStatus still moves the card.
@@ -620,6 +622,7 @@ export async function installFakeAgent(page: Page, opts: FakeAgentOptions = {}):
 					onNewShellTerminalShortcut: unsubscribe,
 					onCloseShellTerminalShortcut: unsubscribe,
 					setCloseShellTerminalShortcutEnabled: () => undefined,
+					setChatDraftRisk: () => undefined,
 					onOpenSettingsShortcut: unsubscribe,
 					onPreviousSessionShortcut: unsubscribe,
 					onNextSessionShortcut: unsubscribe,
@@ -812,6 +815,6 @@ export async function installFakeAgent(page: Page, opts: FakeAgentOptions = {}):
 			} satisfies AoBridge;
 			(window as unknown as { ao: unknown }).ao = ao;
 		},
-		{ version, daemonPort, projectId, projectName, platform, workers },
+		{ version, daemonPort, projectId, projectName, platform, workers, nowIso },
 	);
 }
