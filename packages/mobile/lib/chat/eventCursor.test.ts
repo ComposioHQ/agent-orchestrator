@@ -8,7 +8,7 @@ vi.mock("expo-secure-store", () => ({
 }));
 
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { DEFAULT_CONFIG, type ServerConfig } from "../config";
+import { DEFAULT_CONFIG, machineIdentity, type ServerConfig } from "../config";
 import { clearEventCursorsForHost, eventCursorKey, HEAD_CURSOR, initialCursorFor } from "./eventCursor";
 
 const cfg = (over: Partial<ServerConfig> = {}): ServerConfig => ({
@@ -16,6 +16,17 @@ const cfg = (over: Partial<ServerConfig> = {}): ServerConfig => ({
 });
 
 describe("eventCursorKey", () => {
+	// The identity rule moved to machineIdentity so the store's retained project
+	// list keys on the same one (#5058 review). Two callers that disagreed about
+	// what counts as the same machine would be a bug in whichever was wrong, and
+	// the prefix keeps the key shape this shipped with.
+	it("is the shared machine identity behind a stable prefix", () => {
+		const identified = cfg({ hostId: "h_abc" });
+		const migrated = cfg({ hostId: undefined });
+		expect(eventCursorKey(identified)).toBe(`ao.chat.events.${machineIdentity(identified)}`);
+		expect(eventCursorKey(migrated)).toBe(`ao.chat.events.${machineIdentity(migrated)}`);
+	});
+
 	// The cursor was keyed by address, so the same machine reached over LAN,
 	// Tailscale and the tunnel had three separate cursors. Every network change
 	// therefore started from zero and replayed the entire backlog — measured at

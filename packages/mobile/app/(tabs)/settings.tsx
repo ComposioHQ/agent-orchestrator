@@ -34,7 +34,7 @@ export default function SettingsScreen() {
 	const styles = useThemedStyles(makeStyles);
 	const insets = useSafeAreaInsets();
 	const router = useRouter();
-	const { reloadConfig, projects, connection, activeProjectId, setActiveProject } = useApp();
+	const { reloadConfig, projects, projectsKnown, connection, activeProjectId, setActiveProject } = useApp();
 	const scrollRef = useTabScrollToTop<ScrollView>();
 
 	const [cfg, setCfg] = useState<ServerConfig>(DEFAULT_CONFIG);
@@ -78,7 +78,7 @@ export default function SettingsScreen() {
 					<SettingsRow
 						icon="folder"
 						label="Active project"
-						value={activeProjectLabel(activeProjectId, projects)}
+						value={activeProjectLabel(activeProjectId, projects, projectsKnown)}
 						onPress={() =>
 							router.push(
 								projectSheetRoute({
