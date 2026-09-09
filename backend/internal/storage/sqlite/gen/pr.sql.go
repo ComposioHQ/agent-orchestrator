@@ -14,11 +14,12 @@ import (
 )
 
 const claimPRForSession = `-- name: ClaimPRForSession :exec
-INSERT INTO pr (url, session_id, number, pr_state, review_decision, ci_state, mergeability, updated_at, state_changed_at, auto_inject_ci)
+INSERT INTO pr (url, session_id, number, pr_state, review_decision, ci_state, mergeability, updated_at, state_changed_at, auto_inject_ci, attachment_source)
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?,
-    COALESCE((SELECT auto_inject_ci FROM sessions WHERE id = ?), TRUE))
+    COALESCE((SELECT auto_inject_ci FROM sessions WHERE id = ?), TRUE), 'explicit')
 ON CONFLICT (url) DO UPDATE SET
     session_id = excluded.session_id,
+    attachment_source = 'explicit',
     state_changed_at = CASE
         WHEN pr.pr_state != excluded.pr_state THEN excluded.updated_at
         WHEN pr.state_changed_at IS NULL THEN excluded.state_changed_at
@@ -131,6 +132,25 @@ func (q *Queries) DeletePRByURL(ctx context.Context, url string) error {
 	return err
 }
 
+const detachPR = `-- name: DetachPR :execrows
+DELETE FROM pr
+WHERE url = ? AND session_id = ? AND attachment_source = ?
+`
+
+type DetachPRParams struct {
+	URL              string
+	SessionID        domain.SessionID
+	AttachmentSource string
+}
+
+func (q *Queries) DetachPR(ctx context.Context, arg DetachPRParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, detachPR, arg.URL, arg.SessionID, arg.AttachmentSource)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const getDisplayPRFactsBySession = `-- name: GetDisplayPRFactsBySession :one
 SELECT
     pr.url,
@@ -202,7 +222,7 @@ func (q *Queries) GetDisplayPRFactsBySession(ctx context.Context, sessionID doma
 }
 
 const getPR = `-- name: GetPR :one
-SELECT url, session_id, number, pr_state, review_decision, ci_state, mergeability, updated_at, provider, host, repo, source_branch, target_branch, head_sha, title, additions, deletions, changed_files, author, base_sha, merge_commit_sha, is_draft, is_merged, is_closed, provider_state, provider_mergeable, provider_merge_state_status, html_url, created_at_provider, updated_at_provider, merged_at_provider, closed_at_provider, metadata_hash, ci_hash, review_hash, observed_at, ci_observed_at, review_observed_at, last_nudge_signature, state_changed_at, auto_inject_ci, provider_id, author_avatar_url FROM pr WHERE url = ?
+SELECT url, session_id, number, pr_state, review_decision, ci_state, mergeability, updated_at, provider, host, repo, source_branch, target_branch, head_sha, title, additions, deletions, changed_files, author, base_sha, merge_commit_sha, is_draft, is_merged, is_closed, provider_state, provider_mergeable, provider_merge_state_status, html_url, created_at_provider, updated_at_provider, merged_at_provider, closed_at_provider, metadata_hash, ci_hash, review_hash, observed_at, ci_observed_at, review_observed_at, last_nudge_signature, state_changed_at, auto_inject_ci, provider_id, attachment_source, author_avatar_url FROM pr WHERE url = ?
 `
 
 func (q *Queries) GetPR(ctx context.Context, url string) (PR, error) {
@@ -251,13 +271,14 @@ func (q *Queries) GetPR(ctx context.Context, url string) (PR, error) {
 		&i.StateChangedAt,
 		&i.AutoInjectCI,
 		&i.ProviderID,
+		&i.AttachmentSource,
 		&i.AuthorAvatarURL,
 	)
 	return i, err
 }
 
 const getPRByProviderIdentity = `-- name: GetPRByProviderIdentity :one
-SELECT url, session_id, number, pr_state, review_decision, ci_state, mergeability, updated_at, provider, host, repo, source_branch, target_branch, head_sha, title, additions, deletions, changed_files, author, base_sha, merge_commit_sha, is_draft, is_merged, is_closed, provider_state, provider_mergeable, provider_merge_state_status, html_url, created_at_provider, updated_at_provider, merged_at_provider, closed_at_provider, metadata_hash, ci_hash, review_hash, observed_at, ci_observed_at, review_observed_at, last_nudge_signature, state_changed_at, auto_inject_ci, provider_id, author_avatar_url
+SELECT url, session_id, number, pr_state, review_decision, ci_state, mergeability, updated_at, provider, host, repo, source_branch, target_branch, head_sha, title, additions, deletions, changed_files, author, base_sha, merge_commit_sha, is_draft, is_merged, is_closed, provider_state, provider_mergeable, provider_merge_state_status, html_url, created_at_provider, updated_at_provider, merged_at_provider, closed_at_provider, metadata_hash, ci_hash, review_hash, observed_at, ci_observed_at, review_observed_at, last_nudge_signature, state_changed_at, auto_inject_ci, provider_id, attachment_source, author_avatar_url
 FROM pr
 WHERE provider = ?1
   AND host = ?2
@@ -317,13 +338,14 @@ func (q *Queries) GetPRByProviderIdentity(ctx context.Context, arg GetPRByProvid
 		&i.StateChangedAt,
 		&i.AutoInjectCI,
 		&i.ProviderID,
+		&i.AttachmentSource,
 		&i.AuthorAvatarURL,
 	)
 	return i, err
 }
 
 const getPRByURLOrAlias = `-- name: GetPRByURLOrAlias :one
-SELECT pr.url, pr.session_id, pr.number, pr.pr_state, pr.review_decision, pr.ci_state, pr.mergeability, pr.updated_at, pr.provider, pr.host, pr.repo, pr.source_branch, pr.target_branch, pr.head_sha, pr.title, pr.additions, pr.deletions, pr.changed_files, pr.author, pr.base_sha, pr.merge_commit_sha, pr.is_draft, pr.is_merged, pr.is_closed, pr.provider_state, pr.provider_mergeable, pr.provider_merge_state_status, pr.html_url, pr.created_at_provider, pr.updated_at_provider, pr.merged_at_provider, pr.closed_at_provider, pr.metadata_hash, pr.ci_hash, pr.review_hash, pr.observed_at, pr.ci_observed_at, pr.review_observed_at, pr.last_nudge_signature, pr.state_changed_at, pr.auto_inject_ci, pr.provider_id, pr.author_avatar_url
+SELECT pr.url, pr.session_id, pr.number, pr.pr_state, pr.review_decision, pr.ci_state, pr.mergeability, pr.updated_at, pr.provider, pr.host, pr.repo, pr.source_branch, pr.target_branch, pr.head_sha, pr.title, pr.additions, pr.deletions, pr.changed_files, pr.author, pr.base_sha, pr.merge_commit_sha, pr.is_draft, pr.is_merged, pr.is_closed, pr.provider_state, pr.provider_mergeable, pr.provider_merge_state_status, pr.html_url, pr.created_at_provider, pr.updated_at_provider, pr.merged_at_provider, pr.closed_at_provider, pr.metadata_hash, pr.ci_hash, pr.review_hash, pr.observed_at, pr.ci_observed_at, pr.review_observed_at, pr.last_nudge_signature, pr.state_changed_at, pr.auto_inject_ci, pr.provider_id, pr.attachment_source, pr.author_avatar_url
 FROM pr
 WHERE pr.url = COALESCE(
     (SELECT canonical_url FROM pr_url_alias WHERE alias_url = ?1),
@@ -377,6 +399,7 @@ func (q *Queries) GetPRByURLOrAlias(ctx context.Context, url string) (PR, error)
 		&i.StateChangedAt,
 		&i.AutoInjectCI,
 		&i.ProviderID,
+		&i.AttachmentSource,
 		&i.AuthorAvatarURL,
 	)
 	return i, err
@@ -727,7 +750,7 @@ func (q *Queries) ListPRFactsBySessions(ctx context.Context, jsonEach interface{
 }
 
 const listPRsBySession = `-- name: ListPRsBySession :many
-SELECT url, session_id, number, pr_state, review_decision, ci_state, mergeability, updated_at, provider, host, repo, source_branch, target_branch, head_sha, title, additions, deletions, changed_files, author, base_sha, merge_commit_sha, is_draft, is_merged, is_closed, provider_state, provider_mergeable, provider_merge_state_status, html_url, created_at_provider, updated_at_provider, merged_at_provider, closed_at_provider, metadata_hash, ci_hash, review_hash, observed_at, ci_observed_at, review_observed_at, last_nudge_signature, state_changed_at, auto_inject_ci, provider_id, author_avatar_url FROM pr
+SELECT url, session_id, number, pr_state, review_decision, ci_state, mergeability, updated_at, provider, host, repo, source_branch, target_branch, head_sha, title, additions, deletions, changed_files, author, base_sha, merge_commit_sha, is_draft, is_merged, is_closed, provider_state, provider_mergeable, provider_merge_state_status, html_url, created_at_provider, updated_at_provider, merged_at_provider, closed_at_provider, metadata_hash, ci_hash, review_hash, observed_at, ci_observed_at, review_observed_at, last_nudge_signature, state_changed_at, auto_inject_ci, provider_id, attachment_source, author_avatar_url FROM pr
 WHERE pr.session_id = ?
 ORDER BY updated_at DESC
 `
@@ -784,6 +807,7 @@ func (q *Queries) ListPRsBySession(ctx context.Context, sessionID domain.Session
 			&i.StateChangedAt,
 			&i.AutoInjectCI,
 			&i.ProviderID,
+			&i.AttachmentSource,
 			&i.AuthorAvatarURL,
 		); err != nil {
 			return nil, err
@@ -971,10 +995,10 @@ func (q *Queries) UpdatePRLastNudgeSignature(ctx context.Context, arg UpdatePRLa
 const upsertLegacyPR = `-- name: UpsertLegacyPR :exec
 INSERT INTO pr (
     url, session_id, number, pr_state, review_decision, ci_state, mergeability, updated_at, state_changed_at,
-    is_draft, is_merged, is_closed, auto_inject_ci
+    is_draft, is_merged, is_closed, auto_inject_ci, attachment_source
 )
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-    COALESCE((SELECT auto_inject_ci FROM sessions WHERE id = ?), TRUE))
+    COALESCE((SELECT auto_inject_ci FROM sessions WHERE id = ?), TRUE), ?)
 ON CONFLICT (url) DO UPDATE SET
     number = excluded.number,
     state_changed_at = CASE
@@ -993,19 +1017,20 @@ ON CONFLICT (url) DO UPDATE SET
 `
 
 type UpsertLegacyPRParams struct {
-	URL            string
-	SessionID      domain.SessionID
-	Number         int64
-	PRState        domain.PRState
-	ReviewDecision domain.ReviewDecision
-	CIState        domain.CIState
-	Mergeability   domain.Mergeability
-	UpdatedAt      time.Time
-	StateChangedAt sql.NullTime
-	IsDraft        int64
-	IsMerged       int64
-	IsClosed       int64
-	ID             domain.SessionID
+	URL              string
+	SessionID        domain.SessionID
+	Number           int64
+	PRState          domain.PRState
+	ReviewDecision   domain.ReviewDecision
+	CIState          domain.CIState
+	Mergeability     domain.Mergeability
+	UpdatedAt        time.Time
+	StateChangedAt   sql.NullTime
+	IsDraft          int64
+	IsMerged         int64
+	IsClosed         int64
+	ID               domain.SessionID
+	AttachmentSource string
 }
 
 func (q *Queries) UpsertLegacyPR(ctx context.Context, arg UpsertLegacyPRParams) error {
@@ -1023,6 +1048,7 @@ func (q *Queries) UpsertLegacyPR(ctx context.Context, arg UpsertLegacyPRParams) 
 		arg.IsMerged,
 		arg.IsClosed,
 		arg.ID,
+		arg.AttachmentSource,
 	)
 	return err
 }
@@ -1035,10 +1061,10 @@ INSERT INTO pr (
     is_draft, is_merged, is_closed,
     provider_state, provider_mergeable, provider_merge_state_status, html_url,
     created_at_provider, updated_at_provider, merged_at_provider, closed_at_provider,
-    metadata_hash, ci_hash, review_hash, observed_at, ci_observed_at, review_observed_at, auto_inject_ci
+    metadata_hash, ci_hash, review_hash, observed_at, ci_observed_at, review_observed_at, auto_inject_ci, attachment_source
 )
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-    COALESCE((SELECT auto_inject_ci FROM sessions WHERE id = ?), TRUE))
+    COALESCE((SELECT auto_inject_ci FROM sessions WHERE id = ?), TRUE), ?)
 ON CONFLICT (url) DO UPDATE SET
     number = excluded.number,
     state_changed_at = CASE
@@ -1133,6 +1159,7 @@ type UpsertPRParams struct {
 	CIObservedAt             sql.NullTime
 	ReviewObservedAt         sql.NullTime
 	ID                       domain.SessionID
+	AttachmentSource         string
 }
 
 func (q *Queries) UpsertPR(ctx context.Context, arg UpsertPRParams) error {
@@ -1179,6 +1206,7 @@ func (q *Queries) UpsertPR(ctx context.Context, arg UpsertPRParams) error {
 		arg.CIObservedAt,
 		arg.ReviewObservedAt,
 		arg.ID,
+		arg.AttachmentSource,
 	)
 	return err
 }
