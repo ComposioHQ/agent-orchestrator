@@ -1146,11 +1146,10 @@ describe("CreateProjectFlow project import validation", () => {
 		await waitFor(() => expect(sheet).toHaveClass("modal-shake"));
 	});
 
-	it.each(["single_repo", "workspace"] as const)("passes the checked-out root branch when importing %s", async (kind) => {
+	it.each(["single_repo", "workspace"] as const)("submits %s imports without a blocking branch lookup", async (kind) => {
 		const user = userEvent.setup();
 		const onCreateProject = vi.fn(async () => undefined);
 		bridgeMocks.chooseDirectory.mockResolvedValue("/repo/project");
-		bridgeMocks.getRepositoryBranch.mockResolvedValue("main");
 		if (kind === "workspace") {
 			bridgeMocks.scanImportFolder.mockResolvedValue({
 				path: "/repo/project",
@@ -1183,12 +1182,13 @@ describe("CreateProjectFlow project import validation", () => {
 			expect(onCreateProject).toHaveBeenCalledWith({
 				path: "/repo/project",
 				asWorkspace: kind === "workspace",
-				defaultBranch: "main",
 				workerAgent: "codex",
 				orchestratorAgent: "codex",
 			}),
 		);
-		expect(bridgeMocks.getRepositoryBranch).toHaveBeenCalledWith("/repo/project");
+		// The daemon resolves the base branch itself; the import must not
+		// block on a branch lookup before submitting.
+		expect(bridgeMocks.getRepositoryBranch).not.toHaveBeenCalled();
 	});
 
 	it("shows queued and running setup progress after continue is clicked", async () => {

@@ -1191,6 +1191,8 @@
 	"shell.projects": "プロジェクト",
 	"shell.projectActions": "{{name}} のプロジェクト操作",
 	"shell.projectSettings": "プロジェクト設定",
+	"shell.provisioning": "プロジェクトをセットアップしています — オーケストレーターを起動中…",
+	"shell.provisioningDots": "セットアップ中...",
 	"shell.restart": "再起動",
 	"shell.remove": "削除",
 	"shell.removeProjectBody": "稼働中のセッションを停止し、サイドバーから削除しますが、リポジトリフォルダーと保存済み履歴はディスクに残ります。",

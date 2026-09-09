@@ -1191,6 +1191,8 @@
 	"shell.projects": "Projekte",
 	"shell.projectActions": "Projektaktionen für {{name}}",
 	"shell.projectSettings": "Projekteinstellungen",
+	"shell.provisioning": "Projekt wird eingerichtet — Orchestrator wird gestartet…",
+	"shell.provisioningDots": "Wird eingerichtet...",
 	"shell.restart": "Neu starten",
 	"shell.remove": "Entfernen",
 	"shell.removeProjectBody": "Dadurch werden live laufende Sitzungen gestoppt und das Projekt aus der Seitenleiste entfernt, der Repository-Ordner und der gespeicherte Verlauf bleiben jedoch auf dem Datenträger.",

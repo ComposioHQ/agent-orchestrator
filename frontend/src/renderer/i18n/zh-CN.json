@@ -1177,6 +1177,8 @@
 	"shell.projects": "项目",
 	"shell.projectActions": "{{name}} 的项目操作",
 	"shell.projectSettings": "项目设置",
+	"shell.provisioning": "正在设置项目 — 正在启动编排器…",
+	"shell.provisioningDots": "设置中...",
 	"shell.restart": "重启",
 	"shell.remove": "移除",
 	"shell.removeProjectBody": "会停止其活跃会话并从侧边栏移除，但保留磁盘上的仓库文件夹与历史记录。",
