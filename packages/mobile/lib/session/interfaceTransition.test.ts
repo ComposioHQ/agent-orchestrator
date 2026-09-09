@@ -6,6 +6,7 @@ import {
 	interfaceTransitionPollInterval,
 	interfaceTransitionSessionGone,
 	nativeSessionReadinessAttempts,
+	speculativeFailureAttempts,
 } from "./interfaceTransition";
 
 const daemonReason =
@@ -106,13 +107,58 @@ describe("failed rechecks back off on their own count", () => {
 	const waiting = { reasonCode: "NATIVE_SESSION_UNVERIFIED" };
 	const draining = { transition: { phase: "draining" } };
 
-	it("backs off instead of hammering, then holds at the ceiling rather than giving up", () => {
-		expect(interfaceTransitionNextPoll({ consecutiveFailures: 1 })).toBe(1_000);
-		expect(interfaceTransitionNextPoll({ consecutiveFailures: 2 })).toBe(2_000);
-		expect(interfaceTransitionNextPoll({ consecutiveFailures: 3 })).toBe(4_000);
-		expect(interfaceTransitionNextPoll({ consecutiveFailures: 4 })).toBe(8_000);
-		expect(interfaceTransitionNextPoll({ consecutiveFailures: 5 })).toBe(8_000);
-		expect(interfaceTransitionNextPoll({ consecutiveFailures: 500 })).toBe(8_000);
+	it("backs off instead of hammering, then holds at the ceiling for a live handoff", () => {
+		expect(interfaceTransitionNextPoll({ status: draining, consecutiveFailures: 1 })).toBe(1_000);
+		expect(interfaceTransitionNextPoll({ status: draining, consecutiveFailures: 2 })).toBe(2_000);
+		expect(interfaceTransitionNextPoll({ status: draining, consecutiveFailures: 3 })).toBe(4_000);
+		expect(interfaceTransitionNextPoll({ status: draining, consecutiveFailures: 4 })).toBe(8_000);
+		expect(interfaceTransitionNextPoll({ status: draining, consecutiveFailures: 5 })).toBe(8_000);
+		expect(interfaceTransitionNextPoll({ status: draining, consecutiveFailures: 500 })).toBe(8_000);
+	});
+
+	// The review's row: an hour on NATIVE_SESSION_UNVERIFIED with every request
+	// timing out was 183 requests, `attempts` still 0, still scheduled. Answers
+	// are the only thing that can spend the readiness window, and failures had
+	// stopped terminating anything, so nothing was left to end the wait.
+	it("gives up on a readiness wait the link will not let it finish", () => {
+		let failures = 0;
+		let elapsed = 0;
+		let requests = 0;
+		let delay: number | undefined;
+		do {
+			failures += 1;
+			requests += 1;
+			delay = interfaceTransitionNextPoll({ status: waiting, readinessAttempts: 0, consecutiveFailures: failures });
+			elapsed += (delay ?? 0) + 12_000; // each attempt also waits out REQUEST_TIMEOUT_MS
+		} while (delay !== undefined && requests < 500);
+		expect(requests).toBe(speculativeFailureAttempts);
+		expect(elapsed).toBeLessThan(90_000);
+	});
+
+	// Same shape for a mount fetch that never landed: it is worth retrying, but
+	// there is no operation in flight to keep it alive indefinitely.
+	it("gives up on a cold start the link will not let it finish", () => {
+		expect(interfaceTransitionNextPoll({ consecutiveFailures: speculativeFailureAttempts - 1 })).toBe(8_000);
+		expect(interfaceTransitionNextPoll({ consecutiveFailures: speculativeFailureAttempts })).toBeUndefined();
+	});
+
+	// A live handoff is the one wait that outlives its failures: the user is
+	// watching a banner and the operation is real, so it holds at the ceiling for
+	// as long as the screen is open. An hour of timeouts must not end it.
+	it("never gives up on a live handoff, however long the link is down", () => {
+		expect(interfaceTransitionNextPoll({ status: draining, consecutiveFailures: 300 })).toBe(8_000);
+	});
+
+	// The review asked for this to be decided rather than inherited: a 5xx on a
+	// speculative wait now stops, because a daemon failing this one handler is a
+	// fact about the session too. Under a live handoff it still retries.
+	it.each([500, 502, 503])("stops a speculative wait on a persistent %s, but not a live handoff", (failureStatus) => {
+		expect(
+			interfaceTransitionNextPoll({ status: waiting, consecutiveFailures: speculativeFailureAttempts, failureStatus }),
+		).toBeUndefined();
+		expect(
+			interfaceTransitionNextPoll({ status: draining, consecutiveFailures: speculativeFailureAttempts, failureStatus }),
+		).toBe(8_000);
 	});
 
 	it("keeps a timer alive through a 90s outage mid-transition, so the handoff resumes when the link does", () => {
@@ -156,6 +202,9 @@ describe("failed rechecks back off on their own count", () => {
 		expect(interfaceTransitionNextPoll({ status: undefined, consecutiveFailures: 0 })).toBeUndefined();
 	});
 
+	// Answers, and only answers, spend the readiness window — a timeout says
+	// nothing about whether the native session became ready. What ends a wait
+	// the link will not let us finish is the failure count, tested above.
 	it("does not spend the readiness budget on failures", () => {
 		expect(
 			interfaceTransitionNextPoll({

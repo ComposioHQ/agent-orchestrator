@@ -1081,8 +1081,14 @@ export default function TerminalScreen() {
 		// The guard at the top saw the pre-tap render. The fresh answer can carry
 		// a transition someone else started while the recheck was in flight (the
 		// desktop button, say); starting another gets a 409 and a "Switch failed"
-		// banner for a switch that is in fact proceeding. The card takes over.
-		if (mobileInterfaceTransitionIsActive(status.transition)) return;
+		// banner for a switch that is in fact proceeding. The card takes over and
+		// explains it — but after a visible spinner, returning in silence reads
+		// as a tap that was dropped, so confirm the outcome the user asked for
+		// actually happened rather than leaving the card to arrive unannounced.
+		if (mobileInterfaceTransitionIsActive(status.transition)) {
+			haptics.success();
+			return;
+		}
 		if (!interfaceBusy) {
 			void startInterfaceSwitch("drain");
 			return;

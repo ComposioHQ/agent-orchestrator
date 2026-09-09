@@ -442,12 +442,16 @@ function LiveTurnBar({ snapshot, startedAt, stopping, onInterrupt }: { snapshot:
 	return <View style={styles.live}><ActivityIndicator size="small" color={blocked ? t.amber : t.orange} /><Text style={styles.liveText}>{blocked ? "Waiting for your input" : "Agent is working"}{elapsed ? ` · ${elapsed}` : ""}{queued ? ` · ${queued} queued` : ""}</Text><Pressable accessibilityRole="button" accessibilityLabel={stopLabel} accessibilityState={{ busy: stopping }} disabled={stopping} onPress={() => { haptics.tap(); void onInterrupt(); }} style={styles.stopTurn}><Feather name="square" size={11} color={t.textPrimary} /><Text style={styles.stopTurnText}>{stopping ? "Stopping…" : stopLabel}</Text></Pressable></View>;
 }
 
+// A slot renders from its label and is pressable only when it has a handler.
+// Callers withhold the handler to mean "busy" — "Retrying…", "Resuming…" — and
+// without `disabled` the row still highlighted and still fired a tap haptic, so
+// a label that does nothing felt like a button that had been ignored.
 function InlineBanner({ tone, icon, text, action, secondary, onPress, onSecondary }: { tone: "warning" | "danger" | "muted"; icon: keyof typeof Feather.glyphMap; text: string; action?: string; secondary?: string; onPress?(): void; onSecondary?(): void }) {
 	const t = useTheme();
 	const styles = useThemedStyles(makeStyles);
 	const color = tone === "danger" ? t.red : tone === "warning" ? t.amber : t.textTertiary;
 	const fill = tone === "danger" ? t.tintRed : tone === "warning" ? t.tintAmber : t.bgSubtle;
-	return <View style={[styles.banner, { backgroundColor: fill }]}><Feather name={icon} size={13} color={color} /><Text style={styles.bannerText}>{text}</Text>{secondary ? <Pressable hitSlop={7} onPress={() => { haptics.tap(); onSecondary?.(); }}><Text style={styles.bannerSecondary}>{secondary}</Text></Pressable> : null}{action ? <Pressable hitSlop={7} onPress={() => { haptics.tap(); onPress?.(); }}><Text style={[styles.bannerAction, { color }]}>{action}</Text></Pressable> : null}</View>;
+	return <View style={[styles.banner, { backgroundColor: fill }]}><Feather name={icon} size={13} color={color} /><Text style={styles.bannerText}>{text}</Text>{secondary ? <Pressable hitSlop={7} disabled={!onSecondary} onPress={() => { haptics.tap(); onSecondary?.(); }}><Text style={styles.bannerSecondary}>{secondary}</Text></Pressable> : null}{action ? <Pressable hitSlop={7} disabled={!onPress} onPress={() => { haptics.tap(); onPress?.(); }}><Text style={[styles.bannerAction, { color }]}>{action}</Text></Pressable> : null}</View>;
 }
 
 function ConversationMenu({ visible, onClose, snapshot, openingShell, compacting, mcpReloading, compactSupported, mcpReloadSupported, interfaceSupported, interfaceReason, interfaceSwitching, onMap, onOpenShell, onPreview, onPullRequests, onSettings, onSwitchInterface, onCompact, onReload, onRename }: { visible: boolean; onClose(): void; snapshot: NonNullable<ReturnType<typeof useMobileConversation>["snapshot"]>; openingShell: boolean; compacting: boolean; mcpReloading: boolean; compactSupported: boolean; mcpReloadSupported: boolean; interfaceSupported: boolean; interfaceReason?: string; interfaceSwitching: boolean; onMap(): void; onOpenShell(): void; onPreview(): void; onPullRequests(): void; onSettings(): void; onSwitchInterface(): void; onCompact(): void; onReload(): void; onRename(title: string): void }) {

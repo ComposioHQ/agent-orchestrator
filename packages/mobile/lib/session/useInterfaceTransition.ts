@@ -204,7 +204,21 @@ export function useInterfaceTransition(
 			cancelled = true;
 			if (timer) clearTimeout(timer);
 		};
-	}, [appActive, cfg, fetchFailed, pollable, refresh, sessionId, status?.transition?.phase, status?.reasonCode]);
+	}, [
+		appActive,
+		cfg,
+		// Deliberately a dependency and deliberately unread in the body: a mount
+		// fetch that never lands leaves `status` undefined, and this is the only
+		// thing that re-runs the effect so the loop gets scheduled at all. A
+		// dependency cleanup that drops it as unused would silently take
+		// cold-start recovery with it.
+		fetchFailed,
+		pollable,
+		refresh,
+		sessionId,
+		status?.transition?.phase,
+		status?.reasonCode,
+	]);
 
 	const start = useCallback(
 		async (targetMode: "chat" | "tui", policy: "drain" | "interrupt") => {

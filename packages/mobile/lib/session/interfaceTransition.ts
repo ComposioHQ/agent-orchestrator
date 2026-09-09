@@ -33,6 +33,11 @@ const nativeSessionReadinessPoll = 1_000;
 // The budget is per readiness state, not per screen: the daemon reports MISSING
 // before UNVERIFIED, and that progression is real news, so it earns a fresh
 // window. Worst case is therefore two windows, not one.
+//
+// Only ANSWERS are counted here — a timeout says nothing about whether the
+// native session became ready, so it must not spend the window. That leaves
+// this budget unable to end a wait against a daemon that never answers, which
+// is what `speculativeFailureAttempts` below is for.
 export const nativeSessionReadinessAttempts = 10;
 
 export function mobileInterfaceTransitionIsActive(transition?: InterfaceTransition): boolean {
@@ -67,11 +72,7 @@ export function interfaceTransitionPollInterval(
 // known status re-arms on it: a session deleted mid-transition would 404 at
 // 300ms indefinitely. But only a 404 or 410 is the daemon's word that the
 // session is gone. A timeout, a refused connection or a 5xx is a fact about the
-// link, not the session, and a link comes back, so those are retried at a
-// backoff that holds at its ceiling instead of being counted against a budget.
-// A blanket cap on failures was tried first and stranded a live handoff behind
-// any outage longer than the budget: once the last timer had fired, connectivity
-// returning changed nothing, and the banner froze until the screen was remounted.
+// link, not the session, and a link comes back.
 //
 // 401/403/429 never reach the scheduler: the hook stops polling on those (see
 // `shouldKeepPolling`), because retrying a rejected password arms the lockout.
@@ -80,6 +81,35 @@ export function interfaceTransitionSessionGone(status: number | undefined): bool
 }
 
 const failureBackoff = [1_000, 2_000, 4_000, 8_000];
+
+/**
+ * How many consecutive failures a poll with nothing in flight will absorb
+ * before it gives up.
+ *
+ * The two waits this scheduler serves are not the same shape, so they do not
+ * share a retry policy. A live handoff is a real operation with a banner on
+ * screen: it retries until the link returns, because a blanket cap stranded one
+ * behind any outage longer than the budget — once the last timer had fired,
+ * connectivity returning changed nothing and the banner froze until the screen
+ * was remounted (#4852 review). A readiness wait is speculative: #4122 says it
+ * may never clear even on a healthy link, which is why it was given a budget at
+ * all, and against a daemon that never answers it cannot make progress by
+ * waiting longer. The same goes for a mount fetch that never landed.
+ *
+ * Five is five requests with 1+2+4+8s between them, the fifth failure being
+ * the one that stops it: about 15s against a refused connection, and about 75s
+ * when every request burns REQUEST_TIMEOUT_MS instead of answering. Past it the
+ * escape is the header recheck, tappable precisely because no transition is
+ * live, and any request that lands clears the count and restarts this loop.
+ *
+ * A spent count survives backgrounding, like the readiness window and for the
+ * same reason: `appActive` re-runs the effect, so anything the effect owned
+ * would make app-switching the way to refill a budget. Returning to the app is
+ * news about the user, not about the link — unlike the 401 stop, which
+ * foregrounding does give one fresh request, because a password is re-paired
+ * outside the app.
+ */
+export const speculativeFailureAttempts = 5;
 
 /**
  * The one scheduler for the status poll. Failures back off on their own count,
@@ -100,6 +130,10 @@ export function interfaceTransitionNextPoll(args: {
 	const failures = args.consecutiveFailures ?? 0;
 	if (failures > 0) {
 		if (interfaceTransitionSessionGone(args.failureStatus)) return undefined;
+		// A live handoff is retried for as long as the screen is open; anything
+		// else is speculative and stops. See speculativeFailureAttempts.
+		const live = mobileInterfaceTransitionIsActive(args.status?.transition);
+		if (!live && failures >= speculativeFailureAttempts) return undefined;
 		return failureBackoff[Math.min(failures - 1, failureBackoff.length - 1)];
 	}
 	return interfaceTransitionPollInterval(args.status, args.readinessAttempts ?? 0);
