@@ -661,10 +661,10 @@ describe("GlobalSettingsForm", () => {
 
 		await waitFor(() => expect(writeText).toHaveBeenCalledTimes(2));
 		expect(writeText.mock.calls[0][0]).toContain("Daemon: unknown");
-		expect(writeText.mock.calls[1][0]).toContain("To: prateek@untrivial.ai");
+		expect(writeText.mock.calls[1][0]).toContain("To: prasad@untrivial.ai");
 		expect(writeText.mock.calls[1][0]).toContain("AO feedback");
 		expect(openExternal).toHaveBeenCalledWith("https://discord.com/invite/UZv7JjxbwG");
-		expect(openExternal).toHaveBeenCalledWith(expect.stringContaining("mailto:prateek@untrivial.ai"));
+		expect(openExternal).toHaveBeenCalledWith(expect.stringContaining("mailto:prasad@untrivial.ai"));
 		expect(open).not.toHaveBeenCalled();
 	});
 
