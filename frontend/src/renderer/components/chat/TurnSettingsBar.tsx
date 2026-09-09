@@ -878,7 +878,9 @@ function partitionConfigOptions(options: ChatConfigOption[]): {
  * values while presenting those choices under their respective controls.
  */
 function isExecutionModeChoice(choice: ChatConfigOption["choices"][number]): boolean {
-	return /(?:^|[\s_-])(plan|agent)(?:[\s_-]|$)/i.test(`${choice.name} ${choice.value}`);
+	// OpenCode calls normal execution Build; keep it beside Plan so the toggle
+	// still has a provider-owned value to return to after planning is selected.
+	return [choice.value, choice.name].some((value) => /^(plan|agent|build)(?:[\s_-]mode)?$/i.test(value.trim()));
 }
 
 /**
@@ -906,7 +908,8 @@ function isPlanMode(option: ChatConfigOption | undefined): boolean {
 }
 
 function isPlanChoice(choice: Pick<ChatConfigOption["choices"][number], "name" | "value">): boolean {
-	return /(?:^|[\s_-])plan(?:[\s_-]|$)/i.test(`${choice.name} ${choice.value}`);
+	// Custom agent IDs can contain "plan" without enabling native planning.
+	return [choice.value, choice.name].some((value) => /^plan(?:[\s_-]mode)?$/i.test(value.trim()));
 }
 
 function withChoices(
