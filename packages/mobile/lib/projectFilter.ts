@@ -10,6 +10,9 @@ export const ALL_PROJECTS = "all";
  * `known` is the whole point: `projects` is empty both before the first answer
  * and when the answer never came, and the board's filter has to treat those
  * differently from a daemon that really lists nothing.
+ *
+ * Built only by retainProjects and only from this starting value, which is what
+ * keeps `known: false` and a non-empty list from ever pairing up.
  */
 export type KnownProjects = {
 	/** machineIdentity of the daemon this came from; "" before any answer. */
@@ -17,9 +20,6 @@ export type KnownProjects = {
 	projects: ProjectInfo[];
 	known: boolean;
 };
-
-/** Only retainProjects builds these, which is what keeps `known: false` and a
- *  non-empty list from ever pairing up. */
 
 export const NO_PROJECTS_KNOWN: KnownProjects = { machine: "", projects: [], known: false };
 
@@ -41,7 +41,9 @@ export function retainProjects(
 	prev: KnownProjects,
 	answer: { machine: string; projects: ProjectInfo[] | null },
 ): KnownProjects {
-	if (answer.projects) return { machine: answer.machine, projects: answer.projects, known: true };
+	// Explicitly against null, not truthiness: a successful [] takes this branch
+	// and becomes known, which is the distinction the whole type exists for.
+	if (answer.projects !== null) return { machine: answer.machine, projects: answer.projects, known: true };
 	if (prev.machine === answer.machine && prev.known) return prev;
 	return { machine: answer.machine, projects: [], known: false };
 }

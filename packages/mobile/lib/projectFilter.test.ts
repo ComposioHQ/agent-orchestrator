@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { DashboardSession } from "./api";
-import { NO_PROJECTS_KNOWN, activeProjectLabel, filteredEmptyCopy, resolveActiveProject, retainProjects } from "./projectFilter";
+import { ALL_PROJECTS, NO_PROJECTS_KNOWN, activeProjectLabel, filteredEmptyCopy, resolveActiveProject, retainProjects } from "./projectFilter";
 
 const listed = [
 	{ id: "scratch", name: "Scratch" },
@@ -128,14 +128,22 @@ describe("retainProjects", () => {
 	// /projects into [] and an empty list was not judged, so the rejected filter
 	// came back on the failing tick and the worker vanished with it.
 	it("does not let a failed /projects tick reactivate a rejected filter", () => {
+		const workers = [session("remaining")];
 		const ticks: (typeof remaining | null)[] = [remaining, null, remaining];
 		let known = NO_PROJECTS_KNOWN;
-		const applied: string[] = [];
+		const rows: { applied: string; visible: number }[] = [];
 		for (const projects of ticks) {
 			known = retainProjects(known, { machine: A, projects });
-			applied.push(resolveActiveProject("removed", known.projects, known.known));
+			const applied = resolveActiveProject("removed", known.projects, known.known);
+			// What the board renders: the store filters on the applied value.
+			const visible = applied === ALL_PROJECTS ? workers : workers.filter((s) => s.projectId === applied);
+			rows.push({ applied, visible: visible.length });
 		}
-		expect(applied).toEqual(["all", "all", "all"]);
+		expect(rows).toEqual([
+			{ applied: "all", visible: 1 },
+			{ applied: "all", visible: 1 },
+			{ applied: "all", visible: 1 },
+		]);
 	});
 
 	it("keeps the list a machine last answered with when the next tick fails", () => {
