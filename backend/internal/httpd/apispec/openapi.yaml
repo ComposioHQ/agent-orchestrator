@@ -11408,6 +11408,8 @@ components:
         model:
           maxLength: 256
           type: string
+        parentSessionId:
+          type: string
         projectId:
           type: string
         prompt:
