@@ -36,6 +36,13 @@ wrangler deploy --config cloudflare/domain-redirect.wrangler.toml
 ```
 
 The `www.useao.dev` CNAME must be proxied for its Worker route to execute.
+While it is DNS-only, that route is inactive: public DNS resolves directly to
+GitHub Pages and requests receive GitHub's own redirects/errors. The pre-proxy
+public check returned an HTTP 301 to `http://useao.dev` and an HTTPS certificate
+hostname mismatch. A successful `curl --resolve` check against Cloudflare only
+verifies the staged edge configuration, not public readiness. After enabling
+the proxy, verify public DNS and HTTP/HTTPS redirects without `--resolve`.
+
 Existing, more-specific old-domain API and pass routes remain active for
 compatibility; the catch-all landing redirect does not replace those Workers.
 
@@ -73,6 +80,8 @@ npm run build
 curl -I https://useao.dev/
 curl -I 'https://aoagents.dev/docs/installation/?utm_source=migration-check'
 curl -I 'https://www.aoagents.dev/docs/installation/?utm_source=migration-check'
+curl -I 'http://www.useao.dev/docs/installation/?utm_source=migration-check'
+curl -IL 'https://www.useao.dev/docs/installation/?utm_source=migration-check'
 curl -I https://useao.dev/hackathons/syndicate/pass/
 curl -i -X OPTIONS https://useao.dev/api/cloud-waitlist/
 curl -i -X OPTIONS https://useao.dev/api/testimonial-submissions/
@@ -85,9 +94,27 @@ to `useao.dev`. Check HTTP and HTTPS and the `www` variants without following
 redirects first, then follow them to detect loops. Avoid submitting real form
 data as a deployment check.
 
-If cutover fails, remove the old apex redirect Worker route and restore the GitHub Pages
-custom domain to `aoagents.dev`. Keep the original DNS and Worker routes until
-the migration is verified so that rollback remains available.
+## Rollback
+
+1. Remove the `aoagents.dev/*` redirect Worker route, then restore the GitHub
+   Pages custom domain to `aoagents.dev` and verify the apex returns 200.
+   Keep the original apex DNS and all six more-specific API/pass routes.
+2. Handle `www.aoagents.dev` separately: deleting the apex route does not
+   detach its Worker **Custom Domain**. To return this hostname to Pages,
+   remove the Custom Domain under the Worker's Settings → Domains & Routes,
+   remove its `custom_domain = true` entry from the deployment config, inspect
+   the resulting DNS, and establish a proxied `www` CNAME to
+   `untrivial-ai.github.io`. There was no working pre-migration `www` hostname
+   to restore. Cloudflare manages the Custom Domain's DNS and certificate;
+   detaching it does not guarantee that replacement DNS/TLS is ready.
+   Its Advanced Certificate is **not automatically deleted** on detach.
+   Verify public DNS and HTTPS, allow any necessary certificate provisioning,
+   and only then consider removing an unused certificate.
+3. Keep `useao.dev` serving content during a full rollback for clients that
+   cached the permanent redirect, for example by proxying to the restored
+   origin. Do not add a reverse permanent redirect that could create a loop.
+   Verify both `www` destinations before repointing them. These rollback
+   operations have not been exercised against production.
 
 References: [GitHub Pages custom domains](https://docs.github.com/en/pages/configuring-a-custom-domain-for-your-github-pages-site/managing-a-custom-domain-for-your-github-pages-site),
 [Cloudflare Worker routes](https://developers.cloudflare.com/workers/configuration/routing/routes/),
