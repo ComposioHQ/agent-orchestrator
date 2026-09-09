@@ -89,11 +89,15 @@ export function configureFeed(
 let lastStatus: UpdateStatus = { state: "idle" };
 let independentStatusRevision = 0;
 let eventsWired = false;
+let lastCheckError: string | undefined;
 
 // Staged-update tracking for the escalation evaluator: set on update-downloaded,
 // re-evaluated every 30 minutes while the update sits uninstalled. stateDir is
 // captured from whichever entry point wired the events (both receive it).
 let stagedVersion: string | undefined;
+let nativeInstallReady = process.platform !== "darwin";
+let preparationTimer: ReturnType<typeof setTimeout> | undefined;
+let preparationStalled = false;
 // Release notes for the build currently on offer or staged, already
 // sanitized. Held here because only the updater events carry it, and the
 // renderer needs it on every subsequent status too, not just the one event.
@@ -163,6 +167,7 @@ const DOWNLOAD_STALL_TIMEOUT_MS = 2 * 60 * 1000;
 let downloadStallTimer: ReturnType<typeof setTimeout> | undefined;
 let activeDownloadCancellation: CancellationToken | undefined;
 let downloadStalled = false;
+let manualDownloadPending = false;
 
 function clearDownloadStallWatchdog(): void {
   if (downloadStallTimer !== undefined) {
@@ -267,10 +272,12 @@ function broadcast(
   const describesAnOffer =
     status.state === "available" ||
     status.state === "downloading" ||
+    status.state === "preparing" ||
     status.state === "downloaded";
   const stamped: UpdateStatus = {
     ...statusWithCheckTime,
     ...stagedStamp(),
+    ...(lastCheckError ? { checkError: lastCheckError } : {}),
     // Only on statuses that actually describe a build on offer: "not-available"
     // carrying notes for a build the user already has would read as news.
     ...(describesAnOffer && offeredReleaseNotes !== undefined && status.releaseNotes === undefined
@@ -316,7 +323,10 @@ function broadcastUpdaterStatus(status: UpdateStatus): void {
 }
 
 function broadcastCompletedCheck(status: UpdateStatus): void {
-  lastCheckedAtMs = Date.now();
+  if (status.state !== "error" && status.state !== "unsupported") {
+    lastCheckedAtMs = Date.now();
+    lastCheckError = undefined;
+  }
   broadcastUpdaterStatus(status);
 }
 
@@ -518,6 +528,7 @@ function stagedStamp(): Pick<UpdateStatus, "staged"> {
       ...(stagedVersion === undefined ? {} : { version: stagedVersion }),
       stagedAt: stagedAtMs,
       escalated: stagedEscalated,
+      ...(nativeInstallReady ? {} : { ready: false }),
     },
   };
 }
@@ -560,9 +571,11 @@ function forgetPersistedStagedBuild(stateDir: string | undefined): void {
 /**
  * Reload provenance for a build staged by an earlier run.
  *
- * Discards it when the running version already matches — that build installed,
- * so nothing is pending — and when anything is unreadable, because inventing
- * provenance is worse than having none.
+ * Discards it when the running build already matches, or supersedes a staged
+ * build from the same channel. In both cases nothing remains pending. An older
+ * build from another channel can still be an intentional channel transition.
+ * Unreadable provenance is also discarded because inventing it is worse than
+ * having none.
  */
 function restoreStagedBuild(stateDir: string): void {
   // Synchronous on purpose. Awaiting a real filesystem read here would push the
@@ -578,7 +591,11 @@ function restoreStagedBuild(stateDir: string): void {
     typeof raw.version !== "string" ||
     typeof raw.stagedAt !== "number" ||
     !Number.isFinite(raw.stagedAt) ||
-    raw.version === app.getVersion()
+    raw.version === app.getVersion() ||
+    (raw.channel === installedUpdateChannel() &&
+      semver.valid(raw.version) !== null &&
+      semver.valid(app.getVersion()) !== null &&
+      semver.lt(raw.version, app.getVersion()))
   ) {
     forgetPersistedStagedBuild(stateDir);
     return;
@@ -658,6 +675,9 @@ function discardStagedBuild(): void {
   // Nothing valid is installable until the replacement lands: the only build in
   // the cache belongs to a channel the user has left.
   awaitingStagedReplacement = true;
+  nativeInstallReady = process.platform !== "darwin";
+  clearTimeout(preparationTimer);
+  preparationStalled = false;
   forgetPersistedStagedBuild(escalationStateDir);
   offeredReleaseNotes = undefined;
   directFeedReleaseNotes = undefined;
@@ -750,7 +770,8 @@ function settleCheckStatus(result: UpdateCheckOutcome): void {
 // state, so transient check states can restore the row without recomputing.
 function stagedDownloadedStatus(): UpdateStatus {
   return {
-    state: "downloaded",
+    state: preparationStalled ? "error" : nativeInstallReady ? "downloaded" : "preparing",
+    ...(preparationStalled ? { message: "Update preparation stopped responding. Check for updates to retry." } : {}),
     version: stagedVersion,
     stagedAt: stagedAtMs,
     escalated: stagedEscalated,
@@ -771,7 +792,8 @@ async function runEscalationCheck(): Promise<void> {
   }
   if (escalationStateDir === undefined) return;
   // A newer build is being pulled; let its progress own the status stream.
-  if (lastStatus.state === "downloading") return;
+  if (lastStatus.state === "downloading" || lastStatus.state === "preparing" || preparationStalled) return;
+  const observedVersion = stagedVersion;
   try {
     const settings = await readUpdateSettings(escalationStateDir);
     let important = false;
@@ -787,6 +809,7 @@ async function runEscalationCheck(): Promise<void> {
           : Promise.resolve(false),
       ]);
     }
+    if (["downloading", "preparing"].includes(lastStatus.state) || stagedVersion !== observedVersion) return;
     stagedEscalated = evaluateEscalation({
       channel: settings.channel,
       stagedAt: stagedAtMs,
@@ -917,6 +940,7 @@ function recordAutomaticNetFailure(): void {
 // server and so breaks the streak — otherwise a single interleaving non-net
 // error would let a stale streak still trip the nudge (#3526).
 function recordAutomaticCheckFailure(err: unknown): void {
+  lastCheckError = errorMessage(err);
   if (isNetError(err)) recordAutomaticNetFailure();
   else consecutiveAutomaticNetFailures = 0;
   // Guarded like the net streak: one check can surface as both an "error" event
@@ -1203,6 +1227,15 @@ function wireUpdaterEvents(): void {
   if (eventsWired) return;
   eventsWired = true;
   installE2EUpdateSentinel();
+  if (process.platform === "darwin") {
+    nativeAutoUpdater.on("update-downloaded", (_event, _notes, releaseName) => {
+      if (!hasStagedBuild() || (releaseName && releaseName !== stagedVersion)) return;
+      nativeInstallReady = true;
+      preparationStalled = false;
+      clearTimeout(preparationTimer);
+      broadcast(lastStatus.state === "downloading" ? lastStatus : stagedDownloadedStatus());
+    });
+  }
   // With a build staged, "checking" briefly hides the sidebar restart row; that
   // is acceptable and self-healing: the available / not-available handlers below
   // restore the enriched downloaded status right after.
@@ -1244,6 +1277,11 @@ function wireUpdaterEvents(): void {
     pendingUpdateVersion = info?.version;
     offeredReleaseNotes = normalizeReleaseNotes(info?.releaseNotes) ?? directFeedReleaseNotes;
     broadcastCompletedCheck({ state: "available", version: info?.version });
+    if (autoUpdater.autoDownload) {
+      activeUpdaterPhase = "download";
+      broadcastUpdaterStatus({ state: "downloading", version: info?.version });
+      armDownloadStallWatchdog();
+    }
   });
   autoUpdater.on("update-cancelled", () => {
     clearDownloadStallWatchdog();
@@ -1267,11 +1305,13 @@ function wireUpdaterEvents(): void {
     consecutiveAutomaticCheckFailures = 0;
     failingChecksPublished = false;
     activeUpdaterPhase = "download";
-    armDownloadStallWatchdog();
+    if (p?.transferred === undefined || p.transferred !== lastStatus.transferred) armDownloadStallWatchdog();
     return broadcastUpdaterStatus({
-      state: "downloading",
+      state: p?.percent >= 100 ? "preparing" : "downloading",
       version: pendingUpdateVersion,
-      percent: Math.max(0, Math.min(100, Math.round(p?.percent ?? 0))),
+      percent: Math.max(0, Math.min(100, Math.floor(p?.percent ?? 0))),
+      transferred: p?.transferred,
+      total: p?.total,
     });
   });
   autoUpdater.on("update-downloaded", (info) => {
@@ -1289,6 +1329,7 @@ function wireUpdaterEvents(): void {
     // Resetting stagedAtMs there would mean the latest-channel 48h escalation rule
     // could never fire, because the clock is only ever minutes old.
     const restaged = stagedAtMs !== undefined && info?.version === stagedVersion;
+    if (!restaged) nativeInstallReady = process.platform !== "darwin";
     stagedVersion = info?.version;
     stagedChannel = autoUpdater.channel ?? undefined;
     offeredReleaseNotes =
@@ -1298,6 +1339,15 @@ function wireUpdaterEvents(): void {
       stagedEscalated = false;
     }
     stagedRequestId = activeUpdaterRequestId;
+    if (!nativeInstallReady) {
+      clearTimeout(preparationTimer);
+      preparationStalled = false;
+      preparationTimer = setTimeout(() => {
+        preparationStalled = true;
+        broadcast(stagedDownloadedStatus());
+      }, DOWNLOAD_STALL_TIMEOUT_MS);
+      preparationTimer.unref?.();
+    }
     // A build is staged again, so install-on-quit has something correct to run,
     // and a later rejection is a NEW one rather than a repeat delivery.
     handledInstallRejection = undefined;
@@ -1431,7 +1481,7 @@ function wireUpdaterEvents(): void {
       );
       return;
     }
-    if (activeUpdaterOperation === "automatic-check") {
+    if (activeUpdaterOperation === "automatic-check" && activeUpdaterPhase === "check") {
       console.error("auto-update check failed:", err);
       recordAutomaticCheckFailure(err);
       restoreAutomaticCheckPreviousStatus();
@@ -1452,7 +1502,8 @@ function wireUpdaterEvents(): void {
           }),
         );
       } else if (stagedAtMs !== undefined) {
-        broadcastCompletedCheck(stagedDownloadedStatus());
+        lastCheckError = errorMessage(err);
+        broadcastUpdaterStatus(stagedDownloadedStatus());
       } else {
         broadcastCompletedCheck({
           state: "error",
@@ -1482,6 +1533,7 @@ export function getUpdateStatus(): UpdateStatus {
   return {
     ...lastStatus,
     ...stagedStamp(),
+    ...(lastCheckError ? { checkError: lastCheckError } : {}),
     ...(offeredReleaseNotes !== undefined && lastStatus.releaseNotes === undefined &&
       (lastStatus.state === "available" || lastStatus.state === "downloading" || lastStatus.state === "downloaded")
       ? { releaseNotes: offeredReleaseNotes }
@@ -1527,7 +1579,15 @@ async function awaitStartedDownload(result: UpdateCheckOutcome): Promise<void> {
   // The provider owns this download's token; hand it to the watchdog so a stall
   // can actually be cancelled rather than just reported.
   activeDownloadCancellation = result.cancellationToken;
-  await result.downloadPromise;
+  if (lastStatus.state === "available" || lastStatus.state === "checking") {
+    broadcastUpdaterStatus({ state: "downloading", version: pendingUpdateVersion });
+  }
+  if (lastStatus.state === "downloading" || lastStatus.state === "preparing") armDownloadStallWatchdog();
+  try {
+    await result.downloadPromise;
+  } finally {
+    clearDownloadStallWatchdog();
+  }
 }
 
 async function runAutomaticUpdateCheck(
@@ -1568,7 +1628,7 @@ async function runAutomaticUpdateCheck(
       // every check, forever. A stale staged build still overrides, because
       // leaving THAT one armed installs a channel the user has left.
       autoUpdater.autoDownload =
-        staleStaged ||
+        staleStaged || (hasStagedBuild() && !nativeInstallReady) ||
         (settings.enabled && !hasStagedBuild() && !automaticRecoveryExhausted());
       applyInstallOnQuitPolicy();
       // Only prerelease channels resolve a direct feed. Skipping the await on
@@ -1592,6 +1652,8 @@ async function runAutomaticUpdateCheck(
             pendingUpdateVersion = result?.updateInfo?.version;
             const token = new CancellationToken();
             activeDownloadCancellation = token;
+            broadcastUpdaterStatus({ state: "downloading", version: pendingUpdateVersion });
+            armDownloadStallWatchdog();
             await autoUpdater.downloadUpdate(token);
           }
         }
@@ -1601,9 +1663,13 @@ async function runAutomaticUpdateCheck(
         // pre-check status so the renderer is neither stuck on "checking" nor
         // denied the stale-check nudge once the streak crosses the threshold
         // (#3526). Record before restoring so the restore broadcast is stamped.
-        recordAutomaticCheckFailure(err);
-        restoreAutomaticCheckPreviousStatus();
-        publishFailingChecks();
+        if (activeUpdaterPhase === "download") {
+          if (!downloadStalled && lastStatus.state !== "error") broadcast(withActiveRequest({ state: "error", message: errorMessage(err), version: pendingUpdateVersion }));
+        } else {
+          recordAutomaticCheckFailure(err);
+          restoreAutomaticCheckPreviousStatus();
+          publishFailingChecks();
+        }
         throw err;
       } finally {
         // After the download too: the staged build is already resolved against
@@ -1706,8 +1772,8 @@ export interface UpdateCheckOptions {
 }
 
 // checkForUpdatesNow runs a manual update check regardless of the auto-update
-// opt-in, so a user who never enabled auto-updates can still pull the latest
-// build from Settings. It does NOT auto-download — the user clicks Update — and
+// opt-in, so a user who never enabled auto-updates can still discover the latest
+// build from Settings. Downloads follow the saved preference, and it
 // reports progress via the broadcast status. Updates only work in the packaged,
 // signed app; in dev electron-updater has no feed, so surface that plainly.
 export async function checkForUpdatesNow(
@@ -1754,7 +1820,7 @@ export async function checkForUpdatesNow(
         // channel's build armed, and only staging the new one over it helps.
         const staleStaged = stagedBuildIsStale(settings);
         if (staleStaged) discardStagedBuild();
-        autoUpdater.autoDownload = staleStaged;
+        autoUpdater.autoDownload = staleStaged || (hasStagedBuild() && !nativeInstallReady);
         applyInstallOnQuitPolicy();
         broadcastUpdaterStatus({ state: "checking" });
         const restoreFeed = await configureDirectPrereleaseFeed(settings);
@@ -1766,6 +1832,17 @@ export async function checkForUpdatesNow(
           // is still running.
           if (result?.downloadPromise) failed.phase = "download";
           await awaitStartedDownload(result);
+          if (!result?.downloadPromise && settings.enabled && result?.isUpdateAvailable &&
+              (!hasStagedBuild() || supersedesStagedBuild(result.updateInfo?.version))) {
+            failed.phase = "download";
+            activeUpdaterPhase = "download";
+            pendingUpdateVersion = result.updateInfo?.version;
+            const token = new CancellationToken();
+            activeDownloadCancellation = token;
+            broadcastUpdaterStatus({ state: "downloading", version: pendingUpdateVersion });
+            armDownloadStallWatchdog();
+            await autoUpdater.downloadUpdate(token);
+          }
         } finally {
           restoreFeed?.();
         }
@@ -1788,7 +1865,10 @@ export async function checkForUpdatesNow(
             : "Couldn't check for updates — the update information was not found on the server.",
         ...(options.requestId === undefined ? {} : { requestId: options.requestId }),
       });
-      if (stagedAtMs !== undefined) broadcast(stagedDownloadedStatus());
+      if (stagedAtMs !== undefined) {
+        lastCheckError = errorMessage(err);
+        broadcast(stagedDownloadedStatus());
+      }
     } else {
       broadcastCompletedCheck({
         state: "error",
@@ -1842,7 +1922,7 @@ export async function returnToHome(
         // armed and has to be superseded, not merely forgotten.
         const staleStaged = stagedBuildIsStale(settings);
         if (staleStaged) discardStagedBuild();
-        autoUpdater.autoDownload = staleStaged;
+        autoUpdater.autoDownload = staleStaged || (hasStagedBuild() && !nativeInstallReady);
         applyInstallOnQuitPolicy();
         broadcastUpdaterStatus({ state: "checking" });
         const result = await checkForUpdatesWithDeadline();
@@ -1872,6 +1952,8 @@ export async function returnToHome(
 
 // downloadUpdateNow starts downloading the update found by checkForUpdatesNow.
 export async function downloadUpdateNow(requestId?: string): Promise<void> {
+  if (manualDownloadPending || lastStatus.state === "downloading" || lastStatus.state === "preparing") return;
+  const version = lastStatus.version;
   wireUpdaterEvents();
   forgetInstallRejections();
 	if (!app.isPackaged) {
@@ -1888,6 +1970,8 @@ export async function downloadUpdateNow(requestId?: string): Promise<void> {
     });
     return;
   }
+  manualDownloadPending = true;
+  broadcast({ state: "downloading", version, requestId });
   try {
     await runSerializedUpdaterOperation(
       "manual-download",
@@ -1895,12 +1979,17 @@ export async function downloadUpdateNow(requestId?: string): Promise<void> {
         // Manual downloads get no provider token, so make one: without it the
         // watchdog could report a stall but never release the request.
         const token = new CancellationToken();
+        if (lastStatus.state === "downloaded" || lastStatus.state === "preparing") return;
+        pendingUpdateVersion = lastStatus.version ?? version;
+        broadcastUpdaterStatus({ state: "downloading", version: pendingUpdateVersion });
         activeDownloadCancellation = token;
+        armDownloadStallWatchdog();
         await autoUpdater.downloadUpdate(token);
       },
       requestId,
     );
   } catch (err) {
+    if (lastStatus.state === "error" && lastStatus.message === "Download stopped responding. Try again.") return;
     if (isNativeStagingBusyError(err)) {
       console.info("download refused: native staging already in progress:", err);
       settleWithoutFailure();
@@ -1921,6 +2010,9 @@ export async function downloadUpdateNow(requestId?: string): Promise<void> {
         requestId,
       });
     }
+  } finally {
+    manualDownloadPending = false;
+    clearDownloadStallWatchdog();
   }
 }
 
@@ -2017,6 +2109,7 @@ export function quitAndInstallUpdate(): void {
     });
     return;
   }
+  if (!hasStagedBuild() || !nativeInstallReady || lastStatus.state === "downloading" || lastStatus.state === "preparing") return;
   autoUpdater.quitAndInstall(false, true);
 }
 

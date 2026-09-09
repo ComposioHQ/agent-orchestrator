@@ -66,6 +66,10 @@ import type {
 	BrowserImportRequest,
 	BrowserImportResult,
 } from "./shared/browser-profile-import";
+import type {
+	BrowserDownloadActionInput,
+	BrowserDownloadsState,
+} from "./shared/browser-downloads";
 
 if (typeof document !== "undefined") {
 	const markNativeBrowserComposition = () => {
@@ -102,6 +106,8 @@ export type ImportRepoScan = {
 	branch: string;
 	remote: string;
 	hasRemote: boolean;
+	isRepo: boolean;
+	hasCommit: boolean;
 	status?: "ok" | "error";
 	reason?: string;
 	needsGitInit?: boolean;
@@ -160,6 +166,7 @@ const api = {
 	app: {
 		getVersion: () => ipcRenderer.invoke("app:getVersion") as Promise<string>,
 		chooseDirectory: (title?: string) => ipcRenderer.invoke("app:chooseDirectory", title) as Promise<string | null>,
+		checkGitRepository: (remoteUrl: string) => ipcRenderer.invoke("app:checkGitRepository", remoteUrl) as Promise<boolean>,
 		openExternal: (url: string) => ipcRenderer.invoke("app:openExternal", url) as Promise<void>,
 		scanImportFolder: (input: { path: string; mode: ImportFolderMode }) =>
 			ipcRenderer.invoke("app:scanImportFolder", input) as Promise<ImportFolderScan>,
@@ -167,6 +174,11 @@ const api = {
 			ipcRenderer.invoke("app:checkAncestorRepo", path) as Promise<string | undefined>,
 		getRepositoryBranch: (path: string) =>
 			ipcRenderer.invoke("app:getRepositoryBranch", path) as Promise<string | undefined>,
+		getGitHubLogin: (repoPath?: string) => ipcRenderer.invoke("app:getGitHubLogin", repoPath) as Promise<string>,
+		getCachedGitHubOwners: () => ipcRenderer.invoke("app:getCachedGitHubOwners") as Promise<Array<{ login: string; avatarUrl: string }>>,
+		refreshGitHubOwners: () => ipcRenderer.invoke("app:refreshGitHubOwners") as Promise<Array<{ login: string; avatarUrl: string }>>,
+		checkGitHubRepositoryAvailability: (input: { owner: string; name: string }) =>
+			ipcRenderer.invoke("app:checkGitHubRepositoryAvailability", input) as Promise<{ available: boolean; message?: string }>,
 		// Resolves a dropped File's real filesystem path. Synchronous passthrough
 		// (not ipcRenderer.invoke — a File can't cross that boundary) so it must be
 		// called directly on the File from a drop event, in the same tick, per
@@ -367,6 +379,20 @@ const api = {
 		goForward: (viewId: string) => ipcRenderer.invoke("browser:goForward", viewId) as Promise<BrowserNavState>,
 		reload: (viewId: string) => ipcRenderer.invoke("browser:reload", viewId) as Promise<BrowserNavState>,
 		stop: (viewId: string) => ipcRenderer.invoke("browser:stop", viewId) as Promise<BrowserNavState>,
+		captureScreenshot: (viewId: string) => ipcRenderer.invoke("browser:captureScreenshot", viewId) as Promise<void>,
+		downloads: {
+			list: () => ipcRenderer.invoke("browser:downloads:list") as Promise<BrowserDownloadsState>,
+			action: (input: BrowserDownloadActionInput) =>
+				ipcRenderer.invoke("browser:downloads:action", input) as Promise<BrowserDownloadsState>,
+			clear: () => ipcRenderer.invoke("browser:downloads:clear") as Promise<BrowserDownloadsState>,
+			onChanged: (listener: (state: BrowserDownloadsState) => void) => {
+				const wrapped = (_event: Electron.IpcRendererEvent, state: BrowserDownloadsState) => listener(state);
+				ipcRenderer.on("browser:downloadsChanged", wrapped);
+				return () => {
+					ipcRenderer.off("browser:downloadsChanged", wrapped);
+				};
+			},
+		},
 		getTabs: (viewId: string) => ipcRenderer.invoke("browser:getTabs", viewId) as Promise<BrowserTabsState>,
 		selectTab: (input: { viewId: string; tabId: string }) =>
 			ipcRenderer.invoke("browser:selectTab", input) as Promise<BrowserTabsState>,
