@@ -1,5 +1,6 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
+import type { ReplacementPhase, UpdateCandidate } from "./staged-update-state";
 
 export type UpdateChannel = "latest" | "nightly";
 
@@ -20,7 +21,7 @@ export interface UpdateSettings {
 // Live state of an automatic or manual update check/download, streamed to the
 // renderer so Settings and the sidebar can reflect progress.
 export type UpdateState =
-	"idle" | "checking" | "available" | "not-available" | "downloading" | "preparing" | "downloaded" | "error" | "unsupported";
+	"idle" | "checking" | "available" | "not-available" | "downloading" | "preparing" | "downloaded" | "replacing" | "replacement-failed" | "error" | "unsupported";
 
 export interface UpdateStatus {
 	state: UpdateState;
@@ -29,6 +30,8 @@ export interface UpdateStatus {
 	percent?: number;
 	transferred?: number;
 	total?: number;
+	bytesPerSecond?: number;
+	etaSeconds?: number;
 	message?: string;
 	/** Epoch ms when the updater most recently successfully checked the feed. */
 	checkedAt?: number;
@@ -72,6 +75,13 @@ export interface UpdateStatus {
 	// network-stack error (net::ERR_*). The renderer localizes restart guidance
 	// from this flag instead of receiving pre-built English prose (#3526).
 	netError?: boolean;
+	/** Replacement provenance. Both candidates remain present until handoff succeeds. */
+	stagedCandidate?: UpdateCandidate;
+  nativeCandidates?: UpdateCandidate[];
+	replacementCandidate?: UpdateCandidate;
+	replacementPhase?: ReplacementPhase;
+	/** Why AO's install action is unavailable. */
+	installDisabledReason?: string;
 }
 
 /** File holding the user's auto-update preferences under the ~/.ao state dir. */

@@ -398,7 +398,8 @@ function UpdateActions({
 
 	const manualCheckPending = manualCheckRequestId !== null;
 	const checking = status.state === "checking" || manualCheckPending;
-	const downloading = status.state === "downloading" || status.state === "preparing";
+	const replacementAvailable = status.state === "replacing" && status.replacementPhase === "checking";
+	const downloading = status.state === "downloading" || status.state === "preparing" || (status.state === "replacing" && !replacementAvailable);
 	// Only the user's OWN in-flight check blocks the button. A background check
 	// also reports "checking", and gating on that swallowed the first click
 	// whenever Settings was opened during one — every 15 minutes on nightly.
@@ -408,7 +409,7 @@ function UpdateActions({
 	// The minimum-spinner window keeps "checking" on screen briefly after the
 	// updater has already answered, so the status line and the primary action
 	// read from the live state and only the button's own label follows `checking`.
-	const displayState: UpdateState = checking && !downloading && status.state !== "error" && status.state !== "downloaded" ? "checking" : status.state;
+	const displayState: UpdateState = checking && !downloading && !["error", "downloaded", "replacing", "replacement-failed"].includes(status.state) ? "checking" : status.state;
 
 	const [now, setNow] = useState(Date.now());
 	useEffect(() => {
@@ -492,11 +493,46 @@ function UpdateActions({
 				    the primary label used to carry the full nightly stamp and grew
 				    across the heading. The target build is named in the status line. */}
 				<div className="flex w-full shrink-0 flex-wrap items-center gap-2 sm:w-auto sm:justify-end [&>button]:flex-1 sm:[&>button]:flex-none">
-					{status.state === "available" && (
+					{replacementAvailable && (
+						<Button type="button" variant="primary" size="sm" onClick={() => void requestUpdateDownload()}>
+							{t("settings.updates.updateTo", { version: status.replacementCandidate?.version ?? status.version })}
+						</Button>
+					)}
+					{status.state === "replacing" && status.replacementPhase === "native-handoff" && (
+						<Button type="button" variant="primary" size="sm" disabled aria-describedby="update-replacement-install-reason">
+							{t("settings.updates.update")}
+						</Button>
+					)}
+					{status.state === "replacing" && !replacementAvailable && status.replacementPhase !== "native-handoff" && (
 						<Button
 							type="button"
 							variant="primary"
 							size="sm"
+							disabled
+							aria-label={t("settings.updates.downloadingVersion", { version: status.replacementCandidate?.version ?? status.version })}
+							aria-describedby="update-replacement-install-reason"
+						>
+							<DownloadProgressIcon percent={status.percent ?? 0} />
+							{status.percent ?? 0}%
+						</Button>
+					)}
+					{status.state === "replacement-failed" && (
+						<Button type="button" variant="primary" size="sm" onClick={() => void aoBridge.updates.download()}>
+							{t("settings.updates.retryVersion", { version: status.replacementCandidate?.version ?? status.version })}
+						</Button>
+					)}
+					{(status.state === "downloading" || status.state === "preparing") && (
+						<Button type="button" variant="primary" size="sm" disabled>
+							{status.state === "preparing" ? <Loader2 className="size-icon-sm animate-spin" aria-hidden="true" /> : <DownloadProgressIcon percent={status.percent ?? 0} />}
+							{status.state === "preparing"
+								? t("settings.updates.preparing", { defaultValue: "Preparing update…" })
+								: status.percent === undefined
+									? t("settings.updates.startingDownload", { defaultValue: "Starting download…" })
+									: t("settings.updates.downloading", { percent: status.percent })}
+						</Button>
+					)}
+					{status.state === "available" && (
+						<Button type="button" variant="primary" size="sm"
 							aria-label={status.version ? t("settings.updates.updateTo", { version: `v${status.version}` }) : t("settings.updates.updateToLatest")}
 							onClick={() => void requestUpdateDownload()}
 						>
@@ -508,7 +544,7 @@ function UpdateActions({
 						// Opens the restart confirmation rather than installing outright:
 						// installing quits the app, which costs a turn on any chat session
 						// running a daemon-owned driver.
-						<Button type="button" variant="primary" size="sm" onClick={requestUpdateInstall}>
+						<Button type="button" variant="primary" size="sm" onClick={requestUpdateInstall} disabled={!!status.installDisabledReason} title={status.installDisabledReason}>
 							<RefreshCw className="size-icon-sm" aria-hidden="true" />
 							{t("settings.updates.restartInstall")}
 						</Button>
@@ -543,7 +579,7 @@ function UpdateActions({
 				id="update-status-line"
 				data-testid="update-status-line"
 				role="status"
-				aria-live="polite"
+				aria-live={status.state === "replacing" ? "off" : "polite"}
 				aria-atomic="true"
 				aria-busy={checking}
 				className="flex min-w-0 flex-col gap-1"
@@ -644,6 +680,46 @@ function UpdateStatusLine({
 
 
 	switch (state) {
+		case "replacing": {
+			const from = status.stagedCandidate?.version ?? "?";
+			const quitCandidates = [...new Set([from, ...(status.nativeCandidates ?? []).map((candidate) => candidate.version)])].join(", ");
+			const to = status.replacementCandidate?.version ?? status.version ?? "?";
+			const metrics = status.transferred !== undefined || status.total !== undefined || status.bytesPerSecond !== undefined || status.etaSeconds !== undefined
+				? t("settings.updates.replacementMetrics", {
+					transferred: status.transferred ?? "?",
+					total: status.total ?? "?",
+					rate: status.bytesPerSecond ?? "?",
+					eta: status.etaSeconds ?? "?",
+				})
+				: null;
+			return (
+				<div className="text-settings-label">
+					<p className="text-pretty text-sm font-medium leading-5">
+						{status.replacementPhase === "checking"
+							? t("settings.updates.updateTo", { version: to })
+							: status.replacementPhase === "native-handoff"
+								? status.installDisabledReason
+								: t("settings.updates.replacingTitle", { from, to })}
+					</p>
+					<p id="update-replacement-install-reason" role="status" aria-live="polite" className="mt-1 text-xs leading-4 text-warning">
+						{t("settings.updates.replacingWarning", { from: quitCandidates, phase: status.replacementPhase })}
+					</p>
+					{metrics && <p className="mt-1 text-xs leading-4 tabular-nums text-settings-muted">{metrics}</p>}
+					<div role="progressbar" aria-live="off" aria-label={t("settings.updates.progressVersion", { version: to })} aria-valuemin={0} aria-valuemax={100} aria-valuenow={status.percent ?? 0} className="sr-only" />
+				</div>
+			);
+		}
+		case "replacement-failed": {
+			const from = status.stagedCandidate?.version ?? "?";
+			const quitCandidates = [...new Set([from, ...(status.nativeCandidates ?? []).map((candidate) => candidate.version)])].join(", ");
+			const to = status.replacementCandidate?.version ?? status.version ?? "?";
+			return (
+				<div className="text-error">
+					<p className="text-pretty text-sm font-medium leading-5">{t("settings.updates.replacementFailed", { to, message: status.message })}</p>
+					<p id="update-replacement-install-reason" role="status" aria-live="polite" className="mt-1 text-xs leading-4 text-warning">{t("settings.updates.replacementFailedWarning", { from: quitCandidates, to })}</p>
+				</div>
+			);
+		}
 		case "checking":
 			icon = <Loader2 className="size-icon-sm shrink-0 animate-spin motion-reduce:animate-none" aria-hidden="true" />;
 			label = t("settings.updates.checking");

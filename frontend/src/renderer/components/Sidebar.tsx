@@ -22,6 +22,7 @@ import {
 import { SortableContext, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import {
+	AlertTriangle,
 	ChevronRight,
 	Download,
 	Folder,
@@ -2084,7 +2085,11 @@ function sidebarUpdateAction(status: UpdateStatus, availableDismissed: boolean):
 	// action have room. The sidebar stays focused on update progress and actions.
 	if (status.state === "error" && (status.staged === undefined || status.staged.ready === false)) return null;
 	if (status.state === "downloading" || status.state === "preparing" || status.staged?.ready === false) {
-		return { kind: "downloading", percent: status.percent, preparing: status.state === "preparing" || status.staged?.ready === false };
+		return {
+			kind: "downloading",
+			percent: status.percent === undefined ? undefined : Math.min(100, Math.max(0, status.percent)),
+			preparing: status.state === "preparing" || status.staged?.ready === false,
+		};
 	}
 	// `staged` is the stamp the main process puts on every status; the
 	// `downloaded` fallback keeps this correct for any status that predates it
@@ -2150,6 +2155,30 @@ function UpdateStatusRow({
 }) {
 	const { t, i18n } = useTranslation();
 	const locale = i18n.resolvedLanguage ?? i18n.language;
+	if (status.state === "replacing" || status.state === "replacement-failed") {
+		const from = status.stagedCandidate?.version ?? "?";
+		const quitCandidates = [...new Set([from, ...(status.nativeCandidates ?? []).map((candidate) => candidate.version)])].join(", ");
+		const to = status.replacementCandidate?.version ?? status.version ?? "?";
+		const failed = status.state === "replacement-failed";
+		const available = status.state === "replacing" && status.replacementPhase === "checking";
+		return (
+			<button
+				aria-label={available ? t("settings.updates.updateTo", { version: to }) : failed ? t("shell.retryUpdateVersion", { version: to }) : t("shell.replacingRestartDisabled", { version: to })}
+				className={cn(NAV_ROW_CLASS, "flex w-full items-center text-left [&_svg]:size-icon-md [&_svg]:shrink-0")}
+				data-testid={failed ? "sidebar-update-replacement-failed" : "sidebar-update-replacing"}
+				disabled={!failed && !available}
+				onClick={failed || available ? () => void aoBridge.updates.download() : undefined}
+				tabIndex={tabIndex}
+				type="button"
+			>
+				{failed ? <AlertTriangle aria-hidden="true" /> : <Download aria-hidden="true" />}
+				<span className="min-w-0 flex-1">
+					<span className="block truncate">{available ? t("settings.updates.updateTo", { version: to }) : failed ? t("settings.updates.retryVersion", { version: to }) : t("shell.replacingUpdate", { from, to })}</span>
+					<span className="block truncate text-caption font-normal text-warning">{t("shell.externalQuitRisk", { version: quitCandidates })}</span>
+				</span>
+			</button>
+		);
+	}
 	const action = sidebarUpdateAction(status, availableDismissed);
 	if (action === null) return null;
 
@@ -2251,6 +2280,24 @@ function UpdateStatusRail({
 }) {
 	const { t, i18n } = useTranslation();
 	const locale = i18n.resolvedLanguage ?? i18n.language;
+	if (status.state === "replacing" || status.state === "replacement-failed") {
+		const from = status.stagedCandidate?.version ?? "?";
+		const quitCandidates = [...new Set([from, ...(status.nativeCandidates ?? []).map((candidate) => candidate.version)])].join(", ");
+		const to = status.replacementCandidate?.version ?? status.version ?? "?";
+		const failed = status.state === "replacement-failed";
+		const available = status.state === "replacing" && status.replacementPhase === "checking";
+		const label = available ? t("settings.updates.updateTo", { version: to }) : failed ? t("shell.retryReplacementWarning", { from: quitCandidates, to }) : t("shell.replacingRestartDisabledDetailed", { from: quitCandidates, to });
+		return (
+			<Tooltip>
+				<TooltipTrigger asChild>
+					<button aria-label={label} className="grid size-9 place-items-center rounded-lg text-warning" disabled={!failed && !available} onClick={failed || available ? () => void aoBridge.updates.download() : undefined} tabIndex={tabIndex} type="button">
+						{failed ? <AlertTriangle aria-hidden="true" /> : <Download aria-hidden="true" />}
+					</button>
+				</TooltipTrigger>
+				<TooltipContent side="right">{label}</TooltipContent>
+			</Tooltip>
+		);
+	}
 	const action = sidebarUpdateAction(status, availableDismissed);
 	if (action === null) return null;
 
