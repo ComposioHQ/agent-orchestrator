@@ -7151,8 +7151,6 @@ components:
           - pi
           - qwen
           - agy
-          - continue
-          - goose
           - vibe
           - devin
           - droid
@@ -7476,8 +7474,6 @@ components:
           - pi
           - qwen
           - agy
-          - continue
-          - goose
           - vibe
           - devin
           - droid
