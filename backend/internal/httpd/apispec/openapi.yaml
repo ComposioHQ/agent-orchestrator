@@ -8972,7 +8972,9 @@ components:
             $ref: '#/components/schemas/SessionPRUnresolvedReviewer'
           type: array
         unresolvedThreadCount:
-          type: integer
+          type:
+          - "null"
+          - integer
       required:
       - decision
       - hasUnresolvedHumanComments

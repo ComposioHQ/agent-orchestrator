@@ -276,6 +276,7 @@ type PR struct {
 	StateChangedAt           sql.NullTime
 	AutoInjectCI             bool
 	ProviderID               string
+	ReviewPartial            bool
 }
 
 type PRCheck struct {
