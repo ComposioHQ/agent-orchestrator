@@ -93,6 +93,8 @@ frontend/agent-browser/
 !.agents/skills/bug-triage/**
 !.agents/skills/commit-and-pr-messages/
 !.agents/skills/commit-and-pr-messages/**
+!.agents/skills/simplified-technical-english/
+!.agents/skills/simplified-technical-english/**
 skills-lock.json
 
 # e2e pod gate: downloaded pod logs/traces (uploaded as CI artifacts, not committed)
