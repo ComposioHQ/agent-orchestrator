@@ -23,6 +23,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	aoprocess "github.com/aoagents/agent-orchestrator/backend/internal/process"
+	"github.com/aoagents/agent-orchestrator/backend/internal/session_manager/prompt"
 	"github.com/aoagents/agent-orchestrator/backend/internal/sessionguard"
 	"github.com/aoagents/agent-orchestrator/backend/internal/skillassets"
 	"github.com/aoagents/agent-orchestrator/backend/internal/tmuxbin"
@@ -3801,7 +3802,7 @@ func isDefaultDevDataDir(dataDir string) bool {
 }
 
 func buildPrompt(cfg ports.SpawnConfig) string {
-	return buildTaskPrompt(taskPromptConfig{
+	return prompt.BuildTaskPrompt(prompt.TaskConfig{
 		Role:         promptRoleForKind(cfg.Kind),
 		Prompt:       cfg.Prompt,
 		IssueID:      string(cfg.IssueID),
@@ -3809,18 +3810,18 @@ func buildPrompt(cfg ports.SpawnConfig) string {
 	})
 }
 
-func promptRoleForKind(kind domain.SessionKind) sessionPromptRole {
+func promptRoleForKind(kind domain.SessionKind) prompt.Role {
 	switch kind {
 	case domain.KindOrchestrator:
-		return sessionPromptRoleOrchestrator
+		return prompt.RoleOrchestrator
 	case domain.KindWorker:
-		return sessionPromptRoleWorker
+		return prompt.RoleWorker
 	default:
 		return ""
 	}
 }
 
-func promptProjectContext(projectID domain.ProjectID, project domain.ProjectRecord) promptProject {
+func promptProjectContext(projectID domain.ProjectID, project domain.ProjectRecord) prompt.Project {
 	cfg := project.Config.WithDefaults()
 	if project.Kind.WithDefault() == domain.ProjectKindScratch || cfg.DefaultBranch == domain.DefaultBranchAuto {
 		cfg.DefaultBranch = ""
@@ -3829,7 +3830,7 @@ func promptProjectContext(projectID domain.ProjectID, project domain.ProjectReco
 	if strings.TrimSpace(id) == "" {
 		id = string(projectID)
 	}
-	return promptProject{
+	return prompt.Project{
 		ID:            id,
 		Name:          project.DisplayName,
 		Repo:          project.RepoOriginURL,
@@ -3932,7 +3933,7 @@ func (m *Manager) buildSystemPrompt(ctx context.Context, kind domain.SessionKind
 	if err != nil {
 		return "", err
 	}
-	cfg := systemPromptConfig{
+	cfg := prompt.SystemConfig{
 		Role:    promptRoleForKind(kind),
 		Project: promptProjectContext(projectID, project),
 	}
@@ -3948,7 +3949,7 @@ func (m *Manager) buildSystemPrompt(ctx context.Context, kind domain.SessionKind
 		if ok {
 			cfg.OrchestratorSessionID = string(orchestratorID)
 		}
-		rules, err := buildProjectRules(projectRulesConfig{
+		rules, err := prompt.BuildProjectRules(prompt.ProjectRulesConfig{
 			ProjectPath:    project.Path,
 			AgentRules:     project.Config.AgentRules,
 			AgentRulesFile: project.Config.AgentRulesFile,
@@ -3971,7 +3972,7 @@ func (m *Manager) buildSystemPrompt(ctx context.Context, kind domain.SessionKind
 	if pointer := strings.TrimSpace(m.aoSkillPointer()); pointer != "" {
 		cfg.AdditionalSections = append(cfg.AdditionalSections, pointer)
 	}
-	return buildSystemPromptText(cfg), nil
+	return prompt.BuildSystemPromptText(cfg), nil
 }
 
 // aoSkillPointer is appended to every agent system prompt. It points the agent
