@@ -64,10 +64,48 @@ type harnessProbe struct {
 	ExpectedVersionPrefix string
 }
 
+// doctorHarnesses lists every registered agent adapter whose CLI binary can be
+// probed on PATH. Keep this list in sync with backend/internal/adapters/agent/registry.
+//
+// VersionArg is the flag passed to the binary to obtain a version string for
+// display. Leave it empty for adapters whose CLI does not support a stable
+// --version flag; checkHarness will fall back to a PATH-existence-only check
+// and still emit a WARN when the binary is missing.
+//
+// ExpectedVersionPrefix is optional: when non-empty the probe emits WARN if
+// the first output line does not begin with that prefix (guards against a
+// different tool shadowing the same binary name on PATH).
 var doctorHarnesses = []harnessProbe{
+	// Tier A — full hook surface, known --version flag
 	{Name: "claude-code", BinaryName: "claude", VersionArg: "--version"},
 	{Name: "codex", BinaryName: "codex", VersionArg: "--version"},
+	{Name: "opencode", BinaryName: "opencode", VersionArg: "--version"},
 	{Name: "muse", BinaryName: "muse", VersionArg: "--version", ExpectedVersionPrefix: "Muse Code "},
+	// Tier B — binary present, --version supported
+	{Name: "aider", BinaryName: "aider", VersionArg: "--version"},
+	{Name: "goose", BinaryName: "goose", VersionArg: "--version"},
+	{Name: "grok", BinaryName: "grok", VersionArg: "--version"},
+	{Name: "devin", BinaryName: "devin", VersionArg: "--version"},
+	{Name: "kimi", BinaryName: "kimi", VersionArg: "--version"},
+	{Name: "kiro", BinaryName: "kiro-cli", VersionArg: "--version"},
+	{Name: "kilocode", BinaryName: "kilocode", VersionArg: "--version"},
+	{Name: "omp", BinaryName: "omp", VersionArg: "--version"},
+	// Tier B — binary present, no stable --version; PATH-existence only
+	{Name: "cursor", BinaryName: "cursor-agent"},
+	{Name: "copilot", BinaryName: "copilot"},
+	{Name: "amp", BinaryName: "amp"},
+	{Name: "agy", BinaryName: "agy"},
+	{Name: "crush", BinaryName: "crush"},
+	{Name: "cline", BinaryName: "cline"},
+	{Name: "auggie", BinaryName: "auggie"},
+	{Name: "continue", BinaryName: "cn"},
+	{Name: "droid", BinaryName: "droid"},
+	{Name: "kimchi", BinaryName: "kimchi"},
+	{Name: "pi", BinaryName: "pi"},
+	{Name: "qwen", BinaryName: "qwen"},
+	{Name: "vibe", BinaryName: "vibe"},
+	{Name: "autohand", BinaryName: "autohand"},
+	{Name: "prime-agent", BinaryName: "prime-agent"},
 }
 
 func newDoctorCommand(ctx *commandContext) *cobra.Command {
