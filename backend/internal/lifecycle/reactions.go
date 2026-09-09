@@ -797,10 +797,17 @@ func failedPRChecks(checks []ports.PRCheckObservation) []ports.PRCheckObservatio
 	return failed
 }
 
+// ciFailureSignature identifies a set of failing checks so the same failure is
+// not injected twice. It deliberately excludes the check's URL: GitHub mints a
+// new check-run URL for every attempt, so including it made a re-run of an
+// unchanged failure look like a new one and the agent was nudged again for each
+// retry. Name plus commit plus status plus log tail identifies the failure
+// itself, which is what must not repeat; a genuinely new failure differs in the
+// commit hash or the log.
 func ciFailureSignature(checks []ports.PRCheckObservation) string {
 	parts := make([]string, 0, len(checks))
 	for _, ch := range checks {
-		parts = append(parts, strings.Join([]string{ch.Name, ch.CommitHash, string(ch.Status), ch.URL, ch.LogTail}, "\x00"))
+		parts = append(parts, strings.Join([]string{ch.Name, ch.CommitHash, string(ch.Status), ch.LogTail}, "\x00"))
 	}
 	return strings.Join(parts, "\x01")
 }
