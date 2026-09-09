@@ -80,6 +80,9 @@ jobs:
       - name: Install landing dependencies
         run: npm ci --prefix src/landing
 
+      - name: Verify generated landing favicons
+        run: npm run icons:check --prefix src/landing
+
       - name: Typecheck project
         run: npm run typecheck
 
