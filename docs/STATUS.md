@@ -43,6 +43,11 @@ surface (`npm run sqlc`, `npm run api`).
   conversation between TUI and Chat without changing the AO session/worktree;
   rollback, restart recovery, controller-generation fencing, and a transition
   message outbox preserve the one-controller invariant.
+- Codex Chat app-server processes are owned by authenticated, detached
+  per-session hosts. Desktop close, full quit, and updater daemon replacement
+  detach and reconnect without relaunching the provider or interrupting an
+  in-flight turn; explicit session termination destroys the host. Other Chat
+  drivers still use native resume after daemon replacement.
 - Durable Chat conversations with project-scoped orchestrator continuity,
   session-scoped worker history, bounded history pages, transactional raw-event
   archive/projection, controller-generation fencing, turns, messages,
@@ -91,6 +96,18 @@ surface (`npm run sqlc`, `npm run api`).
 - Lifecycle reducer plus reaper (`internal/observe/reaper`).
 - Agent adapter platform under `internal/adapters/agent/` (25 adapters) with a
   registry and `ao hooks` activity dispatch.
+- Daemon-owned in-memory agent readiness coordination with normalized
+  installation/authentication observations, purpose-specific freshness,
+  single-flight checks, bounded warm-up/retries, launch-time validation, and
+  compatibility projections for older agent inventory/probe clients.
+- Codex account management under Settings → Agents. AO reconciles the current
+  device-global Codex identity, adds file-backed accounts through an inline
+  native login terminal, and shows structured authentication, capacity, usage,
+  and confirmed reset-credit facts without parsing credentials. A manual global
+  switch fences input, stops and resumes only the affected AO-owned Codex
+  controllers with the same native thread IDs, and leaves native history in the
+  normal Codex home. Users can sign accounts out and delete inactive signed-out
+  accounts; external Codex clients are not controlled.
 - OpenAPI spec generated from Go DTOs; frontend TS types generated from it and
   drift-checked in CI.
 
@@ -126,6 +143,9 @@ surface (`npm run sqlc`, `npm run api`).
   auto-discovers a static entry point merely because a fresh worker exists.
 - Real daemon wiring via the generated `openapi-fetch` typed client
   (`src/api/schema.ts`); mock data only in `VITE_NO_ELECTRON` web-preview mode.
+- Agent pickers consume the normalized readiness snapshot, show cached state
+  immediately, and delegate open/focus/selection freshness decisions to the
+  daemon coordinator.
 - Electron main handles daemon discovery, launch, and status reporting.
 - Shell: sidebar (projects + sessions, add/remove project), sessions board,
   session view + inspector, project settings, pull-requests page,
