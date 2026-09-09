@@ -641,11 +641,15 @@ export function Sidebar({
 		(killedSession: WorkspaceSession) => {
 			if (selection.activeSessionId !== killedSession.id) return;
 			const workspace = workspaces.find((w) => w.id === killedSession.workspaceId);
-			const remaining = sortedWorkerSessions(workspace?.sessions ?? []).filter(
-				(s) => s.id !== killedSession.id && s.isTerminated !== true,
+			const orderedSessions = sortedWorkerSessions(workspace?.sessions ?? []).filter(
+				(s) => s.isTerminated !== true,
 			);
+			const currentIndex = orderedSessions.findIndex((s) => s.id === killedSession.id);
+			const remaining = orderedSessions.filter((s) => s.id !== killedSession.id);
 			if (remaining.length > 0) {
-				selection.goSession(killedSession.workspaceId, remaining[0].id);
+				const nextIndex = currentIndex > 0 ? currentIndex - 1 : 0;
+				const nextSession = remaining[nextIndex] ?? remaining[0];
+				selection.goSession(killedSession.workspaceId, nextSession.id);
 				return;
 			}
 			const orchestrator = newestActiveOrchestrator(workspace?.sessions ?? []);
@@ -1960,11 +1964,15 @@ const SessionActions = memo(function SessionActions({
 		} else if (active || selection.activeSessionId === session.id) {
 			const workspaces = queryClient.getQueryData<WorkspaceSummary[]>(workspaceQueryKey) ?? [];
 			const workspace = workspaces.find((w) => w.id === session.workspaceId);
-			const remaining = sortedWorkerSessions(workspace?.sessions ?? []).filter(
-				(s) => s.id !== session.id && s.isTerminated !== true,
+			const orderedSessions = sortedWorkerSessions(workspace?.sessions ?? []).filter(
+				(s) => s.isTerminated !== true,
 			);
+			const currentIndex = orderedSessions.findIndex((s) => s.id === session.id);
+			const remaining = orderedSessions.filter((s) => s.id !== session.id);
 			if (remaining.length > 0) {
-				selection.goSession(session.workspaceId, remaining[0].id);
+				const nextIndex = currentIndex > 0 ? currentIndex - 1 : 0;
+				const nextSession = remaining[nextIndex] ?? remaining[0];
+				selection.goSession(session.workspaceId, nextSession.id);
 			} else {
 				const orchestrator = newestActiveOrchestrator(workspace?.sessions ?? []);
 				if (orchestrator && orchestrator.id !== session.id && orchestrator.isTerminated !== true) {

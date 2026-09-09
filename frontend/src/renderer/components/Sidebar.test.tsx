@@ -2142,6 +2142,13 @@ describe("Sidebar", () => {
 		const row = screen.getByLabelText("Open sole worker").closest<HTMLElement>("[data-session-row]")!;
 		fireEvent.click(within(row).getByLabelText("Kill session"));
 
+		await waitFor(() =>
+			expect(postMock).toHaveBeenCalledWith(
+				"/api/v1/sessions/{sessionId}/kill",
+				expect.objectContaining({ params: { path: { sessionId: "proj-1-1" } } }),
+			),
+		);
+
 		expect(navigateMock).toHaveBeenCalledWith({
 			to: "/projects/$projectId/sessions/$sessionId",
 			params: { projectId: "proj-1", sessionId: "orch-1" },
@@ -2162,6 +2169,13 @@ describe("Sidebar", () => {
 
 		const row = screen.getByLabelText("Open sole worker").closest<HTMLElement>("[data-session-row]")!;
 		fireEvent.click(within(row).getByLabelText("Kill session"));
+
+		await waitFor(() =>
+			expect(postMock).toHaveBeenCalledWith(
+				"/api/v1/sessions/{sessionId}/kill",
+				expect.objectContaining({ params: { path: { sessionId: "proj-1-1" } } }),
+			),
+		);
 
 		expect(navigateMock).toHaveBeenCalledWith({
 			to: "/projects/$projectId",
@@ -2224,6 +2238,38 @@ describe("Sidebar", () => {
 		expect(navigateMock).toHaveBeenCalledWith({
 			to: "/projects/$projectId/sessions/$sessionId",
 			params: { projectId: "proj-1", sessionId: "proj-1-1" },
+		});
+	});
+
+	it("shifts to the adjacent session when killing an active pinned session with multiple remaining sessions", async () => {
+		mockParams.projectId = "proj-1";
+		mockParams.sessionId = "proj-1-1";
+		renderSidebar({
+			workspaces: [
+				{
+					...workspace,
+					sessions: [
+						{ ...session, id: "proj-1-3", title: "newest task", updatedAt: "2026-06-30T02:00:00Z" },
+						{ ...session, id: "proj-1-2", title: "middle task", updatedAt: "2026-06-30T01:00:00Z" },
+						{ ...session, id: "proj-1-1", title: "oldest pinned task", isPinned: true, pinnedAt: "2026-06-30T00:00:00Z", updatedAt: "2026-06-30T00:00:00Z" },
+					],
+				},
+			],
+		});
+
+		const pinnedList = screen.getByTestId("pinned-session-list");
+		const row = within(pinnedList).getByLabelText("Open oldest pinned task").closest<HTMLElement>("[data-session-row]")!;
+		fireEvent.click(within(row).getByLabelText("Kill session"));
+
+		await waitFor(() =>
+			expect(postMock).toHaveBeenCalledWith(
+				"/api/v1/sessions/{sessionId}/kill",
+				expect.objectContaining({ params: { path: { sessionId: "proj-1-1" } } }),
+			),
+		);
+		expect(navigateMock).toHaveBeenCalledWith({
+			to: "/projects/$projectId/sessions/$sessionId",
+			params: { projectId: "proj-1", sessionId: "proj-1-2" },
 		});
 	});
 
