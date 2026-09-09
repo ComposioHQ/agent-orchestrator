@@ -10,14 +10,22 @@ import { queryClient } from "./lib/query-client";
 import { mergeUnreadNotification, unreadNotificationsQueryKey } from "./lib/notifications";
 import { createAppRouter } from "./router";
 import { TelemetryBoundary } from "./components/TelemetryBoundary";
-import { initTelemetry } from "./lib/telemetry";
+import { CloudOnboardingGate } from "./components/CloudOnboardingGate";
+import { applyRendererTelemetryPolicy, clearRendererTelemetryQueues, initTelemetry } from "./lib/telemetry";
+import { aoBridge } from "./lib/bridge";
 import { startDaemonFailureTelemetry } from "./lib/daemon-telemetry";
 import { startUpdateTelemetry } from "./lib/update-telemetry";
 import { appI18n } from "./i18n";
 import { useLocaleStore } from "./stores/locale-store";
 import { useSoundNotificationsStore } from "./stores/sound-notifications-store";
+import { useTelemetryPolicyStore } from "./stores/telemetry-policy-store";
 
 const router = createAppRouter(queryClient);
+
+// Main owns consent and only acknowledges opt-out after every live AO shell
+// confirms that its in-memory renderer queues were actually purged.
+aoBridge.telemetry.onClearQueues(clearRendererTelemetryQueues);
+aoBridge.telemetry.onPolicy((view) => applyRendererTelemetryPolicy(view.eventsEnabled && view.acknowledged && view.state === "applied"));
 
 if (import.meta.env.DEV) {
 	const w = window as never as Record<string, unknown>;
@@ -71,6 +79,7 @@ declare module "@tanstack/react-router" {
 }
 
 async function renderApp(): Promise<void> {
+	void useTelemetryPolicyStore.getState().load();
 	// The persisted locale is cosmetic; do not leave a newly opened native
 	// window blank while its IPC read completes. The router's pending screen
 	// renders immediately, then i18n updates if the user chose another locale.
@@ -84,6 +93,7 @@ async function renderApp(): Promise<void> {
 				<TelemetryBoundary>
 					<QueryClientProvider client={queryClient}>
 						<RouterProvider router={router} />
+						<CloudOnboardingGate />
 					</QueryClientProvider>
 				</TelemetryBoundary>
 			</I18nextProvider>

@@ -43,6 +43,11 @@ The private conductor pins the immutable source SHA before dispatch and treats
 the returned digests as the handoff boundary. Signing credentials and release
 publication permissions stay in `Untrivial-ai/ao-releases`.
 
+Windows installers follow the same boundary (#4502): the NSIS maker
+(`frontend/makers/maker-nsis.ts`) activates electron-builder code signing only
+when signing credentials are present in the environment, so the public build
+stays unsigned while the conductor signs with its own credentials downstream.
+
 ## Channels
 
 - **Stable** releases are deliberate production cuts. After all verification
