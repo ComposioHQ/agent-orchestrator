@@ -105,9 +105,11 @@ const failureBackoff = [1_000, 2_000, 4_000, 8_000];
  * A spent count survives backgrounding, like the readiness window and for the
  * same reason: `appActive` re-runs the effect, so anything the effect owned
  * would make app-switching the way to refill a budget. Returning to the app is
- * news about the user, not about the link — unlike the 401 stop, which
- * foregrounding does give one fresh request, because a password is re-paired
- * outside the app.
+ * news about the user, not about the link.
+ *
+ * This never competes with the 401 stop, which foregrounding does give one
+ * fresh request: a rejection is a request that landed, so `refresh` clears the
+ * count rather than spending it, and `pollable` owns that stop on its own.
  */
 export const speculativeFailureAttempts = 5;
 
@@ -119,7 +121,9 @@ export const speculativeFailureAttempts = 5;
  *
  * Retrying on failure with no status at all is deliberate: a first fetch that
  * never landed would otherwise leave the screen with no poll to start, and the
- * switch would stay greyed out for the life of the screen.
+ * switch would stay greyed out for the life of the screen. That retry is
+ * bounded like the readiness wait — see speculativeFailureAttempts — because
+ * there is no operation in flight to keep it alive indefinitely.
  */
 export function interfaceTransitionNextPoll(args: {
 	status?: InterfaceTransitionStatus;

@@ -102,10 +102,20 @@ export function useInterfaceTransition(
 			const httpStatus = cause instanceof ApiError ? cause.status : undefined;
 			const stale = !current();
 			if (!stale) {
+				const keepPolling = shouldKeepPolling(httpStatus);
 				setError(message);
-				setPollable(shouldKeepPolling(httpStatus));
+				setPollable(keepPolling);
 				setFetchFailed(true);
-				failureRef.current = { count: failureRef.current.count + 1, status: httpStatus };
+				// A rejection is a request that LANDED: the daemon answered, so the
+				// link is not what is wrong and the failure backoff has nothing to
+				// measure. `pollable` owns the stop for those, and clearing the count
+				// keeps the two from interacting — counting them would let five app
+				// switches under a rotated password spend the speculative budget, and
+				// the sixth foreground would then get no fresh request at all, which
+				// is the one thing that notices the password was fixed.
+				failureRef.current = keepPolling
+					? { count: failureRef.current.count + 1, status: httpStatus }
+					: { count: 0 };
 			}
 			// The status code rides along so the caller can tell a rejection from an
 			// unreachable daemon; `shouldKeepPolling` consumes it and drops it.
