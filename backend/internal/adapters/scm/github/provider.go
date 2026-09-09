@@ -259,7 +259,7 @@ const prObservationQuery = `query($owner:String!,$repo:String!,$number:Int!){
           contexts(first:CONTEXT_LIMIT){
             nodes{
               __typename
-              ... on CheckRun  { name status conclusion detailsUrl url databaseId }
+              ... on CheckRun  { name status conclusion detailsUrl url databaseId steps(first:1){ totalCount } }
               ... on StatusContext { context state targetUrl }
             }
             pageInfo{ hasNextPage }
@@ -586,6 +586,27 @@ func statusRollup(pr map[string]any) map[string]any {
 // checkStatusFromGraphQL maps the (status, conclusion) tuple of one node
 // onto the domain enum. Failure-class conclusions always win — pending
 // status with a final conclusion of "failure" is still a failed check.
+// checkRunStepCount reports the number of steps GitHub recorded for a CheckRun
+// node, and whether the field was present at all. The distinction matters:
+// missing means "not requested", which must not be read as zero.
+func checkRunStepCount(n map[string]any) (int, bool) {
+	steps, ok := n["steps"].(map[string]any)
+	if !ok {
+		return 0, false
+	}
+	raw, ok := steps["totalCount"]
+	if !ok {
+		return 0, false
+	}
+	switch v := raw.(type) {
+	case float64:
+		return int(v), true
+	case int:
+		return v, true
+	}
+	return 0, false
+}
+
 func checkStatusFromGraphQL(n map[string]any) domain.PRCheckStatus {
 	typ := str(n["__typename"])
 	if typ == "StatusContext" {
@@ -605,7 +626,24 @@ func checkStatusFromGraphQL(n map[string]any) domain.PRCheckStatus {
 	switch conclusion {
 	case "SUCCESS", "NEUTRAL":
 		return domain.PRCheckPassed
-	case "FAILURE", "TIMED_OUT", "ACTION_REQUIRED", "STARTUP_FAILURE":
+	case "FAILURE":
+		// A job that never ran is not a failing test. GitHub reports a
+		// refused job — spending limit reached, for instance — as a plain
+		// FAILURE with no steps recorded and no log to fetch. Reporting that
+		// as a red check moves the owning session to ci_failed and nudges the
+		// agent to go fix a test that never executed.
+		//
+		// Only a present-and-zero step count means "never started"; an absent
+		// steps block means the caller did not ask for it, and must keep the
+		// old behaviour or every real failure would decay to unknown.
+		if n, ok := checkRunStepCount(n); ok && n == 0 {
+			return domain.PRCheckUnknown
+		}
+		return domain.PRCheckFailed
+	case "TIMED_OUT", "ACTION_REQUIRED", "STARTUP_FAILURE":
+		// Deliberately not covered by the zero-step rule. A STARTUP_FAILURE is
+		// a real defect the user must see (an invalid workflow file, say) and
+		// legitimately records no steps.
 		return domain.PRCheckFailed
 	case "CANCELLED":
 		return domain.PRCheckCancelled
