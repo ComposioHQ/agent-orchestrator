@@ -22,7 +22,7 @@ import {
 	type ProjectInfo,
 	type SessionMode,
 } from "./api";
-import { isConfigured, loadConfig, type ServerConfig } from "./config";
+import { isConfigured, loadConfig, machineIdentity, type ServerConfig } from "./config";
 import { resolveActiveConfig, runtimeResolveDeps } from "./resolveConfig";
 import { pollIntervalFor } from "./pollInterval";
 import type { Endpoint } from "./endpoints";
@@ -35,6 +35,7 @@ import { shouldShowLoading } from "./configLoading";
 import { shouldKeepPolling } from "./connectionError";
 import { primeInstallId } from "./installId";
 import { collectPRs } from "./prView";
+import { ALL_PROJECTS, NO_PROJECTS_KNOWN, resolveActiveProject, retainProjects, type KnownProjects } from "./projectFilter";
 import { MOBILE_EVENTS } from "./telemetry/events";
 import { mobileTelemetry, trackFeature } from "./telemetry/runtime";
 import { useConversationEventTransport } from "./chat/conversationEvents";
@@ -64,6 +65,10 @@ type AppState = {
 	 *  rotated tunnel hostname apart from being simply out of range. */
 	activeEndpoints: Endpoint[];
 	projects: ProjectInfo[];
+	/** Whether `projects` is a list this machine actually answered with, rather
+	 *  than the empty array that stands in before the first one lands. Callers
+	 *  that judge a project id against the list need it — see resolveActiveProject. */
+	projectsKnown: boolean;
 	sessions: DashboardSession[];
 	orchestrators: OrchestratorLink[];
 	orchestratorId: string | null;
@@ -101,7 +106,7 @@ export function useApp(): AppState {
 export function useVisibleSessions(): DashboardSession[] {
 	const { sessions, activeProjectId } = useApp();
 	return useMemo(
-		() => (activeProjectId === "all" ? sessions : sessions.filter((s) => s.projectId === activeProjectId)),
+		() => (activeProjectId === ALL_PROJECTS ? sessions : sessions.filter((s) => s.projectId === activeProjectId)),
 		[sessions, activeProjectId],
 	);
 }
@@ -119,12 +124,19 @@ export function AppProvider({ children }: { children: ReactNode }) {
 	// yet" from "no machine paired" — identical as state, opposite to the user.
 	const [configResolved, setConfigResolved] = useState(false);
 	const [activeEndpoints, setActiveEndpoints] = useState<Endpoint[]>([]);
-	const [projects, setProjects] = useState<ProjectInfo[]>([]);
+	// The last project list a machine answered with, plus whether that answer
+	// ever came. Held together because retainProjects decides all of it from one
+	// tick's result, and split apart they could disagree — see that helper for
+	// why a failed /projects must not read as "this daemon has no projects".
+	const [knownProjects, setKnownProjects] = useState<KnownProjects>(NO_PROJECTS_KNOWN);
+	const { projects, known: projectsKnown } = knownProjects;
 	const [sessions, setSessions] = useState<DashboardSession[]>([]);
 	const [orchestrators, setOrchestrators] = useState<OrchestratorLink[]>([]);
 	const [orchestratorId, setOrchestratorId] = useState<string | null>(null);
 	const [stats, setStats] = useState<DashboardStats>({});
-	const [activeProjectId, setActiveProjectId] = useState<string>("all");
+	// The filter as chosen — from storage at launch, then from the picker. What
+	// consumers see is `activeProjectId` below: this checked against the list.
+	const [chosenProjectId, setChosenProjectId] = useState<string>(ALL_PROJECTS);
 	const [connection, setConnection] = useState<ConnStatus>("closed");
 	const [notificationsUnread, setNotificationsUnread] = useState(0);
 	const [loading, setLoading] = useState(true);
@@ -185,7 +197,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 	// Load persisted active project once.
 	useEffect(() => {
 		AsyncStorage.getItem(ACTIVE_PROJECT_KEY).then((v) => {
-			if (v) setActiveProjectId(v);
+			if (v) setChosenProjectId(v);
 		});
 	}, []);
 
@@ -295,7 +307,18 @@ export function AppProvider({ children }: { children: ReactNode }) {
 			const sess = await getSessions(c, "all");
 			// Most ticks bring back the fleet exactly as it was; keep the previous
 			// value so React bails out of the render — see keepUnchanged.
-			setProjects((prev) => keepUnchanged(prev, sess.projects));
+			//
+			// Keyed on which machine answered, not just stored: a list retained
+			// across a re-pair would have the new machine's filter judged against
+			// the old machine's projects. fetchAll has no staleness guard, so a
+			// late answer from the machine the user just left can still land here —
+			// it is recorded as THAT machine's, so the next tick from this one
+			// replaces it rather than inheriting it. retainProjects holds identity
+			// when it keeps what it has, but a successful tick builds a fresh
+			// object, so it goes through keepUnchanged like everything else.
+			setKnownProjects((prev) =>
+				keepUnchanged(prev, retainProjects(prev, { machine: machineIdentity(c), projects: sess.projects })),
+			);
 			setSessions((prev) => keepUnchanged(prev, sess.sessions));
 			setOrchestrators((prev) => keepUnchanged(prev, sess.orchestrators));
 			setOrchestratorId(sess.orchestratorId);
@@ -414,13 +437,24 @@ export function AppProvider({ children }: { children: ReactNode }) {
 	}, [config, fetchAll, appActive, reloadConfig, configResolved]);
 
 	const setActiveProject = useCallback((id: string) => {
-		setActiveProjectId(id);
+		setChosenProjectId(id);
 		AsyncStorage.setItem(ACTIVE_PROJECT_KEY, id).catch(() => {});
 	}, []);
 
+	// A filter whose project the daemon no longer lists applies as "all" (#4843).
+	// Derived on every list rather than reset and written back: the project can
+	// disappear while the app is open and the stored value can land after the
+	// first list does, storage is then only ever written by a tap, a late
+	// response from a machine the user just left cannot discard the filter they
+	// picked on the new one, and the choice comes back if the project does.
+	const activeProjectId = useMemo(
+		() => resolveActiveProject(chosenProjectId, projects, projectsKnown),
+		[chosenProjectId, projects, projectsKnown],
+	);
+
 	// Pick a sensible project for actions that need one (spawn / conductor).
 	const targetProject = useCallback((): string | null => {
-		if (activeProjectId !== "all") return activeProjectId;
+		if (activeProjectId !== ALL_PROJECTS) return activeProjectId;
 		if (projects.length === 1) return projects[0].id;
 		return null;
 	}, [activeProjectId, projects]);
@@ -497,6 +531,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 			configured: !!config && isConfigured(config),
 			activeEndpoints,
 			projects,
+			projectsKnown,
 			sessions,
 			orchestrators,
 			orchestratorId,
@@ -521,6 +556,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 			config,
 			activeEndpoints,
 			projects,
+			projectsKnown,
 			sessions,
 			orchestrators,
 			orchestratorId,
