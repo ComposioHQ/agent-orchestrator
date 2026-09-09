@@ -842,4 +842,59 @@ describe("TaskComposer", () => {
 			),
 		);
 	});
+
+	it("inherits worker tuning visually but sends only explicit task overrides", async () => {
+		h.get.mockImplementation(async (path: string) => {
+			if (path.includes("/models")) {
+				return {
+					data: {
+						agent: "codex",
+						selectionMode: "catalog",
+						models: [{
+							id: "gpt-test",
+							label: "GPT Test",
+							isDefault: true,
+							efforts: ["low", "high"],
+							speedModes: [{ id: "standard", label: "Standard" }, { id: "fast", label: "Fast" }],
+						}],
+						allowCustom: true,
+						refreshRecommended: false,
+					},
+				};
+			}
+			return {
+				data: { status: "ok", project: { config: { worker: { agent: "codex", agentConfig: {
+					model: "gpt-test", effort: "high", speedMode: "standard",
+				} } } } },
+			};
+		});
+		h.post.mockResolvedValue({ data: { workerId: "sess-tuned" } });
+
+		render(<Wrap><TaskComposer projectId="proj-1" onCreated={vi.fn()} /></Wrap>);
+		const effort = await screen.findByRole("button", { name: "Effort" });
+		const speed = screen.getByRole("button", { name: "Speed" });
+		expect(effort).toHaveTextContent("high");
+		expect(speed).toHaveTextContent("Standard");
+
+		fireEvent.click(screen.getByText("Start task"));
+		await waitFor(() => expect(h.post).toHaveBeenCalledTimes(1));
+		expect(h.post.mock.calls[0][1].body).not.toHaveProperty("effort");
+		expect(h.post.mock.calls[0][1].body).not.toHaveProperty("speedMode");
+
+		await userEvent.click(effort);
+		await userEvent.click(await screen.findByRole("menuitem", { name: "low" }));
+		await userEvent.click(screen.getByRole("button", { name: "Speed" }));
+		await userEvent.click(await screen.findByRole("menuitem", { name: "Fast" }));
+		fireEvent.click(screen.getByText("Start task"));
+		await waitFor(() => expect(h.post).toHaveBeenCalledTimes(2));
+		expect(h.post.mock.calls[1][1].body).toEqual(expect.objectContaining({ effort: "low", speedMode: "fast" }));
+
+		await userEvent.click(screen.getByRole("button", { name: "Effort" }));
+		await userEvent.click(await screen.findByRole("menuitem", { name: "Provider default" }));
+		await userEvent.click(screen.getByRole("button", { name: "Speed" }));
+		await userEvent.click(await screen.findByRole("menuitem", { name: "Provider default" }));
+		fireEvent.click(screen.getByText("Start task"));
+		await waitFor(() => expect(h.post).toHaveBeenCalledTimes(3));
+		expect(h.post.mock.calls[2][1].body).toEqual(expect.objectContaining({ effort: "", speedMode: "" }));
+	});
 });

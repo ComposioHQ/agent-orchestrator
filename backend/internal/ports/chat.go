@@ -74,6 +74,9 @@ var (
 	// but cannot replay that context as typed history. ACP session/resume has this
 	// property; session/load is required when a caller needs a transcript replay.
 	ErrChatHistoryUnavailable = errors.New("chat conversation history replay is unavailable")
+	// ErrChatCapabilityUnavailable means an explicit tuning value was requested
+	// but the provider did not advertise the matching live capability.
+	ErrChatCapabilityUnavailable = errors.New("chat model capability unavailable")
 )
 
 // ChatCapabilityError reports why a harness cannot satisfy one session's Chat
@@ -222,6 +225,9 @@ type ChatStartConfig struct {
 	Env map[string]string
 	// Model is optional; empty defers to the provider's configured default.
 	Model string
+	// Effort and SpeedMode are optional provider-advertised model tuning values.
+	Effort    string
+	SpeedMode string
 	// Permissions is AO's existing per-session approval policy. Drivers map it
 	// onto their provider's native approval and sandbox settings.
 	Permissions PermissionMode
@@ -255,7 +261,9 @@ type ChatResumeConfig struct {
 	// Model is optional; empty keeps the provider conversation's current model.
 	Model string
 	// Effort is optional; empty keeps the provider conversation's current effort.
-	Effort      string
+	Effort string
+	// SpeedMode is optional; empty keeps the provider conversation's current speed.
+	SpeedMode   string
 	Permissions PermissionMode
 	// SystemPrompt is recomputed by the session manager on restore and reapplied
 	// to the provider process. It is not persisted in the conversation transcript.
@@ -339,6 +347,8 @@ type ChatTurnSettings struct {
 	Model string
 	// Effort is how much reasoning to spend, from ChatModel.Efforts.
 	Effort string
+	// SpeedMode is the provider-advertised latency or service-tier id.
+	SpeedMode string
 	// Approval is AO's permission mode for this turn. The driver maps it onto
 	// whatever approval policy and sandbox its provider understands.
 	Approval PermissionMode
@@ -347,7 +357,7 @@ type ChatTurnSettings struct {
 // IsZero reports whether nothing was chosen, so a dispatch can omit the fields
 // entirely rather than sending empty strings the provider would have to interpret.
 func (s ChatTurnSettings) IsZero() bool {
-	return s.Model == "" && s.Effort == "" && s.Approval == ""
+	return s.Model == "" && s.Effort == "" && s.SpeedMode == "" && s.Approval == ""
 }
 
 // ChatModel is one model the provider offers for a conversation.
@@ -366,6 +376,10 @@ type ChatModel struct {
 	Efforts []string
 	// DefaultEffort is the level the provider uses when none is chosen.
 	DefaultEffort string
+	// SpeedModes are provider service tiers or normalized speed choices.
+	SpeedModes []AgentSpeedMode
+	// DefaultSpeedMode is the provider/model default tier.
+	DefaultSpeedMode string
 }
 
 // ChatModelLister is implemented by drivers whose provider can enumerate models.

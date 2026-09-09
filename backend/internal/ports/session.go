@@ -30,6 +30,13 @@ type SpawnConfig struct {
 	// AgentConfig overrides the resolved project/role agent config for this
 	// single spawn. Empty fields keep the project defaults.
 	AgentConfig AgentConfig
+	// EffortOverride and SpeedModeOverride preserve the distinction between an
+	// omitted task override and an explicit empty value meaning provider default.
+	EffortOverride    bool
+	SpeedModeOverride bool
+	// AgentConfigResolved means AgentConfig already contains the fully merged
+	// project/role/task settings and may intentionally clear inherited values.
+	AgentConfigResolved bool
 
 	// RequestedMode is the caller's explicit session mode, or empty to let the
 	// daemon resolve its default. It is validated and persisted before any
