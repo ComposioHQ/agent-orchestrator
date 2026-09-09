@@ -10,6 +10,8 @@ import { XtermTerminal } from "./XtermTerminal";
 
 const state = vi.hoisted(() => ({
 	fit: vi.fn(),
+	webgl: { listener: null as null | (() => void), disposeThrows: false, disposeCalls: 0 },
+	loadedAddons: [] as string[],
 	linkHandler: null as null | ((event: MouseEvent, uri: string) => void),
 	searchAddon: null as null | {
 		clearDecorations: ReturnType<typeof vi.fn>;
@@ -106,7 +108,9 @@ vi.mock("@xterm/xterm", () => ({
 			state.lastTerminal = this;
 		}
 
-		loadAddon() {}
+		loadAddon(addon: unknown) {
+			state.loadedAddons.push((addon as object).constructor.name);
+		}
 		open(host: HTMLElement) {
 			host.appendChild(document.createElement("textarea"));
 		}
@@ -202,8 +206,13 @@ vi.mock("@xterm/addon-canvas", () => ({
 
 vi.mock("@xterm/addon-webgl", () => ({
 	WebglAddon: class FakeWebglAddon {
-		onContextLoss() {}
-		dispose() {}
+		onContextLoss(listener: () => void) {
+			state.webgl.listener = listener;
+		}
+		dispose() {
+			state.webgl.disposeCalls += 1;
+			if (state.webgl.disposeThrows) throw new Error("simulated WebGL addon dispose failure");
+		}
 	},
 }));
 
@@ -221,6 +230,8 @@ function setNavigatorPlatform(platform: string) {
 describe("XtermTerminal", () => {
 	beforeEach(() => {
 		state.fit.mockReset();
+		state.webgl = { listener: null, disposeThrows: false, disposeCalls: 0 };
+		state.loadedAddons = [];
 		state.lastTerminal = null;
 		state.linkHandler = null;
 		state.searchAddon = null;
@@ -312,6 +323,35 @@ describe("XtermTerminal", () => {
 
 		expect(state.lastTerminal!.options.drawBoldTextInBrightColors).toBe(true);
 		expect(state.lastTerminal!.options.minimumContrastRatio).toBe(1);
+	});
+
+	it("falls back to the canvas renderer even when the WebGL addon throws while disposing after context loss", () => {
+		const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+		try {
+			state.webgl.disposeThrows = true;
+			render(<XtermTerminal theme="dark" />);
+			expect(state.loadedAddons).toContain("FakeWebglAddon");
+			expect(state.loadedAddons).not.toContain("FakeCanvasAddon");
+			expect(state.webgl.listener).not.toBeNull();
+
+			expect(() => state.webgl.listener!()).not.toThrow();
+
+			expect(state.webgl.disposeCalls).toBe(1);
+			expect(state.loadedAddons.filter((name) => name === "FakeCanvasAddon")).toHaveLength(1);
+			expect(warn).toHaveBeenCalledWith(expect.stringContaining("WebGL"), expect.any(Error));
+		} finally {
+			warn.mockRestore();
+		}
+	});
+
+	it("handles a repeated context-loss notification once", () => {
+		render(<XtermTerminal theme="dark" />);
+
+		state.webgl.listener!();
+		state.webgl.listener!();
+
+		expect(state.webgl.disposeCalls).toBe(1);
+		expect(state.loadedAddons.filter((name) => name === "FakeCanvasAddon")).toHaveLength(1);
 	});
 
 	it("focuses the terminal when human input is requested", async () => {
