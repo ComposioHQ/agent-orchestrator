@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/hookutil"
@@ -20,8 +21,13 @@ const (
 	copilotHooksDir      = ".github/hooks"
 	copilotHooksFileName = "ao.json"
 
-	copilotAgentsDir     = ".github/agents"
-	copilotAgentSentinel = "<!-- managed by agent-orchestrator: copilot agent profile -->"
+	copilotAgentsDir = ".github/agents"
+	// copilotAgentExcludePattern covers every AO session profile with one line.
+	// The profile filename carries the session id, so excluding the literal path
+	// added a new line to the user's .git/info/exclude for every session ever run
+	// in the repo, and nothing removed them.
+	copilotAgentExcludePattern = "/" + copilotAgentsDir + "/ao-*.agent.md"
+	copilotAgentSentinel       = "<!-- managed by agent-orchestrator: copilot agent profile -->"
 
 	// copilotHooksVersion is the schema version of the hooks file (Copilot uses 1).
 	copilotHooksVersion = 1
@@ -176,7 +182,7 @@ func installCopilotAgent(workspacePath, sessionID, inlinePrompt, promptFile stri
 	if err := hookutil.AtomicWriteFile(agentPath, []byte(body), 0o600); err != nil {
 		return fmt.Errorf("write %s: %w", agentPath, err)
 	}
-	if err := ignoreCopilotPath(workspacePath, "/"+filepath.ToSlash(filepath.Join(copilotAgentsDir, agentName+".agent.md"))); err != nil {
+	if err := ignoreCopilotPath(workspacePath, copilotAgentExcludePattern); err != nil {
 		return fmt.Errorf("git exclude: %w", err)
 	}
 	return nil
@@ -212,7 +218,7 @@ func ignoreCopilotPath(workspacePath, pattern string) error {
 	if err := os.MkdirAll(filepath.Dir(excludePath), 0o750); err != nil {
 		return fmt.Errorf("create %s: %w", filepath.Dir(excludePath), err)
 	}
-	body := strings.TrimRight(string(data), "\n")
+	body := strings.TrimRight(dropSupersededCopilotExcludes(string(data)), "\n")
 	if body != "" {
 		body += "\n"
 	}
@@ -416,3 +422,24 @@ func removeCopilotManagedHooks(entries []copilotHookEntry) []copilotHookEntry {
 	}
 	return kept
 }
+
+// dropSupersededCopilotExcludes removes the per-session lines earlier versions
+// appended, now that one glob covers them. Only lines matching the exact shape
+// this package wrote are touched; anything else in the user's exclude file is
+// left alone.
+func dropSupersededCopilotExcludes(data string) string {
+	if data == "" {
+		return data
+	}
+	lines := strings.Split(data, "\n")
+	kept := make([]string, 0, len(lines))
+	for _, line := range lines {
+		if supersededCopilotExclude.MatchString(strings.TrimSpace(line)) {
+			continue
+		}
+		kept = append(kept, line)
+	}
+	return strings.Join(kept, "\n")
+}
+
+var supersededCopilotExclude = regexp.MustCompile(`^/` + regexp.QuoteMeta(copilotAgentsDir) + `/ao-[^/*]+\.agent\.md$`)
