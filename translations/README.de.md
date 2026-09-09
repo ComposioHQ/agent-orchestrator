@@ -211,7 +211,7 @@ Der [Entwicklungsleitfaden](../docs/development.md) erklärt Voraussetzungen, lo
 
 | Dokument                                                            | Hier findest du                                                                            |
 | ------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
-| [Produktdokumentation](https://useao.dev/docs)                   | Installation, Einrichtung von Agenten und tägliche Produktnutzung.                         |
+| [Produktdokumentation](https://useao.dev/docs)                      | Installation, Einrichtung von Agenten und tägliche Produktnutzung.                         |
 | [docs/architecture.md](../docs/architecture.md)                     | Backend-Mentalmodell, Lifecycle, Persistenz, CDC, Statusableitung und Daemon-Grenzen.      |
 | [docs/backend-code-structure.md](../docs/backend-code-structure.md) | Paketverantwortung und Zuordnung der einzelnen Backend-Bereiche.                           |
 | [docs/cli/README.md](../docs/cli/README.md)                         | CLI-Verhalten und Zuordnung der Daemon-Routen.                                             |

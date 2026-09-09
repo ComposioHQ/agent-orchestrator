@@ -211,7 +211,7 @@ cd agent-orchestrator
 
 | 문서                                                                | 다음 정보가 필요할 때                                               |
 | ------------------------------------------------------------------- | ------------------------------------------------------------------- |
-| [제품 문서](https://useao.dev/docs)                              | 설치, 에이전트 설정, 일상적인 제품 사용법.                          |
+| [제품 문서](https://useao.dev/docs)                                 | 설치, 에이전트 설정, 일상적인 제품 사용법.                          |
 | [docs/architecture.md](../docs/architecture.md)                     | 백엔드 멘탈 모델, 라이프사이클, 영속성, CDC, 상태 도출, 데몬 경계.  |
 | [docs/backend-code-structure.md](../docs/backend-code-structure.md) | 패키지 소유권과 각 백엔드 관심사가 속하는 위치.                     |
 | [docs/cli/README.md](../docs/cli/README.md)                         | CLI 동작과 데몬 라우트 매핑.                                        |

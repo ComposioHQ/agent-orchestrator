@@ -211,7 +211,7 @@ Commencez par le [guide de développement](../docs/development.md) pour connaît
 
 | Document                                                            | Commencez ici pour                                                                                   |
 | ------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
-| [Documentation produit](https://useao.dev/docs)                  | Installation, configuration des agents et utilisation quotidienne du produit.                        |
+| [Documentation produit](https://useao.dev/docs)                     | Installation, configuration des agents et utilisation quotidienne du produit.                        |
 | [docs/architecture.md](../docs/architecture.md)                     | Modèle mental du backend, cycle de vie, persistance, CDC, dérivation de l'état et limites du daemon. |
 | [docs/backend-code-structure.md](../docs/backend-code-structure.md) | Responsabilité des paquets et emplacement de chaque domaine du backend.                              |
 | [docs/cli/README.md](../docs/cli/README.md)                         | Comportement de la CLI et correspondance avec les routes du daemon.                                  |

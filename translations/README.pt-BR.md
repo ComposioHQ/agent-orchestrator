@@ -213,7 +213,7 @@ Comece pelo [guia de desenvolvimento](../docs/development.md) para ver pré-requ
 
 | Documento                                                           | Comece aqui quando precisar de                                                                       |
 | ------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
-| [Documentação do produto](https://useao.dev/docs)                | Instalação, configuração de agentes e uso cotidiano do produto.                                      |
+| [Documentação do produto](https://useao.dev/docs)                   | Instalação, configuração de agentes e uso cotidiano do produto.                                      |
 | [docs/architecture.md](../docs/architecture.md)                     | Modelo mental do backend, ciclo de vida, persistência, CDC, derivação de status e limites do daemon. |
 | [docs/backend-code-structure.md](../docs/backend-code-structure.md) | Responsabilidade dos pacotes e onde cada aspecto do backend deve ficar.                              |
 | [docs/cli/README.md](../docs/cli/README.md)                         | Comportamento da CLI e mapeamento das rotas do daemon.                                               |

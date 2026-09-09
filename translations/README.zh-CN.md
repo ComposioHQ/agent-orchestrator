@@ -213,7 +213,7 @@ cd agent-orchestrator
 
 | 文档                                                                | 需要以下内容时从这里开始                                      |
 | ------------------------------------------------------------------- | ------------------------------------------------------------- |
-| [产品文档](https://useao.dev/docs)                               | 安装、智能体设置和日常产品使用。                              |
+| [产品文档](https://useao.dev/docs)                                  | 安装、智能体设置和日常产品使用。                              |
 | [docs/architecture.md](../docs/architecture.md)                     | 后端心智模型、生命周期、持久化、CDC、状态推导和守护进程边界。 |
 | [docs/backend-code-structure.md](../docs/backend-code-structure.md) | 包职责以及各项后端关注点应归属的位置。                        |
 | [docs/cli/README.md](../docs/cli/README.md)                         | CLI 行为和守护进程路由映射。                                  |
