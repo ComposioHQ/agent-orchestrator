@@ -1,8 +1,8 @@
 export function AOLogo() {
   return (
     <span
-      aria-label="Agent Orchestrator"
-      className="inline-flex items-center gap-2 font-sans text-base font-medium leading-none tracking-[-0.5px] text-foreground"
+      aria-label="AO (Agent Orchestrator)"
+      className="inline-flex items-center gap-1 font-sans text-base font-medium leading-none tracking-[-0.5px] text-foreground"
     >
       {/* Center the mascot's body with the wordmark; the baton extends above it. */}
       <img
@@ -13,7 +13,7 @@ export function AOLogo() {
         aria-hidden="true"
         className="size-5 shrink-0 -translate-y-[3px]"
       />
-      <span>Agent Orchestrator</span>
+      <span>AO (Agent Orchestrator)</span>
     </span>
   );
 }
